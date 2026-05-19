@@ -35,6 +35,11 @@ type ('env, 'err, 'a) t =
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Link_span :
+      Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | With_external_parent :
+      string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Current_span : ('env, 'err, Capabilities.span_info option) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
@@ -70,6 +75,19 @@ let scoped e = Scoped e
 
 let named name e = Named (name, e)
 let annotate ~key ~value e = Annotate (key, value, e)
+let link_span ?(attrs = []) ~trace_id ~span_id e =
+  Link_span
+    ( {
+        Capabilities.link_trace_id = trace_id;
+        link_span_id = span_id;
+        link_attrs = attrs;
+      },
+      e )
+
+let with_external_parent ~trace_id ~span_id e =
+  With_external_parent (trace_id, span_id, e)
+
+let current_span = Current_span
 let here_attr (file, line, col_start, col_end) e =
   Annotate
     ( "loc",
@@ -94,6 +112,9 @@ let collect_names e =
     | Async (n, _) -> n :: acc
     | Named (n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
+    | Link_span (_, e) -> walk acc e
+    | With_external_parent (_, _, e) -> walk acc e
+    | Current_span -> acc
     | Map (e, _) -> walk acc e
     | Delay (_, e) -> walk acc e
     | Timeout (_, e) -> walk acc e

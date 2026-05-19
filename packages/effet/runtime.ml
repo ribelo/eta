@@ -4,6 +4,8 @@ module Sch = Schedule
 exception Raised_cause of int * Obj.t
 
 let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
+let external_parent_key : (string * string) Eio.Fiber.key =
+  Eio.Fiber.create_key ()
 
 module Typed_fail : sig
   type key
@@ -211,27 +213,66 @@ let rec interpret :
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
   | E.Named (name, e) ->
       let parent_id = Eio.Fiber.get active_span_key in
+      let external_parent =
+        match Eio.Fiber.get external_parent_key with
+        | Some ("", "") | None -> None
+        | Some _ as ep -> ep
+      in
       let started_ms = runtime.now_ms () in
       let span_id =
-        runtime.tracer#begin_span ?parent_id ~name ~started_ms ()
+        runtime.tracer#begin_span ?parent_id ?external_parent ~name
+          ~started_ms ()
       in
       let finish status =
         let ended_ms = runtime.now_ms () in
         runtime.tracer#end_span ~span_id ~status ~ended_ms
       in
+      let emit_exception_event cause =
+        let render c =
+          match status_of_cause ~cause_pp:runtime.cause_pp c with
+          | Capabilities.Error msg -> msg
+          | Capabilities.Cancelled -> "cancelled"
+          | Capabilities.Ok -> "ok"
+        in
+        let rec collect acc = function
+          | Cause.Both (a, b) -> collect (collect acc a) b
+          | c -> render c :: acc
+        in
+        let msgs = List.rev (collect [] cause) in
+        List.iter
+          (fun msg ->
+            runtime.tracer#add_event ~span_id ~name:"exception"
+              ~ts_ms:(runtime.now_ms ())
+              ~attrs:[ ("exception.message", msg) ])
+          msgs
+      in
       Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
+      (* External parent is consumed by this begin_span; clear it for the
+         body so nested spans don't inherit it. *)
+      Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
+      let _ = external_parent_key in
       (try
          let value = interpret ~runtime ~fail_key ~sw ~finalizers e env in
          finish Ok;
          value
        with exn ->
-         finish
-           (status_of_cause ~cause_pp:runtime.cause_pp
-              (cause_of_exn fail_key exn));
+         let cause = cause_of_exn fail_key exn in
+         emit_exception_event cause;
+         finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
          raise exn)
   | E.Annotate (key, value, e) ->
       runtime.tracer#add_attr ~key ~value;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
+  | E.Link_span (link, e) ->
+      runtime.tracer#add_link link;
+      interpret ~runtime ~fail_key ~sw ~finalizers e env
+  | E.With_external_parent (trace_id, span_id, e) ->
+      Eio.Fiber.with_binding external_parent_key (trace_id, span_id)
+      @@ fun () -> interpret ~runtime ~fail_key ~sw ~finalizers e env
+  | E.Current_span -> (
+      match Eio.Fiber.get active_span_key with
+      | None -> None
+      | Some span_id -> runtime.tracer#inspect ~span_id)
   | E.Provide (env_in, e) ->
       interpret ~runtime ~fail_key ~sw ~finalizers e env_in
 

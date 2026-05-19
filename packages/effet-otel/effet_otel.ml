@@ -76,6 +76,8 @@ type span = {
   start_unix_ns : int;
   mutable end_unix_ns : int;
   mutable attrs : (string * string) list;
+  mutable events : (string * int * (string * string) list) list;
+  mutable links : Effet.Capabilities.span_link list;
   mutable status_code : int; (* 0 unset, 1 ok, 2 error *)
   mutable status_message : string;
 }
@@ -102,6 +104,43 @@ let encode_span buf s =
   Buffer.add_char buf ',';
   Buffer.add_string buf "\"attributes\":";
   Json.attrs buf s.attrs;
+  if s.events <> [] then begin
+    Buffer.add_char buf ',';
+    Buffer.add_string buf "\"events\":[";
+    List.iteri
+      (fun i (name, ts_ns, attrs) ->
+        if i > 0 then Buffer.add_char buf ',';
+        Buffer.add_char buf '{';
+        Buffer.add_string buf "\"name\":";
+        Json.buf_string buf name;
+        Buffer.add_char buf ',';
+        Json.kv buf "timeUnixNano" (Printf.sprintf "\"%d\"" ts_ns);
+        Buffer.add_char buf ',';
+        Buffer.add_string buf "\"attributes\":";
+        Json.attrs buf attrs;
+        Buffer.add_char buf '}')
+      s.events;
+    Buffer.add_char buf ']'
+  end;
+  if s.links <> [] then begin
+    Buffer.add_char buf ',';
+    Buffer.add_string buf "\"links\":[";
+    List.iteri
+      (fun i { Effet.Capabilities.link_trace_id; link_span_id; link_attrs } ->
+        if i > 0 then Buffer.add_char buf ',';
+        Buffer.add_char buf '{';
+        Json.kv buf "traceId" (Printf.sprintf "\"%s\"" link_trace_id);
+        Buffer.add_char buf ',';
+        Json.kv buf "spanId" (Printf.sprintf "\"%s\"" link_span_id);
+        if link_attrs <> [] then begin
+          Buffer.add_char buf ',';
+          Buffer.add_string buf "\"attributes\":";
+          Json.attrs buf link_attrs
+        end;
+        Buffer.add_char buf '}')
+      s.links;
+    Buffer.add_char buf ']'
+  end;
   if s.status_code <> 0 then begin
     Buffer.add_char buf ',';
     Buffer.add_string buf "\"status\":{";
@@ -219,14 +258,17 @@ let exporter_loop t =
 (* ------------------------------------------------------------------ *)
 
 let resolve_parent_ids t = function
-  | None -> (hex_of_bytes (random_bytes t.rng 16), None)
-  | Some p_handle -> (
+  | None, None -> (hex_of_bytes (random_bytes t.rng 16), None)
+  | _, Some (ext_trace, ext_span) -> (ext_trace, Some ext_span)
+  | Some p_handle, None -> (
       match Hashtbl.find_opt t.table p_handle with
       | Some p -> (p.trace_id, Some p.span_id)
       | None -> (hex_of_bytes (random_bytes t.rng 16), None))
 
-let begin_span t ?parent_id ~name ~started_ms:_ () =
-  let trace_id, parent_span_id = resolve_parent_ids t parent_id in
+let begin_span t ?parent_id ?external_parent ~name ~started_ms:_ () =
+  let trace_id, parent_span_id =
+    resolve_parent_ids t (parent_id, external_parent)
+  in
   let span_id = hex_of_bytes (random_bytes t.rng 8) in
   let start_unix_ns = now_ns t in
   let s =
@@ -238,6 +280,8 @@ let begin_span t ?parent_id ~name ~started_ms:_ () =
       start_unix_ns;
       end_unix_ns = start_unix_ns;
       attrs = [];
+      events = [];
+      links = [];
       status_code = 0;
       status_message = "";
     }
@@ -283,6 +327,39 @@ let add_attr t ~key ~value =
   match !target with
   | Some (_, s) -> s.attrs <- (key, value) :: s.attrs
   | None -> ()
+
+let add_event t ~span_id ~name ~ts_ms ~attrs =
+  match Hashtbl.find_opt t.table span_id with
+  | None -> ()
+  | Some s ->
+      let ts_ns =
+        if ts_ms = 0 then now_ns t else ts_ms * 1_000_000
+      in
+      s.events <- (name, ts_ns, attrs) :: s.events
+
+let add_link t link =
+  let target = ref None in
+  Hashtbl.iter
+    (fun h s ->
+      match !target with
+      | None -> target := Some (h, s)
+      | Some (h', _) when h > h' -> target := Some (h, s)
+      | _ -> ())
+    t.table;
+  match !target with
+  | Some (_, s) -> s.links <- link :: s.links
+  | None -> ()
+
+let inspect t ~span_id : Effet.Capabilities.span_info option =
+  match Hashtbl.find_opt t.table span_id with
+  | Some s ->
+      Some
+        {
+          Effet.Capabilities.trace_id = s.trace_id;
+          span_id = s.span_id;
+          name = s.name;
+        }
+  | None -> None
 
 (* ------------------------------------------------------------------ *)
 (* Public constructor                                                 *)
@@ -332,13 +409,17 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
 
 let tracer t : Effet.Capabilities.tracer =
   object
-    method begin_span ?parent_id ~name ~started_ms () =
-      begin_span t ?parent_id ~name ~started_ms ()
+    method begin_span ?parent_id ?external_parent ~name ~started_ms () =
+      begin_span t ?parent_id ?external_parent ~name ~started_ms ()
 
     method end_span ~span_id ~status ~ended_ms =
       end_span t ~span_id ~status ~ended_ms
 
     method add_attr ~key ~value = add_attr t ~key ~value
+    method add_event ~span_id ~name ~ts_ms ~attrs =
+      add_event t ~span_id ~name ~ts_ms ~attrs
+    method add_link link = add_link t link
+    method inspect ~span_id = inspect t ~span_id
   end
 
 let flush ?(timeout_s = 5.0) t =

@@ -52,6 +52,11 @@ type ('env, 'err, 'a) t =
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Link_span :
+      Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | With_external_parent :
+      string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Current_span : ('env, 'err, Capabilities.span_info option) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
@@ -137,6 +142,30 @@ val provide : 'env_in -> ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 val annotate :
   key:string -> value:string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+
+val link_span :
+  ?attrs:(string * string) list ->
+  trace_id:string ->
+  span_id:string ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
+(** Attach a {!Capabilities.span_link} to the span opened by [body]. If [body]
+    has no enclosing {!named} span, the link buffers and attaches to the next
+    one (mirrors the buffered-attribute semantics). *)
+
+val with_external_parent :
+  trace_id:string ->
+  span_id:string ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
+(** Run [body] with the next opened {!named} span using the given OTLP
+    trace context as its parent. Useful when the caller already received a
+    parent span context out-of-band (e.g. a W3C [traceparent] header). *)
+
+val current_span :
+  ('env, 'err, Capabilities.span_info option) t
+(** Yield the {!Capabilities.span_info} of the currently active span on this
+    fiber, or [None] if none is open. *)
 
 val here_attr :
   string * int * int * int -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t

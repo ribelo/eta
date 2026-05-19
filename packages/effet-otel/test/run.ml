@@ -1,31 +1,10 @@
-(* Integration test: emit spans through Effet_otel against a local OTLP
-   collector, then assert the encoder produces valid OTLP/JSON.
-
-   The test suite has two layers:
-   - encoder unit tests, no I/O
-   - a live POST to motel (http://127.0.0.1:27686), skipped if motel is not
-     reachable. This is the regression guard for end-to-end behavior. *)
+(* Test runner for effet-otel. Wires the ported Effect-TS suites
+   (Tracer/Logger/Metrics) plus the OTLP encoder smoke and live-motel
+   integration tests. *)
 
 open Effet
 
 let env = ()
-
-let with_runtime ~tracer f =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let clock = Eio.Stdenv.clock stdenv in
-  let net = Eio.Stdenv.net stdenv in
-  let rt = Runtime.create ~sw ~clock ~tracer ~env () in
-  f sw clock net rt
-
-let motel_reachable net =
-  try
-    Eio.Switch.run @@ fun sw ->
-    Eio.Net.with_tcp_connect ~host:"127.0.0.1" ~service:"27686" net (fun _ ->
-        ());
-    let _ = sw in
-    true
-  with _ -> false
 
 let test_encoder_smoke () =
   Eio_main.run @@ fun stdenv ->
@@ -34,7 +13,7 @@ let test_encoder_smoke () =
     Effet_otel.create ~sw
       ~net:(Eio.Stdenv.net stdenv)
       ~clock:(Eio.Stdenv.clock stdenv)
-      ~host:"127.0.0.1" ~port:1 (* unreachable; we only test the trait *)
+      ~host:"127.0.0.1" ~port:1
       ~service_name:"effet-otel-encoder-smoke"
       ~on_error:(fun _ -> ())
       ()
@@ -50,13 +29,23 @@ let test_encoder_smoke () =
     ~status:(Capabilities.Error "boom") ~ended_ms:1030;
   Alcotest.(check pass) "encoder ran without raising" () ()
 
+let motel_reachable net =
+  try
+    Eio.Switch.run @@ fun sw ->
+    Eio.Net.with_tcp_connect ~host:"127.0.0.1" ~service:"27686" net (fun _ ->
+        ());
+    let _ = sw in
+    true
+  with _ -> false
+
 let live_motel_test net clock =
   Eio.Switch.run @@ fun sw ->
   let exporter =
     Effet_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port:27686
       ~path:"/v1/traces" ~service_name:"effet-otel-itest"
       ~service_version:"0.0.1"
-      ~resource_attrs:[ ("test.run_id", string_of_int (int_of_float (Eio.Time.now clock))) ]
+      ~resource_attrs:
+        [ ("test.run_id", string_of_int (int_of_float (Eio.Time.now clock))) ]
       ~on_error:(fun msg ->
         prerr_endline ("[itest] export error: " ^ msg))
       ()
@@ -82,10 +71,7 @@ let live_motel_test net clock =
   (match Runtime.run rt demo with
   | Exit.Ok _ -> ()
   | Exit.Error _ -> Alcotest.fail "expected success");
-  let failing =
-    Effect.named "demo.failing"
-      (Effect.fail `Boom)
-  in
+  let failing = Effect.named "demo.failing" (Effect.fail `Boom) in
   (match Runtime.run rt failing with
   | Exit.Ok _ -> Alcotest.fail "expected failure"
   | Exit.Error _ -> ());
@@ -106,4 +92,7 @@ let () =
         [ Alcotest.test_case "smoke" `Quick test_encoder_smoke ] );
       ( "motel",
         [ Alcotest.test_case "live export" `Quick test_motel_live ] );
+      Test_tracer.suite;
+      Test_logger.suite;
+      Test_metrics.suite;
     ]
