@@ -1,0 +1,12 @@
+(library
+ (name nominality_research)
+ (wrapped false)
+ (modules
+  b_b_abstract_newtype
+  b_c_witness_newtype
+  b_d_private_abbrev))
+
+(executable
+ (name runtime_smoke)
+ (libraries nominality_research)
+ (modules runtime_smoke))

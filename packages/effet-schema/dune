@@ -1,0 +1,4 @@
+(library
+ (name effet_schema)
+ (public_name effet-schema)
+ (libraries effet))

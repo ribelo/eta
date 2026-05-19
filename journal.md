@@ -3075,3 +3075,962 @@ No change to `STUB_stream.mli`. The second pass strengthens the rationale
 behind the existing contract. `BACKLOG.md` was updated only to add the S-D
 lesson to concurrent-operator acceptance criteria: downstream completion must
 cancel upstream producers.
+
+## Effet schema/decode/validation design (2h research)
+
+### Why this entry exists
+
+Effet has no schema, decode, or validation surface. A prior conversation leaned
+toward "build a small `Effet.Decode`, skip Schema entirely", but that was a
+prose conclusion. This entry reruns the question lab-first, with H-S0 through
+H-S5 treated as real candidates.
+
+The scope is research only. No code in `packages/effet/` or
+`packages/effet-otel/` was touched.
+
+### Goal
+
+Decide whether Effet should ship:
+
+- nothing, with a documented OCaml stack;
+- a small Decode wrapper;
+- Decode plus validation;
+- a first-class Schema GADT;
+- a hybrid ppx-backed schema layer;
+- or another shape found during the lab.
+
+### Time budget
+
+Strict budget: 2h. The lab and journal were completed inside that wall-clock
+limit. The candidate implementations are intentionally small and not production
+code.
+
+### Constraints inherited from prior research
+
+- V-R10 stands: if a decoder is effectful, its `'env` requirement must be an
+  object row and demand only what it uses.
+- Typed errors stay polymorphic variants. Decode failures must compose as
+  ordinary `Effect.t` failures and travel through `Cause.Fail`.
+- Slim `Cause.t` / `Exit.t` remain the only failure model.
+- Effet is not an application framework. Applications own domain state and
+  domain data modelling.
+
+### Curated fixture from Effect-TS Schema
+
+The fixture is `scratch/schema_research/fixture.ml`. It compresses the
+8.3k-line `Schema.test.ts` and adjacent schema tests into 14 behaviours:
+
+| Behaviour | Effect-TS source |
+| --- | --- |
+| decode unknown to typed value with structured issue | `Schema.ts` decode docs; `Schema.test.ts` struct failures |
+| encode typed value to JSON | `Schema.ts` encode docs; `Schema.test.ts` struct encoding |
+| struct fields | `Schema.test.ts` `{ readonly "a": string }` |
+| array fields | `Schema.test.ts` array and struct-with-array cases |
+| literal / union | `Schema.test.ts` `Literal`, `Literals`, `Union` |
+| optional key | `Schema.test.ts` `Schema.optionalKey` |
+| refinement | `Schema.test.ts` `isMinLength`, `isBetween` |
+| branding | `Schema.ts` `brand`; representation brand tests |
+| bidirectional transform | `Schema.test.ts` `NumberFromString`, `FiniteFromString`, `decodeTo` |
+| effectful decode | `Schema.ts` `decodeUnknownEffect` service channel |
+| JSON Schema doc | `toJsonSchemaDocument.test.ts` object/properties/required |
+| arbitrary samples | `toArbitrary.test.ts` primitive/struct generation |
+| equivalence | `toEquivalence.test.ts` string/struct equality |
+| Cause integration | Effet-specific: `tap_error` / `catch` over `` `Decode`` |
+
+The concrete fixture value is a `person` record:
+
+```ocaml
+type person = {
+  name : string;
+  age : int;
+  email : string option;
+  tags : string list;
+}
+```
+
+The same valid JSON, missing-field JSON, and refinement-failing JSON are used
+against every surviving hypothesis.
+
+### Hypotheses and lab candidates
+
+Artifacts live in `scratch/schema_research/`:
+
+| Hypothesis | File | Shape |
+| --- | --- | --- |
+| H-S0 | `h_s0_skip.ml` | no Effet API; recommended external stack |
+| H-S1 | `h_s1_decode.ml` | parser-to-`Effect.t` wrapper |
+| H-S2 | `h_s2_decode_validate.ml` | H-S1 plus validators and hidden brand constructor |
+| H-S3 | `h_s3_schema_gadt.ml` | first-class schema GADT / codec value |
+| H-S4 | `h_s4_ppx_schema.ml` | ppx marshalling plus schema metadata/refinements |
+| H-S5 | `h_s5_codec_record.ml` | discovered codec-record alternative |
+
+Positive validation:
+
+```text
+nix develop -c dune build scratch/schema_research/
+nix develop -c dune exec scratch/schema_research/runtime_smoke.exe
+support counts: h0=0 h1=6 h2=8 h3=14 h4=10 h5=14
+```
+
+LOC / support count:
+
+| Hypothesis | Candidate LOC | Fixture support |
+| --- | ---: | ---: |
+| H-S0 | 32 | 0 / 14 |
+| H-S1 | 103 | 6 / 14 |
+| H-S2 | 103 | 8 / 14 |
+| H-S3 | 315 | 14 / 14 |
+| H-S4 | 129 | 10 / 14 |
+| H-S5 | 202 | 14 / 14 |
+
+### Negative tests
+
+Each negative was run by temporarily adding its module stem to
+`scratch/schema_research/dune` and building `scratch/schema_research/`.
+
+`neg_hs1_error_erasure.ml`:
+
+```text
+File "scratch/schema_research/neg_hs1_error_erasure.ml", line 6, characters 2-54:
+6 |   H_s1_decode.decode_person Fixture.person_bad_missing
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (<  >, [> `Decode of Fixture.issue list ], Fixture.person)
+         Effet.Effect.t
+       but an expression was expected of type
+         (<  >, [ `Other ], Fixture.person) Effet.Effect.t
+       The second variant type does not allow tag(s) `Decode
+```
+
+Finding: H-S1 preserves the typed error row. Decode failures are not erased.
+
+`neg_hs2_plain_brand.ml`:
+
+```text
+File "scratch/schema_research/neg_hs2_plain_brand.ml", line 4, characters 43-50:
+4 | let bad : H_s2_decode_validate.User_id.t = "u_123"
+                                               ^^^^^^^
+Error: This constant has type string but an expression was expected of type
+         H_s2_decode_validate.User_id.t =
+           (string, H_s2_decode_validate.User_id.brand)
+           H_s2_decode_validate.Brand.t
+```
+
+Finding: hidden constructors can enforce nominal/branded values, but only per
+domain module. A generic public `brand` helper is not enough without hiding the
+constructor behind a module signature.
+
+`neg_hs3_encode_direction.ml`:
+
+```text
+File "scratch/schema_research/neg_hs3_encode_direction.ml", line 7, characters 4-9:
+7 |     "1.5"
+        ^^^^^
+Error: This constant has type string but an expression was expected of type
+         float
+```
+
+Finding: H-S3 can statically keep transformation direction straight. A
+`FiniteFromString`-style schema decodes JSON string to `float`, and its
+encoder accepts `float`, not the encoded string.
+
+`neg_hs5_missing_env.ml`:
+
+```text
+File "scratch/schema_research/neg_hs5_missing_env.ml", lines 7-9, characters 2-26:
+7 | ..H_s5_codec_record.Codec.decode
+8 |     (H_s5_codec_record.person_with_policy ())
+9 |     Fixture.person_ok_json
+Error: This expression has type
+         (< age_policy : int -> bool; .. >,
+          [> `Decode of Fixture.issue list ], Fixture.person)
+         Effet.Effect.t
+       but an expression was expected of type
+         (<  >, [> `Decode of Fixture.issue list ], Fixture.person)
+         Effet.Effect.t
+       The second object type has no method age_policy
+```
+
+Finding: the env-row dividend survives an effectful codec-record shape.
+
+### Cause integration
+
+`runtime_smoke.ml` verifies H-S1 decode failure through real Effet
+`tap_error` and `catch`. The failure is a normal `` `Decode of issue list``
+typed failure under `Cause.Fail`, not a parallel schema error hierarchy.
+
+H-S5 also verifies an effectful decoder whose age policy is read from the env
+object row. The negative above proves that missing service requirements are
+reported at compile time.
+
+### Ecosystem survey
+
+The opam/web survey showed enough existing surface to make "ship a whole
+schema library" a high bar:
+
+| Library | Strength | Gap relative to Effect-TS Schema |
+| --- | --- | --- |
+| `decoders` | Elm-inspired combinator decoders for JSON-like values; backend packages include Yojson/Jsonm/etc. | Decode-only; no encode, JSON Schema, arbitrary, or equivalence. |
+| `data-encoding` | Bidirectional JSON and binary encoding combinators. Closest to H-S5. | Heavier dependency stack; not Effet-shaped errors/env; not a validation/brand story by itself. |
+| `ppx_yojson_conv` | Mature deriving plugin for Yojson conversion functions. | Latest opam package targets newer OCaml than Effet's 5.1 floor; decode errors are ppx library-shaped, not Effet-shaped. |
+| `ppx_deriving_jsonschema` | Generates JSON Schema from OCaml types. | JSON Schema only; does not own decoding/validation/effectful services. |
+| `atd` / `atdgen` | Schema-first IDL; generates efficient JSON serializers, deserializers, and validators. | Separate type-description language; good boundary tool, but not an Effet API. |
+| `repr` / `ppx_repr` | Type representations and generic operations, used by Irmin-related packages. | `repr` states no stability guarantee for public consumption; closer to H-S3/H-S5 than to a small wrapper. |
+| `irmin-type` | No standalone opam package was found in the survey; the relevant public artifact is `repr` / `ppx_repr`. | Not a direct dependency target for Effet. |
+
+### Cross-tabulation
+
+| Criterion | H-S0 | H-S1 | H-S2 | H-S3 | H-S4 | H-S5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fixture behaviours | 0 | 6 | 8 | 14 | 10 | 14 |
+| Cause integration | n/a | yes | yes | yes | yes | yes |
+| Env-row effectful decode | n/a | yes | inherited | possible | absent in lab | yes |
+| Encode | external | no | no | yes | yes | yes |
+| JSON Schema doc | external | no | no | yes | yes | yes |
+| Arbitrary/equivalence | external | no | no | yes | yes | yes |
+| Branding | app/private types | no | yes | yes | no | yes-by-convention |
+| Competes with existing OCaml libs | no | low | medium | high | high | high |
+| API/implementation size pressure | none | low | medium | high | medium | medium |
+
+### Decision diary
+
+#### V-Schema1 — H-S1 is not enough
+
+H-S1 is useful but narrow. It preserves typed errors and Cause integration,
+verified by `neg_hs1_error_erasure.ml` and `runtime_smoke.ml`, but it supports
+only 6/14 fixture behaviours. It cannot encode, generate JSON Schema, derive
+arbitrary samples, derive equivalence, or enforce branding. The prior
+conversation's H-S1 instinct is therefore not a credible answer to "Schema" as
+defined by Effect-TS; it is only a boundary adapter.
+
+#### V-Schema2 — H-S2 improves validation but still is not Schema
+
+H-S2 adds refinements and private branded values, reaching 8/14 behaviours.
+`neg_hs2_plain_brand.ml` proves nominal identity is enforceable when the brand
+constructor is hidden. The cost is that branding becomes per-domain module
+ceremony, not a universal one-liner. H-S2 still has no encode, JSON Schema,
+arbitrary, or equivalence story.
+
+#### V-Schema3 — H-S3 survives the lab but is a real schema library
+
+The first-class schema candidate passes all 14 behaviours and statically
+protects transformation direction (`neg_hs3_encode_direction.ml`). That
+overturns any claim that an OCaml schema GADT is impossible. The rejection is
+not type-system failure; it is ownership. Even the lab needed 315 LOC, a
+`custom` constructor for records, hand-written JSON Schema, arbitrary samples,
+and equality. A credible production H-S3 would compete directly with
+`data-encoding`, `repr`, `ppx_deriving_jsonschema`, `atdgen`, and ppx codecs.
+
+#### V-Schema4 — H-S4 is a useful hybrid, not an Effet core surface
+
+H-S4 shows that ppx-generated JSON codecs can be wrapped with schema metadata
+and refinements, reaching 10/14 behaviours. It dodges reimplementing record
+marshalling, but it still needs a parallel value-level schema for docs,
+arbitrary, equivalence, and refinements. It also did not model effectful decode
+or branding without adding the same machinery as H-S2/H-S5. This is an app
+architecture pattern, not a core Effet abstraction.
+
+#### V-Schema5 — H-S5 is the best "if we build something" shape
+
+The discovered codec-record shape passes all 14 behaviours in 202 LOC and keeps
+env-row effectful decode (`neg_hs5_missing_env.ml`). It is more OCaml-native
+than the GADT for ordinary records. The lab also exposed a value-restriction
+cost: polymorphic effectful codec values had to become `unit -> codec`
+constructors to avoid weak env variables after reuse. H-S5 is the best future
+companion-package shape, but it is also essentially `data-encoding` with
+Effet-shaped decode effects.
+
+#### V-Schema6 — Final recommendation: H-S0 for Effet core
+
+Do not add `Effet.Schema`, `Effet.Decode`, or `Effet.Validate` to core Effet
+now. The lab-backed reason is not that schema cannot be built. It can:
+H-S3/H-S5 pass the fixture. The reason is that the useful versions are whole
+codec/schema libraries, and the small versions are too narrow to justify an
+Effet-owned API. Effet should document the recommended external stack and show
+how to map external decoder errors into `Effect.fail (`Decode issues)`.
+
+#### V-Schema7 — Package placement if this is reopened
+
+If a real Effet artifact is demanded later, it should be a companion package,
+not `packages/effet/`: `effet-codec` or `effet-decode`. Start from H-S5, not
+H-S1 or H-S3. Acceptance for reopening: one real application needs effectful
+decode with env-row services and Cause integration across multiple codecs, and
+existing libraries cannot supply it with a small adapter.
+
+### Recommended stack for H-S0
+
+Effet should document these choices:
+
+- Use `ppx_yojson_conv` when the app already accepts the Jane Street/Base stack
+  and wants generated Yojson functions.
+- Use `decoders` when the boundary is decoder-combinator heavy and encode/schema
+  derivation is not needed.
+- Use `data-encoding` when bidirectional codecs and JSON/binary encodings are
+  needed.
+- Use `ppx_deriving_jsonschema` when the deliverable is JSON Schema from OCaml
+  types.
+- Use `atd` / `atdgen` when the team wants an IDL and generated serializers.
+- Use `repr` / `ppx_repr` only after accepting its stability caveat; it is the
+  closest ecosystem precedent to H-S3/H-S5.
+
+Effet documentation can include a tiny adapter pattern:
+
+```ocaml
+let decode_effect decode json =
+  match decode json with
+  | Ok value -> Effet.Effect.pure value
+  | Error issues -> Effet.Effect.fail (`Decode issues)
+```
+
+That adapter is not enough to justify a package by itself.
+
+### Artifacts
+
+- `scratch/schema_research/dune`
+- `scratch/schema_research/README.md`
+- `scratch/schema_research/fixture.ml`
+- `scratch/schema_research/h_s0_skip.ml`
+- `scratch/schema_research/h_s1_decode.ml`
+- `scratch/schema_research/h_s2_decode_validate.ml`
+- `scratch/schema_research/h_s3_schema_gadt.ml`
+- `scratch/schema_research/h_s4_ppx_schema.ml`
+- `scratch/schema_research/h_s5_codec_record.ml`
+- `scratch/schema_research/runtime_smoke.ml`
+- `scratch/schema_research/neg_hs1_error_erasure.ml`
+- `scratch/schema_research/neg_hs2_plain_brand.ml`
+- `scratch/schema_research/neg_hs3_encode_direction.ml`
+- `scratch/schema_research/neg_hs5_missing_env.ml`
+
+No `STUB_*.mli` or backlog epic was created because the recommendation is
+H-S0: no Effet package work now.
+
+### What we are deliberately not building
+
+- No `packages/effet-schema/` or `packages/effet-decode/`.
+- No production JSON Schema generator, arbitrary generator, or equivalence
+  derivation.
+- No dependency on Yojson, Base, data-encoding, atdgen, or repr in Effet core.
+- No second failure model for validation errors.
+
+### Meta-lesson
+
+The prior H-S1 instinct was too small, but H-S3's dismissal was also too quick.
+The compiler and smoke fixture show H-S3 is viable. The final decision is an
+ownership decision: Effet should not grow into a schema ecosystem unless a real
+application forces that boundary.
+
+## Effet schema second pass — migration-grade Schema contract
+
+### Why this entry exists
+
+The previous schema entry answered a generic-library question: "should Effet
+core ship schema?". The user corrected the frame. Effect Schema is foundational
+in real Effect-TS applications, so an OCaml+Effet migration target needs a
+runtime contract layer even if the API is not a one-to-one TypeScript port.
+
+This pass asks a sharper question: what schema shape gives the best OCaml
+developer experience while preserving the capabilities needed to migrate
+schema-heavy Effect applications?
+
+### Wider fixture
+
+The new fixture is `scratch/schema_research/migration_fixture.ml`. It expands
+the first-pass `person` fixture into a small schema-heavy app:
+
+- branded `user_id`, `email`, and `flag_key`;
+- nested `config` record with database, auth, users, features, and retry
+  duration;
+- tagged unions for `auth` and `event`;
+- recursive `menu` tree;
+- `retryAfter : string <-> int` transformation (`"500ms"` to `500`);
+- optional fields and arrays;
+- accumulation of many nested decode issues;
+- effectful policy check requiring `env#feature_allowed`;
+- JSON Schema metadata, sample values, and equality hooks.
+
+This maps to a wider Effect-TS Schema slice: `Struct`, `optionalKey`, `Array`,
+`Literals`/`Union`, tagged unions, `decodeTo`/transforms, `brand`, `suspend`,
+`parseOptions: { errors: "all" }`, `toJsonSchemaDocument`, `toArbitrary`, and
+`toEquivalence`.
+
+### Refined hypothesis split
+
+The original H-S0..H-S5 split was too coarse. The useful axes are:
+
+| Axis | Options tested |
+| --- | --- |
+| Env placement | env inside schema/codec vs pure schema plus effectful decode policy |
+| Public idiom | raw schema values vs module-first domain APIs |
+| Product encoding | arity-specific record builders now, ppx later |
+| Sum encoding | tagged-union combinator over OCaml variants |
+| Nominality | private branded wrapper instead of TypeScript intersections |
+| Recursion | lazy schema knot |
+| Existing libraries | adapters remain useful, but cannot replace the migration contract |
+
+### Second-pass candidates
+
+| Candidate | File | Shape |
+| --- | --- | --- |
+| M-A | `m_a_pure_schema_effect_policy.ml` | pure `'a Schema.t`; effectful policies attach at decode boundary |
+| M-B | `m_b_env_codec_record.ml` | env-tracking codec record, closest to H-S5 |
+| M-C | `m_c_module_first.ml` | idiomatic domain modules wrapping M-A schemas |
+
+Validation:
+
+```text
+nix develop -c dune build scratch/schema_research/
+nix develop -c dune exec scratch/schema_research/migration_smoke.exe
+migration support counts: m_a=11 m_b=10 m_c=11
+```
+
+LOC:
+
+| File | LOC | Notes |
+| --- | ---: | --- |
+| `migration_fixture.ml` | 330 | domain model, JSON samples, support matrix |
+| `m_a_pure_schema_effect_policy.ml` | 663 | schema DSL plus migrated app schemas |
+| `m_b_env_codec_record.ml` | 75 | thin env-codec wrapper over M-A |
+| `m_c_module_first.ml` | 101 | domain-module facade over M-A |
+| `STUB_schema.mli` | 150 | proposed `effet-schema` contract |
+| `BACKLOG_SCHEMA.md` | 54 | implementation slices |
+
+### Negative tests
+
+`neg_m_a_policy_env.ml`:
+
+```text
+File "scratch/schema_research/neg_m_a_policy_env.ml", lines 7-8, characters 2-40:
+7 | ..M_a_pure_schema_effect_policy.decode_config_with_policy
+8 |     Migration_fixture.sample_config_json
+Error: This expression has type
+         (< feature_allowed : string -> bool; .. >,
+          [> `Decode of Fixture.issue list ], Migration_fixture.config)
+         Effet.Effect.t
+       but an expression was expected of type
+         (<  >, [> `Decode of Fixture.issue list ], Migration_fixture.config)
+         Effet.Effect.t
+       The second object type has no method feature_allowed
+```
+
+Finding: M-A keeps V-R10 env-row inference even though `Schema.t` itself is
+pure. The effectful policy introduces the env requirement exactly where it is
+used.
+
+`neg_m_a_brand_forge.ml`:
+
+```text
+File "scratch/schema_research/neg_m_a_brand_forge.ml", line 3, characters 38-47:
+3 | let bad : Migration_fixture.user_id = "usr_123"
+                                          ^^^^^^^^^
+Error: This constant has type string but an expression was expected of type
+         Migration_fixture.user_id =
+           (string, Migration_fixture.user_id_brand)
+           Migration_fixture.Brand.t
+```
+
+Finding: OCaml can enforce nominal identity more strongly than TypeScript
+brands if the constructor is hidden behind a module boundary.
+
+`neg_m_b_value_required.ml`:
+
+```text
+File "scratch/schema_research/neg_m_b_value_required.ml", line 5, characters 36-63:
+5 |   M_b_env_codec_record.Codec.decode M_b_env_codec_record.config
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The value M_b_env_codec_record.config has type
+         unit ->
+         ('a, Schema_research.Migration_fixture.config)
+         M_b_env_codec_record.Codec.t
+       but an expression was expected of type
+         ('b, 'c) M_b_env_codec_record.Codec.t
+       Hint: Did you forget to provide () as argument?
+```
+
+Finding: putting env-polymorphic effects inside codec records causes an
+ergonomic penalty. The lab had to expose `config ()`, not `config`, to avoid
+weak env variables. This is a strong argument against carrying `'env` in the
+schema value.
+
+### Cross-tabulation
+
+| Criterion | M-A pure schema + policy | M-B env codec record | M-C module-first facade |
+| --- | ---: | ---: | ---: |
+| Migration fixture support | 11 / 11 | 10 / 11 | 11 / 11 |
+| Env-row policy support | yes | yes | yes |
+| Plain reusable schema values | yes | no, thunked | yes |
+| Branded value enforcement | yes | via M-A | yes |
+| Nested record / all-error decode | yes | yes | yes |
+| Tagged unions | yes | yes | yes |
+| Recursive schemas | yes | yes | yes |
+| JSON Schema / samples / equality | yes | yes | yes |
+| Idiomatic OCaml call site | good | weaker (`codec ()`) | best |
+| Implementation complexity | medium | medium plus weak-value hazards | low facade over M-A |
+
+### Decision diary
+
+#### V-Schema8 — Reverse the H-S0 recommendation for migration
+
+H-S0 remains defensible for Effet core as a small effects library, but it is
+not defensible for an Effect-TS migration target. Real Effect apps use Schema
+as a contract layer for config, API boundaries, tagged events, transformations,
+brands, test data, and documentation. The migration fixture proves that
+external libraries alone do not give Effet-shaped env-row effect policies and
+Cause integration as a coherent developer experience.
+
+#### V-Schema9 — Choose pure schema values plus effectful decode policies
+
+Adopt M-A as the implementation core. `Schema.t` should be pure and reusable:
+decode, encode, JSON Schema, samples, and equality are properties of the data
+shape. Effectful validation belongs at decode boundaries via
+`decode_with_policy`. This keeps OCaml values generalisable and avoids the
+weak-value/thunking penalty exposed by M-B.
+
+#### V-Schema10 — Public usage should be module-first
+
+Adopt M-C as the recommended user style. OCaml domain modules should expose
+`type t`, `val schema`, `val decode`, `val encode`, and `val equal`. This is
+more idiomatic than asking users to pipe everything through a large
+TypeScript-shaped namespace. It also gives strong nominal boundaries for brands
+without TypeScript-style intersection machinery.
+
+#### V-Schema11 — Build a companion package, not core Effet
+
+The implementation target is `packages/effet-schema/`, not `packages/effet/`.
+Effet core should stay the effect runtime. `effet-schema` depends on Effet and
+uses `Effect.t` for decode results, but schema should not add new constructors
+to `Effect.t` or a second failure model.
+
+#### V-Schema12 — Feature parity is capability parity, not API parity
+
+Do not port Effect-TS Schema's public API one-to-one. OCaml should use:
+
+- private modules and abstract constructors for brands;
+- arity-specific record builders or generated code for products;
+- normal variants plus tagged-union schemas for sums;
+- lazy knots for recursion;
+- polymorphic variant `` `Decode`` errors under `Cause.Fail`;
+- object-row env only on effectful decode policies.
+
+The capabilities match the relevant Effect-TS behaviours, but the surface is
+OCaml-shaped.
+
+#### V-Schema13 — PPX is a follow-up, not the foundation
+
+Manual `record3`/`record4`/`record6` builders are acceptable for the v0 lab,
+but they are not the final developer experience for large apps. A future
+`ppx_effet_schema` can generate product/variant schema boilerplate after the
+runtime contract is stable. Do not start with ppx: it would hide whether the
+core representation is right.
+
+#### V-Schema14 — Existing libraries are backends/adapters, not the answer
+
+`data-encoding`, `decoders`, `ppx_yojson_conv`, `ppx_deriving_jsonschema`,
+`atdgen`, and `repr` remain useful references or adapters. They do not remove
+the need for an Effet-native contract layer because migration requires a single
+story for typed errors, env-row effect policies, brands, transforms, recursion,
+JSON Schema, and test/equality hooks. The package should offer adapters rather
+than build Effet core around one external library.
+
+### Contract and backlog
+
+The proposed public contract is `scratch/schema_research/STUB_schema.mli`.
+The implementation handoff is `scratch/schema_research/BACKLOG_SCHEMA.md`.
+
+The first implementation slice should build `effet-schema` around:
+
+```ocaml
+type 'a Schema.t
+val decode : 'a Schema.t -> json -> ('env, [> `Decode of issue list ], 'a) Effect.t
+val decode_with_policy :
+  'a Schema.t ->
+  ('a -> ('env, [> `Decode of issue list ], 'a) Effect.t) ->
+  json ->
+  ('env, [> `Decode of issue list ], 'a) Effect.t
+```
+
+### Artifacts added
+
+- `scratch/schema_research/migration_fixture.ml`
+- `scratch/schema_research/m_a_pure_schema_effect_policy.ml`
+- `scratch/schema_research/m_b_env_codec_record.ml`
+- `scratch/schema_research/m_c_module_first.ml`
+- `scratch/schema_research/migration_smoke.ml`
+- `scratch/schema_research/neg_m_a_policy_env.ml`
+- `scratch/schema_research/neg_m_a_brand_forge.ml`
+- `scratch/schema_research/neg_m_b_value_required.ml`
+- `scratch/schema_research/STUB_schema.mli`
+- `scratch/schema_research/BACKLOG_SCHEMA.md`
+
+### Current recommendation
+
+Build `effet-schema` as a companion package. The core representation should be
+pure `Schema.t` with derived codec/doc/test hooks. Effectful policies should be
+separate decode-boundary functions that return Effet effects and therefore
+preserve object-row env inference. The recommended user-facing style is
+module-first, with domain modules wrapping schema values.
+
+## effet-schema implementation — companion package v0
+
+### Why this entry exists
+
+The user reopened the schema work from research into implementation: create
+`effet-schema`, implement the migration-grade subset justified by
+V-Schema8..V-Schema14, and avoid adding schema machinery to Effet core.
+
+### Implemented shape
+
+The package lives under `packages/effet-schema/` with public library
+`effet-schema` / module `Effet_schema`. It follows V-Schema9 and
+V-Schema11:
+
+- pure `'a Schema.t` values;
+- `Schema.decode` returning `('env, [> `Decode of issue list ], 'a) Effect.t`;
+- `Schema.decode_with_policy` for effectful env-row policy checks;
+- structured `issue` paths;
+- OCaml-first nominal values via domain-owned modules and `Schema.transform`;
+- arrays, options, string enums, tagged unions, lazy recursion, refinement,
+  transforms, and nominal schemas;
+- arity-specific `record1`..`record6` product builders;
+- JSON Schema metadata, samples, and equality hooks;
+- a core `Json` module plus `JSON_ADAPTER` signature, with no hard Yojson
+  dependency in the core package.
+
+Production adjustments from `STUB_schema.mli`: record samples are optional
+rather than required, and the public `Brand` / `Schema.brand` surface was
+removed after the V-Brand research pass. Validated nominal types are now
+represented by normal OCaml modules with abstract or private `type t` values
+and schemas built from `Schema.transform`.
+
+### Files added
+
+- `packages/effet-schema/dune`
+- `packages/effet-schema/effet_schema.mli`
+- `packages/effet-schema/effet_schema.ml`
+- `packages/effet-schema/README.md`
+- `packages/effet-schema/test/dune`
+- `packages/effet-schema/test/run.ml`
+- `effet-schema.opam`
+
+`dune-project` now declares the `effet-schema` package. No files under
+`packages/effet/` or `packages/effet-otel/` were intentionally changed.
+
+### Test fixture implemented
+
+`packages/effet-schema/test/run.ml` ports the second-pass migration fixture to
+the public package API:
+
+- nominal `User_id.t`, `Email.t`, and `Flag_key.t` private string types;
+- nested `config` with database/auth/users/features/retry duration;
+- tagged `auth`, `event`, and recursive `menu`;
+- `"500ms" <-> 500` transform;
+- accumulation of nested decode issues;
+- effectful policy requiring `env#feature_allowed`;
+- `tap_error` / `catch` over ``Decode`` failures;
+- JSON Schema title smoke check.
+
+The test uses a tiny evaluator for the subset of `Effect.t` produced by
+schema decoders. That keeps the package test independent of `eio_main` and
+`alcotest`; runtime interpretation remains Effet core's responsibility.
+
+### Verification
+
+The implementation and interface type-check against the already-built Effet
+interfaces:
+
+```text
+ocamlc -I _build/default/packages/effet/.effet.objs/byte \
+  -I _build/default/packages/effet \
+  -c packages/effet-schema/effet_schema.mli \
+  -o /tmp/effet_schema.cmi
+
+ocamlc -I /tmp \
+  -I _build/default/packages/effet/.effet.objs/byte \
+  -I _build/default/packages/effet \
+  -c packages/effet-schema/effet_schema.ml \
+  -o /tmp/effet_schema.cmo
+```
+
+Both commands exited 0.
+
+The public-package migration test also type-checks against the new API:
+
+```text
+ocamlc -I /tmp \
+  -I _build/default/packages/effet/.effet.objs/byte \
+  -I _build/default/packages/effet \
+  -c packages/effet-schema/test/run.ml \
+  -o /tmp/effet_schema_test.cmo
+```
+
+This command exited 0.
+
+Full Dune verification was blocked by the local shell environment, not by a
+schema compile error:
+
+```text
+_opam/bin/dune build packages/effet-schema @runtest
+Error: Library "eio" not found.
+Error: Library "eio_main" not found.
+Error: Library "alcotest" not found.
+Error: Library "ppxlib" not found.
+```
+
+`nix develop -c dune build packages/effet-schema` required daemon access; when
+run with approval, it produced no compiler output for more than a minute and
+was terminated rather than treated as a successful verification.
+
+### Follow-up
+
+The next useful slice is an optional `effet-schema-yojson` adapter package or
+sublibrary implementing `JSON_ADAPTER`. It should not be a core dependency
+unless a downstream package proves that forcing Yojson is worth the weight.
+
+## Effet schema nominality — public Brand vs OCaml newtypes
+
+### Why this entry exists
+
+After the first `effet-schema` implementation pass, the user asked whether a
+public `Brand` abstraction is actually needed in OCaml. The earlier schema
+research treated Effect-TS branding as a behaviour to preserve, but the lab did
+not isolate whether TypeScript's brand API should survive in an OCaml-first
+design.
+
+This entry asks the narrower question: if Effect Schema had been designed in
+OCaml from the start, how should nominal validated scalar types such as
+`User_id.t`, `Email.t`, and `Flag_key.t` look?
+
+### Capability target
+
+The required capability is not a TypeScript-style `string & Brand<...>`.
+The required capability is:
+
+- decode a JSON string into a distinct validated type;
+- reject invalid input at decode time with structured issues;
+- prevent raw strings from being used as validated values;
+- prevent two validated string-like domains from being mixed;
+- encode the validated value back to JSON;
+- keep equality, samples, and JSON Schema metadata available through
+  `Schema.t`;
+- keep the public API obvious to an OCaml user.
+
+### Lab artifacts
+
+The focused lab is `scratch/nominality_research/`.
+
+Positive candidates:
+
+| Candidate | File | Shape |
+| --- | --- | --- |
+| B-A | `b_a_public_brand.ml` | current generic phantom `('a, 'brand) Brand.t` |
+| B-B | `b_b_abstract_newtype.ml` | ordinary abstract module/newtype, constructor hidden |
+| B-C | `b_c_witness_newtype.ml` | functor helper that generates abstract newtype modules |
+| B-D | `b_d_private_abbrev.ml` | `type t = private string` for scalar domains |
+
+Positive validation:
+
+```text
+dune build scratch/nominality_research
+dune exec scratch/nominality_research/runtime_smoke.exe
+nominality scenarios passed
+```
+
+All four positive candidates decode, encode, compare, and preserve nominal use
+sites in the happy path.
+
+### Negative tests
+
+`neg_abstract_newtype_plain_string.ml`:
+
+```text
+File "scratch/nominality_research/neg_abstract_newtype_plain_string.ml", line 4, characters 43-50:
+4 | let bad : B_b_abstract_newtype.User_id.t = "usr_1"
+                                               ^^^^^^^
+Error: This constant has type string but an expression was expected of type
+         B_b_abstract_newtype.User_id.t
+```
+
+Finding: an ordinary abstract module/newtype prevents raw string forgery.
+
+`neg_abstract_newtype_mix.ml`:
+
+```text
+File "scratch/nominality_research/neg_abstract_newtype_mix.ml", line 6, characters 49-54:
+6 |   | Ok email -> B_b_abstract_newtype.use_user_id email
+                                                     ^^^^^
+Error: The value email has type B_b_abstract_newtype.Email.t
+       but an expression was expected of type B_b_abstract_newtype.User_id.t
+```
+
+Finding: two abstract domain modules remain nominally distinct even when both
+are backed by strings.
+
+`neg_witness_make_hidden.ml`:
+
+```text
+File "scratch/nominality_research/neg_witness_make_hidden.ml", line 4, characters 10-42:
+4 | let bad = B_c_witness_newtype.User_id.make "usr_1"
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: Unbound value B_c_witness_newtype.User_id.make
+```
+
+Finding: a helper/functor can reduce boilerplate while still hiding the
+constructor. Users get `decode`, `schema`, `encode`, `value`, and
+`equal`, not an unchecked `make`.
+
+`neg_private_abbrev_plain_string.ml`:
+
+```text
+File "scratch/nominality_research/neg_private_abbrev_plain_string.ml", line 4, characters 41-48:
+4 | let bad : B_d_private_abbrev.User_id.t = "usr_1"
+                                             ^^^^^^^
+Error: This constant has type string but an expression was expected of type
+         B_d_private_abbrev.User_id.t
+```
+
+Finding: `type t = private string` prevents raw construction outside the
+module while preserving cheap coercion from `t` to `string`.
+
+`neg_private_abbrev_mix.ml`:
+
+```text
+File "scratch/nominality_research/neg_private_abbrev_mix.ml", line 6, characters 47-52:
+6 |   | Ok email -> B_d_private_abbrev.use_user_id email
+                                                   ^^^^^
+Error: The value email has type B_d_private_abbrev.Email.t
+       but an expression was expected of type B_d_private_abbrev.User_id.t
+```
+
+Finding: private string abbreviations are still nominal across modules.
+
+`neg_public_brand_alias.ml`:
+
+```text
+exit 0
+```
+
+Finding: the public `Brand` alias shape compiles as an exposed representation:
+
+```ocaml
+type exposed =
+  (string, B_a_public_brand.user_id_brand) B_a_public_brand.Brand.t
+
+let representation_leaks (id : B_a_public_brand.user_id) : exposed = id
+```
+
+This is not unsound, but it is a public-surface smell. The domain type is no
+longer just `User_id.t`; users can name and think in terms of a generic
+`Brand.t` representation. That is TypeScript migration vocabulary leaking
+into an OCaml API.
+
+### Cross-tabulation
+
+| Criterion | B-A public Brand | B-B abstract newtype | B-C helper functor | B-D private abbreviation |
+| --- | ---: | ---: | ---: | ---: |
+| Reject raw string | yes, if alias hidden | yes | yes | yes |
+| Reject Email-as-UserId | yes | yes | yes | yes |
+| Public API says `User_id.t` | weaker | yes | yes | yes |
+| Generic reusable helper | yes | no | yes | no |
+| Constructor hidden by default | only if module wraps it | yes | yes | yes |
+| Cheap coercion to string | via `Brand.value` | via `value` | via `value` | via `:>` or `value` |
+| Good for non-string carriers | yes | yes | with more functors | private only per carrier |
+| OCaml-first idiom | medium | high | high for boilerplate | high for scalar IDs |
+
+### Decision diary
+
+#### V-Brand1 — Public `Brand` is not needed for OCaml nominality
+
+OCaml already has the static capability TypeScript brands emulate. The lab
+proves ordinary abstract modules reject raw strings and cross-domain mixing:
+`neg_abstract_newtype_plain_string.ml` and `neg_abstract_newtype_mix.ml`
+fail with the intended type errors. Therefore `Brand` is not required as a
+public abstraction to achieve Effect Schema's branding capability.
+
+#### V-Brand2 — Prefer domain-owned modules as the public shape
+
+The OCaml-first surface should be:
+
+```ocaml
+module User_id : sig
+  type t
+  val schema : t Schema.t
+  val decode : json -> ('env, [> error ], t) Effect.t
+  val encode : t -> json
+  val value : t -> string
+  val equal : t -> t -> bool
+end
+```
+
+This matches V-Schema10's module-first recommendation and avoids asking users
+to reason about `(string, user_id_brand) Brand.t`. It is clearer at call
+sites, stronger as an abstraction boundary, and more idiomatic than a
+TypeScript-shaped brand namespace.
+
+#### V-Brand3 — `Schema.transform` is the primitive, not `Schema.brand`
+
+Validated nominal scalars are just bidirectional transformations from an
+encoded carrier into a domain type. The primitive should remain
+`Schema.transform`:
+
+```ocaml
+type t = User_id of string
+
+let schema =
+  Schema.transform Schema.string
+    ~name:"user_id"
+    ~decode:(fun s -> if valid s then Ok (User_id s) else Error [...])
+    ~encode:(fun (User_id s) -> s)
+    ~equal
+```
+
+`Schema.brand` adds no capability that `transform` plus an abstract module
+does not already provide. If kept at all, it should be compatibility sugar or
+an internal helper, not the recommended public path.
+
+#### V-Brand4 — Private abbreviations are a useful scalar-specialized idiom
+
+`type t = private string` is attractive for IDs, emails, keys, and other
+string-backed scalar contracts. The lab proves it rejects construction and
+mixing while allowing cheap upcast to `string`. The tradeoff is that it is
+carrier-specific and less general than a normal variant wrapper. Recommended
+guidance: use `type t = private string` for simple scalar domains when cheap
+string interop matters; use an abstract variant/record newtype when the domain
+may grow behaviour or change representation.
+
+#### V-Brand5 — A helper functor can replace generic `Brand` ergonomics
+
+B-C shows the useful part of `Brand` is boilerplate reduction, not the public
+phantom type. A future `Schema.Newtype.Make_string` or documented local
+functor can generate the module-first API while keeping constructors hidden.
+This gives migration convenience without exposing a universal `Brand.t`
+representation.
+
+### Recommended API change
+
+For an OCaml-first `effet-schema`, de-emphasize or remove the public
+`Brand` module and `Schema.brand` from the main surface before the package is
+treated as stable. Replace the concept in docs and examples with
+domain-owned modules built from `Schema.transform`.
+
+Concrete direction:
+
+- keep `Schema.transform` as the core primitive;
+- document `module User_id : sig type t ... end` as the nominality pattern;
+- consider `Schema.Newtype.Make_string` as optional helper sugar;
+- consider `type t = private string` examples for scalar IDs;
+- if migration vocabulary is valuable, move `Brand` to a compatibility or
+  advanced module rather than teaching it first.
+
+Implementation follow-up: this recommendation was materialized immediately in
+`packages/effet-schema/`. The public `Brand` module and `Schema.brand` were
+removed, the package fixture now uses `User_id`, `Email`, and `Flag_key`
+modules with `type t = private string`, and README examples teach
+`Schema.transform` as the nominality primitive. The rejected public-brand
+scratch candidate was removed from the maintained nominality lab after its compiler
+evidence was recorded here.
+
+### Meta-lesson
+
+Branding is a TypeScript repair for a structural type system. OCaml does not
+need that repair as a first-class public abstraction. The capability survives,
+but the API should collapse into OCaml's module system: abstract types,
+private abbreviations, and schema transforms.

@@ -30,6 +30,16 @@
   (alcotest :with-test)))
 
 (package
+ (name effet-schema)
+ (synopsis "Pure schemas and Effet-shaped decode policies")
+ (description
+  "Adds an idiomatic OCaml schema, decode, validation, JSON Schema, and nominal-type contract layer for Effet applications migrating from Effect Schema.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.0))
+  (effet (= :version))))
+
+(package
  (name effet-otel)
  (synopsis "OTLP/JSON exporter for Effet's tracer capability")
  (description
