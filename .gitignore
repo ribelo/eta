@@ -1,0 +1,7 @@
+_build/
+.opam/
+_opam/
+*.install
+.pi/
+.reference/
+journal.md
