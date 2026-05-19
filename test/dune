@@ -1,3 +1,0 @@
-(test
- (name test_effet)
- (libraries effet alcotest eio_main))
