@@ -4524,3 +4524,276 @@ Implementation update:
 
 This supersedes V-RDv1 through V-RDv4. The durable decision is: no public
 `detach`; structured public concurrency only.
+
+## Effet-6s5 Cause research — structured Cause algebra
+
+### Why this entry exists
+
+Slim Cause / Exit was explicitly adopted on probation. The original decision
+kept only `Fail`, `Die`, `Interrupt`, and binary `Both` because Effet had
+only the first parallel-failure hole to close. Since then, supervision,
+runtime-owned resources, scoped finalizers, and OTel flattening made the
+missing structure concrete.
+
+The design question is now whether public `Cause.t` should harden as the slim
+shape, or whether this is the last practical moment to replace `Both` with a
+diagnostic algebra that preserves concurrency, sequencing, and suppressed
+finalizer failures.
+
+### Goal
+
+Research Effet-6s5 for a 2h time budget. Build a lab under
+`scratch/cause_research/` comparing today's `Both` shape with a structured
+algebra, run the same fixtures through both, verify the typed-failure boundary,
+and decide whether to keep `Both`, adopt the structured algebra, or reopen for
+more research.
+
+### Context read
+
+Relevant prior decisions:
+
+- Slim Cause / Exit adopted `Both` only as "enough for the current parallel
+  hole."
+- `Effect.catch` catches only a single typed `Cause.Fail err`; it must not
+  catch `Die`, `Interrupt`, or compound causes.
+- Scoped finalizers are now Effet-owned, not delegated to raw Eio switch
+  finalizers.
+- Supervision stores child failures as `Cause.t`; it did not create a second
+  failure model.
+- Public `detach` was removed; structured public concurrency now goes through
+  `Supervisor`, `par`, `all`, `race`, and traversal combinators.
+- OTel currently flattens `Cause.Both` into one exception event per leaf, which
+  keeps leaf count but erases cause relation.
+
+The Effect-smol reference Cause is a flat list of reasons with optional
+annotations. That is useful evidence, but not a direct target for Effet. The
+open question here is relational structure between reasons, and OCaml can model
+that directly with variants.
+
+### Lab
+
+Artifacts live in `scratch/cause_research/`.
+
+| File | Purpose | Result |
+|---|---|---|
+| `fixture.ml` | Shared fixture functor over a Cause signature | Compiles |
+| `current_both.ml` | Today's algebra: `Fail / Die / Interrupt / Both` | Compiles |
+| `proposed_structured.ml` | Proposed algebra: `Sequential / Concurrent / Suppressed` plus interrupt id | Compiles |
+| `runtime_smoke.ml` | Runs identical fixture suite through both candidates | Passes |
+| `current_runtime_probe.ml` | Probes live Effet behavior for finalizer and race causes | Passes |
+| `README.md` | Lab navigation and commands | Written |
+
+Validation commands:
+
+~~~text
+nix develop -c dune build scratch/cause_research
+nix develop -c dune exec scratch/cause_research/current_runtime_probe.exe
+nix develop -c dune exec scratch/cause_research/runtime_smoke.exe
+~~~
+
+Observed live-runtime output:
+
+~~~text
+scoped body+release failure: Fail(Body)
+race two failures: Both(Fail(A), Fail(B))
+~~~
+
+Observed candidate comparison:
+
+~~~text
+== current Both ==
+par_two_failures: Both(Fail(First), Fail(Second))
+  event path=exception msg=Fail:First
+  event path=exception msg=Fail:Second
+all_failure_plus_sibling_finalizer: Both(Both(Fail(First), Fail(Sibling)), Fail(Finalizer))
+  event path=exception msg=Fail:First
+  event path=exception msg=Fail:Sibling
+  event path=exception msg=Fail:Finalizer
+nested_scoped_finalizer_during_failure: Both(Both(Fail(Body), Fail(Finalizer)), Die(outer finalizer defect))
+  event path=exception msg=Fail:Body
+  event path=exception msg=Fail:Finalizer
+  event path=exception msg=Die:outer finalizer defect
+sequential_tap_rethrow: Both(Fail(Typed), Fail(Tap))
+  event path=exception msg=Fail:Typed
+  event path=exception msg=Fail:Tap
+== structured ==
+par_two_failures: Concurrent[Fail(First); Fail(Second)]
+  event path=cause.concurrent.0 msg=Fail:First
+  event path=cause.concurrent.1 msg=Fail:Second
+all_failure_plus_sibling_finalizer: Suppressed{primary=Concurrent[Fail(First); Fail(Sibling)]; finalizer=Fail(Finalizer)}
+  event path=cause.primary.concurrent.0 msg=Fail:First
+  event path=cause.primary.concurrent.1 msg=Fail:Sibling
+  event path=cause.suppressed_finalizer msg=Fail:Finalizer
+nested_scoped_finalizer_during_failure: Suppressed{primary=Suppressed{primary=Fail(Body); finalizer=Fail(Finalizer)}; finalizer=Die(outer finalizer defect)}
+  event path=cause.primary.primary msg=Fail:Body
+  event path=cause.primary.suppressed_finalizer msg=Fail:Finalizer
+  event path=cause.suppressed_finalizer msg=Die:outer finalizer defect
+sequential_tap_rethrow: Sequential[Fail(Typed); Fail(Tap)]
+  event path=cause.seq.0 msg=Fail:Typed
+  event path=cause.seq.1 msg=Fail:Tap
+cause research smoke tests passed
+~~~
+
+### Cross-tabulation
+
+| Property | Current Both | Structured algebra |
+|---|---:|---:|
+| Single typed `Fail` remains catchable | yes | yes |
+| Compound cause remains outside `catch` | yes | yes |
+| Multiple leaf failures preserved | partial | yes |
+| Parallel vs sequential relation preserved | no | yes |
+| Finalizer failure marked as suppressed | no | yes |
+| Nested suppression chain preserved | no | yes |
+| Interrupt can name the interrupting scope/fiber | no | yes, optional id |
+| OTel flattening can preserve event role/path | no | yes |
+| Pattern matching is idiomatic OCaml | okay | good |
+| Implementation churn | low | medium-high |
+
+### Decision diary
+
+#### V-RCv1 — Adopt structured Cause algebra
+
+Decision: replace binary `Both` with a structured algebra. The lab shows that
+`Both` preserves at most leaf count. It cannot say whether two failures are
+parallel children, sequential failures, or a primary failure plus a suppressed
+release failure. The structured candidate preserves that relation directly in
+the value: `Concurrent [...]`, `Sequential [...]`, and `Suppressed { primary;
+finalizer }`.
+
+#### V-RCv2 — Keep `Effect.catch` as a single typed-Fail boundary
+
+Decision: `catch` semantics do not change. It catches only a top-level
+`Fail err`. The fixture verifies both candidates catch a single typed fail and
+do not catch a compound concurrent cause. This keeps the typed error channel
+honest: diagnostics may be structured, but a handler still receives an `'err`,
+not a cause tree.
+
+#### V-RCv3 — Finalizer failures must not be swallowed
+
+Decision: release/finalizer failures should become `Suppressed` causes. The
+live runtime probe shows today's implementation returns only `Fail(Body)` when
+the body and release both fail, so the release failure is lost completely. That
+is worse than slim `Both`. The implementation follow-up should run finalizers
+under cause capture and combine body/release as `Suppressed { primary; finalizer
+}`.
+
+#### V-RCv4 — Parallel collection should report `Concurrent`
+
+Decision: `race`, `par`, `all`, and `for_each_par` should use
+`Concurrent` for multiple observed child failures. Fail-fast operators may
+still only observe failures that happen before cancellation wins; the algebra
+does not require waiting for all children. When multiple causes are observed,
+nesting them into `Both` is unnecessary and loses the operator semantics.
+
+#### V-RCv5 — Add optional interruption identity
+
+Decision: change `Interrupt` to carry an optional id. The proposed lab used
+`Interrupt of interrupt_id option`; production should make `interrupt_id`
+opaque, not a public string. This preserves today's ability to say "cancelled"
+while giving supervisors, races, and scopes a future place to say who triggered
+the interruption.
+
+#### V-RCv6 — OTel flattening should emit role-aware exception events
+
+Decision: flattening a cause for OTel should keep a path/kind attribute, not
+only one exception event per leaf. The structured fixture emits paths such as
+`cause.primary.concurrent.0` and `cause.suppressed_finalizer`. That gives
+diagnostic consumers enough structure without requiring OTel to understand
+Effet's ADT.
+
+#### V-RCv7 — `Exit.to_result` stays narrow
+
+Decision: `Exit.to_result` remains valid only for `Ok v` and single
+`Error (Fail err)`. `Die`, `Interrupt _`, `Sequential`, `Concurrent`,
+and `Suppressed` have no faithful OCaml `result` representation. This is the
+same contract as the slim model, with more compound constructors.
+
+#### V-RCv8 — Suggested production shape
+
+Recommended public shape:
+
+~~~ocaml
+type interrupt_id
+
+type 'err t =
+  | Fail of 'err
+  | Die of exn * Printexc.raw_backtrace option
+  | Interrupt of interrupt_id option
+  | Sequential of 'err t list
+  | Concurrent of 'err t list
+  | Suppressed of { primary : 'err t; finalizer : 'err t }
+~~~
+
+Keep smart constructors for the common cases. Add helpers to flatten leaves for
+logging/OTel, but keep the tree as the source of truth. Lists should be
+non-empty by construction through smart constructors where practical; the raw
+variant can still exist because an empty `Concurrent []` is not catastrophic,
+only unhelpful.
+
+#### V-RCv9 — Implementation slice
+
+Follow-up implementation should update:
+
+- `Cause.t`, `Cause.equal`, `Cause.pp`, and smart constructors;
+- `Exit.to_result` and existing tests that match `Both`;
+- `Runtime.cause_of_exn` for `Eio.Exn.Multiple` to produce `Concurrent`;
+- `race` all-failures path to accumulate `Concurrent`;
+- `par`, `all`, `for_each_par`, and bounded traversal where multiple
+  failures are observed;
+- `run_finalizers`, `Acquire_release`, `Scoped`, and supervisor child
+  cleanup to report `Suppressed` instead of swallowing release failures;
+- tracer status rendering and exception event flattening to preserve role/path;
+- `packages/effet-otel` tests if they assert exception flattening.
+
+### Recommendation
+
+Adopt the structured Cause algebra now. This is an API correctness decision, not
+a convenience decision. `Both` was acceptable when the only requirement was
+"there were two failures." It is no longer acceptable now that Effet owns
+scoped finalizers, supervision, concurrent operators, and trace diagnostics.
+
+### What we are deliberately not doing in this entry
+
+- No production `packages/effet/` change yet.
+- No `packages/effet-otel/` change yet.
+- No attempt to reproduce the whole Effect-smol Cause API. Effet needs the
+  capability, not the TS surface.
+- No restart/supervision policy change. Supervision remains a consumer of
+  `Cause.t`, not a separate failure model.
+
+### Implementation follow-up - structured Cause adopted
+
+The approved V-RCv recommendation was materialized in the live Effet package.
+
+Changed surface:
+
+- Cause.t now exposes Fail, Die of exn * raw_backtrace option, Interrupt of interrupt_id option, Sequential, Concurrent, and Suppressed.
+- interrupt_id is opaque. Public code can still use Cause.interrupt (Interrupt None); runtime-owned identities can be added without changing the variant shape.
+- Cause.both and Both were removed from the live API.
+- Effect.acquire_release release effects now share the acquire/body error channel so typed release failures can be represented honestly in the resulting cause.
+
+Runtime behavior now covered by tests:
+
+- race all-failures returns Concurrent [Fail first; Fail second].
+- Acquire_release body failure plus release failure returns Suppressed { primary; finalizer }.
+- catch still catches only a top-level Fail.
+- cancellation remains outside the typed error channel as Interrupt None.
+- OTel-style exception events include effet.cause.path, for example cause.concurrent.0 and cause.concurrent.1.
+
+Validation after implementation:
+
+~~~text
+nix develop -c dune build scratch/cause_research
+nix develop -c dune exec scratch/cause_research/current_runtime_probe.exe
+nix develop -c dune exec scratch/cause_research/runtime_smoke.exe
+nix develop -c dune runtest --force
+~~~
+
+Updated probe output:
+
+~~~text
+scoped body+release failure: Suppressed{primary=Fail(Body); finalizer=Fail(Release)}
+race two failures: Concurrent[Fail(A); Fail(B)]
+~~~
+
+The durable decision is now implemented: Effet uses structured causes as the runtime diagnostic algebra; Exit.to_result remains narrow; typed recovery still goes through Effect.catch over a single Fail.

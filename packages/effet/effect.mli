@@ -127,7 +127,7 @@ val repeat : Schedule.t -> ('env, 'err, unit) t -> ('env, 'err, unit) t
 
 val acquire_release :
   acquire:('env, 'err, 'a) t ->
-  release:('a -> ('env, _, unit) t) ->
+  release:('a -> ('env, 'err, unit) t) ->
   ('env, 'err, 'a) t
 
 val scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t

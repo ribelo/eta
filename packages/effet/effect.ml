@@ -36,7 +36,7 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
       -> ('env, 'err, 'a) t
   | Acquire_release :
-      ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
+      ('env, 'err, 'a) t * ('a -> ('env, 'err, unit) t)
       -> ('env, 'err, 'a) t
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Supervisor_scoped :

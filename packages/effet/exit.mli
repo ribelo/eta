@@ -9,8 +9,8 @@ val error : 'err Cause.t -> ('a, 'err) t
 
 val to_result : ('a, 'err) t -> ('a, 'err) result option
 (** Convert to OCaml [result] only when the exit is [Ok _] or a single
-    typed [Fail _]. [Die], [Interrupt], and [Both] have no faithful
-    [result] representation. *)
+    typed [Fail _]. [Die], [Interrupt], [Sequential], [Concurrent], and
+    [Suppressed] have no faithful [result] representation. *)
 
 val equal :
   ('a -> 'a -> bool) ->

@@ -269,14 +269,14 @@ let test_observability_statuses () =
       check_status "interrupt" Tracer.Cancelled interrupt_span.status
   | spans -> Alcotest.failf "expected three spans, got %d" (List.length spans)
 
-let test_observability_both_status () =
+let test_observability_concurrent_status () =
   with_traced_runtime @@ fun rt tracer ->
   let eff =
-    Effect.named "both" (Effect.race [ Effect.fail "a"; Effect.fail "b" ])
+    Effect.named "concurrent" (Effect.race [ Effect.fail "a"; Effect.fail "b" ])
   in
   ignore (Runtime.run rt eff : (unit, string) Exit.t);
   let span = only_span tracer in
-  check_status "both" (Tracer.Error "") span.status
+  check_status "concurrent" (Tracer.Error "") span.status
 
 let test_observability_cancelled_parallel_child_status () =
   with_traced_test_clock @@ fun sw clock rt tracer ->
@@ -588,11 +588,11 @@ let test_runtime_exit_fail_die_interrupt () =
   in
   check_exit_error string_cause "typed failure" (Cause.Fail "bad") fail_exit;
   (match die_exit with
-  | Exit.Error (Cause.Die exn) ->
+  | Exit.Error (Cause.Die (exn, _)) ->
       Alcotest.(check bool) "same exception" true (exn == die)
   | _ -> Alcotest.fail "expected Die");
   (match interrupt_exit with
-  | Exit.Error Cause.Interrupt -> ()
+  | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt")
 
 let test_effect_catch_does_not_catch_interrupt () =
@@ -603,7 +603,7 @@ let test_effect_catch_does_not_catch_interrupt () =
     |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
   in
   match Runtime.run rt eff with
-  | Exit.Error Cause.Interrupt -> ()
+  | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
 
 let test_effect_retry_does_not_retry_interrupt () =
@@ -616,7 +616,7 @@ let test_effect_retry_does_not_retry_interrupt () =
   in
   let eff = Effect.retry (Schedule.recurs 3) (fun (_ : string) -> true) attempt in
   (match Runtime.run rt eff with
-  | Exit.Error Cause.Interrupt -> ()
+  | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt");
   Alcotest.(check int) "not retried" 1 !attempts
 
@@ -650,6 +650,35 @@ let test_acquire_release_on_failure () =
   Alcotest.(check (list string))
     "release after recovered body failure"
     [ "acq"; "caught"; "rel" ] (List.rev !trail)
+
+let test_acquire_release_suppresses_release_failure () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.fail "release")
+      |> Effect.bind (fun () -> Effect.fail "body"))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail "body"; finalizer = Cause.Fail "release" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed release failure, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok () -> Alcotest.fail "expected suppressed release failure"
+
+let test_acquire_release_release_failure_after_success () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.fail "release")
+      |> Effect.bind (fun () -> Effect.pure "body"))
+  in
+  check_exit_error string_cause "release failure" (Cause.Fail "release")
+    (Runtime.run rt eff)
 
 let test_effect_timeout_uses_virtual_clock () =
   with_test_clock @@ fun sw clock rt ->
@@ -700,7 +729,7 @@ let test_effect_race_ignores_early_failure_until_success () =
   check_exit_ok Alcotest.int "first success wins" 100
     (Eio.Promise.await promise)
 
-let test_effect_race_all_failures_returns_both_causes () =
+let test_effect_race_all_failures_returns_concurrent_causes () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_failure ms error =
     Effect.fail error |> Effect.delay (Duration.ms ms)
@@ -710,7 +739,7 @@ let test_effect_race_all_failures_returns_both_causes () =
   wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.ms 10);
   check_exit_error string_cause "failures combined"
-    (Cause.Both (Cause.Fail "first", Cause.Fail "second"))
+    (Cause.Concurrent [ Cause.Fail "first"; Cause.Fail "second" ])
     (Eio.Promise.await promise)
 
 let test_effect_repeat_schedule () =
@@ -842,7 +871,7 @@ let test_supervisor_cancel_runs_finalizer () =
     }
   in
   match Runtime.run rt program with
-  | Exit.Error Cause.Interrupt ->
+  | Exit.Error (Cause.Interrupt None) ->
       Alcotest.(check bool) "finalizer ran" true !finalizer_ran
   | Exit.Error cause ->
       Alcotest.failf "expected Interrupt, got %a"
@@ -866,7 +895,7 @@ let test_supervisor_cancel_before_await_does_not_deadlock () =
     }
   in
   match Runtime.run rt program with
-  | Exit.Error Cause.Interrupt -> ()
+  | Exit.Error (Cause.Interrupt None) -> ()
   | Exit.Error cause ->
       Alcotest.failf "expected Interrupt, got %a"
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
@@ -1366,14 +1395,18 @@ let () =
           Alcotest.test_case "acquire release" `Quick test_acquire_release;
           Alcotest.test_case "acquire release on failure" `Quick
             test_acquire_release_on_failure;
+          Alcotest.test_case "acquire release suppresses release failure" `Quick
+            test_acquire_release_suppresses_release_failure;
+          Alcotest.test_case "acquire release release failure after success"
+            `Quick test_acquire_release_release_failure_after_success;
           Alcotest.test_case "timeout uses virtual clock" `Quick
             test_effect_timeout_uses_virtual_clock;
           Alcotest.test_case "timeout allows fast success" `Quick
             test_effect_timeout_allows_fast_success;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
-          Alcotest.test_case "race all failures returns both causes" `Quick
-            test_effect_race_all_failures_returns_both_causes;
+          Alcotest.test_case "race all failures returns concurrent causes" `Quick
+            test_effect_race_all_failures_returns_concurrent_causes;
           Alcotest.test_case "repeat schedule" `Quick test_effect_repeat_schedule;
           Alcotest.test_case "repeat schedule uses virtual delays" `Quick
             test_effect_repeat_schedule_uses_virtual_delays;
@@ -1454,7 +1487,8 @@ let () =
             test_observability_annotation_order;
           Alcotest.test_case "nested spans" `Quick test_observability_nested_spans;
           Alcotest.test_case "statuses" `Quick test_observability_statuses;
-          Alcotest.test_case "both status" `Quick test_observability_both_status;
+          Alcotest.test_case "concurrent status" `Quick
+            test_observability_concurrent_status;
           Alcotest.test_case "cancelled child status" `Quick
             test_observability_cancelled_parallel_child_status;
           Alcotest.test_case "uninterruptible child status" `Quick

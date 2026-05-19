@@ -26,21 +26,19 @@ let raise_cause key cause =
 
 let raise_fail key err = raise_cause key (Cause.Fail err)
 
+let die_of_exn exn = Cause.die_with_backtrace exn (Printexc.get_raw_backtrace ())
+
 let rec cause_of_exn key exn =
   match exn with
   | Raised_cause (k, cause) when k = Typed_fail.int key -> Obj.obj cause
-  | Eio.Cancel.Cancelled _ -> Cause.Interrupt
-  | Exit -> Cause.Interrupt
+  | Eio.Cancel.Cancelled _ -> Cause.interrupt
+  | Exit -> Cause.interrupt
   | Fun.Finally_raised exn -> cause_of_exn key exn
   | Eio.Exn.Multiple causes ->
       let causes = List.map (fun (exn, _) -> cause_of_exn key exn) causes in
-      if List.for_all (function Cause.Interrupt -> true | _ -> false) causes then
-        Cause.Interrupt
-      else (
-        match causes with
-        | [] -> Cause.Die exn
-        | first :: rest -> List.fold_left Cause.both first rest)
-  | exn -> Cause.Die exn
+      if List.for_all Cause.is_interrupt_only causes then Cause.interrupt
+      else Cause.concurrent causes
+  | exn -> die_of_exn exn
 
 type ('env, 'err) t = {
   env : 'env;
@@ -106,22 +104,60 @@ let rec status_of_cause :
     Capabilities.span_status =
  fun ~cause_pp -> function
   | Cause.Fail err -> Error (cause_pp (Obj.repr err))
-  | Cause.Die exn -> Error (Printexc.to_string exn)
-  | Cause.Interrupt -> Cancelled
-  | Cause.Both (a, b) ->
+  | Cause.Die (exn, _) -> Error (Printexc.to_string exn)
+  | Cause.Interrupt _ -> Cancelled
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      if List.for_all Cause.is_interrupt_only causes then Cancelled
+      else
+        let render c =
+          match status_of_cause ~cause_pp c with
+          | Capabilities.Error msg -> msg
+          | Capabilities.Cancelled -> "cancelled"
+          | Capabilities.Ok -> "ok"
+        in
+        Error (String.concat " | " (List.map render causes))
+  | Cause.Suppressed { primary; finalizer } ->
       let render c =
         match status_of_cause ~cause_pp c with
         | Capabilities.Error msg -> msg
         | Capabilities.Cancelled -> "cancelled"
         | Capabilities.Ok -> "ok"
       in
-      Error (render a ^ " | " ^ render b)
+      Error
+        ("primary: " ^ render primary ^ " | suppressed finalizer: "
+       ^ render finalizer)
 
-let run_finalizers finalizers =
+let run_finalizers ~fail_key finalizers =
   Eio.Cancel.protect @@ fun () ->
   match !finalizers with
-  | [] -> ()
-  | fs -> Eio.Fiber.all (List.map (fun f () -> f ()) fs)
+  | [] -> None
+  | fs ->
+      let failures = Array.make (List.length fs) None in
+      Eio.Fiber.all
+        (List.mapi
+           (fun i f () ->
+             try f () with exn ->
+               failures.(i) <- Some (cause_of_exn fail_key exn))
+           fs);
+      failures
+      |> Array.to_list
+      |> List.filter_map Fun.id
+      |> (function [] -> None | causes -> Some (Cause.concurrent causes))
+
+let with_finalizers ~fail_key finalizers body =
+  match body () with
+  | value -> (
+      match run_finalizers ~fail_key finalizers with
+      | None -> value
+      | Some finalizer -> raise_cause fail_key finalizer)
+  | exception exn ->
+      let primary = cause_of_exn fail_key exn in
+      let cause =
+        match run_finalizers ~fail_key finalizers with
+        | None -> primary
+        | Some finalizer -> Cause.suppressed ~primary ~finalizer
+      in
+      raise_cause fail_key cause
 
 let rec interpret :
     type re env err a.
@@ -156,8 +192,8 @@ let rec interpret :
           | Cause.Fail err ->
               interpret ~runtime ~fail_key ~sw ~finalizers (handler err) env
           | cause -> raise_cause fail_key cause)
-      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
-      | exn -> raise_cause fail_key (Cause.Die exn))
+      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
+      | exn -> raise_cause fail_key (die_of_exn exn))
   | EP.Tap_error (e, observe) ->
       let inner_key = Typed_fail.fresh () in
       (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
@@ -167,8 +203,8 @@ let rec interpret :
               observe err;
               raise_fail fail_key err
           | cause -> raise_cause fail_key cause)
-      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
-      | exn -> raise_cause fail_key (Cause.Die exn))
+      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
+      | exn -> raise_cause fail_key (die_of_exn exn))
   | EP.Delay (d, e) ->
       runtime.sleep d;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
@@ -241,18 +277,16 @@ let rec interpret :
       let v = interpret ~runtime ~fail_key ~sw ~finalizers acquire env in
       finalizers :=
         (fun () ->
-          try
-            interpret ~runtime ~fail_key:runtime.default_fail_key ~sw
-              ~finalizers:(ref []) (release v) env
-          with _ -> ())
+          let release_finalizers = ref [] in
+          with_finalizers ~fail_key release_finalizers (fun () ->
+              interpret ~runtime ~fail_key ~sw ~finalizers:release_finalizers
+                (release v) env))
         :: !finalizers;
       v
   | EP.Scoped e ->
       Eio.Switch.run @@ fun sw' ->
       let child_finalizers = ref [] in
-      Fun.protect
-        ~finally:(fun () -> run_finalizers child_finalizers)
-        (fun () ->
+      with_finalizers ~fail_key child_finalizers (fun () ->
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
   | EP.Supervisor_scoped (max_failures, body) ->
       Eio.Switch.run @@ fun supervisor_sw ->
@@ -260,9 +294,7 @@ let rec interpret :
         EP.make_supervisor ~sw:supervisor_sw ~max_failures
       in
       let supervisor_finalizers = ref [] in
-      Fun.protect
-        ~finally:(fun () -> run_finalizers supervisor_finalizers)
-        (fun () ->
+      with_finalizers ~fail_key supervisor_finalizers (fun () ->
           interpret_supervisor_scope ~runtime ~fail_key ~sw:supervisor_sw
             ~finalizers:supervisor_finalizers (body.run supervisor) env)
   | EP.Named (kind, name, e) ->
@@ -299,17 +331,40 @@ let rec interpret :
             | Capabilities.Cancelled -> "cancelled"
             | Capabilities.Ok -> "ok"
           in
-          let rec collect acc = function
-            | Cause.Both (a, b) -> collect (collect acc a) b
-            | c -> render c :: acc
+          let rec collect path acc = function
+            | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ as c ->
+                (path, render c) :: acc
+            | Cause.Sequential causes ->
+                causes
+                |> List.mapi (fun i c -> (i, c))
+                |> List.fold_left
+                     (fun acc (i, c) ->
+                       collect (path ^ ".seq." ^ string_of_int i) acc c)
+                     acc
+            | Cause.Concurrent causes ->
+                causes
+                |> List.mapi (fun i c -> (i, c))
+                |> List.fold_left
+                     (fun acc (i, c) ->
+                       collect
+                         (path ^ ".concurrent." ^ string_of_int i)
+                         acc c)
+                     acc
+            | Cause.Suppressed { primary; finalizer } ->
+                let acc = collect (path ^ ".primary") acc primary in
+                collect (path ^ ".suppressed_finalizer") acc finalizer
           in
-          let msgs = List.rev (collect [] cause) in
+          let events = List.rev (collect "cause" [] cause) in
           List.iter
-            (fun msg ->
+            (fun (path, msg) ->
               runtime.tracer#add_event ~span_id ~name:"exception"
                 ~ts_ms:(runtime.now_ms ())
-                ~attrs:[ ("exception.message", msg) ])
-            msgs
+                ~attrs:
+                  [
+                    ("exception.message", msg);
+                    ("effet.cause.path", path);
+                  ])
+            events
         in
         Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
         Eio.Fiber.with_binding sampled_key true @@ fun () ->
@@ -438,11 +493,9 @@ and interpret_supervisor_scope :
               Eio.Switch.run @@ fun child_switch ->
               child_sw := Some child_switch;
               let child_finalizers = ref [] in
-              Fun.protect
-                ~finally:(fun () -> run_finalizers child_finalizers)
-                (fun () ->
-                  Ok
-                    (interpret_supervisor_scope ~runtime ~fail_key
+              Ok
+                (with_finalizers ~fail_key child_finalizers (fun () ->
+                     interpret_supervisor_scope ~runtime ~fail_key
                        ~sw:child_switch ~finalizers:child_finalizers child_effect
                        env))
             with exn -> Error (cause_of_exn fail_key exn)
@@ -458,7 +511,7 @@ and interpret_supervisor_scope :
           (fun () ->
             Atomic.set cancel_requested true;
             match !child_cancel with
-            | None -> resolve (Error Cause.Interrupt)
+            | None -> resolve (Error Cause.interrupt)
             | Some cancel_context ->
                 Eio.Cancel.cancel cancel_context Exit;
                 (match !child_sw with
@@ -494,7 +547,7 @@ and par_collect :
  fun ~runtime:_ ~fail_key ~finalizers:_ tasks env ->
   let n = List.length tasks in
   let results : a option array = Array.make n None in
-  let first_cause : err Cause.t option ref = ref None in
+  let causes : err Cause.t list ref = ref [] in
   let exception Stop in
   (try
      Eio.Switch.run @@ fun par_sw ->
@@ -505,15 +558,13 @@ and par_collect :
              try results.(i) <- Some (task env)
              with exn ->
                let cause = cause_of_exn fail_key exn in
-               (match !first_cause with
-                | Some _ -> ()
-                | None -> first_cause := Some cause);
+               causes := cause :: !causes;
                (try Eio.Switch.fail par_sw Stop with _ -> ())))
        tasks
    with Stop -> ());
-  match !first_cause with
-  | Some c -> raise_cause fail_key c
-  | None -> Array.to_list results |> List.map Option.get
+  match List.rev !causes with
+  | [] -> Array.to_list results |> List.map Option.get
+  | causes -> raise_cause fail_key (Cause.concurrent causes)
 
 and race_first :
     type re env err a.
@@ -546,11 +597,11 @@ and race_first :
                 with exn ->
                   Eio.Stream.add results (`Error (cause_of_exn fail_key exn))))
            children;
-         let rec await_success cause remaining =
+         let rec await_success causes remaining =
            if remaining = 0 then
-             match cause with
-             | Some cause -> raise_cause fail_key cause
-             | None -> failwith "Effect.race: no children"
+             match List.rev causes with
+             | [] -> failwith "Effect.race: no children"
+             | causes -> raise_cause fail_key (Cause.concurrent causes)
            else
              match Eio.Stream.take results with
              | `Ok value ->
@@ -558,13 +609,9 @@ and race_first :
                  Eio.Switch.fail race_sw Race_won;
                  Eio.Fiber.await_cancel ()
              | `Error child_cause ->
-                 await_success
-                   (match cause with
-                   | Some cause -> Some (Cause.Both (cause, child_cause))
-                   | None -> Some child_cause)
-                   (remaining - 1)
+                 await_success (child_cause :: causes) (remaining - 1)
          in
-         await_success None n
+         await_success [] n
        with Race_won -> Obj.obj (Option.get !winner))
 
 and par_collect_settled :
@@ -671,8 +718,8 @@ and retry_eff :
                | None -> raise_fail fail_key err
              else raise_fail fail_key err
          | cause -> raise_cause fail_key cause)
-     | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
-     | exn -> raise_cause fail_key (Cause.Die exn))
+     | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
+     | exn -> raise_cause fail_key (die_of_exn exn))
   done;
   Option.get !result
 
@@ -689,7 +736,7 @@ let run t eff =
 let run_exn t eff =
   match run t eff with
   | Exit.Ok value -> value
-  | Exit.Error (Cause.Die exn) -> raise exn
+  | Exit.Error (Cause.Die (exn, _)) -> raise exn
   | Exit.Error _ -> failwith "Effet.Runtime.run_exn"
 
 let drain t =

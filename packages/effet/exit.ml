@@ -8,7 +8,10 @@ let error cause = Error cause
 let to_result = function
   | Ok value -> Some (Stdlib.Ok value)
   | Error (Cause.Fail err) -> Some (Stdlib.Error err)
-  | Error (Cause.Die _ | Interrupt | Both _) -> None
+  | Error
+      ( Cause.Die _ | Interrupt _ | Sequential _ | Concurrent _ | Suppressed _ )
+    ->
+      None
 
 let equal equal_a equal_err left right =
   match (left, right) with

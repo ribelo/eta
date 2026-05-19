@@ -60,6 +60,8 @@ let span_info_eq a b =
 
 let span_info = Alcotest.testable span_info_pp span_info_eq
 
+let attr key attrs = List.assoc_opt key attrs
+
 (* ------------------------------------------------------------------ *)
 (* Mirrors `it.effect("withSpan", ...)`. *)
 (* ------------------------------------------------------------------ *)
@@ -205,6 +207,12 @@ let test_records_every_pretty_error () =
       Alcotest.(check int) "two exception events"
         2
         (List.length exception_events);
+      Alcotest.(check (list string))
+        "cause paths"
+        [ "cause.concurrent.0"; "cause.concurrent.1" ]
+        (List.filter_map
+           (fun ev -> attr "effet.cause.path" ev.Tracer.ev_attrs)
+           exception_events);
       (match s.status with
       | Tracer.Error _ -> ()
       | _ -> Alcotest.fail "expected Error status on combined-cause span")
