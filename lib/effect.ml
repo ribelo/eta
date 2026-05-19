@@ -17,6 +17,7 @@ type ('env, 'err, 'a) t =
   | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
   | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
+  | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
   | Retry :
       ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
@@ -42,6 +43,7 @@ let seq next self = Concat [ self; next ]
 let concat es = Concat es
 let race es = Race es
 let detach e = Detach e
+let uninterruptible e = Uninterruptible e
 
 let catch h e = Catch (e, h)
 let tap_error f e = Tap_error (e, f)
@@ -85,5 +87,6 @@ let collect_names e =
     | Concat xs -> List.fold_left walk acc xs
     | Race xs -> List.fold_left walk acc xs
     | Detach e -> walk acc e
+    | Uninterruptible e -> walk acc e
   in
   List.rev (walk [] e)

@@ -2,10 +2,16 @@ open Effet
 
 let run_ok rt eff =
   match Runtime.run rt eff with
-  | Ok value -> value
-  | Error _ -> Alcotest.fail "expected Ok"
+  | Exit.Ok value -> value
+  | Exit.Error _ -> Alcotest.fail "expected Ok"
 
-let run_result rt eff = Runtime.run rt eff
+let check_exit_ok test name expected = function
+  | Exit.Ok actual -> Alcotest.check test name expected actual
+  | Exit.Error _ -> Alcotest.fail "expected Ok"
+
+let check_exit_error test name expected = function
+  | Exit.Ok _ -> Alcotest.fail "expected Error"
+  | Exit.Error cause -> Alcotest.check test name expected cause
 
 let with_runtime f =
   Eio_main.run @@ fun stdenv ->
@@ -77,6 +83,8 @@ let fork_run sw rt eff =
 let dur_ms = Duration.ms
 let some_dur = Alcotest.option (Alcotest.testable Duration.pp Duration.equal)
 let dur = Alcotest.testable Duration.pp Duration.equal
+let string_cause =
+  Alcotest.testable (Cause.pp Format.pp_print_string) (Cause.equal String.equal)
 
 let test_pure () =
   let e : (_, _, int) Effect.t = Effect.pure 42 in
@@ -228,6 +236,50 @@ let test_effect_tap_error_observes_and_rethrows () =
   Alcotest.(check string) "recovered" "recovered" (run_ok rt eff);
   Alcotest.(check bool) "observed" true !observed
 
+let test_runtime_exit_fail_die_interrupt () =
+  with_runtime @@ fun rt ->
+  let die = Failure "boom" in
+  let fail_exit = Runtime.run rt (Effect.fail "bad") in
+  let die_exit = Runtime.run rt (Effect.sync "die" (fun () -> raise die)) in
+  let interrupt_exit =
+    Runtime.run rt
+      (Effect.sync "interrupt" (fun () ->
+           raise (Eio.Cancel.Cancelled (Failure "cancel"))))
+  in
+  check_exit_error string_cause "typed failure" (Cause.Fail "bad") fail_exit;
+  (match die_exit with
+  | Exit.Error (Cause.Die exn) ->
+      Alcotest.(check bool) "same exception" true (exn == die)
+  | _ -> Alcotest.fail "expected Die");
+  (match interrupt_exit with
+  | Exit.Error Cause.Interrupt -> ()
+  | _ -> Alcotest.fail "expected Interrupt")
+
+let test_effect_catch_does_not_catch_interrupt () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.sync "interrupt" (fun () ->
+        raise (Eio.Cancel.Cancelled (Failure "cancel")))
+    |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error Cause.Interrupt -> ()
+  | _ -> Alcotest.fail "expected Interrupt"
+
+let test_effect_retry_does_not_retry_interrupt () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let attempt =
+    Effect.sync "interrupt" (fun () ->
+        incr attempts;
+        raise (Eio.Cancel.Cancelled (Failure "cancel")))
+  in
+  let eff = Effect.retry (Schedule.recurs 3) (fun (_ : string) -> true) attempt in
+  (match Runtime.run rt eff with
+  | Exit.Error Cause.Interrupt -> ()
+  | _ -> Alcotest.fail "expected Interrupt");
+  Alcotest.(check int) "not retried" 1 !attempts
+
 let test_acquire_release () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
@@ -270,7 +322,7 @@ let test_effect_timeout_uses_virtual_clock () =
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 2;
   Test_clock.adjust clock (Duration.seconds 5);
-  Alcotest.(check (result string reject)) "timed out" (Ok "timeout")
+  check_exit_ok Alcotest.string "timed out" "timeout"
     (Eio.Promise.await promise)
 
 let test_effect_timeout_allows_fast_success () =
@@ -284,7 +336,7 @@ let test_effect_timeout_allows_fast_success () =
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 2;
   Test_clock.adjust clock (Duration.seconds 2);
-  Alcotest.(check (result string reject)) "completed" (Ok "done")
+  check_exit_ok Alcotest.string "completed" "done"
     (Eio.Promise.await promise)
 
 let test_effect_race_ignores_early_failure_until_success () =
@@ -305,10 +357,10 @@ let test_effect_race_ignores_early_failure_until_success () =
   Alcotest.(check int) "race sleepers registered" 2
     (Test_clock.sleeper_count clock);
   Test_clock.adjust clock (Duration.ms 100);
-  Alcotest.(check (result int reject)) "first success wins" (Ok 100)
+  check_exit_ok Alcotest.int "first success wins" 100
     (Eio.Promise.await promise)
 
-let test_effect_race_all_failures_rethrows_first_error () =
+let test_effect_race_all_failures_returns_both_causes () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_failure ms error =
     Effect.fail error |> Effect.delay (Duration.ms ms)
@@ -317,8 +369,9 @@ let test_effect_race_all_failures_rethrows_first_error () =
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.ms 10);
-  Alcotest.(check (result reject string)) "first failure rethrown"
-    (Error "first") (Eio.Promise.await promise)
+  check_exit_error string_cause "failures combined"
+    (Cause.Both (Cause.Fail "first", Cause.Fail "second"))
+    (Eio.Promise.await promise)
 
 let test_effect_repeat_schedule () =
   with_runtime @@ fun rt ->
@@ -345,8 +398,7 @@ let test_effect_repeat_schedule_uses_virtual_delays () =
   yield ();
   Alcotest.(check int) "third tick" 3 !ticks;
   Test_clock.adjust clock (Duration.ms 5);
-  Alcotest.(check (result unit reject)) "repeat done" (Ok ())
-    (Eio.Promise.await promise);
+  check_exit_ok Alcotest.unit "repeat done" () (Eio.Promise.await promise);
   Alcotest.(check int) "three delayed repeats" 4 !ticks
 
 let test_effect_retry_schedule_until_success () =
@@ -384,8 +436,8 @@ let test_effect_retry_schedule_uses_virtual_delays () =
   Test_clock.adjust clock (Duration.ms 5);
   wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.ms 5);
-  Alcotest.(check (result int reject)) "succeeded on delayed third attempt"
-    (Ok 3) (Eio.Promise.await promise)
+  check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
+    (Eio.Promise.await promise)
 
 let test_effect_detach_does_not_block_parent () =
   with_test_clock @@ fun _sw clock rt ->
@@ -420,6 +472,26 @@ let test_effect_detach_child_failure_is_not_parent_failure () =
   Runtime.drain rt;
   Alcotest.(check bool) "parent completed" true !parent_done
 
+let test_effect_uninterruptible_defers_race_cancellation () =
+  with_test_clock @@ fun sw clock rt ->
+  let slow_completed = ref false in
+  let slow =
+    Effect.sync "slow.done" (fun () ->
+        slow_completed := true;
+        "slow")
+    |> Effect.delay (Duration.ms 10)
+    |> Effect.uninterruptible
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; Effect.pure "fast" ]) in
+  wait_for_sleepers clock 1;
+  yield ();
+  Alcotest.(check bool) "race waits for protected loser" false
+    (Eio.Promise.is_resolved promise);
+  Test_clock.adjust clock (Duration.ms 10);
+  check_exit_ok Alcotest.string "winner preserved" "fast"
+    (Eio.Promise.await promise);
+  Alcotest.(check bool) "protected loser completed" true !slow_completed
+
 let test_clock_sleep_without_wall_time () =
   with_test_clock @@ fun sw clock rt ->
   let promise =
@@ -428,7 +500,7 @@ let test_clock_sleep_without_wall_time () =
   in
   wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.hours 11);
-  Alcotest.(check (result string reject)) "elapsed" (Ok "elapsed")
+  check_exit_ok Alcotest.string "elapsed" "elapsed"
     (Eio.Promise.await promise)
 
 let test_clock_sleep_delays_until_adjusted () =
@@ -443,7 +515,7 @@ let test_clock_sleep_delays_until_adjusted () =
   Alcotest.(check bool) "not elapsed after 9h" false
     (Eio.Promise.is_resolved promise);
   Test_clock.adjust clock (Duration.hours 1);
-  Alcotest.(check (result string reject)) "elapsed" (Ok "elapsed")
+  check_exit_ok Alcotest.string "elapsed" "elapsed"
     (Eio.Promise.await promise)
 
 let test_clock_sleep_handles_multiple_sleeps () =
@@ -460,7 +532,11 @@ let test_clock_sleep_handles_multiple_sleeps () =
   let promise = fork_run sw rt (Effect.race [ slow; fast ]) in
   wait_for_sleepers clock 2;
   Test_clock.adjust clock (Duration.hours 1);
-  let f = run_ok rt (Effect.pure (Result.get_ok (Eio.Promise.await promise))) in
+  let f =
+    match Eio.Promise.await promise with
+    | Exit.Ok f -> f
+    | Exit.Error _ -> Alcotest.fail "expected Ok"
+  in
   Alcotest.(check string) "first sleeper wins" "Hello, " (f "")
 
 let test_clock_set_time_wakes_due_sleepers () =
@@ -471,7 +547,7 @@ let test_clock_set_time_wakes_due_sleepers () =
   in
   wait_for_sleepers clock 1;
   Test_clock.set_time clock (Duration.to_ms (Duration.hours 11));
-  Alcotest.(check (result string reject)) "elapsed after set_time" (Ok "elapsed")
+  check_exit_ok Alcotest.string "elapsed after set_time" "elapsed"
     (Eio.Promise.await promise)
 
 let test_scope_finalizers_run_in_parallel () =
@@ -488,8 +564,7 @@ let test_scope_finalizers_run_in_parallel () =
   yield ();
   wait_for_sleepers clock 3;
   Test_clock.adjust clock (Duration.seconds 1);
-  Alcotest.(check (result unit reject)) "scope done" (Ok ())
-    (Eio.Promise.await promise);
+  check_exit_ok Alcotest.unit "scope done" () (Eio.Promise.await promise);
   Alcotest.(check int) "all finalizers released" 3 !released
 
 let test_resource_manual_refresh () =
@@ -543,6 +618,10 @@ let () =
             test_effect_catch_success_and_failure;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
             test_effect_tap_error_observes_and_rethrows;
+          Alcotest.test_case "runtime exit fail die interrupt" `Quick
+            test_runtime_exit_fail_die_interrupt;
+          Alcotest.test_case "catch does not catch interrupt" `Quick
+            test_effect_catch_does_not_catch_interrupt;
           Alcotest.test_case "acquire release" `Quick test_acquire_release;
           Alcotest.test_case "acquire release on failure" `Quick
             test_acquire_release_on_failure;
@@ -552,8 +631,8 @@ let () =
             test_effect_timeout_allows_fast_success;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
-          Alcotest.test_case "race all failures rethrows first error" `Quick
-            test_effect_race_all_failures_rethrows_first_error;
+          Alcotest.test_case "race all failures returns both causes" `Quick
+            test_effect_race_all_failures_returns_both_causes;
           Alcotest.test_case "repeat schedule" `Quick test_effect_repeat_schedule;
           Alcotest.test_case "repeat schedule uses virtual delays" `Quick
             test_effect_repeat_schedule_uses_virtual_delays;
@@ -561,10 +640,14 @@ let () =
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick
             test_effect_retry_schedule_uses_virtual_delays;
+          Alcotest.test_case "retry does not retry interrupt" `Quick
+            test_effect_retry_does_not_retry_interrupt;
           Alcotest.test_case "detach does not block parent" `Quick
             test_effect_detach_does_not_block_parent;
           Alcotest.test_case "detach child failure is not parent failure" `Quick
             test_effect_detach_child_failure_is_not_parent_failure;
+          Alcotest.test_case "uninterruptible defers race cancellation" `Quick
+            test_effect_uninterruptible_defers_race_cancellation;
         ] );
       ( "Clock",
         [

@@ -34,6 +34,7 @@ type ('env, 'err, 'a) t =
   | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
   | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
+  | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
   | Retry :
       ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
@@ -70,6 +71,12 @@ val race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
 val detach : ('env, _, unit) t -> ('env, 'err, unit) t
 (** Start a unit effect detached from the current effect and return
     immediately. The runtime owns the detached fiber. *)
+
+val uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+(** Defer parent cancellation while running the wrapped effect.
+
+    This maps to [Eio.Cancel.protect]. It does not turn interruption
+    into a typed failure, and it does not catch defects. *)
 
 val catch :
   ('err1 -> ('env, 'err2, 'a) t) ->

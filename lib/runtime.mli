@@ -10,12 +10,12 @@ val create :
   unit ->
   ('env, 'err) t
 
-val run : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> ('a, 'err) result
-(** Run an effect to completion. Typed failures become [Error err]. *)
+val run : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> ('a, 'err) Exit.t
+(** Run an effect to completion. *)
 
 val run_exn : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> 'a
-(** Run an effect and raise [Failure "Effet.Runtime.run_exn"] for an
-    uncaught typed failure. Prefer {!run} when inspecting failures. *)
+(** Run an effect and raise on non-success. Prefer {!run} when
+    inspecting failures. *)
 
 val drain : ('env, 'err) t -> unit
 (** Wait until currently detached finite fibers complete. *)

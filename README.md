@@ -39,15 +39,18 @@ let () =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
   in
   match Runtime.run rt program with
-  | Ok n -> Format.printf "%d@." n
-  | Error `Too_small -> assert false
+  | Exit.Ok n -> Format.printf "%d@." n
+  | Exit.Error (Cause.Fail `Too_small) -> assert false
+  | Exit.Error _ -> assert false
 ```
 
 ## Features
 
 | Module | Purpose |
 | --- | --- |
-| `Effect` | GADT for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, detach, scopes. |
+| `Effect` | GADT for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, detach, uninterruptible regions, scopes. |
+| `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
+| `Exit` | Runtime boundary result: success or failure cause. |
 | `Runtime` | Eio-backed interpreter for `Effect.t`. |
 | `Duration` | Millisecond-precision durations. |
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |

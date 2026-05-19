@@ -1,27 +1,30 @@
 module E = Effect
 module Sch = Schedule
 
+exception Raised_cause of int * Obj.t
+
 module Typed_fail : sig
   type key
 
   val fresh : unit -> key
-  val raise_for : key -> 'a -> _
-
-  val with_handler :
-    key -> handler:('a -> 'b) -> body:(unit -> 'b) -> 'b
+  val int : key -> int
 end = struct
   type key = int
   let counter = ref 0
   let fresh () = incr counter; !counter
-
-  exception Typed_failure of int * Obj.t
-
-  let raise_for key value = raise (Typed_failure (key, Obj.repr value))
-
-  let with_handler key ~handler ~body =
-    try body () with
-    | Typed_failure (k, v) when k = key -> handler (Obj.obj v)
+  let int key = key
 end
+
+let raise_cause key cause =
+  raise (Raised_cause (Typed_fail.int key, Obj.repr cause))
+
+let raise_fail key err = raise_cause key (Cause.Fail err)
+
+let cause_of_exn key exn =
+  match exn with
+  | Raised_cause (k, cause) when k = Typed_fail.int key -> Obj.obj cause
+  | Eio.Cancel.Cancelled _ -> Cause.Interrupt
+  | exn -> Cause.Die exn
 
 type ('env, 'err) t = {
   env : 'env;
@@ -66,7 +69,7 @@ let rec interpret :
  fun ~runtime ~fail_key ~sw ~finalizers eff env ->
   match eff with
   | E.Pure v -> v
-  | E.Fail e -> Typed_fail.raise_for fail_key e
+  | E.Fail e -> raise_fail fail_key e
   | E.Sync (_, f) -> f env
   | E.Async (_, f) -> f env
   | E.Bind (e, k) ->
@@ -75,19 +78,25 @@ let rec interpret :
   | E.Map (e, f) -> f (interpret ~runtime ~fail_key ~sw ~finalizers e env)
   | E.Catch (e, handler) ->
       let inner_key = Typed_fail.fresh () in
-      Typed_fail.with_handler inner_key
-        ~handler:(fun err ->
-          interpret ~runtime ~fail_key ~sw ~finalizers (handler err) env)
-        ~body:(fun () ->
-          interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env)
+      (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
+      | Raised_cause (k, cause) when k = Typed_fail.int inner_key -> (
+          match Obj.obj cause with
+          | Cause.Fail err ->
+              interpret ~runtime ~fail_key ~sw ~finalizers (handler err) env
+          | cause -> raise_cause fail_key cause)
+      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
+      | exn -> raise_cause fail_key (Cause.Die exn))
   | E.Tap_error (e, observe) ->
       let inner_key = Typed_fail.fresh () in
-      Typed_fail.with_handler inner_key
-        ~handler:(fun err ->
-          observe err;
-          Typed_fail.raise_for fail_key err)
-        ~body:(fun () ->
-          interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env)
+      (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
+      | Raised_cause (k, cause) when k = Typed_fail.int inner_key -> (
+          match Obj.obj cause with
+          | Cause.Fail err ->
+              observe err;
+              raise_fail fail_key err
+          | cause -> raise_cause fail_key cause)
+      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
+      | exn -> raise_cause fail_key (Cause.Die exn))
   | E.Delay (d, e) ->
       runtime.sleep d;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
@@ -95,7 +104,7 @@ let rec interpret :
       Eio.Fiber.first
         (fun () ->
           runtime.sleep d;
-          Typed_fail.raise_for fail_key `Timeout)
+          raise_fail fail_key `Timeout)
         (fun () -> interpret ~runtime ~fail_key ~sw ~finalizers e env)
   | E.Concat children ->
       List.iter
@@ -105,6 +114,9 @@ let rec interpret :
         children
   | E.Race children -> race_first ~runtime ~fail_key ~finalizers children env
   | E.Detach e -> detach_effect ~runtime e env
+  | E.Uninterruptible e ->
+      Eio.Cancel.protect (fun () ->
+          interpret ~runtime ~fail_key ~sw ~finalizers e env)
   | E.Repeat (e, schedule) ->
       repeat_eff ~runtime ~fail_key ~sw ~finalizers e schedule env
   | E.Retry (e, schedule, predicate) ->
@@ -156,12 +168,13 @@ and race_first :
                        env
                    in
                    Eio.Stream.add results (`Ok value)
-                 with exn -> Eio.Stream.add results (`Error exn)))
+                 with exn ->
+                   Eio.Stream.add results (`Error (cause_of_exn fail_key exn))))
            children;
-         let rec await_success first_error remaining =
+         let rec await_success cause remaining =
            if remaining = 0 then
-             match first_error with
-             | Some exn -> raise exn
+             match cause with
+             | Some cause -> raise_cause fail_key cause
              | None -> failwith "Effect.race: no children"
            else
              match Eio.Stream.take results with
@@ -169,11 +182,11 @@ and race_first :
                  winner := Some (Obj.repr value);
                  Eio.Switch.fail race_sw Race_won;
                  Eio.Fiber.await_cancel ()
-             | `Error exn ->
+             | `Error child_cause ->
                  await_success
-                   (match first_error with
-                   | Some _ -> first_error
-                   | None -> Some exn)
+                   (match cause with
+                   | Some cause -> Some (Cause.Both (cause, child_cause))
+                   | None -> Some child_cause)
                    (remaining - 1)
          in
          await_success None n
@@ -232,36 +245,42 @@ and retry_eff :
   let step = ref 0 in
   let result : a option ref = ref None in
   while Option.is_none !result do
-    Typed_fail.with_handler attempt_key
-      ~handler:(fun err ->
-        if predicate err then
-          match Sch.next_delay schedule ~step:!step with
-          | Some d ->
-              runtime.sleep d;
-              incr step
-          | None -> Typed_fail.raise_for fail_key err
-        else Typed_fail.raise_for fail_key err)
-      ~body:(fun () ->
-        let v =
-          interpret ~runtime ~fail_key:attempt_key ~sw ~finalizers e env
-        in
-        result := Some v)
+    (try
+       let v =
+         interpret ~runtime ~fail_key:attempt_key ~sw ~finalizers e env
+       in
+       result := Some v
+     with
+     | Raised_cause (k, cause) when k = Typed_fail.int attempt_key -> (
+         match Obj.obj cause with
+         | Cause.Fail err ->
+             if predicate err then
+               match Sch.next_delay schedule ~step:!step with
+               | Some d ->
+                   runtime.sleep d;
+                   incr step
+               | None -> raise_fail fail_key err
+             else raise_fail fail_key err
+         | cause -> raise_cause fail_key cause)
+     | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
+     | exn -> raise_cause fail_key (Cause.Die exn))
   done;
   Option.get !result
 
 let run t eff =
   Eio.Switch.run @@ fun sw ->
   let finalizers = ref [] in
-  Typed_fail.with_handler t.default_fail_key
-    ~handler:(fun err -> Error err)
-    ~body:(fun () ->
-      Ok (interpret ~runtime:t ~fail_key:t.default_fail_key ~sw ~finalizers eff
-            t.env))
+  try
+    Exit.Ok
+      (interpret ~runtime:t ~fail_key:t.default_fail_key ~sw ~finalizers eff
+         t.env)
+  with exn -> Exit.Error (cause_of_exn t.default_fail_key exn)
 
 let run_exn t eff =
   match run t eff with
-  | Ok value -> value
-  | Error _ -> failwith "Effet.Runtime.run_exn"
+  | Exit.Ok value -> value
+  | Exit.Error (Cause.Die exn) -> raise exn
+  | Exit.Error _ -> failwith "Effet.Runtime.run_exn"
 
 let drain t =
   while Atomic.get t.active > 0 do
