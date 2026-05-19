@@ -17,6 +17,19 @@
   (alcotest :with-test)))
 
 (package
+ (name effet-stream)
+ (synopsis "Typed chunked streams for Effet")
+ (description
+  "Adds pull-based, chunked Stream and fold-based Sink abstractions on top of Effet's typed effect runtime.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.0))
+  (effet (= :version))
+  (eio (>= 1.0))
+  (eio_main (>= 1.0))
+  (alcotest :with-test)))
+
+(package
  (name effet-otel)
  (synopsis "OTLP/JSON exporter for Effet's tracer capability")
  (description

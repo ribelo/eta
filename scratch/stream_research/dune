@@ -1,0 +1,23 @@
+(library
+ (name stream_research)
+ (wrapped true)
+ (libraries eio eio.core eio_main)
+ (modules
+  services
+  s_a_channel_core
+  s_b_stream_core
+  s_b2_pull_core
+  s_c_eio_pipeline
+  s_d_eio_chunked
+  s_e_channel_transducer
+  s_f_seq_pull))
+
+(executable
+ (name runtime_smoke)
+ (libraries stream_research eio eio_main)
+ (modules runtime_smoke))
+
+(executable
+ (name benchmark_compare)
+ (libraries stream_research eio eio_main unix)
+ (modules benchmark_compare))
