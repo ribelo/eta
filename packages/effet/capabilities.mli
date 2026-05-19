@@ -38,6 +38,9 @@ end
 (** Span completion status used by {!tracer}. *)
 type span_status = Ok | Error of string | Cancelled
 
+(** OpenTelemetry span kind. *)
+type span_kind = Internal | Server | Client | Producer | Consumer
+
 (** Information about an active span surfaced through {!tracer.inspect}. *)
 type span_info = {
   trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
@@ -75,6 +78,7 @@ class type tracer = object
   method begin_span :
     ?parent_id:int ->
     ?external_parent:string * string ->
+    ?kind:span_kind ->
     name:string ->
     started_ms:int ->
     unit -> int

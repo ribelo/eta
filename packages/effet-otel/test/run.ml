@@ -6,7 +6,17 @@ open Effet
 
 let env = ()
 
+let rec json_has_span_kind ~name ~kind = function
+  | `Assoc fields ->
+      let has_name = List.assoc_opt "name" fields = Some (`String name) in
+      let has_kind = List.assoc_opt "kind" fields = Some (`Int kind) in
+      (has_name && has_kind)
+      || List.exists (fun (_, value) -> json_has_span_kind ~name ~kind value) fields
+  | `List xs -> List.exists (json_has_span_kind ~name ~kind) xs
+  | _ -> false
+
 let test_encoder_smoke () =
+  let bodies = ref [] in
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let exporter =
@@ -16,18 +26,24 @@ let test_encoder_smoke () =
       ~host:"127.0.0.1" ~port:1
       ~service_name:"effet-otel-encoder-smoke"
       ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
       ()
   in
   let tracer = Effet_otel.tracer exporter in
   let parent = tracer#begin_span ~name:"parent" ~started_ms:1000 () in
   tracer#add_attr ~key:"phase" ~value:"setup";
   let child =
-    tracer#begin_span ~parent_id:parent ~name:"child" ~started_ms:1010 ()
+    tracer#begin_span ~parent_id:parent ~kind:Capabilities.Server ~name:"child"
+      ~started_ms:1010 ()
   in
   tracer#end_span ~span_id:child ~status:Capabilities.Ok ~ended_ms:1020;
   tracer#end_span ~span_id:parent
     ~status:(Capabilities.Error "boom") ~ended_ms:1030;
-  Alcotest.(check pass) "encoder ran without raising" () ()
+  Effet_otel.flush exporter;
+  Alcotest.(check pass) "encoder ran without raising" () ();
+  let body = String.concat "\n" (List.rev !bodies) in
+  Alcotest.(check bool) "server span kind encoded" true
+    (json_has_span_kind ~name:"child" ~kind:2 (Yojson.Safe.from_string body))
 
 let motel_reachable net =
   try

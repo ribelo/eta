@@ -57,6 +57,33 @@ let () =
 | `Resource` | Cached effectful resources with explicit refresh. |
 | `Capabilities` | Small object-type traits for capability-oriented environments. |
 
+## PPX Span Sugar
+
+The optional `ppx_effet` package provides one small extension:
+
+```ocaml
+let load_user id =
+  [%effet.fn
+    (Effect.sync "db.query" (fun env -> env#db#user id))]
+```
+
+It expands to:
+
+```ocaml
+Effect.fn __POS__ __FUNCTION__
+  (Effect.sync "db.query" (fun env -> env#db#user id))
+```
+
+Use it by adding `ppx_effet` to your test or executable preprocessors:
+
+```lisp
+(preprocess
+ (pps ppx_effet))
+```
+
+The PPX only captures source position and function name. It does not infer
+attributes, change runtime behavior, or auto-instrument leaves.
+
 ## Resource Scopes
 
 `Effect.acquire_release` registers finalizers with the surrounding

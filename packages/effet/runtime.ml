@@ -4,6 +4,7 @@ module Sch = Schedule
 exception Raised_cause of int * Obj.t
 
 let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
+let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
 let external_parent_key : (string * string) Eio.Fiber.key =
   Eio.Fiber.create_key ()
 
@@ -35,6 +36,8 @@ type ('env, 'err) t = {
   sleep : Duration.t -> unit;
   now_ms : unit -> int;
   tracer : Capabilities.tracer;
+  sampler : Sampler.t;
+  auto_instrument : bool;
   logger : Capabilities.logger;
   meter : Capabilities.meter;
   cause_pp : Obj.t -> string;
@@ -53,8 +56,9 @@ let default_cause_pp (obj : Obj.t) : string =
     Printf.sprintf "variant#%d" (Obj.obj (Obj.field obj 0) : int)
   else "<error>"
 
-let create ~sw ~clock ?sleep ?(tracer = Tracer.noop) ?(logger = Logger.noop)
-    ?(meter = Meter.noop) ?cause_pp ~env () =
+let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
+    ?(sampler = Sampler.always_on) ?(auto_instrument = false)
+    ?(logger = Logger.noop) ?(meter = Meter.noop) ?cause_pp ~env () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let sleep =
     match sleep with
@@ -74,6 +78,8 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop) ?(logger = Logger.noop)
     sleep;
     now_ms;
     tracer;
+    sampler;
+    auto_instrument;
     logger;
     meter;
     cause_pp;
@@ -118,8 +124,14 @@ let rec interpret :
   match eff with
   | E.Pure v -> v
   | E.Fail e -> raise_fail fail_key e
-  | E.Sync (_, f) -> f env
-  | E.Async (_, f) -> f env
+  | E.Sync (name, f) ->
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
+      else f env
+  | E.Async (name, f) ->
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
+      else f env
   | E.Bind (e, k) ->
       let v = interpret ~runtime ~fail_key ~sw ~finalizers e env in
       interpret ~runtime ~fail_key ~sw ~finalizers (k v) env
@@ -184,11 +196,25 @@ let rec interpret :
              interpret ~runtime ~fail_key ~sw ~finalizers child env)
            children)
         env
+  | E.All_settled children ->
+      par_collect_settled ~runtime ~fail_key ~finalizers children env
   | E.For_each_par (xs, f) ->
       par_collect ~runtime ~fail_key ~finalizers
         (List.map
            (fun x env ->
              interpret ~runtime ~fail_key ~sw ~finalizers (f x) env)
+           xs)
+        env
+  | E.For_each_par_bounded (max, xs, f) ->
+      let semaphore = Eio.Semaphore.make max in
+      par_collect ~runtime ~fail_key ~finalizers
+        (List.map
+           (fun x env ->
+             Eio.Semaphore.acquire semaphore;
+             Fun.protect
+               ~finally:(fun () -> Eio.Semaphore.release semaphore)
+               (fun () ->
+                 interpret ~runtime ~fail_key ~sw ~finalizers (f x) env))
            xs)
         env
   | E.Detach e -> detach_effect ~runtime e env
@@ -216,55 +242,67 @@ let rec interpret :
         ~finally:(fun () -> run_finalizers child_finalizers)
         (fun () ->
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
-  | E.Named (name, e) ->
+  | E.Named (kind, name, e) ->
       let parent_id = Eio.Fiber.get active_span_key in
+      let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
       let external_parent =
         match Eio.Fiber.get external_parent_key with
         | Some ("", "") | None -> None
         | Some _ as ep -> ep
       in
-      let started_ms = runtime.now_ms () in
-      let span_id =
-        runtime.tracer#begin_span ?parent_id ?external_parent ~name
-          ~started_ms ()
+      let sampled =
+        parent_sampled
+        && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
+             ~parent:(Option.is_some parent_id)
       in
-      let finish status =
-        let ended_ms = runtime.now_ms () in
-        runtime.tracer#end_span ~span_id ~status ~ended_ms
-      in
-      let emit_exception_event cause =
-        let render c =
-          match status_of_cause ~cause_pp:runtime.cause_pp c with
-          | Capabilities.Error msg -> msg
-          | Capabilities.Cancelled -> "cancelled"
-          | Capabilities.Ok -> "ok"
+      if not sampled then
+        Eio.Fiber.with_binding sampled_key false @@ fun () ->
+        Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
+        interpret ~runtime ~fail_key ~sw ~finalizers e env
+      else
+        let started_ms = runtime.now_ms () in
+        let span_id =
+          runtime.tracer#begin_span ?parent_id ?external_parent ~name
+            ~kind ~started_ms ()
         in
-        let rec collect acc = function
-          | Cause.Both (a, b) -> collect (collect acc a) b
-          | c -> render c :: acc
+        let finish status =
+          let ended_ms = runtime.now_ms () in
+          runtime.tracer#end_span ~span_id ~status ~ended_ms
         in
-        let msgs = List.rev (collect [] cause) in
-        List.iter
-          (fun msg ->
-            runtime.tracer#add_event ~span_id ~name:"exception"
-              ~ts_ms:(runtime.now_ms ())
-              ~attrs:[ ("exception.message", msg) ])
-          msgs
-      in
-      Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
-      (* External parent is consumed by this begin_span; clear it for the
-         body so nested spans don't inherit it. *)
-      Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
-      let _ = external_parent_key in
-      (try
-         let value = interpret ~runtime ~fail_key ~sw ~finalizers e env in
-         finish Ok;
-         value
-       with exn ->
-         let cause = cause_of_exn fail_key exn in
-         emit_exception_event cause;
-         finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
-         raise exn)
+        let emit_exception_event cause =
+          let render c =
+            match status_of_cause ~cause_pp:runtime.cause_pp c with
+            | Capabilities.Error msg -> msg
+            | Capabilities.Cancelled -> "cancelled"
+            | Capabilities.Ok -> "ok"
+          in
+          let rec collect acc = function
+            | Cause.Both (a, b) -> collect (collect acc a) b
+            | c -> render c :: acc
+          in
+          let msgs = List.rev (collect [] cause) in
+          List.iter
+            (fun msg ->
+              runtime.tracer#add_event ~span_id ~name:"exception"
+                ~ts_ms:(runtime.now_ms ())
+                ~attrs:[ ("exception.message", msg) ])
+            msgs
+        in
+        Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
+        Eio.Fiber.with_binding sampled_key true @@ fun () ->
+        (* External parent is consumed by this begin_span; clear it for the
+           body so nested spans don't inherit it. *)
+        Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
+        let _ = external_parent_key in
+        (try
+           let value = interpret ~runtime ~fail_key ~sw ~finalizers e env in
+           finish Ok;
+           value
+         with exn ->
+           let cause = cause_of_exn fail_key exn in
+           emit_exception_event cause;
+           finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
+           raise exn)
   | E.Annotate (key, value, e) ->
       runtime.tracer#add_attr ~key ~value;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
@@ -302,6 +340,39 @@ let rec interpret :
   | E.Provide (env_in, e) ->
       interpret ~runtime ~fail_key ~sw ~finalizers e env_in
 
+and instrument_leaf :
+    type re err a.
+    runtime:(re, _) t -> fail_key:Typed_fail.key -> name:string -> (unit -> a) -> a
+    =
+ fun ~runtime ~fail_key ~name f ->
+  let parent_id = Eio.Fiber.get active_span_key in
+  let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
+  let sampled =
+    parent_sampled
+    && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
+         ~parent:(Option.is_some parent_id)
+  in
+  if not sampled then f ()
+  else
+    let started_ms = runtime.now_ms () in
+    let span_id =
+      runtime.tracer#begin_span ?parent_id ~name ~started_ms
+        ~kind:Capabilities.Internal ()
+    in
+    let finish status =
+      runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
+    in
+    Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
+    Eio.Fiber.with_binding sampled_key true @@ fun () ->
+    try
+      let value = f () in
+      finish Ok;
+      value
+    with exn ->
+      let cause = cause_of_exn fail_key exn in
+      finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
+      raise exn
+
 and par_collect :
     type re env err a.
     runtime:(re, _) t ->
@@ -320,6 +391,7 @@ and par_collect :
      List.iteri
        (fun i task ->
          Eio.Fiber.fork ~sw:par_sw (fun () ->
+           Tracer.with_fiber_context @@ fun () ->
              try results.(i) <- Some (task env)
              with exn ->
                let cause = cause_of_exn fail_key exn in
@@ -354,14 +426,15 @@ and race_first :
          List.iter
            (fun child ->
              Eio.Fiber.fork ~sw:race_sw (fun () ->
-                 try
-                   let value =
-                     interpret ~runtime ~fail_key ~sw:race_sw ~finalizers child
-                       env
-                   in
-                   Eio.Stream.add results (`Ok value)
-                 with exn ->
-                   Eio.Stream.add results (`Error (cause_of_exn fail_key exn))))
+                Tracer.with_fiber_context @@ fun () ->
+                try
+                  let value =
+                    interpret ~runtime ~fail_key ~sw:race_sw ~finalizers child
+                      env
+                  in
+                  Eio.Stream.add results (`Ok value)
+                with exn ->
+                  Eio.Stream.add results (`Error (cause_of_exn fail_key exn))))
            children;
          let rec await_success cause remaining =
            if remaining = 0 then
@@ -384,12 +457,44 @@ and race_first :
          await_success None n
        with Race_won -> Obj.obj (Option.get !winner))
 
+and par_collect_settled :
+    type re env err a.
+    runtime:(re, _) t ->
+    fail_key:Typed_fail.key ->
+    finalizers:(unit -> unit) list ref ->
+    (env, err, a) E.t list ->
+    env ->
+    (a, err Cause.t) result list =
+ fun ~runtime ~fail_key ~finalizers children env ->
+  let n = List.length children in
+  let results : (a, err Cause.t) result option array = Array.make n None in
+  (Eio.Switch.run @@ fun par_sw ->
+   List.iteri
+     (fun i child ->
+       Eio.Fiber.fork ~sw:par_sw (fun () ->
+           Tracer.with_fiber_context @@ fun () ->
+           results.(i) <-
+             Some
+               (try
+                  Ok
+                    (interpret ~runtime ~fail_key ~sw:par_sw ~finalizers child
+                       env)
+                with exn -> Error (cause_of_exn fail_key exn))))
+     children);
+  Array.to_list results |> List.map Option.get
+
 and detach_effect :
+    type re env err.
+    runtime:(re, _) t -> (env, err, unit) E.t -> env -> unit =
+ fun ~runtime eff env -> fork_internal ~runtime eff env
+
+and fork_internal :
     type re env err.
     runtime:(re, _) t -> (env, err, unit) E.t -> env -> unit =
  fun ~runtime eff env ->
   Atomic.incr runtime.active;
   Eio.Fiber.fork_daemon ~sw:runtime.outer_sw (fun () ->
+      Tracer.with_fiber_context @@ fun () ->
       (try
          Eio.Switch.run @@ fun sw' ->
          interpret ~runtime ~fail_key:runtime.default_fail_key ~sw:sw'
@@ -460,6 +565,7 @@ and retry_eff :
   Option.get !result
 
 let run t eff =
+  Tracer.with_fiber_context @@ fun () ->
   Eio.Switch.run @@ fun sw ->
   let finalizers = ref [] in
   try

@@ -37,8 +37,14 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('env, 'err, 'b) t
       -> ('env, 'err, 'a * 'b) t
   | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+  | All_settled :
+      ('env, 'err, 'a) t list
+      -> ('env, _, ('a, 'err Cause.t) result list) t
   | For_each_par :
       'x list * ('x -> ('env, 'err, 'a) t)
+      -> ('env, 'err, 'a list) t
+  | For_each_par_bounded :
+      int * 'x list * ('x -> ('env, 'err, 'a) t)
       -> ('env, 'err, 'a list) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
   | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
@@ -50,7 +56,9 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
       -> ('env, 'err, 'a) t
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Named :
+      Capabilities.span_kind * string * ('env, 'err, 'a) t
+      -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Link_span :
       Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
@@ -105,10 +113,25 @@ val all : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
     Fail-fast: the first child failure cancels the others; the cause
     of the first observed failure propagates. *)
 
+val all_settled :
+  ('env, 'err, 'a) t list -> ('env, _, ('a, 'err Cause.t) result list) t
+(** Run effects concurrently and collect every child outcome in input order.
+    Child failures are returned as [Error cause] values instead of failing the
+    outer effect. *)
+
 val for_each_par :
   'x list -> ('x -> ('env, 'err, 'a) t) -> ('env, 'err, 'a list) t
 (** Map over [xs] concurrently with [f]; collect results in input
     order. Fail-fast like {!all}. *)
+
+val for_each_par_bounded :
+  max:int ->
+  'x list ->
+  ('x -> ('env, 'err, 'a) t) ->
+  ('env, 'err, 'a list) t
+(** Map over [xs] with at most [max] child effects running at once. Results
+    are returned in input order and failures are fail-fast like {!for_each_par}.
+    @raise Invalid_argument if [max <= 0]. *)
 
 val detach : ('env, _, unit) t -> ('env, 'err, unit) t
 (** Start a unit effect detached from the current effect and return
@@ -152,6 +175,11 @@ val provide : 'env_in -> ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
     rest of the program. *)
 
 val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+val named_kind :
+  kind:Capabilities.span_kind ->
+  string ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
 val annotate :
   key:string -> value:string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 
@@ -203,7 +231,11 @@ val here_attr :
 (** Attach a [loc] attribute using OCaml's native [__POS__] shape. *)
 
 val fn :
-  string * int * int * int -> string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  ?kind:Capabilities.span_kind ->
+  string * int * int * int ->
+  string ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
 (** [fn __POS__ __FUNCTION__ body] names [body] after the current binding and
     records the source location as a [loc] span attribute. *)
 

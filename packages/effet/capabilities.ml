@@ -9,6 +9,7 @@ class type log = object
 end
 
 type span_status = Ok | Error of string | Cancelled
+type span_kind = Internal | Server | Client | Producer | Consumer
 
 type span_info = {
   trace_id : string;
@@ -44,6 +45,7 @@ class type tracer = object
   method begin_span :
     ?parent_id:int ->
     ?external_parent:string * string ->
+    ?kind:span_kind ->
     name:string ->
     started_ms:int ->
     unit -> int

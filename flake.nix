@@ -32,6 +32,7 @@
               ocamlPackages.eio_main
               ocamlPackages.alcotest
               ocamlPackages.yojson
+              ocamlPackages.ppxlib
             ];
           };
         }

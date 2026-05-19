@@ -30,3 +30,14 @@
   (yojson (>= 2.0))
   (alcotest :with-test)))
 
+(package
+ (name ppx_effet)
+ (synopsis "PPX rewriter for Effet span sugar")
+ (description "Provides [%effet.fn body] sugar for Effet.fn __POS__ __FUNCTION__ body.")
+ (depends
+  (ocaml (>= 5.1))
+  (dune (>= 3.0))
+  (effet (= :version))
+  (ppxlib (>= 0.30))
+  (eio_main :with-test)
+  (alcotest :with-test)))

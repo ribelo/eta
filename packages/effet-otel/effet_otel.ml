@@ -51,6 +51,7 @@ type span = {
   span_id : string; (* 16 hex chars *)
   parent_span_id : string option;
   name : string;
+  kind : Effet.Capabilities.span_kind;
   start_unix_ns : int;
   mutable end_unix_ns : int;
   mutable attrs : (string * string) list;
@@ -87,6 +88,13 @@ let status_json code message : yj option =
   else
     Some (`Assoc [ ("code", `Int code); ("message", `String message) ])
 
+let span_kind_int = function
+  | Effet.Capabilities.Internal -> 1
+  | Server -> 2
+  | Client -> 3
+  | Producer -> 4
+  | Consumer -> 5
+
 let span_json (s : span) : yj =
   let parent =
     match s.parent_span_id with
@@ -114,7 +122,7 @@ let span_json (s : span) : yj =
     @ parent
     @ [
         ("name", `String s.name);
-        ("kind", `Int 1);
+        ("kind", `Int (span_kind_int s.kind));
         ("startTimeUnixNano", str_int s.start_unix_ns);
         ("endTimeUnixNano", str_int s.end_unix_ns);
         ("attributes", attrs_json s.attrs);
@@ -477,7 +485,8 @@ let resolve_parent_ids t = function
       | Some p -> (p.trace_id, Some p.span_id)
       | None -> (hex_of_bytes (random_bytes t.rng 16), None))
 
-let begin_span t ?parent_id ?external_parent ~name ~started_ms:_ () =
+let begin_span t ?parent_id ?external_parent ?(kind = Effet.Capabilities.Internal)
+    ~name ~started_ms:_ () =
   let trace_id, parent_span_id =
     resolve_parent_ids t (parent_id, external_parent)
   in
@@ -489,6 +498,7 @@ let begin_span t ?parent_id ?external_parent ~name ~started_ms:_ () =
       span_id;
       parent_span_id;
       name;
+      kind;
       start_unix_ns;
       end_unix_ns = start_unix_ns;
       attrs = [];
@@ -622,8 +632,8 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
 
 let tracer t : Effet.Capabilities.tracer =
   object
-    method begin_span ?parent_id ?external_parent ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ~name ~started_ms ()
+    method begin_span ?parent_id ?external_parent ?kind ~name ~started_ms () =
+      begin_span t ?parent_id ?external_parent ?kind ~name ~started_ms ()
 
     method end_span ~span_id ~status ~ended_ms =
       end_span t ~span_id ~status ~ended_ms

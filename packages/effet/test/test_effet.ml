@@ -31,6 +31,26 @@ let with_traced_runtime f =
   in
   f rt tracer
 
+let with_sampled_traced_runtime sampler f =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Tracer.as_capability tracer) ~sampler ~env:() ()
+  in
+  f rt tracer
+
+let with_auto_traced_runtime auto_instrument f =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Tracer.as_capability tracer) ~auto_instrument ~env:() ()
+  in
+  f rt tracer
+
 module Test_clock = struct
   type sleeper = { deadline_ms : int; resolver : unit Eio.Promise.u }
   type t = { mutable now_ms : int; mutable sleepers : sleeper list }
@@ -110,6 +130,9 @@ let string_cause =
 
 let attr key span = List.assoc_opt key span.Tracer.attrs
 
+let link_span_id span =
+  List.map (fun link -> link.Tracer.link_span_id) span.Tracer.links
+
 let only_span tracer =
   match Tracer.dump tracer with
   | [ span ] -> span
@@ -177,6 +200,12 @@ let test_observability_named_ok () =
   let span = only_span tracer in
   Alcotest.(check string) "name" "foo" span.name;
   check_status "status" Tracer.Ok span.status
+
+let test_observability_span_kind () =
+  with_traced_runtime @@ fun rt tracer ->
+  run_ok rt (Effect.named_kind ~kind:Capabilities.Server "server" Effect.unit);
+  let span = only_span tracer in
+  Alcotest.(check bool) "server kind" true (span.kind = Tracer.Server)
 
 let test_observability_fn_loc () =
   with_traced_runtime @@ fun rt tracer ->
@@ -293,6 +322,107 @@ let test_observability_par_children_inherit_parent () =
       Alcotest.(check (option int)) "a parent" (Some parent.span_id) a.parent_id;
       Alcotest.(check (option int)) "b parent" (Some parent.span_id) b.parent_id
   | spans -> Alcotest.failf "expected three spans, got %d" (List.length spans)
+
+let test_observability_par_pending_attrs_links_are_fiber_local () =
+  with_traced_test_clock @@ fun sw clock rt tracer ->
+  let branch ~name ~delay ~attr_key ~link_span_id =
+    Effect.pure ()
+    |> Effect.named name
+    |> Effect.delay (Duration.ms delay)
+    |> Effect.link_span ~trace_id:("trace-" ^ name) ~span_id:link_span_id
+    |> Effect.annotate ~key:attr_key ~value:"yes"
+  in
+  let promise =
+    fork_run sw rt
+      (Effect.par
+         (branch ~name:"left" ~delay:10 ~attr_key:"left" ~link_span_id:"left-link")
+         (branch ~name:"right" ~delay:5 ~attr_key:"right" ~link_span_id:"right-link"))
+  in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Test_clock.adjust clock (Duration.ms 5);
+  check_exit_ok (Alcotest.pair Alcotest.unit Alcotest.unit) "par done" ((), ())
+    (Eio.Promise.await promise);
+  let spans = Tracer.dump tracer in
+  let left = List.find (fun span -> span.Tracer.name = "left") spans in
+  let right = List.find (fun span -> span.Tracer.name = "right") spans in
+  Alcotest.(check (option string)) "left has left attr" (Some "yes")
+    (attr "left" left);
+  Alcotest.(check (option string)) "left has no right attr" None
+    (attr "right" left);
+  Alcotest.(check (list string)) "left links" [ "left-link" ]
+    (link_span_id left);
+  Alcotest.(check (option string)) "right has right attr" (Some "yes")
+    (attr "right" right);
+  Alcotest.(check (option string)) "right has no left attr" None
+    (attr "left" right);
+  Alcotest.(check (list string)) "right links" [ "right-link" ]
+    (link_span_id right)
+
+let test_observability_sampler_always_off () =
+  with_sampled_traced_runtime Sampler.always_off @@ fun rt tracer ->
+  run_ok rt (Effect.named "off" Effect.unit);
+  Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+
+let test_observability_sampler_ratio () =
+  with_sampled_traced_runtime (Sampler.ratio 0.5) @@ fun rt tracer ->
+  let spans =
+    List.init 1_000 (fun i -> Effect.named ("span-" ^ string_of_int i) Effect.unit)
+  in
+  run_ok rt (Effect.concat spans);
+  let count = List.length (Tracer.dump tracer) in
+  Alcotest.(check bool) "roughly half sampled" true (count > 350 && count < 650)
+
+let test_observability_sampler_parent_based () =
+  with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun rt tracer ->
+  run_ok rt (Effect.named "parent" (Effect.named "child" Effect.unit));
+  Alcotest.(check int) "parent and child sampled" 2
+    (List.length (Tracer.dump tracer));
+  with_sampled_traced_runtime
+    (Sampler.parent_based ~root:Sampler.always_off ())
+  @@ fun rt tracer ->
+  run_ok rt (Effect.named "parent" (Effect.named "child" Effect.unit));
+  Alcotest.(check int) "unsampled parent suppresses child" 0
+    (List.length (Tracer.dump tracer))
+
+let test_observability_sampler_unsampled_parent_suppresses_par_children () =
+  with_sampled_traced_runtime Sampler.always_off @@ fun rt tracer ->
+  let child name = Effect.named name Effect.unit in
+  ignore (run_ok rt (Effect.named "parent" (Effect.par (child "a") (child "b"))));
+  Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+
+let test_observability_auto_instrument_default_off () =
+  with_traced_runtime @@ fun rt tracer ->
+  run_ok rt (Effect.sync "leaf" (fun () -> ()));
+  Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
+
+let test_observability_auto_instrument_sync_leaves () =
+  with_auto_traced_runtime true @@ fun rt tracer ->
+  let leaf name = Effect.sync name (fun () -> ()) in
+  run_ok rt (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]);
+  Alcotest.(check (list string)) "leaf spans" [ "a"; "b"; "c" ]
+    (List.map (fun span -> span.Tracer.name) (Tracer.dump tracer))
+
+let test_observability_auto_instrument_leaves_nest_under_named () =
+  with_auto_traced_runtime true @@ fun rt tracer ->
+  let leaf name = Effect.sync name (fun () -> ()) in
+  run_ok rt (Effect.named "outer" (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]));
+  let spans = Tracer.dump tracer in
+  let outer = List.find (fun span -> span.Tracer.name = "outer") spans in
+  let children = List.filter (fun span -> span.Tracer.name <> "outer") spans in
+  List.iter
+    (fun span ->
+      Alcotest.(check (option int)) span.Tracer.name (Some outer.span_id)
+        span.parent_id)
+    children
+
+let test_observability_auto_instrument_failure_status () =
+  with_auto_traced_runtime true @@ fun rt tracer ->
+  ignore (Runtime.run rt (Effect.sync "boom" (fun () -> failwith "boom")) :
+            (unit, _) Exit.t);
+  let span = only_span tracer in
+  check_status "leaf failed" (Tracer.Error "") span.status
 
 let test_observability_all_for_each_detach_inherit_parent () =
   with_traced_runtime @@ fun rt tracer ->
@@ -675,6 +805,28 @@ let test_effect_detach_child_failure_is_not_parent_failure () =
   Runtime.drain rt;
   Alcotest.(check bool) "parent completed" true !parent_done
 
+let test_effect_detach_daemon_stops_with_runtime_switch () =
+  let child_cancelled = ref false in
+  let stopped = Failure "stop runtime" in
+  (try
+     Eio_main.run @@ fun stdenv ->
+     Eio.Switch.run @@ fun sw ->
+     let rt =
+       Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+     in
+     let child =
+       Effect.sync "detached.await_cancel" (fun () ->
+           try Eio.Fiber.await_cancel ()
+           with Eio.Cancel.Cancelled _ ->
+             child_cancelled := true;
+             raise (Eio.Cancel.Cancelled (Failure "cancelled")))
+     in
+     run_ok rt (Effect.detach child);
+     yield ();
+     Eio.Switch.fail sw stopped
+   with exn when exn == stopped -> ());
+  Alcotest.(check bool) "detached child cancelled" true !child_cancelled
+
 let test_effect_uninterruptible_defers_race_cancellation () =
   with_test_clock @@ fun sw clock rt ->
   let slow_completed = ref false in
@@ -807,6 +959,61 @@ let test_resource_failed_refresh_keeps_cached_value () =
   in
   Alcotest.(check int) "cached value survived failed refresh" 0 (run_ok rt eff)
 
+let test_resource_auto_refreshes_on_schedule () =
+  with_test_clock @@ fun _sw clock rt ->
+  let source = ref 0 in
+  let load =
+    Effect.sync "resource.auto.load" (fun () ->
+        incr source;
+        !source)
+  in
+  let resource =
+    run_ok rt (Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5)) ())
+  in
+  Alcotest.(check int) "initial value" 1 (run_ok rt (Resource.get resource));
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "first refresh" 2 (run_ok rt (Resource.get resource));
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "second refresh" 3 (run_ok rt (Resource.get resource))
+
+let test_resource_auto_failed_refresh_keeps_cached_value () =
+  with_test_clock @@ fun _sw clock rt ->
+  let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
+  let load =
+    Effect.sync "resource.auto.load" (fun () ->
+        match !results with
+        | [] -> Ok 999
+        | result :: rest ->
+            results := rest;
+            result)
+    |> Effect.bind (function
+         | Ok value -> Effect.pure value
+         | Error message -> Effect.fail (`Refresh_failed message))
+  in
+  let errors = ref [] in
+  let resource =
+    run_ok rt
+      (Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5))
+         ~on_error:(fun err -> errors := err :: !errors) ())
+  in
+  Alcotest.(check int) "initial value" 1 (run_ok rt (Resource.get resource));
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "failed refresh keeps old value" 1
+    (run_ok rt (Resource.get resource));
+  Alcotest.(check (list string)) "observed refresh error" [ "boom" ]
+    (List.map (fun (`Refresh_failed message) -> message) (List.rev !errors));
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "subsequent refresh updates" 2
+    (run_ok rt (Resource.get resource))
+
 (* Auto-DI regression: A defined without naming services or threading.
    The env-row property is the whole reason for the 'env channel.
    See journal V-R10 and scratch/r_research/r_b_env_row.ml. *)
@@ -907,6 +1114,38 @@ let test_all_fail_fast () =
   in
   Alcotest.check string_cause "all cause" (Cause.Fail "boom") cause
 
+let test_all_settled_collects_successes_and_failures () =
+  with_runtime @@ fun rt ->
+  let result =
+    run_ok rt
+      (Effect.all_settled
+         [ Effect.pure 1; Effect.fail `Boom; Effect.pure 3 ])
+  in
+  match result with
+  | [ Ok 1; Error (Cause.Fail `Boom); Ok 3 ] -> ()
+  | _ -> Alcotest.fail "unexpected all_settled result"
+
+let test_all_settled_runs_all_children () =
+  with_test_clock @@ fun sw clock rt ->
+  let slow_done = ref 0 in
+  let slow name =
+    Effect.sync name (fun () -> incr slow_done)
+    |> Effect.delay (Duration.ms 50)
+  in
+  let promise =
+    fork_run sw rt (Effect.all_settled [ Effect.fail `Boom; slow "a"; slow "b" ])
+  in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 50);
+  ignore
+    (Eio.Promise.await promise :
+      ((unit, [> `Boom ] Cause.t) result list, _) Exit.t);
+  Alcotest.(check int) "slow children completed" 2 !slow_done
+
+let test_all_settled_empty () =
+  with_runtime @@ fun rt ->
+  Alcotest.(check int) "empty" 0 (List.length (run_ok rt (Effect.all_settled [])))
+
 let test_for_each_par_success () =
   with_runtime @@ fun rt ->
   let result =
@@ -928,6 +1167,66 @@ let test_for_each_par_one_fails () =
   in
   Alcotest.check string_cause "for_each_par cause" (Cause.Fail "bad") cause
 
+let test_for_each_par_bounded_caps_concurrency () =
+  with_test_clock @@ fun sw clock rt ->
+  let active = ref 0 in
+  let max_seen = ref 0 in
+  let worker x =
+    Effect.sync "enter" (fun () ->
+        incr active;
+        max_seen := max !max_seen !active)
+    |> Effect.bind (fun () ->
+           Effect.pure x
+           |> Effect.delay (Duration.ms 10)
+           |> Effect.tap (fun _ ->
+                  Effect.sync "leave" (fun () -> decr active)))
+  in
+  let promise =
+    fork_run sw rt (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3; 4; 5 ] worker)
+  in
+  for _ = 1 to 3 do
+    wait_for_sleepers clock 1;
+    Test_clock.adjust clock (Duration.ms 10);
+    yield ()
+  done;
+  check_exit_ok (Alcotest.list Alcotest.int) "results" [ 1; 2; 3; 4; 5 ]
+    (Eio.Promise.await promise);
+  Alcotest.(check int) "max concurrency" 2 !max_seen
+
+let test_for_each_par_bounded_max_one_is_sequential () =
+  with_runtime @@ fun rt ->
+  let active = ref 0 in
+  let max_seen = ref 0 in
+  let worker x =
+    Effect.sync "worker" (fun () ->
+        incr active;
+        max_seen := max !max_seen !active;
+        decr active;
+        x)
+  in
+  Alcotest.(check (list int)) "results" [ 1; 2; 3 ]
+    (run_ok rt (Effect.for_each_par_bounded ~max:1 [ 1; 2; 3 ] worker));
+  Alcotest.(check int) "max concurrency" 1 !max_seen
+
+let test_for_each_par_bounded_fail_fast () =
+  with_test_clock @@ fun sw clock rt ->
+  let slow_done = ref false in
+  let worker = function
+    | 1 -> Effect.fail "boom"
+    | _ ->
+        Effect.sync "slow" (fun () -> slow_done := true)
+        |> Effect.delay (Duration.ms 10)
+  in
+  let promise =
+    fork_run sw rt (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3 ] worker)
+  in
+  yield ();
+  check_exit_error string_cause "cause" (Cause.Fail "boom")
+    (Eio.Promise.await promise);
+  Test_clock.adjust clock (Duration.ms 10);
+  yield ();
+  Alcotest.(check bool) "slow cancelled" false !slow_done
+
 let () =
   Alcotest.run "effet"
     [
@@ -944,10 +1243,21 @@ let () =
           Alcotest.test_case "all collects in input order" `Quick
             test_all_collects_in_input_order;
           Alcotest.test_case "all fail-fast" `Quick test_all_fail_fast;
+          Alcotest.test_case "all_settled collects outcomes" `Quick
+            test_all_settled_collects_successes_and_failures;
+          Alcotest.test_case "all_settled runs all children" `Quick
+            test_all_settled_runs_all_children;
+          Alcotest.test_case "all_settled empty" `Quick test_all_settled_empty;
           Alcotest.test_case "for_each_par success" `Quick
             test_for_each_par_success;
           Alcotest.test_case "for_each_par one fails" `Quick
             test_for_each_par_one_fails;
+          Alcotest.test_case "for_each_par_bounded caps concurrency" `Quick
+            test_for_each_par_bounded_caps_concurrency;
+          Alcotest.test_case "for_each_par_bounded max one is sequential" `Quick
+            test_for_each_par_bounded_max_one_is_sequential;
+          Alcotest.test_case "for_each_par_bounded fail-fast" `Quick
+            test_for_each_par_bounded_fail_fast;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
@@ -983,6 +1293,8 @@ let () =
             test_effect_detach_does_not_block_parent;
           Alcotest.test_case "detach child failure is not parent failure" `Quick
             test_effect_detach_child_failure_is_not_parent_failure;
+          Alcotest.test_case "detach daemon stops with runtime switch" `Quick
+            test_effect_detach_daemon_stops_with_runtime_switch;
           Alcotest.test_case "uninterruptible defers race cancellation" `Quick
             test_effect_uninterruptible_defers_race_cancellation;
         ] );
@@ -1022,6 +1334,10 @@ let () =
           Alcotest.test_case "manual refresh" `Quick test_resource_manual_refresh;
           Alcotest.test_case "failed refresh keeps cached value" `Quick
             test_resource_failed_refresh_keeps_cached_value;
+          Alcotest.test_case "auto refreshes on schedule" `Quick
+            test_resource_auto_refreshes_on_schedule;
+          Alcotest.test_case "auto failed refresh keeps cached value" `Quick
+            test_resource_auto_failed_refresh_keeps_cached_value;
         ] );
       ( "Observability",
         [
@@ -1029,6 +1345,7 @@ let () =
             test_tracer_manual_spans;
           Alcotest.test_case "named span status ok" `Quick
             test_observability_named_ok;
+          Alcotest.test_case "span kind" `Quick test_observability_span_kind;
           Alcotest.test_case "fn records location" `Quick test_observability_fn_loc;
           Alcotest.test_case "annotation order" `Quick
             test_observability_annotation_order;
@@ -1041,6 +1358,24 @@ let () =
             test_observability_uninterruptible_parallel_child_status;
           Alcotest.test_case "par children inherit parent" `Quick
             test_observability_par_children_inherit_parent;
+          Alcotest.test_case "par pending attrs links are fiber-local" `Quick
+            test_observability_par_pending_attrs_links_are_fiber_local;
+          Alcotest.test_case "sampler always off" `Quick
+            test_observability_sampler_always_off;
+          Alcotest.test_case "sampler ratio" `Quick
+            test_observability_sampler_ratio;
+          Alcotest.test_case "sampler parent based" `Quick
+            test_observability_sampler_parent_based;
+          Alcotest.test_case "sampler suppresses par children" `Quick
+            test_observability_sampler_unsampled_parent_suppresses_par_children;
+          Alcotest.test_case "auto instrument default off" `Quick
+            test_observability_auto_instrument_default_off;
+          Alcotest.test_case "auto instrument sync leaves" `Quick
+            test_observability_auto_instrument_sync_leaves;
+          Alcotest.test_case "auto instrument leaves nest" `Quick
+            test_observability_auto_instrument_leaves_nest_under_named;
+          Alcotest.test_case "auto instrument failure status" `Quick
+            test_observability_auto_instrument_failure_status;
           Alcotest.test_case "all for_each_par detach inherit parent" `Quick
             test_observability_all_for_each_detach_inherit_parent;
         ] );

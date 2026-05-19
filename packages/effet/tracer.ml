@@ -1,4 +1,5 @@
 type status = Capabilities.span_status = Ok | Error of string | Cancelled
+type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 
 type event = {
   ev_name : string;
@@ -19,6 +20,7 @@ type span = {
   attrs : (string * string) list;
   events : event list;
   links : link list;
+  kind : kind;
   status : status;
   started_ms : int;
   ended_ms : int;
@@ -35,43 +37,78 @@ type open_span = {
   mutable attrs : (string * string) list;
   mutable events : event list;
   mutable links : link list;
+  kind : kind;
   started_ms : int;
 }
 
-type in_memory = {
-  mutable next_id : int;
+type fiber_state = {
   mutable stack : open_span list;
-  mutable spans : span list;
   mutable pending_attrs : (string * string) list;
   mutable pending_links : link list;
 }
 
+type in_memory = {
+  context_id : int;
+  mutable next_id : int;
+  mutable spans : span list;
+  fallback : fiber_state;
+}
+
+let fiber_context_key : (int, fiber_state) Hashtbl.t Eio.Fiber.key =
+  Eio.Fiber.create_key ()
+
+let next_context_id = ref 0
+
+let fresh_context_id () =
+  incr next_context_id;
+  !next_context_id
+
+let empty_state () = { stack = []; pending_attrs = []; pending_links = [] }
+
+let with_fiber_context f =
+  Eio.Fiber.with_binding fiber_context_key (Hashtbl.create 1) f
+
+let fiber_context () =
+  try Eio.Fiber.get fiber_context_key with Stdlib.Effect.Unhandled _ -> None
+
+let state t =
+  match fiber_context () with
+  | None -> t.fallback
+  | Some context -> (
+      match Hashtbl.find_opt context t.context_id with
+      | Some state -> state
+      | None ->
+          let state = empty_state () in
+          Hashtbl.add context t.context_id state;
+          state)
+
 let in_memory () =
   {
+    context_id = fresh_context_id ();
     next_id = 0;
-    stack = [];
     spans = [];
-    pending_attrs = [];
-    pending_links = [];
+    fallback = empty_state ();
   }
 
-let begin_span t ?parent_id ?external_parent ~name ~started_ms () =
+let begin_span t ?parent_id ?external_parent ?(kind = Internal) ~name
+    ~started_ms () =
+  let state = state t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
   let parent_id =
     match parent_id with
     | Some _ as parent -> parent
     | None -> (
-        match t.stack with
+        match state.stack with
         | span :: _ -> Some span.span_id
         | [] -> None)
   in
   let trace_id = "" in
-  let attrs = List.rev t.pending_attrs in
-  let links = List.rev t.pending_links in
-  t.pending_attrs <- [];
-  t.pending_links <- [];
-  t.stack <-
+  let attrs = List.rev state.pending_attrs in
+  let links = List.rev state.pending_links in
+  state.pending_attrs <- [];
+  state.pending_links <- [];
+  state.stack <-
     {
       span_id;
       parent_id;
@@ -81,28 +118,31 @@ let begin_span t ?parent_id ?external_parent ~name ~started_ms () =
       attrs;
       events = [];
       links;
+      kind;
       started_ms;
     }
-    :: t.stack;
+    :: state.stack;
   span_id
 
 let find_open t span_id =
+  let state = state t in
   let rec aux = function
     | [] -> None
     | s :: _ when s.span_id = span_id -> Some s
     | _ :: rest -> aux rest
   in
-  aux t.stack
+  aux state.stack
 
 let end_span t ~span_id ~status ~ended_ms =
+  let state = state t in
   let rec remove acc = function
     | [] -> None
     | span :: rest when span.span_id = span_id ->
-        t.stack <- List.rev_append acc rest;
+        state.stack <- List.rev_append acc rest;
         Some span
     | span :: rest -> remove (span :: acc) rest
   in
-  match remove [] t.stack with
+  match remove [] state.stack with
   | None -> ()
   | Some span ->
       t.spans <-
@@ -115,6 +155,7 @@ let end_span t ~span_id ~status ~ended_ms =
           attrs = List.rev span.attrs;
           events = List.rev span.events;
           links = List.rev span.links;
+          kind = span.kind;
           status;
           started_ms = span.started_ms;
           ended_ms;
@@ -122,9 +163,10 @@ let end_span t ~span_id ~status ~ended_ms =
         :: t.spans
 
 let add_attr t ~key ~value =
-  match t.stack with
+  let state = state t in
+  match state.stack with
   | span :: _ -> span.attrs <- (key, value) :: span.attrs
-  | [] -> t.pending_attrs <- (key, value) :: t.pending_attrs
+  | [] -> state.pending_attrs <- (key, value) :: state.pending_attrs
 
 let add_event t ~span_id ~name ~ts_ms ~attrs =
   match find_open t span_id with
@@ -133,9 +175,10 @@ let add_event t ~span_id ~name ~ts_ms ~attrs =
   | None -> ()
 
 let add_link t link =
-  match t.stack with
+  let state = state t in
+  match state.stack with
   | s :: _ -> s.links <- link :: s.links
-  | [] -> t.pending_links <- link :: t.pending_links
+  | [] -> state.pending_links <- link :: state.pending_links
 
 let inspect t ~span_id : Capabilities.span_info option =
   match find_open t span_id with
@@ -150,8 +193,8 @@ let inspect t ~span_id : Capabilities.span_info option =
 
 let as_capability t : Capabilities.tracer =
   object
-    method begin_span ?parent_id ?external_parent ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ~name ~started_ms ()
+    method begin_span ?parent_id ?external_parent ?kind ~name ~started_ms () =
+      begin_span t ?parent_id ?external_parent ?kind ~name ~started_ms ()
 
     method end_span ~span_id ~status ~ended_ms =
       end_span t ~span_id ~status ~ended_ms
@@ -168,7 +211,9 @@ let as_capability t : Capabilities.tracer =
 
 let noop : Capabilities.tracer =
   object
-    method begin_span ?parent_id:_ ?external_parent:_ ~name:_ ~started_ms:_ () = -1
+    method begin_span ?parent_id:_ ?external_parent:_ ?kind:_ ~name:_
+        ~started_ms:_ () =
+      -1
     method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
     method add_attr ~key:_ ~value:_ = ()
     method add_event ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()

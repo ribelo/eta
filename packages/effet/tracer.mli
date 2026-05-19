@@ -1,4 +1,5 @@
 type status = Capabilities.span_status = Ok | Error of string | Cancelled
+type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 
 type event = {
   ev_name : string;
@@ -19,6 +20,7 @@ type span = {
   attrs : (string * string) list;
   events : event list;
   links : link list;
+  kind : kind;
   status : status;
   started_ms : int;
   ended_ms : int;
@@ -29,6 +31,7 @@ type span = {
 type in_memory
 
 val in_memory : unit -> in_memory
+val with_fiber_context : (unit -> 'a) -> 'a
 val noop : Capabilities.tracer
 val as_capability : in_memory -> Capabilities.tracer
 val dump : in_memory -> span list

@@ -1,0 +1,5 @@
+(library
+ (name ppx_effet)
+ (public_name ppx_effet)
+ (kind ppx_rewriter)
+ (libraries ppxlib))

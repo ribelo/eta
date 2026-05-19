@@ -20,8 +20,14 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('env, 'err, 'b) t
       -> ('env, 'err, 'a * 'b) t
   | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+  | All_settled :
+      ('env, 'err, 'a) t list
+      -> ('env, _, ('a, 'err Cause.t) result list) t
   | For_each_par :
       'x list * ('x -> ('env, 'err, 'a) t)
+      -> ('env, 'err, 'a list) t
+  | For_each_par_bounded :
+      int * 'x list * ('x -> ('env, 'err, 'a) t)
       -> ('env, 'err, 'a list) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
   | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
@@ -33,7 +39,9 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
       -> ('env, 'err, 'a) t
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Named :
+      Capabilities.span_kind * string * ('env, 'err, 'a) t
+      -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Link_span :
       Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
@@ -70,7 +78,11 @@ let concat es = Concat es
 let race es = Race es
 let par a b = Par (a, b)
 let all xs = All xs
+let all_settled xs = All_settled xs
 let for_each_par xs f = For_each_par (xs, f)
+let for_each_par_bounded ~max xs f =
+  if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
+  For_each_par_bounded (max, xs, f)
 let detach e = Detach e
 let uninterruptible e = Uninterruptible e
 
@@ -85,7 +97,8 @@ let repeat sch e = Repeat (e, sch)
 let acquire_release ~acquire ~release = Acquire_release (acquire, release)
 let scoped e = Scoped e
 
-let named name e = Named (name, e)
+let named_kind ~kind name e = Named (kind, name, e)
+let named name e = named_kind ~kind:Capabilities.Internal name e
 let annotate ~key ~value e = Annotate (key, value, e)
 let link_span ?(attrs = []) ~trace_id ~span_id e =
   Link_span
@@ -113,11 +126,12 @@ let here_attr (file, line, col_start, col_end) e =
       Printf.sprintf "%s:%d:%d-%d" file line col_start col_end,
       e )
 
-let fn pos name e = e |> here_attr pos |> named name
+let fn ?(kind = Capabilities.Internal) pos name e =
+  e |> here_attr pos |> named_kind ~kind name
 let provide env_in e = Provide (env_in, e)
 
 let rec name : type env err a. (env, err, a) t -> string option = function
-  | Named (n, _) -> Some n
+  | Named (_, n, _) -> Some n
   | Annotate (_, _, e) -> name e
   | _ -> None
 
@@ -129,7 +143,7 @@ let collect_names e =
     | Fail _ -> acc
     | Sync (n, _) -> n :: acc
     | Async (n, _) -> n :: acc
-    | Named (n, e) -> walk (n :: acc) e
+    | Named (_, n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
     | Link_span (_, e) -> walk acc e
     | With_external_parent (_, _, e) -> walk acc e
@@ -150,7 +164,9 @@ let collect_names e =
     | Race xs -> List.fold_left walk acc xs
     | Par (a, b) -> walk (walk acc a) b
     | All xs -> List.fold_left walk acc xs
+    | All_settled xs -> List.fold_left walk acc xs
     | For_each_par _ -> acc
+    | For_each_par_bounded _ -> acc
     | Detach e -> walk acc e
     | Uninterruptible e -> walk acc e
     | Provide (_, e) -> walk acc e
