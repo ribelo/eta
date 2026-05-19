@@ -33,6 +33,13 @@ type ('env, 'err, 'a) t =
       Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
   | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
   | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
+  | Par :
+      ('env, 'err, 'a) t * ('env, 'err, 'b) t
+      -> ('env, 'err, 'a * 'b) t
+  | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+  | For_each_par :
+      'x list * ('x -> ('env, 'err, 'a) t)
+      -> ('env, 'err, 'a list) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
   | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
@@ -45,6 +52,8 @@ type ('env, 'err, 'a) t =
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Provide :
+      'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
 val pure : 'a -> ('env, 'err, 'a) t
 val fail : 'err -> ('env, 'err, 'a) t
@@ -67,6 +76,22 @@ val concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
 
 val race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
 (** First child to produce a value wins; the rest are cancelled. *)
+
+val par :
+  ('env, 'err, 'a) t -> ('env, 'err, 'b) t -> ('env, 'err, 'a * 'b) t
+(** Run two effects concurrently; collect both successes as a pair.
+    Fail-fast: the first child failure cancels the sibling and the
+    cause propagates upward. *)
+
+val all : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+(** Run effects concurrently, collecting results in input order.
+    Fail-fast: the first child failure cancels the others; the cause
+    of the first observed failure propagates. *)
+
+val for_each_par :
+  'x list -> ('x -> ('env, 'err, 'a) t) -> ('env, 'err, 'a list) t
+(** Map over [xs] concurrently with [f]; collect results in input
+    order. Fail-fast like {!all}. *)
 
 val detach : ('env, _, unit) t -> ('env, 'err, unit) t
 (** Start a unit effect detached from the current effect and return
@@ -100,6 +125,14 @@ val acquire_release :
   ('env, 'err, 'a) t
 
 val scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+
+val provide : 'env_in -> ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
+(** Run [e] under a fully-replaced environment.
+
+    The outer env is unconstrained: nothing of it reaches [e]. Useful
+    for test isolation, sub-system sandboxing, and any case where a
+    sub-effect should observe a different capability bundle than the
+    rest of the program. *)
 
 val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 val annotate :

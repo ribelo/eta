@@ -58,8 +58,8 @@ let run_finalizers finalizers =
   | fs -> Eio.Fiber.all (List.map (fun f () -> f ()) fs)
 
 let rec interpret :
-    type env err a.
-    runtime:(env, _) t ->
+    type re env err a.
+    runtime:(re, _) t ->
     fail_key:Typed_fail.key ->
     sw:Eio.Switch.t ->
     finalizers:(unit -> unit) list ref ->
@@ -113,6 +113,36 @@ let rec interpret :
           ())
         children
   | E.Race children -> race_first ~runtime ~fail_key ~finalizers children env
+  | E.Par (a, b) ->
+      let tasks : (env -> Obj.t) list =
+        [
+          (fun env ->
+            Obj.repr
+              (interpret ~runtime ~fail_key ~sw ~finalizers a env));
+          (fun env ->
+            Obj.repr
+              (interpret ~runtime ~fail_key ~sw ~finalizers b env));
+        ]
+      in
+      (match
+         par_collect ~runtime ~fail_key ~finalizers tasks env
+       with
+       | [ va; vb ] -> (Obj.obj va, Obj.obj vb)
+       | _ -> assert false)
+  | E.All children ->
+      par_collect ~runtime ~fail_key ~finalizers
+        (List.map
+           (fun child env ->
+             interpret ~runtime ~fail_key ~sw ~finalizers child env)
+           children)
+        env
+  | E.For_each_par (xs, f) ->
+      par_collect ~runtime ~fail_key ~finalizers
+        (List.map
+           (fun x env ->
+             interpret ~runtime ~fail_key ~sw ~finalizers (f x) env)
+           xs)
+        env
   | E.Detach e -> detach_effect ~runtime e env
   | E.Uninterruptible e ->
       Eio.Cancel.protect (fun () ->
@@ -140,10 +170,43 @@ let rec interpret :
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
   | E.Named (_, e) -> interpret ~runtime ~fail_key ~sw ~finalizers e env
   | E.Annotate (_, _, e) -> interpret ~runtime ~fail_key ~sw ~finalizers e env
+  | E.Provide (env_in, e) ->
+      interpret ~runtime ~fail_key ~sw ~finalizers e env_in
+
+and par_collect :
+    type re env err a.
+    runtime:(re, _) t ->
+    fail_key:Typed_fail.key ->
+    finalizers:(unit -> unit) list ref ->
+    (env -> a) list ->
+    env ->
+    a list =
+ fun ~runtime:_ ~fail_key ~finalizers:_ tasks env ->
+  let n = List.length tasks in
+  let results : a option array = Array.make n None in
+  let first_cause : err Cause.t option ref = ref None in
+  let exception Stop in
+  (try
+     Eio.Switch.run @@ fun par_sw ->
+     List.iteri
+       (fun i task ->
+         Eio.Fiber.fork ~sw:par_sw (fun () ->
+             try results.(i) <- Some (task env)
+             with exn ->
+               let cause = cause_of_exn fail_key exn in
+               (match !first_cause with
+                | Some _ -> ()
+                | None -> first_cause := Some cause);
+               (try Eio.Switch.fail par_sw Stop with _ -> ())))
+       tasks
+   with Stop -> ());
+  match !first_cause with
+  | Some c -> raise_cause fail_key c
+  | None -> Array.to_list results |> List.map Option.get
 
 and race_first :
-    type env err a.
-    runtime:(env, _) t ->
+    type re env err a.
+    runtime:(re, _) t ->
     fail_key:Typed_fail.key ->
     finalizers:(unit -> unit) list ref ->
     (env, err, a) E.t list ->
@@ -193,8 +256,8 @@ and race_first :
        with Race_won -> Obj.obj (Option.get !winner))
 
 and detach_effect :
-    type env err.
-    runtime:(env, _) t -> (env, err, unit) E.t -> env -> unit =
+    type re env err.
+    runtime:(re, _) t -> (env, err, unit) E.t -> env -> unit =
  fun ~runtime eff env ->
   Atomic.incr runtime.active;
   Eio.Fiber.fork_daemon ~sw:runtime.outer_sw (fun () ->
@@ -207,8 +270,8 @@ and detach_effect :
       `Stop_daemon)
 
 and repeat_eff :
-    type env err.
-    runtime:(env, _) t ->
+    type re env err.
+    runtime:(re, _) t ->
     fail_key:Typed_fail.key ->
     sw:Eio.Switch.t ->
     finalizers:(unit -> unit) list ref ->
@@ -230,8 +293,8 @@ and repeat_eff :
   done
 
 and retry_eff :
-    type env err a.
-    runtime:(env, _) t ->
+    type re env err a.
+    runtime:(re, _) t ->
     fail_key:Typed_fail.key ->
     sw:Eio.Switch.t ->
     finalizers:(unit -> unit) list ref ->

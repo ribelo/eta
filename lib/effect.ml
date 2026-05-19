@@ -16,6 +16,13 @@ type ('env, 'err, 'a) t =
       Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
   | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
   | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
+  | Par :
+      ('env, 'err, 'a) t * ('env, 'err, 'b) t
+      -> ('env, 'err, 'a * 'b) t
+  | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+  | For_each_par :
+      'x list * ('x -> ('env, 'err, 'a) t)
+      -> ('env, 'err, 'a list) t
   | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
   | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
@@ -28,6 +35,8 @@ type ('env, 'err, 'a) t =
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Provide :
+      'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
 let pure v = Pure v
 let fail e = Fail e
@@ -42,6 +51,9 @@ let tap k e = Bind (e, fun a -> Map (k a, fun () -> a))
 let seq next self = Concat [ self; next ]
 let concat es = Concat es
 let race es = Race es
+let par a b = Par (a, b)
+let all xs = All xs
+let for_each_par xs f = For_each_par (xs, f)
 let detach e = Detach e
 let uninterruptible e = Uninterruptible e
 
@@ -58,6 +70,7 @@ let scoped e = Scoped e
 
 let named name e = Named (name, e)
 let annotate ~key ~value e = Annotate (key, value, e)
+let provide env_in e = Provide (env_in, e)
 
 let rec name : type env err a. (env, err, a) t -> string option = function
   | Named (n, _) -> Some n
@@ -86,7 +99,11 @@ let collect_names e =
     | Catch (e, _) -> walk acc e
     | Concat xs -> List.fold_left walk acc xs
     | Race xs -> List.fold_left walk acc xs
+    | Par (a, b) -> walk (walk acc a) b
+    | All xs -> List.fold_left walk acc xs
+    | For_each_par _ -> acc
     | Detach e -> walk acc e
     | Uninterruptible e -> walk acc e
+    | Provide (_, e) -> walk acc e
   in
   List.rev (walk [] e)

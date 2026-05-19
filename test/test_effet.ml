@@ -604,6 +604,127 @@ let test_resource_failed_refresh_keeps_cached_value () =
   in
   Alcotest.(check int) "cached value survived failed refresh" 0 (run_ok rt eff)
 
+(* Auto-DI regression: A defined without naming services or threading.
+   The env-row property is the whole reason for the 'env channel.
+   See journal V-R10 and scratch/r_research/r_b_env_row.ml. *)
+let test_env_row_auto_di () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let log_calls = ref [] in
+  let env =
+    object
+      method db = object method query s = "row:" ^ s end
+      method log =
+        object method info m = log_calls := m :: !log_calls end
+    end
+  in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+  in
+  let b msg = Effect.sync "log" (fun env -> env#log#info msg) in
+  let c id = Effect.sync "db" (fun env -> env#db#query id) in
+  (* A composes B and C without naming services or threading. *)
+  let a id =
+    let open Effect in
+    bind (fun () -> c id) (b ("fetching " ^ id))
+  in
+  match Runtime.run rt (a "42") with
+  | Exit.Error _ -> Alcotest.fail "expected Ok"
+  | Exit.Ok value ->
+      Alcotest.(check string) "db result" "row:42" value;
+      Alcotest.(check (list string))
+        "log calls" [ "fetching 42" ] (List.rev !log_calls)
+
+(* Effect.provide swaps env for the wrapped sub-effect only. *)
+let test_provide_swaps_env () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let calls = ref [] in
+  let env_with_tag tag =
+    object method log msg = calls := (tag, msg) :: !calls end
+  in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~env:(env_with_tag "outer") ()
+  in
+  let log_msg msg = Effect.sync "log" (fun env -> env#log msg) in
+  let eff =
+    let open Effect in
+    log_msg "a"
+    |> seq (provide (env_with_tag "inner") (log_msg "b"))
+    |> seq (log_msg "c")
+  in
+  (match Runtime.run rt eff with
+   | Exit.Ok () -> ()
+   | Exit.Error _ -> Alcotest.fail "expected Ok");
+  Alcotest.(check (list (pair string string)))
+    "provide swapped env mid-tree"
+    [ ("outer", "a"); ("inner", "b"); ("outer", "c") ]
+    (List.rev !calls)
+
+(* V-F1 (F-A): par / all / for_each_par. Fail-fast semantics. *)
+let test_par_returns_both_successes () =
+  with_runtime @@ fun rt ->
+  let result = run_ok rt (Effect.par (Effect.pure 1) (Effect.pure 2)) in
+  Alcotest.(check (pair int int)) "par returns pair" (1, 2) result
+
+let test_par_fail_fast_cancels_sibling () =
+  with_runtime @@ fun rt ->
+  let other_done = ref false in
+  let slow_other =
+    Effect.sync "slow" (fun _ ->
+        Eio.Fiber.yield ();
+        other_done := true;
+        99)
+  in
+  let cause =
+    match Runtime.run rt (Effect.par (Effect.fail "boom") slow_other) with
+    | Exit.Ok _ -> Alcotest.fail "expected Error"
+    | Exit.Error c -> c
+  in
+  Alcotest.check string_cause "par cause" (Cause.Fail "boom") cause;
+  Alcotest.(check bool) "sibling cancelled before completion" false !other_done
+
+let test_all_collects_in_input_order () =
+  with_runtime @@ fun rt ->
+  let result =
+    run_ok rt (Effect.all [ Effect.pure 1; Effect.pure 2; Effect.pure 3 ])
+  in
+  Alcotest.(check (list int)) "all order" [ 1; 2; 3 ] result
+
+let test_all_fail_fast () =
+  with_runtime @@ fun rt ->
+  let cause =
+    match
+      Runtime.run rt
+        (Effect.all [ Effect.pure 1; Effect.fail "boom"; Effect.pure 3 ])
+    with
+    | Exit.Ok _ -> Alcotest.fail "expected Error"
+    | Exit.Error c -> c
+  in
+  Alcotest.check string_cause "all cause" (Cause.Fail "boom") cause
+
+let test_for_each_par_success () =
+  with_runtime @@ fun rt ->
+  let result =
+    run_ok rt
+      (Effect.for_each_par [ 10; 20; 30 ] (fun x -> Effect.pure (x + 1)))
+  in
+  Alcotest.(check (list int)) "for_each_par results" [ 11; 21; 31 ] result
+
+let test_for_each_par_one_fails () =
+  with_runtime @@ fun rt ->
+  let cause =
+    match
+      Runtime.run rt
+        (Effect.for_each_par [ 1; 2; 3 ] (fun x ->
+             if x = 2 then Effect.fail "bad" else Effect.pure x))
+    with
+    | Exit.Ok _ -> Alcotest.fail "expected Error"
+    | Exit.Error c -> c
+  in
+  Alcotest.check string_cause "for_each_par cause" (Cause.Fail "bad") cause
+
 let () =
   Alcotest.run "effet"
     [
@@ -611,6 +732,19 @@ let () =
         [
           Alcotest.test_case "Pure" `Quick test_pure;
           Alcotest.test_case "Map" `Quick test_map;
+          Alcotest.test_case "env row auto DI" `Quick test_env_row_auto_di;
+          Alcotest.test_case "provide swaps env" `Quick test_provide_swaps_env;
+          Alcotest.test_case "par returns pair" `Quick
+            test_par_returns_both_successes;
+          Alcotest.test_case "par fail-fast cancels sibling" `Quick
+            test_par_fail_fast_cancels_sibling;
+          Alcotest.test_case "all collects in input order" `Quick
+            test_all_collects_in_input_order;
+          Alcotest.test_case "all fail-fast" `Quick test_all_fail_fast;
+          Alcotest.test_case "for_each_par success" `Quick
+            test_for_each_par_success;
+          Alcotest.test_case "for_each_par one fails" `Quick
+            test_for_each_par_one_fails;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
