@@ -29,7 +29,7 @@ type ('env, 'err, 'a) t =
   | For_each_par_bounded :
       int * 'x list * ('x -> ('env, 'err, 'a) t)
       -> ('env, 'err, 'a list) t
-  | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
+  | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
   | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
   | Retry :
@@ -127,7 +127,6 @@ let for_each_par xs f = For_each_par (xs, f)
 let for_each_par_bounded ~max xs f =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
   For_each_par_bounded (max, xs, f)
-let detach e = Detach e
 let uninterruptible e = Uninterruptible e
 
 let catch h e = Catch (e, h)
@@ -225,13 +224,123 @@ let collect_names e =
     | All_settled xs -> List.fold_left walk acc xs
     | For_each_par _ -> acc
     | For_each_par_bounded _ -> acc
-    | Detach e -> walk acc e
+    | Daemon e -> walk acc e
     | Uninterruptible e -> walk acc e
     | Provide (_, e) -> walk acc e
   in
   List.rev (walk [] e)
 
+let daemon_internal eff = Daemon eff
+
 module Private = struct
+  type ('env, 'err, 'a) view =
+    | Pure : 'a -> (_, _, 'a) view
+    | Fail : 'err -> (_, 'err, _) view
+    | Sync : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Async : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Bind :
+        ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a) view
+    | Map : ('env, 'err, 'b) t * ('b -> 'a) -> ('env, 'err, 'a) view
+    | Catch :
+        ('env, 'err1, 'a) t * ('err1 -> ('env, 'err2, 'a) t)
+        -> ('env, 'err2, 'a) view
+    | Tap_error : ('env, 'err, 'a) t * ('err -> unit) -> ('env, 'err, 'a) view
+    | Delay : Duration.t * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Timeout :
+        Duration.t * ('env, 'err, 'a) t
+        -> ('env, [> `Timeout ] as 'err, 'a) view
+    | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) view
+    | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) view
+    | Par :
+        ('env, 'err, 'a) t * ('env, 'err, 'b) t
+        -> ('env, 'err, 'a * 'b) view
+    | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) view
+    | All_settled :
+        ('env, 'err, 'a) t list
+        -> ('env, _, ('a, 'err Cause.t) result list) view
+    | For_each_par :
+        'x list * ('x -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a list) view
+    | For_each_par_bounded :
+        int * 'x list * ('x -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a list) view
+    | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) view
+    | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) view
+    | Retry :
+        ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
+        -> ('env, 'err, 'a) view
+    | Acquire_release :
+        ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
+        -> ('env, 'err, 'a) view
+    | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Supervisor_scoped :
+        int option * ('env, 'err, 'a) supervisor_body
+        -> ('env, 'err, 'a) view
+    | Named :
+        Capabilities.span_kind * string * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
+    | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Link_span :
+        Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | With_external_parent :
+        string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Current_span : ('env, 'err, Capabilities.span_info option) view
+    | Log :
+        Capabilities.log_level * string * (string * string) list
+        -> ('env, 'err, unit) view
+    | Metric_update : {
+        name : string;
+        description : string;
+        unit_ : string;
+        kind : Capabilities.metric_kind;
+        attrs : (string * string) list;
+        value : Capabilities.metric_value;
+      }
+        -> ('env, 'err, unit) view
+    | Provide :
+        'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) view
+
+  let view : type env err a. (env, err, a) t -> (env, err, a) view = function
+    | Pure value -> Pure value
+    | Fail err -> Fail err
+    | Sync (name, f) -> Sync (name, f)
+    | Async (name, f) -> Async (name, f)
+    | Bind (eff, k) -> Bind (eff, k)
+    | Map (eff, f) -> Map (eff, f)
+    | Catch (eff, handler) -> Catch (eff, handler)
+    | Tap_error (eff, observe) -> Tap_error (eff, observe)
+    | Delay (duration, eff) -> Delay (duration, eff)
+    | Timeout (duration, eff) -> Timeout (duration, eff)
+    | Concat children -> Concat children
+    | Race children -> Race children
+    | Par (left, right) -> Par (left, right)
+    | All children -> All children
+    | All_settled children -> All_settled children
+    | For_each_par (xs, f) -> For_each_par (xs, f)
+    | For_each_par_bounded (max, xs, f) -> For_each_par_bounded (max, xs, f)
+    | Daemon eff -> Daemon eff
+    | Uninterruptible eff -> Uninterruptible eff
+    | Repeat (eff, schedule) -> Repeat (eff, schedule)
+    | Retry (eff, schedule, predicate) -> Retry (eff, schedule, predicate)
+    | Acquire_release (acquire, release) -> Acquire_release (acquire, release)
+    | Scoped eff -> Scoped eff
+    | Supervisor_scoped (max_failures, body) ->
+        Supervisor_scoped (max_failures, body)
+    | Named (kind, name, eff) -> Named (kind, name, eff)
+    | Annotate (key, value, eff) -> Annotate (key, value, eff)
+    | Link_span (link, eff) -> Link_span (link, eff)
+    | With_external_parent (trace_id, span_id, eff) ->
+        With_external_parent (trace_id, span_id, eff)
+    | Current_span -> Current_span
+    | Log (level, body, attrs) -> Log (level, body, attrs)
+    | Metric_update { name; description; unit_; kind; attrs; value } ->
+        Metric_update { name; description; unit_; kind; attrs; value }
+    | Provide (env, eff) -> Provide (env, eff)
+
+  let daemon = daemon_internal
+
   let make_supervisor ~sw ~max_failures = { sw; max_failures; failures = ref [] }
   let supervisor_switch supervisor = supervisor.sw
   let supervisor_max_failures supervisor = supervisor.max_failures

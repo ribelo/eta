@@ -15,75 +15,9 @@
     Effet follows the Effect-TS / ZIO shape, but uses OCaml's GADTs,
     polymorphic variants, object rows, and Eio runtime primitives. *)
 
-type ('env, 'err, 'a) t =
-  | Pure : 'a -> (_, _, 'a) t
-  | Fail : 'err -> (_, 'err, _) t
-  | Sync : string * ('env -> 'a) -> ('env, _, 'a) t
-  | Async : string * ('env -> 'a) -> ('env, _, 'a) t
-  | Bind :
-      ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a) t
-  | Map : ('env, 'err, 'b) t * ('b -> 'a) -> ('env, 'err, 'a) t
-  | Catch :
-      ('env, 'err1, 'a) t * ('err1 -> ('env, 'err2, 'a) t)
-      -> ('env, 'err2, 'a) t
-  | Tap_error : ('env, 'err, 'a) t * ('err -> unit) -> ('env, 'err, 'a) t
-  | Delay : Duration.t * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Timeout :
-      Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
-  | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
-  | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
-  | Par :
-      ('env, 'err, 'a) t * ('env, 'err, 'b) t
-      -> ('env, 'err, 'a * 'b) t
-  | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
-  | All_settled :
-      ('env, 'err, 'a) t list
-      -> ('env, _, ('a, 'err Cause.t) result list) t
-  | For_each_par :
-      'x list * ('x -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a list) t
-  | For_each_par_bounded :
-      int * 'x list * ('x -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a list) t
-  | Detach : ('env, _, unit) t -> ('env, 'err, unit) t
-  | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
-  | Retry :
-      ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
-      -> ('env, 'err, 'a) t
-  | Acquire_release :
-      ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
-      -> ('env, 'err, 'a) t
-  | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Supervisor_scoped :
-      int option * ('env, 'err, 'a) supervisor_body
-      -> ('env, 'err, 'a) t
-  | Named :
-      Capabilities.span_kind * string * ('env, 'err, 'a) t
-      -> ('env, 'err, 'a) t
-  | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Link_span :
-      Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | With_external_parent :
-      string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Current_span : ('env, 'err, Capabilities.span_info option) t
-  | Log :
-      Capabilities.log_level * string * (string * string) list
-      -> ('env, 'err, unit) t
-  | Metric_update : {
-      name : string;
-      description : string;
-      unit_ : string;
-      kind : Capabilities.metric_kind;
-      attrs : (string * string) list;
-      value : Capabilities.metric_value;
-    }
-      -> ('env, 'err, unit) t
-  | Provide :
-      'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
+type ('env, 'err, 'a) t
 
-and ('s, 'env, 'err, 'a) supervisor_scope =
+type ('s, 'env, 'err, 'a) supervisor_scope =
   | Supervisor_pure : 'a -> (_, _, _, 'a) supervisor_scope
   | Supervisor_lift :
       ('env, 'err, 'a) t -> (_, 'env, 'err, 'a) supervisor_scope
@@ -168,10 +102,6 @@ val for_each_par_bounded :
 (** Map over [xs] with at most [max] child effects running at once. Results
     are returned in input order and failures are fail-fast like {!for_each_par}.
     @raise Invalid_argument if [max <= 0]. *)
-
-val detach : ('env, _, unit) t -> ('env, 'err, unit) t
-(** Start a unit effect detached from the current effect and return
-    immediately. The runtime owns the detached fiber. *)
 
 val uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 (** Defer parent cancellation while running the wrapped effect.
@@ -316,6 +246,78 @@ val name : ('env, 'err, 'a) t -> string option
 val collect_names : ('env, 'err, 'a) t -> string list
 
 module Private : sig
+  type ('env, 'err, 'a) view =
+    | Pure : 'a -> (_, _, 'a) view
+    | Fail : 'err -> (_, 'err, _) view
+    | Sync : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Async : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Bind :
+        ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a) view
+    | Map : ('env, 'err, 'b) t * ('b -> 'a) -> ('env, 'err, 'a) view
+    | Catch :
+        ('env, 'err1, 'a) t * ('err1 -> ('env, 'err2, 'a) t)
+        -> ('env, 'err2, 'a) view
+    | Tap_error : ('env, 'err, 'a) t * ('err -> unit) -> ('env, 'err, 'a) view
+    | Delay : Duration.t * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Timeout :
+        Duration.t * ('env, 'err, 'a) t
+        -> ('env, [> `Timeout ] as 'err, 'a) view
+    | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) view
+    | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) view
+    | Par :
+        ('env, 'err, 'a) t * ('env, 'err, 'b) t
+        -> ('env, 'err, 'a * 'b) view
+    | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) view
+    | All_settled :
+        ('env, 'err, 'a) t list
+        -> ('env, _, ('a, 'err Cause.t) result list) view
+    | For_each_par :
+        'x list * ('x -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a list) view
+    | For_each_par_bounded :
+        int * 'x list * ('x -> ('env, 'err, 'a) t)
+        -> ('env, 'err, 'a list) view
+    | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) view
+    | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) view
+    | Retry :
+        ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
+        -> ('env, 'err, 'a) view
+    | Acquire_release :
+        ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
+        -> ('env, 'err, 'a) view
+    | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Supervisor_scoped :
+        int option * ('env, 'err, 'a) supervisor_body
+        -> ('env, 'err, 'a) view
+    | Named :
+        Capabilities.span_kind * string * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
+    | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Link_span :
+        Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | With_external_parent :
+        string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+    | Current_span : ('env, 'err, Capabilities.span_info option) view
+    | Log :
+        Capabilities.log_level * string * (string * string) list
+        -> ('env, 'err, unit) view
+    | Metric_update : {
+        name : string;
+        description : string;
+        unit_ : string;
+        kind : Capabilities.metric_kind;
+        attrs : (string * string) list;
+        value : Capabilities.metric_value;
+      }
+        -> ('env, 'err, unit) view
+    | Provide :
+        'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) view
+
+  val view : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+  val daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
+
   val make_supervisor :
     sw:Eio.Switch.t ->
     max_failures:int option ->

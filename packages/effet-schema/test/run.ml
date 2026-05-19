@@ -464,26 +464,27 @@ let sample_menu_json =
     ]
 
 let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) result =
- fun env -> function
-  | Effet.Effect.Pure value -> Ok value
-  | Effet.Effect.Fail error -> Error error
-  | Effet.Effect.Sync (_, f) | Effet.Effect.Async (_, f) -> Ok (f env)
-  | Effet.Effect.Map (inner, f) -> Result.map f (eval env inner)
-  | Effet.Effect.Bind (inner, f) -> (
+ fun env eff ->
+  match Effet.Effect.Private.view eff with
+  | Effet.Effect.Private.Pure value -> Ok value
+  | Effet.Effect.Private.Fail error -> Error error
+  | Effet.Effect.Private.Sync (_, f) | Effet.Effect.Private.Async (_, f) -> Ok (f env)
+  | Effet.Effect.Private.Map (inner, f) -> Result.map f (eval env inner)
+  | Effet.Effect.Private.Bind (inner, f) -> (
       match eval env inner with Ok value -> eval env (f value) | Error error -> Error error)
-  | Effet.Effect.Catch (inner, f) -> (
+  | Effet.Effect.Private.Catch (inner, f) -> (
       match eval env inner with Ok value -> Ok value | Error error -> eval env (f error))
-  | Effet.Effect.Tap_error (inner, f) -> (
+  | Effet.Effect.Private.Tap_error (inner, f) -> (
       match eval env inner with
       | Ok value -> Ok value
       | Error error ->
           f error;
           Error error)
-  | Effet.Effect.Provide (env, inner) -> eval env inner
-  | Effet.Effect.Named (_, _, inner)
-  | Effet.Effect.Annotate (_, _, inner)
-  | Effet.Effect.Link_span (_, inner)
-  | Effet.Effect.With_external_parent (_, _, inner) ->
+  | Effet.Effect.Private.Provide (env, inner) -> eval env inner
+  | Effet.Effect.Private.Named (_, _, inner)
+  | Effet.Effect.Private.Annotate (_, _, inner)
+  | Effet.Effect.Private.Link_span (_, inner)
+  | Effet.Effect.Private.With_external_parent (_, _, inner) ->
       eval env inner
   | _ -> failwith "test evaluator only supports the schema effect subset"
 

@@ -48,7 +48,7 @@ let () =
 
 | Module | Purpose |
 | --- | --- |
-| `Effect` | GADT for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, detach, uninterruptible regions, scopes. |
+| `Effect` | Abstract description for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
@@ -131,9 +131,9 @@ let observed =
   }
 ~~~
 
-`Effect.detach` remains available for fire-and-forget work. Prefer
-`Supervisor.scoped` when a child has a lifecycle the parent should observe.
-For long-lived cached resources, `Resource.auto` keeps the existing returned
+`Supervisor.scoped` is the public way to start child work. Runtime-owned
+background work stays internal to modules that own that lifecycle. For
+long-lived cached resources, `Resource.auto` keeps the existing returned
 resource shape and records refresh failures through `Resource.failures`.
 
 ## Development

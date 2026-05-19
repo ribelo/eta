@@ -1,4 +1,5 @@
 module E = Effect
+module EP = Effect.Private
 module Sch = Schedule
 
 exception Raised_cause of int * Obj.t
@@ -132,22 +133,22 @@ let rec interpret :
     env ->
     a =
  fun ~runtime ~fail_key ~sw ~finalizers eff env ->
-  match eff with
-  | E.Pure v -> v
-  | E.Fail e -> raise_fail fail_key e
-  | E.Sync (name, f) ->
+  match EP.view eff with
+  | EP.Pure v -> v
+  | EP.Fail e -> raise_fail fail_key e
+  | EP.Sync (name, f) ->
       if runtime.auto_instrument then
         instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
       else f env
-  | E.Async (name, f) ->
+  | EP.Async (name, f) ->
       if runtime.auto_instrument then
         instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
       else f env
-  | E.Bind (e, k) ->
+  | EP.Bind (e, k) ->
       let v = interpret ~runtime ~fail_key ~sw ~finalizers e env in
       interpret ~runtime ~fail_key ~sw ~finalizers (k v) env
-  | E.Map (e, f) -> f (interpret ~runtime ~fail_key ~sw ~finalizers e env)
-  | E.Catch (e, handler) ->
+  | EP.Map (e, f) -> f (interpret ~runtime ~fail_key ~sw ~finalizers e env)
+  | EP.Catch (e, handler) ->
       let inner_key = Typed_fail.fresh () in
       (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
       | Raised_cause (k, cause) when k = Typed_fail.int inner_key -> (
@@ -157,7 +158,7 @@ let rec interpret :
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
       | exn -> raise_cause fail_key (Cause.Die exn))
-  | E.Tap_error (e, observe) ->
+  | EP.Tap_error (e, observe) ->
       let inner_key = Typed_fail.fresh () in
       (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
       | Raised_cause (k, cause) when k = Typed_fail.int inner_key -> (
@@ -168,23 +169,23 @@ let rec interpret :
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.Interrupt
       | exn -> raise_cause fail_key (Cause.Die exn))
-  | E.Delay (d, e) ->
+  | EP.Delay (d, e) ->
       runtime.sleep d;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
-  | E.Timeout (d, e) ->
+  | EP.Timeout (d, e) ->
       Eio.Fiber.first
         (fun () ->
           runtime.sleep d;
           raise_fail fail_key `Timeout)
         (fun () -> interpret ~runtime ~fail_key ~sw ~finalizers e env)
-  | E.Concat children ->
+  | EP.Concat children ->
       List.iter
         (fun child ->
           let () = interpret ~runtime ~fail_key ~sw ~finalizers child env in
           ())
         children
-  | E.Race children -> race_first ~runtime ~fail_key ~finalizers children env
-  | E.Par (a, b) ->
+  | EP.Race children -> race_first ~runtime ~fail_key ~finalizers children env
+  | EP.Par (a, b) ->
       let tasks : (env -> Obj.t) list =
         [
           (fun env ->
@@ -200,23 +201,23 @@ let rec interpret :
        with
        | [ va; vb ] -> (Obj.obj va, Obj.obj vb)
        | _ -> assert false)
-  | E.All children ->
+  | EP.All children ->
       par_collect ~runtime ~fail_key ~finalizers
         (List.map
            (fun child env ->
              interpret ~runtime ~fail_key ~sw ~finalizers child env)
            children)
         env
-  | E.All_settled children ->
+  | EP.All_settled children ->
       par_collect_settled ~runtime ~fail_key ~finalizers children env
-  | E.For_each_par (xs, f) ->
+  | EP.For_each_par (xs, f) ->
       par_collect ~runtime ~fail_key ~finalizers
         (List.map
            (fun x env ->
              interpret ~runtime ~fail_key ~sw ~finalizers (f x) env)
            xs)
         env
-  | E.For_each_par_bounded (max, xs, f) ->
+  | EP.For_each_par_bounded (max, xs, f) ->
       let semaphore = Eio.Semaphore.make max in
       par_collect ~runtime ~fail_key ~finalizers
         (List.map
@@ -228,15 +229,15 @@ let rec interpret :
                  interpret ~runtime ~fail_key ~sw ~finalizers (f x) env))
            xs)
         env
-  | E.Detach e -> detach_effect ~runtime e env
-  | E.Uninterruptible e ->
+  | EP.Daemon e -> daemon_effect ~runtime e env
+  | EP.Uninterruptible e ->
       Eio.Cancel.protect (fun () ->
           interpret ~runtime ~fail_key ~sw ~finalizers e env)
-  | E.Repeat (e, schedule) ->
+  | EP.Repeat (e, schedule) ->
       repeat_eff ~runtime ~fail_key ~sw ~finalizers e schedule env
-  | E.Retry (e, schedule, predicate) ->
+  | EP.Retry (e, schedule, predicate) ->
       retry_eff ~runtime ~fail_key ~sw ~finalizers e schedule predicate env
-  | E.Acquire_release (acquire, release) ->
+  | EP.Acquire_release (acquire, release) ->
       let v = interpret ~runtime ~fail_key ~sw ~finalizers acquire env in
       finalizers :=
         (fun () ->
@@ -246,17 +247,17 @@ let rec interpret :
           with _ -> ())
         :: !finalizers;
       v
-  | E.Scoped e ->
+  | EP.Scoped e ->
       Eio.Switch.run @@ fun sw' ->
       let child_finalizers = ref [] in
       Fun.protect
         ~finally:(fun () -> run_finalizers child_finalizers)
         (fun () ->
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
-  | E.Supervisor_scoped (max_failures, body) ->
+  | EP.Supervisor_scoped (max_failures, body) ->
       Eio.Switch.run @@ fun supervisor_sw ->
       let supervisor =
-        E.Private.make_supervisor ~sw:supervisor_sw ~max_failures
+        EP.make_supervisor ~sw:supervisor_sw ~max_failures
       in
       let supervisor_finalizers = ref [] in
       Fun.protect
@@ -264,7 +265,7 @@ let rec interpret :
         (fun () ->
           interpret_supervisor_scope ~runtime ~fail_key ~sw:supervisor_sw
             ~finalizers:supervisor_finalizers (body.run supervisor) env)
-  | E.Named (kind, name, e) ->
+  | EP.Named (kind, name, e) ->
       let parent_id = Eio.Fiber.get active_span_key in
       let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
       let external_parent =
@@ -325,20 +326,20 @@ let rec interpret :
            emit_exception_event cause;
            finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
            raise exn)
-  | E.Annotate (key, value, e) ->
+  | EP.Annotate (key, value, e) ->
       runtime.tracer#add_attr ~key ~value;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
-  | E.Link_span (link, e) ->
+  | EP.Link_span (link, e) ->
       runtime.tracer#add_link link;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
-  | E.With_external_parent (trace_id, span_id, e) ->
+  | EP.With_external_parent (trace_id, span_id, e) ->
       Eio.Fiber.with_binding external_parent_key (trace_id, span_id)
       @@ fun () -> interpret ~runtime ~fail_key ~sw ~finalizers e env
-  | E.Current_span -> (
+  | EP.Current_span -> (
       match Eio.Fiber.get active_span_key with
       | None -> None
       | Some span_id -> runtime.tracer#inspect ~span_id)
-  | E.Log (level, body, attrs) ->
+  | EP.Log (level, body, attrs) ->
       let trace_id, span_id =
         match Eio.Fiber.get active_span_key with
         | None -> ("", "")
@@ -356,10 +357,10 @@ let rec interpret :
           trace_id;
           span_id;
         }
-  | E.Metric_update { name; description; unit_; kind; attrs; value } ->
+  | EP.Metric_update { name; description; unit_; kind; attrs; value } ->
       runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
         ~ts_ms:(runtime.now_ms ())
-  | E.Provide (env_in, e) ->
+  | EP.Provide (env_in, e) ->
       interpret ~runtime ~fail_key ~sw ~finalizers e env_in
 
 and instrument_leaf :
@@ -592,7 +593,7 @@ and par_collect_settled :
      children);
   Array.to_list results |> List.map Option.get
 
-and detach_effect :
+and daemon_effect :
     type re env err.
     runtime:(re, _) t -> (env, err, unit) E.t -> env -> unit =
  fun ~runtime eff env -> fork_internal ~runtime eff env
@@ -604,13 +605,15 @@ and fork_internal :
   Atomic.incr runtime.active;
   Eio.Fiber.fork_daemon ~sw:runtime.outer_sw (fun () ->
       Tracer.with_fiber_context @@ fun () ->
-      (try
-         Eio.Switch.run @@ fun sw' ->
-         interpret ~runtime ~fail_key:runtime.default_fail_key ~sw:sw'
-           ~finalizers:(ref []) eff env
-       with _ -> ());
-      Atomic.decr runtime.active;
-      `Stop_daemon)
+      Fun.protect
+        ~finally:(fun () -> Atomic.decr runtime.active)
+        (fun () ->
+          (try
+             Eio.Switch.run @@ fun sw' ->
+             interpret ~runtime ~fail_key:runtime.default_fail_key ~sw:sw'
+               ~finalizers:(ref []) eff env
+           with _ -> ());
+          `Stop_daemon))
 
 and repeat_eff :
     type re env err.

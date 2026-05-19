@@ -24,4 +24,4 @@ val run_exn : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> 'a
     inspecting failures. *)
 
 val drain : ('env, 'err) t -> unit
-(** Wait until currently detached finite fibers complete. *)
+(** Wait until currently runtime-owned finite background fibers complete. *)

@@ -4329,3 +4329,198 @@ This slightly refines V-Sv6: lexical supervisors are the public structured
 concurrency surface; long-lived returned resources use the same observable
 `Cause.t` sink idea because their lifecycle is runtime-owned rather than
 lexically scoped.
+
+## Effet-j40 detach survival lab — delete-or-supervise
+
+### Why this entry exists
+
+Effet-4n3 adopted F-D supervised concurrency, which removed the need for a
+public raw fiber handle. It did not answer whether `Effect.detach` should stay
+as public fire-and-forget. The survival question is now narrower: can we delete
+public `detach`, or should it survive with observable failures?
+
+### Goal
+
+Run a deletion-pressure lab after Supervisor adoption. Branch A removes public
+`detach` and tries to keep a runtime-owned background primitive for
+`Resource.auto`. Branch B keeps public `detach`, but makes detached failures
+observable instead of silently swallowed.
+
+### Lab
+
+Artifacts live in `scratch/detach_survival/`.
+
+| File | Purpose | Result |
+|---|---|---|
+| `branch_a_delete_public.ml` | Shows the viable delete-public-detach shape: make `Effect.t` abstract and keep daemon in `Private` | Compiles |
+| `branch_b_hook.ml` | Keeps public `Detach`, preserves the child error row, and reports failures to a runtime hook | Compiles |
+| `neg_a_hidden_constructor.ml` | Proves an exact public GADT cannot hide an extra internal daemon constructor | Fails as expected |
+| `runtime_smoke.ml` | Runs the Branch B observable-failure fixture | Passes |
+
+Positive validation:
+
+~~~text
+nix develop -c dune build scratch/detach_survival
+nix develop -c dune exec scratch/detach_survival/runtime_smoke.exe
+~~~
+
+Observed output:
+
+~~~text
+Branch B hook observes detached failure: ok
+detach survival smoke tests passed
+~~~
+
+### Negative test
+
+`neg_a_hidden_constructor.ml` was temporarily added to the scratch library
+module list. The compiler rejected the attempted hidden constructor:
+
+~~~text
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Effet' is dirty
+File "scratch/detach_survival/neg_a_hidden_constructor.ml", lines 16-22, characters 6-3:
+16 | ......struct
+17 |   type ('env, 'err, 'a) t =
+18 |     | Pure : 'a -> (_, _, 'a) t
+19 |     | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
+20 |
+21 |   let pure value = Pure value
+22 | end
+Error: Signature mismatch:
+       ...
+       Type declarations do not match:
+         type ('env, 'err, 'a) t =
+             Pure : 'a -> ('b, 'c, 'a) t
+           | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
+       is not included in
+         type ('env, 'err, 'a) t = Pure : 'a -> ('b, 'c, 'a) t
+       An extra constructor, Daemon, is provided in the first declaration.
+       File "scratch/detach_survival/neg_a_hidden_constructor.ml", line 14, characters 2-53:
+         Expected declaration
+       File "scratch/detach_survival/neg_a_hidden_constructor.ml", lines 17-19, characters 2-59:
+         Actual declaration
+~~~
+
+This is the key Branch A result. With the current public-GADT API, an internal
+daemon AST node cannot be hidden while the signature exposes an exact variant
+type. Branch A is possible only if `Effect.t` becomes abstract and all
+constructors move behind smart constructors. That is a broad API shift, not a
+surgical deletion of `detach`.
+
+### Decision diary
+
+#### V-RDv1 — Public `detach` survives for now
+
+Decision: keep `Effect.detach` public. Rationale: deletion is not locally
+cheap under the current public-GADT surface. The lab shows the only clean hidden
+daemon shape requires abstracting `Effect.t` itself
+(`branch_a_delete_public.ml`), while the negative test proves the current
+exact-variant signature cannot hide the daemon constructor. Supervisor covers
+scoped child ownership, but it does not replace runtime-owned work that
+intentionally outlives the current effect body and is bounded by the runtime
+switch.
+
+#### V-RDv2 — Remove error erasure from `detach`
+
+Decision: change `detach` from `('env, _, unit) Effect.t -> ('env, 'err, unit)
+Effect.t` to `('env, 'err, unit) Effect.t -> ('env, 'err, unit) Effect.t`.
+Rationale: a detached child failure still does not fail the parent, but the
+program type should not pretend the child has no typed failure channel. The
+Branch B lab locks this shape with an ascribed value whose error row includes
+`Detached_boom`.
+
+#### V-RDv3 — Add a runtime detached-failure hook
+
+Decision: add `Runtime.create ~on_detached_failure`. Rationale: detached
+failures must have an owner. The runtime owns detached fibers, so the runtime is
+the right observation point. The production hook uses `Obj.t Cause.t`, not
+`'err Cause.t`, because `Catch` and similar local interpretation can run a
+detached subeffect under an error row different from the runtime's outer error
+row. The cause tree shape is preserved; only typed payloads are existential at
+the runtime boundary.
+
+#### V-RDv4 — Resource.auto stays on runtime-owned detach semantics
+
+Decision: keep `Resource.auto` on the runtime-owned daemon path, with
+`Resource.failures` as its typed resource-local sink. Rationale: a lexical
+`Supervisor.scoped` cannot directly own a background refresh loop for a
+resource that is returned and used after the constructor effect completes. The
+right distinction is now clear: `Supervisor` for lexical child lifecycles,
+`detach` for runtime-owned daemons, and `Resource.failures` /
+`on_detached_failure` for observability.
+
+### Implementation follow-up in the same session
+
+The Branch B decision was materialized immediately:
+
+- `Effect.Detach` and `Effect.detach` now preserve the child error row.
+- `Runtime.create` accepts `?on_detached_failure:(Obj.t Cause.t -> unit)`.
+- Detached daemon failures call the hook and still do not fail the parent.
+- A package test verifies parent success plus hook-observed
+  `Cause.Fail Detached_boom`.
+- The full gate passed: `nix develop -c dune runtest --force`.
+
+### What remains deliberately open
+
+A future major API cleanup may still abstract `Effect.t` and hide all raw
+constructors. That would reopen Branch A on better terms. This entry rejects a
+surgical public-detach deletion under the current public-GADT API.
+
+### Global-optimum correction — public detach removed
+
+The previous V-RDv1/V-RDv3 result was a local optimum: it treated the current
+public-GADT shape as a hard constraint and therefore kept `Effect.detach` with
+an observable runtime hook. The design bar was raised: churn is not a reason to
+keep a flawed public primitive before the API hardens. Under that criterion,
+the decision flips.
+
+#### V-RDv5 — Make `Effect.t` abstract
+
+Decision: `Effect.t` is now abstract in `effect.mli`. The interpreter view
+moved under `Effect.Private.view`, and the runtime pattern-matches on that
+private view. Rationale: an exact public GADT prevents internal-only runtime
+nodes. The earlier negative test already proved this: adding a daemon
+constructor to the implementation while hiding it from the exact public variant
+signature is rejected by the compiler. Abstraction is the right fix because it
+lets Effet keep internal AST nodes without accidentally promoting them into the
+public API.
+
+#### V-RDv6 — Remove public `Effect.detach`
+
+Decision: public `Effect.detach` is removed. Public child lifecycles go
+through `Supervisor.scoped`, `par`, `all`, `all_settled`, `race`, and
+bounded traversal. Rationale: public fire-and-forget has no lexical owner, no
+await/cancel surface, and awkward typed-failure semantics. Supervisor is the
+structured public answer. Runtime-owned daemon work remains possible, but it is
+not a general user-facing effect constructor.
+
+#### V-RDv7 — Keep daemon as an internal effect node only
+
+Decision: replace the public `Detach` node with internal `Daemon`, exposed
+only through `Effect.Private.daemon` for package-internal modules such as
+`Resource`. Rationale: `Resource.auto` returns a long-lived resource whose
+refresh loop is owned by the runtime switch rather than by a lexical supervisor
+scope. That lifecycle exists, but it is a library/runtime implementation
+detail, not a public concurrency abstraction.
+
+#### V-RDv8 — Remove `on_detached_failure`
+
+Decision: remove the runtime `on_detached_failure` hook introduced by the
+local-optimum pass. Rationale: once public `detach` is gone, the hook no
+longer has a general public role. `Resource.auto` already records typed
+refresh failures in `Resource.failures`; unexpected daemon defects remain
+runtime-internal defects until a concrete diagnostics surface is designed.
+
+Implementation update:
+
+- `packages/effet/effect.mli` now exposes `type ('env, 'err, 'a) t` abstractly.
+- `Effect.Private.view` gives `Runtime` the interpreter-facing AST view.
+- `Effect.Private.daemon` is the internal runtime-owned background primitive.
+- `Resource.auto` uses `Effect.Private.daemon` instead of public `Effect.detach`.
+- Public tests now use `Supervisor.scoped` for child-work observability and
+  span inheritance.
+- The full project gate passed with this shape: `nix develop -c dune runtest
+  --force`.
+
+This supersedes V-RDv1 through V-RDv4. The durable decision is: no public
+`detach`; structured public concurrency only.

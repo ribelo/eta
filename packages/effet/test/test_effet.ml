@@ -147,16 +147,13 @@ let check_status name expected actual =
   | _ -> Alcotest.failf "%s: unexpected span status" name
 
 let test_pure () =
-  let e : (_, _, int) Effect.t = Effect.pure 42 in
-  match e with
-  | Effect.Pure 42 -> ()
-  | _ -> Alcotest.fail "expected Pure 42"
+  with_runtime @@ fun rt ->
+  Alcotest.(check int) "pure" 42 (run_ok rt (Effect.pure 42))
 
 let test_map () =
+  with_runtime @@ fun rt ->
   let e = Effect.pure 1 |> Effect.map (fun n -> n + 1) in
-  match e with
-  | Effect.Map (_, _) -> ()
-  | _ -> Alcotest.fail "expected Map"
+  Alcotest.(check int) "map" 2 (run_ok rt e)
 
 let test_collect_names () =
   let e =
@@ -424,18 +421,28 @@ let test_observability_auto_instrument_failure_status () =
   let span = only_span tracer in
   check_status "leaf failed" (Tracer.Error "") span.status
 
-let test_observability_all_for_each_detach_inherit_parent () =
+let test_observability_all_for_each_supervisor_inherit_parent () =
   with_traced_runtime @@ fun rt tracer ->
   let child name = Effect.named name (Effect.pure ()) in
+  let supervised =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (child : (s, [> `Boom ], unit) Supervisor.child) =
+            start sup (lift (child "supervised"))
+          in
+          await child;
+    }
+  in
   let eff =
     Effect.named "parent"
       (Effect.all [ child "all-a"; child "all-b" ]
       |> Effect.bind (fun _ ->
              Effect.for_each_par [ "each-a"; "each-b" ] child)
-      |> Effect.bind (fun _ -> Effect.detach (child "detached")))
+      |> Effect.bind (fun _ -> supervised))
   in
   run_ok rt eff;
-  Runtime.drain rt;
   let spans = Tracer.dump tracer in
   let parent = List.find (fun span -> span.Tracer.name = "parent") spans in
   let children = List.filter (fun span -> span.Tracer.name <> "parent") spans in
@@ -771,61 +778,6 @@ let test_effect_retry_schedule_uses_virtual_delays () =
   Test_clock.adjust clock (Duration.ms 5);
   check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
     (Eio.Promise.await promise)
-
-let test_effect_detach_does_not_block_parent () =
-  with_test_clock @@ fun _sw clock rt ->
-  let parent_done = ref false in
-  let child_done = ref false in
-  let child =
-    Effect.sync "child" (fun () -> child_done := true)
-    |> Effect.delay (Duration.ms 10)
-  in
-  let parent =
-    Effect.detach child
-    |> Effect.bind (fun () ->
-           Effect.sync "parent" (fun () -> parent_done := true))
-  in
-  run_ok rt parent;
-  Alcotest.(check bool) "parent completed" true !parent_done;
-  Alcotest.(check bool) "child is still sleeping" false !child_done;
-  wait_for_sleepers clock 1;
-  Test_clock.adjust clock (Duration.ms 10);
-  Runtime.drain rt;
-  Alcotest.(check bool) "detached child completed" true !child_done
-
-let test_effect_detach_child_failure_is_not_parent_failure () =
-  with_runtime @@ fun rt ->
-  let parent_done = ref false in
-  let eff =
-    Effect.detach (Effect.fail `Detached_boom)
-    |> Effect.bind (fun () ->
-           Effect.sync "parent" (fun () -> parent_done := true))
-  in
-  run_ok rt eff;
-  Runtime.drain rt;
-  Alcotest.(check bool) "parent completed" true !parent_done
-
-let test_effect_detach_daemon_stops_with_runtime_switch () =
-  let child_cancelled = ref false in
-  let stopped = Failure "stop runtime" in
-  (try
-     Eio_main.run @@ fun stdenv ->
-     Eio.Switch.run @@ fun sw ->
-     let rt =
-       Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
-     in
-     let child =
-       Effect.sync "detached.await_cancel" (fun () ->
-           try Eio.Fiber.await_cancel ()
-           with Eio.Cancel.Cancelled _ ->
-             child_cancelled := true;
-             raise (Eio.Cancel.Cancelled (Failure "cancelled")))
-     in
-     run_ok rt (Effect.detach child);
-     yield ();
-     Eio.Switch.fail sw stopped
-   with exn when exn == stopped -> ());
-  Alcotest.(check bool) "detached child cancelled" true !child_cancelled
 
 let test_supervisor_observes_child_failure () =
   with_runtime @@ fun rt ->
@@ -1431,12 +1383,6 @@ let () =
             test_effect_retry_schedule_uses_virtual_delays;
           Alcotest.test_case "retry does not retry interrupt" `Quick
             test_effect_retry_does_not_retry_interrupt;
-          Alcotest.test_case "detach does not block parent" `Quick
-            test_effect_detach_does_not_block_parent;
-          Alcotest.test_case "detach child failure is not parent failure" `Quick
-            test_effect_detach_child_failure_is_not_parent_failure;
-          Alcotest.test_case "detach daemon stops with runtime switch" `Quick
-            test_effect_detach_daemon_stops_with_runtime_switch;
           Alcotest.test_case "uninterruptible defers race cancellation" `Quick
             test_effect_uninterruptible_defers_race_cancellation;
         ] );
@@ -1533,7 +1479,7 @@ let () =
             test_observability_auto_instrument_leaves_nest_under_named;
           Alcotest.test_case "auto instrument failure status" `Quick
             test_observability_auto_instrument_failure_status;
-          Alcotest.test_case "all for_each_par detach inherit parent" `Quick
-            test_observability_all_for_each_detach_inherit_parent;
+          Alcotest.test_case "all for_each_par supervisor inherit parent" `Quick
+            test_observability_all_for_each_supervisor_inherit_parent;
         ] );
     ]

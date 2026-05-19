@@ -43,5 +43,5 @@ let auto ?on_error ~load ~schedule () =
   load
   |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
   |> Effect.bind (fun resource ->
-         Effect.detach (refresh_loop resource 0)
+         Effect.Private.daemon (refresh_loop resource 0)
          |> Effect.map (fun () -> resource))
