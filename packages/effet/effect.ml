@@ -63,8 +63,6 @@ type ('env, 'err, 'a) t =
       value : Capabilities.metric_value;
     }
       -> ('env, 'err, unit) t
-  | Provide :
-      'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
 and ('s, 'env, 'err, 'a) supervisor_scope =
   | Supervisor_pure : 'a -> (_, _, _, 'a) supervisor_scope
@@ -184,7 +182,6 @@ let here_attr (file, line, col_start, col_end) e =
 
 let fn ?(kind = Capabilities.Internal) pos name e =
   e |> here_attr pos |> named_kind ~kind name
-let provide env_in e = Provide (env_in, e)
 
 let rec name : type env err a. (env, err, a) t -> string option = function
   | Named (_, n, _) -> Some n
@@ -226,7 +223,6 @@ let collect_names e =
     | For_each_par_bounded _ -> acc
     | Daemon e -> walk acc e
     | Uninterruptible e -> walk acc e
-    | Provide (_, e) -> walk acc e
   in
   List.rev (walk [] e)
 
@@ -299,8 +295,6 @@ module Private = struct
         value : Capabilities.metric_value;
       }
         -> ('env, 'err, unit) view
-    | Provide :
-        'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) view
 
   let view : type env err a. (env, err, a) t -> (env, err, a) view = function
     | Pure value -> Pure value
@@ -337,7 +331,6 @@ module Private = struct
     | Log (level, body, attrs) -> Log (level, body, attrs)
     | Metric_update { name; description; unit_; kind; attrs; value } ->
         Metric_update { name; description; unit_; kind; attrs; value }
-    | Provide (env, eff) -> Provide (env, eff)
 
   let daemon = daemon_internal
 

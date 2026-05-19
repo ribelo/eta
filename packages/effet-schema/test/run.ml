@@ -480,7 +480,6 @@ let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) r
       | Error error ->
           f error;
           Error error)
-  | Effet.Effect.Private.Provide (env, inner) -> eval env inner
   | Effet.Effect.Private.Named (_, _, inner)
   | Effet.Effect.Private.Annotate (_, _, inner)
   | Effet.Effect.Private.Link_span (_, inner)

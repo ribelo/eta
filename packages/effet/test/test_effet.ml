@@ -1168,33 +1168,6 @@ let test_env_row_auto_di () =
       Alcotest.(check (list string))
         "log calls" [ "fetching 42" ] (List.rev !log_calls)
 
-(* Effect.provide swaps env for the wrapped sub-effect only. *)
-let test_provide_swaps_env () =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let calls = ref [] in
-  let env_with_tag tag =
-    object method log msg = calls := (tag, msg) :: !calls end
-  in
-  let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~env:(env_with_tag "outer") ()
-  in
-  let log_msg msg = Effect.sync "log" (fun env -> env#log msg) in
-  let eff =
-    let open Effect in
-    log_msg "a"
-    |> seq (provide (env_with_tag "inner") (log_msg "b"))
-    |> seq (log_msg "c")
-  in
-  (match Runtime.run rt eff with
-   | Exit.Ok () -> ()
-   | Exit.Error _ -> Alcotest.fail "expected Ok");
-  Alcotest.(check (list (pair string string)))
-    "provide swapped env mid-tree"
-    [ ("outer", "a"); ("inner", "b"); ("outer", "c") ]
-    (List.rev !calls)
-
 (* V-F1 (F-A): par / all / for_each_par. Fail-fast semantics. *)
 let test_par_returns_both_successes () =
   with_runtime @@ fun rt ->
@@ -1358,7 +1331,6 @@ let () =
           Alcotest.test_case "Pure" `Quick test_pure;
           Alcotest.test_case "Map" `Quick test_map;
           Alcotest.test_case "env row auto DI" `Quick test_env_row_auto_di;
-          Alcotest.test_case "provide swaps env" `Quick test_provide_swaps_env;
           Alcotest.test_case "par returns pair" `Quick
             test_par_returns_both_successes;
           Alcotest.test_case "par fail-fast cancels sibling" `Quick

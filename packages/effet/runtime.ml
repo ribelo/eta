@@ -415,8 +415,6 @@ let rec interpret :
   | EP.Metric_update { name; description; unit_; kind; attrs; value } ->
       runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
         ~ts_ms:(runtime.now_ms ())
-  | EP.Provide (env_in, e) ->
-      interpret ~runtime ~fail_key ~sw ~finalizers e env_in
 
 and instrument_leaf :
     type re err a.

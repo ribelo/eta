@@ -169,14 +169,6 @@ val supervisor_check :
 
 val supervisor_yield : ('s, 'env, 'err, unit) supervisor_scope
 
-val provide : 'env_in -> ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
-(** Run [e] under a fully-replaced environment.
-
-    The outer env is unconstrained: nothing of it reaches [e]. Useful
-    for test isolation, sub-system sandboxing, and any case where a
-    sub-effect should observe a different capability bundle than the
-    rest of the program. *)
-
 val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 val named_kind :
   kind:Capabilities.span_kind ->
@@ -312,9 +304,6 @@ module Private : sig
         value : Capabilities.metric_value;
       }
         -> ('env, 'err, unit) view
-    | Provide :
-        'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) view
-
   val view : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
   val daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
 

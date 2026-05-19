@@ -4797,3 +4797,190 @@ race two failures: Concurrent[Fail(A); Fail(B)]
 ~~~
 
 The durable decision is now implemented: Effet uses structured causes as the runtime diagnostic algebra; Exit.to_result remains narrow; typed recovery still goes through Effect.catch over a single Fail.
+
+## Effet-0u8 provide survival lab - dynamic env substitution
+
+### Why this entry exists
+
+Review 2 put Effect.provide on probation. V-R10 kept provide as the single Layer-shaped primitive, but the concrete justification was still mostly asserted: test isolation, dynamic sub-system substitution, and sandboxing.
+
+This entry tests whether those examples actually need dynamic env substitution, or whether ordinary OCaml parameter passing is clearer and equally capable.
+
+### Goal
+
+Run a survival lab for Effect.provide with no time budget. Build three with-provide / without-provide pairs, run identical behaviour, compare LOC, inferred signatures, error quality, and whether provide has a property the ordinary OCaml version lacks.
+
+### Lab
+
+Artifacts live in scratch/provide_survival/.
+
+| Fixture | With provide | Without provide | Result |
+|---|---|---|---|
+| Scoped service factory | with_provide_scoped_factory.ml | without_provide_scoped_factory.ml | identical behaviour |
+| Test-local mock injection | with_provide_mock_injection.ml | without_provide_mock_injection.ml | identical behaviour |
+| Sandboxed subsystem | with_provide_sandbox.ml | without_provide_sandbox.ml | identical behaviour |
+| Shared services | services.ml | services.ml | compiles |
+| Smoke runner | runtime_smoke.ml | runtime_smoke.ml | passes |
+
+Validation:
+
+~~~text
+nix develop -c dune build scratch/provide_survival
+nix develop -c dune exec scratch/provide_survival/runtime_smoke.exe
+~~~
+
+Observed output:
+
+~~~text
+provide survival smoke tests passed
+~~~
+
+### LOC comparison
+
+~~~text
+  48 scratch/provide_survival/with_provide_mock_injection.ml
+  35 scratch/provide_survival/with_provide_sandbox.ml
+  28 scratch/provide_survival/with_provide_scoped_factory.ml
+  37 scratch/provide_survival/without_provide_mock_injection.ml
+  28 scratch/provide_survival/without_provide_sandbox.ml
+  27 scratch/provide_survival/without_provide_scoped_factory.ml
+~~~
+
+Summary:
+
+| Fixture | With provide LOC | Without provide LOC | Delta |
+|---|---:|---:|---:|
+| Scoped service factory | 28 | 27 | without is -1 |
+| Mock injection | 48 | 37 | without is -11 |
+| Sandbox | 35 | 28 | without is -7 |
+
+The without-provide versions contain zero Effect.provide calls. They pass runtime envs directly at Runtime.run boundaries and pass services as ordinary values inside the program.
+
+### Signature evidence
+
+The module ascriptions lock the important shapes.
+
+With provide:
+
+~~~ocaml
+val child : (< db : db >, string, string) Effect.t
+val read_user : (< audit : audit; db : db >, string, string) Effect.t
+~~~
+
+Without provide:
+
+~~~ocaml
+val child : db -> ('env, 'err, string) Effect.t
+val read_user : db -> (< audit : audit >, string, string) Effect.t
+val program : db -> (< secret : secret >, string, string * string) Effect.t
+~~~
+
+The without-provide shape makes service substitution ordinary function application. It also keeps the child effect's ambient env smaller: a child that receives db as an argument no longer needs a db method in env.
+
+### Negative probes
+
+neg_with_provide_missing_db.ml was temporarily added as an executable. The compiler rejected running a db-requiring child under an empty env:
+
+~~~text
+File "scratch/provide_survival/neg_with_provide_missing_db.ml", line 10, characters 42-54:
+10 |   Services.run With_provide_sandbox.child (object end)
+                                               ^^^^^^^^^^^^
+Error: This expression has type <  > but an expression was expected of type
+         < db : Services.db >
+       The first object type has no method db
+~~~
+
+neg_without_provide_missing_arg.ml was temporarily added instead. The compiler rejected treating a service-parameterized child function as an already-built effect:
+
+~~~text
+File "scratch/provide_survival/neg_without_provide_missing_arg.ml", line 10, characters 2-31:
+10 |   Without_provide_sandbox.child
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The value Without_provide_sandbox.child has type
+         Provide_survival.Services.db -> ('a, 'b, string) Effect.t
+       but an expression was expected of type (<  >, string, string) Effect.t
+~~~
+
+Both errors are good. The provide error is an object-row missing-method error. The without-provide error is a direct missing-argument shape: db -> Effect.t is not Effect.t. The latter is more local for ordinary OCaml programmers.
+
+### Cross-tabulation
+
+| Criterion | With provide | Without provide |
+|---|---|---|
+| Scoped factory | Works, but wraps child env with object | Works by passing db to child |
+| Mock injection | Works, but fake env must reconstruct every needed method | Works by passing fake db; real env still supplies audit |
+| Sandbox fewer capabilities | Works by providing smaller env | Works by passing only allowed values |
+| LOC | Higher or equal in all three fixtures | Lower or equal in all three fixtures |
+| Missing service error | Good object-row error | Good direct function-shape error |
+| Unique capability | None found | n/a |
+| Runtime AST node needed | Yes | No |
+
+### Decision diary
+
+#### V-RPv1 - Scoped service factories do not need provide
+
+Decision: scoped factories are clearer as ordinary bind plus parameter passing. The with-provide version builds a db env object solely to run one child. The without-provide version passes db to child directly and is one line shorter. No lifecycle property is lost: acquire_release still opens and closes db inside Effect.scoped.
+
+#### V-RPv2 - Mock injection is stronger without provide
+
+Decision: test-local substitution does not justify provide. The with-provide version must build a fake env containing fake db and the real audit service. The without-provide version passes fake db as a normal argument while the real runtime env keeps audit. It is 11 LOC shorter and expresses the substitution at the call site.
+
+#### V-RPv3 - Sandbox is a value boundary, not an env substitution boundary
+
+Decision: sandboxed children do not need dynamic env replacement. Passing only db to child gives it no env-level secret requirement. This is at least as clear as constructing a smaller child env through provide, and it avoids a public AST node.
+
+#### V-RPv4 - Missing-service diagnostics do not favour provide
+
+Decision: both shapes fail statically. Provide gives a row error: object type lacks method db. Ordinary parameter passing gives a function-shape error: db -> Effect.t is not Effect.t. The second error is more direct when the design is service-as-argument.
+
+#### V-RPv5 - Effect.provide is unearned
+
+Decision: delete Effect.provide from the public API and interpreter. The survival lab found no fixture where provide has a property ordinary OCaml lacks. It adds a GADT constructor, a public operator, and a runtime case to recover behaviour already expressible through function arguments and Runtime.run env selection.
+
+### Recommendation
+
+Delete Effect.provide as unearned. Keep the object-row env channel from V-R10, but use it at runtime boundaries and for leaf requirements. For mid-tree service substitution, prefer ordinary OCaml parameter passing. If a future use case requires dynamic replacement that cannot be expressed this way, it should reopen with a concrete lab fixture.
+
+### What we are deliberately not doing in this entry
+
+- No production deletion yet.
+- No change to packages/effet in this research pass.
+- No Layer revival. The lab strengthens the no-Layer decision rather than weakening it.
+
+### Implementation follow-up - 2026-05-20
+
+The recommendation above was materialized in the live library. Effect.provide is removed
+from the public interface, the internal GADT, Effect.Private.view, and the Runtime
+interpreter. The old test asserting mid-tree env substitution was deleted because that
+behaviour is no longer an API promise.
+
+The schema test helper previously interpreted Effect.Private.Provide in its tiny local
+evaluator. That case is gone as well; schema effect tests continue to use the remaining
+pure/sync/map/bind/catch/tap_error subset.
+
+scratch/provide_survival was converted from a comparison lab into a post-deletion
+survival proof. The with-provide candidate modules and the stale with-provide negative
+probe were removed with the API. The remaining modules compile the three recommended
+ordinary-OCaml replacements:
+
+- without_provide_scoped_factory.ml
+- without_provide_mock_injection.ml
+- without_provide_sandbox.ml
+
+Verification:
+
+~~~text
+nix develop -c dune build scratch/provide_survival
+nix develop -c dune exec scratch/provide_survival/runtime_smoke.exe
+post-provide survival smoke tests passed
+
+nix develop -c dune runtest --force
+effet-schema tests passed
+effet-otel: 19 tests run
+effet: 79 tests run
+~~~
+
+This closes the V-RPv5 recommendation: mid-tree dependency substitution is ordinary
+OCaml parameter passing, not a public Effet runtime primitive. If a future use case wants
+dynamic env replacement, it needs a new lab fixture that ordinary functions cannot
+express.
