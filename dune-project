@@ -27,5 +27,6 @@
   (effet (= :version))
   (eio (>= 1.0))
   (eio_main (>= 1.0))
+  (yojson (>= 2.0))
   (alcotest :with-test)))
 

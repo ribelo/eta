@@ -54,6 +54,21 @@ type span_link = {
   link_attrs : (string * string) list;
 }
 
+(** Severity for a {!log_record}. Maps to OTLP severityNumber. *)
+type log_level = Trace | Debug | Info | Warn | Error | Fatal
+
+(** A structured log record. Trace and span identifiers are populated by the
+    runtime from the active span on the emitting fiber, or left empty if no
+    span is active. *)
+type log_record = {
+  level : log_level;
+  body : string;
+  ts_ms : int;
+  attrs : (string * string) list;
+  trace_id : string;
+  span_id : string;
+}
+
 (** Minimal tracing capability. Implementations may back this with an
     in-memory collector, OpenTelemetry, or a noop sink. *)
 class type tracer = object
@@ -73,6 +88,35 @@ class type tracer = object
     unit
   method add_link : span_link -> unit
   method inspect : span_id:int -> span_info option
+end
+
+(** Logging capability. Implementations may back this with an in-memory
+    collector, an OTLP exporter, or a noop sink. The runtime fills
+    {!log_record.trace_id} and {!log_record.span_id} from the active span
+    automatically before calling {!logger.log}. *)
+class type logger = object
+  method log : log_record -> unit
+end
+
+(** Counters and gauges for the metrics signal. Implementations may
+    accumulate in memory or stream to an OTLP exporter. *)
+type metric_kind =
+  | Counter_cumulative  (** non-monotonic UpDownCounter *)
+  | Counter_monotonic  (** monotonic Counter *)
+  | Gauge
+
+type metric_value = Int of int | Float of float
+
+class type meter = object
+  method record :
+    name:string ->
+    description:string ->
+    unit_:string ->
+    kind:metric_kind ->
+    attrs:(string * string) list ->
+    value:metric_value ->
+    ts_ms:int ->
+    unit
 end
 
 (** Bridge an [Eio.Time.clock] into the [clock] trait. *)

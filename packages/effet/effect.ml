@@ -40,6 +40,18 @@ type ('env, 'err, 'a) t =
   | With_external_parent :
       string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Current_span : ('env, 'err, Capabilities.span_info option) t
+  | Log :
+      Capabilities.log_level * string * (string * string) list
+      -> ('env, 'err, unit) t
+  | Metric_update : {
+      name : string;
+      description : string;
+      unit_ : string;
+      kind : Capabilities.metric_kind;
+      attrs : (string * string) list;
+      value : Capabilities.metric_value;
+    }
+      -> ('env, 'err, unit) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
@@ -88,6 +100,13 @@ let with_external_parent ~trace_id ~span_id e =
   With_external_parent (trace_id, span_id, e)
 
 let current_span = Current_span
+
+let log ?(level = Capabilities.Info) ?(attrs = []) body =
+  Log (level, body, attrs)
+
+let metric_update ?(description = "") ?(unit_ = "") ?(attrs = []) ~name
+    ~kind value =
+  Metric_update { name; description; unit_; kind; attrs; value }
 let here_attr (file, line, col_start, col_end) e =
   Annotate
     ( "loc",
@@ -115,6 +134,8 @@ let collect_names e =
     | Link_span (_, e) -> walk acc e
     | With_external_parent (_, _, e) -> walk acc e
     | Current_span -> acc
+    | Log _ -> acc
+    | Metric_update _ -> acc
     | Map (e, _) -> walk acc e
     | Delay (_, e) -> walk acc e
     | Timeout (_, e) -> walk acc e

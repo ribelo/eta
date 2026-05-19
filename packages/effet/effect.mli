@@ -57,6 +57,18 @@ type ('env, 'err, 'a) t =
   | With_external_parent :
       string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Current_span : ('env, 'err, Capabilities.span_info option) t
+  | Log :
+      Capabilities.log_level * string * (string * string) list
+      -> ('env, 'err, unit) t
+  | Metric_update : {
+      name : string;
+      description : string;
+      unit_ : string;
+      kind : Capabilities.metric_kind;
+      attrs : (string * string) list;
+      value : Capabilities.metric_value;
+    }
+      -> ('env, 'err, unit) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 
@@ -166,6 +178,25 @@ val current_span :
   ('env, 'err, Capabilities.span_info option) t
 (** Yield the {!Capabilities.span_info} of the currently active span on this
     fiber, or [None] if none is open. *)
+
+val log :
+  ?level:Capabilities.log_level ->
+  ?attrs:(string * string) list ->
+  string ->
+  ('env, 'err, unit) t
+(** Emit a structured log record to the runtime's logger. The runtime
+    automatically populates the record's [trace_id]/[span_id] from the
+    active span and [ts_ms] from the runtime's clock. *)
+
+val metric_update :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  kind:Capabilities.metric_kind ->
+  Capabilities.metric_value ->
+  ('env, 'err, unit) t
+(** Update a metric on the runtime's meter. *)
 
 val here_attr :
   string * int * int * int -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t

@@ -22,6 +22,24 @@ type span_link = {
   link_attrs : (string * string) list;
 }
 
+type log_level = Trace | Debug | Info | Warn | Error | Fatal
+
+type log_record = {
+  level : log_level;
+  body : string;
+  ts_ms : int;
+  attrs : (string * string) list;
+  trace_id : string;
+  span_id : string;
+}
+
+type metric_kind =
+  | Counter_cumulative
+  | Counter_monotonic
+  | Gauge
+
+type metric_value = Int of int | Float of float
+
 class type tracer = object
   method begin_span :
     ?parent_id:int ->
@@ -39,6 +57,22 @@ class type tracer = object
     unit
   method add_link : span_link -> unit
   method inspect : span_id:int -> span_info option
+end
+
+class type logger = object
+  method log : log_record -> unit
+end
+
+class type meter = object
+  method record :
+    name:string ->
+    description:string ->
+    unit_:string ->
+    kind:metric_kind ->
+    attrs:(string * string) list ->
+    value:metric_value ->
+    ts_ms:int ->
+    unit
 end
 
 let clock_of_eio (c : _ Eio.Std.r) : clock =

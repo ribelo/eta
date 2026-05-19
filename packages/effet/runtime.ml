@@ -35,6 +35,8 @@ type ('env, 'err) t = {
   sleep : Duration.t -> unit;
   now_ms : unit -> int;
   tracer : Capabilities.tracer;
+  logger : Capabilities.logger;
+  meter : Capabilities.meter;
   cause_pp : Obj.t -> string;
   outer_sw : Eio.Switch.t;
   active : int Atomic.t;
@@ -51,7 +53,8 @@ let default_cause_pp (obj : Obj.t) : string =
     Printf.sprintf "variant#%d" (Obj.obj (Obj.field obj 0) : int)
   else "<error>"
 
-let create ~sw ~clock ?sleep ?(tracer = Tracer.noop) ?cause_pp ~env () =
+let create ~sw ~clock ?sleep ?(tracer = Tracer.noop) ?(logger = Logger.noop)
+    ?(meter = Meter.noop) ?cause_pp ~env () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let sleep =
     match sleep with
@@ -71,6 +74,8 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop) ?cause_pp ~env () =
     sleep;
     now_ms;
     tracer;
+    logger;
+    meter;
     cause_pp;
     outer_sw = sw;
     active = Atomic.make 0;
@@ -273,6 +278,27 @@ let rec interpret :
       match Eio.Fiber.get active_span_key with
       | None -> None
       | Some span_id -> runtime.tracer#inspect ~span_id)
+  | E.Log (level, body, attrs) ->
+      let trace_id, span_id =
+        match Eio.Fiber.get active_span_key with
+        | None -> ("", "")
+        | Some span_id -> (
+            match runtime.tracer#inspect ~span_id with
+            | None -> ("", "")
+            | Some info -> (info.trace_id, info.span_id))
+      in
+      runtime.logger#log
+        {
+          Capabilities.level;
+          body;
+          ts_ms = runtime.now_ms ();
+          attrs;
+          trace_id;
+          span_id;
+        }
+  | E.Metric_update { name; description; unit_; kind; attrs; value } ->
+      runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
+        ~ts_ms:(runtime.now_ms ())
   | E.Provide (env_in, e) ->
       interpret ~runtime ~fail_key ~sw ~finalizers e env_in
 

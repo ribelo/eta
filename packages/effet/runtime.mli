@@ -7,6 +7,8 @@ val create :
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?sleep:(Duration.t -> unit) ->
   ?tracer:Capabilities.tracer ->
+  ?logger:Capabilities.logger ->
+  ?meter:Capabilities.meter ->
   ?cause_pp:(Obj.t -> string) ->
   env:'env ->
   unit ->

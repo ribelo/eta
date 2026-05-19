@@ -1,30 +1,10 @@
-(** OTLP/JSON over HTTP/1.1 exporter for Effet's tracer capability.
+(** OTLP/JSON over HTTP/1.1 exporter for Effet's tracer, logger, and meter
+    capabilities.
 
-    [Effet_otel] adapts {!Effet.Capabilities.tracer} to a real OpenTelemetry
-    backend over the OTLP/JSON protocol. The implementation is deliberately
-    small: hand-written JSON, hand-written HTTP/1.1, Eio TCP. It does not
-    depend on cohttp, tls, protobuf, or [ocaml-opentelemetry].
-
-    Usage:
-    {[
-      let exporter =
-        Effet_otel.create ~sw
-          ~net:(Eio.Stdenv.net stdenv)
-          ~clock:(Eio.Stdenv.clock stdenv)
-          ~host:"127.0.0.1" ~port:27686
-          ~service_name:"my-app"
-          ()
-      in
-      let rt =
-        Effet.Runtime.create ~sw
-          ~clock:(Eio.Stdenv.clock stdenv)
-          ~tracer:(Effet_otel.tracer exporter)
-          ~env:my_env
-          ()
-      in
-      let _ = Effet.Runtime.run rt my_program in
-      Effet_otel.flush exporter
-    ]} *)
+    Hand-rolled to keep the dependency closure to {effet, eio, eio.unix}. The
+    exporter accumulates spans, log records, and metric points on three Eio
+    streams; one background fiber per signal drains its queue, encodes a
+    batch as OTLP/JSON, and POSTs it to the configured endpoint. *)
 
 type t
 
@@ -34,23 +14,52 @@ val create :
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?host:string ->
   ?port:int ->
-  ?path:string ->
+  ?traces_path:string ->
+  ?logs_path:string ->
+  ?metrics_path:string ->
   ?service_name:string ->
   ?service_version:string ->
   ?resource_attrs:(string * string) list ->
   ?scope_name:string ->
   ?on_error:(string -> unit) ->
+  ?on_send:(path:string -> body:string -> unit) ->
   unit ->
   t
-(** Construct an exporter. A background fiber is forked on [sw] to drain the
-    completed-spans queue and POST batches to [http://host:port/path].
-
-    Defaults: host="127.0.0.1", port=4318, path="/v1/traces",
-    service_name="effet", scope_name="effet". *)
+(** Construct an exporter. Three background fibers are forked on [sw], one
+    per signal type. Defaults: host="127.0.0.1", port=4318,
+    traces_path="/v1/traces", logs_path="/v1/logs",
+    metrics_path="/v1/metrics", service_name="effet". *)
 
 val tracer : t -> Effet.Capabilities.tracer
-(** Return a value satisfying {!Effet.Capabilities.tracer} backed by [t].
-    Pass it to [Effet.Runtime.create ~tracer]. *)
+(** Tracer adapter for {!Effet.Runtime.create}. *)
+
+val logger : t -> Effet.Capabilities.logger
+(** Logger adapter for {!Effet.Runtime.create}. *)
+
+val meter : t -> Effet.Capabilities.meter
+(** Meter adapter for {!Effet.Runtime.create}. Counter values are aggregated
+    by attribute set within each batch; gauges retain the latest value. *)
 
 val flush : ?timeout_s:float -> t -> unit
-(** Block until the in-flight queue is drained or [timeout_s] elapses. *)
+(** Block until all in-flight signals are drained or [timeout_s] elapses. *)
+
+(** {1 Internals exposed for testing} *)
+
+module Metric_key : sig
+  type t = {
+    name : string;
+    description : string;
+    unit_ : string;
+    kind : Effet.Capabilities.metric_kind;
+    attrs : (string * string) list;
+  }
+end
+
+val aggregate_points :
+  Effet.Meter.point list ->
+  (Metric_key.t
+  * (Effet.Capabilities.metric_value * int * int))
+  list
+(** Aggregate raw meter points by [(name, kind, attrs, description, unit_)].
+    Gauges keep the latest value; counters sum. The returned int pair is
+    [(start_ts_ns, end_ts_ns)]. *)

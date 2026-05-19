@@ -31,6 +31,7 @@
               ocamlPackages.eio
               ocamlPackages.eio_main
               ocamlPackages.alcotest
+              ocamlPackages.yojson
             ];
           };
         }

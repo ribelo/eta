@@ -42,7 +42,7 @@ let live_motel_test net clock =
   Eio.Switch.run @@ fun sw ->
   let exporter =
     Effet_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port:27686
-      ~path:"/v1/traces" ~service_name:"effet-otel-itest"
+      ~traces_path:"/v1/traces" ~service_name:"effet-otel-itest"
       ~service_version:"0.0.1"
       ~resource_attrs:
         [ ("test.run_id", string_of_int (int_of_float (Eio.Time.now clock))) ]
