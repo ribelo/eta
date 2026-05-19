@@ -25,10 +25,20 @@ let raise_cause key cause =
 
 let raise_fail key err = raise_cause key (Cause.Fail err)
 
-let cause_of_exn key exn =
+let rec cause_of_exn key exn =
   match exn with
   | Raised_cause (k, cause) when k = Typed_fail.int key -> Obj.obj cause
   | Eio.Cancel.Cancelled _ -> Cause.Interrupt
+  | Exit -> Cause.Interrupt
+  | Fun.Finally_raised exn -> cause_of_exn key exn
+  | Eio.Exn.Multiple causes ->
+      let causes = List.map (fun (exn, _) -> cause_of_exn key exn) causes in
+      if List.for_all (function Cause.Interrupt -> true | _ -> false) causes then
+        Cause.Interrupt
+      else (
+        match causes with
+        | [] -> Cause.Die exn
+        | first :: rest -> List.fold_left Cause.both first rest)
   | exn -> Cause.Die exn
 
 type ('env, 'err) t = {
@@ -107,6 +117,7 @@ let rec status_of_cause :
       Error (render a ^ " | " ^ render b)
 
 let run_finalizers finalizers =
+  Eio.Cancel.protect @@ fun () ->
   match !finalizers with
   | [] -> ()
   | fs -> Eio.Fiber.all (List.map (fun f () -> f ()) fs)
@@ -242,6 +253,17 @@ let rec interpret :
         ~finally:(fun () -> run_finalizers child_finalizers)
         (fun () ->
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
+  | E.Supervisor_scoped (max_failures, body) ->
+      Eio.Switch.run @@ fun supervisor_sw ->
+      let supervisor =
+        E.Private.make_supervisor ~sw:supervisor_sw ~max_failures
+      in
+      let supervisor_finalizers = ref [] in
+      Fun.protect
+        ~finally:(fun () -> run_finalizers supervisor_finalizers)
+        (fun () ->
+          interpret_supervisor_scope ~runtime ~fail_key ~sw:supervisor_sw
+            ~finalizers:supervisor_finalizers (body.run supervisor) env)
   | E.Named (kind, name, e) ->
       let parent_id = Eio.Fiber.get active_span_key in
       let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
@@ -372,6 +394,93 @@ and instrument_leaf :
       let cause = cause_of_exn fail_key exn in
       finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
       raise exn
+
+and interpret_supervisor_scope :
+    type re s env err a.
+    runtime:(re, _) t ->
+    fail_key:Typed_fail.key ->
+    sw:Eio.Switch.t ->
+    finalizers:(unit -> unit) list ref ->
+    (s, env, err, a) E.supervisor_scope ->
+    env ->
+    a =
+ fun ~runtime ~fail_key ~sw ~finalizers eff env ->
+  match eff with
+  | E.Supervisor_pure value -> value
+  | E.Supervisor_lift child_effect ->
+      interpret ~runtime ~fail_key ~sw ~finalizers child_effect env
+  | E.Supervisor_fail err -> raise_fail fail_key err
+  | E.Supervisor_bind (scope_effect, k) ->
+      let value =
+        interpret_supervisor_scope ~runtime ~fail_key ~sw ~finalizers scope_effect
+          env
+      in
+      interpret_supervisor_scope ~runtime ~fail_key ~sw ~finalizers (k value) env
+  | E.Supervisor_start (supervisor, child_effect) ->
+      let promise, resolver = Eio.Promise.create () in
+      let resolved = Atomic.make false in
+      let cancel_requested = Atomic.make false in
+      let resolve value =
+        if Atomic.compare_and_set resolved false true then
+          Eio.Promise.resolve resolver value
+      in
+      let child_sw = ref None in
+      let child_cancel = ref None in
+      Eio.Fiber.fork ~sw:(E.Private.supervisor_switch supervisor) (fun () ->
+          Tracer.with_fiber_context @@ fun () ->
+          let result =
+            try
+              Eio.Cancel.sub @@ fun cancel_context ->
+              child_cancel := Some cancel_context;
+              if Atomic.get cancel_requested then
+                Eio.Cancel.cancel cancel_context Exit;
+              Eio.Switch.run @@ fun child_switch ->
+              child_sw := Some child_switch;
+              let child_finalizers = ref [] in
+              Fun.protect
+                ~finally:(fun () -> run_finalizers child_finalizers)
+                (fun () ->
+                  Ok
+                    (interpret_supervisor_scope ~runtime ~fail_key
+                       ~sw:child_switch ~finalizers:child_finalizers child_effect
+                       env))
+            with exn -> Error (cause_of_exn fail_key exn)
+          in
+          (match result with
+          | Ok _ -> ()
+          | Error cause ->
+              let failures = E.Private.supervisor_failures_ref supervisor in
+              failures := cause :: !failures);
+          resolve result);
+      E.Private.make_supervisor_child ~promise
+        ~cancel:
+          (fun () ->
+            Atomic.set cancel_requested true;
+            match !child_cancel with
+            | None -> resolve (Error Cause.Interrupt)
+            | Some cancel_context ->
+                Eio.Cancel.cancel cancel_context Exit;
+                (match !child_sw with
+                | None -> ()
+                | Some child_switch ->
+                    (try Eio.Switch.fail child_switch Exit with _ -> ())))
+  | E.Supervisor_await child -> (
+      match Eio.Promise.await (E.Private.supervisor_child_promise child) with
+      | Ok value -> value
+      | Error cause -> raise_cause fail_key cause)
+  | E.Supervisor_cancel child ->
+      E.Private.supervisor_child_cancel child ()
+  | E.Supervisor_failures supervisor ->
+      List.rev !(E.Private.supervisor_failures_ref supervisor)
+  | E.Supervisor_check supervisor -> (
+      match E.Private.supervisor_max_failures supervisor with
+      | None -> ()
+      | Some max ->
+          let count =
+            List.length !(E.Private.supervisor_failures_ref supervisor)
+          in
+          if count >= max then raise_fail fail_key (`Supervisor_failed count))
+  | E.Supervisor_yield -> Eio.Fiber.yield ()
 
 and par_collect :
     type re env err a.

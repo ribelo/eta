@@ -56,6 +56,9 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
       -> ('env, 'err, 'a) t
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Supervisor_scoped :
+      int option * ('env, 'err, 'a) supervisor_body
+      -> ('env, 'err, 'a) t
   | Named :
       Capabilities.span_kind * string * ('env, 'err, 'a) t
       -> ('env, 'err, 'a) t
@@ -79,6 +82,39 @@ type ('env, 'err, 'a) t =
       -> ('env, 'err, unit) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
+
+and ('s, 'env, 'err, 'a) supervisor_scope =
+  | Supervisor_pure : 'a -> (_, _, _, 'a) supervisor_scope
+  | Supervisor_lift :
+      ('env, 'err, 'a) t -> (_, 'env, 'err, 'a) supervisor_scope
+  | Supervisor_fail : 'err -> (_, _, 'err, _) supervisor_scope
+  | Supervisor_bind :
+      ('s, 'env, 'err, 'b) supervisor_scope
+      * ('b -> ('s, 'env, 'err, 'a) supervisor_scope)
+      -> ('s, 'env, 'err, 'a) supervisor_scope
+  | Supervisor_start :
+      ('s, 'err) supervisor
+      * ('s, 'env, 'err, 'a) supervisor_scope
+      -> ('s, 'env, _, ('s, 'err, 'a) supervisor_child) supervisor_scope
+  | Supervisor_await :
+      ('s, 'err, 'a) supervisor_child -> ('s, _, 'err, 'a) supervisor_scope
+  | Supervisor_cancel :
+      ('s, _, _) supervisor_child -> ('s, _, _, unit) supervisor_scope
+  | Supervisor_failures :
+      ('s, 'err) supervisor -> ('s, _, _, 'err Cause.t list) supervisor_scope
+  | Supervisor_check :
+      ('s, [> `Supervisor_failed of int ] as 'err) supervisor
+      -> ('s, _, 'err, unit) supervisor_scope
+  | Supervisor_yield : ('s, _, _, unit) supervisor_scope
+
+and ('env, 'err, 'a) supervisor_body = {
+  run :
+    's.
+    ('s, 'err) supervisor -> ('s, 'env, 'err, 'a) supervisor_scope;
+}
+
+and ('s, !'err) supervisor
+and ('s, !'err, !'a) supervisor_child
 
 val pure : 'a -> ('env, 'err, 'a) t
 val fail : 'err -> ('env, 'err, 'a) t
@@ -166,6 +202,43 @@ val acquire_release :
 
 val scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
 
+val supervisor_scoped :
+  ?max_failures:int ->
+  ('env, 'err, 'a) supervisor_body ->
+  ('env, 'err, 'a) t
+
+val supervisor_pure : 'a -> ('s, 'env, 'err, 'a) supervisor_scope
+
+val supervisor_lift :
+  ('env, 'err, 'a) t -> ('s, 'env, 'err, 'a) supervisor_scope
+
+val supervisor_fail : 'err -> ('s, 'env, 'err, 'a) supervisor_scope
+
+val supervisor_bind :
+  ('a -> ('s, 'env, 'err, 'b) supervisor_scope) ->
+  ('s, 'env, 'err, 'a) supervisor_scope ->
+  ('s, 'env, 'err, 'b) supervisor_scope
+
+val supervisor_start :
+  ('s, 'err) supervisor ->
+  ('s, 'env, 'err, 'a) supervisor_scope ->
+  ('s, 'env, 'outer_err, ('s, 'err, 'a) supervisor_child) supervisor_scope
+
+val supervisor_await :
+  ('s, 'err, 'a) supervisor_child -> ('s, 'env, 'err, 'a) supervisor_scope
+
+val supervisor_cancel :
+  ('s, 'err, 'a) supervisor_child -> ('s, 'env, 'outer_err, unit) supervisor_scope
+
+val supervisor_failures :
+  ('s, 'err) supervisor -> ('s, 'env, 'outer_err, 'err Cause.t list) supervisor_scope
+
+val supervisor_check :
+  ('s, [> `Supervisor_failed of int ] as 'err) supervisor ->
+  ('s, 'env, 'err, unit) supervisor_scope
+
+val supervisor_yield : ('s, 'env, 'err, unit) supervisor_scope
+
 val provide : 'env_in -> ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
 (** Run [e] under a fully-replaced environment.
 
@@ -241,3 +314,25 @@ val fn :
 
 val name : ('env, 'err, 'a) t -> string option
 val collect_names : ('env, 'err, 'a) t -> string list
+
+module Private : sig
+  val make_supervisor :
+    sw:Eio.Switch.t ->
+    max_failures:int option ->
+    ('s, 'err) supervisor
+
+  val supervisor_switch : ('s, 'err) supervisor -> Eio.Switch.t
+  val supervisor_max_failures : ('s, 'err) supervisor -> int option
+  val supervisor_failures_ref : ('s, 'err) supervisor -> 'err Cause.t list ref
+
+  val make_supervisor_child :
+    promise:('a, 'err Cause.t) result Eio.Promise.t ->
+    cancel:(unit -> unit) ->
+    ('s, 'err, 'a) supervisor_child
+
+  val supervisor_child_promise :
+    ('s, 'err, 'a) supervisor_child ->
+    ('a, 'err Cause.t) result Eio.Promise.t
+
+  val supervisor_child_cancel : ('s, 'err, 'a) supervisor_child -> unit -> unit
+end

@@ -1,6 +1,7 @@
 type ('env, 'err, 'a) t = {
   load : ('env, 'err, 'a) Effect.t;
   mutable value : 'a option;
+  failures : 'err Cause.t list ref;
 }
 
 let refresh resource =
@@ -18,7 +19,10 @@ let get resource =
              value)
 
 let manual load =
-  load |> Effect.map (fun value -> { load; value = Some value })
+  load |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
+
+let failures resource =
+  Effect.sync "resource.failures" (fun _ -> List.rev !(resource.failures))
 
 let auto ?on_error ~load ~schedule () =
   let rec refresh_loop resource step =
@@ -29,6 +33,7 @@ let auto ?on_error ~load ~schedule () =
           refresh resource
           |> Effect.catch (fun err ->
                  Effect.sync "resource.auto.refresh_failed" (fun _ ->
+                     resource.failures := Cause.Fail err :: !(resource.failures);
                      Option.iter (fun f -> f err) on_error))
         in
         refresh_once
@@ -36,7 +41,7 @@ let auto ?on_error ~load ~schedule () =
         |> Effect.bind (fun () -> refresh_loop resource (step + 1))
   in
   load
-  |> Effect.map (fun value -> { load; value = Some value })
+  |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
   |> Effect.bind (fun resource ->
          Effect.detach (refresh_loop resource 0)
          |> Effect.map (fun () -> resource))

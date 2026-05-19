@@ -21,3 +21,7 @@ val auto :
 
 val get : ('env, 'err, 'a) t -> ('env, 'err, 'a) Effect.t
 val refresh : ('env, 'err, 'a) t -> ('env, 'err, unit) Effect.t
+val failures : ('env, 'err, 'a) t -> ('env, 'outer_err, 'err Cause.t list) Effect.t
+(** Return refresh failures observed by this resource in observation order.
+    Manual resources start with an empty list. [auto] records typed refresh
+    failures as [Cause.Fail err] before invoking [on_error]. *)

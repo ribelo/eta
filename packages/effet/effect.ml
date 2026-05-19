@@ -39,6 +39,9 @@ type ('env, 'err, 'a) t =
       ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
       -> ('env, 'err, 'a) t
   | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | Supervisor_scoped :
+      int option * ('env, 'err, 'a) supervisor_body
+      -> ('env, 'err, 'a) t
   | Named :
       Capabilities.span_kind * string * ('env, 'err, 'a) t
       -> ('env, 'err, 'a) t
@@ -62,6 +65,47 @@ type ('env, 'err, 'a) t =
       -> ('env, 'err, unit) t
   | Provide :
       'env_in * ('env_in, 'err, 'a) t -> ('env_out, 'err, 'a) t
+
+and ('s, 'env, 'err, 'a) supervisor_scope =
+  | Supervisor_pure : 'a -> (_, _, _, 'a) supervisor_scope
+  | Supervisor_lift :
+      ('env, 'err, 'a) t -> (_, 'env, 'err, 'a) supervisor_scope
+  | Supervisor_fail : 'err -> (_, _, 'err, _) supervisor_scope
+  | Supervisor_bind :
+      ('s, 'env, 'err, 'b) supervisor_scope
+      * ('b -> ('s, 'env, 'err, 'a) supervisor_scope)
+      -> ('s, 'env, 'err, 'a) supervisor_scope
+  | Supervisor_start :
+      ('s, 'err) supervisor
+      * ('s, 'env, 'err, 'a) supervisor_scope
+      -> ('s, 'env, _, ('s, 'err, 'a) supervisor_child) supervisor_scope
+  | Supervisor_await :
+      ('s, 'err, 'a) supervisor_child -> ('s, _, 'err, 'a) supervisor_scope
+  | Supervisor_cancel :
+      ('s, _, _) supervisor_child -> ('s, _, _, unit) supervisor_scope
+  | Supervisor_failures :
+      ('s, 'err) supervisor -> ('s, _, _, 'err Cause.t list) supervisor_scope
+  | Supervisor_check :
+      ('s, [> `Supervisor_failed of int ] as 'err) supervisor
+      -> ('s, _, 'err, unit) supervisor_scope
+  | Supervisor_yield : ('s, _, _, unit) supervisor_scope
+
+and ('env, 'err, 'a) supervisor_body = {
+  run :
+    's.
+    ('s, 'err) supervisor -> ('s, 'env, 'err, 'a) supervisor_scope;
+}
+
+and ('s, !'err) supervisor = {
+  sw : Eio.Switch.t;
+  max_failures : int option;
+  failures : 'err Cause.t list ref;
+}
+
+and ('s, !'err, !'a) supervisor_child = {
+  promise : ('a, 'err Cause.t) result Eio.Promise.t;
+  cancel : unit -> unit;
+}
 
 let pure v = Pure v
 let fail e = Fail e
@@ -96,6 +140,19 @@ let repeat sch e = Repeat (e, sch)
 
 let acquire_release ~acquire ~release = Acquire_release (acquire, release)
 let scoped e = Scoped e
+let supervisor_scoped ?max_failures body =
+  Supervisor_scoped (max_failures, body)
+
+let supervisor_pure v = Supervisor_pure v
+let supervisor_lift e = Supervisor_lift e
+let supervisor_fail e = Supervisor_fail e
+let supervisor_bind k e = Supervisor_bind (e, k)
+let supervisor_start supervisor e = Supervisor_start (supervisor, e)
+let supervisor_await child = Supervisor_await child
+let supervisor_cancel child = Supervisor_cancel child
+let supervisor_failures supervisor = Supervisor_failures supervisor
+let supervisor_check supervisor = Supervisor_check supervisor
+let supervisor_yield = Supervisor_yield
 
 let named_kind ~kind name e = Named (kind, name, e)
 let named name e = named_kind ~kind:Capabilities.Internal name e
@@ -157,6 +214,7 @@ let collect_names e =
     | Repeat (e, _) -> walk acc e
     | Retry (e, _, _) -> walk acc e
     | Scoped e -> walk acc e
+    | Supervisor_scoped _ -> acc
     | Acquire_release (acq, _) -> walk acc acq
     | Bind (e, _) -> walk acc e
     | Catch (e, _) -> walk acc e
@@ -172,3 +230,13 @@ let collect_names e =
     | Provide (_, e) -> walk acc e
   in
   List.rev (walk [] e)
+
+module Private = struct
+  let make_supervisor ~sw ~max_failures = { sw; max_failures; failures = ref [] }
+  let supervisor_switch supervisor = supervisor.sw
+  let supervisor_max_failures supervisor = supervisor.max_failures
+  let supervisor_failures_ref supervisor = supervisor.failures
+  let make_supervisor_child ~promise ~cancel = { promise; cancel }
+  let supervisor_child_promise child = child.promise
+  let supervisor_child_cancel child = child.cancel
+end

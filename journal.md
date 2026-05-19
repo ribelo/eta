@@ -4034,3 +4034,298 @@ Branding is a TypeScript repair for a structural type system. OCaml does not
 need that repair as a first-class public abstraction. The capability survives,
 but the API should collapse into OCaml's module system: abstract types,
 private abbreviations, and schema transforms.
+
+## Effet-4n3 supervision research — nursery / supervisor surface (2.5h)
+
+### Why this entry exists
+
+Effet's earlier fiber research made the right negative call for a raw public
+`Fiber.t`: escaped handles compile and become runtime traps. The review finding
+behind Effet-4n3 points out the missing candidate: a first-class supervised
+scope, closer to Trio/Eio's nursery idiom, where handles exist but are bound to
+a lexical scope.
+
+The pressure is no longer theoretical. `Resource.auto` now exists and is built
+on `Effect.detach`. Refresh failures are either swallowed or sent to an
+untyped side-effect callback. That is enough for a cache, but it is not a
+structured failure-management surface.
+
+### Goal
+
+Reopen V-F2/V-F3 with compiler-backed evidence. Compare:
+
+| Tag | Candidate |
+|---|---|
+| F-D | Scoped supervisor: explicit supervisor value, scope-bound child handles |
+| F-E | Supervisor strategies: `One_for_one` / `One_for_all` and restart policy |
+| F-F | Ambient nursery: nursery operations available inside a rank-2 scope |
+| F-G | Detach-only baseline: current `detach` / `Resource.auto` style |
+
+The required question is not "should Effet expose raw fibers?". That remains
+answered by V-F2. The question is whether Effet needs a structured supervisor
+surface that makes child failure observable without allowing handles to escape.
+
+### Current implementation pressure
+
+Current public concurrency surface:
+
+- `Effect.par` / `all` / `for_each_par`: fail-fast collection combinators.
+- `Effect.all_settled`: collects child exits as values.
+- `Effect.for_each_par_bounded`: bounded fail-fast traversal.
+- `Effect.detach`: runtime-owned unit fiber; child failures do not flow back.
+- `Resource.auto`: seeds a cache, then uses `Effect.detach` for refresh loop.
+  Refresh typed failures keep the old value and call `?on_error` when provided.
+
+That is a useful base, but it has no parent-visible typed sink for detached
+failures and no place to encode restart/failure policy.
+
+### Lab
+
+Artifacts live in `scratch/supervision_research/`.
+
+| File | Purpose | Result |
+|---|---|---|
+| `f_d_supervisor_scope.ml` | Rank-2 scoped supervisor with `start` / `await` / `cancel` / `observe` / `check_threshold` | Compiles |
+| `f_e_supervisor_strategies.ml` | Pure restart strategy model for `One_for_one` and `One_for_all` | Compiles |
+| `f_f_ambient_nursery.ml` | Ambient nursery shape using the same scope-tag trick | Compiles |
+| `f_g_detach_only.ml` | Baseline showing callback-only observability | Compiles |
+| `runtime_smoke.ml` | Runtime fixtures across all candidates | Passes |
+| `neg_d_handle_escape.ml` | F-D escaped child handle must fail to compile | Fails as expected |
+| `neg_f_ambient_escape.ml` | F-F escaped ambient child handle must fail to compile | Fails as expected |
+
+Positive validation:
+
+~~~text
+nix develop -c dune build scratch/supervision_research
+nix develop -c dune exec scratch/supervision_research/runtime_smoke.exe
+~~~
+
+Observed output:
+
+~~~text
+F-D observe child failure: ok
+F-D await child result: ok
+F-D cancel finalizer: ok
+F-D threshold failure: ok
+F-D Resource.auto-shaped failure sink: ok
+F-D nested supervisors: ok
+F-E one-for-one: ok
+F-E one-for-all: ok
+F-F ambient nursery: ok
+F-G swallowed: ok
+F-G callback: ok
+supervision research smoke tests passed
+~~~
+
+### Negative tests
+
+`neg_d_handle_escape.ml` was temporarily added to the library's `(modules ...)`
+list. The compiler rejected the escape:
+
+~~~text
+File "scratch/supervision_research/neg_d_handle_escape.ml", lines 14-16, characters 6-21:
+14 | ......fun (type s) sup ->
+15 |         let** (child : (s, [> `Boom ], int) child) = start sup (s_pure 1) in
+16 |         s_pure child;
+Error: This field value has type
+         ('s, [> `Boom ] as 'a) supervisor ->
+         ('s, 'b, 'a, ('s, 'a, int) child) scoped_t
+       which is less general than
+         's0. ('s0, 'c) supervisor -> ('s0, 'd, 'c, 'e) scoped_t
+~~~
+
+`neg_f_ambient_escape.ml` was then added instead. The compiler rejected that
+escape too:
+
+~~~text
+File "scratch/supervision_research/neg_f_ambient_escape.ml", lines 13-15, characters 6-19:
+13 | ......fun (type s) () ->
+14 |         let* (child : (s, [> `Boom ], int) child) = start (pure 1) in
+15 |         pure child;
+Error: This field value has type
+         unit -> ('s, 'a, 'b, ('s, [> `Boom ], int) child) scoped_t
+       which is less general than 's0. unit -> ('s0, 'c, 'd, 'e) scoped_t
+~~~
+
+The failure mode matches V-F3's earlier rank-2 evidence: a child handle's type
+mentions the locally quantified `'s`, so it cannot become the result of the
+scope.
+
+### Cross-tabulation
+
+| Property | F-D scoped supervisor | F-E strategies | F-F ambient nursery | F-G detach-only |
+|---|:---:|:---:|:---:|:---:|
+| Child handle escape blocked statically | yes | n/a | yes | n/a |
+| Await typed child result in scope | yes | n/a | yes | no |
+| Observe child failure without failing parent by default | yes | yes | possible, not modelled fully | no typed sink |
+| Cancel child and run finalizer | yes | n/a | not modelled | no handle |
+| Supervisor threshold failure | yes | policy can express | not modelled | no |
+| Nested supervisors compose | yes | n/a | yes by same scope trick | no supervisor |
+| Resource.auto failure observability | yes | policy layer only | possible | callback/swallow only |
+| Surface cost | medium | high if public first | medium-high | low |
+| OCaml idiom fit | good: Eio nursery + rank-2 scope | mixed: OTP-like, not Eio-first | weaker: hidden ambient context | good but incomplete |
+
+### Decision diary
+
+#### V-Sv1 — Keep rejecting raw public `Fiber.t`
+
+V-F2 still holds. A raw public handle can escape its parent switch, and the type
+system will not stop it. Effet should not expose that trap. The new lab does not
+revive raw `Fiber.t`; it revives scoped child handles whose phantom scope makes
+escape a compile error (`f_d_supervisor_scope.ml`, `neg_d_handle_escape.ml`).
+
+#### V-Sv2 — Adopt a scoped supervisor/nursery as the recommended direction
+
+F-D is the winning shape. It gives the missing capability without violating
+structured concurrency: `start` returns a child handle, `await` re-enters the
+child's typed error channel, `cancel` terminates the child, and `observe` gives
+the supervisor a failure sink that does not fail the parent by default. The
+runtime smoke verifies all required fixtures, including finalizer execution on
+cancellation and nested supervisor composition.
+
+Recommended surface, sketched:
+
+~~~ocaml
+module Supervisor : sig
+  type ('s, 'err, 'a) child
+  type ('s, 'err) t
+
+  type ('env, 'err, 'a) body = {
+    run : 's. ('s, 'err) t -> ('s, 'env, 'err, 'a) Scope.t;
+  }
+
+  val scoped :
+    ?max_failures:int ->
+    ('env, 'err, 'a) body ->
+    ('env, 'err, 'a) Effect.t
+
+  val start :
+    ('s, 'err) t ->
+    ('s, 'env, 'err, 'a) Scope.t ->
+    ('s, 'env, 'err, ('s, 'err, 'a) child) Scope.t
+
+  val await : ('s, 'err, 'a) child -> ('s, 'env, 'err, 'a) Scope.t
+  val cancel : ('s, 'err, 'a) child -> ('s, 'env, 'err, unit) Scope.t
+  val failures : ('s, 'err) t -> ('s, 'env, 'err, 'err Cause.t list) Scope.t
+end
+~~~
+
+Names can change. The invariant should not: child handles are only usable inside
+the supervisor scope.
+
+#### V-Sv3 — Do not lead with OTP restart strategies
+
+F-E proves `One_for_one` / `One_for_all` restart policies are expressible, but
+the strategy layer is orthogonal to the core handle/supervision question. If it
+ships first, Effet would import a large OTP-shaped policy vocabulary before it
+has a minimal nursery. Keep restart strategy as a second slice layered on F-D's
+observable child outcomes.
+
+#### V-Sv4 — Ambient nursery is not worth the hidden context
+
+F-F blocks handle escape, but only because it keeps the same rank-2 scoped
+effect type. Ambient access removes one explicit argument while adding hidden
+state. That is a poor trade in Effet because the library already makes
+requirements explicit through the `'env` object row. Prefer passing the
+supervisor value explicitly inside `Supervisor.scoped`.
+
+#### V-Sv5 — Detach-only is no longer sufficient
+
+F-G captures the current weakness: detached failures have no typed sink. The
+baseline can increment a callback, but it cannot offer `await`, `cancel`,
+threshold policy, nested supervision, or a typed failure history. The
+`Resource.auto`-shaped F-D fixture shows the better shape: the cache can keep
+the last good value while the supervisor records `Cause.Fail (`Refresh)`.
+
+#### V-Sv6 — Resource.auto should eventually move off raw `detach`
+
+Do not rewrite `Resource.auto` in this research pass. The implementation task
+should first land F-D's supervisor primitive, then rebuild `Resource.auto` so
+its background refresh fiber is owned by an internal supervisor. Public API
+options can stay conservative: preserve `?on_error` for compatibility, but add
+an observable diagnostic sink through the supervisor machinery rather than
+relying on callback-only reporting.
+
+#### V-Sv7 — Failure model stays `Cause.t`
+
+The lab reused a slim cause type with `Fail` / `Die` / `Interrupt`. The
+production version should use Effet's existing `Cause.t` directly. Supervision
+does not create a second failure model; it gives child causes an owner and an
+inspection point.
+
+#### V-Sv8 — First implementation slice
+
+Create a follow-up implementation slice under the Effet-0jv remediation epic:
+
+- add an internal/public `Supervisor` module with a scoped body record;
+- add a scoped child effect type or nested `Supervisor.Scope.t` using the F-D
+  rank-2 phantom tag;
+- implement `start`, `await`, `cancel`, `failures`, and `max_failures`;
+- prove handle escape rejection with a scratch negative or expect-test-style
+  compiler fixture;
+- add runtime tests for observable child failure, await, cancellation finalizer,
+  threshold failure, nested supervisors, and Resource.auto-shaped refresh
+  observability;
+- leave restart strategies for a follow-up after the primitive lands.
+
+### Recommendation
+
+Adopt F-D: scoped supervisor/nursery with scope-bound child handles. Keep
+`Effect.detach` for fire-and-forget compatibility, but stop treating
+detach-only as Effet's final answer for long-lived background work. Defer
+F-E restart strategies until the smaller supervisor primitive is real. Reject
+F-F ambient nursery as a public shape because it keeps the type complexity while
+hiding ownership.
+
+### What we are deliberately not building in this entry
+
+- No production `packages/effet/supervisor.ml` yet.
+- No rewrite of `Resource.auto` yet.
+- No restart-tree API yet.
+- No public raw `Fiber.t`.
+
+### Meta-lesson
+
+The previous "no public fiber" conclusion was too broad. The real invariant is
+"no escaping child handles." OCaml can enforce that with the same rank-2 scope
+tag V-F3 already proved. The new evidence says Effet should expose supervised
+concurrency, not raw fibers and not detach-only background work.
+
+
+### Implementation follow-up — F-D adopted
+
+The approved recommendation was materialized in the live Effet package.
+
+Changed surface:
+
+- Added `packages/effet/supervisor.{ml,mli}`.
+- Added `Supervisor.scoped` with rank-2 body record.
+- Added `Supervisor.Scope` operations: `pure`, `lift`, `fail`, `bind`,
+  `start`, `await`, `cancel`, `failures`, `check`, and `yield`.
+- Added supervisor GADT nodes to `Effect.t` and interpreted them in
+  `Runtime` using Eio switches, promises, and Effet's existing `Cause.t`.
+- Kept raw public `Fiber.t` absent.
+- Kept `Effect.detach` for compatibility and fire-and-forget work.
+
+Runtime behavior now covered by package tests:
+
+- child failure is observable through `Supervisor.Scope.failures` without
+  failing the parent by default;
+- `await` rethrows the child's typed failure;
+- `cancel` interrupts the child and protected finalizers run;
+- `max_failures` plus `Scope.check` fails with `Supervisor_failed n`;
+- nested supervisors compose without unwinding the outer scope.
+
+Resource follow-up:
+
+`Resource.auto` still returns a long-lived resource, so it cannot literally own
+its refresh fiber through a lexical `Supervisor.scoped` whose scope closes
+before the resource is used. Instead, it now records typed refresh failures in
+the resource itself and exposes them through `Resource.failures`. The old
+`?on_error` callback remains for compatibility, but refresh failures are no
+longer callback-only evidence.
+
+This slightly refines V-Sv6: lexical supervisors are the public structured
+concurrency surface; long-lived returned resources use the same observable
+`Cause.t` sink idea because their lifecycle is runtime-owned rather than
+lexically scoped.

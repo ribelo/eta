@@ -827,6 +827,145 @@ let test_effect_detach_daemon_stops_with_runtime_switch () =
    with exn when exn == stopped -> ());
   Alcotest.(check bool) "detached child cancelled" true !child_cancelled
 
+let test_supervisor_observes_child_failure () =
+  with_runtime @@ fun rt ->
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_child : (s, [> `Boom ], int) Supervisor.child) =
+            start sup (fail `Boom)
+          in
+          let* () = yield in
+          failures sup;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Ok [ Cause.Fail `Boom ] -> ()
+  | _ -> Alcotest.fail "expected observed child failure"
+
+let test_supervisor_await_rethrows_child_failure () =
+  with_runtime @@ fun rt ->
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (child : (s, [> `Boom ], int) Supervisor.child) =
+            start sup (fail `Boom)
+          in
+          await child;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Error (Cause.Fail `Boom) -> ()
+  | _ -> Alcotest.fail "expected await to rethrow child failure"
+
+let test_supervisor_cancel_runs_finalizer () =
+  with_test_clock @@ fun _sw clock rt ->
+  let finalizer_ran = ref false in
+  let child =
+    Effect.acquire_release
+      ~acquire:(Effect.sync "supervisor.acquire" (fun _ -> ()))
+      ~release:(fun () ->
+        Effect.sync "supervisor.release" (fun _ -> finalizer_ran := true))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (child : (s, [> `Boom ], unit) Supervisor.child) =
+            start sup (lift child)
+          in
+          let* () =
+            lift
+              (Effect.sync "supervisor.wait_for_child" (fun _ ->
+                   wait_for_sleepers clock 1))
+          in
+          let* () = cancel child in
+          await child;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Error Cause.Interrupt ->
+      Alcotest.(check bool) "finalizer ran" true !finalizer_ran
+  | Exit.Error cause ->
+      Alcotest.failf "expected Interrupt, got %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
+
+let test_supervisor_cancel_before_await_does_not_deadlock () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let child = Effect.delay (Duration.ms 1_000) Effect.unit in
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (child : (s, [> `Boom ], unit) Supervisor.child) =
+            start sup (lift child)
+          in
+          let* () = cancel child in
+          await child;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Error Cause.Interrupt -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected Interrupt, got %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
+
+let test_supervisor_threshold_failure () =
+  with_runtime @@ fun rt ->
+  let program =
+    Supervisor.scoped ~max_failures:1 {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_child :
+                  (s, [> `Boom | `Supervisor_failed of int ], int)
+                  Supervisor.child) =
+            start sup (fail `Boom)
+          in
+          let* () = yield in
+          check sup;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Error (Cause.Fail (`Supervisor_failed 1)) -> ()
+  | _ -> Alcotest.fail "expected supervisor threshold failure"
+
+let test_supervisor_nested_scopes_compose () =
+  with_runtime @@ fun rt ->
+  let inner =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_child : (s, [> `Inner ], unit) Supervisor.child) =
+            start sup (fail `Inner)
+          in
+          let* () = yield in
+          failures sup;
+    }
+  in
+  let outer =
+    Supervisor.scoped {
+      run =
+        fun (_ : (_, _) Supervisor.t) ->
+          let open Supervisor.Scope in
+          let* inner_failures = lift inner in
+          pure (List.length inner_failures);
+    }
+  in
+  Alcotest.(check int) "inner failure observed" 1 (run_ok rt outer)
+
 let test_effect_uninterruptible_defers_race_cancellation () =
   with_test_clock @@ fun sw clock rt ->
   let slow_completed = ref false in
@@ -1008,6 +1147,9 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
     (run_ok rt (Resource.get resource));
   Alcotest.(check (list string)) "observed refresh error" [ "boom" ]
     (List.map (fun (`Refresh_failed message) -> message) (List.rev !errors));
+  (match run_ok rt (Resource.failures resource) with
+  | [ Cause.Fail (`Refresh_failed "boom") ] -> ()
+  | _ -> Alcotest.fail "expected resource failure sink to record refresh error");
   wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.ms 5);
   yield ();
@@ -1297,6 +1439,21 @@ let () =
             test_effect_detach_daemon_stops_with_runtime_switch;
           Alcotest.test_case "uninterruptible defers race cancellation" `Quick
             test_effect_uninterruptible_defers_race_cancellation;
+        ] );
+      ( "Supervisor",
+        [
+          Alcotest.test_case "observes child failure" `Quick
+            test_supervisor_observes_child_failure;
+          Alcotest.test_case "await rethrows child failure" `Quick
+            test_supervisor_await_rethrows_child_failure;
+          Alcotest.test_case "cancel runs finalizer" `Quick
+            test_supervisor_cancel_runs_finalizer;
+          Alcotest.test_case "cancel before await does not deadlock" `Quick
+            test_supervisor_cancel_before_await_does_not_deadlock;
+          Alcotest.test_case "threshold failure" `Quick
+            test_supervisor_threshold_failure;
+          Alcotest.test_case "nested scopes compose" `Quick
+            test_supervisor_nested_scopes_compose;
         ] );
       ( "Clock",
         [

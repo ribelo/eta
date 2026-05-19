@@ -49,12 +49,13 @@ let () =
 | Module | Purpose |
 | --- | --- |
 | `Effect` | GADT for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, detach, uninterruptible regions, scopes. |
+| `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
 | `Runtime` | Eio-backed interpreter for `Effect.t`. |
 | `Duration` | Millisecond-precision durations. |
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
-| `Resource` | Cached effectful resources with explicit refresh. |
+| `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
 | `Capabilities` | Small object-type traits for capability-oriented environments. |
 
 ## PPX Span Sugar
@@ -98,6 +99,42 @@ let with_db k =
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
 ```
+
+## Supervised Concurrency
+
+Use `Supervisor.scoped` when a parent needs handles for child effects without
+letting those handles escape their owning scope.
+
+~~~ocaml
+let supervised =
+  Supervisor.scoped {
+    run =
+      fun sup ->
+        let open Supervisor.Scope in
+        let* child = start sup (lift (Effect.pure 42)) in
+        await child
+  }
+~~~
+
+Child failures are recorded on the supervisor and do not fail the parent unless
+you `await` the child or explicitly check a failure threshold.
+
+~~~ocaml
+let observed =
+  Supervisor.scoped {
+    run =
+      fun sup ->
+        let open Supervisor.Scope in
+        let* _child = start sup (fail `Refresh_failed) in
+        let* () = yield in
+        failures sup
+  }
+~~~
+
+`Effect.detach` remains available for fire-and-forget work. Prefer
+`Supervisor.scoped` when a child has a lifecycle the parent should observe.
+For long-lived cached resources, `Resource.auto` keeps the existing returned
+resource shape and records refresh failures through `Resource.failures`.
 
 ## Development
 
