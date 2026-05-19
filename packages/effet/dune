@@ -1,0 +1,4 @@
+(library
+ (name effet)
+ (public_name effet)
+ (libraries eio))
