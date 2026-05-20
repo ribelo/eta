@@ -200,6 +200,21 @@ let rt =
   Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env:() ()
 ```
 
+Typed failures render as `"<typed failure>"` in span status and exception events
+unless a named effect supplies a typed renderer:
+
+```ocaml
+let save =
+  Effect.named
+    ~error_renderer:(function `Db code -> "db:" ^ string_of_int code)
+    "db.save"
+    (Effect.fail (`Db 42))
+```
+
+Use `Effect.with_error_renderer` when several named spans share the same error
+channel. The renderer is scoped to that effect subtree; caught inner errors keep
+the conservative default unless they provide their own renderer.
+
 At service boundaries, extract W3C headers and install the context around the
 request effect:
 

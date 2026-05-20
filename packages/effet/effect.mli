@@ -136,6 +136,11 @@ val supervisor_scoped :
   ('env, 'err, 'a) supervisor_body ->
   ('env, 'err, 'a) t
 
+val with_error_renderer :
+  ('err -> string) -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+(** Render typed failures in observability span status and exception events for
+    the wrapped effect. The renderer is scoped to this effect's error channel. *)
+
 val supervisor_pure : 'a -> ('s, 'env, 'err, 'a) supervisor_scope
 
 val supervisor_lift :
@@ -168,8 +173,13 @@ val supervisor_check :
 
 val supervisor_yield : ('s, 'env, 'err, unit) supervisor_scope
 
-val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+val named :
+  ?error_renderer:('err -> string) ->
+  string ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
 val named_kind :
+  ?error_renderer:('err -> string) ->
   kind:Capabilities.span_kind ->
   string ->
   ('env, 'err, 'a) t ->
@@ -241,6 +251,7 @@ val here_attr :
 
 val fn :
   ?kind:Capabilities.span_kind ->
+  ?error_renderer:('err -> string) ->
   string * int * int * int ->
   string ->
   ('env, 'err, 'a) t ->
@@ -290,12 +301,14 @@ module Private : sig
         ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
         -> ('env, 'err, 'a) view
     | Acquire_release :
-        ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
+        ('env, 'err, 'a) t * ('a -> ('env, 'err, unit) t)
         -> ('env, 'err, 'a) view
     | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | Supervisor_scoped :
         int option * ('env, 'err, 'a) supervisor_body
         -> ('env, 'err, 'a) view
+    | Render_error :
+        ('err -> string) * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | Named :
         Capabilities.span_kind * string * ('env, 'err, 'a) t
         -> ('env, 'err, 'a) view

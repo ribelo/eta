@@ -4,5 +4,7 @@ _opam/
 *.install
 .pi/
 .reference/
+.backlog/
+backlog/
 journal.md
 .motel-data/

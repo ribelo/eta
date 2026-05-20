@@ -8174,6 +8174,500 @@ promote focused protocols when they earn ownership, and keep local coordination 
 - No new runtime primitive.
 - No new scheduler/cancellation model around Eio data structures.
 
+
+## V-CTv - Typecheck performance and diagnostic quality at scale
+
+### Why this entry exists
+
+Effet-na0 measures whether the current design's type machinery scales beyond toy
+examples. Effet now leans on abstract GADT effects, object-row env requirements,
+polymorphic-variant errors, structured Cause, and rank-2 Supervisor scopes. The question
+is whether a larger program compiles quickly and fails readably.
+
+This is a measurement entry, not a new API design.
+
+### Goal
+
+Build a representative synthetic workload and measure:
+
+- clean and incremental Dune build time;
+- runtime smoke correctness;
+- compiler diagnostics for intentional missing env methods, error-row mismatch,
+  supervisor scope misuse, and reusable open-row effects.
+
+### Lab
+
+Artifacts live in scratch/typecheck_perf/.
+
+The fixture is a generated 50-module app. Each module composes the previous module with a
+12-step effect chain using:
+
+- Effect.bind, map, thunk, fail;
+- object-row env requirements over 25 capability methods;
+- polymorphic-variant errors including Validation, Cache, External, and Timeout-shaped
+  rows;
+- par, all, all_settled, for_each_par_bounded, race;
+- retry and timeout-shaped code;
+- scoped acquire_release;
+- Supervisor.scoped with child start/await;
+- named and annotate.
+
+Validation command:
+
+~~~sh
+nix develop -c dune build scratch/typecheck_perf
+nix develop -c dune exec scratch/typecheck_perf/runtime_smoke.exe
+./scratch/typecheck_perf/measure.sh
+~~~
+
+Runtime smoke:
+
+~~~text
+typecheck_perf smoke passed: 3741715390752970850
+~~~
+
+Peak RSS was unavailable because /usr/bin/time is not installed in this environment. The
+measurement script records wall time and writes max_rss_kb=unavailable.
+
+### Measurements
+
+Single local run:
+
+| Measurement | Wall time |
+|---|---:|
+| Clean build of 50-module fixture | 977 ms |
+| No-op rebuild | 203 ms |
+| Touch middle module tp_m25.ml rebuild | 210 ms |
+
+Diagnostic probes:
+
+| Probe | Lines | Bytes | Result |
+|---|---:|---:|---|
+| Missing env method | 35 | 1979 | Correctly points to missing billing_charge after row dump |
+| Too-narrow error row | 20 | 1038 | Correctly names disallowed tags External, Validation |
+| Supervisor handle escape | 11 | 519 | Correct rank-2 generality error |
+| Value-restriction-style reusable effect | 0 | 0 | No error reproduced with current abstract Effect.t shape |
+
+### Diagnostic excerpts
+
+Missing env method:
+
+~~~text
+The second object type has no method billing_charge
+~~~
+
+Too-narrow error row:
+
+~~~text
+The second variant type does not allow tag(s) `External, `Validation
+~~~
+
+Supervisor handle escape:
+
+~~~text
+This field value has type
+  ('a, 'b) Supervisor.t ->
+  ('a, 'c, 'b, ('a, 'b, int) Supervisor.child) Effect.supervisor_scope
+which is less general than
+  's. ('s, 'd) Supervisor.t -> ('s, 'e, 'd, 'f) Effect.supervisor_scope
+~~~
+
+### Decision diary
+
+#### V-CTv1 - Compile-time performance is acceptable
+
+Decision: no compile-time mitigation is required.
+
+Rationale: a 50-module fixture with deep Effect chains and all major primitives built
+cleanly in 977 ms on this machine. No-op and middle-module rebuilds were about 200 ms.
+That is far below the concern threshold named by the task.
+
+#### V-CTv2 - Object-row diagnostics remain noisy but acceptable
+
+Decision: keep the existing object-row env guidance.
+
+Rationale: the missing-capability diagnostic is 35 lines and dumps a large object row,
+but it ends with the actionable line: no method billing_charge. This matches earlier
+R-DX findings. It is a documentation/DX cost, not a design failure.
+
+#### V-CTv3 - Polymorphic-variant error diagnostics are good enough
+
+Decision: no typed-error representation change.
+
+Rationale: the too-narrow error-row probe is 20 lines and directly names the rejected
+tags External and Validation. That is acceptable for the amount of type information in
+the expression.
+
+#### V-CTv4 - Supervisor escape errors are short, but advanced
+
+Decision: keep the rank-2 Supervisor shape.
+
+Rationale: the handle-escape probe fails in 11 lines. The generality wording is advanced
+OCaml, but it points at the escaping body and confirms the static invariant. This is the
+expected cost of making child-handle escape a compile error.
+
+#### V-CTv5 - Value restriction did not reproduce
+
+Decision: no new thunking mitigation from this task.
+
+Rationale: the reusable open-row effect probe compiled under the current abstract
+Effect.t public shape. Earlier R-DX evidence still justifies documenting explicit
+unit-thunks for exported reusable effects, but this measurement did not find a fresh
+failure.
+
+### Recommendation
+
+No package code change is required.
+
+Keep the current design. Continue documenting the known mitigations:
+
+- use explicit unit-thunks for exported reusable env-row effects when inference gets
+  dense;
+- use named capability profiles in .mli files when signatures are too noisy;
+- keep application service graphs as ordinary OCaml values/functions;
+- reserve object-row env for leaf/runtime-boundary capabilities.
+
+No follow-up task is needed from this measurement. Reopen only if a real application or a
+larger generated fixture shows multi-second incremental builds, errors above roughly 200
+lines, or diagnostics that fail to identify the missing method/tag/scope.
+
+### Artifacts
+
+- scratch/typecheck_perf/README.md
+- scratch/typecheck_perf/dune
+- scratch/typecheck_perf/tp_common.ml
+- scratch/typecheck_perf/tp_m01.ml ... tp_m50.ml
+- scratch/typecheck_perf/tp_top.ml
+- scratch/typecheck_perf/runtime_smoke.ml
+- scratch/typecheck_perf/neg_missing_env.ml
+- scratch/typecheck_perf/neg_error_row.ml
+- scratch/typecheck_perf/neg_supervisor_escape.ml
+- scratch/typecheck_perf/neg_value_restriction.ml
+- scratch/typecheck_perf/measure.sh
+- scratch/typecheck_perf/results/
+- scratch/typecheck_perf/report.md
+
+## Effet-dmo - property and law regression suite
+
+### Why this entry exists
+
+Effet-dmo called out a gap in the core test suite: several design decisions were
+defended in prose by appealing to monad, error-channel, race, retry, repeat, and
+scope laws, but those laws were not machine-checked. The runtime interpreter
+manipulates a GADT, so these tests are meant to catch semantic regressions during
+future refactors.
+
+### Test strategy
+
+The backlog suggested QCheck or qcheck-alcotest. The pinned test environment does
+not currently provide QCheck, and the law surface that matters here is small
+enough to cover with deterministic finite enumeration under Alcotest. I therefore
+did not add a new dependency for this slice. The new tests live in
+packages/effet/test/test_effet.ml under the Alcotest group named Properties.
+
+The fixture enumerates small deterministic effects over a fixed environment:
+
+- pure values;
+- typed failures;
+- thunk leaves reading two env capabilities;
+- mapped/bound variants over those leaves;
+- typed failure handlers;
+- deterministic schedules.
+
+### Laws now checked
+
+Monad laws:
+
+- left identity: bind f (pure x) has the same Exit as f x;
+- right identity: bind pure m has the same Exit as m;
+- associativity: bind g (bind f m) has the same Exit as bind (fun x -> bind g (f x)) m.
+
+Catch/error-channel laws:
+
+- catch h (pure x) is pure x;
+- catch h (fail e) is h e;
+- catch handles a failure in the source of bind;
+- catch handles a failure in the continuation of bind.
+
+Race/retry/repeat/scope invariants:
+
+- race over two immediate effects succeeds iff at least one side succeeds;
+- retry of an always-successful effect returns the same value and attempts once;
+- repeat with recurs n runs the initial execution plus n repeats;
+- acquire_release finalizers run exactly once on success, typed failure, and
+  cancellation/interruption through race.
+
+### Corrected candidate laws
+
+The backlog included three properties that are not valid laws for current Effet.
+They were corrected rather than encoded as false tests.
+
+Catch propagation as originally written was:
+
+~~~text
+catch (bind m f) h === bind (catch m h) (fun x -> catch (f x) h)
+~~~
+
+This is not a valid law for recovery semantics. If m fails and h recovers with a
+value, the right-hand side continues into f while the left-hand side returns the
+handler result directly. The implemented tests split the real obligations:
+source failure is handled, continuation failure is handled, and pure success is
+unchanged.
+
+Race symmetry/commutativity is also too strong. If both sides can succeed, the
+winning value is allowed to depend on scheduling and list order. The valid
+load-bearing law is success/failure classification: race succeeds iff at least one
+child succeeds, and otherwise returns the accumulated typed failures already
+covered by existing race/all-failure tests.
+
+Scope finalizer reverse order is not an Effet invariant. The current Scope tests
+explicitly assert that finalizers run in parallel. For Effet the stable public law
+is exactly-once execution across success, failure, and cancellation, not stack
+ordering.
+
+### Decision diary
+
+#### V-Lawv1 - Deterministic enumeration over QCheck for the first law suite
+
+Decision: add a deterministic Alcotest Properties group, not a QCheck dependency.
+
+Rationale: QCheck is not present in the pinned environment, and the initial law
+space is intentionally finite. Exhaustive enumeration over the small fixture is
+more stable than random generation for these semantics and fits the existing test
+harness.
+
+#### V-Lawv2 - Monad laws are part of the regression contract
+
+Decision: left identity, right identity, and associativity are now checked over
+small successful, failing, env-reading, mapped, and bound effects.
+
+Rationale: these are the laws that justified earlier simplifications around pure
+and bind. The new tests compare interpreter Exits, not AST shape, so they protect
+runtime behavior rather than implementation details.
+
+#### V-Lawv3 - Catch laws must match recovery semantics
+
+Decision: reject the proposed catch-propagation equation and test the valid
+source-failure and continuation-failure cases instead.
+
+Rationale: catch is recovery, not just error observation. A handler that turns a
+failure into a value changes downstream control flow, so the proposed distributive
+equation was false. The split tests are narrower but correct.
+
+#### V-Lawv4 - Race invariants are classification laws, not value commutativity
+
+Decision: test that race succeeds iff any child succeeds for immediate pure/fail
+pairs; do not assert value commutativity.
+
+Rationale: Effet race is intentionally scheduling-sensitive when multiple children
+can produce values. Existing tests already cover all-failure cause accumulation.
+The new law covers the success/failure boundary.
+
+#### V-Lawv5 - Scope finalizer law is exactly-once, not reverse order
+
+Decision: test finalizer exactly-once behavior on success, typed failure, and
+race cancellation.
+
+Rationale: Scope finalizers run in parallel in this library. Reverse order would
+contradict the existing accepted behavior, but exactly-once release remains a
+public resource-safety invariant and is now machine-checked.
+
+### Verification
+
+Focused:
+
+~~~sh
+nix develop -c dune exec packages/effet/test/test_effet.exe -- test Properties --show-errors
+~~~
+
+Full:
+
+~~~sh
+nix develop -c dune runtest --force
+~~~
+
+Result: full suite passed. The effet package now reports 103 tests, including five
+Properties cases. ppx_effet, effet-schema, effet-otel, and effet-stream suites also
+passed.
+
+### Artifacts
+
+- packages/effet/test/test_effet.ml
+- .backlog/Effet-dmo.md
+
+## V-O8r - Typed failure rendering without unsafe Obj printers
+
+### Why this entry exists
+
+Effet-ify reopened a V-O8 correctness claim. The journal said
+`status_of_cause` should render `Cause.Fail err` with
+`Printexc.to_string (Obj.repr err)`. That expression is type-invalid:
+`Printexc.to_string` expects `exn`, while `Obj.repr err` is `Obj.t`.
+
+The current code had already drifted away from that exact expression, but it
+still exposed the same wrong seam: `Runtime.create ?cause_pp:(Obj.t -> string)`.
+That made user-facing error rendering depend on untyped object representation.
+
+### Findings
+
+- `effet-otel` is not the owner of typed failure rendering. It receives
+  `Capabilities.Error string` after the runtime has already interpreted a
+  `Cause.t`.
+- A single `Runtime.create ?cause_pp:('err -> string)` is also not sufficient.
+  `Effect.catch`, `all_settled`, `acquire_release`, and supervisor start can
+  interpret effects whose local error type is not the runtime's final error
+  type.
+- The renderer must therefore live at the typed `Effect.t` boundary, scoped to
+  the effect whose `'err` it renders.
+- The default must be conservative. Guessing polymorphic-variant names from
+  runtime tags is not stable API and cannot render payloads honestly.
+
+### Decision
+
+Add a typed, effect-scoped renderer:
+
+~~~ocaml
+Effect.with_error_renderer : ('err -> string) -> ('env, 'err, 'a) Effect.t -> ...
+Effect.named ?error_renderer : string -> ('env, 'err, 'a) Effect.t -> ...
+Effect.fn ?error_renderer : __POS__ -> __FUNCTION__ -> ('env, 'err, 'a) Effect.t -> ...
+~~~
+
+The runtime default for `Cause.Fail _` is now the fixed string
+`"<typed failure>"`. Users who want richer status messages opt in at the
+effect/span they are naming.
+
+### Alternatives rejected
+
+- `Effet_otel.create ?cause_pp`: too late in the pipeline. The exporter never
+  sees `'err`.
+- `Runtime.create ?cause_pp:('err -> string)`: type-safe only for the final
+  runtime error type, but spans can fail with intermediate error types that are
+  later caught or transformed.
+- `Runtime.create ?cause_pp:(Obj.t -> string)`: flexible but makes unsafe
+  representation inspection public API.
+- Automatic polymorphic-variant decoding: unstable, payload-hostile, and still
+  cannot cover arbitrary typed errors.
+
+### Invariant
+
+Typed failure rendering is opt-in and scoped. A renderer is only applied to the
+effect subtree whose error type it was typed against. When the interpreter enters
+an effect with an existentially different error type, it falls back to
+`"<typed failure>"` unless that subtree supplies its own renderer.
+
+### Verification
+
+~~~sh
+nix develop -c dune build packages/effet packages/effet-otel packages/effet/test packages/effet-otel/test
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet packages/effet-otel
+nix develop -c dune runtest packages/effet packages/effet-otel --force
+~~~
+
+Result: package build passed, strict-formats package build passed, and the
+focused package suites passed: 103 effet tests and 20 effet-otel tests.
+
+Directly filtering the `test_effet.exe` Observability group still trips
+`Unix.ENOMEM` from repeated `io_uring_queue_init` after several `Eio_main.run`
+tests in this environment. The normal Dune package test command passes.
+
+Full `nix develop -c dune build` is still blocked by pre-existing scratch
+experiments that reference the removed `Effect.sync` / `[%effet.sync]` surface.
+The package-scoped build above covers the shipped libraries and tests affected by
+this change.
+
+### Artifacts
+
+- packages/effet/effect.ml
+- packages/effet/effect.mli
+- packages/effet/runtime.ml
+- packages/effet/runtime.mli
+- packages/effet/test/test_effet.ml
+- README.md
+- packages/effet-otel/README.md
+
+## V-O9 - Obj.t boundary audit
+
+### Scope
+
+Audit every current `Obj.t`, `Obj.repr`, and `Obj.obj` use and prove that
+the shipped API does not expose untyped object representation as a user
+extension point.
+
+### Inventory
+
+| Location | Use | Classification | Boundary proof |
+|---|---|---|---|
+| `packages/effet/runtime.ml:5-8` | `Raised_cause of int * Obj.t` | Internal existential failure transport | Exception is private to `runtime.ml`; payload is paired with a fresh `Typed_fail.key`. |
+| `packages/effet/runtime.ml:47` | `Obj.repr cause` | Internal existential failure transport | Packed only by `raise_cause` with the active interpreter key. |
+| `packages/effet/runtime.ml:65` | `Obj.obj cause` | Internal existential failure transport | Unpacked only when `Raised_cause` key equals the current frame key. |
+| `packages/effet/runtime.ml:286` | `Obj.obj cause` in `catch` | Internal existential failure transport | Inner catch frame creates a fresh key; handler failures use the outer key and are not recaught by the inner frame. |
+| `packages/effet/runtime.ml:300` | `Obj.obj cause` in `tap_error` | Internal existential failure transport | Same-key unpack to observe and rethrow the original typed failure. |
+| `packages/effet/runtime.ml:330-343` | `Obj.t`, `Obj.repr`, `Obj.obj` in `par` | Internal heterogeneous success transport | The homogeneous task list packs each child result and immediately unpacks the two fixed slots into the typed pair. |
+| `packages/effet/runtime.ml:749-756` | `Obj.repr`, `Obj.obj` in `race` | Internal local-success transport | The local `Race_won` exception cannot carry existential `'a`; `winner` is local to the frame and unpacked before returning. |
+| `packages/effet/runtime.ml:858` | `Obj.obj cause` in `retry` | Internal existential failure transport | Attempt frame uses a fresh key; only matching attempt failures are inspected for retry policy. |
+| `scratch/fiber_research/*.ml` | `Obj.t`, `Obj.magic`, `Obj.repr`, `Obj.obj` | Scratch research only | Files are outside published packages and are not part of the library API. |
+| Historical `journal.md` notes | `Obj.t`, `Obj.repr`, `Obj.magic` | Historical record | These lines describe prior rejected or superseded designs. |
+
+### Public API check
+
+`rg -n "\\bObj\\.(t|repr|obj)\\b|\\bObj\\." packages --glob '*.mli'`
+returns no matches.
+
+The shipped public interfaces expose typed effects, typed causes, typed
+renderers, and abstract runtime values. They do not expose `Obj.t` or any
+`Obj.t -> string` callback.
+
+### Invariants added
+
+- `Raised_cause` documents the key guard: an `Obj.t` typed failure payload may
+  be unpacked only by the interpreter frame whose fresh key packed it.
+- `Effect.par` documents slot-local success packing: each packed child result
+  is unpacked only at the pair slot whose task produced it.
+- `Effect.race` documents that `winner` is a local carrier for the current
+  existential success type and never leaves the frame.
+
+### Tests added
+
+- `test_effect_catch_handler_failure_uses_outer_key`: proves a failure raised by
+  a catch handler is not recaught by the source catch frame.
+- `test_par_keeps_heterogeneous_successes_private`: proves `Effect.par`
+  preserves a heterogeneous typed pair across its private homogeneous task list.
+
+### Future abstraction
+
+The remaining shipped `Obj` uses could be reduced, but eliminating all of them
+would likely bloat the GADT/runtime shape:
+
+- Failure transport could use a private extensible exception per key, but the
+  current key-guarded payload has the same runtime boundary and less allocation
+  machinery.
+- `par` could avoid heterogeneous packing by duplicating the parallel collector
+  for the pair case, but that adds another collector path for one public
+  combinator.
+- `race` could avoid `Obj.t` by restructuring control flow around a typed
+  result stream and cooperative cancellation instead of a local winning
+  exception, but that is a larger scheduler change.
+
+Recommendation: keep the internal `Obj` transports for now, with the comments
+and regression tests above. Reopen only if a future runtime refactor can replace
+them while preserving the small GADT surface and a single parallel collector.
+
+### Verification
+
+Commands run:
+
+~~~sh
+rg -n "\\bObj\\.(t|repr|obj)\\b|\\bObj\\." packages --glob '*.mli'
+nix develop -c dune build packages/effet packages/effet/test
+nix develop -c dune runtest packages/effet --force
+nix develop -c dune build packages/effet packages/effet-otel packages/effet/test packages/effet-otel/test
+nix develop -c dune runtest packages/effet packages/effet-otel --force
+~~~
+
+Result: public interface search returned no matches. The focused package build
+passed, the broader shipped-package build passed, `packages/effet` tests passed
+with 105 tests run, and `packages/effet-otel` tests passed with 20 tests run.
+
 ## V-Schema-P2 - Schema cleanup and survival decisions
 
 ### Scope

@@ -41,6 +41,7 @@ type ('env, 'err, 'a) t =
   | Supervisor_scoped :
       int option * ('env, 'err, 'a) supervisor_body
       -> ('env, 'err, 'a) t
+  | Render_error : ('err -> string) * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Named :
       Capabilities.span_kind * string * ('env, 'err, 'a) t
       -> ('env, 'err, 'a) t
@@ -140,6 +141,8 @@ let scoped e = Scoped e
 let supervisor_scoped ?max_failures body =
   Supervisor_scoped (max_failures, body)
 
+let with_error_renderer render e = Render_error (render, e)
+
 let supervisor_pure v = Supervisor_pure v
 let supervisor_lift e = Supervisor_lift e
 let supervisor_fail e = Supervisor_fail e
@@ -151,8 +154,14 @@ let supervisor_failures supervisor = Supervisor_failures supervisor
 let supervisor_check supervisor = Supervisor_check supervisor
 let supervisor_yield = Supervisor_yield
 
-let named_kind ~kind name e = Named (kind, name, e)
-let named name e = named_kind ~kind:Capabilities.Internal name e
+let named_kind ?error_renderer ~kind name e =
+  let named = Named (kind, name, e) in
+  match error_renderer with
+  | None -> named
+  | Some render -> with_error_renderer render named
+
+let named ?error_renderer name e =
+  named_kind ?error_renderer ~kind:Capabilities.Internal name e
 let annotate ~key ~value e = Annotate (key, value, e)
 let link_span ?(attrs = []) ~trace_id ~span_id e =
   Link_span
@@ -185,10 +194,11 @@ let here_attr (file, line, col_start, col_end) e =
       Printf.sprintf "%s:%d:%d-%d" file line col_start col_end,
       e )
 
-let fn ?(kind = Capabilities.Internal) pos name e =
-  e |> here_attr pos |> named_kind ~kind name
+let fn ?(kind = Capabilities.Internal) ?error_renderer pos name e =
+  e |> here_attr pos |> named_kind ?error_renderer ~kind name
 
 let rec name : type env err a. (env, err, a) t -> string option = function
+  | Render_error (_, e) -> name e
   | Named (_, n, _) -> Some n
   | Annotate (_, _, e) -> name e
   | _ -> None
@@ -200,6 +210,7 @@ let collect_names e =
     | Pure _ -> acc
     | Fail _ -> acc
     | Thunk (n, _) -> n :: acc
+    | Render_error (_, e) -> walk acc e
     | Named (_, n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
     | Link_span (_, e) -> walk acc e
@@ -273,12 +284,13 @@ module Private = struct
         ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
         -> ('env, 'err, 'a) view
     | Acquire_release :
-        ('env, 'err, 'a) t * ('a -> ('env, _, unit) t)
+        ('env, 'err, 'a) t * ('a -> ('env, 'err, unit) t)
         -> ('env, 'err, 'a) view
     | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | Supervisor_scoped :
         int option * ('env, 'err, 'a) supervisor_body
         -> ('env, 'err, 'a) view
+    | Render_error : ('err -> string) * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | Named :
         Capabilities.span_kind * string * ('env, 'err, 'a) t
         -> ('env, 'err, 'a) view
@@ -331,6 +343,7 @@ module Private = struct
     | Scoped eff -> Scoped eff
     | Supervisor_scoped (max_failures, body) ->
         Supervisor_scoped (max_failures, body)
+    | Render_error (render, eff) -> Render_error (render, eff)
     | Named (kind, name, eff) -> Named (kind, name, eff)
     | Annotate (key, value, eff) -> Annotate (key, value, eff)
     | Link_span (link, eff) -> Link_span (link, eff)

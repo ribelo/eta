@@ -57,6 +57,16 @@ That program emits one parent span with two children. `Effect.fn __POS__
 __FUNCTION__` records the current source location as a `loc` attribute and
 names the span after the enclosing OCaml binding.
 
+Typed failures render as `"<typed failure>"` unless the effect supplies a typed
+renderer before the runtime emits the span status:
+
+```ocaml
+Effect.fn
+  ~error_renderer:(function `Boom -> "boom")
+  __POS__ __FUNCTION__
+  (Effect.fail `Boom)
+```
+
 ## Propagation
 
 Effet core owns W3C propagation parsing because sampling and baggage affect the

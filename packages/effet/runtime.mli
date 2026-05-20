@@ -12,7 +12,6 @@ val create :
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
   ?capture_backtrace:bool ->
-  ?cause_pp:(Obj.t -> string) ->
   env:'env ->
   unit ->
   ('env, 'err) t

@@ -188,6 +188,13 @@ let check_status name expected actual =
   | Tracer.Error _, Tracer.Error _ -> ()
   | _ -> Alcotest.failf "%s: unexpected span status" name
 
+let check_error_message name expected actual =
+  match actual with
+  | Tracer.Error msg -> Alcotest.(check string) name expected msg
+  | _ -> Alcotest.failf "%s: expected Error status" name
+
+type observability_err = [ `Boom | `Db of int | `Inner | `Outer ]
+
 let test_pure () =
   with_runtime @@ fun rt ->
   Alcotest.(check int) "pure" 42 (run_ok rt (Effect.pure 42))
@@ -292,24 +299,65 @@ let test_observability_nested_spans () =
 
 let test_observability_statuses () =
   with_traced_runtime @@ fun rt tracer ->
-  ignore (Runtime.run rt (Effect.named "fail" (Effect.fail `Boom)) :
-            (unit, [> `Boom ]) Exit.t);
+  let fail_eff : (unit, observability_err, unit) Effect.t =
+    Effect.named "fail" (Effect.fail `Boom)
+  in
+  ignore (Runtime.run rt fail_eff : (unit, observability_err) Exit.t);
+  let render_db : observability_err -> string = function
+    | `Db code -> "db:" ^ string_of_int code
+    | _ -> "<unexpected>"
+  in
+  let custom_eff : (unit, observability_err, unit) Effect.t =
+    Effect.named ~error_renderer:render_db "custom" (Effect.fail (`Db 42))
+  in
+  ignore
+    (Runtime.run rt custom_eff : (unit, observability_err) Exit.t);
+  let inner = Effect.named "inner" (Effect.fail `Inner) in
+  let render_outer : observability_err -> string = function
+    | `Outer -> "outer"
+    | _ -> "<unexpected>"
+  in
+  let outer : (unit, observability_err, unit) Effect.t =
+    Effect.named ~error_renderer:render_outer "outer"
+      (Effect.catch (function `Inner -> Effect.fail `Outer) inner)
+  in
+  ignore (Runtime.run rt outer : (unit, observability_err) Exit.t);
   ignore
     (Runtime.run rt
        (Effect.named "die" (Effect.thunk "die" (fun () -> failwith "boom"))) :
       (unit, _) Exit.t);
   ignore
     (Runtime.run rt
-       (Effect.named "interrupt"
-          (Effect.thunk "interrupt" (fun () ->
-               raise (Eio.Cancel.Cancelled (Failure "cancel"))))) :
-      (unit, _) Exit.t);
-  match Tracer.dump tracer with
-  | [ fail_span; die_span; interrupt_span ] ->
-      check_status "fail" (Tracer.Error "") fail_span.status;
-      check_status "die" (Tracer.Error "") die_span.status;
-      check_status "interrupt" Tracer.Cancelled interrupt_span.status
-  | spans -> Alcotest.failf "expected three spans, got %d" (List.length spans)
+	       (Effect.named "interrupt"
+	          (Effect.thunk "interrupt" (fun () ->
+	               raise (Eio.Cancel.Cancelled (Failure "cancel"))))) :
+	      (unit, _) Exit.t);
+  let spans = Tracer.dump tracer in
+  let find name = List.find (fun span -> span.Tracer.name = name) spans in
+  let fail_span = find "fail" in
+  check_error_message "fail default" "<typed failure>" fail_span.status;
+  (match fail_span.events with
+  | [ event ] ->
+      Alcotest.(check (option string))
+        "fail exception message" (Some "<typed failure>")
+        (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+  | events ->
+      Alcotest.failf "expected one fail exception event, got %d"
+        (List.length events));
+  let custom_span = find "custom" in
+  check_error_message "custom status" "db:42" custom_span.status;
+  (match custom_span.events with
+  | [ event ] ->
+      Alcotest.(check (option string))
+        "custom exception message" (Some "db:42")
+        (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+  | events ->
+      Alcotest.failf "expected one custom exception event, got %d"
+        (List.length events));
+  check_error_message "inner default" "<typed failure>" (find "inner").status;
+  check_error_message "outer custom" "outer" (find "outer").status;
+  check_status "die" (Tracer.Error "") (find "die").status;
+  check_status "interrupt" Tracer.Cancelled (find "interrupt").status
 
 let test_observability_concurrent_status () =
   with_traced_runtime @@ fun rt tracer ->
@@ -681,6 +729,20 @@ let test_effect_catch_success_and_failure () =
   in
   Alcotest.(check int) "success bypasses catch" 1 (run_ok rt success);
   Alcotest.(check string) "failure recovers" "recovered" (run_ok rt failure)
+
+let test_effect_catch_handler_failure_uses_outer_key () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.fail `Inner
+    |> Effect.catch (fun (`Inner : [ `Inner ]) -> Effect.fail `Outer)
+  in
+  check_exit_error
+    (Alcotest.testable
+       (Cause.pp (fun fmt -> function
+         | `Inner -> Format.pp_print_string fmt "inner"
+         | `Outer -> Format.pp_print_string fmt "outer"))
+       ( = ))
+    "handler failure is not recaught" (Cause.Fail `Outer) (Runtime.run rt eff)
 
 let test_effect_tap_error_observes_and_rethrows () =
   with_runtime @@ fun rt ->
@@ -1637,6 +1699,252 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   Alcotest.(check int) "subsequent refresh updates" 2
     (run_ok rt (Resource.get resource))
 
+type law_env = < add : int -> int ; mul : int -> int >
+
+type law_err = [ `E0 | `E1 | `Neg | `Retry | `Release | `Timeout ]
+
+let pp_law_err fmt = function
+  | `E0 -> Format.pp_print_string fmt "E0"
+  | `E1 -> Format.pp_print_string fmt "E1"
+  | `Neg -> Format.pp_print_string fmt "Neg"
+  | `Retry -> Format.pp_print_string fmt "Retry"
+  | `Release -> Format.pp_print_string fmt "Release"
+  | `Timeout -> Format.pp_print_string fmt "Timeout"
+
+let equal_law_err (a : law_err) (b : law_err) = a = b
+
+let with_law_runtime f =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let env =
+    object
+      method add n = n + 1
+      method mul n = n * 2
+    end
+  in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+  in
+  f rt
+
+let check_law rt name left right =
+  let left_exit = Runtime.run rt left in
+  let right_exit = Runtime.run rt right in
+  if not (Exit.equal Int.equal equal_law_err left_exit right_exit) then
+    Alcotest.failf "%s failed:@.left:  %a@.right: %a" name
+      (Exit.pp Format.pp_print_int pp_law_err)
+      left_exit
+      (Exit.pp Format.pp_print_int pp_law_err)
+      right_exit
+
+let law_effects () : (law_env, law_err, int) Effect.t list =
+  [
+    Effect.pure (-2);
+    Effect.pure 0;
+    Effect.pure 3;
+    Effect.fail `E0;
+    Effect.fail `E1;
+    Effect.thunk "law.add" (fun env -> env#add 1);
+    Effect.thunk "law.mul" (fun env -> env#mul 2);
+    Effect.pure 2 |> Effect.map (fun n -> n + 4);
+    Effect.pure 3 |> Effect.bind (fun n -> Effect.pure (n * 3));
+    Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure 7);
+  ]
+
+let law_functions () :
+    (string * (int -> (law_env, law_err, int) Effect.t)) list =
+  [
+    ("inc", fun x -> Effect.pure (x + 1));
+    ( "fail-negative",
+      fun x -> if x < 0 then Effect.fail `Neg else Effect.pure (x * 2) );
+    ("env-add", fun x -> Effect.thunk "law.f.add" (fun env -> env#add x));
+    ("mapped", fun x -> Effect.pure x |> Effect.map (fun n -> n + 3));
+    ( "catch-local",
+      fun x -> Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure (x + 5)) );
+  ]
+
+let test_properties_monad_laws () =
+  with_law_runtime @@ fun rt ->
+  let values = [ -2; 0; 3 ] in
+  let effects = law_effects () in
+  let functions = law_functions () in
+  List.iter
+    (fun x ->
+      List.iter
+        (fun (fname, f) ->
+          check_law rt
+            (Printf.sprintf "left identity x=%d f=%s" x fname)
+            (Effect.bind f (Effect.pure x))
+            (f x))
+        functions)
+    values;
+  List.iteri
+    (fun i m ->
+      check_law rt
+        (Printf.sprintf "right identity m=%d" i)
+        (Effect.bind Effect.pure m) m)
+    effects;
+  List.iteri
+    (fun i m ->
+      List.iter
+        (fun (fname, f) ->
+          List.iter
+            (fun (gname, g) ->
+              check_law rt
+                (Printf.sprintf "associativity m=%d f=%s g=%s" i fname gname)
+                (Effect.bind g (Effect.bind f m))
+                (Effect.bind (fun x -> Effect.bind g (f x)) m))
+            functions)
+        functions)
+    effects
+
+let catch_handler : law_err -> (law_env, law_err, int) Effect.t = function
+  | `E0 -> Effect.pure 10
+  | `E1 -> Effect.pure 20
+  | `Neg -> Effect.pure 30
+  | `Retry -> Effect.pure 40
+  | `Release -> Effect.pure 50
+  | `Timeout -> Effect.pure 60
+
+let test_properties_catch_laws () =
+  with_law_runtime @@ fun rt ->
+  List.iter
+    (fun x ->
+      check_law rt
+        (Printf.sprintf "catch pure identity x=%d" x)
+        (Effect.catch catch_handler (Effect.pure x))
+        (Effect.pure x))
+    [ -2; 0; 3 ];
+  List.iter
+    (fun err ->
+      check_law rt "catch fail identity"
+        (Effect.catch catch_handler (Effect.fail err))
+        (catch_handler err))
+    ([ `E0; `E1; `Neg; `Retry; `Release; `Timeout ] : law_err list);
+  List.iter
+    (fun err ->
+      List.iter
+        (fun (_fname, f) ->
+          check_law rt "catch handles bind source failure"
+            (Effect.catch catch_handler (Effect.bind f (Effect.fail err)))
+            (catch_handler err))
+        (law_functions ()))
+    ([ `E0; `E1; `Neg ] : law_err list);
+  List.iter
+    (fun x ->
+      check_law rt "catch handles continuation failure"
+        (Effect.catch catch_handler
+           (Effect.bind (fun _ -> Effect.fail `E1) (Effect.pure x)))
+        (catch_handler `E1))
+    [ -2; 0; 3 ]
+
+let test_properties_race_success_invariant () =
+  with_law_runtime @@ fun rt ->
+  let cases =
+    [
+      ("ok1", Effect.pure 1);
+      ("ok2", Effect.pure 2);
+      ("fail0", Effect.fail `E0);
+      ("fail1", Effect.fail `E1);
+    ]
+  in
+  let succeeds = function Exit.Ok _ -> true | Exit.Error _ -> false in
+  List.iter
+    (fun (an, a) ->
+      List.iter
+        (fun (bn, b) ->
+          let actual = Runtime.run rt (Effect.race [ a; b ]) |> succeeds in
+          let expected =
+            Runtime.run rt a |> succeeds || (Runtime.run rt b |> succeeds)
+          in
+          Alcotest.(check bool)
+            (Printf.sprintf "race success iff any succeeds %s/%s" an bn)
+            expected actual)
+        cases)
+    cases
+
+let test_properties_retry_and_repeat_laws () =
+  with_law_runtime @@ fun rt ->
+  let schedules =
+    [
+      Schedule.recurs 0;
+      Schedule.recurs 3;
+      Schedule.both (Schedule.recurs 3) (Schedule.spaced Duration.zero);
+      Schedule.either (Schedule.recurs 2) (Schedule.recurs 4);
+    ]
+  in
+  List.iteri
+    (fun i schedule ->
+      let attempts = ref 0 in
+      let attempt =
+        Effect.thunk "retry.always-succeed" (fun _ ->
+            incr attempts;
+            i)
+      in
+      Alcotest.(check int)
+        (Printf.sprintf "retry success result %d" i)
+        i
+        (run_ok rt (Effect.retry schedule (fun (_ : law_err) -> true) attempt));
+      Alcotest.(check int)
+        (Printf.sprintf "retry success attempts %d" i)
+        1 !attempts)
+    schedules;
+  List.iter
+    (fun n ->
+      let ticks = ref 0 in
+      run_ok rt
+        (Effect.repeat (Schedule.recurs n)
+           (Effect.thunk "repeat.tick" (fun _ -> incr ticks)));
+      Alcotest.(check int)
+        (Printf.sprintf "repeat recurs %d runs initial+n" n)
+        (n + 1) !ticks)
+    [ 0; 1; 2; 5 ]
+
+let test_properties_scope_finalizers_once () =
+  with_runtime @@ fun rt ->
+  let run_case body =
+    let releases = ref [] in
+    let resource name =
+      Effect.acquire_release
+        ~acquire:(Effect.thunk ("acquire." ^ name) (fun () -> ()))
+        ~release:(fun () ->
+          Effect.thunk ("release." ^ name) (fun () ->
+              releases := name :: !releases))
+    in
+    ignore
+      (Runtime.run rt
+         (Effect.scoped
+            (Effect.concat [ resource "a"; resource "b"; body ])));
+    List.sort String.compare !releases
+  in
+  Alcotest.(check (list string))
+    "success releases once" [ "a"; "b" ] (run_case Effect.unit);
+  Alcotest.(check (list string))
+    "typed failure releases once" [ "a"; "b" ] (run_case (Effect.fail `E0));
+  with_test_clock @@ fun sw _clock rt ->
+  let releases = ref 0 in
+  let acquired, acquired_u = Eio.Promise.create () in
+  let resource =
+    Effect.acquire_release
+      ~acquire:(Effect.thunk "acquire.cancelled" (fun () ->
+          Eio.Promise.resolve acquired_u ()))
+      ~release:(fun () ->
+        Effect.thunk "release.cancelled" (fun () -> incr releases))
+  in
+  let slow =
+    Effect.scoped
+      (resource
+      |> Effect.bind (fun () ->
+             Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))
+  in
+  let fast =
+    Effect.thunk "wait-acquired" (fun () -> Eio.Promise.await acquired)
+    |> Effect.map (fun () -> "fast")
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; fast ]) in
+  check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
+  Alcotest.(check int) "cancelled release once" 1 !releases
+
 (* Auto-DI regression: A defined without naming services or threading.
    The env-row property is the whole reason for the 'env channel.
    See journal V-R10 and scratch/r_research/r_b_env_row.ml. *)
@@ -1673,6 +1981,11 @@ let test_par_returns_both_successes () =
   with_runtime @@ fun rt ->
   let result = run_ok rt (Effect.par (Effect.pure 1) (Effect.pure 2)) in
   Alcotest.(check (pair int int)) "par returns pair" (1, 2) result
+
+let test_par_keeps_heterogeneous_successes_private () =
+  with_runtime @@ fun rt ->
+  let result = run_ok rt (Effect.par (Effect.pure 1) (Effect.pure "two")) in
+  Alcotest.(check (pair int string)) "par returns typed pair" (1, "two") result
 
 let test_par_fail_fast_cancels_sibling () =
   with_runtime @@ fun rt ->
@@ -1833,6 +2146,8 @@ let () =
           Alcotest.test_case "env row auto DI" `Quick test_env_row_auto_di;
           Alcotest.test_case "par returns pair" `Quick
             test_par_returns_both_successes;
+          Alcotest.test_case "par keeps heterogeneous successes private" `Quick
+            test_par_keeps_heterogeneous_successes_private;
           Alcotest.test_case "par fail-fast cancels sibling" `Quick
             test_par_fail_fast_cancels_sibling;
           Alcotest.test_case "all collects in input order" `Quick
@@ -1858,6 +2173,8 @@ let () =
             test_effect_map_bind_tap_runtime;
           Alcotest.test_case "catch success and failure" `Quick
             test_effect_catch_success_and_failure;
+          Alcotest.test_case "catch handler failure uses outer key" `Quick
+            test_effect_catch_handler_failure_uses_outer_key;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
             test_effect_tap_error_observes_and_rethrows;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
@@ -1976,6 +2293,17 @@ let () =
             test_resource_auto_refreshes_on_schedule;
           Alcotest.test_case "auto failed refresh keeps cached value" `Quick
             test_resource_auto_failed_refresh_keeps_cached_value;
+        ] );
+      ( "Properties",
+        [
+          Alcotest.test_case "monad laws" `Quick test_properties_monad_laws;
+          Alcotest.test_case "catch laws" `Quick test_properties_catch_laws;
+          Alcotest.test_case "race success invariant" `Quick
+            test_properties_race_success_invariant;
+          Alcotest.test_case "retry and repeat laws" `Quick
+            test_properties_retry_and_repeat_laws;
+          Alcotest.test_case "scope finalizers exactly once" `Quick
+            test_properties_scope_finalizers_once;
         ] );
       ( "Observability",
         [
