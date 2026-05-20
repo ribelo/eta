@@ -79,17 +79,36 @@ measurement JSON and the shell runner wraps them into the final result file.
 That keeps category executables simple and lets compile-time shell results use
 the same object shape.
 
+Committed baselines:
+
+- `bench/results/20260520T204629Z-b0590d2.json` — quick run for
+  `b0590d2`, 280 benchmark entries, `dirty: false`.
+- `bench/results/20260520T204752Z-855d7c4.json` — quick run for
+  `855d7c4`, 280 benchmark entries, `dirty: false`.
+
+The second run is the reference used for the numbers below. It ran on Linux
+6.19.13-xanmod1, AMD Ryzen 9 9950X, OCaml 5.4.1, Dune 3.21.1.
+
 ### V-Bench-Core
 
 `bench/runtime_core/` covers pure run, right and left bind chains at 1k/10k/100k,
 map chains at 1k/10k/100k, thunk chains, catch success/failure,
 `tap_error`, fail-then-catch, and runtime create/run/shutdown.
 
+Reference: `effect.core.bind_right.100k` measured 12.35ms wall,
+955,617 minor words, and 562,107 major words in the second quick baseline.
+
 ### V-Bench-Concurrency
 
 `bench/runtime_concurrency/` covers `par`, `all`, `for_each_par`,
 bounded `for_each_par`, `race`, and supervisor start/await with and without
 finalizers. The workloads use noop tracing and no file I/O.
+
+Reference: `effect.concurrency.for_each_par.512` measured 0.87ms wall.
+The bounded 512-item variants at 1/2/4/8 measured roughly 0.67ms/0.68ms/
+0.69ms/0.69ms in the second quick baseline. That does not visibly separate
+bounded-concurrency costs yet; the suite records the signal, but a future
+fixture should add a workload with real blocking or longer leaf work.
 
 ### V-Bench-Observability
 
@@ -101,11 +120,21 @@ The OTLP benchmark uses `Effet_otel.Internal` encoders. This small internal
 surface exists so tests and benchmarks can measure JSON encoding without
 collector availability or failed TCP posts dominating the result.
 
+Reference: `effect.observability.in_memory_tracer.auto` measured 5.25ms wall.
+`effect.observability.effet_otel.encoder.span.1000` measured 1.68ms wall.
+`effect.observability.named_with_attrs` measured 32.58s wall in the second
+quick baseline, which is intentionally preserved as a finding rather than
+hidden. It likely points at attr accumulation cost and deserves a separate
+profiling/fix task if that path matters.
+
 ### V-Bench-Stream
 
 `bench/runtime_stream/` covers map/filter/fold, take/fold,
 merge, early-take cancellation, `flat_map_par`, and `from_file` with generated
 deterministic cache files under `bench/fixtures/cache/`.
+
+Reference: `effet_stream.range.map.filter.fold.1M` measured 26.31ms wall.
+`effet_stream.from_file.16MiB.1MiB` measured 2.75ms wall.
 
 ### V-Bench-Schema
 
@@ -113,11 +142,18 @@ deterministic cache files under `bench/fixtures/cache/`.
 unions, recursive schemas, arrays, transforms, effectful
 `decode_with_policy`, failure construction, and `Json.to_string`.
 
+Reference: `effet_schema.decode.record6.refined` measured 1.37ms wall,
+524,280 minor words, and 28 major words.
+
 ### V-Bench-Compile
 
 `bench/compile/run_compile.sh` records clean, touch-top, touch-internal, and
 touch-test builds for `effet`, `effet-stream`, `effet-schema`, `effet-otel`,
 and `ppx_effet`.
+
+Second quick baseline clean-build wall times: `effet` 418ms,
+`effet-stream` 222ms, `effet-schema` 159ms, `effet-otel` 231ms,
+`ppx_effet` 328ms.
 
 ### V-Bench-User-Compile
 
@@ -133,6 +169,10 @@ and `ppx_effet`.
 The original scratch labs remain tracked as research evidence. The bench
 fixtures are independent copies so the historical labs do not need to be
 mutated by benchmark maintenance.
+
+Second quick baseline clean-build wall times: `deep_bind` 688ms, `env_row`
+250ms, `schema_heavy` 121ms, `ppx_heavy` 113ms. Inferred-interface sizes
+from `ocamlc -i`: 832 bytes, 851 bytes, 361 bytes, and 51 bytes respectively.
 
 > v1 was a faithful port of the MoonBit reference. Several v1 choices were
 > driven by MoonBit's type-system limits, not by good OCaml engineering.
