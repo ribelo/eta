@@ -4,9 +4,14 @@
   (alias runtime_core/bench)
   (alias runtime_concurrency/bench)
   (alias runtime_observability/bench)
+  (alias runtime_overhead/bench)
   (alias runtime_stream/bench)
   (alias runtime_schema/bench)))
 
 (executable
  (name compare)
  (libraries yojson unix str))
+
+(executable
+ (name overhead)
+ (libraries yojson unix))

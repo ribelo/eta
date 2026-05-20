@@ -8,6 +8,7 @@ time. It is opt-in infrastructure, not a CI gate.
 | Category | Prefix | Purpose |
 | --- | --- | --- |
 | Core interpreter | `effect.core.*` | Per-bind, thunk, catch, and typed-failure boundary cost. |
+| Overhead controls | `overhead.*` | Paired Effet-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Streams | `effet_stream.*` | Representative `effet-stream` pipelines and file reads. |
@@ -84,6 +85,15 @@ nix develop -c dune exec bench/compare.exe
 The compare tool prints a per-metric delta table. It has no failure threshold
 and does not act as a gate.
 
+For the focused "how much does Effet cost?" question, use the overhead ratio
+report:
+
+```sh
+nix develop -c dune exec bench/overhead.exe -- bench/results/result.json
+```
+
+With no file argument, it reads the newest file in `bench/results/`.
+
 ## Committing Results
 
 Commit a result when it is useful evidence:
@@ -109,9 +119,9 @@ Avoid committing dirty-tree results unless the commit message explains why.
 
 ## Caveats
 
-- The current suite is a trend tracker. It does not yet include the small
-  paired base-OCaml controls or ratio report needed to answer "Effet is X times
-  slower than direct OCaml" from committed evidence alone.
+- The `overhead.*` controls answer only the core interpreter question. They do
+  not yet compare every stream/schema/observability workload against a direct
+  hand-written equivalent.
 - Compile-time benchmarks mutate file timestamps with `touch`; they do not edit
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter

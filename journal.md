@@ -217,6 +217,30 @@ interpretation, 2.8x for bind build+run, 5.2x for prebuilt 100k fail/catch,
 and 5.4x for fail/catch build+run. In absolute terms this was roughly 72ns per
 prebuilt interpreted bind and 17ns per fail/catch on the Ryzen 9950X machine.
 
+### V-Bench-Overhead-Wired
+
+The apples-to-apples lab is now wired into the suite as `bench/runtime_overhead/`
+and `bench/overhead.ml`. It is included by `bench/run.sh` and `dune build
+@bench`.
+
+Focused wired command:
+
+```sh
+nix develop -c bash bench/run.sh --filter overhead --out /tmp/effet-overhead-wired.json
+_build/default/bench/overhead.exe /tmp/effet-overhead-wired.json
+```
+
+Observed ratios from the focused wired run:
+
+- bind prebuilt time: 12.91x Effet vs minimal interpreter
+- bind build+run time: 2.72x
+- fail/catch prebuilt time: 5.09x
+- fail/catch build+run time: 5.59x
+- setup time: noise-level, 0.66x in this run
+
+Allocation ratios in the same run: bind prebuilt minor words 2.50x, bind
+build+run minor words 1.40x, fail/catch minor words 2.00x.
+
 > v1 was a faithful port of the MoonBit reference. Several v1 choices were
 > driven by MoonBit's type-system limits, not by good OCaml engineering.
 > This journal partitions the v2 hypothesis space and records what I learn
