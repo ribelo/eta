@@ -25,7 +25,10 @@ type span = {
   started_ms : int;
   ended_ms : int;
   trace_id : string;
-  external_parent : (string * string) option;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+  external_parent : Capabilities.trace_context option;
 }
 
 type open_span = {
@@ -33,7 +36,10 @@ type open_span = {
   parent_id : int option;
   name : string;
   trace_id : string;
-  external_parent : (string * string) option;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+  external_parent : Capabilities.trace_context option;
   mutable attrs : (string * string) list;
   mutable events : event list;
   mutable links : link list;
@@ -90,8 +96,9 @@ let in_memory () =
     fallback = empty_state ();
   }
 
-let begin_span t ?parent_id ?external_parent ?(kind = Internal) ~name
-    ~started_ms () =
+let begin_span t ?parent_id
+    ?(external_parent : Capabilities.trace_context option) ?(kind = Internal)
+    ~name ~started_ms () =
   let state = state t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
@@ -103,7 +110,14 @@ let begin_span t ?parent_id ?external_parent ?(kind = Internal) ~name
         | span :: _ -> Some span.span_id
         | [] -> None)
   in
-  let trace_id = "" in
+  let trace_id, trace_flags, trace_state, baggage =
+    match (parent_id, external_parent, state.stack) with
+    | _, Some ctx, _ ->
+        (ctx.trace_id, ctx.trace_flags, ctx.trace_state, ctx.baggage)
+    | Some _, None, parent :: _ ->
+        (parent.trace_id, parent.trace_flags, parent.trace_state, parent.baggage)
+    | _ -> ("", 1, [], [])
+  in
   let attrs = List.rev state.pending_attrs in
   let links = List.rev state.pending_links in
   state.pending_attrs <- [];
@@ -114,6 +128,9 @@ let begin_span t ?parent_id ?external_parent ?(kind = Internal) ~name
       parent_id;
       name;
       trace_id;
+      trace_flags;
+      trace_state;
+      baggage;
       external_parent;
       attrs;
       events = [];
@@ -151,6 +168,9 @@ let end_span t ~span_id ~status ~ended_ms =
           parent_id = span.parent_id;
           name = span.name;
           trace_id = span.trace_id;
+          trace_flags = span.trace_flags;
+          trace_state = span.trace_state;
+          baggage = span.baggage;
           external_parent = span.external_parent;
           attrs = List.rev span.attrs;
           events = List.rev span.events;
@@ -188,6 +208,9 @@ let inspect t ~span_id : Capabilities.span_info option =
           Capabilities.trace_id = s.trace_id;
           span_id = "";
           name = s.name;
+          trace_flags = s.trace_flags;
+          trace_state = s.trace_state;
+          baggage = s.baggage;
         }
   | None -> None
 

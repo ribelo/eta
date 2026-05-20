@@ -11,10 +11,21 @@ end
 type span_status = Ok | Error of string | Cancelled
 type span_kind = Internal | Server | Client | Producer | Consumer
 
+type trace_context = {
+  trace_id : string;
+  span_id : string;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+}
+
 type span_info = {
   trace_id : string;
   span_id : string;
   name : string;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
 type span_link = {
@@ -44,7 +55,7 @@ type metric_value = Int of int | Float of float
 class type tracer = object
   method begin_span :
     ?parent_id:int ->
-    ?external_parent:string * string ->
+    ?external_parent:trace_context ->
     ?kind:span_kind ->
     name:string ->
     started_ms:int ->

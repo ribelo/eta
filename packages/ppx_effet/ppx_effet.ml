@@ -61,7 +61,7 @@ let rec expression_mentions_env expr =
   iter#expression expr;
   !found
 
-let expand_sync_like ~ctxt ~kind expr =
+let expand_thunk_like ~ctxt ~kind expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   let open Ast_builder.Default in
   match expr.pexp_desc with
@@ -102,7 +102,7 @@ let expand_sync_like ~ctxt ~kind expr =
       expand_fn ~ctxt leaf
   | _ ->
       fail expr.pexp_loc
-        "expected [%effet.sync \"name\" (cap : Type) body] or a tuple of caps"
+        "expected [%effet.thunk \"name\" (cap : Type) body] or a tuple of caps"
 
 let expand_env ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
@@ -135,15 +135,10 @@ let fn_extension =
     Ast_pattern.(single_expr_payload __)
     expand_fn
 
-let sync_extension =
-  Extension.V3.declare "effet.sync" Extension.Context.expression
+let thunk_extension =
+  Extension.V3.declare "effet.thunk" Extension.Context.expression
     Ast_pattern.(single_expr_payload __)
-    (expand_sync_like ~kind:"sync")
-
-let async_extension =
-  Extension.V3.declare "effet.async" Extension.Context.expression
-    Ast_pattern.(single_expr_payload __)
-    (expand_sync_like ~kind:"async")
+    (expand_thunk_like ~kind:"thunk")
 
 let env_extension =
   Extension.V3.declare "effet.env" Extension.Context.expression
@@ -155,7 +150,6 @@ let () =
     ~rules:
       [
         Context_free.Rule.extension fn_extension;
-        Context_free.Rule.extension sync_extension;
-        Context_free.Rule.extension async_extension;
+        Context_free.Rule.extension thunk_extension;
         Context_free.Rule.extension env_extension;
       ]

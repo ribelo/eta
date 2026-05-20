@@ -54,8 +54,7 @@ val pure : 'a -> ('env, 'err, 'a) t
 val fail : 'err -> ('env, 'err, 'a) t
 val unit : ('env, 'err, unit) t
 
-val sync : string -> ('env -> 'a) -> ('env, 'err, 'a) t
-val async : string -> ('env -> 'a) -> ('env, 'err, 'a) t
+val thunk : string -> ('env -> 'a) -> ('env, 'err, 'a) t
 
 val map : ('a -> 'b) -> ('env, 'err, 'a) t -> ('env, 'err, 'b) t
 val bind :
@@ -193,14 +192,29 @@ val with_external_parent :
   span_id:string ->
   ('env, 'err, 'a) t ->
   ('env, 'err, 'a) t
-(** Run [body] with the next opened {!named} span using the given OTLP
-    trace context as its parent. Useful when the caller already received a
-    parent span context out-of-band (e.g. a W3C [traceparent] header). *)
+(** Compatibility wrapper for {!with_context} when only a trace ID and parent
+    span ID are available. New boundary code should prefer {!Trace_context.extract}
+    plus {!with_context} so trace flags, tracestate, and baggage are preserved. *)
+
+val with_context :
+  Capabilities.trace_context ->
+  ('env, 'err, 'a) t ->
+  ('env, 'err, 'a) t
+(** Run [body] with an inbound or otherwise external trace context. The next
+    opened {!named} span uses this context as parent, parent-based sampling sees
+    its sampled flag, and baggage/tracestate remain visible through
+    {!current_context}. *)
 
 val current_span :
   ('env, 'err, Capabilities.span_info option) t
 (** Yield the {!Capabilities.span_info} of the currently active span on this
     fiber, or [None] if none is open. *)
+
+val current_context :
+  ('env, 'err, Capabilities.trace_context option) t
+(** Yield the current propagation context. When a span is active this is that
+    span's context; otherwise it is the ambient context installed by
+    {!with_context}, if any. *)
 
 val log :
   ?level:Capabilities.log_level ->
@@ -241,8 +255,7 @@ module Private : sig
   type ('env, 'err, 'a) view =
     | Pure : 'a -> (_, _, 'a) view
     | Fail : 'err -> (_, 'err, _) view
-    | Sync : string * ('env -> 'a) -> ('env, _, 'a) view
-    | Async : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Thunk : string * ('env -> 'a) -> ('env, _, 'a) view
     | Bind :
         ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
         -> ('env, 'err, 'a) view
@@ -290,8 +303,13 @@ module Private : sig
     | Link_span :
         Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | With_external_parent :
-        string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        Capabilities.trace_context * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
+    | With_context :
+        Capabilities.trace_context * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
     | Current_span : ('env, 'err, Capabilities.span_info option) view
+    | Current_context : ('env, 'err, Capabilities.trace_context option) view
     | Log :
         Capabilities.log_level * string * (string * string) list
         -> ('env, 'err, unit) view

@@ -50,6 +50,9 @@ type span = {
   trace_id : string; (* 32 hex chars *)
   span_id : string; (* 16 hex chars *)
   parent_span_id : string option;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
   name : string;
   kind : Effet.Capabilities.span_kind;
   start_unix_ns : int;
@@ -109,6 +112,17 @@ let span_json (s : span) : yj =
     if s.links = [] then []
     else [ ("links", `List (List.map link_json s.links)) ]
   in
+  let trace_state =
+    match s.trace_state with
+    | [] -> []
+    | xs ->
+        [
+          ( "traceState",
+            `String
+              (String.concat ","
+                 (List.map (fun (k, v) -> k ^ "=" ^ v) xs)) );
+        ]
+  in
   let status =
     match status_json s.status_code s.status_message with
     | None -> []
@@ -127,7 +141,7 @@ let span_json (s : span) : yj =
         ("endTimeUnixNano", str_int s.end_unix_ns);
         ("attributes", attrs_json s.attrs);
       ]
-    @ events @ links @ status)
+    @ trace_state @ events @ links @ status)
 
 let resource_json resource_attrs : yj =
   `Assoc [ ("attributes", attrs_json resource_attrs) ]
@@ -477,18 +491,25 @@ let metrics_loop t =
 (* Tracer methods                                                     *)
 (* ------------------------------------------------------------------ *)
 
-let resolve_parent_ids t = function
-  | None, None -> (hex_of_bytes (random_bytes t.rng 16), None)
-  | _, Some (ext_trace, ext_span) -> (ext_trace, Some ext_span)
+let resolve_parent t = function
+  | None, None ->
+      (hex_of_bytes (random_bytes t.rng 16), None, 1, [], [])
+  | _, Some (ctx : Effet.Capabilities.trace_context) ->
+      ( ctx.trace_id,
+        Some ctx.span_id,
+        ctx.trace_flags,
+        ctx.trace_state,
+        ctx.baggage )
   | Some p_handle, None -> (
       match Hashtbl.find_opt t.table p_handle with
-      | Some p -> (p.trace_id, Some p.span_id)
-      | None -> (hex_of_bytes (random_bytes t.rng 16), None))
+      | Some p ->
+          (p.trace_id, Some p.span_id, p.trace_flags, p.trace_state, p.baggage)
+      | None -> (hex_of_bytes (random_bytes t.rng 16), None, 1, [], []))
 
 let begin_span t ?parent_id ?external_parent ?(kind = Effet.Capabilities.Internal)
     ~name ~started_ms:_ () =
-  let trace_id, parent_span_id =
-    resolve_parent_ids t (parent_id, external_parent)
+  let trace_id, parent_span_id, trace_flags, trace_state, baggage =
+    resolve_parent t (parent_id, external_parent)
   in
   let span_id = hex_of_bytes (random_bytes t.rng 8) in
   let start_unix_ns = now_ns t in
@@ -497,6 +518,9 @@ let begin_span t ?parent_id ?external_parent ?(kind = Effet.Capabilities.Interna
       trace_id;
       span_id;
       parent_span_id;
+      trace_flags;
+      trace_state;
+      baggage;
       name;
       kind;
       start_unix_ns;
@@ -567,6 +591,9 @@ let inspect t ~span_id : Effet.Capabilities.span_info option =
           Effet.Capabilities.trace_id = s.trace_id;
           span_id = s.span_id;
           name = s.name;
+          trace_flags = s.trace_flags;
+          trace_state = s.trace_state;
+          baggage = s.baggage;
         }
   | None -> None
 

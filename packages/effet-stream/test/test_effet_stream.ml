@@ -170,7 +170,7 @@ let test_from_file_downstream_failure_closes () =
 let delayed_counted_source produced =
   Stream.from_iterable (List.init 1_000 (fun i -> i))
   |> Stream.map_effect (fun value ->
-         Effect.sync "stream.produced" (fun _ -> incr produced)
+         Effect.thunk "stream.produced" (fun _ -> incr produced)
          |> Effect.bind (fun () ->
                 Effect.delay (Duration.ms 5) (Effect.pure value)))
 
@@ -229,11 +229,11 @@ end
 let row_pipeline () =
   let clock_stream =
     Stream.from_effect
-      (Effect.sync "clock" (fun env ->
+      (Effect.thunk "clock" (fun env ->
            env#clock#sleep (Duration.ms 0);
            1))
   in
-  let db_stream = Stream.from_effect (Effect.sync "db" (fun env -> env#db#get)) in
+  let db_stream = Stream.from_effect (Effect.thunk "db" (fun env -> env#db#get)) in
   Stream.merge clock_stream db_stream
   |> Stream.flat_map_par ~max_concurrency:2 (fun value ->
          Stream.from_effect

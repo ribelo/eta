@@ -1,8 +1,7 @@
 type ('env, 'err, 'a) t =
   | Pure : 'a -> (_, _, 'a) t
   | Fail : 'err -> (_, 'err, _) t
-  | Sync : string * ('env -> 'a) -> ('env, _, 'a) t
-  | Async : string * ('env -> 'a) -> ('env, _, 'a) t
+  | Thunk : string * ('env -> 'a) -> ('env, _, 'a) t
   | Bind :
       ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
       -> ('env, 'err, 'a) t
@@ -49,8 +48,11 @@ type ('env, 'err, 'a) t =
   | Link_span :
       Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | With_external_parent :
-      string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+      Capabilities.trace_context * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  | With_context :
+      Capabilities.trace_context * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
   | Current_span : ('env, 'err, Capabilities.span_info option) t
+  | Current_context : ('env, 'err, Capabilities.trace_context option) t
   | Log :
       Capabilities.log_level * string * (string * string) list
       -> ('env, 'err, unit) t
@@ -108,9 +110,7 @@ and ('s, !'err, !'a) supervisor_child = {
 let pure v = Pure v
 let fail e = Fail e
 let unit = Pure ()
-let sync name f = Sync (name, f)
-let async name f = Async (name, f)
-
+let thunk name f = Thunk (name, f)
 let map f e = Map (e, f)
 let bind k e = Bind (e, k)
 let ( >>= ) e k = Bind (e, k)
@@ -164,9 +164,14 @@ let link_span ?(attrs = []) ~trace_id ~span_id e =
       e )
 
 let with_external_parent ~trace_id ~span_id e =
-  With_external_parent (trace_id, span_id, e)
+  match Trace_context.make ~trace_id ~span_id () with
+  | Some ctx -> With_external_parent (ctx, e)
+  | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
+
+let with_context ctx e = With_context (ctx, e)
 
 let current_span = Current_span
+let current_context = Current_context
 
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   Log (level, body, attrs)
@@ -194,13 +199,14 @@ let collect_names e =
    fun acc -> function
     | Pure _ -> acc
     | Fail _ -> acc
-    | Sync (n, _) -> n :: acc
-    | Async (n, _) -> n :: acc
+    | Thunk (n, _) -> n :: acc
     | Named (_, n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
     | Link_span (_, e) -> walk acc e
-    | With_external_parent (_, _, e) -> walk acc e
+    | With_external_parent (_, e) -> walk acc e
+    | With_context (_, e) -> walk acc e
     | Current_span -> acc
+    | Current_context -> acc
     | Log _ -> acc
     | Metric_update _ -> acc
     | Map (e, _) -> walk acc e
@@ -232,8 +238,7 @@ module Private = struct
   type ('env, 'err, 'a) view =
     | Pure : 'a -> (_, _, 'a) view
     | Fail : 'err -> (_, 'err, _) view
-    | Sync : string * ('env -> 'a) -> ('env, _, 'a) view
-    | Async : string * ('env -> 'a) -> ('env, _, 'a) view
+    | Thunk : string * ('env -> 'a) -> ('env, _, 'a) view
     | Bind :
         ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
         -> ('env, 'err, 'a) view
@@ -281,8 +286,13 @@ module Private = struct
     | Link_span :
         Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
     | With_external_parent :
-        string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        Capabilities.trace_context * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
+    | With_context :
+        Capabilities.trace_context * ('env, 'err, 'a) t
+        -> ('env, 'err, 'a) view
     | Current_span : ('env, 'err, Capabilities.span_info option) view
+    | Current_context : ('env, 'err, Capabilities.trace_context option) view
     | Log :
         Capabilities.log_level * string * (string * string) list
         -> ('env, 'err, unit) view
@@ -299,8 +309,7 @@ module Private = struct
   let view : type env err a. (env, err, a) t -> (env, err, a) view = function
     | Pure value -> Pure value
     | Fail err -> Fail err
-    | Sync (name, f) -> Sync (name, f)
-    | Async (name, f) -> Async (name, f)
+    | Thunk (name, f) -> Thunk (name, f)
     | Bind (eff, k) -> Bind (eff, k)
     | Map (eff, f) -> Map (eff, f)
     | Catch (eff, handler) -> Catch (eff, handler)
@@ -325,9 +334,10 @@ module Private = struct
     | Named (kind, name, eff) -> Named (kind, name, eff)
     | Annotate (key, value, eff) -> Annotate (key, value, eff)
     | Link_span (link, eff) -> Link_span (link, eff)
-    | With_external_parent (trace_id, span_id, eff) ->
-        With_external_parent (trace_id, span_id, eff)
+    | With_external_parent (ctx, eff) -> With_external_parent (ctx, eff)
+    | With_context (ctx, eff) -> With_context (ctx, eff)
     | Current_span -> Current_span
+    | Current_context -> Current_context
     | Log (level, body, attrs) -> Log (level, body, attrs)
     | Metric_update { name; description; unit_; kind; attrs; value } ->
         Metric_update { name; description; unit_; kind; attrs; value }

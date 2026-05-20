@@ -6220,6 +6220,904 @@ the concrete R-channel DX pain:
 - explicit thunk style for exported effects;
 - boundary env object annotations;
 - no service-graph machinery.
+
+## OTel propagation — W3C context, baggage, sampling flags (V-P)
+
+### Why this entry exists
+
+V-O6 correctly moved tracer injection to `Runtime.create ?tracer`, but it only
+settled in-process span emission. Distributed tracing needs a propagation value:
+W3C `traceparent`, `tracestate`, the sampled flag, and baggage must cross
+service boundaries and must affect runtime sampling before a span is opened.
+
+### Goal
+
+Decide where full propagation belongs, prove the choice in a lab, then implement
+the confirmed minimum surface.
+
+### Constraints inherited from prior research
+
+- V-O6 holds: tracer remains a runtime parameter, not an env-row capability.
+- Eio fiber-local context remains the runtime propagation mechanism.
+- `effet-otel` stays a companion package for OTLP export; core Effet must not
+  grow a network stack.
+- The public effect surface should expose capabilities, not Effect-TS type names
+  for their own sake.
+
+### Hypothesis space
+
+- **P-A — pair-only external parent.** Keep `with_external_parent ~trace_id
+  ~span_id` as the only boundary primitive.
+- **P-B — full core trace_context.** Add a W3C-shaped record in core, carry it in
+  runtime fiber-local state, and expose extract/inject helpers.
+- **P-C — exporter-only propagation.** Put header parsing and injection in
+  `effet-otel`; leave core runtime unchanged.
+
+### Lab
+
+`scratch/otel_propagation/` contains three self-contained candidates and a
+runtime smoke executable.
+
+- `p_a_pair_only.ml` demonstrates that the current pair-only shape correlates a
+  child but necessarily drops trace flags, tracestate, and baggage.
+- `p_b_core_context.ml` round-trips W3C-style headers and lets a parent sampled
+  flag suppress child span creation.
+- `p_c_exporter_only.ml` can parse/inject headers but cannot make `named`,
+  `par`, logs, or `current_context` observe baggage or sampling flags.
+
+Command:
+
+```sh
+nix develop -c dune exec scratch/otel_propagation/runtime_smoke.exe
+```
+
+Result:
+
+```text
+otel propagation lab passed
+```
+
+Negative fixture:
+
+```sh
+nix develop -c dune exec scratch/otel_propagation/neg_malformed_traceparent.exe
+```
+
+Result: exited successfully because malformed all-zero trace IDs are rejected.
+
+### ocaml-opentelemetry comparison
+
+The upstream `ocaml-opentelemetry` library already has `Trace_context.Traceparent`
+helpers and a `Span_ctx` model. Its public `Traceparent.of_value` currently
+returns only `Trace_id.t * Span_id.t` and the source comment says flags are
+ignored. The Cohttp integration also notes that parsing an external traceparent
+really wants a span context. It does not give Effet a drop-in Eio runtime context
+or baggage carrier.
+
+Decision: do not depend on `ocaml-opentelemetry` for core propagation. Keep the
+dependency-free W3C parser in core and allow alternate exporter adapters later.
+
+### Decision diary
+
+#### V-P1 — Propagation context lives in core
+
+Decision: adopt P-B. A full `Capabilities.trace_context` record is now core
+state because sampling and `Effect.current_context` need it before any exporter
+sees a span. P-C is too late in the pipeline: an exporter can serialize headers,
+but it cannot make `Runtime` suppress unsampled children or carry baggage through
+`par`.
+
+#### V-P2 — Pair-only external parent remains only as compatibility
+
+Decision: keep `Effect.with_external_parent ~trace_id ~span_id` as a wrapper,
+but document `Trace_context.extract` + `Effect.with_context` as the real
+boundary API. The lab shows pair-only propagation drops the fields production OTel
+needs.
+
+#### V-P3 — Header extract/inject is dependency-free and small
+
+Decision: `Effet.Trace_context` parses and injects `traceparent`,
+`tracestate`, and `baggage` as HTTP-style `(string * string) list` headers.
+It rejects malformed trace IDs/span IDs, including all-zero IDs. It intentionally
+does not implement a full HTTP abstraction.
+
+#### V-P4 — Parent-based sampling reads the W3C sampled flag
+
+Decision: `Effect.with_context ctx body` binds runtime sampled state from
+`ctx.trace_flags land 1`. A parent-based sampler now treats an inbound context
+as a parent even before a local span exists. The new test
+`trace context unsampled parent suppresses child` verifies `traceflags=00`
+creates no child span.
+
+#### V-P5 — Baggage and tracestate propagate through fibers
+
+Decision: the runtime stores trace context in an Eio fiber-local key, so `par`,
+`all`, `for_each_par`, supervisors, and runtime-owned daemons inherit it at
+fork time via the same mechanism used for active span context. The test
+`trace context par inherits baggage` verifies both `par` children see baggage.
+
+#### V-P6 — effet-otel preserves traceState, baggage remains propagation-only
+
+Decision: emitted OTLP spans now preserve `traceState` when a remote parent
+provided it. Baggage is carried by `Trace_context.inject`; it is not an OTLP span
+field. The `effet-otel` encoder smoke test now asserts `traceState` appears in
+the exported JSON.
+
+#### V-P7 — current_context is the user-facing outbound hook
+
+Decision: add `Effect.current_context`. In an active span it returns that span's
+propagation context; otherwise it returns the ambient context installed by
+`with_context`. Outbound HTTP wrappers should call
+`Effect.current_context |> Effect.map Trace_context.inject`.
+
+### Implementation summary
+
+Implemented:
+
+- `packages/effet/trace_context.{ml,mli}`
+- `Capabilities.trace_context` and widened `span_info`
+- `Effect.with_context` and `Effect.current_context`
+- Runtime fiber-local propagation of full context and sampled flag
+- `effet-otel` tracer storage/export of trace flags, tracestate, and baggage
+- README and `packages/effet-otel/README.md` propagation docs
+
+Verification:
+
+```sh
+nix develop -c dune runtest --force
+```
+
+Result: `effet-schema`, `ppx_effet`, `effet` (83 tests), and
+`effet-otel` (19 tests) passed.
+
+### What remains deliberately out of scope
+
+- URL percent-decoding and metadata-preserving baggage parsing. The current API
+  preserves key/value baggage needed for Effet propagation; richer baggage
+  metadata can be added without changing `Effect.with_context`.
+- A full HTTP client/server wrapper. The surface is header-list based so Eio,
+  Piaf, Cohttp, or app-local transports can adapt it.
+- Replacing `effet-otel` with `ocaml-opentelemetry`. The core trait remains
+  adapter-friendly, but the current package keeps the dependency closure small.
+
+## V-O7r - OTLP backend re-comparison after Yojson and propagation
+
+### Why this entry exists
+
+V-O7 chose a hand-rolled effet-otel OTLP/JSON transport partly because it added
+zero dependencies. That premise is stale. Later work replaced the hand-written
+JSON buffer assembly with Yojson and V-P added core W3C propagation helpers. The
+backend decision needed to be rerun against the current dependency baseline and
+current propagation surface.
+
+This is research-only. No live exporter implementation was changed in this
+entry.
+
+### Goal
+
+Compare the current effet-otel transport with an ocaml-opentelemetry-style
+adapter on the axes the original V-O7 decision used plus the new production
+axes raised by the reviews:
+
+- dependency closure;
+- LOC and local maintenance surface;
+- retry, batching, backoff, and dropped-signal observability;
+- propagation fit after V-P;
+- semantic conventions and SDK drift cost.
+
+### Evidence read
+
+Current code:
+
+- packages/effet-otel/effet_otel.ml: 710 LOC.
+- packages/effet-otel/effet_otel.mli: 65 LOC.
+- Current package direct dependencies in dune-project: effet, eio, eio_main,
+  yojson, and alcotest for tests.
+
+Upstream package metadata and source survey:
+
+- opentelemetry.0.91/opam depends on ptime, hmap, pbrt, pbrt_yojson,
+  ambient-context, mtime, dune, and has optional integrations for eio, lwt,
+  thread-local-storage, and tracing.
+- opentelemetry-client.0.91/opam depends on matching opentelemetry and
+  thread-local-storage.
+- opentelemetry-client-cohttp-eio.0.91/opam adds ca-certs,
+  mirage-crypto-rng, ambient-context-eio, cohttp-eio, and tls-eio.
+- Upstream 0.90/0.91 changelog records HTTP/JSON support, retry with
+  exponential backoff, bounded queue overhaul, batching enabled by default,
+  better OTLP HTTP failure errors, and self debug/metrics for retry/drop paths.
+- Upstream Span_ctx has W3C trace-context helpers and sampled flag support, but
+  it is not a drop-in replacement for Effet's runtime fiber-local
+  Trace_context.t.
+
+### Lab
+
+Created scratch/otlp_compare/.
+
+The lab intentionally models the comparison instead of linking the upstream SDK.
+That keeps the repo dependency graph unchanged and isolates the behavioral
+questions. The upstream model is based on the 0.90/0.91 package/source survey,
+not on a production adapter implementation.
+
+Files:
+
+- common.ml: shared signal, batch, result, and propagation fixtures.
+- current_hand_roll_model.ml: fixed batch sizes, one POST attempt, on_error as
+  the only failure signal.
+- upstream_adapter_model.ml: default batching, retry attempts, bounded queue
+  pressure, and self diagnostics.
+- runtime_smoke.ml: collector OK/down/intermittent/slow plus W3C extract/inject
+  fixture.
+- results.md: short result table and recommendation.
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/otlp_compare/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+otlp_compare runtime smoke passed
+~~~
+
+### Dependency comparison
+
+V-O7's "zero new dependencies" argument is retired.
+
+Current effet-otel already depends on Yojson. The revised hand-roll argument is
+not zero dependencies; it is a small and explicit dependency closure: effet, eio,
+eio_main, and yojson at runtime.
+
+The Eio upstream adapter path would add at least:
+
+~~~text
+opentelemetry
+opentelemetry-client
+opentelemetry-client-cohttp-eio
+ptime
+hmap
+pbrt
+pbrt_yojson
+ambient-context
+thread-local-storage
+mtime
+cohttp-eio
+tls-eio
+ca-certs
+mirage-crypto-rng
+ambient-context-eio
+~~~
+
+That list is acceptable for an application that already wants the upstream SDK,
+but it is a large increase for a small companion exporter.
+
+### LOC comparison
+
+Current implementation:
+
+~~~text
+710 packages/effet-otel/effet_otel.ml
+ 65 packages/effet-otel/effet_otel.mli
+~~~
+
+The scratch adapter model is only 73 LOC, but that is not a real adapter. A real
+adapter would still need translation from Effet span/log/metric traits into the
+upstream SDK's tracer/logger/meter providers, propagation bridge code, global SDK
+setup policy, and tests. The useful conclusion is narrower: upstream would
+delete wire-format and transport maintenance, but not all adapter code.
+
+### Failure behavior
+
+This is the strongest point against the current transport.
+
+Current effet-otel batches signals and posts once. On failure, the daemon calls
+on_error if the user supplied it and then moves on. There is no retry, backoff,
+bounded queue accounting, self-diagnostic stream, or built-in dropped signal
+counter. The scratch model's intermittent-failure fixture drops the first batch.
+
+The upstream SDK has the right production semantics already: bounded queues,
+batching enabled by default, retry with exponential backoff, better HTTP failure
+messages, and self debug/metrics. The scratch model's intermittent-failure
+fixture retries and delivers.
+
+### Propagation
+
+V-P changes the propagation comparison.
+
+Effet core now owns W3C traceparent, tracestate, sampled flag, and baggage
+extract/inject through Trace_context. That means distributed propagation no
+longer requires the upstream SDK. It also means an upstream adapter would need to
+bridge Effet's fiber-local runtime context into the upstream ambient context or
+choose one context owner explicitly.
+
+The upstream library has useful W3C/span-context pieces, but adopting the full
+SDK for propagation alone would duplicate a solved core problem and introduce a
+second context model.
+
+### Semantic conventions and SDK drift
+
+The upstream SDK wins long-term spec maintenance. It tracks OTLP wire shape,
+semantic convention updates, HTTP/JSON behavior, bounded queue details, retry
+policy, and self diagnostics. Hand-roll means Effet owns all of those decisions.
+
+Effet still has a reason to keep the current adapter small: the public capability
+traits are already Effet-shaped, and the exporter can serialize the same runtime
+context without translating through a second global SDK. The maintenance cost is
+acceptable only if the wire layer stays deliberately small and we stop pretending
+it is feature-complete.
+
+### Decision diary
+
+#### V-O7r1 - Zero-dependency rationale is invalid
+
+Decision: supersede the V-O7 rationale. effet-otel now uses Yojson, so the
+winning argument cannot be "zero new dependencies" or "hand-written JSON". The
+valid remaining argument is small dependency closure plus direct integration
+with Effet runtime context.
+
+#### V-O7r2 - Do not migrate to ocaml-opentelemetry now
+
+Decision: do not replace the current exporter with an upstream SDK adapter in
+this pass. The adapter would bring a much larger dependency closure and a second
+ambient context model. V-P already gives Effet the propagation capabilities that
+were the most urgent SDK-shaped gap.
+
+Deferred: a separate adapter package can still be built later for applications
+that already standardize on ocaml-opentelemetry.
+
+#### V-O7r3 - Upstream wins failure semantics
+
+Decision: the current transport is weaker on production failure behavior. The
+lab and upstream changelog agree on the gap: retry, bounded queues, backoff,
+self diagnostics, and dropped-signal accounting are real capabilities, not
+cosmetic SDK features. Hand-roll only remains defensible if these semantics are
+added or explicitly rejected with a production rationale.
+
+#### V-O7r4 - Propagation stays Effet-owned
+
+Decision: keep propagation in core Effet. Trace_context.extract,
+Effect.with_context, Effect.current_context, and Trace_context.inject compose
+with Eio fiber-local runtime state and do not require a network/exporter
+dependency. Exporters should consume this context rather than own it.
+
+#### V-O7r5 - Recommendation
+
+Decision: keep the hand-rolled effet-otel transport for now, but change the
+roadmap. The correct follow-up is not a migration; it is a small hardening slice
+that cherry-picks the upstream behaviors that matter:
+
+- bounded retry with exponential backoff for failed POSTs;
+- dropped-signal counters or callback payloads per signal kind;
+- richer error payloads including signal, endpoint, attempt count, and failure;
+- optional self-diagnostic hook or metrics path;
+- documentation that the package is a minimal Effet-native exporter, not a full
+  OTel SDK.
+
+Implementation is intentionally not started here. This entry is the approval
+point.
+
+### Final recommendation
+
+Recommendation (c): keep hand-roll, but cherry-pick adapter behavior.
+
+Do not use V-O7's old wording again. The revised position is:
+
+> effet-otel stays Effet-native because its runtime context and dependency
+> closure are small. It must adopt upstream-style retry/drop diagnostics before
+> being treated as production-grade transport.
+
+### Artifacts
+
+- scratch/otlp_compare/README.md
+- scratch/otlp_compare/common.ml
+- scratch/otlp_compare/current_hand_roll_model.ml
+- scratch/otlp_compare/upstream_adapter_model.ml
+- scratch/otlp_compare/runtime_smoke.ml
+- scratch/otlp_compare/results.md
+
+## V-LM - Logger/Meter AST survival lab
+
+### Why this entry exists
+
+Effet-9qk reopens V-O10/V-O11 under deletion pressure. Review 2 argued that
+Effect.log and Effect.metric_update may be overbuilt as core AST constructors
+because span correlation could be implemented by adapters over standard
+logging/metrics ecosystems. If that adapter shape gives the same behavior with
+less core surface and similar ergonomics, the AST constructors are unearned.
+
+This pass is both research and implementation-gated. The implementation rule
+was: delete or change the live code only if the lab indicates a better design.
+
+### Goal
+
+Compare two branches:
+
+- Branch A: current design. Log and Metric_update are effect AST constructors
+  interpreted by the runtime.
+- Branch B: adapter design. The effect AST has no log/metric constructors.
+  Logs go through a Logs reporter and metrics through a registry. Both read a
+  fiber-local runtime observation context to correlate with the active span.
+
+### Lab
+
+Artifacts:
+
+- scratch/log_meter_survival/common.ml
+- scratch/log_meter_survival/branch_a_ast.ml
+- scratch/log_meter_survival/branch_b_adapter.ml
+- scratch/log_meter_survival/runtime_smoke.ml
+- scratch/log_meter_survival/results.md
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/log_meter_survival/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+log_meter_survival runtime smoke passed
+~~~
+
+### Fixture
+
+Both branches run the same behavioral shape:
+
+1. Open a named span parent.
+2. Emit one log record with body hello.
+3. Emit one metric point named requests.
+4. Assert the log and metric carry the span trace/span identifiers.
+
+Branch B also checks that emitting outside a runtime observation context drops
+the signal rather than fabricating correlation.
+
+### LOC and dependency evidence
+
+Scratch model LOC:
+
+~~~text
+ 72 scratch/log_meter_survival/branch_a_ast.ml
+126 scratch/log_meter_survival/branch_b_adapter.ml
+~~~
+
+Relevant live-code LOC:
+
+~~~text
+ 32 packages/effet/logger.ml
+ 27 packages/effet/logger.mli
+ 35 packages/effet/meter.ml
+ 27 packages/effet/meter.mli
+360 packages/effet/effect.ml
+349 packages/effet/effect.mli
+773 packages/effet/runtime.ml
+155 packages/effet-otel/test/test_logger.ml
+240 packages/effet-otel/test/test_metrics.ml
+~~~
+
+Logs is available in the current Nix shell. No metrics or prometheus package is
+installed there. That matters: the logging half can be a real adapter, but the
+metrics half still needs either a new dependency or an Effet-owned registry.
+
+### Ergonomics
+
+Branch A application code is effect-native:
+
+~~~ocaml
+Effect.named "parent"
+  (Effect.log "hello"
+   |> Effect.bind (fun () ->
+      Effect.metric_update ~name:"requests"
+        ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1)))
+~~~
+
+Branch B can preserve laziness only by wrapping ordinary emissions in an effect
+leaf:
+
+~~~ocaml
+Effect.named "parent"
+  (Effect.sync "emit" (fun _ ->
+     Logs.info (fun m -> m "hello");
+     Metric_registry.record ~name:"requests" ~kind:Counter (Int 1)))
+~~~
+
+That shape proves correlation is possible, but it is not simpler. It moves the
+signal API out of the effect AST and into a process-global Logs reporter plus a
+metrics registry. For logs, global reporter state also has test/runtime
+isolation costs that Runtime.create ?logger avoids.
+
+### Test equivalence
+
+The scratch fixtures pass with identical correlation assertions. The existing
+ports in packages/effet-otel/test/test_logger.ml and
+packages/effet-otel/test/test_metrics.ml would not pass unchanged because they
+intentionally exercise Effect.log and Effect.metric_update. Branch B would
+require test-body rewrites to Logs.info and registry calls.
+
+### Decision diary
+
+#### V-LMv1 - Logs adapter is possible
+
+Decision: the reviewer was correct that a Logs reporter can correlate records
+with the active span without a Log AST constructor. Branch B uses an Eio
+fiber-local observation context and the Logs reporter API to emit a correlated
+record inside a named span.
+
+Rationale: branch_b_adapter.ml passes the same trace/span correlation fixture as
+branch_a_ast.ml.
+
+#### V-LMv2 - Metrics are not equivalent to logs
+
+Decision: do not treat metrics as solved by the logging result. The current
+environment has logs, but not a comparable metrics registry package. Branch B
+therefore implements an Effet-local Metric_registry, which is conceptually the
+same responsibility as the current Meter capability moved sideways.
+
+Deferred: a future task may compare a concrete OCaml metrics package if Effet
+chooses one as a dependency. This lab does not justify adding that dependency.
+
+#### V-LMv3 - Process-global reporter state is a regression
+
+Decision: global Logs.set_reporter is worse than runtime-local Runtime.create
+?logger for Effet core semantics. Effet already treats the runtime as the owner
+of interpretation, tracing, sampling, logging, and metrics. A global reporter
+makes multi-runtime tests and nested runtimes harder to reason about.
+
+Rationale: Branch B must install and restore the reporter around runtime
+execution. Branch A uses the runtime value directly and needs no global state.
+
+#### V-LMv4 - Keep Log and Metric_update AST nodes
+
+Decision: keep Log and Metric_update as core AST constructors.
+
+Rationale: deletion is possible but not superior. The adapter model is larger
+in the scratch lab, forces test-body rewrites, introduces process-global
+logging state, and still needs an Effet-owned metrics registry. The current
+constructors are small, lazy until interpretation, runtime-scoped, independent
+of env rows, and preserve the same effect sequencing model as the rest of the
+library.
+
+#### V-LMv5 - No live code changes required
+
+Decision: no packages/ implementation changes are made for this task.
+
+Rationale: the lab rejects the deletion hypothesis. The only durable artifact
+needed is this journal entry plus the scratch lab. V-O10/V-O11 survive with a
+better rationale: the AST nodes are not there because span correlation is
+impossible otherwise; they are there because the effect runtime is the right
+owner for these runtime-scoped signals.
+
+### Final recommendation
+
+Recommendation (a): keep the current AST nodes with documented reason.
+
+Do not migrate Effect.log to Logs.info or Effect.metric_update to a separate
+metrics registry in core Effet. Adapters can still be added later as interop
+conveniences, but they should not replace the effect-native operations.
+
+## V-Sh - effet-stream hardening before release
+
+### Why this entry exists
+
+Effet-zx5 reopens the stream package after external review. The research shape
+survived, but the package implementation still had release-blocking skeletons:
+`merge` was sequential `concat`, `flat_map_par` was sequential
+`flat_map`, `from_file` and `from_eio_stream` returned empty streams, and
+there were no package-level tests.
+
+This entry records the implementation hardening done before treating
+`effet-stream` as a real package surface.
+
+### Goal
+
+Close the concrete gaps named by Effet-zx5:
+
+- downstream early `take` closes a file source;
+- `merge` runs concurrent producers and cancels upstream when downstream stops;
+- `flat_map_par` runs bounded-concurrent inner streams;
+- bounded internal queues do not deadlock when downstream stops;
+- object-row env and polymorphic-variant error rows survive composition.
+
+### Implementation
+
+The package moved from whole-list materialization to a stop-aware monadic fold.
+Each source/operator receives an `emit` callback that returns the updated sink
+state plus a boolean saying whether upstream should continue. `take` now stops
+upstream instead of collecting all values and slicing afterward.
+
+`Stream.merge` is now a real concurrent operator. It starts both producers
+under `Effet.Supervisor.scoped`, forwards values through a bounded Eio queue,
+and sets a stop flag before cancelling producer children when downstream
+finishes early.
+
+`Stream.flat_map_par` now uses a bounded outer queue, fixed worker fibers, and
+a bounded output queue. The outer producer feeds values to workers; each worker
+runs inner streams and forwards items to the downstream consumer. The
+`max_concurrency` semaphore shape from the placeholder was replaced with
+actual worker ownership under the Effet supervisor scope.
+
+`Stream.from_file` is implemented as a v0 whole-file source using
+`Eio.Path.load`, emitting one `bytes` chunk. That is enough to prove descriptor
+closure under `take 1`, but it is deliberately not yet an incremental byte
+stream.
+
+### Tests
+
+New package tests live in `packages/effet-stream/test/test_effet_stream.ml`.
+
+Focused command:
+
+~~~sh
+nix develop -c dune runtest packages/effet-stream --force
+~~~
+
+Result:
+
+~~~text
+Test Successful in 0.513s. 6 tests run.
+~~~
+
+Covered fixtures:
+
+- A/B/C scenario: integer source, map `* 2`, `take 5`, fold sum = 30.
+- `take_then_close`: `from_file |> take 1 |> drain` does not increase
+  `/proc/self/fd` count.
+- `merge_cancellation`: `merge` plus downstream `take 1` stops both large
+  delayed producers before full production.
+- `flat_map_par_concurrency`: 100 inner streams each delay 50ms; with
+  `max_concurrency:10`, total runtime stays below 2s instead of the sequential
+  5s shape.
+- `bounded_queue_no_deadlock`: delayed producers plus downstream early stop
+  complete under a 1s timeout.
+- `row_polymorphism`: a clock+db pipeline through `merge` and
+  `flat_map_par` is locked with a module signature requiring
+  `< clock : Capabilities.clock; db : db; .. >` and error row
+  `[> `Negative]`.
+
+### Decision diary
+
+#### V-Shv1 - Replace list materialization with stop-aware folding
+
+Decision: `run` is now based on a monadic fold that can stop upstream. The
+previous `effect_list` interpreter made early termination impossible because
+operators such as `take` ran only after the entire stream was collected.
+
+Rationale: the new `take_then_close` and merge cancellation fixtures would not
+be meaningful under the old collect-then-slice model.
+
+#### V-Shv2 - Implement merge as supervised producers plus queue
+
+Decision: `merge` is no longer `concat`. It forks both producers under the
+current Effet runtime via `Supervisor.scoped`, forwards items through an Eio
+queue, and cancels producers when the downstream fold returns stop.
+
+Rationale: the `merge_cancellation` test observes that both large upstream
+sources stop before producing all 1000 values.
+
+#### V-Shv3 - Implement flat_map_par with bounded workers
+
+Decision: `flat_map_par` is no longer sequential `flat_map`. It uses a
+bounded outer queue and fixed worker fibers; at most `max_concurrency` inner
+streams are active.
+
+Rationale: the timing fixture uses 100 inputs with 50ms inner delays and
+`max_concurrency:10`. The test completes below 2s, which excludes the old
+sequential 5s behavior.
+
+#### V-Shv4 - Keep from_file whole-file in v0, document it
+
+Decision: `from_file` now works and closes, but it emits one whole-file
+`bytes` chunk. Incremental byte chunks are deferred.
+
+Rationale: the release blocker was the empty placeholder and close behavior
+under early take. The package now passes that test. A chunk-size API should not
+be invented until the byte-stream use case is clearer.
+
+#### V-Shv5 - Eio.Stream interop is prefix-oriented
+
+Decision: `from_eio_stream` pulls from an existing Eio queue but does not
+invent an end-of-stream marker. Callers own producer lifetime and should use
+`take` for finite prefixes.
+
+Rationale: Eio.Stream itself has no close/end signal. Adding one in Effet would
+change ownership semantics. The README now calls this out as a v0 footgun.
+
+#### V-Shv6 - Stream rows survive concurrent composition
+
+Decision: the stream package keeps Effet's env/error channel discipline through
+concurrent operators. No separate stream error model was introduced.
+
+Rationale: the row-polymorphism test locks a `merge` plus `flat_map_par`
+pipeline to the expected object-row env and polymorphic-variant error row.
+
+### Deferred
+
+- `from_file` is not yet an incremental byte stream.
+- `from_eio_stream` has no end-of-stream sentinel; callers must bound prefix
+  consumption or provide a producer that continues.
+- The current `merge` and `flat_map_par` queues are bounded implementation
+  details, not public tuning parameters.
+
+### Artifacts
+
+- packages/effet-stream/effet_stream.ml
+- packages/effet-stream/effet_stream.mli
+- packages/effet-stream/README.md
+- packages/effet-stream/test/dune
+- packages/effet-stream/test/test_effet_stream.ml
+
+## V-Rs - Resource module survival lab
+
+### Why this entry exists
+
+Effet-6yf reopens the Resource module under deletion pressure. Review 2 argued
+that Resource may be decorative: a cached effectful loader can be written with
+an Atomic.t cell, Effect.sync, Effect.bind, and a scheduled background refresh.
+If that replacement is equally clear and uses public primitives, Resource does
+not earn a separate public module.
+
+The current code is not the same code the original criticism saw. Public
+Effect.detach has already been removed. Resource.auto now uses the internal
+Effect.Private.daemon primitive and Resource.failures records typed refresh
+failures as Cause.t values.
+
+### Goal
+
+Compare two branches against the existing Resource behavioral slice:
+
+- Branch A: keep packages/effet/resource.ml as today.
+- Branch B: implement the cached-loader recipe directly with Atomic.t and
+  Effect primitives.
+
+Behavioral requirements:
+
+- manual refresh updates cached value;
+- failed manual refresh keeps the last good value;
+- auto refresh follows a schedule;
+- failed auto refresh keeps the last good value, invokes on_error, and records
+  the typed failure in a failure sink.
+
+### Lab
+
+Artifacts:
+
+- scratch/resource_survival/common.ml
+- scratch/resource_survival/branch_a_resource.ml
+- scratch/resource_survival/branch_b_atomic.ml
+- scratch/resource_survival/runtime_smoke.ml
+- scratch/resource_survival/results.md
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/resource_survival/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+resource_survival runtime smoke passed
+~~~
+
+### LOC and shape comparison
+
+~~~text
+ 47 packages/effet/resource.ml
+ 27 packages/effet/resource.mli
+  9 scratch/resource_survival/branch_a_resource.ml
+ 61 scratch/resource_survival/branch_b_atomic.ml
+127 scratch/resource_survival/runtime_smoke.ml
+~~~
+
+Branch B is not shorter than the current implementation. It is nearly the same
+algorithm, written at each call site or in an application-local helper. The
+important line is not the Atomic.t cell; it is this one:
+
+~~~ocaml
+Effect.Private.daemon (refresh_loop resource 0)
+~~~
+
+After public detach removal, an app cannot express Resource.auto using only the
+ordinary public Effect surface without either using Private or owning its own
+Eio fiber/switch outside Effect. That is the real survival criterion.
+
+### Ergonomics
+
+Branch A call site:
+
+~~~ocaml
+Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5)) ()
+~~~
+
+Branch B call site requires introducing a local resource record, cache cell,
+failure cell, refresh loop, catch path, and daemon ownership. That is acceptable
+inside Effet, but poor as repeated application boilerplate.
+
+Manual cached loading alone is recipe-sized. Auto-refresh is not.
+
+### Failure isolation
+
+Both branches preserve the important behavior: failed refresh does not replace
+the last good value. Both branches record the failed auto-refresh as
+Cause.Fail err before invoking on_error.
+
+That behavior does not fall out of Atomic.t. It comes from the refresh protocol:
+only update after a successful load, catch refresh failures in the daemon loop,
+and record them in a typed sink. Keeping Resource makes that protocol the
+single audited implementation.
+
+### Thread-safety
+
+Branch B uses Atomic.t and therefore makes the cache cell explicit. The current
+Resource uses mutable fields and refs, which is sufficient for the current Eio
+single-runtime usage tested here. This lab does not prove a multi-domain
+Resource contract, and Effet does not otherwise document one.
+
+Decision: do not widen Resource's contract to domain-safe caching in this
+survival task. If Effet later promises cross-domain sharing, Resource should be
+revisited with explicit Atomic/locking tests.
+
+### Decision diary
+
+#### V-Rsv1 - Manual Resource is a recipe
+
+Decision: manual cached loading by itself does not justify a module. The lab
+shows the manual get/refresh behavior is straightforward with an option cell
+and Effect.map/bind.
+
+Rationale: branch_b_atomic.ml reproduces manual refresh and failed manual
+refresh behavior without special runtime support.
+
+#### V-Rsv2 - Resource.auto is not public-userland code
+
+Decision: Resource.auto earns a library seam. The replacement branch can only
+match auto-refresh by calling Effect.Private.daemon. That primitive exists so
+packages can own runtime-daemon behavior without restoring public detach.
+
+Rationale: branch_b_atomic.ml line using Effect.Private.daemon is the same
+lifecycle dependency as packages/effet/resource.ml. Removing Resource would
+push users toward Private or raw Eio fibers for the exact behavior Effet already
+centralizes.
+
+#### V-Rsv3 - Keep last-good and failure history centralized
+
+Decision: keep the failure-isolation protocol in Resource. The behavior is small
+but subtle enough to centralize: successful loads update the cache, failed
+refreshes preserve last-good, auto refresh records Cause.Fail err, and on_error
+remains compatibility side-effect evidence.
+
+Rationale: both branches pass the same fixture, but Branch B duplicates the
+same catch/update/history protocol.
+
+#### V-Rsv4 - Do not replace Resource with documentation-only recipe
+
+Decision: do not delete Resource. A recipe doc would be acceptable for manual
+caches, but it would either omit auto-refresh or teach users to use the Private
+daemon escape hatch.
+
+Rationale: that would weaken the public/private boundary established by the
+detach deletion work.
+
+#### V-Rsv5 - No live implementation change
+
+Decision: no packages/ code change is required from this survival lab.
+
+Rationale: Resource survives. The Atomic.t replacement did not expose a better
+implementation target for today's documented runtime model. The existing test
+suite already covers the retained behavior.
+
+### Final recommendation
+
+Recommendation (a): keep Resource with a narrowed rationale.
+
+Resource is not a general Effect-TS Resource port and should not be documented
+as one. It is the Effet-owned cached-loader abstraction for a runtime-owned
+auto-refresh loop with last-good semantics and typed refresh-failure history.
+Manual-only caches remain simple enough to write by hand, but auto-refresh
+belongs in the library.
+
 ## V-Shf - Stream.from_file public hardening
 
 ### Why this entry exists
@@ -6476,3 +7374,338 @@ New typed-error tests:
 - `from_file missing path fails typed`
 - `from_file error is recoverable`
 - `from_file maps file error`
+
+## Effet-9ey - typed request DSL over OCaml native effects
+
+### Why this entry exists
+
+Review 1 finding #4 reopened R-D. V-R10 rejected OCaml 5 native effects because raw handlers do not statically track which handlers are installed; forgetting a handler compiles and crashes with `Effect.Unhandled`. That rejection was correct for raw handlers, but it did not test a typed request DSL layered over native effects.
+
+This entry tests that missing candidate.
+
+### Goal
+
+Decide whether a typed `Req.t`/handler DSL over native effects can compete with the current object-row R-channel.
+
+The success bar is V-R10's bar:
+
+- `a` calls `b` and `c`;
+- `b` needs Log, `c` needs Db;
+- `a` is defined without mentioning services in its body or argument list;
+- the inferred type carries transitive requirements;
+- missing handlers are compile-time errors.
+
+### Lab
+
+Created `scratch/native_effects_research/`.
+
+Candidates:
+
+- `r_d_raw.ml`: raw OCaml 5 native handlers, matching the original R-D dismissal.
+- `r_d_typed.ml` / `Presence_set`: request witnesses plus a phantom HList of required handlers.
+- `r_d_typed.ml` / `Scoped_token`: handler scopes create lexical tokens, and `ask` requires the token.
+
+Positive command:
+
+~~~sh
+nix develop -c dune exec scratch/native_effects_research/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+native_effects_research runtime smoke passed
+~~~
+
+LOC comparison:
+
+~~~text
+   69 scratch/r_research/r_b_env_row.ml
+   78 scratch/r_research/r_d_native_handlers.ml
+   62 scratch/native_effects_research/r_d_raw.ml
+  224 scratch/native_effects_research/r_d_typed.ml
+~~~
+
+### Negative tests
+
+Presence-set missing handler:
+
+~~~sh
+nix develop -c env NATIVE_EFFECTS_NEG=presence_missing_handler \
+  dune build scratch/native_effects_research/neg_presence_missing_handler.exe
+~~~
+
+Observed:
+
+~~~text
+File "scratch/native_effects_research/neg_presence_missing_handler.ml", line 11, characters 23-54:
+11 |   run (HDb (db, HNil)) (a db_witness log_witness "42")
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type (both, [> `Db_err ], string) t
+       but an expression was expected of type ((db_cap, nil) cons, 'a, 'b) t
+       Type both = db_cap * (log_cap, nil) cons is not compatible with type
+         (db_cap, nil) cons = db_cap * nil
+       Type (log_cap, nil) cons = log_cap * nil is not compatible with type
+         nil
+~~~
+
+Scoped-token ask outside handler:
+
+~~~sh
+nix develop -c env NATIVE_EFFECTS_NEG=token_ask_without_scope \
+  dune build scratch/native_effects_research/neg_token_ask_without_scope.exe
+~~~
+
+Observed:
+
+~~~text
+File "scratch/native_effects_research/neg_token_ask_without_scope.ml", line 9, characters 12-14:
+9 | let _ = ask Db
+                ^^
+Error: This variant expression is expected to have type 'a token
+       There is no constructor Db within type token
+~~~
+
+### Cross-tabulation
+
+| Property | R-B env-row | R-D raw | R-D presence-set | R-D scoped-token |
+|---|:---:|:---:|:---:|:---:|
+| A body mentions zero services | yes | yes | yes | yes |
+| A argument list mentions zero services | yes | yes | no | no |
+| Type carries transitive requirements | yes | no | yes | no |
+| Missing handler compile-time failure | yes | no | yes, at run | yes, at ask |
+| Handler/witness order leaks into user API | no | no | yes | no |
+| Explicit token threading leaks into user API | no | no | no | yes |
+| Runtime uses native effects | no | yes | yes | yes |
+
+### Decision diary
+
+#### V-RNv1 - Raw R-D remains rejected
+
+Decision: raw OCaml 5 native effects do not satisfy the R-channel contract.
+
+Rationale: `r_d_raw.ml` keeps the best R-D ergonomics, but `unsafe_boot_no_handler` compiles and raises `Effect.Unhandled` at runtime. This is the same safety failure V-R10 observed.
+
+#### V-RNv2 - Presence-set R-D recovers safety but loses the dividend
+
+Decision: the phantom presence-set design is type-safe but not competitive.
+
+Rationale: `Presence_set` rejects a missing Log handler at compile time, but only after introducing capability tags, membership witnesses, an ordered handler HList, and explicit witness arguments to `a`. The user-visible signature is:
+
+~~~ocaml
+val a :
+  (need, db_cap) has ->
+  (need, log_cap) has ->
+  string ->
+  (need, [> `Db_err ], string) t
+~~~
+
+That is a second dependency language. It is more complex than object rows and does not preserve V-R10's "A argument list mentions zero services" property.
+
+#### V-RNv3 - Scoped-token R-D makes ask safe by making dependencies explicit
+
+Decision: lexical tokens are safe but collapse back into explicit dependency passing.
+
+Rationale: `Scoped_token.ask Db` without a token fails to compile. That proves the "ask without handle" property can be enforced. The cost is that every service-using function accepts tokens:
+
+~~~ocaml
+val a :
+  db_token token ->
+  log_token token ->
+  string ->
+  ([> `Db_err ], string) t
+~~~
+
+This is not an R-channel replacement. It is explicit argument passing with native-effect implementation behind the token.
+
+#### V-RNv4 - Hidden witnesses are the failing point
+
+Decision: the lab did not find a way to hide request witnesses while retaining static handler installation.
+
+Rationale: if witnesses are hidden, the program can describe a request but the boot boundary cannot prove that the matching native handler is installed. If witnesses are exposed, users manage HList order or token threading. Object rows avoid both costs because OCaml already has structural row inference for method requirements.
+
+#### V-RNv5 - Final recommendation
+
+Decision: keep R-D rejected, but refine the rationale.
+
+The earlier rejection was too narrow if it only said "native handlers have no effect rows". A typed DSL can add static evidence. The reason not to adopt it is that the static evidence is worse than the current object-row R-channel: more LOC, more concepts, worse signatures, and no preservation of V-R10's zero service-argument property.
+
+No live library code change is recommended.
+
+### Artifacts
+
+- `scratch/native_effects_research/r_d_raw.ml`
+- `scratch/native_effects_research/r_d_typed.ml`
+- `scratch/native_effects_research/neg_presence_missing_handler.ml`
+- `scratch/native_effects_research/neg_token_ask_without_scope.ml`
+- `scratch/native_effects_research/runtime_smoke.ml`
+
+## Effet-hpt / Effet-yp5 / Effet-vp8 survival pass
+
+### Why this entry exists
+
+These three small review findings were API-width checks. Each asks whether a surface exists because it has a semantic job, or because it was copied from Effect-TS / early prototypes.
+
+- Effet-hpt: `Sync` and `Async` leaves had identical runtime behavior.
+- Effet-yp5: `Duration.t` needed justification over plain `int_ms`.
+- Effet-vp8: `ppx_effet` needed evidence and edge-case coverage or removal.
+
+### Effet-hpt - single leaf and final name
+
+Lab artifact: `scratch/sync_async_survival/`.
+
+Before the change, runtime interpretation of `EP.Sync` and `EP.Async` was identical: both called the callback in the current interpreter fiber, both auto-instrumented the same way, and neither introduced scheduling, yielding, cancellation, or blocking semantics.
+
+Naming decision: `sync` and `async` are both the wrong axis for OCaml/Eio. Eio has no function-color split, and this leaf is not an async boundary. The chosen public name is:
+
+~~~ocaml
+val thunk : string -> ('env -> 'a) -> ('env, 'err, 'a) Effect.t
+~~~
+
+Rationale: `thunk` says exactly what is stored: a deferred OCaml callback. It does not imply a scheduler boundary, and it does not imply immediate evaluation. `leaf` remains the internal concept, but it is too AST-jargony for user code.
+
+Implemented:
+
+- internal constructor/view is `Thunk`;
+- public `Effect.thunk` replaces `Effect.sync`;
+- public `Effect.async` is removed, with no alias;
+- `[%effet.thunk ...]` replaces `[%effet.sync ...]`;
+- `[%effet.async ...]` is removed.
+
+Negative PPX check from `scratch/ppx_survival/neg_async_removed.ml`:
+
+~~~text
+File "scratch/ppx_survival/neg_async_removed.ml", line 6, characters 10-21:
+6 | let _ = [%effet.async "removed" ()]
+              ^^^^^^^^^^^
+Error: Uninterpreted extension 'effet.async'.
+~~~
+
+#### V-SAv1 - Collapse Sync and Async
+
+Decision: collapse the leaves. There is only `Thunk`.
+
+Rationale: no test or runtime branch could defend separate constructors. Keeping both would encode a semantic distinction the interpreter does not have.
+
+#### V-SAv2 - Use thunk, not sync
+
+Decision: expose `Effect.thunk`.
+
+Rationale: `sync` is an Effect-TS/JavaScript-coloring word and `async` is worse. In OCaml/Eio the callback is ordinary OCaml code evaluated by the Effet interpreter in the current fiber. `thunk` is the strongest name because it describes the deferred callback without suggesting scheduling or immediate evaluation.
+
+#### V-SAv3 - No compatibility alias
+
+Decision: do not keep `Effect.async`, `Effect.sync`, `[%effet.async]`, or `[%effet.sync]` aliases.
+
+Rationale: this project is still in design phase. Backward compatibility would preserve obsolete vocabulary and force future docs to explain names we already know are wrong.
+
+### Effet-yp5 - Duration survival
+
+Lab artifact: `scratch/duration_survival/`.
+
+The lab implements the same small Schedule subset twice: once with a `Duration.t` newtype and once with plain `int` milliseconds.
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/duration_survival/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+duration_survival runtime smoke passed
+~~~
+
+LOC comparison:
+
+~~~text
+48 scratch/duration_survival/duration_keep.ml
+51 scratch/duration_survival/int_ms_branch.ml
+~~~
+
+The int branch does not reduce complexity in Schedule. It does lose the public unit boundary: `delay 3 value` compiles in the int branch, while the current API requires `Duration.ms 3` or `Duration.seconds 3`.
+
+#### V-Dv1 - Keep Duration.t
+
+Decision: keep `Duration.t`.
+
+Rationale: the type catches unit mistakes at the API boundary and keeps call sites readable. Schedule still needs add/scale/min/max either way, so replacing the module with bare `int` does not materially simplify the implementation.
+
+#### V-Dv2 - Do not switch to Eio spans
+
+Decision: do not expose Eio/Mtime span types in Effet's public core API.
+
+Rationale: Effet's public time algebra is deliberately small and test-clock friendly. Eio integration remains inside Runtime/Capabilities; user code should not need to import Eio time types to express an Effet delay or schedule.
+
+#### V-Dv3 - Keep algebra small
+
+Decision: `Duration.t` survives, but it should remain a small nonnegative millisecond type.
+
+Rationale: this lab does not justify adding Effect-TS Duration features. It only justifies retaining the unit-safe wrapper and the operations Schedule actually uses.
+
+### Effet-vp8 - PPX survival
+
+Lab artifact: `scratch/ppx_survival/`.
+
+`explicit_idiom_fixture.ml` contains 27 representative definitions, including 20+ instrumented functions using explicit `Effect.fn __POS__ __FUNCTION__ body`. The explicit form is tolerable for occasional use but noisy when every leaf or public function is instrumented.
+
+`runtime_smoke.ml` runs PPX-expanded cases under an in-memory tracer and checks the generated function names for:
+
+- top-level function;
+- nested function;
+- anonymous lambda;
+- partial application;
+- local module;
+- thunk leaf;
+- env builder.
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+ppx_survival runtime smoke passed
+~~~
+
+Observed lambda naming:
+
+~~~text
+Ppx_survival__Golden_cases.anonymous_lambda.(fun)
+~~~
+
+That is acceptable and explicit: PPX does not invent a nicer name for anonymous code.
+
+#### V-Pxv1 - Keep ppx_effet
+
+Decision: keep the optional PPX.
+
+Rationale: the explicit idiom is mechanical but repetitive. The PPX expands to ordinary `Effect.fn`, `Effect.thunk`, and object expressions; it does not infer services or introduce hidden DI.
+
+#### V-Pxv2 - Narrow the PPX surface
+
+Decision: PPX keeps only `[%effet.fn]`, `[%effet.thunk]`, and `[%effet.env]`.
+
+Rationale: `[%effet.async]` and `[%effet.sync]` carry the removed vocabulary. The negative test proves `[%effet.async]` is gone.
+
+#### V-Pxv3 - Golden coverage becomes semantic coverage
+
+Decision: use runtime semantic checks for the expansion edge cases.
+
+Rationale: Dune's stored `.pp.ml` artifact is not a stable text golden in this setup, but the behavior we care about is stable: source location/function-name instrumentation and env binding. The smoke test checks those semantics directly.
+
+### Verification
+
+Focused commands run during this pass:
+
+~~~sh
+nix develop -c dune build packages/effet packages/effet-stream packages/effet-schema packages/effet-otel packages/ppx_effet scratch/ppx_survival scratch/duration_survival
+nix develop -c dune exec scratch/duration_survival/runtime_smoke.exe
+nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
+nix develop -c dune runtest packages/ppx_effet --force
+nix develop -c env PPX_SURVIVAL_NEG=async_removed dune build scratch/ppx_survival/neg_async_removed.exe
+~~~

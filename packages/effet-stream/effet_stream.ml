@@ -286,7 +286,7 @@ and fold_stream :
               (fun (acc, keep_going) ->
                 if keep_going then loop acc else Effet.Effect.pure (acc, false))
               (folder.emit acc value))
-          (Effet.Effect.sync "Stream.from_eio_stream.take" (fun _ ->
+          (Effet.Effect.thunk "Stream.from_eio_stream.take" (fun _ ->
                Eio.Stream.take stream))
       in
       loop acc
@@ -299,7 +299,7 @@ and fold_stream :
           (function
             | Ok () -> Effet.Effect.unit
             | Error error -> Effet.Effect.fail (on_error error))
-          (Effet.Effect.sync "Stream.from_file.read" (fun _ ->
+          (Effet.Effect.thunk "Stream.from_file.read" (fun _ ->
                let finish () =
                  ignore (Eio.Promise.try_resolve done_resolver ())
                in
@@ -357,7 +357,7 @@ and fold_stream :
               let rec consume acc =
                 let* event =
                   lift
-                    (Effet.Effect.sync "Stream.from_file.take" (fun _ ->
+                    (Effet.Effect.thunk "Stream.from_file.take" (fun _ ->
                          next_event ()))
                 in
                 match event with
@@ -392,7 +392,7 @@ and fold_merge :
   let producer stream =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.sync "Stream.merge.done" (fun _ ->
+        Effet.Effect.thunk "Stream.merge.done" (fun _ ->
             if not (Atomic.get stopped) then Eio.Stream.add queue Done))
     |> bind (fun () ->
            map ignore
@@ -404,7 +404,7 @@ and fold_merge :
                       else
                         map
                           (fun () -> ((), true))
-                          (Effet.Effect.sync "Stream.merge.emit" (fun _ ->
+                          (Effet.Effect.thunk "Stream.merge.emit" (fun _ ->
                                Eio.Stream.add queue (Item value))));
                 }))
   in
@@ -434,7 +434,7 @@ and fold_merge :
             else
               let* event =
                 lift
-                  (Effet.Effect.sync "Stream.merge.take" (fun _ ->
+                  (Effet.Effect.thunk "Stream.merge.take" (fun _ ->
                        Eio.Stream.take queue))
               in
               match event with
@@ -465,7 +465,7 @@ and fold_flat_map_par :
   let outer_producer =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.sync "Stream.flat_map_par.outer_done" (fun _ ->
+        Effet.Effect.thunk "Stream.flat_map_par.outer_done" (fun _ ->
             if not (Atomic.get stopped) then
               Eio.Stream.add outer_queue Outer_done))
     |> bind (fun () ->
@@ -478,7 +478,7 @@ and fold_flat_map_par :
                       else
                         map
                           (fun () -> ((), true))
-                          (Effet.Effect.sync "Stream.flat_map_par.outer_emit"
+                          (Effet.Effect.thunk "Stream.flat_map_par.outer_emit"
                              (fun _ ->
                                Eio.Stream.add outer_queue (Outer_item value))));
                 }))
@@ -486,14 +486,14 @@ and fold_flat_map_par :
   let worker =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.sync "Stream.flat_map_par.worker_done" (fun _ ->
+        Effet.Effect.thunk "Stream.flat_map_par.worker_done" (fun _ ->
             if not (Atomic.get stopped) then Eio.Stream.add output_queue Done))
     |> bind (fun () ->
            let rec loop () =
              bind
                (function
                  | Outer_done ->
-                     Effet.Effect.sync "Stream.flat_map_par.rebroadcast_done"
+                     Effet.Effect.thunk "Stream.flat_map_par.rebroadcast_done"
                        (fun _ -> Eio.Stream.add outer_queue Outer_done)
                  | Outer_item value ->
                      bind
@@ -508,13 +508,13 @@ and fold_flat_map_par :
                                   else
                                     map
                                       (fun () -> ((), true))
-                                      (Effet.Effect.sync
+                                      (Effet.Effect.thunk
                                          "Stream.flat_map_par.inner_emit"
                                          (fun _ ->
                                            Eio.Stream.add output_queue
                                              (Item item))));
                              })))
-               (Effet.Effect.sync "Stream.flat_map_par.outer_take" (fun _ ->
+               (Effet.Effect.thunk "Stream.flat_map_par.outer_take" (fun _ ->
                     Eio.Stream.take outer_queue))
            in
            loop ())
@@ -553,7 +553,7 @@ and fold_flat_map_par :
             let* () = cancel outer_child in
             let* () =
               lift
-                (Effet.Effect.sync "Stream.flat_map_par.wake_workers" (fun _ ->
+                (Effet.Effect.thunk "Stream.flat_map_par.wake_workers" (fun _ ->
                      let rec drain_outer () =
                        match Eio.Stream.take_nonblocking outer_queue with
                        | None -> ()
@@ -577,7 +577,7 @@ and fold_flat_map_par :
             else
               let* event =
                 lift
-                  (Effet.Effect.sync "Stream.flat_map_par.take" (fun _ ->
+                  (Effet.Effect.thunk "Stream.flat_map_par.take" (fun _ ->
                        Eio.Stream.take output_queue))
               in
               match event with

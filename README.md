@@ -48,7 +48,7 @@ let () =
 
 | Module | Purpose |
 | --- | --- |
-| `Effect` | Abstract description for pure values, typed failure, sync/async leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
+| `Effect` | Abstract description for pure values, typed failure, thunk leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
@@ -57,6 +57,7 @@ let () =
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
 | `Capabilities` | Small object-type traits for capability-oriented environments. |
+| `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
 ## PPX Helpers
 
@@ -67,14 +68,14 @@ graphs, or add runtime semantics.
 ```ocaml
 let load_user id =
   [%effet.fn
-    (Effect.sync "db.query" (fun env -> env#db#user id))]
+    (Effect.thunk "db.query" (fun env -> env#db#user id))]
 ```
 
 It expands to:
 
 ```ocaml
 Effect.fn __POS__ __FUNCTION__
-  (Effect.sync "db.query" (fun env -> env#db#user id))
+  (Effect.thunk "db.query" (fun env -> env#db#user id))
 ```
 
 Leaf effects can bind an explicit capability list so the body cannot read
@@ -82,11 +83,11 @@ Leaf effects can bind an explicit capability list so the body cannot read
 
 ```ocaml
 let current_user () =
-  [%effet.sync "auth.current_user" (auth : Auth.t)
+  [%effet.thunk "auth.current_user" (auth : Auth.t)
     (Auth.current_user auth)]
 ```
 
-This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.sync ...)`, with a
+This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.thunk ...)`, with a
 generated env argument and local typed `auth` binding. Use the explicit `()` for
 exported or reusable env-row effects; it avoids OCaml value-restriction weak
 variables.
@@ -116,9 +117,9 @@ conversion.
 
 ```ocaml
 let with_db k =
-  let acquire = Effect.sync "db.open" (fun env -> env#db#open_) in
+  let acquire = Effect.thunk "db.open" (fun env -> env#db#open_) in
   let release handle =
-    Effect.sync "db.close" (fun env -> env#db#close handle)
+    Effect.thunk "db.close" (fun env -> env#db#close handle)
   in
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
@@ -168,6 +169,40 @@ let observed =
 background work stays internal to modules that own that lifecycle. For
 long-lived cached resources, `Resource.auto` keeps the existing returned
 resource shape and records refresh failures through `Resource.failures`.
+
+## Trace Propagation
+
+Tracing is configured on the runtime, not through the env row:
+
+```ocaml
+let rt =
+  Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env:() ()
+```
+
+At service boundaries, extract W3C headers and install the context around the
+request effect:
+
+```ocaml
+let handle headers =
+  let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
+  match Trace_context.extract headers with
+  | None -> body
+  | Some ctx -> Effect.with_context ctx body
+```
+
+Inside the request, outbound clients can read and inject the current context:
+
+```ocaml
+let outbound_headers =
+  Effect.current_context
+  |> Effect.map (function
+       | None -> []
+       | Some ctx -> Trace_context.inject ctx)
+```
+
+`Effect.with_context` preserves the W3C sampled flag, `tracestate`, and
+`baggage`. `Effect.with_external_parent` remains as a compatibility helper
+when only a trace ID and parent span ID are available.
 
 ## Development
 

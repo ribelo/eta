@@ -159,8 +159,8 @@ let test_collect_names () =
   let e =
     Effect.concat
       [
-        Effect.sync "leaf-a" (fun _ -> ()) |> Effect.map (fun _ -> ());
-        Effect.async "leaf-b" (fun _ -> ());
+        Effect.thunk "leaf-a" (fun _ -> ()) |> Effect.map (fun _ -> ());
+        Effect.thunk "leaf-b" (fun _ -> ());
       ]
     |> Effect.named "outer"
   in
@@ -254,12 +254,12 @@ let test_observability_statuses () =
             (unit, [> `Boom ]) Exit.t);
   ignore
     (Runtime.run rt
-       (Effect.named "die" (Effect.sync "die" (fun () -> failwith "boom"))) :
+       (Effect.named "die" (Effect.thunk "die" (fun () -> failwith "boom"))) :
       (unit, _) Exit.t);
   ignore
     (Runtime.run rt
        (Effect.named "interrupt"
-          (Effect.sync "interrupt" (fun () ->
+          (Effect.thunk "interrupt" (fun () ->
                raise (Eio.Cancel.Cancelled (Failure "cancel"))))) :
       (unit, _) Exit.t);
   match Tracer.dump tracer with
@@ -389,21 +389,87 @@ let test_observability_sampler_unsampled_parent_suppresses_par_children () =
   ignore (run_ok rt (Effect.named "parent" (Effect.par (child "a") (child "b"))));
   Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
 
+let test_trace_context_extract_inject () =
+  let ctx =
+    Trace_context.extract
+      [
+        ( "TraceParent",
+          "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" );
+        ("tracestate", "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE");
+        ("baggage", "tenant=acme,plan=pro");
+      ]
+  in
+  match ctx with
+  | None -> Alcotest.fail "expected valid trace context"
+  | Some ctx ->
+      Alcotest.(check string) "trace_id"
+        "4bf92f3577b34da6a3ce929d0e0e4736" ctx.trace_id;
+      Alcotest.(check int) "trace_flags" 1 ctx.trace_flags;
+      Alcotest.(check (option string)) "tracestate" (Some "t61rcWkgMzE")
+        (List.assoc_opt "congo" ctx.trace_state);
+      Alcotest.(check (option string)) "baggage" (Some "acme")
+        (List.assoc_opt "tenant" ctx.baggage);
+      Alcotest.(check (option string)) "traceparent injected"
+        (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+        (List.assoc_opt "traceparent" (Trace_context.inject ctx))
+
+let test_trace_context_rejects_malformed_traceparent () =
+  let bad =
+    Trace_context.extract
+      [
+        ( "traceparent",
+          "00-00000000000000000000000000000000-00f067aa0ba902b7-01" );
+      ]
+  in
+  Alcotest.(check bool) "all-zero trace rejected" true (Option.is_none bad)
+
+let test_trace_context_current_and_par_inherit_baggage () =
+  with_traced_runtime @@ fun rt _tracer ->
+  let ctx =
+    Option.get
+      (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+         ~span_id:"00f067aa0ba902b7" ~trace_state:[ ("rojo", "1") ]
+         ~baggage:[ ("tenant", "acme") ] ())
+  in
+  let left = Effect.current_context in
+  let right = Effect.current_context in
+  let a, b = run_ok rt (Effect.with_context ctx (Effect.par left right)) in
+  let check name (ctx : Capabilities.trace_context option) =
+    match ctx with
+    | None -> Alcotest.fail (name ^ " missing context")
+    | Some ctx ->
+        Alcotest.(check (option string)) name (Some "acme")
+          (List.assoc_opt "tenant" ctx.baggage)
+  in
+  check "left baggage" a;
+  check "right baggage" b
+
+let test_trace_context_unsampled_parent_suppresses_child () =
+  with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun rt tracer ->
+  let ctx =
+    Option.get
+      (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+         ~span_id:"00f067aa0ba902b7" ~trace_flags:0 ())
+  in
+  run_ok rt (Effect.with_context ctx (Effect.named "child" Effect.unit));
+  Alcotest.(check int) "unsampled parent suppresses child span" 0
+    (List.length (Tracer.dump tracer))
+
 let test_observability_auto_instrument_default_off () =
   with_traced_runtime @@ fun rt tracer ->
-  run_ok rt (Effect.sync "leaf" (fun () -> ()));
+  run_ok rt (Effect.thunk "leaf" (fun () -> ()));
   Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
 
-let test_observability_auto_instrument_sync_leaves () =
+let test_observability_auto_instrument_eval_leaves () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  let leaf name = Effect.sync name (fun () -> ()) in
+  let leaf name = Effect.thunk name (fun () -> ()) in
   run_ok rt (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]);
   Alcotest.(check (list string)) "leaf spans" [ "a"; "b"; "c" ]
     (List.map (fun span -> span.Tracer.name) (Tracer.dump tracer))
 
 let test_observability_auto_instrument_leaves_nest_under_named () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  let leaf name = Effect.sync name (fun () -> ()) in
+  let leaf name = Effect.thunk name (fun () -> ()) in
   run_ok rt (Effect.named "outer" (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]));
   let spans = Tracer.dump tracer in
   let outer = List.find (fun span -> span.Tracer.name = "outer") spans in
@@ -416,7 +482,7 @@ let test_observability_auto_instrument_leaves_nest_under_named () =
 
 let test_observability_auto_instrument_failure_status () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  ignore (Runtime.run rt (Effect.sync "boom" (fun () -> failwith "boom")) :
+  ignore (Runtime.run rt (Effect.thunk "boom" (fun () -> failwith "boom")) :
             (unit, _) Exit.t);
   let span = only_span tracer in
   check_status "leaf failed" (Tracer.Error "") span.status
@@ -544,7 +610,7 @@ let test_effect_map_bind_tap_runtime () =
     |> Effect.map (fun n -> n + 1)
     |> Effect.bind (fun n -> Effect.pure (n * 2))
     |> Effect.tap (fun n ->
-           Effect.sync "tap" (fun () -> observed := n :: !observed))
+           Effect.thunk "tap" (fun () -> observed := n :: !observed))
     |> Effect.map (fun n -> n + 1)
   in
   Alcotest.(check int) "value" 5 (run_ok rt eff);
@@ -580,10 +646,10 @@ let test_runtime_exit_fail_die_interrupt () =
   with_runtime @@ fun rt ->
   let die = Failure "boom" in
   let fail_exit = Runtime.run rt (Effect.fail "bad") in
-  let die_exit = Runtime.run rt (Effect.sync "die" (fun () -> raise die)) in
+  let die_exit = Runtime.run rt (Effect.thunk "die" (fun () -> raise die)) in
   let interrupt_exit =
     Runtime.run rt
-      (Effect.sync "interrupt" (fun () ->
+      (Effect.thunk "interrupt" (fun () ->
            raise (Eio.Cancel.Cancelled (Failure "cancel"))))
   in
   check_exit_error string_cause "typed failure" (Cause.Fail "bad") fail_exit;
@@ -598,7 +664,7 @@ let test_runtime_exit_fail_die_interrupt () =
 let test_effect_catch_does_not_catch_interrupt () =
   with_runtime @@ fun rt ->
   let eff =
-    Effect.sync "interrupt" (fun () ->
+    Effect.thunk "interrupt" (fun () ->
         raise (Eio.Cancel.Cancelled (Failure "cancel")))
     |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
   in
@@ -610,7 +676,7 @@ let test_effect_retry_does_not_retry_interrupt () =
   with_runtime @@ fun rt ->
   let attempts = ref 0 in
   let attempt =
-    Effect.sync "interrupt" (fun () ->
+    Effect.thunk "interrupt" (fun () ->
         incr attempts;
         raise (Eio.Cancel.Cancelled (Failure "cancel")))
   in
@@ -623,7 +689,7 @@ let test_effect_retry_does_not_retry_interrupt () =
 let test_acquire_release () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
-  let mark name = Effect.sync name (fun () -> trail := name :: !trail) in
+  let mark name = Effect.thunk name (fun () -> trail := name :: !trail) in
   let eff =
     Effect.scoped
       (Effect.acquire_release
@@ -638,7 +704,7 @@ let test_acquire_release () =
 let test_acquire_release_on_failure () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
-  let mark name = Effect.sync name (fun () -> trail := name :: !trail) in
+  let mark name = Effect.thunk name (fun () -> trail := name :: !trail) in
   let eff =
     Effect.scoped
       (Effect.acquire_release ~acquire:(mark "acq") ~release:(fun () ->
@@ -745,7 +811,7 @@ let test_effect_race_all_failures_returns_concurrent_causes () =
 let test_effect_repeat_schedule () =
   with_runtime @@ fun rt ->
   let ticks = ref 0 in
-  let tick = Effect.sync "tick" (fun () -> incr ticks) in
+  let tick = Effect.thunk "tick" (fun () -> incr ticks) in
   run_ok rt (Effect.repeat (Schedule.recurs 3) tick);
   Alcotest.(check int) "initial run plus three repeats" 4 !ticks
 
@@ -756,7 +822,7 @@ let test_effect_repeat_schedule_uses_virtual_delays () =
     Schedule.both (Schedule.recurs 3) (Schedule.spaced (Duration.ms 5))
   in
   let promise =
-    fork_run sw rt (Effect.sync "tick" (fun () -> incr ticks) |> Effect.repeat schedule)
+    fork_run sw rt (Effect.thunk "tick" (fun () -> incr ticks) |> Effect.repeat schedule)
   in
   yield ();
   Alcotest.(check int) "initial tick" 1 !ticks;
@@ -774,7 +840,7 @@ let test_effect_retry_schedule_until_success () =
   with_runtime @@ fun rt ->
   let attempts = ref 0 in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.thunk "attempt" (fun () ->
         incr attempts;
         !attempts)
     |> Effect.bind (fun n ->
@@ -790,7 +856,7 @@ let test_effect_retry_schedule_uses_virtual_delays () =
     Schedule.both (Schedule.recurs 5) (Schedule.spaced (Duration.ms 5))
   in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.thunk "attempt" (fun () ->
         incr attempts;
         !attempts)
     |> Effect.bind (fun n ->
@@ -848,9 +914,9 @@ let test_supervisor_cancel_runs_finalizer () =
   let finalizer_ran = ref false in
   let child =
     Effect.acquire_release
-      ~acquire:(Effect.sync "supervisor.acquire" (fun _ -> ()))
+      ~acquire:(Effect.thunk "supervisor.acquire" (fun _ -> ()))
       ~release:(fun () ->
-        Effect.sync "supervisor.release" (fun _ -> finalizer_ran := true))
+        Effect.thunk "supervisor.release" (fun _ -> finalizer_ran := true))
     |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
   in
   let program =
@@ -863,7 +929,7 @@ let test_supervisor_cancel_runs_finalizer () =
           in
           let* () =
             lift
-              (Effect.sync "supervisor.wait_for_child" (fun _ ->
+              (Effect.thunk "supervisor.wait_for_child" (fun _ ->
                    wait_for_sleepers clock 1))
           in
           let* () = cancel child in
@@ -951,7 +1017,7 @@ let test_effect_uninterruptible_defers_race_cancellation () =
   with_test_clock @@ fun sw clock rt ->
   let slow_completed = ref false in
   let slow =
-    Effect.sync "slow.done" (fun () ->
+    Effect.thunk "slow.done" (fun () ->
         slow_completed := true;
         "slow")
     |> Effect.delay (Duration.ms 10)
@@ -1030,7 +1096,7 @@ let test_scope_finalizers_run_in_parallel () =
   let released = ref 0 in
   let resource =
     Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-        Effect.sync "release" (fun () -> incr released)
+        Effect.thunk "release" (fun () -> incr released)
         |> Effect.delay (Duration.seconds 1))
   in
   let promise =
@@ -1045,13 +1111,13 @@ let test_scope_finalizers_run_in_parallel () =
 let test_resource_manual_refresh () =
   with_runtime @@ fun rt ->
   let source = ref 0 in
-  let load = Effect.sync "resource.load" (fun () -> !source) in
+  let load = Effect.thunk "resource.load" (fun () -> !source) in
   let eff =
     Resource.manual load
     |> Effect.bind (fun resource ->
            Resource.get resource
            |> Effect.bind (fun initial ->
-                  Effect.sync "source.set" (fun () -> source := 1)
+                  Effect.thunk "source.set" (fun () -> source := 1)
                   |> Effect.bind (fun () -> Resource.refresh resource)
                   |> Effect.bind (fun () -> Resource.get resource)
                   |> Effect.map (fun refreshed -> (initial, refreshed))))
@@ -1063,7 +1129,7 @@ let test_resource_failed_refresh_keeps_cached_value () =
   with_runtime @@ fun rt ->
   let source = ref (Ok 0) in
   let load =
-    Effect.sync "resource.load" (fun () -> !source)
+    Effect.thunk "resource.load" (fun () -> !source)
     |> Effect.bind (function
          | Ok value -> Effect.pure value
          | Error message -> Effect.fail (`Refresh_failed message))
@@ -1071,7 +1137,7 @@ let test_resource_failed_refresh_keeps_cached_value () =
   let eff =
     Resource.manual load
     |> Effect.bind (fun resource ->
-           Effect.sync "source.fail" (fun () -> source := Error "Uh oh!")
+           Effect.thunk "source.fail" (fun () -> source := Error "Uh oh!")
            |> Effect.bind (fun () -> Resource.refresh resource)
            |> Effect.catch (fun (`Refresh_failed _ : [ `Refresh_failed of string ]) ->
                   Effect.unit)
@@ -1083,7 +1149,7 @@ let test_resource_auto_refreshes_on_schedule () =
   with_test_clock @@ fun _sw clock rt ->
   let source = ref 0 in
   let load =
-    Effect.sync "resource.auto.load" (fun () ->
+    Effect.thunk "resource.auto.load" (fun () ->
         incr source;
         !source)
   in
@@ -1104,7 +1170,7 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   with_test_clock @@ fun _sw clock rt ->
   let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
   let load =
-    Effect.sync "resource.auto.load" (fun () ->
+    Effect.thunk "resource.auto.load" (fun () ->
         match !results with
         | [] -> Ok 999
         | result :: rest ->
@@ -1154,8 +1220,8 @@ let test_env_row_auto_di () =
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
   in
-  let b msg = Effect.sync "log" (fun env -> env#log#info msg) in
-  let c id = Effect.sync "db" (fun env -> env#db#query id) in
+  let b msg = Effect.thunk "log" (fun env -> env#log#info msg) in
+  let c id = Effect.thunk "db" (fun env -> env#db#query id) in
   (* A composes B and C without naming services or threading. *)
   let a id =
     let open Effect in
@@ -1178,7 +1244,7 @@ let test_par_fail_fast_cancels_sibling () =
   with_runtime @@ fun rt ->
   let other_done = ref false in
   let slow_other =
-    Effect.sync "slow" (fun _ ->
+    Effect.thunk "slow" (fun _ ->
         Eio.Fiber.yield ();
         other_done := true;
         99)
@@ -1225,7 +1291,7 @@ let test_all_settled_runs_all_children () =
   with_test_clock @@ fun sw clock rt ->
   let slow_done = ref 0 in
   let slow name =
-    Effect.sync name (fun () -> incr slow_done)
+    Effect.thunk name (fun () -> incr slow_done)
     |> Effect.delay (Duration.ms 50)
   in
   let promise =
@@ -1268,14 +1334,14 @@ let test_for_each_par_bounded_caps_concurrency () =
   let active = ref 0 in
   let max_seen = ref 0 in
   let worker x =
-    Effect.sync "enter" (fun () ->
+    Effect.thunk "enter" (fun () ->
         incr active;
         max_seen := max !max_seen !active)
     |> Effect.bind (fun () ->
            Effect.pure x
            |> Effect.delay (Duration.ms 10)
            |> Effect.tap (fun _ ->
-                  Effect.sync "leave" (fun () -> decr active)))
+                  Effect.thunk "leave" (fun () -> decr active)))
   in
   let promise =
     fork_run sw rt (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3; 4; 5 ] worker)
@@ -1294,7 +1360,7 @@ let test_for_each_par_bounded_max_one_is_sequential () =
   let active = ref 0 in
   let max_seen = ref 0 in
   let worker x =
-    Effect.sync "worker" (fun () ->
+    Effect.thunk "worker" (fun () ->
         incr active;
         max_seen := max !max_seen !active;
         decr active;
@@ -1310,7 +1376,7 @@ let test_for_each_par_bounded_fail_fast () =
   let worker = function
     | 1 -> Effect.fail "boom"
     | _ ->
-        Effect.sync "slow" (fun () -> slow_done := true)
+        Effect.thunk "slow" (fun () -> slow_done := true)
         |> Effect.delay (Duration.ms 10)
   in
   let promise =
@@ -1477,10 +1543,19 @@ let () =
             test_observability_sampler_parent_based;
           Alcotest.test_case "sampler suppresses par children" `Quick
             test_observability_sampler_unsampled_parent_suppresses_par_children;
+          Alcotest.test_case "trace context extract inject" `Quick
+            test_trace_context_extract_inject;
+          Alcotest.test_case "trace context rejects malformed traceparent" `Quick
+            test_trace_context_rejects_malformed_traceparent;
+          Alcotest.test_case "trace context par inherits baggage" `Quick
+            test_trace_context_current_and_par_inherit_baggage;
+          Alcotest.test_case "trace context unsampled parent suppresses child"
+            `Quick
+            test_trace_context_unsampled_parent_suppresses_child;
           Alcotest.test_case "auto instrument default off" `Quick
             test_observability_auto_instrument_default_off;
-          Alcotest.test_case "auto instrument sync leaves" `Quick
-            test_observability_auto_instrument_sync_leaves;
+          Alcotest.test_case "auto instrument thunk leaves" `Quick
+            test_observability_auto_instrument_eval_leaves;
           Alcotest.test_case "auto instrument leaves nest" `Quick
             test_observability_auto_instrument_leaves_nest_under_named;
           Alcotest.test_case "auto instrument failure status" `Quick

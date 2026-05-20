@@ -6,7 +6,7 @@ exception Raised_cause of int * Obj.t
 
 let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
 let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
-let external_parent_key : (string * string) Eio.Fiber.key =
+let trace_context_key : Capabilities.trace_context Eio.Fiber.key =
   Eio.Fiber.create_key ()
 
 module Typed_fail : sig
@@ -172,11 +172,7 @@ let rec interpret :
   match EP.view eff with
   | EP.Pure v -> v
   | EP.Fail e -> raise_fail fail_key e
-  | EP.Sync (name, f) ->
-      if runtime.auto_instrument then
-        instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
-      else f env
-  | EP.Async (name, f) ->
+  | EP.Thunk (name, f) ->
       if runtime.auto_instrument then
         instrument_leaf ~runtime ~fail_key ~name (fun () -> f env)
       else f env
@@ -299,20 +295,26 @@ let rec interpret :
             ~finalizers:supervisor_finalizers (body.run supervisor) env)
   | EP.Named (kind, name, e) ->
       let parent_id = Eio.Fiber.get active_span_key in
-      let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
+      let ambient_context = Eio.Fiber.get trace_context_key in
+      let parent_sampled =
+        Option.value (Eio.Fiber.get sampled_key)
+          ~default:
+            (match ambient_context with
+            | None -> true
+            | Some ctx -> Trace_context.sampled ctx)
+      in
       let external_parent =
-        match Eio.Fiber.get external_parent_key with
-        | Some ("", "") | None -> None
-        | Some _ as ep -> ep
+        match parent_id with
+        | Some _ -> None
+        | None -> ambient_context
       in
       let sampled =
         parent_sampled
         && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
-             ~parent:(Option.is_some parent_id)
+             ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
       in
       if not sampled then
         Eio.Fiber.with_binding sampled_key false @@ fun () ->
-        Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
         interpret ~runtime ~fail_key ~sw ~finalizers e env
       else
         let started_ms = runtime.now_ms () in
@@ -368,10 +370,6 @@ let rec interpret :
         in
         Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
         Eio.Fiber.with_binding sampled_key true @@ fun () ->
-        (* External parent is consumed by this begin_span; clear it for the
-           body so nested spans don't inherit it. *)
-        Eio.Fiber.with_binding external_parent_key ("", "") @@ fun () ->
-        let _ = external_parent_key in
         (try
            let value = interpret ~runtime ~fail_key ~sw ~finalizers e env in
            finish Ok;
@@ -387,13 +385,29 @@ let rec interpret :
   | EP.Link_span (link, e) ->
       runtime.tracer#add_link link;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
-  | EP.With_external_parent (trace_id, span_id, e) ->
-      Eio.Fiber.with_binding external_parent_key (trace_id, span_id)
-      @@ fun () -> interpret ~runtime ~fail_key ~sw ~finalizers e env
+  | EP.With_external_parent (ctx, e) | EP.With_context (ctx, e) ->
+      Eio.Fiber.with_binding trace_context_key ctx @@ fun () ->
+      Eio.Fiber.with_binding sampled_key (Trace_context.sampled ctx) @@ fun () ->
+      interpret ~runtime ~fail_key ~sw ~finalizers e env
   | EP.Current_span -> (
       match Eio.Fiber.get active_span_key with
       | None -> None
       | Some span_id -> runtime.tracer#inspect ~span_id)
+  | EP.Current_context -> (
+      match Eio.Fiber.get active_span_key with
+      | Some span_id -> (
+          match runtime.tracer#inspect ~span_id with
+          | Some info ->
+              Some
+                {
+                  Capabilities.trace_id = info.trace_id;
+                  span_id = info.span_id;
+                  trace_flags = info.trace_flags;
+                  trace_state = info.trace_state;
+                  baggage = info.baggage;
+                }
+          | None -> Eio.Fiber.get trace_context_key)
+      | None -> Eio.Fiber.get trace_context_key)
   | EP.Log (level, body, attrs) ->
       let trace_id, span_id =
         match Eio.Fiber.get active_span_key with
@@ -422,17 +436,29 @@ and instrument_leaf :
     =
  fun ~runtime ~fail_key ~name f ->
   let parent_id = Eio.Fiber.get active_span_key in
-  let parent_sampled = Option.value (Eio.Fiber.get sampled_key) ~default:true in
+  let ambient_context = Eio.Fiber.get trace_context_key in
+  let parent_sampled =
+    Option.value (Eio.Fiber.get sampled_key)
+      ~default:
+        (match ambient_context with
+        | None -> true
+        | Some ctx -> Trace_context.sampled ctx)
+  in
+  let external_parent =
+    match parent_id with
+    | Some _ -> None
+    | None -> ambient_context
+  in
   let sampled =
     parent_sampled
     && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
-         ~parent:(Option.is_some parent_id)
+         ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
   in
   if not sampled then f ()
   else
     let started_ms = runtime.now_ms () in
     let span_id =
-      runtime.tracer#begin_span ?parent_id ~name ~started_ms
+      runtime.tracer#begin_span ?parent_id ?external_parent ~name ~started_ms
         ~kind:Capabilities.Internal ()
     in
     let finish status =

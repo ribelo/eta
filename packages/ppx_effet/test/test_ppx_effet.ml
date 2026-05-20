@@ -36,13 +36,9 @@ module Auth = struct
 end
 
 let current_user () =
-  [%effet.sync "auth.current_user" (auth : Auth.t) (Auth.current_user auth)]
+  [%effet.thunk "auth.current_user" (auth : Auth.t) (Auth.current_user auth)]
 
-let current_user_async () =
-  [%effet.async "auth.current_user_async" (auth : Auth.t)
-    (Auth.current_user auth)]
-
-let test_ppx_sync_leaf () =
+let test_ppx_thunk_leaf () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
@@ -57,14 +53,6 @@ let test_ppx_sync_leaf () =
   Alcotest.(check string) "span name" "Dune__exe__Test_ppx_effet.current_user"
     span.name
 
-let test_ppx_async_leaf () =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let auth = { Auth.user = "alice" } in
-  let env = [%effet.env { auth = (auth : Auth.t) }] in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env () in
-  Alcotest.(check string) "value" "alice" (run_ok rt (current_user_async ()))
-
 let test_ppx_env_builder_annotations () =
   let auth = { Auth.user = "alice" } in
   let env = [%effet.env { auth = (auth : Auth.t) }] in
@@ -76,8 +64,7 @@ let () =
       ( "ppx",
         [
           Alcotest.test_case "fn" `Quick test_ppx_fn;
-          Alcotest.test_case "sync leaf" `Quick test_ppx_sync_leaf;
-          Alcotest.test_case "async leaf" `Quick test_ppx_async_leaf;
+          Alcotest.test_case "thunk leaf" `Quick test_ppx_thunk_leaf;
           Alcotest.test_case "env builder" `Quick test_ppx_env_builder_annotations;
         ] );
     ]

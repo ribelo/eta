@@ -25,7 +25,10 @@ type span = {
   started_ms : int;
   ended_ms : int;
   trace_id : string;
-  external_parent : (string * string) option;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+  external_parent : Capabilities.trace_context option;
 }
 
 type in_memory

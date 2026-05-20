@@ -41,11 +41,23 @@ type span_status = Ok | Error of string | Cancelled
 (** OpenTelemetry span kind. *)
 type span_kind = Internal | Server | Client | Producer | Consumer
 
+(** W3C trace context plus baggage propagated across service boundaries. *)
+type trace_context = {
+  trace_id : string;  (** Hex 32 chars. *)
+  span_id : string;  (** Hex 16 chars. *)
+  trace_flags : int;  (** W3C flags byte. Bit 0 is the sampled flag. *)
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+}
+
 (** Information about an active span surfaced through {!tracer.inspect}. *)
 type span_info = {
   trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
   span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
   name : string;
+  trace_flags : int;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
 (** A reference to another span that the current span is linked to.
@@ -77,7 +89,7 @@ type log_record = {
 class type tracer = object
   method begin_span :
     ?parent_id:int ->
-    ?external_parent:string * string ->
+    ?external_parent:trace_context ->
     ?kind:span_kind ->
     name:string ->
     started_ms:int ->

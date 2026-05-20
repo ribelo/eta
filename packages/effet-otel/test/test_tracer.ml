@@ -154,7 +154,7 @@ let test_supervisor_sets_context () =
     Effect.named "ok"
       (Effect.bind
          (fun _ -> Effect.current_span)
-         (Effect.sync "yield" (fun () -> ())))
+         (Effect.thunk "yield" (fun () -> ())))
   in
   match run_ok rt prog with
   | Some info ->

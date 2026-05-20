@@ -468,7 +468,7 @@ let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) r
   match Effet.Effect.Private.view eff with
   | Effet.Effect.Private.Pure value -> Ok value
   | Effet.Effect.Private.Fail error -> Error error
-  | Effet.Effect.Private.Sync (_, f) | Effet.Effect.Private.Async (_, f) -> Ok (f env)
+  | Effet.Effect.Private.Thunk (_, f) -> Ok (f env)
   | Effet.Effect.Private.Map (inner, f) -> Result.map f (eval env inner)
   | Effet.Effect.Private.Bind (inner, f) -> (
       match eval env inner with Ok value -> eval env (f value) | Error error -> Error error)
@@ -483,8 +483,10 @@ let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) r
   | Effet.Effect.Private.Named (_, _, inner)
   | Effet.Effect.Private.Annotate (_, _, inner)
   | Effet.Effect.Private.Link_span (_, inner)
-  | Effet.Effect.Private.With_external_parent (_, _, inner) ->
+  | Effet.Effect.Private.With_external_parent (_, inner)
+  | Effet.Effect.Private.With_context (_, inner) ->
       eval env inner
+  | Effet.Effect.Private.Current_context -> Ok None
   | _ -> failwith "test evaluator only supports the schema effect subset"
 
 let run_effect eff = eval (object end) eff
@@ -535,7 +537,7 @@ let test_policy_env_row () =
       (fun allowed ->
         if allowed then Effect.pure config
         else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
-      (Effect.sync "feature-policy" (fun env ->
+      (Effect.thunk "feature-policy" (fun env ->
            List.for_all
              (fun feature -> env#feature_allowed (Flag_key.value feature.key))
              config.features))

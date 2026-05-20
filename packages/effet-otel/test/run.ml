@@ -15,6 +15,13 @@ let rec json_has_span_kind ~name ~kind = function
   | `List xs -> List.exists (json_has_span_kind ~name ~kind) xs
   | _ -> false
 
+let rec json_has_string_field ~key ~value = function
+  | `Assoc fields ->
+      List.assoc_opt key fields = Some (`String value)
+      || List.exists (fun (_, v) -> json_has_string_field ~key ~value v) fields
+  | `List xs -> List.exists (json_has_string_field ~key ~value) xs
+  | _ -> false
+
 let test_encoder_smoke () =
   let bodies = ref [] in
   Eio_main.run @@ fun stdenv ->
@@ -30,7 +37,16 @@ let test_encoder_smoke () =
       ()
   in
   let tracer = Effet_otel.tracer exporter in
-  let parent = tracer#begin_span ~name:"parent" ~started_ms:1000 () in
+  let external_parent =
+    Option.get
+      (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+         ~span_id:"00f067aa0ba902b7"
+         ~trace_state:[ ("rojo", "00f067aa0ba902b7") ]
+         ~baggage:[ ("tenant", "acme") ] ())
+  in
+  let parent =
+    tracer#begin_span ~external_parent ~name:"parent" ~started_ms:1000 ()
+  in
   tracer#add_attr ~key:"phase" ~value:"setup";
   let child =
     tracer#begin_span ~parent_id:parent ~kind:Capabilities.Server ~name:"child"
@@ -42,8 +58,11 @@ let test_encoder_smoke () =
   Effet_otel.flush exporter;
   Alcotest.(check pass) "encoder ran without raising" () ();
   let body = String.concat "\n" (List.rev !bodies) in
+  let json = Yojson.Safe.from_string body in
   Alcotest.(check bool) "server span kind encoded" true
-    (json_has_span_kind ~name:"child" ~kind:2 (Yojson.Safe.from_string body))
+    (json_has_span_kind ~name:"child" ~kind:2 json);
+  Alcotest.(check bool) "tracestate encoded" true
+    (json_has_string_field ~key:"traceState" ~value:"rojo=00f067aa0ba902b7" json)
 
 let motel_reachable net =
   try
@@ -73,11 +92,11 @@ let live_motel_test net clock =
     Effect.named "demo.root"
       (Effect.par
          (Effect.named "demo.left"
-            (Effect.sync "work-left" (fun () ->
+            (Effect.thunk "work-left" (fun () ->
                  Eio.Time.sleep clock 0.005)
             |> Effect.annotate ~key:"side" ~value:"left"))
          (Effect.named "demo.right"
-            (Effect.sync "work-right" (fun () ->
+            (Effect.thunk "work-right" (fun () ->
                  Eio.Time.sleep clock 0.010)
             |> Effect.annotate ~key:"side" ~value:"right"
             |> Effect.bind (fun () -> Effect.fail `Demo_boom)
