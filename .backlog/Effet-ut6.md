@@ -1,12 +1,12 @@
 ---
 id: Effet-ut6
 title: Remove Stdlib.( = ) default from Schema.transform's ?equal
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T20:51:36.170Z
 created_by: backlog
-updated_at: 2026-05-19T21:10:03.421Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-ut6
     depends_on_id: Effet-tkw
@@ -55,3 +55,9 @@ That keeps the escape hatch but makes its usage visible in grep.
 ## acceptance criteria
 
 Schema.transform's ?equal becomes a required ~equal: argument. No call site in packages/effet-schema/ relies on the implicit Stdlib.( = ) default. If Schema.unsafe_polymorphic_equal escape hatch is added, it is documented as 'use at your own risk' and exists only for the cases where the user knowingly accepts the hazard. Existing tests pass after explicit ~equal is added at the call sites that previously relied on the default.
+
+## resolution
+
+`Schema.transform` now requires `~equal`; no escape hatch was needed for
+in-tree callers. Package implementation/interface search has no remaining
+`Stdlib.( = )` default.

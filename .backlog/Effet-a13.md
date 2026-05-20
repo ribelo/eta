@@ -1,12 +1,12 @@
 ---
 id: Effet-a13
 title: "issue.path: distinguish object key from array index"
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T21:02:07.323Z
 created_by: backlog
-updated_at: 2026-05-19T21:11:35.824Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-a13
     depends_on_id: Effet-tkw
@@ -59,3 +59,10 @@ Migration cost: every test in run.ml that asserts on issue.path needs to update 
 ## acceptance criteria
 
 issue.path is path_segment list distinguishing Field and Index. render_issue produces a readable rendering that visibly distinguishes object keys from array indexes. issue_to_json_pointer (or equivalent) is exported. Existing tests are updated to the new shape. nix develop -c dune runtest --force passes.
+
+## resolution
+
+`issue.path` is now `path_segment list` with `Field` and `Index`.
+`render_issue` distinguishes `users[0].id` from `users.0.id`, and
+`issue_to_json_pointer` is exported. Regression tests cover nested array paths
+and numeric object keys.

@@ -1,12 +1,12 @@
 ---
 id: Effet-qtp
 title: "Research: applicative-style record builder vs arity ceiling at record6"
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T21:07:14.617Z
 created_by: backlog
-updated_at: 2026-05-19T21:12:02.438Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-qtp
     depends_on_id: Effet-tkw
@@ -72,3 +72,10 @@ Compare:
 ## acceptance criteria
 
 scratch/record_builder_research/ contains R0/R1/R2 candidates building the same 8-field test schema. journal.md gains a V-Rbv decision diary. Recommendation: (a) keep record1..record6 ceiling, document escape hatch (split records into nested schemas); (b) extend to record1..record12 to push the ceiling; (c) ship applicative-style builder; (d) ship GADT field-list builder. If a builder is recommended, capture as implementation task. 2h time budget.
+
+## resolution
+
+Recorded R0/R1/R2 comparison in `scratch/record_builder_research/README.md`
+and `journal.md` V-Schema-P2. No builder was added in this pass; the current
+recommendation is to prototype the applicative builder separately with negative
+compile fixtures before changing the public API.

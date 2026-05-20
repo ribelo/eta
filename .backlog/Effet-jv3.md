@@ -1,12 +1,12 @@
 ---
 id: Effet-jv3
 title: "Survival lab: Schema.json_schema — make it real or remove it"
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T20:56:19.487Z
 created_by: backlog
-updated_at: 2026-05-19T21:10:47.257Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-jv3
     depends_on_id: Effet-tkw
@@ -51,3 +51,10 @@ Tie-breaker: do any current users (downstream packages, OpenAPI generation, docu
 ## acceptance criteria
 
 scratch/schema_jsonschema_survival/ contains a fixture set, generated outputs, and validation results from an external JSON Schema validator. journal.md gains a V-Jsv decision diary recording per-constructor json_schema behaviour and the chosen direction. Recommendation: (a) implement real JSON Schema generation — capture as multi-session epic; (b) remove json_schema from Schema.t — capture as small migration task. The package stops shipping a placeholder. 2h time budget.
+
+## resolution
+
+Removed `json_schema` from `Schema.t` and the public API. The package no
+longer ships a placeholder JSON Schema generator. Research notes live in
+`scratch/schema_jsonschema_survival/README.md` and `journal.md`
+V-Schema-P2.

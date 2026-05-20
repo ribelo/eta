@@ -196,6 +196,7 @@ let retry_after =
         | _ -> Error [ issue "Expected non-negative duration in ms" ]
       else Error [ issue "Expected duration like 500ms" ])
     ~encode:(fun n -> string_of_int n ^ "ms")
+    ~equal:Int.equal
     Schema.string
 
 let database =
@@ -229,8 +230,8 @@ let auth =
     | Some value -> (
         match Schema.decode_result (bounded_int ~min:8 ~max:128) value with
         | Ok min_length -> Ok (Password { min_length })
-        | Error issues -> Error (at "minLength" issues))
-    | None -> Error [ issue ~path:[ "minLength" ] "Missing key" ]
+        | Error issues -> Error (at_field "minLength" issues))
+    | None -> Error [ issue ~path:[ Field "minLength" ] "Missing key" ]
   in
   let oauth_decode json =
     match (Json.find "issuer" json, Json.find "clientId" json) with
@@ -242,20 +243,20 @@ let auth =
         | Ok issuer, Ok client_id -> Ok (OAuth { issuer; client_id })
         | a, b ->
             let collect = function Ok _ -> [] | Error issues -> issues in
-            Error (at "issuer" (collect a) @ at "clientId" (collect b)))
+            Error (at_field "issuer" (collect a) @ at_field "clientId" (collect b)))
     | _ -> Error [ issue "Invalid OAuth auth" ]
   in
   let password_encode = function
     | Password { min_length } ->
-        Some (Json.object_ [ ("minLength", Json.int min_length) ])
-    | _ -> None
+        Ok (Some (Json.object_ [ ("minLength", Json.int min_length) ]))
+    | _ -> Ok None
   in
   let oauth_encode = function
     | OAuth { issuer; client_id } ->
-        Some
+        Ok (Some
           (Json.object_
-             [ ("issuer", Json.string issuer); ("clientId", Json.string client_id) ])
-    | _ -> None
+             [ ("issuer", Json.string issuer); ("clientId", Json.string client_id) ]))
+    | _ -> Ok None
   in
   Schema.tagged_union ~name:"auth" ~tag:"_tag"
     [
@@ -280,11 +281,14 @@ let event =
   let user_created_decode json =
     match Json.find "user" json with
     | Some value -> Result.map (fun user -> User_created user) (Schema.decode_result user value)
-    | None -> Error [ issue ~path:[ "user" ] "Missing key" ]
+    | None -> Error [ issue ~path:[ Field "user" ] "Missing key" ]
   in
   let user_created_encode = function
-    | User_created u -> Some (Json.object_ [ ("user", Schema.encode user u) ])
-    | _ -> None
+    | User_created u ->
+        Result.map
+          (fun user_json -> Some (Json.object_ [ ("user", user_json) ]))
+          (Schema.encode_result user u)
+    | _ -> Ok None
   in
   let feature_toggled_decode json =
     match (Json.find "key" json, Json.find "enabled" json) with
@@ -296,25 +300,31 @@ let event =
         | Ok key, Ok enabled -> Ok (Feature_toggled { key; enabled })
         | a, b ->
             let collect = function Ok _ -> [] | Error issues -> issues in
-            Error (at "key" (collect a) @ at "enabled" (collect b)))
+            Error (at_field "key" (collect a) @ at_field "enabled" (collect b)))
     | _ -> Error [ issue "Invalid FeatureToggled event" ]
   in
   let feature_toggled_encode = function
     | Feature_toggled { key; enabled } ->
-        Some
-          (Json.object_
-             [ ("key", Schema.encode Flag_key.schema key); ("enabled", Json.bool enabled) ])
-    | _ -> None
+        Result.map
+          (fun key_json ->
+            Some (Json.object_ [ ("key", key_json); ("enabled", Json.bool enabled) ]))
+          (Schema.encode_result Flag_key.schema key)
+    | _ -> Ok None
   in
   let metric_decode json =
     match (Json.find "name" json, Json.find "value" json) with
-    | Some (Json.String name), Some (Json.Number value) -> Ok (Metric { name; value })
+    | Some (Json.String name), Some value_json -> (
+        match Schema.decode_result Schema.float value_json with
+        | Ok value -> Ok (Metric { name; value })
+        | Error issues -> Error (at_field "value" issues))
     | _ -> Error [ issue "Invalid Metric event" ]
   in
   let metric_encode = function
     | Metric { name; value } ->
-        Some (Json.object_ [ ("name", Json.string name); ("value", Json.number value) ])
-    | _ -> None
+        Ok
+          (Some
+             (Json.object_ [ ("name", Json.string name); ("value", Json.number value) ]))
+    | _ -> Ok None
   in
   Schema.tagged_union ~name:"event" ~tag:"_tag"
     [
@@ -333,26 +343,26 @@ let rec menu () =
   in
   let item_encode = function
     | Item { label; route } ->
-        Some (Json.object_ [ ("label", Json.string label); ("route", Json.string route) ])
-    | _ -> None
+        Ok (Some (Json.object_ [ ("label", Json.string label); ("route", Json.string route) ]))
+    | _ -> Ok None
   in
   let group_decode json =
     match (Json.find "label" json, Json.find "children" json) with
     | Some (Json.String label), Some children_json -> (
         match Schema.decode_result (Schema.array (Schema.lazy_ menu)) children_json with
         | Ok children -> Ok (Group { label; children })
-        | Error issues -> Error (at "children" issues))
+        | Error issues -> Error (at_field "children" issues))
     | _ -> Error [ issue "Invalid menu group" ]
   in
   let group_encode = function
     | Group { label; children } ->
-        Some
-          (Json.object_
-             [
-               ("label", Json.string label);
-               ("children", Schema.encode (Schema.array (Schema.lazy_ menu)) children);
-             ])
-    | _ -> None
+        Result.map
+          (fun children_json ->
+            Some
+              (Json.object_
+                 [ ("label", Json.string label); ("children", children_json) ]))
+          (Schema.encode_result (Schema.array (Schema.lazy_ menu)) children)
+    | _ -> Ok None
   in
   Schema.tagged_union ~name:"menu" ~tag:"_tag"
     [
@@ -495,15 +505,24 @@ let run_effect_env env eff = eval env eff
 let expect_ok name = function
   | Ok value -> value
   | Error (`Decode issues) -> failwith (Printf.sprintf "%s: %s" name (render_issues issues))
+  | Error (`Encode issues) -> failwith (Printf.sprintf "%s: %s" name (render_issues issues))
 
 let expect_decode_error name = function
   | Ok _ -> failwith (name ^ ": expected decode failure")
   | Error (`Decode issues) -> issues
+  | Error (`Encode _) -> failwith (name ^ ": expected decode failure, got encode failure")
+
+let expect_encode_error name = function
+  | Ok _ -> failwith (name ^ ": expected encode failure")
+  | Error (`Encode issues) -> issues
+  | Error (`Decode _) -> failwith (name ^ ": expected encode failure, got decode failure")
 
 let decode_ok schema json = run_effect (Schema.decode schema json) |> expect_ok "decode"
+let encode_ok schema value = run_effect (Schema.encode schema value) |> expect_ok "encode"
 
 let check_bool name value = if not value then failwith name
 let check_int name expected actual = if expected <> actual then failwith name
+let check_string name expected actual = if not (String.equal expected actual) then failwith name
 
 let test_config_roundtrip () =
   let decoded = decode_ok config sample_config_json in
@@ -511,24 +530,24 @@ let test_config_roundtrip () =
   check_bool "feature key value"
     (String.equal "flag.new-checkout" (Flag_key.value (List.hd decoded.features).key));
   check_bool "roundtrip json"
-    (Json.equal sample_config_json (Schema.encode config decoded));
+    (Json.equal sample_config_json (encode_ok config decoded));
   check_bool "self equal" (Schema.equal config decoded decoded)
 
 let test_many_issues () =
   let issues = run_effect (Schema.decode config bad_config_json) |> expect_decode_error "bad config" in
   check_bool "all errors" (List.length issues >= 8);
   check_bool "nested user id path"
-    (List.exists (fun issue -> issue.path = [ "users"; "0"; "id" ]) issues)
+    (List.exists (fun issue -> issue.path = [ Field "users"; Index 0; Field "id" ]) issues)
 
 let test_tagged_and_recursive () =
   let event_value = decode_ok event sample_event_json in
   check_bool "event self equal" (Schema.equal event event_value event_value);
   check_bool "event roundtrip"
-    (Json.equal sample_event_json (Schema.encode event event_value));
+    (Json.equal sample_event_json (encode_ok event event_value));
   let menu_value = decode_ok (menu ()) sample_menu_json in
   check_bool "menu self equal" (Schema.equal (menu ()) menu_value menu_value);
   check_bool "menu roundtrip"
-    (Json.equal sample_menu_json (Schema.encode (menu ()) menu_value))
+    (Json.equal sample_menu_json (encode_ok (menu ()) menu_value))
 
 let test_policy_env_row () =
   let policy config =
@@ -568,11 +587,94 @@ let test_cause_integration () =
   check_bool "tap saw issues" (!seen >= 8);
   check_bool "catch recovered" (recovered >= 8)
 
-let test_json_schema () =
-  match Schema.json_schema config with
-  | Json.Object fields ->
-      check_bool "has title" (List.mem_assoc "title" fields)
-  | _ -> failwith "expected object schema"
+let test_issue_paths_distinguish_fields_and_indexes () =
+  let issues = run_effect (Schema.decode config bad_config_json) |> expect_decode_error "bad config" in
+  let user_id_issue =
+    match
+      List.find_opt
+        (fun issue -> issue.path = [ Field "users"; Index 0; Field "id" ])
+        issues
+    with
+    | Some issue -> issue
+    | None -> failwith "expected nested user id issue"
+  in
+  check_string "rendered path" "Expected user_id at users[0].id"
+    (render_issue user_id_issue);
+  check_string "json pointer" "/users/0/id" (issue_to_json_pointer user_id_issue);
+  let numeric_key_issue =
+    issue ~path:[ Field "users"; Field "0"; Field "id" ] "field key"
+  in
+  check_string "numeric field path" "field key at users.0.id"
+    (render_issue numeric_key_issue)
+
+let test_json_number_rendering () =
+  check_string "integer float has no trailing dot" "1" (Json.to_string (Json.number 1.));
+  check_string "fractional float" "1.5" (Json.to_string (Json.number 1.5));
+  check_string "large integral float does not overflow" "1e+100"
+    (Json.to_string (Json.number 1e100));
+  check_string "large int literal stays exact" "9007199254740993"
+    (Json.to_string (Json.intlit "9007199254740993"));
+  ignore
+    (run_effect (Schema.decode Schema.int (Json.number 1e100))
+    |> expect_decode_error "large integer")
+
+type request_user = { request_id : user_id }
+type canonical_user = { canonical_id : user_id; canonical_name : string }
+
+let request_user_equal a b = User_id.equal a.request_id b.request_id
+
+let request_user_schema =
+  Schema.record1 ~name:"request_user"
+    (fun request_id -> { request_id })
+    (Schema.required "id" User_id.schema (fun u -> u.request_id))
+    ~equal:request_user_equal ()
+
+let test_decode_with_policy_enriches_type () =
+  let policy request =
+    let open Effet in
+    Effect.map
+      (fun canonical_name -> { canonical_id = request.request_id; canonical_name })
+      (Effect.thunk "lookup-user" (fun env -> env#lookup_user (User_id.value request.request_id)))
+  in
+  let json = Json.object_ [ ("id", Json.string "usr_999") ] in
+  let env = object method lookup_user _ = "Ada" end in
+  let enriched =
+    run_effect_env env (Schema.decode_with_policy request_user_schema policy json)
+    |> expect_ok "policy enriched"
+  in
+  check_string "enriched name" "Ada" enriched.canonical_name
+
+let test_encode_failures_are_typed () =
+  let one = Schema.enum ~name:"one" [ ("one", 1) ] ~equal:Int.equal in
+  let enum_issues = run_effect (Schema.encode one 2) |> expect_encode_error "enum" in
+  check_int "enum issue count" 1 (List.length enum_issues);
+  let password_only =
+    let decode _ = Error [ issue "unused" ] in
+    let encode = function
+      | Password { min_length } ->
+          Ok (Some (Json.object_ [ ("minLength", Json.int min_length) ]))
+      | _ -> Ok None
+    in
+    Schema.tagged_union ~name:"password_only" ~tag:"_tag"
+      [ Schema.case ~tag:"Password" ~decode ~encode ] ~equal:auth_equal
+  in
+  let union_issues =
+    run_effect (Schema.encode password_only (OAuth { issuer = "i"; client_id = "c" }))
+    |> expect_encode_error "tagged union"
+  in
+  check_int "tagged union issue count" 1 (List.length union_issues)
+
+let test_lazy_schema_memoizes_thunk () =
+  let forced = ref 0 in
+  let schema =
+    Schema.lazy_ (fun () ->
+        incr forced;
+        Schema.string)
+  in
+  ignore (Schema.decode_result schema (Json.string "x") : (string, issue list) result);
+  ignore (Schema.encode_result schema "x" : (json, issue list) result);
+  check_bool "lazy equal" (Schema.equal schema "x" "x");
+  check_int "lazy forced once" 1 !forced
 
 let () =
   test_config_roundtrip ();
@@ -580,5 +682,9 @@ let () =
   test_tagged_and_recursive ();
   test_policy_env_row ();
   test_cause_integration ();
-  test_json_schema ();
+  test_issue_paths_distinguish_fields_and_indexes ();
+  test_json_number_rendering ();
+  test_decode_with_policy_enriches_type ();
+  test_encode_failures_are_typed ();
+  test_lazy_schema_memoizes_thunk ();
   print_endline "effet-schema tests passed"

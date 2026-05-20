@@ -2,15 +2,21 @@
 
     [effet-schema] is a companion package, not part of Effet core. A schema is
     a reusable value describing a data contract: it can decode JSON, encode a
-    typed value, expose JSON Schema metadata, provide samples, and derive
-    equality. Effectful validation is attached at the decode boundary so the
-    environment channel remains an ordinary Effet object row. *)
+    typed value, and derive equality. Decode and encode failures are
+    represented as typed Effet failures. Effectful validation is attached at
+    the decode boundary so the environment channel remains an ordinary Effet
+    object row. *)
 
 module Json : sig
+  type number =
+    | Int of int
+    | Intlit of string
+    | Float of float
+
   type t =
     | Null
     | Bool of bool
-    | Number of float
+    | Number of number
     | String of string
     | Array of t list
     | Object of (string * t) list
@@ -19,6 +25,7 @@ module Json : sig
   val bool : bool -> t
   val number : float -> t
   val int : int -> t
+  val intlit : string -> t
   val string : string -> t
   val array : t list -> t
   val object_ : (string * t) list -> t
@@ -32,20 +39,27 @@ end
 
 type json = Json.t
 
+type path_segment =
+  | Field of string
+  | Index of int
+
 type issue = {
-  path : string list;
+  path : path_segment list;
   message : string;
 }
 (** A structured decode or validation problem. [path] is ordered from the
     outermost field/index to the innermost field/index. *)
 
-type error = [ `Decode of issue list ]
-(** Typed Effet error emitted by schema decoders. *)
+type error = [ `Decode of issue list | `Encode of issue list ]
+(** Typed Effet error emitted by schema codecs. *)
 
-val issue : ?path:string list -> string -> issue
-val at : string -> issue list -> issue list
+val issue : ?path:path_segment list -> string -> issue
+val at : path_segment -> issue list -> issue list
+val at_field : string -> issue list -> issue list
+val at_index : int -> issue list -> issue list
 val render_issue : issue -> string
 val render_issues : issue list -> string
+val issue_to_json_pointer : issue -> string
 
 module Schema : sig
   type 'a t
@@ -71,7 +85,7 @@ module Schema : sig
   val case :
     tag:string ->
     decode:(json -> ('a, issue list) result) ->
-    encode:('a -> json option) ->
+    encode:('a -> (json option, issue list) result) ->
     'a case
 
   val tagged_union :
@@ -80,7 +94,9 @@ module Schema : sig
     'a case list ->
     equal:('a -> 'a -> bool) ->
     'a t
-  (** Tagged-union schema for ordinary OCaml variants. *)
+  (** Tagged-union schema for ordinary OCaml variants. Case encoders return
+      [Ok None] when the value belongs to another case and [Error issues] when
+      the selected case cannot encode its payload. *)
 
   val lazy_ : (unit -> 'a t) -> 'a t
   (** Recursive schema knot. *)
@@ -101,7 +117,6 @@ module Schema : sig
     ('a -> 'record) ->
     ('record, 'a) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
 
@@ -111,7 +126,6 @@ module Schema : sig
     ('record, 'a) field ->
     ('record, 'b) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
 
@@ -122,7 +136,6 @@ module Schema : sig
     ('record, 'b) field ->
     ('record, 'c) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
 
@@ -134,7 +147,6 @@ module Schema : sig
     ('record, 'c) field ->
     ('record, 'd) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
 
@@ -147,7 +159,6 @@ module Schema : sig
     ('record, 'd) field ->
     ('record, 'e) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
 
@@ -161,7 +172,6 @@ module Schema : sig
     ('record, 'e) field ->
     ('record, 'f) field ->
     equal:('record -> 'record -> bool) ->
-    ?samples:'record list ->
     unit ->
     'record t
   (** Arity-specific builders are the v0 hand-written product API. A PPX can
@@ -171,7 +181,7 @@ module Schema : sig
 
   val transform :
     name:string ->
-    ?equal:('a -> 'a -> bool) ->
+    equal:('a -> 'a -> bool) ->
     decode:('encoded -> ('a, issue list) result) ->
     encode:('a -> 'encoded) ->
     'encoded t ->
@@ -183,19 +193,20 @@ module Schema : sig
       built from [transform], rather than a TypeScript-style public wrapper. *)
 
   val decode_result : 'a t -> json -> ('a, issue list) result
-  val decode : 'a t -> json -> ('env, [> error ] as 'err, 'a) Effet.Effect.t
+  val decode :
+    'a t -> json -> ('env, [> `Decode of issue list ] as 'err, 'a) Effet.Effect.t
+  val encode_result : 'a t -> 'a -> (json, issue list) result
 
   val decode_with_policy :
     'a t ->
-    ('a -> ('env, [> error ] as 'err, 'a) Effet.Effect.t) ->
+    ('a -> ('env, [> `Decode of issue list ] as 'err, 'b) Effet.Effect.t) ->
     json ->
-    ('env, 'err, 'a) Effet.Effect.t
+    ('env, 'err, 'b) Effet.Effect.t
   (** Decode with an effectful validation/enrichment policy. This is where
       Effet env-row requirements enter schema workflows. *)
 
-  val encode : 'a t -> 'a -> json
-  val json_schema : 'a t -> json
-  val samples : 'a t -> 'a list
+  val encode :
+    'a t -> 'a -> ('env, [> `Encode of issue list ] as 'err, json) Effet.Effect.t
   val equal : 'a t -> 'a -> 'a -> bool
 end
 

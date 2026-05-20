@@ -1,12 +1,12 @@
 ---
 id: Effet-a64
 title: "Research: Json.Number representation (collapse vs Int/Intlit/Float)"
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T20:50:16.093Z
 created_by: backlog
-updated_at: 2026-05-19T21:09:40.971Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-a64
     depends_on_id: Effet-tkw
@@ -52,3 +52,11 @@ Coupled with Effet-tkw audit: the JSON_ADAPTER work (Effet-vtj-equivalent below)
 ## acceptance criteria
 
 scratch/json_number_research/ contains candidates N0..N3 with the fixture set passing or producing documented precision-loss markers. journal.md gains a V-Jnv1..V-JnvN decision diary recording per-candidate behaviour and the recommendation. Recommendation: (a) keep float-only with documented loss; (b) flip to a richer numeric variant — capture as migration task. 2h time budget.
+
+## resolution
+
+Implemented the richer N1 representation in `packages/effet-schema`:
+`Json.Number of Json.Int | Intlit | Float`, plus `Json.intlit`. Regression
+tests cover exact large integer literal rendering and large float integer decode
+rejection. Research notes live in `scratch/json_number_research/README.md` and
+`journal.md` V-Schema-P2.

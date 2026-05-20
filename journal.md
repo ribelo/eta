@@ -8173,3 +8173,98 @@ promote focused protocols when they earn ownership, and keep local coordination 
 - No effet-concurrent package.
 - No new runtime primitive.
 - No new scheduler/cancellation model around Eio data structures.
+
+## V-Schema-P2 - Schema cleanup and survival decisions
+
+### Scope
+
+Backlog items covered:
+
+- Effet-a64: JSON number representation.
+- Effet-ut6: remove `Stdlib.( = )` default from `Schema.transform`.
+- Effet-avf: make `Schema.samples` real or remove it.
+- Effet-jv3: make `Schema.json_schema` real or remove it.
+- Effet-a13: distinguish object field paths from array indexes.
+- Effet-5we: generalise `decode_with_policy` from `'a -> 'a` to
+  `'a -> 'b`.
+- Effet-qtp: research record builder ceiling.
+
+### Findings
+
+The shipped `effet-schema` package had two classes of problems:
+
+1. Concrete API defects that could be fixed directly.
+2. Placeholder metadata surfaces that looked like product features but had no
+   validator/arbitrary semantics behind them.
+
+No non-test package code consumed `Schema.samples` or `Schema.json_schema`.
+The only `json_schema` test checked for a title field, which did not prove
+JSON Schema validity.
+
+### Decisions
+
+| Item | Decision | Rationale |
+|---|---|---|
+| Effet-a64 | Replace float-only JSON numbers with `Json.Number of Int | Intlit | Float`. | Preserves large integer tokens without taking a Yojson dependency. |
+| Effet-ut6 | Make `Schema.transform ~equal` required. | Polymorphic equality can raise or encode the wrong domain equality. |
+| Effet-avf | Remove `samples` from `Schema.t`. | The derivation was incomplete and unconsumed; arbitrary generation needs its own policy surface. |
+| Effet-jv3 | Remove `json_schema` from `Schema.t`. | Real JSON Schema needs a draft, definitions, refs, and validator-backed tests. |
+| Effet-a13 | Change `issue.path` to `path_segment list`. | Paths now distinguish `Field "0"` from `Index 0`. |
+| Effet-5we | Generalise `decode_with_policy` to return `'b`. | Enrichment is a common decode-boundary workflow. |
+| Effet-qtp | Do not add a record builder yet. | The arity-ceiling fix is UX-sensitive and needs a focused compiled prototype. |
+
+### Implementation notes
+
+- `Json.intlit` validates JSON number literal syntax before constructing an
+  exact integer token.
+- `Schema.int` accepts `Int`, exact in-range `Intlit`, and finite integral
+  `Float` values. It rejects `1e100` instead of overflowing.
+- `Schema.float` accepts finite numeric tokens.
+- Decode/encode issue paths use `Field of string` and `Index of int`.
+- `render_issue` renders `Field "users"; Index 0; Field "id"` as
+  `users[0].id`.
+- `issue_to_json_pointer` exports RFC 6901-style pointer text, with field
+  escaping for `~` and `/`.
+
+### Research artifacts
+
+- `scratch/json_number_research/README.md`
+- `scratch/schema_samples_survival/README.md`
+- `scratch/schema_jsonschema_survival/README.md`
+- `scratch/record_builder_research/README.md`
+
+### Follow-up recommendation
+
+If record arity becomes painful in real users, prototype an applicative builder
+in isolation and include negative compile fixtures before adding it to
+`effet-schema`. Do not extend to `record12` by default; that only moves the
+ceiling.
+
+If JSON Schema generation is needed, create a separate
+`Effet_schema_jsonschema` module or package. It should choose one draft and
+test generated output with an external validator.
+
+### Verification
+
+Commands run so far:
+
+~~~sh
+nix develop -c dune build packages/effet-schema packages/effet-schema/test
+nix develop -c dune runtest packages/effet-schema --force
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet-schema packages/effet-schema/test
+nix develop -c dune build packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet packages/effet/test packages/effet-otel/test packages/effet-schema/test packages/effet-stream/test packages/ppx_effet/test
+nix develop -c dune runtest packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet --force
+rg -n "val json_schema|val samples|json_schema :|samples :|\\?samples|Stdlib\\.\\( = \\)" packages/effet-schema --glob '*.ml' --glob '*.mli'
+~~~
+
+Result: focused schema build/test passed, strict-formats schema build passed,
+the shipped package build passed, and the shipped package test suites passed:
+`effet-schema`, 3 `ppx_effet` tests, 105 `effet` tests, 20
+`effet-otel` tests, and 13 `effet-stream` tests. The code search returned no
+remaining package implementation/interface matches for `json_schema`,
+`samples`, `?samples`, or the polymorphic equality default.
+
+Full `nix develop -c dune build` remains blocked by pre-existing scratch
+experiments that still reference removed `Effect.sync` and `[%effet.sync]`
+surfaces. The new scratch research directories added here contain README files
+only and do not add new Dune targets.

@@ -1,12 +1,12 @@
 ---
 id: Effet-5we
 title: Generalise decode_with_policy from 'a -> 'a to 'a -> 'b
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T21:03:35.645Z
 created_by: backlog
-updated_at: 2026-05-19T21:11:53.496Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-5we
     depends_on_id: Effet-tkw
@@ -55,3 +55,9 @@ Migration cost in tests: any test using the locked 'a -> 'a shape continues to w
 ## acceptance criteria
 
 decode_with_policy's signature accepts 'a -> Effect.t 'b (any output type). A test exercises a policy that decodes record A and returns record B, verifying the type signature compiles and the runtime produces the enriched value. README.md gains a section showing the enrichment pattern with an env-row service. Existing tests pass.
+
+## resolution
+
+`decode_with_policy` now accepts policies returning `'b`. Tests cover decoding
+a request record and enriching it into a canonical user record. The README shows
+the enrichment pattern.

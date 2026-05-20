@@ -9,11 +9,25 @@ The core value is pure:
 type 'a Effet_schema.Schema.t
 ```
 
-A schema can decode JSON, encode values, expose JSON Schema metadata, provide
-sample values, and derive equality. It does not carry an Effet environment.
-Effectful validation belongs at the decode boundary through
-`Schema.decode_with_policy`, so service requirements remain normal Effet
-object-row requirements.
+A schema can decode JSON, encode values, and derive equality. It does not carry
+an Effet environment. Decode and encode failures are typed Effet failures
+through `Schema.decode` and `Schema.encode`; direct callers can use
+`decode_result` / `encode_result`. Effectful validation belongs at the decode
+boundary through `Schema.decode_with_policy`, so service requirements remain
+normal Effet object-row requirements.
+
+The built-in JSON representation preserves number shape:
+
+```ocaml
+type number =
+  | Int of int
+  | Intlit of string
+  | Float of float
+```
+
+Use `Json.intlit` for integer tokens that do not fit OCaml `int` or must not
+round through IEEE 754. `Schema.int` only accepts values that fit OCaml `int`;
+`Schema.float` accepts finite numeric tokens.
 
 Recommended application style is module-first: domain modules expose `type t`,
 `val schema`, `val decode`, `val encode`, and `val equal`.
@@ -43,3 +57,40 @@ end = struct
       Effet_schema.Schema.string
 end
 ```
+
+`Schema.transform` requires `~equal`. There is no polymorphic equality
+default because transformed values can be abstract, functional, cyclic, or
+otherwise unsafe for `Stdlib.( = )`.
+
+Policies may enrich decoded input into a different output type:
+
+```ocaml
+type input = { id : User_id.t }
+type user = { id : User_id.t; name : string }
+
+let decode_user json =
+  Effet_schema.Schema.decode_with_policy input_schema
+    (fun input ->
+      Effet.Effect.map
+        (fun name -> { id = input.id; name })
+        (Effet.Effect.thunk "lookup-user" (fun env ->
+           env#lookup_user (User_id.value input.id))))
+    json
+```
+
+Decode issues carry structured paths:
+
+```ocaml
+Effet_schema.issue_to_json_pointer issue
+```
+
+`Field "users"; Index 0; Field "id"` renders as `users[0].id` and converts
+to the JSON Pointer `/users/0/id`. A numeric object key remains a field, so it
+renders as `users.0.id`.
+
+Limits:
+
+- This package no longer exposes placeholder `Schema.samples`.
+- This package no longer exposes placeholder `Schema.json_schema`. JSON Schema
+  generation should be a separate module with a chosen draft, real `$ref`
+  handling, and validator tests.

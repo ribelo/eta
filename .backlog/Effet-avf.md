@@ -1,12 +1,12 @@
 ---
 id: Effet-avf
 title: "Survival lab: Schema.samples — implement properly or remove"
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-19T20:53:34.121Z
 created_by: backlog
-updated_at: 2026-05-19T21:10:29.168Z
+updated_at: 2026-05-20T19:21:25.000Z
 dependencies:
   - issue_id: Effet-avf
     depends_on_id: Effet-tkw
@@ -51,3 +51,9 @@ Tie-breaker: do any current users (test fixture, tests in run.ml, downstream cod
 ## acceptance criteria
 
 scratch/schema_samples_survival/ contains a fixture set and both branches. journal.md gains a V-Sav decision diary recording per-constructor sample behaviour and the chosen direction. Recommendation: (a) implement real samples derivation across all constructors; (b) remove samples from Schema.t and document the alternative. Either way, the package no longer ships a half-implemented field. 2h time budget.
+
+## resolution
+
+Removed `samples` from `Schema.t`, record builders, and the public API. No
+non-test shipped consumers existed. Research notes live in
+`scratch/schema_samples_survival/README.md` and `journal.md` V-Schema-P2.
