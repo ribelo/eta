@@ -9,6 +9,7 @@ time. It is opt-in infrastructure, not a CI gate.
 | --- | --- | --- |
 | Core interpreter | `effect.core.*` | Per-bind, thunk, catch, and typed-failure boundary cost. |
 | Overhead controls | `overhead.*` | Paired Effet-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
+| Bun + Effect reference | `overhead.ts.*` | Same workloads as `overhead.*`, run on Bun + Effect v4 (`effect-smol`). Wall time is sampled inside the Bun process so startup is excluded. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Streams | `effet_stream.*` | Representative `effet-stream` pipelines and file reads. |
@@ -122,6 +123,15 @@ Avoid committing dirty-tree results unless the commit message explains why.
 - The `overhead.*` controls answer only the core interpreter question. They do
   not yet compare every stream/schema/observability workload against a direct
   hand-written equivalent.
+- All OCaml benchmark executables are built with `--profile=release` so
+  assertions are stripped and flambda-style optimisations apply when
+  available. The `dune build @bench` alias runs in the active profile;
+  prefer `bench/run.sh` for performance numbers.
+- The `overhead.ts.*` rows require `bun` on `PATH`. If it is missing,
+  `bench/run.sh` prints a notice on stderr and produces a result file without
+  those rows. The pinned Effect version lives in
+  `bench/runtime_overhead_ts/package.json` and the row map is documented in
+  `bench/runtime_overhead_ts/README.md`.
 - Compile-time benchmarks mutate file timestamps with `touch`; they do not edit
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter

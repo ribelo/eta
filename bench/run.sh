@@ -44,7 +44,7 @@ run_runtime() {
   "$exe" "${args[@]}" >> "$tmp"
 }
 
-dune build \
+dune build --profile=release \
   bench/runtime_core/runtime_core.exe \
   bench/runtime_concurrency/runtime_concurrency.exe \
   bench/runtime_observability/runtime_observability.exe \
@@ -60,6 +60,11 @@ run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
 run_runtime _build/default/bench/runtime_overhead/runtime_overhead.exe
 run_runtime _build/default/bench/runtime_stream/runtime_stream.exe
 run_runtime _build/default/bench/runtime_schema/runtime_schema.exe
+
+ts_args=()
+if [ "$quick" = true ]; then ts_args+=("--quick"); fi
+if [ -n "$filter" ]; then ts_args+=("--filter" "$filter"); fi
+bench/runtime_overhead_ts/run.sh "${ts_args[@]}" >> "$tmp"
 
 compile_args=()
 if [ "$quick" = true ]; then compile_args+=("--quick"); fi

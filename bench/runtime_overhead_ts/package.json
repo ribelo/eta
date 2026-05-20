@@ -1,0 +1,12 @@
+{
+  "name": "effet-bench-runtime-overhead-ts",
+  "private": true,
+  "type": "module",
+  "description": "Bun + TypeScript + Effect reference workloads, mirroring bench/runtime_overhead/runtime_overhead.ml.",
+  "scripts": {
+    "bench": "bun runtime_overhead.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.70"
+  }
+}
