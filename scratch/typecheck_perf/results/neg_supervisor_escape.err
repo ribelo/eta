@@ -1,0 +1,11 @@
+File "scratch/typecheck_perf/neg_supervisor_escape.ml", lines 6-9, characters 8-21:
+6 | ........(fun (type s) sup ->
+7 |           let open Supervisor.Scope in
+8 |           let* child = start sup (lift (Effect.pure 1)) in
+9 |           pure child).
+Error: This field value has type
+         ('a, 'b) Supervisor.t ->
+         ('a, 'c, 'b, ('a, 'b, int) Supervisor.child) Effect.supervisor_scope
+       which is less general than
+         's.
+           ('s, 'd) Supervisor.t -> ('s, 'e, 'd, 'f) Effect.supervisor_scope
