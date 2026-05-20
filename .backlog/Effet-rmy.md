@@ -2,12 +2,12 @@
 id: Effet-rmy
 title: "Tests: simultaneous-failure and finalizer-failure semantics for par /
   all / for_each_par"
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T18:43:09.637Z
 created_by: backlog
-updated_at: 2026-05-19T18:47:46.763Z
+updated_at: 2026-05-20T15:34:27+02:00
 dependencies:
   - issue_id: Effet-rmy
     depends_on_id: Effet-0jv

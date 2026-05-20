@@ -7709,3 +7709,77 @@ nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
 nix develop -c dune runtest packages/ppx_effet --force
 nix develop -c env PPX_SURVIVAL_NEG=async_removed dune build scratch/ppx_survival/neg_async_removed.exe
 ~~~
+
+## Effet-rmy / Effet-3z2 edge-case test pass
+
+### Why this entry exists
+
+Two review-remediation tasks asked for tests, not new API surface:
+
+- Effet-rmy: establish the observable baseline for simultaneous child failures and finalizer failures during fail-fast cancellation in `par`, `all`, and `for_each_par`.
+- Effet-3z2: establish the observable baseline for uninterruptible edge cases: nested masks, blocking finalizers, timeout inside a protected region, and race losers without cancellation checkpoints.
+
+The purpose is regression coverage and semantic evidence for later runtime work. These tests deliberately assert observed behavior, including one behavior that is probably not the final desired design.
+
+### Artifacts
+
+All tests were added to `packages/effet/test/test_effet.ml`.
+
+New failure-baseline tests:
+
+- `test_par_simultaneous_failures_records_concurrent_baseline`
+- `test_par_finalizer_failure_during_sibling_cancellation`
+- `test_all_finalizer_failure_during_sibling_cancellation_baseline`
+- `test_for_each_par_simultaneous_failures_baseline`
+- `test_for_each_par_finalizer_failure_during_sibling_cancellation`
+- `test_par_nested_race_all_failures_baseline`
+
+New uninterruptible edge-case tests:
+
+- `test_uninterruptible_nested_masks_wait_for_protected_loser`
+- `test_uninterruptible_blocking_finalizer_delays_race_completion`
+- `test_uninterruptible_timeout_inside_protected_still_fires`
+- `test_uninterruptible_race_loser_without_checkpoints_returns`
+
+### Observed baseline
+
+Simultaneous failure behavior is observable today. `par` and `for_each_par` can return `Cause.Concurrent` when multiple children are released from a barrier and fail before cancellation collapses the group. A nested `race` whose branches all fail also propagates its `Cause.Concurrent` through `par`.
+
+The first `all` finalizer fixture was under-specified: the fast body failure could win before the sibling had acquired its scoped resource, so there was no registered finalizer to preserve. The tightened fixture now gates the body failure on sibling acquisition. With that precondition, `par`, `all`, and `for_each_par` all preserve the cancelled sibling's failing finalizer as a suppressed failure under interrupt inside the returned `Cause.Concurrent`.
+
+Uninterruptible behavior is stable under the new fixtures:
+
+- nested `uninterruptible` regions compose; the protected loser completes before `race` returns the already-known winner;
+- a blocking finalizer inside a protected loser delays `race` completion until the finalizer finishes;
+- `timeout` inside an uninterruptible region still fires, because it is an internal timeout race rather than an external cancellation;
+- a protected race loser without ordinary cancellation checkpoints can return without deadlocking, and the race winner remains preserved.
+
+### Decision diary
+
+#### V-Ecv1 - Concurrent child failures are reachable
+
+Decision: keep tests that assert `Cause.Concurrent` is reachable from `par`, `for_each_par`, and nested `race`.
+
+Rationale: this confirms the structured Cause algebra is not dead surface. Concurrent causes are observable when multiple child failures happen inside the cancellation window.
+
+#### V-Ecv2 - Acquired sibling finalizer failures are preserved
+
+Decision: guarantee the acquired-resource case with regression tests across `par`, `all`, and `for_each_par`.
+
+Rationale: once the cancelled sibling has acquired and registered a finalizer, the runtime already waits for cleanup before returning and records the finalizer failure as `Suppressed { primary = Interrupt; finalizer = Fail "release" }` inside `Concurrent`. The apparent gap was a fixture bug, not a runtime bug.
+
+#### V-Ecv3 - Uninterruptible masks compose by deferring external cancellation
+
+Decision: keep the uninterruptible edge-case tests as regression coverage.
+
+Rationale: nested masking, blocking protected finalizers, timeout inside protected work, and no-checkpoint losers all now have explicit behavioral assertions. This makes future runtime refactors safer.
+
+### Verification
+
+Focused commands run during this pass:
+
+~~~sh
+nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 29-34 --show-errors
+nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 40-44 --show-errors
+nix develop -c dune runtest --force
+~~~

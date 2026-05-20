@@ -128,6 +128,39 @@ let dur = Alcotest.testable Duration.pp Duration.equal
 let string_cause =
   Alcotest.testable (Cause.pp Format.pp_print_string) (Cause.equal String.equal)
 
+let rec string_cause_contains expected = function
+  | Cause.Fail actual -> String.equal expected actual
+  | Cause.Die _ | Cause.Interrupt _ -> false
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (string_cause_contains expected) causes
+  | Cause.Suppressed { primary; finalizer } ->
+      string_cause_contains expected primary
+      || string_cause_contains expected finalizer
+
+let check_string_cause_contains label expected cause =
+  Alcotest.(check bool) label true (string_cause_contains expected cause)
+
+let rec string_cause_has_suppressed_finalizer expected = function
+  | Cause.Suppressed { primary = Cause.Interrupt _; finalizer } ->
+      string_cause_contains expected finalizer
+  | Cause.Suppressed { primary; finalizer } ->
+      string_cause_has_suppressed_finalizer expected primary
+      || string_cause_has_suppressed_finalizer expected finalizer
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (string_cause_has_suppressed_finalizer expected) causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+
+let check_suppressed_finalizer label expected cause =
+  Alcotest.(check bool)
+    label true (string_cause_has_suppressed_finalizer expected cause)
+
+let check_concurrent_cause label cause =
+  match cause with
+  | Cause.Concurrent (_ :: _) -> ()
+  | _ ->
+      Alcotest.failf "%s: expected Concurrent cause, got %a" label
+        (Cause.pp Format.pp_print_string) cause
+
 let attr key span = List.assoc_opt key span.Tracer.attrs
 
 let link_span_id span =
@@ -808,6 +841,176 @@ let test_effect_race_all_failures_returns_concurrent_causes () =
     (Cause.Concurrent [ Cause.Fail "first"; Cause.Fail "second" ])
     (Eio.Promise.await promise)
 
+let test_par_simultaneous_failures_records_concurrent_baseline () =
+  with_test_clock @@ fun sw _clock rt ->
+  let go, release = Eio.Promise.create () in
+  let ready = Eio.Stream.create 2 in
+  let child name =
+    Effect.thunk name (fun () ->
+        Eio.Stream.add ready name;
+        Eio.Promise.await go)
+    |> Effect.bind (fun () -> Effect.fail name)
+  in
+  let promise = fork_run sw rt (Effect.par (child "left") (child "right")) in
+  let first = Eio.Stream.take ready in
+  let second = Eio.Stream.take ready in
+  Eio.Promise.resolve release ();
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected simultaneous failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "par simultaneous failure baseline" cause;
+      check_string_cause_contains "first child observed" first cause;
+      check_string_cause_contains "second child observed" second cause
+
+let test_par_finalizer_failure_during_sibling_cancellation () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let release_started = ref false in
+  let slow =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:
+           (Effect.thunk "par.slow.acquire" (fun () ->
+                Eio.Promise.resolve acquired_u ()))
+         ~release:(fun () ->
+           release_started := true;
+           Effect.fail "release")
+      |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
+  in
+  let body =
+    Effect.thunk "par.body.wait_for_acquire" (fun () ->
+        Eio.Promise.await acquired)
+    |> Effect.bind (fun () -> Effect.fail "body")
+  in
+  let promise = fork_run sw rt (Effect.par body slow) in
+  wait_for_sleepers clock 1;
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected body/finalizer failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "par cancellation/finalizer failure" cause;
+      check_string_cause_contains "body failure observed" "body" cause;
+      check_suppressed_finalizer
+        "cancelled sibling release failure is suppressed under interrupt"
+        "release" cause;
+      Alcotest.(check bool)
+        "cancelled sibling finalizer ran before par returned" true !release_started
+
+let test_all_finalizer_failure_during_sibling_cancellation_baseline () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let release_started = ref false in
+  let slow =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:
+           (Effect.thunk "slow.acquire" (fun () ->
+                Eio.Promise.resolve acquired_u ()))
+         ~release:(fun () ->
+           release_started := true;
+           Effect.fail "release")
+      |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
+  in
+  let body =
+    Effect.thunk "body.wait_for_acquire" (fun () -> Eio.Promise.await acquired)
+    |> Effect.bind (fun () -> Effect.fail "body")
+  in
+  let promise = fork_run sw rt (Effect.all [ body; slow ]) in
+  wait_for_sleepers clock 1;
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected body/finalizer failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "all cancellation/finalizer failure" cause;
+      check_string_cause_contains "body failure observed" "body" cause;
+      check_suppressed_finalizer
+        "cancelled sibling release failure is suppressed under interrupt"
+        "release" cause;
+      Alcotest.(check bool)
+        "cancelled sibling finalizer ran before all returned" true !release_started
+
+let test_for_each_par_simultaneous_failures_baseline () =
+  with_test_clock @@ fun sw _clock rt ->
+  let go, release = Eio.Promise.create () in
+  let ready = Eio.Stream.create 2 in
+  let worker name =
+    Effect.thunk ("worker." ^ name) (fun () ->
+        if name <> "ok" then (
+          Eio.Stream.add ready name;
+          Eio.Promise.await go);
+        name)
+    |> Effect.bind (fun name ->
+           if name = "ok" then Effect.pure name else Effect.fail name)
+  in
+  let promise =
+    fork_run sw rt (Effect.for_each_par [ "left"; "right"; "ok" ] worker)
+  in
+  let first = Eio.Stream.take ready in
+  let second = Eio.Stream.take ready in
+  Eio.Promise.resolve release ();
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected for_each_par failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "for_each_par simultaneous baseline" cause;
+      check_string_cause_contains "first item observed" first cause;
+      check_string_cause_contains "second item observed" second cause
+
+let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let release_started = ref false in
+  let worker = function
+    | "slow" ->
+        Effect.scoped
+          (Effect.acquire_release
+             ~acquire:
+               (Effect.thunk "foreach.slow.acquire" (fun () ->
+                    Eio.Promise.resolve acquired_u ()))
+             ~release:(fun () ->
+               release_started := true;
+               Effect.fail "release")
+          |> Effect.bind (fun () ->
+                 Effect.delay (Duration.ms 1_000) Effect.unit))
+    | "body" ->
+        Effect.thunk "foreach.body.wait_for_acquire" (fun () ->
+            Eio.Promise.await acquired)
+        |> Effect.bind (fun () -> Effect.fail "body")
+    | _ -> Effect.unit
+  in
+  let promise = fork_run sw rt (Effect.for_each_par [ "body"; "slow" ] worker) in
+  wait_for_sleepers clock 1;
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected body/finalizer failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "for_each_par cancellation/finalizer failure" cause;
+      check_string_cause_contains "body failure observed" "body" cause;
+      check_suppressed_finalizer
+        "cancelled sibling release failure is suppressed under interrupt"
+        "release" cause;
+      Alcotest.(check bool)
+        "cancelled sibling finalizer ran before for_each_par returned" true
+        !release_started
+
+let test_par_nested_race_all_failures_baseline () =
+  with_test_clock @@ fun sw clock rt ->
+  let delayed_failure ms error =
+    Effect.fail error |> Effect.delay (Duration.ms ms)
+  in
+  let nested =
+    Effect.race
+      [ delayed_failure 0 "race-left"; delayed_failure 10 "race-right" ]
+  in
+  let promise =
+    fork_run sw rt
+      (Effect.par nested (Effect.pure () |> Effect.delay (Duration.ms 20)))
+  in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  match Eio.Promise.await promise with
+  | Exit.Ok _ -> Alcotest.fail "expected nested race failure"
+  | Exit.Error cause ->
+      check_concurrent_cause "par nested race baseline" cause;
+      check_string_cause_contains "nested first failure observed" "race-left" cause;
+      check_string_cause_contains "nested second failure observed" "race-right" cause
+
 let test_effect_repeat_schedule () =
   with_runtime @@ fun rt ->
   let ticks = ref 0 in
@@ -1032,6 +1235,98 @@ let test_effect_uninterruptible_defers_race_cancellation () =
   check_exit_ok Alcotest.string "winner preserved" "fast"
     (Eio.Promise.await promise);
   Alcotest.(check bool) "protected loser completed" true !slow_completed
+
+let test_uninterruptible_nested_masks_wait_for_protected_loser () =
+  with_test_clock @@ fun sw clock rt ->
+  let slow_completed = ref false in
+  let slow =
+    Effect.thunk "nested.done" (fun () ->
+        slow_completed := true;
+        "slow")
+    |> Effect.delay (Duration.ms 10)
+    |> Effect.uninterruptible
+    |> Effect.uninterruptible
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; Effect.pure "fast" ]) in
+  wait_for_sleepers clock 1;
+  yield ();
+  Alcotest.(check bool) "race waits for nested protected loser" false
+    (Eio.Promise.is_resolved promise);
+  Test_clock.adjust clock (Duration.ms 10);
+  check_exit_ok Alcotest.string "winner preserved" "fast"
+    (Eio.Promise.await promise);
+  Alcotest.(check bool) "nested protected loser completed" true !slow_completed
+
+let test_uninterruptible_blocking_finalizer_delays_race_completion () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = ref false in
+  let protected =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
+           Effect.thunk "release.done" (fun () -> released := true)
+           |> Effect.delay (Duration.ms 1_000))
+      |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) Effect.unit))
+    |> Effect.map (fun () -> "protected")
+    |> Effect.uninterruptible
+  in
+  let promise = fork_run sw rt (Effect.race [ protected; Effect.pure "fast" ]) in
+  wait_for_sleepers clock 1;
+  yield ();
+  Alcotest.(check bool) "race waits for protected body" false
+    (Eio.Promise.is_resolved promise);
+  Test_clock.adjust clock (Duration.ms 10);
+  wait_for_sleepers clock 1;
+  Alcotest.(check bool) "race still waits for protected finalizer" false
+    (Eio.Promise.is_resolved promise);
+  Test_clock.adjust clock (Duration.ms 1_000);
+  check_exit_ok Alcotest.string "winner preserved" "fast"
+    (Eio.Promise.await promise);
+  Alcotest.(check bool) "blocking finalizer completed" true !released
+
+let test_uninterruptible_timeout_inside_protected_still_fires () =
+  with_test_clock @@ fun sw clock rt ->
+  let eff =
+    Effect.delay (Duration.ms 100) Effect.unit
+    |> Effect.timeout (Duration.ms 50)
+    |> Effect.uninterruptible
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 50);
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected typed timeout failure, got %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "Timeout"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected Timeout"
+
+let test_uninterruptible_race_loser_without_checkpoints_returns () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+  in
+  let domain_mgr = Eio.Stdenv.domain_mgr stdenv in
+  let completed = ref false in
+  let loser =
+    Effect.thunk "cpu.loser" (fun () ->
+        let total =
+          Eio.Domain_manager.run domain_mgr (fun () ->
+              let acc = ref 0 in
+              for i = 1 to 200_000 do
+                acc := !acc + i
+              done;
+              !acc)
+        in
+        completed := total > 0;
+        "slow")
+    |> Effect.uninterruptible
+  in
+  let result = Runtime.run rt (Effect.race [ Effect.pure "fast"; loser ]) in
+  check_exit_ok Alcotest.string "winner preserved" "fast" result;
+  Alcotest.(check bool)
+    "loser returned without cancellation checkpoint" true !completed
 
 let test_clock_sleep_without_wall_time () =
   with_test_clock @@ fun sw clock rt ->
@@ -1445,6 +1740,18 @@ let () =
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick
             test_effect_race_all_failures_returns_concurrent_causes;
+          Alcotest.test_case "par simultaneous failures baseline" `Quick
+            test_par_simultaneous_failures_records_concurrent_baseline;
+          Alcotest.test_case "par finalizer cancellation baseline" `Quick
+            test_par_finalizer_failure_during_sibling_cancellation;
+          Alcotest.test_case "all finalizer cancellation baseline" `Quick
+            test_all_finalizer_failure_during_sibling_cancellation_baseline;
+          Alcotest.test_case "for_each_par simultaneous failures baseline" `Quick
+            test_for_each_par_simultaneous_failures_baseline;
+          Alcotest.test_case "for_each_par finalizer cancellation baseline"
+            `Quick test_for_each_par_finalizer_failure_during_sibling_cancellation;
+          Alcotest.test_case "par nested race failures baseline" `Quick
+            test_par_nested_race_all_failures_baseline;
           Alcotest.test_case "repeat schedule" `Quick test_effect_repeat_schedule;
           Alcotest.test_case "repeat schedule uses virtual delays" `Quick
             test_effect_repeat_schedule_uses_virtual_delays;
@@ -1456,6 +1763,14 @@ let () =
             test_effect_retry_does_not_retry_interrupt;
           Alcotest.test_case "uninterruptible defers race cancellation" `Quick
             test_effect_uninterruptible_defers_race_cancellation;
+          Alcotest.test_case "uninterruptible nested masks" `Quick
+            test_uninterruptible_nested_masks_wait_for_protected_loser;
+          Alcotest.test_case "uninterruptible blocking finalizer" `Quick
+            test_uninterruptible_blocking_finalizer_delays_race_completion;
+          Alcotest.test_case "uninterruptible timeout inside protected" `Quick
+            test_uninterruptible_timeout_inside_protected_still_fires;
+          Alcotest.test_case "uninterruptible no-checkpoint loser" `Quick
+            test_uninterruptible_race_loser_without_checkpoints_returns;
         ] );
       ( "Supervisor",
         [

@@ -2,12 +2,12 @@
 id: Effet-3z2
 title: "Tests: uninterruptible edge cases (nested masking, blocking finalizer,
   timeout-inside-protected, race losers without checkpoints)"
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T18:43:31.434Z
 created_by: backlog
-updated_at: 2026-05-19T18:47:53.849Z
+updated_at: 2026-05-20T15:34:27+02:00
 dependencies:
   - issue_id: Effet-3z2
     depends_on_id: Effet-0jv
