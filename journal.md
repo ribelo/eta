@@ -6220,3 +6220,259 @@ the concrete R-channel DX pain:
 - explicit thunk style for exported effects;
 - boundary env object annotations;
 - no service-graph machinery.
+## V-Shf - Stream.from_file public hardening
+
+### Why this entry exists
+
+The first stream hardening pass made `from_file` safe enough not to leak, but it
+kept a whole-file `Eio.Path.load` implementation and explicitly deferred
+incremental chunks. That was acceptable only as a v0 placeholder. A public
+`effet-stream` byte source cannot read the entire file before downstream gets a
+chance to stop.
+
+This entry supersedes V-Shv4.
+
+### Goal
+
+Harden `Stream.from_file` until it is fit for the public stream API: chunked
+reading, bounded memory, descriptor cleanup on normal completion, early
+termination, typed downstream failure, and clear documentation of file I/O
+failure semantics.
+
+### Implementation shape
+
+`Stream.from_file ?chunk_size path` now stores the chunk size in the stream AST.
+When interpreted, it starts one supervised producer fiber. The producer opens the
+file with `Eio.Path.with_open_in`, reads with `Eio.Flow.single_read` into a
+fixed Cstruct buffer, copies each read into a fresh `bytes` chunk, and pushes
+chunks through a bounded internal queue.
+
+Completion is signalled with an `Eio.Promise`, not a queue sentinel. That matters
+because finalization must not block trying to enqueue `Done` when downstream has
+already failed or the supervisor is cancelling the reader. Downstream `take` sets
+a stop flag and cancels the child reader; normal EOF awaits the child so read
+errors still surface through Effet's `Cause.Die` path.
+
+### Evidence
+
+Focused command:
+
+~~~sh
+nix develop -c dune runtest packages/effet-stream --force
+~~~
+
+Result:
+
+~~~text
+11 tests run, all OK
+~~~
+
+New file-specific tests:
+
+- `from_file emits bounded chunks`: a 7-byte file with `chunk_size:3` emits
+  `["abc"; "def"; "g"]`.
+- `take from_file closes`: a 1 MiB file read with `chunk_size:4096` and
+  `take 1` returns exactly one 4096-byte chunk and does not increase fd count.
+  The previous `Path.load` implementation would have returned the whole 1 MiB
+  file as the first chunk.
+- `from_file rejects invalid chunk size`: `chunk_size <= 0` is rejected at
+  construction with `Invalid_argument`.
+- `from_file missing path dies`: Eio file exceptions enter the unchecked
+  `Cause.Die` channel rather than inventing a stream-specific typed error.
+- `from_file take zero is lazy`: `take 0 (from_file missing_path)` succeeds
+  without opening the file.
+- `from_file downstream failure closes`: a typed failure in the downstream
+  consumer returns the typed failure, completes within the timeout, and does not
+  leak descriptors.
+
+### Decision diary
+
+#### V-Shfv1 - from_file is chunked now
+
+Decision: `from_file` is no longer a whole-file source. It emits bounded
+`bytes` chunks with a default 64 KiB chunk size and an explicit `?chunk_size`
+parameter.
+
+Rationale: the old placeholder violated stream backpressure. The bounded-chunk
+test and the 1 MiB `take 1` test prove the consumer can observe a prefix without
+forcing a full file load.
+
+#### V-Shfv2 - one supervised producer owns the file descriptor
+
+Decision: the file descriptor lives inside one supervised reader child. The
+consumer owns cancellation by setting a stop flag and cancelling that child when
+downstream stops early.
+
+Rationale: this keeps the implementation aligned with Effet's structured
+concurrency rule. No background file reader exists outside a supervisor scope,
+and `with_open_in` closes the file on EOF, exceptions, or cancellation.
+
+#### V-Shfv3 - completion is a promise, not a queue sentinel
+
+Decision: `from_file` uses a bounded queue only for chunks and an `Eio.Promise`
+for producer completion.
+
+Rationale: a queue sentinel makes finalization potentially blocking if the
+consumer has already failed and stopped draining. A promise gives a nonblocking
+completion signal while still allowing the consumer to drain any chunk already
+queued before EOF.
+
+#### V-Shfv4 - file I/O exceptions remain defects
+
+Decision: `from_file` does not add a stream-specific file error row. Missing
+files and other Eio I/O exceptions currently surface as `Cause.Die`.
+
+Rationale: Effet's typed error channel is application-owned. A public file
+source that guesses a portable typed I/O error algebra would be more API than
+the stream package has earned. Callers that need typed file errors can check or
+open at their own boundary and map that effect into their error row.
+
+#### V-Shfv5 - take 0 is lazy
+
+Decision: `take 0` does not interpret its source, so `take 0 (from_file path)`
+does not open `path`.
+
+Rationale: this preserves pull semantics and matters for resource safety. The
+missing-path fixture verifies it.
+
+### Artifacts
+
+- packages/effet-stream/effet_stream.ml
+- packages/effet-stream/effet_stream.mli
+- packages/effet-stream/README.md
+- packages/effet-stream/test/test_effet_stream.ml
+- dune-project
+- effet-stream.opam
+
+## V-Shfe - Stream.from_file typed file errors
+
+### Why this entry exists
+
+V-Shfv4 kept file I/O failures as `Cause.Die` defects. That was a placeholder,
+not a final API. Eio's own exception docs say `Eio.Io` is used for interaction
+with the outside world and "does not generally indicate a bug in the program".
+That makes defect-only file errors the wrong default for a typed-effect stream
+source.
+
+This entry supersedes V-Shfv4.
+
+### Goal
+
+Find the final public `Stream.from_file` error API and implement it.
+
+### Lab
+
+Created `scratch/from_file_research/`.
+
+Candidates:
+
+- F-A typed default: `from_file` fails with
+  `` `File_error of file_error``.
+- F-B mapper-only: caller supplies `file_error -> 'err`.
+- F-C unsafe/exn: file I/O exceptions stay defects.
+- F-D pre-opened flow: caller supplies an already-open Eio flow.
+
+Command:
+
+~~~sh
+nix develop -c dune exec scratch/from_file_research/runtime_smoke.exe
+~~~
+
+Result:
+
+~~~text
+from_file_research runtime smoke passed
+~~~
+
+Evidence:
+
+- F-A exposes missing file as a typed `File_error` with `kind = `Not_found` and
+  `operation = `Open`, and recovery can be written directly.
+- F-B maps the same public `file_error` into an application error variant.
+- F-C raises raw `Eio.Io`; typed recovery is impossible at the stream boundary.
+- F-D is useful future interop, but it cannot own open errors because the file
+  is already open before the stream exists.
+
+### Decision diary
+
+#### V-Shfe1 - File I/O failures are typed failures, not defects
+
+Decision: `Stream.from_file` now returns
+`('env, [> `File_error of Stream.file_error ], bytes) Stream.t`.
+
+Rationale: file not found, permission denied, and read errors are expected
+environmental failures. They belong in Effet's typed error channel. Defects are
+reserved for bugs and unexpected exceptions.
+
+#### V-Shfe2 - Keep a public file_error record
+
+Decision: expose `Stream.file_error` with `operation`, `path`, `kind`, `message`,
+and `cause`.
+
+Rationale: callers need stable matching for common branches such as
+`Not_found`, while diagnostics still need the original Eio exception and
+formatted message. The coarse `kind` avoids forcing user code to pattern-match
+directly on backend-specific Eio exception details.
+
+#### V-Shfe3 - Provide an explicit mapper
+
+Decision: add `Stream.from_file_map_error`.
+
+Rationale: typed default is best for quick use, but real applications often
+want their own error algebra. A mapper avoids making every application expose
+Effet Stream's public variant in its top-level error type.
+
+#### V-Shfe4 - Do not ship unsafe as the default
+
+Decision: no defect-only `from_file` remains as the public default.
+
+Rationale: the lab's unsafe candidate only makes sense when a caller explicitly
+wants exceptions. Effet should not make ordinary I/O failures unrecoverable by
+default.
+
+#### V-Shfe5 - Pre-opened flow is separate future interop
+
+Decision: do not fold the pre-opened-flow candidate into this change.
+
+Rationale: it has a different ownership contract. It may be useful for byte-flow
+interop, but it cannot solve `from_file` open errors and should not complicate
+the file source API.
+
+### Implementation
+
+Implemented:
+
+- `Stream.file_operation`
+- `Stream.file_error_kind`
+- `Stream.file_error`
+- `Stream.pp_file_error`
+- typed default `Stream.from_file`
+- custom mapper `Stream.from_file_map_error`
+
+Runtime behavior:
+
+- open/read/close Eio errors become typed file errors;
+- cancellation still propagates as interruption;
+- downstream typed failures are not wrapped;
+- `take 0` remains lazy;
+- early `take` still cancels the supervised reader and closes the descriptor.
+
+### Verification
+
+Focused command:
+
+~~~sh
+nix develop -c dune runtest packages/effet-stream --force
+~~~
+
+Result:
+
+~~~text
+13 tests run, all OK
+~~~
+
+New typed-error tests:
+
+- `from_file missing path fails typed`
+- `from_file error is recoverable`
+- `from_file maps file error`

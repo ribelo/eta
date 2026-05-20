@@ -25,6 +25,7 @@
   (ocaml (>= 5.1))
   (dune (>= 3.0))
   (effet (= :version))
+  (cstruct (>= 6.0.0))
   (eio (>= 1.0))
   (eio_main (>= 1.0))
   (alcotest :with-test)))
