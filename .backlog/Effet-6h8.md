@@ -1,12 +1,17 @@
 ---
 id: Effet-6h8
 title: issue carries no schema identity / source discriminator
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T21:08:32.532Z
 created_by: backlog
-updated_at: 2026-05-19T21:12:42.952Z
+updated_at: 2026-05-20T19:32:00.501Z
+closed_at: 2026-05-20T19:32:00.501Z
+close_reason: Fixed. issue extended with structured kind
+  (Type_mismatch/Missing_field/Custom/Refinement_failed) and optional
+  schema_name. render_issue includes schema name when present. Programmatic
+  dispatch on kind without string parsing.
 dependencies:
   - issue_id: Effet-6h8
     depends_on_id: Effet-tkw
@@ -66,3 +71,12 @@ Coupled with Effet-a13 (path_segment) — they touch the same record. Either lan
 ## acceptance criteria
 
 issue carries a structured kind field plus optional schema_name. render_issue produces a human-readable message that includes the schema name when present. A test verifies that decoding through Schema.user vs Schema.admin produces issues distinguishable by schema_name. Programmatic code can pattern-match on kind without parsing strings. Existing tests are updated. nix develop -c dune runtest --force passes.
+
+## resolution
+
+issue now carries schema_name : string option and structured issue_kind instead
+of a flat message. Built-in mismatches and missing fields use structured kinds,
+while issue text remains the custom issue helper. Named schemas stamp issues
+when no more specific source exists. Tests verify that the same JSON decoded
+through user and admin schemas produces distinguishable schema_name values and
+pattern-matchable Type_mismatch data.

@@ -8268,3 +8268,72 @@ Full `nix develop -c dune build` remains blocked by pre-existing scratch
 experiments that still reference removed `Effect.sync` and `[%effet.sync]`
 surfaces. The new scratch research directories added here contain README files
 only and do not add new Dune targets.
+
+## V-Schema-P3 - Adapter consumer and issue source identity
+
+### Scope
+
+Backlog items covered:
+
+- Effet-67v: wire JSON_ADAPTER to a real consumer or remove it.
+- Effet-6h8: add schema identity and source discrimination to issues.
+
+### Findings
+
+JSON_ADAPTER was only a module type. Keeping it was justified only if the core
+package consumed it directly; adding a concrete Yojson package would force a
+JSON dependency decision that the package has deliberately avoided.
+
+Issue still had a flat human message after the path-segment cleanup. That made
+schema-source classification and kind-based handling impossible without parsing
+text.
+
+### Decisions
+
+| Item | Decision | Rationale |
+|---|---|---|
+| Effet-67v | Keep JSON_ADAPTER and add Make (A : JSON_ADAPTER). | The abstraction now has a real decode/encode consumer without forcing Yojson into the core package. |
+| Effet-6h8 | Replace issue.message with schema_name and issue_kind. | Programmatic consumers can classify errors by source and kind without regexing rendered text. |
+
+### Implementation notes
+
+- issue_kind now distinguishes Type_mismatch, Missing_field, Custom, and
+  Refinement_failed.
+- issue "text" remains as the custom issue constructor for user predicates and
+  policy failures.
+- Named schemas stamp issues with schema_name when there is no more specific
+  source. This covers records, enums, tagged unions, refinements, and
+  transforms.
+- render_issue includes the schema name when present, but callers should use
+  issue.kind for structured handling.
+- Make exposes decode_result, decode, encode_result, and encode over an
+  adapter's external JSON type. Adapter conversion failures surface as typed
+  decode issues.
+
+### Verification
+
+Focused tests added:
+
+- schema source discrimination: decoding the same shape through user and admin
+  record schemas yields distinguishable schema_name values.
+- adapter consumer: a test adapter is wired through Make and round-trips a
+  request-user fixture, including adapter-originated decode failure.
+
+Commands run so far:
+
+~~~sh
+nix develop -c dune build packages/effet-schema packages/effet-schema/test
+nix develop -c dune runtest packages/effet-schema --force
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet-schema packages/effet-schema/test
+nix develop -c dune build packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet packages/effet/test packages/effet-otel/test packages/effet-schema/test packages/effet-stream/test packages/ppx_effet/test
+nix develop -c dune runtest packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet --force
+~~~
+
+Result: focused schema build/test passed, strict-formats schema build passed,
+the shipped package build passed, and shipped package tests passed:
+effet-schema, 3 ppx_effet tests, 105 effet tests, 20 effet-otel tests, and
+13 effet-stream tests.
+
+Full nix develop -c dune build remains blocked by pre-existing scratch
+experiments that still reference removed Effect.sync and [%effet.sync]
+surfaces.

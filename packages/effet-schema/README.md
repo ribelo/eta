@@ -88,6 +88,42 @@ Effet_schema.issue_to_json_pointer issue
 to the JSON Pointer `/users/0/id`. A numeric object key remains a field, so it
 renders as `users.0.id`.
 
+Issues also carry structured kind and source fields:
+
+```ocaml
+type issue_kind =
+  | Type_mismatch of { expected : string; got : string }
+  | Missing_field of string
+  | Custom of string
+  | Refinement_failed of { name : string; reason : string }
+
+type issue = {
+  path : path_segment list;
+  schema_name : string option;
+  kind : issue_kind;
+}
+```
+
+Named schemas such as records, enums, tagged unions, refinements, and
+transforms stamp issues with `schema_name` when the lower-level issue has no
+more specific source. Use `render_issue` for text and pattern-match on `kind`
+for programmatic handling.
+
+Concrete JSON libraries plug in through `JSON_ADAPTER` and `Make`:
+
+```ocaml
+module Codec = Effet_schema.Make (My_json_adapter)
+
+let decode_user external_json =
+  Codec.decode User.schema external_json
+
+let encode_user user =
+  Codec.encode User.schema user
+```
+
+The core package does not depend on Yojson or Ezjsonm. Adapters live at the
+boundary where an application chooses its JSON library.
+
 Limits:
 
 - This package no longer exposes placeholder `Schema.samples`.

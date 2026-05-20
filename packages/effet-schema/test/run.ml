@@ -524,6 +524,12 @@ let check_bool name value = if not value then failwith name
 let check_int name expected actual = if expected <> actual then failwith name
 let check_string name expected actual = if not (String.equal expected actual) then failwith name
 
+let check_option_string name expected actual =
+  match (expected, actual) with
+  | None, None -> ()
+  | Some expected, Some actual when String.equal expected actual -> ()
+  | _ -> failwith name
+
 let test_config_roundtrip () =
   let decoded = decode_ok config sample_config_json in
   check_bool "retry transform" (decoded.retry_after_ms = 500);
@@ -598,14 +604,48 @@ let test_issue_paths_distinguish_fields_and_indexes () =
     | Some issue -> issue
     | None -> failwith "expected nested user id issue"
   in
-  check_string "rendered path" "Expected user_id at users[0].id"
+  check_string "rendered path" "user_id: Expected user_id at users[0].id"
     (render_issue user_id_issue);
+  check_option_string "source schema" (Some "user_id") user_id_issue.schema_name;
+  (match user_id_issue.kind with
+  | Custom message -> check_string "custom issue" "Expected user_id" message
+  | _ -> failwith "expected custom issue");
   check_string "json pointer" "/users/0/id" (issue_to_json_pointer user_id_issue);
   let numeric_key_issue =
     issue ~path:[ Field "users"; Field "0"; Field "id" ] "field key"
   in
   check_string "numeric field path" "field key at users.0.id"
     (render_issue numeric_key_issue)
+
+type named_name = { name : string }
+
+let named_name_equal a b = String.equal a.name b.name
+
+let named_schema schema_name =
+  Schema.record1 ~name:schema_name
+    (fun name -> { name })
+    (Schema.required "name" Schema.string (fun value -> value.name))
+    ~equal:named_name_equal ()
+
+let test_issue_source_discriminator () =
+  let json = Json.object_ [ ("name", Json.int 42) ] in
+  let user_issues =
+    run_effect (Schema.decode (named_schema "user") json) |> expect_decode_error "user"
+  in
+  let admin_issues =
+    run_effect (Schema.decode (named_schema "admin") json) |> expect_decode_error "admin"
+  in
+  let user_issue = List.hd user_issues in
+  let admin_issue = List.hd admin_issues in
+  check_option_string "user source" (Some "user") user_issue.schema_name;
+  check_option_string "admin source" (Some "admin") admin_issue.schema_name;
+  (match user_issue.kind with
+  | Type_mismatch { expected; got } ->
+      check_string "expected string" "string" expected;
+      check_string "got int" "42" got
+  | _ -> failwith "expected type mismatch");
+  check_string "source render" "user: Expected string, got 42 at name"
+    (render_issue user_issue)
 
 let test_json_number_rendering () =
   check_string "integer float has no trailing dot" "1" (Json.to_string (Json.number 1.));
@@ -629,6 +669,65 @@ let request_user_schema =
     (Schema.required "id" User_id.schema (fun u -> u.request_id))
     ~equal:request_user_equal ()
 
+type external_json =
+  | XNull
+  | XBool of bool
+  | XInt of int
+  | XIntlit of string
+  | XFloat of float
+  | XString of string
+  | XArray of external_json list
+  | XObject of (string * external_json) list
+  | XBad of string
+
+module Test_adapter = struct
+  type nonrec external_json = external_json
+
+  let rec of_external = function
+    | XNull -> Ok Json.Null
+    | XBool value -> Ok (Json.bool value)
+    | XInt value -> Ok (Json.int value)
+    | XIntlit value -> Ok (Json.intlit value)
+    | XFloat value -> Ok (Json.number value)
+    | XString value -> Ok (Json.string value)
+    | XArray values ->
+        values
+        |> List.fold_left
+             (fun acc value ->
+               match (acc, of_external value) with
+               | Ok values, Ok json -> Ok (json :: values)
+               | Error issues, Ok _ -> Error issues
+               | Ok _, Error issues -> Error issues
+               | Error a, Error b -> Error (a @ b))
+             (Ok [])
+        |> Result.map (fun values -> Json.Array (List.rev values))
+    | XObject fields ->
+        fields
+        |> List.fold_left
+             (fun acc (key, value) ->
+               match (acc, of_external value) with
+               | Ok fields, Ok json -> Ok ((key, json) :: fields)
+               | Error issues, Ok _ -> Error issues
+               | Ok _, Error issues -> Error issues
+               | Error a, Error b -> Error (a @ b))
+             (Ok [])
+        |> Result.map (fun fields -> Json.Object (List.rev fields))
+    | XBad message -> Error [ issue ~schema_name:"test-adapter" message ]
+
+  let rec to_external = function
+    | Json.Null -> XNull
+    | Json.Bool value -> XBool value
+    | Json.Number (Json.Int value) -> XInt value
+    | Json.Number (Json.Intlit value) -> XIntlit value
+    | Json.Number (Json.Float value) -> XFloat value
+    | Json.String value -> XString value
+    | Json.Array values -> XArray (List.map to_external values)
+    | Json.Object fields ->
+        XObject (List.map (fun (key, value) -> (key, to_external value)) fields)
+end
+
+module Test_codec = Make (Test_adapter)
+
 let test_decode_with_policy_enriches_type () =
   let policy request =
     let open Effet in
@@ -643,6 +742,30 @@ let test_decode_with_policy_enriches_type () =
     |> expect_ok "policy enriched"
   in
   check_string "enriched name" "Ada" enriched.canonical_name
+
+let test_json_adapter_make_functor () =
+  let external_json = XObject [ ("id", XString "usr_999") ] in
+  let decoded =
+    run_effect (Test_codec.decode request_user_schema external_json)
+    |> expect_ok "adapter decode"
+  in
+  check_string "adapter decoded" "usr_999" (User_id.value decoded.request_id);
+  let encoded =
+    run_effect (Test_codec.encode request_user_schema decoded)
+    |> expect_ok "adapter encode"
+  in
+  (match encoded with
+  | XObject [ ("id", XString "usr_999") ] -> ()
+  | _ -> failwith "unexpected adapter encode");
+  let issues =
+    run_effect (Test_codec.decode request_user_schema (XBad "bad external json"))
+    |> expect_decode_error "adapter decode failure"
+  in
+  let issue = List.hd issues in
+  check_option_string "adapter source" (Some "test-adapter") issue.schema_name;
+  (match issue.kind with
+  | Custom message -> check_string "adapter issue" "bad external json" message
+  | _ -> failwith "expected adapter custom issue")
 
 let test_encode_failures_are_typed () =
   let one = Schema.enum ~name:"one" [ ("one", 1) ] ~equal:Int.equal in
@@ -683,8 +806,10 @@ let () =
   test_policy_env_row ();
   test_cause_integration ();
   test_issue_paths_distinguish_fields_and_indexes ();
+  test_issue_source_discriminator ();
   test_json_number_rendering ();
   test_decode_with_policy_enriches_type ();
+  test_json_adapter_make_functor ();
   test_encode_failures_are_typed ();
   test_lazy_schema_memoizes_thunk ();
   print_endline "effet-schema tests passed"

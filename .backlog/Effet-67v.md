@@ -1,12 +1,15 @@
 ---
 id: Effet-67v
 title: Wire JSON_ADAPTER to a real consumer (Make functor) or remove it
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T21:00:15.221Z
 created_by: backlog
-updated_at: 2026-05-19T21:11:20.382Z
+updated_at: 2026-05-20T19:32:00.501Z
+closed_at: 2026-05-20T19:32:00.501Z
+close_reason: Fixed. JSON_ADAPTER now has a real Make functor consumer without
+  forcing a concrete JSON dependency into the core package.
 dependencies:
   - issue_id: Effet-67v
     depends_on_id: Effet-tkw
@@ -59,3 +62,11 @@ Pick A if any concrete user has asked for adapter-based plug-in, or if shipping 
 ## acceptance criteria
 
 Either (A) packages/effet-schema-yojson/ exists with an Adapter satisfying JSON_ADAPTER, plus a Make functor in core that uses it; an integration test round-trips a fixture through the adapter. Or (B) module type JSON_ADAPTER is removed from effet_schema.mli. The package no longer ships an unused interface.
+
+## resolution
+
+Kept JSON_ADAPTER and added Make (A : JSON_ADAPTER) with decode_result,
+decode, encode_result, and encode. The core package now has a real adapter
+consumer without taking a Yojson dependency. Tests wire a fixture adapter
+through Make, round-trip a request-user value, and verify an adapter-originated
+decode issue.

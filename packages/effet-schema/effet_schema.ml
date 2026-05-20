@@ -119,17 +119,60 @@ type path_segment =
   | Field of string
   | Index of int
 
+type issue_kind =
+  | Type_mismatch of {
+      expected : string;
+      got : string;
+    }
+  | Missing_field of string
+  | Custom of string
+  | Refinement_failed of {
+      name : string;
+      reason : string;
+    }
+
 type issue = {
   path : path_segment list;
-  message : string;
+  schema_name : string option;
+  kind : issue_kind;
 }
 
 type error = [ `Decode of issue list | `Encode of issue list ]
 
-let issue ?(path = []) message = { path; message }
+let issue ?(path = []) ?schema_name message =
+  { path; schema_name; kind = Custom message }
+
+let type_mismatch ?(path = []) ?schema_name ~expected ~got () =
+  { path; schema_name; kind = Type_mismatch { expected; got } }
+
+let missing_field ?(path = []) ?schema_name name =
+  { path; schema_name; kind = Missing_field name }
+
 let at segment issues = List.map (fun i -> { i with path = segment :: i.path }) issues
 let at_field name issues = at (Field name) issues
 let at_index index issues = at (Index index) issues
+
+let with_schema_name name issues =
+  List.map
+    (fun issue ->
+      match issue.schema_name with
+      | Some _ -> issue
+      | None -> { issue with schema_name = Some name })
+    issues
+
+let with_refinement_name name issues =
+  List.map
+    (fun issue ->
+      match (issue.schema_name, issue.kind) with
+      | None, Custom reason ->
+          {
+            issue with
+            schema_name = Some name;
+            kind = Refinement_failed { name; reason };
+          }
+      | Some _, _ -> issue
+      | None, _ -> { issue with schema_name = Some name })
+    issues
 
 let render_path path =
   let segment first = function
@@ -142,9 +185,21 @@ let render_path path =
       segment true first ^ String.concat "" (List.map (segment false) rest)
 
 let render_issue issue =
+  let message =
+    match issue.kind with
+    | Type_mismatch { expected; got } -> "Expected " ^ expected ^ ", got " ^ got
+    | Missing_field _ -> "Missing key"
+    | Custom message -> message
+    | Refinement_failed { reason; _ } -> reason
+  in
+  let message =
+    match issue.schema_name with
+    | None -> message
+    | Some schema_name -> schema_name ^ ": " ^ message
+  in
   match issue.path with
-  | [] -> issue.message
-  | path -> issue.message ^ " at " ^ render_path path
+  | [] -> message
+  | path -> message ^ " at " ^ render_path path
 
 let render_issues issues = String.concat "; " (List.map render_issue issues)
 
@@ -217,7 +272,8 @@ module Schema = struct
       decode =
         (function
         | Json.String s -> Ok s
-        | json -> Error [ issue ("Expected string, got " ^ Json.to_string json) ]);
+        | json ->
+            Error [ type_mismatch ~expected:"string" ~got:(Json.to_string json) () ]);
       encode = (fun s -> Ok (Json.String s));
       equal = String.equal;
     }
@@ -227,7 +283,8 @@ module Schema = struct
       decode =
         (function
         | Json.Bool b -> Ok b
-        | json -> Error [ issue ("Expected boolean, got " ^ Json.to_string json) ]);
+        | json ->
+            Error [ type_mismatch ~expected:"boolean" ~got:(Json.to_string json) () ]);
       encode = (fun b -> Ok (Json.Bool b));
       equal = Bool.equal;
     }
@@ -240,8 +297,9 @@ module Schema = struct
             match int_of_number n with
             | Some value -> Ok value
             | None ->
-                Error [ issue ("Expected int, got " ^ Json.to_string (Json.Number n)) ])
-        | json -> Error [ issue ("Expected int, got " ^ Json.to_string json) ]);
+                Error
+                  [ type_mismatch ~expected:"int" ~got:(Json.to_string (Json.Number n)) () ])
+        | json -> Error [ type_mismatch ~expected:"int" ~got:(Json.to_string json) () ]);
       encode = (fun n -> Ok (Json.int n));
       equal = Int.equal;
     }
@@ -254,8 +312,10 @@ module Schema = struct
             match float_of_number n with
             | Some value -> Ok value
             | None ->
-                Error [ issue ("Expected number, got " ^ Json.to_string (Json.Number n)) ])
-        | json -> Error [ issue ("Expected number, got " ^ Json.to_string json) ]);
+                Error
+                  [ type_mismatch ~expected:"number" ~got:(Json.to_string (Json.Number n)) () ])
+        | json ->
+            Error [ type_mismatch ~expected:"number" ~got:(Json.to_string json) () ]);
       encode = (fun n -> Ok (Json.number n));
       equal = Float.equal;
     }
@@ -276,7 +336,7 @@ module Schema = struct
                       rest)
           in
           loop 0 [] [] xs
-      | json -> Error [ issue ("Expected array, got " ^ Json.to_string json) ]
+      | json -> Error [ type_mismatch ~expected:"array" ~got:(Json.to_string json) () ]
     in
     {
       decode;
@@ -316,13 +376,19 @@ module Schema = struct
       | Json.String s -> (
           match List.find_opt (fun (label, _) -> String.equal label s) cases with
           | Some (_, value) -> Ok value
-          | None -> Error [ issue ("Expected " ^ name ^ ", got " ^ Json.to_string (Json.String s)) ])
-      | json -> Error [ issue ("Expected " ^ name ^ ", got " ^ Json.to_string json) ]
+          | None ->
+              Error
+                [
+                  type_mismatch ~schema_name:name ~expected:name
+                    ~got:(Json.to_string (Json.String s)) ();
+                ])
+      | json ->
+          Error [ type_mismatch ~schema_name:name ~expected:name ~got:(Json.to_string json) () ]
     in
     let encode value =
       match List.find_opt (fun (_, candidate) -> equal value candidate) cases with
       | Some (label, _) -> Ok (Json.String label)
-      | None -> Error [ issue ("Cannot encode " ^ name) ]
+      | None -> Error [ issue ~schema_name:name ("Cannot encode " ^ name) ]
     in
     {
       decode;
@@ -343,23 +409,26 @@ module Schema = struct
       match Json.find tag json with
       | Some (Json.String tag_value) -> (
           match List.find_opt (fun case -> String.equal case.tag_value tag_value) cases with
-          | Some case -> case.decode_case json
-          | None -> Error [ issue ~path:[ Field tag ] ("Unknown tag " ^ tag_value) ])
+          | Some case -> Result.map_error (with_schema_name name) (case.decode_case json)
+          | None -> Error [ issue ~path:[ Field tag ] ~schema_name:name ("Unknown tag " ^ tag_value) ])
       | Some json ->
           Error
-            [ issue ~path:[ Field tag ] ("Expected string tag, got " ^ Json.to_string json) ]
-      | None -> Error [ issue ~path:[ Field tag ] "Missing tag" ]
+            [
+              type_mismatch ~path:[ Field tag ] ~schema_name:name ~expected:"string tag"
+                ~got:(Json.to_string json) ();
+            ]
+      | None -> Error [ missing_field ~path:[ Field tag ] ~schema_name:name tag ]
     in
     let encode value =
       let rec loop = function
-        | [] -> Error [ issue ("Cannot encode " ^ name) ]
+        | [] -> Error [ issue ~schema_name:name ("Cannot encode " ^ name) ]
         | case :: rest -> (
             match case.encode_case value with
             | Ok None -> loop rest
             | Ok (Some (Json.Object fields)) ->
                 Ok (Json.Object ((tag, Json.String case.tag_value) :: fields))
             | Ok (Some json) -> Ok json
-            | Error issues -> Error issues)
+            | Error issues -> Error (with_schema_name name issues))
       in
       loop cases
     in
@@ -401,7 +470,7 @@ module Schema = struct
     match field with
     | Required f -> (
         match Json.find f.name json with
-        | None -> Error [ issue ~path:[ Field f.name ] "Missing key" ]
+        | None -> Error [ missing_field ~path:[ Field f.name ] f.name ]
         | Some value -> Result.map_error (at_field f.name) (f.schema.decode value))
     | Optional f -> (
         match Json.find f.name json with
@@ -433,9 +502,11 @@ module Schema = struct
         | Json.Object _ as json -> (
             match decode_field json f1 with
             | Ok a -> Ok (make a)
-            | Error issues -> Error issues)
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
-      encode = encode_object [ Any_field f1 ];
+            | Error issues -> Error (with_schema_name name issues))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
+      encode = (fun record -> Result.map_error (with_schema_name name) (encode_object [ Any_field f1 ] record));
       equal;
     }
 
@@ -446,9 +517,14 @@ module Schema = struct
         | Json.Object _ as json -> (
             match (decode_field json f1, decode_field json f2) with
             | Ok a, Ok b -> Ok (make a b)
-            | a, b -> Error (collect a @ collect b))
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
-      encode = encode_object [ Any_field f1; Any_field f2 ];
+            | a, b -> Error (with_schema_name name (collect a @ collect b)))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
+      encode =
+        (fun record ->
+          Result.map_error (with_schema_name name)
+            (encode_object [ Any_field f1; Any_field f2 ] record));
       equal;
     }
 
@@ -459,9 +535,14 @@ module Schema = struct
         | Json.Object _ as json -> (
             match (decode_field json f1, decode_field json f2, decode_field json f3) with
             | Ok a, Ok b, Ok c -> Ok (make a b c)
-            | a, b, c -> Error (collect a @ collect b @ collect c))
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
-      encode = encode_object [ Any_field f1; Any_field f2; Any_field f3 ];
+            | a, b, c -> Error (with_schema_name name (collect a @ collect b @ collect c)))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
+      encode =
+        (fun record ->
+          Result.map_error (with_schema_name name)
+            (encode_object [ Any_field f1; Any_field f2; Any_field f3 ] record));
       equal;
     }
 
@@ -477,10 +558,15 @@ module Schema = struct
                 decode_field json f4 )
             with
             | Ok a, Ok b, Ok c, Ok d -> Ok (make a b c d)
-            | a, b, c, d -> Error (collect a @ collect b @ collect c @ collect d))
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
+            | a, b, c, d ->
+                Error (with_schema_name name (collect a @ collect b @ collect c @ collect d)))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
       encode =
-        encode_object [ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ];
+        (fun record ->
+          Result.map_error (with_schema_name name)
+            (encode_object [ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ] record));
       equal;
     }
 
@@ -497,11 +583,18 @@ module Schema = struct
                 decode_field json f5 )
             with
             | Ok a, Ok b, Ok c, Ok d, Ok e -> Ok (make a b c d e)
-            | a, b, c, d, e -> Error (collect a @ collect b @ collect c @ collect d @ collect e))
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
+            | a, b, c, d, e ->
+                Error
+                  (with_schema_name name (collect a @ collect b @ collect c @ collect d @ collect e)))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
       encode =
-        encode_object
-          [ Any_field f1; Any_field f2; Any_field f3; Any_field f4; Any_field f5 ];
+        (fun record ->
+          Result.map_error (with_schema_name name)
+            (encode_object
+               [ Any_field f1; Any_field f2; Any_field f3; Any_field f4; Any_field f5 ]
+               record));
       equal;
     }
 
@@ -520,18 +613,25 @@ module Schema = struct
             with
             | Ok a, Ok b, Ok c, Ok d, Ok e, Ok f -> Ok (make a b c d e f)
             | a, b, c, d, e, f ->
-                Error (collect a @ collect b @ collect c @ collect d @ collect e @ collect f))
-        | json -> Error [ issue ("Expected object " ^ name ^ ", got " ^ Json.to_string json) ]);
+                Error
+                  (with_schema_name name
+                     (collect a @ collect b @ collect c @ collect d @ collect e @ collect f)))
+        | json ->
+            Error
+              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
       encode =
-        encode_object
-          [
-            Any_field f1;
-            Any_field f2;
-            Any_field f3;
-            Any_field f4;
-            Any_field f5;
-            Any_field f6;
-          ];
+        (fun record ->
+          Result.map_error (with_schema_name name)
+            (encode_object
+               [
+                 Any_field f1;
+                 Any_field f2;
+                 Any_field f3;
+                 Any_field f4;
+                 Any_field f5;
+                 Any_field f6;
+               ]
+               record));
       equal;
     }
 
@@ -541,9 +641,11 @@ module Schema = struct
       decode =
         (fun json ->
           match schema.decode json with
-          | Error issues -> Error issues
+          | Error issues -> Error (with_schema_name name issues)
           | Ok value -> (
-              match check value with [] -> Ok value | issues -> Error issues));
+              match check value with
+              | [] -> Ok value
+              | issues -> Error (with_refinement_name name issues)));
     }
 
   let transform ~name ~equal ~decode ~encode schema =
@@ -551,9 +653,9 @@ module Schema = struct
       decode =
         (fun json ->
           match schema.decode json with
-          | Ok value -> decode value
-          | Error issues -> Error issues);
-      encode = (fun value -> schema.encode (encode value));
+          | Ok value -> Result.map_error (with_schema_name name) (decode value)
+          | Error issues -> Error (with_schema_name name issues));
+      encode = (fun value -> Result.map_error (with_schema_name name) (schema.encode (encode value)));
       equal;
     }
 
@@ -592,4 +694,24 @@ module type JSON_ADAPTER = sig
 
   val of_external : external_json -> (json, issue list) result
   val to_external : json -> external_json
+end
+
+module Make (A : JSON_ADAPTER) = struct
+  let decode_result schema external_json =
+    match A.of_external external_json with
+    | Ok json -> Schema.decode_result schema json
+    | Error issues -> Error issues
+
+  let decode schema external_json =
+    match decode_result schema external_json with
+    | Ok value -> Effet.Effect.pure value
+    | Error issues -> Effet.Effect.fail (`Decode issues)
+
+  let encode_result schema value =
+    Result.map A.to_external (Schema.encode_result schema value)
+
+  let encode schema value =
+    match encode_result schema value with
+    | Ok external_json -> Effet.Effect.pure external_json
+    | Error issues -> Effet.Effect.fail (`Encode issues)
 end

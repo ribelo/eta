@@ -43,17 +43,42 @@ type path_segment =
   | Field of string
   | Index of int
 
+type issue_kind =
+  | Type_mismatch of {
+      expected : string;
+      got : string;
+    }
+  | Missing_field of string
+  | Custom of string
+  | Refinement_failed of {
+      name : string;
+      reason : string;
+    }
+
 type issue = {
   path : path_segment list;
-  message : string;
+  schema_name : string option;
+  kind : issue_kind;
 }
-(** A structured decode or validation problem. [path] is ordered from the
-    outermost field/index to the innermost field/index. *)
+(** A structured decode or validation problem.
+
+    [path] is ordered from the outermost field/index to the innermost
+    field/index. [schema_name] identifies the schema surface that produced the
+    issue when the schema is named. [kind] is intended for programmatic
+    classification; use {!render_issue} only for human-readable text. *)
 
 type error = [ `Decode of issue list | `Encode of issue list ]
 (** Typed Effet error emitted by schema codecs. *)
 
-val issue : ?path:path_segment list -> string -> issue
+val issue : ?path:path_segment list -> ?schema_name:string -> string -> issue
+val type_mismatch :
+  ?path:path_segment list ->
+  ?schema_name:string ->
+  expected:string ->
+  got:string ->
+  unit ->
+  issue
+val missing_field : ?path:path_segment list -> ?schema_name:string -> string -> issue
 val at : path_segment -> issue list -> issue list
 val at_field : string -> issue list -> issue list
 val at_index : int -> issue list -> issue list
@@ -218,3 +243,20 @@ module type JSON_ADAPTER = sig
 end
 (** Adapter contract for concrete JSON libraries such as Yojson or Ezjsonm.
     The core package intentionally does not force one JSON dependency. *)
+
+module Make (A : JSON_ADAPTER) : sig
+  val decode_result : 'a Schema.t -> A.external_json -> ('a, issue list) result
+
+  val decode :
+    'a Schema.t ->
+    A.external_json ->
+    ('env, [> `Decode of issue list ] as 'err, 'a) Effet.Effect.t
+
+  val encode_result : 'a Schema.t -> 'a -> (A.external_json, issue list) result
+
+  val encode :
+    'a Schema.t ->
+    'a ->
+    ('env, [> `Encode of issue list ] as 'err, A.external_json) Effet.Effect.t
+end
+(** Bind schemas to a concrete JSON representation through a {!JSON_ADAPTER}. *)
