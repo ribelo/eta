@@ -4984,3 +4984,1239 @@ This closes the V-RPv5 recommendation: mid-tree dependency substitution is ordin
 OCaml parameter passing, not a public Effet runtime primitive. If a future use case wants
 dynamic env replacement, it needs a new lab fixture that ordinary functions cannot
 express.
+
+## Effet-0u8 Layer survival lab - merge_explicit and GADT presence sets
+
+### Why this entry exists
+
+Review 1 finding #2 correctly identified an incompleteness in V-R2. The earlier Layer rejection argued from the absence of type-level object-row intersection, then dismissed phantom lists, Hmap, and restricted merge. It did not test two missing candidates:
+
+- explicit output merging with combine;
+- GADT presence sets with hidden lookup witnesses.
+
+This entry reopens V-R2 against those candidates.
+
+### Goal
+
+Within a 3h budget, build scratch/layer_research/ with the shared-Clock fixture:
+
+- Db layer needs Clock.
+- Http layer needs Clock and Log.
+- App merges Db and Http.
+- Boot supplies Clock and Log.
+- Missing Clock or Log must fail statically.
+- Method-name collisions or duplicate services must surface clearly.
+
+Compare each candidate against the current no-Layer answer: ordinary OCaml service factories, scoped acquire/release, and bind.
+
+### Lab artifacts
+
+Files:
+
+- scratch/layer_research/services.ml
+- scratch/layer_research/merge_explicit.ml
+- scratch/layer_research/gadt_presence_set.ml
+- scratch/layer_research/no_layer_baseline.ml
+- scratch/layer_research/runtime_smoke.ml
+- scratch/layer_research/neg_merge_missing_clock.ml
+- scratch/layer_research/neg_merge_collision.ml
+- scratch/layer_research/neg_gadt_missing_clock.ml
+- scratch/layer_research/neg_no_layer_missing_log.ml
+
+Positive validation:
+
+~~~text
+nix develop -c dune build scratch/layer_research
+nix develop -c dune exec scratch/layer_research/runtime_smoke.exe
+layer research smoke tests passed
+~~~
+
+LOC:
+
+~~~text
+  115 scratch/layer_research/gadt_presence_set.ml
+   74 scratch/layer_research/merge_explicit.ml
+   37 scratch/layer_research/no_layer_baseline.ml
+~~~
+
+### Candidate A - Layer.merge_explicit
+
+Shape tested:
+
+~~~ocaml
+module Layer : sig
+  type ('rin, 'err, 'out) t = ('rin, 'err, 'out) Effect.t
+
+  val scoped :
+    acquire:('rin, 'err, 'a) Effect.t ->
+    release:('a -> ('rin, 'err, unit) Effect.t) ->
+    ('rin, 'err, 'a) t
+
+  val merge :
+    combine:('a -> 'b -> 'out) ->
+    ('rin, 'err, 'a) t ->
+    ('rin, 'err, 'b) t ->
+    ('rin, 'err, 'out) t
+
+  val use :
+    ('rin, 'err, 'out) t ->
+    ('out -> ('rin, 'err, 'a) Effect.t) ->
+    ('rin, 'err, 'a) Effect.t
+end
+~~~
+
+The important signature lock:
+
+~~~ocaml
+val db_layer : unit -> (< clock : clock; .. >, string, db) Effect.t
+
+val http_layer :
+  unit -> (< clock : clock; log : log; .. >, string, http) Effect.t
+
+val app_layer :
+  unit ->
+  (< clock : clock; log : log; .. >, string, < db : db; http : http >) Effect.t
+~~~
+
+Finding: explicit combine solves the output-intersection problem. The input side also works: OCaml row unification widens Db's <clock; ..> requirement to the merged app's <clock; log; ..> requirement.
+
+But reusable layer values need thunks. Without eta/thunking, the compiler monomorphised the layer value at its later app-layer use, and the signature lock failed:
+
+~~~text
+Values do not match:
+  val db_layer : (< clock : clock; log : log >, string, db) Layer.t
+is not included in
+  val db_layer : (< clock : clock; .. >, string, db) Layer.t
+The second object type has no method log
+~~~
+
+So the viable surface is not just "a first-class Layer.t value"; in practical OCaml it is "a function returning a fresh Layer.t" when open object rows must remain reusable.
+
+### Candidate B - GADT presence-set with hidden witnesses
+
+Shape tested:
+
+~~~ocaml
+type _ cap = Clock : clock cap | Log : log cap | Db : db cap | Http : http cap
+
+type _ env =
+  | Nil : unit env
+  | Cons : 'a cap * 'a * 'rest env -> ('a * 'rest) env
+
+type (_, _) has =
+  | Here : ('a * 'rest, 'a) has
+  | There : ('rest, 'a) has -> ('b * 'rest, 'a) has
+
+type ('need, 'provide, 'err) layer =
+  'need env -> (< >, 'err, 'provide env) Effect.t
+~~~
+
+The service constructors hide the lookup witnesses for the fixture:
+
+~~~ocaml
+val db_layer : (clock * 'rest, db * unit, string) layer
+
+val http_layer :
+  (clock * (log * 'rest), http * unit, string) layer
+
+val app_layer :
+  (clock * (log * 'rest), db * (http * unit), string) layer
+~~~
+
+Finding: the fixture can be made to compile, but only by importing a parallel Tag/Context/HList model. The type-level service order is now part of the public API: Clock must precede Log for this fixture. This is not object-row inference; it is a second service language.
+
+The generic merge tested here is also intentionally narrow: it merges singleton-providing layers. A general merge needs type-level append and dedup witnesses, which either become visible at the call site or require a larger generated DSL.
+
+Collision/dedup evidence: duplicate Db providers compile and are signature-locked:
+
+~~~ocaml
+val duplicate_db_layer : (clock * 'rest, db * (db * unit), string) layer
+~~~
+
+A good Layer merge should reject or resolve duplicate services. This candidate silently accumulates duplicates.
+
+### Baseline - no Layer
+
+Shape tested:
+
+~~~ocaml
+val db_factory : clock -> (< >, string, db) Effect.t
+val http_factory : clock -> log -> (< >, string, http) Effect.t
+val boot : clock -> log -> (< >, string, string * db * http) Effect.t
+~~~
+
+This is the post-provide style from V-RPv5: build services with ordinary values, compose with bind, use Effect.scoped for finalizers. It is half the size of merge_explicit and a third of the GADT candidate.
+
+### Negative probes
+
+neg_merge_missing_clock.ml was temporarily added as an executable. The compiler rejected booting the merged app without Clock:
+
+~~~text
+File "scratch/layer_research/neg_merge_missing_clock.ml", line 11, characters 4-87:
+11 |     (Merge_explicit.Layer.use (Merge_explicit.app_layer ()) Merge_explicit.app_program)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (< clock : Services.clock; log : Services.log; .. >, string,
+          string * Services.db * Services.http)
+         Merge_explicit.Layer.t
+       but an expression was expected of type
+         (< log : Services.log >, 'a, 'b) Merge_explicit.Layer.t
+       The second object type has no method clock
+~~~
+
+neg_merge_collision.ml was temporarily added as an executable. The compiler rejected duplicate object methods in the explicit combine:
+
+~~~text
+File "scratch/layer_research/neg_merge_collision.ml", line 14, characters 8-29:
+14 |         method service = http
+             ^^^^^^^^^^^^^^^^^^^^^
+Error: The method service has multiple definitions in this object
+~~~
+
+neg_gadt_missing_clock.ml was temporarily added as an executable. The compiler rejected a boot env containing Log without Clock:
+
+~~~text
+File "scratch/layer_research/neg_gadt_missing_clock.ml", line 13, characters 34-61:
+13 |   Gadt_presence_set.Layer.use env Gadt_presence_set.app_layer
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The value Gadt_presence_set.app_layer has type
+         (Services.clock * (Services.log * 'a),
+          Services.db * (Services.http * unit), string)
+         Gadt_presence_set.Layer.t =
+           (Services.clock * (Services.log * 'a)) Gadt_presence_set.Env.t ->
+           (<  >, string,
+            (Services.db * (Services.http * unit)) Gadt_presence_set.Env.t)
+           Effet.Effect.t
+       but an expression was expected of type
+         (Services.log * unit) Gadt_presence_set.Env.t ->
+         ('b, 'c, 'd) Effet.Effect.t
+       Type Services.clock is not compatible with type Services.log
+~~~
+
+neg_no_layer_missing_log.ml was temporarily added as an executable. The compiler rejected forgetting the Log boot argument as an ordinary partial application warning promoted to error by the build:
+
+~~~text
+File "scratch/layer_research/neg_no_layer_missing_log.ml", line 10, characters 2-30:
+10 |   No_layer_baseline.boot clock
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error (warning 5 [ignored-partial-application]): this function application is partial,
+  maybe some arguments are missing.
+~~~
+
+### Cross-tabulation
+
+| Criterion | merge_explicit | GADT presence-set | no Layer |
+|---|---|---|---|
+| Shared Clock fixture | Passes | Passes | Passes |
+| Missing Clock static check | Good object-row error | Fails statically, but as ordered-list mismatch | Direct missing value / type error |
+| Method collision | Good at combine site | Avoids method names, but duplicate caps compile | Ordinary OCaml naming |
+| Output merge | Explicit combine | Singleton merge only; general append/dedup missing | No output merge type needed |
+| Reusable builders | Need thunks for open rows | Need HList order/witness discipline | Plain functions |
+| Public concepts | Layer.t + merge/use | cap, env, has, layer, order, hidden witnesses | functions and Effect.scoped |
+| LOC in fixture | 74 | 115 | 37 |
+
+### Decision diary
+
+#### V-RLv1 - merge_explicit is possible but not optimal
+
+Decision: the earlier V-R2 claim was too broad if read as "no Layer-like merge can compile". merge_explicit does compile and gives good object-row errors. However, it does not beat ordinary OCaml. It requires a new Layer module, explicit combine lambdas, Layer.use, and thunked layer factories to preserve reusable open-row signatures. The no-Layer baseline expresses the same scoped service graph in 37 LOC with direct arguments.
+
+#### V-RLv2 - explicit combine is a local app helper, not a core abstraction
+
+Decision: if an application wants to assemble a dependency graph as a value, merge_explicit is a reasonable app-local helper. It should not be in Effet core. Effet's public API should not privilege a helper that mostly wraps Effect.bind and Effect.scoped while adding a second name for ordinary composition.
+
+#### V-RLv3 - GADT presence sets are rejected
+
+Decision: do not ship the GADT presence-set Layer. The positive fixture compiles only by introducing cap constructors, HLists, ordered type-level service sets, and a non-general singleton merge. The missing-service error is less idiomatic than object rows, and duplicate Db providers compile. This recreates Effect-TS Context/Tag in OCaml despite OCaml already having modules, abstract types, objects, and functions.
+
+#### V-RLv4 - no-Layer remains the global optimum for OCaml Effet
+
+Decision: V-RPv5's post-provide style wins this lab too. Service construction is an ordinary function problem; resource lifetime is an Effect.scoped/acquire_release problem; dependency threading is ordinary OCaml parameter passing plus object-row env at runtime boundaries. This gives fewer concepts, shorter code, and better errors than either Layer candidate.
+
+#### V-RLv5 - V-R2 holds, with a narrower rationale
+
+Decision: keep "no Layer module" as the durable public API decision. Refine the rationale: a restricted Layer.merge_explicit is technically viable, so V-R2 should not say every Layer merge is untypeable. The stronger reason not to ship it is that the viable subset is not materially better than ordinary OCaml. The faithful Tag/Context-style route remains rejected because it loses the OCaml object-row dividend and reintroduces service witnesses/order/dedup machinery.
+
+### Recommendation
+
+V-R2 holds: Effet should not ship Layer.t.
+
+No follow-up implementation task is needed. The only documentation follow-up worth considering is a services guide showing the no-Layer pattern:
+
+- define service handles as ordinary module-owned types;
+- build services with functions returning Effect.t;
+- compose factories with bind inside Effect.scoped;
+- pass Clock/Log/Db/Http as normal values or runtime env methods at the outer boundary.
+
+### Documentation follow-up - 2026-05-20
+
+The approved recommendation was materialized as documentation, not production API.
+docs/services.md now records the no-Layer service-construction pattern and links to the
+compiling scratch/layer_research fixture. README.md links to the guide from a new
+Services section.
+
+No Layer module, Tag, Context, or Effect.provide was added.
+
+## Effet-0u8 R-channel DX scale lab - object-row env at 20 modules
+
+### Why this entry exists
+
+Review 1 finding #3 challenged V-R10's evidence base. The auto-DI lab proved that a three-function object-row env example can hide service plumbing from inner functions, but it did not measure developer experience at larger scale.
+
+This entry measures the costs directly: inferred type size, compiler error length and pinpoint quality, build time, incremental rebuild time, and a method-shape refactor.
+
+### Goal
+
+Build a synthetic 20-module app with 30 capability methods and compare three encodings:
+
+- env-row: current Effet style, effects read capabilities from the runtime env;
+- args: explicit named service arguments;
+- bag: one composite services object passed as a value.
+
+The fixture deliberately uses common verb pressure in method names (query/get/run/fetch), deep chains through m01..m20, and a shape-refactor probe for one method.
+
+### Lab artifacts
+
+Artifacts live in scratch/r_dx_research/.
+
+- generate_fixture.ml
+- dx_common.ml
+- env_m01.ml .. env_m20.ml, env_top.ml
+- args_m01.ml .. args_m20.ml, args_top.ml
+- bag_m01.ml .. bag_m20.ml, bag_top.ml
+- runtime_smoke.ml
+- measure.sh
+- neg_env_missing_cap.ml
+- neg_args_missing_cap.ml
+- neg_bag_shape_refactor.ml
+- neg_env_collision.ml
+- results/summary.md
+
+Positive validation:
+
+~~~text
+nix develop -c ocaml scratch/r_dx_research/generate_fixture.ml
+nix develop -c dune build scratch/r_dx_research
+nix develop -c dune exec scratch/r_dx_research/runtime_smoke.exe
+r-dx smoke tests passed
+~~~
+
+### Fixture shape
+
+The generator creates 30 capability methods:
+
+~~~text
+user_query user_get user_run user_fetch
+order_query order_get order_run order_fetch
+cache_query cache_get cache_run cache_fetch
+billing_query billing_get billing_run billing_fetch
+audit_query audit_get audit_run audit_fetch
+search_query search_get search_run search_fetch
+notify_query notify_get notify_run notify_fetch
+feature_query feature_get
+~~~
+
+Modules m01..m10 add two capabilities each. Modules m11..m20 add one capability each. The top chain therefore accumulates all 30 capabilities.
+
+LOC:
+
+| Variant | LOC |
+|---|---:|
+| env-row modules + top | 135 |
+| args modules + top | 169 |
+| bag modules + top | 135 |
+
+### Build-time measurements
+
+Single local run. The script removes only _build/default/scratch/r_dx_research, not the whole repo build cache.
+
+| Measurement | ms |
+|---|---:|
+| clean all variants | 525 |
+| clean env-row top | 189 |
+| clean args top | 187 |
+| clean bag top | 236 |
+| noop incremental all | 41 |
+| touch env_m10 rebuild top | 28 |
+| touch args_m10 rebuild top | 29 |
+| touch bag_m10 rebuild top | 30 |
+| shape refactor failed rebuild | 442 |
+
+Finding: no variant has a material compile-time advantage in this fixture. Object rows are not measurably slower here.
+
+### Interface / hover proxy
+
+ocamlmerlin was not available as a one-shot CLI in this environment. ocamllsp is installed, but it is an interactive language server, not a direct hover command. The lab uses ocamlc -i as a hover/interface proxy.
+
+| Variant | ocamlc -i bytes | lines |
+|---|---:|---:|
+| env-row top | 851 | 16 |
+| args top | 901 | 32 |
+| bag top | 88 | 2 |
+
+env-row top interface excerpt:
+
+~~~ocaml
+val program :
+  unit ->
+  (< audit_fetch : 'a -> 'b; audit_get : 'c -> 'd; audit_query : 'e -> 'c;
+     audit_run : 'd -> 'a; billing_fetch : 'f -> 'e; billing_get : 'g -> 'h;
+     billing_query : 'i -> 'g; billing_run : 'h -> 'f;
+     ...
+     user_fetch : 'b1 -> 'x; user_get : 'c1 -> 'd1; user_query : int -> 'c1;
+     user_run : 'd1 -> 'b1; .. >,
+   'e1, 'o)
+  Effet.Effect.t
+~~~
+
+args top interface excerpt:
+
+~~~ocaml
+val program :
+  user_query:(int -> 'a) ->
+  user_get:('a -> 'b) ->
+  ...
+  feature_get:('c1 -> 'd1) -> ('e1, 'f1, 'd1) Effet.Effect.t
+~~~
+
+bag top interface:
+
+~~~ocaml
+val program : #Dx_common.services -> ('a, 'b, int) Effet.Effect.t
+val run : unit -> int
+~~~
+
+Finding: bag has the cleanest hover but hides dependency precision. env-row and args both expose large polymorphic chains; env-row is denser, args is longer but more familiar.
+
+### Value restriction finding
+
+The first env-row generator emitted module-level values:
+
+~~~ocaml
+let program = ...
+~~~
+
+That failed at m01:
+
+~~~text
+Error: The type of this expression,
+       (< user_get : '_weak2 -> '_weak3; user_query : int -> '_weak2; .. >
+        as '_weak1, '_weak4, '_weak3)
+       Effect.t, contains the non-generalizable type variable(s)
+~~~
+
+The working env-row fixture uses thunks:
+
+~~~ocaml
+let program () = ...
+~~~
+
+Decision impact: module-level reusable env-row effects may need eta-expansion/thunks when open object rows and polymorphic result chains appear. This is a real DX cost. It is not a soundness failure.
+
+### Negative probes
+
+#### Missing capability - env-row
+
+neg_env_missing_cap.ml omits billing_fetch from the boot env.
+
+~~~text
+File "scratch/r_dx_research/neg_env_missing_cap.ml", line 36, characters 66-86:
+36 | let _ : (int, string Cause.t) result = Dx_common.run_with_env env (Env_top.program ())
+                                                                       ^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (< audit_fetch : 'a -> 'b; audit_get : 'c -> 'd;
+            audit_query : 'e -> 'c; audit_run : 'd -> 'a;
+            billing_fetch : 'f -> 'e; billing_get : 'g -> 'h;
+            billing_query : 'i -> 'g; billing_run : 'h -> 'f;
+            cache_fetch : 'j -> 'i; cache_get : 'k -> 'l;
+            cache_query : 'm -> 'k; cache_run : 'l -> 'j;
+            feature_get : 'n -> 'o; feature_query : 'p -> 'n;
+            notify_fetch : 'q -> 'p; notify_get : 'r -> 's;
+            notify_query : 't -> 'r; notify_run : 's -> 'q;
+            order_fetch : 'u -> 'm; order_get : 'v -> 'w;
+            order_query : 'x -> 'v; order_run : 'w -> 'u;
+            search_fetch : 'y -> 't; search_get : 'z -> 'a1;
+            search_query : 'b -> 'z; search_run : 'a1 -> 'y;
+            user_fetch : 'b1 -> 'x; user_get : 'c1 -> 'd1;
+            user_query : int -> 'c1; user_run : 'd1 -> 'b1; .. >,
+          'e1, 'o)
+         Effect.t
+       but an expression was expected of type
+         (< audit_fetch : int -> int; audit_get : int -> int;
+            audit_query : int -> int; audit_run : int -> int;
+            billing_get : int -> int; billing_query : int -> int;
+            billing_run : int -> int; cache_fetch : int -> int;
+            cache_get : int -> int; cache_query : int -> int;
+            cache_run : int -> int; feature_get : int -> int;
+            feature_query : int -> int; notify_fetch : int -> int;
+            notify_get : int -> int; notify_query : int -> int;
+            notify_run : int -> int; order_fetch : int -> int;
+            order_get : int -> int; order_query : int -> int;
+            order_run : int -> int; search_fetch : int -> int;
+            search_get : int -> int; search_query : int -> int;
+            search_run : int -> int; user_fetch : int -> int;
+            user_get : int -> int; user_query : int -> int;
+            user_run : int -> int >,
+          'f1, 'g1)
+         Effect.t
+       The second object type has no method billing_fetch
+~~~
+
+Size excluding nix dirty warning: 2295 bytes, 40 lines.
+
+Quality: correct missing method, poor pinpoint. The useful fact is at the bottom after a full row dump.
+
+#### Missing capability - args
+
+neg_args_missing_cap.ml omits the billing_fetch named argument.
+
+~~~text
+File "scratch/r_dx_research/neg_args_missing_cap.ml", lines 6-35, characters 2-37:
+ 6 | ..Args_top.program
+ 7 |     ~user_query:services#user_query
+ 8 |     ~user_get:services#user_get
+ 9 |     ~user_run:services#user_run
+10 |     ~user_fetch:services#user_fetch
+...
+32 |     ~notify_run:services#notify_run
+33 |     ~notify_fetch:services#notify_fetch
+34 |     ~feature_query:services#feature_query
+35 |     ~feature_get:services#feature_get
+Error: This expression has type
+         billing_fetch:(int -> int) -> ('a, 'b, int) Effect.t
+       but an expression was expected of type (<  >, string, int) Effect.t
+Hint: This function application is partial, maybe some arguments are missing.
+~~~
+
+Size excluding nix dirty warning: 689 bytes, 15 lines.
+
+Quality: better. It names billing_fetch directly and reads like ordinary OCaml.
+
+#### Shape refactor - bag
+
+neg_bag_shape_refactor.ml changes billing_fetch to string -> int.
+
+~~~text
+File "scratch/r_dx_research/neg_bag_shape_refactor.ml", line 35, characters 24-32:
+35 | let _ = Bag_top.program services
+                             ^^^^^^^^
+Error: The value services has type
+         < audit_fetch : int -> int; audit_get : int -> int;
+           audit_query : int -> int; audit_run : int -> int;
+           billing_fetch : string -> int; billing_get : int -> int;
+           ...
+           user_query : int -> int; user_run : int -> int >
+       but an expression was expected of type
+         #Dx_common.services as 'a =
+           < audit_fetch : int -> int; audit_get : int -> int;
+             audit_query : int -> int; audit_run : int -> int;
+             billing_fetch : int -> int; billing_get : int -> int;
+             ...
+             user_query : int -> int; user_run : int -> int; .. >
+       The method billing_fetch has type string -> int,
+       but the expected method type was int -> int
+~~~
+
+Size excluding nix dirty warning: 2284 bytes, 38 lines.
+
+Quality: long, but precise. The final sentence is directly actionable.
+
+#### Generic method collision - env-row
+
+neg_env_collision.ml composes effects that all use common method names query/get with incompatible shapes.
+
+~~~text
+File "scratch/r_dx_research/neg_env_collision.ml", line 8, characters 2-3:
+8 |   a |> Effect.bind (fun _ -> b)
+      ^
+Error: The value a has type (< query : int -> 'a; .. >, 'b, 'a) Effect.t
+       but an expression was expected of type
+         (< query : string -> 'c; .. >, 'd, 'e) Effect.t
+       The method query has type int -> 'a, but the expected method type was
+       string -> 'c
+~~~
+
+Size excluding nix dirty warning: 391 bytes, 8 lines.
+
+Quality: good. Generic method-name collisions fail near the composition point with the incompatible method name.
+
+### Shape-refactor rebuild
+
+A temporary generated change modified billing_fetch from int -> int to string -> int in dx_common.ml and then built scratch/r_dx_research.
+
+~~~text
+exit=1
+elapsed_ms=442
+~~~
+
+The failed build reported all three affected styles:
+
+- bag: failed in bag_m08 when billing_fetch changed the chain input type;
+- env-row: failed at Env_top.run with a long row mismatch;
+- args: failed at Args_top.run where services#billing_fetch no longer matched int -> 'a.
+
+Finding: the changed method propagates quickly and fails statically. The env-row failure is the longest; args is most local; bag fails inside the first module where the chain type becomes inconsistent.
+
+### Cross-tabulation
+
+| Criterion | env-row | args | bag |
+|---|---|---|---|
+| Clean build time | 189 ms | 187 ms | 236 ms |
+| Touch rebuild | 28 ms | 29 ms | 30 ms |
+| Top interface size | 851 bytes | 901 bytes | 88 bytes |
+| Missing capability error | 2295 bytes, precise final line | 689 bytes, direct missing arg | n/a for missing method if bag type is named |
+| Shape refactor error | long row mismatch | direct bad argument at top | long but precise services mismatch |
+| Collision quality | good for incompatible method shape | ordinary value naming | hidden behind bag type |
+| Module-boundary cost | thunks needed for reusable open-row values | none observed | none observed |
+| Dependency precision | per effect | per function arg list | all-or-nothing bag |
+
+### Decision diary
+
+#### V-Dxv1 - Compile time does not reopen V-R10
+
+Decision: V-R10 is not rejected on compile-time grounds. At 20 modules / 30 capabilities, clean and incremental build times are effectively tied across env-row, args, and bag. The differences are below the noise floor for this synthetic fixture.
+
+#### V-Dxv2 - Env-row diagnostics are correct but noisy
+
+Decision: env-row error quality is the main cost. Missing capability errors are statically correct and name the missing method, but the compiler dumps the whole row before the actionable final line. This is materially worse than explicit args for "forgot one dependency at boot".
+
+#### V-Dxv3 - Hover usefulness is mixed
+
+Decision: env-row hovers are dense and expose the full capability row. Args hovers are longer but familiar. Bag hovers are tiny, but that is because the bag hides dependency precision. This does not justify flipping to bag; it does suggest keeping public examples away from giant env rows.
+
+#### V-Dxv4 - Value restriction is a real env-row footgun
+
+Decision: reusable module-level env-row effects may need thunks. The generator's first env-row version failed with non-generalizable weak variables. The fixed version exports program : unit -> Effect.t. This should be documented as a pattern for polymorphic env-row values that cross module boundaries.
+
+#### V-Dxv5 - Method-name collisions are manageable
+
+Decision: generic collisions on query/get/run/fetch fail statically and locally when shapes conflict. The lab supports the existing guidance: avoid generic env method names in public libraries; namespace methods or pass service handles as values.
+
+#### V-Dxv6 - V-R10 confirmed, with DX mitigations
+
+Decision: keep V-R10. The object-row env channel remains sound and compile-time cost is acceptable at this synthetic scale. Do not flip to args or composite bag globally. The right mitigation is narrower: use env rows for leaf/runtime-boundary capabilities, use ordinary args for service graph construction, and document thunking for reusable polymorphic env-row effects.
+
+### Recommendation
+
+V-R10 remains valid at scale for Effet core.
+
+Mitigation tasks worth keeping in mind:
+
+- document the thunk pattern for module-level polymorphic env-row effects;
+- keep README/docs examples from accumulating giant env rows;
+- prefer service handles as ordinary values for large application graphs;
+- consider a short "reading object-row errors" troubleshooting note if users report pain.
+
+No migration epic is justified by this lab.
+
+## R-channel follow-up review labs - black-box effects, public APIs, naming, evolution
+
+### Why this entry exists
+
+GPT Pro reviewed the R-channel research and agreed with the narrowed final design:
+keep the structural object-row R-channel, but do not treat it as a general DI system.
+It also identified five remaining holes before the design could be considered settled:
+black-box env-requiring effects after Effect.provide deletion, real public/editor DX,
+public .mli style, same-shape semantic collisions, and library evolution when a leaf
+effect gains a capability.
+
+This entry closes those holes as far as the current lab can.
+
+### Goal
+
+Verify whether the current split still holds:
+
+- Effect.t keeps the R-channel for leaf/runtime-boundary capabilities.
+- Application service graphs use ordinary OCaml arguments and scoped factories.
+- Layer.t, Tag/Context, and Effect.provide stay out of the public API.
+
+### Artifacts
+
+Lab: scratch/r_followup_research/
+
+- black_box.ml: black-box env-effect substitution fixture.
+- public_mli_styles.mli/ml: exported API shape comparisons.
+- naming_collision.ml: generic vs namespaced method collision fixture.
+- library_evolution.ml: leaf gains metrics capability across env-row, args, bag.
+- neg_black_box_value.ml: open-row effect value fails by value restriction.
+- neg_closed_row_extra_env.ml: closed row rejects extra env methods.
+- neg_evolution_env_missing_metric.ml: env-row missing new leaf capability.
+- neg_evolution_args_missing_metric.ml: explicit args missing new argument.
+- hazard_same_shape_collision.ml: deliberately compiles; documents semantic collision.
+- results.md: command outputs.
+
+Positive build and smoke:
+
+~~~text
+nix develop -c dune build scratch/r_followup_research
+exit=0
+
+nix develop -c dune exec scratch/r_followup_research/runtime_smoke.exe
+exit=0
+~~~
+
+### Lab 1 - black-box env-requiring effect substitution
+
+Fixture: a third-party module exposes a child computation that requires db through env,
+and the host program requires real db, audit, and secret. The host wants to run its own
+before/after db work against real db, but the child against fake db.
+
+Candidate A, direct black-box env effect:
+
+~~~ocaml
+host_program (Third_party.black_box ())
+~~~
+
+Result: child uses the host db. This is type-correct but cannot locally swap db for only
+the child. Runtime result:
+
+~~~text
+before=real:before;child=real:child;after=real:after;secret=s3
+~~~
+
+Candidate B, constructor / ordinary-argument library API:
+
+~~~ocaml
+host_program (Third_party.make fake_db)
+~~~
+
+Result: works and preserves host env for real db/audit/secret. Runtime result:
+
+~~~text
+before=real:before;child=fake:child;after=real:after;secret=s3
+~~~
+
+Candidate C, separate Runtime.run boundary:
+
+~~~ocaml
+let fake_child = run_with_env fake_db_env (Third_party.black_box ()) in
+host_program (Effect.pure fake_child)
+~~~
+
+Result: works only by splitting the child out of the parent program. That is acceptable
+for test setup or an actual process/runtime boundary, but it is not a general
+in-effect local substitution primitive.
+
+Candidate D, private provide-like local evaluator:
+
+~~~ocaml
+Private_eval.locally fake_db_env (Third_party.black_box ())
+~~~
+
+Result: works only by reinterpreting Effect.Private.view for a tiny subset
+Pure/Fail/Sync/Bind/Map. This is not a viable user API; full correctness would require
+duplicating the runtime semantics for scoped resources, supervision, cancellation,
+tracing, async, par/all/race, finalizers, and cause shaping.
+
+The lab also exposed a stronger OCaml-specific constraint: a reusable already-built
+open-row effect value is not exportable without weak variables. The black-box public
+shape must be a thunk.
+
+~~~text
+R_FOLLOWUP_NEG=black_box_value nix develop -c dune build scratch/r_followup_research/neg_black_box_value.exe
+File "scratch/r_followup_research/neg_black_box_value.ml", lines 11-14, characters 6-3:
+11 | ......struct
+12 |   let black_box =
+13 |     Effect.sync "third.black_box" (fun env -> query env#db "child")
+14 | end
+Error: Signature mismatch:
+       ...
+       Values do not match:
+         val black_box :
+           (< db : db; .. > as '_weak1, '_weak2, string) Effect.t
+       is not included in
+         val black_box : (< db : db; .. >, string, string) Effect.t
+       The type (< db : db; .. > as '_weak1, '_weak2, string) Effect.t
+       is not compatible with the type
+         (< db : db; .. >, string, string) Effect.t
+       Type '_weak1 is not compatible with type 'a
+~~~
+
+Finding: the deletion of Effect.provide remains correct for the public core, but the
+documentation must tell library authors to expose env-requiring effects as thunks or as
+ordinary constructors. If a future real fixture requires local substitution for a
+black-box effect that cannot expose either form, the primitive to reopen is not broad
+provide; it is a narrow, runtime-owned local-env interpreter with the full runtime
+semantics. No such fixture exists yet.
+
+### Lab 2 - public .mli and editor-DX proxy
+
+public_mli_styles.mli compares the public API options:
+
+~~~ocaml
+val open_row_thunk :
+  unit -> (< clock : clock ; log : log ; .. >, string, result) Effect.t
+
+val closed_row_value : (< clock : clock ; log : log >, string, result) Effect.t
+
+val args :
+  clock:clock -> log:log -> ('env, string, result) Effect.t
+
+val bag :
+  #clock_log -> ('env, string, result) Effect.t
+~~~
+
+ocamllsp is installed, but the lab did not find a reliable one-shot CLI hover command;
+the server exposes only stdio/socket modes. As a proxy, the lab used explicit .mli
+text plus ocamlc -i output from the implementation:
+
+~~~text
+val open_row_thunk :
+  unit ->
+  (< clock : R_followup_research.Services.clock;
+     log : R_followup_research.Services.log; .. >,
+   'a, string)
+  Effet.Effect.t
+val closed_row_value :
+  (< clock : R_followup_research.Services.clock;
+     log : R_followup_research.Services.log; .. >
+   as '_weak1, '_weak2, string)
+  Effet.Effect.t
+val args :
+  clock:R_followup_research.Services.clock ->
+  log:R_followup_research.Services.log -> ('a, 'b, string) Effet.Effect.t
+val bag :
+  < clock : R_followup_research.Services.clock;
+    log : R_followup_research.Services.log; .. > ->
+  ('a, 'b, string) Effet.Effect.t
+~~~
+
+The explicit .mli is clearer than inferred output. The inferred output shows why public
+interfaces should be written deliberately: reusable effect values infer weak env/error
+variables, while thunks and ordinary-arg constructors remain polymorphic.
+
+Closed rows are compact but too strict:
+
+~~~text
+R_FOLLOWUP_NEG=closed_row_extra_env nix develop -c dune build scratch/r_followup_research/neg_closed_row_extra_env.exe
+File "scratch/r_followup_research/neg_closed_row_extra_env.ml", line 17, characters 28-62:
+17 |   Services.run_with_env env Public_mli_styles.closed_row_value
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The value Public_mli_styles.closed_row_value has type
+         (< clock : Services.clock; log : Services.log >, string, string)
+         Effet.Effect.t
+       but an expression was expected of type
+         (< clock : Services.clock; log : Services.log;
+            secret : Services.secret >,
+          string, 'a)
+         Effet.Effect.t
+       The first object type has no method secret
+~~~
+
+Finding: public APIs should prefer open-row thunks for reusable env effects, ordinary
+arguments for service construction, and closed rows only for intentionally sealed
+subsystems.
+
+### Lab 3 - same-shape semantic collisions
+
+Previous DX research proved incompatible method-shape collisions fail locally. This lab
+tests the missing case: two libraries both require env#query : string -> string, but
+mean different things.
+
+~~~ocaml
+let user_by_generic_query =
+  Effect.sync "user.generic_query" (fun env -> env#query "current-user")
+
+let order_by_generic_query =
+  Effect.sync "order.generic_query" (fun env -> env#query "current-order")
+~~~
+
+This compiles:
+
+~~~text
+R_FOLLOWUP_NEG=hazard_same_shape_collision nix develop -c dune build scratch/r_followup_research/hazard_same_shape_collision.exe
+exit=0
+~~~
+
+Runtime result uses the same implementation for both semantics:
+
+~~~text
+shared:current-user
+shared:current-order
+~~~
+
+Namespaced methods avoid the ambiguity:
+
+~~~ocaml
+env#user_query
+env#order_query
+~~~
+
+Finding: structural object rows cannot detect same-shape semantic collisions. This is
+not a reason to drop the R-channel; it is a reason to prohibit generic verbs as public
+env methods. Public capabilities should be service-shaped or namespaced.
+
+### Lab 4 - library evolution
+
+Fixture: a four-layer library has a leaf that initially needs clock. V2 adds metrics at
+the leaf. Compare env-row, explicit args, and bag.
+
+Observed source churn in the hand-written fixture:
+
+| Shape | Files/functions touched | Reason |
+|---|---:|---|
+| env-row | 1 | leaf source changes; inferred top env row grows |
+| args | 4 | leaf plus every pass-through function grows ~metrics |
+| bag | 2 | bag type plus leaf change; dependency precision hidden |
+
+All V2 positives pass and record the metric exactly once.
+
+Env-row missing metric fails at boot/run boundary:
+
+~~~text
+R_FOLLOWUP_NEG=evolution_env_missing_metric nix develop -c dune build scratch/r_followup_research/neg_evolution_env_missing_metric.exe
+File "scratch/r_followup_research/neg_evolution_env_missing_metric.ml", line 14, characters 28-65:
+14 |   Services.run_with_env env (Library_evolution.Env_row.V2.top ())
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (< clock : Services.clock; metrics : Services.metrics; .. >, 'a,
+          int)
+         Effet.Effect.t
+       but an expression was expected of type
+         (< clock : Services.clock >, string, 'b) Effet.Effect.t
+       The second object type has no method metrics
+~~~
+
+Explicit args fail at the pass-through call site:
+
+~~~text
+R_FOLLOWUP_NEG=evolution_args_missing_metric nix develop -c dune build scratch/r_followup_research/neg_evolution_args_missing_metric.exe
+File "scratch/r_followup_research/neg_evolution_args_missing_metric.ml", line 8, characters 2-58:
+8 |   Library_evolution.Args.V2.top ~clock:(Services.clock 42)
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error (warning 5 [ignored-partial-application]): this function application is partial,
+  maybe some arguments are missing.
+~~~
+
+Finding: this is the strongest positive evidence for the R-channel after V-R10. Adding
+a new leaf capability does not force source churn through every intermediate function.
+The cost is that missing capability diagnostics are row-shaped and appear at the run
+boundary. Args have better local errors but more ripple.
+
+### Decision diary
+
+#### V-RFv1 - Black-box effect substitution does not restore public provide
+
+Decision: keep Effect.provide deleted. Direct black-box env effects use the host env;
+constructor/ordinary-arg APIs solve local substitution cleanly; separate Runtime.run
+works only by splitting the program; a local provide-like helper requires reimplementing
+the runtime. The only reopening criterion is a real third-party black-box effect that
+cannot expose a thunk/constructor and must be locally reinterpreted inside a parent
+effect with full scoped/supervised semantics.
+
+#### V-RFv2 - Public env effects should be thunks
+
+Decision: document unit -> Effect.t for reusable open-row env effects. The compiler
+rejects an exported already-built open-row effect value with weak variables. This is a
+language-level constraint, not a style preference.
+
+#### V-RFv3 - Closed rows are niche
+
+Decision: do not recommend closed object rows for public capability requirements.
+They are compact in signatures, but they reject callers with extra capabilities.
+Use them only when a subsystem is intentionally sealed.
+
+#### V-RFv4 - Same-shape semantic collisions are a convention risk
+
+Decision: keep structural object rows, but document naming rules. OCaml catches
+incompatible method shapes, but cannot distinguish two env#query methods with the same
+type and different meaning. Public env methods should be namespaced or service-shaped:
+clock, db, audit, user_query, order_query, not query/get/run/fetch.
+
+#### V-RFv5 - Library evolution supports the narrowed R-channel
+
+Decision: the R-channel earns its place for effect requirements. When a leaf gains a
+metrics capability, env-row changes stay at the leaf and inferred requirements propagate
+to the boundary. Explicit args give better local errors but force pass-through churn.
+The correct split remains: use env rows for effect requirements, arguments for service
+construction.
+
+#### V-RFv6 - Real editor DX remains partly open
+
+Decision: the public .mli experiment is sufficient to set signature guidance, but not
+to claim complete editor-DX evidence. ocamllsp was available only as an LSP server in
+this lab, and no stable one-shot hover capture was recorded. Keep the mitigation:
+write explicit .mli files for public modules and avoid exposing large inferred rows.
+
+### Final recommendation
+
+The GPT Pro review did not overturn the design. It sharpened it.
+
+Keep the current R-channel, no Layer.t, no Effect.provide. The missing experiments
+support the same narrowed rule:
+
+~~~text
+Env rows: leaf/runtime-boundary effect requirements.
+Ordinary arguments: service construction, mocks, scoped factories, app graphs.
+Thunks: reusable public env-requiring effects.
+Namespaced methods: public capabilities.
+Closed rows: rare sealed subsystem boundary only.
+~~~
+
+Required documentation follow-up: add the thunk pattern, black-box library guidance,
+closed-row warning, namespaced capability naming rule, and library-evolution tradeoff to
+the README/services guide.
+
+## PPX env-DX research - syntax only, no hidden DI
+
+### Why this entry exists
+
+The R-channel follow-up labs kept the structural object-row env channel, but narrowed
+its use: env rows are for leaf/runtime-boundary capabilities, while service graphs are
+ordinary OCaml values and functions. The remaining question is whether ppx_effet should
+improve the env-row DX without reopening Layer, Context, Tag, provide, or hidden service
+wiring.
+
+### Goal
+
+Evaluate all proposed PPX ideas:
+
+- raw env#cap baseline;
+- explicit leaf capability binding;
+- capability declaration/profile/accessor generation;
+- runtime env object builder;
+- declared leaf requirements that prevent accidental env creep;
+- troubleshooting/check-env helpers;
+- anti-hypotheses: Layer/Context/Tag generation, inferred env construction, implicit
+  service injection, arg/env conversion, mega service bags, tracer-as-env, silent
+  thunking.
+
+If a candidate is clearly good and semantics-preserving, implement it in ppx_effet.
+
+### Artifacts
+
+Lab: scratch/ppx_env_research/
+
+- p_a_baseline_raw.ml: raw env#cap leaves.
+- p_b_leaf_ppx.ml: [%effet.sync] / [%effet.async] leaf capability binding.
+- p_c_capability_profile.ml: manual shape that a capability declaration PPX would
+  generate.
+- p_d_env_builder.ml: [%effet.env] boundary object builder.
+- neg_b_env_creep.ml: direct env read inside a declared leaf must fail.
+- neg_b_duplicate_cap.ml: duplicate capability binding must fail.
+- neg_d_duplicate_env.ml: duplicate env object field must fail.
+- neg_value_restriction_raw.ml: raw open-row value hits weak variables.
+- results.md: command outputs and interface measurements.
+
+Production implementation:
+
+- packages/ppx_effet/ppx_effet.ml
+- packages/ppx_effet/test/test_ppx_effet.ml
+- README.md
+- docs/services.md
+
+### Syntax reality check
+
+The pretty proposed binding form:
+
+~~~ocaml
+let%effet.sync current_user () [auth : Auth.t] =
+  Auth.current_user auth
+~~~
+
+does not fit normal OCaml expression grammar cleanly. The implemented shape keeps the
+same explicit capability-binding idea but uses a valid expression extension:
+
+~~~ocaml
+let current_user () =
+  [%effet.sync "auth.current_user" (auth : Auth.t)
+    (Auth.current_user auth)]
+~~~
+
+Multiple capabilities use a tuple:
+
+~~~ocaml
+[%effet.sync "auth.current_user_logged" ((auth : Auth.t), (log : Log.t))
+  (let user = Auth.current_user auth in
+   Log.info log ("user=" ^ user);
+   user)]
+~~~
+
+Boundary env objects use ordinary record-like payload syntax:
+
+~~~ocaml
+let env =
+  [%effet.env { auth = (auth : Auth.t); log = (log : Log.t) }]
+~~~
+
+### Candidate results
+
+Positive build and smoke:
+
+~~~text
+nix develop -c dune build scratch/ppx_env_research
+exit=0
+
+nix develop -c dune exec scratch/ppx_env_research/runtime_smoke.exe
+exit=0
+~~~
+
+Interface measurements from ocamlc -i over preprocessed candidates:
+
+| Candidate | Lines | Bytes | Notes |
+|---|---:|---:|---|
+| P-A raw env#cap | 12 | 368 | shortest control |
+| P-B ppx leaf | 15 | 429 | adds async sample, same inferred env shape |
+| P-C capability profile | 18 | 576 | named class type survives as #Auth_cap.has_auth |
+| P-D env builder | 12 | 386 | type-annotated object method output |
+
+The P-B expansion is readable and semantics-preserving:
+
+~~~ocaml
+let current_user () =
+  Effet.Effect.fn __POS__ __FUNCTION__
+    (Effet.Effect.sync "auth.current_user"
+       (fun __effet_env ->
+          let auth = (__effet_env#auth : Auth.t) in Auth.current_user auth))
+~~~
+
+The P-D expansion is just an object:
+
+~~~ocaml
+let env ~auth ~log =
+  object method auth = (auth : Auth.t) method log = (log : Log.t) end
+~~~
+
+### Negative tests
+
+Direct env read inside a declared leaf fails during PPX expansion:
+
+~~~text
+PPX_ENV_NEG=env_creep nix develop -c dune build scratch/ppx_env_research/neg_b_env_creep.exe
+File "scratch/ppx_env_research/neg_b_env_creep.ml", line 8, characters 4-50:
+8 |     (Auth.current_user auth ^ Db.query env#db "x")]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: effet leaf body must use listed capabilities, not env directly
+~~~
+
+Duplicate leaf capabilities fail before type checking:
+
+~~~text
+PPX_ENV_NEG=duplicate_cap nix develop -c dune build scratch/ppx_env_research/neg_b_duplicate_cap.exe
+File "scratch/ppx_env_research/neg_b_duplicate_cap.ml", lines 7-8, characters 2-29:
+7 | ..[%effet.sync "bad.duplicate" ((auth : Auth.t), (auth : Auth.t))
+8 |     (Auth.current_user auth)]
+Error: duplicate capability binding: auth
+~~~
+
+Duplicate env builder fields fail before type checking:
+
+~~~text
+PPX_ENV_NEG=duplicate_env nix develop -c dune build scratch/ppx_env_research/neg_d_duplicate_env.exe
+File "scratch/ppx_env_research/neg_d_duplicate_env.ml", line 7, characters 2-65:
+7 |   [%effet.env { auth = (auth : Auth.t); auth = (auth : Auth.t) }]
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: duplicate capability binding: auth
+~~~
+
+The raw module-level open-row value still hits weak variables:
+
+~~~text
+PPX_ENV_NEG=value_restriction_raw nix develop -c dune build scratch/ppx_env_research/neg_value_restriction_raw.exe
+File "scratch/ppx_env_research/neg_value_restriction_raw.ml", lines 10-13, characters 6-3:
+10 | ......struct
+11 |   let current_user =
+12 |     Effect.sync "auth.current_user" (fun env -> Auth.current_user env#auth)
+13 | end
+Error: Signature mismatch:
+       ...
+       Values do not match:
+         val current_user :
+           (< auth : Auth.t; .. > as '_weak1, '_weak2, string) Effect.t
+       is not included in
+         val current_user : (< auth : Auth.t; .. >, string, string) Effect.t
+~~~
+
+### Anti-hypotheses
+
+PPX-generated Layer/Context/Tag remains rejected. The Layer lab already proved an
+explicit merge layer can compile but is worse than ordinary OCaml service construction.
+PPX would hide that cost, not remove it.
+
+Inferred env construction remains rejected. A normal PPX runs before typing and cannot
+inspect the inferred object row of an arbitrary program. A .cmt analyzer would be a
+separate tool, not ppx_effet.
+
+Implicit service injection by variable name remains rejected. The accepted syntax writes
+the capability list in source. There is no magic lookup of unbound variables.
+
+Automatic function-arg/env-row conversion remains rejected. It blurs the settled split:
+arguments construct service graphs; env rows describe effect requirements.
+
+Generated service bags remain rejected for application wiring. [%effet.env] is a
+boundary object literal helper only.
+
+Tracer-as-env remains rejected. [%effet.sync] wraps with Effect.fn, but it does not add
+env#tracer. Tracing remains a Runtime.create parameter and interpreter concern.
+
+Silent thunking remains rejected. The PPX does not rewrite let program = ... into
+let program () = .... The user writes () explicitly.
+
+### Decision diary
+
+#### V-PPX1 - Leaf capability binding is accepted
+
+Decision: ship expression forms [%effet.sync] and [%effet.async]. They directly target
+real DX problems: leaf boilerplate, explicit capability list, accidental env creep, and
+source-position span naming. The expansion is plain Effect.fn around Effect.sync/async,
+so runtime semantics do not change.
+
+#### V-PPX2 - Binding syntax is deferred
+
+Decision: do not ship let%effet.sync binding syntax now. The attractive proposed
+surface does not fit OCaml grammar as written, and the expression extension already
+handles the load-bearing case while keeping the explicit thunk visible.
+
+#### V-PPX3 - Runtime env builder is accepted
+
+Decision: ship [%effet.env { cap = (value : Type); ... }]. It generates only an object
+literal with annotated methods and rejects duplicates early. This improves boundary code
+without creating Layer or service wiring.
+
+#### V-PPX4 - Capability declaration/profile generation is not accepted yet
+
+Decision: defer [%%effet.capability] and [%%effet.env_profile]. The manual P-C shape
+compiles and #Auth_cap.has_auth appears in ocamlc -i, but it adds more interface surface
+than the leaf/builder helpers and needs a real ocamllsp hover study before becoming
+public syntax.
+
+#### V-PPX5 - Check-env helper is not accepted yet
+
+Decision: defer [%effet.check_env]. The env builder already localizes boundary method
+types for constructed envs. A separate check helper is only justified if users report
+large boundary-object diagnostics that [%effet.env] does not improve.
+
+#### V-PPX6 - ppx_effet remains syntactic and documentary
+
+Decision: ppx_effet is not dependency injection. It may name and bind capabilities that
+the author writes explicitly, and it may generate object literals at the runtime
+boundary. It must not infer, resolve, provide, substitute, merge, or auto-wire services.
+
+### Implementation summary
+
+Implemented in ppx_effet:
+
+~~~ocaml
+[%effet.sync "name" (cap : Type) body]
+[%effet.sync "name" ((cap1 : T1), (cap2 : T2)) body]
+[%effet.async "name" (cap : Type) body]
+[%effet.env { cap = (value : Type); ... }]
+~~~
+
+All sync/async leaves expand through Effect.fn __POS__ __FUNCTION__, preserving the
+existing span convention. The generated env variable is named __effet_env, and the PPX
+rejects direct identifier env in the body.
+
+### Final recommendation
+
+Keep the new PPX helpers. Do not add any broader PPX mechanism now.
+
+The accepted surface is small enough to explain in README and strong enough to address
+the concrete R-channel DX pain:
+
+- less leaf boilerplate;
+- explicit capability lists;
+- no accidental env#cap creep in leaves;
+- explicit thunk style for exported effects;
+- boundary env object annotations;
+- no service-graph machinery.

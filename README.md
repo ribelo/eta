@@ -58,9 +58,11 @@ let () =
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
 | `Capabilities` | Small object-type traits for capability-oriented environments. |
 
-## PPX Span Sugar
+## PPX Helpers
 
-The optional `ppx_effet` package provides one small extension:
+The optional `ppx_effet` package provides small syntax helpers. They expand to
+ordinary `Effect` and object code; they do not infer services, build dependency
+graphs, or add runtime semantics.
 
 ```ocaml
 let load_user id =
@@ -75,6 +77,27 @@ Effect.fn __POS__ __FUNCTION__
   (Effect.sync "db.query" (fun env -> env#db#user id))
 ```
 
+Leaf effects can bind an explicit capability list so the body cannot read
+`env` directly:
+
+```ocaml
+let current_user () =
+  [%effet.sync "auth.current_user" (auth : Auth.t)
+    (Auth.current_user auth)]
+```
+
+This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.sync ...)`, with a
+generated env argument and local typed `auth` binding. Use the explicit `()` for
+exported or reusable env-row effects; it avoids OCaml value-restriction weak
+variables.
+
+Runtime-boundary env objects can be generated with local type annotations:
+
+```ocaml
+let env =
+  [%effet.env { auth = (auth : Auth.t); clock = (clock : Capabilities.clock) }]
+```
+
 Use it by adding `ppx_effet` to your test or executable preprocessors:
 
 ```lisp
@@ -82,8 +105,9 @@ Use it by adding `ppx_effet` to your test or executable preprocessors:
  (pps ppx_effet))
 ```
 
-The PPX only captures source position and function name. It does not infer
-attributes, change runtime behavior, or auto-instrument leaves.
+The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
+`Tag`, implicit service lookup, inferred env construction, or argument/env-row
+conversion.
 
 ## Resource Scopes
 
@@ -99,6 +123,15 @@ let with_db k =
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
 ```
+
+## Services
+
+Effet does not ship `Layer.t`, `Tag`, `Context`, or `Effect.provide`.
+Build service graphs with ordinary OCaml functions and keep resource lifetime
+inside `Effect.scoped`.
+
+See [Services Without Layer](docs/services.md) for the project convention and
+failure modes.
 
 ## Supervised Concurrency
 

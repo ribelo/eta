@@ -29,6 +29,55 @@ let test_ppx_fn () =
   | Some loc -> Alcotest.(check bool) "loc recorded" true (String.contains loc '/')
   | None -> Alcotest.fail "missing loc attr"
 
+module Auth = struct
+  type t = { user : string }
+
+  let current_user auth = auth.user
+end
+
+let current_user () =
+  [%effet.sync "auth.current_user" (auth : Auth.t) (Auth.current_user auth)]
+
+let current_user_async () =
+  [%effet.async "auth.current_user_async" (auth : Auth.t)
+    (Auth.current_user auth)]
+
+let test_ppx_sync_leaf () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Tracer.in_memory () in
+  let auth = { Auth.user = "alice" } in
+  let env = [%effet.env { auth = (auth : Auth.t) }] in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Tracer.as_capability tracer) ~env ()
+  in
+  Alcotest.(check string) "value" "alice" (run_ok rt (current_user ()));
+  let span = only_span tracer in
+  Alcotest.(check string) "span name" "Dune__exe__Test_ppx_effet.current_user"
+    span.name
+
+let test_ppx_async_leaf () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let auth = { Auth.user = "alice" } in
+  let env = [%effet.env { auth = (auth : Auth.t) }] in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env () in
+  Alcotest.(check string) "value" "alice" (run_ok rt (current_user_async ()))
+
+let test_ppx_env_builder_annotations () =
+  let auth = { Auth.user = "alice" } in
+  let env = [%effet.env { auth = (auth : Auth.t) }] in
+  Alcotest.(check string) "method" "alice" env#auth.user
+
 let () =
   Alcotest.run "ppx_effet"
-    [ ("ppx", [ Alcotest.test_case "fn" `Quick test_ppx_fn ]) ]
+    [
+      ( "ppx",
+        [
+          Alcotest.test_case "fn" `Quick test_ppx_fn;
+          Alcotest.test_case "sync leaf" `Quick test_ppx_sync_leaf;
+          Alcotest.test_case "async leaf" `Quick test_ppx_async_leaf;
+          Alcotest.test_case "env builder" `Quick test_ppx_env_builder_annotations;
+        ] );
+    ]
