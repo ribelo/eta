@@ -1,12 +1,18 @@
 ---
 id: Effet-bl1
 title: "Research: thin Effect-shaped wrappers for Queue / Deferred / PubSub / Latch"
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T18:44:14.794Z
 created_by: backlog
-updated_at: 2026-05-19T18:48:09.962Z
+updated_at: 2026-05-20T14:50:59.522Z
+closed_at: 2026-05-20T14:50:59.522Z
+close_reason: "Completed. Lab built Queue, Deferred, PubSub, and Latch
+  wrapper candidates against direct Eio fixtures. Recommendation is to skip
+  public generic wrappers: Queue/PubSub become policy-owning once close/fail
+  and drop semantics are added, Deferred/Latch are too small to justify a
+  module family, and README now documents direct Eio usage guidance."
 dependencies:
   - issue_id: Effet-bl1
     depends_on_id: Effet-0jv

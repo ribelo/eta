@@ -1,0 +1,26 @@
+(library
+ (name schema_research)
+ (wrapped true)
+ (libraries effet)
+ (modules
+  fixture
+  h_s0_skip
+  h_s1_decode
+  h_s2_decode_validate
+  h_s3_schema_gadt
+  h_s4_ppx_schema
+  h_s5_codec_record
+  migration_fixture
+  m_a_pure_schema_effect_policy
+  m_b_env_codec_record
+  m_c_module_first))
+
+(executable
+ (name runtime_smoke)
+ (libraries schema_research effet eio eio_main)
+ (modules runtime_smoke))
+
+(executable
+ (name migration_smoke)
+ (libraries schema_research effet eio eio_main)
+ (modules migration_smoke))

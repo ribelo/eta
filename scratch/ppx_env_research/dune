@@ -1,0 +1,50 @@
+(library
+ (name ppx_env_research)
+ (wrapped true)
+ (libraries effet eio_main)
+ (preprocess
+  (pps ppx_effet))
+ (modules
+  services
+  p_a_baseline_raw
+  p_b_leaf_ppx
+  p_c_capability_profile
+  p_d_env_builder))
+
+(executable
+ (name runtime_smoke)
+ (libraries ppx_env_research effet eio_main)
+ (modules runtime_smoke))
+
+(executable
+ (name neg_b_env_creep)
+ (libraries ppx_env_research effet eio_main)
+ (preprocess
+  (pps ppx_effet))
+ (modules neg_b_env_creep)
+ (enabled_if (= %{env:PPX_ENV_NEG=} env_creep)))
+
+(executable
+ (name neg_b_duplicate_cap)
+ (libraries ppx_env_research effet eio_main)
+ (preprocess
+  (pps ppx_effet))
+ (modules neg_b_duplicate_cap)
+ (enabled_if (= %{env:PPX_ENV_NEG=} duplicate_cap)))
+
+(executable
+ (name neg_d_duplicate_env)
+ (libraries ppx_env_research effet eio_main)
+ (preprocess
+  (pps ppx_effet))
+ (modules neg_d_duplicate_env)
+ (enabled_if (= %{env:PPX_ENV_NEG=} duplicate_env)))
+
+(executable
+ (name neg_value_restriction_raw)
+ (libraries ppx_env_research effet eio_main)
+ (preprocess
+  (pps ppx_effet))
+ (modules neg_value_restriction_raw)
+ (enabled_if (= %{env:PPX_ENV_NEG=} value_restriction_raw)))
+

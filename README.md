@@ -170,6 +170,27 @@ background work stays internal to modules that own that lifecycle. For
 long-lived cached resources, `Resource.auto` keeps the existing returned
 resource shape and records refresh failures through `Resource.failures`.
 
+## Eio Concurrency Data
+
+Use Eio data primitives directly for local coordination:
+
+| Need | Use |
+| --- | --- |
+| Bounded producer/consumer queue | `Eio.Stream` |
+| One-shot signal or shared result | `Eio.Promise` |
+| Countdown or wait-for-condition | `Eio.Condition` with `Eio.Mutex` |
+| Broadcast with drop/backpressure policy | Application-owned queues or `effet-stream` when it is stream-shaped |
+
+Effet does not ship `Effect.Queue`, `Effect.Deferred`, `Effect.PubSub`, or
+`Effect.Latch`. The lab found that adding close/fail state, slow-consumer
+policy, and nonblocking shutdown makes these wrappers policy-owning
+abstractions, not thin aliases.
+
+Wrap Eio operations in `Effect.thunk` at the leaf when they need typed failure
+conversion, env-row requirements, or tracing names. If a protocol is reusable
+and owns lifecycle semantics, prefer a focused module such as `Resource` or
+`effet-stream` rather than a generic concurrency-data wrapper.
+
 ## Trace Propagation
 
 Tracing is configured on the runtime, not through the env row:

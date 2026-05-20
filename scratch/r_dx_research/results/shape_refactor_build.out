@@ -1,0 +1,54 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Effet' is dirty
+File "scratch/r_dx_research/bag_m08.ml", lines 4-5, characters 2-91:
+4 | ..Bag_m07.program services
+5 |   |> Effect.bind (fun acc -> Effect.sync "billing_run" (fun _ -> services#billing_run acc))
+Error: This expression has type ('a, 'b, int) Effect.t
+       but an expression was expected of type ('a, 'b, string) Effect.t
+       Type int is not compatible with type string
+File "scratch/r_dx_research/env_top.ml", line 5, characters 65-77:
+5 | let run () = Dx_common.run_with_env (Dx_common.make_services ()) (program ()) |> Dx_common.ok
+                                                                     ^^^^^^^^^^^^
+Error: This expression has type
+         (< audit_fetch : int -> int; audit_get : int -> int;
+            audit_query : int -> int; audit_run : int -> int;
+            billing_fetch : string -> int; billing_get : int -> int;
+            billing_query : int -> int; billing_run : int -> string;
+            cache_fetch : 'a -> int; cache_get : 'b -> 'c;
+            cache_query : 'd -> 'b; cache_run : 'c -> 'a;
+            feature_get : 'e -> 'f; feature_query : 'g -> 'e;
+            notify_fetch : 'h -> 'g; notify_get : 'i -> 'j;
+            notify_query : 'k -> 'i; notify_run : 'j -> 'h;
+            order_fetch : 'l -> 'd; order_get : 'm -> 'n;
+            order_query : 'o -> 'm; order_run : 'n -> 'l;
+            search_fetch : 'p -> 'k; search_get : 'q -> 'r;
+            search_query : int -> 'q; search_run : 'r -> 'p;
+            user_fetch : 's -> 'o; user_get : 't -> 'u;
+            user_query : int -> 't; user_run : 'u -> 's; .. >,
+          'v, 'f)
+         Effect.t
+       but an expression was expected of type
+         (< audit_fetch : int -> int; audit_get : int -> int;
+            audit_query : int -> int; audit_run : int -> int;
+            billing_fetch : string -> int; billing_get : int -> int;
+            billing_query : int -> int; billing_run : int -> int;
+            cache_fetch : int -> int; cache_get : int -> int;
+            cache_query : int -> int; cache_run : int -> int;
+            feature_get : int -> int; feature_query : int -> int;
+            notify_fetch : int -> int; notify_get : int -> int;
+            notify_query : int -> int; notify_run : int -> int;
+            order_fetch : int -> int; order_get : int -> int;
+            order_query : int -> int; order_run : int -> int;
+            search_fetch : int -> int; search_get : int -> int;
+            search_query : int -> int; search_run : int -> int;
+            user_fetch : int -> int; user_get : int -> int;
+            user_query : int -> int; user_run : int -> int >,
+          'w, 'x)
+         Effect.t
+       The method billing_run has type int -> string,
+       but the expected method type was int -> int
+File "scratch/r_dx_research/args_top.ml", line 23, characters 19-41:
+23 |     ~billing_fetch:services#billing_fetch
+                        ^^^^^^^^^^^^^^^^^^^^^^
+Error: The method call services#billing_fetch has type string -> int
+       but an expression was expected of type int -> 'a
+       Type string is not compatible with type int

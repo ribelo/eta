@@ -7955,3 +7955,221 @@ nix develop -c dune runtest --force
 
 Full-suite result: `effet` 98 tests, `effet-otel` 20 tests, `effet-stream` 13 tests,
 `ppx_effet` 3 tests, and `effet-schema` tests all passed.
+
+## V-CD - Concurrency data primitives: Queue / Deferred / PubSub / Latch
+
+### Why this entry exists
+
+Effet-bl1 reopened a gap in the concurrency surface. Earlier decisions said to use
+Eio.Stream, Eio.Promise, Eio.Condition, and related Eio primitives directly. The review
+question is whether that forces every application to rebuild typed-error, tracing, env,
+and cancellation wrappers at each call site.
+
+### Goal
+
+Test whether thin Effect-shaped wrappers for common Eio concurrency data primitives earn
+public API space. Candidates: Queue, Deferred, PubSub, and Latch.
+
+### Context read
+
+Relevant inherited constraints:
+
+- Public raw detach is gone; public child lifecycles go through Supervisor, par, all,
+  all_settled, race, and bounded traversal.
+- Eio.Stream was already accepted as an internal transport for effet-stream merge,
+  flat_map_par, fanout, buffering, and interop. It was rejected as the core stream model.
+- Resource.auto survives because it owns a nontrivial lifecycle protocol over an
+  internal runtime daemon. That is the bar: a public module should own real protocol
+  semantics, not just rename Eio operations.
+- Tracing lives at the Runtime interpreter. Effect.thunk leaves can already be named and
+  auto-instrumented.
+
+### Lab
+
+Artifacts live in scratch/concurrent_data_research/.
+
+Files:
+
+- wrappers.ml: minimal candidates for Queue, Deferred, PubSub, and Latch.
+- fixtures.ml: paired wrapper-vs-direct Eio fixtures.
+- runtime_smoke.ml: runnable assertions and tracing check.
+- README.md: lab navigation.
+
+Validation:
+
+~~~sh
+nix develop -c dune build scratch/concurrent_data_research
+nix develop -c dune exec scratch/concurrent_data_research/runtime_smoke.exe
+~~~
+
+Observed output:
+
+~~~text
+ASSERT wrapper queue
+ASSERT wrapper deferred
+ASSERT wrapper pubsub fast
+ASSERT wrapper pubsub slow
+ASSERT wrapper latch
+ASSERT direct queue
+ASSERT direct deferred
+ASSERT direct pubsub fast
+ASSERT direct pubsub slow
+ASSERT direct latch
+ASSERT wrapper operations are traced by auto-instrumentation
+concurrent_data_research smoke passed
+~~~
+
+### Fixtures
+
+The lab implemented these paired behaviours:
+
+- Queue: bounded producer/consumer with backpressure and graceful close.
+- Deferred: one-shot config load with three readers awaiting the same value.
+- PubSub: two subscribers, one fast and one slow, with drop-if-full policy.
+- Latch: wait until three events complete.
+- Tracing: wrapper operations are visible as auto-instrumented Effect.thunk spans.
+
+### LOC and shape comparison
+
+Fixture line counts from fixtures.ml:
+
+| Fixture | Wrapper call site | Direct Eio call site |
+|---|---:|---:|
+| Queue | 23 | 19 |
+| Deferred | 12 | 16 |
+| PubSub | 44 | 30 |
+| Latch | 7 | 19 |
+
+Wrapper implementation size:
+
+| Wrapper | Lines |
+|---|---:|
+| Queue | 45 |
+| Deferred | 26 |
+| PubSub | 59 |
+| Latch | 29 |
+
+The mixed result matters. Deferred and Latch make call sites smaller, but Queue is
+neutral and PubSub is worse. The family is not uniformly a 5+ LOC win per use site.
+
+### Evidence
+
+Queue stopped being thin as soon as it gained close/fail state. Eio.Stream has no
+close/end signal. The wrapper therefore had to add an Atomic state, a Stop marker, and
+careful wakeup logic. The first tracing fixture deadlocked because Queue.close tried to
+enqueue Stop into a full bounded queue with no consumer. The fix was nonblocking wakeup:
+only enqueue Stop when there is capacity. That is protocol design, not a thin wrapper.
+
+Deferred is genuinely thin. Eio.Promise plus a result gives a one-shot typed signal, and
+multiple waiters work naturally. The wrapper improves the call site slightly by turning
+Error err into Effect.fail err. But it adds only a small convenience; direct Eio.Promise
+is already clear and idiomatic.
+
+PubSub is the clearest rejection. There is no neutral broadcast wrapper: every design
+must choose subscriber queue capacity, slow-consumer policy, close semantics, whether
+close wakes or drops, and whether publish blocks, drops, or fails. The wrapper and the
+direct Eio fixture both had to solve nonblocking close when a slow subscriber queue was
+full. This belongs to application protocol or effet-stream, not a generic Effect.PubSub.
+
+Latch is also thin, but too small. Eio.Condition plus Eio.Mutex is a direct OCaml/Eio
+idiom. The wrapper saves lines at the use site, but it does not add typed failure,
+resource ownership, or a reusable protocol beyond count-down-and-wait.
+
+Tracing is not enough to justify modules. The wrapper operations become spans because
+they are Effect.thunk leaves and the runtime has auto_instrument enabled. Direct Eio
+operations can get the same treatment by placing the operation in a named Effect.thunk.
+
+Cancellation semantics are inherited from Eio. The wrappers do not add a new
+cancellation model; they block in Eio.Stream.take/add, Eio.Promise.await, and
+Eio.Condition.await the same way direct Eio code does.
+
+### Decision diary
+
+#### V-CDv1 - Do not ship a generic Queue wrapper
+
+Decision: no public Effect.Queue.
+
+Rationale: a bounded queue with close and fail states is no longer a thin alias over
+Eio.Stream. The lab needed wrapper-owned state and nonblocking close wakeup to avoid
+deadlock when the queue is full. If an Effet module owns that much protocol, it should be
+domain-specific like Resource or Stream, not a generic data primitive.
+
+#### V-CDv2 - Do not ship Deferred as a standalone module yet
+
+Decision: no public Effect.Deferred from this task.
+
+Rationale: the candidate is viable and small, but the win is not large enough on its own.
+Direct Eio.Promise is already idiomatic for one-shot signals. A future module can reopen
+this only if several package-level protocols need the same typed result promise shape.
+
+#### V-CDv3 - Reject generic PubSub
+
+Decision: no public Effect.PubSub.
+
+Rationale: PubSub is policy-heavy. Slow-consumer handling, queue capacity, close
+delivery, backpressure, and drop accounting are semantic choices. The lab's drop-if-full
+candidate worked, but it is one application protocol among many. For stream-shaped
+broadcast, use or extend effet-stream; for app event buses, keep the protocol local.
+
+#### V-CDv4 - Do not ship Latch
+
+Decision: no public Effect.Latch.
+
+Rationale: Latch saves lines, but it mostly renames Eio.Condition plus Eio.Mutex. It does
+not integrate typed failures or resource ownership in a way direct Eio lacks. The
+abstraction is too small for core Effet.
+
+#### V-CDv5 - Keep Eio data primitives as the public guidance
+
+Decision: document direct Eio.Stream, Eio.Promise, and Eio.Condition usage in README.
+
+Rationale: this is consistent with Effet's boundary: applications own state and local
+coordination; Effet owns effect description, interpretation, supervision, resources, and
+stream protocols. Direct Eio primitives are the idiomatic OCaml answer for local
+coordination.
+
+#### V-CDv6 - Reopen only around a real protocol cluster
+
+Decision: future work should not reopen generic wrappers because an app wrote two
+Effect.thunk wrappers. Reopen only if multiple Effet packages need the same protocol.
+
+Reopen triggers:
+
+- effet-stream needs a reusable typed handoff queue with proven close/fail semantics;
+- Resource or Supervisor needs a shared typed one-shot primitive;
+- a real application repeats the same queue/deferred/latch wrapper in several modules
+  and direct Eio code obscures failure handling.
+
+### Public documentation update
+
+README now has an Eio Concurrency Data section:
+
+- Eio.Stream for bounded producer/consumer queues.
+- Eio.Promise for one-shot signals.
+- Eio.Condition with Eio.Mutex for countdown/wait conditions.
+- Application-owned queues or effet-stream for broadcast depending on whether the shape
+  is stream-like.
+
+### Recommendation
+
+Recommendation (a): skip generic wrappers and document direct Eio primitives.
+
+Do not implement Effect.Queue, Effect.Deferred, Effect.PubSub, Effect.Latch, or a new
+effet-concurrent package from this evidence. The right library shape is narrower:
+promote focused protocols when they earn ownership, and keep local coordination in Eio.
+
+### Artifacts
+
+- scratch/concurrent_data_research/dune
+- scratch/concurrent_data_research/wrappers.ml
+- scratch/concurrent_data_research/fixtures.ml
+- scratch/concurrent_data_research/runtime_smoke.ml
+- scratch/concurrent_data_research/README.md
+- README.md
+
+### What we deliberately did not build
+
+- No packages/effet Queue/Deferred/PubSub/Latch modules.
+- No effet-concurrent package.
+- No new runtime primitive.
+- No new scheduler/cancellation model around Eio data structures.
