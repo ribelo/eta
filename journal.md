@@ -226,16 +226,19 @@ and `bench/overhead.ml`. It is included by `bench/run.sh` and `dune build
 Focused wired command:
 
 ```sh
-nix develop -c bash bench/run.sh --filter overhead --out /tmp/effet-overhead-wired.json
-_build/default/bench/overhead.exe /tmp/effet-overhead-wired.json
+nix develop -c bash bench/run.sh --filter overhead
+_build/default/bench/overhead.exe bench/results/20260520T224451Z-81b3fee.json
 ```
 
-Observed ratios from the focused wired run:
+Committed result: `bench/results/20260520T224451Z-81b3fee.json`, 39
+`overhead.*` metric entries, `dirty: false`.
 
-- bind prebuilt time: 12.91x Effet vs minimal interpreter
-- bind build+run time: 2.72x
-- fail/catch prebuilt time: 5.09x
-- fail/catch build+run time: 5.59x
+Observed ratios from the focused wired result:
+
+- bind prebuilt time: 14.11x Effet vs minimal interpreter
+- bind build+run time: 2.74x
+- fail/catch prebuilt time: 5.32x
+- fail/catch build+run time: 5.14x
 - setup time: noise-level, 0.66x in this run
 
 Allocation ratios in the same run: bind prebuilt minor words 2.50x, bind
