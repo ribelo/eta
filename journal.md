@@ -195,6 +195,28 @@ Every overhead claim must cite a same-result-file pair and report both time and
 allocation ratios. Keep the current custom harness; Bechamel/Core_bench are not
 the missing ingredient yet.
 
+### V-Bench-Overhead-Numbers
+
+`scratch/bench_research/apples_to_apples.ml` applies the V-R10 lab rule to
+the overhead question. It compares Effet against a minimal same-shape
+interpreter with `Pure`, `Fail`, `Bind`, and `Catch`, plus direct OCaml
+lower-bound controls.
+
+Command:
+
+```sh
+nix develop -c dune exec scratch/bench_research/apples_to_apples.exe
+```
+
+Results are recorded in
+`scratch/bench_research/apples_to_apples_results.md`.
+
+Finding: the fair denominator is the mini interpreter, not the raw direct loop.
+Against that denominator, Effet costs about 14.7x for prebuilt 100k bind
+interpretation, 2.8x for bind build+run, 5.2x for prebuilt 100k fail/catch,
+and 5.4x for fail/catch build+run. In absolute terms this was roughly 72ns per
+prebuilt interpreted bind and 17ns per fail/catch on the Ryzen 9950X machine.
+
 > v1 was a faithful port of the MoonBit reference. Several v1 choices were
 > driven by MoonBit's type-system limits, not by good OCaml engineering.
 > This journal partitions the v2 hypothesis space and records what I learn
