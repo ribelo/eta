@@ -64,6 +64,37 @@ let test_encoder_smoke () =
   Alcotest.(check bool) "tracestate encoded" true
     (json_has_string_field ~key:"traceState" ~value:"rojo=00f067aa0ba902b7" json)
 
+let test_exception_stacktrace_exported () =
+  let bodies = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock stdenv in
+  let exporter =
+    Effet_otel.create ~sw
+      ~net:(Eio.Stdenv.net stdenv)
+      ~clock ~host:"127.0.0.1" ~port:1
+      ~service_name:"effet-otel-exception-stacktrace"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
+      ()
+  in
+  let rt = Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env () in
+  let eff =
+    Effect.named "failing.span"
+      (Effect.thunk "failing.leaf" (fun () -> failwith "wire stacktrace")
+      |> Effect.annotate ~key:"phase" ~value:"test")
+  in
+  ignore (Runtime.run rt eff : (unit, _) Exit.t);
+  Effet_otel.flush exporter;
+  let body = String.concat "\n" (List.rev !bodies) in
+  let json = Yojson.Safe.from_string body in
+  Alcotest.(check bool) "exception event exported" true
+    (json_has_string_field ~key:"name" ~value:"exception" json);
+  Alcotest.(check bool) "stacktrace attr exported" true
+    (json_has_string_field ~key:"key" ~value:"exception.stacktrace" json);
+  Alcotest.(check bool) "annotation attr exported" true
+    (json_has_string_field ~key:"key" ~value:"effet.annotation.phase" json)
+
 let motel_reachable net =
   try
     Eio.Switch.run @@ fun sw ->
@@ -124,7 +155,11 @@ let () =
   Alcotest.run "effet-otel"
     [
       ( "encoder",
-        [ Alcotest.test_case "smoke" `Quick test_encoder_smoke ] );
+        [
+          Alcotest.test_case "smoke" `Quick test_encoder_smoke;
+          Alcotest.test_case "exception stacktrace" `Quick
+            test_exception_stacktrace_exported;
+        ] );
       ( "motel",
         [ Alcotest.test_case "live export" `Quick test_motel_live ] );
       Test_tracer.suite;

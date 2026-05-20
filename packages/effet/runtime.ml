@@ -9,6 +9,25 @@ let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
 let trace_context_key : Capabilities.trace_context Eio.Fiber.key =
   Eio.Fiber.create_key ()
 
+type die_context = {
+  span_name : string option;
+  annotations : (string * string) list;
+}
+
+let die_context_key : die_context Eio.Fiber.key = Eio.Fiber.create_key ()
+let empty_die_context = { span_name = None; annotations = [] }
+let current_die_context () =
+  Option.value (Eio.Fiber.get die_context_key) ~default:empty_die_context
+
+let with_die_span_name name f =
+  let context = current_die_context () in
+  Eio.Fiber.with_binding die_context_key { context with span_name = Some name } f
+
+let with_die_annotation key value f =
+  let context = current_die_context () in
+  let annotations = context.annotations @ [ (key, value) ] in
+  Eio.Fiber.with_binding die_context_key { context with annotations } f
+
 module Typed_fail : sig
   type key
 
@@ -26,19 +45,34 @@ let raise_cause key cause =
 
 let raise_fail key err = raise_cause key (Cause.Fail err)
 
-let die_of_exn exn = Cause.die_with_backtrace exn (Printexc.get_raw_backtrace ())
+let die_of_exn ?backtrace ~capture_backtrace exn =
+  let backtrace =
+    if capture_backtrace then
+      match backtrace with
+      | Some _ as bt -> bt
+      | None -> Some (Printexc.get_raw_backtrace ())
+    else None
+  in
+  let context = current_die_context () in
+  Cause.die_with_diagnostics ?backtrace ?span_name:context.span_name
+    ~annotations:context.annotations exn
 
-let rec cause_of_exn key exn =
+let rec cause_of_exn ?backtrace ~capture_backtrace key exn =
   match exn with
   | Raised_cause (k, cause) when k = Typed_fail.int key -> Obj.obj cause
   | Eio.Cancel.Cancelled _ -> Cause.interrupt
   | Exit -> Cause.interrupt
-  | Fun.Finally_raised exn -> cause_of_exn key exn
+  | Fun.Finally_raised exn -> cause_of_exn ~capture_backtrace key exn
   | Eio.Exn.Multiple causes ->
-      let causes = List.map (fun (exn, _) -> cause_of_exn key exn) causes in
+      let causes =
+        List.map
+          (fun (exn, bt) ->
+            cause_of_exn ~backtrace:bt ~capture_backtrace key exn)
+          causes
+      in
       if List.for_all Cause.is_interrupt_only causes then Cause.interrupt
       else Cause.concurrent causes
-  | exn -> die_of_exn exn
+  | exn -> die_of_exn ?backtrace ~capture_backtrace exn
 
 type ('env, 'err) t = {
   env : 'env;
@@ -49,6 +83,7 @@ type ('env, 'err) t = {
   auto_instrument : bool;
   logger : Capabilities.logger;
   meter : Capabilities.meter;
+  capture_backtrace : bool;
   cause_pp : Obj.t -> string;
   outer_sw : Eio.Switch.t;
   active : int Atomic.t;
@@ -67,7 +102,8 @@ let default_cause_pp (obj : Obj.t) : string =
 
 let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     ?(sampler = Sampler.always_on) ?(auto_instrument = false)
-    ?(logger = Logger.noop) ?(meter = Meter.noop) ?cause_pp ~env () =
+    ?(logger = Logger.noop) ?(meter = Meter.noop) ?(capture_backtrace = true)
+    ?cause_pp ~env () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let sleep =
     match sleep with
@@ -91,6 +127,7 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     auto_instrument;
     logger;
     meter;
+    capture_backtrace;
     cause_pp;
     outer_sw = sw;
     active = Atomic.make 0;
@@ -104,7 +141,7 @@ let rec status_of_cause :
     Capabilities.span_status =
  fun ~cause_pp -> function
   | Cause.Fail err -> Error (cause_pp (Obj.repr err))
-  | Cause.Die (exn, _) -> Error (Printexc.to_string exn)
+  | Cause.Die die -> Error (Printexc.to_string die.exn)
   | Cause.Interrupt _ -> Cancelled
   | Cause.Sequential causes | Cause.Concurrent causes ->
       if List.for_all Cause.is_interrupt_only causes then Cancelled
@@ -127,7 +164,72 @@ let rec status_of_cause :
         ("primary: " ^ render primary ^ " | suppressed finalizer: "
        ^ render finalizer)
 
-let run_finalizers ~fail_key finalizers =
+let render_cause ~cause_pp cause =
+  match status_of_cause ~cause_pp cause with
+  | Capabilities.Error msg -> msg
+  | Capabilities.Cancelled -> "cancelled"
+  | Capabilities.Ok -> "ok"
+
+let exception_event_attrs ~cause_pp path cause =
+  let base =
+    [
+      ("exception.message", render_cause ~cause_pp cause);
+      ("effet.cause.path", path);
+    ]
+  in
+  match cause with
+  | Cause.Die die ->
+      let with_type = ("exception.type", Printexc.to_string die.exn) :: base in
+      let with_stack =
+        match die.backtrace with
+        | None -> with_type
+        | Some bt ->
+            ("exception.stacktrace", Printexc.raw_backtrace_to_string bt)
+            :: with_type
+      in
+      let with_span =
+        match die.span_name with
+        | None -> with_stack
+        | Some name -> ("effet.die.span_name", name) :: with_stack
+      in
+      List.map
+        (fun (key, value) -> ("effet.annotation." ^ key, value))
+        die.annotations
+      @ with_span
+  | Cause.Fail _ | Cause.Interrupt _ -> base
+  | Cause.Sequential _ | Cause.Concurrent _ | Cause.Suppressed _ -> assert false
+
+let exception_event_attrs_tree ~cause_pp cause =
+  let rec collect path acc = function
+    | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ as c ->
+        exception_event_attrs ~cause_pp path c :: acc
+    | Cause.Sequential causes ->
+        causes
+        |> List.mapi (fun i c -> (i, c))
+        |> List.fold_left
+             (fun acc (i, c) ->
+               collect (path ^ ".seq." ^ string_of_int i) acc c)
+             acc
+    | Cause.Concurrent causes ->
+        causes
+        |> List.mapi (fun i c -> (i, c))
+        |> List.fold_left
+             (fun acc (i, c) ->
+               collect (path ^ ".concurrent." ^ string_of_int i) acc c)
+             acc
+    | Cause.Suppressed { primary; finalizer } ->
+        let acc = collect (path ^ ".primary") acc primary in
+        collect (path ^ ".suppressed_finalizer") acc finalizer
+  in
+  List.rev (collect "cause" [] cause)
+
+let cause_of_exn_runtime runtime key exn =
+  cause_of_exn ~capture_backtrace:runtime.capture_backtrace key exn
+
+let die_of_exn_runtime runtime exn =
+  die_of_exn ~capture_backtrace:runtime.capture_backtrace exn
+
+let run_finalizers ~runtime ~fail_key finalizers =
   Eio.Cancel.protect @@ fun () ->
   match !finalizers with
   | [] -> None
@@ -137,23 +239,23 @@ let run_finalizers ~fail_key finalizers =
         (List.mapi
            (fun i f () ->
              try f () with exn ->
-               failures.(i) <- Some (cause_of_exn fail_key exn))
-           fs);
+               failures.(i) <- Some (cause_of_exn_runtime runtime fail_key exn))
+          fs);
       failures
       |> Array.to_list
       |> List.filter_map Fun.id
       |> (function [] -> None | causes -> Some (Cause.concurrent causes))
 
-let with_finalizers ~fail_key finalizers body =
+let with_finalizers ~runtime ~fail_key finalizers body =
   match body () with
   | value -> (
-      match run_finalizers ~fail_key finalizers with
+      match run_finalizers ~runtime ~fail_key finalizers with
       | None -> value
       | Some finalizer -> raise_cause fail_key finalizer)
   | exception exn ->
-      let primary = cause_of_exn fail_key exn in
+      let primary = cause_of_exn_runtime runtime fail_key exn in
       let cause =
-        match run_finalizers ~fail_key finalizers with
+        match run_finalizers ~runtime ~fail_key finalizers with
         | None -> primary
         | Some finalizer -> Cause.suppressed ~primary ~finalizer
       in
@@ -189,7 +291,7 @@ let rec interpret :
               interpret ~runtime ~fail_key ~sw ~finalizers (handler err) env
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
-      | exn -> raise_cause fail_key (die_of_exn exn))
+      | exn -> raise_cause fail_key (die_of_exn_runtime runtime exn))
   | EP.Tap_error (e, observe) ->
       let inner_key = Typed_fail.fresh () in
       (try interpret ~runtime ~fail_key:inner_key ~sw ~finalizers e env with
@@ -200,7 +302,7 @@ let rec interpret :
               raise_fail fail_key err
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
-      | exn -> raise_cause fail_key (die_of_exn exn))
+      | exn -> raise_cause fail_key (die_of_exn_runtime runtime exn))
   | EP.Delay (d, e) ->
       runtime.sleep d;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
@@ -274,7 +376,7 @@ let rec interpret :
       finalizers :=
         (fun () ->
           let release_finalizers = ref [] in
-          with_finalizers ~fail_key release_finalizers (fun () ->
+          with_finalizers ~runtime ~fail_key release_finalizers (fun () ->
               interpret ~runtime ~fail_key ~sw ~finalizers:release_finalizers
                 (release v) env))
         :: !finalizers;
@@ -282,7 +384,7 @@ let rec interpret :
   | EP.Scoped e ->
       Eio.Switch.run @@ fun sw' ->
       let child_finalizers = ref [] in
-      with_finalizers ~fail_key child_finalizers (fun () ->
+      with_finalizers ~runtime ~fail_key child_finalizers (fun () ->
           interpret ~runtime ~fail_key ~sw:sw' ~finalizers:child_finalizers e env)
   | EP.Supervisor_scoped (max_failures, body) ->
       Eio.Switch.run @@ fun supervisor_sw ->
@@ -290,7 +392,7 @@ let rec interpret :
         EP.make_supervisor ~sw:supervisor_sw ~max_failures
       in
       let supervisor_finalizers = ref [] in
-      with_finalizers ~fail_key supervisor_finalizers (fun () ->
+      with_finalizers ~runtime ~fail_key supervisor_finalizers (fun () ->
           interpret_supervisor_scope ~runtime ~fail_key ~sw:supervisor_sw
             ~finalizers:supervisor_finalizers (body.run supervisor) env)
   | EP.Named (kind, name, e) ->
@@ -314,8 +416,10 @@ let rec interpret :
              ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
       in
       if not sampled then
+        with_die_span_name name @@ fun () ->
         Eio.Fiber.with_binding sampled_key false @@ fun () ->
-        interpret ~runtime ~fail_key ~sw ~finalizers e env
+        (try interpret ~runtime ~fail_key ~sw ~finalizers e env with exn ->
+           raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
       else
         let started_ms = runtime.now_ms () in
         let span_id =
@@ -327,47 +431,16 @@ let rec interpret :
           runtime.tracer#end_span ~span_id ~status ~ended_ms
         in
         let emit_exception_event cause =
-          let render c =
-            match status_of_cause ~cause_pp:runtime.cause_pp c with
-            | Capabilities.Error msg -> msg
-            | Capabilities.Cancelled -> "cancelled"
-            | Capabilities.Ok -> "ok"
+          let events =
+            exception_event_attrs_tree ~cause_pp:runtime.cause_pp cause
           in
-          let rec collect path acc = function
-            | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ as c ->
-                (path, render c) :: acc
-            | Cause.Sequential causes ->
-                causes
-                |> List.mapi (fun i c -> (i, c))
-                |> List.fold_left
-                     (fun acc (i, c) ->
-                       collect (path ^ ".seq." ^ string_of_int i) acc c)
-                     acc
-            | Cause.Concurrent causes ->
-                causes
-                |> List.mapi (fun i c -> (i, c))
-                |> List.fold_left
-                     (fun acc (i, c) ->
-                       collect
-                         (path ^ ".concurrent." ^ string_of_int i)
-                         acc c)
-                     acc
-            | Cause.Suppressed { primary; finalizer } ->
-                let acc = collect (path ^ ".primary") acc primary in
-                collect (path ^ ".suppressed_finalizer") acc finalizer
-          in
-          let events = List.rev (collect "cause" [] cause) in
           List.iter
-            (fun (path, msg) ->
+            (fun attrs ->
               runtime.tracer#add_event ~span_id ~name:"exception"
-                ~ts_ms:(runtime.now_ms ())
-                ~attrs:
-                  [
-                    ("exception.message", msg);
-                    ("effet.cause.path", path);
-                  ])
+                ~ts_ms:(runtime.now_ms ()) ~attrs)
             events
         in
+        with_die_span_name name @@ fun () ->
         Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
         Eio.Fiber.with_binding sampled_key true @@ fun () ->
         (try
@@ -375,13 +448,15 @@ let rec interpret :
            finish Ok;
            value
          with exn ->
-           let cause = cause_of_exn fail_key exn in
+           let cause = cause_of_exn_runtime runtime fail_key exn in
            emit_exception_event cause;
            finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
-           raise exn)
+           raise_cause fail_key cause)
   | EP.Annotate (key, value, e) ->
       runtime.tracer#add_attr ~key ~value;
-      interpret ~runtime ~fail_key ~sw ~finalizers e env
+      with_die_annotation key value @@ fun () ->
+      (try interpret ~runtime ~fail_key ~sw ~finalizers e env with exn ->
+         raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
   | EP.Link_span (link, e) ->
       runtime.tracer#add_link link;
       interpret ~runtime ~fail_key ~sw ~finalizers e env
@@ -454,7 +529,10 @@ and instrument_leaf :
     && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
          ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
   in
-  if not sampled then f ()
+  if not sampled then
+    with_die_span_name name @@ fun () ->
+    try f () with exn ->
+      raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn)
   else
     let started_ms = runtime.now_ms () in
     let span_id =
@@ -464,6 +542,7 @@ and instrument_leaf :
     let finish status =
       runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
     in
+    with_die_span_name name @@ fun () ->
     Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
     Eio.Fiber.with_binding sampled_key true @@ fun () ->
     try
@@ -471,9 +550,13 @@ and instrument_leaf :
       finish Ok;
       value
     with exn ->
-      let cause = cause_of_exn fail_key exn in
+      let cause = cause_of_exn_runtime runtime fail_key exn in
+      exception_event_attrs_tree ~cause_pp:runtime.cause_pp cause
+      |> List.iter (fun attrs ->
+             runtime.tracer#add_event ~span_id ~name:"exception"
+               ~ts_ms:(runtime.now_ms ()) ~attrs);
       finish (status_of_cause ~cause_pp:runtime.cause_pp cause);
-      raise exn
+      raise_cause fail_key cause
 
 and interpret_supervisor_scope :
     type re s env err a.
@@ -518,11 +601,11 @@ and interpret_supervisor_scope :
               child_sw := Some child_switch;
               let child_finalizers = ref [] in
               Ok
-                (with_finalizers ~fail_key child_finalizers (fun () ->
+                (with_finalizers ~runtime ~fail_key child_finalizers (fun () ->
                      interpret_supervisor_scope ~runtime ~fail_key
                        ~sw:child_switch ~finalizers:child_finalizers child_effect
                        env))
-            with exn -> Error (cause_of_exn fail_key exn)
+            with exn -> Error (cause_of_exn_runtime runtime fail_key exn)
           in
           (match result with
           | Ok _ -> ()
@@ -568,7 +651,7 @@ and par_collect :
     (env -> a) list ->
     env ->
     a list =
- fun ~runtime:_ ~fail_key ~finalizers:_ tasks env ->
+	 fun ~runtime ~fail_key ~finalizers:_ tasks env ->
   let n = List.length tasks in
   let results : a option array = Array.make n None in
   let causes : err Cause.t list ref = ref [] in
@@ -581,7 +664,7 @@ and par_collect :
            Tracer.with_fiber_context @@ fun () ->
              try results.(i) <- Some (task env)
              with exn ->
-               let cause = cause_of_exn fail_key exn in
+               let cause = cause_of_exn_runtime runtime fail_key exn in
                causes := cause :: !causes;
                (try Eio.Switch.fail par_sw Stop with _ -> ())))
        tasks
@@ -619,7 +702,8 @@ and race_first :
                   in
                   Eio.Stream.add results (`Ok value)
                 with exn ->
-                  Eio.Stream.add results (`Error (cause_of_exn fail_key exn))))
+                  Eio.Stream.add results
+                    (`Error (cause_of_exn_runtime runtime fail_key exn))))
            children;
          let rec await_success causes remaining =
            if remaining = 0 then
@@ -660,7 +744,8 @@ and par_collect_settled :
                   Ok
                     (interpret ~runtime ~fail_key ~sw:par_sw ~finalizers child
                        env)
-                with exn -> Error (cause_of_exn fail_key exn))))
+                with exn ->
+                  Error (cause_of_exn_runtime runtime fail_key exn))))
      children);
   Array.to_list results |> List.map Option.get
 
@@ -743,7 +828,7 @@ and retry_eff :
              else raise_fail fail_key err
          | cause -> raise_cause fail_key cause)
      | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
-     | exn -> raise_cause fail_key (die_of_exn exn))
+     | exn -> raise_cause fail_key (die_of_exn_runtime runtime exn))
   done;
   Option.get !result
 
@@ -755,12 +840,14 @@ let run t eff =
     Exit.Ok
       (interpret ~runtime:t ~fail_key:t.default_fail_key ~sw ~finalizers eff
          t.env)
-  with exn -> Exit.Error (cause_of_exn t.default_fail_key exn)
+  with exn -> Exit.Error (cause_of_exn_runtime t t.default_fail_key exn)
 
 let run_exn t eff =
   match run t eff with
   | Exit.Ok value -> value
-  | Exit.Error (Cause.Die (exn, _)) -> raise exn
+  | Exit.Error (Cause.Die { exn; backtrace = Some backtrace; _ }) ->
+      Printexc.raise_with_backtrace exn backtrace
+  | Exit.Error (Cause.Die { exn; backtrace = None; _ }) -> raise exn
   | Exit.Error _ -> failwith "Effet.Runtime.run_exn"
 
 let drain t =

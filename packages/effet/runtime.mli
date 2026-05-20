@@ -11,10 +11,17 @@ val create :
   ?auto_instrument:bool ->
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
+  ?capture_backtrace:bool ->
   ?cause_pp:(Obj.t -> string) ->
   env:'env ->
   unit ->
   ('env, 'err) t
+(** Create an interpreter.
+
+    [capture_backtrace] controls whether unchecked exceptions captured as
+    [Cause.Die] carry [Printexc.raw_backtrace]. It defaults to [true]. Disable
+    it only for runtimes where defect-path allocation cost matters more than
+    diagnostics. *)
 
 val run : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> ('a, 'err) Exit.t
 (** Run an effect to completion. *)

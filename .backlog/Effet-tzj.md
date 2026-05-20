@@ -1,12 +1,18 @@
 ---
 id: Effet-tzj
 title: Backtraces / source locations on Cause.Die
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-19T18:43:46.379Z
 created_by: backlog
-updated_at: 2026-05-19T18:48:04.557Z
+updated_at: 2026-05-20T14:18:17.030Z
+closed_at: 2026-05-20T14:18:17.030Z
+close_reason: "Completed. Cause.Die now carries a diagnostic record with exn,
+  optional raw backtrace, active span name, and active annotations. Runtime
+  captures diagnostics at thunk/named/annotate/finalizer defect boundaries,
+  Runtime.create exposes ?capture_backtrace, Cause.pp renders diagnostics, and
+  exception events exported through effet-otel include exception.stacktrace."
 dependencies:
   - issue_id: Effet-tzj
     depends_on_id: Effet-0jv

@@ -51,6 +51,15 @@ let with_auto_traced_runtime auto_instrument f =
   in
   f rt tracer
 
+let with_runtime_capture_backtrace capture_backtrace f =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~capture_backtrace
+      ~env:() ()
+  in
+  f rt
+
 module Test_clock = struct
   type sleeper = { deadline_ms : int; resolver : unit Eio.Promise.u }
   type t = { mutable now_ms : int; mutable sleepers : sleeper list }
@@ -518,7 +527,16 @@ let test_observability_auto_instrument_failure_status () =
   ignore (Runtime.run rt (Effect.thunk "boom" (fun () -> failwith "boom")) :
             (unit, _) Exit.t);
   let span = only_span tracer in
-  check_status "leaf failed" (Tracer.Error "") span.status
+  check_status "leaf failed" (Tracer.Error "") span.status;
+  match span.events with
+  | [ event ] ->
+      Alcotest.(check (option string)) "leaf cause path" (Some "cause")
+        (List.assoc_opt "effet.cause.path" event.Tracer.ev_attrs);
+      Alcotest.(check bool) "leaf stacktrace" true
+        (Option.is_some
+           (List.assoc_opt "exception.stacktrace" event.Tracer.ev_attrs))
+  | events ->
+      Alcotest.failf "expected one exception event, got %d" (List.length events)
 
 let test_observability_all_for_each_supervisor_inherit_parent () =
   with_traced_runtime @@ fun rt tracer ->
@@ -687,12 +705,133 @@ let test_runtime_exit_fail_die_interrupt () =
   in
   check_exit_error string_cause "typed failure" (Cause.Fail "bad") fail_exit;
   (match die_exit with
-  | Exit.Error (Cause.Die (exn, _)) ->
-      Alcotest.(check bool) "same exception" true (exn == die)
+  | Exit.Error (Cause.Die actual) ->
+      Alcotest.(check bool) "same exception" true (actual.exn == die)
   | _ -> Alcotest.fail "expected Die");
   (match interrupt_exit with
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt")
+
+let test_runtime_die_captures_diagnostics () =
+  with_sampled_traced_runtime Sampler.always_off @@ fun rt _tracer ->
+  let exn = Failure "diagnostic boom" in
+  let eff =
+    Effect.thunk "die.leaf" (fun () -> raise exn)
+    |> Effect.annotate ~key:"request.id" ~value:"r-1"
+    |> Effect.fn __POS__ "diagnostic.fn"
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die die) ->
+      Alcotest.(check bool) "same exception" true (die.exn == exn);
+      Alcotest.(check (option string)) "span name" (Some "diagnostic.fn")
+        die.span_name;
+      Alcotest.(check (option string)) "annotation" (Some "r-1")
+        (List.assoc_opt "request.id" die.annotations);
+      Alcotest.(check bool) "loc annotation exists" true
+        (Option.is_some (List.assoc_opt "loc" die.annotations));
+      Alcotest.(check bool) "backtrace captured" true
+        (Option.is_some die.backtrace)
+  | _ -> Alcotest.fail "expected Die with diagnostics"
+
+let test_runtime_die_capture_backtrace_can_be_disabled () =
+  with_runtime_capture_backtrace false @@ fun rt ->
+  match
+    Runtime.run rt (Effect.thunk "die.no-backtrace" (fun () -> failwith "boom"))
+  with
+  | Exit.Error (Cause.Die die) ->
+      Alcotest.(check (option string)) "no backtrace" None
+        (Option.map Printexc.raw_backtrace_to_string die.backtrace)
+  | _ -> Alcotest.fail "expected Die"
+
+let test_runtime_run_exn_uses_captured_backtrace () =
+  with_runtime @@ fun rt ->
+  let exn = Failure "run_exn defect" in
+  match Runtime.run_exn rt (Effect.thunk "die.run_exn" (fun () -> raise exn)) with
+  | _ -> Alcotest.fail "expected exception"
+  | exception actual ->
+      Alcotest.(check bool) "same exception" true (actual == exn);
+      let backtrace = Printexc.raw_backtrace_to_string (Printexc.get_raw_backtrace ()) in
+      Alcotest.(check bool) "backtrace not empty" true (String.length backtrace > 0)
+
+let test_runtime_concurrent_child_die_captures_diagnostics () =
+  with_runtime @@ fun rt ->
+  let left_ready, left_resolver = Eio.Promise.create () in
+  let right_ready, right_resolver = Eio.Promise.create () in
+  let child name own_ready other_ready =
+    Effect.thunk name (fun () ->
+        Eio.Promise.resolve own_ready ();
+        Eio.Promise.await other_ready;
+        raise (Failure name))
+    |> Effect.annotate ~key:"branch" ~value:name
+    |> Effect.named (name ^ ".span")
+  in
+  let eff =
+    Effect.par
+      (child "left" left_resolver right_ready)
+      (child "right" right_resolver left_ready)
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Concurrent causes) ->
+      let dies : Cause.die list =
+        List.filter_map
+          (function Cause.Die die -> Some die | _ -> None)
+          causes
+      in
+      Alcotest.(check (list string)) "child spans"
+        [ "left.span"; "right.span" ]
+        (dies
+        |> List.map (fun die -> Option.value die.Cause.span_name ~default:"")
+        |> List.sort String.compare);
+      List.iter
+        (fun die ->
+          let expected =
+            match die.Cause.span_name with
+            | Some "left.span" -> Some "left"
+            | Some "right.span" -> Some "right"
+            | _ -> None
+          in
+          Alcotest.(check (option string)) "branch annotation" expected
+            (List.assoc_opt "branch" die.Cause.annotations))
+        dies
+  | Exit.Error cause ->
+      Alcotest.failf "expected concurrent Die causes, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected concurrent child defects"
+
+let test_runtime_finalizer_die_captures_diagnostics () =
+  with_runtime @@ fun rt ->
+  let body_exn = Failure "body defect" in
+  let release_exn = Failure "release defect" in
+  let release () =
+    Effect.thunk "release.leaf" (fun () -> raise release_exn)
+    |> Effect.annotate ~key:"phase" ~value:"release"
+    |> Effect.named "release.span"
+  in
+  let body =
+    Effect.thunk "body.leaf" (fun () -> raise body_exn)
+    |> Effect.named "body.span"
+  in
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ()) ~release
+      |> Effect.bind (fun () -> body))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Die primary; finalizer = Cause.Die finalizer }) ->
+      Alcotest.(check bool) "primary exn" true (primary.exn == body_exn);
+      Alcotest.(check (option string)) "primary span" (Some "body.span")
+        primary.span_name;
+      Alcotest.(check bool) "finalizer exn" true (finalizer.exn == release_exn);
+      Alcotest.(check (option string)) "finalizer span" (Some "release.span")
+        finalizer.span_name;
+      Alcotest.(check (option string)) "finalizer annotation" (Some "release")
+        (List.assoc_opt "phase" finalizer.annotations)
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected cause: %a" (Cause.pp Format.pp_print_string)
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected finalizer Die"
 
 let test_effect_catch_does_not_catch_interrupt () =
   with_runtime @@ fun rt ->
@@ -1723,6 +1862,16 @@ let () =
             test_effect_tap_error_observes_and_rethrows;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
             test_runtime_exit_fail_die_interrupt;
+          Alcotest.test_case "die captures diagnostics" `Quick
+            test_runtime_die_captures_diagnostics;
+          Alcotest.test_case "die backtrace capture flag" `Quick
+            test_runtime_die_capture_backtrace_can_be_disabled;
+          Alcotest.test_case "run_exn preserves backtrace" `Quick
+            test_runtime_run_exn_uses_captured_backtrace;
+          Alcotest.test_case "concurrent child die captures diagnostics" `Quick
+            test_runtime_concurrent_child_die_captures_diagnostics;
+          Alcotest.test_case "finalizer die captures diagnostics" `Quick
+            test_runtime_finalizer_die_captures_diagnostics;
           Alcotest.test_case "catch does not catch interrupt" `Quick
             test_effect_catch_does_not_catch_interrupt;
           Alcotest.test_case "acquire release" `Quick test_acquire_release;

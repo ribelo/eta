@@ -7783,3 +7783,175 @@ nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 29-34
 nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 40-44 --show-errors
 nix develop -c dune runtest --force
 ~~~
+
+## V-Diag - Cause.Die diagnostic context
+
+### Why this entry exists
+
+Effet-tzj reopened unchecked defects. The structured Cause work made `Die` a real
+leaf in the public failure tree, but its payload still only carried an exception and
+optional raw backtrace. That was not enough for production debugging: a defect inside a
+named and annotated effect should say where it happened in Effet terms, not only where
+OCaml raised.
+
+### Goal
+
+Decide and implement the final diagnostic shape for `Cause.Die`: backtrace capture,
+source/span context, annotation propagation, runtime cost control, and OTel exception
+event mapping.
+
+### Context read
+
+Relevant current facts:
+
+- V-RCv adopted structured `Cause.t`: `Fail`, `Die`, `Interrupt`, `Sequential`,
+  `Concurrent`, and `Suppressed`.
+- `Effect.fn` is defined as `here_attr __POS__` plus `named`, so source location is
+  already represented as an annotation.
+- `Runtime` already caught defects and used `Printexc.get_raw_backtrace`, but the public
+  `Die` payload was anonymous and had no span/annotation context.
+- Span attributes live in the tracer, but defects must remain inspectable even when the
+  sampler is off or the tracer is noop.
+
+### Evidence
+
+The implementation pass used live runtime tests rather than a detached scratch model,
+because the important question was whether diagnostics survive the real interpreter
+boundaries where Eio fiber-local bindings unwind.
+
+New focused fixtures:
+
+- `die captures diagnostics`: a failing `Effect.thunk` wrapped in `Effect.fn` and
+  `Effect.annotate`, with the sampler forced off, still returns `Cause.Die` with the
+  active name, loc annotation, custom annotation, and backtrace.
+- `die backtrace capture flag`: `Runtime.create ~capture_backtrace:false` returns a
+  `Die` with `backtrace = None`.
+- `run_exn preserves backtrace`: `Runtime.run_exn` re-raises a `Die` with the captured
+  raw backtrace instead of creating a fresh raise site.
+- `concurrent child die captures diagnostics`: two forked `par` children fail together
+  and each `Die` keeps its child span name and branch annotation.
+- `finalizer die captures diagnostics`: a failing scoped body plus a failing release
+  effect preserves diagnostics on both the primary `Die` and suppressed finalizer `Die`.
+- `auto instrument failure status`: an auto-instrumented failing thunk span now records
+  an exception event with `exception.stacktrace`.
+- `exception stacktrace` in `packages/effet-otel/test/run.ml`: OTLP/JSON export contains
+  an exception event with an `exception.stacktrace` attribute and propagated Effet
+  annotation attributes.
+
+A useful bug surfaced during the first test run: capturing context in `Named` but then
+re-raising the original exception was not enough. The outer `Runtime.run` caught the
+exception after the diagnostic fiber-local context had unwound and recomputed a
+context-free `Die`. The fix is to re-raise the captured cause via `Raised_cause` once
+diagnostic context is attached.
+
+### Decision diary
+
+#### V-Diag1 - Make Die a record payload
+
+Decision: replace `Die of exn * raw_backtrace option` with `Die of Cause.die`, where
+`Cause.die` contains `exn`, `backtrace`, `span_name`, and `annotations`.
+
+Rationale: this is an intentional API break during design phase. A named record is
+clearer than an anonymous pair and gives diagnostic consumers a stable field-level
+contract.
+
+#### V-Diag2 - Diagnostics live on Cause, not only spans
+
+Decision: `Cause.Die` owns diagnostic context. Tracer events are derived from the cause.
+
+Rationale: sampler-off and noop-tracer runs still need debuggable `Runtime.run` output.
+The `die captures diagnostics` test proves span name and annotations are present even
+when no span is emitted.
+
+#### V-Diag3 - Runtime owns a small diagnostic fiber context
+
+Decision: `Runtime` keeps a fiber-local diagnostic context with the active Effet
+`span_name` and accumulated `annotations`.
+
+Rationale: `Tracer.inspect` cannot provide this reliably. Noop tracers cannot inspect
+anything, sampler-off named effects do not open spans, and source locations are already
+represented through `Effect.annotate`. A runtime-local diagnostic context follows the
+same Eio fiber inheritance model as active span context, but does not depend on span
+sampling.
+
+#### V-Diag4 - Re-raise captured causes across context boundaries
+
+Decision: once `Named`, `Annotate`, or an auto-instrumented leaf catches a defect and
+attaches diagnostics, the interpreter raises `Raised_cause` instead of re-raising the
+original exception.
+
+Rationale: this preserves the captured `Die` after fiber-local context unwinds. The
+first red test showed that re-raising the original exception loses `span_name` under
+sampler off.
+
+#### V-Diag5 - Backtrace capture is runtime-configurable
+
+Decision: `Runtime.create` accepts `?capture_backtrace`, defaulting to `true`.
+
+Rationale: defect diagnostics should be useful by default. Production runtimes that care
+about defect-path allocation can disable raw backtrace capture, and the test pins that
+the field becomes `None`.
+
+#### V-Diag6 - run_exn preserves captured backtraces
+
+Decision: `Runtime.run_exn` uses `Printexc.raise_with_backtrace` when a `Die` has a
+captured raw backtrace.
+
+Rationale: otherwise callers choosing the exception-raising API would lose the main
+debugging value this task adds. The `run_exn preserves backtrace` test pins that a
+re-raised defect has a non-empty raw backtrace.
+
+#### V-Diag7 - OTel gets stacktrace through event attributes
+
+Decision: runtime exception events include `exception.stacktrace` when a `Die` has a
+backtrace. They also include `exception.type`, `effet.die.span_name`, and
+`effet.annotation.<key>` attributes for diagnostic context.
+
+Rationale: `effet-otel` already serializes span event attributes into OTLP/JSON. No
+exporter-specific Cause dependency is needed; the runtime emits standard event
+attributes and the exporter forwards them.
+
+### Public surface
+
+Changed public API:
+
+~~~ocaml
+type die = {
+  exn : exn;
+  backtrace : Printexc.raw_backtrace option;
+  span_name : string option;
+  annotations : (string * string) list;
+}
+
+type 'err Cause.t =
+  | Fail of 'err
+  | Die of die
+  | Interrupt of interrupt_id option
+  | Sequential of 'err Cause.t list
+  | Concurrent of 'err Cause.t list
+  | Suppressed of { primary : 'err Cause.t; finalizer : 'err Cause.t }
+
+val die_with_diagnostics :
+  ?backtrace:Printexc.raw_backtrace ->
+  ?span_name:string ->
+  ?annotations:(string * string) list ->
+  exn ->
+  'err Cause.t
+
+val Runtime.create : ... -> ?capture_backtrace:bool -> ...
+~~~
+
+### Verification
+
+Focused commands run during this pass:
+
+~~~sh
+nix develop -c dune build packages/effet packages/effet-otel
+nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 19-24 --show-errors
+nix develop -c dune exec packages/effet/test/test_effet.exe -- test Observability 23 --show-errors
+nix develop -c dune exec packages/effet-otel/test/run.exe -- test encoder --show-errors
+nix develop -c dune runtest --force
+~~~
+
+Full-suite result: `effet` 98 tests, `effet-otel` 20 tests, `effet-stream` 13 tests,
+`ppx_effet` 3 tests, and `effet-schema` tests all passed.
