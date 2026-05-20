@@ -1,5 +1,6 @@
 _build/
 .opam/
+.opam-oxcaml/
 _opam/
 *.install
 .pi/

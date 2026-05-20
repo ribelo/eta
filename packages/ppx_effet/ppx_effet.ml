@@ -25,7 +25,7 @@ let cap_name_of_lid loc = function
 let parse_cap expr =
   match expr.pexp_desc with
   | Pexp_constraint
-      ({ pexp_desc = Pexp_ident { txt = lid; loc = name_loc }; _ }, typ) ->
+      ({ pexp_desc = Pexp_ident { txt = lid; loc = name_loc }; _ }, Some typ, _) ->
       (cap_name_of_lid name_loc lid, typ)
   | _ ->
       fail expr.pexp_loc
@@ -33,7 +33,7 @@ let parse_cap expr =
 
 let parse_caps expr =
   match expr.pexp_desc with
-  | Pexp_tuple caps -> List.map parse_cap caps
+  | Pexp_tuple caps -> List.map (fun (_, cap) -> parse_cap cap) caps
   | _ -> [ parse_cap expr ]
 
 let check_no_duplicate_caps loc caps =
