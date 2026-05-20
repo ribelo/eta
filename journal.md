@@ -174,6 +174,27 @@ Second quick baseline clean-build wall times: `deep_bind` 688ms, `env_row`
 250ms, `schema_heavy` 121ms, `ppx_heavy` 113ms. Inferred-interface sizes
 from `ocamlc -i`: 832 bytes, 851 bytes, 361 bytes, and 51 bytes respectively.
 
+### V-Bench-Overhead-Research
+
+The current `bench/` suite is a trend tracker, not an overhead suite. It can
+say whether Effet got faster or slower, but it cannot honestly answer "how much
+does Effet cost versus base OCaml?" because it lacks paired denominators.
+
+Decision: add a small paired-overhead layer, not a large new benchmark taxonomy.
+`scratch/bench_research/overhead_suite_research.md` narrows the follow-up to
+one new runtime executable plus one ratio reporter:
+
+- pure interpreter floor: reused-runtime `Effect.pure` loop vs direct OCaml loop
+- bind cost: `Effect.bind` chain vs direct closure-bind chain
+- typed failure cost: `Effect.fail |> catch` loop vs `Result.Error |> match`
+- runtime setup cost: `Runtime.create + run` vs `Eio_main.run + Switch.run`
+- one realistic pipeline: one existing stream or schema workload vs a hand-coded
+  equivalent
+
+Every overhead claim must cite a same-result-file pair and report both time and
+allocation ratios. Keep the current custom harness; Bechamel/Core_bench are not
+the missing ingredient yet.
+
 > v1 was a faithful port of the MoonBit reference. Several v1 choices were
 > driven by MoonBit's type-system limits, not by good OCaml engineering.
 > This journal partitions the v2 hypothesis space and records what I learn

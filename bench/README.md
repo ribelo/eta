@@ -109,6 +109,9 @@ Avoid committing dirty-tree results unless the commit message explains why.
 
 ## Caveats
 
+- The current suite is a trend tracker. It does not yet include the small
+  paired base-OCaml controls or ratio report needed to answer "Effet is X times
+  slower than direct OCaml" from committed evidence alone.
 - Compile-time benchmarks mutate file timestamps with `touch`; they do not edit
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter
