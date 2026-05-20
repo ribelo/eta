@@ -1,0 +1,9 @@
+(executable
+ (name runtime_stream)
+ (libraries bench_lib effet effet-stream eio_main unix))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./runtime_stream.exe --quick))))

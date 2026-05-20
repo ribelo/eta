@@ -1,0 +1,4 @@
+(library
+ (name bench_typecheck_deep_bind)
+ (wrapped false)
+ (libraries effet eio_main))

@@ -45,6 +45,12 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
+Benchmarks are opt-in repo infrastructure under `bench/`. Use
+`nix develop -c bash bench/run.sh --quick` for a fast performance snapshot,
+`nix develop -c bash bench/run.sh` for the full local record, and
+`nix develop -c dune build @bench` for runtime-only benchmark executables.
+Benchmarks are deliberately not attached to `dune runtest`.
+
 ## Commit & Pull Request Guidelines
 
 The short history uses conventional-style commits such as `feat: par / all /

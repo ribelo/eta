@@ -8,3 +8,4 @@ _opam/
 backlog/
 journal.md
 .motel-data/
+bench/fixtures/cache/*.bin

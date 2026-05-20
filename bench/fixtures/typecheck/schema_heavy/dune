@@ -1,0 +1,4 @@
+(library
+ (name bench_typecheck_schema_heavy)
+ (wrapped false)
+ (libraries effet-schema effet))

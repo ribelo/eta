@@ -1,0 +1,9 @@
+(executable
+ (name runtime_observability)
+ (libraries bench_lib effet effet_otel eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./runtime_observability.exe --quick))))

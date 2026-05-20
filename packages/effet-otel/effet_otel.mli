@@ -63,3 +63,40 @@ val aggregate_points :
 (** Aggregate raw meter points by [(name, kind, attrs, description, unit_)].
     Gauges keep the latest value; counters sum. The returned int pair is
     [(start_ts_ns, end_ts_ns)]. *)
+
+module Internal : sig
+  type span = {
+    trace_id : string;
+    span_id : string;
+    parent_span_id : string option;
+    trace_flags : int;
+    trace_state : (string * string) list;
+    baggage : (string * string) list;
+    name : string;
+    kind : Effet.Capabilities.span_kind;
+    start_unix_ns : int;
+    mutable end_unix_ns : int;
+    mutable attrs : (string * string) list;
+    mutable events : (string * int * (string * string) list) list;
+    mutable links : Effet.Capabilities.span_link list;
+    mutable status_code : int;
+    mutable status_message : string;
+  }
+
+  val encode_traces_request :
+    resource_attrs:(string * string) list -> scope_name:string -> span list -> string
+
+  val encode_logs_request :
+    resource_attrs:(string * string) list ->
+    scope_name:string ->
+    Effet.Capabilities.log_record list ->
+    string
+
+  val encode_metrics_request :
+    resource_attrs:(string * string) list ->
+    scope_name:string ->
+    Effet.Meter.point list ->
+    string
+end
+(** Encoder surface for tests and benchmarks. It deliberately excludes network
+    export so encoder cost can be measured without collector availability. *)

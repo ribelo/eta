@@ -1,5 +1,139 @@
 # Apsis OCaml v2 — design journal
 
+## V-Bench — continuous performance and compile-time awareness
+
+Effet-7b1 turns the previous one-off performance labs into an opt-in bench
+suite under `bench/`. The suite is not a CI gate and is not run by
+`dune runtest`; it is a committed paper trail for runtime and compile-time
+movement across commits.
+
+### V-Bv1 — runtime bench library
+
+Decision: use a small custom helper in `bench/lib/bench_lib.ml`.
+
+Evidence: `scratch/bench_research/a_custom_baseline.ml` builds the same kind
+of bind-chain workload as the runtime benches with `Unix.gettimeofday` and
+`Gc.quick_stat`. This matches the earlier stream research measurement style
+without adding Bechamel/Core_Bench to the package dependency story.
+
+Rejected: Core_bench, because it pulls in Core/Async for infrastructure that
+must stay lightweight. Bechamel remains a future option if the custom helper
+stops being enough, but the current acceptance needs stable JSON history more
+than a benchmark framework.
+
+### V-Bv2 — compile-time timer
+
+Decision: compile-time measurements use `date +%s%3N` around Dune commands in
+`bench/compile/run_compile.sh`.
+
+Evidence: `scratch/bench_research/compile_time_candidates.sh` records the
+shell timer and treats `/usr/bin/time` as optional. The environment used for
+Effet-na0 did not reliably provide `/usr/bin/time`; wall-clock milliseconds are
+always available and are enough for trend tracking.
+
+### V-Bv3 — history storage
+
+Decision: commit JSON files under `bench/results/`.
+
+Evidence: `scratch/bench_research/history_storage_lab.md` compares committed
+JSON, Git notes, and external storage. Committed JSON wins for v0 because a
+fresh clone has the record and review sees the exact measurement shape.
+
+### V-Bv4 — run mechanism
+
+Decision: `bench/run.sh` is the full entry point; `dune build @bench` is a
+runtime-only alias.
+
+Reason: compile-time benchmarks measure Dune itself and must stay outside the
+alias. Runtime executables are normal Dune targets and can be compiled or run
+without touching package tests.
+
+### V-Bv5 — statistical contract
+
+Quick mode records one sample. Full mode records five runtime samples and
+three compile-time samples. Every measurement stores raw samples, mean,
+standard deviation, min, max, metric, and unit.
+
+This is intentionally modest. The suite is a trend record for a small library,
+not a CI-grade statistical lab.
+
+### V-Bv6 — machine fingerprint
+
+Each result records OS, kernel, CPU model, CPU count, OCaml version, and Dune
+version. Cross-machine comparisons are not considered authoritative; the
+fingerprint exists to make that visible.
+
+### V-Bench-Harness
+
+Implemented:
+
+- `bench/run.sh` writes `bench/results/<timestamp>-<sha>.json`.
+- `bench/compare.ml` reads two explicit result files, or defaults to the two
+  newest files in `bench/results/`, and prints per-metric deltas.
+- `bench/lib/bench_lib.ml` provides runtime sampling and JSON-object emission.
+- `bench/README.md` documents running, output, result commits, and bisecting.
+- `dune build @bench` wires runtime benchmark executables only.
+
+Deviation from the original sketch: runtime executables emit newline-delimited
+measurement JSON and the shell runner wraps them into the final result file.
+That keeps category executables simple and lets compile-time shell results use
+the same object shape.
+
+### V-Bench-Core
+
+`bench/runtime_core/` covers pure run, right and left bind chains at 1k/10k/100k,
+map chains at 1k/10k/100k, thunk chains, catch success/failure,
+`tap_error`, fail-then-catch, and runtime create/run/shutdown.
+
+### V-Bench-Concurrency
+
+`bench/runtime_concurrency/` covers `par`, `all`, `for_each_par`,
+bounded `for_each_par`, `race`, and supervisor start/await with and without
+finalizers. The workloads use noop tracing and no file I/O.
+
+### V-Bench-Observability
+
+`bench/runtime_observability/` covers noop versus in-memory tracing,
+auto-instrumentation, named spans with attributes, cause construction, trace
+context extract/inject, and OTLP adapter paths for spans/logs/metrics.
+
+The OTLP benchmark uses `Effet_otel.Internal` encoders. This small internal
+surface exists so tests and benchmarks can measure JSON encoding without
+collector availability or failed TCP posts dominating the result.
+
+### V-Bench-Stream
+
+`bench/runtime_stream/` covers map/filter/fold, take/fold,
+merge, early-take cancellation, `flat_map_par`, and `from_file` with generated
+deterministic cache files under `bench/fixtures/cache/`.
+
+### V-Bench-Schema
+
+`bench/runtime_schema/` covers record decode/encode, refined records, tagged
+unions, recursive schemas, arrays, transforms, effectful
+`decode_with_policy`, failure construction, and `Json.to_string`.
+
+### V-Bench-Compile
+
+`bench/compile/run_compile.sh` records clean, touch-top, touch-internal, and
+touch-test builds for `effet`, `effet-stream`, `effet-schema`, `effet-otel`,
+and `ppx_effet`.
+
+### V-Bench-User-Compile
+
+`bench/fixtures/typecheck/` contains:
+
+- `deep_bind`, lifted from `scratch/typecheck_perf`.
+- `env_row`, lifted from `scratch/r_dx_research` and updated from the removed
+  `Effect.sync` spelling to `Effect.thunk`.
+- `schema_heavy`, a schema-heavy user fixture with record6, refinements,
+  optional fields, and tagged-union rollup.
+- `ppx_heavy`, a PPX expansion fixture using `[%effet.fn]`.
+
+The original scratch labs remain tracked as research evidence. The bench
+fixtures are independent copies so the historical labs do not need to be
+mutated by benchmark maintenance.
+
 > v1 was a faithful port of the MoonBit reference. Several v1 choices were
 > driven by MoonBit's type-system limits, not by good OCaml engineering.
 > This journal partitions the v2 hypothesis space and records what I learn

@@ -248,6 +248,16 @@ Use the Nix shell when available:
 nix develop -c dune runtest --force
 ```
 
+Performance and compile-time history lives in the opt-in bench suite:
+
+```sh
+nix develop -c bash bench/run.sh --quick
+```
+
+See [bench/README.md](bench/README.md) for the JSON format, comparison tool,
+and bisect workflow. `dune runtest` does not run benchmarks; `dune build
+@bench` runs the runtime benchmark executables only.
+
 Without Nix:
 
 ```sh

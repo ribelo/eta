@@ -708,3 +708,27 @@ let flush ?(timeout_s = 5.0) t =
     end
   in
   wait ()
+
+module Internal = struct
+  type nonrec span = span = {
+    trace_id : string;
+    span_id : string;
+    parent_span_id : string option;
+    trace_flags : int;
+    trace_state : (string * string) list;
+    baggage : (string * string) list;
+    name : string;
+    kind : Effet.Capabilities.span_kind;
+    start_unix_ns : int;
+    mutable end_unix_ns : int;
+    mutable attrs : (string * string) list;
+    mutable events : (string * int * (string * string) list) list;
+    mutable links : Effet.Capabilities.span_link list;
+    mutable status_code : int;
+    mutable status_message : string;
+  }
+
+  let encode_traces_request = encode_traces_request
+  let encode_logs_request = encode_logs_request
+  let encode_metrics_request = encode_metrics_request
+end

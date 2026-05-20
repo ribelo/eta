@@ -1,0 +1,3 @@
+(executable
+ (name a_custom_baseline)
+ (libraries bench_lib effet eio_main))
