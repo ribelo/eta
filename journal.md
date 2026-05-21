@@ -2,31 +2,38 @@
 
 ## V-OxCaml-Perf — OxCaml is faster by default for free
 
-Status: final. Switching the toolchain from mainline OCaml `5.4.1` to OxCaml
-`5.2.0+ox`, with no Effet source changes, makes the bench suite about
-**1.34×–1.49× faster across 88% of measured workloads** (76/98 benches
-improve by >5%, 10/98 regress by >5%, 12/98 are within ±5%; geomean of the
-oxcaml/mainline wall_ns ratio is 0.673, median 0.747).
+Status: final, reproduced across two independent runs per toolchain.
+Switching the toolchain from mainline OCaml `5.4.1` to OxCaml `5.2.0+ox`,
+with no Effet source changes, makes the bench suite about
+**1.34×–1.52× faster across 91% of measured workloads** (83/98 benches
+improve by >5%, 7/98 regress by >5%, 8/98 are within ±5%; geomean of the
+oxcaml/mainline wall_ns ratio is 0.657, median 0.748, best case 11.5×,
+worst regression 1.35×).
 
-Reproduce:
+Reproduce (two runs per toolchain, aggregated by per-bench min):
 
 ```sh
-nix develop -c            bash scratch/oxcaml_research/perf/run_perf.sh mainline
-nix develop .#oxcaml -c   bash scratch/oxcaml_research/perf/run_perf.sh oxcaml
+nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 1
+nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 2
+nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 1
+nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 2
 python3 scratch/oxcaml_research/perf/compare.py | tee scratch/oxcaml_research/perf/compare.txt
 ```
 
 Method: same source, same machine (AMD Ryzen 9 9950X), same
-`--profile=release`, same `EIO_BACKEND=posix` (sandbox forces posix on both).
-Bench infrastructure was rebased from `main` (3b5a50f..d69e3f9) into the
-`Effet-OxCaml` branch as a linear rebase. The TS reference suite and compile
-probes were skipped to keep the comparison apples-to-apples on the OCaml side.
+`--profile=release`, same `EIO_BACKEND=posix` on both runs (sandbox forces
+posix on either toolchain). Bench infrastructure was rebased from `main`
+(3b5a50f..d69e3f9) into the `Effet-OxCaml` branch as a linear rebase. Two
+full-sample runs per toolchain; aggregation uses per-bench min over runs to
+suppress spike noise. The TS reference suite and compile probes were skipped
+to keep the comparison apples-to-apples on the OCaml side.
 
-Top wins are in AST-heavy and stream/IO paths: `overhead.mini.bind.100k.build_run`
-9.2×, `overhead.effet.bind.100k.build_run` 8.6×, `effet_stream.from_file.16MiB.64KiB`
-8.4×, `effect.core.map_chain.100k` 6.5×, `effet_stream.merge.early_take.5`
-4.3×, `effect.observability.effet_otel.encoder.span.1000` 3.2×, supervisor
-start/await 2.6×, basic `bind_left.100k` 2.0×.
+Top wins are AST-heavy and stream/IO paths: `overhead.mini.bind.100k.build_run`
+11.5×, `overhead.effet.bind.100k.build_run` 8.6×,
+`effect.core.map_chain.100k` 6.4×, `effect.core.map_chain.10k` 4.8×,
+`effet_stream.merge.early_take.5` 4.4×,
+`effect.observability.effet_otel.encoder.span.1000` 3.0×,
+`effect.core.bind_left.100k` 2.4×, `effect.concurrency.all.heavy.64` 2.3×.
 
 Regressions are concentrated in small-input observability/Cause construction
 and a few encoder microbenchmarks; absolute deltas are sub-microsecond and at

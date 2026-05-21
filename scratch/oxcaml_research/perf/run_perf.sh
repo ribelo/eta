@@ -8,7 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
 label="${1:?label required: mainline | oxcaml}"
-out="scratch/oxcaml_research/perf/${label}.json"
+run_id="${2:-1}"
+out="scratch/oxcaml_research/perf/${label}.${run_id}.json"
 quick="${QUICK:-false}"
 
 mkdir -p scratch/oxcaml_research/perf
