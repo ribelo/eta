@@ -127,6 +127,11 @@
               ocamlPackages.yojson
               ocamlPackages.ppxlib
             ];
+
+            shellHook = ''
+              echo "Effet mainline OCaml shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
+              echo "For the OxCaml shell run: nix develop .#oxcaml"
+            '';
           };
 
           oxcaml = pkgs.mkShell {
@@ -142,9 +147,30 @@
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
               fi
-              echo "Effet OxCaml research shell"
+              echo "Effet OxCaml research shell (${oxCamlSwitch})"
               echo "Run 'effet-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
               echo "Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only."
+            '';
+          };
+
+          # Symmetry alias: the mainline toolchain is `nix develop` or
+          # `nix develop .#mainline`; the OxCaml toolchain is `nix develop .#oxcaml`.
+          # Keeping both side by side makes before/after perf comparisons trivial.
+          mainline = pkgs.mkShell {
+            packages = [
+              ocamlPackages.ocaml
+              ocamlPackages.dune_3
+              ocamlPackages.findlib
+              ocamlPackages.eio
+              ocamlPackages.eio_main
+              ocamlPackages.alcotest
+              ocamlPackages.yojson
+              ocamlPackages.ppxlib
+            ];
+
+            shellHook = ''
+              echo "Effet mainline OCaml shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
+              echo "Same as 'nix develop'. For OxCaml run: nix develop .#oxcaml"
             '';
           };
         }

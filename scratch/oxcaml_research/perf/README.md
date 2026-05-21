@@ -42,7 +42,24 @@ stream / file-IO pipelines, and `for_each_par` / supervisor concurrency.
 - The TS reference suite and compile probes were skipped to keep the
   comparison apples-to-apples on the OCaml side.
 
-Reproduce:
+Reproduce (one command, two runs per toolchain):
+
+```sh
+bash scratch/oxcaml_research/perf/run_both.sh
+# Optional: more samples / quick mode
+bash scratch/oxcaml_research/perf/run_both.sh -n 3
+bash scratch/oxcaml_research/perf/run_both.sh -n 1 -q
+```
+
+`run_both.sh` enters both flake shells, runs `run_perf.sh` `RUNS` times in
+each, and feeds the result to `compare.py`. The flake exposes both
+toolchains side by side:
+
+- `nix develop` (alias `nix develop .#mainline`) — mainline OCaml from
+  nixpkgs.
+- `nix develop .#oxcaml` — OxCaml `5.2.0+ox` via opam in `.opam-oxcaml/`.
+
+Manual reproduce (if you want to drive each shell yourself):
 
 ```sh
 nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 1
@@ -111,6 +128,8 @@ perf is now a third independent reason to switch.
 
 All under `scratch/oxcaml_research/perf/`:
 
+- `run_both.sh` — one-shot driver: enters both flake shells, runs the suite
+  N times each, then prints the comparison.
 - `run_perf.sh` — runs the OCaml runtime bench exes once per invocation,
   takes a `<label> <run-id>` argument so multiple runs are kept side-by-side.
 - `mainline.1.json`, `mainline.2.json`, `oxcaml.1.json`, `oxcaml.2.json` —
