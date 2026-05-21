@@ -10185,3 +10185,240 @@ Deferred:
 
 - Phase 10 still needs README/AGENTS updates, a final V-OxCaml-Native audit entry, and the bench no-regression gate.
 - A newer OxCaml release can replace `5.2.0+ox` only after the toolchain check, scratch probes, shipped gate, and editor tool probes pass on that release.
+
+## V-Concurrency-Model - Per-domain explicit-push runtime
+
+Status: final for Effet-OxCaml-rp2. No shipped runtime rewrite is included in this entry.
+
+Question: which concurrency model should Effet adopt after Phase 0 showed that
+Eio is per-domain and Portable_ws_deque.push is owner-local?
+
+Artifacts:
+
+- scratch/oxcaml_research/concurrency_model/rejected.md
+- scratch/oxcaml_research/concurrency_model/h7_null_probe/h7_cpu_fanout.ml
+- scratch/oxcaml_research/concurrency_model/h7_null_probe/results.md
+- scratch/oxcaml_research/concurrency_model/h2_ws_probe/h2_vs_h3.ml
+- scratch/oxcaml_research/concurrency_model/h2_ws_probe/results.md
+- scratch/oxcaml_research/concurrency_model/h3_push_probe/h3_protocol_smoke.ml
+- scratch/oxcaml_research/concurrency_model/h3_push_probe/results.md
+- scratch/oxcaml_research/concurrency_model/h4_hybrid_probe/results.md
+- scratch/oxcaml_research/concurrency_model/h5_centralized_probe/results.md
+
+Verification commands:
+
+    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h7_null_probe/run.sh
+
+Last result: single-domain 44.814ms, two-domain 22.718ms, speedup 1.973x.
+
+    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h2_ws_probe/run.sh
+
+Last result: H2 work-stealing 23.282ms, H3 explicit-push 22.939ms,
+H2/H3 time ratio 1.015. Both produced the same count, work, and checksum.
+Task latency was comparable: H2 p50 558us / p95 575us; H3 p50 557us / p95 585us.
+
+    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h3_push_probe/run.sh
+
+Last result: success dispatch, failure/cancel, timeout, portable failure
+aggregation, portable events, and bounded-inbox backpressure all passed.
+
+    nix develop -c bash -lc 'effet-oxcaml-test-shipped >/tmp/effet_concurrency_model_gate.log 2>&1'
+
+Last result: exit 0. The log tail shows effet-otel 20 tests and
+effet-stream 13 tests successful; the gate also includes the shipped effet,
+schema, and ppx package tests.
+
+Candidate statuses:
+
+| Hypothesis | Status | Evidence |
+| --- | --- | --- |
+| H1 shared-substrate work stealing | Rejected | V-P0T2 Eio is same-domain; V-P0T6 ws_deque push is owner-local |
+| H2 per-domain work stealing | Rejected for default | Tied H3 on H7 workload while requiring peer stealing and separate producer handoff |
+| H3 per-domain explicit push | Affirmed | H7 speedup retained; H3 protocol smoke covers success, failure, cancel, timeout, observability, backpressure |
+| H4 hybrid push plus steal | Deferred | No H3 pathology in this probe justifies steal-on-overload |
+| H5 centralized orchestrator plus pure fan-out | Deferred | No H3 failure/observability pathology justifies centralizing all evaluation |
+| H6 actor model | Rejected | V-P3-Partial keeps lexical rank-2 supervised nursery, not mailbox actors |
+| H7 single-domain only | Disproved | CPU fan-out showed 1.973x speedup on two domains |
+
+Evaluation matrix:
+
+| Criterion | H2 per-domain work stealing | H3 per-domain explicit push |
+| --- | --- | --- |
+| Mode-system fit | Needs ws_deque owner discipline plus separate cross-domain producer queue | Uses Portable.Atomic inboxes for producer handoff directly |
+| Effet constraint survival | Still inherits V-P0T6 push limitation | Matches V-P0T2 per-domain Eio and V-P0T6 producer handoff |
+| Throughput on H7 workload | 23.282ms | 22.939ms |
+| Per-task latency | p50 558us, p95 575us | p50 557us, p95 585us |
+| Cancellation | Requires cancel token plus steal-loop cooperation | Portable.Atomic cancel token in coordinator/worker protocol |
+| Observability | Worker-local events still need coordinator reassembly | Worker-local portable events return to coordinator directly |
+| Supervision | Worker failures must be stolen/returned and converted | Worker failures return as portable causes to coordinator supervisor |
+| Implementation complexity | ws_deque, seed queue, peer stealing, producer handoff | bounded portable inbox, coordinator assignment |
+
+Decision diary:
+
+- V-CM-1 - Reject single-domain Effet.
+  Decision: Effet keeps a domain-parallel runtime path.
+  Rationale: the H7 probe showed a 1.973x two-domain speedup on a deterministic CPU fan-out workload with identical output.
+- V-CM-2 - Reject shared substrate and actors.
+  Decision: do not build a global ZIO/Tokio queue or an actor/mailbox runtime.
+  Rationale: H1 contradicts V-P0T2 and V-P0T6; H6 contradicts the rank-2 lexical supervisor retained by V-P3-Partial.
+- V-CM-3 - Pin H3 as the default model.
+  Decision: Effet's OxCaml runtime should be per-domain explicit push with share-nothing workers.
+  Rationale: H3 preserves the H7 speedup, ties H2 on the workload that matters now, and has the smaller primitive set.
+- V-CM-4 - Keep H4 and H5 conditional.
+  Decision: do not add steal-on-overload or centralized evaluation until H3 shows a measured pathology.
+  Rationale: the H3 smoke surfaced expected bounded-inbox backpressure but no throughput, failure-ordering, or observability pathology.
+- V-CM-5 - Concrete runtime shape.
+  Decision: Runtime.run owns the coordinator. The coordinator owns the user-facing Eio switch, scheduling policy, result ordering, supervisor state, cause aggregation, and observability reassembly. Worker domains own their local Eio runtimes and bounded Portable.Atomic inboxes. Only portable pure-core Effect.t subgraphs and portable context snapshots cross the domain boundary.
+  Rationale: this matches the successful H3 smoke while respecting Eio's same-domain boundary.
+
+Pinned semantics:
+
+- Runtime.run: create or borrow a Parallel_scheduler, create per-domain worker contexts, and push portable pure-core work to bounded per-domain inboxes. The coordinator remains the only owner of same-domain Eio handles.
+- par/all/for_each_par: split into portable sub-effects, assign by round-robin initially and later least-loaded when queue depth is known, preserve input order at the coordinator.
+- supervisor failure aggregation: workers return Cause.Portable values; the coordinator converts or records them into supervisor failure state and applies max_failures thresholds.
+- Cause aggregation: raw Cause.t remains same-domain. Cross-domain child outcomes use Cause.Portable or an equivalent immutable boundary representation.
+- cancellation: coordinator owns a Portable.Atomic cancel token per parallel region; workers poll at pure-core node boundaries and map local Eio cancellation inside their domain.
+- observability: workers emit portable trace/log/metric events to per-domain buffers; coordinator rebuilds the user-visible span tree and sends exporter work through the chosen Eio-bound exporter domain.
+- backpressure: each worker inbox is bounded. Full inboxes suspend or retry through an Eio-local wakeup wrapper on the coordinator side; they do not become unbounded global queues.
+- timeout/delay/retry: worker-local effects use that worker's Eio clock; coordinator-level timeout wraps the orchestration region and fans cancellation to workers.
+
+Implementation follow-up:
+
+- Phase 5 should focus runtime state on coordinator-owned aggregation plus portable worker inbox state, not a universal shared capsule state.
+- Phase 6 should rewrite the ZIO-direction wording to explicit-push per-domain workers, not shared work stealing.
+- Phase 7 Resource remains Portable.Atomic-based, but auto-refresh work should be dispatched through H3 worker inboxes and must wait for the portable Effect.t payload boundary from Phase 4.
+- Phase 8 stream/exporter handoff should reuse the H3 bounded Portable.Atomic inbox plus Eio-local wakeup model; Eio.Stream stays same-domain only.
+
+Deferred:
+
+- Measure 4-domain and 8-domain variants once the shipped runtime has real worker pools rather than paper fork_join probes.
+- Add a skewed workload after H3 exists in shipped code. If explicit assignment fails under measured skew, reopen H4.
+- Add observability ordering measurements after the shipped tracer/exporter path emits real cross-domain events. If reassembly dominates, reopen H5.
+
+## V-Concurrency-Model-Hardening - Senior review and protocol invariants
+
+Status: refines V-Concurrency-Model after a senior review of the verdict and the
+H3 smoke evidence. The choice of H3 stands. The verdict's wording does not.
+
+The earlier entry framed H3 as "affirmed" and the smoke as proof of the runtime
+protocol. A senior review identified that the smoke proved the model could be
+sketched, not that the protocol is implementation-ready. The correct framing is:
+
+> H3 is selected as Effet's default concurrency model. Its protocol invariants
+> must be made true by the probes in epic Effet-OxCaml-u73 before any shipped
+> runtime work begins in Effet-OxCaml-7dp Phases 5 to 8.
+
+This entry records that correction and pins the invariants the H3 protocol
+must satisfy.
+
+### Naming correction
+
+H3 is not literally "share-nothing". Workers do share state via portable
+atomics: bounded inboxes, cancel tokens, event bags, failure bags, indexed
+result stores. The accurate description is:
+
+> Per-domain local execution with explicit portable handoff and
+> coordinator-owned reassembly.
+
+That is what the V-Concurrency-Model "Concrete runtime shape" paragraph
+already specified; "share-nothing" was a shorthand that hides the role of
+Portable.Atomic in the dispatch protocol.
+
+### Worker non-capture rules
+
+Workers run pure-core Effect.t subgraphs. They must not capture the
+following same-domain values, by either type-system enforcement or
+documented contract:
+
+- Eio.Switch.t, Eio.Promise.t, Eio.Stream.t, Eio.Cancel
+- Eio.Time.clock and any Eio.Std.r capability handle
+- Tracer.in_memory mutable collector, Logger / Meter mutable buffers
+- Same-domain Cause.t (use Cause.Portable across the boundary)
+- Same-domain Runtime.t (workers receive a portable subset)
+
+Workers may capture only:
+
+- Cause.Portable.t and Phase 1 immutable_data payload values
+- Trace context snapshots (V-P1-PureData immutable_data)
+- Coordinator-supplied Portable.Atomic inboxes, cancel tokens, result
+  stores
+- Schedule.t, Duration.t, Sampler.t, and other immutable_data records
+
+Mechanical enforcement of these rules is the subject of probe T8
+(Effet-OxCaml-cex).
+
+### H3 protocol invariants
+
+| Area | Invariant | Probe |
+| --- | --- | --- |
+| Inbox ownership | Either single coordinator producer with phase-separated drain, or a real linearizable bounded queue. The protocol must specify which. | T1 (Effet-OxCaml-8cx) |
+| Task identity | Every task carries a stable index used for ordered reassembly. | T3 (Effet-OxCaml-nbb) |
+| Result ordering | all / for_each_par / all_settled return results in input order. Unordered atomic bags are internal storage only. | T3 (Effet-OxCaml-nbb) |
+| Failure ordering | Cross-domain supervisor failure observation order is defined: coordinator receipt order, task-index order, or an explicit weakening for portable supervisors. | T4 (Effet-OxCaml-xbw) |
+| Cancellation | Workers poll a Portable.Atomic cancel token at a specified discipline (per Bind/Map node, every N nodes, or wall-clock interval). Long CPU work exits within bounded polls. | T2 (Effet-OxCaml-3ik) |
+| Failure payload | Workers return real Cause.Portable variants (Die, Fail, Interrupt, Concurrent, Suppressed). Typed-error payloads are immutable_data. | T5 (Effet-OxCaml-7fj) |
+| Timeout/clock | Coordinator deadlines propagate as portable Mtime.t int64 values. Workers compare against local Eio clocks at the cancellation polling discipline. Schedule.jittered RNG strategy is decided. | T7 (Effet-OxCaml-09k) |
+| Observability | Workers emit portable trace/log/metric events; coordinator owns export and span/event ordering. Reassembly cost is measured. | T6 (Effet-OxCaml-5ab) |
+| Eio non-leakage | Forbidden captures (Eio handles, mutable collectors, same-domain Cause/Runtime) are mechanically rejected by the type system. | T8 (Effet-OxCaml-cex) |
+| Backpressure | Bounded inbox semantics survive the actual producer/drain concurrency model from the inbox-ownership choice. | T1 (Effet-OxCaml-8cx) |
+| Skew | A 2/4/8-domain matrix with uneven and nested workloads is measured. The chosen dispatch policy survives; otherwise H4 hybrid reopens. | T9 (Effet-OxCaml-rdr) |
+
+The hardening epic Effet-OxCaml-u73 owns all eleven probes plus T10's
+synthesis (Effet-OxCaml-7gc).
+
+### Supersession of V-P0T6
+
+V-P0T6 evaluated Portable_ws_deque vs a Portable.Atomic queue and
+recommended Portable_ws_deque for "Phase 6 work-stealing queues" plus a
+Portable.Atomic wrapper for "Phase 8 producer handoff". V-Concurrency-Model
+then rejected work-stealing (H2) for the H3 baseline.
+
+This entry pins the consequences:
+
+- The H3 default runtime uses Portable.Atomic bounded inboxes for both
+  Phase 6 cross-domain dispatch and Phase 8 producer handoff. There is
+  one queue primitive, not two.
+- Portable_ws_deque is reserved for a future H4 (hybrid steal-on-empty)
+  or H2 reopen if the skew benchmark T9 forces it. Until then,
+  Portable_ws_deque is not part of the H3 baseline.
+
+V-P0T6's positive evidence about the deque API remains valid as input to
+a future H4 probe; only its "use this for the H3 default" implication is
+superseded.
+
+### Smoke gaps the hardening epic closes
+
+The H3 smoke at scratch/oxcaml_research/concurrency_model/h3_push_probe/
+proved transport happens. Six concrete gaps remain before runtime work
+ships:
+
+- Inbox push_bounded is racy unless the protocol pins single-producer +
+  phase-separated drain or replaces the primitive (T1).
+- max_cancel_poll = 0 demonstrates "sibling sees cancel before any
+  work", not "long CPU work polls and exits" (T2).
+- Result ordering uses unordered atomic bags; production needs indexed
+  reassembly (T3).
+- Supervisor.failures observation order is undefined for cross-domain
+  children (T4).
+- portable_cause = { task_id; code } is integers, not real Cause.Portable
+  variants (T5).
+- timeout_after uses synthetic local wall clock; deadline propagation and
+  worker-local clocks are unspecified (T7).
+
+Plus T6 (observability reassembly cost), T8 (Eio non-leakage), and T9
+(skew benchmark) which were deferred entirely in V-Concurrency-Model.
+
+### Verdict
+
+H3 is selected. Implementation is gated on T1-T9 producing the invariants
+above with positive and negative fixtures, and T10 synthesizing the H3
+Implementation Acceptance Checklist that Effet-OxCaml-7dp Phases 5-8 then
+follow without further interpretation.
+
+### Deferred (until T10 synthesis)
+
+- Backlog comments on Effet-OxCaml-7dp Phases 5/6/7/8 referencing this
+  hardening verdict. Added by T10 after probe results are in.
+- Promotion of the smoke fixtures to shipped tests where the hardened
+  protocol survives. Decided by T10.
+- Decision on whether H4 hybrid reopens. Decided by T9.
