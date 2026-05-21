@@ -10449,7 +10449,7 @@ scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md.
 | Observability | Workers emit portable events keyed by task_id/event_index; coordinator owns export. | T6 results.md |
 | Eio non-leakage | Raw Eio handles, Runtime.t, raw Cause.t, and mutable collectors are rejected at the worker boundary. | T8 results.md |
 | Backpressure | Capacity is enforced during the coordinator push phase; close rejects late pushes. | T1 results.md |
-| Dispatch under skew | H3 uses static skew-aware assignment. H4 does not reopen. | T9 results.md |
+| Dispatch under skew | H3 uses explicit coordinator assignment. The latest T9 run pins least-loaded assignment. H4 does not reopen. | T9 results.md |
 
 ### Probe summaries
 
@@ -10463,24 +10463,123 @@ scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md.
 | T6 observability | pass=3 fail=0 | reassembly_pct=9.94, below H5 reopen trigger. |
 | T7 timeout/clock | pass=3 fail=0 | max_deadline_to_exit_us=48417. |
 | T8 non-leakage | pass=12 fail=0 | Eleven forbidden captures rejected; portable replacements passed. |
-| T9 skew | pass=2 fail=0 | chosen_policy=skew_aware, h4_reopen=false. |
+| T9 skew | pass=2 fail=0 | Latest rerun: chosen_policy=least_loaded, h4_reopen=false. |
 
 ### Supersession and follow-through
 
 V-P0T6 remains superseded for H3. Portable_ws_deque is not the H3 queue
-primitive. It remains reserved for a future H4 if production workloads disprove
-static skew-aware assignment.
+primitive. It remains reserved for a future H4 if production workloads trip the
+C6 telemetry threshold.
 
-Schedule.jittered is the remaining implementation caveat: schedule.ml currently
-uses implicit Random.float. The H3 implementation must move jitter to
-coordinator-generated delays or an explicit portable PRNG capability before any
-worker-side schedule interpretation.
+Schedule.jittered was the remaining implementation caveat in this entry. It is
+closed by V-CM-H2: core scheduling code now uses an explicit portable
+Capabilities.random token and no longer calls stdlib Random.
 
 ### Verdict
 
 H3 is implementation-ready for Phases 5-8 only under the checklist above. The
 protocol is not share-nothing; it is per-domain local execution with explicit
 portable handoff and coordinator-owned reassembly.
+
+## V-CM-H2 - H3 implementation caveats closed
+
+Date: 2026-05-21
+
+### Scope
+
+This entry closes Effet-OxCaml-jak. The work turns six H3 caveats plus one
+dispatch-policy supersession (C7) into mechanical gates: one shipped
+scheduling change, two portable probes, three decision artifacts, CI/review
+automation, an executable dispatch verdict, and explicit follow-up
+constraints for Phase 6 and Phase 8.
+
+### Verdicts
+
+- V-CM-H2-C1 - Use a portable random token for jitter.
+  Decision: Schedule.jittered no longer calls global Random.float. The runtime
+  owns a Capabilities.random token, and Schedule.next_delay accepts an explicit
+  random token for jitter interpretation.
+  Rationale: The full C1 lab rejected the object-method capability as
+  nonportable, accepted the Portable.Atomic-backed token, accepted
+  coordinator-materialized delays only for finite batches, and showed global
+  Random.float compiles unless a policy gate rejects it.
+
+- V-CM-H2-C2 - Phase 8 transport is online.
+  Decision: Phase 8 cannot reuse the H3 close-before-drain inbox for stream or
+  exporter transport. It must use or implement a real linearizable bounded
+  queue before online cross-domain transport ships.
+  Rationale: merge, flat_map_par, and OTel exporter buffering are live
+  producer/consumer workflows. Treating them as batch reductions changes
+  latency, memory, and backpressure semantics.
+
+- V-CM-H2-C3 - Document two supervisor ordering contracts.
+  Decision: Same-domain Supervisor.failures remains observation order.
+  Portable H3 supervisors use task-index order.
+  Rationale: Same-domain observation order is meaningful inside one Eio runtime;
+  cross-domain completion order is not a stable user-facing source. The portable
+  fixture reassembles reverse completion order into task-index order.
+
+- V-CM-H2-C4 - Accept the current timeout SLO.
+  Decision: Phase 6 accepts max_deadline_to_exit_us <= 50_000 as the production
+  SLO under the 4096-iteration pure-loop cancellation polling discipline.
+  Rationale: T7 measured max_deadline_to_exit_us=48417. If Phase 6 exceeds
+  50 ms, the polling interval must tighten and T2/T7 must rerun before shipping.
+
+- V-CM-H2-C5 - Promote H3 evidence to CI and PR review.
+  Decision: Add the H3 hardening workflow and PR template. PRs touching runtime,
+  scheduler, supervisor, stream, exporter, or concurrency-model research paths
+  run the hardening gate and caveat probes, and the template requires invariant
+  citations.
+  Rationale: The checklist must be executable and reviewed, or it will drift
+  from implementation.
+
+- V-CM-H2-C6 - Reopen H4 only from concrete telemetry.
+  Decision: H4 reopens when p95 idle-spin ratio is above 0.35 while queue depth
+  remains positive for 3 consecutive 60s scheduler windows in at least 5 percent
+  of production runs for the same workload class.
+  Rationale: This metric is implementable through the existing meter surface and
+  separates real skew waste from genuinely idle systems.
+
+- V-CM-H2-C7 - Supersede the stale static skew-aware wording.
+  Decision: The latest full hardening gate pins explicit least-loaded
+  coordinator assignment for H3. Skew-aware assignment remains a viable fallback,
+  but not the current default.
+  Rationale: The fresh T9 executable verdict is chosen_policy=least_loaded,
+  h4_reopen=false, least_loaded_within_1_5x_single=true,
+  skew_aware_within_1_5x_single=true. Executable evidence supersedes the older
+  prose that selected static skew-aware assignment.
+
+### Artifacts
+
+| Caveat | Artifact |
+| --- | --- |
+| C1 | scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/results.md |
+| C2 | scratch/oxcaml_research/concurrency_model/h3_caveats/c2_phase8/scope.md |
+| C3 | packages/effet/supervisor.mli and scratch/oxcaml_research/concurrency_model/h3_caveats/c3_supervisor_order/results.md |
+| C4 | scratch/oxcaml_research/concurrency_model/h3_caveats/c4_timeout_slo/slo.md |
+| C5 | .github/workflows/h3-hardening.yml and .github/pull_request_template.md |
+| C6 | scratch/oxcaml_research/concurrency_model/h3_caveats/c6_h4_reopen/telemetry.md |
+| C7 | scratch/oxcaml_research/concurrency_model/h3_hardening/t9_skew_bench/results.md and scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md |
+
+### Verification
+
+- C1 random probe: summary pass=7 fail=0.
+- C3 supervisor-order probe: summary pass=1 fail=0.
+- Core scheduling grep: no Random.* in packages/effet/schedule.ml,
+  packages/effet/runtime.ml, or packages/effet/capabilities.ml.
+- Full H3 hardening gate:
+  nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh,
+  T1-T9 all pass with fail=0.
+- Full shipped test gate: nix develop -c dune runtest --force. Effet 109,
+  ppx_effet 3, effet-otel 20, and effet-stream 13 tests passed; effet-schema
+  tests passed.
+
+### Phase Constraints
+
+Phase 6 must pass explicit random seeds or worker-local random tokens into
+worker runtimes before interpreting jittered schedules. Phase 8 must choose a
+real online bounded queue before implementing stream/exporter cross-domain
+transport.
 
 ## V-CM-H2 - Senior acceptance and implementation caveats
 
@@ -10521,31 +10620,26 @@ These three paragraphs are the canonical wording for downstream documentation.
 | Observability | Closed. Reassembly cost 9.94%, well below the 30% H5 reopen trigger. | T6 |
 | Timeout/clock | Closed as a protocol; SLO bound is C4 below. | T7 |
 | Eio non-leakage | Closed. Eleven forbidden captures rejected, portable replacements pass. | T8 |
-| Skew dispatch | Closed for now. Static skew-aware assignment is the chosen stable default; H4 does not reopen unless production telemetry trips C6 below. | T9 |
+| Skew dispatch | Closed for now. Latest T9 pins explicit least-loaded assignment; H4 does not reopen unless production telemetry trips C6 below. | T9 |
 | H4/H5 status | Both closed. C6 carries the H4 reopen-hook design. | T9, T6 |
 
-### Three implementation caveats
+### Implementation caveats and follow-through
 
-Tracked in epic Effet-OxCaml (created below as a new follow-up epic) before
+Tracked in epic Effet-OxCaml-jak (created as a follow-up epic) before
 Phase 6 begins worker-side schedule interpretation or Phase 8 chooses its
-transport.
+transport. The original draft enumerated three caveats; the senior review
+expanded the set to six, and the eventual close added a seventh
+(V-CM-H2-C7 dispatch supersession) when the executable T9 verdict
+superseded the static-skew-aware wording. The full set is C1-C7 below.
 
 C1. **Schedule.jittered must not interpret global Random inside portable
-workers.** schedule.ml currently uses implicit Random.float. Lead hypothesis,
-given Effet's existing pattern: Random is an env-row capability matching
-Logger/Tracer/Meter, the runtime interprets Schedule.jittered by calling
-capability methods, and workers receive a portable Random capability instance.
-The alternative is coordinator-generated portable delay data with no Random
-surface in the worker. The hypothesis must be tested before Phase 6 begins
-worker-side schedule interpretation; both shapes need positive and negative
-fixtures so the verdict is mechanical, not aesthetic.
+workers.** Closed by V-CM-H2-C1. The object-method capability shape was tested
+and rejected at the portable boundary; the chosen shape is a portable
+Capabilities.random token. Core scheduling code no longer calls stdlib Random.
 
-C2. **Phase 8 stream/exporter transport is batch-only under H3 inboxes.**
-The H3 inbox is coordinator-produced, close-before-drain. That is correct for
-batch reduction (collect M items, dispatch batch, reassemble). It is wrong for
-live overlapping production and drain. If Phase 8 needs an online producer
-queue, T1's verdict says H3 must replace the inbox with a real linearizable
-bounded queue first. Phase 8 must declare which it is.
+C2. **Phase 8 stream/exporter transport is online.** Closed by V-CM-H2-C2. The
+H3 inbox remains batch-only; Phase 8 must use or implement a real linearizable
+bounded queue before online cross-domain stream/exporter transport ships.
 
 C3. **API documentation drift between same-domain and portable supervisors.**
 The shipped Supervisor.mli says failures are returned in observation order.
@@ -10571,9 +10665,11 @@ must run on CI for every PR that touches runtime/scheduler code, and the
 review checklist must require each invariant to be cited in the PR
 description. Without this, the hardening evidence rots.
 
-C6. **H4 reopen telemetry hook.** Static skew-aware assignment is the H3
-default, but the senior review correctly flagged that this is "not a universal
-winner in every row of the matrix." Production runtime must emit per-domain
+C6. **H4 reopen telemetry hook.** H3's default dispatch is now explicit
+least-loaded coordinator assignment (per V-CM-H2-C7 below; the earlier
+static-skew-aware wording is superseded). Even so, the senior review
+correctly flagged that no single dispatch policy is "a universal winner in
+every row of the matrix." Production runtime must emit per-domain
 queue-depth and idle-spin signals. If a defined threshold trips on real
 workloads, H4 hybrid (steal-on-empty-inbox) reopens. The hook is design-only
 work now; the metric definition and reopen criterion are the deliverables.
@@ -10582,3 +10678,87 @@ work now; the metric definition and reopen criterion are the deliverables.
 
 Ship H3 as the Phase 5-8 implementation target. Keep H4 and H5 closed. C1-C6
 must close before or alongside Phase 6 and Phase 8 implementation work begins.
+
+## V-CM-H3 - Senior review of V-CM-H2 accepted after artifact reconciliation
+
+Date: 2026-05-21
+
+Status: documentation closeout. No new tickets, no new probes. This entry
+records the senior reviewer's acceptance of V-CM-H2 after the artifact-drift
+items they flagged were corrected in place.
+
+### What was accepted
+
+The substance of V-CM-H2 stands. C1-C6 close the implementation caveats that
+remained open after V-CM-H1, C7 supersedes the stale static-skew-aware
+dispatch wording, the canonical H3 description ("per-domain local execution
+with explicit portable handoff and coordinator-owned reassembly") is correct,
+and the inbox/cancellation/timeout/supervisor/observability/Eio/skew
+contracts are coherent across T1-T9 and the implementation caveat work.
+
+The senior verdict was: accept V-CM-H2 as the closing direction, but mark it
+"accepted with artifact-reconciliation required" before treating it as the
+canonical implementation gate.
+
+### What was reconciled
+
+Three artifact-drift items + three smaller cleanup items were flagged. All are
+documentation, not technical work:
+
+1. **Dispatch policy** - V-CM-H2-C7 says least-loaded; T9 results.md and
+   checklist.md were already saying least-loaded; the older V-CM-H2 entry's
+   C6 prose still said "Static skew-aware assignment is the H3 default."
+   Fixed in place: the C6 paragraph now reads "H3's default dispatch is now
+   explicit least-loaded coordinator assignment (per V-CM-H2-C7 below; the
+   earlier static-skew-aware wording is superseded)." Production telemetry
+   for H4 reopen is unchanged.
+
+2. **Phase 8 transport** - V-CM-H2-C2 says Phase 8 cannot reuse the H3
+   close-before-drain inbox for live stream/exporter transport. The
+   checklist.md "Phase 8 Stream/exporter" row still claimed the
+   phase-separated bounded inbox protocol was Phase 8's transport. Fixed in
+   place: the row now reads "Online cross-domain transport requires a real
+   linearizable bounded queue per V-CM-H2-C2. H3 close-before-drain inboxes
+   remain batch-only and are not valid for live producer/consumer
+   transport. Exporter sinks remain coordinator-owned."
+
+3. **Schedule.jittered** - V-CM-H2-C1 closed the global Random caveat;
+   checklist.md already records this as a closed caveat with no remaining
+   open-constraints listing. No edit needed.
+
+Smaller cleanup applied in place:
+
+- The opening paragraph of V-CM-H2 changed from "the work turns the six H3
+  caveats" to "the work turns six H3 caveats plus one dispatch-policy
+  supersession (C7)". Reconciles V-CM-H2 prose with the seven verdicts it
+  records.
+- Artifacts table in V-CM-H2 gained a C7 row pointing at the executable
+  T9 verdict and the checklist.
+- The "Three implementation caveats" heading in the older V-CM-H2 entry
+  (which actually listed C1-C6) was renamed to "Implementation caveats and
+  follow-through" with a one-line note that the count grew to seven across
+  successive reviews.
+
+### Canonical wording for downstream documentation
+
+H3 stays implementation-gated. The verdict statement, reproduced here as the
+authoritative single paragraph for downstream docs:
+
+> H3 remains the Phase 5-8 implementation target. V-CM-H2 closes the
+> implementation caveats by requiring explicit portable randomness for
+> jitter, a real online bounded queue for Phase 8 stream/exporter
+> transport, documented same-domain vs portable supervisor ordering, a
+> 50 ms timeout-exit SLO under the 4096-iteration polling discipline,
+> CI/PR hardening gates, and a telemetry-based H4 reopen criterion.
+> Dispatch policy: H3 uses explicit least-loaded coordinator assignment.
+> The older static-skew-aware wording is superseded by the fresh T9
+> executable verdict.
+
+### Outcome
+
+After these in-place edits, V-CM-H2 is fully implementation-gated rather
+than research-accepted. No new backlog tickets. No new probes. The next
+work along the H3 path is the existing Effet-OxCaml-jak follow-through
+(Phase 6 worker-side schedule interpretation, Phase 8 linearizable bounded
+queue, CI/PR gate enforcement, H4 telemetry hook design) - all of those
+are already tracked under their existing C1-C7 verdicts.
