@@ -9,7 +9,8 @@ time. It is opt-in infrastructure, not a CI gate.
 | --- | --- | --- |
 | Core interpreter | `effect.core.*` | Per-bind, thunk, catch, and typed-failure boundary cost. |
 | Overhead controls | `overhead.*` | Paired Effet-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
-| Bun + Effect reference | `overhead.ts.*` | Same workloads as `overhead.*`, run on Bun + Effect v4 (`effect-smol`). Wall time is sampled inside the Bun process so startup is excluded. |
+| Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `for_each_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
+| Bun + Effect reference | `overhead.ts.*` and `realuse.ts.*` | Same workloads as `overhead.*` and `realuse.*`, run on Bun + Effect v4 (`effect-smol`). Wall time is sampled inside the Bun process so startup is excluded. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Streams | `effet_stream.*` | Representative `effet-stream` pipelines and file reads. |

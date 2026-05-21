@@ -9,7 +9,7 @@
 // bench/lib/bench_lib.ml's emit_measurement (consumed by bench/run.sh and
 // bench/compare.ml).
 
-import { Effect } from "effect"
+import { Effect, Schedule } from "effect"
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -301,6 +301,119 @@ function effectRunSyncPureLoop(n: number): void {
   intSink = last
 }
 
+// 5. Real-use workloads (mirrored 1:1 with bench/runtime_real/runtime_real.ml)
+// ---------------------------------------------------------------------------
+//
+// Each row exercises a slice of the Effet API for which Effect-v4 has a
+// fair counterpart. Workloads are synchronous (no real I/O, no real
+// timers) so wall time is dominated by the runtime/interpreter, not by
+// the kernel.
+
+// A 50-step bind chain reused as per-task work in the fanout rows.
+function work50(): Effect.Effect<number> {
+  let acc: Effect.Effect<number> = Effect.succeed(0)
+  for (let i = 0; i < 50; i++) acc = Effect.flatMap(acc, (x) => Effect.succeed(x + 1))
+  return acc
+}
+
+function realuseFanoutPar64x50(): Effect.Effect<number> {
+  const tasks: Effect.Effect<number>[] = []
+  for (let i = 0; i < 64; i++) {
+    tasks.push(Effect.flatMap(work50(), () => Effect.succeed(1)))
+  }
+  return Effect.map(
+    Effect.all(tasks, { concurrency: "unbounded" }) as Effect.Effect<number[]>,
+    (xs: number[]) => xs.reduce((a: number, b: number) => a + b, 0),
+  )
+}
+
+function realuseFanoutBounded512x50K8(): Effect.Effect<number> {
+  const tasks: Effect.Effect<number>[] = []
+  for (let i = 0; i < 512; i++) {
+    tasks.push(Effect.flatMap(work50(), () => Effect.succeed(1)))
+  }
+  return Effect.map(
+    Effect.all(tasks, { concurrency: 8 }) as Effect.Effect<number[]>,
+    (xs: number[]) => xs.reduce((a: number, b: number) => a + b, 0),
+  )
+}
+
+function realuseRetryFlaky(): Effect.Effect<number> {
+  // Counter is module-local so it is shared across the 100 inner runs,
+  // but reset to 0 before each retry block, matching the OCaml shape.
+  const state = { counter: 0 }
+  const attempt = Effect.sync(() => {
+    state.counter += 1
+    return state.counter
+  })
+  const flaky: Effect.Effect<number, "Boom"> = Effect.flatMap(attempt, (n) =>
+    n < 5 ? (Effect.fail("Boom" as const) as Effect.Effect<number, "Boom">) : Effect.succeed(n),
+  )
+  // Schedule.recurs(n) means "retry up to n times". The flaky op needs
+  // four retries, so 10 is more than enough; the schedule terminates
+  // because the 5th attempt succeeds.
+  const oneRun = Effect.retry(flaky, Schedule.recurs(10))
+  // Re-build the loop so each iteration resets the counter via the
+  // sync side-effect.
+  function loop(remaining: number, acc: number): Effect.Effect<number> {
+    if (remaining === 0) return Effect.succeed(acc)
+    return Effect.flatMap(
+      Effect.sync(() => {
+        state.counter = 0
+      }),
+      () =>
+        Effect.flatMap(oneRun, (v: number) => loop(remaining - 1, acc + v)),
+    )
+  }
+  return loop(100, 0)
+}
+
+function realusePipelineBindCatch1k(): Effect.Effect<number> {
+  // 500 binds, then a fail-and-catch boundary, then 500 more binds.
+  let prefix: Effect.Effect<number> = Effect.succeed(0)
+  for (let i = 0; i < 500; i++) {
+    prefix = Effect.flatMap(prefix, (x: number) => Effect.succeed(x + 1))
+  }
+  const recovered: Effect.Effect<number> = Effect.flatMap(prefix, (acc: number) =>
+    Effect.catch(
+      Effect.fail("Boom" as const) as Effect.Effect<number, "Boom">,
+      () => Effect.succeed(acc),
+    ),
+  )
+  return Effect.flatMap(recovered, (base: number) => {
+    let suffix: Effect.Effect<number> = Effect.succeed(base)
+    for (let i = 0; i < 500; i++) {
+      suffix = Effect.flatMap(suffix, (x: number) => Effect.succeed(x + 1))
+    }
+    return suffix
+  })
+}
+
+function realuseScopeAcquireRelease64(): Effect.Effect<number> {
+  const state = { counter: 0 }
+  const acquireOne = Effect.acquireRelease(
+    Effect.sync(() => {
+      state.counter += 1
+      return state.counter
+    }),
+    () =>
+      Effect.sync(() => {
+        state.counter -= 1
+      }),
+  )
+  function build(depth: number): Effect.Effect<number, never, never> {
+    if (depth === 0) return Effect.succeed(0)
+    return Effect.flatMap(acquireOne, (v: number) =>
+      Effect.map(build(depth - 1), (x: number) => x + v),
+    )
+  }
+  return Effect.scoped(build(64))
+}
+
+function runEffectIgnore<A>(p: Effect.Effect<A>): void {
+  intSink = (Effect.runSync(p) as unknown as number) | 0
+}
+
 // ---------------------------------------------------------------------------
 // Workload assembly
 
@@ -339,6 +452,22 @@ function effectWorkloads(): Workload[] {
   ]
 }
 
+const rw = (name: string, run: () => void, samples?: number): Workload => ({
+  name: `realuse.ts.${name}`,
+  run,
+  samples,
+})
+
+function realuseWorkloads(): Workload[] {
+  return [
+    rw("fanout.par.success.64x50", () => runEffectIgnore(realuseFanoutPar64x50())),
+    rw("fanout.bounded.512x50.k=8", () => runEffectIgnore(realuseFanoutBounded512x50K8())),
+    rw("retry.flaky.fail4_then_ok", () => runEffectIgnore(realuseRetryFlaky())),
+    rw("pipeline.bind_catch.1k", () => runEffectIgnore(realusePipelineBindCatch1k())),
+    rw("scope.acquire_release.64", () => runEffectIgnore(realuseScopeAcquireRelease64())),
+  ]
+}
+
 // ---------------------------------------------------------------------------
 // Main
 
@@ -346,6 +475,7 @@ function main(): void {
   const opts = parseArgs(process.argv.slice(2))
   for (const wl of directAndMiniWorkloads()) runWorkload(opts, wl)
   for (const wl of effectWorkloads()) runWorkload(opts, wl)
+  for (const wl of realuseWorkloads()) runWorkload(opts, wl)
   // Touch the sink so the JIT cannot eliminate unread work.
   if (intSink === Number.MAX_SAFE_INTEGER) process.stderr.write("sink hit\n")
 }

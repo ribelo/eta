@@ -40,6 +40,23 @@ effect@4.0.0-beta.70   (effect-smol)
 Pinned in `package.json`. `bun install --frozen-lockfile` is used by
 `run.sh` so a stale lockfile fails loudly.
 
+## Real-Use Rows
+
+`realuse.ts.*` rows mirror `bench/runtime_real/runtime_real.ml` 1:1.
+Each exercises a slice of the API for which Effect-v4 has a fair
+counterpart:
+
+| TS row | OCaml counterpart | Workload |
+| --- | --- | --- |
+| `realuse.ts.fanout.par.success.64x50` | `realuse.fanout.par.success.64x50` | 64 concurrent tasks, each a 50-step bind chain. `Effect.all([…], { concurrency: "unbounded" })` ↔ `Effect.for_each_par`. |
+| `realuse.ts.fanout.bounded.512x50.k=8` | `realuse.fanout.bounded.512x50.k=8` | 512 tasks bounded to 8 in flight. |
+| `realuse.ts.retry.flaky.fail4_then_ok` | `realuse.retry.flaky.fail4_then_ok` | Operation fails 4 times before succeeding; retried with `Schedule.recurs(10)`; loop ×100 to escape the timer floor. |
+| `realuse.ts.pipeline.bind_catch.1k` | `realuse.pipeline.bind_catch.1k` | 500 binds → fail-and-catch boundary → 500 binds. |
+| `realuse.ts.scope.acquire_release.64` | `realuse.scope.acquire_release.64` | 64 nested `Effect.acquireRelease` inside one `Effect.scoped`. |
+
+All workloads are synchronous (no real I/O, no real timers) so wall
+time is dominated by the runtime/interpreter, not by the kernel.
+
 ## Running
 
 The script is invoked automatically by `bench/run.sh` when `bun` is on

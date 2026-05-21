@@ -5,6 +5,7 @@
   (alias runtime_concurrency/bench)
   (alias runtime_observability/bench)
   (alias runtime_overhead/bench)
+  (alias runtime_real/bench)
   (alias runtime_stream/bench)
   (alias runtime_schema/bench)))
 

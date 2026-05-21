@@ -49,6 +49,7 @@ dune build --profile=release \
   bench/runtime_concurrency/runtime_concurrency.exe \
   bench/runtime_observability/runtime_observability.exe \
   bench/runtime_overhead/runtime_overhead.exe \
+  bench/runtime_real/runtime_real.exe \
   bench/runtime_stream/runtime_stream.exe \
   bench/runtime_schema/runtime_schema.exe \
   bench/compare.exe \
@@ -58,6 +59,7 @@ run_runtime _build/default/bench/runtime_core/runtime_core.exe
 run_runtime _build/default/bench/runtime_concurrency/runtime_concurrency.exe
 run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
 run_runtime _build/default/bench/runtime_overhead/runtime_overhead.exe
+run_runtime _build/default/bench/runtime_real/runtime_real.exe
 run_runtime _build/default/bench/runtime_stream/runtime_stream.exe
 run_runtime _build/default/bench/runtime_schema/runtime_schema.exe
 
