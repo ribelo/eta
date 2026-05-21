@@ -36,13 +36,13 @@ class type log = object
 end
 
 (** Span completion status used by {!tracer}. *)
-type span_status = Ok | Error of string | Cancelled
+type span_status : immutable_data = Ok | Error of string | Cancelled
 
 (** OpenTelemetry span kind. *)
-type span_kind = Internal | Server | Client | Producer | Consumer
+type span_kind : immutable_data = Internal | Server | Client | Producer | Consumer
 
 (** W3C trace context plus baggage propagated across service boundaries. *)
-type trace_context = {
+type trace_context : immutable_data = {
   trace_id : string;  (** Hex 32 chars. *)
   span_id : string;  (** Hex 16 chars. *)
   trace_flags : int;  (** W3C flags byte. Bit 0 is the sampled flag. *)
@@ -51,7 +51,7 @@ type trace_context = {
 }
 
 (** Information about an active span surfaced through {!tracer.inspect}. *)
-type span_info = {
+type span_info : immutable_data = {
   trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
   span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
   name : string;
@@ -63,19 +63,19 @@ type span_info = {
 (** A reference to another span that the current span is linked to.
     [trace_id] and [span_id] are hex strings; for links to in-process spans
     use {!tracer.inspect} to resolve them. *)
-type span_link = {
+type span_link : immutable_data = {
   link_trace_id : string;
   link_span_id : string;
   link_attrs : (string * string) list;
 }
 
 (** Severity for a {!log_record}. Maps to OTLP severityNumber. *)
-type log_level = Trace | Debug | Info | Warn | Error | Fatal
+type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
 
 (** A structured log record. Trace and span identifiers are populated by the
     runtime from the active span on the emitting fiber, or left empty if no
     span is active. *)
-type log_record = {
+type log_record : immutable_data = {
   level : log_level;
   body : string;
   ts_ms : int;
@@ -116,12 +116,12 @@ end
 
 (** Counters and gauges for the metrics signal. Implementations may
     accumulate in memory or stream to an OTLP exporter. *)
-type metric_kind =
+type metric_kind : immutable_data =
   | Counter_cumulative  (** non-monotonic UpDownCounter *)
   | Counter_monotonic  (** monotonic Counter *)
   | Gauge
 
-type metric_value = Int of int | Float of float
+type metric_value : immutable_data = Int of int | Float of float
 
 class type meter = object
   method record :

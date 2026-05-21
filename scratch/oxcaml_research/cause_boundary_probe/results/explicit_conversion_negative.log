@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml", line 26, characters 50-53:
+26 |            Parallel.fork_join2 parallel (fun _ -> raw) (fun _ -> raw)
+                                                       ^^^
+Error: This value is "shared"
+         because it is used inside the function at file "scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml", lines 24-28, characters 48-23
+         which is expected to be "shareable".
+       However, the highlighted expression is expected to be "uncontended".

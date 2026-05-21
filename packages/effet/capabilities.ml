@@ -8,10 +8,10 @@ class type log = object
   method error : string -> unit
 end
 
-type span_status = Ok | Error of string | Cancelled
-type span_kind = Internal | Server | Client | Producer | Consumer
+type span_status : immutable_data = Ok | Error of string | Cancelled
+type span_kind : immutable_data = Internal | Server | Client | Producer | Consumer
 
-type trace_context = {
+type trace_context : immutable_data = {
   trace_id : string;
   span_id : string;
   trace_flags : int;
@@ -19,7 +19,7 @@ type trace_context = {
   baggage : (string * string) list;
 }
 
-type span_info = {
+type span_info : immutable_data = {
   trace_id : string;
   span_id : string;
   name : string;
@@ -28,15 +28,15 @@ type span_info = {
   baggage : (string * string) list;
 }
 
-type span_link = {
+type span_link : immutable_data = {
   link_trace_id : string;
   link_span_id : string;
   link_attrs : (string * string) list;
 }
 
-type log_level = Trace | Debug | Info | Warn | Error | Fatal
+type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
 
-type log_record = {
+type log_record : immutable_data = {
   level : log_level;
   body : string;
   ts_ms : int;
@@ -45,12 +45,12 @@ type log_record = {
   span_id : string;
 }
 
-type metric_kind =
+type metric_kind : immutable_data =
   | Counter_cumulative
   | Counter_monotonic
   | Gauge
 
-type metric_value = Int of int | Float of float
+type metric_value : immutable_data = Int of int | Float of float
 
 class type tracer = object
   method begin_span :

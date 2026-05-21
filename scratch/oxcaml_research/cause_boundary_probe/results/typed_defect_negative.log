@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", line 9, characters 10-19:
+9 | let bad : bad_error cause = Fail (Bad (fun () -> "boom"))
+              ^^^^^^^^^
+Error: This type "bad_error" should be an instance of type
+         "('a : immutable_data)"
+       The kind of bad_error is value mod immutable non_float
+         because of the definition of bad_error at file "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", lines 3-4, characters 0-27.
+       But the kind of bad_error must be a subkind of immutable_data
+         because of the definition of cause at file "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", lines 6-7, characters 0-16.

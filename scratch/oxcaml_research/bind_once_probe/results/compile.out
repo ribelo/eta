@@ -1,0 +1,30 @@
+== many_ast_once_continuation (fail) ==
+File "scratch/oxcaml_research/bind_once_probe/many_ast_once_continuation.ml", line 23, characters 15-22:
+23 |   let a = eval program in
+                    ^^^^^^^
+Error: This value is "once" but is expected to be "many".
+PASS expected-fail many_ast_once_continuation
+== once_ast_reuse_negative (fail) ==
+File "scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml", line 13, characters 14-15:
+13 |   | Pure v -> v
+                   ^
+Error: This value is "once"
+         because it is contained (via constructor "Pure") in the value at file "scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml", line 13, characters 4-10
+         which is "once".
+       However, the highlighted expression is expected to be "many".
+PASS expected-fail once_ast_reuse_negative
+== once_program_second_run_compiles (pass) ==
+PASS expected-pass once_program_second_run_compiles
+== portable_continuation_reuse_positive (pass) ==
+PASS expected-pass portable_continuation_reuse_positive
+== portable_continuation_capture_negative (fail) ==
+File "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", line 15, characters 11-18:
+15 |       incr counter;
+                ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", lines 14-16, characters 18-25
+         which is expected to be "portable"
+         because it is contained (via constructor "Bind") (with some modality) in the value at file "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", lines 14-16, characters 4-26.
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail portable_continuation_capture_negative
+summary: pass=5 fail=0

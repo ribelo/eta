@@ -5,7 +5,7 @@
     HTTP-style headers, carried through fiber-local runtime context, and
     injected into outbound headers. *)
 
-type t = Capabilities.trace_context = {
+type t : immutable_data = Capabilities.trace_context = {
   trace_id : string;
   span_id : string;
   trace_flags : int;
@@ -39,4 +39,3 @@ val extract : (string * string) list -> t option
 
 val inject : t -> (string * string) list
 (** Produce lowercase W3C [traceparent], [tracestate], and [baggage] headers. *)
-

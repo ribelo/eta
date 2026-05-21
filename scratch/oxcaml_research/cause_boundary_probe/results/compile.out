@@ -1,0 +1,43 @@
+== raw_exn_positive (pass) ==
+PASS expected-pass raw_exn_positive
+== raw_exn_fcm_negative (pass) ==
+PASS expected-pass raw_exn_fcm_negative
+== materialized_positive (pass) ==
+PASS expected-pass materialized_positive
+== materialized_closure_negative (fail) ==
+File "scratch/oxcaml_research/cause_boundary_probe/materialized_closure_negative.ml", lines 3-6, characters 0-1:
+3 | type diagnostic : value mod portable = {
+4 |   message : string;
+5 |   render : unit -> string;
+6 | }
+Error: The kind of type "diagnostic" is value mod immutable non_float
+         because it's a boxed record type.
+       But the kind of type "diagnostic" must be a subkind of 
+           value mod portable
+         because of the annotation on the declaration of the type diagnostic.
+PASS expected-fail materialized_closure_negative
+== typed_defect_positive (pass) ==
+PASS expected-pass typed_defect_positive
+== typed_defect_negative (fail) ==
+File "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", line 9, characters 10-19:
+9 | let bad : bad_error cause = Fail (Bad (fun () -> "boom"))
+              ^^^^^^^^^
+Error: This type "bad_error" should be an instance of type
+         "('a : immutable_data)"
+       The kind of bad_error is value mod immutable non_float
+         because of the definition of bad_error at file "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", lines 3-4, characters 0-27.
+       But the kind of bad_error must be a subkind of immutable_data
+         because of the definition of cause at file "scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml", lines 6-7, characters 0-16.
+PASS expected-fail typed_defect_negative
+== explicit_conversion_positive (pass) ==
+PASS expected-pass explicit_conversion_positive
+== explicit_conversion_negative (fail) ==
+File "scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml", line 26, characters 50-53:
+26 |            Parallel.fork_join2 parallel (fun _ -> raw) (fun _ -> raw)
+                                                       ^^^
+Error: This value is "shared"
+         because it is used inside the function at file "scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml", lines 24-28, characters 48-23
+         which is expected to be "shareable".
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail explicit_conversion_negative
+summary: pass=8 fail=0

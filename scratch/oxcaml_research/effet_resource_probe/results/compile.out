@@ -1,0 +1,24 @@
+== effet_resource_portable_probe (pass) ==
+PASS expected-pass effet_resource_portable_probe
+== effect_map_payload_negative (fail) ==
+File "scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml", line 19, characters 36-41:
+19 |         value = P_atomic.make (Some value);
+                                         ^^^^^
+Error: This value is "nonportable"
+       but is expected to be "portable"
+         because it is contained (via constructor "Some") in the value at file "scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml", line 19, characters 30-42
+         which is expected to be "portable".
+PASS expected-fail effect_map_payload_negative
+== open_variant_error_negative (fail) ==
+File "scratch/oxcaml_research/effet_resource_probe/open_variant_error_negative.ml", line 7, characters 16-46:
+7 | let _failures : [> `Refresh_failed of string ] failures = P_atomic.make []
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This type "[> `Refresh_failed of string ]" should be an instance of type
+         "('a : immutable_data)"
+       The kind of [> `Refresh_failed of string ] is value mod non_float
+         because it's a polymorphic variant type.
+       But the kind of [> `Refresh_failed of string ] must be a subkind of 
+           immutable_data
+         because of the definition of failures at file "scratch/oxcaml_research/effet_resource_probe/open_variant_error_negative.ml", line 5, characters 0-60.
+PASS expected-fail open_variant_error_negative
+summary: pass=3 fail=0

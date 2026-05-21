@@ -1,5 +1,6 @@
 module E = Effect
 module EP = Effect.Private
+module P_atomic = Portable.Atomic
 module Sch = Schedule
 
 (* Typed failures cross Eio fibers through OCaml exceptions. The [Obj.t] payload
@@ -88,7 +89,7 @@ type ('env, 'err) t = {
   meter : Capabilities.meter;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
-  active : int Atomic.t;
+  active : int P_atomic.t;
   default_fail_key : Typed_fail.key;
 }
 
@@ -122,7 +123,7 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     meter;
     capture_backtrace;
     outer_sw = sw;
-    active = Atomic.make 0;
+    active = P_atomic.make 0;
     default_fail_key = Typed_fail.fresh ();
   }
 
@@ -226,6 +227,7 @@ let run_finalizers ~runtime ~fail_key finalizers =
   match !finalizers with
   | [] -> None
   | fs ->
+      finalizers := [];
       let failures = Array.make (List.length fs) None in
       Eio.Fiber.all
         (List.mapi
@@ -428,7 +430,7 @@ let rec interpret :
       in
       let sampled =
         parent_sampled
-        && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
+        && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
              ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
       in
       if not sampled then
@@ -552,7 +554,7 @@ and instrument_leaf :
   in
   let sampled =
     parent_sampled
-    && runtime.sampler.sample ~trace_id:"" ~name ~attrs:[]
+    && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
          ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
   in
   if not sampled then
@@ -617,7 +619,7 @@ and interpret_supervisor_scope :
       in
       let child_sw = ref None in
       let child_cancel = ref None in
-      Eio.Fiber.fork ~sw:(E.Private.supervisor_switch supervisor) (fun () ->
+      E.Private.supervisor_fork supervisor (fun () ->
           Tracer.with_fiber_context @@ fun () ->
           let result =
             try
@@ -639,8 +641,7 @@ and interpret_supervisor_scope :
           (match result with
           | Ok _ -> ()
           | Error cause ->
-              let failures = E.Private.supervisor_failures_ref supervisor in
-              failures := cause :: !failures);
+              E.Private.supervisor_record_failure supervisor cause);
           resolve result);
       E.Private.make_supervisor_child ~promise
         ~cancel:
@@ -661,14 +662,12 @@ and interpret_supervisor_scope :
   | E.Supervisor_cancel child ->
       E.Private.supervisor_child_cancel child ()
   | E.Supervisor_failures supervisor ->
-      List.rev !(E.Private.supervisor_failures_ref supervisor)
+      List.rev (E.Private.supervisor_failures supervisor)
   | E.Supervisor_check supervisor -> (
       match E.Private.supervisor_max_failures supervisor with
       | None -> ()
       | Some max ->
-          let count =
-            List.length !(E.Private.supervisor_failures_ref supervisor)
-          in
+          let count = E.Private.supervisor_failure_count supervisor in
           if count >= max then raise_fail fail_key (`Supervisor_failed count))
   | E.Supervisor_yield -> Eio.Fiber.yield ()
 
@@ -792,11 +791,11 @@ and fork_internal :
     type re env err.
     runtime:(re, _) t -> (env, err, unit) E.t -> env -> unit =
  fun ~runtime eff env ->
-  Atomic.incr runtime.active;
+  P_atomic.incr runtime.active;
   Eio.Fiber.fork_daemon ~sw:runtime.outer_sw (fun () ->
       Tracer.with_fiber_context @@ fun () ->
       Fun.protect
-        ~finally:(fun () -> Atomic.decr runtime.active)
+        ~finally:(fun () -> P_atomic.decr runtime.active)
         (fun () ->
           (try
              Eio.Switch.run @@ fun sw' ->
@@ -900,6 +899,6 @@ let run_exn t eff =
   | Exit.Error _ -> failwith "Effet.Runtime.run_exn"
 
 let drain t =
-  while Atomic.get t.active > 0 do
+  while P_atomic.get t.active > 0 do
     Eio.Fiber.yield ()
   done

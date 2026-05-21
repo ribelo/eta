@@ -4,7 +4,7 @@ synopsis: "PPX rewriter for Effet span sugar"
 description:
   "Provides [%effet.fn body] sugar for Effet.fn __POS__ __FUNCTION__ body."
 depends: [
-  "ocaml" {>= "5.1"}
+  "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "effet" {= version}
   "ppxlib" {>= "0.30"}

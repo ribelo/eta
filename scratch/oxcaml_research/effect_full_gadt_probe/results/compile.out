@@ -1,0 +1,56 @@
+== candidate_a_one_gadt (fail) ==
+File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_a_one_gadt.ml", line 30, characters 48-69:
+30 |       Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
+                                                     ^^^^^^^^^^^^^^^^^^^^^
+Error: This type "[> `Timeout ]" should be an instance of type
+         "('a : immutable_data)"
+       The kind of [> `Timeout ] is value mod non_float
+         because it's a polymorphic variant type.
+       But the kind of [> `Timeout ] must be a subkind of immutable_data
+         because of the annotation on 'err in the declaration of the type t.
+PASS expected-fail candidate_a_one_gadt
+== candidate_b_split (pass) ==
+PASS expected-pass candidate_b_split
+== candidate_b_split_negative (fail) ==
+File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml", line 19, characters 13-20:
+19 |         incr counter;
+                  ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml", lines 18-20, characters 30-16
+         which is expected to be "portable"
+         because it is contained (via constructor "Thunk") (with some modality) in the value at file "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml", lines 18-20, characters 4-17.
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail candidate_b_split_negative
+== candidate_b_polyvariant_error_negative (fail) ==
+File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml", line 12, characters 21-30:
+12 | let program : (unit, [> `Bad ], int) Effect_pure.t =
+                          ^^^^^^^^^
+Error: This type "[> `Bad ]" should be an instance of type
+         "('a : immutable_data)"
+       The kind of [> `Bad ] is value mod non_float
+         because it's a polymorphic variant type.
+       But the kind of [> `Bad ] must be a subkind of immutable_data
+         because of the definition of t at file "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml", lines 8-9, characters 2-38.
+PASS expected-fail candidate_b_polyvariant_error_negative
+== candidate_c_mode_template (fail) ==
+File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_c_mode_template.ml", line 31, characters 19-49:
+31 |       -> ('env, _, ('a, 'err Cause.t) result list) t
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This type "('a, 'err Cause.t) result list" should be an instance of type
+         "('b : immutable_data)"
+       The kind of ('a, 'err Cause.t) result list is 
+           value
+             mod stateless immutable non_float
+             with 'a
+             
+             with 'err
+             
+             with Cause.interrupt_id
+             
+             with Printexc.raw_backtrace
+         because it's a boxed variant type.
+       But the kind of ('a, 'err Cause.t) result list must be a subkind of 
+           immutable_data
+         because of the annotation on 'a in the declaration of the type t.
+PASS expected-fail candidate_c_mode_template
+summary: pass=5 fail=0

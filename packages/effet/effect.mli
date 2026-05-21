@@ -343,9 +343,11 @@ module Private : sig
     max_failures:int option ->
     ('s, 'err) supervisor
 
-  val supervisor_switch : ('s, 'err) supervisor -> Eio.Switch.t
+  val supervisor_fork : ('s, 'err) supervisor -> (unit -> unit) -> unit
   val supervisor_max_failures : ('s, 'err) supervisor -> int option
-  val supervisor_failures_ref : ('s, 'err) supervisor -> 'err Cause.t list ref
+  val supervisor_record_failure : ('s, 'err) supervisor -> 'err Cause.t -> unit
+  val supervisor_failures : ('s, 'err) supervisor -> 'err Cause.t list
+  val supervisor_failure_count : ('s, 'err) supervisor -> int
 
   val make_supervisor_child :
     promise:('a, 'err Cause.t) result Eio.Promise.t ->

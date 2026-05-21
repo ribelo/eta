@@ -9364,3 +9364,824 @@ parallelism), perf is now a third independent reason to switch toward
 OxCaml. Full writeup: `scratch/oxcaml_research/perf/README.md` and
 `scratch/oxcaml_research/perf/compare.txt`.
 
+## V-P0T1 — Full Effect.t recursive GADT kind probe
+
+Status: final for Effet-OxCaml-uwr. This closes the deferred V-OxCaml-2 question about whether the full shipped Effect.t can carry one set of portable kind annotations.
+
+Question: can Phase 4 annotate the current Effect.t as one portable recursive GADT with env portable/contended, err immutable_data, success immutable_data, and portable callbacks, or must the AST split?
+
+Artifacts:
+
+- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_a_one_gadt.ml`
+- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split.ml`
+- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml`
+- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml`
+- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_c_mode_template.ml`
+- `scratch/oxcaml_research/effect_full_gadt_probe/results.md`
+- `scratch/oxcaml_research/effect_full_gadt_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/effect_full_gadt_probe/run.sh
+```
+
+Last result: `summary: pass=9 fail=0`.
+
+Evidence:
+
+- Candidate A, one full portable GADT, fails at the current `Timeout` constructor. OxCaml reports that the open `Timeout` polymorphic-variant row has kind `value mod non_float`, but the requested Effect.t error parameter requires `immutable_data`. This blocks one universal portable Effect.t before the deeper recursive-GADT inference risk becomes the main issue.
+- Candidate B, a split portable pure core plus same-domain runtime/I/O GADT, compiles. Its portable core covers `Pure`, `Fail`, `Thunk`, `Bind`, `Map`, and `Catch` with the requested kinds and portable callbacks; the same-domain side keeps `Duration`, `Schedule`, `Cause.t`, `Eio.Switch.t`, `Eio.Promise.t`, supervisor refs, observability nodes, and fiber runtime constructors.
+- Candidate B's capture negative fails as desired. A `Thunk` callback capturing `int ref` is rejected because the closure is expected to be portable.
+- Candidate B's typed-error negative fails as desired. Open polymorphic variant errors such as the `Bad` row are not `immutable_data`, so portable domain APIs need a separate immutable error representation.
+- Candidate C, a mode-polymorphic template sketch, fails on `('a, 'err Cause.t) result list`: `Cause.t` includes raw backtrace structure and does not satisfy the requested immutable_data success kind.
+
+Comparison:
+
+- A, one portable GADT: reject. It attempts all constructors, but fails on `Timeout` before portable callback enforcement is reached.
+- B, split pure/runtime: adopt. The runtime side keeps all constructors, the portable side is the pure core, and capture safety is mechanically enforced.
+- C, mode template: reject for now. It adds PPX/template complexity and still fails on `Cause.t` payload kind.
+
+Decision diary:
+
+- V-P0T1-1 - Reject one universal portable Effect.t.
+  Decision: Phase 4 should not annotate the current full Effect.t as one portable GADT.
+  Rationale: candidate_a_one_gadt fails on the current Timeout error-channel shape before reaching deeper recursive-GADT issues. The requested immutable_data error kind is incompatible with Effet's open polymorphic variant errors.
+- V-P0T1-2 - Adopt a split AST shape for Phase 4.
+  Decision: Phase 4 should split a portable pure/domain AST from a same-domain runtime/fiber AST, with the runtime interpreting both.
+  Rationale: candidate_b_split compiles, while candidate_b_split_negative proves portable callbacks are mechanically enforced. This preserves current runtime nodes while giving domain execution a statically checked core.
+- V-P0T1-3 - Treat portable typed errors as a separate boundary design.
+  Decision: do not promise current polymorphic-variant typed failures inside the portable core.
+  Rationale: candidate_b_polyvariant_error_negative shows open polymorphic variants are not immutable_data. A later Cause.Portable / error-boundary task must pick an immutable representation for cross-domain typed failures.
+- V-P0T1-4 - Reject mode-template unification for now.
+  Decision: do not use a mode-polymorphic template to preserve one source AST.
+  Rationale: candidate_c_mode_template still fails on Cause.t payload kind and adds PPX/template complexity without removing the real boundary problem.
+
+Deferred:
+
+- Full Phase 4 implementation still needs constructor-by-constructor fixtures for the chosen split.
+- Cause.Portable remains required for all_settled and cross-domain failure aggregation.
+- The Eio wrapper tasks still decide Switch_local, Fiber_portable, Cancel_local, and Stream_portable.
+- Bind/Map continuation once-mode behavior remains a separate Phase 0 question.
+
+## V-P0T3 — Portable Cause boundary
+
+Status: final for Effet-OxCaml-vyr.
+
+Question: what representation should Effet use when a `Cause.Die` crosses Parallel domains?
+
+Artifacts:
+
+- `scratch/oxcaml_research/cause_boundary_probe/raw_exn_positive.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/raw_exn_fcm_negative.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/materialized_positive.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/materialized_closure_negative.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/typed_defect_positive.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_positive.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml`
+- `scratch/oxcaml_research/cause_boundary_probe/results.md`
+- `scratch/oxcaml_research/cause_boundary_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/cause_boundary_probe/run.sh
+```
+
+Last result: `summary: pass=8 fail=0`.
+
+Evidence:
+
+- Raw `exn` plus `Printexc.raw_backtrace option` can be declared portable and returned across Parallel in this setup.
+- The first-class-module custom exception hazard also compiles. There is no mechanical rejection for that raw-exn shape, so raw exceptions are not an acceptable public portable boundary for Effet.
+- A materialized diagnostic record crosses Parallel and rejects closure-valued fields.
+- A typed immutable defect variant also crosses Parallel and rejects closure payloads, but it blurs unchecked defects with typed failures.
+- Explicit conversion from same-domain raw Cause.Die to a portable diagnostic mirror crosses Parallel. An unconverted same-domain raw cause captured into Parallel is rejected when it remains unannotated.
+
+Decision diary:
+
+- V-P0T3-1 - Do not make raw Cause.Die portable.
+  Decision: raw `exn` and raw backtrace stay in same-domain `Cause.t` only.
+  Rationale: raw_exn_positive proves raw data can cross if declared portable, but raw_exn_fcm_negative also compiles. The compiler is not protecting Effet from arbitrary exception constructors at the boundary.
+- V-P0T3-2 - Add `Cause.Portable` as a materialized diagnostic mirror.
+  Decision: Phase 1 should implement `Cause.Portable.t` with a pure-data Die payload: kind/string classification, message, optional stringified stack, span_name, and annotations.
+  Rationale: materialized_positive and materialized_closure_negative give the desired positive and negative evidence.
+- V-P0T3-3 - Make conversion explicit and lossy.
+  Decision: cross-domain runtime paths convert same-domain `Cause.t` to `Cause.Portable.t` through `of_cause` / `of_die` before aggregation.
+  Rationale: explicit_conversion_positive proves the boundary shape. Accepted information loss: exception identity and raw backtrace identity become strings.
+- V-P0T3-4 - Reject typed-defect replacement as the primary boundary.
+  Decision: keep `Cause.Fail` as the typed failure channel and `Cause.Die` as unchecked diagnostics.
+  Rationale: typed_defect_positive is mechanically viable but would make defects look like typed application errors.
+
+Deferred:
+
+- Phase 1 implements `Cause.Portable` and conversion functions.
+- Phase 4 still decides the exact immutable kind bound for typed `Cause.Fail` payloads in portable Effect.t.
+- Same-domain `Cause.pp` and `Cause.equal` can keep raw exception behavior; portable printing/equality should be string based.
+
+## V-P0T5 — Bind/Map once-mode characterization
+
+Status: final for Effet-OxCaml-ss6.
+
+Question: should Phase 4 make `Effect.t` values once/linear so `Bind` and `Map` continuations can be once, or keep `Effect.t` reusable with portable callbacks?
+
+Artifacts:
+
+- `scratch/oxcaml_research/bind_once_probe/many_ast_once_continuation.ml`
+- `scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml`
+- `scratch/oxcaml_research/bind_once_probe/once_program_second_run_compiles.ml`
+- `scratch/oxcaml_research/bind_once_probe/portable_continuation_reuse_positive.ml`
+- `scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml`
+- `scratch/oxcaml_research/bind_once_probe/results.md`
+- `scratch/oxcaml_research/bind_once_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/bind_once_probe/run.sh
+```
+
+Last result: `summary: pass=5 fail=0`.
+
+Evidence:
+
+- A reusable AST that stores a once Bind continuation is rejected at reuse: `This value is "once" but is expected to be "many"`.
+- A naive once AST interpreter hits mode friction immediately when extracting `Pure v`: the value contained in a once constructor is once, while the interpreter expects many.
+- A function argument annotated `@ once` does not by itself make an ordinary AST value linear; an isolated second-run fixture compiles.
+- Portable Bind/Map continuations preserve reusable Effect.t values and still reject mutable-ref capture.
+
+Decision diary:
+
+- V-P0T5-1 - Keep `Effect.t` reusable/many.
+  Decision: Phase 4 should not make `Effect.t` globally once or linear.
+  Rationale: Effet examples, tests, and benchmarks use effects as ordinary reusable values. The once-AST probes add mode friction without proving a better runtime contract.
+- V-P0T5-2 - Do not type Bind/Map continuations as once.
+  Decision: Bind and Map continuations should be `portable` for domain execution, not `once`.
+  Rationale: `many_ast_once_continuation` fails on reuse. `once_ast_reuse_negative` shows interpreting a once AST is not a local annotation change.
+- V-P0T5-3 - Keep once for true one-shot protocols.
+  Decision: `acquire_release` release remains the right once-mode target; Bind/Map are not.
+  Rationale: release has an at-most-once ownership protocol. Bind/Map continuations are called once per interpretation, but the AST itself may be interpreted many times.
+
+Deferred:
+
+- Phase 4 should add constructor-level positive and negative fixtures for portable Bind/Map callbacks.
+- A future linear-AST design would need to intentionally remove Effect.t reuse; this epic does not need that for the ZIO-shaped portable runtime.
+
+## V-P0T6 — Portable cross-domain queue primitive
+
+Status: final for Effet-OxCaml-5uz.
+
+Question: which queue primitive should Phase 6 and Phase 8 use for cross-domain value handoff under OxCaml portability checks?
+
+Artifacts:
+
+- `scratch/oxcaml_research/portable_queue_probe/ws_deque_steal_positive.ml`
+- `scratch/oxcaml_research/portable_queue_probe/ws_deque_push_capture_negative.ml`
+- `scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml`
+- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_parallel_positive.ml`
+- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml`
+- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_closure_negative.ml`
+- `scratch/oxcaml_research/portable_queue_probe/results.md`
+- `scratch/oxcaml_research/portable_queue_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/portable_queue_probe/run.sh
+```
+
+Last result: `summary: pass=6 fail=0`.
+
+Evidence:
+
+- The installed module path exists: `portable_ws_deque` / `Portable_ws_deque`. Its interface declares a portable work-stealing deque, `type 'a t : mutable_data with 'a @@ contended portable`.
+- `Portable_ws_deque` works for cross-domain stealing: two Parallel workers steal from the same deque and consume each portable integer exactly once.
+- `Portable_ws_deque.push` is owner-local, not multi-producer: capturing a deque in a Parallel closure and pushing fails because the shared queue is expected to be uncontended.
+- `Portable_ws_deque` rejects nonportable closure payloads at construction of the portable payload list.
+- A minimal Effet-owned wrapper over `Portable.Atomic.t` passes a two-producer stress fixture: two Parallel workers push 500 immutable integers into one atomic list and the parent drains the full set.
+- The atomic wrapper rejects `int ref` payloads through the `immutable_data` bound and rejects closure-with-ref payloads as nonportable at the Parallel boundary.
+
+Comparison:
+
+| Criterion | Portable_ws_deque | Effet Portable_queue over Portable.Atomic |
+| --- | --- | --- |
+| Existing shipped primitive | Yes | No, small wrapper |
+| Cross-domain consumer | Yes, `steal_opt` | Yes, drain/exchange |
+| Cross-domain producer | No for shared capture; owner-local only | Yes, stress fixture passes |
+| Payload rejection | Nonportable closure rejected | Refs and nonportable closures rejected |
+| Best fit | Phase 6 work stealing | Phase 8 producer handoff |
+
+Decision diary:
+
+- V-P0T6-1 - Use `Portable_ws_deque` for Phase 6 work queues.
+  Decision: Phase 6 should build scheduler/work-stealing queues on the installed `Portable_ws_deque`.
+  Rationale: it is shipped, portable, and the positive fixture matches work-stealing consumption.
+- V-P0T6-2 - Use an Effet-owned `Portable.Atomic.t` wrapper for Phase 8 handoff.
+  Decision: Phase 8 stream/exporter producer handoff should not use `Portable_ws_deque` directly; it should use a small internal wrapper over `Portable.Atomic.t` and immutable payload lists.
+  Rationale: `Portable_ws_deque.push` correctly rejects shared producer capture, while the atomic wrapper proves the required multi-producer handoff shape.
+- V-P0T6-3 - Keep wakeups and backpressure outside this primitive.
+  Decision: the portable queue primitive only owns cross-domain data movement; Eio-local wakeups, cancellation, and boundedness remain wrapper/runtime concerns.
+  Rationale: the evidence covers static portability and producer handoff, not a blocking protocol. Adding one here would exceed the ticket.
+
+Deferred:
+
+- P0-T2 must decide the Eio-local wake/cancellation wrapper around portable queue state.
+- Phase 8 should promote the wrapper with focused exporter batching tests.
+- If fairness or bounded backpressure becomes required, add a separate probe before changing the primitive.
+
+## V-P0T2 — Mode-annotated Eio wrapper API
+
+Status: final for Effet-OxCaml-07e.
+
+Question: what wrapper API should Effet use around Eio under OxCaml modes?
+
+Artifacts:
+
+- `scratch/oxcaml_research/eio_wrap_probe/eio_wrap_positive.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/parallel_inside_eio_positive.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/switch_local_fork_negative.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/switch_escape_wrapped_negative.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/fiber_portable_ref_capture_negative.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/stream_payload_negative.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/stream_parallel_wrapped_negative.ml`
+- `scratch/oxcaml_research/eio_wrap_probe/results.md`
+- `scratch/oxcaml_research/eio_wrap_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/eio_wrap_probe/run.sh
+```
+
+Last result: `summary: pass=7 fail=0`.
+
+Evidence:
+
+- A scoped/forked/cancelled same-domain Eio program compiles and runs through lexical wrappers over Eio.Switch, Eio.Fiber, Eio.Cancel, and Eio.Stream.
+- Parallel composes inside an Eio fiber when the Parallel fork boundary uses portable closures and does not capture raw Eio handles.
+- A local switch handle rejects escape into a ref, but the same local handle cannot call raw Eio.Fiber.fork because Eio expects a global Switch.t.
+- The portable domain fork wrapper rejects int ref capture at compile time.
+- Stream_portable rejects nonportable closure payloads, but the wrapped raw Eio.Stream remains nonportable when captured into Parallel.
+
+Decision diary:
+
+- V-P0T2-1 - Keep Eio same-domain and lexical.
+  Decision: Effet wraps Eio as the local runtime/IO substrate; it does not make raw Eio handles portable.
+  Rationale: the positive wrapper fixture runs, and the wrapped stream still fails correctly at the Parallel boundary.
+- V-P0T2-2 - Use Switch_scope, not a universal Switch_local handle.
+  Decision: Phase 3 should expose a lexical Switch_scope wrapper around Eio.Switch.run. Use @ local switch borrows only for APIs that do not call raw Eio functions.
+  Rationale: switch escape is mechanically rejected, but local switch handles cannot call Eio.Fiber.fork until Eio itself exposes mode-aware signatures.
+- V-P0T2-3 - Split Fiber_local from Fiber_portable.
+  Decision: Fiber_local wraps Eio.Fiber.fork for same-domain fibers; Fiber_portable wraps Parallel.fork_join/domain execution and requires portable closures.
+  Rationale: Eio fiber bodies legitimately capture Eio promises, streams, switches, and cancellation contexts. Parallel is the domain portability boundary.
+- V-P0T2-4 - Stream_portable is local payload checking only.
+  Decision: Stream_portable wraps Eio.Stream locally and requires portable payloads on add/take APIs; cross-domain stream/exporter handoff uses the P0-T6 Portable.Atomic queue before returning to Eio.
+  Rationale: stream payload checking works, but raw Eio.Stream remains nonportable across Parallel.
+
+Adopted wrapper surface:
+
+- `Switch_scope.run : (t -> 'a) -> 'a`
+- `Fiber_local.fork : Switch_scope.t -> (unit -> unit) -> unit`
+- `Cancel_scope.sub/cancel/check`
+- `Fiber_portable.fork_join2 : Parallel.t -> portable closures -> result`
+- `Stream_portable.create/add/take` for Eio-local streams with portable payload checks
+- `Portable_queue` from V-P0T6 for cross-domain producer handoff
+
+Deferred:
+
+- Re-test Switch_local if upstream Eio gains mode annotations.
+- Phase 8 still needs wake/backpressure design around the portable handoff queue.
+
+## V-P0T4 — Supervisor failure state: Capsule vs Portable.Atomic
+
+Status: final for Effet-OxCaml-r18.
+
+Question: should supervisor failure state use Capsule-protected mutable state or a Portable.Atomic immutable list?
+
+Artifacts:
+
+- `scratch/oxcaml_research/supervisor_state_probe/capsule_state_positive.ml`
+- `scratch/oxcaml_research/supervisor_state_probe/atomic_state_positive.ml`
+- `scratch/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml`
+- `scratch/oxcaml_research/supervisor_state_probe/results.md`
+- `scratch/oxcaml_research/supervisor_state_probe/results/compile.out`
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/supervisor_state_probe/run.sh
+```
+
+Last result: `summary: pass=3 fail=0`.
+
+Evidence:
+
+- Capsule.Expert.Data plus Capsule.Blocking_sync.Mutex passes two-domain append stress, count validation, checksum validation, and max_failures checking.
+- Portable.Atomic over immutable list plus atomic count passes the same stress and threshold checks.
+- The atomic fixture is smaller (53 lines vs 71) and snapshots the failure list directly.
+- Returning aliased capsule data directly hit uniqueness friction during the probe; the viable Capsule fixture computes metrics inside the lock instead.
+- A nonportable closure failure payload is rejected at the Parallel boundary.
+
+Decision diary:
+
+- V-P0T4-1 - Use Portable.Atomic for supervisor failures.
+  Decision: Phase 3 / Phase 5 should use a Portable.Atomic immutable list plus count for supervisor failure history.
+  Rationale: supervisor failures are append-only with snapshot reads and threshold checks; the atomic branch proves that shape with less API ceremony.
+- V-P0T4-2 - Reserve Capsule for richer runtime state.
+  Decision: use Capsule when multiple mutable fields require one guarded invariant, condition/wait semantics, or nontrivial mutation protocols.
+  Rationale: Capsule works under stress but adds brand/key/password/mutex ceremony that this append-only list does not need.
+- V-P0T4-3 - Snapshot capsule state under the lock if used later.
+  Decision: do not expose capsule-owned mutable lists directly as public/runtime snapshots.
+  Rationale: the probe hit aliased/unique friction when returning capsule list data; materialized snapshots are the safer boundary.
+
+Deferred:
+
+- Phase 3 should implement the atomic supervisor state after Cause.Portable exists.
+- Revisit Capsule only if the supervisor state contract grows beyond append/read/check.
+
+## V-P0T7 — ppx_effet and OxCaml mode syntax
+
+Status: final for Effet-OxCaml-3gk.
+
+Question: can ppx_effet emit or avoid OxCaml mode syntax with the pinned toolchain?
+
+Artifacts:
+
+- scratch/oxcaml_research/ppx_oxcaml_probe/ppxlib_parse_modes_positive.ml
+- scratch/oxcaml_research/ppx_oxcaml_probe/current_ast_helper_shape.ml
+- scratch/oxcaml_research/ppx_oxcaml_probe/current_style_expansion_positive.ml
+- scratch/oxcaml_research/ppx_oxcaml_probe/current_style_capture_negative.ml
+- scratch/oxcaml_research/ppx_oxcaml_probe/results.md
+- scratch/oxcaml_research/ppx_oxcaml_probe/results/compile.out
+
+Verification command:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/ppx_oxcaml_probe/run.sh
+```
+
+Last result: summary: pass=4 fail=0.
+
+Evidence:
+
+- Ppxlib.Parse accepts portable value-binding syntax and exposes a non-empty pvb_modes list.
+- Current-style ppx_effet thunk expansion to Effect.thunk plus a generated function compiles against a mode-annotated helper that requires a portable body.
+- The same current-style expansion rejects a closure that captures int ref.
+- Ast_builder.Default.pexp_fun still creates an ordinary mode-empty function node, so explicit mode-bearing nodes need the Jane/OxCaml ppxlib path.
+
+Decision diary:
+
+- V-P0T7-1 - Avoid explicit mode emission for existing thunk/env expansions.
+  Decision: keep ppx_effet expanding to mode-annotated helper calls wherever possible.
+  Rationale: helper-call expansion compiles and preserves capture safety through the helper signature.
+- V-P0T7-2 - Use Jane/OxCaml ppxlib APIs when explicit modes are unavoidable.
+  Decision: do not assume upstream ppxlib helpers can build every mode-bearing node; use the pinned Jane/OxCaml AST path for those cases.
+  Rationale: the pinned parser carries mode nodes, while current default helpers create normal functions with no modes.
+- V-P0T7-3 - Reject raw-source escape hatches for covered expansions.
+  Decision: no stringly code generation for thunk/capability/env expansion.
+  Rationale: the typed AST route is sufficient for the representative expansion.
+
+Deferred:
+
+- Add a real ppx_effet regression test after Effect.thunk is changed to require portable callbacks.
+- Add a Ppxlib_jane builder probe if future PPX work emits explicit mode-bearing type declarations or bindings.
+
+## V-P0T8 - OxCaml toolchain pin and editor-tool health
+
+Status: final for Effet-OxCaml-nkh.
+
+Question: can the project pin a concrete OxCaml 5.2 toolchain and verify the Jane/OxCaml dev tools against mode-annotated source?
+
+Artifacts:
+
+- `flake.nix`
+- `scratch/oxcaml_research/toolchain_probe/mode_syntax.ml`
+- `scratch/oxcaml_research/toolchain_probe/check_merlin_no_errors.py`
+- `scratch/oxcaml_research/toolchain_probe/check_lsp_no_errors.py`
+- `scratch/oxcaml_research/toolchain_probe/results.md`
+
+Pinned toolchain:
+
+- OCaml switch: `ocaml-variants.5.2.0+ox`
+- Dune: `3.22.2+ox`
+- ocamlformat: `0.26.2+ox1`
+- merlin: `5.2.1-502+ox1`
+- ocaml-lsp-server: `1.19.0+ox1`
+
+Verification command:
+
+`nix develop .#oxcaml -c bash -lc 'effet-oxcaml-check-toolchain'`
+
+Last result:
+
+`merlin diagnostics: []`
+
+`lsp diagnostics: []`
+
+Evidence:
+
+- `effet-oxcaml-init` now installs the pinned Jane/OxCaml dev-tool set after package test dependencies.
+- `effet-oxcaml-check-toolchain` asserts `ocamlc -version = 5.2.0+ox` and `dune --version = 3.22.2`.
+- The helper builds `scratch/oxcaml_research/toolchain_probe/mode_syntax.ml`, which contains the mode-annotated binding `let (identity @ portable) x = x`.
+- ocamlformat `0.26.2+ox1` accepts the file with `--check`, proving round-trip fidelity for the mode syntax probe.
+- merlin returns no non-config diagnostics for the same source.
+- ocaml-lsp opens the same source over stdio and publishes no diagnostics.
+- Attempting the newer `ocaml-lsp-server.1.26.0-5.5~preview` line was rejected by opam under the 5.2 switch because it requires OCaml >= 5.5, so it is a future cutover target rather than a valid current pin.
+
+Decision diary:
+
+- V-P0T8-1 - Pin the current OxCaml work to 5.2.0+ox.
+  Decision: keep the project-local OxCaml switch on `5.2.0+ox` until compiler and editor tools have an aligned stable 5.4/5.5 release set.
+  Rationale: the 5.2 switch builds the current Phase 0 probes and has matching Jane/OxCaml formatter, merlin, and LSP packages.
+- V-P0T8-2 - Use the Jane/OxCaml dev-tool forks inside the OxCaml shell.
+  Decision: `effet-oxcaml-init` installs the pinned Dune, ocamlformat, merlin, and ocaml-lsp packages into `.opam-oxcaml`.
+  Rationale: editor/parser evidence must come from the same opam repository and compiler family as the mode syntax being tested.
+- V-P0T8-3 - Gate editor health with a minimal mode syntax probe.
+  Decision: use a dependency-free toolchain probe instead of a PPX lab file that imports `Portable`.
+  Rationale: the check should distinguish parser/tool health from unrelated load-path configuration.
+
+Cutover plan:
+
+- Revisit the switch when OxCaml publishes an aligned compiler plus Dune, ocamlformat, merlin, and ocaml-lsp set for the upstream 5.4 merge or the 5.5 preview line.
+- The cutover is allowed only after `effet-oxcaml-check-toolchain`, all Phase 0 scratch probes, and `effet-oxcaml-test-shipped` pass on the newer switch.
+- Keep the dual-toolchain flake only for performance comparison until the epic removes mainline OCaml as a build target.
+
+## V-P1-Cause - Shipped Cause.Portable boundary
+
+Status: partial for Effet-OxCaml-unm. This implements the Cause boundary slice of Phase 1; the broader phase remains open for Duration, Schedule, Trace_context, Sampler, Capabilities payload records, logger/meter payloads, and span metadata.
+
+Question: can shipped `Cause.t` keep raw same-domain diagnostics while exposing a portable mirror that can cross Parallel domains?
+
+Artifacts:
+
+- `packages/effet/cause.ml`
+- `packages/effet/cause.mli`
+- `packages/effet/test/test_effet.ml`
+- `scratch/oxcaml_research/phase1_cause_portable_probe/portable_cause_parallel_positive.ml`
+- `scratch/oxcaml_research/phase1_cause_portable_probe/raw_cause_parallel_negative.ml`
+- `scratch/oxcaml_research/phase1_cause_portable_probe/portable_payload_ref_negative.ml`
+- `scratch/oxcaml_research/phase1_cause_portable_probe/results/compile.out`
+
+Verification commands:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase1_cause_portable_probe/run.sh`
+
+Last result: `summary: pass=3 fail=0`.
+
+`nix develop .#oxcaml -c bash -lc 'dune runtest packages/effet --force'`
+
+Last result: 106 Effet tests pass.
+
+Evidence:
+
+- `Cause.Portable.t` is explicitly annotated `value mod portable` and carries materialized defect fields: `kind`, `message`, optional string backtrace, span name, and annotations.
+- `Cause.to_portable` / `Cause.Portable.of_cause` convert raw same-domain `Cause.t` into the portable mirror while preserving typed failures through a caller-supplied converter.
+- The positive fixture converts a `Concurrent` raw cause, captures the resulting `Cause.Portable.t` in two `Parallel.fork_join2` workers, and validates the materialized shape at runtime.
+- The raw-cause negative fixture tries to capture same-domain `Cause.t` directly in `Parallel.fork_join2`; OxCaml rejects it.
+- The payload negative fixture tries to store a ref-capturing closure in `Cause.Portable.Fail`; OxCaml rejects it through the portable type parameter bound.
+- The shipped test `portable cause materializes diagnostics` verifies typed failure preservation and raw backtrace string materialization in the normal Effet test suite.
+
+Decision diary:
+
+- V-P1-Cause-1 - Keep raw `Cause.t` same-domain.
+  Decision: `Cause.t` still stores raw `exn` and `Printexc.raw_backtrace option` for local runtime diagnostics.
+  Rationale: local exception identity remains useful, and Phase 0 showed raw exception portability is not a trustworthy cross-domain boundary.
+- V-P1-Cause-2 - Use `Cause.Portable.t` for domain boundaries.
+  Decision: domain-parallel runtime and aggregation code should convert to `Cause.Portable.t` before crossing Parallel workers.
+  Rationale: the shipped type annotation plus positive/negative fixtures prove the boundary mechanically, not just by convention.
+- V-P1-Cause-3 - Keep conversion explicit and caller-mapped.
+  Decision: typed failure payloads are converted with `('err -> 'portable_err)` rather than assuming every current error type is portable.
+  Rationale: Phase 0 showed current open polymorphic variants do not satisfy the stricter portable-core error kind. The explicit converter keeps this boundary honest.
+
+Deferred:
+
+- Finish Phase 1 annotations for the remaining pure-data modules.
+- Use `Cause.Portable.t` in Phase 4/6 aggregation paths once Effect.t and Runtime.run become domain-parallel.
+
+## V-P1-PureData - Phase 1 pure data kind annotations
+
+Status: final for Effet-OxCaml-unm. This completes Phase 1 together with V-P1-Cause.
+
+Question: can Effet's pure value surfaces carry explicit OxCaml kind annotations and cross Parallel domains without allowing function/ref payloads?
+
+Artifacts:
+
+- `packages/effet/duration.ml{,i}`
+- `packages/effet/schedule.ml{,i}`
+- `packages/effet/trace_context.ml{,i}`
+- `packages/effet/sampler.ml{,i}`
+- `packages/effet/capabilities.ml{,i}`
+- `packages/effet/logger.ml{,i}`
+- `packages/effet/meter.ml{,i}`
+- `packages/effet/tracer.ml{,i}`
+- `scratch/oxcaml_research/phase1_pure_data_probe/results/compile.out`
+
+Verification commands:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase1_pure_data_probe/run.sh`
+
+Last result: `summary: pass=5 fail=0`.
+
+`nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped'`
+
+Last result: shipped OxCaml gate exits 0.
+
+Evidence:
+
+- `Duration.t`, `Schedule.t`, `Trace_context.t`, `Sampler.t`, Capabilities payload types, `Logger.record`, `Meter.point`, `Tracer.event`, and `Tracer.span` are explicitly annotated `immutable_data`.
+- `Sampler.t` no longer stores a public function field. It is now a pure policy ADT with a `Sampler.sample` interpreter function.
+- `pure_data_parallel_positive.ml` moves a payload record containing Duration, Schedule, Trace_context, Sampler, Capabilities payload records, Logger/Meter payloads, and Tracer span metadata through `Parallel.fork_join2`.
+- `portable_function_payload_negative.ml` rejects a function-valued field under `immutable_data`.
+- `portable_ref_payload_negative.ml` rejects an `int ref` field under `immutable_data`.
+- `sampler_field_escape_negative.ml` rejects the old `Sampler.always_on.sample` field access, proving Sampler no longer exposes a closure payload.
+- The shipped runtime and observability tests still pass with the new sampler interpreter.
+
+Decision diary:
+
+- V-P1-PureData-1 - Use `immutable_data` for pure records and variants.
+  Decision: pure public values use `immutable_data`, not merely `value mod portable`.
+  Rationale: the ref negative fixture showed `value mod portable` was too weak for Phase 1's payload promise; `immutable_data` rejects both ref and function payloads.
+- V-P1-PureData-2 - Make Sampler data, not a closure record.
+  Decision: `Sampler.t` is a pure policy ADT and sampling is interpreted by `Sampler.sample`.
+  Rationale: the old function field could not honestly satisfy the pure-data requirement. The shipped sampler tests still pass through the interpreter function.
+- V-P1-PureData-3 - Do not annotate capability class types as pure data.
+  Decision: annotate the payload records/enums used by capability methods; leave class types as same-domain capability interfaces.
+  Rationale: classes with methods are not the pure values Phase 1 is about, and later phases handle capability/runtime ownership.
+
+Deferred:
+
+- Phase 2 can now use immutable pure payloads when making finalizers once-shot.
+- Phase 4 and Phase 6 should use `Cause.Portable.t` and the immutable payload records as their cross-domain failure/context vocabulary.
+
+## V-P2-Partial - Runtime finalizer draining and Portable.Atomic daemon accounting
+
+Status: partial for Effet-OxCaml-bim. The runtime/accounting slice is shipped, but the public `Effect.acquire_release` `@ once` signature remains blocked by the current reusable `Effect.t` / `Runtime.run` design.
+
+Question: can Phase 2 make finalizer execution and daemon accounting safer without silently breaking the Phase 0 decision that effect AST values remain reusable?
+
+Artifacts:
+
+- `packages/effet/runtime.ml`
+- `packages/effet/dune`
+- `dune-project`
+- `effet.opam`
+- `scratch/oxcaml_research/phase2_once_finalizer_probe/results.md`
+- `scratch/oxcaml_research/phase2_once_finalizer_probe/results/compile.out`
+
+Verification commands:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase2_once_finalizer_probe/run.sh`
+
+Last result: `summary: pass=4 fail=0`.
+
+`nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped; echo SHIPPED_EXIT:$?'`
+
+Last result: `SHIPPED_EXIT:0`.
+
+After replacing `supervisor_switch` with `supervisor_fork`, the same shipped gate was re-run with output redirected to `/tmp/effet_shipped_gate.log`; the command exited 0.
+
+Evidence:
+
+- `public_signature_once_call_negative.ml` proves an `@ once` release parameter mechanically rejects a double call.
+- `minimal_once_acquire_reuse_negative.ml` proves storing that once release callback in the current AST makes the whole program value once; repeated interpretation fails with `This value is "once" but is expected to be "many"`.
+- `consuming_run_once_acquire_negative.ml` proves making `Runtime.run` consume the whole AST is not a local fix: extracting a normal success value from `Pure` inside a once AST is rejected as once where many is expected.
+- `field_many_once_release_candidate.ml`, `once_ast_global_fields_positive.ml`, and `once_ast_once_result_candidate.ml` reject narrower data-AST escape hatches: tuple/type field syntax cannot isolate many fields, `global_` only addresses locality, and once success values cannot be passed to ordinary release arguments.
+- `church_once_resource_candidate.ml` passes: a one-shot interpreter-function representation can own a once release callback, run the acquire, run the release exactly once, and return the acquired value.
+- `wrapped_once_release_negative.ml` proves accepting a once release and hiding it behind a regular many closure is rejected by OxCaml.
+- `portable_atomic_counter_positive.ml` proves the `Portable.Atomic` API supports daemon counter operations.
+- Shipped `runtime.ml` now clears the finalizer stack before executing the captured finalizer list, so a shared stack cannot be replayed after finalizer execution starts.
+- Shipped `runtime.ml` now stores daemon activity in `Portable.Atomic.t`; the package adds the `portable` library dependency needed for that module.
+
+Decision diary:
+
+- V-P2-1 - Do not force `Effect.acquire_release` to `@ once` under the current AST.
+  Decision: leave the current data-AST release signature unchanged until the broader Effect.t representation is rewritten.
+  Rationale: the positive safety property is real, but the current GADT cannot isolate a once release callback without making ordinary values unusable. The passing candidate is a one-shot interpreter-function representation, not a local constructor patch.
+- V-P2-2 - Drain finalizer stacks before running them.
+  Decision: set `finalizers := []` immediately after taking the pending list.
+  Rationale: this is the smallest runtime-owned at-most-once improvement that does not change public reuse semantics.
+- V-P2-3 - Use `Portable.Atomic` for daemon activity.
+  Decision: move `runtime.active` from stdlib `Atomic.t` to `Portable.Atomic.t` and add the package dependency.
+  Rationale: Phase 2's domain-parallel accounting requirement applies to this counter, and the probe plus shipped gate confirm the dependency and API shape.
+
+Deferred:
+
+- Effet-OxCaml-bim stays open for the public `@ once` acquire_release shape and actual-runtime negative fixture.
+- Resolve that remaining requirement by rewriting Effect.t around the one-shot interpreter-function shape proven by `church_once_resource_candidate.ml`, or explicitly revising the Phase 2 acceptance criteria. A consuming data-AST `Runtime.run` alone has now been rejected by evidence.
+
+## V-P3-Partial - Supervisor failure state without handle redesign
+
+Status: partial for Effet-OxCaml-7n9. Supervisor failure mutation is now atomic and rank-2 child-handle safety is retained; local switch replacement remains blocked by raw Eio API modes.
+
+Question: can Phase 3 improve supervisor mutation safety without replacing the already-working rank-2 child-handle discipline or claiming unsupported Eio switch locality?
+
+Artifacts:
+
+- `packages/effet/effect.ml`
+- `packages/effet/effect.mli`
+- `packages/effet/runtime.ml`
+- `packages/effet/test/test_effet.ml`
+- `scratch/oxcaml_research/supervisor_state_probe/results/compile.out`
+
+Verification commands:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/supervisor_state_probe/run.sh`
+
+Last result: `summary: pass=3 fail=0`.
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/eio_wrap_probe/run.sh`
+
+Last result: `summary: pass=8 fail=0`.
+
+`nix develop .#oxcaml -c bash -lc 'dune runtest packages/effet --force; echo EFFET_EXIT:$?'`
+
+Last result: `EFFET_EXIT:0`; 107 Effet tests pass.
+
+`nix develop .#oxcaml -c bash -lc 'set +e; dune build packages/effet >/tmp/phase3_build.log 2>&1; b=$?; dune runtest packages/effet --force >/tmp/phase3_effet.log 2>&1; t=$?; tail -8 /tmp/phase3_effet.log; echo BUILD_EXIT:$b TEST_EXIT:$t; test $b -eq 0 && test $t -eq 0'`
+
+Last result: `BUILD_EXIT:0 TEST_EXIT:0`.
+
+`nix develop .#oxcaml -c bash -lc 'set +e; effet-oxcaml-test-shipped >/tmp/effet_shipped_gate.log 2>&1; status=$?; tail -20 /tmp/effet_shipped_gate.log; echo SHIPPED_EXIT:$status; exit $status'`
+
+Last result: `SHIPPED_EXIT:0`.
+
+Evidence:
+
+- Phase 0's supervisor probe still passes: Capsule and Portable.Atomic candidates both handle two-domain append stress for portable integer failures, and the nonportable payload negative is rejected.
+- Phase 0's Eio wrapper probe now includes `runtime_create_local_switch_negative.ml`; it proves the actual `Runtime.create` shape cannot accept and store a local `Eio.Switch.t` because the runtime record needs a global stored switch for daemon ownership.
+- Attempting to use `Portable.Atomic.update` for shipped supervisor `Cause.t` storage failed because raw same-domain `Cause.t` cannot be captured by the portable update closure. This is the correct boundary: raw causes stay same-domain until the supervisor API has a portable failure mirror.
+- Shipped supervisor failure state now uses stdlib `Atomic.t` for the raw same-domain list plus an atomic count, replacing the previous mutable `ref` list.
+- Runtime failure recording now goes through `Effect.Private.supervisor_record_failure`; public `Supervisor.failures` and `Supervisor.check` read snapshots/counts through accessors rather than a leaked ref.
+- Runtime forking now goes through `Effect.Private.supervisor_fork`; `Effect.Private` no longer exposes the raw supervisor `Eio.Switch.t` accessor.
+- The new shipped test `records multiple failures` proves the public supervisor snapshot path returns two child failures after concurrent Eio-fiber starts.
+- Existing rank-2 `supervisor_body` continues to prevent child handles escaping their scope without changing user-facing syntax.
+
+Decision diary:
+
+- V-P3-1 - Keep rank-2 supervisor bodies for now.
+  Decision: do not replace the public supervisor API with local-mode child handles in this slice.
+  Rationale: Phase 0 showed locality and rank-2 are equivalent for child escape safety, while the shipped rank-2 API already works and avoids a risky public rewrite.
+- V-P3-2 - Make raw supervisor failure mutation atomic, not portable.
+  Decision: use stdlib `Atomic.t` for same-domain raw `Cause.t` failure history and count.
+  Rationale: `Portable.Atomic` is right for portable failure payloads, but raw `Cause.t` is intentionally same-domain. The failed compile is evidence that forcing it through a portable update closure would violate the Phase 1 Cause boundary.
+- V-P3-3 - Do not claim local Eio switch safety yet.
+  Decision: stop exposing the raw supervisor switch through `Effect.Private`; keep the raw switch internal to the implementation until Effet has a lexical wrapper that still works with `Eio.Fiber.fork` or Eio itself exposes mode annotations.
+  Rationale: P0-T2 proved a truly local switch wrapper prevents escape but cannot call raw Eio fork; shipping that would break the current runtime substrate.
+
+Deferred:
+
+- Effet-OxCaml-7n9 stays open for the broader local switch wrapper/runtime-entry cleanup.
+- Once Phase 4 introduces portable supervisor failure payloads, re-test `Portable.Atomic` for supervisor failure storage with `Cause.Portable.t` rather than raw `Cause.t`.
+
+## V-P4-Prep - One-shot interpreter-function Effect.t direction
+
+Status: preparatory for Effet-OxCaml-7dp, Effet-OxCaml-bim, and Effet-OxCaml-1tm. No shipped Effect.t rewrite is included in this entry.
+
+Question: after Phase 2 proved the current reusable data GADT cannot locally accept an `@ once` `acquire_release` callback, does a more real Effet-shaped one-shot interpreter-function representation support the core combinators while preserving compiler-enforced resource ownership?
+
+Artifacts:
+
+- `scratch/oxcaml_research/one_shot_effect_probe/README.md`
+- `scratch/oxcaml_research/one_shot_effect_probe/core_one_shot_positive.ml`
+- `scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml`
+- `scratch/oxcaml_research/one_shot_effect_probe/double_release_negative.ml`
+- `scratch/oxcaml_research/one_shot_effect_probe/results.md`
+- `scratch/oxcaml_research/one_shot_effect_probe/results/compile.out`
+
+Verification command:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/one_shot_effect_probe/run.sh`
+
+Last result: `summary: pass=3 fail=0`.
+
+`nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped >/tmp/effet_shipped_gate_after_oneshot.log 2>&1'`
+
+Last result: exit 0. The log tail shows effet-otel 20 tests and effet-stream 13 tests successful; this gate also includes the shipped ppx and effet package tests.
+
+Evidence:
+
+- `core_one_shot_positive.ml` proves the one-shot interpreter-function shape can express `pure`, `fail`, `thunk`, `bind`, `map`, `catch`, `acquire_release`, and a consuming `run` while returning typed failures through `result`.
+- `reuse_negative.ml` proves a resource-owning program produced by `acquire_release` cannot be run twice; OxCaml reports that the once value was already used at the first `run` call.
+- `double_release_negative.ml` proves a resource interpreter cannot call the same once release callback twice.
+- The earlier `rg` dependency check shows a shipped rewrite is broad: `Runtime.run` is used by Effet, effet-otel, and effet-stream tests; `Effect.collect_names` and `Effect.Private.daemon` also depend on the current data view. This is not a surgical Phase 2 patch.
+
+Decision diary:
+
+- V-P4P-1 - Replace the current GADT direction, do not patch around it.
+  Decision: treat the one-shot interpreter-function representation as the next serious Effect.t direction for Phase 4.
+  Rationale: the current data GADT rejected every local escape hatch in V-P2-Partial, while this representation directly enforces once release and once resource-program consumption.
+- V-P4P-2 - Do not promote this prototype into shipped code in the current slice.
+  Decision: keep shipped Effect.t unchanged until the full runtime and observability migration is planned as one coherent rewrite.
+  Rationale: the prototype answers the mode question, but shipped code still depends on a data view for interpretation, names, tests, daemon helpers, and package integrations.
+
+Deferred:
+
+- Rebuild shipped `Effect.t`, `Effect.Private.view`, `Runtime.run`, `collect_names`, PPX output, and dependent tests around the chosen one-shot shape.
+- Decide whether pure, resource-free programs should remain reusable as ordinary functions or be wrapped in an explicit one-shot public type. The probe shows resource-owning programs are linear; it does not settle public ergonomics for pure values.
+- Re-run the full shipped gate after any shipped rewrite; this entry only changes scratch evidence and journal/backlog documentation.
+
+## V-P7-Prep - Resource Portable.Atomic state depends on Effect payload modes
+
+Status: preparatory for Effet-OxCaml-7dp and Effet-OxCaml-675. No shipped Resource rewrite is included in this entry.
+
+Question: can `packages/effet/resource.ml` move from `ref`/mutable fields to `Portable.Atomic` before the Phase 4 `Effect.t` payload boundary is mode-aware?
+
+Artifacts:
+
+- `scratch/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.ml`
+- `scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml`
+- `scratch/oxcaml_research/effet_resource_probe/open_variant_error_negative.ml`
+- `scratch/oxcaml_research/effet_resource_probe/run.sh`
+- `scratch/oxcaml_research/effet_resource_probe/results.md`
+- `scratch/oxcaml_research/effet_resource_probe/results/compile.out`
+
+Verification command:
+
+`nix develop .#oxcaml -c bash scratch/oxcaml_research/effet_resource_probe/run.sh`
+
+Last result: `summary: pass=3 fail=0`.
+
+Evidence:
+
+- `effet_resource_portable_probe.ml` proves the target state shape works in isolation: cached value and failure history can live in `Portable.Atomic.t`, and a two-domain Parallel smoke can update value/failure state over immutable payloads.
+- A direct shipped edit to `packages/effet/resource.ml` failed at `P_atomic.make (Some value)` because the current `Effect.map` callback argument is nonportable. The reduced `effect_map_payload_negative.ml` fixture preserves that compiler diagnostic.
+- The same shipped edit also failed at existing tests using `[> \`Refresh_failed of string ]`; `open_variant_error_negative.ml` proves open polymorphic variants are not `immutable_data` and cannot be used directly as portable Resource failure payloads.
+- After reverting the direct shipped Resource edit, `nix develop .#oxcaml -c bash -lc 'dune build packages/effet 2>&1'` exits 0.
+- `nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped >/tmp/effet_shipped_gate_after_resource_probe.log 2>&1'` also exits 0 after the Resource probe updates.
+
+Decision diary:
+
+- V-P7P-1 - Do not move shipped `Resource.t` to `Portable.Atomic` under the current `Effect.t`.
+  Decision: defer the shipped Resource rewrite until Phase 4 gives Resource a portable value/error boundary.
+  Rationale: `Portable.Atomic` is the right target state, but storing values loaded through the current many/nonportable `Effect.map` callback is rejected by OxCaml.
+- V-P7P-2 - Resource's public error/value payloads must become portable, not merely its fields.
+  Decision: Phase 7 must close or otherwise materialize typed failures before recording them in portable Resource state.
+  Rationale: open polymorphic variant errors do not satisfy `immutable_data`; pretending only the storage field changed would leave the public contract untyped for domain use.
+
+Deferred:
+
+- After Phase 4, port `packages/effet/resource.ml` to `value : 'a option Portable.Atomic.t` and `failures : 'err Cause.t list Portable.Atomic.t` or to `Cause.Portable.t` failures if raw `Cause.t` remains same-domain.
+- Move the positive Resource probe into shipped tests once `Effect.t` and Resource signatures expose the required payload kinds.
+
+## V-P10-Partial - Package metadata and default shell are OxCaml-first
+
+Status: partial for Effet-OxCaml-7dp and Effet-OxCaml-ftj. This satisfies the package/tooling part of mainline retirement, but not the full Phase 10 docs, bench, or final audit requirements.
+
+Question: can the shipped package metadata and default development entry point stop presenting mainline OCaml as the supported build target while preserving an explicit comparison shell for benchmarks?
+
+Artifacts:
+
+- `dune-project`
+- `effet.opam`
+- `effet-stream.opam`
+- `effet-schema.opam`
+- `effet-otel.opam`
+- `ppx_effet.opam`
+- `flake.nix`
+
+Verification commands:
+
+`nix develop .#oxcaml -c bash -lc 'dune build @install 2>&1'`
+
+Last result: exit 0; Dune regenerated all package opam files.
+
+`rg '"ocaml"|\\(ocaml ' dune-project *.opam -n`
+
+Last result: every shipped package now requires `ocaml = 5.2.0+ox`.
+
+`nix develop -c bash -lc 'ocamlc -version; dune --version'`
+
+Last result: default shell reports `5.2.0+ox` and Dune `3.22.2`.
+
+`nix develop .#mainline -c bash -lc 'ocamlc -version'`
+
+Last result: explicit comparison shell reports `5.4.1` and prints that it is benchmark-comparison-only.
+
+`nix develop -c bash -lc 'effet-oxcaml-test-shipped >/tmp/effet_shipped_gate_after_oxonly.log 2>&1'`
+
+Last result: exit 0. The log tail shows effet-otel 20 tests and effet-stream 13 tests successful; this gate also includes the shipped ppx, effet, and schema package tests.
+
+Evidence:
+
+- The source of truth in `dune-project` now pins `(ocaml (= 5.2.0+ox))` for all five packages.
+- Generated opam files now carry `"ocaml" {= "5.2.0+ox"}`, so opam metadata no longer advertises mainline OCaml support.
+- The default `nix develop` shell uses the OxCaml opam switch and toolchain helpers.
+- The `.#mainline` shell remains available only for performance comparison, matching the epic constraint that the dual toolchain survives for benches.
+
+Decision diary:
+
+- V-P10P-1 - Make OxCaml the default developer shell.
+  Decision: change `devShells.default` to the same OxCaml setup used by `devShells.oxcaml`.
+  Rationale: a default mainline shell contradicts the epic's "mainline stops being a build target" requirement.
+- V-P10P-2 - Keep mainline explicit and labeled.
+  Decision: retain `devShells.mainline`, but label it comparison-only.
+  Rationale: the epic explicitly keeps dual toolchains for performance comparisons.
+- V-P10P-3 - Pin package metadata to the current OxCaml release.
+  Decision: require `ocaml = 5.2.0+ox` in every package stanza.
+  Rationale: exact metadata is the strongest current project-level signal that shipped packages target OxCaml only.
+
+Deferred:
+
+- Phase 10 still needs README/AGENTS updates, a final V-OxCaml-Native audit entry, and the bench no-regression gate.
+- A newer OxCaml release can replace `5.2.0+ox` only after the toolchain check, scratch probes, shipped gate, and editor tool probes pass on that release.

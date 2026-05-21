@@ -28,6 +28,7 @@
             runtimeInputs = [
               pkgs.git
               pkgs.opam
+              pkgs.python3
             ];
             text = ''
               switch_name="''${1:-${oxCamlSwitch}}"
@@ -51,9 +52,47 @@
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
               opam install . --deps-only --with-test --assume-depexts --yes
+              opam install \
+                'dune=3.22.2+ox' \
+                'ocamlformat=0.26.2+ox1' \
+                'merlin=5.2.1-502+ox1' \
+                'ocaml-lsp-server=1.19.0+ox1' \
+                --assume-depexts \
+                --yes
 
               echo "OxCaml switch is ready: $switch_name"
               echo "Enter it with: nix develop .#oxcaml"
+            '';
+          };
+          oxCamlToolchainCheck = pkgs.writeShellApplication {
+            name = "effet-oxcaml-check-toolchain";
+            runtimeInputs = [
+              pkgs.git
+              pkgs.opam
+              pkgs.python3
+            ];
+            text = ''
+              repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              cd "$repo_root"
+
+              export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
+              export OPAMSWITCH="${oxCamlSwitch}"
+              eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
+
+              test "$(ocamlc -version)" = "${oxCamlSwitch}"
+              test "$(dune --version)" = "3.22.2"
+              opam list --installed --short ocamlformat | grep -Fxq ocamlformat
+              opam list --installed --short merlin | grep -Fxq merlin
+              opam list --installed --short ocaml-lsp-server | grep -Fxq ocaml-lsp-server
+
+              mode_probe="scratch/oxcaml_research/toolchain_probe/mode_syntax.ml"
+              dune build scratch/oxcaml_research/toolchain_probe/mode_syntax.exe
+              ocamlformat --enable-outside-detected-project --check "$mode_probe"
+              probe_source="$(cat "$mode_probe")"
+              printf '%s\n' "$probe_source" \
+                | ocamlmerlin single errors -filename "$mode_probe" \
+                | python3 scratch/oxcaml_research/toolchain_probe/check_merlin_no_errors.py
+              python3 scratch/oxcaml_research/toolchain_probe/check_lsp_no_errors.py "$mode_probe"
             '';
           };
           oxCamlShippedTests = pkgs.writeShellApplication {
@@ -106,6 +145,7 @@
               pkgs.which
               oxCamlSetup
               oxCamlShippedTests
+              oxCamlToolchainCheck
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.gmp
@@ -117,20 +157,21 @@
         in
         {
           default = pkgs.mkShell {
-            packages = [
-              ocamlPackages.ocaml
-              ocamlPackages.dune_3
-              ocamlPackages.findlib
-              ocamlPackages.eio
-              ocamlPackages.eio_main
-              ocamlPackages.alcotest
-              ocamlPackages.yojson
-              ocamlPackages.ppxlib
-            ];
+            packages = oxCamlHostPackages;
 
             shellHook = ''
-              echo "Effet mainline OCaml shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
-              echo "For the OxCaml shell run: nix develop .#oxcaml"
+              if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+                export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
+              else
+                export OPAMROOT="''${OPAMROOT:-$PWD/${oxCamlOpamRoot}}"
+              fi
+              if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
+                export OPAMSWITCH="${oxCamlSwitch}"
+                eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
+              fi
+              echo "Effet OxCaml shell (${oxCamlSwitch})"
+              echo "Run 'effet-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+              echo "Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only."
             '';
           };
 
@@ -153,9 +194,8 @@
             '';
           };
 
-          # Symmetry alias: the mainline toolchain is `nix develop` or
-          # `nix develop .#mainline`; the OxCaml toolchain is `nix develop .#oxcaml`.
-          # Keeping both side by side makes before/after perf comparisons trivial.
+          # Mainline is retained only for before/after performance comparison.
+          # The default development shell is OxCaml.
           mainline = pkgs.mkShell {
             packages = [
               ocamlPackages.ocaml
@@ -169,8 +209,8 @@
             ];
 
             shellHook = ''
-              echo "Effet mainline OCaml shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
-              echo "Same as 'nix develop'. For OxCaml run: nix develop .#oxcaml"
+              echo "Effet mainline OCaml comparison shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
+              echo "Use this only for benchmark comparison; default development is OxCaml."
             '';
           };
         }

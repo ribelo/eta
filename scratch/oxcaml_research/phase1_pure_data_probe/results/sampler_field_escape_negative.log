@@ -1,0 +1,4 @@
+File "scratch/oxcaml_research/phase1_pure_data_probe/sampler_field_escape_negative.ml", line 1, characters 36-42:
+1 | let value = Effet.Sampler.always_on.sample
+                                        ^^^^^^
+Error: Unbound record field "sample"

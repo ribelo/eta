@@ -1,0 +1,8 @@
+File "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml", line 26, characters 46-53:
+26 |           (fun _ -> Portable_queue.push queue payload)
+                                                   ^^^^^^^
+Error: This expression has type "int ref"
+       but an expression was expected of type "('a : immutable_data)"
+       The kind of int ref is mutable_data.
+       But the kind of int ref must be a subkind of immutable_data
+         because of the definition of push at file "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml", lines 8-9, characters 11-62.

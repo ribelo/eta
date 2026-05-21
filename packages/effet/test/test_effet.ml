@@ -795,6 +795,34 @@ let test_runtime_die_captures_diagnostics () =
         (Option.is_some die.backtrace)
   | _ -> Alcotest.fail "expected Die with diagnostics"
 
+let test_cause_to_portable_materializes_diagnostics () =
+  let backtrace = Printexc.get_callstack 4 in
+  let raw =
+    Cause.suppressed ~primary:(Cause.fail "typed")
+      ~finalizer:
+        (Cause.die_with_diagnostics ~backtrace ~span_name:"release"
+           ~annotations:[ ("phase", "release") ] (Failure "boom"))
+  in
+  match Cause.to_portable Fun.id raw with
+  | Cause.Portable.Suppressed
+      {
+        primary = Cause.Portable.Fail "typed";
+        finalizer =
+          Cause.Portable.Die
+            {
+              message = "Failure(\"boom\")";
+              backtrace = Some stack;
+              span_name = Some "release";
+              annotations = [ ("phase", "release") ];
+              _;
+            };
+      } ->
+      Alcotest.(check bool) "stack materialized" true (String.length stack > 0)
+  | portable ->
+      Alcotest.failf "unexpected portable cause: %a"
+        (Cause.Portable.pp Format.pp_print_string)
+        portable
+
 let test_runtime_die_capture_backtrace_can_be_disabled () =
   with_runtime_capture_backtrace false @@ fun rt ->
   match
@@ -1389,8 +1417,38 @@ let test_supervisor_threshold_failure () =
     }
   in
   match Runtime.run rt program with
-  | Exit.Error (Cause.Fail (`Supervisor_failed 1)) -> ()
-  | _ -> Alcotest.fail "expected supervisor threshold failure"
+| Exit.Error (Cause.Fail (`Supervisor_failed 1)) -> ()
+| _ -> Alcotest.fail "expected supervisor threshold failure"
+
+let test_supervisor_records_multiple_failures () =
+  with_runtime @@ fun rt ->
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_left : (s, [> `Left | `Right ], unit) Supervisor.child) =
+            start sup (fail `Left)
+          in
+          let* (_right : (s, [> `Left | `Right ], unit) Supervisor.child) =
+            start sup (fail `Right)
+          in
+          let* () = yield in
+          failures sup;
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Ok failures ->
+      let rendered =
+        failures
+        |> List.map (function
+             | Cause.Fail `Left -> "left"
+             | Cause.Fail `Right -> "right"
+             | _ -> "other")
+        |> List.sort String.compare
+      in
+      Alcotest.(check (list string)) "failures" [ "left"; "right" ] rendered
+  | Exit.Error _ -> Alcotest.fail "expected supervisor failures snapshot"
 
 let test_supervisor_nested_scopes_compose () =
   with_runtime @@ fun rt ->
@@ -2181,6 +2239,8 @@ let () =
             test_runtime_exit_fail_die_interrupt;
           Alcotest.test_case "die captures diagnostics" `Quick
             test_runtime_die_captures_diagnostics;
+          Alcotest.test_case "portable cause materializes diagnostics" `Quick
+            test_cause_to_portable_materializes_diagnostics;
           Alcotest.test_case "die backtrace capture flag" `Quick
             test_runtime_die_capture_backtrace_can_be_disabled;
           Alcotest.test_case "run_exn preserves backtrace" `Quick
@@ -2250,6 +2310,8 @@ let () =
             test_supervisor_cancel_before_await_does_not_deadlock;
           Alcotest.test_case "threshold failure" `Quick
             test_supervisor_threshold_failure;
+          Alcotest.test_case "records multiple failures" `Quick
+            test_supervisor_records_multiple_failures;
           Alcotest.test_case "nested scopes compose" `Quick
             test_supervisor_nested_scopes_compose;
         ] );

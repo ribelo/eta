@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/phase1_pure_data_probe/portable_ref_payload_negative.ml", line 1, characters 0-47:
+1 | type bad : immutable_data = { count : int ref }
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The kind of type "bad" is mutable_data
+         because it's a boxed record type.
+       But the kind of type "bad" must be a subkind of immutable_data
+         because of the annotation on the declaration of the type bad.

@@ -4,9 +4,10 @@ synopsis: "Typed functional effects for OCaml, backed by Eio"
 description:
   "Effet ports the core ideas of TypeScript Effect and Scala ZIO to idiomatic OCaml: an environment channel, a typed failure channel, a success channel, resource scopes, schedules, retry, race, timeout, and detached fibers."
 depends: [
-  "ocaml" {>= "5.1"}
+  "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eio" {>= "1.0"}
+  "portable"
   "eio_main" {>= "1.0"}
   "alcotest" {with-test}
   "odoc" {with-doc}

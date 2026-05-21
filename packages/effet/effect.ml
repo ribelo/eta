@@ -100,7 +100,8 @@ and ('env, 'err, 'a) supervisor_body = {
 and ('s, !'err) supervisor = {
   sw : Eio.Switch.t;
   max_failures : int option;
-  failures : 'err Cause.t list ref;
+  failures : 'err Cause.t list Atomic.t;
+  failure_count : int Atomic.t;
 }
 
 and ('s, !'err, !'a) supervisor_child = {
@@ -329,10 +330,27 @@ module Private = struct
 
   let daemon = daemon_internal
 
-  let make_supervisor ~sw ~max_failures = { sw; max_failures; failures = ref [] }
-  let supervisor_switch supervisor = supervisor.sw
+  let make_supervisor ~sw ~max_failures =
+    {
+      sw;
+      max_failures;
+      failures = Atomic.make [];
+      failure_count = Atomic.make 0;
+    }
+
+  let supervisor_fork supervisor body = Eio.Fiber.fork ~sw:supervisor.sw body
   let supervisor_max_failures supervisor = supervisor.max_failures
-  let supervisor_failures_ref supervisor = supervisor.failures
+  let supervisor_record_failure supervisor failure =
+    let rec push () =
+      let failures = Atomic.get supervisor.failures in
+      if not (Atomic.compare_and_set supervisor.failures failures (failure :: failures))
+      then push ()
+    in
+    push ();
+    Atomic.incr supervisor.failure_count
+
+  let supervisor_failures supervisor = Atomic.get supervisor.failures
+  let supervisor_failure_count supervisor = Atomic.get supervisor.failure_count
   let make_supervisor_child ~promise ~cancel = { promise; cancel }
   let supervisor_child_promise child = child.promise
   let supervisor_child_cancel child = child.cancel

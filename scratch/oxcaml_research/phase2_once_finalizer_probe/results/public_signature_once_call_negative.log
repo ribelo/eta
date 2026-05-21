@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/public_signature_once_call_negative.ml", line 9, characters 10-17:
+9 |   ignore (release resource);
+              ^^^^^^^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/public_signature_once_call_negative.ml", line 8, characters 10-17:
+8 |   ignore (release resource);
+              ^^^^^^^
+  

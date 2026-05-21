@@ -1,4 +1,4 @@
-type t = Capabilities.trace_context = {
+type t : immutable_data = Capabilities.trace_context = {
   trace_id : string;
   span_id : string;
   trace_flags : int;
@@ -110,4 +110,3 @@ let inject t =
   match t.baggage with
   | [] -> headers
   | xs -> headers @ [ ("baggage", render_pairs xs) ]
-

@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/phase1_pure_data_probe/portable_function_payload_negative.ml", line 1, characters 0-49:
+1 | type bad : immutable_data = { run : unit -> int }
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The kind of type "bad" is value mod immutable non_float
+         because it's a boxed record type.
+       But the kind of type "bad" must be a subkind of immutable_data
+         because of the annotation on the declaration of the type bad.

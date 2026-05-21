@@ -1,0 +1,4 @@
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/wrapped_once_release_negative.ml", line 16, characters 9-53:
+16 |   ignore (acquire_release ~acquire:(Pure 1) ~release)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This value is "once" but is expected to be "many".

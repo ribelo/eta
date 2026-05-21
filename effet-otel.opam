@@ -4,7 +4,7 @@ synopsis: "OTLP/JSON exporter for Effet's tracer capability"
 description:
   "Implements Effet's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP/1.1 protocol. No protobuf, no TLS stack, no ambient-context: just Eio TCP, a hand-written JSON encoder, and the same fiber-local span context Effet's runtime already uses."
 depends: [
-  "ocaml" {>= "5.1"}
+  "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "effet" {= version}
   "eio" {>= "1.0"}

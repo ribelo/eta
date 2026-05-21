@@ -1,7 +1,7 @@
 type status = Capabilities.span_status = Ok | Error of string | Cancelled
 type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 
-type event = {
+type event : immutable_data = {
   ev_name : string;
   ev_ts_ms : int;
   ev_attrs : (string * string) list;
@@ -13,7 +13,7 @@ type link = Capabilities.span_link = {
   link_attrs : (string * string) list;
 }
 
-type span = {
+type span : immutable_data = {
   span_id : int;
   parent_id : int option;
   name : string;

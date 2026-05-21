@@ -9,7 +9,7 @@ type kind = Capabilities.metric_kind =
 
 type value = Capabilities.metric_value = Int of int | Float of float
 
-type point = {
+type point : immutable_data = {
   name : string;
   description : string;
   unit_ : string;

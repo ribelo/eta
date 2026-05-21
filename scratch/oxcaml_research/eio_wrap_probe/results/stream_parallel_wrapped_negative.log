@@ -1,0 +1,8 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/eio_wrap_probe/stream_parallel_wrapped_negative.ml", line 26, characters 18-37:
+26 |         (fun _ -> Stream_portable.add stream 1)
+                       ^^^^^^^^^^^^^^^^^^^
+Error: The value "Stream_portable.add" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/eio_wrap_probe/stream_parallel_wrapped_negative.ml", lines 22-29, characters 16-7
+         which is expected to be "shareable".

@@ -1,0 +1,16 @@
+== capsule_state_positive (pass) ==
+PASS expected-pass capsule_state_positive
+== atomic_state_positive (pass) ==
+PASS expected-pass atomic_state_positive
+== atomic_payload_negative (fail) ==
+File "scratch/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml", line 27, characters 36-43:
+27 |         (fun _ -> append supervisor failure)
+                                         ^^^^^^^
+Error: The value "failure" is "nonportable"
+         because it contains a usage (of the value "counter" at file "scratch/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml", line 22, characters 20-27)
+         which is expected to be "uncontended".
+       However, the value "failure" highlighted is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml", lines 23-30, characters 16-7
+         which is expected to be "shareable".
+PASS expected-fail atomic_payload_negative
+summary: pass=3 fail=0

@@ -1,0 +1,55 @@
+== minimal_once_acquire_reuse_negative (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/minimal_once_acquire_reuse_negative.ml", line 25, characters 14-21:
+25 |   let a = run program in
+                   ^^^^^^^
+Error: This value is "once" but is expected to be "many".
+PASS expected-fail minimal_once_acquire_reuse_negative
+== consuming_run_once_acquire_negative (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/consuming_run_once_acquire_negative.ml", line 12, characters 18-23:
+12 |   | Pure value -> value
+                       ^^^^^
+Error: This value is "once"
+         because it is contained (via constructor "Pure") in the value at file "scratch/oxcaml_research/phase2_once_finalizer_probe/consuming_run_once_acquire_negative.ml", line 12, characters 4-14
+         which is "once".
+       However, the highlighted expression is expected to be "many".
+PASS expected-fail consuming_run_once_acquire_negative
+== field_many_once_release_candidate (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/field_many_once_release_candidate.ml", line 28, characters 14-21:
+28 |   let a = run program in
+                   ^^^^^^^
+Error: This value is "once" but is expected to be "many".
+PASS expected-fail field_many_once_release_candidate
+== once_ast_global_fields_positive (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/once_ast_global_fields_positive.ml", line 7, characters 19-24:
+7 |   | Pure : { many_ value : 'a } -> ('env, 'err, 'a) t
+                       ^^^^^
+Error: Syntax error
+PASS expected-fail once_ast_global_fields_positive
+== once_ast_once_result_candidate (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/once_ast_once_result_candidate.ml", line 21, characters 27-32:
+21 |       ignore (run (release value));
+                                ^^^^^
+Error: This value is "once" but is expected to be "many".
+PASS expected-fail once_ast_once_result_candidate
+== church_once_resource_candidate (pass) ==
+PASS expected-pass church_once_resource_candidate
+== public_signature_once_call_negative (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/public_signature_once_call_negative.ml", line 9, characters 10-17:
+9 |   ignore (release resource);
+              ^^^^^^^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/public_signature_once_call_negative.ml", line 8, characters 10-17:
+8 |   ignore (release resource);
+              ^^^^^^^
+  
+PASS expected-fail public_signature_once_call_negative
+== wrapped_once_release_negative (fail) ==
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/wrapped_once_release_negative.ml", line 16, characters 9-53:
+16 |   ignore (acquire_release ~acquire:(Pure 1) ~release)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This value is "once" but is expected to be "many".
+PASS expected-fail wrapped_once_release_negative
+== portable_atomic_counter_positive (pass) ==
+PASS expected-pass portable_atomic_counter_positive
+summary: pass=9 fail=0

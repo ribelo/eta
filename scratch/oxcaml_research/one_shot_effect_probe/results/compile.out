@@ -1,0 +1,25 @@
+== core_one_shot_positive (pass) ==
+PASS expected-pass core_one_shot_positive
+== reuse_negative (fail) ==
+File "scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml", line 22, characters 14-21:
+22 |   ignore (run program ())
+                   ^^^^^^^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml", line 21, characters 14-21:
+21 |   ignore (run program ());
+                   ^^^^^^^
+  
+PASS expected-fail reuse_negative
+== double_release_negative (fail) ==
+File "scratch/oxcaml_research/one_shot_effect_probe/double_release_negative.ml", line 12, characters 6-13:
+12 |       release resource env
+           ^^^^^^^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "scratch/oxcaml_research/one_shot_effect_probe/double_release_negative.ml", line 11, characters 14-21:
+11 |       ignore (release resource env);
+                   ^^^^^^^
+  
+PASS expected-fail double_release_negative
+summary: pass=3 fail=0

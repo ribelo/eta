@@ -1,0 +1,28 @@
+(library
+ (name effect_full_gadt_probe_common)
+ (modules common)
+ (wrapped false)
+ (enabled_if (= %{env:EFFET_OXCAML_RESEARCH=false} true))
+ (libraries effet eio_main portable))
+
+(executables
+ (names
+  candidate_a_one_gadt
+  candidate_b_split
+  candidate_b_split_negative
+  candidate_b_polyvariant_error_negative)
+ (modules
+  candidate_a_one_gadt
+  candidate_b_split
+  candidate_b_split_negative
+  candidate_b_polyvariant_error_negative)
+ (enabled_if (= %{env:EFFET_OXCAML_RESEARCH=false} true))
+ (libraries effect_full_gadt_probe_common effet eio_main portable))
+
+(executable
+ (name candidate_c_mode_template)
+ (modules candidate_c_mode_template)
+ (enabled_if (= %{env:EFFET_OXCAML_RESEARCH=false} true))
+ (libraries effect_full_gadt_probe_common effet eio_main portable)
+ (preprocess
+  (pps ppx_jane)))

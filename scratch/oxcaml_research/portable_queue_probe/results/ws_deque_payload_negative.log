@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 44-51:
+12 |     Portable_ws_deque.of_list [ (fun () -> !counter); (fun () -> !counter + 1) ]
+                                                 ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 32-52
+         which is expected to be "portable"
+         because it is contained (via constructor "::") in the value at file "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 30-80
+         which is expected to be "portable".
+       However, the highlighted expression is expected to be "uncontended".

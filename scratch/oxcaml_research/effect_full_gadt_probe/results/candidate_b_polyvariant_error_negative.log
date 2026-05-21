@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml", line 12, characters 21-30:
+12 | let program : (unit, [> `Bad ], int) Effect_pure.t =
+                          ^^^^^^^^^
+Error: This type "[> `Bad ]" should be an instance of type
+         "('a : immutable_data)"
+       The kind of [> `Bad ] is value mod non_float
+         because it's a polymorphic variant type.
+       But the kind of [> `Bad ] must be a subkind of immutable_data
+         because of the definition of t at file "scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml", lines 8-9, characters 2-38.

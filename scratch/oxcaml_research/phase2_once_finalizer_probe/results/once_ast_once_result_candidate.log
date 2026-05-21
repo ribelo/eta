@@ -1,0 +1,4 @@
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/once_ast_once_result_candidate.ml", line 21, characters 27-32:
+21 |       ignore (run (release value));
+                                ^^^^^
+Error: This value is "once" but is expected to be "many".

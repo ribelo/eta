@@ -1,0 +1,4 @@
+File "scratch/oxcaml_research/phase2_once_finalizer_probe/once_ast_global_fields_positive.ml", line 7, characters 19-24:
+7 |   | Pure : { many_ value : 'a } -> ('env, 'err, 'a) t
+                       ^^^^^
+Error: Syntax error

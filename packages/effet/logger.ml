@@ -6,7 +6,7 @@ type level = Capabilities.log_level =
   | Error
   | Fatal
 
-type record = Capabilities.log_record = {
+type record : immutable_data = Capabilities.log_record = {
   level : level;
   body : string;
   ts_ms : int;

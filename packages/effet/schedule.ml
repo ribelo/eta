@@ -1,4 +1,4 @@
-type t =
+type t : immutable_data =
   | Recurs of int
   | Forever
   | Spaced of Duration.t

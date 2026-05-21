@@ -4,7 +4,7 @@ synopsis: "Typed chunked streams for Effet"
 description:
   "Adds pull-based, chunked Stream and fold-based Sink abstractions on top of Effet's typed effect runtime."
 depends: [
-  "ocaml" {>= "5.1"}
+  "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "effet" {= version}
   "cstruct" {>= "6.0.0"}

@@ -1,6 +1,6 @@
 (** Pure recurrence-policy descriptions. Drives retry/repeat. *)
 
-type t =
+type t : immutable_data =
   | Recurs of int
   | Forever
   | Spaced of Duration.t

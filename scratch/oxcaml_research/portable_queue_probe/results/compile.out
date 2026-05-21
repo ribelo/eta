@@ -1,0 +1,44 @@
+== ws_deque_steal_positive (pass) ==
+PASS expected-pass ws_deque_steal_positive
+== ws_deque_push_capture_negative (fail) ==
+File "scratch/oxcaml_research/portable_queue_probe/ws_deque_push_capture_negative.ml", line 16, characters 43-48:
+16 |           (fun _ -> Portable_ws_deque.push queue 1)
+                                                ^^^^^
+Error: This value is "shared"
+         because it is used inside the function at file "scratch/oxcaml_research/portable_queue_probe/ws_deque_push_capture_negative.ml", lines 12-19, characters 45-9
+         which is expected to be "shareable".
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail ws_deque_push_capture_negative
+== ws_deque_payload_negative (fail) ==
+File "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 44-51:
+12 |     Portable_ws_deque.of_list [ (fun () -> !counter); (fun () -> !counter + 1) ]
+                                                 ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 32-52
+         which is expected to be "portable"
+         because it is contained (via constructor "::") in the value at file "scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml", line 12, characters 30-80
+         which is expected to be "portable".
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail ws_deque_payload_negative
+== atomic_queue_parallel_positive (pass) ==
+PASS expected-pass atomic_queue_parallel_positive
+== atomic_queue_payload_ref_negative (fail) ==
+File "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml", line 26, characters 46-53:
+26 |           (fun _ -> Portable_queue.push queue payload)
+                                                   ^^^^^^^
+Error: This expression has type "int ref"
+       but an expression was expected of type "('a : immutable_data)"
+       The kind of int ref is mutable_data.
+       But the kind of int ref must be a subkind of immutable_data
+         because of the definition of push at file "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml", lines 8-9, characters 11-62.
+PASS expected-fail atomic_queue_payload_ref_negative
+== atomic_queue_payload_closure_negative (fail) ==
+File "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_closure_negative.ml", line 27, characters 46-53:
+27 |           (fun _ -> Portable_queue.push queue payload)
+                                                   ^^^^^^^
+Error: The value "payload" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_closure_negative.ml", lines 23-30, characters 45-9
+         which is expected to be "shareable".
+PASS expected-fail atomic_queue_payload_closure_negative
+summary: pass=6 fail=0
