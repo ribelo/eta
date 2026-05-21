@@ -1,294 +1,5 @@
 # Apsis OCaml v2 — design journal
 
-## V-OxCaml-Perf — OxCaml is faster by default for free
-
-Status: final, reproduced across two independent runs per toolchain.
-Switching the toolchain from mainline OCaml `5.4.1` to OxCaml `5.2.0+ox`,
-with no Effet source changes, makes the bench suite about
-**1.34×–1.52× faster across 91% of measured workloads** (83/98 benches
-improve by >5%, 7/98 regress by >5%, 8/98 are within ±5%; geomean of the
-oxcaml/mainline wall_ns ratio is 0.657, median 0.748, best case 11.5×,
-worst regression 1.35×).
-
-Reproduce (two runs per toolchain, aggregated by per-bench min):
-
-```sh
-nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 1
-nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 2
-nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 1
-nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 2
-python3 scratch/oxcaml_research/perf/compare.py | tee scratch/oxcaml_research/perf/compare.txt
-```
-
-Method: same source, same machine (AMD Ryzen 9 9950X), same
-`--profile=release`, same `EIO_BACKEND=posix` on both runs (sandbox forces
-posix on either toolchain). Bench infrastructure was rebased from `main`
-(3b5a50f..d69e3f9) into the `Effet-OxCaml` branch as a linear rebase. Two
-full-sample runs per toolchain; aggregation uses per-bench min over runs to
-suppress spike noise. The TS reference suite and compile probes were skipped
-to keep the comparison apples-to-apples on the OCaml side.
-
-Top wins are AST-heavy and stream/IO paths: `overhead.mini.bind.100k.build_run`
-11.5×, `overhead.effet.bind.100k.build_run` 8.6×,
-`effect.core.map_chain.100k` 6.4×, `effect.core.map_chain.10k` 4.8×,
-`effet_stream.merge.early_take.5` 4.4×,
-`effect.observability.effet_otel.encoder.span.1000` 3.0×,
-`effect.core.bind_left.100k` 2.4×, `effect.concurrency.all.heavy.64` 2.3×.
-
-Regressions are concentrated in small-input observability/Cause construction
-and a few encoder microbenchmarks; absolute deltas are sub-microsecond and at
-or below sample noise.
-
-Caveats: one sample per toolchain; `EIO_BACKEND=posix`; benches do not
-exercise multi-domain runtime yet. The signal dominates noise but production
-workloads on `eio_linux` may differ.
-
-Combined with V-OxCaml-2 (compatible + better suited on safety and
-parallelism), perf is now a third independent reason to switch toward
-OxCaml. Full writeup: `scratch/oxcaml_research/perf/README.md` and
-`scratch/oxcaml_research/perf/compare.txt`.
-
-## V-OxCaml-2 — switch toward OxCaml (supersedes V-OxCaml session 1)
-
-Status: final spike verdict. Switch toward OxCaml. This supersedes V-OxCaml
-below, which used migration cost and dependency weight as decisive criteria;
-the user reframed those as zero-cost. Under that framing the spike question
-becomes: does OxCaml mechanically guarantee Effet's scope/effect/capture
-safety AND enable parallel execution that mainline OCaml cannot? Answer:
-yes/yes, with runnable evidence.
-
-Full writeup: `scratch/oxcaml_research/results.md`. Reproduce with:
-
-```sh
-nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped'
-nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
-```
-
-Last recorded: 141 shipped tests pass under `5.2.0+ox`; fixture lab
-`summary: pass=27 fail=0`.
-
-### V-OX-A — Compatibility
-
-Decision: shipped Effet builds and tests under `5.2.0+ox` without source
-changes (effet-schema, ppx_effet, effet 105, effet-otel 20, effet-stream 13).
-The shipped abstract `Effet.Effect.t` runs end-to-end
-(`scratch/oxcaml_research/effet_portable_probe/effet_real_t_portable_smoke.ml`).
-
-### V-OX-B — Three static guarantees mainline OCaml cannot encode
-
-Each is a positive fixture proving the property + a negative fixture proving
-the constraint is enforced.
-
-B1. **Domain-portable effect AST (the ZIO direction).**
-  - Negative: shipped `Effet.Effect.t` is nonportable; OxCaml refuses to ship
-    it across a `Parallel_scheduler` boundary
-    (`effet_real_t_portable_negative.log`: `value "program" is "nonportable"
-    but is expected to be "shareable"`).
-  - Positive: a redesigned Pure/Thunk/Bind/Map AST with portable kind
-    annotations builds a tree on the parent domain, evaluates it on two child
-    domains via `Parallel.fork_join2`, and returns the right answer
-    (`effet_redesigned_portable_positive.ml`).
-  - Safety bar: the same AST rejects a `Thunk` capturing a non-portable
-    `int ref` (`effet_redesigned_portable_negative.log`: `value is
-    "contended" but is expected to be "portable"`).
-  - Mainline equivalent: none. There is no static "this Effect.t is safe to
-    cross domains" notion.
-
-B2. **`once` for `acquire_release`'s release callback.**
-  - Positive: a `release @ once` callback runs exactly once.
-  - Negative: `release 1; release 2` is rejected with `defined as once and
-    has already been used`.
-  - Mainline equivalent: none. "Called at most once" is not encodable.
-
-B3. **`local_` for `Eio.Switch.t` lifetime.**
-  - Negative: capturing a switch into `let leaked = ref None` is rejected
-    with `value is "local" to the parent region but is expected to be
-    "global"`.
-  - Mainline equivalent: dynamic switch death only.
-
-Reinforcing evidence kept from session 1: portable Resource state via
-`Portable.Atomic` and Capsule (positive + negative), Effet-shaped Resource
-probe with daemon refresh under Parallel scheduler, supervisor child-handle
-locality (equivalent to rank-2 with simpler signatures), Cause portability
-at domain boundaries, and Stream sink portability vs `Eio.Stream.add`
-being nonportable.
-
-Cross-tab summary: eight categories of static guarantee where OxCaml is
-strictly more expressive for Effet's invariants, one tie (supervisor handle
-escape, where rank-2 already works), zero categories where mainline is
-better for Effet's idea.
-
-### What this verdict does NOT prove (explicit deferred work)
-
-- Portability of the *full* shipped `Effect.t` GADT (29 constructors, rank-2
-  `supervisor_body`, etc.). Probe used Pure/Thunk/Bind/Map only. Recursive
-  kind inference can give up on large GADTs and may force splitting the AST
-  into portable / nonportable halves.
-- Replacing rank-2 `supervisor_body` with `local_` against the real Effet
-  runtime types (only proven on a toy record).
-- Eio API itself does not yet declare `Switch.t` as `local_`; adoption may
-  need a wrapper or upstream change.
-- Whether `Effect.bind`'s continuation can be `once` (the runtime treats it
-  as one-shot but the type does not say so).
-- Performance comparison vs mainline (out of scope; bench baseline is
-  mainline-only).
-
-### Implementation follow-ups (file as new tasks when work resumes)
-
-- Annotate `Effet.Effect.t` and supervisor types with portable kinds; expect
-  to split into same-domain and portable AST variants.
-- Add `Runtime.run_parallel` / `Runtime.create_pool` backed by
-  `Parallel_scheduler` for portable `Effect.t` values; keep fiber-only
-  runtime as the default sibling.
-- Annotate `release` in `Effect.acquire_release` with `once`.
-- Annotate `Eio.Switch.t` references in supervisor/resource paths with
-  `local_` (likely behind an Effet-owned alias).
-- Re-evaluate rank-2 `supervisor_body` against `local_` end-to-end on the
-  real Effet GADT before replacing.
-
-### Rejected
-
-- "Branch-only, do not switch" (the prior V-OxCaml verdict): rejected. It
-  was driven by migration cost and dependency weight, both ruled out.
-- "Effect.t can stay nonportable forever": rejected. The static negative
-  fixture is the explicit gap that mainline cannot close.
-- "Portable Resource needs a separate domain-safe API and is therefore not
-  worth the constraint": rejected under churn = 0.
-
-Artifacts: `scratch/oxcaml_research/{results.md,run.sh,fixtures/,effet_portable_probe/,effet_resource_probe/,results/}`.
-
-## V-OxCaml — branch-only adoption verdict after environment repair
-
-Status: final spike verdict. Keep OxCaml as a research branch; do not switch
-Effet wholesale from mainline OCaml now.
-
-The earlier branch-only conclusion was wrong because it treated missing
-Capsule/Portable/Parallel modules as a toolchain fact. They are available after
-installing the OxCaml packages from the OxCaml opam repository:
-
-```sh
-nix develop .#oxcaml -c bash -lc 'opam install capsule portable parallel --yes --assume-depexts'
-```
-
-This repaired switch exposes `capsule`, `portable`, `parallel`,
-`parallel.scheduler`, `await`, `concurrent`, `base`, `core`, and `async`
-through `ocamlfind`. The cost is real: the repaired switch has 225 installed
-opam packages, and `parallel` directly pulls the larger Jane Street stack
-including `async`, `core`, and `ppx_jane`.
-
-### V-OX0 — branch-only verdict
-
-Decision: keep OxCaml as a research branch.
-
-Rationale: OxCaml can build and test Effet, and it gives useful mechanical
-checks for future domain-parallel boundaries. It does not yet beat mainline
-OCaml for the shipped library. The strongest new contract, portable Resource
-state, needs a separate constrained API; Supervisor locality duplicates the
-current rank-2 scoped invariant; and the Parallel/Capsule/Portable route adds
-substantial dependency/tooling weight.
-
-### V-OX1 — baseline Effet still passes under OxCaml
-
-Decision: OxCaml is viable as a research/test switch.
-
-Evidence:
-
-```sh
-nix develop .#oxcaml -c bash -lc 'ocamlc -version; dune --version; effet-oxcaml-test-shipped'
-```
-
-Result: pass with `ocamlc 5.2.0+ox` and `dune 3.22.2`.
-
-Passing shipped suites:
-
-- `effet-schema`
-- `ppx_effet` — 3 tests
-- `effet` — 105 tests
-- `effet-otel` — 20 tests
-- `effet-stream` — 13 tests
-
-### V-OX2 — Resource has a viable portable-state candidate
-
-Decision: do not widen today's generic `Resource.t`; consider a separate
-domain-safe Resource API in later work.
-
-The corrected Resource evidence is:
-
-- The current ref-backed Resource shape is rejected in portable closures.
-- Stdlib `Atomic.t` is also rejected in the relevant portable closure shape.
-- `Portable.Atomic` can express last-good value plus refresh-failure state.
-- A Resource-auto-shaped parallel refresh fixture passes under
-  `Parallel_scheduler`.
-- An Effet-shaped executable against the real `effet` library passes when the
-  candidate constrains payloads to `immutable_data`.
-
-The unresolved cost is API shape. The Effet-shaped candidate cannot be a silent
-widening of today's generic `Resource.t`: it needs immutable payloads and a
-contended failure-history surface. That points toward either a separate
-domain-safe Resource API or keeping the shipped Resource fiber-local.
-
-Runnable evidence:
-
-```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
-EFFET_OXCAML_RESEARCH=true dune exec scratch/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.exe
-```
-
-Current fixture result: `summary: pass=20 fail=0`.
-
-### V-OX3 — Supervisor locality is real but not decisive alone
-
-Decision: keep the current rank-2 public Supervisor API.
-
-Local child handles reject returning the handle and storing it in an outer ref.
-That proves OxCaml can encode the nursery lifetime invariant, but the current
-rank-2 API already enforces the same escape cases without requiring OxCaml.
-
-### V-OX4 — Effect AST modes can stay out of ordinary user code
-
-Decision: reserve mode constraints for explicit portable/domain APIs.
-
-Plain Effect AST usage compiles without mode syntax. Portable callback fixtures
-reject captured mutable refs and accept mode-compatible captured state. This
-supports API containment rather than a broad public mode annotation pass.
-
-### V-OX5 — Eio fibers and domain parallelism are separate surfaces
-
-Decision: do not reinterpret `par`, `all`, `for_each_par`, `Stream.merge`, or
-`Stream.flat_map_par` as domain-parallel APIs.
-
-Shipped Eio-backed tests and a fiber smoke fixture pass under OxCaml. Separate
-Parallel probes show scheduler-backed fork/join works and rejects unsafe mutable
-ref capture. Stream probes show the same boundary: a `Portable.Atomic` sink can
-accept parallel emits, while `Eio.Stream.add` is nonportable inside Parallel
-work.
-
-### V-OX6 — Cause portability only works with constrained payloads
-
-Decision: keep today's `Cause.t` general unless a future domain-parallel
-boundary needs a portable diagnostic representation.
-
-Portable diagnostic Cause fixtures compile with constrained payloads. A closure
-payload is rejected. That is useful boundary evidence, not a reason to restrict
-the general failure model today.
-
-### V-OX deferred work
-
-Deferred questions after the branch-only verdict:
-
-- Is the portable Resource candidate worth a separate public API?
-- Can stream/domain work express payload transformation and error collection,
-  not just sink emission?
-- Do two Effet-specific invariants become cleaner enough to justify the
-  dependency and toolchain weight?
-
-Primary artifacts:
-
-- `scratch/oxcaml_research/results.md`
-- `scratch/oxcaml_research/run.sh`
-- `scratch/oxcaml_research/fixtures/`
-- `scratch/oxcaml_research/effet_resource_probe/`
-
 ## V-Bench — continuous performance and compile-time awareness
 
 Effet-7b1 turns the previous one-off performance labs into an opt-in bench
@@ -9364,3 +9075,292 @@ effet-schema, 3 ppx_effet tests, 105 effet tests, 20 effet-otel tests, and
 Full nix develop -c dune build remains blocked by pre-existing scratch
 experiments that still reference removed Effect.sync and [%effet.sync]
 surfaces.
+## V-OxCaml — branch-only adoption verdict after environment repair
+
+Status: final spike verdict. Keep OxCaml as a research branch; do not switch
+Effet wholesale from mainline OCaml now.
+
+The earlier branch-only conclusion was wrong because it treated missing
+Capsule/Portable/Parallel modules as a toolchain fact. They are available after
+installing the OxCaml packages from the OxCaml opam repository:
+
+```sh
+nix develop .#oxcaml -c bash -lc 'opam install capsule portable parallel --yes --assume-depexts'
+```
+
+This repaired switch exposes `capsule`, `portable`, `parallel`,
+`parallel.scheduler`, `await`, `concurrent`, `base`, `core`, and `async`
+through `ocamlfind`. The cost is real: the repaired switch has 225 installed
+opam packages, and `parallel` directly pulls the larger Jane Street stack
+including `async`, `core`, and `ppx_jane`.
+
+### V-OX0 — branch-only verdict
+
+Decision: keep OxCaml as a research branch.
+
+Rationale: OxCaml can build and test Effet, and it gives useful mechanical
+checks for future domain-parallel boundaries. It does not yet beat mainline
+OCaml for the shipped library. The strongest new contract, portable Resource
+state, needs a separate constrained API; Supervisor locality duplicates the
+current rank-2 scoped invariant; and the Parallel/Capsule/Portable route adds
+substantial dependency/tooling weight.
+
+### V-OX1 — baseline Effet still passes under OxCaml
+
+Decision: OxCaml is viable as a research/test switch.
+
+Evidence:
+
+```sh
+nix develop .#oxcaml -c bash -lc 'ocamlc -version; dune --version; effet-oxcaml-test-shipped'
+```
+
+Result: pass with `ocamlc 5.2.0+ox` and `dune 3.22.2`.
+
+Passing shipped suites:
+
+- `effet-schema`
+- `ppx_effet` — 3 tests
+- `effet` — 105 tests
+- `effet-otel` — 20 tests
+- `effet-stream` — 13 tests
+
+### V-OX2 — Resource has a viable portable-state candidate
+
+Decision: do not widen today's generic `Resource.t`; consider a separate
+domain-safe Resource API in later work.
+
+The corrected Resource evidence is:
+
+- The current ref-backed Resource shape is rejected in portable closures.
+- Stdlib `Atomic.t` is also rejected in the relevant portable closure shape.
+- `Portable.Atomic` can express last-good value plus refresh-failure state.
+- A Resource-auto-shaped parallel refresh fixture passes under
+  `Parallel_scheduler`.
+- An Effet-shaped executable against the real `effet` library passes when the
+  candidate constrains payloads to `immutable_data`.
+
+The unresolved cost is API shape. The Effet-shaped candidate cannot be a silent
+widening of today's generic `Resource.t`: it needs immutable payloads and a
+contended failure-history surface. That points toward either a separate
+domain-safe Resource API or keeping the shipped Resource fiber-local.
+
+Runnable evidence:
+
+```sh
+nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
+EFFET_OXCAML_RESEARCH=true dune exec scratch/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.exe
+```
+
+Current fixture result: `summary: pass=20 fail=0`.
+
+### V-OX3 — Supervisor locality is real but not decisive alone
+
+Decision: keep the current rank-2 public Supervisor API.
+
+Local child handles reject returning the handle and storing it in an outer ref.
+That proves OxCaml can encode the nursery lifetime invariant, but the current
+rank-2 API already enforces the same escape cases without requiring OxCaml.
+
+### V-OX4 — Effect AST modes can stay out of ordinary user code
+
+Decision: reserve mode constraints for explicit portable/domain APIs.
+
+Plain Effect AST usage compiles without mode syntax. Portable callback fixtures
+reject captured mutable refs and accept mode-compatible captured state. This
+supports API containment rather than a broad public mode annotation pass.
+
+### V-OX5 — Eio fibers and domain parallelism are separate surfaces
+
+Decision: do not reinterpret `par`, `all`, `for_each_par`, `Stream.merge`, or
+`Stream.flat_map_par` as domain-parallel APIs.
+
+Shipped Eio-backed tests and a fiber smoke fixture pass under OxCaml. Separate
+Parallel probes show scheduler-backed fork/join works and rejects unsafe mutable
+ref capture. Stream probes show the same boundary: a `Portable.Atomic` sink can
+accept parallel emits, while `Eio.Stream.add` is nonportable inside Parallel
+work.
+
+### V-OX6 — Cause portability only works with constrained payloads
+
+Decision: keep today's `Cause.t` general unless a future domain-parallel
+boundary needs a portable diagnostic representation.
+
+Portable diagnostic Cause fixtures compile with constrained payloads. A closure
+payload is rejected. That is useful boundary evidence, not a reason to restrict
+the general failure model today.
+
+### V-OX deferred work
+
+Deferred questions after the branch-only verdict:
+
+- Is the portable Resource candidate worth a separate public API?
+- Can stream/domain work express payload transformation and error collection,
+  not just sink emission?
+- Do two Effet-specific invariants become cleaner enough to justify the
+  dependency and toolchain weight?
+
+Primary artifacts:
+
+- `scratch/oxcaml_research/results.md`
+- `scratch/oxcaml_research/run.sh`
+- `scratch/oxcaml_research/fixtures/`
+- `scratch/oxcaml_research/effet_resource_probe/`
+
+## V-OxCaml-2 — switch toward OxCaml (supersedes V-OxCaml session 1)
+
+Status: final spike verdict. Switch toward OxCaml. This supersedes V-OxCaml
+below, which used migration cost and dependency weight as decisive criteria;
+the user reframed those as zero-cost. Under that framing the spike question
+becomes: does OxCaml mechanically guarantee Effet's scope/effect/capture
+safety AND enable parallel execution that mainline OCaml cannot? Answer:
+yes/yes, with runnable evidence.
+
+Full writeup: `scratch/oxcaml_research/results.md`. Reproduce with:
+
+```sh
+nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped'
+nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
+```
+
+Last recorded: 141 shipped tests pass under `5.2.0+ox`; fixture lab
+`summary: pass=27 fail=0`.
+
+### V-OX-A — Compatibility
+
+Decision: shipped Effet builds and tests under `5.2.0+ox` without source
+changes (effet-schema, ppx_effet, effet 105, effet-otel 20, effet-stream 13).
+The shipped abstract `Effet.Effect.t` runs end-to-end
+(`scratch/oxcaml_research/effet_portable_probe/effet_real_t_portable_smoke.ml`).
+
+### V-OX-B — Three static guarantees mainline OCaml cannot encode
+
+Each is a positive fixture proving the property + a negative fixture proving
+the constraint is enforced.
+
+B1. **Domain-portable effect AST (the ZIO direction).**
+  - Negative: shipped `Effet.Effect.t` is nonportable; OxCaml refuses to ship
+    it across a `Parallel_scheduler` boundary
+    (`effet_real_t_portable_negative.log`: `value "program" is "nonportable"
+    but is expected to be "shareable"`).
+  - Positive: a redesigned Pure/Thunk/Bind/Map AST with portable kind
+    annotations builds a tree on the parent domain, evaluates it on two child
+    domains via `Parallel.fork_join2`, and returns the right answer
+    (`effet_redesigned_portable_positive.ml`).
+  - Safety bar: the same AST rejects a `Thunk` capturing a non-portable
+    `int ref` (`effet_redesigned_portable_negative.log`: `value is
+    "contended" but is expected to be "portable"`).
+  - Mainline equivalent: none. There is no static "this Effect.t is safe to
+    cross domains" notion.
+
+B2. **`once` for `acquire_release`'s release callback.**
+  - Positive: a `release @ once` callback runs exactly once.
+  - Negative: `release 1; release 2` is rejected with `defined as once and
+    has already been used`.
+  - Mainline equivalent: none. "Called at most once" is not encodable.
+
+B3. **`local_` for `Eio.Switch.t` lifetime.**
+  - Negative: capturing a switch into `let leaked = ref None` is rejected
+    with `value is "local" to the parent region but is expected to be
+    "global"`.
+  - Mainline equivalent: dynamic switch death only.
+
+Reinforcing evidence kept from session 1: portable Resource state via
+`Portable.Atomic` and Capsule (positive + negative), Effet-shaped Resource
+probe with daemon refresh under Parallel scheduler, supervisor child-handle
+locality (equivalent to rank-2 with simpler signatures), Cause portability
+at domain boundaries, and Stream sink portability vs `Eio.Stream.add`
+being nonportable.
+
+Cross-tab summary: eight categories of static guarantee where OxCaml is
+strictly more expressive for Effet's invariants, one tie (supervisor handle
+escape, where rank-2 already works), zero categories where mainline is
+better for Effet's idea.
+
+### What this verdict does NOT prove (explicit deferred work)
+
+- Portability of the *full* shipped `Effect.t` GADT (29 constructors, rank-2
+  `supervisor_body`, etc.). Probe used Pure/Thunk/Bind/Map only. Recursive
+  kind inference can give up on large GADTs and may force splitting the AST
+  into portable / nonportable halves.
+- Replacing rank-2 `supervisor_body` with `local_` against the real Effet
+  runtime types (only proven on a toy record).
+- Eio API itself does not yet declare `Switch.t` as `local_`; adoption may
+  need a wrapper or upstream change.
+- Whether `Effect.bind`'s continuation can be `once` (the runtime treats it
+  as one-shot but the type does not say so).
+- Performance comparison vs mainline (out of scope; bench baseline is
+  mainline-only).
+
+### Implementation follow-ups (file as new tasks when work resumes)
+
+- Annotate `Effet.Effect.t` and supervisor types with portable kinds; expect
+  to split into same-domain and portable AST variants.
+- Add `Runtime.run_parallel` / `Runtime.create_pool` backed by
+  `Parallel_scheduler` for portable `Effect.t` values; keep fiber-only
+  runtime as the default sibling.
+- Annotate `release` in `Effect.acquire_release` with `once`.
+- Annotate `Eio.Switch.t` references in supervisor/resource paths with
+  `local_` (likely behind an Effet-owned alias).
+- Re-evaluate rank-2 `supervisor_body` against `local_` end-to-end on the
+  real Effet GADT before replacing.
+
+### Rejected
+
+- "Branch-only, do not switch" (the prior V-OxCaml verdict): rejected. It
+  was driven by migration cost and dependency weight, both ruled out.
+- "Effect.t can stay nonportable forever": rejected. The static negative
+  fixture is the explicit gap that mainline cannot close.
+- "Portable Resource needs a separate domain-safe API and is therefore not
+  worth the constraint": rejected under churn = 0.
+
+Artifacts: `scratch/oxcaml_research/{results.md,run.sh,fixtures/,effet_portable_probe/,effet_resource_probe/,results/}`.
+
+## V-OxCaml-Perf — OxCaml is faster by default for free
+
+Status: final, reproduced across two independent runs per toolchain.
+Switching the toolchain from mainline OCaml `5.4.1` to OxCaml `5.2.0+ox`,
+with no Effet source changes, makes the bench suite about
+**1.34×–1.52× faster across 91% of measured workloads** (83/98 benches
+improve by >5%, 7/98 regress by >5%, 8/98 are within ±5%; geomean of the
+oxcaml/mainline wall_ns ratio is 0.657, median 0.748, best case 11.5×,
+worst regression 1.35×).
+
+Reproduce (two runs per toolchain, aggregated by per-bench min):
+
+```sh
+nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 1
+nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 2
+nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 1
+nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 2
+python3 scratch/oxcaml_research/perf/compare.py | tee scratch/oxcaml_research/perf/compare.txt
+```
+
+Method: same source, same machine (AMD Ryzen 9 9950X), same
+`--profile=release`, same `EIO_BACKEND=posix` on both runs (sandbox forces
+posix on either toolchain). Bench infrastructure was rebased from `main`
+(3b5a50f..d69e3f9) into the `Effet-OxCaml` branch as a linear rebase. Two
+full-sample runs per toolchain; aggregation uses per-bench min over runs to
+suppress spike noise. The TS reference suite and compile probes were skipped
+to keep the comparison apples-to-apples on the OCaml side.
+
+Top wins are AST-heavy and stream/IO paths: `overhead.mini.bind.100k.build_run`
+11.5×, `overhead.effet.bind.100k.build_run` 8.6×,
+`effect.core.map_chain.100k` 6.4×, `effect.core.map_chain.10k` 4.8×,
+`effet_stream.merge.early_take.5` 4.4×,
+`effect.observability.effet_otel.encoder.span.1000` 3.0×,
+`effect.core.bind_left.100k` 2.4×, `effect.concurrency.all.heavy.64` 2.3×.
+
+Regressions are concentrated in small-input observability/Cause construction
+and a few encoder microbenchmarks; absolute deltas are sub-microsecond and at
+or below sample noise.
+
+Caveats: one sample per toolchain; `EIO_BACKEND=posix`; benches do not
+exercise multi-domain runtime yet. The signal dominates noise but production
+workloads on `eio_linux` may differ.
+
+Combined with V-OxCaml-2 (compatible + better suited on safety and
+parallelism), perf is now a third independent reason to switch toward
+OxCaml. Full writeup: `scratch/oxcaml_research/perf/README.md` and
+`scratch/oxcaml_research/perf/compare.txt`.
+
