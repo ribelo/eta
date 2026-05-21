@@ -1,0 +1,172 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Effet-OxCaml' is dirty
+Effet OxCaml research shell
+Run 'effet-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only.
+5.2.0+ox
+3.22.2
+effet-schema tests passed
+Testing `ppx_effet'.
+This run has ID `7H3O3SYY'.
+
+  [OK]          ppx          0   fn.
+  [OK]          ppx          1   thunk leaf.
+  [OK]          ppx          2   env builder.
+
+Full test results in `~/projects/ribelo/ocaml/Effet-OxCaml/_build/default/packages/ppx_effet/test/_build/_tests/ppx_effet'.
+Test Successful in 0.001s. 3 tests run.
+Testing `effet'.
+This run has ID `RBY79LEM'.
+
+  [OK]          Effect                 0   Pure.
+  [OK]          Effect                 1   Map.
+  [OK]          Effect                 2   env row auto DI.
+  [OK]          Effect                 3   par returns pair.
+  [OK]          Effect                 4   par keeps heterogeneous successes ...
+  [OK]          Effect                 5   par fail-fast cancels sibling.
+  [OK]          Effect                 6   all collects in input order.
+  [OK]          Effect                 7   all fail-fast.
+  [OK]          Effect                 8   all_settled collects outcomes.
+  [OK]          Effect                 9   all_settled runs all children.
+  [OK]          Effect                10   all_settled empty.
+  [OK]          Effect                11   for_each_par success.
+  [OK]          Effect                12   for_each_par one fails.
+  [OK]          Effect                13   for_each_par_bounded caps concurre...
+  [OK]          Effect                14   for_each_par_bounded max one is se...
+  [OK]          Effect                15   for_each_par_bounded fail-fast.
+  [OK]          Effect                16   collect_names.
+  [OK]          Effect                17   map bind tap runtime.
+  [OK]          Effect                18   catch success and failure.
+  [OK]          Effect                19   catch handler failure uses outer key.
+  [OK]          Effect                20   tap_error observes and rethrows.
+  [OK]          Effect                21   runtime exit fail die interrupt.
+  [OK]          Effect                22   die captures diagnostics.
+  [OK]          Effect                23   die backtrace capture flag.
+  [OK]          Effect                24   run_exn preserves backtrace.
+  [OK]          Effect                25   concurrent child die captures diag...
+  [OK]          Effect                26   finalizer die captures diagnostics.
+  [OK]          Effect                27   catch does not catch interrupt.
+  [OK]          Effect                28   acquire release.
+  [OK]          Effect                29   acquire release on failure.
+  [OK]          Effect                30   acquire release suppresses release...
+  [OK]          Effect                31   acquire release release failure af...
+  [OK]          Effect                32   timeout uses virtual clock.
+  [OK]          Effect                33   timeout allows fast success.
+  [OK]          Effect                34   race ignores early failure until s...
+  [OK]          Effect                35   race all failures returns concurre...
+  [OK]          Effect                36   par simultaneous failures baseline.
+  [OK]          Effect                37   par finalizer cancellation baseline.
+  [OK]          Effect                38   all finalizer cancellation baseline.
+  [OK]          Effect                39   for_each_par simultaneous failures...
+  [OK]          Effect                40   for_each_par finalizer cancellatio...
+  [OK]          Effect                41   par nested race failures baseline.
+  [OK]          Effect                42   repeat schedule.
+  [OK]          Effect                43   repeat schedule uses virtual delays.
+  [OK]          Effect                44   retry schedule until success.
+  [OK]          Effect                45   retry schedule uses virtual delays.
+  [OK]          Effect                46   retry does not retry interrupt.
+  [OK]          Effect                47   uninterruptible defers race cancel...
+  [OK]          Effect                48   uninterruptible nested masks.
+  [OK]          Effect                49   uninterruptible blocking finalizer.
+  [OK]          Effect                50   uninterruptible timeout inside pro...
+  [OK]          Effect                51   uninterruptible no-checkpoint loser.
+  [OK]          Supervisor             0   observes child failure.
+  [OK]          Supervisor             1   await rethrows child failure.
+  [OK]          Supervisor             2   cancel runs finalizer.
+  [OK]          Supervisor             3   cancel before await does not deadl...
+  [OK]          Supervisor             4   threshold failure.
+  [OK]          Supervisor             5   nested scopes compose.
+  [OK]          Clock                  0   sleep without wall time.
+  [OK]          Clock                  1   sleep delays until adjusted.
+  [OK]          Clock                  2   multiple sleeps.
+  [OK]          Clock                  3   set_time wakes due sleepers.
+  [OK]          Duration               0   constructors.
+  [OK]          Duration               1   ordering.
+  [OK]          Duration               2   algebra.
+  [OK]          Duration               3   min max clamp.
+  [OK]          Schedule               0   recurs.
+  [OK]          Schedule               1   exponential.
+  [OK]          Schedule               2   spaced fixed linear.
+  [OK]          Schedule               3   composition.
+  [OK]          Scope                  0   finalizers run in parallel.
+  [OK]          Resource               0   manual refresh.
+  [OK]          Resource               1   failed refresh keeps cached value.
+  [OK]          Resource               2   auto refreshes on schedule.
+  [OK]          Resource               3   auto failed refresh keeps cached v...
+  [OK]          Properties             0   monad laws.
+  [OK]          Properties             1   catch laws.
+  [OK]          Properties             2   race success invariant.
+  [OK]          Properties             3   retry and repeat laws.
+  [OK]          Properties             4   scope finalizers exactly once.
+  [OK]          Observability          0   manual tracer spans.
+  [OK]          Observability          1   named span status ok.
+  [OK]          Observability          2   span kind.
+  [OK]          Observability          3   fn records location.
+  [OK]          Observability          4   annotation order.
+  [OK]          Observability          5   nested spans.
+  [OK]          Observability          6   statuses.
+  [OK]          Observability          7   concurrent status.
+  [OK]          Observability          8   cancelled child status.
+  [OK]          Observability          9   uninterruptible child status.
+  [OK]          Observability         10   par children inherit parent.
+  [OK]          Observability         11   par pending attrs links are fiber-...
+  [OK]          Observability         12   sampler always off.
+  [OK]          Observability         13   sampler ratio.
+  [OK]          Observability         14   sampler parent based.
+  [OK]          Observability         15   sampler suppresses par children.
+  [OK]          Observability         16   trace context extract inject.
+  [OK]          Observability         17   trace context rejects malformed tr...
+  [OK]          Observability         18   trace context par inherits baggage.
+  [OK]          Observability         19   trace context unsampled parent sup...
+  [OK]          Observability         20   auto instrument default off.
+  [OK]          Observability         21   auto instrument thunk leaves.
+  [OK]          Observability         22   auto instrument leaves nest.
+  [OK]          Observability         23   auto instrument failure status.
+  [OK]          Observability         24   all for_each_par supervisor inheri...
+
+Full test results in `~/projects/ribelo/ocaml/Effet-OxCaml/_build/default/packages/effet/test/_build/_tests/effet'.
+Test Successful in 0.020s. 105 tests run.
+Testing `effet-otel'.
+This run has ID `COBD6Q2X'.
+
+  [OK]          encoder          0   smoke.
+  [OK]          encoder          1   exception stacktrace.
+  [OK]          motel            0   live export.
+  [OK]          Tracer           0   withSpan.
+  [OK]          Tracer           1   withSpan links.
+  [OK]          Tracer           2   nested withSpan parent chain.
+  [OK]          Tracer           3   supervisor sets context.
+  [OK]          Tracer           4   currentOtelSpan equivalent.
+  [OK]          Tracer           5   records every pretty error.
+  [OK]          Tracer           6   withSpanContext.
+  [OK]          Tracer           7   not provided withSpan.
+  [OK]          Tracer           8   withSpanContext OTLP live.
+  [OK]          Logger           0   emits log records.
+  [OK]          Logger           1   log carries active span ids.
+  [OK]          Logger           2   not provided log dropped.
+  [OK]          Logger           3   log OTLP live.
+  [OK]          Metrics          0   gauge.
+  [OK]          Metrics          1   counter cumulative.
+  [OK]          Metrics          2   counter monotonic.
+  [OK]          Metrics          3   metrics OTLP live.
+
+Full test results in `~/projects/ribelo/ocaml/Effet-OxCaml/_build/default/packages/effet-otel/test/_build/_tests/effet-otel'.
+Test Successful in 0.015s. 20 tests run.
+Testing `effet-stream'.
+This run has ID `LQYQ3KTV'.
+
+  [OK]          Stream          0   A/B/C map take fold.
+  [OK]          Stream          1   from_file emits bounded chunks.
+  [OK]          Stream          2   take from_file closes.
+  [OK]          Stream          3   from_file rejects invalid chunk size.
+  [OK]          Stream          4   from_file missing path fails typed.
+  [OK]          Stream          5   from_file error is recoverable.
+  [OK]          Stream          6   from_file maps file error.
+  [OK]          Stream          7   from_file take zero is lazy.
+  [OK]          Stream          8   from_file downstream failure closes.
+  [OK]          Stream          9   merge cancels upstream on downstream stop.
+  [OK]          Stream         10   flat_map_par is bounded concurrent.
+  [OK]          Stream         11   bounded queue no deadlock on early stop.
+  [OK]          Stream         12   env/error rows compose.
+
+Full test results in `~/projects/ribelo/ocaml/Effet-OxCaml/_build/default/packages/effet-stream/test/_build/_tests/effet-stream'.
+Test Successful in 0.518s. 13 tests run.

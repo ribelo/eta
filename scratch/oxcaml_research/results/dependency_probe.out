@@ -1,0 +1,40 @@
+== installed package count ==
+225
+
+== capsule/portable/parallel depends ==
+"ocaml" {>= "5.1.0"}
+"base" {= "v0.18~preview.130.91+190"}
+"capsule0" {= "v0.18~preview.130.91+190"}
+"ppx_sexp_conv" {= "v0.18~preview.130.91+190"}
+"ppx_template" {= "v0.18~preview.130.91+190"}
+"dune" {>= "3.17.0"}
+"ocaml" {>= "5.1.0"}
+"base" {= "v0.18~preview.130.91+190"}
+"base_quickcheck" {= "v0.18~preview.130.91+190"}
+"basement" {= "v0.18~preview.130.91+190"}
+"capsule" {= "v0.18~preview.130.91+190"}
+"ppx_compare" {= "v0.18~preview.130.91+190"}
+"ppx_sexp_conv" {= "v0.18~preview.130.91+190"}
+"ppx_shorthand" {= "v0.18~preview.130.91+190"}
+"ppx_template" {= "v0.18~preview.130.91+190"}
+"dune" {>= "3.17.0"}
+"ocaml" {>= "5.2.0"}
+"async" {= "v0.18~preview.130.91+190"}
+"async_kernel" {= "v0.18~preview.130.91+190"}
+"await" {= "v0.18~preview.130.91+190"}
+"base" {= "v0.18~preview.130.91+190"}
+"base_bigstring" {= "v0.18~preview.130.91+190"}
+"bignum" {= "v0.18~preview.130.91+190"}
+"concurrent" {= "v0.18~preview.130.91+190"}
+"core" {= "v0.18~preview.130.91+190"}
+"expect_test_helpers_core" {= "v0.18~preview.130.91+190"}
+"handled_effect" {= "v0.18~preview.130.91+190"}
+"portable" {= "v0.18~preview.130.91+190"}
+"portable_ws_deque" {= "v0.18~preview.130.91+190"}
+"ppx_jane" {= "v0.18~preview.130.91+190"}
+"unboxed" {= "v0.18~preview.130.91+190"}
+"unboxed_datatypes" {= "v0.18~preview.130.91+190"}
+"unique" {= "v0.18~preview.130.91+190"}
+"vec" {= "v0.18~preview.130.91+190"}
+"base-threads"
+"dune" {>= "3.17.0"}

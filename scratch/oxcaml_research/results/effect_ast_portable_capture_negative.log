@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/fixtures/effect_ast_portable_capture_negative.ml", line 9, characters 11-18:
+9 |       incr counter;
+               ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/fixtures/effect_ast_portable_capture_negative.ml", lines 8-10, characters 33-10
+         which is expected to be "portable".
+       However, the highlighted expression is expected to be "uncontended".

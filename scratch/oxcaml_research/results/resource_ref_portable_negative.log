@@ -1,0 +1,8 @@
+File "scratch/oxcaml_research/fixtures/resource_ref_portable_negative.ml", line 8, characters 4-12:
+8 |     resource.value <- Some value;
+        ^^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/fixtures/resource_ref_portable_negative.ml", lines 7-9, characters 27-27
+         which is expected to be "portable".
+       However, the highlighted expression is expected to be "uncontended"
+         because its mutable field "value" is being written.

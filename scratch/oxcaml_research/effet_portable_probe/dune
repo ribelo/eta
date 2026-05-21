@@ -1,0 +1,4 @@
+(executables
+ (names effet_real_t_portable_smoke effet_real_t_portable_negative)
+ (enabled_if (= %{env:EFFET_OXCAML_RESEARCH=false} true))
+ (libraries base effet eio_main portable parallel parallel.scheduler))

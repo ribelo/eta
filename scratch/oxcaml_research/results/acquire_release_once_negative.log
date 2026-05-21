@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/fixtures/acquire_release_once_negative.ml", line 18, characters 2-9:
+18 |   release 2
+       ^^^^^^^
+Error: This value is used here,
+       but it is defined as once and has already been used at:
+File "scratch/oxcaml_research/fixtures/acquire_release_once_negative.ml", line 17, characters 2-9:
+17 |   release 1;
+       ^^^^^^^
+  

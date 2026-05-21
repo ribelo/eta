@@ -1,0 +1,8 @@
+File "scratch/oxcaml_research/fixtures/cause_closure_negative.ml", lines 1-3, characters 0-27:
+1 | type cause : value mod portable =
+2 |   | Fail of string
+3 |   | Die of (unit -> string)
+Error: The kind of type "cause" is value mod immutable non_float
+         because it's a boxed variant type.
+       But the kind of type "cause" must be a subkind of value mod portable
+         because of the annotation on the declaration of the type cause.

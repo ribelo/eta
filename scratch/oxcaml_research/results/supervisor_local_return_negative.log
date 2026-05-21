@@ -1,0 +1,4 @@
+File "scratch/oxcaml_research/fixtures/supervisor_local_return_negative.ml", line 7, characters 34-39:
+7 | let bad () = scoped (fun child -> child)
+                                      ^^^^^
+Error: This value is "local" to the parent region but is expected to be "global".
