@@ -246,7 +246,7 @@ let collect_names e =
 let daemon_internal eff = Daemon eff
 
 module Private = struct
-  type ('env, 'err, 'a) view =
+  type ('env, 'err, 'a) view = ('env, 'err, 'a) t =
     | Pure : 'a -> (_, _, 'a) view
     | Fail : 'err -> (_, 'err, _) view
     | Thunk : string * ('env -> 'a) -> ('env, _, 'a) view
@@ -318,42 +318,14 @@ module Private = struct
       }
         -> ('env, 'err, unit) view
 
-  let view : type env err a. (env, err, a) t -> (env, err, a) view = function
-    | Pure value -> Pure value
-    | Fail err -> Fail err
-    | Thunk (name, f) -> Thunk (name, f)
-    | Bind (eff, k) -> Bind (eff, k)
-    | Map (eff, f) -> Map (eff, f)
-    | Catch (eff, handler) -> Catch (eff, handler)
-    | Tap_error (eff, observe) -> Tap_error (eff, observe)
-    | Delay (duration, eff) -> Delay (duration, eff)
-    | Timeout (duration, eff) -> Timeout (duration, eff)
-    | Concat children -> Concat children
-    | Race children -> Race children
-    | Par (left, right) -> Par (left, right)
-    | All children -> All children
-    | All_settled children -> All_settled children
-    | For_each_par (xs, f) -> For_each_par (xs, f)
-    | For_each_par_bounded (max, xs, f) -> For_each_par_bounded (max, xs, f)
-    | Daemon eff -> Daemon eff
-    | Uninterruptible eff -> Uninterruptible eff
-    | Repeat (eff, schedule) -> Repeat (eff, schedule)
-    | Retry (eff, schedule, predicate) -> Retry (eff, schedule, predicate)
-    | Acquire_release (acquire, release) -> Acquire_release (acquire, release)
-    | Scoped eff -> Scoped eff
-    | Supervisor_scoped (max_failures, body) ->
-        Supervisor_scoped (max_failures, body)
-    | Render_error (render, eff) -> Render_error (render, eff)
-    | Named (kind, name, eff) -> Named (kind, name, eff)
-    | Annotate (key, value, eff) -> Annotate (key, value, eff)
-    | Link_span (link, eff) -> Link_span (link, eff)
-    | With_external_parent (ctx, eff) -> With_external_parent (ctx, eff)
-    | With_context (ctx, eff) -> With_context (ctx, eff)
-    | Current_span -> Current_span
-    | Current_context -> Current_context
-    | Log (level, body, attrs) -> Log (level, body, attrs)
-    | Metric_update { name; description; unit_; kind; attrs; value } ->
-        Metric_update { name; description; unit_; kind; attrs; value }
+  (* [view] is a transparent alias of [t] with the constructors
+     re-exposed for the runtime. The previous implementation reallocated
+     an isomorphic GADT block per node visited (~3 minor words per
+     [Bind] step). The [view] GADT is declared with constructors
+     bit-identical to those of [t], so the runtime block layouts
+     coincide; [%identity] tells the compiler to emit no conversion
+     code, making [view] an exact zero-cost cast. *)
+  external view : ('env, 'err, 'a) t -> ('env, 'err, 'a) view = "%identity"
 
   let daemon = daemon_internal
 
