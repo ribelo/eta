@@ -10422,3 +10422,163 @@ follow without further interpretation.
 - Promotion of the smoke fixtures to shipped tests where the hardened
   protocol survives. Decided by T10.
 - Decision on whether H4 hybrid reopens. Decided by T9.
+
+## V-CM-H1 - H3 hardening probes complete
+
+Date: 2026-05-21
+
+### Scope
+
+This entry closes the hardening loop opened by V-Concurrency-Model-Hardening
+for Effet-OxCaml-u73. T1-T9 now have executable positive/negative probes under
+scratch/oxcaml_research/concurrency_model/h3_hardening/, and T10 has the H3
+Implementation Acceptance Checklist at
+scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md.
+
+### Final protocol decisions
+
+| Area | Decision | Evidence |
+| --- | --- | --- |
+| Inbox ownership | H3 uses single coordinator producer plus close-before-drain. The inbox is not a general multi-producer queue. | T1 results.md |
+| Task identity | Every child carries a stable input index. | T3 results.md |
+| Result ordering | all, for_each_par, and all_settled reassemble in input order. | T3 results.md |
+| Failure ordering | Portable Supervisor.failures uses task-index order. | T4 results.md |
+| Cancellation | Workers poll cancel at Bind/Map boundaries and at least every 4096 pure-core loop iterations. | T2 results.md |
+| Failure payload | Cross-domain failures use real Cause.Portable variants with portable typed-error payloads. | T5 results.md |
+| Timeout/clock | Coordinator sends int64 monotonic-ns deadlines; workers compare locally at cancellation polling points. | T7 results.md |
+| Observability | Workers emit portable events keyed by task_id/event_index; coordinator owns export. | T6 results.md |
+| Eio non-leakage | Raw Eio handles, Runtime.t, raw Cause.t, and mutable collectors are rejected at the worker boundary. | T8 results.md |
+| Backpressure | Capacity is enforced during the coordinator push phase; close rejects late pushes. | T1 results.md |
+| Dispatch under skew | H3 uses static skew-aware assignment. H4 does not reopen. | T9 results.md |
+
+### Probe summaries
+
+| Probe | Summary | Key measurement |
+| --- | --- | --- |
+| T1 inbox | pass=6 fail=0 | Capacity race negative detected count=2/items=2 for capacity=1. |
+| T2 cancellation | pass=2 fail=0 | poll_every=4096, max_polls=63, p95_cancel_latency_us=5. |
+| T3 ordered results | pass=3 fail=0 | Reverse completion restored to input order. |
+| T4 supervisor order | pass=3 fail=0 | Reverse failure completion returned 0..7 task order. |
+| T5 Cause.Portable | pass=8 fail=0 | Die/Fail/Interrupt/Concurrent/Suppressed positives; raw/open/closure negatives rejected. |
+| T6 observability | pass=3 fail=0 | reassembly_pct=9.94, below H5 reopen trigger. |
+| T7 timeout/clock | pass=3 fail=0 | max_deadline_to_exit_us=48417. |
+| T8 non-leakage | pass=12 fail=0 | Eleven forbidden captures rejected; portable replacements passed. |
+| T9 skew | pass=2 fail=0 | chosen_policy=skew_aware, h4_reopen=false. |
+
+### Supersession and follow-through
+
+V-P0T6 remains superseded for H3. Portable_ws_deque is not the H3 queue
+primitive. It remains reserved for a future H4 if production workloads disprove
+static skew-aware assignment.
+
+Schedule.jittered is the remaining implementation caveat: schedule.ml currently
+uses implicit Random.float. The H3 implementation must move jitter to
+coordinator-generated delays or an explicit portable PRNG capability before any
+worker-side schedule interpretation.
+
+### Verdict
+
+H3 is implementation-ready for Phases 5-8 only under the checklist above. The
+protocol is not share-nothing; it is per-domain local execution with explicit
+portable handoff and coordinator-owned reassembly.
+
+## V-CM-H2 - Senior acceptance and implementation caveats
+
+Status: closes the hardening loop. Effet-OxCaml-u73 is complete and accepted.
+Implementation work is gated on the H3 Implementation Acceptance Checklist
+plus three named caveats tracked in a new follow-up epic (see end of entry).
+
+### Senior verdict (accepted)
+
+> H3 is implementation-ready for Phases 5-8 under the H3 Implementation
+> Acceptance Checklist. The runtime model is per-domain local execution with
+> explicit portable handoff and coordinator-owned reassembly. H3 is not
+> share-nothing: portable atomics, indexed result stores, cancel tokens,
+> deadlines, event buffers, and portable causes are shared protocol data. Eio
+> handles, runtime state, raw causes, and mutable observability collectors
+> remain same-domain/coordinator-owned.
+
+> H3 inboxes are not general concurrent queues. They are coordinator-produced,
+> close-before-drain, bounded handoff cells. Any future runtime that requires
+> concurrent producers or producer/drain overlap must replace the inbox with a
+> real linearizable bounded queue before shipping.
+
+> Portable supervisor failure ordering is task-index order. Same-domain
+> supervisor observation order remains a separate same-domain runtime
+> contract.
+
+These three paragraphs are the canonical wording for downstream documentation.
+
+### What hardening closed
+
+| Concern | Status | Evidence |
+| --- | --- | --- |
+| Inbox protocol | Closed. Single producer + close-before-drain pinned. Two-producer overrun, mixed push/drain, late push after close all proven to fail as expected. | T1 |
+| Cancellation | Closed. Poll at Bind/Map boundaries plus every 4096 pure-core loop iterations. No-poll fixture proves polling is load-bearing. | T2 |
+| Result ordering | Closed. Indexed worker messages plus coordinator result-store fill plus input-order scan for all/for_each_par/all_settled. Unordered bags are internal transport only. | T3 |
+| Supervisor ordering | Closed for cross-domain via task-index order, including max_failures threshold. Same-domain "observation order" is a separate contract documented in C3 below. | T4 |
+| Failure payloads | Closed. Real Cause.Portable variants for Die/Fail/Interrupt/Concurrent/Suppressed; raw same-domain Cause.t, open polyvariant errors, and closure payloads rejected. | T5 |
+| Observability | Closed. Reassembly cost 9.94%, well below the 30% H5 reopen trigger. | T6 |
+| Timeout/clock | Closed as a protocol; SLO bound is C4 below. | T7 |
+| Eio non-leakage | Closed. Eleven forbidden captures rejected, portable replacements pass. | T8 |
+| Skew dispatch | Closed for now. Static skew-aware assignment is the chosen stable default; H4 does not reopen unless production telemetry trips C6 below. | T9 |
+| H4/H5 status | Both closed. C6 carries the H4 reopen-hook design. | T9, T6 |
+
+### Three implementation caveats
+
+Tracked in epic Effet-OxCaml (created below as a new follow-up epic) before
+Phase 6 begins worker-side schedule interpretation or Phase 8 chooses its
+transport.
+
+C1. **Schedule.jittered must not interpret global Random inside portable
+workers.** schedule.ml currently uses implicit Random.float. Lead hypothesis,
+given Effet's existing pattern: Random is an env-row capability matching
+Logger/Tracer/Meter, the runtime interprets Schedule.jittered by calling
+capability methods, and workers receive a portable Random capability instance.
+The alternative is coordinator-generated portable delay data with no Random
+surface in the worker. The hypothesis must be tested before Phase 6 begins
+worker-side schedule interpretation; both shapes need positive and negative
+fixtures so the verdict is mechanical, not aesthetic.
+
+C2. **Phase 8 stream/exporter transport is batch-only under H3 inboxes.**
+The H3 inbox is coordinator-produced, close-before-drain. That is correct for
+batch reduction (collect M items, dispatch batch, reassemble). It is wrong for
+live overlapping production and drain. If Phase 8 needs an online producer
+queue, T1's verdict says H3 must replace the inbox with a real linearizable
+bounded queue first. Phase 8 must declare which it is.
+
+C3. **API documentation drift between same-domain and portable supervisors.**
+The shipped Supervisor.mli says failures are returned in observation order.
+H3 portable supervisors return failures in task-index order. Both are
+defensible. The library docs and the .mli must explicitly distinguish them so
+users do not assume the portable path inherits same-domain semantics.
+
+C4. **Timeout SLO bound.** T7 measured max_deadline_to_exit_us=48417 under
+the chosen cancellation polling discipline. Production cannot assume this is
+acceptable without an explicit decision. Either accept 48417us as the
+documented SLO bound, or tighten the polling discipline (lower the 4096
+iteration threshold) and re-measure.
+
+C5. **Promote the checklist to a non-negotiable CI/review gate.** The
+checklist exists in scratch and binds documentation only. For Phase 6 to
+ship, the gate command
+
+```sh
+nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh
+```
+
+must run on CI for every PR that touches runtime/scheduler code, and the
+review checklist must require each invariant to be cited in the PR
+description. Without this, the hardening evidence rots.
+
+C6. **H4 reopen telemetry hook.** Static skew-aware assignment is the H3
+default, but the senior review correctly flagged that this is "not a universal
+winner in every row of the matrix." Production runtime must emit per-domain
+queue-depth and idle-spin signals. If a defined threshold trips on real
+workloads, H4 hybrid (steal-on-empty-inbox) reopens. The hook is design-only
+work now; the metric definition and reopen criterion are the deliverables.
+
+### Verdict
+
+Ship H3 as the Phase 5-8 implementation target. Keep H4 and H5 closed. C1-C6
+must close before or alongside Phase 6 and Phase 8 implementation work begins.
