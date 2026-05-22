@@ -100,6 +100,8 @@ let clock_of_eio (c : _ Eio.Std.r) : clock =
 
 let random_of_seed seed = { seed = P_atomic.make (seed land 0x3fffffff) }
 
+let random_set_seed random seed = P_atomic.set random.seed (seed land 0x3fffffff)
+
 let random_default () = random_of_seed 0x5eed5
 
 let next_seed seed =

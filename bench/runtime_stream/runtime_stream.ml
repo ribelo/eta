@@ -39,10 +39,10 @@ let ensure_file path size =
   if not (Sys.file_exists path) then begin
     let oc = open_out_bin path in
     let buf = Bytes.create 4096 in
-    let rng = Random.State.make [| 0xEFFE7 |] in
+    let rng = Stdlib.Random.State.make [| 0xEFFE7 |] in
     for _ = 1 to size / 4096 do
       for i = 0 to 4095 do
-        Bytes.set_uint8 buf i (Random.State.int rng 256)
+        Bytes.set_uint8 buf i (Stdlib.Random.State.int rng 256)
       done;
       output_bytes oc buf
     done;

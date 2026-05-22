@@ -25,7 +25,7 @@ let hex_of_bytes b =
 let random_bytes rng n =
   let b = Bytes.create n in
   for i = 0 to n - 1 do
-    Bytes.set b i (Char.chr (Random.State.int rng 256))
+    Bytes.set b i (Char.chr (Stdlib.Random.State.int rng 256))
   done;
   b
 
@@ -423,7 +423,7 @@ type t = {
   flush_rt : unit Eta.Runtime.t;
   mutable next_handle : int;
   table : (int, span) Hashtbl.t;
-  rng : Random.State.t;
+  rng : Stdlib.Random.State.t;
   in_flight : Drain_counter.t;
   mutable on_error : string -> unit;
   mutable on_send : path:string -> body:string -> unit;
@@ -742,7 +742,7 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     in
     base @ resource_attrs
   in
-  let rng = Random.State.make_self_init () in
+  let rng = Stdlib.Random.State.make_self_init () in
   let self_tracer = Eta.Tracer.in_memory () in
   let rt =
     Eta.Runtime.create ~sw ~clock

@@ -1,4 +1,5 @@
 open Eta_schema
+open Eta_schema_test
 
 module User_id : sig
   type t = private string
@@ -473,52 +474,6 @@ let sample_menu_json =
           ] );
     ]
 
-let rec eval : type err a. (a, err) Eta.Effect.t -> (a, err) result =
- fun eff ->
-  match Eta.Effect.Private.view eff with
-  | Eta.Effect.Private.Pure value -> Ok value
-  | Eta.Effect.Private.Fail error -> Error error
-  | Eta.Effect.Private.Sync (_, f) -> Ok (f ())
-  | Eta.Effect.Private.Map (inner, f) -> Result.map f (eval inner)
-  | Eta.Effect.Private.Bind (inner, f) -> (
-      match eval inner with Ok value -> eval (f value) | Error error -> Error error)
-  | Eta.Effect.Private.Catch (inner, f) -> (
-      match eval inner with Ok value -> Ok value | Error error -> eval (f error))
-  | Eta.Effect.Private.Tap_error (inner, f) -> (
-      match eval inner with
-      | Ok value -> Ok value
-      | Error error ->
-          f error;
-          Error error)
-  | Eta.Effect.Private.Named (_, _, inner)
-  | Eta.Effect.Private.Annotate (_, _, inner)
-  | Eta.Effect.Private.Link_span (_, inner)
-  | Eta.Effect.Private.With_external_parent (_, inner)
-  | Eta.Effect.Private.With_context (_, inner) ->
-      eval inner
-  | Eta.Effect.Private.Current_context -> Ok None
-  | _ -> failwith "test evaluator only supports the schema effect subset"
-
-let run_effect eff = eval eff
-
-let expect_ok name = function
-  | Ok value -> value
-  | Error (`Decode issues) -> failwith (Printf.sprintf "%s: %s" name (render_issues issues))
-  | Error (`Encode issues) -> failwith (Printf.sprintf "%s: %s" name (render_issues issues))
-
-let expect_decode_error name = function
-  | Ok _ -> failwith (name ^ ": expected decode failure")
-  | Error (`Decode issues) -> issues
-  | Error (`Encode _) -> failwith (name ^ ": expected decode failure, got encode failure")
-
-let expect_encode_error name = function
-  | Ok _ -> failwith (name ^ ": expected encode failure")
-  | Error (`Encode issues) -> issues
-  | Error (`Decode _) -> failwith (name ^ ": expected encode failure, got decode failure")
-
-let decode_ok schema json = run_effect (Schema.decode schema json) |> expect_ok "decode"
-let encode_ok schema value = run_effect (Schema.encode schema value) |> expect_ok "encode"
-
 let check_bool name value = if not value then failwith name
 let check_int name expected actual = if expected <> actual then failwith name
 let check_string name expected actual = if not (String.equal expected actual) then failwith name
@@ -539,7 +494,10 @@ let test_config_roundtrip () =
   check_bool "self equal" (Schema.equal config decoded decoded)
 
 let test_many_issues () =
-  let issues = run_effect (Schema.decode config bad_config_json) |> expect_decode_error "bad config" in
+  let issues =
+    run_effect (Schema.decode config bad_config_json)
+    |> expect_decode_error ~name:"bad config"
+  in
   check_bool "all errors" (List.length issues >= 8);
   check_bool "nested user id path"
     (List.exists (fun issue -> issue.path = [ Field "users"; Index 0; Field "id" ]) issues)
@@ -569,7 +527,7 @@ let test_policy_closure_deps () =
   in
   let accepted =
     run_effect (Schema.decode_with_policy config policy sample_config_json)
-    |> expect_ok "policy accepted"
+    |> expect_ok ~name:"policy accepted"
   in
   check_bool "policy decoded" (Schema.equal config accepted accepted);
   let feature_allowed _ = false in
@@ -586,7 +544,7 @@ let test_policy_closure_deps () =
   in
   let issues =
     run_effect (Schema.decode_with_policy config policy sample_config_json)
-    |> expect_decode_error "policy rejected"
+    |> expect_decode_error ~name:"policy rejected"
   in
   check_int "policy issue count" 1 (List.length issues)
 
@@ -599,12 +557,15 @@ let test_cause_integration () =
     |> Eta.Effect.catch (function
          | `Decode issues -> Eta.Effect.pure (List.length issues))
   in
-  let recovered = run_effect program |> expect_ok "catch decode" in
+  let recovered = run_effect program |> expect_ok ~name:"catch decode" in
   check_bool "tap saw issues" (!seen >= 8);
   check_bool "catch recovered" (recovered >= 8)
 
 let test_issue_paths_distinguish_fields_and_indexes () =
-  let issues = run_effect (Schema.decode config bad_config_json) |> expect_decode_error "bad config" in
+  let issues =
+    run_effect (Schema.decode config bad_config_json)
+    |> expect_decode_error ~name:"bad config"
+  in
   let user_id_issue =
     match
       List.find_opt
@@ -640,10 +601,12 @@ let named_schema schema_name =
 let test_issue_source_discriminator () =
   let json = Json.object_ [ ("name", Json.int 42) ] in
   let user_issues =
-    run_effect (Schema.decode (named_schema "user") json) |> expect_decode_error "user"
+    run_effect (Schema.decode (named_schema "user") json)
+    |> expect_decode_error ~name:"user"
   in
   let admin_issues =
-    run_effect (Schema.decode (named_schema "admin") json) |> expect_decode_error "admin"
+    run_effect (Schema.decode (named_schema "admin") json)
+    |> expect_decode_error ~name:"admin"
   in
   let user_issue = List.hd user_issues in
   let admin_issue = List.hd admin_issues in
@@ -666,7 +629,7 @@ let test_json_number_rendering () =
     (Json.to_string (Json.intlit "9007199254740993"));
   ignore
     (run_effect (Schema.decode Schema.int (Json.number 1e100))
-    |> expect_decode_error "large integer")
+    |> expect_decode_error ~name:"large integer")
 
 type request_user = { request_id : user_id }
 type canonical_user = { canonical_id : user_id; canonical_name : string }
@@ -749,7 +712,7 @@ let test_decode_with_policy_enriches_type () =
   let json = Json.object_ [ ("id", Json.string "usr_999") ] in
   let enriched =
     run_effect (Schema.decode_with_policy request_user_schema policy json)
-    |> expect_ok "policy enriched"
+    |> expect_ok ~name:"policy enriched"
   in
   check_string "enriched name" "Ada" enriched.canonical_name
 
@@ -757,19 +720,19 @@ let test_json_adapter_make_functor () =
   let external_json = XObject [ ("id", XString "usr_999") ] in
   let decoded =
     run_effect (Test_codec.decode request_user_schema external_json)
-    |> expect_ok "adapter decode"
+    |> expect_ok ~name:"adapter decode"
   in
   check_string "adapter decoded" "usr_999" (User_id.value decoded.request_id);
   let encoded =
     run_effect (Test_codec.encode request_user_schema decoded)
-    |> expect_ok "adapter encode"
+    |> expect_ok ~name:"adapter encode"
   in
   (match encoded with
   | XObject [ ("id", XString "usr_999") ] -> ()
   | _ -> failwith "unexpected adapter encode");
   let issues =
     run_effect (Test_codec.decode request_user_schema (XBad "bad external json"))
-    |> expect_decode_error "adapter decode failure"
+    |> expect_decode_error ~name:"adapter decode failure"
   in
   let issue = List.hd issues in
   check_option_string "adapter source" (Some "test-adapter") issue.schema_name;
@@ -779,7 +742,9 @@ let test_json_adapter_make_functor () =
 
 let test_encode_failures_are_typed () =
   let one = Schema.enum ~name:"one" [ ("one", 1) ] ~equal:Int.equal in
-  let enum_issues = run_effect (Schema.encode one 2) |> expect_encode_error "enum" in
+  let enum_issues =
+    run_effect (Schema.encode one 2) |> expect_encode_error ~name:"enum"
+  in
   check_int "enum issue count" 1 (List.length enum_issues);
   let password_only =
     let decode _ = Error [ issue "unused" ] in
@@ -793,7 +758,7 @@ let test_encode_failures_are_typed () =
   in
   let union_issues =
     run_effect (Schema.encode password_only (OAuth { issuer = "i"; client_id = "c" }))
-    |> expect_encode_error "tagged union"
+    |> expect_encode_error ~name:"tagged union"
   in
   check_int "tagged union issue count" 1 (List.length union_issues)
 

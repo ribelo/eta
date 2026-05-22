@@ -42,6 +42,19 @@
   (eta (= :version))))
 
 (package
+ (name eta-schema-test)
+ (synopsis "Schema testing helpers for Eta Schema")
+ (description
+  "Provides Alcotest-oriented helpers for Eta Schema decode, encode, issue, and round-trip assertions.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-schema (= :version))
+  (eta-test (= :version))
+  alcotest))
+
+(package
  (name eta-otel)
  (synopsis "OTLP/JSON exporter for Eta's tracer capability")
  (description
@@ -55,6 +68,19 @@
   (eio_main (>= 1.0))
   (yojson (>= 2.0))
   (alcotest :with-test)))
+
+(package
+ (name eta-test)
+ (synopsis "Testing helpers for Eta")
+ (description
+  "Provides Eta-shaped testing helpers: a virtual-time test clock, deterministic random tokens, and cause assertion helpers.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eio (>= 1.0))
+  (eio_main (>= 1.0))
+  alcotest))
 
 (package
  (name ppx_eta)

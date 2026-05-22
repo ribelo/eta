@@ -1,4 +1,5 @@
 open Eta
+open Eta_test
 
 let run_ok rt eff =
   match Runtime.run rt eff with
@@ -59,40 +60,6 @@ let with_runtime_capture_backtrace capture_backtrace f =
   in
   f rt
 
-module Test_clock = struct
-  type sleeper = { deadline_ms : int; resolver : unit Eio.Promise.u }
-  type t = { mutable now_ms : int; mutable sleepers : sleeper list }
-
-  let create () = { now_ms = 0; sleepers = [] }
-
-  let wake_due t =
-    let due, pending =
-      List.partition (fun sleeper -> sleeper.deadline_ms <= t.now_ms) t.sleepers
-    in
-    t.sleepers <- pending;
-    List.iter
-      (fun sleeper -> Eio.Promise.resolve sleeper.resolver ())
-      due
-
-  let sleep t duration =
-    let deadline_ms = t.now_ms + Duration.to_ms duration in
-    if deadline_ms <= t.now_ms then ()
-    else
-      let promise, resolver = Eio.Promise.create () in
-      t.sleepers <- { deadline_ms; resolver } :: t.sleepers;
-      Eio.Promise.await promise
-
-  let adjust t duration =
-    t.now_ms <- t.now_ms + Duration.to_ms duration;
-    wake_due t
-
-  let set_time t time_ms =
-    t.now_ms <- max 0 time_ms;
-    wake_due t
-
-  let sleeper_count t = List.length t.sleepers
-end
-
 let yield () = Eio.Fiber.yield ()
 
 let wait_for_sleepers clock expected =
@@ -101,27 +68,6 @@ let wait_for_sleepers clock expected =
     incr attempts;
     yield ()
   done
-
-let with_test_clock f =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let clock = Test_clock.create () in
-  let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ()
-  in
-  f sw clock rt
-
-let with_traced_test_clock f =
-  Eio_main.run @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
-  let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~tracer:(Tracer.as_capability tracer) ()
-  in
-  f sw clock rt tracer
 
 let fork_run sw rt eff =
   let promise, resolver = Eio.Promise.create () in
@@ -726,7 +672,27 @@ let test_schedule_jittered_uses_random_capability () =
   in
   Alcotest.(check some_dur) "jittered factor from capability"
     (Some (Duration.ms 139))
-    (Schedule.next_delay ~random schedule ~step:0)
+    (Schedule.next_delay ~random schedule ~step:0);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check int) "inclusive range" 13
+    (Random.int_in_range random ~min:10 ~max:20);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check (float 0.0000001))
+    "float range" 1.6656494140625
+    (Random.float_in_range random ~min:1.0 ~max:3.0);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check bool) "bool" false (Random.bool random);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check (list int)) "shuffle" [ 4; 3; 1; 2 ]
+    (Random.shuffle random [ 1; 2; 3; 4 ]);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check (option string))
+    "weighted choice" (Some "b")
+    (Random.weighted_choice random [ ("a", 1.0); ("b", 2.0); ("c", 1.0) ]);
+  let random = Capabilities.random_of_seed 7 in
+  Alcotest.(check (option int)) "sample" (Some 20)
+    (Random.sample random [ 10; 20; 30; 40 ]);
+  Alcotest.(check (option int)) "empty" None (Random.sample random [])
 
 let test_effect_map_bind_tap_runtime () =
   with_runtime @@ fun rt ->
@@ -763,13 +729,13 @@ let test_effect_catch_handler_failure_uses_outer_key () =
     Effect.fail `Inner
     |> Effect.catch (fun (`Inner : [ `Inner ]) -> Effect.fail `Outer)
   in
-  check_exit_error
+  Expect.expect_typed_failure_eq
     (Alcotest.testable
-       (Cause.pp (fun fmt -> function
+       (fun fmt -> function
          | `Inner -> Format.pp_print_string fmt "inner"
-         | `Outer -> Format.pp_print_string fmt "outer"))
+         | `Outer -> Format.pp_print_string fmt "outer")
        ( = ))
-    "handler failure is not recaught" (Cause.Fail `Outer) (Runtime.run rt eff)
+    (Runtime.run rt eff) `Outer
 
 let test_effect_tap_error_observes_and_rethrows () =
   with_runtime @@ fun rt ->
@@ -792,14 +758,9 @@ let test_runtime_exit_fail_die_interrupt () =
       (Effect.sync "interrupt" (fun () ->
            raise (Eio.Cancel.Cancelled (Failure "cancel"))))
   in
-  check_exit_error string_cause "typed failure" (Cause.Fail "bad") fail_exit;
-  (match die_exit with
-  | Exit.Error (Cause.Die actual) ->
-      Alcotest.(check bool) "same exception" true (actual.exn == die)
-  | _ -> Alcotest.fail "expected Die");
-  (match interrupt_exit with
-  | Exit.Error (Cause.Interrupt None) -> ()
-  | _ -> Alcotest.fail "expected Interrupt")
+  Expect.expect_typed_failure_eq Alcotest.string fail_exit "bad";
+  Expect.expect_die die_exit (fun actual -> actual.exn == die);
+  Expect.expect_interrupt interrupt_exit
 
 let test_runtime_die_captures_diagnostics () =
   with_sampled_traced_runtime Sampler.always_off @@ fun rt _tracer ->
@@ -1081,8 +1042,9 @@ let test_effect_race_ignores_early_failure_until_success () =
   Alcotest.(check int) "race sleepers registered" 2
     (Test_clock.sleeper_count clock);
   Test_clock.adjust clock (Duration.ms 100);
-  check_exit_ok Alcotest.int "first success wins" 100
-    (Eio.Promise.await promise)
+  Alcotest.(check int)
+    "first success wins" 100
+    (Expect.expect_ok (Eio.Promise.await promise))
 
 let test_effect_race_all_failures_returns_concurrent_causes () =
   with_test_clock @@ fun sw clock rt ->

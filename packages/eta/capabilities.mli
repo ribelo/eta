@@ -132,6 +132,10 @@ val clock_of_eio :
 (** Create a portable random token from an explicit seed. *)
 val random_of_seed : int -> random
 
+(** Reset a portable random token to an explicit seed. Intended for
+    deterministic test replay through eta-test. *)
+val random_set_seed : random -> int -> unit
+
 (** Deterministic fallback token. Runtimes should pass explicit seeds when
     nondeterministic jitter matters. *)
 val random_default : unit -> random
