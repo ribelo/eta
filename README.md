@@ -60,6 +60,36 @@ let () =
 | `Capabilities` | Small object-type traits for runtime services and explicit dependencies. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
+## Portable Islands
+
+`Effect.island` is the portable twin of `Effect.thunk`: it runs one
+compiler-checked portable callback through a runtime-owned island pool.
+
+```ocaml
+let (square @ portable) n = n * n
+
+let program =
+  Effect.island ~name:"square" square 7
+```
+
+Finite batches use `Effect.Island.map`, `map_result`, or `all_settled`.
+Inputs, outputs, and callback error values must be `immutable_data`; the
+callback itself is `@ portable`, so captures such as refs, Eio streams,
+runtimes, loggers, or raw causes are rejected by the compiler.
+
+```ocaml
+let pool = Effect.Island.Pool.create ~domains:2 ()
+
+let rt =
+  Runtime.create ~sw ~clock ~island_pool:pool ()
+```
+
+There is no silent fallback. If island work reaches `Runtime.run` without a
+runtime pool or per-run `~island_pool` override, the effect dies. Island v1 is
+callback-based only: no timeout, cancellation, preemption, online queue, public
+`Effect.Portable.t`, or portable Resource/Supervisor/Stream/OTel surface is
+implied.
+
 ## PPX Helpers
 
 The optional `ppx_effet` package provides small syntax helpers. They expand to

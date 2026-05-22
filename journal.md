@@ -11320,3 +11320,128 @@ This is a breaking API migration. Existing user code that relied on
 `Runtime.create ~env` or `Effect.thunk name (fun env -> ...)` must be rewritten
 to pass dependencies explicitly. The migration is mechanical and now covered by
 the shipped package tests, but external downstream code will need source edits.
+
+## V-Island-Impl - Portable callback islands v1
+
+Date: 2026-05-22
+
+Status: accepted and implemented.
+
+### Question
+
+Should the OxCaml work ship as a full portable Effect AST, a ZIO-style env
+model, or a small portable-island twin of same-domain thunk?
+
+### Decision
+
+Ship the small island boundary in the current Effet-named package. The repo has
+not been renamed to Eta, so the implemented public surface is:
+
+```ocaml
+val Effect.island :
+  ('input : immutable_data) ('output : immutable_data).
+  ?name:string ->
+  ('input -> 'output) @ portable ->
+  'input ->
+  ('output, 'err) Effect.t
+
+module Effect.Island : sig
+  type pool
+  type worker_die = { kind : string; message : string; backtrace : string option }
+  type ('a : immutable_data, 'e : immutable_data) settled =
+    | Ok of 'a
+    | Error of 'e
+    | Worker_died of worker_die
+
+  val map :
+    ('input : immutable_data) ('output : immutable_data).
+    ?name:string -> ?pool:pool ->
+    f:(('input -> 'output) @ portable) ->
+    'input list -> ('output list, 'err) Effect.t
+
+  val map_result :
+    ('input : immutable_data) ('output : immutable_data) ('error : immutable_data).
+    ?name:string -> ?pool:pool ->
+    f:(('input -> ('output, 'error) result) @ portable) ->
+    'input list -> (('output, 'error) result list, 'err) Effect.t
+
+  val all_settled :
+    ('input : immutable_data) ('output : immutable_data) ('error : immutable_data).
+    ?name:string -> ?pool:pool ->
+    f:(('input -> ('output, 'error) result) @ portable) ->
+    'input list -> (('output, 'error) settled list, 'err) Effect.t
+end
+
+val Runtime.create : ... -> ?island_pool:Effect.Island.pool -> unit -> 'err Runtime.t
+val Runtime.run : ?island_pool:Effect.Island.pool -> 'err Runtime.t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
+```
+
+`Effect.island` is stricter than `Effect.thunk`: anything accepted by island
+is valid thunk-shaped work, but not every thunk callback is portable. The value
+is compiler-enforced capture safety, not a blanket speed claim.
+
+Runtime owns island execution. A runtime default pool or per-run/batch override
+is required; missing pool is a runtime defect and there is no same-domain
+fallback. Pools are explicit and reusable because scheduler creation is known
+to be expensive.
+
+`map` and `map_result` preserve input order and raise a coordinator-side defect
+when a worker callback raises. `all_settled` preserves input order and returns
+`Ok`, `Error`, or `Worker_died` per item. Worker crash diagnostics are portable
+and intentionally not raw `Cause.t`.
+
+### Evidence
+
+Implemented files:
+
+- `packages/effet/effect.ml/.mli`: island constructors, public API, pool wrapper,
+  portable callback constraints, immutable input/output/error constraints,
+  ordered batch execution.
+- `packages/effet/runtime.ml/.mli`: runtime-owned `?island_pool`, per-run
+  override, no-pool defect, auto-instrumented island leaves.
+- `packages/effet/dune`: explicit `parallel` and `parallel.scheduler` libraries.
+- `packages/effet/test/test_effet.ml`: single island, missing-pool, run override,
+  order preservation, `map_result`, `all_settled`, worker crash, and three
+  workload fixtures.
+- `packages/effet/test/island_negative/*`: compile-fail fixtures for ref capture,
+  Eio stream capture, runtime capture, logger capture, and raw `Cause.t` capture.
+
+Gate:
+
+```sh
+nix develop -c dune runtest packages/effet --force
+```
+
+Result: 118 Alcotest cases passed, and the negative island compile-fail rule
+passed. The negative rule rejects failures that are not mode/portability errors
+so an unbound-module or bad-link failure cannot count as evidence.
+
+During implementation, one candidate signature required callbacks of type
+`('a @ shared -> 'b) @ portable`; package tests rejected that shape because it
+made ordinary integer callbacks awkward. The shipped signature instead constrains
+inputs and outputs to `immutable_data` and keeps the callback shape as ordinary
+`('a -> 'b) @ portable`, which matches the ticket and the simpler user model.
+
+A balanced fork-tree batch implementation was attempted, but the split lists
+became non-shareable when captured into fork closures. v1 therefore keeps the
+ordered scheduler-backed dispatch simple and evidence-backed. Future throughput
+work should use a dedicated portable array/sequence representation rather than
+forcing list splitting through modes.
+
+### Consequences
+
+- No portable env channel is introduced. Dependencies remain explicit arguments,
+  records, modules, or portable captures.
+- No public `Effect.Portable.t` module exists.
+- No portable Resource, Supervisor, Stream, OTel, or raw Cause boundary is
+  implied by this work.
+- No island timeout, cancellation, preemption, or online bounded queue is shipped.
+- The island pool boundary is now real package API, so future island performance
+  work can focus on batching internals without reopening the core effect type.
+
+### Remaining Risk
+
+The v1 batch executor proves safety and semantics, not optimal throughput.
+The next performance-oriented step should compare a portable array/sequence
+batch representation against the CPU-pool baseline before changing the public
+surface.

@@ -51,6 +51,96 @@ val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
 
 val thunk : string -> (unit -> 'a) -> ('a, 'err) t
+(** Same-domain lazy work. The callback runs in the interpreting Eio domain and
+    may capture ordinary OCaml/Eio values. *)
+
+val island :
+  ('input : immutable_data) ('output : immutable_data).
+  ?name:string ->
+  ('input -> 'output) @ portable ->
+  'input ->
+  ('output, 'err) t
+(** Portable twin of {!thunk} for one domain-offloaded callback.
+
+    Anything accepted by [island] can also be expressed with {!thunk}; the
+    reverse is deliberately false because [island] requires a [@ portable]
+    callback and portable input/output values. The runtime must be configured
+    with an island pool; Effet never silently falls back to same-domain
+    execution. No timeout, cancellation, preemption, streaming/online queueing,
+    portable AST, or portable Resource/Supervisor/Stream/OTel behavior is
+    implied by this primitive. *)
+
+module Island : sig
+  type worker_die = {
+    kind : string;
+    message : string;
+    backtrace : string option;
+  }
+  (** Diagnostic returned when a worker-domain callback raises before producing
+      its declared result. v1 keeps this portable and intentionally smaller than
+      {!Cause.t}; raw causes do not cross the island boundary. *)
+
+  type ('a : immutable_data, 'e : immutable_data) settled =
+    | Ok of 'a
+    | Error of 'e
+    | Worker_died of worker_die
+  (** Per-item result for {!all_settled}. [Ok] and [Error] are the callback's
+      own result channel; [Worker_died] is an unchecked worker crash. *)
+
+  type pool
+  (** Reusable OxCaml [Parallel_scheduler] pool. Create it once, pass it to the
+      runtime or to a batch override, and shut it down at program exit. Pool
+      creation is intentionally not hidden because it is comparatively
+      expensive and because missing configuration must fail loudly. *)
+
+  val map :
+    ('input : immutable_data) ('output : immutable_data).
+    ?name:string ->
+    ?pool:pool ->
+    f:('input -> 'output) @ portable ->
+    'input list ->
+    ('output list, 'err) t
+  (** Run a finite batch of portable callbacks and return results in input
+      order. Worker crashes fail the outer effect as defects. *)
+
+  val map_result :
+    ('input : immutable_data)
+    ('output : immutable_data)
+    ('error : immutable_data).
+    ?name:string ->
+    ?pool:pool ->
+    f:('input -> ('output, 'error) result) @ portable ->
+    'input list ->
+    (('output, 'error) result list, 'err) t
+  (** Like {!map}, but the portable callback returns a typed per-item [result].
+      Callback [Error _] values are returned in place; worker crashes still fail
+      the outer effect as defects. *)
+
+  val all_settled :
+    ('input : immutable_data)
+    ('output : immutable_data)
+    ('error : immutable_data).
+    ?name:string ->
+    ?pool:pool ->
+    f:('input -> ('output, 'error) result) @ portable ->
+    'input list ->
+    (('output, 'error) settled list, 'err) t
+  (** Run a finite batch and return one settled outcome per input, preserving
+      input order. Worker crashes are represented as [Worker_died] values
+      instead of aborting siblings. *)
+
+  module Pool : sig
+    type t = pool
+
+    val create : ?domains:int -> unit -> t
+    (** Create a reusable island pool. [domains] defaults to [2].
+        @raise Invalid_argument if [domains <= 0]. *)
+
+    val shutdown : t -> unit
+    (** Stop the pool. Calling it more than once is harmless; submitting work to
+        a stopped pool raises [Invalid_argument]. *)
+  end
+end
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
@@ -237,6 +327,47 @@ module Private : sig
     | Pure : 'a -> ('a, _) view
     | Fail : 'err -> (_, 'err) view
     | Thunk : string * (unit -> 'a) -> ('a, _) view
+    | Island :
+        ('input : immutable_data) ('output : immutable_data) 'err.
+        {
+          name : string;
+          f : ('input -> 'output) @@ portable;
+          input : 'input;
+        }
+        -> ('output, 'err) view
+    | Island_map :
+        ('input : immutable_data) ('output : immutable_data) 'err.
+        {
+          name : string;
+          pool : Island.pool option;
+          f : ('input -> 'output) @@ portable;
+          inputs : 'input list;
+        }
+        -> ('output list, 'err) view
+    | Island_map_result :
+        ('input : immutable_data)
+        ('output : immutable_data)
+        ('error : immutable_data)
+        'err.
+        {
+          name : string;
+          pool : Island.pool option;
+          f : ('input -> ('output, 'error) result) @@ portable;
+          inputs : 'input list;
+        }
+        -> (('output, 'error) result list, 'err) view
+    | Island_all_settled :
+        ('input : immutable_data)
+        ('output : immutable_data)
+        ('error : immutable_data)
+        'err.
+        {
+          name : string;
+          pool : Island.pool option;
+          f : ('input -> ('output, 'error) result) @@ portable;
+          inputs : 'input list;
+        }
+        -> (('output, 'error) Island.settled list, 'err) view
     | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
     | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
     | Catch :
@@ -289,6 +420,41 @@ module Private : sig
 
   val view : ('a, 'err) t -> ('a, 'err) view
   val daemon : (unit, 'err) t -> (unit, 'err) t
+
+  val island_submit :
+    ('input : immutable_data) ('output : immutable_data).
+    string ->
+    Island.pool ->
+    ('input -> 'output) @ portable ->
+    'input ->
+    'output
+
+  val island_submit_map :
+    ('input : immutable_data) ('output : immutable_data).
+    string ->
+    Island.pool ->
+    ('input -> 'output) @ portable ->
+    'input list ->
+    'output list
+
+  val island_submit_map_result :
+    ('input : immutable_data)
+    ('output : immutable_data)
+    ('error : immutable_data).
+    string ->
+    Island.pool ->
+    ('input -> ('output, 'error) result) @ portable ->
+    'input list ->
+    ('output, 'error) result list
+
+  val island_submit_all_settled :
+    ('input : immutable_data)
+    ('output : immutable_data)
+    ('error : immutable_data).
+    Island.pool ->
+    ('input -> ('output, 'error) result) @ portable ->
+    'input list ->
+    ('output, 'error) Island.settled list
 
   val make_supervisor :
     sw:Eio.Switch.t -> max_failures:int option -> ('s, 'err) supervisor

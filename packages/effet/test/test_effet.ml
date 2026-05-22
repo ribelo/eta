@@ -217,6 +217,8 @@ let test_collect_names () =
     (Effect.collect_names e)
 
 let test_tracer_manual_spans () =
+  Eio_main.run @@ fun _stdenv ->
+  Tracer.with_fiber_context @@ fun () ->
   let tracer = Tracer.in_memory () in
   let t = Tracer.as_capability tracer in
   t#add_attr ~key:"pending" ~value:"yes";
@@ -2272,6 +2274,206 @@ let test_portable_queue_backpressure_and_close () =
   | Portable_queue.Closed_empty -> ()
   | _ -> Alcotest.fail "expected closed empty queue"
 
+let contains_substring haystack needle =
+  let h_len = String.length haystack in
+  let n_len = String.length needle in
+  let rec at pos i =
+    i = n_len
+    || (pos + i < h_len
+       && Char.equal haystack.[pos + i] needle.[i]
+       && at pos (i + 1))
+  in
+  let rec search pos =
+    if n_len = 0 then true
+    else if pos + n_len > h_len then false
+    else at pos 0 || search (pos + 1)
+  in
+  search 0
+
+let rec cause_has_die_message expected = function
+  | Cause.Die die -> contains_substring (Printexc.to_string die.exn) expected
+  | Cause.Fail _ | Cause.Interrupt _ -> false
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (cause_has_die_message expected) causes
+  | Cause.Suppressed { primary; finalizer } ->
+      cause_has_die_message expected primary
+      || cause_has_die_message expected finalizer
+
+let check_die_message label expected cause =
+  Alcotest.(check bool) label true (cause_has_die_message expected cause)
+
+let with_island_runtime ?domains f =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let pool = Effect.Island.Pool.create ?domains () in
+  Fun.protect
+    ~finally:(fun () -> Effect.Island.Pool.shutdown pool)
+    (fun () ->
+      let rt =
+        Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~island_pool:pool
+          ()
+      in
+      f rt pool)
+
+type island_error : immutable_data =
+  | Odd of int
+  | Invalid_payload of string
+
+type parse_input : immutable_data = {
+  parse_id : int;
+  payload : string;
+}
+
+type schema_input : immutable_data = {
+  schema_version : int;
+  required : int;
+  values : int list;
+}
+
+type hash_input : immutable_data = {
+  hash_seed : int;
+  rounds : int;
+  bytes : string;
+}
+
+let (island_square @ portable) n = n * n
+
+let (island_order_work @ portable) n =
+  let rec burn acc i =
+    if i = 0 then acc
+    else burn (((acc lxor (i * 33)) + n) land 0x3fffffff) (i - 1)
+  in
+  ignore (burn 0 (((n mod 3) + 1) * 250));
+  n * 10
+
+let (island_even_result @ portable) n =
+  if n mod 2 = 0 then Ok (n / 2) else Error (Odd n)
+
+let (island_settled_work @ portable) n =
+  if n = 0 then failwith "worker died"
+  else if n mod 2 = 0 then Ok (n * 2)
+  else Error (Odd n)
+
+let (island_parse_work @ portable) input =
+  let len = String.length input.payload in
+  let rec count_colons i acc =
+    if i = len then acc
+    else
+      let acc = if Char.equal input.payload.[i] ':' then acc + 1 else acc in
+      count_colons (i + 1) acc
+  in
+  input.parse_id + len + count_colons 0 0
+
+let (island_schema_work @ portable) input =
+  let rec sum acc = function
+    | [] -> acc
+    | x :: xs -> sum (acc + x) xs
+  in
+  input.schema_version + input.required + sum 0 input.values
+
+let (island_hash_work @ portable) input =
+  let len = String.length input.bytes in
+  let rec loop i acc =
+    if i = input.rounds then acc
+    else
+      let byte = Char.code input.bytes.[i mod len] in
+      loop (i + 1) (((acc lxor byte) * 16_777_619) land 0x3fffffff)
+  in
+  loop 0 input.hash_seed
+
+let test_island_single_uses_runtime_pool () =
+  with_island_runtime @@ fun rt _pool ->
+  Alcotest.(check int)
+    "single island" 49
+    (run_ok rt (Effect.island ~name:"square" island_square 7))
+
+let test_island_requires_pool () =
+  with_runtime @@ fun rt ->
+  match Runtime.run rt (Effect.island ~name:"missing" island_square 3) with
+  | Exit.Ok _ -> Alcotest.fail "expected missing island pool to fail"
+  | Exit.Error cause ->
+      check_die_message "missing pool" "island executor not configured" cause
+
+let test_island_run_pool_override () =
+  with_runtime @@ fun rt ->
+  let pool = Effect.Island.Pool.create () in
+  Fun.protect
+    ~finally:(fun () -> Effect.Island.Pool.shutdown pool)
+    (fun () ->
+      check_exit_ok Alcotest.int "override pool" 36
+        (Runtime.run ~island_pool:pool rt
+           (Effect.island ~name:"override" island_square 6)))
+
+let test_island_map_preserves_order () =
+  with_island_runtime @@ fun rt _pool ->
+  let inputs = [ 5; 1; 4; 2; 3 ] in
+  Alcotest.(check (list int))
+    "input order" [ 50; 10; 40; 20; 30 ]
+    (run_ok rt (Effect.Island.map ~f:island_order_work inputs))
+
+let test_island_map_result_returns_item_results () =
+  with_island_runtime @@ fun rt _pool ->
+  match run_ok rt (Effect.Island.map_result ~f:island_even_result [ 2; 3; 4 ])
+  with
+  | [ Ok 1; Error (Odd 3); Ok 2 ] -> ()
+  | _ -> Alcotest.fail "unexpected map_result output"
+
+let test_island_all_settled_returns_worker_died () =
+  with_island_runtime @@ fun rt _pool ->
+  match
+    run_ok rt
+      (Effect.Island.all_settled ~f:island_settled_work [ 2; 3; 0; 4 ])
+  with
+  | [
+   Effect.Island.Ok 4;
+   Effect.Island.Error (Odd 3);
+   Effect.Island.Worker_died die;
+   Effect.Island.Ok 8;
+  ] ->
+      Alcotest.(check string) "worker die kind" "worker_died" die.kind
+  | _ -> Alcotest.fail "unexpected all_settled output"
+
+let test_island_map_worker_crash_fails_outer_effect () =
+  with_island_runtime @@ fun rt _pool ->
+  match Runtime.run rt (Effect.Island.map ~f:island_settled_work [ 1; 0 ]) with
+  | Exit.Ok _ -> Alcotest.fail "expected worker crash to fail map"
+  | Exit.Error cause -> check_die_message "worker crash" "worker died" cause
+
+let test_island_workloads () =
+  with_island_runtime @@ fun rt _pool ->
+  let parse_inputs =
+    [
+      { parse_id = 1; payload = "a:b:c" };
+      { parse_id = 2; payload = "abc" };
+      { parse_id = 3; payload = "x:y" };
+    ]
+  in
+  let schema_inputs =
+    [
+      { schema_version = 1; required = 10; values = [ 1; 2; 3 ] };
+      { schema_version = 2; required = 0; values = [ 5; 5 ] };
+    ]
+  in
+  let hash_inputs =
+    [
+      { hash_seed = 17; rounds = 24; bytes = "abcdef" };
+      { hash_seed = 23; rounds = 32; bytes = "schema" };
+      { hash_seed = 31; rounds = 16; bytes = "payload" };
+    ]
+  in
+  Alcotest.(check (list int))
+    "parse workload" [ 8; 5; 7 ]
+    (run_ok rt (Effect.Island.map ~name:"parse" ~f:island_parse_work parse_inputs));
+  Alcotest.(check (list int))
+    "schema workload" [ 17; 12 ]
+    (run_ok rt
+       (Effect.Island.map ~name:"schema" ~f:island_schema_work schema_inputs));
+  Alcotest.(check int)
+    "hash workload count" 3
+    (List.length
+       (run_ok rt
+          (Effect.Island.map ~name:"hash" ~f:island_hash_work hash_inputs)))
+
 let () =
   Alcotest.run "effet"
     [
@@ -2378,6 +2580,23 @@ let () =
             test_uninterruptible_timeout_inside_protected_still_fires;
           Alcotest.test_case "uninterruptible no-checkpoint loser" `Quick
             test_uninterruptible_race_loser_without_checkpoints_returns;
+        ] );
+      ( "Island",
+        [
+          Alcotest.test_case "single uses runtime pool" `Quick
+            test_island_single_uses_runtime_pool;
+          Alcotest.test_case "requires pool" `Quick test_island_requires_pool;
+          Alcotest.test_case "run pool override" `Quick
+            test_island_run_pool_override;
+          Alcotest.test_case "map preserves order" `Quick
+            test_island_map_preserves_order;
+          Alcotest.test_case "map_result returns item results" `Quick
+            test_island_map_result_returns_item_results;
+          Alcotest.test_case "all_settled returns worker_died" `Quick
+            test_island_all_settled_returns_worker_died;
+          Alcotest.test_case "map worker crash fails outer effect" `Quick
+            test_island_map_worker_crash_fails_outer_effect;
+          Alcotest.test_case "workloads" `Quick test_island_workloads;
         ] );
       ( "Supervisor",
         [

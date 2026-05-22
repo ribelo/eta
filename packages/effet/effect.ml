@@ -1,7 +1,187 @@
+module Island_runtime = struct
+  type worker_die : immutable_data = {
+    kind : string;
+    message : string;
+    backtrace : string option;
+  }
+
+  type ('a : immutable_data, 'e : immutable_data) settled : immutable_data =
+    | Ok of 'a
+    | Error of 'e
+    | Worker_died of worker_die
+
+  type pool = {
+    scheduler : Parallel_scheduler.t;
+    mutable stopped : bool;
+  }
+
+  type ('a : immutable_data) map_outcome : immutable_data =
+    | Map_ok of 'a
+    | Map_worker_died of worker_die
+
+  type ('a : immutable_data, 'e : immutable_data) result_outcome :
+    immutable_data =
+    | Result_ok of 'a
+    | Result_error of 'e
+    | Result_worker_died of worker_die
+
+  let generic_worker_die =
+    {
+      kind = "worker_died";
+      message = "portable island callback raised";
+      backtrace = None;
+    }
+
+  let raise_worker_die name die =
+    failwith
+      (Printf.sprintf "%s: worker died (%s): %s" name die.kind die.message)
+
+  module Pool = struct
+    type t = pool
+
+    let create ?(domains = 2) () =
+      if domains <= 0 then
+        invalid_arg "Effect.Island.Pool.create: domains must be > 0";
+      {
+        scheduler = Parallel_scheduler.create ~max_domains:domains ();
+        stopped = false;
+      }
+
+    let shutdown pool =
+      if not pool.stopped then (
+        pool.stopped <- true;
+        Parallel_scheduler.stop pool.scheduler)
+  end
+
+  let ensure_running pool =
+    if pool.stopped then invalid_arg "Effect.Island: pool already shut down"
+
+  let (capture_map @ portable) (f @ portable) input =
+    try Map_ok (f input) with _ -> Map_worker_died generic_worker_die
+
+  let (capture_result @ portable) (f @ portable) input =
+    try
+      match f input with
+      | Stdlib.Ok value -> Result_ok value
+      | Stdlib.Error error -> Result_error error
+    with _ -> Result_worker_died generic_worker_die
+
+  let rec map_outcomes_with_parallel parallel (f @ portable) = function
+    | [] -> []
+    | [ x ] ->
+        let #(result, ()) =
+          Parallel.fork_join2 parallel
+            (fun _ -> capture_map f x)
+            (fun _ -> ())
+        in
+        [ result ]
+    | left :: right :: rest ->
+        let #(left, right) =
+          Parallel.fork_join2 parallel
+            (fun _ -> capture_map f left)
+            (fun _ -> capture_map f right)
+        in
+        left :: right :: map_outcomes_with_parallel parallel f rest
+
+  let rec result_outcomes_with_parallel parallel (f @ portable) = function
+    | [] -> []
+    | [ x ] ->
+        let #(result, ()) =
+          Parallel.fork_join2 parallel
+            (fun _ -> capture_result f x)
+            (fun _ -> ())
+        in
+        [ result ]
+    | left :: right :: rest ->
+        let #(left, right) =
+          Parallel.fork_join2 parallel
+            (fun _ -> capture_result f left)
+            (fun _ -> capture_result f right)
+        in
+        left :: right :: result_outcomes_with_parallel parallel f rest
+
+  let map_outcomes pool (f @ portable) inputs =
+    ensure_running pool;
+    Parallel_scheduler.parallel pool.scheduler ~f:(fun parallel ->
+        map_outcomes_with_parallel parallel f inputs)
+
+  let result_outcomes pool (f @ portable) inputs =
+    ensure_running pool;
+    Parallel_scheduler.parallel pool.scheduler ~f:(fun parallel ->
+        result_outcomes_with_parallel parallel f inputs)
+
+  let submit name pool (f @ portable) input =
+    match map_outcomes pool f [ input ] with
+    | [ Map_ok value ] -> value
+    | [ Map_worker_died die ] -> raise_worker_die name die
+    | _ -> assert false
+
+  let submit_map name pool (f @ portable) inputs =
+    map_outcomes pool f inputs
+    |> List.map (function
+         | Map_ok value -> value
+         | Map_worker_died die -> raise_worker_die name die)
+
+  let submit_map_result name pool (f @ portable) inputs =
+    result_outcomes pool f inputs
+    |> List.map (function
+         | Result_ok value -> Stdlib.Ok value
+         | Result_error error -> Stdlib.Error error
+         | Result_worker_died die -> raise_worker_die name die)
+
+  let submit_all_settled pool (f @ portable) inputs =
+    result_outcomes pool f inputs
+    |> List.map (function
+         | Result_ok value -> Ok value
+         | Result_error error -> Error error
+         | Result_worker_died die -> Worker_died die)
+end
+
 type ('a, 'err) t =
   | Pure : 'a -> ('a, _) t
   | Fail : 'err -> (_, 'err) t
   | Thunk : string * (unit -> 'a) -> ('a, _) t
+  | Island :
+      ('input : immutable_data) ('output : immutable_data) 'err.
+      {
+        name : string;
+        f : ('input -> 'output) @@ portable;
+        input : 'input;
+      }
+      -> ('output, 'err) t
+  | Island_map :
+      ('input : immutable_data) ('output : immutable_data) 'err.
+      {
+        name : string;
+        pool : Island_runtime.pool option;
+        f : ('input -> 'output) @@ portable;
+        inputs : 'input list;
+      }
+      -> ('output list, 'err) t
+  | Island_map_result :
+      ('input : immutable_data)
+      ('output : immutable_data)
+      ('error : immutable_data)
+      'err.
+      {
+        name : string;
+        pool : Island_runtime.pool option;
+        f : ('input -> ('output, 'error) result) @@ portable;
+        inputs : 'input list;
+      }
+      -> (('output, 'error) result list, 'err) t
+  | Island_all_settled :
+      ('input : immutable_data)
+      ('output : immutable_data)
+      ('error : immutable_data)
+      'err.
+      {
+        name : string;
+        pool : Island_runtime.pool option;
+        f : ('input -> ('output, 'error) result) @@ portable;
+        inputs : 'input list;
+      }
+      -> (('output, 'error) Island_runtime.settled list, 'err) t
   | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) t
   | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) t
   | Catch : ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) t
@@ -91,6 +271,7 @@ let pure v = Pure v
 let fail e = Fail e
 let unit = Pure ()
 let thunk name f = Thunk (name, f)
+let island ?(name = "island") f input = Island { name; f; input }
 let map f e = Map (e, f)
 let bind k e = Bind (e, k)
 let ( >>= ) e k = Bind (e, k)
@@ -121,6 +302,33 @@ let supervisor_scoped ?max_failures body =
   Supervisor_scoped (max_failures, body)
 
 let with_error_renderer render e = Render_error (render, e)
+
+module Island = struct
+  type worker_die = Island_runtime.worker_die = {
+    kind : string;
+    message : string;
+    backtrace : string option;
+  }
+
+  type ('a : immutable_data, 'e : immutable_data) settled =
+    ('a, 'e) Island_runtime.settled =
+    | Ok of 'a
+    | Error of 'e
+    | Worker_died of worker_die
+
+  type pool = Island_runtime.pool
+
+  module Pool = Island_runtime.Pool
+
+  let map ?(name = "island.map") ?pool ~f inputs =
+    Island_map { name; pool; f; inputs }
+
+  let map_result ?(name = "island.map_result") ?pool ~f inputs =
+    Island_map_result { name; pool; f; inputs }
+
+  let all_settled ?(name = "island.all_settled") ?pool ~f inputs =
+    Island_all_settled { name; pool; f; inputs }
+end
 
 let supervisor_pure v = Supervisor_pure v
 let supervisor_lift e = Supervisor_lift e
@@ -188,6 +396,11 @@ let collect_names e =
     | Pure _ -> acc
     | Fail _ -> acc
     | Thunk (n, _) -> n :: acc
+    | Island { name; _ }
+    | Island_map { name; _ }
+    | Island_map_result { name; _ }
+    | Island_all_settled { name; _ } ->
+        name :: acc
     | Render_error (_, e) -> walk acc e
     | Named (_, n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
@@ -228,6 +441,47 @@ module Private = struct
     | Pure : 'a -> ('a, _) view
     | Fail : 'err -> (_, 'err) view
     | Thunk : string * (unit -> 'a) -> ('a, _) view
+    | Island :
+        ('input : immutable_data) ('output : immutable_data) 'err.
+        {
+          name : string;
+          f : ('input -> 'output) @@ portable;
+          input : 'input;
+        }
+        -> ('output, 'err) view
+    | Island_map :
+        ('input : immutable_data) ('output : immutable_data) 'err.
+        {
+          name : string;
+          pool : Island_runtime.pool option;
+          f : ('input -> 'output) @@ portable;
+          inputs : 'input list;
+        }
+        -> ('output list, 'err) view
+    | Island_map_result :
+        ('input : immutable_data)
+        ('output : immutable_data)
+        ('error : immutable_data)
+        'err.
+        {
+          name : string;
+          pool : Island_runtime.pool option;
+          f : ('input -> ('output, 'error) result) @@ portable;
+          inputs : 'input list;
+        }
+        -> (('output, 'error) result list, 'err) view
+    | Island_all_settled :
+        ('input : immutable_data)
+        ('output : immutable_data)
+        ('error : immutable_data)
+        'err.
+        {
+          name : string;
+          pool : Island_runtime.pool option;
+          f : ('input -> ('output, 'error) result) @@ portable;
+          inputs : 'input list;
+        }
+        -> (('output, 'error) Island_runtime.settled list, 'err) view
     | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
     | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
     | Catch :
@@ -288,6 +542,11 @@ module Private = struct
   external view : ('a, 'err) t -> ('a, 'err) view = "%identity"
 
   let daemon = daemon_internal
+
+  let island_submit = Island_runtime.submit
+  let island_submit_map = Island_runtime.submit_map
+  let island_submit_map_result = Island_runtime.submit_map_result
+  let island_submit_all_settled = Island_runtime.submit_all_settled
 
   let make_supervisor ~sw ~max_failures =
     {

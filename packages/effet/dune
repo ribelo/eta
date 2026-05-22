@@ -1,4 +1,4 @@
 (library
  (name effet)
  (public_name effet)
-(libraries eio portable))
+ (libraries eio portable parallel parallel.scheduler))

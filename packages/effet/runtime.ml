@@ -87,6 +87,7 @@ type 'err t = {
   logger : Capabilities.logger;
   meter : Capabilities.meter;
   random : Capabilities.random;
+  island_pool : E.Island.pool option;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
   active : int P_atomic.t;
@@ -97,7 +98,7 @@ let default_error_renderer _ = "<typed failure>"
 
 let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     ?(sampler = Sampler.always_on) ?(auto_instrument = false)
-    ?(logger = Logger.noop) ?(meter = Meter.noop) ?random
+    ?(logger = Logger.noop) ?(meter = Meter.noop) ?random ?island_pool
     ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let sleep =
@@ -130,6 +131,7 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     logger;
     meter;
     random;
+    island_pool;
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;
@@ -231,6 +233,14 @@ let cause_of_exn_runtime runtime key exn =
 let die_of_exn_runtime runtime exn =
   die_of_exn ~capture_backtrace:runtime.capture_backtrace exn
 
+let island_pool runtime override =
+  match override with
+  | Some pool -> pool
+  | None -> (
+      match runtime.island_pool with
+      | Some pool -> pool
+      | None -> failwith "Effect.island: island executor not configured")
+
 let run_finalizers ~runtime ~fail_key finalizers =
   Eio.Cancel.protect @@ fun () ->
   match !finalizers with
@@ -281,6 +291,32 @@ let rec interpret :
       if runtime.auto_instrument then
         instrument_leaf ~runtime ~error_renderer ~fail_key ~name f
       else f ()
+  | EP.Island { name; f; input } ->
+      let run () = EP.island_submit name (island_pool runtime None) f input in
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
+      else run ()
+  | EP.Island_map { name; pool; f; inputs } ->
+      let run () =
+        EP.island_submit_map name (island_pool runtime pool) f inputs
+      in
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
+      else run ()
+  | EP.Island_map_result { name; pool; f; inputs } ->
+      let run () =
+        EP.island_submit_map_result name (island_pool runtime pool) f inputs
+      in
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
+      else run ()
+  | EP.Island_all_settled { name; pool; f; inputs } ->
+      let run () =
+        EP.island_submit_all_settled (island_pool runtime pool) f inputs
+      in
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
+      else run ()
   | EP.Bind (e, k) ->
       let v = interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e in
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers (k v)
@@ -862,7 +898,12 @@ and retry_eff :
   done;
   Option.get !result
 
-let run t eff =
+let run ?island_pool t eff =
+  let t =
+    match island_pool with
+    | None -> t
+    | Some pool -> { t with island_pool = Some pool }
+  in
   (* Fast path for terminal nodes: returning a pure value or a typed
      failure does not need a fresh switch, a tracer fiber context, a
      finalizers ref, or a try/with frame. Effect-v4 has the same

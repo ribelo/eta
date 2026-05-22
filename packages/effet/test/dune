@@ -4,3 +4,11 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree island_negative)
+  (:effet_cmxa ../effet.cmxa))
+ (action
+  (run bash island_negative/run.sh %{effet_cmxa})))
