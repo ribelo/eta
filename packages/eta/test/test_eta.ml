@@ -1024,6 +1024,30 @@ let test_effect_timeout_allows_fast_success () =
   check_exit_ok Alcotest.string "completed" "done"
     (Eio.Promise.await promise)
 
+let test_effect_timeout_nested_cancel_maps_to_outer_timeout () =
+  with_test_clock @@ fun sw clock rt ->
+  let inner =
+    Effect.pure "done"
+    |> Effect.delay (Duration.seconds 10)
+    |> Effect.timeout (Duration.seconds 10)
+  in
+  let eff =
+    inner
+    |> Effect.timeout (Duration.seconds 5)
+    |> Effect.catch (fun (`Timeout : [ `Timeout ]) ->
+           Effect.fail `Total_timeout)
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 3;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Total_timeout) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected mapped timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected mapped timeout"
+
 let test_effect_race_ignores_early_failure_until_success () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_success ms value =
@@ -2136,6 +2160,34 @@ let test_all_settled_runs_all_children () =
       ((unit, [> `Boom ] Cause.t) result list, _) Exit.t);
   Alcotest.(check int) "slow children completed" 2 !slow_done
 
+let test_all_settled_timeout_scoped_resource_is_typed () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = ref 0 in
+  let body =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ())
+         ~release:(fun () ->
+           Effect.sync "release" (fun () -> incr released))
+      |> Effect.bind (fun () ->
+             Effect.delay (Duration.seconds 10) Effect.unit))
+    |> Effect.timeout (Duration.seconds 5)
+  in
+  let promise = fork_run sw rt (Effect.all_settled [ body ]) in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Ok [ Error (Cause.Fail `Timeout) ] ->
+      Alcotest.(check int) "released" 1 !released
+  | Exit.Ok [ Error cause ] ->
+      Alcotest.failf "expected typed timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected one settled timeout"
+  | Exit.Error cause ->
+      Alcotest.failf "expected all_settled success, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+
 let test_all_settled_empty () =
   with_runtime @@ fun rt ->
   Alcotest.(check int) "empty" 0 (List.length (run_ok rt (Effect.all_settled [])))
@@ -2866,6 +2918,8 @@ let () =
             test_all_settled_collects_successes_and_failures;
           Alcotest.test_case "all_settled runs all children" `Quick
             test_all_settled_runs_all_children;
+          Alcotest.test_case "all_settled timeout scoped resource typed" `Quick
+            test_all_settled_timeout_scoped_resource_is_typed;
           Alcotest.test_case "all_settled empty" `Quick test_all_settled_empty;
           Alcotest.test_case "for_each_par success" `Quick
             test_for_each_par_success;
@@ -2913,6 +2967,8 @@ let () =
             test_effect_timeout_uses_virtual_clock;
           Alcotest.test_case "timeout allows fast success" `Quick
             test_effect_timeout_allows_fast_success;
+          Alcotest.test_case "nested timeout maps outer timeout" `Quick
+            test_effect_timeout_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick

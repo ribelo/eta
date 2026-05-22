@@ -12883,3 +12883,664 @@ Shipped package gate:
 
 Result: pass. eta-schema, ppx_eta, eta-otel, eta-stream, and eta package tests
 all passed.
+
+## V-Http-Review3-Incorporation - GPT Pro review of Phase H-S evidence
+
+Question: after Phase H-S closed, an external GPT Pro review of the
+scratch labs and the journal verdicts was conducted. What did the
+review find, and what does the plan need to absorb?
+
+### Evidence
+
+Review payload built with the big-picture skill:
+
+    /tmp/big-picture-eta-http-research-20260522-211514-464478601.txt
+
+Repomix payload covering scratch/eta_http_research/ plus an embedded
+journal slice for V-Http-S1 through V-Http-Phase-S. 39111 estimated
+tokens, 32 files, 187486 prompt chars.
+
+The review was framed as a senior-eyes evidence pass: where is the
+evidence weaker than the verdict, what gaps were not probed, which
+hypotheses should be reopened, what new hypotheses are missing. The
+project-existence question (whether eta-http should exist at all) is
+explicitly out of scope per the user's call: the goal is to prove HOW
+to write eta-http, not WHETHER. H-A0 stays as parallel context, not as
+a gate.
+
+### Findings already addressed
+
+Most of the review's P0 and P1 findings were already absorbed by the
+agent's earlier Review #2 reframing pass. Specifically:
+
+- H-S4 (TestClock as substrate) was already replaced by H-S4a
+  (cancellation safety) at Eta-c7h. V-Http-S4a closed PASS-WITH-CAVEAT.
+- H-S5 (Cause.t pretty-print) was already replaced by H-D-Errors
+  (structured HTTP error taxonomy with redaction) at Eta-619.
+- H-S0 (HTTP/1.1 substrate) already exists at Eta-3s9 and shipped
+  V-Http-S0-Partial.
+- The Phase H-S pivot rule was already narrowed: only H-S0 / H-S1 /
+  H-S2 / H-S3 failures pivot v1 architecture. H-S4a is reshaping, not
+  pivoting.
+- H-D2 (unified pool) replaced by H-D2a (request API) at Eta-p47.
+- H-D3 (Schedule.honor_retry_after) replaced by H-D3a (outcome-driven
+  retry) at Eta-7xp.
+- H-D4 (gzip via Stream.map) replaced by H-D4a (stateful transducer
+  with expansion caps) at Eta-eor.
+- H-D0 (bounded channel/permit primitive) was filed at Eta-6jh as the
+  fix-Eta-along-the-way primitive that H-D1 will need.
+- H-Q1 (frame round-trip) replaced by H-Q1a (state-machine invariants)
+  at Eta-lsc.
+- H-Q2 was renamed away from "Rapid Reset" to "malicious peer stream
+  churn" with the client-vs-server-threat-model fix.
+- H-Q4 (curl interop with public server scope) replaced by H-Q4a
+  (scripted fixture interop) at Eta-2ap.
+- H-Q5 (expanded malicious-peer envelope: CPU/Huffman, SETTINGS,
+  WINDOW_UPDATE, PING flood, DATA slowloris, decompression bombs,
+  allocator pressure) was filed at Eta-ad1.
+- H-O1 (observability conforming to OTel HTTP semconv without
+  recursion) was filed at Eta-2s0.
+- H-D6 (timeout taxonomy: connect / TLS / write / header / body-idle /
+  total / pool-acquire) was filed at Eta-64q.
+- H-P1 (product semantics: redirects, cookies-out-of-scope, trailers,
+  HEAD, early responses, pipelining-out-of-scope) was filed at Eta-k4r.
+- H-G1 (gRPC forward-compat) was filed at Eta-m8h.
+- H-Ops1 (dependency closure, license, build-time, CVE process) was
+  filed at Eta-aea.
+- H-D5 (ALPN-to-pool bootstrap state machine) was filed at Eta-qvi.
+- H-M1 (eta-otel migration) at Eta-8tn replaced the optimistic <150
+  LOC bound with seven explicit behavior-preservation invariants.
+
+### Findings newly addressed in this incorporation
+
+Three concrete gaps that Review #3 named and that the existing tasks
+did not yet enforce:
+
+1. Server-push rejection has a stated out-of-scope decision but no
+   test enforcing it. Added as state-machine invariant (i) in H-Q1a
+   (Eta-lsc): eta-http sends SETTINGS_ENABLE_PUSH=0 and treats any
+   PUSH_PROMISE as a connection error per RFC 9113 sect 8.4. Also added
+   to the H-Q4a interop matrix (Eta-2ap) as a misbehaving-peer scenario.
+
+2. PRIORITY frame tolerance has a stated out-of-scope decision but no
+   test enforcing parser tolerance. Added as state-machine invariant
+   (j) in H-Q1a (Eta-lsc): PRIORITY frames are accepted by the parser
+   and ignored by the scheduler consistent with RFC 9113 sect 5.3.2.
+
+3. Server-Sent Events were in-scope-by-implication (streaming bodies
+   are claimed) but not explicitly tested. SSE is the canonical
+   adversary for response_body_idle_timeout: a long-lived legitimate
+   stream with heartbeat comments must not be killed mid-flight.
+   Added as fixtures (f) and (g) in H-D6 (Eta-64q): heartbeat-bearing
+   SSE happy path AND stalled SSE stream. Also added to H-Q4a interop
+   matrix as a long-lived streaming scenario.
+
+4. WebSocket upgrade is out of scope for v1 but must reject gracefully
+   (RFC 8441 reserves the extension point). Added to H-Q4a interop
+   matrix as a misbehaving-peer scenario: server replies 101 Switching
+   Protocols / Upgrade: websocket; eta-http rejects with a typed error.
+
+5. Evidence-artifact discipline has been consolidated into the umbrella
+   (Eta-ck1) so it applies uniformly across every hypothesis: exact
+   dep versions, reproducible command transcripts, property-test seeds
+   plus shrunk failure cases, RSS sampling alongside Gc.quick_stat,
+   fd/fiber/permit baselines for cancellation tests, coverage matrix,
+   negative-evidence sections, decision blocks, ADR landing where
+   public API is constrained.
+
+### Findings explicitly skipped per user direction
+
+The review's P0 architectural-alternatives finding (H-A0 as a project
+gate) is explicitly not adopted. H-A0 (Eta-01u) remains as parallel
+context calibration, not a gate. The user's call: the goal is to prove
+how to write eta-http, not whether eta-http should exist. The Popper
+discipline applies inside the architecture choice, not around it.
+
+### Decision
+
+Phase H-D may proceed without further reframing. The backlog now
+encodes both Review #2 (already absorbed) and Review #3 (this entry).
+Three hypothesis tasks were updated in place (Eta-lsc, Eta-2ap,
+Eta-64q) rather than replaced; the umbrella description was extended
+with the consolidated evidence-artifact discipline.
+
+### Consequences
+
+When the agent picks up H-D, the state-machine property tests (H-Q1a)
+will need fixtures for server-push and PRIORITY in addition to the
+RST_STREAM / GOAWAY / cancellation / window / trailer / pool
+invariants. The interop matrix (H-Q4a) will need SSE, server-push,
+and WebSocket-rejection rows alongside the protocol edge cases.
+Timeout-taxonomy work (H-D6) will need SSE happy-path and stall
+fixtures, not only the body-stalled / total-deadline pair.
+
+
+## V-Pool-Gap - public connection-pool primitive is not probed and is needed
+
+Question: do we have the primitives we need for eta-http connection pooling,
+or is there a gap nobody has probed?
+
+### Evidence
+
+The agent who shipped Phase H-S substrate research flagged a worry: Eta has
+the right primitives for typed effects, scoped resources, retry/backoff,
+observability, and timeouts, but Resource may be too cache-shaped for
+connection pools, and bounded acquire/use/release helpers are not obviously
+in place.
+
+Cross-referencing with the journal:
+
+V-Rs (lines 7195-7370) closed Resource as the Effet-owned cached-loader
+abstraction. Quoted from V-Rsv4: Resource is not a general Effect-TS Resource
+port. It is N=1 cached value with last-good semantics and refresh-on-schedule.
+The current resource.mli (manual / auto / get / refresh / failures) confirms:
+no acquire/release/use, no per-connection health, no max-size, no idle
+eviction, no wait queue.
+
+H-D0 (Eta-6jh, bounded channel/permit primitive) covers admission counts via
+permit_set: acquire/release/available are integer permit counters. Permits
+are not connection storage; H-D0 explicitly frames the primitive around HTTP/2
+flow control and writer-fiber outbound mailbox, not pool-of-connections.
+
+Eta.Blocking.Pool exists but is sys-thread-pool, not generic resource-pool.
+
+H-D5 (Eta-qvi, ALPN to pool bootstrap) sketches Http1_pool and
+Http2_multiplexer dispatch but assumes the pool primitive exists with some
+shape it does not pick.
+
+H-D2a (Eta-p47, request API) hides h1 / h2 lifecycle from callers but
+similarly assumes a pool primitive exists.
+
+So the connection-pool-primitive question is unprobed across the entire
+backlog. Three downstream tasks all assume an answer that nobody chose.
+
+### Decision
+
+File H-D-Pool (Eta-a55) as a survival lab in the V-Rs format. Branch A
+prototypes a connection pool inside eta-http (private). Branch B prototypes
+it as a public Eta.Pool generic over connection type. The lab decides which
+ships, surveys prior art (Caqti pool, undici, hyper, HikariCP, pgbouncer),
+and writes V-Pool-Survival when the verdict closes.
+
+H-D-Pool blocks H-D5 and H-D2a because both task designs depend on whether
+Pool is a public Eta primitive (consumed by eta-http and any future Eta IO
+consumer) or an internal eta-http module (eta-http private).
+
+### Why now and not inside H-D5
+
+The umbrella's fix-Eta-along-the-way working mode says primitive gaps are
+discovered during dogfooding. That is correct for primitives that surface
+inside a hypothesis. The pool primitive is different: H-D5 and H-D2a both
+assume it exists. Discovering the gap inside H-D5 would force H-D5 to make
+the public-vs-internal decision implicitly while focused on ALPN dispatch.
+Probing it before H-D5 starts is cheaper and produces a cleaner decision.
+
+This is the same pattern V-Rs used: probe the abstraction shape before the
+consumers depend on it implicitly.
+
+### Out of scope for H-D-Pool
+
+- HTTP-specific pool semantics (e.g., h2 stream-permit-vs-h1-connection-handle
+  distinction). That belongs in H-D5.
+- Pool API ergonomics inside eta-http's request shape. That belongs in H-D2a.
+- Eta.Resource scope changes. V-Rs already settled Resource as cache-shaped;
+  H-D-Pool does not reopen it.
+- Replacing Eta.Blocking.Pool. Sys-thread-pool stays as is.
+
+### Consequences
+
+If V-Pool-Survival verdict is library: ship Eta.Pool in packages/eta with its
+own ADR and journal entry V-Eta-Pool. eta-http h1 connection pool and h2
+multiplexer connection cache both build on Eta.Pool. Future eta-sql /
+eta-grpc / eta-llm inherit the primitive without reopening this question.
+
+If V-Pool-Survival verdict is recipe: pool stays internal to eta-http, no
+pool primitive types leak into public eta-http API, and the decision is
+documented so future Eta IO consumers do not reopen it without new evidence.
+
+## V-Pool-Survival - Pool primitive dogfood lab
+
+### Why this entry exists
+
+Eta-a55 asked whether eta-http connection pooling should be an eta-http-private
+recipe or a public Eta.Pool primitive. During the work, the user sharpened the
+purpose: this is dogfooding Eta with a real IO lifecycle, not merely writing a
+pool for an HTTP client. The lab therefore records both the pool verdict and
+the Eta primitives that did not hold up cleanly.
+
+### Artifacts
+
+- scratch/eta_research/pool_survival/README.md
+- scratch/eta_research/pool_survival/prior_art.md
+- scratch/eta_research/pool_survival/dogfood_gaps.md
+- scratch/eta_research/pool_survival/results.md
+- scratch/eta_research/pool_survival/adr.md
+- scratch/eta_research/pool_survival/common.ml
+- scratch/eta_research/pool_survival/branch_a_internal_pool.ml
+- scratch/eta_research/pool_survival/branch_b_eta_pool.ml
+- scratch/eta_research/pool_survival/runtime_smoke.ml
+- scratch/eta_research/pool_survival/allocation_probe.ml
+- scratch/eta_research/pool_survival/treiber_stack_probe.ml
+- scratch/eta_research/pool_survival/portable_atomic_positive.ml
+- scratch/eta_research/pool_survival/oxcaml_borrow_positive.ml
+- scratch/eta_research/pool_survival/oxcaml_conn_unique_negative.ml
+- scratch/eta_research/pool_survival/oxcaml_borrow_effect_capture_negative.ml
+- scratch/eta_research/pool_survival/atomic_portable_negative.ml
+
+### Prior-art mapping
+
+The lab mapped five settled pool designs onto Eta:
+
+- Caqti / caqti-eio: bounded checkout/use/checkin confirms Resource is the
+  wrong abstraction.
+- undici Pool and hyper client pool: request callers should not see pool
+  handles; pooling belongs under the client/request layer.
+- HikariCP: lifecycle, health, lifetime, stats, and warm reuse are worth
+  centralizing.
+- pgbouncer: pool modes differ by protocol, so a generic primitive must not
+  become the public eta-http request API.
+
+### Runtime evidence
+
+Command:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/runtime_smoke.exe
+~~~
+
+Result summary:
+
+~~~text
+branch_a_internal_pool cancel_waiter FAIL ... cancelled_waiters=1 ... waiting=0
+branch_a_internal_pool workload PASS ... max_live=8 ... health_rejected=1 ... pool_shutdowns=92
+branch_a_internal_pool idle_evict PASS ...
+branch_b_eta_pool cancel_waiter FAIL ... cancelled_waiters=1 ... waiting=0
+branch_b_eta_pool workload PASS ... max_live=8 ... health_rejected=1 ... pool_shutdowns=92
+branch_b_eta_pool idle_evict PASS ...
+pool_survival runtime smoke passed
+~~~
+
+The cancellation fixture failure is a dogfood finding, not a branch-specific
+pool failure. Both branches clean the wait slot, but the waiter appears in
+all_settled as Cause.Die containing nested Eta__Runtime.Raised_cause exceptions
+instead of a clean typed timeout/cancellation result.
+
+### OxCaml evidence
+
+Treiber LIFO works with Stdlib.Atomic:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/treiber_stack_probe.exe
+~~~
+
+~~~text
+treiber_stack_probe PASS lifo=true atomic=Stdlib.Atomic
+~~~
+
+After checking oxmono, the correct portable atomic API is Portable.Atomic, not
+Atomic.Portable. The installed portable package exposes Portable.Atomic and
+Atomic.Loc; the positive probe passes:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/portable_atomic_positive.exe
+~~~
+
+~~~text
+portable_atomic_positive PASS api=Portable.Atomic lifo=true
+~~~
+
+Negative probes:
+
+~~~text
+atomic_portable_negative: Atomic.Portable is unbound; correct path is Portable.Atomic
+oxcaml_conn_unique_negative: pooled conn is aliased, expected unique
+oxcaml_borrow_effect_capture_negative: local borrow cannot be captured by global Effect.sync closure
+~~~
+
+Conclusion: LIFO warm reuse over Portable.Atomic is a viable internal
+candidate. This lab did not prove it is the best storage policy; it only
+proved the candidate compiles and behaves as LIFO. A shipped Eta.Pool still
+needs a storage-policy comparison against mutex-protected LIFO/FIFO and
+Eio.Stream-style FIFO with throughput, allocation, fairness, and warm-reuse
+metrics. The conn local-unique API is still not ready for current Eta.
+
+### Allocation and cost signal
+
+Command:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/allocation_probe.exe
+~~~
+
+Result:
+
+~~~text
+branch_a_internal_pool allocation_probe count=1000 wall_ms=1 minor_words=516553 promoted_words=263 major_words=263 minor_collections=6 major_collections=3
+branch_b_eta_pool allocation_probe count=1000 wall_ms=0 minor_words=515883 promoted_words=27 major_words=27 minor_collections=6 major_collections=3
+~~~
+
+This is roughly 516 minor words per acquire/use/release in the lab. It is not a
+production benchmark, but it is enough to require real performance evidence
+before Eta.Pool claims to be low-allocation.
+
+### LOC
+
+~~~text
+ 151 common.ml
+ 303 branch_a_internal_pool.ml
+ 326 branch_b_eta_pool.ml
+ 240 runtime_smoke.ml
+  86 allocation_probe.ml
+  33 treiber_stack_probe.ml
+  36 oxcaml_borrow_positive.ml
+1175 total
+~~~
+
+Branch B is only 23 LOC larger than Branch A in the implementation probe while
+removing duplication pressure from future Eta IO consumers.
+
+### Dogfood gaps
+
+The durable gap list is in
+scratch/eta_research/pool_survival/dogfood_gaps.md. The high-priority items:
+
+- timeout inside all_settled under scoped acquire/release can leak internal
+  Raised_cause as Cause.Die;
+- Eta lacks a public cancellation-safe wait-slot primitive;
+- idle eviction needs package-owned daemon behavior, so a userland recipe
+  pushes consumers toward Effect.Private.daemon or raw Eio fibers;
+- Atomic.Portable was the wrong module path; Portable.Atomic is available;
+- direct conn local unique cannot be produced from aliased pool storage;
+- abstract local borrows do not compose with lazy Eta Effect.t callbacks;
+- timeout typing is awkward for optional-deadline APIs;
+- allocation on the pool path needs a real benchmark gate;
+- Pool observability needs first-class stats/metrics/tracing shape.
+
+### Decision diary
+
+#### V-Pool-Survival-1 - Resource is not the pool primitive
+
+Decision: do not extend Resource into a pool.
+
+Evidence: the lab requires max size, idle list, health check, shutdown, wait
+queue, and per-connection stats. Resource remains the V-Rs cached-loader
+abstraction.
+
+Confidence: High.
+
+#### V-Pool-Survival-2 - Pool should be Eta-owned, not eta-http-private
+
+Decision: accept the library shape.
+
+Evidence: Branch A and Branch B implement the same lifecycle protocol. The
+generic branch is only 23 LOC larger in the lab and avoids duplicating
+wait/shutdown/health logic across eta-http, eta-sql, eta-grpc, and eta-llm.
+
+Counterevidence considered: HTTP/2 multiplexer semantics are not identical to
+HTTP/1.1 connection checkout. This means Pool must stay internal to eta-http,
+not that eta-http should copy the generic primitive.
+
+Confidence: Medium-high.
+
+Would change if: H-D5 proves ALPN/h2 bootstrap cannot consume a generic bounded
+resource primitive without leaking protocol-specific lifecycle.
+
+#### V-Pool-Survival-3 - Do not ship local-unique borrow as v1 API
+
+Decision: keep the OxCaml borrow design deferred.
+
+Evidence: Portable.Atomic can express the LIFO storage direction. The exact
+conn local-unique API still fails from aliased pool storage. An abstract
+local-unique borrow handle compiles, but it cannot be captured into Eta's lazy
+Effect.t, which is how effectful connection operations are built today.
+
+Confidence: Medium.
+
+Would change if: Eta gains a local-aware effect representation or a synchronous
+borrow callback API that can still express real network operations.
+
+#### V-Pool-Survival-4 - Cancellation cause quality is an Eta runtime gap
+
+Decision: fix or explicitly account for timeout/all_settled/scoped-resource
+cause normalization before relying on Eta.Pool for production HTTP.
+
+Evidence: both branches clean the wait slot, but all_settled records Cause.Die
+with nested Raised_cause exceptions under timeout cancellation.
+
+Confidence: High that the observed behavior is bad; medium on exact fix.
+
+#### V-Pool-Survival-5 - File Eta.Pool implementation task, but gate it
+
+Decision: file a separate Eta.Pool implementation task and gate it on the
+dogfood gaps.
+
+Evidence: the primitive shape is valuable, but the dogfood run found runtime,
+typing, observability, and performance work that should not be buried inside
+eta-http.
+
+Follow-up filed: Eta-y9p.
+
+### Consequences
+
+H-D5 and H-D2a were updated to reference this verdict. They should consume
+Eta.Pool internally where it fits, keep Pool out of the public eta-http request
+API, and only reopen the primitive if their own fixtures produce new evidence.
+
+## V-Pool-Choice - Eta.Pool idle storage comparison
+
+Question: among the feasible idle-storage policies, which one is actually best
+for Eta.Pool under OxCaml/Eio constraints?
+
+Lab:
+
+- scratch/eta_research/pool_choice/storage_policy_bench.ml
+- scratch/eta_research/pool_choice/pool_protocol_bench.ml
+- scratch/eta_research/pool_choice/domain_safe_treiber_positive.ml
+- scratch/eta_research/pool_choice/domain_safe_mutex_counter_positive.ml
+- scratch/eta_research/pool_choice/domain_safe_mutex_list_negative.ml
+- scratch/eta_research/pool_choice/domain_safe_stream_negative.ml
+- scratch/eta_research/pool_choice/portable_atomic_eio_conn_negative.ml
+
+Command:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_choice/storage_policy_bench.exe
+nix develop .#oxcaml -c dune exec scratch/eta_research/pool_choice/pool_protocol_bench.exe
+~~~
+
+Representative result:
+
+~~~text
+eio_fibers warm_reuse_matters treiber_lifo_portable_atomic wall_ms=12 warm_pct=99.99 p99_us=2.15 active_items=16 cas_retries=0
+eio_fibers warm_reuse_matters mutex_lifo wall_ms=14 warm_pct=99.99 p99_us=2.15 active_items=16 cas_retries=0
+eio_fibers warm_reuse_matters mutex_fifo wall_ms=25 warm_pct=0.00 p99_us=4.05 active_items=64 cas_retries=0
+eio_fibers warm_reuse_matters eio_stream_fifo wall_ms=25 warm_pct=0.00 p99_us=3.10 active_items=64 cas_retries=0
+domains warm_reuse_matters treiber_lifo_portable_atomic wall_ms=47 warm_pct=90.00 p99_us=20.03 cas_retries=827420
+domains warm_reuse_matters mutex_lifo wall_ms=57 warm_pct=76.77 p99_us=38.86 cas_retries=0
+domains warm_reuse_matters mutex_fifo wall_ms=88 warm_pct=0.00 p99_us=42.92
+domains warm_reuse_matters eio_stream_fifo wall_ms=87 warm_pct=0.00 p99_us=46.01
+~~~
+
+Full-protocol result through Eta acquire/use/release:
+
+~~~text
+protocol_churn treiber_lifo_portable_atomic wall_ms=805 warm=3192 cold=8 wait_loops=2197 opened=9 closed=9 health_rejected=1 cancelled_waiters=0
+protocol_churn mutex_lifo wall_ms=802 warm=3192 cold=8 wait_loops=2197 opened=9 closed=9 health_rejected=1 cancelled_waiters=0
+protocol_churn mutex_fifo wall_ms=691 warm=3172 cold=28 wait_loops=2191 opened=9 closed=9 health_rejected=1 cancelled_waiters=0
+protocol_warm_cache treiber_lifo_portable_atomic wall_ms=412 warm=3200 cold=64 opened=65 closed=65 health_rejected=1
+protocol_warm_cache mutex_lifo wall_ms=407 warm=3200 cold=64 opened=65 closed=65 health_rejected=1
+protocol_warm_cache mutex_fifo wall_ms=527 warm=40 cold=3224 opened=65 closed=65 health_rejected=1
+cancellation_smoke all candidates: outcomes=ok:holder_done,ok:cancelled waiting=0 cancelled_waiters=1 live=0
+idle_eviction_smoke all candidates: total=0 idle=0 in_use=0 opened=1 closed=1 live=0
+~~~
+
+Mode-safety evidence:
+
+~~~text
+domain_safe_treiber_positive PASS
+domain_safe_mutex_counter_positive PASS
+domain_safe_mutex_list_negative: mutable values field rejected under Domain.Safe.spawn
+domain_safe_stream_negative: Eio.Stream.take_nonblocking is nonportable under Domain.Safe.spawn
+portable_atomic_eio_conn_negative: Eio-shaped connection payload is nonportable, but Portable.Atomic.compare_and_set requires a portable replacement value
+~~~
+
+Decision:
+
+- V-Pool-Choice-1 - Use LIFO, not FIFO, for idle connection reuse.
+  Rationale: FIFO is fair over idle entries but destroys warm reuse in the
+  benchmark. When warm reuse matters, FIFO/Stream are materially slower.
+- V-Pool-Choice-2 - Do not make arbitrary Eta.Pool cross-domain in v1.
+  Rationale: eta-http connection payloads contain Eio handles, and
+  Portable.Atomic Treiber storage rejects an Eio-shaped connection record as
+  nonportable. Forcing portability into the public Pool payload type would make
+  the API worse for the actual eta-http dogfood case.
+- V-Pool-Choice-3 - Use mutex LIFO for v1 eta-http/Eta.Pool idle storage.
+  Rationale: it matches Treiber's warm behavior and wall time in the full
+  same-domain protocol, stores ordinary Eio connection handles, and keeps mode
+  constraints out of the public API.
+- V-Pool-Choice-4 - Keep Treiber LIFO over Portable.Atomic as the leading
+  candidate only for a future portable-payload/cross-domain Pool.
+  Rationale: it passes Domain.Safe.spawn for portable payloads and wins the raw
+  domain stress run, but it is not the right default for arbitrary Eio
+  connections.
+- V-Pool-Choice-5 - Do not use Eio.Stream as idle storage.
+  Rationale: it is FIFO, loses warm reuse, and its nonblocking take API is
+  nonportable under Domain.Safe.spawn. It can remain wait-queue prior art.
+- V-Pool-Choice-6 - Use the conservative callback API for v1 Pool.
+  Rationale: oxcaml_borrow_positive builds for a sealed local borrow only when
+  the returned Eta effect does not capture it; oxcaml_conn_unique_negative shows
+  an aliased stored connection cannot be passed as conn @ local unique; and
+  oxcaml_borrow_effect_capture_negative shows Effect.sync cannot capture a
+  local borrow because the stored closure must be global.
+
+Additional dogfood finding:
+
+- raw Portable.Atomic values expose mode friction. The first protocol version
+  failed when ordinary integer comparisons consumed Portable.Atomic.get results.
+  Eta.Pool should hide counter/flag/timestamp details behind private helpers.
+
+Still open:
+
+- repeat the benchmark against shipped Eta.Pool once implemented;
+- reopen local/unique borrows only if Eta gains a local-aware effect boundary or
+  a useful synchronous-only Pool API.
+
+## V-Channel-Choice - Bounded channel primitive for eta-http backpressure
+
+Question: what should Eta expose for eta-http bounded communication and
+flow-control backpressure?
+
+Lab:
+
+- scratch/eta_research/channel_choice/channel_choice.ml
+- scratch/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
+- scratch/eta_research/channel_choice/results.md
+
+Command:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/channel_choice/channel_choice.exe
+nix develop .#oxcaml -c ocamlfind ocamlc -package eio -thread -c scratch/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
+~~~
+
+Representative result:
+
+~~~text
+stress candidate=mutex_queue elapsed_ms=2 sent=3840 received=3840 max_depth=16 final_depth=0
+stress candidate=mutex_ring_int elapsed_ms=1 sent=3840 received=3840 max_depth=16 final_depth=0
+cancel_blocked_sender mutex_queue outcome=cancelled sent=1 final_depth=0 waiting_senders=0 cancelled_senders=1
+cancel_blocked_sender mutex_ring_int outcome=cancelled sent=1 final_depth=0 waiting_senders=0 cancelled_senders=1
+close_blocked_sender mutex_queue outcomes=closed,close_called closed=true final_depth=0
+close_blocked_sender mutex_ring_int outcomes=closed,close_called closed=true final_depth=0
+allocation_probe mutex_queue minor_words=280024 promoted_words=24
+allocation_probe mutex_ring_int minor_words=220024 promoted_words=24
+mailbox_drop_smoke first=enqueued second=dropped dropped=1
+eio_stream_close_gap closed=true first=1 second=2 blocked_finished=true
+domain_safe_eio_mutex_channel_negative: Eio.Mutex.lock is nonportable under Domain.Safe.spawn
+~~~
+
+Decision:
+
+- V-Channel-Choice-1 - Eta needs a public bounded Channel primitive for
+  eta-http backpressure.
+  Rationale: existing public Eta_stream.Mailbox is drop-on-full, and HTTP/2
+  flow control needs WAIT semantics.
+- V-Channel-Choice-2 - Use a same-domain Eio.Mutex/Eio.Condition implementation
+  for v1.
+  Rationale: it composes with Eta effects, supports cancellation cleanup, and
+  matches eta-http's same-domain Eio I/O ownership. It is not portable under
+  Domain.Safe.spawn, so do not promise cross-domain use.
+- V-Channel-Choice-3 - Prefer a preallocated ring over Queue.
+  Rationale: both pass the behavior probes, but ring allocates less in the
+  hot-path try_send/try_recv probe.
+- V-Channel-Choice-4 - Keep Mailbox for nonblocking wakeups and writer intents.
+  Rationale: offer returns Enqueued/Dropped/Closed and is exactly the right
+  shape for best-effort notification paths, but not for bounded backpressure.
+- V-Channel-Choice-5 - Do not wrap Eio.Stream as Eta.Channel.
+  Rationale: Eio.Stream has blocking add/take but no close/error propagation;
+  the close-gap smoke shows a blocked sender can enqueue after close=true.
+
+Follow-up filed: Eta-chn.
+
+## V-Timeout-Choice - eta-http timeout taxonomy and Eta timeout primitive gap
+
+Question: should eta-http use one total timeout, eta-http-level wrappers over
+Eta.Effect.timeout, or a new Eta runtime primitive for idle-progress deadlines?
+
+Lab:
+
+- scratch/eta_research/timeout_choice/timeout_choice.ml
+- scratch/eta_research/timeout_choice/results.md
+- scratch/eta_research/timeout_choice/defaults.md
+
+Command:
+
+~~~sh
+nix develop .#oxcaml -c dune exec scratch/eta_research/timeout_choice/timeout_choice.exe
+nix develop .#oxcaml -c dune runtest packages/eta/test --force
+nix develop .#oxcaml -c eta-oxcaml-test-shipped
+~~~
+
+Representative result:
+
+~~~text
+connect_timeout PASS error=connect_timeout
+tls_handshake_timeout PASS error=tls_handshake_timeout
+request_write_timeout PASS error=request_write_timeout
+response_header_timeout PASS error=response_header_timeout
+pool_acquire_timeout PASS error=pool_acquire_timeout
+body_idle_stall PASS error=response_body_idle_timeout
+fast_download_not_killed_by_idle PASS chunks=200
+sse_heartbeat_happy_path PASS chunks=10
+sse_stall PASS error=response_body_idle_timeout
+total_request_timeout_progressing_body PASS error=total_request_timeout
+single_total_timeout_kills_valid_sse PASS error=total_request_timeout
+~~~
+
+Runtime finding:
+
+- Layered timeouts initially exposed an internal cancellation/race cause instead
+  of the typed timeout observed by Effect.catch.
+- packages/eta/runtime.ml now normalizes timeout/cancellation races in
+  EP.Timeout and normalizes internal Raised_cause exceptions in EP.Catch and
+  EP.Tap_error.
+- packages/eta/test/test_eta.ml adds the regressions "all_settled timeout
+  scoped resource typed" and "nested timeout maps outer timeout".
+- The pool survival runtime smoke passes again after the fix.
+
+Decision:
+
+- V-Timeout-Choice-1 - eta-http needs seven independent timeout controls:
+  connect, TLS handshake, request write, response header, response body idle,
+  total request, and pool acquire.
+- V-Timeout-Choice-2 - response_body_idle_timeout is a per-read/per-frame
+  progress timeout. It resets on body chunks and SSE heartbeats.
+- V-Timeout-Choice-3 - a single total request timeout is rejected. It kills the
+  valid SSE heartbeat fixture.
+- V-Timeout-Choice-4 - Eta does not need a new runtime primitive for body-idle
+  deadlines. Effect.timeout composes after the runtime normalization fix.
+- V-Timeout-Choice-5 - Eta should add a typed timeout helper such as
+  Effect.timeout_as. Current Effect.timeout forces the wrapped effect's error
+  row to admit raw Timeout, which leaks into eta-http wrapper code.
+
+Follow-up filed: Eta-tmo.

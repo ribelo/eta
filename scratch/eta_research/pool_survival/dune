@@ -1,0 +1,23 @@
+(executable
+ (name runtime_smoke)
+ (modules common branch_a_internal_pool branch_b_eta_pool runtime_smoke)
+ (libraries eta eta-test eio eio_main alcotest))
+
+(executable
+ (name treiber_stack_probe)
+ (modules treiber_stack_probe))
+
+(executable
+ (name portable_atomic_positive)
+ (modules portable_atomic_positive)
+ (libraries portable))
+
+(executable
+ (name oxcaml_borrow_positive)
+ (modules oxcaml_borrow_positive)
+ (libraries eta))
+
+(executable
+ (name allocation_probe)
+ (modules common branch_a_internal_pool branch_b_eta_pool allocation_probe)
+ (libraries eta eio eio_main unix))

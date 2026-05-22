@@ -1,0 +1,4 @@
+(executable
+ (name channel_choice)
+ (modules channel_choice)
+ (libraries eta eta-stream eio eio_main unix))

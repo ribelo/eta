@@ -403,7 +403,7 @@ let rec interpret :
                 (handler err)
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
-      | exn -> raise_cause fail_key (die_of_exn_runtime runtime exn))
+      | exn -> raise_cause fail_key (cause_of_exn_runtime runtime inner_key exn))
   | EP.Tap_error (e, observe) ->
       let inner_key = Typed_fail.fresh () in
       (try
@@ -416,16 +416,40 @@ let rec interpret :
               raise_fail fail_key err
           | cause -> raise_cause fail_key cause)
       | Eio.Cancel.Cancelled _ -> raise_cause fail_key Cause.interrupt
-      | exn -> raise_cause fail_key (die_of_exn_runtime runtime exn))
+      | exn -> raise_cause fail_key (cause_of_exn_runtime runtime inner_key exn))
   | EP.Delay (d, e) ->
       runtime.sleep d;
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
   | EP.Timeout (d, e) ->
-      Eio.Fiber.first
-        (fun () ->
-          runtime.sleep d;
-          raise_fail fail_key `Timeout)
-        (fun () -> interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e)
+      let rec has_timeout : _ Cause.t -> bool = function
+        | Cause.Fail `Timeout -> true
+        | Cause.Sequential causes | Cause.Concurrent causes ->
+            List.exists has_timeout causes
+        | Cause.Suppressed { primary; finalizer } ->
+            has_timeout primary || has_timeout finalizer
+        | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+      in
+      let rec only_timeout_or_interrupt : _ Cause.t -> bool = function
+        | Cause.Fail `Timeout | Cause.Interrupt _ -> true
+        | Cause.Sequential causes | Cause.Concurrent causes ->
+            List.for_all only_timeout_or_interrupt causes
+        | Cause.Suppressed { primary; finalizer } ->
+            only_timeout_or_interrupt primary
+            && only_timeout_or_interrupt finalizer
+        | Cause.Fail _ | Cause.Die _ -> false
+      in
+      (try
+         Eio.Fiber.first
+           (fun () ->
+             runtime.sleep d;
+             raise_fail fail_key `Timeout)
+           (fun () ->
+             interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e)
+       with exn ->
+         let cause = cause_of_exn_runtime runtime fail_key exn in
+         if has_timeout cause && only_timeout_or_interrupt cause then
+           raise_fail fail_key `Timeout
+         else raise_cause fail_key cause)
   | EP.Concat children ->
       List.iter
         (fun child ->
