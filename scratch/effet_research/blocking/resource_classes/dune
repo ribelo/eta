@@ -1,0 +1,4 @@
+(executables
+ (names shared_pool_starvation db_fs_separate_pools per_pool_limits)
+ (libraries blocking_research_common blocking_research_pool eio eio.unix eio_main unix threads))
+

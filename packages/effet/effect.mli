@@ -142,6 +142,144 @@ module Island : sig
   end
 end
 
+module Blocking : sig
+  type ('a, 'err) effect = ('a, 'err) t
+
+  module Pool : sig
+    type t
+
+    type queue_policy = Wait | Reject
+    type shutdown_policy = Drain | Detach_started
+
+    type config = {
+      max_threads : int;
+      max_queued : int;
+      queue_policy : queue_policy;
+      shutdown_policy : shutdown_policy;
+    }
+
+    type stats = {
+      active : int;
+      queued : int;
+      completed : int;
+      rejected : int;
+      cancelled_before_start : int;
+      detached : int;
+    }
+
+    val create : ?name:string -> config -> t
+    (** Create a bounded blocking pool.
+
+        Use a separate pool per resource class when one class can saturate
+        another: database calls, filesystem operations, and third-party SDK
+        calls should usually have independent pools.
+
+        Example:
+
+        {[
+          let db_pool =
+            Effect.Blocking.Pool.create ~name:"db"
+              {
+                max_threads = 32;
+                max_queued = 64;
+                queue_policy = Wait;
+                shutdown_policy = Drain;
+              }
+
+          let fs_pool =
+            Effect.Blocking.Pool.create ~name:"fs"
+              {
+                max_threads = 128;
+                max_queued = 64;
+                queue_policy = Wait;
+                shutdown_policy = Drain;
+              }
+        ]}
+
+        Pools are independent: one full pool does not back-pressure another.
+        The runtime-owned default pool uses [max_threads = 128],
+        [max_queued = 64], [queue_policy = Wait], and
+        [shutdown_policy = Drain]. That thread count comes from the
+        Effet-OxCaml-q73 measurement matrix: num_cpu/2, num_cpu, num_cpu*2,
+        and fixed 32 failed the mixed workload heartbeat budget on this host;
+        fixed 128 met the budget and fixed 512 did not improve the measured
+        workload. Tune explicitly for applications with known higher blocking
+        I/O concurrency. *)
+
+    val create_domain_isolated : ?name:string -> config -> t
+    (** Warning: create a domain-isolated blocking pool. Use this ONLY for
+        legacy C bindings that hold the OCaml runtime lock during blocking
+        work (compression, crypto, sync DB clients without nonblocking polling,
+        etc.).
+
+        Cost: started callbacks run in separate OCaml domains. Do not create
+        many of these pools and do not use this as a general-purpose parallel
+        execution API.
+
+        Safety: callbacks must not capture Eio handles, Effet runtime state, or
+        any value that is not safe to use across domains. Doing so is undefined
+        behavior.
+
+        [Pool.create] is sufficient for blocking calls that release the runtime
+        lock, including well-behaved C bindings and Unix syscalls through Eio's
+        systhread substrate. Choose this constructor only when you have
+        measured the lock-hold case. *)
+
+    val stats : t -> stats
+    (** Snapshot pool counters. [active] is started work still running;
+        [queued] is admitted work waiting for an active slot; [completed] is
+        started work that reached a value or exception; [rejected] counts
+        [Reject] submissions refused because the pool was full;
+        [cancelled_before_start] counts admitted jobs removed before start by
+        parent cancellation; [detached] counts started jobs no longer awaited by
+        the caller or by [shutdown] because the pool used [Detach_started]. *)
+
+    val shutdown : t -> (unit, 'err) effect
+    (** Stop accepting new work. [Drain] waits for admitted work to finish.
+        [Detach_started] returns promptly and records still-running started
+        work as detached. *)
+  end
+
+  val submit :
+    ?pool:Pool.t -> ?name:string -> (unit -> 'a) -> ('a, 'err) effect
+  (** Namespaced spelling for {!blocking}. *)
+end
+
+val blocking :
+  ?pool:Blocking.Pool.t -> ?name:string -> (unit -> 'a) -> ('a, 'err) t
+(** [Effect.blocking f] runs [f ()] on a bounded blocking pool. Use this for
+    legacy synchronous I/O that cannot or should not be rewritten to Eio:
+    old DB clients, blocking filesystem libraries, sync SDKs, and blocking C
+    bindings.
+
+    Anti-pattern: do not call [f ()] directly inside an Eio fiber for legacy
+    blocking work. The V-Blocking-A research measured about 49ms heartbeat
+    freeze for a 50ms direct blocking call. Always go through
+    [Effect.blocking].
+
+    Anti-pattern: do not use [Effect.blocking] for CPU-bound work. Blocking
+    workers are an I/O escape hatch, not a CPU scheduler. Use {!Effect.island}
+    for one portable CPU callback or {!Effect.Island.map} for a finite batch.
+
+    Effect.blocking does NOT preempt running callbacks. Parent cancellation
+    while a job is started is honored only when the pool is configured with
+    [shutdown_policy = Detach_started] or via an explicit cooperative cancel
+    hook (not in v1).
+
+    Blocking worker callbacks are ordinary synchronous OCaml functions. They may
+    call legacy blocking libraries. They must not call Eio operations, run Effet
+    runtimes, submit nested blocking jobs, or resolve parent-domain promises as
+    supported API. Doing any of those is undefined behavior; Effet does not
+    guarantee deadlock, panic, or correctness for it.
+
+    The pool defaults to the runtime-owned pool. For resource isolation
+    (database connections, filesystem operations, third-party SDK calls), pass
+    an explicit [?pool] created by {!Blocking.Pool.create}.
+
+    For lock-holding C bindings, see {!Blocking.Pool.create_domain_isolated}.
+    The [?name] label propagates to tracing and metrics as the blocking
+    operation name. *)
+
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
@@ -368,6 +506,13 @@ module Private : sig
           inputs : 'input list;
         }
         -> (('output, 'error) Island.settled list, 'err) view
+    | Blocking : {
+        name : string;
+        pool : Blocking.Pool.t option;
+        f : unit -> 'a;
+      }
+        -> ('a, 'err) view
+    | Blocking_shutdown : Blocking.Pool.t -> (unit, 'err) view
     | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
     | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
     | Catch :
@@ -455,6 +600,38 @@ module Private : sig
     ('input -> ('output, 'error) result) @ portable ->
     'input list ->
     ('output, 'error) Island.settled list
+
+  type blocking_outcome =
+    | Blocking_ok
+    | Blocking_error of string
+    | Blocking_cancelled
+    | Blocking_rejected
+    | Blocking_shutdown_rejected
+    | Blocking_detached
+
+  type blocking_event = {
+    pool : string;
+    name : string;
+    queue_wait_ms : int;
+    run_ms : int;
+    outcome : blocking_outcome;
+  }
+
+  val blocking_default_config : Blocking.Pool.config
+
+  val blocking_submit :
+    sw:Eio.Switch.t ->
+    emit:(blocking_event -> unit) ->
+    Blocking.Pool.t ->
+    string ->
+    (unit -> 'a) ->
+    'a
+
+  val blocking_shutdown :
+    emit:(blocking_event -> unit) -> Blocking.Pool.t -> unit
+
+  val blocking_pool_name : Blocking.Pool.t -> string
+  val in_blocking_worker : unit -> bool
 
   val make_supervisor :
     sw:Eio.Switch.t -> max_failures:int option -> ('s, 'err) supervisor

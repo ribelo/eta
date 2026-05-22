@@ -1,0 +1,4 @@
+(executables
+ (names blocking_returns_value blocking_raises_exn blocking_raises_after_cancel blocking_raises_after_detach typed_errors_via_result)
+ (libraries blocking_research_common blocking_research_pool effet eio eio.unix eio_main unix threads))
+

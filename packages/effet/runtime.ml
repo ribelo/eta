@@ -88,6 +88,8 @@ type 'err t = {
   meter : Capabilities.meter;
   random : Capabilities.random;
   island_pool : E.Island.pool option;
+  blocking_pool : E.Blocking.Pool.t option;
+  default_blocking_pool : E.Blocking.Pool.t Lazy.t;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
   active : int P_atomic.t;
@@ -99,7 +101,7 @@ let default_error_renderer _ = "<typed failure>"
 let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     ?(sampler = Sampler.always_on) ?(auto_instrument = false)
     ?(logger = Logger.noop) ?(meter = Meter.noop) ?random ?island_pool
-    ?(capture_backtrace = true) () =
+    ?blocking_pool ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let sleep =
     match sleep with
@@ -132,6 +134,11 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     meter;
     random;
     island_pool;
+    blocking_pool;
+    default_blocking_pool =
+      lazy
+        (E.Blocking.Pool.create ~name:"runtime.default"
+           E.Private.blocking_default_config);
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;
@@ -241,6 +248,45 @@ let island_pool runtime override =
       | Some pool -> pool
       | None -> failwith "Effect.island: island executor not configured")
 
+let blocking_pool runtime override =
+  match override with
+  | Some pool -> pool
+  | None -> (
+      match runtime.blocking_pool with
+      | Some pool -> pool
+      | None -> Lazy.force runtime.default_blocking_pool)
+
+let string_of_blocking_outcome = function
+  | E.Private.Blocking_ok -> "ok"
+  | E.Private.Blocking_error msg -> "error:" ^ msg
+  | E.Private.Blocking_cancelled -> "cancelled"
+  | E.Private.Blocking_rejected -> "rejected"
+  | E.Private.Blocking_shutdown_rejected -> "shutdown"
+  | E.Private.Blocking_detached -> "detached"
+
+let emit_blocking_event runtime event =
+  let attrs =
+    [
+      ("effet.blocking.pool", event.E.Private.pool);
+      ("effet.blocking.name", event.name);
+      ("effet.blocking.outcome", string_of_blocking_outcome event.outcome);
+      ("effet.blocking.queue_wait_ms", string_of_int event.queue_wait_ms);
+      ("effet.blocking.run_ms", string_of_int event.run_ms);
+    ]
+  in
+  (match Eio.Fiber.get active_span_key with
+  | None -> ()
+  | Some span_id ->
+      runtime.tracer#add_event ~span_id ~name:"effet.blocking"
+        ~ts_ms:(runtime.now_ms ()) ~attrs);
+  runtime.meter#record ~name:"effet.blocking.queue_wait_ms"
+    ~description:"Time spent admitted but waiting for a blocking worker"
+    ~unit_:"ms" ~kind:Gauge ~attrs
+    ~value:(Int event.queue_wait_ms) ~ts_ms:(runtime.now_ms ());
+  runtime.meter#record ~name:"effet.blocking.run_ms"
+    ~description:"Time spent running a blocking callback" ~unit_:"ms"
+    ~kind:Gauge ~attrs ~value:(Int event.run_ms) ~ts_ms:(runtime.now_ms ())
+
 let run_finalizers ~runtime ~fail_key finalizers =
   Eio.Cancel.protect @@ fun () ->
   match !finalizers with
@@ -317,6 +363,16 @@ let rec interpret :
       if runtime.auto_instrument then
         instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
       else run ()
+  | EP.Blocking { name; pool; f } ->
+      let run () =
+        EP.blocking_submit ~sw:runtime.outer_sw
+          ~emit:(emit_blocking_event runtime) (blocking_pool runtime pool) name f
+      in
+      if runtime.auto_instrument then
+        instrument_leaf ~runtime ~error_renderer ~fail_key ~name run
+      else run ()
+  | EP.Blocking_shutdown pool ->
+      EP.blocking_shutdown ~emit:(emit_blocking_event runtime) pool
   | EP.Bind (e, k) ->
       let v = interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e in
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers (k v)
@@ -898,11 +954,23 @@ and retry_eff :
   done;
   Option.get !result
 
-let run ?island_pool t eff =
+let run ?island_pool ?blocking_pool t eff =
+  if EP.in_blocking_worker () then
+    invalid_arg
+      "Effet.Runtime.run must not be called from inside an Effect.Blocking worker callback";
   let t =
-    match island_pool with
-    | None -> t
-    | Some pool -> { t with island_pool = Some pool }
+    match (island_pool, blocking_pool) with
+    | None, None -> t
+    | _ ->
+        {
+          t with
+          island_pool =
+            (match island_pool with Some _ as pool -> pool | None -> t.island_pool);
+          blocking_pool =
+            (match blocking_pool with
+            | Some _ as pool -> pool
+            | None -> t.blocking_pool);
+        }
   in
   (* Fast path for terminal nodes: returning a pure value or a typed
      failure does not need a fresh switch, a tracer fiber context, a

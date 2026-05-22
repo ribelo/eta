@@ -1,6 +1,9 @@
 (test
  (name test_effet)
- (libraries effet alcotest eio_main)
+ (foreign_stubs
+  (language c)
+  (names blocking_test_stubs))
+ (libraries effet alcotest eio_main eio.unix unix threads)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

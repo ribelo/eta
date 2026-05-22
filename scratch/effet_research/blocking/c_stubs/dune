@@ -1,0 +1,13 @@
+(library
+ (name blocking_research_c_stubs)
+ (libraries unix)
+ (modules blocking_research_c_stubs)
+ (foreign_stubs
+  (language c)
+  (names blocking_stubs)))
+
+(executables
+ (names release_lock_sleep hold_lock_sleep hold_lock_cpu)
+ (modules release_lock_sleep hold_lock_sleep hold_lock_cpu)
+ (libraries blocking_research_common blocking_research_c_stubs eio eio.unix eio_main unix))
+

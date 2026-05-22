@@ -137,6 +137,369 @@ module Island_runtime = struct
          | Result_worker_died die -> Worker_died die)
 end
 
+module Blocking_runtime = struct
+  type queue_policy = Wait | Reject
+  type shutdown_policy = Drain | Detach_started
+
+  type config = {
+    max_threads : int;
+    max_queued : int;
+    queue_policy : queue_policy;
+    shutdown_policy : shutdown_policy;
+  }
+
+  type stats = {
+    active : int;
+    queued : int;
+    completed : int;
+    rejected : int;
+    cancelled_before_start : int;
+    detached : int;
+  }
+
+  type outcome =
+    | Blocking_ok
+    | Blocking_error of string
+    | Blocking_cancelled
+    | Blocking_rejected
+    | Blocking_shutdown_rejected
+    | Blocking_detached
+
+  type event = {
+    pool : string;
+    name : string;
+    queue_wait_ms : int;
+    run_ms : int;
+    outcome : outcome;
+  }
+
+  type kind = Systhread | Domain_isolated
+
+  type t = {
+    name : string;
+    config : config;
+    kind : kind;
+    mutex : Eio.Mutex.t;
+    condition : Eio.Condition.t;
+    mutable active : int;
+    mutable queued : int;
+    mutable completed : int;
+    mutable rejected : int;
+    mutable cancelled_before_start : int;
+    mutable detached : int;
+    mutable shutdown : bool;
+  }
+
+  type packed_result = Packed_ok of Obj.t | Packed_error of exn * Printexc.raw_backtrace
+
+  exception Pool_full of string
+  exception Pool_shutting_down of string
+  exception Blocking_worker_invariant_violation of string
+
+  let now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
+
+  let default_config =
+    {
+      max_threads = 128;
+      max_queued = 64;
+      queue_policy = Wait;
+      shutdown_policy = Drain;
+    }
+
+  let validate_config config =
+    if config.max_threads <= 0 then
+      invalid_arg "Effect.Blocking.Pool.create: max_threads must be > 0";
+    if config.max_queued < 0 then
+      invalid_arg "Effect.Blocking.Pool.create: max_queued must be >= 0"
+
+  let create_with_kind kind ?(name = "blocking") config =
+    validate_config config;
+    {
+      name;
+      config;
+      kind;
+      mutex = Eio.Mutex.create ();
+      condition = Eio.Condition.create ();
+      active = 0;
+      queued = 0;
+      completed = 0;
+      rejected = 0;
+      cancelled_before_start = 0;
+      detached = 0;
+      shutdown = false;
+    }
+
+  module Worker_context = struct
+    let mutex = Mutex.create ()
+    let workers : (int, int) Hashtbl.t = Hashtbl.create 16
+
+    let current_id () = Thread.id (Thread.self ())
+
+    let enter () =
+      let id = current_id () in
+      Mutex.lock mutex;
+      let count = Option.value (Hashtbl.find_opt workers id) ~default:0 in
+      Hashtbl.replace workers id (count + 1);
+      Mutex.unlock mutex;
+      id
+
+    let leave id =
+      Mutex.lock mutex;
+      let count = Option.value (Hashtbl.find_opt workers id) ~default:0 in
+      if count <= 1 then Hashtbl.remove workers id
+      else Hashtbl.replace workers id (count - 1);
+      Mutex.unlock mutex
+
+    let run f =
+      let id = enter () in
+      Fun.protect ~finally:(fun () -> leave id) f
+
+    let active () =
+      let id = current_id () in
+      Mutex.lock mutex;
+      let result = Hashtbl.mem workers id in
+      Mutex.unlock mutex;
+      result
+  end
+
+  let in_worker = Worker_context.active
+
+  let check_not_worker operation =
+    if in_worker () then
+      raise
+        (Blocking_worker_invariant_violation
+           (operation
+          ^ " must not be called from inside an Effect.Blocking worker callback"))
+
+  let name t = t.name
+
+  let stats t =
+    Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+    {
+      active = t.active;
+      queued = t.queued;
+      completed = t.completed;
+      rejected = t.rejected;
+      cancelled_before_start = t.cancelled_before_start;
+      detached = t.detached;
+    }
+
+  let emit_event emit t name submitted_at started_at ended_at outcome =
+    emit
+      {
+        pool = t.name;
+        name;
+        queue_wait_ms = max 0 (started_at - submitted_at);
+        run_ms = max 0 (ended_at - started_at);
+        outcome;
+      }
+
+  let raise_pool_full t name emit submitted_at =
+    let ts = now_ms () in
+    emit_event emit t name submitted_at ts ts Blocking_rejected;
+    raise (Pool_full t.name)
+
+  let raise_pool_shutting_down t name emit submitted_at =
+    let ts = now_ms () in
+    emit_event emit t name submitted_at ts ts Blocking_shutdown_rejected;
+    raise (Pool_shutting_down t.name)
+
+  let rec reserve_slot t name emit submitted_at =
+    match
+      Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+      if t.shutdown then `Shutdown
+      else if t.active < t.config.max_threads then (
+        t.active <- t.active + 1;
+        `Started)
+      else if t.queued < t.config.max_queued then (
+        t.queued <- t.queued + 1;
+        `Queued)
+      else
+        match t.config.queue_policy with
+        | Reject ->
+            t.rejected <- t.rejected + 1;
+            `Reject
+        | Wait -> `Wait_full
+    with
+    | `Started -> `Started
+    | `Queued -> `Queued
+    | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
+    | `Reject -> raise_pool_full t name emit submitted_at
+    | `Wait_full ->
+        Eio_unix.sleep 0.001;
+        reserve_slot t name emit submitted_at
+
+  let wait_queued_slot t name emit submitted_at =
+    try
+      let rec loop () =
+        match
+          Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+          if t.shutdown && t.config.shutdown_policy = Detach_started then (
+            t.queued <- max 0 (t.queued - 1);
+            Eio.Condition.broadcast t.condition;
+            `Shutdown)
+          else if t.active < t.config.max_threads then (
+            t.queued <- max 0 (t.queued - 1);
+            t.active <- t.active + 1;
+            Eio.Condition.broadcast t.condition;
+            `Started)
+          else `Wait
+        with
+        | `Wait ->
+            Eio_unix.sleep 0.001;
+            loop ()
+        | (`Started | `Shutdown) as state -> state
+      in
+      match loop () with
+      | `Started -> ()
+      | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
+    with (Eio.Cancel.Cancelled _ | Exit) ->
+      let ts = now_ms () in
+      Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+          t.queued <- max 0 (t.queued - 1);
+          t.cancelled_before_start <- t.cancelled_before_start + 1;
+          Eio.Condition.broadcast t.condition);
+      emit_event emit t name submitted_at ts ts Blocking_cancelled;
+      raise Exit
+
+  let release_started t =
+    Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+    t.active <- max 0 (t.active - 1);
+    t.completed <- t.completed + 1;
+    Eio.Condition.broadcast t.condition
+
+  let mark_detached t count =
+    if count > 0 then
+      Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+      t.detached <- t.detached + count;
+      Eio.Condition.broadcast t.condition
+
+  let run_callback f =
+    Worker_context.run @@ fun () ->
+    try Packed_ok (Obj.repr (f ())) with exn ->
+      Packed_error (exn, Printexc.get_raw_backtrace ())
+
+  let run_systhread name f =
+    Eio_unix.run_in_systhread ~label:name (fun () -> run_callback f)
+
+  let run_domain f =
+    let finished = Atomic.make false in
+    let result = Atomic.make None in
+    let domain =
+      Domain.spawn (fun () ->
+          let r = run_callback f in
+          Atomic.set result (Some r);
+          Atomic.set finished true)
+    in
+    while not (Atomic.get finished) do
+      Eio_unix.sleep 0.001
+    done;
+    Domain.join domain;
+    match Atomic.get result with Some r -> r | None -> assert false
+
+  let run_worker t name f =
+    match t.kind with
+    | Systhread -> run_systhread name f
+    | Domain_isolated -> run_domain f
+
+  let finish_result t name emit submitted_at started_at outcome =
+    let ended_at = now_ms () in
+    release_started t;
+    match outcome with
+    | Packed_ok value ->
+        emit_event emit t name submitted_at started_at ended_at Blocking_ok;
+        Obj.obj value
+    | Packed_error (exn, bt) ->
+        emit_event emit t name submitted_at started_at ended_at
+          (Blocking_error (Printexc.to_string exn));
+        Printexc.raise_with_backtrace exn bt
+
+  let submit ~sw ~emit t name f =
+    check_not_worker "Effect.Blocking.submit";
+    let submitted_at = now_ms () in
+    (try
+       match reserve_slot t name emit submitted_at with
+       | `Started -> ()
+       | `Queued -> wait_queued_slot t name emit submitted_at
+     with Exit -> raise Exit);
+    let started_at = now_ms () in
+    match t.config.shutdown_policy with
+    | Drain ->
+        Eio.Cancel.protect @@ fun () ->
+        let outcome = run_worker t name f in
+        finish_result t name emit submitted_at started_at outcome
+    | Detach_started ->
+        let promise =
+          Eio.Fiber.fork_promise ~sw (fun () ->
+              let outcome = run_worker t name f in
+              finish_result t name emit submitted_at started_at outcome)
+        in
+        (try Eio.Promise.await_exn promise with
+        | Eio.Cancel.Cancelled _ as exn ->
+            mark_detached t 1;
+            let ts = now_ms () in
+            emit_event emit t name submitted_at started_at ts Blocking_detached;
+            raise exn)
+
+  let shutdown ~emit t =
+    let detached =
+      Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+      t.shutdown <- true;
+      let detached =
+        match t.config.shutdown_policy with
+        | Drain -> 0
+        | Detach_started -> t.active
+      in
+      t.detached <- t.detached + detached;
+      Eio.Condition.broadcast t.condition;
+      detached
+    in
+    if detached > 0 then
+      emit
+        {
+          pool = t.name;
+          name = "blocking.shutdown";
+          queue_wait_ms = 0;
+          run_ms = 0;
+          outcome = Blocking_detached;
+        };
+    match t.config.shutdown_policy with
+    | Detach_started -> ()
+    | Drain ->
+        Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+        while t.active > 0 || t.queued > 0 do
+          Eio.Condition.await t.condition t.mutex
+        done
+
+  module Pool = struct
+    type nonrec t = t
+    type nonrec queue_policy = queue_policy = Wait | Reject
+    type nonrec shutdown_policy = shutdown_policy = Drain | Detach_started
+
+    type nonrec config = config = {
+      max_threads : int;
+      max_queued : int;
+      queue_policy : queue_policy;
+      shutdown_policy : shutdown_policy;
+    }
+
+    type nonrec stats = stats = {
+      active : int;
+      queued : int;
+      completed : int;
+      rejected : int;
+      cancelled_before_start : int;
+      detached : int;
+    }
+
+    let create ?name config = create_with_kind Systhread ?name config
+    let create_domain_isolated ?name config =
+      create_with_kind Domain_isolated ?name config
+
+    let stats = stats
+  end
+end
+
 type ('a, 'err) t =
   | Pure : 'a -> ('a, _) t
   | Fail : 'err -> (_, 'err) t
@@ -182,6 +545,13 @@ type ('a, 'err) t =
         inputs : 'input list;
       }
       -> (('output, 'error) Island_runtime.settled list, 'err) t
+  | Blocking : {
+      name : string;
+      pool : Blocking_runtime.t option;
+      f : unit -> 'a;
+    }
+      -> ('a, 'err) t
+  | Blocking_shutdown : Blocking_runtime.t -> (unit, 'err) t
   | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) t
   | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) t
   | Catch : ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) t
@@ -272,6 +642,9 @@ let fail e = Fail e
 let unit = Pure ()
 let thunk name f = Thunk (name, f)
 let island ?(name = "island") f input = Island { name; f; input }
+let blocking ?pool ?(name = "blocking") f =
+  Blocking_runtime.check_not_worker "Effect.blocking";
+  Blocking { name; pool; f }
 let map f e = Map (e, f)
 let bind k e = Bind (e, k)
 let ( >>= ) e k = Bind (e, k)
@@ -328,6 +701,20 @@ module Island = struct
 
   let all_settled ?(name = "island.all_settled") ?pool ~f inputs =
     Island_all_settled { name; pool; f; inputs }
+end
+
+module Blocking = struct
+  type ('a, 'err) effect = ('a, 'err) t
+
+  let submit ?pool ?(name = "blocking") f =
+    Blocking_runtime.check_not_worker "Effect.Blocking.submit";
+    Blocking { name; pool; f }
+
+  module Pool = struct
+    include Blocking_runtime.Pool
+
+    let shutdown pool = Blocking_shutdown pool
+  end
 end
 
 let supervisor_pure v = Supervisor_pure v
@@ -401,6 +788,8 @@ let collect_names e =
     | Island_map_result { name; _ }
     | Island_all_settled { name; _ } ->
         name :: acc
+    | Blocking { name; _ } -> name :: acc
+    | Blocking_shutdown _ -> acc
     | Render_error (_, e) -> walk acc e
     | Named (_, n, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
@@ -482,6 +871,13 @@ module Private = struct
           inputs : 'input list;
         }
         -> (('output, 'error) Island_runtime.settled list, 'err) view
+    | Blocking : {
+        name : string;
+        pool : Blocking_runtime.t option;
+        f : unit -> 'a;
+      }
+        -> ('a, 'err) view
+    | Blocking_shutdown : Blocking_runtime.t -> (unit, 'err) view
     | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
     | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
     | Catch :
@@ -547,6 +943,27 @@ module Private = struct
   let island_submit_map = Island_runtime.submit_map
   let island_submit_map_result = Island_runtime.submit_map_result
   let island_submit_all_settled = Island_runtime.submit_all_settled
+  type blocking_outcome = Blocking_runtime.outcome =
+    | Blocking_ok
+    | Blocking_error of string
+    | Blocking_cancelled
+    | Blocking_rejected
+    | Blocking_shutdown_rejected
+    | Blocking_detached
+
+  type blocking_event = Blocking_runtime.event = {
+    pool : string;
+    name : string;
+    queue_wait_ms : int;
+    run_ms : int;
+    outcome : blocking_outcome;
+  }
+
+  let blocking_default_config = Blocking_runtime.default_config
+  let blocking_submit = Blocking_runtime.submit
+  let blocking_shutdown = Blocking_runtime.shutdown
+  let blocking_pool_name = Blocking_runtime.name
+  let in_blocking_worker = Blocking_runtime.in_worker
 
   let make_supervisor ~sw ~max_failures =
     {

@@ -11445,3 +11445,298 @@ The v1 batch executor proves safety and semantics, not optimal throughput.
 The next performance-oriented step should compare a portable array/sequence
 batch representation against the CPU-pool baseline before changing the public
 surface.
+
+## V-Blocking-A: bounded blocking I/O boundary
+
+Date: 2026-05-22
+
+Status: research accepted. No package implementation shipped in this ticket.
+
+### Question
+
+Should Effet expose blocking I/O as direct Eio execution, raw
+`Eio_unix.run_in_systhread`, an Effet-owned bounded pool, a domain-isolated
+escape hatch, or resource-class pools?
+
+### Decision
+
+Use an Effet-owned bounded blocking pool for normal legacy blocking I/O. The
+pool must bound active workers and queued jobs, support `Wait` and `Reject`,
+surface stats and labels, cancel pending jobs, and document that started jobs
+are nonpreemptive.
+
+Add an explicit domain-isolated pool for known or suspected lock-holding C
+bindings. Do not make it the default path.
+
+Expose manual named pools in v1 so DB-like work and FS/SDK-like work can have
+separate capacity. Do not add a resource-class framework yet.
+
+Reject CPU work on the blocking pool. CPU work remains an island concern.
+
+### Evidence
+
+The research lab lives under:
+
+```text
+scratch/effet_research/blocking/
+```
+
+Gate:
+
+```sh
+nix develop -c bash scratch/effet_research/blocking/run.sh
+```
+
+Key measurements:
+
+- Direct blocking inside Eio froze heartbeat for about 49 ms on a 50 ms call.
+- Raw `Eio_unix.run_in_systhread` preserved heartbeat for ordinary sleeps, but
+  created 102 threads for 100 short jobs.
+- The bounded pool completed 100 jobs with `max_threads=4`,
+  `peak_queued_jobs=64`, `threads_after=6`, and heartbeat p99 12 us.
+- The bounded pool was slower than raw systhreads for 100 short sleeps
+  (`76967 us` vs `4899 us`), which is the expected bounded-admission tradeoff.
+- C stubs that release the OCaml runtime lock worked through systhreads
+  (heartbeat p99 11 us).
+- C stubs that hold the runtime lock still froze heartbeat through systhreads
+  (p99 49188-52217 us).
+- The domain-isolated probe restored heartbeat for hold-lock stubs
+  (p99 3-8 us).
+- A shared blocking pool delayed DB-like work by 503 ms behind FS-like work;
+  separate or capacity-limited pools completed the DB probe in 2 ms.
+- CPU work through the blocking pool delayed an I/O probe by 47 ms; the island
+  fixture was faster than the blocking-pool CPU fixture.
+
+### Consequences
+
+Downstream implementation should prototype:
+
+```ocaml
+Effect.Blocking.submit :
+  ?pool:Blocking.Pool.t ->
+  ?name:string ->
+  (unit -> 'a) ->
+  ('a, 'err) Effect.t
+```
+
+The measured default seed is conservative: `max_threads=4`, `max_queued=64`,
+`Wait` by default, `Reject` available, named pools for resource isolation, and
+mandatory labels/stats. Larger defaults need a separate implementation
+benchmark.
+
+The scratch B2 pool is a bounded admission layer over
+`Eio_unix.run_in_systhread`, not a final custom worker lifecycle. If production
+requires exact idle-timeout behavior, the implementation epic must prove it
+with owned workers or with an Eio-backed equivalent.
+
+Worker callbacks must remain synchronous and boring: no Eio operations, no
+nested Effet runtime, no nested blocking submit, and no parent-domain promise
+resolution as supported API.
+
+## V-Blocking-Impl: ship bounded blocking I/O
+
+Date: 2026-05-22
+
+Status: implementation shipped.
+
+### Shipped Surface
+
+`Effect.blocking` ships as the third executor-family primitive:
+
+```ocaml
+val Effect.blocking :
+  ?pool:Effect.Blocking.Pool.t ->
+  ?name:string ->
+  (unit -> 'a) ->
+  ('a, 'err) Effect.t
+```
+
+The namespaced spelling also ships:
+
+```ocaml
+val Effect.Blocking.submit :
+  ?pool:Effect.Blocking.Pool.t ->
+  ?name:string ->
+  (unit -> 'a) ->
+  ('a, 'err) Effect.t
+```
+
+Public pool surface is in `packages/effet/effect.mli`:
+
+- `Effect.Blocking.Pool.t`: line 149.
+- `queue_policy = Wait | Reject`: line 151.
+- `shutdown_policy = Drain | Detach_started`: line 152.
+- `config`: lines 154-159.
+- `stats`: lines 161-168.
+- `create`: line 170.
+- `create_domain_isolated`: line 209.
+- `stats`: line 228.
+- `shutdown`: line 237.
+- `Effect.blocking`: lines 248-281.
+
+`Runtime.create` and `Runtime.run` accept `?blocking_pool` overrides in
+`packages/effet/runtime.mli` lines 15-17 and 37-44. If omitted, the runtime
+lazily creates a default pool.
+
+### Phase 1 Substrate
+
+The shipped substrate is Phase 1: Effet-owned bounded admission over
+`Eio_unix.run_in_systhread`.
+
+The implementation uses pool-owned counters plus an Eio mutex/condition and a
+small cancellation-polling wait loop to enforce:
+
+- `max_threads` active started jobs,
+- `max_queued` admitted waiting jobs,
+- `Wait` or `Reject` full-pool policy,
+- pending cancellation before start,
+- nonpreemptive started jobs,
+- `Drain` and `Detach_started` shutdown,
+- stats, trace events, and meter points.
+
+No owned `Thread.create` worker lifecycle ships in this epic. `idle_timeout`
+remains absent from the stable surface.
+
+Implementation-discovered limitation: Phase 1 cannot directly control Eio's
+internal systhread idle teardown. The public v1 contract therefore promises
+bounded active admission and bounded Effet queueing, not custom thread lifetime.
+
+Domain-isolated pools use the same admission contract but run started callbacks
+away from the main Eio domain. The implementation intentionally keeps the
+docstring scary because OxCaml emits safety alerts around raw domain spawning
+and because this path is only for measured lock-holding C bindings.
+
+Final gate note: the parent Eio fiber must not busy-poll a spawned domain with
+plain `Eio.Fiber.yield ()`; that starves the heartbeat enough to erase the
+domain-isolation signal. The shipped path sleeps briefly between completion
+polls so timer fibers get scheduled while the domain callback runs.
+
+### Phase 2 Reopen Trigger
+
+Reopen Phase 2 only if at least one condition is measured:
+
+- Phase 1 cannot bound active jobs tightly under sustained load.
+- Phase 1 cannot deliver predictable shutdown semantics.
+- The public surface needs `idle_timeout`.
+- Production telemetry shows systhread leakage or unbounded growth.
+
+None of those triggers are met by the v1 gate.
+
+### Default Config
+
+`scratch/effet_research/blocking/api_ergonomics/default_threads/results.md`
+records the T1 measurement.
+
+Verdict:
+
+```ocaml
+production_default = 128
+```
+
+The runtime-owned default pool uses:
+
+```ocaml
+{
+  max_threads = 128;
+  max_queued = 64;
+  queue_policy = Wait;
+  shutdown_policy = Drain;
+}
+```
+
+The measurement rejected `num_cpu / 2`, `num_cpu`, `num_cpu * 2`, and fixed 32:
+they failed the mixed workload heartbeat budget on this host. Fixed 128 met the
+budget, and fixed 512 did not improve the measured workload.
+
+### Cancellation Contract
+
+| State | Semantics |
+| --- | --- |
+| Queued, not started | Parent cancellation removes; counts `cancelled_before_start`. |
+| Started | NOT preemptively cancelled. Job runs to completion or raises. |
+| Full pool + Wait | Caller waits for capacity; cancellation while waiting is honored. |
+| Full pool + Reject | submit reports rejection deterministically; counts `rejected`. |
+| Shutdown | Stops accepting new jobs; `Drain` waits, `Detach_started` exits and records detached work. |
+
+Formal public wording in `effect.mli` lines 264-267:
+
+> Effect.blocking does NOT preempt running callbacks. Parent cancellation while
+> a job is started is honored only when the pool is configured with
+> `shutdown_policy = Detach_started` or via an explicit cooperative cancel hook
+> (not in v1).
+
+### Worker Invariant
+
+Public wording in `effect.mli` lines 269-273:
+
+> Blocking worker callbacks are ordinary synchronous OCaml functions. They may
+> call legacy blocking libraries. They must not call Eio operations, run Effet
+> runtimes, submit nested blocking jobs, or resolve parent-domain promises as
+> supported API. Doing any of those is undefined behavior; Effet does not
+> guarantee deadlock, panic, or correctness for it.
+
+Mechanized v1 checks reject nested `Effect.Blocking.submit` construction and
+nested `Runtime.run` from inside a worker callback.
+
+### Gate State
+
+All 15 V-Blocking-Impl gate items are covered by
+`packages/effet/test/test_effet.ml`, registered under the `Blocking` group at
+lines 2992-3023.
+
+| Gate | Test |
+| --- | --- |
+| 1 direct blocking anti-pattern + blocking heartbeat | `direct control and heartbeat` |
+| 2 max active jobs capped | `wait caps active and queue` |
+| 3 max queued jobs capped | `wait caps active and queue` |
+| 4 Wait policy does not freeze heartbeat | `wait caps active and queue` |
+| 5 Reject policy deterministic | `reject deterministic` |
+| 6 pending cancellation removes queued job | `pending cancellation` |
+| 7 started cancellation nonpreemptive | `started cancellation nonpreemptive` |
+| 8 shutdown rejects new jobs | `shutdown rejects new jobs` |
+| 9 shutdown Drain waits | `shutdown drain waits` |
+| 10 Detach_started records detached completion/failure metrics | `shutdown detach records` |
+| 11 named DB/FS pools prevent starvation | `named pools isolate` |
+| 12 domain-isolated hold-lock C heartbeat | `domain isolated hold-lock` |
+| 13 CPU-on-blocking anti-pattern | `cpu antipattern` |
+| 14 worker invariant violations detected | `worker rejects nested submit`, `worker rejects runtime run` |
+| 15 stats, labels, timings visible | `submit alias and stats`, `observability labels timings` |
+
+Gate command:
+
+```sh
+nix develop -c dune runtest packages/effet --force
+```
+
+Result: 133 Alcotest cases passed, including 15 Blocking cases. The existing
+island negative compile-fail rule also remains green.
+
+### Canonical Wording
+
+Effect.thunk is for ordinary same-domain work.
+
+Effect.island is for portable CPU offload.
+
+Effect.blocking is for legacy synchronous I/O that cannot or should not be
+rewritten to Eio.
+
+CPU work routes to `Effect.island`, not `Effect.blocking`. Lock-holding C routes
+to `Effect.Blocking.Pool.create_domain_isolated`, not the normal default pool.
+
+### Rejected
+
+The older senior-review suggestion to restore `('env, 'err, 'a) Effect.t` is
+rejected here. The public type arity remains `('a, 'err) Effect.t`, with result
+first and error second. Any future proposal to reintroduce `'env` requires a
+new verdict.
+
+The `Effect.thunk` positional-name API is left unchanged in this epic. New
+`Effect.blocking` follows the `Effect.island` optional `?name` convention; thunk
+alignment is not required to ship blocking and should be handled separately if
+the project wants that API polish.
+
+### Consequences
+
+The V-Blocking-A research expectation is now implemented in `packages/effet`.
+This does not change the island API from Effet-OxCaml-p1x and does not imply
+portable `Resource`, `Supervisor`, `Stream`, OTel, or `Cause` behavior.
