@@ -1,0 +1,19 @@
+(executable
+ (name p1_inprocess_matrix)
+ (libraries h2 eio eio_main unix))
+
+(executable
+ (name p2_eio_tcp_get)
+ (libraries h2 eio eio.unix eio_main unix))
+
+(executable
+ (name stage2_matrix)
+ (libraries h2 eio eio.unix eio_main unix))
+
+(executable
+ (name goaway_raw_probe)
+ (libraries h2 unix))
+
+(executable
+ (name nghttp2_h2_smoke)
+ (libraries h2 tls tls-eio mirage-crypto-rng-eio ca-certs eio eio.unix eio_main domain-name unix))

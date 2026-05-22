@@ -12000,3 +12000,886 @@ If it does not, Eta's default runtime remains the cheap path.
   and die-context binding are too expensive.
 - A public custom-noop marker for third-party tracer/logger/meter adapters.
   Current detection covers Eta's shipped noop singletons.
+
+## V-Http-S1-P0P2 - h2 sans-IO is drivable from an Eio TCP flow for a single GET
+
+Question: can the pinned OxCaml switch build enough of the HTTP/2 substrate to
+drive `ocaml-h2` directly from Eta-shaped Eio code, without inheriting an
+`httpun` runtime adapter?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s1_ocaml_h2_eio/`
+
+Dependency setup under `nix develop .#oxcaml`:
+
+- `cohttp`, `cohttp-eio`, `h2`, `hpack`, and `httpun-types` installed.
+- `tls-eio`, `tls`, `x509`, `mirage-crypto-rng`, and `ca-certs` did
+  not install because `digestif.1.3.0` fails to compile under
+  `ocaml-variants.5.2.0+ox` with a mode-type mismatch in
+  `src-ocaml/baijiu_rmd160.ml`.
+
+P1 in-process sans-IO pump:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe && dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe'
+
+Output:
+
+    h_s1_p1_single_get status=200 body="hello-h2" server_seen=/single
+
+P2 Eio TCP flow smoke:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe'
+
+Output:
+
+    h_s1_p2_eio_tcp_get status=200 body="eio-h2:/eio" port=35119
+
+Shipped package gate:
+
+    nix develop .#oxcaml -c eta-oxcaml-test-shipped
+
+Result: pass. `eta-schema` passed, `ppx_eta` 2 tests passed,
+`eta-otel` 26 tests passed, `eta-stream` 17 tests passed, and `eta` 134
+tests passed. Root `dune build` remains blocked by pre-existing stale scratch
+`effet` / `ppx_effet` references, unrelated to this H-S1 lab.
+
+### Decision
+
+This is partial evidence, not the final `V-Http-S1` verdict. It proves that
+`H2.Client_connection` and `H2.Server_connection` expose the needed sans-IO
+read/write state-machine surface and can be driven over a real localhost
+`Eio.Net` TCP connection for a single GET, without an `httpun` runtime
+adapter.
+
+The first adapter copies between `Cstruct.t`, `string`, and
+`Bigstringaf.t`; that is acceptable for this API-shape probe but not for the
+eta-http hot path. Later H-S1/H-D1 work must replace this with a lower-copy
+bridge and measure the OxCaml allocation implications.
+
+One adapter constraint surfaced: `yield_writer` must not be called repeatedly
+for the same `Yield` state. h2 allows only one registered wakeup callback at a
+time; the real Eio adapter must register once and await that wakeup.
+
+### Deferred
+
+- H-S1 Stage 1 TLS smoke to `nghttp2.org` is blocked until the
+  `digestif`/TLS dependency issue is resolved.
+- H-S1 Stage 2 remains open: 10 concurrent GETs, POST body, server RST_STREAM,
+  GOAWAY cutoff, response trailers, flow-control stall, client cancellation,
+  adapter LOC, and ownership split.
+- H-S2/H-S3 cannot start as TLS substrate verdicts until the TLS stack compiles
+  or an alternative/patched dependency path is chosen.
+
+## V-Http-S1-P3-Partial - first local Stage 2 h2 matrix rows pass
+
+Question: can the local h2-over-Eio harness cover real Stage 2 behavior beyond
+the single GET smoke?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
+
+Output:
+
+    h_s1_stage2_concurrent_gets count=10 statuses=all-200
+    h_s1_stage2_post_body status=200 body="post:upload-body"
+    h_s1_stage2_trailers status=200 trailers=1
+    h_s1_stage2_server_rst error="protocol_error:INTERNAL_ERROR (0x2):"
+    h_s1_stage2_goaway_cutoff adapter_gate connection_error="protocol_error:INTERNAL_ERROR (0x2):Failure(\"stage2-goaway\")"
+    h_s1_stage2_client_cancel first_chunk="slow-prefix" after_status=200
+
+### Decision
+
+This supersedes part of the deferred list in `V-Http-S1-P0P2`, but it is
+still not the final `V-Http-S1` verdict. Six local Stage 2 capabilities now pass:
+10 in-flight GETs on one h2 connection, POST body upload through DATA frames,
+response trailers delivered through h2's trailers handler, and server
+RST_STREAM after a streaming response has started. Client mid-body cancellation
+is modeled by closing the response body reader after the first chunk; a
+follow-up GET on the same h2 connection succeeds, so this path does not corrupt
+the connection state.
+
+Error GOAWAY now also passes in the adapter-owned sense: the server triggers
+GOAWAY with `Server_connection.report_exn`, the client connection error
+handler observes `INTERNAL_ERROR`, and the adapter can stop admitting new
+requests based on that signal.
+
+A negative sub-probe also matters: `Reqd.report_exn` before a response starts
+does not create an RST_STREAM fixture. h2 routes that through the server error
+handler and sends a 500 response body. The local RST fixture therefore starts a
+streaming response first, then reports the exception; the client observes a
+stream-level `INTERNAL_ERROR`.
+
+The adapter is still intentionally simple and copies through
+`Cstruct.t -> string -> Bigstringaf.t`; the OxCaml hot-path allocation concern
+remains open.
+
+Two GOAWAY caveats remain. First, `Server_connection.shutdown` is not a
+GOAWAY fixture; it closes h2 reader/writer state without sending GOAWAY.
+Second, graceful `NO_ERROR` GOAWAY with precise `last_stream_id` cutoff is
+still unproven. Code inspection shows h2's client-side
+`process_goaway_frame` ignores `last_stream_id` and routes GOAWAY through
+connection shutdown. Eta-http must own request admission after GOAWAY and
+should not rely on per-request callbacks for late streams.
+
+Ownership split and current probe size are captured in
+`scratch/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md`. Current
+probe size is 206 LOC for the P2 smoke and 466 LOC for the Stage 2 matrix; the
+reusable production adapter should be smaller because the research fixtures and
+assertions dominate the file.
+
+### Deferred
+
+- Graceful GOAWAY `last_stream_id` cutoff semantics.
+- Flow-control stall without deadlock.
+- Stronger client cancellation cleanup with explicit stream-state counters.
+- TLS Stage 1 smoke remains blocked by the `digestif`/TLS dependency issue.
+
+## V-Http-S1-P3-FlowCancel - local Stage 2 covers stream stall and cleanup counters
+
+Question: can the local h2-over-Eio matrix demonstrate flow-control stall
+without deadlocking unrelated streams, and can the cancellation row prove
+adapter-owned cleanup instead of only "follow-up request works"?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
+
+Output:
+
+    h_s1_stage2_concurrent_gets count=10 statuses=all-200
+    h_s1_stage2_post_body status=200 body="post:upload-body"
+    h_s1_stage2_trailers status=200 trailers=1
+    h_s1_stage2_server_rst error="protocol_error:INTERNAL_ERROR (0x2):"
+    h_s1_stage2_goaway_cutoff adapter_gate connection_error="protocol_error:INTERNAL_ERROR (0x2):Failure(\"stage2-goaway\")"
+    h_s1_stage2_flow_stall first_chunk_len=1024 peer_window=1024 control_status=200
+    h_s1_stage2_client_cancel first_chunk="slow-prefix" body_closed=true metadata=0 after_status=200
+
+### Decision
+
+This advances H-S1 Stage 2 but is still not a final `V-Http-S1` verdict.
+
+The flow-control fixture configures the client h2 connection with
+`initial_window_size = 1024`, asks the server for a 64 KiB streaming response,
+reads exactly the first 1024-byte DATA chunk, then leaves that response body
+open and unread. A control GET on a second stream completes within 0.5s on the
+same connection. That is positive evidence that a stream-level h2
+flow-control stall does not deadlock the Eio writer loop or unrelated streams.
+It is not connection-window or OS-socket backpressure evidence; the final
+adapter still needs timeout policy for streams that remain stalled.
+
+The cancellation row now closes the response `Body.Reader`, observes
+`Body.Reader.is_closed = true`, decrements an adapter-owned stream metadata
+counter back to zero, and then completes a follow-up GET on the same
+connection. This proves the cleanup shape eta-http needs even though h2 does
+not expose internal stream counts.
+
+GOAWAY remains caveated. Source inspection of pinned `h2.0.13.0` shows
+`lib/client_connection.ml:process_goaway_frame` ignores `last_stream_id` and
+routes received GOAWAY through connection shutdown. Source inspection of
+`lib/server_connection.ml:shutdown` shows server shutdown only closes the
+reader/writer; it does not send graceful GOAWAY. The current matrix therefore
+proves adapter-gated error GOAWAY, not graceful `NO_ERROR` cutoff semantics.
+
+Probe size after this update:
+
+    wc -l scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
+
+Output:
+
+      206 scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml
+      582 scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
+      788 total
+
+### Deferred
+
+- Final H-S1 verdict.
+- Graceful GOAWAY `last_stream_id` cutoff decision: raw-frame diagnostic,
+  local h2 patch, or documented eta-http adapter caveat.
+- H-S1 Stage 1 TLS smoke to `nghttp2.org`, blocked by the current
+  `digestif`/TLS install failure under `ocaml-variants.5.2.0+ox`.
+
+## V-Http-S1-P3-GOAWAY-Raw - graceful cutoff is not surfaced by pinned h2
+
+Question: if a peer sends graceful `NO_ERROR` GOAWAY with
+`last_stream_id = 1` while the client has a later stream open, does h2 notify
+the caller which stream was excluded by the cutoff?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe && dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe'
+
+Output:
+
+    h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
+
+### Decision
+
+This is negative evidence for graceful GOAWAY cutoff semantics in pinned
+`h2.0.13.0`.
+
+The probe opens two client streams, feeds an empty server SETTINGS frame, then
+feeds a raw GOAWAY frame with `NO_ERROR` and `last_stream_id = 1`. h2 closes
+the connection after flushing one outgoing write, but it calls neither the
+connection error handler nor either stream error handler. The stream above the
+GOAWAY cutoff is therefore not classified for retry/replay by the public h2
+API.
+
+This matches source inspection: `lib/client_connection.ml:process_goaway_frame`
+ignores `last_stream_id` and routes GOAWAY through connection shutdown. It also
+matches the server-side limitation already recorded:
+`lib/server_connection.ml:shutdown` closes reader/writer state and does not
+produce a graceful server GOAWAY fixture.
+
+Eta-http cannot rely on h2 to implement graceful GOAWAY cutoff semantics. The
+implementation track must either patch/wrap h2 with adapter-owned stream
+admission/cutoff tracking or record this as an H-S1 caveat/blocker.
+
+### Deferred
+
+- Final H-S1 verdict on whether this GOAWAY behavior is acceptable for
+  eta-http, requires a local h2 patch, or pivots architecture.
+
+## V-Http-S1-Stage1-nghttp2 - production h2 smoke over tls-eio passes
+
+Question: after resolving the TLS dependency path, can the h2 sans-IO client
+be driven over a real `tls-eio` flow to the Stage 1 production target?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.ml`
+
+TLS dependency branch installed:
+
+    nix develop .#oxcaml -c opam install --yes --assume-depexts tls-eio.0.17.5 mirage-crypto-rng-eio.0.11.3 x509.0.16.5 ca-certs
+
+Installed versions:
+
+    ca-certs              0.2.3
+    mirage-crypto         0.11.3
+    mirage-crypto-rng     0.11.3
+    mirage-crypto-rng-eio 0.11.3
+    tls                   0.17.5
+    tls-eio               0.17.5
+    x509                  0.16.5
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe && timeout 20s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe'
+
+Output:
+
+    h_s1_stage1_nghttp2 status=200 alpn=h2 version=tls13 body_len=6324
+
+Post-install gate:
+
+    nix develop .#oxcaml -c eta-oxcaml-test-shipped
+
+Result: pass. Shipped Eta package tests still pass after downgrading
+`mirage-crypto`, `eqaf`, and `asn1-combinators` for the older TLS branch.
+
+### Decision
+
+This is positive Stage 1 evidence for H-S1. `tls-eio` negotiates ALPN `h2`
+against `nghttp2.org`, and the probe then drives `H2.Client_connection`
+directly over that TLS flow to receive an HTTP 200 response. No `httpun`
+runtime adapter is imported.
+
+This does not close H-S3. The working TLS stack is older than latest available
+packages, and production-grade TLS still requires badssl/local certificate
+fixtures, exact-version CVE audit, and revocation-policy ADR.
+
+## V-Http-S2-ALPN-Partial - tls-eio negotiates local and production ALPN
+
+Question: can `tls-eio` plus `ocaml-tls` negotiate ALPN outcomes locally
+across TLS modes, and can it negotiate `h2` with a production peer?
+
+### Evidence
+
+Artifacts:
+
+- `scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml`
+- `scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml`
+
+Local matrix command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe'
+
+Output:
+
+    h_s2_alpn mode=tls12 min=tls12 max=tls12 config=server_prefers_h2 selected=h2 payload="ok"
+    h_s2_alpn mode=tls12 min=tls12 max=tls12 config=server_prefers_h1 selected=http/1.1 payload="ok"
+    h_s2_alpn mode=tls13 min=tls13 max=tls13 config=server_prefers_h2 selected=h2 payload="ok"
+    h_s2_alpn mode=tls13 min=tls13 max=tls13 config=server_prefers_h1 selected=http/1.1 payload="ok"
+    h_s2_alpn mode=tls12_to_tls13 min=tls12 max=tls13 config=server_prefers_h2 selected=h2 payload="ok"
+    h_s2_alpn mode=tls12_to_tls13 min=tls12 max=tls13 config=server_prefers_h1 selected=http/1.1 payload="ok"
+
+Production ALPN smoke command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe'
+
+Output:
+
+    h_s2_prod_alpn host=nghttp2.org selected=h2 version=tls13
+
+Required 2 x 3 ALPN matrix command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe'
+
+Output:
+
+    h_s2_required_alpn server=h2_h1 client=prefer_h2_fallback selected=h2 payload="ok"
+    h_s2_required_alpn server=h2_h1 client=require_h2 selected=h2 payload="ok"
+    h_s2_required_alpn server=h2_h1 client=require_h1 selected=http/1.1 payload="ok"
+    h_s2_required_alpn server=h1_only client=prefer_h2_fallback selected=http/1.1 payload="ok"
+    h_s2_required_alpn server=h1_only client=require_h2 selected=rejected payload="<none>"
+    h_s2_required_alpn server=h1_only client=require_h1 selected=http/1.1 payload="ok"
+
+### Decision
+
+This is positive H-S2 evidence on the older TLS branch. The local matrix covers
+3 TLS modes x 2 ALPN configurations:
+
+- TLS modes: TLS 1.2 only, TLS 1.3 only, TLS 1.2-through-1.3 range.
+- ALPN configs: server preference selects `h2`; server preference selects
+  `http/1.1`.
+
+Both client and server epochs report the expected selected ALPN in the TLS-mode
+matrix, and encrypted payload transfer works after each handshake. The required
+2 x 3 ALPN matrix also passes: require-h2 against an h1-only server rejects the
+handshake with no application protocol. The production smoke validates ALPN
+`h2` with `nghttp2.org` under CA validation.
+
+### Caveats
+
+- This is not H-S3 evidence. The older stack (`tls-eio.0.17.5`,
+  `tls.0.17.5`, `x509.0.16.5`) still needs security and maintenance review.
+- The latest `tls-eio.2.1.0` path remains blocked by `digestif.1.3.0`
+  failing to compile under OxCaml.
+
+## V-Http-S1 - ocaml-h2 sans-IO over Eio passes with adapter-owned GOAWAY caveat
+
+Question: can ocaml-h2 sans-IO be driven from Eio without an httpun runtime
+adapter for eta-http's required h2 substrate behavior?
+
+### Evidence
+
+Artifacts:
+
+- scratch/eta_http_research/h_s1_ocaml_h2_eio/results.md
+- scratch/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md
+
+Evidence rows already recorded in V-Http-S1-P0P2,
+V-Http-S1-P3-Partial, V-Http-S1-P3-FlowCancel,
+V-Http-S1-P3-GOAWAY-Raw, and V-Http-S1-Stage1-nghttp2.
+
+### Decision
+
+H-S1 is PASS-WITH-CAVEAT. ocaml-h2 sans-IO works over Eio TCP and over
+tls-eio ALPN h2, and the local Stage 2 matrix covers concurrent GETs, POST
+body, response trailers, RST cleanup, flow-control stall, and client
+cancellation cleanup.
+
+The caveat is graceful GOAWAY. Pinned h2 does not surface NO_ERROR GOAWAY
+last_stream_id cutoff semantics for streams above the cutoff. Eta-http must own
+request admission/cutoff tracking in its adapter, patch h2, or pivot if that
+ownership is unacceptable.
+
+## V-Http-S2 - tls-eio ALPN matrix passes on older TLS branch
+
+Question: can tls-eio plus ocaml-tls negotiate eta-http's local ALPN modes?
+
+### Evidence
+
+Artifacts:
+
+- scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml
+- scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.ml
+- scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml
+
+The required 2 x 3 matrix passes:
+
+    h_s2_required_alpn server=h2_h1 client=prefer_h2_fallback selected=h2 payload="ok"
+    h_s2_required_alpn server=h2_h1 client=require_h2 selected=h2 payload="ok"
+    h_s2_required_alpn server=h2_h1 client=require_h1 selected=http/1.1 payload="ok"
+    h_s2_required_alpn server=h1_only client=prefer_h2_fallback selected=http/1.1 payload="ok"
+    h_s2_required_alpn server=h1_only client=require_h2 selected=rejected payload="<none>"
+    h_s2_required_alpn server=h1_only client=require_h1 selected=http/1.1 payload="ok"
+
+### Decision
+
+H-S2 is PASS-WITH-CAVEAT. ALPN negotiation works for fallback and required
+client modes on the older TLS branch, and the nghttp2.org production smoke
+negotiates h2. The caveat is dependency/security, not ALPN mechanics: the fixed
+newer TLS branch remains blocked under OxCaml, and H-S3 rejects the pinned
+tls.0.17.5 branch for production-grade client TLS.
+
+## V-Http-S0-Partial - cohttp-eio h1 basics pass, client pooling/trailers fail
+
+Question: does cohttp-eio cover the HTTP/1.1 substrate semantics eta-http needs
+for H-S0?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe'
+
+Output:
+
+    h_s0_keep_alive_server responses=2
+    h_s0_chunked_response transfer=chunked body=HelloWorld
+    h_s0_known_length_upload content_length=11 body=hello-known
+    h_s0_chunked_upload transfer=chunked body=hello-chunk
+    h_s0_head status=200 content_length=9 body_len=0
+    h_s0_early_response status=200 body=early unread_upload=true
+    h_s0_error_body status=500 body="error-detail"
+    h_s0_client_no_pool connect_calls=2 verdict=negative
+    h_s0_cancel_cleanup_smoke accepts_after_client_close=true
+    h_s0_trailers verdict=negative reason=cohttp_transfer_io_discards_trailers
+
+### Decision
+
+This is partial H-S0 evidence, not a clean pass.
+
+Positive rows: cohttp-eio server can handle sequential keep-alive requests on
+one TCP connection, emit chunked responses, read known-length and chunked
+uploads, support explicit HEAD-without-body handler behavior, send an early
+response before consuming a declared upload body, expose non-2xx response
+bodies to the client, and continue accepting connections after a client closes
+a streaming response early.
+
+Negative rows: the high-level cohttp-eio client opens a fresh connection per
+request, so eta-http cannot get HTTP/1.1 keep-alive pooling from
+`Cohttp_eio.Client.get`. Source inspection also shows trailers are discarded:
+`cohttp/transfer_io.ml` uses `junk_until_empty_line`, and request/response
+writers have `TODO Trailer header support` before writing the terminal chunk.
+
+HEAD is handler-owned. The matrix can produce correct HEAD semantics when the
+handler returns an empty body with the desired content length, but cohttp-eio
+does not automatically enforce that invariant.
+
+### Deferred
+
+- Decide whether H-S0 is acceptable with eta-http owning h1 pooling, trailer
+  handling, and HEAD enforcement, or whether this pivots away from cohttp-eio.
+- Strong cancellation cleanup evidence with fd/fiber counters remains for H-S4a
+  or a deeper H-S0 follow-up.
+
+## V-Http-S3-PartA-BadSSL - pinned ocaml-tls accepts DH1024
+
+Question: does the pinned TLS branch reject the badssl failures required by the
+H-S3 production-grade client TLS bar?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s3_tls_grade/badssl_grid.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 90s dune exec scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe'
+
+Output:
+
+    h_s3_badssl name=expired host=expired.badssl.com expected=reject_expired observed=reject_expired result=PASS detail="reject_expired"
+    h_s3_badssl name=self_signed host=self-signed.badssl.com expected=reject_invalid_chain observed=reject_invalid_chain result=PASS detail="reject_invalid_chain"
+    h_s3_badssl name=untrusted_root host=untrusted-root.badssl.com expected=reject_invalid_chain observed=reject_invalid_chain result=PASS detail="reject_invalid_chain"
+    h_s3_badssl name=wrong_host host=wrong.host.badssl.com expected=reject_name_mismatch observed=reject_name_mismatch result=PASS detail="reject_name_mismatch"
+    h_s3_badssl name=dh1024 host=dh1024.badssl.com expected=reject_weak_dh observed=accepted_weak_dh result=FAIL version=tls12 alpn=http/1.1
+    h_s3_badssl name=rc4_md5 host=rc4-md5.badssl.com expected=reject_weak_cipher observed=reject_handshake_failure result=PASS detail="reject_handshake_failure"
+    h_s3_badssl name=hsts host=hsts.badssl.com expected=accept_valid_tls observed=accepted result=PASS version=tls12 alpn=http/1.1
+    h_s3_badssl_summary verdict=FAIL failed=dh1024
+
+Source inspection under `.opam-oxcaml/5.2.0+ox/lib/tls`:
+
+- `config.ml`: `Tls.Config.Ciphers.http2` still includes DHE_RSA
+  AEAD ciphersuites.
+- `config.ml`: `let min_dh_size = 1024`.
+- `config.mli`: `min_dh_size` is documented as currently 1024.
+- `handshake_client.ml`: DHE validation accepts
+  `Mirage_crypto_pk.Dh.modulus_size group >= Config.min_dh_size`.
+
+### Decision
+
+This is a FAIL for H-S3 Part A on the pinned older TLS branch. The stack rejects
+the certificate-authentication failures and RC4-MD5 as expected, and accepts the
+valid HSTS endpoint, but it also accepts `dh1024.badssl.com`. The
+production-grade bar expects weak 1024-bit DHE rejection.
+
+### Consequence
+
+H-S3 cannot be marked viable on this evidence. Continue the local certificate
+matrix and exact-version audit to determine whether the failure is narrowly
+configurable by an eta-http cipher policy, fixed by a newer TLS path, or a hard
+pivot toward another TLS substrate.
+
+## V-Http-S3-PartB-LocalCerts - hostname/SAN/SNI/TLS versions pass
+
+Question: does the pinned TLS branch validate local certificate shapes and TLS
+version modes that eta-http needs?
+
+### Evidence
+
+Artifact:
+
+- `scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml`
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 60s dune exec scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
+
+Output:
+
+    h_s3_local_cert name=san_single expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=san_mismatch expected=reject_name observed=reject_name result=PASS identity=host:other.local.test detail="reject_name"
+    h_s3_local_cert name=wildcard expected=accept observed=accepted result=PASS identity=host:api.wild.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=wildcard_too_deep expected=reject_name observed=reject_name result=PASS identity=host:deep.api.wild.local.test detail="reject_name"
+    h_s3_local_cert name=san_multiple expected=accept observed=accepted result=PASS identity=host:multi.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=ip_literal expected=accept observed=accepted result=PASS identity=ip:127.0.0.1 version=tls13 payload="ok"
+    h_s3_local_cert name=idna_alabel expected=accept observed=accepted result=PASS identity=host:xn--bcher-kva.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=sni_multiple_cert_select expected=accept observed=accepted result=PASS identity=host:sni.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=tls12_only expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls12 payload="ok"
+    h_s3_local_cert name=tls13_only expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls13 payload="ok"
+    h_s3_local_cert_summary verdict=PASS failed=<none>
+
+### Decision
+
+This is positive H-S3 Part B evidence. The pinned stack validates SAN DNS
+names, rejects a wrong DNS name, applies wildcard matching only one DNS label
+deep, validates SAN IP addresses through `Tls.Config.client ~ip`, accepts
+an IDNA A-label hostname, uses client SNI to select the matching certificate
+from `Tls.Config.server ~certificates:(`Multiple_default ...)`, and can
+complete TLS 1.2-only and TLS 1.3-only handshakes.
+
+### Caveat
+
+The IDNA row proves the ASCII A-label wire form
+`xn--bcher-kva.local.test`. Unicode U-label conversion is still an
+eta-http API/input-normalization concern if eta-http accepts Unicode hostnames.
+This positive Part B result does not offset the Part A DH1024 failure.
+
+## V-Http-S3-PartC-Audit-Revocation - pinned TLS branch has advisories and no live revocation
+
+Question: does the exact pinned TLS branch satisfy the H-S3 production-grade
+security bar after exact-version advisory and revocation-policy review?
+
+### Evidence
+
+Artifacts:
+
+- scratch/eta_http_research/h_s3_tls_grade/security_audit.md
+- scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+
+Exact pinned packages:
+
+    ca-certs              0.2.3
+    mirage-crypto         0.11.3
+    mirage-crypto-rng     0.11.3
+    mirage-crypto-rng-eio 0.11.3
+    tls                   0.17.5
+    tls-eio               0.17.5
+    x509                  0.16.5
+
+Local advisory tooling:
+
+    nix develop .#oxcaml -c bash -lc 'command -v opam-audit || command -v osv-scanner || command -v trivy || true'
+
+Result: no local advisory scanner was installed in the OxCaml shell.
+
+OSV package-url query result:
+
+    {"results":[{"vulns":[{"id":"OSEC-2026-06","modified":"2026-05-20T14:15:05.649849Z"},{"id":"OSEC-2026-07","modified":"2026-05-20T14:15:05.649759Z"}]},{},{},{},{},{},{}]}
+
+Advisories:
+
+- OSEC-2026-06 / CVE-2026-45388: tls < 2.1.0 TLS 1.3 client misses
+  KeyUsage/ExtendedKeyUsage checks on server certificates. This directly
+  affects eta-http client TLS on tls.0.17.5.
+- OSEC-2026-07 / CVE-2026-45389: tls < 2.1.0 server mTLS misses
+  client-certificate KeyUsage/ExtendedKeyUsage checks. This constrains any
+  eta-http server/mTLS substrate plan using this package.
+
+Source inspection:
+
+- tls/config.ml: let min_dh_size = 1024.
+- tls/config.ml: let min_rsa_key_size = 1024.
+- tls/config.ml: Tls.Config.Ciphers.http2 includes DHE_RSA AEAD ciphersuites.
+- x509/authenticator.ml: chain_of_trust only installs a revocation predicate
+  when ?crls is provided.
+- ca-certs/ca_certs.ml: authenticator ?crls ?allowed_hashes () passes an
+  optional CRL list through to X509.Authenticator.chain_of_trust.
+- tls-eio/x509_eio.ml: authenticator ?allowed_hashes ?crls loads CRLs only
+  from a caller-provided path.
+
+### Decision
+
+This is an H-S3 Part C FAIL for the pinned older TLS branch. The exact package
+set is affected by published tls advisories, including a TLS 1.3 client
+certificate-purpose validation issue. Separately, source inspection and BadSSL
+evidence show weak DH acceptance, and revocation is opt-in via caller-provided
+CRLs rather than default live OCSP/CRL checking.
+
+The revocation ADR makes the policy explicit: eta-http must not claim
+browser-equivalent revocation checking on this substrate. If eta-http proceeds,
+revocation must be a caller-owned policy/API surface with fixtures for
+revoked, stale, unavailable, and unknown status cases.
+
+### Consequence
+
+H-S3 remains failed. H-D must not proceed on the claim that this exact
+tls.0.17.5 substrate is production-grade. Viable pivots are: make the fixed
+tls >= 2.1.0 path compile under OxCaml, prove a narrowed policy around
+ciphers/key sizes/revocation with explicit fixtures, or select another TLS
+substrate.
+
+## V-Http-S3 - production-grade client TLS fails on the pinned older TLS branch
+
+Question: after BadSSL, local certificate, exact-version advisory, and
+revocation-policy evidence, can the current pinned OCaml TLS stack carry
+production-grade eta-http client TLS?
+
+### Evidence
+
+Artifacts:
+
+- scratch/eta_http_research/h_s3_tls_grade/badssl_grid.ml
+- scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml
+- scratch/eta_http_research/h_s3_tls_grade/security_audit.md
+- scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+
+Focused verification command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 90s dune exec scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 60s dune exec scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
+
+Focused verification output:
+
+    h_s3_badssl name=expired host=expired.badssl.com expected=reject_expired observed=reject_expired result=PASS detail="reject_expired"
+    h_s3_badssl name=self_signed host=self-signed.badssl.com expected=reject_invalid_chain observed=reject_invalid_chain result=PASS detail="reject_invalid_chain"
+    h_s3_badssl name=untrusted_root host=untrusted-root.badssl.com expected=reject_invalid_chain observed=reject_invalid_chain result=PASS detail="reject_invalid_chain"
+    h_s3_badssl name=wrong_host host=wrong.host.badssl.com expected=reject_name_mismatch observed=reject_name_mismatch result=PASS detail="reject_name_mismatch"
+    h_s3_badssl name=dh1024 host=dh1024.badssl.com expected=reject_weak_dh observed=accepted_weak_dh result=FAIL version=tls12 alpn=http/1.1
+    h_s3_badssl name=rc4_md5 host=rc4-md5.badssl.com expected=reject_weak_cipher observed=reject_handshake_failure result=PASS detail="reject_handshake_failure"
+    h_s3_badssl name=hsts host=hsts.badssl.com expected=accept_valid_tls observed=accepted result=PASS version=tls12 alpn=http/1.1
+    h_s3_badssl_summary verdict=FAIL failed=dh1024
+    h_s3_local_cert name=san_single expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=san_mismatch expected=reject_name observed=reject_name result=PASS identity=host:other.local.test detail="reject_name"
+    h_s3_local_cert name=wildcard expected=accept observed=accepted result=PASS identity=host:api.wild.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=wildcard_too_deep expected=reject_name observed=reject_name result=PASS identity=host:deep.api.wild.local.test detail="reject_name"
+    h_s3_local_cert name=san_multiple expected=accept observed=accepted result=PASS identity=host:multi.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=ip_literal expected=accept observed=accepted result=PASS identity=ip:127.0.0.1 version=tls13 payload="ok"
+    h_s3_local_cert name=idna_alabel expected=accept observed=accepted result=PASS identity=host:xn--bcher-kva.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=sni_multiple_cert_select expected=accept observed=accepted result=PASS identity=host:sni.local.test version=tls13 payload="ok"
+    h_s3_local_cert name=tls12_only expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls12 payload="ok"
+    h_s3_local_cert name=tls13_only expected=accept observed=accepted result=PASS identity=host:api.local.test version=tls13 payload="ok"
+    h_s3_local_cert_summary verdict=PASS failed=<none>
+
+Positive evidence:
+
+- BadSSL expired, self-signed, untrusted-root, wrong-host, RC4-MD5, and valid
+  HSTS rows classify as expected.
+- Local SAN single/wildcard/multiple, IP-literal, A-label IDNA, SNI certificate
+  selection, TLS 1.2-only, and TLS 1.3-only rows pass.
+
+Negative evidence:
+
+- BadSSL dh1024.badssl.com is accepted under TLS 1.2.
+- OSV reports OSEC-2026-06 / CVE-2026-45388 against tls.0.17.5, directly
+  affecting TLS 1.3 client certificate validation.
+- Revocation is not live by default and requires an explicit eta-http policy.
+
+### Decision
+
+H-S3 is FAIL for this exact pinned stack. The positive name/SAN/SNI/version
+mechanics are not enough for the production-grade client TLS bar.
+
+### Would change if
+
+- tls >= 2.1.0 compiles and passes the same H-S3 fixtures under OxCaml, or
+- eta-http proves an explicit narrowed TLS policy that rejects weak DH/RSA,
+  avoids affected certificate-validation paths, and makes revocation semantics
+  explicit, or
+- another TLS substrate passes H-S3 with the same evidence bar.
+
+## V-Http-S4a-P0-TimeoutTaxonomy - Eta.timeout returns typed timeout and cancels loser cleanup
+
+Question: before building the TCP/TLS timeout matrix, what taxonomy does
+Eta.timeout expose to callers, and does the losing blocked operation run local
+cleanup when cancelled?
+
+### Evidence
+
+Artifact:
+
+- scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
+
+Command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe && timeout 10s dune exec scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe'
+
+Output:
+
+    h_s4a_timeout_taxonomy outcome=timeout_fail cleanup_ran=true permit=0 fd_before=6 fd_after=6 fd_delta=0
+
+### Decision
+
+This is P0 PASS for timeout taxonomy only. The caller-facing result is a typed
+Cause.Fail Timeout, while the losing blocked Eio operation is cancelled and its
+cleanup path runs. The local permit returned to zero, and this non-network
+baseline did not change the descriptor count.
+
+### Deferred
+
+This does not close H-S4a. The required saturated-listener connect, TLS
+handshake stall, header read stall, body read stall, and upload sink stall
+fixtures still need fd/fiber/permit measurements before V-Http-S4a can be a
+full PASS/PASS-WITH-CAVEAT/FAIL verdict.
+
+## V-Http-S4a - Eta.timeout cancels local TCP/TLS/read/write stalls
+
+Question: does Eta.timeout cancel Eio TCP/TLS/read/write operations safely for
+eta-http, and what timeout taxonomy should eta-http rely on?
+
+### Evidence
+
+Artifacts:
+
+- scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
+- scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.ml
+- scratch/eta_http_research/h_s4a_cancellation_safety/results.md
+
+Network matrix command:
+
+    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe && timeout 30s dune exec scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe'
+
+Output:
+
+    h_s4a_connect name=tcp_connect_saturated_listener result=PASS outcome=timeout filler_connected=2 stop_reason=connect_timeout permit=0 fd_before=263 fd_after=263 fd_delta=0 fiber_before=0 fiber_after=0
+    h_s4a_network name=tls_handshake_stall result=PASS outcome=timeout server_closed=true permit=0 fd_before=7 fd_after=7 fd_delta=0 fiber_before=1 fiber_after=0 server_detail=bytes=517
+    h_s4a_network name=header_read_stall result=PASS outcome=timeout server_closed=true permit=0 fd_before=7 fd_after=7 fd_delta=0 fiber_before=1 fiber_after=0 server_detail=bytes=0
+    h_s4a_network name=body_read_stall result=PASS outcome=timeout server_closed=true permit=0 fd_before=7 fd_after=7 fd_delta=0 fiber_before=1 fiber_after=0 server_detail=bytes=0
+    h_s4a_network name=upload_sink_stall result=PASS outcome=timeout server_closed=true permit=0 fd_before=7 fd_after=7 fd_delta=0 fiber_before=1 fiber_after=0 server_detail=bytes=3977216
+
+### Decision
+
+H-S4a is PASS-WITH-CAVEAT. Eta.timeout returns a caller-visible typed
+Cause.Fail Timeout, while the losing operation is cancelled. In the five local
+fixtures, timeout cancellation releases local permits, closes the client side,
+lets server-side fibers exit, and returns descriptor counts to baseline.
+
+The timeout taxonomy for eta-http should be:
+
+- Caller deadline exceeded: Cause.Fail Timeout.
+- Runtime cancellation of the loser or externally cancelled child:
+  Cause.Interrupt.
+
+### Caveat
+
+The fiber measurement is a fixture-managed counter for fibers created by the
+matrix, not a global Eio runtime census. This is enough to catch leaked fixture
+server fibers, but it does not prove that every possible third-party adapter
+fiber exits under timeout.
+
+### Consequence
+
+H-S4a does not block H-D by itself. Eta-http can use Eta.timeout around local
+Eio TCP/TLS/read/write operations with the measured cleanup behavior, while
+keeping timeout as a typed failure and cancellation as interruption.
+
+## V-Http-Phase-S - substrate research closes with TLS pivot constraints
+
+Question: after H-S0, H-S1, H-S2, H-S3, and H-S4a evidence, may eta-http move
+from substrate viability research into Phase H-D?
+
+### Evidence
+
+Phase summary:
+
+- scratch/eta_http_research/phase_s_summary.md
+
+Hypothesis artifacts:
+
+- H-S0: scratch/eta_http_research/h_s0_cohttp_eio_h1
+- H-S1: scratch/eta_http_research/h_s1_ocaml_h2_eio
+- H-S2: scratch/eta_http_research/h_s2_tls_eio_alpn
+- H-S3: scratch/eta_http_research/h_s3_tls_grade
+- H-S4a: scratch/eta_http_research/h_s4a_cancellation_safety
+- ADR: scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+
+Verdicts:
+
+- V-Http-S0-Partial: cohttp-eio h1 basics pass, but high-level client pooling
+  and trailers fail; HEAD is handler-owned.
+- V-Http-S1: ocaml-h2 sans-IO can run over Eio/TLS, but graceful GOAWAY
+  admission/cutoff must be adapter-owned.
+- V-Http-S2-ALPN-Partial: tls-eio negotiates local and production ALPN on the
+  older TLS branch.
+- V-Http-S3: production-grade client TLS fails on pinned tls.0.17.5 because of
+  DH1024 acceptance, published advisories, and no live revocation by default.
+- V-Http-S4a: Eta.timeout cancels the five local TCP/TLS/read/write stalls with
+  zero fd delta, released permits, and fixture-managed fiber cleanup.
+
+### Decision
+
+Phase H-S closes as PASS-WITH-CAVEAT for continuing eta-http design, but FAIL
+for the exact pinned production TLS substrate.
+
+H-D may proceed only under explicit constraints. It must not assume the current
+pinned ocaml-tls branch is production-grade. H-D must either make tls >= 2.1.0
+work under OxCaml and rerun H-S3, prove a narrowed TLS policy with fixtures, or
+select another TLS substrate.
+
+### Constraints carried into H-D
+
+- H-S3 is a blocking TLS substrate decision, not a cosmetic caveat.
+- ADR 0001 applies: eta-http must not claim browser-equivalent revocation unless
+  a caller-owned revocation policy/API is deliberately designed and tested.
+- If cohttp-eio remains in the h1 path, eta-http must own pooling, trailers, and
+  HEAD enforcement.
+- If ocaml-h2 remains in the h2 path, eta-http must own GOAWAY admission/cutoff
+  semantics.
+- Eta.timeout taxonomy is Cause.Fail Timeout for caller deadlines and
+  Cause.Interrupt for cancellation of losers/children.
+
+### Verification limits
+
+Focused lab commands and outputs are recorded in each results.md. Root dune
+build is still not the right gate while unrelated historical scratch
+directories reference old effet/ppx_effet APIs. Use eta-oxcaml-test-shipped for
+the shipped Eta package gate and focused dune commands for eta_http_research
+labs.
+
+Shipped package gate:
+
+    nix develop .#oxcaml -c eta-oxcaml-test-shipped
+
+Result: pass. eta-schema, ppx_eta, eta-otel, eta-stream, and eta package tests
+all passed.
