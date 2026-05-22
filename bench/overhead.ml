@@ -62,46 +62,46 @@ let () =
   in
   let tbl = table (load path) in
   Printf.printf "result: %s\n\n" path;
-  Printf.printf "%-44s %14s %14s %10s %s\n" "ratio" "effet" "baseline" "ratio" "unit";
+  Printf.printf "%-44s %14s %14s %10s %s\n" "ratio" "eta" "baseline" "ratio" "unit";
   [
     ratio tbl ~metric:"wall_ns" ~name:"bind.prebuilt.time"
-      ~left:"overhead.effet.bind.100k.prebuilt"
+      ~left:"overhead.eta.bind.100k.prebuilt"
       ~right:"overhead.mini.bind.100k.prebuilt";
     ratio tbl ~metric:"minor_words" ~name:"bind.prebuilt.minor_words"
-      ~left:"overhead.effet.bind.100k.prebuilt"
+      ~left:"overhead.eta.bind.100k.prebuilt"
       ~right:"overhead.mini.bind.100k.prebuilt";
     ratio tbl ~metric:"major_words" ~name:"bind.prebuilt.major_words"
-      ~left:"overhead.effet.bind.100k.prebuilt"
+      ~left:"overhead.eta.bind.100k.prebuilt"
       ~right:"overhead.mini.bind.100k.prebuilt";
     ratio tbl ~metric:"wall_ns" ~name:"bind.build_run.time"
-      ~left:"overhead.effet.bind.100k.build_run"
+      ~left:"overhead.eta.bind.100k.build_run"
       ~right:"overhead.mini.bind.100k.build_run";
     ratio tbl ~metric:"minor_words" ~name:"bind.build_run.minor_words"
-      ~left:"overhead.effet.bind.100k.build_run"
+      ~left:"overhead.eta.bind.100k.build_run"
       ~right:"overhead.mini.bind.100k.build_run";
     ratio tbl ~metric:"major_words" ~name:"bind.build_run.major_words"
-      ~left:"overhead.effet.bind.100k.build_run"
+      ~left:"overhead.eta.bind.100k.build_run"
       ~right:"overhead.mini.bind.100k.build_run";
     ratio tbl ~metric:"wall_ns" ~name:"fail_catch.prebuilt.time"
-      ~left:"overhead.effet.fail_catch.100k.prebuilt"
+      ~left:"overhead.eta.fail_catch.100k.prebuilt"
       ~right:"overhead.mini.fail_catch.100k.prebuilt";
     ratio tbl ~metric:"minor_words" ~name:"fail_catch.prebuilt.minor_words"
-      ~left:"overhead.effet.fail_catch.100k.prebuilt"
+      ~left:"overhead.eta.fail_catch.100k.prebuilt"
       ~right:"overhead.mini.fail_catch.100k.prebuilt";
     ratio tbl ~metric:"major_words" ~name:"fail_catch.prebuilt.major_words"
-      ~left:"overhead.effet.fail_catch.100k.prebuilt"
+      ~left:"overhead.eta.fail_catch.100k.prebuilt"
       ~right:"overhead.mini.fail_catch.100k.prebuilt";
     ratio tbl ~metric:"wall_ns" ~name:"fail_catch.build_run.time"
-      ~left:"overhead.effet.fail_catch.100k.build_run"
+      ~left:"overhead.eta.fail_catch.100k.build_run"
       ~right:"overhead.mini.fail_catch.100k.build_run";
     ratio tbl ~metric:"minor_words" ~name:"fail_catch.build_run.minor_words"
-      ~left:"overhead.effet.fail_catch.100k.build_run"
+      ~left:"overhead.eta.fail_catch.100k.build_run"
       ~right:"overhead.mini.fail_catch.100k.build_run";
     ratio tbl ~metric:"major_words" ~name:"fail_catch.build_run.major_words"
-      ~left:"overhead.effet.fail_catch.100k.build_run"
+      ~left:"overhead.eta.fail_catch.100k.build_run"
       ~right:"overhead.mini.fail_catch.100k.build_run";
     ratio tbl ~metric:"wall_ns" ~name:"setup.time"
-      ~left:"overhead.effet.setup_pure"
+      ~left:"overhead.eta.setup_pure"
       ~right:"overhead.eio.setup";
   ]
   |> List.iter (function

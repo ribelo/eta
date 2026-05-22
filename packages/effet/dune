@@ -1,4 +1,0 @@
-(library
- (name effet)
- (public_name effet)
- (libraries eio eio.unix portable parallel parallel.scheduler threads))

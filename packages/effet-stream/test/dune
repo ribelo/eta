@@ -1,6 +1,0 @@
-(test
- (name test_effet_stream)
- (libraries effet-stream effet alcotest eio_main unix)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

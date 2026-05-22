@@ -1,6 +1,6 @@
 (* Real-use workloads, mirrored 1:1 with bench/runtime_overhead_ts/realuse_*.
  *
- * These exercise the slices of Effet that have a fair Effect-v4
+ * These exercise the slices of Eta that have a fair Effect-v4
  * counterpart: bounded/unbounded concurrent fanout, retry over a
  * Schedule with a flaky operation, a pipeline of binds with one
  * caught failure, and nested resource acquire/release scopes.
@@ -12,7 +12,7 @@
  * Bun side.
  *)
 
-open Effet
+open Eta
 
 let sink = ref 0
 
@@ -56,7 +56,7 @@ let fanout_bounded_512x50_k8 () =
 let retry_flaky () =
   let counter = ref 0 in
   let attempt =
-    Effect.thunk "retry.attempt" (fun _ ->
+    Effect.sync "retry.attempt" (fun _ ->
         let n = !counter + 1 in
         counter := n;
         n)
@@ -111,11 +111,11 @@ let scope_acquire_release_64 () =
   let acquire_one =
     Effect.acquire_release
       ~acquire:
-        (Effect.thunk "acq" (fun _ ->
+        (Effect.sync "acq" (fun _ ->
              incr counter;
              !counter))
       ~release:(fun _ ->
-        Effect.thunk "rel" (fun _ ->
+        Effect.sync "rel" (fun _ ->
             decr counter;
             ()))
   in

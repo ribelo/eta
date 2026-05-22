@@ -1,0 +1,4 @@
+(library
+ (name eta_otel)
+ (public_name eta-otel)
+ (libraries eta eio eio.unix yojson))

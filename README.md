@@ -1,11 +1,11 @@
-# Effet
+# Eta
 
-Effet is an OCaml effect library shaped by TypeScript Effect and Scala ZIO.
+Eta is an OCaml effect library shaped by TypeScript Effect and Scala ZIO.
 It keeps the useful axes: typed failures and success values.
 
 It is not an Elm Architecture framework. There is no message loop, inbox,
 subscription reconciler, or state container. Applications own their
-state; Effet owns effect description and interpretation.
+state; Eta owns effect description and interpretation.
 
 ## Core Type
 
@@ -18,13 +18,13 @@ state; Effet owns effect description and interpretation.
   inferred error rows.
 
 Dependencies are ordinary OCaml values. Pass records, modules, closures, or
-handles to functions that build effects; Effet does not provide a ZIO-style
+handles to functions that build effects; Eta does not provide a ZIO-style
 environment or layer graph.
 
 ## Example
 
 ```ocaml
-open Effet
+open Eta
 
 let program =
   Effect.pure 1
@@ -49,7 +49,7 @@ let () =
 
 | Module | Purpose |
 | --- | --- |
-| `Effect` | Abstract description for pure values, typed failure, thunk leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
+| `Effect` | Abstract description for pure values, typed failure, sync leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
@@ -62,7 +62,7 @@ let () =
 
 ## Portable Islands
 
-`Effect.island` is the portable twin of `Effect.thunk`: it runs one
+`Effect.island` is the portable twin of `Effect.sync`: it runs one
 compiler-checked portable callback through a runtime-owned island pool.
 
 ```ocaml
@@ -92,21 +92,21 @@ implied.
 
 ## PPX Helpers
 
-The optional `ppx_effet` package provides small syntax helpers. They expand to
+The optional `ppx_eta` package provides small syntax helpers. They expand to
 ordinary `Effect` and object code; they do not infer services, build dependency
 graphs, or add runtime semantics.
 
 ```ocaml
 let load_user id =
-  [%effet.fn
-    (Effect.thunk "db.query" (fun () -> Db.user id))]
+  [%eta.fn
+    (Effect.sync "db.query" (fun () -> Db.user id))]
 ```
 
 It expands to:
 
 ```ocaml
 Effect.fn __POS__ __FUNCTION__
-  (Effect.thunk "db.query" (fun () -> Db.user id))
+  (Effect.sync "db.query" (fun () -> Db.user id))
 ```
 
 Leaf effects can bind an explicit capture list so the body cannot read an
@@ -114,18 +114,18 @@ ambient `env`:
 
 ```ocaml
 let current_user auth =
-  [%effet.thunk "auth.current_user" (auth : Auth.t)
+  [%eta.sync "auth.current_user" (auth : Auth.t)
     (Auth.current_user auth)]
 ```
 
-This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.thunk ...)`, with a
-zero-argument thunk and a local typed `auth` binding.
+This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.sync ...)`, with a
+zero-argument callback and a local typed `auth` binding.
 
-Use it by adding `ppx_effet` to your test or executable preprocessors:
+Use it by adding `ppx_eta` to your test or executable preprocessors:
 
 ```lisp
 (preprocess
- (pps ppx_effet))
+ (pps ppx_eta))
 ```
 
 The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
@@ -139,9 +139,9 @@ conversion.
 
 ```ocaml
 let with_db k =
-  let acquire = Effect.thunk "db.open" (fun () -> Db.open_) in
+  let acquire = Effect.sync "db.open" (fun () -> Db.open_) in
   let release handle =
-    Effect.thunk "db.close" (fun () -> Db.close handle)
+    Effect.sync "db.close" (fun () -> Db.close handle)
   in
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
@@ -149,7 +149,7 @@ let with_db k =
 
 ## Services
 
-Effet does not ship `Layer.t`, `Tag`, `Context`, or `Effect.provide`.
+Eta does not ship `Layer.t`, `Tag`, `Context`, or `Effect.provide`.
 Build service graphs with ordinary OCaml functions and keep resource lifetime
 inside `Effect.scoped`.
 
@@ -201,17 +201,17 @@ Use Eio data primitives directly for local coordination:
 | Bounded producer/consumer queue | `Eio.Stream` |
 | One-shot signal or shared result | `Eio.Promise` |
 | Countdown or wait-for-condition | `Eio.Condition` with `Eio.Mutex` |
-| Broadcast with drop/backpressure policy | Application-owned queues or `effet-stream` when it is stream-shaped |
+| Broadcast with drop/backpressure policy | Application-owned queues or `eta-stream` when it is stream-shaped |
 
-Effet does not ship `Effect.Queue`, `Effect.Deferred`, `Effect.PubSub`, or
+Eta does not ship `Effect.Queue`, `Effect.Deferred`, `Effect.PubSub`, or
 `Effect.Latch`. The lab found that adding close/fail state, slow-consumer
 policy, and nonblocking shutdown makes these wrappers policy-owning
 abstractions, not thin aliases.
 
-Wrap Eio operations in `Effect.thunk` at the leaf when they need typed failure
+Wrap Eio operations in `Effect.sync` at the leaf when they need typed failure
 conversion or tracing names. If a protocol is reusable
 and owns lifecycle semantics, prefer a focused module such as `Resource` or
-`effet-stream` rather than a generic concurrency-data wrapper.
+`eta-stream` rather than a generic concurrency-data wrapper.
 
 ## Trace Propagation
 
@@ -219,7 +219,7 @@ Tracing is configured on the runtime:
 
 ```ocaml
 let rt =
-  Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ()
+  Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
 ```
 
 Typed failures render as `"<typed failure>"` in span status and exception events

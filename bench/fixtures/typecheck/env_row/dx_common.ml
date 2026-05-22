@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 class type services = object
   method user_query : int -> int

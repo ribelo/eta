@@ -1,0 +1,4 @@
+(library
+ (name eta)
+ (public_name eta)
+ (libraries eio eio.unix portable parallel parallel.scheduler threads))

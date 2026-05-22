@@ -1,6 +1,6 @@
 (executable
  (name runtime_real)
- (libraries bench_lib effet eio_main))
+ (libraries bench_lib eta eio_main))
 
 (rule
  (alias bench)

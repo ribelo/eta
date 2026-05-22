@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "effet-bench-runtime-overhead-ts",
+      "name": "eta-bench-runtime-overhead-ts",
       "dependencies": {
         "effect": "4.0.0-beta.70",
       },

@@ -1,5 +1,5 @@
 {
-  "name": "effet-bench-runtime-overhead-ts",
+  "name": "eta-bench-runtime-overhead-ts",
   "private": true,
   "type": "module",
   "description": "Bun + TypeScript + Effect reference workloads, mirroring bench/runtime_overhead/runtime_overhead.ml.",

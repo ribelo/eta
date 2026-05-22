@@ -1,6 +1,6 @@
 (library
  (name bench_typecheck_ppx_heavy)
  (wrapped false)
- (libraries effet)
+ (libraries eta)
  (preprocess
-  (pps ppx_effet)))
+  (pps ppx_eta)))

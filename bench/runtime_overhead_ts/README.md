@@ -14,9 +14,9 @@ startup is excluded from every measurement.
 | `overhead.ts.direct.closure_bind.100k` | `overhead.direct.closure_bind.100k` | `bind`/`pure` as anonymous functions. |
 | `overhead.ts.mini.bind.100k.{prebuilt,build_run}` | `overhead.mini.bind.100k.{prebuilt,build_run}` | Hand-rolled minimal interpreter over `Pure`/`Bind`. |
 | `overhead.ts.mini.fail_catch.100k.{prebuilt,build_run}` | `overhead.mini.fail_catch.100k.{prebuilt,build_run}` | Same interpreter with `Fail`/`Catch`. |
-| `overhead.ts.effect.runSync_pure.100k` | `overhead.effet.pure.reused_rt` (×100k) | 100k `Effect.runSync(Effect.succeed(0))` calls. Divide by 100k for per-call cost. |
-| `overhead.ts.effect.bind.100k.{prebuilt,build_run}` | `overhead.effet.bind.100k.{prebuilt,build_run}` | `Effect.flatMap` chain over `Effect.succeed`. |
-| `overhead.ts.effect.fail_catch.100k.{prebuilt,build_run}` | `overhead.effet.fail_catch.100k.{prebuilt,build_run}` | `Effect.catch` over `Effect.fail`. |
+| `overhead.ts.effect.runSync_pure.100k` | `overhead.eta.pure.reused_rt` (×100k) | 100k `Effect.runSync(Effect.succeed(0))` calls. Divide by 100k for per-call cost. |
+| `overhead.ts.effect.bind.100k.{prebuilt,build_run}` | `overhead.eta.bind.100k.{prebuilt,build_run}` | `Effect.flatMap` chain over `Effect.succeed`. |
+| `overhead.ts.effect.fail_catch.100k.{prebuilt,build_run}` | `overhead.eta.fail_catch.100k.{prebuilt,build_run}` | `Effect.catch` over `Effect.fail`. |
 
 The TS mini interpreter uses an explicit frame stack, not host recursion,
 because JS engines blow the stack around 10k frames; the OCaml mini

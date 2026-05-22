@@ -1,4 +1,0 @@
-(library
- (name effet_otel)
- (public_name effet-otel)
- (libraries effet eio eio.unix yojson))

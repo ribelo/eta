@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 class type services = object
   method clock_now : int -> int

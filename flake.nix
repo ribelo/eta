@@ -1,5 +1,5 @@
 {
-  description = "Effet OCaml development environment";
+  description = "Eta OCaml development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -24,7 +24,7 @@
           oxCamlSwitch = "5.2.0+ox";
           oxCamlOpamRoot = ".opam-oxcaml";
           oxCamlSetup = pkgs.writeShellApplication {
-            name = "effet-oxcaml-init";
+            name = "eta-oxcaml-init";
             runtimeInputs = [
               pkgs.git
               pkgs.opam
@@ -65,7 +65,7 @@
             '';
           };
           oxCamlToolchainCheck = pkgs.writeShellApplication {
-            name = "effet-oxcaml-check-toolchain";
+            name = "eta-oxcaml-check-toolchain";
             runtimeInputs = [
               pkgs.git
               pkgs.opam
@@ -96,7 +96,7 @@
             '';
           };
           oxCamlShippedTests = pkgs.writeShellApplication {
-            name = "effet-oxcaml-test-shipped";
+            name = "eta-oxcaml-test-shipped";
             runtimeInputs = [
               pkgs.opam
             ];
@@ -110,23 +110,23 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
-                packages/effet \
-                packages/effet-otel \
-                packages/effet-schema \
-                packages/effet-stream \
-                packages/ppx_effet \
-                packages/effet/test \
-                packages/effet-otel/test \
-                packages/effet-schema/test \
-                packages/effet-stream/test \
-                packages/ppx_effet/test
+                packages/eta \
+                packages/eta-otel \
+                packages/eta-schema \
+                packages/eta-stream \
+                packages/ppx_eta \
+                packages/eta/test \
+                packages/eta-otel/test \
+                packages/eta-schema/test \
+                packages/eta-stream/test \
+                packages/ppx_eta/test
 
               dune runtest \
-                packages/effet \
-                packages/effet-otel \
-                packages/effet-schema \
-                packages/effet-stream \
-                packages/ppx_effet \
+                packages/eta \
+                packages/eta-otel \
+                packages/eta-schema \
+                packages/eta-stream \
+                packages/ppx_eta \
                 --force
             '';
           };
@@ -169,9 +169,9 @@
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
               fi
-              echo "Effet OxCaml shell (${oxCamlSwitch})"
-              echo "Run 'effet-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
-              echo "Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only."
+              echo "Eta OxCaml shell (${oxCamlSwitch})"
+              echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+              echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
             '';
           };
 
@@ -188,9 +188,9 @@
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
               fi
-              echo "Effet OxCaml research shell (${oxCamlSwitch})"
-              echo "Run 'effet-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
-              echo "Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only."
+              echo "Eta OxCaml research shell (${oxCamlSwitch})"
+              echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+              echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
             '';
           };
 
@@ -209,7 +209,7 @@
             ];
 
             shellHook = ''
-              echo "Effet mainline OCaml comparison shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
+              echo "Eta mainline OCaml comparison shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
               echo "Use this only for benchmark comparison; default development is OxCaml."
             '';
           };

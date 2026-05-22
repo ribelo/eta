@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 let run_effect program =
   Eio_main.run @@ fun stdenv ->
@@ -22,13 +22,13 @@ let bind_left n =
 let rec map_chain n acc =
   if n = 0 then acc else map_chain (n - 1) (Effect.map (( + ) 1) acc)
 
-let thunk_chain n =
+let sync_chain n =
   let rec go i =
     if i = 0 then Effect.pure 0
     else
       Effect.bind
         (fun _ -> go (i - 1))
-        (Effect.thunk "bench.thunk" (fun () -> i))
+        (Effect.sync "bench.sync" (fun () -> i))
   in
   go n
 
@@ -47,9 +47,9 @@ let workloads =
     core "map_chain.1k" (fun () -> run_effect (map_chain 1_000 (Effect.pure 0)));
     core "map_chain.10k" (fun () -> run_effect (map_chain 10_000 (Effect.pure 0)));
     core "map_chain.100k" (fun () -> run_effect (map_chain 100_000 (Effect.pure 0)));
-    core "thunk.1" (fun () -> run_effect (thunk_chain 1));
-    core "thunk.100" (fun () -> run_effect (thunk_chain 100));
-    core "thunk.10000" (fun () -> run_effect (thunk_chain 10_000));
+    core "sync.1" (fun () -> run_effect (sync_chain 1));
+    core "sync.100" (fun () -> run_effect (sync_chain 100));
+    core "sync.10000" (fun () -> run_effect (sync_chain 10_000));
     core "catch_success" (fun () ->
         run_effect
           (Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 0) (Effect.pure 1)));

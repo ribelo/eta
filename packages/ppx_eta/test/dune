@@ -1,0 +1,8 @@
+(test
+ (name test_ppx_eta)
+ (libraries eta alcotest eio_main)
+ (preprocess
+  (pps ppx_eta))
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

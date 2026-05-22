@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 let chain n =
   let rec go i acc =
@@ -39,7 +39,7 @@ let attrs_work n =
   in
   go n (Effect.pure 0)
 
-let span i : Effet_otel.Internal.span =
+let span i : Eta_otel.Internal.span =
   {
     trace_id = "0af7651916cd43dd8448eb211c80319c";
     span_id = Printf.sprintf "%016x" i;
@@ -68,7 +68,7 @@ let log i : Capabilities.log_record =
     span_id = Printf.sprintf "%016x" i;
   }
 
-let point i : Effet.Meter.point =
+let point i : Eta.Meter.point =
   {
     name = "bench.metric";
     description = "bench";
@@ -83,15 +83,15 @@ let run_otel kind count =
   let payload =
     match kind with
     | `Span ->
-        Effet_otel.Internal.encode_traces_request
+        Eta_otel.Internal.encode_traces_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count span)
     | `Log ->
-        Effet_otel.Internal.encode_logs_request
+        Eta_otel.Internal.encode_logs_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count log)
     | `Metric ->
-        Effet_otel.Internal.encode_metrics_request
+        Eta_otel.Internal.encode_metrics_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count point)
   in
@@ -133,10 +133,10 @@ let workloads =
         run_in_memory ~auto_instrument:true (chain 10_000));
     item "named_span_only" (fun () -> run_in_memory (chain 10_000));
     item "named_with_attrs" (fun () -> run_in_memory (attrs_work 10_000));
-    item "effet_otel.encoder.span.100" (fun () -> run_otel `Span 100);
-    item "effet_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
-    item "effet_otel.encoder.log.100" (fun () -> run_otel `Log 100);
-    item "effet_otel.encoder.metric.100" (fun () -> run_otel `Metric 100);
+    item "eta_otel.encoder.span.100" (fun () -> run_otel `Span 100);
+    item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
+    item "eta_otel.encoder.log.100" (fun () -> run_otel `Log 100);
+    item "eta_otel.encoder.metric.100" (fun () -> run_otel `Metric 100);
     item "cause.construction.fail" (fun () -> repeat 10_000 (fun () -> ignore (Cause.fail "a")));
     item "cause.construction.concurrent" (fun () -> repeat 10_000 cause_concurrent);
     item "cause.construction.suppressed" (fun () -> repeat 10_000 cause_suppressed);

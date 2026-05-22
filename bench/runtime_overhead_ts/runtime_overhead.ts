@@ -275,7 +275,7 @@ function effectBindChain(n: number, acc: Effect.Effect<number>): Effect.Effect<n
 }
 
 function effectFailCatchLoop(n: number): Effect.Effect<number> {
-  // Same recursion shape as effet_fail_catch_loop in OCaml.
+  // Same recursion shape as eta_fail_catch_loop in OCaml.
   function go(i: number, acc: number): Effect.Effect<number> {
     if (i === 0) return Effect.succeed(acc)
     return Effect.catch(Effect.fail("Boom" as const), () => go(i - 1, acc + 1))
@@ -287,11 +287,11 @@ function runEffectInt(p: Effect.Effect<number>): void {
   intSink = Effect.runSync(p)
 }
 
-// 4. runSync hot loop (analogue of overhead.effet.pure.reused_rt) ----------
+// 4. runSync hot loop (analogue of overhead.eta.pure.reused_rt) ----------
 //
 // Effect-TS has no externally created runtime; the per-call cost is what a
 // caller pays. We loop runSync(succeed) so the per-op cost is observable
-// above the timer floor, then compare against overhead.effet.pure.reused_rt
+// above the timer floor, then compare against overhead.eta.pure.reused_rt
 // per-call by dividing on the analysis side.
 
 function effectRunSyncPureLoop(n: number): void {
@@ -304,7 +304,7 @@ function effectRunSyncPureLoop(n: number): void {
 // 5. Real-use workloads (mirrored 1:1 with bench/runtime_real/runtime_real.ml)
 // ---------------------------------------------------------------------------
 //
-// Each row exercises a slice of the Effet API for which Effect-v4 has a
+// Each row exercises a slice of the Eta API for which Effect-v4 has a
 // fair counterpart. Workloads are synchronous (no real I/O, no real
 // timers) so wall time is dominated by the runtime/interpreter, not by
 // the kernel.

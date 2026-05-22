@@ -1,20 +1,20 @@
-# Effet Bench Suite
+# Eta Bench Suite
 
-The bench suite records runtime and compile-time measurements for Effet over
+The bench suite records runtime and compile-time measurements for Eta over
 time. It is opt-in infrastructure, not a CI gate.
 
 ## What It Measures
 
 | Category | Prefix | Purpose |
 | --- | --- | --- |
-| Core interpreter | `effect.core.*` | Per-bind, thunk, catch, and typed-failure boundary cost. |
-| Overhead controls | `overhead.*` | Paired Effet-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
+| Core interpreter | `effect.core.*` | Per-bind, sync leaf, catch, and typed-failure boundary cost. |
+| Overhead controls | `overhead.*` | Paired Eta-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
 | Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `for_each_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
 | Bun + Effect reference | `overhead.ts.*` and `realuse.ts.*` | Same workloads as `overhead.*` and `realuse.*`, run on Bun + Effect v4 (`effect-smol`). Wall time is sampled inside the Bun process so startup is excluded. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
-| Streams | `effet_stream.*` | Representative `effet-stream` pipelines and file reads. |
-| Schemas | `effet_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
+| Streams | `eta_stream.*` | Representative `eta-stream` pipelines and file reads. |
+| Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, env-row, schema-heavy, and ppx-heavy workloads. |
 
@@ -41,7 +41,7 @@ nix develop -c bash bench/run.sh --quick --filter 'effect.core.bind_right'
 Write to an explicit file:
 
 ```sh
-nix develop -c bash bench/run.sh --quick --out /tmp/effet-bench.json
+nix develop -c bash bench/run.sh --quick --out /tmp/eta-bench.json
 ```
 
 Runtime-only Dune alias:
@@ -87,7 +87,7 @@ nix develop -c dune exec bench/compare.exe
 The compare tool prints a per-metric delta table. It has no failure threshold
 and does not act as a gate.
 
-For the focused "how much does Effet cost?" question, use the overhead ratio
+For the focused "how much does Eta cost?" question, use the overhead ratio
 report:
 
 ```sh
@@ -137,5 +137,5 @@ Avoid committing dirty-tree results unless the commit message explains why.
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter
   workloads because they include Eio scheduling.
-- The OTLP adapter benchmark uses `Effet_otel.Internal` encoders. It records
+- The OTLP adapter benchmark uses `Eta_otel.Internal` encoders. It records
   encoding cost, not a live collector round trip.

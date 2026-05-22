@@ -1,4 +1,0 @@
-(library
- (name effet_stream)
- (public_name effet-stream)
- (libraries effet eio cstruct))

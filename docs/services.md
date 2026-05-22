@@ -1,6 +1,6 @@
 # Services Without Layer
 
-Effet does not ship `Layer.t`, `Tag`, `Context`, `Effect.provide`, or a runtime
+Eta does not ship `Layer.t`, `Tag`, `Context`, `Effect.provide`, or a runtime
 environment channel. Applications build service graphs with ordinary OCaml
 values and functions.
 
@@ -19,7 +19,7 @@ Effect-TS needs Layer because TypeScript needs a value-level service graph to
 recover nominal service identity, scoped construction, and requirement tracking.
 OCaml already covers most of that directly.
 
-OCaml gives Effet:
+OCaml gives Eta:
 
 - module-owned types for nominal service handles;
 - functions and records for dependency injection;
@@ -37,7 +37,7 @@ Define handles in the service module. Keep constructors and cleanup local to
 that module.
 
 ```ocaml
-open Effet
+open Eta
 
 type clock = { now : unit -> float }
 
@@ -51,13 +51,13 @@ end = struct
   type t = { dsn : string; clock : clock }
 
   let open_ clock =
-    Effect.thunk "db.open" (fun () -> { dsn = "db://local"; clock })
+    Effect.sync "db.open" (fun () -> { dsn = "db://local"; clock })
 
   let close _db =
-    Effect.thunk "db.close" (fun () -> ())
+    Effect.sync "db.close" (fun () -> ())
 
   let query db sql =
-    Effect.thunk "db.query" (fun () -> db.dsn ^ ":" ^ sql)
+    Effect.sync "db.query" (fun () -> db.dsn ^ ":" ^ sql)
 end
 ```
 
@@ -101,7 +101,7 @@ A leaf effect closes over the dependencies it needs. There is no ambient
 
 ```ocaml
 let current_user auth =
-  Effect.thunk "auth.current_user" (fun () -> Auth.current_user auth)
+  Effect.sync "auth.current_user" (fun () -> Auth.current_user auth)
 ```
 
 If a leaf must run in a portable island, make the input and callback explicit.
@@ -135,7 +135,7 @@ or different record fields.
 
 ## Decision
 
-Effet keeps service construction in normal OCaml and does not add a Layer or
+Eta keeps service construction in normal OCaml and does not add a Layer or
 environment module.
 
 The durable public style is:

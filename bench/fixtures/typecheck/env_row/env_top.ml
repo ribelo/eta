@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 let program () = Env_m20.program ()
 

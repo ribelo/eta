@@ -1,4 +1,4 @@
-open Effet_schema
+open Eta_schema
 
 type event =
   | One of Schema_m01.t

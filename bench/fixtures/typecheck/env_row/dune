@@ -1,4 +1,4 @@
 (library
  (name bench_typecheck_env_row)
  (wrapped false)
- (libraries effet eio_main))
+ (libraries eta eio_main))

@@ -1,5 +1,5 @@
-open Effet
-open Effet_stream
+open Eta
+open Eta_stream
 
 let run_stream stream sink =
   Eio_main.run @@ fun stdenv ->
@@ -63,7 +63,7 @@ let from_file size chunk take =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "effet_stream." ^ name; run; samples = None }
+    { Bench_lib.name = "eta_stream." ^ name; run; samples = None }
   in
   [
     item "range.map.filter.fold.1k" (fun () -> map_filter_fold 1_000);

@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 let int_sink = ref 0
 let unit_sink = ref ()
@@ -53,11 +53,11 @@ let run_mini_int program =
   | Ok v -> int_sink := Sys.opaque_identity v
   | Error _ -> failwith "unexpected mini failure"
 
-let rec effet_bind_chain n acc =
+let rec eta_bind_chain n acc =
   if n = 0 then acc
-  else effet_bind_chain (n - 1) (Effect.bind (fun x -> Effect.pure (x + 1)) acc)
+  else eta_bind_chain (n - 1) (Effect.bind (fun x -> Effect.pure (x + 1)) acc)
 
-let effet_fail_catch_loop n =
+let eta_fail_catch_loop n =
   let rec go i acc =
     if i = 0 then Effect.pure acc
     else
@@ -67,10 +67,10 @@ let effet_fail_catch_loop n =
   in
   go n 0
 
-let run_effet_int rt program =
+let run_eta_int rt program =
   match Runtime.run rt program with
   | Exit.Ok v -> int_sink := Sys.opaque_identity v
-  | Exit.Error _ -> failwith "unexpected Effet failure"
+  | Exit.Error _ -> failwith "unexpected Eta failure"
 
 let workload name run = { Bench_lib.name = "overhead." ^ name; run; samples = None }
 
@@ -96,26 +96,26 @@ let setup_workloads () =
     workload "eio.setup" (fun () ->
         Eio_main.run @@ fun _stdenv ->
         Eio.Switch.run @@ fun _sw -> unit_sink := ());
-    workload "effet.setup_pure" (fun () ->
+    workload "eta.setup_pure" (fun () ->
         Eio_main.run @@ fun stdenv ->
         Eio.Switch.run @@ fun sw ->
         let rt =
           Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
         in
-        run_effet_int rt (Effect.pure 0));
+        run_eta_int rt (Effect.pure 0));
   ]
 
-let effet_workloads rt =
-  let effet_bind = effet_bind_chain bind_n (Effect.pure 0) in
-  let effet_fail = effet_fail_catch_loop fail_n in
+let eta_workloads rt =
+  let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
+  let eta_fail = eta_fail_catch_loop fail_n in
   [
-    workload "effet.pure.reused_rt" (fun () -> run_effet_int rt (Effect.pure 0));
-    workload "effet.bind.100k.prebuilt" (fun () -> run_effet_int rt effet_bind);
-    workload "effet.bind.100k.build_run" (fun () ->
-        run_effet_int rt (effet_bind_chain bind_n (Effect.pure 0)));
-    workload "effet.fail_catch.100k.prebuilt" (fun () -> run_effet_int rt effet_fail);
-    workload "effet.fail_catch.100k.build_run" (fun () ->
-        run_effet_int rt (effet_fail_catch_loop fail_n));
+    workload "eta.pure.reused_rt" (fun () -> run_eta_int rt (Effect.pure 0));
+    workload "eta.bind.100k.prebuilt" (fun () -> run_eta_int rt eta_bind);
+    workload "eta.bind.100k.build_run" (fun () ->
+        run_eta_int rt (eta_bind_chain bind_n (Effect.pure 0)));
+    workload "eta.fail_catch.100k.prebuilt" (fun () -> run_eta_int rt eta_fail);
+    workload "eta.fail_catch.100k.build_run" (fun () ->
+        run_eta_int rt (eta_fail_catch_loop fail_n));
   ]
 
 let () =
@@ -127,5 +127,5 @@ let () =
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
   in
-  Bench_lib.run opts (effet_workloads rt)
+  Bench_lib.run opts (eta_workloads rt)
 

@@ -1,0 +1,17 @@
+(test
+ (name test_eta)
+ (foreign_stubs
+  (language c)
+  (names blocking_test_stubs))
+ (libraries eta alcotest eio_main eio.unix unix threads)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree island_negative)
+  (:eta_cmxa ../eta.cmxa))
+ (action
+  (run bash island_negative/run.sh %{eta_cmxa})))

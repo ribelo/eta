@@ -1,8 +1,0 @@
-(test
- (name test_ppx_effet)
- (libraries effet alcotest eio_main)
- (preprocess
-  (pps ppx_effet))
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

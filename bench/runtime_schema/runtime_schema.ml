@@ -1,5 +1,5 @@
-open Effet
-open Effet_schema
+open Eta
+open Eta_schema
 
 type record3 = { name : string; count : int; active : bool }
 type record6 = { a : string; b : int; c : bool; d : float; e : string option; f : int }
@@ -127,7 +127,7 @@ let run_policy () =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
   in
   let policy value =
-    Effect.thunk "policy" (fun env ->
+    Effect.sync "policy" (fun env ->
         if env#feature_allowed then value else value)
   in
   ignore (Runtime.run rt (Schema.decode_with_policy record3_schema policy record3_json)
@@ -135,7 +135,7 @@ let run_policy () =
 
 let workloads =
   let item name run =
-    { Bench_lib.name = "effet_schema." ^ name; run; samples = None }
+    { Bench_lib.name = "eta_schema." ^ name; run; samples = None }
   in
   [
     item "decode.record3.simple" (fun () -> repeat 10_000 (fun _ -> decode record3_schema record3_json));

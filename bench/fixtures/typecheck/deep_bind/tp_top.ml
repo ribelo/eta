@@ -1,4 +1,4 @@
-open Effet
+open Eta
 
 let program () = Tp_m50.program ()
 

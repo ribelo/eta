@@ -2,16 +2,16 @@
 
 ## Project Structure & Module Organization
 
-Effet is a small OCaml 5 library built with Dune. Public code lives in `packages/effet/`;
+Eta is a small OCaml 5 library built with Dune. Public code lives in `packages/eta/`;
 each exported module has a paired implementation and interface, for example
 `effect.ml` and `effect.mli`. The core modules are `Effect`, `Runtime`,
 `Cause`, `Exit`, `Duration`, `Schedule`, `Resource`, `Capabilities`, and
 `Tracer`.
 
-Tests live in `packages/effet/test/test_effet.ml` and are registered by
-`packages/effet/test/dune`. Research
+Tests live in `packages/eta/test/test_eta.ml` and are registered by
+`packages/eta/test/dune`. Research
 experiments live under `scratch/`; keep them out of the published library unless
-they are deliberately promoted into `packages/effet/`. Generated artifacts belong in
+they are deliberately promoted into `packages/eta/`. Generated artifacts belong in
 `_build/` and local switches in `_opam/`.
 
 ## Build, Test, and Development Commands
@@ -38,7 +38,7 @@ and run Dune before submitting changes.
 ## Testing Guidelines
 
 Tests use Alcotest plus Eio runtime helpers. Add focused `let test_* ()`
-functions in `packages/effet/test/test_effet.ml`, then register them in the suite in that file.
+functions in `packages/eta/test/test_eta.ml`, then register them in the suite in that file.
 Prefer deterministic helpers such as the existing test clock for timeouts,
 delays, and fiber scheduling. Cover both `Exit.Ok` and `Exit.Error` paths when
 changing runtime interpretation or typed failures.
@@ -63,6 +63,6 @@ changes, call out updates to both `.ml` and `.mli` files.
 
 ## Agent-Specific Instructions
 
-Do not treat Effet as an application framework. The README is explicit:
-applications own state; Effet owns effect description and interpretation.
+Do not treat Eta as an application framework. The README is explicit:
+applications own state; Eta owns effect description and interpretation.
 Preserve that boundary when adding features.
