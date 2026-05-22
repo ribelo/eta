@@ -70,19 +70,14 @@ let expand_thunk_like ~ctxt ~kind expr =
         [ (Nolabel, caps_expr); (Nolabel, body) ] ) ->
       if expression_mentions_env body then
         fail body.pexp_loc
-          "effet leaf body must use listed capabilities, not env directly";
+          "effet leaf body must use listed captures, not env directly";
       let caps = parse_caps caps_expr in
       check_no_duplicate_caps loc caps;
-      let env = evar ~loc "__effet_env" in
       let body =
         List.fold_right
           (fun (cap, typ) acc ->
             let cap_loc = { loc with loc_ghost = true } in
-            let cap_expr =
-              pexp_constraint ~loc
-                (pexp_send ~loc env (Located.mk ~loc:cap_loc cap))
-                typ
-            in
+            let cap_expr = pexp_constraint ~loc (evar ~loc cap) typ in
             pexp_let ~loc Nonrecursive
               [
                 value_binding ~loc
@@ -96,39 +91,13 @@ let expand_thunk_like ~ctxt ~kind expr =
         pexp_apply ~loc (effet_effect_ident ~loc kind)
           [
             (Nolabel, estring ~loc name);
-            (Nolabel, pexp_fun ~loc Nolabel None (pvar ~loc "__effet_env") body);
+            (Nolabel, pexp_fun ~loc Nolabel None (punit ~loc) body);
           ]
       in
       expand_fn ~ctxt leaf
   | _ ->
       fail expr.pexp_loc
         "expected [%effet.thunk \"name\" (cap : Type) body] or a tuple of caps"
-
-let expand_env ~ctxt expr =
-  let loc = Expansion_context.Extension.extension_point_loc ctxt in
-  let open Ast_builder.Default in
-  match expr.pexp_desc with
-  | Pexp_record (fields, None) ->
-      let names =
-        List.map
-          (fun ({ txt = lid; loc }, value) ->
-            let name = cap_name_of_lid loc lid in
-            (name, value))
-          fields
-      in
-      check_no_duplicate_caps loc names;
-      let class_fields =
-        List.map
-          (fun (name, value) ->
-            pcf_method ~loc
-              ( Located.mk ~loc name,
-                Public,
-                Cfk_concrete (Fresh, value) ))
-          names
-      in
-      pexp_object ~loc
-        (class_structure ~self:(ppat_any ~loc) ~fields:class_fields)
-  | _ -> fail expr.pexp_loc "expected [%effet.env { cap = value; ... }]"
 
 let fn_extension =
   Extension.V3.declare "effet.fn" Extension.Context.expression
@@ -140,16 +109,10 @@ let thunk_extension =
     Ast_pattern.(single_expr_payload __)
     (expand_thunk_like ~kind:"thunk")
 
-let env_extension =
-  Extension.V3.declare "effet.env" Extension.Context.expression
-    Ast_pattern.(single_expr_payload __)
-    expand_env
-
 let () =
   Driver.register_transformation "ppx_effet"
     ~rules:
       [
         Context_free.Rule.extension fn_extension;
         Context_free.Rule.extension thunk_extension;
-        Context_free.Rule.extension env_extension;
       ]

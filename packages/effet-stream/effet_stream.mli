@@ -27,46 +27,46 @@ module Stream : sig
 
   val pp_file_error : Format.formatter -> file_error -> unit
 
-  type ('env, 'err, 'a) t
+  type ('a, 'err) t
 
-  val empty : ('env, 'err, 'a) t
-  val succeed : 'a -> ('env, 'err, 'a) t
-  val from_chunk : 'a chunk -> ('env, 'err, 'a) t
-  val from_iterable : 'a list -> ('env, 'err, 'a) t
-  val from_effect : ('env, 'err, 'a) Effet.Effect.t -> ('env, 'err, 'a) t
-  val fail : 'err -> ('env, 'err, 'a) t
+  val empty : ('a, 'err) t
+  val succeed : 'a -> ('a, 'err) t
+  val from_chunk : 'a chunk -> ('a, 'err) t
+  val from_iterable : 'a list -> ('a, 'err) t
+  val from_effect : ('a, 'err) Effet.Effect.t -> ('a, 'err) t
+  val fail : 'err -> ('a, 'err) t
 
-  val map : ('a -> 'b) -> ('env, 'err, 'a) t -> ('env, 'err, 'b) t
+  val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
   val map_effect :
-    ('a -> ('env, 'err, 'b) Effet.Effect.t) ->
-    ('env, 'err, 'a) t ->
-    ('env, 'err, 'b) t
-  val filter : ('a -> bool) -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  val take : int -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  val drop : int -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  val scan : ('s -> 'a -> 's) -> 's -> ('env, 'err, 'a) t -> ('env, 'err, 's) t
+    ('a -> ('b, 'err) Effet.Effect.t) ->
+    ('a, 'err) t ->
+    ('b, 'err) t
+  val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  val take : int -> ('a, 'err) t -> ('a, 'err) t
+  val drop : int -> ('a, 'err) t -> ('a, 'err) t
+  val scan : ('s -> 'a -> 's) -> 's -> ('a, 'err) t -> ('s, 'err) t
 
   val concat :
-    ('env, 'err, 'a) t -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+    ('a, 'err) t -> ('a, 'err) t -> ('a, 'err) t
   val flat_map :
-    ('a -> ('env, 'err, 'b) t) -> ('env, 'err, 'a) t -> ('env, 'err, 'b) t
+    ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 
   val merge :
-    ('env, 'err, 'a) t -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+    ('a, 'err) t -> ('a, 'err) t -> ('a, 'err) t
   (** Run both streams concurrently and interleave emitted values. Downstream
       completion, for example through {!take}, cancels both upstream producers. *)
 
   val flat_map_par :
     max_concurrency:int ->
-    ('a -> ('env, 'err, 'b) t) ->
-    ('env, 'err, 'a) t ->
-    ('env, 'err, 'b) t
+    ('a -> ('b, 'err) t) ->
+    ('a, 'err) t ->
+    ('b, 'err) t
   (** Evaluate inner streams concurrently, with at most [max_concurrency]
       active inners at once.
 
       @raise Invalid_argument if [max_concurrency <= 0]. *)
 
-  val from_eio_stream : 'a Eio.Stream.t -> ('env, 'err, 'a) t
+  val from_eio_stream : 'a Eio.Stream.t -> ('a, 'err) t
   (** Pull values from an existing [Eio.Stream.t]. Ownership of the queue and
       its producers remains with the caller. This source has no end-of-stream
       marker; use operators such as {!take} when consuming finite prefixes. *)
@@ -74,7 +74,7 @@ module Stream : sig
   val from_file :
     ?chunk_size:int ->
     [> Eio.Fs.dir_ty ] Eio.Path.t ->
-    ('env, [> `File_error of file_error ], bytes) t
+    (bytes, [> `File_error of file_error ]) t
   (** Read a file as a stream of [bytes] chunks.
 
       The source opens the file when the stream is run, reads at most
@@ -95,38 +95,37 @@ module Stream : sig
     ?chunk_size:int ->
     on_error:(file_error -> 'err) ->
     [> Eio.Fs.dir_ty ] Eio.Path.t ->
-    ('env, 'err, bytes) t
+    (bytes, 'err) t
   (** Like {!from_file}, but maps the public [file_error] record into an
       application-specific typed error. *)
 
-  val named : string -> ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+  val named : string -> ('a, 'err) t -> ('a, 'err) t
   val fn :
     string * int * int * int ->
     string ->
-    ('env, 'err, 'a) t ->
-    ('env, 'err, 'a) t
+    ('a, 'err) t ->
+    ('a, 'err) t
 end
 
 module Sink : sig
-  type ('env, 'err, 'in_, 'out) t
+  type ('in_, 'out, 'err) t
 
   val fold :
-    ('out -> 'in_ -> 'out) -> 'out -> ('env, 'err, 'in_, 'out) t
+    ('out -> 'in_ -> 'out) -> 'out -> ('in_, 'out, 'err) t
   val fold_effect :
-    ('out -> 'in_ -> ('env, 'err, 'out) Effet.Effect.t) ->
+    ('out -> 'in_ -> ('out, 'err) Effet.Effect.t) ->
     'out ->
-    ('env, 'err, 'in_, 'out) t
-  val collect_to_list : ('env, 'err, 'a, 'a list) t
-  val count : ('env, 'err, 'a, int) t
-  val drain : ('env, 'err, 'a, unit) t
+    ('in_, 'out, 'err) t
+  val collect_to_list : ('a, 'a list, 'err) t
+  val count : ('a, int, 'err) t
+  val drain : ('a, unit, 'err) t
 end
 
 val run :
-  ('env, 'err, 'a) Stream.t ->
-  ('env, 'err, 'a, 'b) Sink.t ->
-  ('env, 'err, 'b) Effet.Effect.t
+  ('a, 'err) Stream.t ->
+  ('a, 'b, 'err) Sink.t ->
+  ('b, 'err) Effet.Effect.t
 
-val run_collect :
-  ('env, 'err, 'a) Stream.t -> ('env, 'err, 'a list) Effet.Effect.t
+val run_collect : ('a, 'err) Stream.t -> ('a list, 'err) Effet.Effect.t
 
-val run_drain : ('env, 'err, 'a) Stream.t -> ('env, 'err, unit) Effet.Effect.t
+val run_drain : ('a, 'err) Stream.t -> (unit, 'err) Effet.Effect.t

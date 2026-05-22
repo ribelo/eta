@@ -1,5 +1,5 @@
-type ('env, 'err, 'a) t = {
-  load : ('env, 'err, 'a) Effect.t;
+type ('a, 'err) t = {
+  load : ('a, 'err) Effect.t;
   mutable value : 'a option;
   failures : 'err Cause.t list ref;
 }
@@ -22,17 +22,17 @@ let manual load =
   load |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
 
 let failures resource =
-  Effect.thunk "resource.failures" (fun _ -> List.rev !(resource.failures))
+  Effect.thunk "resource.failures" (fun () -> List.rev !(resource.failures))
 
-let auto ?on_error ~load ~schedule () =
+let auto ?on_error ~load ?random ~schedule () =
   let rec refresh_loop resource step =
-    match Schedule.next_delay schedule ~step with
+    match Schedule.next_delay ?random schedule ~step with
     | None -> Effect.unit
     | Some delay ->
         let refresh_once =
           refresh resource
           |> Effect.catch (fun err ->
-                 Effect.thunk "resource.auto.refresh_failed" (fun _ ->
+                 Effect.thunk "resource.auto.refresh_failed" (fun () ->
                      resource.failures := Cause.Fail err :: !(resource.failures);
                      Option.iter (fun f -> f err) on_error))
         in

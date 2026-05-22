@@ -1,13 +1,12 @@
 # effet-stream
 
 `effet-stream` adds pull-shaped streams and fold-shaped sinks on top of
-Effet's `('env, 'err, 'a) Effect.t`.
+Effet's `('a, 'err) Effect.t`.
 
-Streams keep Effet's three channels:
+Streams keep Effet's two channels:
 
-- `'env` is the object-row capability requirement.
-- `'err` is the typed error row.
 - `'a` is the emitted element type.
+- `'err` is the typed error row.
 
 ## Quick Start
 
@@ -28,7 +27,7 @@ Run the returned effect with an Effet runtime:
 Eio_main.run @@ fun env ->
 Eio.Switch.run @@ fun sw ->
 let rt =
-  Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~env:(object end) ()
+  Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
 in
 Runtime.run rt program
 ```
@@ -55,7 +54,7 @@ File I/O exceptions fail the stream through the typed error channel:
 
 ```ocaml
 Stream.from_file path
-(* ('env, [> `File_error of Stream.file_error ], bytes) Stream.t *)
+(* (bytes, [> `File_error of Stream.file_error ]) Stream.t *)
 ```
 
 Use `Stream.from_file_map_error` to map file errors into an application error

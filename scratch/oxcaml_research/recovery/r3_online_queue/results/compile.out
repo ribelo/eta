@@ -1,0 +1,7 @@
+== mpsc_queue_positive ==
+mpsc_queue_positive producers=3 consumer=1 capacity=32 total=1500 sum=300374250 full_retries=221857 empty_retries=505 close_rejects_push=true fifo_single_consumer=true
+PASS mpsc_queue_positive
+== h3_batch_inbox_online_negative ==
+h3_batch_inbox_online_negative online_push_take=false drain_requires_close=true push_after_close_rejected=true
+PASS h3_batch_inbox_online_negative
+summary: pass=2 fail=0

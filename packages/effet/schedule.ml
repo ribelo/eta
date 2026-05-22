@@ -45,7 +45,10 @@ let pow_factor f step =
   for _ = 0 to step - 1 do v := !v *. f done;
   !v
 
-let rec next_delay sch ~step =
+let default_random = lazy (Capabilities.random_default ())
+
+let next_delay ?(random = Lazy.force default_random) sch ~step =
+  let rec loop sch ~step =
   match sch with
   | Recurs n -> if step < n then Some Duration.zero else None
   | Forever -> Some Duration.zero
@@ -54,20 +57,22 @@ let rec next_delay sch ~step =
   | Linear { initial; step = s } ->
       Some (Duration.add initial (Duration.scale s (float_of_int step)))
   | Both (a, b) -> (
-      match next_delay a ~step, next_delay b ~step with
+      match loop a ~step, loop b ~step with
       | Some da, Some db -> Some (Duration.max da db)
       | _ -> None)
   | Either (a, b) -> (
-      match next_delay a ~step, next_delay b ~step with
+      match loop a ~step, loop b ~step with
       | Some da, Some db -> Some (Duration.min da db)
       | Some d, None | None, Some d -> Some d
       | None, None -> None)
   | And_then (a, b) -> (
-      match next_delay a ~step with Some d -> Some d | None -> next_delay b ~step)
+      match loop a ~step with Some d -> Some d | None -> loop b ~step)
   | Jittered (inner, lo, hi) -> (
-      match next_delay inner ~step with
+      match loop inner ~step with
       | None -> None
       | Some d ->
-          let factor = lo +. ((hi -. lo) *. Random.float 1.0) in
+          let factor = lo +. ((hi -. lo) *. Capabilities.random_float random 1.0) in
           Some (Duration.scale d factor))
-  | Named (s, _) -> next_delay s ~step
+  | Named (s, _) -> loop s ~step
+  in
+  loop sch ~step

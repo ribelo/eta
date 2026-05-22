@@ -2,6 +2,10 @@ class type clock = object
   method sleep : Duration.t -> unit
 end
 
+module P_atomic = Portable.Atomic
+
+type random : value mod portable contended = { seed : int P_atomic.t }
+
 class type log = object
   method info : string -> unit
   method warn : string -> unit
@@ -93,3 +97,17 @@ let clock_of_eio (c : _ Eio.Std.r) : clock =
   object
     method sleep d = Eio.Time.sleep c (Duration.to_seconds_float d)
   end
+
+let random_of_seed seed = { seed = P_atomic.make (seed land 0x3fffffff) }
+
+let random_default () = random_of_seed 0x5eed5
+
+let next_seed seed =
+  ((seed * 1_103_515_245) + 12_345) land 0x3fffffff
+
+let random_float random bound =
+  if bound <= 0.0 then 0.0
+  else
+    let seed = next_seed (P_atomic.get random.seed) in
+    P_atomic.set random.seed seed;
+    bound *. (float_of_int (seed land 0xffff) /. 65_536.0)

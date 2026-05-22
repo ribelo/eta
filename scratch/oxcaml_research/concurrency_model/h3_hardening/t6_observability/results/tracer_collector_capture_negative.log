@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t6_observability/tracer_collector_capture_negative.ml", line 16, characters 21-38:
+16 |            (fun _ -> Effet.Tracer.dump collector)
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Tracer.dump" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t6_observability/tracer_collector_capture_negative.ml", lines 14-17, characters 48-50
+         which is expected to be "shareable".

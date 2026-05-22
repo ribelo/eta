@@ -41,32 +41,32 @@ module Stream = struct
     Format.fprintf ppf "%a %s failed (%a): %s" pp_file_operation
       error.operation error.path pp_file_error_kind error.kind error.message
 
-  type ('env, 'err, 'a) t =
-    | Empty : ('env, 'err, 'a) t
-    | Chunk : 'a chunk -> ('env, 'err, 'a) t
-    | From_effect : ('env, 'err, 'a) Effet.Effect.t -> ('env, 'err, 'a) t
-    | Fail : 'err -> ('env, 'err, 'a) t
-    | Map : ('env, 'err, 'a) t * ('a -> 'b) -> ('env, 'err, 'b) t
+  type ('a, 'err) t =
+    | Empty : ('a, 'err) t
+    | Chunk : 'a chunk -> ('a, 'err) t
+    | From_effect : ('a, 'err) Effet.Effect.t -> ('a, 'err) t
+    | Fail : 'err -> ('a, 'err) t
+    | Map : ('a, 'err) t * ('a -> 'b) -> ('b, 'err) t
     | Map_effect :
-        ('env, 'err, 'a) t * ('a -> ('env, 'err, 'b) Effet.Effect.t)
-        -> ('env, 'err, 'b) t
-    | Filter : ('env, 'err, 'a) t * ('a -> bool) -> ('env, 'err, 'a) t
-    | Take : int * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-    | Drop : int * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-    | Scan : ('s -> 'a -> 's) * 's * ('env, 'err, 'a) t -> ('env, 'err, 's) t
+        ('a, 'err) t * ('a -> ('b, 'err) Effet.Effect.t)
+        -> ('b, 'err) t
+    | Filter : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
+    | Take : int * ('a, 'err) t -> ('a, 'err) t
+    | Drop : int * ('a, 'err) t -> ('a, 'err) t
+    | Scan : ('s -> 'a -> 's) * 's * ('a, 'err) t -> ('s, 'err) t
     | Concat :
-        ('env, 'err, 'a) t * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) t
+        ('a, 'err) t * ('a, 'err) t
+        -> ('a, 'err) t
     | Flat_map :
-        ('env, 'err, 'a) t * ('a -> ('env, 'err, 'b) t)
-        -> ('env, 'err, 'b) t
+        ('a, 'err) t * ('a -> ('b, 'err) t)
+        -> ('b, 'err) t
     | Merge :
-        ('env, 'err, 'a) t * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) t
+        ('a, 'err) t * ('a, 'err) t
+        -> ('a, 'err) t
     | Flat_map_par :
-        int * ('env, 'err, 'a) t * ('a -> ('env, 'err, 'b) t)
-        -> ('env, 'err, 'b) t
-    | From_eio_stream : 'a Eio.Stream.t -> ('env, 'err, 'a) t
+        int * ('a, 'err) t * ('a -> ('b, 'err) t)
+        -> ('b, 'err) t
+    | From_eio_stream : 'a Eio.Stream.t -> ('a, 'err) t
     | From_file :
         {
           chunk_size : int;
@@ -74,11 +74,11 @@ module Stream = struct
           path_label : string;
           on_error : file_error -> 'err;
         }
-        -> ('env, 'err, bytes) t
-    | Named : string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+        -> (bytes, 'err) t
+    | Named : string * ('a, 'err) t -> ('a, 'err) t
     | Fn :
-        string * int * int * int * string * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) t
+        string * int * int * int * string * ('a, 'err) t
+        -> ('a, 'err) t
 
   let empty = Empty
   let succeed value = Chunk [ value ]
@@ -118,10 +118,10 @@ module Stream = struct
 end
 
 module Sink = struct
-  type ('env, 'err, 'in_, 'out) t = {
+  type ('in_, 'out, 'err) t = {
     init : unit -> 'out;
-    step : 'out -> 'in_ -> ('env, 'err, 'out) Effet.Effect.t;
-    done_ : 'out -> ('env, 'err, 'out) Effet.Effect.t;
+    step : 'out -> 'in_ -> ('out, 'err) Effet.Effect.t;
+    done_ : 'out -> ('out, 'err) Effet.Effect.t;
   }
 
   let fold f init =
@@ -156,8 +156,8 @@ module Sink = struct
     }
 end
 
-type ('env, 'err, 'acc, 'a) folder = {
-  emit : 'acc -> 'a -> ('env, 'err, 'acc * bool) Effet.Effect.t;
+type ('acc, 'a, 'err) folder = {
+  emit : 'acc -> 'a -> ('acc * bool, 'err) Effet.Effect.t;
 }
 
 type 'a queue_event = Item of 'a | Done
@@ -185,11 +185,11 @@ let make_file_error ~operation ~path cause =
   }
 
 let rec fold_values :
-    type env err acc a.
+    type err acc a.
     a list ->
     acc ->
-    (env, err, acc, a) folder ->
-    (env, err, acc * bool) Effet.Effect.t =
+    (acc, a, err) folder ->
+    (acc * bool, err) Effet.Effect.t =
  fun values acc folder ->
   match values with
   | [] -> Effet.Effect.pure (acc, true)
@@ -201,11 +201,11 @@ let rec fold_values :
         (folder.emit acc value)
 
 and fold_stream :
-    type env err acc a.
-    (env, err, a) Stream.t ->
+    type err acc a.
+    (a, err) Stream.t ->
     acc ->
-    (env, err, acc, a) folder ->
-    (env, err, acc * bool) Effet.Effect.t =
+    (acc, a, err) folder ->
+    (acc * bool, err) Effet.Effect.t =
  fun stream acc folder ->
   match stream with
   | Stream.Empty -> Effet.Effect.pure (acc, true)
@@ -286,7 +286,7 @@ and fold_stream :
               (fun (acc, keep_going) ->
                 if keep_going then loop acc else Effet.Effect.pure (acc, false))
               (folder.emit acc value))
-          (Effet.Effect.thunk "Stream.from_eio_stream.take" (fun _ ->
+          (Effet.Effect.thunk "Stream.from_eio_stream.take" (fun () ->
                Eio.Stream.take stream))
       in
       loop acc
@@ -299,7 +299,7 @@ and fold_stream :
           (function
             | Ok () -> Effet.Effect.unit
             | Error error -> Effet.Effect.fail (on_error error))
-          (Effet.Effect.thunk "Stream.from_file.read" (fun _ ->
+          (Effet.Effect.thunk "Stream.from_file.read" (fun () ->
                let finish () =
                  ignore (Eio.Promise.try_resolve done_resolver ())
                in
@@ -357,7 +357,7 @@ and fold_stream :
               let rec consume acc =
                 let* event =
                   lift
-                    (Effet.Effect.thunk "Stream.from_file.take" (fun _ ->
+                    (Effet.Effect.thunk "Stream.from_file.take" (fun () ->
                          next_event ()))
                 in
                 match event with
@@ -380,19 +380,19 @@ and fold_stream :
         (fold_stream inner acc folder)
 
 and fold_merge :
-    type env err acc a.
-    (env, err, a) Stream.t ->
-    (env, err, a) Stream.t ->
+    type err acc a.
+    (a, err) Stream.t ->
+    (a, err) Stream.t ->
     acc ->
-    (env, err, acc, a) folder ->
-    (env, err, acc * bool) Effet.Effect.t =
+    (acc, a, err) folder ->
+    (acc * bool, err) Effet.Effect.t =
  fun left right acc folder ->
   let queue = Eio.Stream.create 1024 in
   let stopped = Atomic.make false in
   let producer stream =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.thunk "Stream.merge.done" (fun _ ->
+        Effet.Effect.thunk "Stream.merge.done" (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add queue Done))
     |> bind (fun () ->
            map ignore
@@ -404,7 +404,7 @@ and fold_merge :
                       else
                         map
                           (fun () -> ((), true))
-                          (Effet.Effect.thunk "Stream.merge.emit" (fun _ ->
+                          (Effet.Effect.thunk "Stream.merge.emit" (fun () ->
                                Eio.Stream.add queue (Item value))));
                 }))
   in
@@ -434,7 +434,7 @@ and fold_merge :
             else
               let* event =
                 lift
-                  (Effet.Effect.thunk "Stream.merge.take" (fun _ ->
+                  (Effet.Effect.thunk "Stream.merge.take" (fun () ->
                        Eio.Stream.take queue))
               in
               match event with
@@ -451,13 +451,13 @@ and fold_merge :
     }
 
 and fold_flat_map_par :
-    type env err acc a b.
+    type err acc a b.
     max_concurrency:int ->
-    (env, err, a) Stream.t ->
-    (a -> (env, err, b) Stream.t) ->
+    (a, err) Stream.t ->
+    (a -> (b, err) Stream.t) ->
     acc ->
-    (env, err, acc, b) folder ->
-    (env, err, acc * bool) Effet.Effect.t =
+    (acc, b, err) folder ->
+    (acc * bool, err) Effet.Effect.t =
  fun ~max_concurrency inner f acc folder ->
   let outer_queue = Eio.Stream.create max_concurrency in
   let output_queue = Eio.Stream.create 1024 in
@@ -465,7 +465,7 @@ and fold_flat_map_par :
   let outer_producer =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.thunk "Stream.flat_map_par.outer_done" (fun _ ->
+        Effet.Effect.thunk "Stream.flat_map_par.outer_done" (fun () ->
             if not (Atomic.get stopped) then
               Eio.Stream.add outer_queue Outer_done))
     |> bind (fun () ->
@@ -479,14 +479,14 @@ and fold_flat_map_par :
                         map
                           (fun () -> ((), true))
                           (Effet.Effect.thunk "Stream.flat_map_par.outer_emit"
-                             (fun _ ->
+                             (fun () ->
                                Eio.Stream.add outer_queue (Outer_item value))));
                 }))
   in
   let worker =
     Effet.Effect.acquire_release ~acquire:Effet.Effect.unit
       ~release:(fun () ->
-        Effet.Effect.thunk "Stream.flat_map_par.worker_done" (fun _ ->
+        Effet.Effect.thunk "Stream.flat_map_par.worker_done" (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add output_queue Done))
     |> bind (fun () ->
            let rec loop () =
@@ -494,7 +494,7 @@ and fold_flat_map_par :
                (function
                  | Outer_done ->
                      Effet.Effect.thunk "Stream.flat_map_par.rebroadcast_done"
-                       (fun _ -> Eio.Stream.add outer_queue Outer_done)
+                       (fun () -> Eio.Stream.add outer_queue Outer_done)
                  | Outer_item value ->
                      bind
                        (fun _ -> loop ())
@@ -510,11 +510,11 @@ and fold_flat_map_par :
                                       (fun () -> ((), true))
                                       (Effet.Effect.thunk
                                          "Stream.flat_map_par.inner_emit"
-                                         (fun _ ->
+                                         (fun () ->
                                            Eio.Stream.add output_queue
                                              (Item item))));
                              })))
-               (Effet.Effect.thunk "Stream.flat_map_par.outer_take" (fun _ ->
+               (Effet.Effect.thunk "Stream.flat_map_par.outer_take" (fun () ->
                     Eio.Stream.take outer_queue))
            in
            loop ())
@@ -553,7 +553,7 @@ and fold_flat_map_par :
             let* () = cancel outer_child in
             let* () =
               lift
-                (Effet.Effect.thunk "Stream.flat_map_par.wake_workers" (fun _ ->
+                (Effet.Effect.thunk "Stream.flat_map_par.wake_workers" (fun () ->
                      let rec drain_outer () =
                        match Eio.Stream.take_nonblocking outer_queue with
                        | None -> ()
@@ -577,7 +577,7 @@ and fold_flat_map_par :
             else
               let* event =
                 lift
-                  (Effet.Effect.thunk "Stream.flat_map_par.take" (fun _ ->
+                  (Effet.Effect.thunk "Stream.flat_map_par.take" (fun () ->
                        Eio.Stream.take output_queue))
               in
               match event with
@@ -593,7 +593,7 @@ and fold_flat_map_par :
     }
 
 and effect_list :
-    type env err a. (env, err, a) Stream.t -> (env, err, a list) Effet.Effect.t =
+    type err a. (a, err) Stream.t -> (a list, err) Effet.Effect.t =
  fun stream ->
   map
     (fun (values, _) -> List.rev values)

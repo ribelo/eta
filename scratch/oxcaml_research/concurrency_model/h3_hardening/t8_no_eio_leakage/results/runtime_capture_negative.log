@@ -1,0 +1,8 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/runtime_capture_negative.ml", line 19, characters 21-38:
+19 |            (fun _ -> Effet.Runtime.run rt (Effet.Effect.pure 1))
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Runtime.run" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/runtime_capture_negative.ml", lines 17-20, characters 48-65
+         which is expected to be "shareable".

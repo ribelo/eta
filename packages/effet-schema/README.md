@@ -14,7 +14,7 @@ an Effet environment. Decode and encode failures are typed Effet failures
 through `Schema.decode` and `Schema.encode`; direct callers can use
 `decode_result` / `encode_result`. Effectful validation belongs at the decode
 boundary through `Schema.decode_with_policy`, so service requirements remain
-normal Effet object-row requirements.
+ordinary OCaml arguments or captured values.
 
 The built-in JSON representation preserves number shape:
 
@@ -69,12 +69,13 @@ type input = { id : User_id.t }
 type user = { id : User_id.t; name : string }
 
 let decode_user json =
+  let lookup_user id = User_directory.lookup id in
   Effet_schema.Schema.decode_with_policy input_schema
     (fun input ->
       Effet.Effect.map
         (fun name -> { id = input.id; name })
-        (Effet.Effect.thunk "lookup-user" (fun env ->
-           env#lookup_user (User_id.value input.id))))
+        (Effet.Effect.thunk "lookup-user" (fun () ->
+           lookup_user (User_id.value input.id))))
     json
 ```
 

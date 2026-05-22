@@ -10762,3 +10762,561 @@ work along the H3 path is the existing Effet-OxCaml-jak follow-through
 (Phase 6 worker-side schedule interpretation, Phase 8 linearizable bounded
 queue, CI/PR gate enforcement, H4 telemetry hook design) - all of those
 are already tracked under their existing C1-C7 verdicts.
+
+## V-Recovery-R1 - Portable thunk cancellation contract
+
+Date: 2026-05-22
+
+Status: closed for Stage A. This entry resolves Effet-OxCaml-641.
+
+### Goal
+
+Decide what timeout and cancellation can honestly promise for portable
+Thunk. The risk was that arbitrary CPU code inside a thunk cannot be
+preempted by the portable evaluator, while the previous H3 timeout SLO assumed
+polling at Bind/Map boundaries and every 4096 interpreter-loop iterations.
+
+### Evidence
+
+Artifacts:
+
+| Fixture | Result |
+| --- | --- |
+| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_a_cooperative_only.ml | Non-polling CPU thunk ignored cancellation until completion; max_deadline_to_exit_us=99056. |
+| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_b_polling_aware.ml | Polling-aware thunk exited within max_deadline_to_exit_us_4096=5 and max_deadline_to_exit_us_1024=1. Local uncancelled runtime was 15504us at 4096 and 15430us at 1024 on the latest run. |
+| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_c_interpreter_scoped.ml | Interpreter-controlled loop exited within max_deadline_to_exit_us=5 at poll_every=4096. |
+
+Command:
+
+nix develop -c bash scratch/oxcaml_research/recovery/r1_thunk_cancel/run.sh
+
+Result: summary pass=3 fail=0.
+
+### Decision
+
+Portable Thunk is cooperative. The portable API must also expose a portable
+poll primitive for thunks that perform long-running CPU work.
+
+The timeout-exit SLO applies to:
+
+- interpreter-controlled boundaries;
+- interpreter-loop polling;
+- polling-aware thunks that call the portable poll primitive at the documented
+  interval.
+
+Arbitrary non-polling thunks are outside the SLO and may run until completion.
+
+Phase 6 should start with a 1024 interpreter-loop polling interval, not 4096,
+unless the package-level evaluator benchmark shows unacceptable throughput
+cost. Rationale: the old 4096 T7 result was close to the 50ms cap, and the R1
+local loop measured 1024 in the same runtime band as 4096.
+
+### Candidate Status
+
+| Candidate | Status | Reason |
+| --- | --- | --- |
+| A. Cooperative-only thunks | Rejected as the whole contract | It is honest but gives library CPU loops no testable cancellation hook. |
+| B. Polling-aware thunks | Accepted | It preserves honesty and gives long-running thunks a direct, runnable cancellation mechanism. |
+| C. Interpreter-scoped SLO only | Dominated | It is true for AST/evaluator loops but weaker than B for real CPU loops. |
+
+### Would Change If
+
+If the package-level Phase 6 evaluator benchmark shows 1024 polling is too
+expensive, the interval can move back upward, but the explicit poll primitive
+and the non-polling-thunk exclusion stay.
+
+## V-Recovery-R2 - Portable env/error boundary
+
+Date: 2026-05-22
+
+Status: closed for Stage A. This entry resolves Effet-OxCaml-wdj.
+
+### Goal
+
+Decide the portable core's public env/error shape. Same-domain Effect.t can
+keep object rows and open polymorphic variants, but the portable core needs
+compiler-checkable payloads.
+
+### Evidence
+
+Artifacts:
+
+| Fixture | Result |
+| --- | --- |
+| scratch/oxcaml_research/recovery/r2_env_error/env_a_closed_records_positive.ml | Closed record env ran across Parallel_scheduler. |
+| scratch/oxcaml_research/recovery/r2_env_error/env_b_phantom_tuple_positive.ml | Phantom tuple env also ran across Parallel_scheduler. |
+| scratch/oxcaml_research/recovery/r2_env_error/env_c_closed_object_negative.ml | Closed object env failed: object kind was value mod global many non_float, not value mod portable contended. |
+| scratch/oxcaml_research/recovery/r2_env_error/error_a_closed_polyvariant_positive.ml | Fully closed polymorphic variant error compiled and ran. |
+| scratch/oxcaml_research/recovery/r2_env_error/error_b_closed_record_positive.ml | Named closed record/ordinary variant error compiled and ran with Catch. |
+| scratch/oxcaml_research/recovery/r2_env_error/error_c_cause_portable_positive.ml | Cause.Portable.t compiled and ran, but it collapses the public typed-error channel. |
+| scratch/oxcaml_research/recovery/r2_env_error/negative_open_polyvariant_error.ml | Open polymorphic variant failed at the portable boundary. |
+| scratch/oxcaml_research/recovery/r2_env_error/negative_raw_cause_error.ml | Raw same-domain Cause.t failed across Parallel. |
+| scratch/oxcaml_research/recovery/r2_env_error/negative_ref_capture.ml | Mutable ref capture failed inside a portable callback. |
+
+Command:
+
+nix develop -c bash scratch/oxcaml_research/recovery/r2_env_error/run.sh
+
+Result: summary pass=9 fail=0.
+
+### Decision
+
+Portable envs use named closed records. Capability fields may be immutable data
+or portable contended tokens, such as Portable.Atomic-backed capabilities.
+Portable envs do not use object methods or row-polymorphic object types.
+
+Portable typed errors use named closed records/ordinary variants with explicit
+lifting between error families. Fully closed polymorphic variants are
+compiler-compatible, but portable API examples and docs must not encourage open
+row widening. Cause.Portable.t remains the runtime failure snapshot boundary,
+not the only public typed-error channel.
+
+Same-domain Effect.t is explicitly excluded from the new portable constraints.
+Its object-row/open-variant docs can remain same-domain guidance.
+
+### Candidate Status
+
+| Candidate | Status | Reason |
+| --- | --- | --- |
+| Env A. Closed records | Accepted | Passes the portable boundary and keeps the public shape named and inspectable. |
+| Env B. Phantom tuple | Dominated | Also passes, but adds boilerplate without a safety win over records. |
+| Env C. Closed objects | Rejected | Compile fixture failed on object kind portability. |
+| Error A. Closed polymorphic variants | Allowed but not canonical | Fully closed rows pass, but open-row widening is the known footgun. |
+| Error B. Named records/ordinary variants | Accepted | Preserves typed errors and makes widening/lifting explicit. |
+| Error C. Cause.Portable.t only | Dominated | Works for runtime snapshots but loses the public typed-error channel. |
+
+### Would Change If
+
+If OxCaml later gives object methods or open rows compiler-checkable portable
+kinds, the rejected same-domain-like shapes can be retested. Today they fail the
+actual compiler boundary.
+
+## V-Recovery-R3 - Phase 8 online bounded queue
+
+Date: 2026-05-22
+
+Status: closed for Stage A. This entry resolves Effet-OxCaml-21c.
+
+### Goal
+
+Choose the Phase 8 online transport primitive. The H3 inbox is correct for
+finite batch reduction, but it is close-before-drain and cannot be reused for
+live stream/exporter producer-consumer workflows.
+
+### Evidence
+
+Caller shape:
+
+| Caller | Shape | Requirement |
+| --- | --- | --- |
+| merge | many sources to one coordinator consumer | MPSC |
+| flat_map_par | many workers publish outputs to one downstream consumer | MPSC on output side |
+| OTel exporter handoff | many instrumentation producers to one exporter actor | MPSC |
+
+Primitive survey:
+
+- portable exposes Atomic and Atomic_array, not a queue.
+- portable_ws_deque is owner-local for push/pop and not a many-producer FIFO.
+- Await.Sync.Stack is portable MPMC but LIFO, unbounded, and has no close.
+- Await.Sync.Mvar is a single-slot cell, not a bounded FIFO queue.
+- Awaitable and Semaphore are wake/backpressure building blocks, not a queue.
+
+Artifacts:
+
+| Fixture | Result |
+| --- | --- |
+| packages/effet/portable_queue.ml and packages/effet/portable_queue.mli | Shipped Effet-owned bounded MPSC FIFO with try_push, try_take, close, and Full/Closed backpressure. |
+| scratch/oxcaml_research/recovery/r3_online_queue/mpsc_queue_positive.ml | Exercised Effet.Portable_queue across Parallel_scheduler with 3 producers, 1 consumer, capacity 32, total=1500, sum=300374250. |
+| scratch/oxcaml_research/recovery/r3_online_queue/h3_batch_inbox_online_negative.ml | Proved batch inbox online_push_take=false and drain_requires_close=true. |
+| scratch/oxcaml_research/recovery/r3_online_queue/primitive_survey.md | Records the local primitive survey. |
+
+Command:
+
+nix develop -c bash scratch/oxcaml_research/recovery/r3_online_queue/run.sh
+
+Result: summary pass=2 fail=0.
+
+### Decision
+
+Phase 8 uses an online bounded MPSC queue. MPMC is not justified by current
+caller evidence. The H3 close-before-drain inbox remains batch-only and must not
+be used for streams/exporter handoff.
+
+Effet.Portable_queue is the Stage A queue contract. Stage B S10 may add Eio or
+Await.Sync wakeups around it, but must preserve the same push/take/close and
+backpressure semantics.
+
+### Candidate Status
+
+| Candidate | Status | Reason |
+| --- | --- | --- |
+| A. Adopt existing queue | Rejected | No installed primitive matches bounded FIFO plus close/backpressure for MPSC. |
+| B. Effet-owned Michael-Scott style MPMC queue | Deferred | Stronger than needed for known callers; more proof required. |
+| C. Effet-owned bounded MPSC ring | Accepted | Covers all known callers and passed cross-domain push/take/backpressure evidence. |
+| H3 batch inbox as transport | Rejected | Negative fixture proved it cannot support online producer/consumer drain. |
+
+### Would Change If
+
+If a Phase 8 caller needs multiple concurrent consumers, reopen R3 and test an
+MPMC design. Until then, MPSC is the simpler proven contract.
+
+## V-Recovery-Stage-A - H3 recovery research close
+
+Date: 2026-05-22
+
+Status: Stage A closed. This does not close Effet-OxCaml-1z1 as an epic;
+Stage B implementation remains open.
+
+### Gap Audit
+
+The GPT Pro audit was correct: the current packages/ runtime is still the
+same-domain Eio interpreter plus useful portable data-boundary work. It is not
+the H3 runtime. H3 recovery must build a fresh portable core and runtime path
+instead of mutating Runtime.run into cross-domain execution.
+
+### Stage A Closing State
+
+| Task | State | Verdict |
+| --- | --- | --- |
+| R1 portable thunk cancellation | Closed | Cooperative thunks plus explicit portable poll primitive; arbitrary non-polling thunks outside SLO; Phase 6 starts with 1024 interpreter-loop polling unless package benchmarks reject it. |
+| R2 portable env/error boundary | Closed | Portable envs are named closed records; portable typed errors are named closed records/ordinary variants with explicit lifting; object envs/open rows/raw Cause.t are rejected at the boundary. |
+| R3 Phase 8 online bounded queue | Closed | Effet.Portable_queue is the bounded MPSC contract; H3 batch inbox is forbidden for online stream/exporter transport. |
+| S1-S11 | Not started | Deliberately out of scope for the Stage A-only objective. |
+
+### Verification
+
+Stage A gate:
+
+nix develop -c bash scratch/oxcaml_research/recovery/run_stage_a.sh
+
+Result:
+
+- R1 summary pass=3 fail=0.
+- R2 summary pass=9 fail=0.
+- R3 summary pass=2 fail=0.
+
+Package gate:
+
+nix develop -c dune runtest --force
+
+Result: exit 0. Effet 110 tests passed, including Portable_queue;
+ppx_effet, effet-schema, effet-otel, and effet-stream tests also passed.
+
+The shipped code and journal agree as of this entry: Stage A decisions are
+recorded here, evidence lives under scratch/oxcaml_research/recovery, and the
+only package implementation promoted by Stage A is the selected
+Effet.Portable_queue primitive.
+
+## V-Recovery-Envless-Core - Envless portable core prompt
+
+Date: 2026-05-22
+
+Status: research closed. This entry was originally misattributed to
+Effet-OxCaml-9vo before the real ticket was found. It is retained as standalone
+recovery research for the available journal prompt.
+
+### Goal
+
+Decide whether the fresh portable core should keep dragging an Env type
+argument through every effect node, or remove it and rely on ordinary OCaml
+argument passing.
+
+### Evidence
+
+Artifacts:
+
+| Fixture | Result |
+| --- | --- |
+| scratch/oxcaml_research/recovery/envless_core_prompt/env_parameterized_baseline_positive.ml | Env-parameterized portable core compiled and ran across Parallel_scheduler. It needed three effect type parameters and a runtime env argument. |
+| scratch/oxcaml_research/recovery/envless_core_prompt/envless_argument_passing_positive.ml | Envless portable core compiled and ran across Parallel_scheduler. It needed only typed error/result parameters; dependencies were ordinary OCaml arguments captured by portable thunks. |
+| scratch/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml | Mutable ref capture failed inside a portable thunk. |
+| scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml | Eio.Time.now failed inside a portable thunk because it is nonportable. |
+| scratch/oxcaml_research/recovery/envless_core_prompt/results.md | Full hypothesis ledger and verdict. |
+
+Command:
+
+nix develop -c bash scratch/oxcaml_research/recovery/envless_core_prompt/run.sh
+
+Result:
+
+- candidate=A env_parameterized portable=true effect_type_params=3 runtime_env=true result_sum=95
+- candidate=B envless ordinary_args=true portable=true effect_type_params=2 runtime_env=false result_sum=95
+- expected-fail ref and Eio capture checks passed.
+- summary: pass=4 fail=0.
+
+### Decision
+
+The fresh portable core should be envless:
+
+- type shape: ('err, 'a) Effect_portable.t;
+- thunk shape: unit -> 'a, portable;
+- dependency shape: ordinary OCaml arguments to effect-builder functions, e.g.
+  clock -> random -> (error, int) Effect_portable.t.
+
+Capability records remain valid as ordinary values when callers want to bundle
+dependencies, but they are not a graph-wide type parameter of every effect node.
+The envless shape preserves the Stage A portable boundary: mutable refs and Eio
+operations are still rejected inside portable thunks.
+
+The current same-domain Effect.t API remains unchanged by this verdict. Removing
+its public 'env parameter would be a separate compatibility migration. For H3
+recovery, the env removal applies to the fresh portable core that Stage B builds
+upward.
+
+### Candidate Status
+
+| Candidate | Status | Reason |
+| --- | --- | --- |
+| A. Env-parameterized portable core | Viable but dominated | It passes the compiler boundary, but models a ZIO-like requirement graph Effet does not own and forces every thunk/interpreter path to carry env. |
+| B. Envless portable core plus ordinary arguments | Accepted | It passes the same compiler boundary with fewer type parameters and idiomatic OCaml dependency passing. |
+| C. Remove env from same-domain Effect.t now | Deferred | This is an API migration outside the fresh portable-core research question. |
+
+### Would Change If
+
+Reopen this only if a portable interpreter feature needs graph-wide dependency
+analysis that ordinary OCaml arguments cannot express. Current evidence points
+the other way: the portable core needs typed errors/results, cancellation
+polling, and online queues, not a ZIO-style requirement channel.
+
+The shipped code and journal agree as of this entry: this prompt added research
+fixtures and a verdict only; it did not change the package API.
+
+## V-Islands - Portable CPU islands beat full H3
+
+Date: 2026-05-22
+
+Status: closed for Effet-OxCaml-9vo.
+
+### Goal
+
+Test the prior question before reopening H3 Stage B: can Effet get most of the
+practical OxCaml value from small explicit portable CPU islands inside the
+existing same-domain Eio runtime, instead of migrating toward a full portable
+Effect.t and H3 runtime?
+
+### Apples-To-Apples Controls
+
+The comparison controls what can be controlled:
+
+- same three workloads: parse/validate, schema decode, hash/checksum/compress;
+- same item count: 128 per workload;
+- same bounded parallelism: 2 worker domains;
+- same finite-batch contract: output order is input order;
+- same typed-error behavior: result-returning callbacks with one typed error
+  exercised per workload;
+- same no-Eio-worker rule.
+
+The substrate is intentionally different. Design A uses a normal OCaml domain
+pool because it is the no-OxCaml baseline. Design B uses OxCaml
+Parallel_scheduler because it is the portable island substrate. Therefore wall
+time is directional only; the decision does not claim that OxCaml islands are
+generally faster. The deciding evidence is compiler-enforced safety.
+
+Timing hygiene follow-up: an earlier run made schema/hash islands look about
+50ms slower. diagnose_island_timing.ml isolated this to repeated
+Parallel_scheduler creation: the second and third scheduler creations took about
+50ms, while the parallel workload bodies stayed in the hundreds of microseconds.
+The workload fixture now reuses one island scheduler, matching the intended
+implementation shape.
+
+### Evidence
+
+Artifacts:
+
+| Artifact | Result |
+| --- | --- |
+| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/cpu_pool_smoke.ml | Design A ran parse/validate, schema decode, and hash/checksum/compress with 128 items each, input-order results, bounded=2, typed errors, and no Eio worker contamination. |
+| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/ordered_results_positive.ml | Design A preserved input order under uneven work. |
+| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/bad_capture_policy_note.md | Documents the captures Design A cannot reject mechanically. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/portable_map_positive.ml | Design B portable callback map compiled and ran. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/ordered_results_positive.ml | Design B preserved input order. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/all_settled_positive.ml | Design B collected typed successes/errors without a portable AST. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/atomic_capture_positive.ml | Design B accepted Portable.Atomic-backed capability capture. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/workloads_positive.ml | Design B ran the same workload class as A. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/worker_die_diagnostic_positive.ml | Design B can materialize callback crashes as a tiny worker_die diagnostic. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/ref_capture_negative.ml | Mutable ref capture rejected. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/eio_stream_capture_negative.ml | Eio.Stream.add rejected as nonportable. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/runtime_capture_negative.ml | Effet.Runtime.run rejected as nonportable. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/logger_capture_negative.ml | Effet.Logger.dump rejected as nonportable. |
+| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/raw_cause_capture_negative.ml | Raw same-domain Cause.t rejected as nonportable. |
+| scratch/oxcaml_research/portable_islands/use_cases/invariants.md | Records the reduced seven-item invariant checklist. |
+| scratch/oxcaml_research/portable_islands/use_cases/ergonomics_examples.ml | Three manual examples compiled without PPX. |
+| scratch/oxcaml_research/portable_islands/use_cases/busy_loop_not_preempted.ml | Busy-loop callback compiles but is not run; arbitrary CPU callbacks are not preemptible. |
+| scratch/oxcaml_research/portable_islands/diagnose_island_timing.ml | Proved the apparent 50ms schema/hash slowdown came from repeated Parallel_scheduler.create, not workload execution. |
+| scratch/oxcaml_research/portable_islands/portable_effect_island_optional/results.md | Design C was not attempted because Design B covered the first useful island use cases. |
+| scratch/oxcaml_research/portable_islands/decision.md | Applies all three decision gates and records the H1-H10 ledger. |
+
+Command:
+
+nix develop -c bash scratch/oxcaml_research/portable_islands/run.sh
+
+Result:
+
+- Design A baseline workloads passed.
+- Design B positive fixtures passed.
+- Design B negative fixtures failed for the intended portability reasons.
+- summary: pass=15 fail=0.
+
+### Decision
+
+Choose decision gate 2: portable islands.
+
+Effet should keep the normal same-domain Eio runtime as the mainline model and
+add, at most, an optional OxCaml-only Effect.Island module for explicit finite
+CPU offload. Do not reopen the full H3 rewrite path from the current evidence.
+
+Design A remains viable and cheap. Design B beats it only on compiler-enforced
+safety: ref, Eio.Stream, Runtime.run, Logger, and raw Cause captures are
+mechanically rejected. That is enough to justify an optional island module, but
+not enough to migrate the whole library.
+
+Design C, a small portable Effect AST, is deferred and unattempted. Typed
+results, all_settled, worker diagnostics, and the ergonomic examples all work
+with portable callbacks.
+
+### H1-H10 Ledger
+
+| Hypothesis | Verdict | Reason |
+| --- | --- | --- |
+| H1 mainline CPU pool baseline | Holds | A normal domain pool covers the workloads and remains the burden-of-proof baseline. |
+| H2 portable callback island | Holds | Same workload class plus compiler rejection of bad captures. |
+| H3 avoid full Effect.t split | Holds | No portable AST was needed for typed result callbacks or finite composition. |
+| H4 reduced invariant checklist | Holds | v1 needs only portable input/callback/output, input-order results, materialized failures, no Eio leakage, and finite batch only. |
+| H5 explicit API stance | Holds | Islands are opt-in and do not alter existing Effect.t or Runtime.run behavior. |
+| H6 batch-only boundary | Holds | Stream/exporter transport remains out of scope. |
+| H7 honest cancellation/timeout | Holds with v1 no-timeout | Arbitrary CPU callbacks are not preemptible; no timeout API should be promised in v1. |
+| H8 error boundary | Holds with tiny diagnostic | Typed results plus worker_die are enough; Cause.Portable waits for nested portable composition. |
+| H9 ergonomics without PPX | Holds | Three examples compile with manual annotations; PPX is unnecessary for v1. |
+| H10 complexity budget | Holds | Forbidden full-H3 concepts remain absent. |
+
+### Candidate Status
+
+| Candidate | Status | Reason |
+| --- | --- | --- |
+| A. Mainline OCaml CPU pool | Viable baseline | It works and is simpler, but cannot reject bad captures. |
+| B. OxCaml portable callback island | Accepted | It adds real compiler safety with a small explicit surface. |
+| C. Effect.Portable.t island DSL | Deferred | No current island use case requires nested portable composition. |
+| Full H3 rewrite | Rejected for now | The epic did not force portable Resource, Supervisor, Stream/OTel bridge, full Runtime replacement, capsule state, H4 telemetry, or a portable Effect AST. |
+
+### Consequence For Effet-OxCaml-1z1
+
+Effet-OxCaml-1z1 Stage B should not reopen as written. S1-S11 are superseded by
+a smaller optional island implementation path. H3 research remains useful as
+boundary evidence, but it is not the implementation target.
+
+Stage A recovery evidence is absorbed:
+
+- R1 cancellation: island v1 exposes no timeout; cooperative polling is future
+  work only if real island users need it.
+- R2 env/error: island v1 uses typed result callbacks plus worker_die
+  diagnostics; no portable env or full Cause.Portable channel is needed.
+- R3 online queue: out of scope for finite batch islands; stream/exporter
+  bridges remain deferred.
+
+The shipped code and journal agree as of this entry: 9vo added research
+fixtures and a decision only; it did not change the package API.
+
+## V-Recovery-B0 - Envless core Effet
+
+Date: 2026-05-22
+
+Status: accepted and implemented.
+
+### Question
+
+Should core Effet keep the universal environment parameter, or should the
+shipped API move to ordinary OCaml dependency passing before returning to
+portable island work?
+
+### Decision
+
+Remove the universal environment parameter from core Effet.
+
+The shipped effect type is now:
+
+```ocaml
+('a, 'err) Effect.t
+```
+
+using OCaml/result ordering: success first, error second. `Effect.thunk` is a
+zero-argument leaf:
+
+```ocaml
+val thunk : string -> (unit -> 'a) -> ('a, 'err) Effect.t
+```
+
+`Runtime.create` no longer accepts or stores `~env`, and interpretation no
+longer supplies an ambient object to thunks. Runtime services such as clock,
+tracer, logger, meter, random, and switch remain runtime-owned parameters.
+Application services are ordinary values captured by closures or passed through
+records/modules/functions.
+
+This supersedes earlier env-row journal decisions for shipped core Effet.
+Those entries remain as historical evidence; the current implementation and
+tests are the active verdict.
+
+### Evidence
+
+Compiler-facing migration:
+
+- `packages/effet/effect.ml/.mli`: `('env, 'err, 'a) t` became
+  `('a, 'err) t`; `Thunk` now stores `unit -> 'a`; supervisor scope/body types
+  were reordered and made envless.
+- `packages/effet/runtime.ml/.mli`: runtime type became `'err Runtime.t`; the
+  stored `env` field and `Runtime.create ~env` were removed; interpreter
+  helpers no longer thread env through `interpret`, `race`, `par_collect`,
+  daemon, repeat, retry, or supervisor scopes.
+- `Resource`, `Supervisor`, `effet-stream`, `effet-schema`, `effet-otel`, and
+  `ppx_effet` were migrated to `('a, 'err) Effect.t`.
+- `ppx_effet` removed `[%effet.env]`. `[%effet.thunk]` now generates a
+  zero-argument thunk with explicit typed captures.
+- Tests that previously proved env-row auto-DI now prove explicit dependency
+  passing with closure-captured records/values.
+
+Search evidence:
+
+```sh
+rg -n "\\('env|'env\\b|~env|effet\\.env|env-row|env row|requirement channel|fun env -> env#" packages README.md
+```
+
+Result: no matches in shipped packages or README.
+
+Gate:
+
+```sh
+nix develop -c dune runtest packages/effet packages/effet-stream packages/effet-schema packages/effet-otel packages/ppx_effet --force
+```
+
+Result:
+
+- effet: 110 tests passed.
+- effet-stream: 13 tests passed.
+- effet-schema: tests passed.
+- effet-otel: 20 tests passed.
+- ppx_effet: 2 tests passed.
+
+Hygiene:
+
+```sh
+git diff --check
+```
+
+Result: passed.
+
+### Consequences
+
+- There is no core `'env` parameter left that needs to be made portable.
+- Portable island work should not model an ambient dependency row. Islands
+  should accept explicit inputs, explicit portable callbacks, and ordinary
+  captured portable records when needed.
+- Typed errors remain load-bearing and stay in the core type.
+- Runtime services remain interpreter configuration, not user dependency rows.
+- Historical backlog/research tickets that describe portable env rows are now
+  stale unless reopened explicitly as compatibility-history context.
+
+### Remaining Risk
+
+This is a breaking API migration. Existing user code that relied on
+`Runtime.create ~env` or `Effect.thunk name (fun env -> ...)` must be rewritten
+to pass dependencies explicitly. The migration is mechanical and now covered by
+the shipped package tests, but external downstream code will need source edits.

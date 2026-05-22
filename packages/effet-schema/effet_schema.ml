@@ -663,25 +663,25 @@ module Schema = struct
   let encode_result schema value = schema.encode value
 
   let decode :
-      type env a.
-      a t -> json -> (env, [> `Decode of issue list ], a) Effet.Effect.t =
+      type a.
+      a t -> json -> (a, [> `Decode of issue list ]) Effet.Effect.t =
    fun schema json ->
     match schema.decode json with
     | Ok value -> Effet.Effect.pure value
     | Error issues -> Effet.Effect.fail (`Decode issues)
 
   let decode_with_policy :
-      type env a b.
+      type a b.
       a t ->
-      (a -> (env, [> `Decode of issue list ], b) Effet.Effect.t) ->
+      (a -> (b, [> `Decode of issue list ]) Effet.Effect.t) ->
       json ->
-      (env, [> `Decode of issue list ], b) Effet.Effect.t =
+      (b, [> `Decode of issue list ]) Effet.Effect.t =
    fun schema policy json ->
     Effet.Effect.bind policy (decode schema json)
 
   let encode :
-      type env a.
-      a t -> a -> (env, [> `Encode of issue list ], json) Effet.Effect.t =
+      type a.
+      a t -> a -> (json, [> `Encode of issue list ]) Effet.Effect.t =
    fun schema value ->
     match schema.encode value with
     | Ok json -> Effet.Effect.pure json

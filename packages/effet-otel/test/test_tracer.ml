@@ -7,8 +7,6 @@
 
 open Effet
 
-let env = ()
-
 let with_traced_runtime f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -16,8 +14,7 @@ let with_traced_runtime f =
   let rt =
     Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer)
-      ~env ()
+      ~tracer:(Tracer.as_capability tracer) ()
   in
   f rt tracer
 
@@ -33,7 +30,7 @@ let with_otlp_runtime ~host ~port f =
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env ()
+    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ()
   in
   f rt exporter
 
@@ -246,7 +243,7 @@ let test_not_provided_with_span () =
   Eio.Switch.run @@ fun sw ->
   (* Default tracer is Tracer.noop (V-O3). *)
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let prog = Effect.named "ok" Effect.current_span in
   match run_ok rt prog with

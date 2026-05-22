@@ -473,19 +473,19 @@ let sample_menu_json =
           ] );
     ]
 
-let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) result =
- fun env eff ->
+let rec eval : type err a. (a, err) Effet.Effect.t -> (a, err) result =
+ fun eff ->
   match Effet.Effect.Private.view eff with
   | Effet.Effect.Private.Pure value -> Ok value
   | Effet.Effect.Private.Fail error -> Error error
-  | Effet.Effect.Private.Thunk (_, f) -> Ok (f env)
-  | Effet.Effect.Private.Map (inner, f) -> Result.map f (eval env inner)
+  | Effet.Effect.Private.Thunk (_, f) -> Ok (f ())
+  | Effet.Effect.Private.Map (inner, f) -> Result.map f (eval inner)
   | Effet.Effect.Private.Bind (inner, f) -> (
-      match eval env inner with Ok value -> eval env (f value) | Error error -> Error error)
+      match eval inner with Ok value -> eval (f value) | Error error -> Error error)
   | Effet.Effect.Private.Catch (inner, f) -> (
-      match eval env inner with Ok value -> Ok value | Error error -> eval env (f error))
+      match eval inner with Ok value -> Ok value | Error error -> eval (f error))
   | Effet.Effect.Private.Tap_error (inner, f) -> (
-      match eval env inner with
+      match eval inner with
       | Ok value -> Ok value
       | Error error ->
           f error;
@@ -495,12 +495,11 @@ let rec eval : type env err a. env -> (env, err, a) Effet.Effect.t -> (a, err) r
   | Effet.Effect.Private.Link_span (_, inner)
   | Effet.Effect.Private.With_external_parent (_, inner)
   | Effet.Effect.Private.With_context (_, inner) ->
-      eval env inner
+      eval inner
   | Effet.Effect.Private.Current_context -> Ok None
   | _ -> failwith "test evaluator only supports the schema effect subset"
 
-let run_effect eff = eval (object end) eff
-let run_effect_env env eff = eval env eff
+let run_effect eff = eval eff
 
 let expect_ok name = function
   | Ok value -> value
@@ -555,27 +554,38 @@ let test_tagged_and_recursive () =
   check_bool "menu roundtrip"
     (Json.equal sample_menu_json (encode_ok (menu ()) menu_value))
 
-let test_policy_env_row () =
+let test_policy_closure_deps () =
+  let feature_allowed key = String.equal key "flag.new-checkout" in
   let policy config =
     let open Effet in
     Effect.bind
       (fun allowed ->
         if allowed then Effect.pure config
         else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
-      (Effect.thunk "feature-policy" (fun env ->
+      (Effect.thunk "feature-policy" (fun () ->
            List.for_all
-             (fun feature -> env#feature_allowed (Flag_key.value feature.key))
+             (fun feature -> feature_allowed (Flag_key.value feature.key))
              config.features))
   in
-  let env = object method feature_allowed key = String.equal key "flag.new-checkout" end in
   let accepted =
-    run_effect_env env (Schema.decode_with_policy config policy sample_config_json)
+    run_effect (Schema.decode_with_policy config policy sample_config_json)
     |> expect_ok "policy accepted"
   in
   check_bool "policy decoded" (Schema.equal config accepted accepted);
-  let env = object method feature_allowed _ = false end in
+  let feature_allowed _ = false in
+  let policy config =
+    let open Effet in
+    Effect.bind
+      (fun allowed ->
+        if allowed then Effect.pure config
+        else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
+      (Effect.thunk "feature-policy" (fun () ->
+           List.for_all
+             (fun feature -> feature_allowed (Flag_key.value feature.key))
+             config.features))
+  in
   let issues =
-    run_effect_env env (Schema.decode_with_policy config policy sample_config_json)
+    run_effect (Schema.decode_with_policy config policy sample_config_json)
     |> expect_decode_error "policy rejected"
   in
   check_int "policy issue count" 1 (List.length issues)
@@ -729,16 +739,16 @@ end
 module Test_codec = Make (Test_adapter)
 
 let test_decode_with_policy_enriches_type () =
+  let lookup_user _ = "Ada" in
   let policy request =
     let open Effet in
     Effect.map
       (fun canonical_name -> { canonical_id = request.request_id; canonical_name })
-      (Effect.thunk "lookup-user" (fun env -> env#lookup_user (User_id.value request.request_id)))
+      (Effect.thunk "lookup-user" (fun () -> lookup_user (User_id.value request.request_id)))
   in
   let json = Json.object_ [ ("id", Json.string "usr_999") ] in
-  let env = object method lookup_user _ = "Ada" end in
   let enriched =
-    run_effect_env env (Schema.decode_with_policy request_user_schema policy json)
+    run_effect (Schema.decode_with_policy request_user_schema policy json)
     |> expect_ok "policy enriched"
   in
   check_string "enriched name" "Ada" enriched.canonical_name
@@ -803,7 +813,7 @@ let () =
   test_config_roundtrip ();
   test_many_issues ();
   test_tagged_and_recursive ();
-  test_policy_env_row ();
+  test_policy_closure_deps ();
   test_cause_integration ();
   test_issue_paths_distinguish_fields_and_indexes ();
   test_issue_source_discriminator ();

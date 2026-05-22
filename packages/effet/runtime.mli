@@ -1,6 +1,6 @@
 (** Eio-backed interpreter for Effet effects. *)
 
-type ('env, 'err) t
+type 'err t
 
 val create :
   sw:Eio.Switch.t ->
@@ -11,10 +11,10 @@ val create :
   ?auto_instrument:bool ->
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
+  ?random:Capabilities.random ->
   ?capture_backtrace:bool ->
-  env:'env ->
   unit ->
-  ('env, 'err) t
+  'err t
 (** Create an interpreter.
 
     [capture_backtrace] controls whether unchecked exceptions captured as
@@ -22,12 +22,12 @@ val create :
     it only for runtimes where defect-path allocation cost matters more than
     diagnostics. *)
 
-val run : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> ('a, 'err) Exit.t
+val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
 (** Run an effect to completion. *)
 
-val run_exn : ('env, 'err) t -> ('env, 'err, 'a) Effect.t -> 'a
+val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
 (** Run an effect and raise on non-success. Prefer {!run} when
     inspecting failures. *)
 
-val drain : ('env, 'err) t -> unit
+val drain : 'err t -> unit
 (** Wait until currently runtime-owned finite background fibers complete. *)

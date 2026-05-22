@@ -18,7 +18,7 @@ let test_ppx_fn () =
   let tracer = Tracer.in_memory () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~env:() ()
+      ~tracer:(Tracer.as_capability tracer) ()
   in
   let expected_name = __FUNCTION__ in
   let program = [%effet.fn (Effect.pure 1)] in
@@ -35,7 +35,7 @@ module Auth = struct
   let current_user auth = auth.user
 end
 
-let current_user () =
+let current_user auth =
   [%effet.thunk "auth.current_user" (auth : Auth.t) (Auth.current_user auth)]
 
 let test_ppx_thunk_leaf () =
@@ -43,20 +43,14 @@ let test_ppx_thunk_leaf () =
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let auth = { Auth.user = "alice" } in
-  let env = [%effet.env { auth = (auth : Auth.t) }] in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~env ()
+      ~tracer:(Tracer.as_capability tracer) ()
   in
-  Alcotest.(check string) "value" "alice" (run_ok rt (current_user ()));
+  Alcotest.(check string) "value" "alice" (run_ok rt (current_user auth));
   let span = only_span tracer in
   Alcotest.(check string) "span name" "Dune__exe__Test_ppx_effet.current_user"
     span.name
-
-let test_ppx_env_builder_annotations () =
-  let auth = { Auth.user = "alice" } in
-  let env = [%effet.env { auth = (auth : Auth.t) }] in
-  Alcotest.(check string) "method" "alice" env#auth.user
 
 let () =
   Alcotest.run "ppx_effet"
@@ -65,6 +59,5 @@ let () =
         [
           Alcotest.test_case "fn" `Quick test_ppx_fn;
           Alcotest.test_case "thunk leaf" `Quick test_ppx_thunk_leaf;
-          Alcotest.test_case "env builder" `Quick test_ppx_env_builder_annotations;
         ] );
     ]

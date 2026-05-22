@@ -1,0 +1,24 @@
+open! Portable
+
+module Island = struct
+  let with_scheduler f =
+    let scheduler = Parallel_scheduler.create ~max_domains:2 () in
+    Fun.protect
+      ~finally:(fun () -> Parallel_scheduler.stop scheduler)
+      (fun () -> f scheduler)
+
+  let map_pair (f @ portable) left right =
+    with_scheduler (fun scheduler ->
+        Parallel_scheduler.parallel scheduler ~f:(fun parallel ->
+            let #(left, right) =
+              Parallel.fork_join2 parallel (fun _ -> f left) (fun _ -> f right)
+            in
+            (left, right)))
+end
+
+let (square @ portable) n = n * n
+
+let () =
+  match Island.map_pair square 6 7 with
+  | 36, 49 -> Printf.printf "island portable_map=true\n%!"
+  | _ -> failwith "portable map returned wrong result"

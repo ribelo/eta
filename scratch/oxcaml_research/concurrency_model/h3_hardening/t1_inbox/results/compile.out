@@ -1,0 +1,19 @@
+== phase_separated_positive ==
+phase_separated accepted=32 drained=32
+PASS phase_separated_positive
+== capacity_positive ==
+capacity accepted=3 rejected=3
+PASS capacity_positive
+== close_positive ==
+closed_inbox_rejects_late_push=true
+PASS close_positive
+== two_producer_race_negative ==
+detected_two_producer_capacity_race capacity=1 count=2 items=2
+PASS two_producer_race_negative
+== mixed_push_drain_negative ==
+detected_mixed_push_drain_mismatch drained=2 stale_count=1
+PASS mixed_push_drain_negative
+== push_after_close_negative ==
+detected_missing_close_contract late_items=1
+PASS push_after_close_negative
+summary: pass=6 fail=0

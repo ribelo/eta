@@ -1,62 +1,43 @@
-type ('env, 'err, 'a) t =
-  | Pure : 'a -> (_, _, 'a) t
-  | Fail : 'err -> (_, 'err, _) t
-  | Thunk : string * ('env -> 'a) -> ('env, _, 'a) t
-  | Bind :
-      ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a) t
-  | Map : ('env, 'err, 'b) t * ('b -> 'a) -> ('env, 'err, 'a) t
-  | Catch :
-      ('env, 'err1, 'a) t * ('err1 -> ('env, 'err2, 'a) t)
-      -> ('env, 'err2, 'a) t
-  | Tap_error : ('env, 'err, 'a) t * ('err -> unit) -> ('env, 'err, 'a) t
-  | Delay : Duration.t * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Timeout :
-      Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
-  | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) t
-  | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) t
-  | Par :
-      ('env, 'err, 'a) t * ('env, 'err, 'b) t
-      -> ('env, 'err, 'a * 'b) t
-  | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) t
+type ('a, 'err) t =
+  | Pure : 'a -> ('a, _) t
+  | Fail : 'err -> (_, 'err) t
+  | Thunk : string * (unit -> 'a) -> ('a, _) t
+  | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) t
+  | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) t
+  | Catch : ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) t
+  | Tap_error : ('a, 'err) t * ('err -> unit) -> ('a, 'err) t
+  | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) t
+  | Timeout : Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) t
+  | Concat : (unit, 'err) t list -> (unit, 'err) t
+  | Race : ('a, 'err) t list -> ('a, 'err) t
+  | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) t
+  | All : ('a, 'err) t list -> ('a list, 'err) t
   | All_settled :
-      ('env, 'err, 'a) t list
-      -> ('env, _, ('a, 'err Cause.t) result list) t
-  | For_each_par :
-      'x list * ('x -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a list) t
+      ('a, 'err) t list -> (('a, 'err Cause.t) result list, _) t
+  | For_each_par : 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) t
   | For_each_par_bounded :
-      int * 'x list * ('x -> ('env, 'err, 'a) t)
-      -> ('env, 'err, 'a list) t
-  | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) t
-  | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) t
-  | Retry :
-      ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
-      -> ('env, 'err, 'a) t
-  | Acquire_release :
-      ('env, 'err, 'a) t * ('a -> ('env, 'err, unit) t)
-      -> ('env, 'err, 'a) t
-  | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+      int * 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) t
+  | Daemon : (unit, 'err) t -> (unit, 'err) t
+  | Uninterruptible : ('a, 'err) t -> ('a, 'err) t
+  | Repeat : (unit, 'err) t * Schedule.t -> (unit, 'err) t
+  | Retry : ('a, 'err) t * Schedule.t * ('err -> bool) -> ('a, 'err) t
+  | Acquire_release : ('a, 'err) t * ('a -> (unit, 'err) t) -> ('a, 'err) t
+  | Scoped : ('a, 'err) t -> ('a, 'err) t
   | Supervisor_scoped :
-      int option * ('env, 'err, 'a) supervisor_body
-      -> ('env, 'err, 'a) t
-  | Render_error : ('err -> string) * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+      int option * ('a, 'err) supervisor_body -> ('a, 'err) t
+  | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) t
   | Named :
-      Capabilities.span_kind * string * ('env, 'err, 'a) t
-      -> ('env, 'err, 'a) t
-  | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Link_span :
-      Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+      Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) t
+  | Annotate : string * string * ('a, 'err) t -> ('a, 'err) t
+  | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) t
   | With_external_parent :
-      Capabilities.trace_context * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
+      Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) t
   | With_context :
-      Capabilities.trace_context * ('env, 'err, 'a) t -> ('env, 'err, 'a) t
-  | Current_span : ('env, 'err, Capabilities.span_info option) t
-  | Current_context : ('env, 'err, Capabilities.trace_context option) t
+      Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) t
+  | Current_span : (Capabilities.span_info option, 'err) t
+  | Current_context : (Capabilities.trace_context option, 'err) t
   | Log :
-      Capabilities.log_level * string * (string * string) list
-      -> ('env, 'err, unit) t
+      Capabilities.log_level * string * (string * string) list -> (unit, 'err) t
   | Metric_update : {
       name : string;
       description : string;
@@ -65,36 +46,33 @@ type ('env, 'err, 'a) t =
       attrs : (string * string) list;
       value : Capabilities.metric_value;
     }
-      -> ('env, 'err, unit) t
+      -> (unit, 'err) t
 
-and ('s, 'env, 'err, 'a) supervisor_scope =
-  | Supervisor_pure : 'a -> (_, _, _, 'a) supervisor_scope
-  | Supervisor_lift :
-      ('env, 'err, 'a) t -> (_, 'env, 'err, 'a) supervisor_scope
-  | Supervisor_fail : 'err -> (_, _, 'err, _) supervisor_scope
+and ('s, 'a, 'err) supervisor_scope =
+  | Supervisor_pure : 'a -> (_, 'a, _) supervisor_scope
+  | Supervisor_lift : ('a, 'err) t -> (_, 'a, 'err) supervisor_scope
+  | Supervisor_fail : 'err -> (_, _, 'err) supervisor_scope
   | Supervisor_bind :
-      ('s, 'env, 'err, 'b) supervisor_scope
-      * ('b -> ('s, 'env, 'err, 'a) supervisor_scope)
-      -> ('s, 'env, 'err, 'a) supervisor_scope
+      ('s, 'b, 'err) supervisor_scope
+      * ('b -> ('s, 'a, 'err) supervisor_scope)
+      -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_start :
       ('s, 'err) supervisor
-      * ('s, 'env, 'err, 'a) supervisor_scope
-      -> ('s, 'env, _, ('s, 'err, 'a) supervisor_child) supervisor_scope
+      * ('s, 'a, 'err) supervisor_scope
+      -> ('s, ('s, 'err, 'a) supervisor_child, _) supervisor_scope
   | Supervisor_await :
-      ('s, 'err, 'a) supervisor_child -> ('s, _, 'err, 'a) supervisor_scope
+      ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
-      ('s, _, _) supervisor_child -> ('s, _, _, unit) supervisor_scope
+      ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
   | Supervisor_failures :
-      ('s, 'err) supervisor -> ('s, _, _, 'err Cause.t list) supervisor_scope
+      ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
   | Supervisor_check :
       ('s, [> `Supervisor_failed of int ] as 'err) supervisor
-      -> ('s, _, 'err, unit) supervisor_scope
-  | Supervisor_yield : ('s, _, _, unit) supervisor_scope
+      -> ('s, unit, 'err) supervisor_scope
+  | Supervisor_yield : ('s, unit, _) supervisor_scope
 
-and ('env, 'err, 'a) supervisor_body = {
-  run :
-    's.
-    ('s, 'err) supervisor -> ('s, 'env, 'err, 'a) supervisor_scope;
+and ('a, 'err) supervisor_body = {
+  run : 's. ('s, 'err) supervisor -> ('s, 'a, 'err) supervisor_scope;
 }
 
 and ('s, !'err) supervisor = {
@@ -198,15 +176,14 @@ let here_attr (file, line, col_start, col_end) e =
 let fn ?(kind = Capabilities.Internal) ?error_renderer pos name e =
   e |> here_attr pos |> named_kind ?error_renderer ~kind name
 
-let rec name : type env err a. (env, err, a) t -> string option = function
+let rec name : type a err. (a, err) t -> string option = function
   | Render_error (_, e) -> name e
   | Named (_, n, _) -> Some n
   | Annotate (_, _, e) -> name e
   | _ -> None
 
 let collect_names e =
-  let rec walk : type env err a.
-      string list -> (env, err, a) t -> string list =
+  let rec walk : type a err. string list -> (a, err) t -> string list =
    fun acc -> function
     | Pure _ -> acc
     | Fail _ -> acc
@@ -247,68 +224,50 @@ let collect_names e =
 let daemon_internal eff = Daemon eff
 
 module Private = struct
-  type ('env, 'err, 'a) view = ('env, 'err, 'a) t =
-    | Pure : 'a -> (_, _, 'a) view
-    | Fail : 'err -> (_, 'err, _) view
-    | Thunk : string * ('env -> 'a) -> ('env, _, 'a) view
-    | Bind :
-        ('env, 'err, 'b) t * ('b -> ('env, 'err, 'a) t)
-        -> ('env, 'err, 'a) view
-    | Map : ('env, 'err, 'b) t * ('b -> 'a) -> ('env, 'err, 'a) view
+  type ('a, 'err) view = ('a, 'err) t =
+    | Pure : 'a -> ('a, _) view
+    | Fail : 'err -> (_, 'err) view
+    | Thunk : string * (unit -> 'a) -> ('a, _) view
+    | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
+    | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
     | Catch :
-        ('env, 'err1, 'a) t * ('err1 -> ('env, 'err2, 'a) t)
-        -> ('env, 'err2, 'a) view
-    | Tap_error : ('env, 'err, 'a) t * ('err -> unit) -> ('env, 'err, 'a) view
-    | Delay : Duration.t * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) view
+    | Tap_error : ('a, 'err) t * ('err -> unit) -> ('a, 'err) view
+    | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) view
     | Timeout :
-        Duration.t * ('env, 'err, 'a) t
-        -> ('env, [> `Timeout ] as 'err, 'a) view
-    | Concat : ('env, 'err, unit) t list -> ('env, 'err, unit) view
-    | Race : ('env, 'err, 'a) t list -> ('env, 'err, 'a) view
-    | Par :
-        ('env, 'err, 'a) t * ('env, 'err, 'b) t
-        -> ('env, 'err, 'a * 'b) view
-    | All : ('env, 'err, 'a) t list -> ('env, 'err, 'a list) view
+        Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) view
+    | Concat : (unit, 'err) t list -> (unit, 'err) view
+    | Race : ('a, 'err) t list -> ('a, 'err) view
+    | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) view
+    | All : ('a, 'err) t list -> ('a list, 'err) view
     | All_settled :
-        ('env, 'err, 'a) t list
-        -> ('env, _, ('a, 'err Cause.t) result list) view
-    | For_each_par :
-        'x list * ('x -> ('env, 'err, 'a) t)
-        -> ('env, 'err, 'a list) view
+        ('a, 'err) t list -> (('a, 'err Cause.t) result list, _) view
+    | For_each_par : 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) view
     | For_each_par_bounded :
-        int * 'x list * ('x -> ('env, 'err, 'a) t)
-        -> ('env, 'err, 'a list) view
-    | Daemon : ('env, 'err, unit) t -> ('env, 'err, unit) view
-    | Uninterruptible : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
-    | Repeat : ('env, 'err, unit) t * Schedule.t -> ('env, 'err, unit) view
-    | Retry :
-        ('env, 'err, 'a) t * Schedule.t * ('err -> bool)
-        -> ('env, 'err, 'a) view
+        int * 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) view
+    | Daemon : (unit, 'err) t -> (unit, 'err) view
+    | Uninterruptible : ('a, 'err) t -> ('a, 'err) view
+    | Repeat : (unit, 'err) t * Schedule.t -> (unit, 'err) view
+    | Retry : ('a, 'err) t * Schedule.t * ('err -> bool) -> ('a, 'err) view
     | Acquire_release :
-        ('env, 'err, 'a) t * ('a -> ('env, 'err, unit) t)
-        -> ('env, 'err, 'a) view
-    | Scoped : ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        ('a, 'err) t * ('a -> (unit, 'err) t) -> ('a, 'err) view
+    | Scoped : ('a, 'err) t -> ('a, 'err) view
     | Supervisor_scoped :
-        int option * ('env, 'err, 'a) supervisor_body
-        -> ('env, 'err, 'a) view
-    | Render_error : ('err -> string) * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        int option * ('a, 'err) supervisor_body -> ('a, 'err) view
+    | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) view
     | Named :
-        Capabilities.span_kind * string * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) view
-    | Annotate : string * string * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
-    | Link_span :
-        Capabilities.span_link * ('env, 'err, 'a) t -> ('env, 'err, 'a) view
+        Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) view
+    | Annotate : string * string * ('a, 'err) t -> ('a, 'err) view
+    | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) view
     | With_external_parent :
-        Capabilities.trace_context * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) view
+        Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) view
     | With_context :
-        Capabilities.trace_context * ('env, 'err, 'a) t
-        -> ('env, 'err, 'a) view
-    | Current_span : ('env, 'err, Capabilities.span_info option) view
-    | Current_context : ('env, 'err, Capabilities.trace_context option) view
+        Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) view
+    | Current_span : (Capabilities.span_info option, 'err) view
+    | Current_context : (Capabilities.trace_context option, 'err) view
     | Log :
         Capabilities.log_level * string * (string * string) list
-        -> ('env, 'err, unit) view
+        -> (unit, 'err) view
     | Metric_update : {
         name : string;
         description : string;
@@ -317,7 +276,7 @@ module Private = struct
         attrs : (string * string) list;
         value : Capabilities.metric_value;
       }
-        -> ('env, 'err, unit) view
+        -> (unit, 'err) view
 
   (* [view] is a transparent alias of [t] with the constructors
      re-exposed for the runtime. The previous implementation reallocated
@@ -326,7 +285,7 @@ module Private = struct
      bit-identical to those of [t], so the runtime block layouts
      coincide; [%identity] tells the compiler to emit no conversion
      code, making [view] an exact zero-cost cast. *)
-  external view : ('env, 'err, 'a) t -> ('env, 'err, 'a) view = "%identity"
+  external view : ('a, 'err) t -> ('a, 'err) view = "%identity"
 
   let daemon = daemon_internal
 

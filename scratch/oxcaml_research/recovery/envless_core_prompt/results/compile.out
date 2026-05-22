@@ -1,0 +1,28 @@
+== env_parameterized_baseline_positive (pass) ==
+candidate=A env_parameterized portable=true effect_type_params=3 runtime_env=true result_sum=95
+PASS expected-pass env_parameterized_baseline_positive
+== envless_argument_passing_positive (pass) ==
+candidate=B envless ordinary_args=true portable=true effect_type_params=2 runtime_env=false result_sum=95
+PASS expected-pass envless_argument_passing_positive
+== envless_ref_capture_negative (fail) ==
+File "scratch/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml", line 16, characters 15-22:
+16 |           incr counter;
+                    ^^^^^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml", lines 15-17, characters 8-18
+         which is expected to be "portable"
+         because it is contained (via constructor "Thunk") (with some modality) in the value at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml", lines 13-17, characters 4-20.
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail envless_ref_capture_negative
+== envless_eio_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 61-73:
+22 |     Effect.Thunk ("bad-eio-capture", fun () -> int_of_float (Eio.Time.now clock))
+                                                                  ^^^^^^^^^^^^
+Error: The value "Eio.Time.now" is "nonportable"
+       but is expected to be "portable"
+         because it is used inside the function at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 37-80
+         which is expected to be "portable"
+         because it is contained (via constructor "Thunk") (with some modality) in the value at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 4-81.
+PASS expected-fail envless_eio_capture_negative
+summary: pass=4 fail=0

@@ -1,0 +1,23 @@
+== timeout_clock_positive (pass) ==
+timeout_clock_positive payload=int64_ns poll_every=4096 max_deadline_to_exit_us=4 sibling_success=true sibling_failure=true mid_loop=true
+PASS expected-pass timeout_clock_positive
+== eio_clock_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/eio_clock_capture_negative.ml", line 16, characters 21-33:
+16 |            (fun _ -> Eio.Time.now clock)
+                          ^^^^^^^^^^^^
+Error: The value "Eio.Time.now" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/eio_clock_capture_negative.ml", lines 14-17, characters 48-41
+         which is expected to be "shareable".
+PASS expected-fail eio_clock_capture_negative
+== random_state_capture_negative (fail) ==
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/random_state_capture_negative.ml", line 16, characters 40-43:
+16 |            (fun _ -> Random.State.float rng 1.0)
+                                             ^^^
+Error: This value is "shared"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/random_state_capture_negative.ml", lines 14-17, characters 48-49
+         which is expected to be "shareable".
+       However, the highlighted expression is expected to be "uncontended".
+PASS expected-fail random_state_capture_negative
+summary: pass=3 fail=0

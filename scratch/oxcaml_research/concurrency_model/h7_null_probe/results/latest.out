@@ -1,0 +1,3 @@
+single_domain wall_ms=44.814 count=80 work=36000000 checksum=229220960
+two_domain_parallel wall_ms=22.718 count=80 work=36000000 checksum=229220960
+h7_speedup=1.973

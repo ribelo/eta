@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/random_state_capture_negative.ml", line 16, characters 40-43:
+16 |            (fun _ -> Random.State.float rng 1.0)
+                                             ^^^
+Error: This value is "shared"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t7_timeout_clock/random_state_capture_negative.ml", lines 14-17, characters 48-49
+         which is expected to be "shareable".
+       However, the highlighted expression is expected to be "uncontended".

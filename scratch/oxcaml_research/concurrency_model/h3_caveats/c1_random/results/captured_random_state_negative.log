@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/captured_random_state_negative.ml", line 6, characters 41-44:
+6 |   let factor = 1.0 +. Random.State.float rng 1.0 in
+                                             ^^^
+Error: This value is "contended"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/captured_random_state_negative.ml", lines 5-7, characters 24-44
+         which is expected to be "portable".
+       However, the highlighted expression is expected to be "uncontended".

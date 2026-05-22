@@ -1,0 +1,1 @@
+candidate=C interpreter_scoped arbitrary_thunks_outside_slo=true samples=5 poll_every=4096 max_deadline_to_exit_us=5

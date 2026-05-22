@@ -1,0 +1,10 @@
+== indexed_all_positive ==
+indexed_all_positive completion_order=reverse input_order_restored=true reassembly_us=0
+PASS indexed_all_positive
+== indexed_all_settled_positive ==
+indexed_all_settled_positive errors=4 input_order_restored=true reassembly_us=0
+PASS indexed_all_settled_positive
+== unordered_bag_negative ==
+detected_unordered_bag_contract_break first=task_15 expected_first=task_00
+PASS unordered_bag_negative
+summary: pass=3 fail=0

@@ -40,7 +40,7 @@ let () =
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env:() ()
+    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ()
   in
   let work =
     Effect.fn __POS__ __FUNCTION__

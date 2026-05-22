@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/object_capability_probe.ml", line 43, characters 36-42:
+43 |               (fun _ -> next_delay ~random schedule)
+                                         ^^^^^^
+Error: The value "random" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/object_capability_probe.ml", lines 40-46, characters 47-68
+         which is expected to be "shareable".

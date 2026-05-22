@@ -1,8 +1,7 @@
 # Effet
 
 Effet is an OCaml effect library shaped by TypeScript Effect and Scala ZIO.
-It keeps the useful axes: environment requirements, typed failures, and
-success values.
+It keeps the useful axes: typed failures and success values.
 
 It is not an Elm Architecture framework. There is no message loop, inbox,
 subscription reconciler, or state container. Applications own their
@@ -11,14 +10,16 @@ state; Effet owns effect description and interpretation.
 ## Core Type
 
 ```ocaml
-('env, 'err, 'a) Effect.t
+('a, 'err) Effect.t
 ```
 
-- `'env` is the requirement channel. Structural object types work well for
-  capabilities.
+- `'a` is the success value.
 - `'err` is the typed failure channel. Polymorphic variants give precise,
   inferred error rows.
-- `'a` is the success value.
+
+Dependencies are ordinary OCaml values. Pass records, modules, closures, or
+handles to functions that build effects; Effet does not provide a ZIO-style
+environment or layer graph.
 
 ## Example
 
@@ -36,7 +37,7 @@ let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   match Runtime.run rt program with
   | Exit.Ok n -> Format.printf "%d@." n
@@ -56,7 +57,7 @@ let () =
 | `Duration` | Millisecond-precision durations. |
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
-| `Capabilities` | Small object-type traits for capability-oriented environments. |
+| `Capabilities` | Small object-type traits for runtime services and explicit dependencies. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
 ## PPX Helpers
@@ -68,36 +69,27 @@ graphs, or add runtime semantics.
 ```ocaml
 let load_user id =
   [%effet.fn
-    (Effect.thunk "db.query" (fun env -> env#db#user id))]
+    (Effect.thunk "db.query" (fun () -> Db.user id))]
 ```
 
 It expands to:
 
 ```ocaml
 Effect.fn __POS__ __FUNCTION__
-  (Effect.thunk "db.query" (fun env -> env#db#user id))
+  (Effect.thunk "db.query" (fun () -> Db.user id))
 ```
 
-Leaf effects can bind an explicit capability list so the body cannot read
-`env` directly:
+Leaf effects can bind an explicit capture list so the body cannot read an
+ambient `env`:
 
 ```ocaml
-let current_user () =
+let current_user auth =
   [%effet.thunk "auth.current_user" (auth : Auth.t)
     (Auth.current_user auth)]
 ```
 
 This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.thunk ...)`, with a
-generated env argument and local typed `auth` binding. Use the explicit `()` for
-exported or reusable env-row effects; it avoids OCaml value-restriction weak
-variables.
-
-Runtime-boundary env objects can be generated with local type annotations:
-
-```ocaml
-let env =
-  [%effet.env { auth = (auth : Auth.t); clock = (clock : Capabilities.clock) }]
-```
+zero-argument thunk and a local typed `auth` binding.
 
 Use it by adding `ppx_effet` to your test or executable preprocessors:
 
@@ -107,7 +99,7 @@ Use it by adding `ppx_effet` to your test or executable preprocessors:
 ```
 
 The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
-`Tag`, implicit service lookup, inferred env construction, or argument/env-row
+`Tag`, implicit service lookup, inferred dependency construction, or argument
 conversion.
 
 ## Resource Scopes
@@ -117,9 +109,9 @@ conversion.
 
 ```ocaml
 let with_db k =
-  let acquire = Effect.thunk "db.open" (fun env -> env#db#open_) in
+  let acquire = Effect.thunk "db.open" (fun () -> Db.open_) in
   let release handle =
-    Effect.thunk "db.close" (fun env -> env#db#close handle)
+    Effect.thunk "db.close" (fun () -> Db.close handle)
   in
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
@@ -187,17 +179,17 @@ policy, and nonblocking shutdown makes these wrappers policy-owning
 abstractions, not thin aliases.
 
 Wrap Eio operations in `Effect.thunk` at the leaf when they need typed failure
-conversion, env-row requirements, or tracing names. If a protocol is reusable
+conversion or tracing names. If a protocol is reusable
 and owns lifecycle semantics, prefer a focused module such as `Resource` or
 `effet-stream` rather than a generic concurrency-data wrapper.
 
 ## Trace Propagation
 
-Tracing is configured on the runtime, not through the env row:
+Tracing is configured on the runtime:
 
 ```ocaml
 let rt =
-  Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env:() ()
+  Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ()
 ```
 
 Typed failures render as `"<typed failure>"` in span status and exception events

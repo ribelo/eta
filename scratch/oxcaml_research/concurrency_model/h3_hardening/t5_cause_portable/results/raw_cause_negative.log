@@ -1,0 +1,7 @@
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t5_cause_portable/raw_cause_negative.ml", line 15, characters 48-51:
+15 |          Parallel.fork_join2 parallel (fun _ -> raw) (fun _ -> raw))))
+                                                     ^^^
+Error: The value "raw" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t5_cause_portable/raw_cause_negative.ml", lines 14-15, characters 48-68
+         which is expected to be "shareable".

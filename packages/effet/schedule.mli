@@ -29,6 +29,7 @@ val named : string -> t -> t
 val pp : Format.formatter -> t -> unit
 
 (** [next_delay schedule ~step] is the wait before the next attempt or
-    [None] if the schedule has terminated. Pure; deterministic except
-    when [Jittered] is in the tree. *)
-val next_delay : t -> step:int -> Duration.t option
+    [None] if the schedule has terminated. [Jittered] draws from [random].
+    Portable runtimes should pass an explicit worker-safe random capability
+    instead of relying on the same-domain default. *)
+val next_delay : ?random:Capabilities.random -> t -> step:int -> Duration.t option

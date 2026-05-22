@@ -4,8 +4,6 @@
 
 open Effet
 
-let env = ()
-
 let rec json_has_span_kind ~name ~kind = function
   | `Assoc fields ->
       let has_name = List.assoc_opt "name" fields = Some (`String name) in
@@ -78,7 +76,7 @@ let test_exception_stacktrace_exported () =
       ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
       ()
   in
-  let rt = Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env () in
+  let rt = Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) () in
   let eff =
     Effect.named "failing.span"
       (Effect.thunk "failing.leaf" (fun () -> failwith "wire stacktrace")
@@ -117,7 +115,7 @@ let live_motel_test net clock =
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ~env ()
+    Runtime.create ~sw ~clock ~tracer:(Effet_otel.tracer exporter) ()
   in
   let demo =
     Effect.named "demo.root"

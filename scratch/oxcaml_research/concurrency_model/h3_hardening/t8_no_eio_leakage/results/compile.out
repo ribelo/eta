@@ -1,0 +1,115 @@
+== portable_replacements_positive (pass) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+portable_replacements_positive cause_portable=true trace_context=true atomics=true schedule_duration_sampler=true
+PASS expected-pass portable_replacements_positive
+== switch_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/switch_capture_negative.ml", line 16, characters 21-36:
+16 |            (fun _ -> Eio.Switch.fail sw (Failure "worker"))
+                          ^^^^^^^^^^^^^^^
+Error: The value "Eio.Switch.fail" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/switch_capture_negative.ml", lines 14-17, characters 48-60
+         which is expected to be "shareable".
+PASS expected-fail switch_capture_negative
+== promise_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/promise_capture_negative.ml", line 16, characters 21-38:
+16 |            (fun _ -> Eio.Promise.await promise)
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Eio.Promise.await" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/promise_capture_negative.ml", lines 14-17, characters 48-48
+         which is expected to be "shareable".
+PASS expected-fail promise_capture_negative
+== stream_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/stream_capture_negative.ml", line 16, characters 21-35:
+16 |            (fun _ -> Eio.Stream.add stream 1)
+                          ^^^^^^^^^^^^^^
+Error: The value "Eio.Stream.add" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/stream_capture_negative.ml", lines 14-17, characters 48-46
+         which is expected to be "shareable".
+PASS expected-fail stream_capture_negative
+== cancel_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/cancel_capture_negative.ml", line 16, characters 21-37:
+16 |            (fun _ -> Eio.Cancel.check cancel)
+                          ^^^^^^^^^^^^^^^^
+Error: The value "Eio.Cancel.check" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/cancel_capture_negative.ml", lines 14-17, characters 48-66
+         which is expected to be "shareable".
+PASS expected-fail cancel_capture_negative
+== clock_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/clock_capture_negative.ml", line 16, characters 21-33:
+16 |            (fun _ -> Eio.Time.now clock)
+                          ^^^^^^^^^^^^
+Error: The value "Eio.Time.now" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/clock_capture_negative.ml", lines 14-17, characters 48-41
+         which is expected to be "shareable".
+PASS expected-fail clock_capture_negative
+== stdenv_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/stdenv_capture_negative.ml", line 15, characters 21-35:
+15 |            (fun _ -> Eio.Stdenv.cwd env)
+                          ^^^^^^^^^^^^^^
+Error: The value "Eio.Stdenv.cwd" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/stdenv_capture_negative.ml", lines 13-16, characters 48-41
+         which is expected to be "shareable".
+PASS expected-fail stdenv_capture_negative
+== tracer_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/tracer_capture_negative.ml", line 16, characters 21-38:
+16 |            (fun _ -> Effet.Tracer.dump collector)
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Tracer.dump" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/tracer_capture_negative.ml", lines 14-17, characters 48-50
+         which is expected to be "shareable".
+PASS expected-fail tracer_capture_negative
+== logger_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/logger_capture_negative.ml", line 16, characters 21-38:
+16 |            (fun _ -> Effet.Logger.dump collector)
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Logger.dump" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/logger_capture_negative.ml", lines 14-17, characters 48-50
+         which is expected to be "shareable".
+PASS expected-fail logger_capture_negative
+== meter_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/meter_capture_negative.ml", line 16, characters 21-37:
+16 |            (fun _ -> Effet.Meter.dump collector)
+                          ^^^^^^^^^^^^^^^^
+Error: The value "Effet.Meter.dump" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/meter_capture_negative.ml", lines 14-17, characters 48-49
+         which is expected to be "shareable".
+PASS expected-fail meter_capture_negative
+== raw_cause_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/raw_cause_capture_negative.ml", line 15, characters 48-51:
+15 |          Parallel.fork_join2 parallel (fun _ -> raw) (fun _ -> raw))))
+                                                     ^^^
+Error: The value "raw" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/raw_cause_capture_negative.ml", lines 14-15, characters 48-68
+         which is expected to be "shareable".
+PASS expected-fail raw_cause_capture_negative
+== runtime_capture_negative (fail) ==
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/runtime_capture_negative.ml", line 19, characters 21-38:
+19 |            (fun _ -> Effet.Runtime.run rt (Effet.Effect.pure 1))
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Runtime.run" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/runtime_capture_negative.ml", lines 17-20, characters 48-65
+         which is expected to be "shareable".
+PASS expected-fail runtime_capture_negative
+summary: pass=12 fail=0

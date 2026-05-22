@@ -17,7 +17,7 @@ let with_runtime f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   f rt
 
@@ -27,7 +27,7 @@ let with_traced_runtime f =
   let tracer = Tracer.in_memory () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~env:() ()
+      ~tracer:(Tracer.as_capability tracer) ()
   in
   f rt tracer
 
@@ -37,7 +37,7 @@ let with_sampled_traced_runtime sampler f =
   let tracer = Tracer.in_memory () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~sampler ~env:() ()
+      ~tracer:(Tracer.as_capability tracer) ~sampler ()
   in
   f rt tracer
 
@@ -47,7 +47,7 @@ let with_auto_traced_runtime auto_instrument f =
   let tracer = Tracer.in_memory () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~auto_instrument ~env:() ()
+      ~tracer:(Tracer.as_capability tracer) ~auto_instrument ()
   in
   f rt tracer
 
@@ -55,8 +55,7 @@ let with_runtime_capture_backtrace capture_backtrace f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~capture_backtrace
-      ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~capture_backtrace ()
   in
   f rt
 
@@ -109,7 +108,7 @@ let with_test_clock f =
   let clock = Test_clock.create () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~env:() ()
+      ~sleep:(Test_clock.sleep clock) ()
   in
   f sw clock rt
 
@@ -120,8 +119,7 @@ let with_traced_test_clock f =
   let tracer = Tracer.in_memory () in
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~tracer:(Tracer.as_capability tracer)
-      ~env:() ()
+      ~sleep:(Test_clock.sleep clock) ~tracer:(Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer
 
@@ -208,8 +206,8 @@ let test_collect_names () =
   let e =
     Effect.concat
       [
-        Effect.thunk "leaf-a" (fun _ -> ()) |> Effect.map (fun _ -> ());
-        Effect.thunk "leaf-b" (fun _ -> ());
+        Effect.thunk "leaf-a" (fun () -> ()) |> Effect.map (fun _ -> ());
+        Effect.thunk "leaf-b" (fun () -> ());
       ]
     |> Effect.named "outer"
   in
@@ -299,7 +297,7 @@ let test_observability_nested_spans () =
 
 let test_observability_statuses () =
   with_traced_runtime @@ fun rt tracer ->
-  let fail_eff : (unit, observability_err, unit) Effect.t =
+  let fail_eff : (unit, observability_err) Effect.t =
     Effect.named "fail" (Effect.fail `Boom)
   in
   ignore (Runtime.run rt fail_eff : (unit, observability_err) Exit.t);
@@ -307,7 +305,7 @@ let test_observability_statuses () =
     | `Db code -> "db:" ^ string_of_int code
     | _ -> "<unexpected>"
   in
-  let custom_eff : (unit, observability_err, unit) Effect.t =
+  let custom_eff : (unit, observability_err) Effect.t =
     Effect.named ~error_renderer:render_db "custom" (Effect.fail (`Db 42))
   in
   ignore
@@ -317,7 +315,7 @@ let test_observability_statuses () =
     | `Outer -> "outer"
     | _ -> "<unexpected>"
   in
-  let outer : (unit, observability_err, unit) Effect.t =
+  let outer : (unit, observability_err) Effect.t =
     Effect.named ~error_renderer:render_outer "outer"
       (Effect.catch (function `Inner -> Effect.fail `Outer) inner)
   in
@@ -700,6 +698,16 @@ let test_schedule_composition () =
        (Schedule.and_then (Schedule.recurs 1)
           (Schedule.spaced (Duration.seconds 1)))
        ~step:1)
+
+let test_schedule_jittered_uses_random_capability () =
+  let random = Capabilities.random_of_seed 17 in
+  let schedule =
+    Schedule.spaced (Duration.ms 100)
+    |> Schedule.jittered ~min:1.0 ~max:2.0
+  in
+  Alcotest.(check some_dur) "jittered factor from capability"
+    (Some (Duration.ms 139))
+    (Schedule.next_delay ~random schedule ~step:0)
 
 let test_effect_map_bind_tap_runtime () =
   with_runtime @@ fun rt ->
@@ -1306,6 +1314,39 @@ let test_effect_retry_schedule_uses_virtual_delays () =
   check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
     (Eio.Promise.await promise)
 
+let test_effect_retry_jittered_schedule_uses_runtime_random () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~random:(Capabilities.random_of_seed 17)
+      ()
+  in
+  let attempts = ref 0 in
+  let schedule =
+    Schedule.spaced (Duration.ms 100)
+    |> Schedule.jittered ~min:1.0 ~max:2.0
+  in
+  let attempt =
+    Effect.thunk "attempt" (fun () ->
+        incr attempts;
+        !attempts)
+    |> Effect.bind (fun n ->
+           if n < 2 then Effect.fail (`Again n) else Effect.pure n)
+  in
+  let promise =
+    fork_run sw rt (Effect.retry schedule (fun (`Again _) -> true) attempt)
+  in
+  yield ();
+  Alcotest.(check int) "first attempt" 1 !attempts;
+  Test_clock.adjust clock (Duration.ms 138);
+  yield ();
+  Alcotest.(check int) "still sleeping" 1 !attempts;
+  Test_clock.adjust clock (Duration.ms 1);
+  check_exit_ok Alcotest.int "retry result" 2 (Eio.Promise.await promise)
+
 let test_supervisor_observes_child_failure () =
   with_runtime @@ fun rt ->
   let program =
@@ -1346,9 +1387,9 @@ let test_supervisor_cancel_runs_finalizer () =
   let finalizer_ran = ref false in
   let child =
     Effect.acquire_release
-      ~acquire:(Effect.thunk "supervisor.acquire" (fun _ -> ()))
+      ~acquire:(Effect.thunk "supervisor.acquire" (fun () -> ()))
       ~release:(fun () ->
-        Effect.thunk "supervisor.release" (fun _ -> finalizer_ran := true))
+        Effect.thunk "supervisor.release" (fun () -> finalizer_ran := true))
     |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
   in
   let program =
@@ -1361,7 +1402,7 @@ let test_supervisor_cancel_runs_finalizer () =
           in
           let* () =
             lift
-              (Effect.thunk "supervisor.wait_for_child" (fun _ ->
+              (Effect.thunk "supervisor.wait_for_child" (fun () ->
                    wait_for_sleepers clock 1))
           in
           let* () = cancel child in
@@ -1564,7 +1605,7 @@ let test_uninterruptible_race_loser_without_checkpoints_returns () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let domain_mgr = Eio.Stdenv.domain_mgr stdenv in
   let completed = ref false in
@@ -1757,7 +1798,10 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   Alcotest.(check int) "subsequent refresh updates" 2
     (run_ok rt (Resource.get resource))
 
-type law_env = < add : int -> int ; mul : int -> int >
+type law_deps = {
+  add : int -> int;
+  mul : int -> int;
+}
 
 type law_err = [ `E0 | `E1 | `Neg | `Retry | `Release | `Timeout ]
 
@@ -1774,16 +1818,11 @@ let equal_law_err (a : law_err) (b : law_err) = a = b
 let with_law_runtime f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let env =
-    object
-      method add n = n + 1
-      method mul n = n * 2
-    end
-  in
+  let deps = { add = (fun n -> n + 1); mul = (fun n -> n * 2) } in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
-  f rt
+  f rt deps
 
 let check_law rt name left right =
   let left_exit = Runtime.run rt left in
@@ -1795,37 +1834,36 @@ let check_law rt name left right =
       (Exit.pp Format.pp_print_int pp_law_err)
       right_exit
 
-let law_effects () : (law_env, law_err, int) Effect.t list =
+let law_effects deps : (int, law_err) Effect.t list =
   [
     Effect.pure (-2);
     Effect.pure 0;
     Effect.pure 3;
     Effect.fail `E0;
     Effect.fail `E1;
-    Effect.thunk "law.add" (fun env -> env#add 1);
-    Effect.thunk "law.mul" (fun env -> env#mul 2);
+    Effect.thunk "law.add" (fun () -> deps.add 1);
+    Effect.thunk "law.mul" (fun () -> deps.mul 2);
     Effect.pure 2 |> Effect.map (fun n -> n + 4);
     Effect.pure 3 |> Effect.bind (fun n -> Effect.pure (n * 3));
     Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure 7);
   ]
 
-let law_functions () :
-    (string * (int -> (law_env, law_err, int) Effect.t)) list =
+let law_functions deps : (string * (int -> (int, law_err) Effect.t)) list =
   [
     ("inc", fun x -> Effect.pure (x + 1));
     ( "fail-negative",
       fun x -> if x < 0 then Effect.fail `Neg else Effect.pure (x * 2) );
-    ("env-add", fun x -> Effect.thunk "law.f.add" (fun env -> env#add x));
+    ("deps-add", fun x -> Effect.thunk "law.f.add" (fun () -> deps.add x));
     ("mapped", fun x -> Effect.pure x |> Effect.map (fun n -> n + 3));
     ( "catch-local",
       fun x -> Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure (x + 5)) );
   ]
 
 let test_properties_monad_laws () =
-  with_law_runtime @@ fun rt ->
+  with_law_runtime @@ fun rt deps ->
   let values = [ -2; 0; 3 ] in
-  let effects = law_effects () in
-  let functions = law_functions () in
+  let effects = law_effects deps in
+  let functions = law_functions deps in
   List.iter
     (fun x ->
       List.iter
@@ -1856,7 +1894,7 @@ let test_properties_monad_laws () =
         functions)
     effects
 
-let catch_handler : law_err -> (law_env, law_err, int) Effect.t = function
+let catch_handler : law_err -> (int, law_err) Effect.t = function
   | `E0 -> Effect.pure 10
   | `E1 -> Effect.pure 20
   | `Neg -> Effect.pure 30
@@ -1865,7 +1903,7 @@ let catch_handler : law_err -> (law_env, law_err, int) Effect.t = function
   | `Timeout -> Effect.pure 60
 
 let test_properties_catch_laws () =
-  with_law_runtime @@ fun rt ->
+  with_law_runtime @@ fun rt deps ->
   List.iter
     (fun x ->
       check_law rt
@@ -1886,7 +1924,7 @@ let test_properties_catch_laws () =
           check_law rt "catch handles bind source failure"
             (Effect.catch catch_handler (Effect.bind f (Effect.fail err)))
             (catch_handler err))
-        (law_functions ()))
+        (law_functions deps))
     ([ `E0; `E1; `Neg ] : law_err list);
   List.iter
     (fun x ->
@@ -1897,7 +1935,7 @@ let test_properties_catch_laws () =
     [ -2; 0; 3 ]
 
 let test_properties_race_success_invariant () =
-  with_law_runtime @@ fun rt ->
+  with_law_runtime @@ fun rt _deps ->
   let cases =
     [
       ("ok1", Effect.pure 1);
@@ -1922,7 +1960,7 @@ let test_properties_race_success_invariant () =
     cases
 
 let test_properties_retry_and_repeat_laws () =
-  with_law_runtime @@ fun rt ->
+  with_law_runtime @@ fun rt _deps ->
   let schedules =
     [
       Schedule.recurs 0;
@@ -1935,7 +1973,7 @@ let test_properties_retry_and_repeat_laws () =
     (fun i schedule ->
       let attempts = ref 0 in
       let attempt =
-        Effect.thunk "retry.always-succeed" (fun _ ->
+        Effect.thunk "retry.always-succeed" (fun () ->
             incr attempts;
             i)
       in
@@ -1952,7 +1990,7 @@ let test_properties_retry_and_repeat_laws () =
       let ticks = ref 0 in
       run_ok rt
         (Effect.repeat (Schedule.recurs n)
-           (Effect.thunk "repeat.tick" (fun _ -> incr ticks)));
+           (Effect.thunk "repeat.tick" (fun () -> incr ticks)));
       Alcotest.(check int)
         (Printf.sprintf "repeat recurs %d runs initial+n" n)
         (n + 1) !ticks)
@@ -2003,31 +2041,39 @@ let test_properties_scope_finalizers_once () =
   check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
   Alcotest.(check int) "cancelled release once" 1 !releases
 
-(* Auto-DI regression: A defined without naming services or threading.
-   The env-row property is the whole reason for the 'env channel.
-   See journal V-R10 and scratch/r_research/r_b_env_row.ml. *)
-let test_env_row_auto_di () =
+(* Dependencies are ordinary OCaml values. A composes B and C by closing over
+   the explicit dependency record, without an ambient Effet env channel. *)
+let test_explicit_dependency_passing () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let log_calls = ref [] in
-  let env =
+  let deps =
+    {
+      add = (fun n -> n + 1);
+      mul = (fun n -> n * 2);
+    }
+  in
+  let db_query s = "row:" ^ s in
+  let log_info m = log_calls := m :: !log_calls in
+  let services =
     object
-      method db = object method query s = "row:" ^ s end
-      method log =
-        object method info m = log_calls := m :: !log_calls end
+      method query = db_query
+      method info = log_info
     end
   in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
-  let b msg = Effect.thunk "log" (fun env -> env#log#info msg) in
-  let c id = Effect.thunk "db" (fun env -> env#db#query id) in
-  (* A composes B and C without naming services or threading. *)
+  let b msg = Effect.thunk "log" (fun () -> services#info msg) in
+  let c id =
+    Effect.thunk "db" (fun () -> services#query (string_of_int (deps.add id)))
+  in
   let a id =
     let open Effect in
-    bind (fun () -> c id) (b ("fetching " ^ id))
+    let user_id = deps.add id in
+    bind (fun () -> c id) (b ("fetching " ^ string_of_int user_id))
   in
-  match Runtime.run rt (a "42") with
+  match Runtime.run rt (a 41) with
   | Exit.Error _ -> Alcotest.fail "expected Ok"
   | Exit.Ok value ->
       Alcotest.(check string) "db result" "row:42" value;
@@ -2049,7 +2095,7 @@ let test_par_fail_fast_cancels_sibling () =
   with_runtime @@ fun rt ->
   let other_done = ref false in
   let slow_other =
-    Effect.thunk "slow" (fun _ ->
+    Effect.thunk "slow" (fun () ->
         Eio.Fiber.yield ();
         other_done := true;
         99)
@@ -2194,6 +2240,38 @@ let test_for_each_par_bounded_fail_fast () =
   yield ();
   Alcotest.(check bool) "slow cancelled" false !slow_done
 
+let check_push label expected actual =
+  match (expected, actual) with
+  | Portable_queue.Pushed, Portable_queue.Pushed
+  | Portable_queue.Full, Portable_queue.Full
+  | Portable_queue.Closed, Portable_queue.Closed ->
+      ()
+  | _ -> Alcotest.failf "%s: unexpected push result" label
+
+let check_take_int label expected actual =
+  match (expected, actual) with
+  | Some expected, Portable_queue.Value actual ->
+      Alcotest.(check int) label expected actual
+  | None, Portable_queue.Empty | None, Portable_queue.Closed_empty -> ()
+  | _ -> Alcotest.failf "%s: unexpected take result" label
+
+let test_portable_queue_backpressure_and_close () =
+  let queue = Portable_queue.create ~capacity:2 in
+  check_push "push 1" Portable_queue.Pushed (Portable_queue.try_push queue 1);
+  check_push "push 2" Portable_queue.Pushed (Portable_queue.try_push queue 2);
+  check_push "full" Portable_queue.Full (Portable_queue.try_push queue 3);
+  check_take_int "take 1" (Some 1) (Portable_queue.try_take queue);
+  check_push "push after take" Portable_queue.Pushed
+    (Portable_queue.try_push queue 3);
+  check_take_int "take 2" (Some 2) (Portable_queue.try_take queue);
+  Portable_queue.close queue;
+  check_push "push after close" Portable_queue.Closed
+    (Portable_queue.try_push queue 4);
+  check_take_int "take 3" (Some 3) (Portable_queue.try_take queue);
+  match Portable_queue.try_take queue with
+  | Portable_queue.Closed_empty -> ()
+  | _ -> Alcotest.fail "expected closed empty queue"
+
 let () =
   Alcotest.run "effet"
     [
@@ -2201,7 +2279,8 @@ let () =
         [
           Alcotest.test_case "Pure" `Quick test_pure;
           Alcotest.test_case "Map" `Quick test_map;
-          Alcotest.test_case "env row auto DI" `Quick test_env_row_auto_di;
+          Alcotest.test_case "explicit dependency passing" `Quick
+            test_explicit_dependency_passing;
           Alcotest.test_case "par returns pair" `Quick
             test_par_returns_both_successes;
           Alcotest.test_case "par keeps heterogeneous successes private" `Quick
@@ -2285,6 +2364,8 @@ let () =
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick
             test_effect_retry_schedule_uses_virtual_delays;
+          Alcotest.test_case "retry jittered schedule uses runtime random" `Quick
+            test_effect_retry_jittered_schedule_uses_runtime_random;
           Alcotest.test_case "retry does not retry interrupt" `Quick
             test_effect_retry_does_not_retry_interrupt;
           Alcotest.test_case "uninterruptible defers race cancellation" `Quick
@@ -2340,6 +2421,8 @@ let () =
           Alcotest.test_case "spaced fixed linear" `Quick
             test_spaced_fixed_linear;
           Alcotest.test_case "composition" `Quick test_schedule_composition;
+          Alcotest.test_case "jittered uses random capability" `Quick
+            test_schedule_jittered_uses_random_capability;
         ] );
       ( "Scope",
         [
@@ -2355,6 +2438,11 @@ let () =
             test_resource_auto_refreshes_on_schedule;
           Alcotest.test_case "auto failed refresh keeps cached value" `Quick
             test_resource_auto_failed_refresh_keeps_cached_value;
+        ] );
+      ( "Portable_queue",
+        [
+          Alcotest.test_case "backpressure and close" `Quick
+            test_portable_queue_backpressure_and_close;
         ] );
       ( "Properties",
         [

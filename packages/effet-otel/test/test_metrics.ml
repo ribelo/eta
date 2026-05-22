@@ -16,8 +16,6 @@
 
 open Effet
 
-let env = ()
-
 let with_meter f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -25,8 +23,7 @@ let with_meter f =
   let rt =
     Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
-      ~meter:(Meter.as_capability meter)
-      ~env ()
+      ~meter:(Meter.as_capability meter) ()
   in
   f rt meter
 
@@ -169,8 +166,7 @@ let test_metrics_otlp_live () =
     in
     let rt =
       Runtime.create ~sw ~clock
-        ~meter:(Effet_otel.meter exporter)
-        ~env ()
+        ~meter:(Effet_otel.meter exporter) ()
     in
     let prog =
       Effect.bind

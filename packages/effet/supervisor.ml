@@ -3,8 +3,7 @@ type ('s, 'err) supervisor = ('s, 'err) t
 type ('s, 'err, 'a) child = ('s, 'err, 'a) Effect.supervisor_child
 
 module Scope = struct
-  type ('s, 'env, 'err, 'a) t =
-    ('s, 'env, 'err, 'a) Effect.supervisor_scope
+  type ('s, 'a, 'err) t = ('s, 'a, 'err) Effect.supervisor_scope
 
   let pure = Effect.supervisor_pure
   let lift = Effect.supervisor_lift
@@ -19,8 +18,8 @@ module Scope = struct
   let yield = Effect.supervisor_yield
 end
 
-type ('env, 'err, 'a) body = {
-  run : 's. ('s, 'err) t -> ('s, 'env, 'err, 'a) Scope.t;
+type ('a, 'err) body = {
+  run : 's. ('s, 'err) t -> ('s, 'a, 'err) Scope.t;
 }
 
 let scoped ?max_failures body =

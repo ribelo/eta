@@ -1,0 +1,9 @@
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t6_observability/closure_attribute_negative.ml", line 20, characters 9-71:
+20 |          Parallel.fork_join2 parallel (fun _ -> event) (fun _ -> event))))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type "#(bad_event * bad_event)"
+       but an expression was expected of type "('a : value)"
+       The layout of #(bad_event * bad_event) is value & value
+         because it is an unboxed tuple.
+       But the layout of #(bad_event * bad_event) must be a sublayout of 
+           value.

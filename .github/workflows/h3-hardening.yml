@@ -1,0 +1,31 @@
+name: H3 hardening
+
+on:
+  pull_request:
+    paths:
+      - "packages/effet/runtime.ml"
+      - "packages/effet/runtime.mli"
+      - "packages/effet/schedule.ml"
+      - "packages/effet/schedule.mli"
+      - "packages/effet/capabilities.ml"
+      - "packages/effet/capabilities.mli"
+      - "packages/effet/supervisor.ml"
+      - "packages/effet/supervisor.mli"
+      - "packages/effet-stream/**"
+      - "packages/effet-otel/**"
+      - "scratch/oxcaml_research/concurrency_model/**"
+      - ".github/workflows/h3-hardening.yml"
+      - ".github/pull_request_template.md"
+
+jobs:
+  h3-hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v15
+      - name: Reject ambient jitter random
+        run: nix develop -c bash -lc 'if rg "Random\\." packages/effet/schedule.ml packages/effet/runtime.ml packages/effet/capabilities.ml; then exit 1; fi'
+      - name: Run H3 hardening gate
+        run: nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh
+      - name: Run H3 caveat probes
+        run: nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_caveats/run.sh

@@ -1,0 +1,8 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/logger_capture_negative.ml", line 16, characters 21-38:
+16 |            (fun _ -> Effet.Logger.dump collector)
+                          ^^^^^^^^^^^^^^^^^
+Error: The value "Effet.Logger.dump" is "nonportable"
+       but is expected to be "shareable"
+         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/logger_capture_negative.ml", lines 14-17, characters 48-50
+         which is expected to be "shareable".

@@ -19,7 +19,7 @@ let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~env:(object end) ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
   in
   f env rt
 
@@ -170,7 +170,7 @@ let test_from_file_downstream_failure_closes () =
 let delayed_counted_source produced =
   Stream.from_iterable (List.init 1_000 (fun i -> i))
   |> Stream.map_effect (fun value ->
-         Effect.thunk "stream.produced" (fun _ -> incr produced)
+         Effect.thunk "stream.produced" (fun () -> incr produced)
          |> Effect.bind (fun () ->
                 Effect.delay (Duration.ms 5) (Effect.pure value)))
 
@@ -226,14 +226,14 @@ class type db = object
   method get : int
 end
 
-let row_pipeline () =
+let row_pipeline clock db () =
   let clock_stream =
     Stream.from_effect
-      (Effect.thunk "clock" (fun env ->
-           env#clock#sleep (Duration.ms 0);
+      (Effect.thunk "clock" (fun () ->
+           clock#sleep (Duration.ms 0);
            1))
   in
-  let db_stream = Stream.from_effect (Effect.thunk "db" (fun env -> env#db#get)) in
+  let db_stream = Stream.from_effect (Effect.thunk "db" (fun () -> db#get)) in
   Stream.merge clock_stream db_stream
   |> Stream.flat_map_par ~max_concurrency:2 (fun value ->
          Stream.from_effect
@@ -242,9 +242,7 @@ let row_pipeline () =
 
 module type ROW_SIG = sig
   val row_pipeline :
-    unit ->
-    (< clock : Capabilities.clock ; db : db ; .. >, [> `Negative ], int list)
-    Effect.t
+    Capabilities.clock -> db -> unit -> (int list, [> `Negative ]) Effect.t
 end
 
 module _ : ROW_SIG = struct
@@ -259,16 +257,11 @@ let test_row_pipeline_runtime () =
       method get = 2
     end
   in
-  let runtime_env =
-    object
-      method clock = Capabilities.clock_of_eio (Eio.Stdenv.clock env)
-      method db = db
-    end
-  in
+  let clock = Capabilities.clock_of_eio (Eio.Stdenv.clock env) in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~env:runtime_env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
   in
-  match Runtime.run rt (row_pipeline ()) with
+  match Runtime.run rt (row_pipeline clock db ()) with
   | Exit.Ok values ->
       Alcotest.(check (list int)) "row values" [ 1; 2 ] (List.sort compare values)
   | Exit.Error cause ->
@@ -302,7 +295,8 @@ let suite =
         test_flat_map_par_concurrency;
       Alcotest.test_case "bounded queue no deadlock on early stop" `Quick
         test_bounded_queue_no_deadlock;
-      Alcotest.test_case "env/error rows compose" `Quick test_row_pipeline_runtime;
+      Alcotest.test_case "explicit deps/error rows compose" `Quick
+        test_row_pipeline_runtime;
     ] )
 
 let () = Alcotest.run "effet-stream" [ suite ]

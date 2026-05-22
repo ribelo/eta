@@ -13,8 +13,6 @@
 
 open Effet
 
-let env = ()
-
 let with_logger f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -22,8 +20,7 @@ let with_logger f =
   let rt =
     Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
-      ~logger:(Logger.as_capability logger)
-      ~env ()
+      ~logger:(Logger.as_capability logger) ()
   in
   f rt logger
 
@@ -36,8 +33,7 @@ let with_logger_and_tracer f =
     Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
       ~logger:(Logger.as_capability logger)
-      ~tracer:(Tracer.as_capability tracer)
-      ~env ()
+      ~tracer:(Tracer.as_capability tracer) ()
   in
   f rt logger tracer
 
@@ -94,7 +90,7 @@ let test_not_provided_log_dropped () =
   Eio.Switch.run @@ fun sw ->
   (* No logger configured: Logger.noop default drops everything silently. *)
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let _ = Runtime.run rt (Effect.log "test") in
   (* No assertion target — the contract is "doesn't crash". *)
@@ -132,8 +128,7 @@ let test_log_otlp_live () =
     let rt =
       Runtime.create ~sw ~clock
         ~tracer:(Effet_otel.tracer exporter)
-        ~logger:(Effet_otel.logger exporter)
-        ~env ()
+        ~logger:(Effet_otel.logger exporter) ()
     in
     let prog =
       Effect.named "parent"

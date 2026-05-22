@@ -219,19 +219,19 @@ module Schema : sig
 
   val decode_result : 'a t -> json -> ('a, issue list) result
   val decode :
-    'a t -> json -> ('env, [> `Decode of issue list ] as 'err, 'a) Effet.Effect.t
+    'a t -> json -> ('a, [> `Decode of issue list ] as 'err) Effet.Effect.t
   val encode_result : 'a t -> 'a -> (json, issue list) result
 
   val decode_with_policy :
     'a t ->
-    ('a -> ('env, [> `Decode of issue list ] as 'err, 'b) Effet.Effect.t) ->
+    ('a -> ('b, [> `Decode of issue list ] as 'err) Effet.Effect.t) ->
     json ->
-    ('env, 'err, 'b) Effet.Effect.t
+    ('b, 'err) Effet.Effect.t
   (** Decode with an effectful validation/enrichment policy. This is where
-      Effet env-row requirements enter schema workflows. *)
+      ordinary OCaml dependencies can be captured by the policy closure. *)
 
   val encode :
-    'a t -> 'a -> ('env, [> `Encode of issue list ] as 'err, json) Effet.Effect.t
+    'a t -> 'a -> (json, [> `Encode of issue list ] as 'err) Effet.Effect.t
   val equal : 'a t -> 'a -> 'a -> bool
 end
 
@@ -250,13 +250,13 @@ module Make (A : JSON_ADAPTER) : sig
   val decode :
     'a Schema.t ->
     A.external_json ->
-    ('env, [> `Decode of issue list ] as 'err, 'a) Effet.Effect.t
+    ('a, [> `Decode of issue list ] as 'err) Effet.Effect.t
 
   val encode_result : 'a Schema.t -> 'a -> (A.external_json, issue list) result
 
   val encode :
     'a Schema.t ->
     'a ->
-    ('env, [> `Encode of issue list ] as 'err, A.external_json) Effet.Effect.t
+    (A.external_json, [> `Encode of issue list ] as 'err) Effet.Effect.t
 end
 (** Bind schemas to a concrete JSON representation through a {!JSON_ADAPTER}. *)
