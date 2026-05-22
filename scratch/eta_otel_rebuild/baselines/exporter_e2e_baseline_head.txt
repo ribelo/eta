@@ -1,0 +1,11 @@
+Command:
+
+cd /home/ribelo/projects/ribelo/ocaml/Eta-otel-baseline
+dune exec scratch/eta_otel_rebuild/exporter_e2e_bench.exe -- --samples 5 --count 1000
+
+Baseline worktree: HEAD 4174444 refactor: rename Effet to Eta
+Exporter: hand-rolled Eio queues plus per-signal daemon fibers
+
+span.1000 wall_ns mean=6658173 stddev=402020 min=6423950 max=7364035 throughput_per_s=150191.36 requests=32;32;32;32;32 bytes=231237;231237;231237;231237;231237 samples=7364035;6423950;6430864;6458998;6613016
+log.1000 wall_ns mean=5075979 stddev=6679 min=5069971 max=5087137 throughput_per_s=197006.32 requests=16;16;16;16;16 bytes=279506;279506;279506;279506;279506 samples=5075932;5074978;5069971;5087137;5071878
+metric.1000 wall_ns mean=5028772 stddev=5050 min=5024910 max=5037069 throughput_per_s=198855.69 requests=8;8;8;8;8 bytes=3503;3503;3503;3503;3503 samples=5037069;5025148;5024910;5029917;5026817

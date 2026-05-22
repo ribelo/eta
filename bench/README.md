@@ -16,7 +16,7 @@ time. It is opt-in infrastructure, not a CI gate.
 | Streams | `eta_stream.*` | Representative `eta-stream` pipelines and file reads. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |
-| User-code compile time | `compile.fixture.*` | Deep-bind, env-row, schema-heavy, and ppx-heavy workloads. |
+| User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
 
 ## Running
 

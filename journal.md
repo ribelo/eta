@@ -11740,3 +11740,263 @@ the project wants that API polish.
 The V-Blocking-A research expectation is now implemented in `packages/effet`.
 This does not change the island API from Effet-OxCaml-p1x and does not imply
 portable `Resource`, `Supervisor`, `Stream`, OTel, or `Cause` behavior.
+
+## 2026-05-22 - V-Otel-Rebuild
+
+### Goal
+
+Eta-5zo asked whether eta-otel can become the flagship Eta program: raw Eio only
+at the network/time leaf, with batching, backpressure, retry, timeout,
+lifecycle, and self-observation expressed through Eta primitives.
+
+The implementation also closed a stale dependency benchmark blocker instead of
+excluding it from verification.
+
+### Candidates
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| A. Keep the current Eta_otel.create API and run one internal Eta exporter daemon | Accepted | Existing call sites stay intact; tests pass; signal streams merge through Stream.merge and exports run through Eta.Runtime and Effect.Private.daemon. |
+| B. Add an Eta stream mailbox primitive | Accepted | eta-otel needed producer-side nonblocking enqueue plus pull-side stream batching; Eta_stream.Mailbox tests cover close/drop and online partial batches. |
+| C. Make eta-otel only an effectful Resource.t constructor | Dominated | It models lifecycle honestly, but forces users to run Eta before they can construct Runtime services. The compatibility constructor can still start a scoped internal daemon and use Resource.t for cached config. |
+| D. Algebraic-effect/PPX transparent-cost dispatch | Deferred | Plausible, but wider than eta-otel. Eta-5zo did not need runtime-wide dispatch changes to rebuild the exporter. |
+| E. Keep the old hand-rolled Eio exporter | Rejected for this epic | It was small and working, but left queueing, batching, retry, and daemon lifecycle outside Eta. |
+
+### Implementation
+
+- `packages/eta-stream` now exposes `Mailbox.create`, `Mailbox.offer`,
+  `Mailbox.close`, `Mailbox.dropped`, `Mailbox.to_stream`, and
+  `Mailbox.to_batch_stream`.
+- `Stream.grouped` covers finite upstream grouping; `Mailbox.to_batch_stream`
+  covers online exporter batches that must flush partial batches.
+- `packages/eta-otel` now consumes bounded mailboxes with Eta streams and one
+  Eta runtime daemon. Typed per-signal batches are merged with `Stream.merge`
+  and exported with bounded `Stream.flat_map_par` concurrency.
+- Export attempts use `Effect.sync`, `Effect.race`, `Effect.timeout`,
+  `Effect.retry`, `Effect.acquire_release`, `Effect.scoped`,
+  `Eta_stream.run_drain`, and `Effect.Private.daemon`.
+- Resolved exporter configuration is cached in `Resource.t`; `flush` races
+  `Eta_stream.Drain_counter.await_zero` against a timeout branch that uses
+  `Capabilities.clock`.
+- `Eta_otel.create` gained `?queue_capacity`; `Eta_otel.shutdown` closes
+  mailboxes and drains accepted telemetry; `Eta_otel.Internal.dropped` exposes
+  overflow evidence for tests.
+- Exporter self-spans use a private in-memory tracer and are not re-exported.
+- `docs/tutorial-eta-otel.md` and `packages/eta-otel/README.md` now describe
+  explicit dependency passing, merged stream batching, cached configuration,
+  deadline racing, bounded backpressure, shutdown, and nonrecursive
+  self-observation.
+
+### Dependency Cleanup
+
+The old dependency benchmark surface was fixed, not excluded:
+
+- `bench/runtime_*` now pass only explicit runtime services.
+- `bench/fixtures/typecheck/deep_bind` now names the dependency object
+  `services`, and uses unit `Effect.sync` callbacks.
+- The dependency-row typecheck fixture was renamed to
+  `bench/fixtures/typecheck/explicit_deps`.
+- Compile benchmark labels are now `compile.fixture.explicit_deps.*`.
+- Runtime schema labels are now `eta_schema.decode_with_policy.explicit_deps`.
+
+Historical scratch files still preserve earlier dependency-row experiments.
+Current code, docs, benchmark fixtures, and result labels do not use the stale
+dependency surface.
+
+### Evidence
+
+Strict dependency-surface scan over non-archival paths, including benchmark
+results, returned no matches.
+
+eta-otel raw concurrency scan:
+
+```sh
+rg -n "Eio\\.Stream|Eio\\.Fiber|take_nonblocking|while true|fork_daemon" \
+  packages/eta-otel/eta_otel.ml packages/eta-otel/eta_otel.mli
+```
+
+Result: no matches.
+
+Focused tests:
+
+```sh
+dune runtest packages/eta-stream packages/eta-otel --force
+```
+
+Result: eta-stream 17 tests passed; eta-otel 26 tests passed.
+
+Shipped package gate:
+
+```sh
+dune runtest packages/eta packages/eta-stream packages/eta-schema packages/eta-otel packages/ppx_eta --force
+```
+
+Result: eta 133 tests passed, eta-stream 17, eta-schema passed, eta-otel 26,
+ppx_eta 2. The known OxCaml `Domain.spawn` alerts remain during benchmark
+builds and are unrelated to this change.
+
+Full Dune gate:
+
+```sh
+dune runtest --force
+```
+
+Result: final rerun passed. One earlier full run exposed a timing-sensitive
+`Blocking/domain isolated hold-lock` failure with near-identical p99 values;
+the isolated test then passed 20/20 and the full gate passed on rerun. Treat
+that as an existing flaky timing assertion, not evidence against Eta-5zo.
+
+Benchmark evidence:
+
+```sh
+bash bench/compile/run_compile.sh --quick --filter 'compile.fixture.explicit_deps'
+bash bench/run.sh --quick
+bash bench/run.sh --filter 'eta_otel.encoder' --out bench/results/eta-otel-encoder-repeat-current.json
+dune exec scratch/eta_otel_rebuild/exporter_e2e_bench.exe -- --samples 5 --count 1000
+```
+
+Quick gate artifact: `bench/results/eta-5zo-quick-current.json`.
+Five-sample encoder repeat artifact:
+`bench/results/eta-otel-encoder-repeat-current.json`.
+E2E local-collector results:
+`scratch/eta_otel_rebuild/baselines/exporter_e2e_baseline_head.txt` and
+`scratch/eta_otel_rebuild/baselines/exporter_e2e_after_rebuild.txt`.
+Completion audit: `scratch/eta_otel_rebuild/completion_audit.md`.
+
+Encoder repeat versus the pre-rebuild focused baseline:
+
+| Benchmark | Baseline ns | Rebuilt mean ns | Result |
+| --- | ---: | ---: | --- |
+| encoder span.100 | 101805 | 58174 | better |
+| encoder span.1000 | 902891 | 662613 | better |
+| encoder log.100 | 42915 | 44060 | same-range |
+| encoder metric.100 | 11921 | 9680 | better |
+
+E2E submit+flush local-collector benchmark versus the hand-rolled `HEAD`
+exporter, same benchmark file, count 1000, five samples:
+
+| Signal | Hand-rolled mean ns | Rebuilt mean ns | Hand-rolled /s | Rebuilt /s |
+| --- | ---: | ---: | ---: | ---: |
+| span.1000 | 6658173 | 3668594 | 150191 | 272584 |
+| log.1000 | 5075979 | 1587343 | 197006 | 629983 |
+| metric.1000 | 5028772 | 506544 | 198856 | 1974162 |
+
+The first e2e run exposed a real weakness: fixed 5ms flush polling made the
+rebuilt exporter slightly slower than the hand-rolled baseline. The fix was to
+replace polling with `Eta_stream.Drain_counter.await_zero`; the timeout branch
+still uses the Eta clock capability. After that correction, the rebuilt
+exporter is at-or-better on representative span/log/metric latency and
+throughput loads.
+
+### Decision
+
+V-Otel-Rebuild accepts the mailbox-plus-merged-exporter-daemon design. Eta owns
+the exporter concurrency and lifecycle now; raw Eio remains at the HTTP/time
+leaf and inside eta-stream's runtime primitive implementation.
+
+The stale dependency benchmark blocker is closed. Future research must compare
+against `explicit_deps` labels and must not reintroduce a universal Effect
+environment parameter without a new verdict.
+
+### Deferred
+
+- End-to-end collector throughput and latency under realistic collector load.
+- Transparent-cost algebraic-effect/PPX dispatch for runtimes with no OTel wired.
+- Optional transport upgrades such as protobuf, compression, and TLS.
+
+## V-Obs-Paygo - No-OTel observability must cut off in Eta core
+
+Question: when applications do not install OTel, can Eta make observability
+effectively pay-as-you-go without making Effect.named lose diagnostic value or
+making eta-otel configuration less obvious?
+
+### Hypotheses
+
+- A. Leave the current noop capability objects only. Simple, but every
+  Effect.named, Effect.log, and Effect.metric_update still reaches
+  sampler/clock/object-method paths before doing nothing.
+- B. Detect Eta's shipped noop tracer/logger/meter in Runtime.create and branch
+  in the core interpreter before timestamps, span lifecycle calls, log records,
+  metric records, exporter queues, or OTLP/JSON encoding exist.
+- C. Add a separate eta-otel noop exporter. This makes optional wiring easy,
+  but it cuts off too late and still asks hot code to build telemetry that will
+  be discarded.
+
+### Evidence
+
+Code inspection:
+
+- Runtime.create defaults to Tracer.noop, Logger.noop, and Meter.noop.
+- eta-otel queues and OTLP/JSON encoders are reachable only after an
+  application constructs Eta_otel.t and passes its tracer/logger/meter into
+  Runtime.create.
+- Before this change, Eta core still called noop tracer/logger/meter methods,
+  sampled named spans, read clocks, inspected active spans, and constructed
+  log/metric payloads before the noop sink discarded them.
+
+Implementation:
+
+- Runtime.create now records whether the installed tracer/logger/meter are the
+  shipped noop singletons.
+- EP.Named and auto-instrumented leaves skip sampler/clock/span lifecycle work
+  when tracing is disabled, but still install die span names so Cause.Die
+  diagnostics retain named context.
+- EP.Annotate still records die annotations with no tracer; only tracer
+  attribute calls are skipped.
+- EP.Log and EP.Metric_update return before timestamping, trace inspection,
+  record construction, or capability calls when their sinks are noop.
+- Blocking observability now avoids attribute construction and meter/tracer
+  capability calls when both tracing and metrics are disabled.
+
+Regression tests:
+
+    nix develop -c dune runtest packages/eta packages/eta-otel --force
+
+Result: eta 134 tests passed, including
+Observability/noop runtime keeps die diagnostics; eta-otel 26 tests passed.
+
+Benchmark evidence:
+
+    nix develop -c bash bench/run.sh --quick --filter 'effect.observability' \
+      --out bench/results/eta-observability-paygo-after.json
+    nix develop -c _build/default/bench/runtime_observability/runtime_observability.exe \
+      --filter 'noop_tracer|in_memory_tracer|noop_logger|in_memory_logger|noop_meter|in_memory_meter' \
+      --samples 5
+
+One-sample artifact: bench/results/eta-observability-paygo-after.json.
+Five-sample direct run, 10k interpreted operations per sample:
+
+| Benchmark | Mean ns | Approx ns/op | Minor words | Notes |
+| --- | ---: | ---: | ---: | --- |
+| noop_tracer.no_auto | 1109600 | 111 | 0 | preserves named die diagnostics |
+| noop_tracer.auto | 955343 | 96 | 0 | auto leaf diagnostics, no span lifecycle |
+| in_memory_tracer.no_auto | 4279804 | 428 | 2621435 | real span storage still pays |
+| in_memory_tracer.auto | 4117393 | 412 | 2621437 | real span storage still pays |
+| noop_logger.log | 268745 | 27 | 0 | no timestamp/record/logger call |
+| in_memory_logger.log | 587606 | 59 | 0 | real logger stores records |
+| noop_meter.metric | 253201 | 25 | 0 | no timestamp/point/meter call |
+| in_memory_meter.metric | 659657 | 66 | 0 | real meter stores points |
+
+Previous quick artifact bench/results/eta-5zo-quick-current.json measured
+noop_tracer.no_auto at about 4033089 ns for 10k named effects before the core
+cutoff. The new five-sample run averages about 1109600 ns, roughly 3.6x faster,
+with zero measured allocation in the noop path.
+
+### Decision
+
+V-Obs-Paygo accepts B. No-OTel observability is cut off in Eta core, before
+eta-otel can enqueue, serialize, batch, or send anything. Effect.named is still
+not literally free because the interpreter still traverses the named effect and
+preserves diagnostic context, but the downstream tracing/exporter work is no
+longer on the noop path.
+
+Do not add an eta-otel noop exporter for this purpose. If an application
+constructs Eta_otel.t and installs its capabilities, that is the real OTel path.
+If it does not, Eta's default runtime remains the cheap path.
+
+### Deferred
+
+- Compile-time or PPX elision for truly hot loops where even the Named AST node
+  and die-context binding are too expensive.
+- A public custom-noop marker for third-party tracer/logger/meter adapters.
+  Current detection covers Eta's shipped noop singletons.

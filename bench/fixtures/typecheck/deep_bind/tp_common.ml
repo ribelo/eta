@@ -57,10 +57,10 @@ let make_services () =
     method rate_limit n = n + 25
   end
 
-let run_with_env env eff =
+let run_with_services _services eff =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env () in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   Runtime.run rt eff
 
 let ok = function

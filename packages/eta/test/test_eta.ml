@@ -479,6 +479,23 @@ let test_observability_sampler_unsampled_parent_suppresses_par_children () =
   ignore (run_ok rt (Effect.named "parent" (Effect.par (child "a") (child "b"))));
   Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
 
+let test_observability_noop_runtime_keeps_die_diagnostics () =
+  with_runtime @@ fun rt ->
+  let exn = Failure "noop diagnostic" in
+  let eff =
+    Effect.sync "noop.leaf" (fun () -> raise exn)
+    |> Effect.annotate ~key:"request.id" ~value:"noop-1"
+    |> Effect.named "noop.span"
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die die) ->
+      Alcotest.(check bool) "same exception" true (die.exn == exn);
+      Alcotest.(check (option string)) "span name" (Some "noop.span")
+        die.span_name;
+      Alcotest.(check (option string)) "annotation" (Some "noop-1")
+        (List.assoc_opt "request.id" die.annotations)
+  | _ -> Alcotest.fail "expected Die with noop runtime diagnostics"
+
 let test_trace_context_extract_inject () =
   let ctx =
     Trace_context.extract
@@ -3128,6 +3145,8 @@ let () =
             test_observability_sampler_parent_based;
           Alcotest.test_case "sampler suppresses par children" `Quick
             test_observability_sampler_unsampled_parent_suppresses_par_children;
+          Alcotest.test_case "noop runtime keeps die diagnostics" `Quick
+            test_observability_noop_runtime_keeps_die_diagnostics;
           Alcotest.test_case "trace context extract inject" `Quick
             test_trace_context_extract_inject;
           Alcotest.test_case "trace context rejects malformed traceparent" `Quick

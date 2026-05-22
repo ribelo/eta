@@ -222,6 +222,13 @@ let rt =
   Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
 ```
 
+Observability is pay-as-you-go. A runtime created without tracer, logger, or
+meter capabilities uses Eta's noop sinks and cuts off tracing/logging/metrics
+inside the core interpreter before records enter eta-otel queues or OTLP/JSON
+encoding. `Effect.named` still keeps Eta diagnostics such as defect span names
+and annotations, so use it where that context is useful rather than as a
+per-element marker in the hottest loops.
+
 Typed failures render as `"<typed failure>"` in span status and exception events
 unless a named effect supplies a typed renderer:
 

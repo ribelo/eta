@@ -1,10 +1,10 @@
 (** OTLP/JSON over HTTP/1.1 exporter for Eta's tracer, logger, and meter
     capabilities.
 
-    Hand-rolled to keep the dependency closure to {eta, eio, eio.unix}. The
-    exporter accumulates spans, log records, and metric points on three Eio
-    streams; one background fiber per signal drains its queue, encodes a
-    batch as OTLP/JSON, and POSTs it to the configured endpoint. *)
+    Hand-rolled to keep the dependency closure to {eta, eta-stream, eio,
+    eio.unix}. The exporter accumulates spans, log records, and metric points
+    on bounded Eta mailboxes. Eta stream pipelines batch and merge the signal
+    streams; one Eta runtime daemon POSTs them to the configured endpoints. *)
 
 type t
 
@@ -21,12 +21,14 @@ val create :
   ?service_version:string ->
   ?resource_attrs:(string * string) list ->
   ?scope_name:string ->
+  ?queue_capacity:int ->
   ?on_error:(string -> unit) ->
   ?on_send:(path:string -> body:string -> unit) ->
   unit ->
   t
-(** Construct an exporter. Three background fibers are forked on [sw], one
-    per signal type. Defaults: host="127.0.0.1", port=4318,
+(** Construct an exporter. One Eta runtime daemon is started on [sw] to consume
+    merged signal batches. [queue_capacity] bounds each signal mailbox and
+    defaults to 1024. Defaults: host="127.0.0.1", port=4318,
     traces_path="/v1/traces", logs_path="/v1/logs",
     metrics_path="/v1/metrics", service_name="eta". *)
 
@@ -42,6 +44,10 @@ val meter : t -> Eta.Capabilities.meter
 
 val flush : ?timeout_s:float -> t -> unit
 (** Block until all in-flight signals are drained or [timeout_s] elapses. *)
+
+val shutdown : ?timeout_s:float -> t -> unit
+(** Close signal mailboxes and block until already accepted signals are drained
+    or [timeout_s] elapses. Signals submitted after shutdown are dropped. *)
 
 (** {1 Internals exposed for testing} *)
 
@@ -97,6 +103,13 @@ module Internal : sig
     scope_name:string ->
     Eta.Meter.point list ->
     string
+
+  val dropped : t -> int
+  (** Number of signals dropped because a bounded mailbox was full. *)
+
+  val self_spans : t -> Eta.Tracer.span list
+  (** Exporter-internal Eta spans. These are recorded with an in-memory tracer
+      owned by the exporter and are never sent through the OTLP sink. *)
 end
 (** Encoder surface for tests and benchmarks. It deliberately excludes network
     export so encoder cost can be measured without collector availability. *)

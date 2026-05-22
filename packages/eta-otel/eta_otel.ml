@@ -2,14 +2,18 @@
    and meter capabilities.
 
    Hand-rolled HTTP/1.1 over Eio TCP keeps the dependency closure to
-   {eta, eio, yojson}. The exporter accumulates spans, log records, and
-   metric points on three Eio streams; one background fiber per signal
-   drains its queue, builds an OTLP/JSON [Yojson.Safe.t] tree, and POSTs
-   it to the configured endpoint. *)
+   {eta, eta-stream, eio, yojson}. The exporter accumulates spans, log
+   records, and metric points on bounded Eta mailboxes; Eta stream pipelines
+   batch and merge each signal and one Eta runtime daemon exports them. Raw Eio stays at the
+   HTTP and clock leaves. *)
 
 (* ------------------------------------------------------------------ *)
 (* Hex helpers                                                        *)
 (* ------------------------------------------------------------------ *)
+
+module Stream = Eta_stream.Stream
+module Mailbox = Eta_stream.Mailbox
+module Drain_counter = Eta_stream.Drain_counter
 
 let hex_of_bytes b =
   let buf = Buffer.create (2 * Bytes.length b) in
@@ -63,6 +67,21 @@ type span = {
   mutable status_code : int; (* 0 unset, 1 ok, 2 error *)
   mutable status_message : string;
 }
+
+type export_config = {
+  host : string;
+  port : int;
+  traces_path : string;
+  logs_path : string;
+  metrics_path : string;
+  resource_attrs : (string * string) list;
+  scope_name : string;
+}
+
+type signal_batch =
+  | Trace_batch of span list
+  | Log_batch of Eta.Capabilities.log_record list
+  | Metric_batch of Eta.Meter.point list
 
 let event_json (name, ts_ns, attrs) : yj =
   `Assoc
@@ -250,13 +269,17 @@ module Metric_key = struct
     attrs : (string * string) list;
   }
 
+  let normalize_attrs = function
+    | [] | [ _ ] as attrs -> attrs
+    | attrs -> List.sort compare attrs
+
   let normalize (p : Eta.Meter.point) =
     {
       name = p.name;
       description = p.description;
       unit_ = p.unit_;
       kind = p.kind;
-      attrs = List.sort compare p.attrs;
+      attrs = normalize_attrs p.attrs;
     }
 end
 
@@ -391,21 +414,17 @@ let post_json ~sw ~net ~host ~port ~path body =
 type t = {
   net : [ `Generic ] Eio.Net.ty Eio.Std.r;
   clock : float Eio.Time.clock_ty Eio.Std.r;
-  host : string;
-  port : int;
-  traces_path : string;
-  logs_path : string;
-  metrics_path : string;
-  resource_attrs : (string * string) list;
-  scope_name : string;
-  queue : span Eio.Stream.t;
-  log_queue : Eta.Capabilities.log_record Eio.Stream.t;
-  metric_queue : Eta.Meter.point Eio.Stream.t;
+  eta_clock : Eta.Capabilities.clock;
+  config : (export_config, [ `Config ]) Eta.Resource.t;
+  queue : span Mailbox.t;
+  log_queue : Eta.Capabilities.log_record Mailbox.t;
+  metric_queue : Eta.Meter.point Mailbox.t;
+  self_tracer : Eta.Tracer.in_memory;
+  flush_rt : unit Eta.Runtime.t;
   mutable next_handle : int;
   table : (int, span) Hashtbl.t;
   rng : Random.State.t;
-  flush : unit Eio.Promise.t * unit Eio.Promise.u;
-  mutable in_flight : int Atomic.t;
+  in_flight : Drain_counter.t;
   mutable on_error : string -> unit;
   mutable on_send : path:string -> body:string -> unit;
 }
@@ -415,77 +434,179 @@ let now_ns t =
   int_of_float (secs *. 1_000_000_000.0)
 
 (* ------------------------------------------------------------------ *)
-(* Background exporter fibers                                         *)
+(* Eta exporter programs                                               *)
 (* ------------------------------------------------------------------ *)
 
-let try_post t ~path ~body ~n =
-  (try t.on_send ~path ~body with _ -> ());
-  let result =
-    try
-      Eio.Switch.run @@ fun sw ->
-      post_json ~sw ~net:t.net ~host:t.host ~port:t.port ~path body
-    with exn -> Error (Printexc.to_string exn)
-  in
-  (match result with
-  | Ok () -> ()
-  | Error msg -> (try t.on_error msg with _ -> ()));
-  for _ = 1 to n do
-    Atomic.decr t.in_flight
-  done
+let decrement_in_flight t n =
+  Eta.Effect.sync "eta_otel.export.decrement_in_flight" (fun () ->
+      Drain_counter.decr_by t.in_flight n)
 
-let exporter_loop t =
-  let rec drain_more acc remaining =
-    if remaining = 0 then List.rev acc
-    else
-      match Eio.Stream.take_nonblocking t.queue with
-      | Some s -> drain_more (s :: acc) (remaining - 1)
-      | None -> List.rev acc
-  in
-  while true do
-    let first = Eio.Stream.take t.queue in
-    let batch = first :: drain_more [] 31 in
-    let body =
-      encode_traces_request ~resource_attrs:t.resource_attrs
-        ~scope_name:t.scope_name batch
-    in
-    try_post t ~path:t.traces_path ~body ~n:(List.length batch)
-  done
+let observe_send t ~path ~body =
+  Eta.Effect.sync "eta_otel.export.on_send" (fun () ->
+      try t.on_send ~path ~body with _ -> ())
 
-let logs_loop t =
-  let rec drain_more acc remaining =
-    if remaining = 0 then List.rev acc
-    else
-      match Eio.Stream.take_nonblocking t.log_queue with
-      | Some r -> drain_more (r :: acc) (remaining - 1)
-      | None -> List.rev acc
-  in
-  while true do
-    let first = Eio.Stream.take t.log_queue in
-    let batch = first :: drain_more [] 63 in
-    let body =
-      encode_logs_request ~resource_attrs:t.resource_attrs
-        ~scope_name:t.scope_name batch
-    in
-    try_post t ~path:t.logs_path ~body ~n:(List.length batch)
-  done
+let observe_error t msg =
+  Eta.Effect.sync "eta_otel.export.on_error" (fun () ->
+      try t.on_error msg with _ -> ())
 
-let metrics_loop t =
-  let rec drain_more acc remaining =
-    if remaining = 0 then List.rev acc
-    else
-      match Eio.Stream.take_nonblocking t.metric_queue with
-      | Some p -> drain_more (p :: acc) (remaining - 1)
-      | None -> List.rev acc
+let render_export_error = function
+  | `Export_error msg -> msg
+  | `Timeout -> "export timeout"
+
+let post_effect t config ~path ~body =
+  Eta.Effect.sync "eta_otel.export.post_json" (fun () ->
+      try
+        Eio.Switch.run @@ fun sw ->
+        post_json ~sw ~net:t.net ~host:config.host ~port:config.port ~path body
+      with exn -> Error (Printexc.to_string exn))
+  |> Eta.Effect.bind (function
+       | Ok () -> Eta.Effect.unit
+       | Error msg -> Eta.Effect.fail (`Export_error msg))
+
+let post_or_deadline t config ~path ~body =
+  let post =
+    post_effect t config ~path ~body
+    |> Eta.Effect.map (fun () -> `Posted)
+    |> Eta.Effect.catch (fun (`Export_error msg) ->
+           Eta.Effect.pure (`Post_failed msg))
   in
-  while true do
-    let first = Eio.Stream.take t.metric_queue in
-    let batch = first :: drain_more [] 127 in
-    let body =
-      encode_metrics_request ~resource_attrs:t.resource_attrs
-        ~scope_name:t.scope_name batch
+  let deadline =
+    Eta.Effect.pure `Timed_out
+    |> Eta.Effect.delay (Eta.Duration.seconds 5)
+  in
+  Eta.Effect.race [ post; deadline ]
+  |> Eta.Effect.timeout (Eta.Duration.seconds 6)
+  |> Eta.Effect.bind (function
+       | `Posted -> Eta.Effect.unit
+       | `Post_failed msg -> Eta.Effect.fail (`Export_error msg)
+       | `Timed_out -> Eta.Effect.fail `Timeout)
+
+let export_body t config ~path ~body =
+  observe_send t ~path ~body
+  |> Eta.Effect.bind (fun () ->
+         post_or_deadline t config ~path ~body
+         |> Eta.Effect.retry (Eta.Schedule.recurs 2) (fun _ -> true)
+         |> Eta.Effect.catch (fun error ->
+                observe_error t (render_export_error error)))
+
+let export_batch t config ~path ~body ~n =
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+       ~release:(fun () -> decrement_in_flight t n)
+    |> Eta.Effect.bind (fun () -> export_body t config ~path ~body))
+
+let signal_batches t =
+  let traces =
+    Mailbox.to_batch_stream ~max:32 t.queue
+    |> Stream.map (fun batch -> Trace_batch batch)
+  in
+  let logs =
+    Mailbox.to_batch_stream ~max:64 t.log_queue
+    |> Stream.map (fun batch -> Log_batch batch)
+  in
+  let metrics =
+    Mailbox.to_batch_stream ~max:128 t.metric_queue
+    |> Stream.map (fun batch -> Metric_batch batch)
+  in
+  Stream.merge traces (Stream.merge logs metrics)
+
+let encode_signal config = function
+  | Trace_batch batch ->
+      ( "traces",
+        config.traces_path,
+        List.length batch,
+        encode_traces_request ~resource_attrs:config.resource_attrs
+          ~scope_name:config.scope_name batch )
+  | Log_batch batch ->
+      ( "logs",
+        config.logs_path,
+        List.length batch,
+        encode_logs_request ~resource_attrs:config.resource_attrs
+          ~scope_name:config.scope_name batch )
+  | Metric_batch batch ->
+      ( "metrics",
+        config.metrics_path,
+        List.length batch,
+        encode_metrics_request ~resource_attrs:config.resource_attrs
+          ~scope_name:config.scope_name batch )
+
+let export_signal t config signal =
+  let name =
+    match signal with
+    | Trace_batch _ -> "traces"
+    | Log_batch _ -> "logs"
+    | Metric_batch _ -> "metrics"
+  in
+  Eta.Effect.sync ("eta_otel." ^ name ^ ".encode") (fun () ->
+      encode_signal config signal)
+  |> Eta.Effect.bind (fun (name, path, n, body) ->
+         export_batch t config ~path ~body ~n
+         |> Eta.Effect.annotate ~key:"otel.path" ~value:path
+         |> Eta.Effect.annotate ~key:"otel.batch_size" ~value:(string_of_int n)
+         |> Eta.Effect.named ("eta_otel.export." ^ name))
+
+let export_program t =
+  Eta.Resource.get t.config
+  |> Eta.Effect.bind (fun config ->
+         signal_batches t
+         |> Stream.flat_map_par ~max_concurrency:3 (fun signal ->
+                Stream.from_effect (export_signal t config signal))
+         |> Eta_stream.run_drain)
+  |> Eta.Effect.named "eta_otel.exporter"
+
+let start_daemon rt effect =
+  match Eta.Runtime.run rt (Eta.Effect.Private.daemon effect) with
+  | Eta.Exit.Ok () -> ()
+  | Eta.Exit.Error _ -> ()
+
+let enqueue t mailbox value =
+  Drain_counter.incr t.in_flight;
+  match Mailbox.offer mailbox value with
+  | Mailbox.Enqueued -> ()
+  | Mailbox.Dropped | Mailbox.Closed ->
+      Drain_counter.decr t.in_flight
+
+let dropped t =
+  Mailbox.dropped t.queue + Mailbox.dropped t.log_queue
+  + Mailbox.dropped t.metric_queue
+
+let close_mailboxes t =
+  Mailbox.close t.queue;
+  Mailbox.close t.log_queue;
+  Mailbox.close t.metric_queue
+
+let duration_of_timeout_s timeout_s =
+  let ms = max 0 (int_of_float (ceil (timeout_s *. 1000.0))) in
+  Eta.Duration.ms ms
+
+let flush ?(timeout_s = 5.0) t =
+  if Drain_counter.value t.in_flight = 0 then ()
+  else
+    let wait = Drain_counter.await_zero t.in_flight in
+    let timeout =
+      Eta.Effect.sync "eta_otel.flush.timeout" (fun () ->
+          t.eta_clock#sleep (duration_of_timeout_s timeout_s))
     in
-    try_post t ~path:t.metrics_path ~body ~n:(List.length batch)
-  done
+    ignore
+      (Eta.Runtime.run t.flush_rt (Eta.Effect.race [ wait; timeout ])
+        : (unit, unit) Eta.Exit.t)
+
+let shutdown ?timeout_s t =
+  close_mailboxes t;
+  flush ?timeout_s t
+
+let start_exporters t ~rt =
+  start_daemon rt (export_program t)
+
+let make_config_resource rt config :
+    (export_config, [ `Config ]) Eta.Resource.t =
+  let load =
+    Eta.Effect.sync "eta_otel.config.load" (fun () -> config)
+    |> Eta.Effect.named "eta_otel.config"
+  in
+  match Eta.Runtime.run rt (Eta.Resource.manual load) with
+  | Eta.Exit.Ok resource -> resource
+  | Eta.Exit.Error _ -> failwith "eta-otel: config resource failed"
 
 (* ------------------------------------------------------------------ *)
 (* Tracer methods                                                     *)
@@ -552,8 +673,7 @@ let end_span t ~span_id ~status ~ended_ms:_ =
       let code, message = map_status status in
       s.status_code <- code;
       s.status_message <- message;
-      Atomic.incr t.in_flight;
-      Eio.Stream.add t.queue s
+      enqueue t t.queue s
 
 let pick_latest_open t =
   let target = ref None in
@@ -604,8 +724,8 @@ let inspect t ~span_id : Eta.Capabilities.span_info option =
 let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     ?(traces_path = "/v1/traces") ?(logs_path = "/v1/logs")
     ?(metrics_path = "/v1/metrics") ?(service_name = "eta")
-    ?service_version ?(resource_attrs = []) ?(scope_name = "eta") ?on_error
-    ?on_send () =
+    ?service_version ?(resource_attrs = []) ?(scope_name = "eta")
+    ?(queue_capacity = 1024) ?on_error ?on_send () =
   let net = (net :> [ `Generic ] Eio.Net.ty Eio.Std.r) in
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let on_error =
@@ -623,10 +743,19 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     base @ resource_attrs
   in
   let rng = Random.State.make_self_init () in
-  let t =
+  let self_tracer = Eta.Tracer.in_memory () in
+  let rt =
+    Eta.Runtime.create ~sw ~clock
+      ~tracer:(Eta.Tracer.as_capability self_tracer)
+      ()
+  in
+  let flush_rt : unit Eta.Runtime.t =
+    Eta.Runtime.create ~sw ~clock
+      ~tracer:(Eta.Tracer.as_capability self_tracer)
+      ()
+  in
+  let config =
     {
-      net;
-      clock;
       host;
       port;
       traces_path;
@@ -634,27 +763,29 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       metrics_path;
       resource_attrs;
       scope_name;
-      queue = Eio.Stream.create 1024;
-      log_queue = Eio.Stream.create 1024;
-      metric_queue = Eio.Stream.create 1024;
+    }
+  in
+  let config_resource = make_config_resource rt config in
+  let t =
+    {
+      net;
+      clock;
+      eta_clock = Eta.Capabilities.clock_of_eio clock;
+      config = config_resource;
+      queue = Mailbox.create ~capacity:queue_capacity ();
+      log_queue = Mailbox.create ~capacity:queue_capacity ();
+      metric_queue = Mailbox.create ~capacity:queue_capacity ();
+      self_tracer;
+      flush_rt;
       next_handle = 1;
       table = Hashtbl.create 64;
       rng;
-      flush = Eio.Promise.create ();
-      in_flight = Atomic.make 0;
+      in_flight = Drain_counter.create ();
       on_error;
       on_send;
     }
   in
-  Eio.Fiber.fork_daemon ~sw (fun () ->
-      (try exporter_loop t with _ -> ());
-      `Stop_daemon);
-  Eio.Fiber.fork_daemon ~sw (fun () ->
-      (try logs_loop t with _ -> ());
-      `Stop_daemon);
-  Eio.Fiber.fork_daemon ~sw (fun () ->
-      (try metrics_loop t with _ -> ());
-      `Stop_daemon);
+  start_exporters t ~rt;
   t
 
 let tracer t : Eta.Capabilities.tracer =
@@ -674,9 +805,7 @@ let tracer t : Eta.Capabilities.tracer =
 
 let logger t : Eta.Capabilities.logger =
   object
-    method log r =
-      Atomic.incr t.in_flight;
-      Eio.Stream.add t.log_queue r
+    method log r = enqueue t t.log_queue r
   end
 
 let meter t : Eta.Capabilities.meter =
@@ -693,21 +822,8 @@ let meter t : Eta.Capabilities.meter =
           ts_ms;
         }
       in
-      Atomic.incr t.in_flight;
-      Eio.Stream.add t.metric_queue p
+      enqueue t t.metric_queue p
   end
-
-let flush ?(timeout_s = 5.0) t =
-  let deadline = Eio.Time.now t.clock +. timeout_s in
-  let rec wait () =
-    if Atomic.get t.in_flight = 0 then ()
-    else if Eio.Time.now t.clock > deadline then ()
-    else begin
-      Eio.Time.sleep t.clock 0.005;
-      wait ()
-    end
-  in
-  wait ()
 
 module Internal = struct
   type nonrec span = span = {
@@ -731,4 +847,6 @@ module Internal = struct
   let encode_traces_request = encode_traces_request
   let encode_logs_request = encode_logs_request
   let encode_metrics_request = encode_metrics_request
+  let dropped = dropped
+  let self_spans t = Eta.Tracer.dump t.self_tracer
 end

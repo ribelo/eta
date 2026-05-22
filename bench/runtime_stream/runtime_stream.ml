@@ -5,7 +5,7 @@ let run_stream stream sink =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   ignore (Runtime.run rt (run stream sink) : (_, _) Exit.t)
 
@@ -55,7 +55,7 @@ let from_file size chunk take =
   ensure_file file size;
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let path = Eio.Path.(Eio.Stdenv.cwd stdenv / file) in
   let stream = Stream.from_file ~chunk_size:chunk path |> Stream.take take in

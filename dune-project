@@ -50,6 +50,7 @@
   (ocaml (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
+  (eta-stream (= :version))
   (eio (>= 1.0))
   (eio_main (>= 1.0))
   (yojson (>= 2.0))

@@ -120,15 +120,15 @@ let encode schema value =
   | Error _ -> ()
 
 let run_policy () =
-  let env = object method feature_allowed = true end in
+  let deps = object method feature_allowed = true end in
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let policy value =
-    Effect.sync "policy" (fun env ->
-        if env#feature_allowed then value else value)
+    Effect.sync "policy" (fun () ->
+        if deps#feature_allowed then value else value)
   in
   ignore (Runtime.run rt (Schema.decode_with_policy record3_schema policy record3_json)
     : (_, [> `Decode of issue list ]) Exit.t)
@@ -146,7 +146,7 @@ let workloads =
     item "decode.array.10" (fun () -> decode (Schema.array record3_schema) (Json.array (List.init 10 (fun _ -> record3_json))));
     item "decode.array.1000" (fun () -> decode (Schema.array record3_schema) (Json.array (List.init 1_000 (fun _ -> record3_json))));
     item "decode.transform.string_int" (fun () -> repeat 10_000 (fun _ -> decode string_int (Json.string "42")));
-    item "decode_with_policy.env_row" run_policy;
+    item "decode_with_policy.explicit_deps" run_policy;
     item "decode.failure.record3" (fun () -> repeat 10_000 (fun _ -> decode record3_schema Json.null));
     item "encode.record3" (fun () -> repeat 10_000 (fun _ -> encode record3_schema { name = "a"; count = 1; active = true }));
     item "encode.record6" (fun () -> repeat 10_000 (fun _ -> encode record6_schema { a = "a"; b = 1; c = true; d = 1.0; e = Some "x"; f = 2 }));

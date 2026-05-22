@@ -1,0 +1,11 @@
+(executable
+ (name baseline_encoder)
+ (libraries eta eta_otel unix))
+
+(executable
+ (name mailbox_probe)
+ (libraries eta eta-stream eio_main))
+
+(executable
+ (name exporter_e2e_bench)
+ (libraries eta eta_otel eio_main unix))

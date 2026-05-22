@@ -3,10 +3,12 @@
 OTLP/JSON exporter for [Eta](../eta)'s tracer, logger, and meter
 capabilities.
 
-Hand-rolled OpenTelemetry Protocol implementation in ~250 LOC: JSON encoder,
-HTTP/1.1 client over Eio TCP, batching daemon. **No protobuf, no TLS stack,
-no `cohttp`, no `ambient-context`.** The dependency closure is just `eta`
-and `eio`.
+Hand-rolled OpenTelemetry Protocol implementation: JSON encoders and an
+HTTP/1.1 client over Eio TCP at the I/O leaf, with batching, stream merging,
+timeout, retry, backpressure, cached exporter configuration, and daemon
+lifecycle expressed as Eta effects and Eta streams.
+**No protobuf, no TLS stack, no `cohttp`, no ambient dependency context.** The
+dependency closure is `eta`, `eta-stream`, `eio`, and `yojson`.
 
 ## Why a separate package?
 
@@ -110,13 +112,22 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 | `~service_version`| `None`           | `service.version` resource attribute         |
 | `~resource_attrs` | `[]`             | extra resource attributes (key, value pairs) |
 | `~scope_name`     | `"eta"`        | OTel instrumentation scope name              |
+| `~queue_capacity` | `1024`           | bounded mailbox capacity per signal          |
 | `~on_error`       | prints to stderr | callback for non-fatal export errors         |
+| `~on_send`        | no-op            | test hook called before each HTTP POST       |
 
-The exporter forks one background fiber on the supplied switch. That fiber
-drains the in-memory queues and POSTs JSON to the configured OTLP paths.
+The exporter starts one Eta runtime daemon on the supplied switch. That daemon
+loads cached exporter configuration through `Eta.Resource`, consumes bounded
+`Eta_stream.Mailbox` sources, merges signal streams with `Stream.merge`, exports
+batches with bounded parallelism, retries failed POSTs, and decrements
+in-flight counters through Eta finalizers. Flush waits on
+`Eta_stream.Drain_counter.await_zero` instead of fixed-interval polling.
 
 `Eta_otel.flush ?timeout_s exporter` blocks until the queue is drained or
 the timeout elapses. Call it before the program exits to avoid losing spans.
+
+`Eta_otel.shutdown ?timeout_s exporter` closes the signal mailboxes, drains
+already accepted telemetry, and drops signals submitted after shutdown.
 
 ## Pointing at a collector
 

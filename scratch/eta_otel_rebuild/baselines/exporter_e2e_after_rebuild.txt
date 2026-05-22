@@ -1,0 +1,9 @@
+Command:
+
+dune exec scratch/eta_otel_rebuild/exporter_e2e_bench.exe -- --samples 5 --count 1000
+
+Exporter: Eta mailboxes, merged Eta stream daemon, Drain_counter flush
+
+span.1000 wall_ns mean=3668594 stddev=746402 min=3180027 max=4981995 throughput_per_s=272583.97 requests=32;32;32;32;32 bytes=231237;231237;231237;231237;231237 samples=4981995;3551960;3300905;3328085;3180027
+log.1000 wall_ns mean=1587343 stddev=95176 min=1532078 max=1754999 throughput_per_s=629983.48 requests=16;16;16;16;16 bytes=279506;279506;279506;279506;279506 samples=1754999;1573801;1538992;1536846;1532078
+metric.1000 wall_ns mean=506544 stddev=64025 min=437021 max=591040 throughput_per_s=1974161.72 requests=8;8;8;8;8 bytes=3503;3503;3503;3503;3503 samples=489950;552893;461817;437021;591040

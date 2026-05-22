@@ -1,0 +1,13 @@
+Command:
+
+bash bench/run.sh --filter 'eta_otel.encoder' --out bench/results/eta-otel-encoder-repeat-current.json
+
+Baseline: scratch/eta_otel_rebuild/baselines/current_encoder_quick.txt
+Current artifact: bench/results/eta-otel-encoder-repeat-current.json
+Samples: 5
+
+name baseline_wall_ns current_mean_wall_ns current_min_wall_ns current_max_wall_ns result
+span.100 101805 58174 46968 97036 better
+span.1000 902891 662613 556946 1032829 better
+log.100 42915 44060 39101 59128 same-range
+metric.100 11921 9680 8106 13113 better

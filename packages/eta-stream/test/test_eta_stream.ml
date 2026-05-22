@@ -15,6 +15,14 @@ let check_ok_unit label = function
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
         cause
 
+let run_ok rt eff =
+  match Runtime.run rt eff with
+  | Exit.Ok value -> value
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected error %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause
+
 let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -269,6 +277,62 @@ let test_row_pipeline_runtime () =
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
         cause
 
+let test_grouped_batches () =
+  with_runtime @@ fun _env rt ->
+  let stream = Stream.from_iterable [ 1; 2; 3; 4; 5 ] |> Stream.grouped 2 in
+  Alcotest.(check (list (list int)))
+    "batches" [ [ 1; 2 ]; [ 3; 4 ]; [ 5 ] ]
+    (run_ok rt (run_collect stream))
+
+let test_mailbox_stream_close_and_drop () =
+  with_runtime @@ fun _env rt ->
+  let mailbox = Mailbox.create ~capacity:2 () in
+  (match Mailbox.offer mailbox 1 with
+  | Enqueued -> ()
+  | Dropped | Closed -> Alcotest.fail "expected first offer to enqueue");
+  (match Mailbox.offer mailbox 2 with
+  | Enqueued -> ()
+  | Dropped | Closed -> Alcotest.fail "expected second offer to enqueue");
+  (match Mailbox.offer mailbox 3 with
+  | Dropped -> ()
+  | Enqueued | Closed -> Alcotest.fail "expected full mailbox to drop");
+  Alcotest.(check int) "dropped" 1 (Mailbox.dropped mailbox);
+  Mailbox.close mailbox;
+  Alcotest.(check (list int))
+    "drain queued values" [ 1; 2 ]
+    (run_ok rt (run_collect (Mailbox.to_stream mailbox)))
+
+let test_mailbox_batch_stream_emits_partial () =
+  with_runtime @@ fun _env rt ->
+  let mailbox = Mailbox.create ~capacity:8 () in
+  List.iter
+    (fun value ->
+      match Mailbox.offer mailbox value with
+      | Enqueued -> ()
+      | Dropped | Closed -> Alcotest.fail "expected offer to enqueue")
+    [ 1; 2; 3 ];
+  Mailbox.close mailbox;
+  Alcotest.(check (list (list int)))
+    "partial batches" [ [ 1; 2 ]; [ 3 ] ]
+    (run_ok rt (run_collect (Mailbox.to_batch_stream ~max:2 mailbox)))
+
+let test_drain_counter_await_zero () =
+  with_runtime @@ fun _env rt ->
+  let counter = Drain_counter.create () in
+  Drain_counter.incr_by counter 2;
+  let release =
+    Effect.delay (Duration.ms 1)
+      (Effect.sync "drain_counter.release" (fun () ->
+           Drain_counter.decr_by counter 2))
+  in
+  let wait = Drain_counter.await_zero counter in
+  Runtime.run rt
+    (Effect.all [ release; wait ]
+    |> Effect.map (fun _ -> ())
+    |> Effect.timeout (Duration.ms 1_000))
+  |> check_ok_unit "drain counter reaches zero";
+  Alcotest.(check int) "counter value" 0 (Drain_counter.value counter)
+
 let suite =
   ( "Stream",
     [
@@ -297,6 +361,13 @@ let suite =
         test_bounded_queue_no_deadlock;
       Alcotest.test_case "explicit deps/error rows compose" `Quick
         test_row_pipeline_runtime;
+      Alcotest.test_case "grouped batches" `Quick test_grouped_batches;
+      Alcotest.test_case "mailbox closes and drops" `Quick
+        test_mailbox_stream_close_and_drop;
+      Alcotest.test_case "mailbox batch stream emits partial batches" `Quick
+        test_mailbox_batch_stream_emits_partial;
+      Alcotest.test_case "drain counter await zero" `Quick
+        test_drain_counter_await_zero;
     ] )
 
 let () = Alcotest.run "eta-stream" [ suite ]

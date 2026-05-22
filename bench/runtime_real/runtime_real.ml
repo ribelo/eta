@@ -19,7 +19,7 @@ let sink = ref 0
 let run_effect program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() () in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   match Runtime.run rt program with
   | Exit.Ok v -> sink := v
   | Exit.Error _ -> failwith "unexpected failure"
@@ -56,7 +56,7 @@ let fanout_bounded_512x50_k8 () =
 let retry_flaky () =
   let counter = ref 0 in
   let attempt =
-    Effect.sync "retry.attempt" (fun _ ->
+    Effect.sync "retry.attempt" (fun () ->
         let n = !counter + 1 in
         counter := n;
         n)
@@ -111,11 +111,11 @@ let scope_acquire_release_64 () =
   let acquire_one =
     Effect.acquire_release
       ~acquire:
-        (Effect.sync "acq" (fun _ ->
+        (Effect.sync "acq" (fun () ->
              incr counter;
              !counter))
       ~release:(fun _ ->
-        Effect.sync "rel" (fun _ ->
+        Effect.sync "rel" (fun () ->
             decr counter;
             ()))
   in

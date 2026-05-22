@@ -20,6 +20,51 @@ let rec json_has_string_field ~key ~value = function
   | `List xs -> List.exists (json_has_string_field ~key ~value) xs
   | _ -> false
 
+let string_contains haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec loop i =
+    i + needle_len <= haystack_len
+    && (String.sub haystack i needle_len = needle || loop (i + 1))
+  in
+  needle_len = 0 || loop 0
+
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> Alcotest.fail "expected TCP listening socket"
+
+let closed_tcp_port net =
+  Eio.Switch.run @@ fun sw ->
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  tcp_port (Eio.Net.listening_addr socket)
+
+let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
+    response =
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:16 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+      (try
+         for _ = 1 to connections do
+           Eio.Switch.run @@ fun conn_sw ->
+           let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+           if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
+           Eio.Flow.copy_string response flow;
+           try Eio.Flow.shutdown flow `Send with _ -> ()
+         done
+       with _ -> ());
+      `Stop_daemon);
+  port
+
+let emit_span (tracer : Capabilities.tracer) name =
+  let span = tracer#begin_span ~name ~started_ms:0 () in
+  tracer#end_span ~span_id:span ~status:Capabilities.Ok ~ended_ms:0
+
 let test_encoder_smoke () =
   let bodies = ref [] in
   Eio_main.run @@ fun stdenv ->
@@ -93,6 +138,147 @@ let test_exception_stacktrace_exported () =
   Alcotest.(check bool) "annotation attr exported" true
     (json_has_string_field ~key:"key" ~value:"eta.annotation.phase" json)
 
+let test_network_partition_reports_error () =
+  let errors = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw
+      ~net
+      ~clock:(Eio.Stdenv.clock stdenv)
+      ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-network-partition"
+      ~on_error:(fun msg -> errors := msg :: !errors)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "partitioned";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  Alcotest.(check bool) "network error reported" true (!errors <> [])
+
+let test_malformed_response_reports_error () =
+  let errors = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port =
+    start_response_server ~sw ~net ~clock
+      "HTTP/1.1 500 Broken\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-malformed-response"
+      ~on_error:(fun msg -> errors := msg :: !errors)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "malformed";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  Alcotest.(check bool) "collector error reported" true (!errors <> [])
+
+let test_slow_collector_flush_timeout () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port =
+    start_response_server ~sw ~net ~clock ~delay_s:1.0
+      "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-slow-collector"
+      ~on_error:(fun _ -> ())
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "slow";
+  let started = Eio.Time.now clock in
+  Eta_otel.flush ~timeout_s:0.02 exporter;
+  let elapsed = Eio.Time.now clock -. started in
+  Alcotest.(check bool) "flush respects timeout" true (elapsed < 0.5)
+
+let test_backpressure_overflow_drops () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let gate, release = Eio.Promise.create () in
+  let net = Eio.Stdenv.net stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw
+      ~net
+      ~clock:(Eio.Stdenv.clock stdenv)
+      ~host:"127.0.0.1" ~port ~queue_capacity:1
+      ~service_name:"eta-otel-backpressure"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path:_ ~body:_ -> Eio.Promise.await gate)
+      ()
+  in
+  let tracer = Eta_otel.tracer exporter in
+  for i = 1 to 128 do
+    emit_span tracer ("overflow-" ^ string_of_int i)
+  done;
+  Alcotest.(check bool)
+    "overflow drops instead of blocking producers" true
+    (Eta_otel.Internal.dropped exporter > 0);
+  Eio.Promise.resolve release ();
+  Eta_otel.flush ~timeout_s:1.0 exporter
+
+let test_shutdown_closes_queues () =
+  let sends = ref 0 in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw
+      ~net
+      ~clock:(Eio.Stdenv.clock stdenv)
+      ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-shutdown"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path:_ ~body:_ -> incr sends)
+      ()
+  in
+  let tracer = Eta_otel.tracer exporter in
+  emit_span tracer "before-shutdown";
+  Eta_otel.shutdown ~timeout_s:1.0 exporter;
+  let sent_before_closed_offer = !sends in
+  emit_span tracer "after-shutdown";
+  Eta_otel.flush ~timeout_s:0.05 exporter;
+  Alcotest.(check int)
+    "signals after shutdown are not exported" sent_before_closed_offer !sends
+
+let test_self_spans_do_not_reenter_export () =
+  let bodies = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw ~net
+      ~clock:(Eio.Stdenv.clock stdenv)
+      ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-self-spans"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "application-span";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  let self_names =
+    Eta_otel.Internal.self_spans exporter |> List.map (fun s -> s.Tracer.name)
+  in
+  Alcotest.(check bool) "config resource span recorded" true
+    (List.exists (( = ) "eta_otel.config") self_names);
+  Alcotest.(check bool) "self export span recorded" true
+    (List.exists (( = ) "eta_otel.export.traces") self_names);
+  let exported = String.concat "\n" (List.rev !bodies) in
+  Alcotest.(check bool) "self spans are not exported" false
+    (string_contains exported "eta_otel.export.traces");
+  Alcotest.(check bool) "application span is exported" true
+    (string_contains exported "application-span")
+
 let motel_reachable net =
   try
     Eio.Switch.run @@ fun sw ->
@@ -157,6 +343,21 @@ let () =
           Alcotest.test_case "smoke" `Quick test_encoder_smoke;
           Alcotest.test_case "exception stacktrace" `Quick
             test_exception_stacktrace_exported;
+        ] );
+      ( "adversarial",
+        [
+          Alcotest.test_case "network partition" `Quick
+            test_network_partition_reports_error;
+          Alcotest.test_case "malformed response" `Quick
+            test_malformed_response_reports_error;
+          Alcotest.test_case "slow collector flush timeout" `Quick
+            test_slow_collector_flush_timeout;
+          Alcotest.test_case "backpressure overflow" `Quick
+            test_backpressure_overflow_drops;
+          Alcotest.test_case "shutdown closes queues" `Quick
+            test_shutdown_closes_queues;
+          Alcotest.test_case "self spans do not re-enter export" `Quick
+            test_self_spans_do_not_reenter_export;
         ] );
       ( "motel",
         [ Alcotest.test_case "live export" `Quick test_motel_live ] );

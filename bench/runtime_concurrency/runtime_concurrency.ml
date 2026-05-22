@@ -4,7 +4,7 @@ let run_effect program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~env:() ()
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   ignore (Runtime.run rt program : (_, _) Exit.t)
 

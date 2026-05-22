@@ -1,7 +1,7 @@
 open Eta
 
-let program () = Tp_m50.program ()
+let program services = Tp_m50.program services
 
 let run () =
-  Tp_common.run_with_env (Tp_common.make_services ()) (program ())
-  |> Tp_common.ok
+  let services = Tp_common.make_services () in
+  Tp_common.run_with_services services (program services) |> Tp_common.ok

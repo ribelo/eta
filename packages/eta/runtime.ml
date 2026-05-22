@@ -82,10 +82,13 @@ type 'err t = {
   sleep : Duration.t -> unit;
   now_ms : unit -> int;
   tracer : Capabilities.tracer;
+  tracing_enabled : bool;
   sampler : Sampler.t;
   auto_instrument : bool;
   logger : Capabilities.logger;
+  logging_enabled : bool;
   meter : Capabilities.meter;
+  metrics_enabled : bool;
   random : Capabilities.random;
   island_pool : E.Island.pool option;
   blocking_pool : E.Blocking.Pool.t option;
@@ -98,11 +101,13 @@ type 'err t = {
 
 let default_error_renderer _ = "<typed failure>"
 
-let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
-    ?(sampler = Sampler.always_on) ?(auto_instrument = false)
-    ?(logger = Logger.noop) ?(meter = Meter.noop) ?random ?island_pool
+let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
+    ?(auto_instrument = false) ?logger ?meter ?random ?island_pool
     ?blocking_pool ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
+  let tracer = Option.value tracer ~default:Tracer.noop in
+  let logger = Option.value logger ~default:Logger.noop in
+  let meter = Option.value meter ~default:Meter.noop in
   let sleep =
     match sleep with
     | Some sleep -> sleep
@@ -128,10 +133,13 @@ let create ~sw ~clock ?sleep ?(tracer = Tracer.noop)
     sleep;
     now_ms;
     tracer;
+    tracing_enabled = tracer != Tracer.noop;
     sampler;
     auto_instrument;
     logger;
+    logging_enabled = logger != Logger.noop;
     meter;
+    metrics_enabled = meter != Meter.noop;
     random;
     island_pool;
     blocking_pool;
@@ -265,27 +273,31 @@ let string_of_blocking_outcome = function
   | E.Private.Blocking_detached -> "detached"
 
 let emit_blocking_event runtime event =
-  let attrs =
-    [
-      ("eta.blocking.pool", event.E.Private.pool);
-      ("eta.blocking.name", event.name);
-      ("eta.blocking.outcome", string_of_blocking_outcome event.outcome);
-      ("eta.blocking.queue_wait_ms", string_of_int event.queue_wait_ms);
-      ("eta.blocking.run_ms", string_of_int event.run_ms);
-    ]
-  in
-  (match Eio.Fiber.get active_span_key with
-  | None -> ()
-  | Some span_id ->
-      runtime.tracer#add_event ~span_id ~name:"eta.blocking"
-        ~ts_ms:(runtime.now_ms ()) ~attrs);
-  runtime.meter#record ~name:"eta.blocking.queue_wait_ms"
-    ~description:"Time spent admitted but waiting for a blocking worker"
-    ~unit_:"ms" ~kind:Gauge ~attrs
-    ~value:(Int event.queue_wait_ms) ~ts_ms:(runtime.now_ms ());
-  runtime.meter#record ~name:"eta.blocking.run_ms"
-    ~description:"Time spent running a blocking callback" ~unit_:"ms"
-    ~kind:Gauge ~attrs ~value:(Int event.run_ms) ~ts_ms:(runtime.now_ms ())
+  if runtime.tracing_enabled || runtime.metrics_enabled then
+    let attrs =
+      [
+        ("eta.blocking.pool", event.E.Private.pool);
+        ("eta.blocking.name", event.name);
+        ("eta.blocking.outcome", string_of_blocking_outcome event.outcome);
+        ("eta.blocking.queue_wait_ms", string_of_int event.queue_wait_ms);
+        ("eta.blocking.run_ms", string_of_int event.run_ms);
+      ]
+    in
+    (if runtime.tracing_enabled then
+       match Eio.Fiber.get active_span_key with
+       | None -> ()
+       | Some span_id ->
+           runtime.tracer#add_event ~span_id ~name:"eta.blocking"
+             ~ts_ms:(runtime.now_ms ()) ~attrs);
+    if runtime.metrics_enabled then (
+      runtime.meter#record ~name:"eta.blocking.queue_wait_ms"
+        ~description:"Time spent admitted but waiting for a blocking worker"
+        ~unit_:"ms" ~kind:Gauge ~attrs
+        ~value:(Int event.queue_wait_ms) ~ts_ms:(runtime.now_ms ());
+      runtime.meter#record ~name:"eta.blocking.run_ms"
+        ~description:"Time spent running a blocking callback" ~unit_:"ms"
+        ~kind:Gauge ~attrs ~value:(Int event.run_ms)
+        ~ts_ms:(runtime.now_ms ()))
 
 let run_finalizers ~runtime ~fail_key finalizers =
   Eio.Cancel.protect @@ fun () ->
@@ -507,120 +519,137 @@ let rec interpret :
   | EP.Render_error (render, e) ->
       interpret ~runtime ~error_renderer:render ~fail_key ~sw ~finalizers e
   | EP.Named (kind, name, e) ->
-      let parent_id = Eio.Fiber.get active_span_key in
-      let ambient_context = Eio.Fiber.get trace_context_key in
-      let parent_sampled =
-        Option.value (Eio.Fiber.get sampled_key)
-          ~default:
-            (match ambient_context with
-            | None -> true
-            | Some ctx -> Trace_context.sampled ctx)
-      in
-      let external_parent =
-        match parent_id with
-        | Some _ -> None
-        | None -> ambient_context
-      in
-      let sampled =
-        parent_sampled
-        && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
-             ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
-      in
-      if not sampled then
+      if not runtime.tracing_enabled then
         with_die_span_name name @@ fun () ->
-        Eio.Fiber.with_binding sampled_key false @@ fun () ->
         (try
            interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
          with exn ->
            raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
       else
-        let started_ms = runtime.now_ms () in
-        let span_id =
-          runtime.tracer#begin_span ?parent_id ?external_parent ~name
-            ~kind ~started_ms ()
+        let parent_id = Eio.Fiber.get active_span_key in
+        let ambient_context = Eio.Fiber.get trace_context_key in
+        let parent_sampled =
+          Option.value (Eio.Fiber.get sampled_key)
+            ~default:
+              (match ambient_context with
+              | None -> true
+              | Some ctx -> Trace_context.sampled ctx)
         in
-        let finish status =
-          let ended_ms = runtime.now_ms () in
-          runtime.tracer#end_span ~span_id ~status ~ended_ms
+        let external_parent =
+          match parent_id with
+          | Some _ -> None
+          | None -> ambient_context
         in
-        let emit_exception_event cause =
-          let events =
-            exception_event_attrs_tree ~error_renderer cause
-          in
-          List.iter
-            (fun attrs ->
-              runtime.tracer#add_event ~span_id ~name:"exception"
-                ~ts_ms:(runtime.now_ms ()) ~attrs)
-            events
+        let sampled =
+          parent_sampled
+          && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
+               ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
         in
-        with_die_span_name name @@ fun () ->
-        Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
-        Eio.Fiber.with_binding sampled_key true @@ fun () ->
-        (try
-           let value =
+        if not sampled then
+          with_die_span_name name @@ fun () ->
+          Eio.Fiber.with_binding sampled_key false @@ fun () ->
+          (try
              interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
-           in
-           finish Ok;
-           value
-         with exn ->
-           let cause = cause_of_exn_runtime runtime fail_key exn in
-           emit_exception_event cause;
-           finish (status_of_cause ~error_renderer cause);
-           raise_cause fail_key cause)
+           with exn ->
+             raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
+        else
+          let started_ms = runtime.now_ms () in
+          let span_id =
+            runtime.tracer#begin_span ?parent_id ?external_parent ~name
+              ~kind ~started_ms ()
+          in
+          let finish status =
+            let ended_ms = runtime.now_ms () in
+            runtime.tracer#end_span ~span_id ~status ~ended_ms
+          in
+          let emit_exception_event cause =
+            let events = exception_event_attrs_tree ~error_renderer cause in
+            List.iter
+              (fun attrs ->
+                runtime.tracer#add_event ~span_id ~name:"exception"
+                  ~ts_ms:(runtime.now_ms ()) ~attrs)
+              events
+          in
+          with_die_span_name name @@ fun () ->
+          Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
+          Eio.Fiber.with_binding sampled_key true @@ fun () ->
+          (try
+             let value =
+               interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
+             in
+             finish Ok;
+             value
+           with exn ->
+             let cause = cause_of_exn_runtime runtime fail_key exn in
+             emit_exception_event cause;
+             finish (status_of_cause ~error_renderer cause);
+             raise_cause fail_key cause)
   | EP.Annotate (key, value, e) ->
-      runtime.tracer#add_attr ~key ~value;
+      (if runtime.tracing_enabled then runtime.tracer#add_attr ~key ~value);
       with_die_annotation key value @@ fun () ->
       (try
          interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
        with exn ->
          raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
   | EP.Link_span (link, e) ->
-      runtime.tracer#add_link link;
+      (if runtime.tracing_enabled then runtime.tracer#add_link link);
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
   | EP.With_external_parent (ctx, e) | EP.With_context (ctx, e) ->
-      Eio.Fiber.with_binding trace_context_key ctx @@ fun () ->
-      Eio.Fiber.with_binding sampled_key (Trace_context.sampled ctx) @@ fun () ->
-      interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
+      if runtime.tracing_enabled then
+        Eio.Fiber.with_binding trace_context_key ctx @@ fun () ->
+        Eio.Fiber.with_binding sampled_key (Trace_context.sampled ctx) @@ fun () ->
+        interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
+      else
+        Eio.Fiber.with_binding trace_context_key ctx @@ fun () ->
+        interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
   | EP.Current_span -> (
-      match Eio.Fiber.get active_span_key with
-      | None -> None
-      | Some span_id -> runtime.tracer#inspect ~span_id)
-  | EP.Current_context -> (
-      match Eio.Fiber.get active_span_key with
-      | Some span_id -> (
-          match runtime.tracer#inspect ~span_id with
-          | Some info ->
-              Some
-                {
-                  Capabilities.trace_id = info.trace_id;
-                  span_id = info.span_id;
-                  trace_flags = info.trace_flags;
-                  trace_state = info.trace_state;
-                  baggage = info.baggage;
-                }
-          | None -> Eio.Fiber.get trace_context_key)
-      | None -> Eio.Fiber.get trace_context_key)
-  | EP.Log (level, body, attrs) ->
-      let trace_id, span_id =
+      if not runtime.tracing_enabled then None
+      else
         match Eio.Fiber.get active_span_key with
-        | None -> ("", "")
+        | None -> None
+        | Some span_id -> runtime.tracer#inspect ~span_id)
+  | EP.Current_context -> (
+      if not runtime.tracing_enabled then Eio.Fiber.get trace_context_key
+      else
+        match Eio.Fiber.get active_span_key with
         | Some span_id -> (
             match runtime.tracer#inspect ~span_id with
+            | Some info ->
+                Some
+                  {
+                    Capabilities.trace_id = info.trace_id;
+                    span_id = info.span_id;
+                    trace_flags = info.trace_flags;
+                    trace_state = info.trace_state;
+                    baggage = info.baggage;
+                  }
+            | None -> Eio.Fiber.get trace_context_key)
+        | None -> Eio.Fiber.get trace_context_key)
+  | EP.Log (level, body, attrs) ->
+      if runtime.logging_enabled then (
+        let trace_id, span_id =
+          if not runtime.tracing_enabled then ("", "")
+          else
+            match Eio.Fiber.get active_span_key with
             | None -> ("", "")
-            | Some info -> (info.trace_id, info.span_id))
-      in
-      runtime.logger#log
-        {
-          Capabilities.level;
-          body;
-          ts_ms = runtime.now_ms ();
-          attrs;
-          trace_id;
-          span_id;
-        }
+            | Some span_id -> (
+                match runtime.tracer#inspect ~span_id with
+                | None -> ("", "")
+                | Some info -> (info.trace_id, info.span_id))
+        in
+        runtime.logger#log
+          {
+            Capabilities.level;
+            body;
+            ts_ms = runtime.now_ms ();
+            attrs;
+            trace_id;
+            span_id;
+          })
   | EP.Metric_update { name; description; unit_; kind; attrs; value } ->
-      runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
-        ~ts_ms:(runtime.now_ms ())
+      if runtime.metrics_enabled then
+        runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
+          ~ts_ms:(runtime.now_ms ())
 
 and instrument_leaf :
     type err a.
@@ -631,53 +660,58 @@ and instrument_leaf :
     (unit -> a) ->
     a =
  fun ~runtime ~error_renderer ~fail_key ~name f ->
-  let parent_id = Eio.Fiber.get active_span_key in
-  let ambient_context = Eio.Fiber.get trace_context_key in
-  let parent_sampled =
-    Option.value (Eio.Fiber.get sampled_key)
-      ~default:
-        (match ambient_context with
-        | None -> true
-        | Some ctx -> Trace_context.sampled ctx)
-  in
-  let external_parent =
-    match parent_id with
-    | Some _ -> None
-    | None -> ambient_context
-  in
-  let sampled =
-    parent_sampled
-    && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
-         ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
-  in
-  if not sampled then
+  if not runtime.tracing_enabled then
     with_die_span_name name @@ fun () ->
     try f () with exn ->
       raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn)
   else
-    let started_ms = runtime.now_ms () in
-    let span_id =
-      runtime.tracer#begin_span ?parent_id ?external_parent ~name ~started_ms
-        ~kind:Capabilities.Internal ()
+    let parent_id = Eio.Fiber.get active_span_key in
+    let ambient_context = Eio.Fiber.get trace_context_key in
+    let parent_sampled =
+      Option.value (Eio.Fiber.get sampled_key)
+        ~default:
+          (match ambient_context with
+          | None -> true
+          | Some ctx -> Trace_context.sampled ctx)
     in
-    let finish status =
-      runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
+    let external_parent =
+      match parent_id with
+      | Some _ -> None
+      | None -> ambient_context
     in
-    with_die_span_name name @@ fun () ->
-    Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
-    Eio.Fiber.with_binding sampled_key true @@ fun () ->
-    try
-      let value = f () in
-      finish Ok;
-      value
-    with exn ->
-      let cause = cause_of_exn_runtime runtime fail_key exn in
-      exception_event_attrs_tree ~error_renderer cause
-      |> List.iter (fun attrs ->
-             runtime.tracer#add_event ~span_id ~name:"exception"
-               ~ts_ms:(runtime.now_ms ()) ~attrs);
-      finish (status_of_cause ~error_renderer cause);
-      raise_cause fail_key cause
+    let sampled =
+      parent_sampled
+      && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
+           ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
+    in
+    if not sampled then
+      with_die_span_name name @@ fun () ->
+      try f () with exn ->
+        raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn)
+    else
+      let started_ms = runtime.now_ms () in
+      let span_id =
+        runtime.tracer#begin_span ?parent_id ?external_parent ~name ~started_ms
+          ~kind:Capabilities.Internal ()
+      in
+      let finish status =
+        runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
+      in
+      with_die_span_name name @@ fun () ->
+      Eio.Fiber.with_binding active_span_key span_id @@ fun () ->
+      Eio.Fiber.with_binding sampled_key true @@ fun () ->
+      try
+        let value = f () in
+        finish Ok;
+        value
+      with exn ->
+        let cause = cause_of_exn_runtime runtime fail_key exn in
+        exception_event_attrs_tree ~error_renderer cause
+        |> List.iter (fun attrs ->
+               runtime.tracer#add_event ~span_id ~name:"exception"
+                 ~ts_ms:(runtime.now_ms ()) ~attrs);
+        finish (status_of_cause ~error_renderer cause);
+        raise_cause fail_key cause
 
 and interpret_supervisor_scope :
     type s err a.

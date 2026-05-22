@@ -45,6 +45,11 @@ module Stream : sig
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val drop : int -> ('a, 'err) t -> ('a, 'err) t
   val scan : ('s -> 'a -> 's) -> 's -> ('a, 'err) t -> ('s, 'err) t
+  val grouped : int -> ('a, 'err) t -> ('a list, 'err) t
+  (** Collect upstream values into non-empty batches of at most [n] items.
+      The final batch may contain fewer than [n] items.
+
+      @raise Invalid_argument if [n <= 0]. *)
 
   val concat :
     ('a, 'err) t -> ('a, 'err) t -> ('a, 'err) t
@@ -105,6 +110,57 @@ module Stream : sig
     string ->
     ('a, 'err) t ->
     ('a, 'err) t
+end
+
+module Mailbox : sig
+  type 'a t
+  type offer_result = Enqueued | Dropped | Closed
+
+  val create : ?capacity:int -> unit -> 'a t
+  (** Create a bounded producer-side stream mailbox.
+
+      [capacity] defaults to [1024].
+      @raise Invalid_argument if [capacity <= 0]. *)
+
+  val offer : 'a t -> 'a -> offer_result
+  (** Try to enqueue without waiting for capacity. Full mailboxes drop the new
+      value and return [Dropped]. Closed mailboxes return [Closed]. *)
+
+  val close : 'a t -> unit
+  (** Close the mailbox. Consumers drain already-enqueued values and then the
+      mailbox stream ends. *)
+
+  val dropped : 'a t -> int
+  (** Number of values dropped by {!offer}. *)
+
+  val to_stream : 'a t -> ('a, 'err) Stream.t
+  (** Consume values from the mailbox as a stream. *)
+
+  val to_batch_stream : max:int -> 'a t -> ('a list, 'err) Stream.t
+  (** Consume non-empty batches from the mailbox. The consumer waits for the
+      first value in each batch, then drains up to [max - 1] values already
+      available without waiting for a full batch.
+
+      @raise Invalid_argument if [max <= 0]. *)
+end
+
+module Drain_counter : sig
+  type t
+
+  val create : unit -> t
+  val value : t -> int
+  val incr : t -> unit
+  val decr : t -> unit
+  val incr_by : t -> int -> unit
+  val decr_by : t -> int -> unit
+
+  val await_zero : ?name:string -> t -> (unit, 'err) Eta.Effect.t
+  (** Wait until the counter reaches zero. This is useful for producer/consumer
+      adapters that need a non-polling drain signal while still exposing the
+      wait as an Eta effect.
+
+      @raise Invalid_argument if [incr_by] or [decr_by] receive a negative
+      count. *)
 end
 
 module Sink : sig

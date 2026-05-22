@@ -11,12 +11,40 @@ let chain n =
   in
   go n (Effect.pure 0)
 
+let log_chain n =
+  let rec go i acc =
+    if i = 0 then acc
+    else
+      go (i - 1)
+        (Effect.bind
+           (fun () ->
+             Effect.log ~level:Capabilities.Info
+               ~attrs:[ ("phase", "bench") ] "bench log")
+           acc)
+  in
+  go n Effect.unit
+
+let metric_chain n =
+  let rec go i acc =
+    if i = 0 then acc
+    else
+      go (i - 1)
+        (Effect.bind
+           (fun () ->
+             Effect.metric_update ~name:"bench.metric"
+               ~description:"bench" ~unit_:"1"
+               ~attrs:[ ("phase", "bench") ]
+               ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1))
+           acc)
+  in
+  go n Effect.unit
+
 let run ?tracer ?logger ?meter ?(auto_instrument = false) program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ?tracer ?logger ?meter
-      ~auto_instrument ~env:() ()
+      ~auto_instrument ()
   in
   ignore (Runtime.run rt program : (_, _) Exit.t)
 
@@ -24,6 +52,16 @@ let run_in_memory ?(auto_instrument = false) program =
   let tracer = Tracer.in_memory () in
   run ~tracer:(Tracer.as_capability tracer) ~auto_instrument program;
   ignore (Tracer.dump tracer)
+
+let run_in_memory_logger program =
+  let logger = Logger.in_memory () in
+  run ~logger:(Logger.as_capability logger) program;
+  ignore (Logger.dump logger)
+
+let run_in_memory_meter program =
+  let meter = Meter.in_memory () in
+  run ~meter:(Meter.as_capability meter) program;
+  ignore (Meter.dump meter)
 
 let attrs_work n =
   let rec go i acc =
@@ -133,6 +171,12 @@ let workloads =
         run_in_memory ~auto_instrument:true (chain 10_000));
     item "named_span_only" (fun () -> run_in_memory (chain 10_000));
     item "named_with_attrs" (fun () -> run_in_memory (attrs_work 10_000));
+    item "noop_logger.log" (fun () -> run ~logger:Logger.noop (log_chain 10_000));
+    item "in_memory_logger.log" (fun () ->
+        run_in_memory_logger (log_chain 10_000));
+    item "noop_meter.metric" (fun () -> run ~meter:Meter.noop (metric_chain 10_000));
+    item "in_memory_meter.metric" (fun () ->
+        run_in_memory_meter (metric_chain 10_000));
     item "eta_otel.encoder.span.100" (fun () -> run_otel `Span 100);
     item "eta_otel.encoder.span.1000" (fun () -> run_otel `Span 1_000);
     item "eta_otel.encoder.log.100" (fun () -> run_otel `Log 100);

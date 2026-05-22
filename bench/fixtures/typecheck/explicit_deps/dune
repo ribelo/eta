@@ -1,0 +1,4 @@
+(library
+ (name bench_typecheck_explicit_deps)
+ (wrapped false)
+ (libraries eta eio_main))

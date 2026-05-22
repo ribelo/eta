@@ -100,10 +100,10 @@ measure_cmd "compile.fixture.deep_bind.touch_top" "dune build bench/fixtures/typ
 measure_cmd "compile.fixture.deep_bind.touch_internal" "dune build bench/fixtures/typecheck/deep_bind && touch bench/fixtures/typecheck/deep_bind/tp_m25.ml && dune build bench/fixtures/typecheck/deep_bind"
 measure_ocamlc_i "compile.fixture.deep_bind.ocamlc_i" "bench/fixtures/typecheck/deep_bind/tp_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/deep_bind/.bench_typecheck_deep_bind.objs/byte"
 
-measure_cmd "compile.fixture.env_row.clean" "rm -rf _build/default/bench/fixtures/typecheck/env_row && dune build bench/fixtures/typecheck/env_row"
-measure_cmd "compile.fixture.env_row.touch_top" "dune build bench/fixtures/typecheck/env_row && touch bench/fixtures/typecheck/env_row/env_top.ml && dune build bench/fixtures/typecheck/env_row"
-measure_cmd "compile.fixture.env_row.touch_internal" "dune build bench/fixtures/typecheck/env_row && touch bench/fixtures/typecheck/env_row/env_m10.ml && dune build bench/fixtures/typecheck/env_row"
-measure_ocamlc_i "compile.fixture.env_row.ocamlc_i" "bench/fixtures/typecheck/env_row/env_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/env_row/.bench_typecheck_env_row.objs/byte"
+measure_cmd "compile.fixture.explicit_deps.clean" "rm -rf _build/default/bench/fixtures/typecheck/explicit_deps && dune build bench/fixtures/typecheck/explicit_deps"
+measure_cmd "compile.fixture.explicit_deps.touch_top" "dune build bench/fixtures/typecheck/explicit_deps && touch bench/fixtures/typecheck/explicit_deps/deps_top.ml && dune build bench/fixtures/typecheck/explicit_deps"
+measure_cmd "compile.fixture.explicit_deps.touch_internal" "dune build bench/fixtures/typecheck/explicit_deps && touch bench/fixtures/typecheck/explicit_deps/deps_m10.ml && dune build bench/fixtures/typecheck/explicit_deps"
+measure_ocamlc_i "compile.fixture.explicit_deps.ocamlc_i" "bench/fixtures/typecheck/explicit_deps/deps_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/explicit_deps/.bench_typecheck_explicit_deps.objs/byte"
 
 measure_cmd "compile.fixture.schema_heavy.clean" "rm -rf _build/default/bench/fixtures/typecheck/schema_heavy && dune build bench/fixtures/typecheck/schema_heavy"
 measure_cmd "compile.fixture.schema_heavy.touch_top" "dune build bench/fixtures/typecheck/schema_heavy && touch bench/fixtures/typecheck/schema_heavy/schema_top.ml && dune build bench/fixtures/typecheck/schema_heavy"
