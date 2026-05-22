@@ -14,6 +14,15 @@ experiments live under `scratch/`; keep them out of the published library unless
 they are deliberately promoted into `packages/eta/`. Generated artifacts belong in
 `_build/` and local switches in `_opam/`.
 
+## Reference Code
+
+Use the local `.reference/` directories before inventing patterns from scratch.
+Treat them as prior art, not dependencies, and preserve Eta's boundary:
+applications own state; Eta owns effect description and interpretation.
+
+- [.reference/effect-smol](/home/ribelo/projects/ribelo/ocaml/Eta/.reference/effect-smol) - Effect v4 reference for behavior Eta intentionally echoes: typed failures, success values, causes, exits, schedules, retry/repeat, scoped resources, concurrency semantics, and combinator naming. Use it especially as a source of behavior and test cases to port into OCaml when Eta partially reimplements the same semantics. Do not copy TypeScript architecture wholesale or import Effect-only concepts that Eta explicitly omits.
+- [.reference/oxmono](/home/ribelo/projects/ribelo/ocaml/Eta/.reference/oxmono) - OCaml/OxCaml reference for high-quality library style, Dune/package structure, Alcotest usage, Eio integration, and idiomatic OxCaml. Use it as the local standard for writing good OCaml and OxCaml in this repo, while keeping changes scoped to Eta's small library surface.
+
 ## Build, Test, and Development Commands
 
 - `nix develop -c dune build`: build the library using the pinned Nix shell.
