@@ -67,7 +67,7 @@ let duplicate_db_layer : (clock * 'rest, db * (db * unit), string) Layer.t =
 let app_program services =
   let db = Env.get Env.Here services in
   let http = Env.get (Env.There Env.Here) services in
-  Effect.sync "app" (fun _ -> (app_result db http, db, http))
+  Effect.named "app" (Effect.sync (fun _ -> (app_result db http, db, http)))
 
 let boot_env clock log =
   Env.cons Env.Clock clock (Env.cons Env.Log log Env.empty)

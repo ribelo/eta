@@ -6,10 +6,10 @@ module Third_party : sig
   val make : db -> ('env, string, string) Effect.t
 end = struct
   let black_box () =
-    Effect.sync "third.black_box" (fun env -> query env#db "child")
+    Effect.named "third.black_box" (Effect.sync (fun env -> query env#db "child"))
 
   let make db =
-    Effect.sync "third.make" (fun _env -> query db "child")
+    Effect.named "third.make" (Effect.sync (fun _env -> query db "child"))
 end
 
 let host_env ~db ~audit ~secret =
@@ -29,7 +29,7 @@ let host_program child =
     (fun before ->
        Effect.bind
          (fun child_value ->
-            Effect.sync "host.after" (fun env ->
+            Effect.named "host.after" (Effect.sync (fun env ->
               let after = query env#db "after" in
               write_audit env#audit after;
               String.concat ";"
@@ -38,12 +38,12 @@ let host_program child =
                   "child=" ^ child_value;
                   "after=" ^ after;
                   "secret=" ^ env#secret.token;
-                ]))
+                ])))
          child)
-    (Effect.sync "host.before" (fun env ->
+    (Effect.named "host.before" (Effect.sync (fun env ->
        let before = query env#db "before" in
        write_audit env#audit before;
-       before))
+       before)))
 
 let run_black_box_uses_host_db () =
   let real_db = db "real" in
@@ -85,10 +85,10 @@ module Private_eval = struct
     | _ -> failwith "research-only evaluator supports Pure/Fail/Sync/Bind only"
 
   let locally env effect_ =
-    Effect.sync "private_eval.locally" (fun _parent_env ->
+    Effect.named "private_eval.locally" (Effect.sync (fun _parent_env ->
       match eval env effect_ with
       | Ok value -> value
-      | Error err -> failwith err)
+      | Error err -> failwith err))
 end
 
 let run_private_eval_can_swap_but_reimplements_runtime_subset () =

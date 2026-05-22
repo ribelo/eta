@@ -73,7 +73,7 @@ let workload (module P : CANDIDATE) =
          in
          Effect.all_settled (warmup @ mixed @ [ shutdown_midflight ])
          |> Effect.bind (fun outcomes ->
-                Effect.sync (P.label ^ ".assert_workload") (fun () ->
+                Effect.named (P.label ^ ".assert_workload") (Effect.sync (fun () ->
                     let stats = P.stats pool in
                     let factory_stats = factory_stats factory in
                     let used, cancelled, shutdown_done, pool_shutdowns, other_errors =
@@ -101,7 +101,7 @@ let workload (module P : CANDIDATE) =
                       "%s workload PASS used=%d cancelled=%d shutdown_done=%d pool_shutdowns=%d %s %s\n%!"
                       P.label used cancelled shutdown_done pool_shutdowns
                       (pp_pool_stats stats)
-                      (pp_factory_stats factory_stats))))
+                      (pp_factory_stats factory_stats)))))
 
 let cancel_waiter (module P : CANDIDATE) =
   let factory = create_factory () in
@@ -134,7 +134,7 @@ let cancel_waiter (module P : CANDIDATE) =
                     in
                     Effect.all_settled [ holder_delay; waiter ]))
          |> Effect.bind (fun outcomes ->
-                Effect.sync (P.label ^ ".assert_cancel_waiter") (fun () ->
+                Effect.named (P.label ^ ".assert_cancel_waiter") (Effect.sync (fun () ->
                     let describe = function
                       | Ok `Holder_done -> "ok_holder"
                       | Ok `Cancelled -> "ok_cancelled"
@@ -169,7 +169,7 @@ let cancel_waiter (module P : CANDIDATE) =
                       else "FAIL"
                     in
                     Printf.printf "%s cancel_waiter %s %s\n%!" P.label
-                      verdict (pp_pool_stats stats))
+                      verdict (pp_pool_stats stats)))
                 |> Effect.bind (fun () ->
                        P.shutdown ~deadline:(Duration.ms 100) pool)))
 
@@ -190,7 +190,7 @@ let idle_eviction (module P : CANDIDATE) =
          |> Effect.bind (fun first_id ->
                 Effect.delay (Duration.ms 8) Effect.unit
                 |> Effect.bind (fun () ->
-                       Effect.sync (P.label ^ ".assert_idle_evicted") (fun () ->
+                       Effect.named (P.label ^ ".assert_idle_evicted") (Effect.sync (fun () ->
                            let stats = P.stats pool in
                            let factory_stats = factory_stats factory in
                            check (P.label ^ " idle evicted") (stats.idle = 0);
@@ -199,18 +199,18 @@ let idle_eviction (module P : CANDIDATE) =
                            Printf.printf
                              "%s idle_evict PASS first=%d %s %s\n%!" P.label
                              first_id (pp_pool_stats stats)
-                             (pp_factory_stats factory_stats))))
+                             (pp_factory_stats factory_stats)))))
                  |> Effect.bind (fun () ->
                         P.with_connection pool (fun conn ->
                             Effect.delay (Duration.ms 8) Effect.unit
                             |> Effect.bind (fun () ->
-                                   Effect.sync
+                                   Effect.named
                                      (P.label ^ ".assert_in_use_alive")
-                                     (fun () ->
+                                     (Effect.sync (fun () ->
                                        check
                                          (P.label
                                         ^ " in-use connection kept alive")
-                                         (not (Atomic.get conn.closed))))))
+                                         (not (Atomic.get conn.closed)))))))
                  |> Effect.bind (fun () ->
                         P.shutdown ~deadline:(Duration.ms 100) pool))
 

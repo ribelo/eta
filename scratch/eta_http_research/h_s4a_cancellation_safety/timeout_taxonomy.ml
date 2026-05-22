@@ -19,12 +19,12 @@ let () =
   let before_fd = fd_count () in
   incr permit;
   let effect =
-    Effect.sync "h_s4a_blocked_loser" (fun () ->
+    Effect.named "h_s4a_blocked_loser" (Effect.sync (fun () ->
       Fun.protect
         ~finally:(fun () ->
           cleanup_ran := true;
           decr permit)
-        (fun () -> Eio.Promise.await never))
+        (fun () -> Eio.Promise.await never)))
     |> Effect.timeout (Duration.ms 20)
   in
   let outcome =

@@ -125,7 +125,7 @@ let create_factory () =
   }
 
 let open_connection (factory : factory) =
-  Effect.sync "pool_protocol.open_connection" (fun () ->
+  Effect.named "pool_protocol.open_connection" (Effect.sync (fun () ->
       let id = atomic_incr factory.next_id in
       ignore (atomic_incr factory.opened : int);
       let live = atomic_incr factory.live in
@@ -136,26 +136,26 @@ let open_connection (factory : factory) =
         closed = PA.make 0;
         unhealthy = PA.make (if id = 3 then 1 else 0);
         uses = PA.make 0;
-      })
+      }))
 
 let close_connection (factory : factory) (conn : connection) =
-  Effect.sync "pool_protocol.close_connection" (fun () ->
+  Effect.named "pool_protocol.close_connection" (Effect.sync (fun () ->
       match
         PA.compare_and_set conn.closed ~if_phys_equal_to:0 ~replace_with:1
       with
       | PA.Compare_failed_or_set_here.Set_here ->
           ignore (atomic_incr factory.closed : int);
           ignore (atomic_decr factory.live : int)
-      | PA.Compare_failed_or_set_here.Compare_failed -> ())
+      | PA.Compare_failed_or_set_here.Compare_failed -> ()))
 
 let health_check (conn : connection) =
   atomic_get_int conn.closed = 0 && atomic_get_int conn.unhealthy = 0
 
 let use_connection (conn : connection) =
-  Effect.sync "pool_protocol.use_connection" (fun () ->
+  Effect.named "pool_protocol.use_connection" (Effect.sync (fun () ->
       if atomic_get_int conn.closed <> 0 then
         failwith (Printf.sprintf "connection %d used after close" conn.id);
-      ignore (atomic_incr conn.uses : int))
+      ignore (atomic_incr conn.uses : int)))
 
 module Treiber_lifo : STORAGE = struct
   type node = { value : entry; next : node option }
@@ -305,7 +305,7 @@ module Make_pool (S : STORAGE) = struct
     if config.max_idle < 0 then invalid_arg "pool_protocol: max_idle < 0";
     if config.max_idle > config.max_size then
       invalid_arg "pool_protocol: max_idle > max_size";
-    Effect.sync "pool_protocol.create" (fun () ->
+    Effect.named "pool_protocol.create" (Effect.sync (fun () ->
         {
           config;
           factory;
@@ -325,7 +325,7 @@ module Make_pool (S : STORAGE) = struct
           events = PA.make 0;
           checksum = PA.make 0;
           shutting_down = PA.make 0;
-        })
+        }))
 
   let stats t =
     {
@@ -411,15 +411,15 @@ module Make_pool (S : STORAGE) = struct
   let wait_for_retry t =
     let completed = ref false in
     let register =
-      Effect.sync "pool_protocol.wait_register" (fun () ->
+      Effect.named "pool_protocol.wait_register" (Effect.sync (fun () ->
           ignore (atomic_incr t.waiting : int);
           ignore (atomic_incr t.wait_loops : int);
-          ignore (atomic_incr t.events : int))
+          ignore (atomic_incr t.events : int)))
     in
     let release () =
-      Effect.sync "pool_protocol.wait_release" (fun () ->
+      Effect.named "pool_protocol.wait_release" (Effect.sync (fun () ->
           ignore (atomic_decr t.waiting : int);
-          if not !completed then ignore (atomic_incr t.cancelled_waiters : int))
+          if not !completed then ignore (atomic_incr t.cancelled_waiters : int)))
     in
     Effect.scoped
       (Effect.acquire_release ~acquire:register ~release
@@ -428,7 +428,7 @@ module Make_pool (S : STORAGE) = struct
              |> Effect.map (fun () -> completed := true)))
 
   let rec acquire_entry t =
-    Effect.sync "pool_protocol.reserve" (fun () -> reserve t)
+    Effect.named "pool_protocol.reserve" (Effect.sync (fun () -> reserve t))
     |> Effect.bind (function
          | Shutdown -> Effect.fail Pool_shutdown
          | Wait -> wait_for_retry t |> Effect.bind (fun () -> acquire_entry t)
@@ -461,7 +461,7 @@ module Make_pool (S : STORAGE) = struct
                       |> Effect.bind (fun () -> acquire_entry t))))
 
   let release_entry t entry =
-    Effect.sync "pool_protocol.release" (fun () ->
+    Effect.named "pool_protocol.release" (Effect.sync (fun () ->
         let now = now_ms () in
         ignore (atomic_decr t.in_use : int);
         if
@@ -480,7 +480,7 @@ module Make_pool (S : STORAGE) = struct
           PA.set entry.last_used_ms now;
           S.push t.idle entry;
           ignore (atomic_incr t.events : int);
-          None))
+          None)))
     |> Effect.bind (function
          | None -> Effect.unit
          | Some conn -> close_connection t.factory conn)
@@ -496,9 +496,9 @@ module Make_pool (S : STORAGE) = struct
       | None -> acc
       | Some entry -> drain (entry :: acc)
     in
-    Effect.sync "pool_protocol.evict_partition" (fun () ->
+    Effect.named "pool_protocol.evict_partition" (Effect.sync (fun () ->
         let now = now_ms () in
-        List.partition (should_close t now) (drain []))
+        List.partition (should_close t now) (drain [])))
     |> Effect.bind (fun (expired, keep) ->
            List.iter (S.push t.idle) keep;
            List.map

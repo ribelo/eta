@@ -520,10 +520,10 @@ let test_policy_closure_deps () =
       (fun allowed ->
         if allowed then Effect.pure config
         else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
-      (Effect.sync "feature-policy" (fun () ->
+      (Effect.named "feature-policy" (Effect.sync (fun () ->
            List.for_all
              (fun feature -> feature_allowed (Flag_key.value feature.key))
-             config.features))
+             config.features)))
   in
   let accepted =
     run_effect (Schema.decode_with_policy config policy sample_config_json)
@@ -537,10 +537,10 @@ let test_policy_closure_deps () =
       (fun allowed ->
         if allowed then Effect.pure config
         else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
-      (Effect.sync "feature-policy" (fun () ->
+      (Effect.named "feature-policy" (Effect.sync (fun () ->
            List.for_all
              (fun feature -> feature_allowed (Flag_key.value feature.key))
-             config.features))
+             config.features)))
   in
   let issues =
     run_effect (Schema.decode_with_policy config policy sample_config_json)
@@ -707,7 +707,7 @@ let test_decode_with_policy_enriches_type () =
     let open Eta in
     Effect.map
       (fun canonical_name -> { canonical_id = request.request_id; canonical_name })
-      (Effect.sync "lookup-user" (fun () -> lookup_user (User_id.value request.request_id)))
+      (Effect.named "lookup-user" (Effect.sync (fun () -> lookup_user (User_id.value request.request_id))))
   in
   let json = Json.object_ [ ("id", Json.string "usr_999") ] in
   let enriched =

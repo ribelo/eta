@@ -74,8 +74,8 @@ let decode_user json =
     (fun input ->
       Eta.Effect.map
         (fun name -> { id = input.id; name })
-        (Eta.Effect.sync "lookup-user" (fun () ->
-           lookup_user (User_id.value input.id))))
+        (Eta.Effect.named "lookup-user" (Eta.Effect.sync (fun () ->
+           lookup_user (User_id.value input.id)))))
     json
 ```
 

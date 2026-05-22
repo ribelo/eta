@@ -4,7 +4,7 @@ open Services
 let read_user db =
   audit_from_env "before"
   |> Effect.bind (fun () ->
-         Effect.sync "db.query" (fun _ -> query db "user:42")
+         Effect.named "db.query" (Effect.sync (fun _ -> query db "user:42"))
          |> Effect.bind (fun value ->
                 audit_from_env ("read:" ^ value)
                 |> Effect.map (fun () -> value)))

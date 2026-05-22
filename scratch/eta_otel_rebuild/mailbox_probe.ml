@@ -13,7 +13,7 @@ let start ~sw ~clock =
   let consume =
     Mailbox.to_stream mailbox
     |> Stream.map_effect (fun n ->
-           Effect.sync "mailbox.record" (fun () -> seen := n :: !seen))
+           Effect.named "mailbox.record" (Effect.sync (fun () -> seen := n :: !seen)))
     |> run_drain
   in
   match Runtime.run rt (Effect.Private.daemon consume) with

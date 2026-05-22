@@ -90,7 +90,7 @@ module Mutex_queue : CHANNEL = struct
           Sent))
 
   let send t value =
-    Effect.sync (label ^ ".send") (fun () -> send_sync t value)
+    Effect.named (label ^ ".send") (Effect.sync (fun () -> send_sync t value))
     |> Effect.bind (function
          | Sent -> Effect.unit
          | Closed -> Effect.fail Closed_error
@@ -133,7 +133,7 @@ module Mutex_queue : CHANNEL = struct
         | None -> None)
 
   let recv t =
-    Effect.sync (label ^ ".recv") (fun () -> recv_sync t)
+    Effect.named (label ^ ".recv") (Effect.sync (fun () -> recv_sync t))
     |> Effect.bind (function Some value -> Effect.pure value | None -> Effect.fail Closed_error)
 
   let try_recv t =
@@ -243,7 +243,7 @@ module Mutex_ring : CHANNEL = struct
           Sent))
 
   let send t value =
-    Effect.sync (label ^ ".send") (fun () -> send_sync t value)
+    Effect.named (label ^ ".send") (Effect.sync (fun () -> send_sync t value))
     |> Effect.bind (function
          | Sent -> Effect.unit
          | Closed -> Effect.fail Closed_error
@@ -281,7 +281,7 @@ module Mutex_ring : CHANNEL = struct
         result)
 
   let recv t =
-    Effect.sync (label ^ ".recv") (fun () -> recv_sync t)
+    Effect.named (label ^ ".recv") (Effect.sync (fun () -> recv_sync t))
     |> Effect.bind (function Some value -> Effect.pure value | None -> Effect.fail Closed_error)
 
   let try_recv t =
@@ -387,9 +387,9 @@ let close_blocked_sender (module C : CHANNEL) =
       in
       let closer =
         Effect.delay (Duration.ms 2)
-          (Effect.sync "channel.close" (fun () ->
+          (Effect.named "channel.close" (Effect.sync (fun () ->
                C.close ch;
-               "close_called"))
+               "close_called")))
       in
       let outcomes = run_effect (Effect.all [ blocked; closer ]) in
       let first = Option.value (C.try_recv ch) ~default:(-1) in

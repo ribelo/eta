@@ -2,3 +2,13 @@
  (name channel_choice)
  (modules channel_choice)
  (libraries eta eta-stream eio eio_main unix))
+
+(executable
+ (name channel_impl_probe)
+ (modules channel_impl_probe)
+ (libraries eta eio eio_main unix))
+
+(executable
+ (name channel_v2_probe)
+ (modules channel_v2_probe)
+ (libraries eta eio eio_main unix))

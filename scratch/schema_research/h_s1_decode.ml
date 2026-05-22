@@ -67,7 +67,7 @@ let decode_person_effectful json =
         (fun accepted ->
           if accepted then Effect.pure person
           else Decode.fail [ issue "age rejected by effectful policy" ])
-        (Effect.sync "age_policy" (fun env -> env#age_policy person.age)))
+        (Effect.named "age_policy" (Effect.sync (fun env -> env#age_policy person.age))))
     (decode_person json)
 
 let support =

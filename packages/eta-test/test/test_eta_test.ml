@@ -71,9 +71,9 @@ let runtime_retry_delays ~seed =
   in
   let attempts = ref 0 in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.named "attempt" (Effect.sync (fun () ->
         incr attempts;
-        !attempts)
+        !attempts))
     |> Effect.bind (fun attempt ->
            if attempt < 4 then Effect.fail "again" else Effect.pure attempt)
   in
@@ -107,8 +107,8 @@ let test_clock_adjust_wakes_in_deadline_order () =
   with_test_clock @@ fun sw clock rt ->
   let observed = ref [] in
   let sleeper ms =
-    Effect.delay (Duration.ms ms) (Effect.sync "record" (fun () ->
-        observed := ms :: !observed))
+    Effect.delay (Duration.ms ms) (Effect.named "record" (Effect.sync (fun () ->
+        observed := ms :: !observed)))
   in
   let promise =
     fork_run sw rt (Effect.all [ sleeper 30; sleeper 10; sleeper 20 ])
@@ -123,11 +123,11 @@ let test_clock_adjust_drains_cascading_sleeps () =
   with_test_clock @@ fun sw clock rt ->
   let observed = ref [] in
   let eff =
-    Effect.delay (Duration.ms 10) (Effect.sync "first" (fun () ->
-        observed := "first" :: !observed))
+    Effect.delay (Duration.ms 10) (Effect.named "first" (Effect.sync (fun () ->
+        observed := "first" :: !observed)))
     |> Effect.bind (fun () ->
-           Effect.delay (Duration.ms 10) (Effect.sync "second" (fun () ->
-               observed := "second" :: !observed)))
+           Effect.delay (Duration.ms 10) (Effect.named "second" (Effect.sync (fun () ->
+               observed := "second" :: !observed))))
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;

@@ -152,8 +152,9 @@ let test_collect_names () =
   let e =
     Effect.concat
       [
-        Effect.sync "leaf-a" (fun () -> ()) |> Effect.map (fun _ -> ());
-        Effect.sync "leaf-b" (fun () -> ());
+        Effect.named "leaf-a" (Effect.sync (fun () -> ())) |> Effect.map (fun _ -> ());
+        Effect.sync (fun () -> ());
+        Effect.named "leaf-b" (Effect.sync (fun () -> ()));
       ]
     |> Effect.named "outer"
   in
@@ -270,12 +271,12 @@ let test_observability_statuses () =
   ignore (Runtime.run rt outer : (unit, observability_err) Exit.t);
   ignore
     (Runtime.run rt
-       (Effect.named "die" (Effect.sync "die" (fun () -> failwith "boom"))) :
+       (Effect.named "die" (Effect.sync (fun () -> failwith "boom"))) :
       (unit, _) Exit.t);
   ignore
     (Runtime.run rt
 	       (Effect.named "interrupt"
-	          (Effect.sync "interrupt" (fun () ->
+	          (Effect.sync (fun () ->
 	               raise (Eio.Cancel.Cancelled (Failure "cancel"))))) :
 	      (unit, _) Exit.t);
   let spans = Tracer.dump tracer in
@@ -429,7 +430,7 @@ let test_observability_noop_runtime_keeps_die_diagnostics () =
   with_runtime @@ fun rt ->
   let exn = Failure "noop diagnostic" in
   let eff =
-    Effect.sync "noop.leaf" (fun () -> raise exn)
+    Effect.sync (fun () -> raise exn)
     |> Effect.annotate ~key:"request.id" ~value:"noop-1"
     |> Effect.named "noop.span"
   in
@@ -510,19 +511,19 @@ let test_trace_context_unsampled_parent_suppresses_child () =
 
 let test_observability_auto_instrument_default_off () =
   with_traced_runtime @@ fun rt tracer ->
-  run_ok rt (Effect.sync "leaf" (fun () -> ()));
+  run_ok rt (Effect.sync (fun () -> ()));
   Alcotest.(check int) "no spans" 0 (List.length (Tracer.dump tracer))
 
 let test_observability_auto_instrument_eval_leaves () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  let leaf name = Effect.sync name (fun () -> ()) in
-  run_ok rt (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]);
+  let leaf name = Effect.named name (Effect.sync (fun () -> ())) in
+  run_ok rt (Effect.concat [ leaf "a"; Effect.sync (fun () -> ()); leaf "b"; leaf "c" ]);
   Alcotest.(check (list string)) "leaf spans" [ "a"; "b"; "c" ]
     (List.map (fun span -> span.Tracer.name) (Tracer.dump tracer))
 
 let test_observability_auto_instrument_leaves_nest_under_named () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  let leaf name = Effect.sync name (fun () -> ()) in
+  let leaf name = Effect.named name (Effect.sync (fun () -> ())) in
   run_ok rt (Effect.named "outer" (Effect.concat [ leaf "a"; leaf "b"; leaf "c" ]));
   let spans = Tracer.dump tracer in
   let outer = List.find (fun span -> span.Tracer.name = "outer") spans in
@@ -535,7 +536,7 @@ let test_observability_auto_instrument_leaves_nest_under_named () =
 
 let test_observability_auto_instrument_failure_status () =
   with_auto_traced_runtime true @@ fun rt tracer ->
-  ignore (Runtime.run rt (Effect.sync "boom" (fun () -> failwith "boom")) :
+  ignore (Runtime.run rt (Effect.named "boom" (Effect.sync (fun () -> failwith "boom"))) :
             (unit, _) Exit.t);
   let span = only_span tracer in
   check_status "leaf failed" (Tracer.Error "") span.status;
@@ -702,7 +703,7 @@ let test_effect_map_bind_tap_runtime () =
     |> Effect.map (fun n -> n + 1)
     |> Effect.bind (fun n -> Effect.pure (n * 2))
     |> Effect.tap (fun n ->
-           Effect.sync "tap" (fun () -> observed := n :: !observed))
+           Effect.named "tap" (Effect.sync (fun () -> observed := n :: !observed)))
     |> Effect.map (fun n -> n + 1)
   in
   Alcotest.(check int) "value" 5 (run_ok rt eff);
@@ -752,11 +753,11 @@ let test_runtime_exit_fail_die_interrupt () =
   with_runtime @@ fun rt ->
   let die = Failure "boom" in
   let fail_exit = Runtime.run rt (Effect.fail "bad") in
-  let die_exit = Runtime.run rt (Effect.sync "die" (fun () -> raise die)) in
+  let die_exit = Runtime.run rt (Effect.named "die" (Effect.sync (fun () -> raise die))) in
   let interrupt_exit =
     Runtime.run rt
-      (Effect.sync "interrupt" (fun () ->
-           raise (Eio.Cancel.Cancelled (Failure "cancel"))))
+      (Effect.named "interrupt" (Effect.sync (fun () ->
+           raise (Eio.Cancel.Cancelled (Failure "cancel")))))
   in
   Expect.expect_typed_failure_eq Alcotest.string fail_exit "bad";
   Expect.expect_die die_exit (fun actual -> actual.exn == die);
@@ -766,14 +767,14 @@ let test_runtime_die_captures_diagnostics () =
   with_sampled_traced_runtime Sampler.always_off @@ fun rt _tracer ->
   let exn = Failure "diagnostic boom" in
   let eff =
-    Effect.sync "die.leaf" (fun () -> raise exn)
+    Effect.named "die.leaf" (Effect.sync (fun () -> raise exn))
     |> Effect.annotate ~key:"request.id" ~value:"r-1"
     |> Effect.fn __POS__ "diagnostic.fn"
   in
   match Runtime.run rt eff with
   | Exit.Error (Cause.Die die) ->
       Alcotest.(check bool) "same exception" true (die.exn == exn);
-      Alcotest.(check (option string)) "span name" (Some "diagnostic.fn")
+      Alcotest.(check (option string)) "span name" (Some "die.leaf")
         die.span_name;
       Alcotest.(check (option string)) "annotation" (Some "r-1")
         (List.assoc_opt "request.id" die.annotations);
@@ -814,7 +815,7 @@ let test_cause_to_portable_materializes_diagnostics () =
 let test_runtime_die_capture_backtrace_can_be_disabled () =
   with_runtime_capture_backtrace false @@ fun rt ->
   match
-    Runtime.run rt (Effect.sync "die.no-backtrace" (fun () -> failwith "boom"))
+    Runtime.run rt (Effect.named "die.no-backtrace" (Effect.sync (fun () -> failwith "boom")))
   with
   | Exit.Error (Cause.Die die) ->
       Alcotest.(check (option string)) "no backtrace" None
@@ -824,7 +825,7 @@ let test_runtime_die_capture_backtrace_can_be_disabled () =
 let test_runtime_run_exn_uses_captured_backtrace () =
   with_runtime @@ fun rt ->
   let exn = Failure "run_exn defect" in
-  match Runtime.run_exn rt (Effect.sync "die.run_exn" (fun () -> raise exn)) with
+  match Runtime.run_exn rt (Effect.named "die.run_exn" (Effect.sync (fun () -> raise exn))) with
   | _ -> Alcotest.fail "expected exception"
   | exception actual ->
       Alcotest.(check bool) "same exception" true (actual == exn);
@@ -836,10 +837,10 @@ let test_runtime_concurrent_child_die_captures_diagnostics () =
   let left_ready, left_resolver = Eio.Promise.create () in
   let right_ready, right_resolver = Eio.Promise.create () in
   let child name own_ready other_ready =
-    Effect.sync name (fun () ->
+    Effect.named name (Effect.sync (fun () ->
         Eio.Promise.resolve own_ready ();
         Eio.Promise.await other_ready;
-        raise (Failure name))
+        raise (Failure name)))
     |> Effect.annotate ~key:"branch" ~value:name
     |> Effect.named (name ^ ".span")
   in
@@ -856,7 +857,7 @@ let test_runtime_concurrent_child_die_captures_diagnostics () =
           causes
       in
       Alcotest.(check (list string)) "child spans"
-        [ "left.span"; "right.span" ]
+        [ "left"; "right" ]
         (dies
         |> List.map (fun die -> Option.value die.Cause.span_name ~default:"")
         |> List.sort String.compare);
@@ -864,8 +865,8 @@ let test_runtime_concurrent_child_die_captures_diagnostics () =
         (fun die ->
           let expected =
             match die.Cause.span_name with
-            | Some "left.span" -> Some "left"
-            | Some "right.span" -> Some "right"
+            | Some "left" -> Some "left"
+            | Some "right" -> Some "right"
             | _ -> None
           in
           Alcotest.(check (option string)) "branch annotation" expected
@@ -881,12 +882,12 @@ let test_runtime_finalizer_die_captures_diagnostics () =
   let body_exn = Failure "body defect" in
   let release_exn = Failure "release defect" in
   let release () =
-    Effect.sync "release.leaf" (fun () -> raise release_exn)
+    Effect.named "release.leaf" (Effect.sync (fun () -> raise release_exn))
     |> Effect.annotate ~key:"phase" ~value:"release"
     |> Effect.named "release.span"
   in
   let body =
-    Effect.sync "body.leaf" (fun () -> raise body_exn)
+    Effect.named "body.leaf" (Effect.sync (fun () -> raise body_exn))
     |> Effect.named "body.span"
   in
   let eff =
@@ -899,10 +900,10 @@ let test_runtime_finalizer_die_captures_diagnostics () =
       (Cause.Suppressed
         { primary = Cause.Die primary; finalizer = Cause.Die finalizer }) ->
       Alcotest.(check bool) "primary exn" true (primary.exn == body_exn);
-      Alcotest.(check (option string)) "primary span" (Some "body.span")
+      Alcotest.(check (option string)) "primary span" (Some "body.leaf")
         primary.span_name;
       Alcotest.(check bool) "finalizer exn" true (finalizer.exn == release_exn);
-      Alcotest.(check (option string)) "finalizer span" (Some "release.span")
+      Alcotest.(check (option string)) "finalizer span" (Some "release.leaf")
         finalizer.span_name;
       Alcotest.(check (option string)) "finalizer annotation" (Some "release")
         (List.assoc_opt "phase" finalizer.annotations)
@@ -914,8 +915,8 @@ let test_runtime_finalizer_die_captures_diagnostics () =
 let test_effect_catch_does_not_catch_interrupt () =
   with_runtime @@ fun rt ->
   let eff =
-    Effect.sync "interrupt" (fun () ->
-        raise (Eio.Cancel.Cancelled (Failure "cancel")))
+    Effect.named "interrupt" (Effect.sync (fun () ->
+        raise (Eio.Cancel.Cancelled (Failure "cancel"))))
     |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
   in
   match Runtime.run rt eff with
@@ -926,9 +927,9 @@ let test_effect_retry_does_not_retry_interrupt () =
   with_runtime @@ fun rt ->
   let attempts = ref 0 in
   let attempt =
-    Effect.sync "interrupt" (fun () ->
+    Effect.named "interrupt" (Effect.sync (fun () ->
         incr attempts;
-        raise (Eio.Cancel.Cancelled (Failure "cancel")))
+        raise (Eio.Cancel.Cancelled (Failure "cancel"))))
   in
   let eff = Effect.retry (Schedule.recurs 3) (fun (_ : string) -> true) attempt in
   (match Runtime.run rt eff with
@@ -939,7 +940,7 @@ let test_effect_retry_does_not_retry_interrupt () =
 let test_acquire_release () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
-  let mark name = Effect.sync name (fun () -> trail := name :: !trail) in
+  let mark name = Effect.named name (Effect.sync (fun () -> trail := name :: !trail)) in
   let eff =
     Effect.scoped
       (Effect.acquire_release
@@ -954,7 +955,7 @@ let test_acquire_release () =
 let test_acquire_release_on_failure () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
-  let mark name = Effect.sync name (fun () -> trail := name :: !trail) in
+  let mark name = Effect.named name (Effect.sync (fun () -> trail := name :: !trail)) in
   let eff =
     Effect.scoped
       (Effect.acquire_release ~acquire:(mark "acq") ~release:(fun () ->
@@ -1048,6 +1049,55 @@ let test_effect_timeout_nested_cancel_maps_to_outer_timeout () =
         cause
   | Exit.Ok _ -> Alcotest.fail "expected mapped timeout"
 
+type typed_timeout_err = [ `Slow | `Inner | `Outer ]
+
+let test_effect_timeout_as_keeps_exact_error_row () =
+  with_runtime @@ fun rt ->
+  let eff : (string, [ `Slow ]) Effect.t =
+    Effect.pure "ok"
+    |> Effect.timeout_as (Duration.seconds 1) ~on_timeout:`Slow
+  in
+  Alcotest.(check string) "ok" "ok" (run_ok rt eff)
+
+let test_effect_timeout_as_maps_delayed_effect () =
+  with_test_clock @@ fun sw clock rt ->
+  let eff : (string, typed_timeout_err) Effect.t =
+    Effect.pure "done"
+    |> Effect.delay (Duration.seconds 10)
+    |> Effect.timeout_as (Duration.seconds 5) ~on_timeout:`Slow
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Slow) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected typed timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected typed timeout"
+
+let test_effect_timeout_as_nested_cancel_maps_to_outer_timeout () =
+  with_test_clock @@ fun sw clock rt ->
+  let inner : (string, typed_timeout_err) Effect.t =
+    Effect.pure "done"
+    |> Effect.delay (Duration.seconds 10)
+    |> Effect.timeout_as (Duration.seconds 10) ~on_timeout:`Inner
+  in
+  let eff =
+    inner |> Effect.timeout_as (Duration.seconds 5) ~on_timeout:`Outer
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 3;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Outer) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected outer typed timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected outer typed timeout"
+
 let test_effect_race_ignores_early_failure_until_success () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_success ms value =
@@ -1088,9 +1138,9 @@ let test_par_simultaneous_failures_records_concurrent_baseline () =
   let go, release = Eio.Promise.create () in
   let ready = Eio.Stream.create 2 in
   let child name =
-    Effect.sync name (fun () ->
+    Effect.named name (Effect.sync (fun () ->
         Eio.Stream.add ready name;
-        Eio.Promise.await go)
+        Eio.Promise.await go))
     |> Effect.bind (fun () -> Effect.fail name)
   in
   let promise = fork_run sw rt (Effect.par (child "left") (child "right")) in
@@ -1112,16 +1162,16 @@ let test_par_finalizer_failure_during_sibling_cancellation () =
     Effect.scoped
       (Effect.acquire_release
          ~acquire:
-           (Effect.sync "par.slow.acquire" (fun () ->
-                Eio.Promise.resolve acquired_u ()))
+           (Effect.named "par.slow.acquire" (Effect.sync (fun () ->
+                Eio.Promise.resolve acquired_u ())))
          ~release:(fun () ->
            release_started := true;
            Effect.fail "release")
       |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
   in
   let body =
-    Effect.sync "par.body.wait_for_acquire" (fun () ->
-        Eio.Promise.await acquired)
+    Effect.named "par.body.wait_for_acquire" (Effect.sync (fun () ->
+        Eio.Promise.await acquired))
     |> Effect.bind (fun () -> Effect.fail "body")
   in
   let promise = fork_run sw rt (Effect.par body slow) in
@@ -1145,15 +1195,15 @@ let test_all_finalizer_failure_during_sibling_cancellation_baseline () =
     Effect.scoped
       (Effect.acquire_release
          ~acquire:
-           (Effect.sync "slow.acquire" (fun () ->
-                Eio.Promise.resolve acquired_u ()))
+           (Effect.named "slow.acquire" (Effect.sync (fun () ->
+                Eio.Promise.resolve acquired_u ())))
          ~release:(fun () ->
            release_started := true;
            Effect.fail "release")
       |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
   in
   let body =
-    Effect.sync "body.wait_for_acquire" (fun () -> Eio.Promise.await acquired)
+    Effect.named "body.wait_for_acquire" (Effect.sync (fun () -> Eio.Promise.await acquired))
     |> Effect.bind (fun () -> Effect.fail "body")
   in
   let promise = fork_run sw rt (Effect.all [ body; slow ]) in
@@ -1174,11 +1224,11 @@ let test_for_each_par_simultaneous_failures_baseline () =
   let go, release = Eio.Promise.create () in
   let ready = Eio.Stream.create 2 in
   let worker name =
-    Effect.sync ("worker." ^ name) (fun () ->
+    Effect.named ("worker." ^ name) (Effect.sync (fun () ->
         if name <> "ok" then (
           Eio.Stream.add ready name;
           Eio.Promise.await go);
-        name)
+        name))
     |> Effect.bind (fun name ->
            if name = "ok" then Effect.pure name else Effect.fail name)
   in
@@ -1204,16 +1254,16 @@ let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
         Effect.scoped
           (Effect.acquire_release
              ~acquire:
-               (Effect.sync "foreach.slow.acquire" (fun () ->
-                    Eio.Promise.resolve acquired_u ()))
+               (Effect.named "foreach.slow.acquire" (Effect.sync (fun () ->
+                    Eio.Promise.resolve acquired_u ())))
              ~release:(fun () ->
                release_started := true;
                Effect.fail "release")
           |> Effect.bind (fun () ->
                  Effect.delay (Duration.ms 1_000) Effect.unit))
     | "body" ->
-        Effect.sync "foreach.body.wait_for_acquire" (fun () ->
-            Eio.Promise.await acquired)
+        Effect.named "foreach.body.wait_for_acquire" (Effect.sync (fun () ->
+            Eio.Promise.await acquired))
         |> Effect.bind (fun () -> Effect.fail "body")
     | _ -> Effect.unit
   in
@@ -1256,7 +1306,7 @@ let test_par_nested_race_all_failures_baseline () =
 let test_effect_repeat_schedule () =
   with_runtime @@ fun rt ->
   let ticks = ref 0 in
-  let tick = Effect.sync "tick" (fun () -> incr ticks) in
+  let tick = Effect.named "tick" (Effect.sync (fun () -> incr ticks)) in
   run_ok rt (Effect.repeat (Schedule.recurs 3) tick);
   Alcotest.(check int) "initial run plus three repeats" 4 !ticks
 
@@ -1267,7 +1317,7 @@ let test_effect_repeat_schedule_uses_virtual_delays () =
     Schedule.both (Schedule.recurs 3) (Schedule.spaced (Duration.ms 5))
   in
   let promise =
-    fork_run sw rt (Effect.sync "tick" (fun () -> incr ticks) |> Effect.repeat schedule)
+    fork_run sw rt (Effect.named "tick" (Effect.sync (fun () -> incr ticks)) |> Effect.repeat schedule)
   in
   yield ();
   Alcotest.(check int) "initial tick" 1 !ticks;
@@ -1285,9 +1335,9 @@ let test_effect_retry_schedule_until_success () =
   with_runtime @@ fun rt ->
   let attempts = ref 0 in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.named "attempt" (Effect.sync (fun () ->
         incr attempts;
-        !attempts)
+        !attempts))
     |> Effect.bind (fun n ->
            if n < 3 then Effect.fail (`Again n) else Effect.pure n)
   in
@@ -1301,9 +1351,9 @@ let test_effect_retry_schedule_uses_virtual_delays () =
     Schedule.both (Schedule.recurs 5) (Schedule.spaced (Duration.ms 5))
   in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.named "attempt" (Effect.sync (fun () ->
         incr attempts;
-        !attempts)
+        !attempts))
     |> Effect.bind (fun n ->
            if n < 3 then Effect.fail (`Again n) else Effect.pure n)
   in
@@ -1335,9 +1385,9 @@ let test_effect_retry_jittered_schedule_uses_runtime_random () =
     |> Schedule.jittered ~min:1.0 ~max:2.0
   in
   let attempt =
-    Effect.sync "attempt" (fun () ->
+    Effect.named "attempt" (Effect.sync (fun () ->
         incr attempts;
-        !attempts)
+        !attempts))
     |> Effect.bind (fun n ->
            if n < 2 then Effect.fail (`Again n) else Effect.pure n)
   in
@@ -1392,9 +1442,9 @@ let test_supervisor_cancel_runs_finalizer () =
   let finalizer_ran = ref false in
   let child =
     Effect.acquire_release
-      ~acquire:(Effect.sync "supervisor.acquire" (fun () -> ()))
+      ~acquire:(Effect.named "supervisor.acquire" (Effect.sync (fun () -> ())))
       ~release:(fun () ->
-        Effect.sync "supervisor.release" (fun () -> finalizer_ran := true))
+        Effect.named "supervisor.release" (Effect.sync (fun () -> finalizer_ran := true)))
     |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
   in
   let program =
@@ -1407,8 +1457,8 @@ let test_supervisor_cancel_runs_finalizer () =
           in
           let* () =
             lift
-              (Effect.sync "supervisor.wait_for_child" (fun () ->
-                   wait_for_sleepers clock 1))
+              (Effect.named "supervisor.wait_for_child" (Effect.sync (fun () ->
+                   wait_for_sleepers clock 1)))
           in
           let* () = cancel child in
           await child;
@@ -1525,9 +1575,9 @@ let test_effect_uninterruptible_defers_race_cancellation () =
   with_test_clock @@ fun sw clock rt ->
   let slow_completed = ref false in
   let slow =
-    Effect.sync "slow.done" (fun () ->
+    Effect.named "slow.done" (Effect.sync (fun () ->
         slow_completed := true;
-        "slow")
+        "slow"))
     |> Effect.delay (Duration.ms 10)
     |> Effect.uninterruptible
   in
@@ -1545,9 +1595,9 @@ let test_uninterruptible_nested_masks_wait_for_protected_loser () =
   with_test_clock @@ fun sw clock rt ->
   let slow_completed = ref false in
   let slow =
-    Effect.sync "nested.done" (fun () ->
+    Effect.named "nested.done" (Effect.sync (fun () ->
         slow_completed := true;
-        "slow")
+        "slow"))
     |> Effect.delay (Duration.ms 10)
     |> Effect.uninterruptible
     |> Effect.uninterruptible
@@ -1568,7 +1618,7 @@ let test_uninterruptible_blocking_finalizer_delays_race_completion () =
   let protected =
     Effect.scoped
       (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-           Effect.sync "release.done" (fun () -> released := true)
+           Effect.named "release.done" (Effect.sync (fun () -> released := true))
            |> Effect.delay (Duration.ms 1_000))
       |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) Effect.unit))
     |> Effect.map (fun () -> "protected")
@@ -1615,7 +1665,7 @@ let test_uninterruptible_race_loser_without_checkpoints_returns () =
   let domain_mgr = Eio.Stdenv.domain_mgr stdenv in
   let completed = ref false in
   let loser =
-    Effect.sync "cpu.loser" (fun () ->
+    Effect.sync (fun () ->
         let total =
           Eio.Domain_manager.run domain_mgr (fun () ->
               let acc = ref 0 in
@@ -1696,7 +1746,7 @@ let test_scope_finalizers_run_in_parallel () =
   let released = ref 0 in
   let resource =
     Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-        Effect.sync "release" (fun () -> incr released)
+        Effect.named "release" (Effect.sync (fun () -> incr released))
         |> Effect.delay (Duration.seconds 1))
   in
   let promise =
@@ -1711,13 +1761,13 @@ let test_scope_finalizers_run_in_parallel () =
 let test_resource_manual_refresh () =
   with_runtime @@ fun rt ->
   let source = ref 0 in
-  let load = Effect.sync "resource.load" (fun () -> !source) in
+  let load = Effect.named "resource.load" (Effect.sync (fun () -> !source)) in
   let eff =
     Resource.manual load
     |> Effect.bind (fun resource ->
            Resource.get resource
            |> Effect.bind (fun initial ->
-                  Effect.sync "source.set" (fun () -> source := 1)
+                  Effect.named "source.set" (Effect.sync (fun () -> source := 1))
                   |> Effect.bind (fun () -> Resource.refresh resource)
                   |> Effect.bind (fun () -> Resource.get resource)
                   |> Effect.map (fun refreshed -> (initial, refreshed))))
@@ -1729,7 +1779,7 @@ let test_resource_failed_refresh_keeps_cached_value () =
   with_runtime @@ fun rt ->
   let source = ref (Ok 0) in
   let load =
-    Effect.sync "resource.load" (fun () -> !source)
+    Effect.named "resource.load" (Effect.sync (fun () -> !source))
     |> Effect.bind (function
          | Ok value -> Effect.pure value
          | Error message -> Effect.fail (`Refresh_failed message))
@@ -1737,7 +1787,7 @@ let test_resource_failed_refresh_keeps_cached_value () =
   let eff =
     Resource.manual load
     |> Effect.bind (fun resource ->
-           Effect.sync "source.fail" (fun () -> source := Error "Uh oh!")
+           Effect.named "source.fail" (Effect.sync (fun () -> source := Error "Uh oh!"))
            |> Effect.bind (fun () -> Resource.refresh resource)
            |> Effect.catch (fun (`Refresh_failed _ : [ `Refresh_failed of string ]) ->
                   Effect.unit)
@@ -1749,9 +1799,9 @@ let test_resource_auto_refreshes_on_schedule () =
   with_test_clock @@ fun _sw clock rt ->
   let source = ref 0 in
   let load =
-    Effect.sync "resource.auto.load" (fun () ->
+    Effect.named "resource.auto.load" (Effect.sync (fun () ->
         incr source;
-        !source)
+        !source))
   in
   let resource =
     run_ok rt (Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5)) ())
@@ -1770,12 +1820,12 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   with_test_clock @@ fun _sw clock rt ->
   let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
   let load =
-    Effect.sync "resource.auto.load" (fun () ->
+    Effect.named "resource.auto.load" (Effect.sync (fun () ->
         match !results with
         | [] -> Ok 999
         | result :: rest ->
             results := rest;
-            result)
+            result))
     |> Effect.bind (function
          | Ok value -> Effect.pure value
          | Error message -> Effect.fail (`Refresh_failed message))
@@ -1846,8 +1896,8 @@ let law_effects deps : (int, law_err) Effect.t list =
     Effect.pure 3;
     Effect.fail `E0;
     Effect.fail `E1;
-    Effect.sync "law.add" (fun () -> deps.add 1);
-    Effect.sync "law.mul" (fun () -> deps.mul 2);
+    Effect.named "law.add" (Effect.sync (fun () -> deps.add 1));
+    Effect.named "law.mul" (Effect.sync (fun () -> deps.mul 2));
     Effect.pure 2 |> Effect.map (fun n -> n + 4);
     Effect.pure 3 |> Effect.bind (fun n -> Effect.pure (n * 3));
     Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure 7);
@@ -1858,7 +1908,7 @@ let law_functions deps : (string * (int -> (int, law_err) Effect.t)) list =
     ("inc", fun x -> Effect.pure (x + 1));
     ( "fail-negative",
       fun x -> if x < 0 then Effect.fail `Neg else Effect.pure (x * 2) );
-    ("deps-add", fun x -> Effect.sync "law.f.add" (fun () -> deps.add x));
+    ("deps-add", fun x -> Effect.named "law.f.add" (Effect.sync (fun () -> deps.add x)));
     ("mapped", fun x -> Effect.pure x |> Effect.map (fun n -> n + 3));
     ( "catch-local",
       fun x -> Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure (x + 5)) );
@@ -1978,9 +2028,9 @@ let test_properties_retry_and_repeat_laws () =
     (fun i schedule ->
       let attempts = ref 0 in
       let attempt =
-        Effect.sync "retry.always-succeed" (fun () ->
+        Effect.named "retry.always-succeed" (Effect.sync (fun () ->
             incr attempts;
-            i)
+            i))
       in
       Alcotest.(check int)
         (Printf.sprintf "retry success result %d" i)
@@ -1995,7 +2045,7 @@ let test_properties_retry_and_repeat_laws () =
       let ticks = ref 0 in
       run_ok rt
         (Effect.repeat (Schedule.recurs n)
-           (Effect.sync "repeat.tick" (fun () -> incr ticks)));
+           (Effect.named "repeat.tick" (Effect.sync (fun () -> incr ticks))));
       Alcotest.(check int)
         (Printf.sprintf "repeat recurs %d runs initial+n" n)
         (n + 1) !ticks)
@@ -2007,10 +2057,10 @@ let test_properties_scope_finalizers_once () =
     let releases = ref [] in
     let resource name =
       Effect.acquire_release
-        ~acquire:(Effect.sync ("acquire." ^ name) (fun () -> ()))
+        ~acquire:(Effect.named ("acquire." ^ name) (Effect.sync (fun () -> ())))
         ~release:(fun () ->
-          Effect.sync ("release." ^ name) (fun () ->
-              releases := name :: !releases))
+          Effect.named ("release." ^ name) (Effect.sync (fun () ->
+              releases := name :: !releases)))
     in
     ignore
       (Runtime.run rt
@@ -2027,10 +2077,10 @@ let test_properties_scope_finalizers_once () =
   let acquired, acquired_u = Eio.Promise.create () in
   let resource =
     Effect.acquire_release
-      ~acquire:(Effect.sync "acquire.cancelled" (fun () ->
-          Eio.Promise.resolve acquired_u ()))
+      ~acquire:(Effect.named "acquire.cancelled" (Effect.sync (fun () ->
+          Eio.Promise.resolve acquired_u ())))
       ~release:(fun () ->
-        Effect.sync "release.cancelled" (fun () -> incr releases))
+        Effect.named "release.cancelled" (Effect.sync (fun () -> incr releases)))
   in
   let slow =
     Effect.scoped
@@ -2039,7 +2089,7 @@ let test_properties_scope_finalizers_once () =
              Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))
   in
   let fast =
-    Effect.sync "wait-acquired" (fun () -> Eio.Promise.await acquired)
+    Effect.named "wait-acquired" (Effect.sync (fun () -> Eio.Promise.await acquired))
     |> Effect.map (fun () -> "fast")
   in
   let promise = fork_run sw rt (Effect.race [ slow; fast ]) in
@@ -2069,9 +2119,9 @@ let test_explicit_dependency_passing () =
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
-  let b msg = Effect.sync "log" (fun () -> services#info msg) in
+  let b msg = Effect.named "log" (Effect.sync (fun () -> services#info msg)) in
   let c id =
-    Effect.sync "db" (fun () -> services#query (string_of_int (deps.add id)))
+    Effect.named "db" (Effect.sync (fun () -> services#query (string_of_int (deps.add id))))
   in
   let a id =
     let open Effect in
@@ -2100,10 +2150,10 @@ let test_par_fail_fast_cancels_sibling () =
   with_runtime @@ fun rt ->
   let other_done = ref false in
   let slow_other =
-    Effect.sync "slow" (fun () ->
+    Effect.named "slow" (Effect.sync (fun () ->
         Eio.Fiber.yield ();
         other_done := true;
-        99)
+        99))
   in
   let cause =
     match Runtime.run rt (Effect.par (Effect.fail "boom") slow_other) with
@@ -2147,7 +2197,7 @@ let test_all_settled_runs_all_children () =
   with_test_clock @@ fun sw clock rt ->
   let slow_done = ref 0 in
   let slow name =
-    Effect.sync name (fun () -> incr slow_done)
+    Effect.named name (Effect.sync (fun () -> incr slow_done))
     |> Effect.delay (Duration.ms 50)
   in
   let promise =
@@ -2167,7 +2217,7 @@ let test_all_settled_timeout_scoped_resource_is_typed () =
     Effect.scoped
       (Effect.acquire_release ~acquire:(Effect.pure ())
          ~release:(fun () ->
-           Effect.sync "release" (fun () -> incr released))
+           Effect.named "release" (Effect.sync (fun () -> incr released)))
       |> Effect.bind (fun () ->
              Effect.delay (Duration.seconds 10) Effect.unit))
     |> Effect.timeout (Duration.seconds 5)
@@ -2218,14 +2268,14 @@ let test_for_each_par_bounded_caps_concurrency () =
   let active = ref 0 in
   let max_seen = ref 0 in
   let worker x =
-    Effect.sync "enter" (fun () ->
+    Effect.named "enter" (Effect.sync (fun () ->
         incr active;
-        max_seen := max !max_seen !active)
+        max_seen := max !max_seen !active))
     |> Effect.bind (fun () ->
            Effect.pure x
            |> Effect.delay (Duration.ms 10)
            |> Effect.tap (fun _ ->
-                  Effect.sync "leave" (fun () -> decr active)))
+                  Effect.named "leave" (Effect.sync (fun () -> decr active))))
   in
   let promise =
     fork_run sw rt (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3; 4; 5 ] worker)
@@ -2244,11 +2294,11 @@ let test_for_each_par_bounded_max_one_is_sequential () =
   let active = ref 0 in
   let max_seen = ref 0 in
   let worker x =
-    Effect.sync "worker" (fun () ->
+    Effect.named "worker" (Effect.sync (fun () ->
         incr active;
         max_seen := max !max_seen !active;
         decr active;
-        x)
+        x))
   in
   Alcotest.(check (list int)) "results" [ 1; 2; 3 ]
     (run_ok rt (Effect.for_each_par_bounded ~max:1 [ 1; 2; 3 ] worker));
@@ -2260,7 +2310,7 @@ let test_for_each_par_bounded_fail_fast () =
   let worker = function
     | 1 -> Effect.fail "boom"
     | _ ->
-        Effect.sync "slow" (fun () -> slow_done := true)
+        Effect.named "slow" (Effect.sync (fun () -> slow_done := true))
         |> Effect.delay (Duration.ms 10)
   in
   let promise =
@@ -2522,6 +2572,154 @@ let wait_until ?(attempts = 200) pred =
       loop (n - 1))
   in
   loop attempts
+
+let test_channel_try_send_try_recv () =
+  with_runtime @@ fun rt ->
+  let ch = Channel.create ~capacity:1 () in
+  (match run_ok rt (Channel.try_recv ch) with
+  | `Empty -> ()
+  | _ -> Alcotest.fail "expected empty");
+  (match run_ok rt (Channel.try_send ch 1) with
+  | `Sent -> ()
+  | _ -> Alcotest.fail "expected sent");
+  (match run_ok rt (Channel.try_send ch 2) with
+  | `Full -> ()
+  | _ -> Alcotest.fail "expected full");
+  (match run_ok rt (Channel.try_recv ch) with
+  | `Item 1 -> ()
+  | _ -> Alcotest.fail "expected item");
+  let stats = Channel.stats ch in
+  Alcotest.(check int) "sent" 1 stats.Channel.sent;
+  Alcotest.(check int) "received" 1 stats.Channel.received
+
+let test_channel_blocking_send_backpressure () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch 1);
+  let sender = fork_run sw rt (Channel.send ch 2) in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+  Alcotest.(check int) "depth while blocked" 1 (Channel.stats ch).depth;
+  Alcotest.(check int) "first recv" 1 (run_ok rt (Channel.recv ch));
+  check_exit_ok Alcotest.unit "sender completed" () (Eio.Promise.await sender);
+  Alcotest.(check int) "second recv" 2 (run_ok rt (Channel.recv ch))
+
+let test_channel_blocked_sender_is_not_passed_by_later_sender () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch 1);
+  let first_sender = fork_run sw rt (Channel.send ch 2) in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+  Alcotest.(check int) "initial value" 1 (run_ok rt (Channel.recv ch));
+  check_exit_ok Alcotest.unit "first sender admitted" ()
+    (Eio.Promise.await first_sender);
+  let later_sender = fork_run sw rt (Channel.send ch 3) in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+  Alcotest.(check int) "blocked sender value" 2 (run_ok rt (Channel.recv ch));
+  check_exit_ok Alcotest.unit "later sender admitted" ()
+    (Eio.Promise.await later_sender);
+  Alcotest.(check int) "later value" 3 (run_ok rt (Channel.recv ch))
+
+let test_channel_blocking_recv () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  let receiver = fork_run sw rt (Channel.recv ch) in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
+  run_ok rt (Channel.send ch 7);
+  check_exit_ok Alcotest.int "received" 7 (Eio.Promise.await receiver)
+
+let test_channel_close_wakes_blocked_senders_and_receivers () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sender_ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send sender_ch 1);
+  let sender = fork_run sw rt (Channel.send sender_ch 2) in
+  wait_until (fun () -> (Channel.stats sender_ch).Channel.waiting_senders = 1);
+  Channel.close sender_ch;
+  (match Eio.Promise.await sender with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | _ -> Alcotest.fail "expected blocked sender closed");
+  let receiver_ch = Channel.create ~capacity:1 () in
+  let receiver = fork_run sw rt (Channel.recv receiver_ch) in
+  wait_until (fun () -> (Channel.stats receiver_ch).Channel.waiting_receivers = 1);
+  Channel.close receiver_ch;
+  match Eio.Promise.await receiver with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | _ -> Alcotest.fail "expected blocked receiver closed"
+
+let test_channel_cancel_blocked_send_cleans_waiter () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch 1);
+  let cancel_ctx = ref None in
+  let sender =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt (Channel.send ch 2))
+  in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  (match Eio.Promise.await_exn sender with
+  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
+  | Exit.Error _ -> ());
+  let stats = Channel.stats ch in
+  Alcotest.(check int) "waiting senders" 0 stats.Channel.waiting_senders;
+  Alcotest.(check int) "cancelled senders" 1 stats.Channel.cancelled_senders;
+  Alcotest.(check int) "depth unchanged" 1 stats.Channel.depth;
+  Alcotest.(check int) "original value" 1 (run_ok rt (Channel.recv ch));
+  match run_ok rt (Channel.try_recv ch) with
+  | `Empty -> ()
+  | _ -> Alcotest.fail "cancelled sender enqueued a value"
+
+let test_channel_cancel_blocked_recv_cleans_waiter () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  let cancel_ctx = ref None in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt (Channel.recv ch))
+  in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  (match Eio.Promise.await_exn receiver with
+  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
+  | Exit.Error _ -> ());
+  Alcotest.(check int)
+    "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers
+
+let test_channel_parent_switch_teardown_does_not_hang () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch 1);
+  let outcome =
+    try
+      Eio.Switch.run @@ fun child_sw ->
+      ignore
+        (Eio.Fiber.fork_promise ~sw:child_sw (fun () ->
+             Runtime.run rt (Channel.send ch 2)));
+      wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+      Eio.Switch.fail child_sw Exit;
+      `Returned
+    with Exit -> `Cancelled
+  in
+  (match outcome with `Returned | `Cancelled -> ());
+  Alcotest.(check int)
+    "waiting senders" 0 (Channel.stats ch).Channel.waiting_senders
 
 let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)
 
@@ -2969,6 +3167,12 @@ let () =
             test_effect_timeout_allows_fast_success;
           Alcotest.test_case "nested timeout maps outer timeout" `Quick
             test_effect_timeout_nested_cancel_maps_to_outer_timeout;
+          Alcotest.test_case "timeout_as exact error row" `Quick
+            test_effect_timeout_as_keeps_exact_error_row;
+          Alcotest.test_case "timeout_as maps delayed effect" `Quick
+            test_effect_timeout_as_maps_delayed_effect;
+          Alcotest.test_case "timeout_as nested maps outer timeout" `Quick
+            test_effect_timeout_as_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick
@@ -3121,6 +3325,23 @@ let () =
         [
           Alcotest.test_case "backpressure and close" `Quick
             test_portable_queue_backpressure_and_close;
+        ] );
+      ( "Channel",
+        [
+          Alcotest.test_case "try send recv" `Quick test_channel_try_send_try_recv;
+          Alcotest.test_case "blocking send backpressure" `Quick
+            test_channel_blocking_send_backpressure;
+          Alcotest.test_case "blocked sender not passed" `Quick
+            test_channel_blocked_sender_is_not_passed_by_later_sender;
+          Alcotest.test_case "blocking recv" `Quick test_channel_blocking_recv;
+          Alcotest.test_case "close wakes blocked users" `Quick
+            test_channel_close_wakes_blocked_senders_and_receivers;
+          Alcotest.test_case "cancel blocked send" `Quick
+            test_channel_cancel_blocked_send_cleans_waiter;
+          Alcotest.test_case "cancel blocked recv" `Quick
+            test_channel_cancel_blocked_recv_cleans_waiter;
+          Alcotest.test_case "parent switch teardown" `Quick
+            test_channel_parent_switch_teardown_does_not_hang;
         ] );
       ( "Properties",
         [

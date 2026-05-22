@@ -18,17 +18,17 @@ let lines audit = List.rev audit.lines
 
 let scoped_db label =
   Effect.acquire_release
-    ~acquire:(Effect.sync "db.open" (fun _ -> make_db label))
-    ~release:(fun db -> Effect.sync "db.close" (fun _ -> close_db db))
+    ~acquire:(Effect.named "db.open" (Effect.sync (fun _ -> make_db label)))
+    ~release:(fun db -> Effect.named "db.close" (Effect.sync (fun _ -> close_db db)))
 
 let query_from_env sql : (< db : db; .. >, 'err, string) Effect.t =
-  Effect.sync "db.query" (fun env -> query env#db sql)
+  Effect.named "db.query" (Effect.sync (fun env -> query env#db sql))
 
 let audit_from_env line : (< audit : audit; .. >, 'err, unit) Effect.t =
-  Effect.sync "audit.record" (fun env -> record env#audit line)
+  Effect.named "audit.record" (Effect.sync (fun env -> record env#audit line))
 
 let secret_from_env () : (< secret : secret; .. >, 'err, string) Effect.t =
-  Effect.sync "secret.read" (fun env -> env#secret.token)
+  Effect.named "secret.read" (Effect.sync (fun env -> env#secret.token))
 
 let run eff env =
   Eio_main.run @@ fun stdenv ->

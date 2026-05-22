@@ -22,7 +22,7 @@ let manual load =
   load |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
 
 let failures resource =
-  Effect.sync "resource.failures" (fun () -> List.rev !(resource.failures))
+  Effect.named "resource.failures" (Effect.sync (fun () -> List.rev !(resource.failures)))
 
 let auto ?on_error ~load ?random ~schedule () =
   let rec refresh_loop resource step =
@@ -32,9 +32,9 @@ let auto ?on_error ~load ?random ~schedule () =
         let refresh_once =
           refresh resource
           |> Effect.catch (fun err ->
-                 Effect.sync "resource.auto.refresh_failed" (fun () ->
+                 Effect.named "resource.auto.refresh_failed" (Effect.sync (fun () ->
                      resource.failures := Cause.Fail err :: !(resource.failures);
-                     Option.iter (fun f -> f err) on_error))
+                     Option.iter (fun f -> f err) on_error)))
         in
         refresh_once
         |> Effect.delay delay

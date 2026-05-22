@@ -17,13 +17,13 @@ end
 
 let db_layer () : (< clock : clock; .. >, string, db) Layer.t =
   Layer.scoped
-    ~acquire:(Effect.sync "db.clock" (fun env -> env#clock) |> Effect.bind open_db)
+    ~acquire:(Effect.named "db.clock" (Effect.sync (fun env -> env#clock)) |> Effect.bind open_db)
     ~release:close_db
 
 let http_layer () : (< clock : clock; log : log; .. >, string, http) Layer.t =
   Layer.scoped
     ~acquire:
-      (Effect.sync "http.deps" (fun env -> (env#clock, env#log))
+      (Effect.named "http.deps" (Effect.sync (fun env -> (env#clock, env#log)))
       |> Effect.bind (fun (clock, log) -> open_http clock log))
     ~release:stop_http
 
@@ -38,7 +38,7 @@ let app_layer ()
       end)
 
 let app_program services =
-  Effect.sync "app" (fun _ -> (app_result services#db services#http, services#db, services#http))
+  Effect.named "app" (Effect.sync (fun _ -> (app_result services#db services#http, services#db, services#http)))
 
 let run () =
   let clock = make_clock () in

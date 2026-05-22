@@ -88,10 +88,13 @@ let expand_sync_like ~ctxt ~kind expr =
           caps body
       in
       let leaf =
-        pexp_apply ~loc (eta_effect_ident ~loc kind)
+        pexp_apply ~loc (eta_effect_ident ~loc "named")
           [
             (Nolabel, estring ~loc name);
-            (Nolabel, pexp_fun ~loc Nolabel None (punit ~loc) body);
+            ( Nolabel,
+              pexp_apply ~loc (eta_effect_ident ~loc kind)
+                [ (Nolabel, pexp_fun ~loc Nolabel None (punit ~loc) body) ]
+            );
           ]
       in
       expand_fn ~ctxt leaf

@@ -615,8 +615,8 @@ let decode_config_with_policy json =
       (fun allowed ->
         if allowed then Effect.pure config
         else Effect.fail (`Decode [ issue "feature policy rejected config" ]))
-      (Effect.sync "feature_policy" (fun env ->
-           List.for_all (fun feature -> env#feature_allowed (Brand.value feature.key)) config.features))
+      (Effect.named "feature_policy" (Effect.sync (fun env ->
+           List.for_all (fun feature -> env#feature_allowed (Brand.value feature.key)) config.features)))
   in
   Schema.decode_with_policy config policy json
 

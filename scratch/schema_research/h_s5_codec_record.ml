@@ -110,7 +110,7 @@ let person_with_policy () =
               (fun ok ->
                 if ok then Effect.pure person
                 else Effect.fail (`Decode [ issue "age rejected by policy" ]))
-              (Effect.sync "age_policy" (fun env -> env#age_policy person.age)))
+              (Effect.named "age_policy" (Effect.sync (fun env -> env#age_policy person.age))))
           (Codec.decode (person ()) json));
   }
 

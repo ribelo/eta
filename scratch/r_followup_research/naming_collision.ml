@@ -1,10 +1,10 @@
 open Effet
 
 let user_by_generic_query =
-  Effect.sync "user.generic_query" (fun env -> env#query "current-user")
+  Effect.named "user.generic_query" (Effect.sync (fun env -> env#query "current-user"))
 
 let order_by_generic_query =
-  Effect.sync "order.generic_query" (fun env -> env#query "current-order")
+  Effect.named "order.generic_query" (Effect.sync (fun env -> env#query "current-order"))
 
 let generic_composed =
   Effect.bind
@@ -13,10 +13,10 @@ let generic_composed =
     user_by_generic_query
 
 let user_by_namespaced_query =
-  Effect.sync "user.namespaced_query" (fun env -> env#user_query "current")
+  Effect.named "user.namespaced_query" (Effect.sync (fun env -> env#user_query "current"))
 
 let order_by_namespaced_query =
-  Effect.sync "order.namespaced_query" (fun env -> env#order_query "current")
+  Effect.named "order.namespaced_query" (Effect.sync (fun env -> env#order_query "current"))
 
 let namespaced_composed =
   Effect.bind

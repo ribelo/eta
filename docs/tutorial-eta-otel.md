@@ -52,7 +52,7 @@ Eta environment.
 
 ```ocaml
 let load_user db user_id =
-  Effect.sync "db.load_user" (fun () -> Db.load_user db user_id)
+  Effect.named "db.load_user" (Effect.sync (fun () -> Db.load_user db user_id))
 
 let request db user_id =
   Effect.named "load-user" (load_user db user_id)
@@ -93,7 +93,7 @@ when the exporter starts.
 ```ocaml
 Resource.manual
   (Effect.named "eta_otel.config"
-     (Effect.sync "eta_otel.config.load" (fun () -> config)))
+     (Effect.named "eta_otel.config.load" (Effect.sync (fun () -> config))))
 ```
 
 The daemon reads that resource before consuming signal streams. There is no

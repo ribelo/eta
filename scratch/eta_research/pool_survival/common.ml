@@ -102,7 +102,7 @@ let factory_stats (factory : factory) =
   }
 
 let open_connection (factory : factory) =
-  Effect.sync "fake_connection.open" (fun () ->
+  Effect.named "fake_connection.open" (Effect.sync (fun () ->
       let id = atomic_incr factory.next_id in
       ignore (atomic_incr factory.opened : int);
       let live = atomic_incr factory.live in
@@ -113,22 +113,22 @@ let open_connection (factory : factory) =
         closed = Atomic.make false;
         unhealthy = Atomic.make (id = 3);
         uses = Atomic.make 0;
-      })
+      }))
 
 let close_connection (factory : factory) (conn : connection) =
-  Effect.sync "fake_connection.close" (fun () ->
+  Effect.named "fake_connection.close" (Effect.sync (fun () ->
       if Atomic.compare_and_set conn.closed false true then (
         ignore (atomic_incr factory.closed : int);
-        ignore (atomic_decr factory.live : int)))
+        ignore (atomic_decr factory.live : int))))
 
 let health_check (conn : connection) =
   (not (Atomic.get conn.closed)) && not (Atomic.get conn.unhealthy)
 
 let use_connection (conn : connection) =
-  Effect.sync "fake_connection.use" (fun () ->
+  Effect.named "fake_connection.use" (Effect.sync (fun () ->
       if Atomic.get conn.closed then
         failwith (Printf.sprintf "connection %d used after close" conn.id);
-      ignore (atomic_incr conn.uses : int))
+      ignore (atomic_incr conn.uses : int)))
 
 let duration_expired ~now duration started_at =
   now - started_at >= Duration.to_ms duration

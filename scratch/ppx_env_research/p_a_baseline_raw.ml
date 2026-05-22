@@ -2,14 +2,14 @@ open Effet
 open Services
 
 let current_user () =
-  Effect.sync "auth.current_user" (fun env ->
-    Auth.current_user env#auth)
+  Effect.named "auth.current_user" (Effect.sync (fun env ->
+    Auth.current_user env#auth))
 
 let current_user_logged () =
-  Effect.sync "auth.current_user_logged" (fun env ->
+  Effect.named "auth.current_user_logged" (Effect.sync (fun env ->
     let user = Auth.current_user env#auth in
     Log.info env#log ("user=" ^ user);
-    user)
+    user))
 
 let env ~auth ~log =
   object

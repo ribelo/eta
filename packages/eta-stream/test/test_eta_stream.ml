@@ -178,7 +178,7 @@ let test_from_file_downstream_failure_closes () =
 let delayed_counted_source produced =
   Stream.from_iterable (List.init 1_000 (fun i -> i))
   |> Stream.map_effect (fun value ->
-         Effect.sync "stream.produced" (fun () -> incr produced)
+         Effect.named "stream.produced" (Effect.sync (fun () -> incr produced))
          |> Effect.bind (fun () ->
                 Effect.delay (Duration.ms 5) (Effect.pure value)))
 
@@ -237,11 +237,11 @@ end
 let row_pipeline clock db () =
   let clock_stream =
     Stream.from_effect
-      (Effect.sync "clock" (fun () ->
+      (Effect.named "clock" (Effect.sync (fun () ->
            clock#sleep (Duration.ms 0);
-           1))
+           1)))
   in
-  let db_stream = Stream.from_effect (Effect.sync "db" (fun () -> db#get)) in
+  let db_stream = Stream.from_effect (Effect.named "db" (Effect.sync (fun () -> db#get))) in
   Stream.merge clock_stream db_stream
   |> Stream.flat_map_par ~max_concurrency:2 (fun value ->
          Stream.from_effect
@@ -322,8 +322,8 @@ let test_drain_counter_await_zero () =
   Drain_counter.incr_by counter 2;
   let release =
     Effect.delay (Duration.ms 1)
-      (Effect.sync "drain_counter.release" (fun () ->
-           Drain_counter.decr_by counter 2))
+      (Effect.named "drain_counter.release" (Effect.sync (fun () ->
+           Drain_counter.decr_by counter 2)))
   in
   let wait = Drain_counter.await_zero counter in
   Runtime.run rt

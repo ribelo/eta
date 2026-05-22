@@ -4,7 +4,7 @@ open Services
 module Env_row = struct
   module V1 = struct
     let leaf () =
-      Effect.sync "env.v1.leaf" (fun env -> env#clock.now)
+      Effect.named "env.v1.leaf" (Effect.sync (fun env -> env#clock.now))
 
     let m1 () = leaf ()
     let m2 () = m1 ()
@@ -14,9 +14,9 @@ module Env_row = struct
 
   module V2 = struct
     let leaf () =
-      Effect.sync "env.v2.leaf" (fun env ->
+      Effect.named "env.v2.leaf" (Effect.sync (fun env ->
         record_metric env#metrics;
-        env#clock.now)
+        env#clock.now))
 
     let m1 () = leaf ()
     let m2 () = m1 ()
@@ -27,7 +27,7 @@ end
 
 module Args = struct
   module V1 = struct
-    let leaf ~clock = Effect.sync "args.v1.leaf" (fun _env -> clock.now)
+    let leaf ~clock = Effect.named "args.v1.leaf" (Effect.sync (fun _env -> clock.now))
     let m1 ~clock = leaf ~clock
     let m2 ~clock = m1 ~clock
     let m3 ~clock = m2 ~clock
@@ -36,9 +36,9 @@ module Args = struct
 
   module V2 = struct
     let leaf ~clock ~metrics =
-      Effect.sync "args.v2.leaf" (fun _env ->
+      Effect.named "args.v2.leaf" (Effect.sync (fun _env ->
         record_metric metrics;
-        clock.now)
+        clock.now))
 
     let m1 ~clock ~metrics = leaf ~clock ~metrics
     let m2 ~clock ~metrics = m1 ~clock ~metrics
@@ -59,7 +59,7 @@ module Bag = struct
 
   module V1 = struct
     let leaf (services : #services_v1) =
-      Effect.sync "bag.v1.leaf" (fun _env -> services#clock.now)
+      Effect.named "bag.v1.leaf" (Effect.sync (fun _env -> services#clock.now))
 
     let m1 services = leaf services
     let m2 services = m1 services
@@ -69,9 +69,9 @@ module Bag = struct
 
   module V2 = struct
     let leaf (services : #services_v2) =
-      Effect.sync "bag.v2.leaf" (fun _env ->
+      Effect.named "bag.v2.leaf" (Effect.sync (fun _env ->
         record_metric services#metrics;
-        services#clock.now)
+        services#clock.now))
 
     let m1 services = leaf services
     let m2 services = m1 services

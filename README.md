@@ -99,14 +99,14 @@ graphs, or add runtime semantics.
 ```ocaml
 let load_user id =
   [%eta.fn
-    (Effect.sync "db.query" (fun () -> Db.user id))]
+    (Effect.named "db.query" (Effect.sync (fun () -> Db.user id)))]
 ```
 
 It expands to:
 
 ```ocaml
 Effect.fn __POS__ __FUNCTION__
-  (Effect.sync "db.query" (fun () -> Db.user id))
+  (Effect.named "db.query" (Effect.sync (fun () -> Db.user id)))
 ```
 
 Leaf effects can bind an explicit capture list so the body cannot read an
@@ -118,7 +118,7 @@ let current_user auth =
     (Auth.current_user auth)]
 ```
 
-This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.sync ...)`, with a
+This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named ... (Effect.sync ...))`, with a
 zero-argument callback and a local typed `auth` binding.
 
 Use it by adding `ppx_eta` to your test or executable preprocessors:
@@ -139,9 +139,9 @@ conversion.
 
 ```ocaml
 let with_db k =
-  let acquire = Effect.sync "db.open" (fun () -> Db.open_) in
+  let acquire = Effect.named "db.open" (Effect.sync (fun () -> Db.open_)) in
   let release handle =
-    Effect.sync "db.close" (fun () -> Db.close handle)
+    Effect.named "db.close" (Effect.sync (fun () -> Db.close handle))
   in
   Effect.scoped
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)

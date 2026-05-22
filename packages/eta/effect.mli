@@ -50,9 +50,9 @@ val pure : 'a -> ('a, 'err) t
 val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
 
-val sync : string -> (unit -> 'a) -> ('a, 'err) t
-(** Same-domain lazy work. The callback runs in the interpreting Eio domain and
-    may capture ordinary OCaml/Eio values. *)
+val sync : (unit -> 'a) -> ('a, 'err) t
+(** [sync f] lifts an OCaml function into an effect. Use {!Effect.named} to
+    attach a span name for tracing. *)
 
 val island :
   ('input : immutable_data) ('output : immutable_data).
@@ -333,6 +333,10 @@ val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
 
 val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
 val timeout : Duration.t -> ('a, [> `Timeout ] as 'err) t -> ('a, 'err) t
+val timeout_as :
+  Duration.t -> on_timeout:'err -> ('a, 'err) t -> ('a, 'err) t
+(** Like {!timeout}, but fails with [on_timeout] instead of widening the error
+    row with raw Timeout. *)
 val repeat : Schedule.t -> (unit, 'err) t -> (unit, 'err) t
 
 val acquire_release :
@@ -385,6 +389,7 @@ val named :
   string ->
   ('a, 'err) t ->
   ('a, 'err) t
+(** [named name body] attaches a span name for tracing around [body]. *)
 val named_kind :
   ?error_renderer:('err -> string) ->
   kind:Capabilities.span_kind ->
@@ -464,7 +469,7 @@ module Private : sig
   type ('a, 'err) view =
     | Pure : 'a -> ('a, _) view
     | Fail : 'err -> (_, 'err) view
-    | Sync : string * (unit -> 'a) -> ('a, _) view
+    | Sync : (unit -> 'a) -> ('a, _) view
     | Island :
         ('input : immutable_data) ('output : immutable_data) 'err.
         {
@@ -521,6 +526,7 @@ module Private : sig
     | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) view
     | Timeout :
         Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) view
+    | Timeout_as : Duration.t * 'err * ('a, 'err) t -> ('a, 'err) view
     | Concat : (unit, 'err) t list -> (unit, 'err) view
     | Race : ('a, 'err) t list -> ('a, 'err) view
     | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) view

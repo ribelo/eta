@@ -31,4 +31,4 @@ end
 
 let bad_capture pool =
   Pool.with_connection pool (fun borrow ->
-      Effect.sync "captures-local-borrow" (fun () -> Pool.id borrow))
+      Effect.named "captures-local-borrow" (Effect.sync (fun () -> Pool.id borrow)))

@@ -124,18 +124,18 @@ let reserve t =
 let wait_for_retry t =
   let completed = ref false in
   let register =
-    Effect.sync "internal_pool.wait_register" (fun () ->
+    Effect.named "internal_pool.wait_register" (Effect.sync (fun () ->
         with_lock t @@ fun () ->
         t.waiting <- t.waiting + 1;
-        emit t "wait_register")
+        emit t "wait_register"))
   in
   let unregister () =
-    Effect.sync "internal_pool.wait_unregister" (fun () ->
+    Effect.named "internal_pool.wait_unregister" (Effect.sync (fun () ->
         with_lock t @@ fun () ->
         t.waiting <- max 0 (t.waiting - 1);
         if not !completed then (
           t.cancelled_waiters <- t.cancelled_waiters + 1;
-          emit t "wait_cancelled"))
+          emit t "wait_cancelled")))
   in
   Effect.scoped
     (Effect.acquire_release ~acquire:register ~release:unregister
@@ -145,17 +145,17 @@ let wait_for_retry t =
 
 let close_reserved t conn =
   let update =
-    Effect.sync "internal_pool.close_reserved" (fun () ->
+    Effect.named "internal_pool.close_reserved" (Effect.sync (fun () ->
         with_lock t @@ fun () ->
         t.in_use <- max 0 (t.in_use - 1);
         t.total <- max 0 (t.total - 1);
         t.closed_by_pool <- t.closed_by_pool + 1;
-        Eio.Condition.broadcast t.condition)
+        Eio.Condition.broadcast t.condition))
   in
   update |> Effect.bind (fun () -> close_connection t.factory conn)
 
 let rec acquire_entry t =
-  Effect.sync "internal_pool.reserve" (fun () -> reserve t)
+  Effect.named "internal_pool.reserve" (Effect.sync (fun () -> reserve t))
   |> Effect.bind (function
        | `Shutdown -> Effect.fail `Pool_shutdown
        | `Wait -> wait_for_retry t |> Effect.bind (fun () -> acquire_entry t)
@@ -164,20 +164,20 @@ let rec acquire_entry t =
        | `Use entry ->
            if health_check entry.conn then Effect.pure entry
            else
-             Effect.sync "internal_pool.health_reject_reused" (fun () ->
+             Effect.named "internal_pool.health_reject_reused" (Effect.sync (fun () ->
                  with_lock t @@ fun () ->
-                 t.health_rejected <- t.health_rejected + 1)
+                 t.health_rejected <- t.health_rejected + 1))
              |> Effect.bind (fun () ->
                     close_reserved t entry.conn
                     |> Effect.bind (fun () -> acquire_entry t))
        | `Open_new ->
            open_connection t.factory
            |> Effect.catch (fun err ->
-                  Effect.sync "internal_pool.open_failed" (fun () ->
+                  Effect.named "internal_pool.open_failed" (Effect.sync (fun () ->
                       with_lock t @@ fun () ->
                       t.in_use <- max 0 (t.in_use - 1);
                       t.total <- max 0 (t.total - 1);
-                      Eio.Condition.broadcast t.condition)
+                      Eio.Condition.broadcast t.condition))
                   |> Effect.bind (fun () -> Effect.fail err))
            |> Effect.bind (fun conn ->
                   let entry =
@@ -188,19 +188,19 @@ let rec acquire_entry t =
                     }
                   in
                   if health_check conn then
-                    Effect.sync "internal_pool.acquired_new" (fun () ->
-                        with_lock t @@ fun () -> t.acquired <- t.acquired + 1)
+                    Effect.named "internal_pool.acquired_new" (Effect.sync (fun () ->
+                        with_lock t @@ fun () -> t.acquired <- t.acquired + 1))
                     |> Effect.map (fun () -> entry)
                   else
-                    Effect.sync "internal_pool.health_reject_new" (fun () ->
+                    Effect.named "internal_pool.health_reject_new" (Effect.sync (fun () ->
                         with_lock t @@ fun () ->
-                        t.health_rejected <- t.health_rejected + 1)
+                        t.health_rejected <- t.health_rejected + 1))
                     |> Effect.bind (fun () ->
                            close_reserved t conn
                            |> Effect.bind (fun () -> acquire_entry t))))
 
 let release_entry t entry =
-  Effect.sync "internal_pool.release_slot" (fun () ->
+  Effect.named "internal_pool.release_slot" (Effect.sync (fun () ->
       let now = now_ms () in
       with_lock t @@ fun () ->
       t.in_use <- max 0 (t.in_use - 1);
@@ -223,7 +223,7 @@ let release_entry t entry =
         t.idle <- entry :: t.idle;
         emit t ("idle:" ^ string_of_int entry.conn.id);
         Eio.Condition.broadcast t.condition;
-        `Keep))
+        `Keep)))
   |> Effect.bind (function
        | `Keep -> Effect.unit
        | `Close conn -> close_connection t.factory conn)
@@ -235,13 +235,13 @@ let with_connection t body =
 
 let rec eviction_loop t =
   Effect.delay (Duration.ms 1)
-    (Effect.sync "internal_pool.evict_idle" (fun () ->
+    (Effect.named "internal_pool.evict_idle" (Effect.sync (fun () ->
          with_lock t @@ fun () ->
          if t.shutting_down then []
          else
            let expired = take_expired_idle_locked t in
            Eio.Condition.broadcast t.condition;
-           expired)
+           expired))
     |> Effect.bind (close_entries t))
   |> Effect.bind (fun () ->
          if (stats t).shutting_down then Effect.unit else eviction_loop t)
@@ -271,7 +271,7 @@ let create ?(config = default_config) factory =
   Effect.Private.daemon (eviction_loop t) |> Effect.map (fun () -> t)
 
 let rec wait_until_drained t =
-  Effect.sync "internal_pool.wait_drain" (fun () -> (stats t).in_use = 0)
+  Effect.named "internal_pool.wait_drain" (Effect.sync (fun () -> (stats t).in_use = 0))
   |> Effect.bind (function
        | true -> Effect.unit
        | false ->
@@ -280,7 +280,7 @@ let rec wait_until_drained t =
 
 let shutdown ?deadline t =
   let begin_shutdown =
-    Effect.sync "internal_pool.shutdown_begin" (fun () ->
+    Effect.named "internal_pool.shutdown_begin" (Effect.sync (fun () ->
         with_lock t @@ fun () ->
         t.shutting_down <- true;
         let idle = t.idle in
@@ -289,14 +289,14 @@ let shutdown ?deadline t =
         t.closed_by_pool <- t.closed_by_pool + List.length idle;
         emit t "shutdown_begin";
         Eio.Condition.broadcast t.condition;
-        idle)
+        idle))
     |> Effect.bind (close_entries t)
   in
   let drain =
     begin_shutdown
     |> Effect.bind (fun () -> wait_until_drained t)
     |> Effect.bind (fun () ->
-           Effect.sync "internal_pool.shutdown_done" (fun () -> emit t "shutdown_done"))
+           Effect.named "internal_pool.shutdown_done" (Effect.sync (fun () -> emit t "shutdown_done")))
   in
   match deadline with
   | None -> drain

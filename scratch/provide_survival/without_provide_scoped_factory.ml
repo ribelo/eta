@@ -2,7 +2,7 @@ open Effet
 open Services
 
 let child db =
-  Effect.sync "db.query" (fun _ -> query db "select 1")
+  Effect.named "db.query" (Effect.sync (fun _ -> query db "select 1"))
 
 let program =
   Effect.scoped

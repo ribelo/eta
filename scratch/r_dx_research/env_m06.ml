@@ -2,6 +2,6 @@ open Effet
 
 let program () =
   Env_m05.program ()
-  |> Effect.bind (fun acc -> Effect.sync "cache_run" (fun env -> env#cache_run acc))
-  |> Effect.bind (fun acc -> Effect.sync "cache_fetch" (fun env -> env#cache_fetch acc))
+  |> Effect.bind (fun acc -> Effect.named "cache_run" (Effect.sync (fun env -> env#cache_run acc)))
+  |> Effect.bind (fun acc -> Effect.named "cache_fetch" (Effect.sync (fun env -> env#cache_fetch acc)))
 

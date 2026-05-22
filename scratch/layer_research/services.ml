@@ -23,23 +23,23 @@ let record log line = log.lines <- line :: log.lines
 let log_lines log = List.rev log.lines
 
 let open_db clock =
-  Effect.sync "db.open" (fun _ ->
-      { db_label = "db"; db_opened_at = now clock; db_closed = false })
+  Effect.named "db.open" (Effect.sync (fun _ ->
+      { db_label = "db"; db_opened_at = now clock; db_closed = false }))
 
 let close_db db =
-  Effect.sync "db.close" (fun _ -> db.db_closed <- true)
+  Effect.named "db.close" (Effect.sync (fun _ -> db.db_closed <- true))
 
 let query db sql =
   Printf.sprintf "%s:%s@%d" db.db_label sql db.db_opened_at
 
 let open_http clock log =
-  Effect.sync "http.open" (fun _ ->
+  Effect.named "http.open" (Effect.sync (fun _ ->
       let opened_at = now clock in
       record log (Printf.sprintf "http-open@%d" opened_at);
-      { http_label = "http"; http_opened_at = opened_at; http_stopped = false })
+      { http_label = "http"; http_opened_at = opened_at; http_stopped = false }))
 
 let stop_http http =
-  Effect.sync "http.stop" (fun _ -> http.http_stopped <- true)
+  Effect.named "http.stop" (Effect.sync (fun _ -> http.http_stopped <- true))
 
 let request http path =
   Printf.sprintf "%s:%s@%d" http.http_label path http.http_opened_at

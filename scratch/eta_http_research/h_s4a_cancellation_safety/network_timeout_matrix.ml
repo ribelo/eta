@@ -116,13 +116,15 @@ let run_row env ~name ~server_mode client =
   let permit = ref 0 in
   incr permit;
   let effect =
-    Effect.sync name (fun () ->
+    Effect.named name
+      (Effect.sync (fun () ->
       Fun.protect
         ~finally:(fun () -> decr permit)
         (fun () ->
           Eio.Switch.run @@ fun client_sw ->
           let flow = Eio.Net.connect ~sw:client_sw net (`Tcp (loopback, port)) in
           client flow))
+      )
     |> Effect.timeout (Duration.ms 50)
   in
   let outcome = classify (Runtime.run rt effect) in
@@ -186,7 +188,7 @@ let run_saturated_connect env =
   let permit = ref 0 in
   incr permit;
   let effect =
-    Effect.sync "tcp_connect_saturated_listener" (fun () ->
+    Effect.named "tcp_connect_saturated_listener" (Effect.sync (fun () ->
       Fun.protect
         ~finally:(fun () -> decr permit)
         (fun () ->
@@ -194,7 +196,7 @@ let run_saturated_connect env =
           let flow =
             Eio.Net.connect ~sw:client_sw net (`Tcp (loopback, port))
           in
-          Eio.Resource.close flow))
+          Eio.Resource.close flow)))
     |> Effect.timeout (Duration.ms 50)
   in
   let outcome = classify (Runtime.run rt effect) in

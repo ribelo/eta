@@ -7,6 +7,7 @@ module Sch = Schedule
    is private to this module and is unpacked only after the fresh [Typed_fail]
    key matches the interpreter frame that packed it. *)
 exception Raised_cause of int * Obj.t
+exception Timeout_as_fired of int
 
 let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
 let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
@@ -248,6 +249,47 @@ let cause_of_exn_runtime runtime key exn =
 let die_of_exn_runtime runtime exn =
   die_of_exn ~capture_backtrace:runtime.capture_backtrace exn
 
+let rec has_timeout_as token = function
+  | Timeout_as_fired observed -> observed = token
+  | Fun.Finally_raised exn -> has_timeout_as token exn
+  | Eio.Exn.Multiple causes ->
+      List.exists (fun (exn, _) -> has_timeout_as token exn) causes
+  | _ -> false
+
+let rec only_timeout_as_or_interrupt token = function
+  | Timeout_as_fired observed -> observed = token
+  | Eio.Cancel.Cancelled _ | Exit -> true
+  | Raised_cause (_, cause) -> (
+      let rec only_fail_or_interrupt : _ Cause.t -> bool = function
+        | Cause.Fail _ | Cause.Interrupt _ -> true
+        | Cause.Sequential causes | Cause.Concurrent causes ->
+            List.for_all only_fail_or_interrupt causes
+        | Cause.Suppressed _ | Cause.Die _ -> false
+      in
+      match Obj.obj cause with
+      | cause when only_fail_or_interrupt cause -> true
+      | cause -> Cause.is_interrupt_only cause)
+  | Fun.Finally_raised exn -> only_timeout_as_or_interrupt token exn
+  | Eio.Exn.Multiple causes ->
+      List.for_all
+        (fun (exn, _) -> only_timeout_as_or_interrupt token exn)
+        causes
+  | _ -> false
+
+let cause_of_timeout_as_exn runtime fail_key token on_timeout exn =
+  let rec convert ?backtrace = function
+    | Timeout_as_fired observed when observed = token -> Cause.Fail on_timeout
+    | Fun.Finally_raised exn -> convert ?backtrace exn
+    | Eio.Exn.Multiple causes ->
+        causes
+        |> List.map (fun (exn, bt) -> convert ~backtrace:bt exn)
+        |> Cause.concurrent
+    | exn ->
+        cause_of_exn ?backtrace ~capture_backtrace:runtime.capture_backtrace
+          fail_key exn
+  in
+  convert exn
+
 let island_pool runtime override =
   match override with
   | Some pool -> pool
@@ -345,10 +387,7 @@ let rec interpret :
   match EP.view eff with
   | EP.Pure v -> v
   | EP.Fail e -> raise_fail fail_key e
-  | EP.Sync (name, f) ->
-      if runtime.auto_instrument then
-        instrument_leaf ~runtime ~error_renderer ~fail_key ~name f
-      else f ()
+  | EP.Sync f -> f ()
   | EP.Island { name; f; input } ->
       let run () = EP.island_submit name (island_pool runtime None) f input in
       if runtime.auto_instrument then
@@ -450,6 +489,23 @@ let rec interpret :
          if has_timeout cause && only_timeout_or_interrupt cause then
            raise_fail fail_key `Timeout
          else raise_cause fail_key cause)
+  | EP.Timeout_as (d, on_timeout, e) ->
+      let token = Typed_fail.int (Typed_fail.fresh ()) in
+      (try
+         Eio.Fiber.first
+           (fun () ->
+             runtime.sleep d;
+             raise (Timeout_as_fired token))
+           (fun () ->
+             interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e)
+       with exn ->
+         if
+           has_timeout_as token exn
+           && only_timeout_as_or_interrupt token exn
+         then raise_fail fail_key on_timeout
+         else
+           raise_cause fail_key
+             (cause_of_timeout_as_exn runtime fail_key token on_timeout exn))
   | EP.Concat children ->
       List.iter
         (fun child ->

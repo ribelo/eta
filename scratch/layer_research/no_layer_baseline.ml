@@ -8,7 +8,7 @@ let http_factory clock log =
   Effect.acquire_release ~acquire:(open_http clock log) ~release:stop_http
 
 let program db http =
-  Effect.sync "app" (fun _ -> (app_result db http, db, http))
+  Effect.named "app" (Effect.sync (fun _ -> (app_result db http, db, http)))
 
 let boot clock log =
   Effect.scoped

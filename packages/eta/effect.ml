@@ -503,7 +503,7 @@ end
 type ('a, 'err) t =
   | Pure : 'a -> ('a, _) t
   | Fail : 'err -> (_, 'err) t
-  | Sync : string * (unit -> 'a) -> ('a, _) t
+  | Sync : (unit -> 'a) -> ('a, _) t
   | Island :
       ('input : immutable_data) ('output : immutable_data) 'err.
       {
@@ -558,6 +558,7 @@ type ('a, 'err) t =
   | Tap_error : ('a, 'err) t * ('err -> unit) -> ('a, 'err) t
   | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) t
   | Timeout : Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) t
+  | Timeout_as : Duration.t * 'err * ('a, 'err) t -> ('a, 'err) t
   | Concat : (unit, 'err) t list -> (unit, 'err) t
   | Race : ('a, 'err) t list -> ('a, 'err) t
   | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) t
@@ -640,7 +641,7 @@ and ('s, !'err, !'a) supervisor_child = {
 let pure v = Pure v
 let fail e = Fail e
 let unit = Pure ()
-let sync name f = Sync (name, f)
+let sync f = Sync f
 let island ?(name = "island") f input = Island { name; f; input }
 let blocking ?pool ?(name = "blocking") f =
   Blocking_runtime.check_not_worker "Effect.blocking";
@@ -667,6 +668,7 @@ let retry sch pred e = Retry (e, sch, pred)
 
 let delay d e = Delay (d, e)
 let timeout d e = Timeout (d, e)
+let timeout_as d ~on_timeout e = Timeout_as (d, on_timeout, e)
 let repeat sch e = Repeat (e, sch)
 
 let acquire_release ~acquire ~release = Acquire_release (acquire, release)
@@ -782,7 +784,7 @@ let collect_names e =
    fun acc -> function
     | Pure _ -> acc
     | Fail _ -> acc
-    | Sync (n, _) -> n :: acc
+    | Sync _ -> acc
     | Island { name; _ }
     | Island_map { name; _ }
     | Island_map_result { name; _ }
@@ -803,6 +805,7 @@ let collect_names e =
     | Map (e, _) -> walk acc e
     | Delay (_, e) -> walk acc e
     | Timeout (_, e) -> walk acc e
+    | Timeout_as (_, _, e) -> walk acc e
     | Tap_error (e, _) -> walk acc e
     | Repeat (e, _) -> walk acc e
     | Retry (e, _, _) -> walk acc e
@@ -829,7 +832,7 @@ module Private = struct
   type ('a, 'err) view = ('a, 'err) t =
     | Pure : 'a -> ('a, _) view
     | Fail : 'err -> (_, 'err) view
-    | Sync : string * (unit -> 'a) -> ('a, _) view
+    | Sync : (unit -> 'a) -> ('a, _) view
     | Island :
         ('input : immutable_data) ('output : immutable_data) 'err.
         {
@@ -886,6 +889,7 @@ module Private = struct
     | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) view
     | Timeout :
         Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) view
+    | Timeout_as : Duration.t * 'err * ('a, 'err) t -> ('a, 'err) view
     | Concat : (unit, 'err) t list -> (unit, 'err) view
     | Race : ('a, 'err) t list -> ('a, 'err) view
     | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) view

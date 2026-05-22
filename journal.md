@@ -13544,3 +13544,208 @@ Decision:
   row to admit raw Timeout, which leaks into eta-http wrapper code.
 
 Follow-up filed: Eta-tmo.
+
+## V-Pool-Shape-Survey - Eta.Pool scope locked for Eta-t59
+
+Question: should HTTP/1.1, HTTP/2, SQL, and keyed sharding share one Pool
+primitive?
+
+Artifact:
+
+- scratch/eta_research/pool_shape_survey/results.md
+
+Decision:
+
+- V-Pool-Shape-Survey-1 - One same-domain Eta.Pool covers HTTP/1.1 and SQL
+  bounded checkout.
+- V-Pool-Shape-Survey-2 - HTTP/2 multiplexer is not a Pool consumer. It stays
+  eta-http-internal for v1 and consumes Channel/Permit_set-shaped primitives.
+- V-Pool-Shape-Survey-3 - Cohort_map is separate from Pool. It owns keyed
+  lookup, first-arrival collapse, empty-cohort eviction, and optional shared
+  budgets without reaching into Pool internals.
+- V-Pool-Shape-Survey-4 - Pool health checks are effectful:
+  conn -> (unit, err) Effect.t.
+
+Eta-t59 scope is locked to one same-domain generic Pool with mutex LIFO storage,
+conservative callback API, effectful health checks, cancellation-safe private
+wait queue, and G9 observability. It must not absorb h2 multiplexer,
+Cohort_map, cross-domain Pool, or local-unique borrow scope.
+
+Follow-up filed: Eta-cmp.
+
+## V-Wait-Slot-Survey - keep wait-slot private for Eta.Pool v1
+
+Question: should Eta extract a public Eta.Wait_slot before implementing
+Eta.Pool?
+
+Artifact:
+
+- scratch/eta_research/wait_slot_survey/results.md
+
+Decision: inline for Eta-t59.
+
+Evidence: every surveyed consumer wants a richer primitive than raw waiter
+registration. Pool wants acquire/release; HTTP/2 and grpc admission want
+Permit_set; bounded send/recv wants Channel; SQL query waiting is Pool acquire;
+Cohort_map waits are keyed registry plus Pool or Permit_set.
+
+Reopen public Wait_slot only after at least two shipped Eta primitives duplicate
+the same raw waiter data structure and cancellation finalizer surface.
+
+## V-Pool-Observability - Pool uses existing runtime capabilities
+
+Question: does Eta.Pool need a new observability capability?
+
+Artifact:
+
+- scratch/eta_research/pool_observability/design.md
+
+Decision: no new capability for Eta-t59.
+
+Pool should emit:
+
+- metrics under eta.pool.* for active, idle, waiting, max_size, opened, closed,
+  health_rejected, cancelled_waiters, and acquire_wait_ms;
+- internal spans for acquire, health_check, close, and shutdown;
+- sparse logs for health rejection, waiter cancellation, shutdown, shutdown
+  timeout, and close failure.
+
+Compatibility: Eta-5zo can consume this through the existing tracer/logger/meter
+capabilities. Eta-2s0 keeps HTTP semantic-convention ownership; Pool remains
+protocol-neutral and does not emit http.* or url.* attributes.
+
+## V-Borrow-Freeze - local-unique Pool borrow remains deferred
+
+Question: should Eta-t59 reopen the local-unique borrow API?
+
+Artifact:
+
+- scratch/eta_research/borrow_api_freeze/notes.md
+
+Decision: no.
+
+Evidence: oxcaml_conn_unique_negative.ml still captures the core storage issue:
+a connection read from aliased pool storage cannot be handed out as local
+unique. oxcaml_borrow_effect_capture_negative.ml captures the effect boundary
+issue: a local borrow cannot be captured by Effect.sync because Effect.t stores
+a global closure.
+
+Eta-t59 keeps the conservative callback API. Reopen only if Eta gains a
+local-aware effect representation, a synchronous borrow callback API that can
+still express real network IO, or a shipped consumer proves the conservative
+API is insufficient.
+
+## V-Eta-Cause-Normalization - timeout cancellation no longer leaks Raised_cause
+
+Question: did G1's runtime fix land and cover the pool-survival failure?
+
+Artifacts:
+
+- packages/eta/runtime.ml
+- packages/eta/test/test_eta.ml
+- scratch/eta_research/pool_survival/runtime_smoke.ml
+
+Decision: fixed.
+
+Evidence: runtime timeout interpretation now normalizes timeout/cancellation
+races back to typed Timeout when the only competing causes are Timeout or
+Interrupt. Catch and Tap_error normalize internal Raised_cause exceptions rather
+than surfacing them as defects. Eta tests include all_settled timeout scoped
+resource typed and nested timeout maps outer timeout.
+
+Invariant: all_settled wrapping timeout over scoped acquire/release must surface
+Cause.Fail Timeout, or Cause.Interrupt for cancellation, not Cause.Die wrapping
+Eta__Runtime.Raised_cause.
+
+## V-Eta-Channel - same-domain bounded Channel shipped
+
+Question: did Eta-duy ship the Channel primitive accepted by V-Channel-Choice?
+
+Artifacts:
+
+- packages/eta/channel.ml
+- packages/eta/channel.mli
+- packages/eta/test/test_eta.ml
+- scratch/eta_research/channel_choice/channel_impl_probe.ml
+
+Decision: shipped for v1 as same-domain only.
+
+Surface:
+
+- Channel.create ~capacity
+- Channel.send / recv
+- Channel.try_send / try_recv
+- Channel.close
+- Channel.stats
+
+Implementation: Eio.Mutex + explicit sender/receiver waiter queues with
+preallocated ring storage. Waiters are resolved one-at-a-time to avoid
+Condition.broadcast amplification.
+Closed channels wake blocked senders and receivers. Buffered values remain
+receivable after close; once drained, recv reports Closed. The mli documents
+that this is not a portable or cross-domain handoff channel.
+
+Evidence: Eta tests cover blocking send backpressure, blocking recv, try_send
+full, try_recv empty, close wakeups, cancellation cleanup for blocked send and
+recv, and parent-switch teardown. The shipped probe records:
+
+~~~text
+try_send_recv iterations=10000 minor_words=3145725 promoted_words=284 major_words=203 sent=10000 received=10000 depth=0
+blocking_contention producers=4 total=4000 minor_words=1048576 promoted_words=509 major_words=0 sent=4000 received=4000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+~~~
+
+## V-Eta-Channel-Wake-One - Channel v2 replaced broadcast wakeups
+
+Question: does explicit wake-one waiter handling pay for Eta.Channel?
+
+Artifacts:
+
+- packages/eta/channel.ml
+- scratch/eta_research/channel_choice/channel_v2_probe.ml
+- scratch/eta_research/channel_choice/results.md
+
+Decision: yes, replace the broadcast implementation.
+
+Evidence:
+
+~~~text
+v1 try_send_recv iterations=100000 elapsed_ms=44.461 minor_words=34078690 promoted_words=2840 major_words=2754
+v2 try_send_recv iterations=100000 elapsed_ms=40.606 minor_words=34602862 promoted_words=948 major_words=928
+v1 blocking_contention capacity=16 producers=4 total=40000 elapsed_ms=21.678 minor_words=15204308 promoted_words=141750 major_words=137198
+v2 blocking_contention capacity=16 producers=4 total=40000 elapsed_ms=21.135 minor_words=14680016 promoted_words=125713 major_words=125713
+v1 broadcast_stress capacity=1 producers=16 total=80000 elapsed_ms=256.138 minor_words=131595912 promoted_words=7895864 major_words=7857443
+v2 broadcast_stress capacity=1 producers=16 total=80000 elapsed_ms=56.139 minor_words=38797180 promoted_words=1407801 major_words=1407801
+~~~
+
+The stress case targets the actual suspected cost: broadcast wakes every blocked
+sender for each freed slot. The replacement keeps the same public API and tests
+for cancellation cleanup, close wakeup, and switch teardown still pass.
+
+## V-Timeout-As - typed timeout helper shipped
+
+Question: can Eta express typed deadline errors without forcing raw Timeout into
+the wrapped effect's public error row?
+
+Artifacts:
+
+- packages/eta/effect.ml
+- packages/eta/effect.mli
+- packages/eta/runtime.ml
+- packages/eta/test/test_eta.ml
+
+Decision: shipped Effect.timeout_as.
+
+API:
+
+~~~ocaml
+val timeout_as :
+  Duration.t -> on_timeout:'err -> ('a, 'err) Effect.t -> ('a, 'err) Effect.t
+~~~
+
+Runtime: Timeout_as is a distinct runtime branch. It raises the caller-provided
+typed failure directly and keeps the timeout/cancellation normalization behavior
+needed by nested timeouts and pool-survival cancellation.
+
+Related cleanup: Effect.sync no longer carries a name at all. Names and spans
+belong on Effect.named. The PPX and examples now expand named leaves as
+Effect.named name (Effect.sync body), so hot primitive leaves can stay unnamed.

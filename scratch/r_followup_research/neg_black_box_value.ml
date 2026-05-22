@@ -10,5 +10,5 @@ module Third_party : sig
   val black_box : (< db : db ; .. >, string, string) Effect.t
 end = struct
   let black_box =
-    Effect.sync "third.black_box" (fun env -> query env#db "child")
+    Effect.named "third.black_box" (Effect.sync (fun env -> query env#db "child"))
 end

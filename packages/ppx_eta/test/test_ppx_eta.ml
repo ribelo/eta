@@ -48,9 +48,12 @@ let test_ppx_thunk_leaf () =
       ~tracer:(Tracer.as_capability tracer) ()
   in
   Alcotest.(check string) "value" "alice" (run_ok rt (current_user auth));
-  let span = only_span tracer in
-  Alcotest.(check string) "span name" "Dune__exe__Test_ppx_eta.current_user"
-    span.name
+  let spans = Tracer.dump tracer in
+  Alcotest.(check int) "span count" 2 (List.length spans);
+  let find name = List.find (fun span -> span.Tracer.name = name) spans in
+  let fn = find "Dune__exe__Test_ppx_eta.current_user" in
+  let leaf = find "auth.current_user" in
+  Alcotest.(check (option int)) "leaf parent" (Some fn.span_id) leaf.parent_id
 
 let () =
   Alcotest.run "ppx_eta"

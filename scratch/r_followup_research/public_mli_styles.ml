@@ -14,14 +14,14 @@ let describe clock log =
   "tick=" ^ string_of_int clock.Services.now
 
 let open_row_thunk () =
-  Effect.sync "public.open_row" (fun env -> describe env#clock env#log)
+  Effect.named "public.open_row" (Effect.sync (fun env -> describe env#clock env#log))
 
 let closed_row_value =
-  Effect.sync "public.closed_row" (fun env -> describe env#clock env#log)
+  Effect.named "public.closed_row" (Effect.sync (fun env -> describe env#clock env#log))
 
 let args ~clock ~log =
-  Effect.sync "public.args" (fun _env -> describe clock log)
+  Effect.named "public.args" (Effect.sync (fun _env -> describe clock log))
 
 let bag services =
-  Effect.sync "public.bag" (fun _env -> describe services#clock services#log)
+  Effect.named "public.bag" (Effect.sync (fun _env -> describe services#clock services#log))
 

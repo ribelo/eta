@@ -2,7 +2,7 @@ open Effet
 open Services
 
 let child db =
-  Effect.sync "db.query" (fun _ -> query db "public")
+  Effect.named "db.query" (Effect.sync (fun _ -> query db "public"))
 
 let program db =
   secret_from_env ()

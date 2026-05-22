@@ -124,7 +124,7 @@ let test_exception_stacktrace_exported () =
   let rt = Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
   let eff =
     Effect.named "failing.span"
-      (Effect.sync "failing.leaf" (fun () -> failwith "wire stacktrace")
+      (Effect.named "failing.leaf" (Effect.sync (fun () -> failwith "wire stacktrace"))
       |> Effect.annotate ~key:"phase" ~value:"test")
   in
   ignore (Runtime.run rt eff : (unit, _) Exit.t);
@@ -307,12 +307,12 @@ let live_motel_test net clock =
     Effect.named "demo.root"
       (Effect.par
          (Effect.named "demo.left"
-            (Effect.sync "work-left" (fun () ->
-                 Eio.Time.sleep clock 0.005)
+            (Effect.named "work-left" (Effect.sync (fun () ->
+                 Eio.Time.sleep clock 0.005))
             |> Effect.annotate ~key:"side" ~value:"left"))
          (Effect.named "demo.right"
-            (Effect.sync "work-right" (fun () ->
-                 Eio.Time.sleep clock 0.010)
+            (Effect.named "work-right" (Effect.sync (fun () ->
+                 Eio.Time.sleep clock 0.010))
             |> Effect.annotate ~key:"side" ~value:"right"
             |> Effect.bind (fun () -> Effect.fail `Demo_boom)
             |> Effect.catch (fun (`Demo_boom : [ `Demo_boom ]) ->

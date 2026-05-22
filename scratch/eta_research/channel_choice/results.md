@@ -75,3 +75,58 @@ File Eta.Channel as a same-domain Eta primitive with:
 Keep Eta_stream.Mailbox for nonblocking notification paths such as best-effort
 stream wakeups or outbound RST intent queues where dropping or closed reporting
 is the right behavior. Do not use it for HTTP/2 flow-control backpressure.
+
+## Shipped Eta.Channel Probe
+
+Command:
+
+~~~sh
+nix develop -c dune build scratch/eta_research/channel_choice/channel_impl_probe.exe
+nix develop -c _build/default/scratch/eta_research/channel_choice/channel_impl_probe.exe
+~~~
+
+Result:
+
+~~~text
+try_send_recv iterations=10000 minor_words=3145725 promoted_words=284 major_words=203 sent=10000 received=10000 depth=0
+blocking_contention producers=4 total=4000 minor_words=1048576 promoted_words=509 major_words=0 sent=4000 received=4000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+~~~
+
+This is a smoke allocation signal for the shipped generic Channel, not a
+zero-allocation claim. The behavior counters are the acceptance evidence:
+contention drains to depth 0 and leaves no waiting or cancelled waiter residue.
+
+## Channel v2 Wake-One Probe
+
+Question: should the shipped Channel keep Eio.Condition.broadcast or replace it
+with explicit waiter queues resolved one-at-a-time?
+
+Command:
+
+~~~sh
+nix develop -c dune build scratch/eta_research/channel_choice/channel_v2_probe.exe
+nix develop -c _build/default/scratch/eta_research/channel_choice/channel_v2_probe.exe
+~~~
+
+Result:
+
+~~~text
+v1 behavior_smoke ok
+v2 behavior_smoke ok
+v1 try_send_recv iterations=100000 elapsed_ms=44.461 minor_words=34078690 promoted_words=2840 major_words=2754 sent=100000 received=100000 depth=0
+v2 try_send_recv iterations=100000 elapsed_ms=40.606 minor_words=34602862 promoted_words=948 major_words=928 sent=100000 received=100000 depth=0
+v1 blocking_contention capacity=16 producers=4 total=40000 elapsed_ms=21.678 minor_words=15204308 promoted_words=141750 major_words=137198 sent=40000 received=40000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+v2 blocking_contention capacity=16 producers=4 total=40000 elapsed_ms=21.135 minor_words=14680016 promoted_words=125713 major_words=125713 sent=40000 received=40000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+v1 broadcast_stress capacity=1 producers=16 total=80000 elapsed_ms=256.138 minor_words=131595912 promoted_words=7895864 major_words=7857443 sent=80000 received=80000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+v2 broadcast_stress capacity=1 producers=16 total=80000 elapsed_ms=56.139 minor_words=38797180 promoted_words=1407801 major_words=1407801 sent=80000 received=80000 depth=0 waiting_senders=0 waiting_receivers=0 cancelled_senders=0
+~~~
+
+Verdict: replace the implementation. The ordinary contention workload is a
+small but consistent v2 win; the capacity-1 producer stress case is the
+decisive evidence because it targets broadcast amplification directly.
+
+Residual cost: the capacity-16 contention probe still reports about 367 minor
+words per delivered item pair. This is mostly waiter/promise/fiber overhead in
+the blocking path, not a zero-allocation routing claim. H-D1 should remeasure
+per-frame allocation at realistic HTTP/2 capacities (16-64, hundreds of streams)
+before claiming a low-allocation frame-routing path.

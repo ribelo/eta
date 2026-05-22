@@ -32,8 +32,8 @@ let push_failure resource cause =
   loop ()
 
 let failures resource =
-  Effect.sync "atomic_resource.failures" (fun _ ->
-      List.rev (Atomic.get resource.failures))
+  Effect.named "atomic_resource.failures" (Effect.sync (fun _ ->
+      List.rev (Atomic.get resource.failures)))
 
 let auto ?on_error ~load ~schedule () =
   let rec refresh_loop resource step =
@@ -43,9 +43,9 @@ let auto ?on_error ~load ~schedule () =
         let refresh_once =
           refresh resource
           |> Effect.catch (fun err ->
-                 Effect.sync "atomic_resource.auto.refresh_failed" (fun _ ->
+                 Effect.named "atomic_resource.auto.refresh_failed" (Effect.sync (fun _ ->
                      push_failure resource (Cause.Fail err);
-                     Option.iter (fun f -> f err) on_error))
+                     Option.iter (fun f -> f err) on_error)))
         in
         refresh_once
         |> Effect.delay delay

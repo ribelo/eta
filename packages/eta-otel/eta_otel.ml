@@ -438,27 +438,27 @@ let now_ns t =
 (* ------------------------------------------------------------------ *)
 
 let decrement_in_flight t n =
-  Eta.Effect.sync "eta_otel.export.decrement_in_flight" (fun () ->
-      Drain_counter.decr_by t.in_flight n)
+  Eta.Effect.named "eta_otel.export.decrement_in_flight" (Eta.Effect.sync (fun () ->
+      Drain_counter.decr_by t.in_flight n))
 
 let observe_send t ~path ~body =
-  Eta.Effect.sync "eta_otel.export.on_send" (fun () ->
-      try t.on_send ~path ~body with _ -> ())
+  Eta.Effect.named "eta_otel.export.on_send" (Eta.Effect.sync (fun () ->
+      try t.on_send ~path ~body with _ -> ()))
 
 let observe_error t msg =
-  Eta.Effect.sync "eta_otel.export.on_error" (fun () ->
-      try t.on_error msg with _ -> ())
+  Eta.Effect.named "eta_otel.export.on_error" (Eta.Effect.sync (fun () ->
+      try t.on_error msg with _ -> ()))
 
 let render_export_error = function
   | `Export_error msg -> msg
   | `Timeout -> "export timeout"
 
 let post_effect t config ~path ~body =
-  Eta.Effect.sync "eta_otel.export.post_json" (fun () ->
+  Eta.Effect.named "eta_otel.export.post_json" (Eta.Effect.sync (fun () ->
       try
         Eio.Switch.run @@ fun sw ->
         post_json ~sw ~net:t.net ~host:config.host ~port:config.port ~path body
-      with exn -> Error (Printexc.to_string exn))
+      with exn -> Error (Printexc.to_string exn)))
   |> Eta.Effect.bind (function
        | Ok () -> Eta.Effect.unit
        | Error msg -> Eta.Effect.fail (`Export_error msg))
@@ -537,8 +537,8 @@ let export_signal t config signal =
     | Log_batch _ -> "logs"
     | Metric_batch _ -> "metrics"
   in
-  Eta.Effect.sync ("eta_otel." ^ name ^ ".encode") (fun () ->
-      encode_signal config signal)
+  Eta.Effect.named ("eta_otel." ^ name ^ ".encode") (Eta.Effect.sync (fun () ->
+      encode_signal config signal))
   |> Eta.Effect.bind (fun (name, path, n, body) ->
          export_batch t config ~path ~body ~n
          |> Eta.Effect.annotate ~key:"otel.path" ~value:path
@@ -584,8 +584,8 @@ let flush ?(timeout_s = 5.0) t =
   else
     let wait = Drain_counter.await_zero t.in_flight in
     let timeout =
-      Eta.Effect.sync "eta_otel.flush.timeout" (fun () ->
-          t.eta_clock#sleep (duration_of_timeout_s timeout_s))
+      Eta.Effect.named "eta_otel.flush.timeout" (Eta.Effect.sync (fun () ->
+          t.eta_clock#sleep (duration_of_timeout_s timeout_s)))
     in
     ignore
       (Eta.Runtime.run t.flush_rt (Eta.Effect.race [ wait; timeout ])
@@ -601,7 +601,7 @@ let start_exporters t ~rt =
 let make_config_resource rt config :
     (export_config, [ `Config ]) Eta.Resource.t =
   let load =
-    Eta.Effect.sync "eta_otel.config.load" (fun () -> config)
+    Eta.Effect.named "eta_otel.config.load" (Eta.Effect.sync (fun () -> config))
     |> Eta.Effect.named "eta_otel.config"
   in
   match Eta.Runtime.run rt (Eta.Resource.manual load) with

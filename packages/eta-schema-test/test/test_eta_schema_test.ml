@@ -33,7 +33,7 @@ let test_roundtrip_json () =
 
 let test_effect_subset_policy () =
   let policy value =
-    Eta.Effect.sync "policy" (fun () -> value ^ "!")
+    Eta.Effect.named "policy" (Eta.Effect.sync (fun () -> value ^ "!"))
   in
   let result =
     Schema.decode_with_policy string_schema policy (Json.string "ok")

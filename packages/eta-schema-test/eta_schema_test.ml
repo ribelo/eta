@@ -17,7 +17,7 @@ let rec run_effect : type err a. (a, err) Eta.Effect.t -> (a, err) result =
   match Eta.Effect.Private.view eff with
   | Eta.Effect.Private.Pure value -> Ok value
   | Eta.Effect.Private.Fail error -> Error error
-  | Eta.Effect.Private.Sync (_, f) -> Ok (f ())
+  | Eta.Effect.Private.Sync f -> Ok (f ())
   | Eta.Effect.Private.Map (inner, f) -> Result.map f (run_effect inner)
   | Eta.Effect.Private.Bind (inner, f) -> (
       match run_effect inner with

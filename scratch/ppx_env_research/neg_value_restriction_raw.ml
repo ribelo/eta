@@ -9,6 +9,6 @@ module M : sig
   val current_user : (< auth : Auth.t ; .. >, string, string) Effect.t
 end = struct
   let current_user =
-    Effect.sync "auth.current_user" (fun env -> Auth.current_user env#auth)
+    Effect.named "auth.current_user" (Effect.sync (fun env -> Auth.current_user env#auth))
 end
 
