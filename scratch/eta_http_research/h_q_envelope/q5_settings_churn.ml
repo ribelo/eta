@@ -13,7 +13,7 @@ let attack =
       default ~knob:"max_settings_per_second" ~value:"10/sec"
         ~justification:
           "SETTINGS changes are connection configuration, normally sent at handshake or rare reconfiguration. 10/sec is intentionally generous."
-        ~error_variant:"Decode_error";
-    expected_error_class = "decode_error";
+        ~error_variant:"Settings_churn_rate_exceeded";
+    expected_error_class = "settings_churn_rate_exceeded";
     frames_per_second = 250;
   }

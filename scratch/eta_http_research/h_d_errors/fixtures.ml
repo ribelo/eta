@@ -62,6 +62,12 @@ let all_variants =
          });
     make (Decode_error { codec = "gzip"; message = "crc mismatch" });
     make
+      (Connection_protocol_violation
+         {
+           kind = "window_update_accounting";
+           message = "WINDOW_UPDATE accounting limit exceeded";
+         });
+    make
       (Hpack_decode_overflow
          { decoded_bytes = 104_857_600; limit_bytes = 262_144 });
     make
@@ -71,6 +77,14 @@ let all_variants =
     make
       (Rst_rate_exceeded
          { observed_per_second = 1_000; limit_per_second = 100 });
+    make (Ping_rate_exceeded { observed_rate_hz = 1_000; limit_hz = 100 });
+    make
+      (Settings_churn_rate_exceeded
+         { observed_rate_hz = 250; limit_hz = 10 });
+    make
+      (Response_header_change_rate_exceeded
+         { observed_rate_hz = 128; limit_hz = 32 });
+    make (Header_invalid { reason = "uppercase response header name" });
   ]
 
 let test_every_required_variant_has_observability () =
@@ -107,7 +121,36 @@ let test_layer_mapping () =
     (Error.layer_to_string
        (Error.layer
           (make (Decode_error { codec = "gzip"; message = "crc mismatch" }))));
+  check_equal "window update layer" "http_response"
+    (Error.layer_to_string
+       (Error.layer
+          (make
+             (Connection_protocol_violation
+                {
+                  kind = "window_update_accounting";
+                  message = "bad increment";
+                }))));
   print_endline "PASS layers distinguish TCP/TLS/ALPN/HTTP/body-decode failures"
+
+let test_retry_policy_distinguishes_protocol_abuse () =
+  let decode =
+    make (Decode_error { codec = "h2_frame"; message = "truncated frame" })
+  in
+  let window_update =
+    make
+      (Connection_protocol_violation
+         {
+           kind = "window_update_accounting";
+           message = "WINDOW_UPDATE accounting limit exceeded";
+         })
+  in
+  check_equal "transient decode retryability"
+    "retryable_if_body_replayable"
+    (Error.retryability_to_string (Error.retryability decode));
+  check_equal "protocol abuse retryability" "not_retryable"
+    (Error.retryability_to_string (Error.retryability window_update));
+  print_endline
+    "PASS retry policy distinguishes decode corruption from protocol abuse"
 
 let test_redaction () =
   let error = List.nth all_variants 9 in
@@ -168,6 +211,26 @@ let source_cross_tab =
       make
         (Rst_rate_exceeded
            { observed_per_second = 1_000; limit_per_second = 100 }) );
+    ( "H-Q5 ping flood",
+      make (Ping_rate_exceeded { observed_rate_hz = 1_000; limit_hz = 100 })
+    );
+    ( "H-Q5 window update accounting",
+      make
+        (Connection_protocol_violation
+           {
+             kind = "window_update_accounting";
+             message = "WINDOW_UPDATE accounting limit exceeded";
+           }) );
+    ( "H-Q5 settings churn",
+      make
+        (Settings_churn_rate_exceeded
+           { observed_rate_hz = 250; limit_hz = 10 }) );
+    ( "H-Q2 response header churn",
+      make
+        (Response_header_change_rate_exceeded
+           { observed_rate_hz = 128; limit_hz = 32 }) );
+    ( "H-Q5 header normalization",
+      make (Header_invalid { reason = "uppercase response header name" }) );
     ( "H-Q3 continuation breaker",
       make
         (Continuation_flood
@@ -188,6 +251,7 @@ let test_cross_tab_has_no_unintended_collision () =
 let () =
   test_every_required_variant_has_observability ();
   test_layer_mapping ();
+  test_retry_policy_distinguishes_protocol_abuse ();
   test_redaction ();
   test_cause_leaf ();
   test_cross_tab_has_no_unintended_collision ();

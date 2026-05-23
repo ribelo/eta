@@ -13,7 +13,7 @@ let attack =
       default ~knob:"max_header_name_bytes" ~value:"8192"
         ~justification:
           "Large enough for real custom metadata names by a wide margin; paired with value/list caps from H-Q3 to bound normalization."
-        ~error_variant:"Decode_error";
-    expected_error_class = "decode_error";
+        ~error_variant:"Header_invalid";
+    expected_error_class = "header_invalid";
     frames_per_second = 64;
   }

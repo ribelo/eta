@@ -2,6 +2,10 @@
 
 Status: Draft
 
+Note: This ADR is provisional. 6 of 12 originally-scoped attack classes have
+not been exercised at byte level. Promotion from Draft to Accepted requires
+Eta-h2-raw-frame-envelope closure.
+
 ## Context
 
 H-Q2 and H-Q5 test whether eta-http v1 can bound a fixed malicious-server
@@ -34,8 +38,14 @@ Artifacts:
 - `scratch/eta_http_research/h_q_envelope/results.md`
 
 The H-Q envelope runner sampled all catalogue rows at 1 Hz from second 0
-through second 30. H-D1-exercisable rows returned stream state to baseline,
-kept fd/fiber counts flat, and mapped to H-D-Errors variants.
+through second 30. 6 of 12 catalogue attacks passed against H-D1.
+H-D1-exercisable rows returned stream state to baseline, kept fd/fiber counts flat,
+and mapped to precise H-D-Errors variants.
+
+The allocator-pressure falsifier now samples Gc.minor_words on the active
+path between attack start and breaker fire. The selected active-path rates
+were 281.17, 153.84, and 98.43 words/admitted-frame against the 2260
+words/frame envelope.
 
 Rows requiring byte-level GOAWAY, SETTINGS, HPACK/Huffman, or header
 normalization hooks are explicitly deferred with the missing capability named.
@@ -52,6 +62,19 @@ full malicious-server HTTP/2 coverage. In particular:
 
 Drop-and-disconnect is an accepted defense. The defaults bound resource use
 under attack; they do not promise to sustain malicious peers indefinitely.
+
+H-D-Errors grew protocol-security variants instead of flattening H-Q rows into
+Decode_error or Connection_closed:
+
+- Connection_protocol_violation for WINDOW_UPDATE accounting abuse.
+- Ping_rate_exceeded for PING floods.
+- Settings_churn_rate_exceeded for SETTINGS churn.
+- Response_header_change_rate_exceeded for response-header churn.
+- Header_invalid for header normalization failures.
+
+The retry-policy distinction is load-bearing: transient Decode_error remains
+retryable if the request body is replayable, while protocol abuse and rate
+violations are not retryable.
 
 ## Alternatives
 

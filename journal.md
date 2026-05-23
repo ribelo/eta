@@ -14423,7 +14423,12 @@ Residual risk:
 
 - Frame-level malicious behavior and resource plateau checks remain for H-Q2/H-Q3.
 
-## V-Http-Q2 - malicious peer stream churn is bounded by circuit breakers
+## V-Http-Q2-Predecessor - malicious peer stream churn is bounded by circuit breakers
+
+Superseded by V-Http-Q2 below. The older lab's
+`response_header_timeout` and `connection_closed` PASSes for header churn and
+GOAWAY mid-flight measured the failure path, not the attack itself. The newer
+lab correctly marks both as DEFERRED pending byte-level adapter hooks.
 
 Question: can a malicious HTTP/2 server cause unbounded eta-http client memory, stream state, fiber, or fd growth through stream churn and frame-rate abuse?
 
@@ -14673,6 +14678,9 @@ Residual risk:
 Question: do H-D1 stream admission and cleanup survive the H-Q2 stream-level
 malicious-server catalogue without leaks or stringly errors?
 
+Status: Accepted as partial. 3 of 5 H-Q2 rows pass against H-D1; GOAWAY
+mid-flight and header churn remain deferred to byte-level adapter hooks.
+
 Artifacts:
 
 - scratch/eta_http_research/h_q_envelope/attack_runner.ml
@@ -14686,7 +14694,7 @@ Hypothesis ledger:
 | --- | --- | --- |
 | HEADERS + RST_STREAM after every stream | Accepted | 1000 attempts, 128 opened, 872 rejected, stream state returned to baseline, `Stream_admission_rejected`. |
 | GOAWAY mid-flight | Deferred | H-D1 has no GOAWAY frame or `last_stream_id` cutoff hook; mapped reopener to raw adapter fixture. |
-| Header churn | Deferred | H-D1 headers do not carry names/values; mapped reopener to adapter header block fixture. |
+| Header churn | Deferred | H-D1 headers do not carry names/values; mapped reopener to adapter header block fixture, Response_header_change_rate_exceeded. |
 | Stream-id jumps | Accepted | 10,000 unknown stream frames dropped with no stream state allocation, `Stream_admission_rejected`. |
 | RST_STREAM rate exceeded | Accepted | 250 attempts against 100/sec default, stream state baseline restored, `Rst_rate_exceeded`. |
 
@@ -14696,7 +14704,7 @@ Evidence:
 nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
 ATTACK id=headers_rst_every_stream group=H-Q2 verdict=PASS ... samples=31 ... streams(active=0 cancelled=0 live=0 opened=128 completed=128 remote_resets=128 rejected=872)
 ATTACK id=goaway_mid_flight group=H-Q2 verdict=DEFERRED ... error=connection_closed samples=31
-ATTACK id=header_churn group=H-Q2 verdict=DEFERRED ... error=decode_error samples=31
+ATTACK id=header_churn group=H-Q2 verdict=DEFERRED ... error=response_header_change_rate_exceeded samples=31
 ATTACK id=stream_id_jumps group=H-Q2 verdict=PASS ... samples=31 ... streams(active=0 cancelled=0 live=0 opened=0 completed=0 remote_resets=0 rejected=0)
 ATTACK id=rst_rate_exceeded group=H-Q2 verdict=PASS ... error=rst_rate_exceeded samples=31 ... streams(active=0 cancelled=0 live=0 opened=128 completed=128 remote_resets=128 rejected=122)
 ~~~
@@ -14704,10 +14712,10 @@ ATTACK id=rst_rate_exceeded group=H-Q2 verdict=PASS ... error=rst_rate_exceeded 
 Verdict:
 
 - V-Http-Q2-1 - H-D1-exercisable stream churn is bounded.
-  Decision: accepted. Evidence: stream state returns to baseline and all
+  Decision: Accepted as partial. Evidence: stream state returns to baseline and all
   exercisable rows map to typed H-D-Errors variants.
 - V-Http-Q2-2 - Full byte-level Q2 coverage is not proven.
-  Decision: accepted as residual risk. Evidence: GOAWAY and header churn need
+  Decision: Accepted as partial residual risk. Evidence: GOAWAY and header churn need
   adapter hooks absent from H-D1.
 
 Residual risk:
@@ -14721,6 +14729,10 @@ Residual risk:
 Question: do the H-Q5 frame/protocol attacks bound memory, fd/fiber, stream
 state, CPU, and allocator pressure under drop-and-disconnect policy?
 
+Status: Accepted as partial. 3 of 7 H-Q5 frame/protocol rows pass against
+H-D1, 4 remain deferred to byte-level adapter hooks, and allocator pressure
+passes the active-path falsifier.
+
 Artifacts:
 
 - scratch/eta_http_research/h_q_envelope/attack_runner.ml
@@ -14733,39 +14745,41 @@ Hypothesis ledger:
 
 | Attack | Status | Evidence |
 | --- | --- | --- |
-| PING flood | Accepted | 1000 PING frames, 900 over default policy, no stream state allocation, `Connection_closed`. |
+| PING flood | Accepted | 1000 PING frames, 900 over default policy, no stream state allocation, Ping_rate_exceeded. |
 | SETTINGS_HEADER_TABLE_SIZE churn | Deferred | H-D1 has no SETTINGS frame; adapter parser hook required. |
-| WINDOW_UPDATE accounting | Accepted | 2000 updates, stalled stream released, baseline restored, `Decode_error`. |
+| WINDOW_UPDATE accounting | Accepted | 2000 updates, stalled stream released, baseline restored, Connection_protocol_violation. |
 | GOAWAY churn | Deferred | H-D1 has no GOAWAY; H-D5 raw close/reopen fixture still needed. |
 | DATA-frame slowloris | Accepted | trickled DATA timed out, stream released, `Response_body_idle_timeout`. |
 | Huffman CPU amplification | Deferred | H-D1 has no HPACK/Huffman decoder; H-Q3 size cap exists but CPU cost is unproven. |
-| Header normalization edges | Deferred | H-D1 lacks header names/values; adapter normalization hook required. |
-| Allocator pressure | Accepted for current policy | Post-warmup allocation measured `0.00` words per attack frame after disconnect. |
+| Header normalization edges | Deferred | H-D1 lacks header names/values; adapter normalization hook required, Header_invalid. |
+| Allocator pressure | Accepted for active-path falsifier | Selected active attack rates measured 281.17, 153.84, and 98.43 words/admitted-frame against the 2260 envelope. |
 
 Evidence:
 
 ~~~text
 nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
-ATTACK id=ping_flood group=H-Q5 verdict=PASS ... error=connection_closed samples=31
-ATTACK id=settings_header_table_size_churn group=H-Q5 verdict=DEFERRED ... error=decode_error samples=31
-ATTACK id=window_update_accounting group=H-Q5 verdict=PASS ... error=decode_error samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
+ATTACK id=ping_flood group=H-Q5 verdict=PASS ... error=ping_rate_exceeded samples=31
+ATTACK id=settings_header_table_size_churn group=H-Q5 verdict=DEFERRED ... error=settings_churn_rate_exceeded samples=31
+ATTACK id=window_update_accounting group=H-Q5 verdict=PASS ... error=connection_protocol_violation samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
 ATTACK id=goaway_churn group=H-Q5 verdict=DEFERRED ... error=connection_closed samples=31
 ATTACK id=data_frame_slowloris group=H-Q5 verdict=PASS ... error=response_body_idle_timeout samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
 ATTACK id=huffman_cpu_amplification group=H-Q5 verdict=DEFERRED ... error=hpack_decode_overflow samples=31
-ATTACK id=header_normalization_edges group=H-Q5 verdict=DEFERRED ... error=decode_error samples=31
-ATTACK id=allocator_pressure group=H-Q5-alloc verdict=PASS ... alloc_words_per_frame_after_warmup=0.00
+ATTACK id=header_normalization_edges group=H-Q5 verdict=DEFERRED ... error=header_invalid samples=31
+ATTACK id=allocator_pressure group=H-Q5-alloc verdict=PASS ... alloc_words_per_admitted_frame_active=132.40 alloc_words_per_frame_after_warmup=0.00
 ~~~
 
 Verdict:
 
 - V-Http-Q5-1 - H-D1-exercisable frame attacks are bounded.
-  Decision: accepted. Evidence: PING, WINDOW_UPDATE, and DATA slowloris rows
+  Decision: Accepted as partial. Evidence: PING, WINDOW_UPDATE, and DATA slowloris rows
   return stream state to baseline and produce typed errors.
-- V-Http-Q5-2 - Allocator pressure is bounded after disconnect.
-  Decision: accepted for current policy. Evidence: post-warmup words per attack
-  frame measured `0.00`; the defense is drop-and-disconnect.
+- V-Http-Q5-2 - Allocator pressure is bounded during sustained attack.
+  Decision: Accepted as partial. Evidence: active-path rates for HEADERS+RST,
+  WINDOW_UPDATE, and stream-id jumps measured 281.17, 153.84, and 98.43
+  words/admitted-frame, below the 2260 envelope. The post-disconnect 0.00
+  words/frame metric is secondary only.
 - V-Http-Q5-3 - Full byte-level Q5 coverage remains open.
-  Decision: accepted as residual risk. Evidence: SETTINGS, GOAWAY, HPACK/
+  Decision: Accepted as partial residual risk. Evidence: SETTINGS, GOAWAY, HPACK/
   Huffman, and header normalization require adapter hooks.
 
 Residual risk:

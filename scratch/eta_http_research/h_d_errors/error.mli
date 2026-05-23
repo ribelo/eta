@@ -45,6 +45,7 @@ type kind =
   | Total_request_timeout of timeout
   | HTTP_status of { status : int; headers : (string * string) list }
   | Decode_error of { codec : string; message : string }
+  | Connection_protocol_violation of { kind : string; message : string }
   | Hpack_decode_overflow of { decoded_bytes : int; limit_bytes : int }
   | Continuation_flood of {
       accumulated_bytes : int;
@@ -53,6 +54,16 @@ type kind =
     }
   | Stream_admission_rejected of { limit : int }
   | Rst_rate_exceeded of { observed_per_second : int; limit_per_second : int }
+  | Ping_rate_exceeded of { observed_rate_hz : int; limit_hz : int }
+  | Settings_churn_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
+  | Response_header_change_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
+  | Header_invalid of { reason : string }
 
 type context = {
   method_ : string;

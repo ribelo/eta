@@ -42,11 +42,24 @@ let connection_closed id =
 let response_idle id =
   mk_error id (Response_body_idle_timeout { timeout_ms = Some 10_000 })
 
-let decode_error id codec message =
-  mk_error id (Decode_error { codec; message })
+let protocol_violation id ~kind ~message =
+  mk_error id (Connection_protocol_violation { kind; message })
 
 let rst_rate id ~observed_per_second ~limit_per_second =
   mk_error id (Rst_rate_exceeded { observed_per_second; limit_per_second })
+
+let ping_rate id ~observed_rate_hz ~limit_hz =
+  mk_error id (Ping_rate_exceeded { observed_rate_hz; limit_hz })
+
+let settings_churn id ~observed_rate_hz ~limit_hz =
+  mk_error id
+    (Settings_churn_rate_exceeded { observed_rate_hz; limit_hz })
+
+let response_header_change_rate id ~observed_rate_hz ~limit_hz =
+  mk_error id
+    (Response_header_change_rate_exceeded { observed_rate_hz; limit_hz })
+
+let header_invalid id ~reason = mk_error id (Header_invalid { reason })
 
 let stream_admission id ~limit =
   mk_error id (Stream_admission_rejected { limit })
@@ -60,21 +73,23 @@ let attack_error attack =
   | "headers_rst_every_stream" -> stream_admission attack.id ~limit:128
   | "goaway_mid_flight" -> connection_closed attack.id
   | "header_churn" ->
-      decode_error attack.id "h2_headers" "response header change rate exceeded"
+      response_header_change_rate attack.id ~observed_rate_hz:128 ~limit_hz:32
   | "stream_id_jumps" -> stream_admission attack.id ~limit:128
   | "rst_rate_exceeded" -> rst_rate attack.id ~observed_per_second:250 ~limit_per_second:100
-  | "ping_flood" -> connection_closed attack.id
+  | "ping_flood" -> ping_rate attack.id ~observed_rate_hz:1000 ~limit_hz:100
   | "settings_header_table_size_churn" ->
-      decode_error attack.id "h2_settings" "SETTINGS_HEADER_TABLE_SIZE change rate exceeded"
+      settings_churn attack.id ~observed_rate_hz:250 ~limit_hz:10
   | "window_update_accounting" ->
-      decode_error attack.id "h2_window_update" "WINDOW_UPDATE accounting limit exceeded"
+      protocol_violation attack.id ~kind:"window_update_accounting"
+        ~message:"WINDOW_UPDATE accounting limit exceeded"
   | "goaway_churn" -> connection_closed attack.id
   | "data_frame_slowloris" -> response_idle attack.id
   | "huffman_cpu_amplification" -> hpack_overflow attack.id
   | "header_normalization_edges" ->
-      decode_error attack.id "h2_headers" "invalid response header name or value"
+      header_invalid attack.id ~reason:"invalid response header name or value"
   | "allocator_pressure" ->
-      decode_error attack.id "h2_allocator" "allocator pressure envelope exceeded"
+      protocol_violation attack.id ~kind:"allocator_pressure"
+        ~message:"active-path allocation envelope exceeded"
   | _ -> connection_closed attack.id
 
 let default ~knob ~value ~justification ~error_variant =

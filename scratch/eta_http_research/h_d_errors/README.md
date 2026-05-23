@@ -21,8 +21,9 @@ generic typed-failure container, and eta-http owns the HTTP-specific payload.
 - Cover the requested variants: connect timeout, TLS handshake, certificate
   validation, connection closed, pool shutdown/acquire timeout, response header
   timeout, response body idle timeout, total request timeout, HTTP status,
-  decode error, HPACK overflow, CONTINUATION flood, stream admission rejection,
-  and RST rate limit.
+  decode error, protocol violation, HPACK overflow, CONTINUATION flood, stream
+  admission rejection, RST rate limit, PING rate limit, SETTINGS churn,
+  response-header churn, and invalid headers.
 - Preserve endpoint context, negotiated protocol, failure layer, retryability,
   status/status class when present, and low-cardinality error class.
 - Redact Authorization, Cookie, Set-Cookie, and X-API-Key header values.

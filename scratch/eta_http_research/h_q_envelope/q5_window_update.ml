@@ -11,7 +11,7 @@ let attack =
       default ~knob:"max_window_updates_per_second" ~value:"1000/sec"
         ~justification:
           "Window updates are expected under large streaming responses. The default allows high-throughput flow control while bounding storms."
-        ~error_variant:"Decode_error";
-    expected_error_class = "decode_error";
+        ~error_variant:"Connection_protocol_violation";
+    expected_error_class = "connection_protocol_violation";
     frames_per_second = 2000;
   }

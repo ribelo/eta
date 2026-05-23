@@ -1,7 +1,7 @@
 # H-Q Envelope Lab
 
-This lab bounds the eta-http v1 malicious-server HTTP/2 envelope against the
-current scratch SUT:
+This lab partially bounds the eta-http v1 malicious-server HTTP/2 envelope
+against the current scratch SUT:
 
 - H-D1 multiplexer for stream admission, stream release, RST, PING, DATA, and
   WINDOW_UPDATE paths.
@@ -12,6 +12,11 @@ current scratch SUT:
 The lab intentionally preserves deferred rows. A deferred row means the attack
 class is real, but the current scratch SUT lacks the capability needed to drive
 it honestly.
+
+Current status: 6 of 12 catalogue attacks pass against H-D1, and 6 remain
+deferred to byte-level adapter hooks. The allocator-pressure falsifier uses
+active-path Gc.minor_words between attack start and breaker fire; the
+post-disconnect allocation metric is secondary only.
 
 ## Run
 

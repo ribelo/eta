@@ -9,6 +9,7 @@ type config = {
   max_settings_per_second : int;
   max_window_updates_per_second : int;
   allocator_words_per_frame_cap : float;
+  allocator_words_per_admitted_frame_active_cap : float;
 }
 
 let default_config =
@@ -21,6 +22,7 @@ let default_config =
     max_settings_per_second = 10;
     max_window_updates_per_second = 1000;
     allocator_words_per_frame_cap = 128.0;
+    allocator_words_per_admitted_frame_active_cap = 2260.0;
   }
 
 type sut_stats = {
@@ -41,6 +43,7 @@ type run_evidence = {
   dropped_frames : int;
   fiber_count : int;
   disconnected : bool;
+  alloc_words_per_admitted_frame_active : float;
 }
 
 type verdict = Pass | Fail of string | Deferred of string
@@ -144,6 +147,7 @@ let h_d1_headers_rst config =
     dropped_frames = rejected;
     fiber_count = 0;
     disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
   }
 
 let h_d1_stream_id_jumps _config =
@@ -161,7 +165,14 @@ let h_d1_stream_id_jumps _config =
         loop frames |> Effect.bind (fun () -> Effect.sync (fun () -> of_mux_stats (Multiplexer.stats mux))))
   in
   let stats, _ = run_or_empty "stream_id_jumps" (Effect.map (fun s -> (s, 0)) effect) in
-  { sut_stats = stats; frames_seen = frames; dropped_frames = frames; fiber_count = 0; disconnected = true }
+  {
+    sut_stats = stats;
+    frames_seen = frames;
+    dropped_frames = frames;
+    fiber_count = 0;
+    disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
 
 let h_d1_rst_rate config =
   let attempts = config.max_rst_per_second_per_connection + 150 in
@@ -175,7 +186,14 @@ let h_d1_rst_rate config =
         |> Effect.bind (fun _ -> Effect.sync (fun () -> of_mux_stats (Multiplexer.stats mux))))
   in
   let stats, _ = run_or_empty "rst_rate" (Effect.map (fun s -> (s, 0)) effect) in
-  { sut_stats = stats; frames_seen = attempts; dropped_frames = attempts - config.max_rst_per_second_per_connection; fiber_count = 0; disconnected = true }
+  {
+    sut_stats = stats;
+    frames_seen = attempts;
+    dropped_frames = attempts - config.max_rst_per_second_per_connection;
+    fiber_count = 0;
+    disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
 
 let h_d1_ping_flood config =
   let frames = config.max_ping_per_second + 900 in
@@ -191,7 +209,14 @@ let h_d1_ping_flood config =
         loop frames |> Effect.bind (fun () -> Effect.sync (fun () -> of_mux_stats (Multiplexer.stats mux))))
   in
   let stats, _ = run_or_empty "ping_flood" (Effect.map (fun s -> (s, 0)) effect) in
-  { sut_stats = stats; frames_seen = frames; dropped_frames = frames - config.max_ping_per_second; fiber_count = 0; disconnected = true }
+  {
+    sut_stats = stats;
+    frames_seen = frames;
+    dropped_frames = frames - config.max_ping_per_second;
+    fiber_count = 0;
+    disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
 
 let h_d1_window_update config =
   let frames = config.max_window_updates_per_second + 1000 in
@@ -216,7 +241,14 @@ let h_d1_window_update config =
         |> Effect.bind (fun _ -> Effect.sync (fun () -> of_mux_stats (Multiplexer.stats mux))))
   in
   let stats, _ = run_or_empty "window_update" (Effect.map (fun s -> (s, 0)) effect) in
-  { sut_stats = stats; frames_seen = frames; dropped_frames = frames - config.max_window_updates_per_second; fiber_count = 0; disconnected = true }
+  {
+    sut_stats = stats;
+    frames_seen = frames;
+    dropped_frames = frames - config.max_window_updates_per_second;
+    fiber_count = 0;
+    disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
 
 let h_d1_data_slowloris _config =
   let conn = Fake_multiplex_connection.create ~held_tags:[ 0 ] () in
@@ -245,7 +277,14 @@ let h_d1_data_slowloris _config =
         |> Effect.bind (fun _ -> Effect.sync (fun () -> of_mux_stats (Multiplexer.stats mux))))
   in
   let stats, _ = run_or_empty "data_slowloris" (Effect.map (fun s -> (s, 0)) effect) in
-  { sut_stats = stats; frames_seen = frames; dropped_frames = frames; fiber_count = 0; disconnected = true }
+  {
+    sut_stats = stats;
+    frames_seen = frames;
+    dropped_frames = frames;
+    fiber_count = 0;
+    disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
 
 let policy_only attack config =
   let limit =
@@ -261,7 +300,47 @@ let policy_only attack config =
     dropped_frames = dropped;
     fiber_count = 0;
     disconnected = true;
+    alloc_words_per_admitted_frame_active = 0.0;
   }
+
+let combine_stats a b =
+  {
+    active = a.active + b.active;
+    cancelled = a.cancelled + b.cancelled;
+    live = a.live + b.live;
+    opened = a.opened + b.opened;
+    completed = a.completed + b.completed;
+    remote_resets = a.remote_resets + b.remote_resets;
+    local_resets = a.local_resets + b.local_resets;
+    admission_rejected = a.admission_rejected + b.admission_rejected;
+    max_inflight = max a.max_inflight b.max_inflight;
+  }
+
+let combine_evidence a b =
+  {
+    sut_stats = combine_stats a.sut_stats b.sut_stats;
+    frames_seen = a.frames_seen + b.frames_seen;
+    dropped_frames = a.dropped_frames + b.dropped_frames;
+    fiber_count = max a.fiber_count b.fiber_count;
+    disconnected = a.disconnected && b.disconnected;
+    alloc_words_per_admitted_frame_active = 0.0;
+  }
+
+let h_d1_allocator_pressure config =
+  List.fold_left combine_evidence
+    {
+      sut_stats = empty_stats;
+      frames_seen = 0;
+      dropped_frames = 0;
+      fiber_count = 0;
+      disconnected = true;
+      alloc_words_per_admitted_frame_active = 0.0;
+    }
+    [
+      h_d1_headers_rst config;
+      h_d1_window_update config;
+      h_d1_stream_id_jumps config;
+    ]
 
 let run_attack_once config attack =
   match attack.Malicious_server.id with
@@ -271,7 +350,19 @@ let run_attack_once config attack =
   | "ping_flood" -> h_d1_ping_flood config
   | "window_update_accounting" -> h_d1_window_update config
   | "data_frame_slowloris" -> h_d1_data_slowloris config
+  | "allocator_pressure" -> h_d1_allocator_pressure config
   | _ -> policy_only attack config
+
+let measure_active_allocation config attack =
+  Gc.compact ();
+  let before = Gc.stat () in
+  let evidence = run_attack_once config attack in
+  let after = Gc.stat () in
+  let frames = max 1 evidence.frames_seen in
+  let active_words =
+    (after.Gc.minor_words -. before.Gc.minor_words) /. float_of_int frames
+  in
+  { evidence with alloc_words_per_admitted_frame_active = active_words }
 
 let sample_attack baseline second attack evidence error =
   let gc = Gc.quick_stat () in
@@ -292,6 +383,8 @@ let sample_attack baseline second attack evidence error =
     stream_live = evidence.sut_stats.live;
     frames_seen = evidence.frames_seen + (second * attack.frames_per_second);
     dropped_frames = evidence.dropped_frames + (if evidence.disconnected then second * attack.frames_per_second else 0);
+    alloc_words_per_admitted_frame_active =
+      evidence.alloc_words_per_admitted_frame_active;
     disconnected = evidence.disconnected;
     error_class = Error.error_class error;
   }
@@ -308,6 +401,13 @@ let allocator_words_per_frame_after_warmup config samples =
       ((last.minor_words_delta -. first.minor_words_delta)
       +. (last.major_words_delta -. first.major_words_delta))
       /. float_of_int frames
+
+let active_allocator_probe (attack : Malicious_server.attack) =
+  match attack.id with
+  | "headers_rst_every_stream" | "window_update_accounting"
+  | "stream_id_jumps" | "allocator_pressure" ->
+      true
+  | _ -> false
 
 let verdict config attack evidence samples alloc_words =
   match attack.Malicious_server.coverage with
@@ -326,6 +426,12 @@ let verdict config attack evidence samples alloc_words =
         Fail "fd count did not plateau"
       else if not (Monitor.plateau_int ~tolerance:64_000 rss_values) then
         Fail "RSS did not plateau"
+      else if
+        active_allocator_probe attack
+        && evidence.alloc_words_per_admitted_frame_active
+           > config.allocator_words_per_admitted_frame_active_cap
+      then
+        Fail "active allocator words per admitted frame exceeded cap"
       else if alloc_words > config.allocator_words_per_frame_cap then
         Fail "allocator words per attack frame exceeded cap"
       else Pass
@@ -337,7 +443,7 @@ let run ?(config = default_config) ?(csv_path = "scratch/eta_http_research/h_q_e
     List.map
       (fun attack ->
         let error = Malicious_server.attack_error attack in
-        (attack, error, run_attack_once config attack))
+        (attack, error, measure_active_allocation config attack))
       attacks
   in
   let sample_sets = Hashtbl.create 16 in
@@ -385,7 +491,7 @@ let print_result result =
   let attack = result.attack in
   let stats = result.evidence.sut_stats in
   Printf.printf
-    "ATTACK id=%s group=%s verdict=%s coverage=%s error=%s samples=%d frames=%d dropped=%d alloc_words_per_frame_after_warmup=%.2f streams(active=%d cancelled=%d live=%d opened=%d completed=%d remote_resets=%d rejected=%d)\n%!"
+    "ATTACK id=%s group=%s verdict=%s coverage=%s error=%s samples=%d frames=%d dropped=%d alloc_words_per_admitted_frame_active=%.2f alloc_words_per_frame_after_warmup=%.2f streams(active=%d cancelled=%d live=%d opened=%d completed=%d remote_resets=%d rejected=%d)\n%!"
     attack.id
     (Malicious_server.group_to_string attack.group)
     (verdict_to_string result.verdict)
@@ -393,8 +499,9 @@ let print_result result =
     (Error.error_class result.error)
     (List.length result.samples)
     result.evidence.frames_seen result.evidence.dropped_frames
-    result.allocator_words_per_frame_after_warmup stats.active stats.cancelled
-    stats.live stats.opened stats.completed stats.remote_resets
+    result.evidence.alloc_words_per_admitted_frame_active
+    result.allocator_words_per_frame_after_warmup stats.active
+    stats.cancelled stats.live stats.opened stats.completed stats.remote_resets
     stats.admission_rejected
 
 let has_failure results =

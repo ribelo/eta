@@ -13,7 +13,7 @@ let attack =
       default ~knob:"response_header_max_change_rate" ~value:"32/sec"
         ~justification:
           "One response header block per request is normal. 32/sec leaves room for redirects/retries while bounding malicious metadata churn."
-        ~error_variant:"Decode_error";
-    expected_error_class = "decode_error";
+        ~error_variant:"Response_header_change_rate_exceeded";
+    expected_error_class = "response_header_change_rate_exceeded";
     frames_per_second = 128;
   }

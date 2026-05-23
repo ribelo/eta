@@ -14,6 +14,7 @@ type sample = {
   stream_live : int;
   frames_seen : int;
   dropped_frames : int;
+  alloc_words_per_admitted_frame_active : float;
   disconnected : bool;
   error_class : string;
 }
@@ -58,15 +59,16 @@ let baseline () =
   }
 
 let csv_header =
-  "attack_id,second,rss_kb,live_words,minor_words_delta,major_words_delta,user_cpu_seconds_delta,system_cpu_seconds_delta,fd_count,fiber_count,stream_active,stream_cancelled,stream_live,frames_seen,dropped_frames,disconnected,error_class"
+  "attack_id,second,rss_kb,live_words,minor_words_delta,major_words_delta,user_cpu_seconds_delta,system_cpu_seconds_delta,fd_count,fiber_count,stream_active,stream_cancelled,stream_live,frames_seen,dropped_frames,alloc_words_per_admitted_frame_active,disconnected,error_class"
 
 let csv_row s =
   Printf.sprintf
-    "%s,%d,%d,%d,%.0f,%.0f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%b,%s"
+    "%s,%d,%d,%d,%.0f,%.0f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%.2f,%b,%s"
     s.attack_id s.second s.rss_kb s.live_words s.minor_words_delta
     s.major_words_delta s.user_cpu_seconds_delta s.system_cpu_seconds_delta
     s.fd_count s.fiber_count s.stream_active s.stream_cancelled s.stream_live
-    s.frames_seen s.dropped_frames s.disconnected s.error_class
+    s.frames_seen s.dropped_frames s.alloc_words_per_admitted_frame_active
+    s.disconnected s.error_class
 
 let write_csv path samples =
   let oc = open_out path in
