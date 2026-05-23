@@ -4,17 +4,13 @@ open Eta
 
 module Error = Eta_http_error.Error
 
+type read_result = Chunk of bytes | Last of bytes | End
+
 type t = {
-  chunks : bytes array;
+  read_next : unit -> (read_result, Error.t) Effect.t;
   release : unit -> (unit, Error.t) Effect.t;
-  mutable next : int;
   mutable released : bool;
 }
-
-let empty () = { chunks = [||]; release = (fun () -> Effect.unit); next = 0; released = false }
-
-let of_bytes ?(release = fun () -> Effect.unit) chunks =
-  { chunks = Array.of_list chunks; release; next = 0; released = false }
 
 let release_once t =
   if t.released then Effect.unit
@@ -22,18 +18,39 @@ let release_once t =
     t.released <- true;
     t.release ())
 
+let empty () =
+  {
+    read_next = (fun () -> Effect.pure End);
+    release = (fun () -> Effect.unit);
+    released = false;
+  }
+
+let of_reader ?(release = fun () -> Effect.unit) read_next =
+  { read_next; release; released = false }
+
+let of_bytes ?(release = fun () -> Effect.unit) chunks =
+  let chunks = Array.of_list chunks in
+  let next = ref 0 in
+  let read_next () =
+    if !next >= Array.length chunks then Effect.pure End
+    else
+      let chunk = Bytes.copy chunks.(!next) in
+      incr next;
+      if !next >= Array.length chunks then Effect.pure (Last chunk)
+      else Effect.pure (Chunk chunk)
+  in
+  of_reader ~release read_next
+
 let read t =
-  Effect.sync (fun () ->
-      if t.released || t.next >= Array.length t.chunks then None
-      else
-        let chunk = Bytes.copy t.chunks.(t.next) in
-        t.next <- t.next + 1;
-        Some (chunk, t.next >= Array.length t.chunks))
-  |> Effect.bind (function
-       | None -> release_once t |> Effect.map (fun () -> None)
-       | Some (chunk, last) ->
-           (if last then release_once t else Effect.unit)
-           |> Effect.map (fun () -> Some chunk))
+  if t.released then Effect.pure None
+  else
+    t.read_next ()
+    |> Effect.catch (fun error ->
+           release_once t |> Effect.bind (fun () -> Effect.fail error))
+    |> Effect.bind (function
+         | End -> release_once t |> Effect.map (fun () -> None)
+         | Chunk chunk -> Effect.pure (Some chunk)
+         | Last chunk -> release_once t |> Effect.map (fun () -> Some chunk))
 
 let read_all t =
   let rec loop acc total =

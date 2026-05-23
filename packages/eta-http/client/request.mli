@@ -1,6 +1,13 @@
 (** Public eta-http request model. *)
 
-type body = Empty | Fixed of bytes list
+type body =
+  | Empty
+  | Fixed of bytes list
+  | Stream of Eta_http_body.Stream.t
+  | Rewindable_stream of {
+      length : int option;
+      make : unit -> Eta_http_body.Stream.t;
+    }
 
 type t = {
   method_ : string;

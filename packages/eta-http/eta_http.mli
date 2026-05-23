@@ -15,7 +15,10 @@ end
 (** Core protocol values shared by HTTP/1.1 and HTTP/2. *)
 
 module Body : sig
+  module Chunked = Eta_http_body.Chunked
+  module Source = Eta_http_body.Source
   module Stream = Eta_http_body.Stream
+  module Transducer = Eta_http_body.Transducer
 end
 (** Request and response body surfaces. *)
 

@@ -1,6 +1,13 @@
 (** HTTP/1.1 client loop. *)
 
-type request_body = Empty | Fixed of bytes list
+type request_body =
+  | Empty
+  | Fixed of bytes list
+  | Stream of Eta_http_body.Stream.t
+  | Rewindable_stream of {
+      length : int option;
+      make : unit -> Eta_http_body.Stream.t;
+    }
 
 type request = {
   method_ : string;
@@ -13,6 +20,7 @@ type response = {
   status : int;
   headers : Eta_http_core.Header.t;
   body : Eta_http_body.Stream.t;
+  trailers : unit -> (Eta_http_core.Header.t, Eta_http_error.Error.t) Eta.Effect.t;
 }
 
 type pool

@@ -30,7 +30,7 @@ Observed:
 ```text
 eta-http: 24 tests passed
 eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
-eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 content_length="151" transfer_encoding="<none>" protocol=h1
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 ```
 

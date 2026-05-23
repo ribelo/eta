@@ -1,0 +1,4 @@
+(test
+ (name gzip_bomb)
+ (package eta-http)
+ (libraries eta-http eta-test alcotest eio_main))

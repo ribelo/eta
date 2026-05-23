@@ -29,7 +29,7 @@ Observed:
 
 ```text
 eta-http: 24 tests passed
-eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 content_length="151" transfer_encoding="<none>" protocol=h1
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 ```
 

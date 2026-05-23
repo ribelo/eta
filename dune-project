@@ -70,6 +70,35 @@
   (alcotest :with-test)))
 
 (package
+ (name eta-http)
+ (synopsis "HTTP/1.1 and HTTP/2 client for Eta")
+ (description
+  "Clean-room HTTP client package for Eta. v1 owns HTTP/1.1, client lifecycle, retries, streaming bodies, and observability while using ocaml-h2 for HTTP/2 frame/HPACK handling and ocaml-tls for TLS.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-stream (= :version))
+  (eio (>= 1.0))
+  (eio_main (>= 1.0))
+  cstruct
+  (h2 (>= 0.12.0))
+  (tls (= 0.17.5))
+  (tls-eio (= 0.17.5))
+  (x509 (= 0.16.5))
+  (ca-certs (= 0.2.3))
+  (mirage-crypto (= 0.11.3))
+  (mirage-crypto-rng (= 0.11.3))
+  (mirage-crypto-rng-eio (= 0.11.3))
+  eqaf
+  domain-name
+  ipaddr
+  bigstringaf
+  (decompress (= 1.5.3))
+  (eta-test :with-test)
+  (alcotest :with-test)))
+
+(package
  (name eta-test)
  (synopsis "Testing helpers for Eta")
  (description
