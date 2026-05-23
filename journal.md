@@ -16699,3 +16699,49 @@ Residual risk:
   redirect-following request loop.
 - Trace-context injection into outbound request headers is deferred to a future
   propagation wrapper or caller-owned boundary.
+
+## V-LogLevel - Eta.Log_level port
+
+Port of `LogLevel.ts` from effect-smol: a closed variant with eight levels,
+total order, OTel severityNumber mapping, and threshold filtering.
+
+Artifacts:
+
+- `packages/eta/log_level.{ml,mli}` — canonical type and helpers.
+- `packages/eta/test/test_eta.ml` — 7 Alcotest cases covering the 10 test items
+  from the port plan.
+
+Design choice:
+
+- Closed variant matching OTel naming: `All`, `Trace`, `Debug`, `Info`, `Warn`,
+  `Error`, `Fatal`, `None`.
+- Total order: `All < Trace < Debug < Info < Warn < Error < Fatal < None`.
+- `is_enabled` treats `All` and `None` as sentinels: threshold `All` enables
+  everything; threshold `None` disables everything. An `at` level of `None`
+  is always disabled regardless of threshold.
+- OTel severityNumber mapping follows the spec
+  (https://opentelemetry.io/docs/specs/otel/logs/data-model/#field-severitynumber):
+
+  | Eta level | OTel severityNumber |
+  |-----------|---------------------|
+  | Trace     | 1  (TRACE)          |
+  | Debug     | 5  (DEBUG)          |
+  | Info      | 9  (INFO)           |
+  | Warn      | 13 (WARN)           |
+  | Error     | 17 (ERROR)          |
+  | Fatal     | 21 (FATAL)          |
+  | All / None| 0  (UNSPECIFIED)    |
+
+- `of_otel_severity` rounds down to the named range; `0` maps to `All`;
+  values `> 24` map to `Fatal` without raising.
+
+Verdicts:
+
+- V-LogLevel-1 - Closed variant with OTel naming is the canonical level type.
+  Decision: accepted. Evidence: tests pass, mapping verified against spec.
+- V-LogLevel-2 - Sentinel behaviour for `All` and `None` is correct.
+  Decision: accepted. Evidence: `is_enabled` tests cover all variants at both
+  sentinel thresholds.
+- V-LogLevel-3 - OTel severityNumber mapping matches the spec ranges.
+  Decision: accepted. Evidence: boundary tests for 1, 4, 5, 8, 9, 12, 13, 16,
+  17, 20, 21, 24 all pass.
