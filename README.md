@@ -58,6 +58,7 @@ let () =
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
 | `Capabilities` | Small object-type traits for runtime services and explicit dependencies. |
+| `Redacted` | Opaque wrapper for sensitive values that redacts string and JSON output. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
 ## Portable Islands
@@ -212,6 +213,26 @@ Wrap Eio operations in `Effect.sync` at the leaf when they need typed failure
 conversion or tracing names. If a protocol is reusable
 and owns lifecycle semantics, prefer a focused module such as `Resource` or
 `eta-stream` rather than a generic concurrency-data wrapper.
+
+## Redacted Values
+
+`Redacted.t` wraps sensitive values so that formatting and JSON output show
+`<redacted>` instead of the underlying data. Equality and hash use the
+original value, so redacted strings can still be used as map keys.
+
+```ocaml
+let token = Redacted.make ~label:"api_key" "secret-token"
+let auth_header = "Bearer " ^ Redacted.value token
+```
+
+The type is abstract and has no `[@@deriving show]` hooks; accidental
+formatter derivation is blocked at the API level. `wipe_unsafe` best-effort
+erases the cell, but the value may still exist in other references.
+
+When adding values to tracer attributes or logs, explicitly extract or
+render them. The tracer attribute API remains `(string * string) list`;
+wrap secrets in `Redacted.t` at the source and call `Redacted.value` or
+`Format.asprintf "%a" Redacted.pp` only when constructing the attribute list.
 
 ## Trace Propagation
 
