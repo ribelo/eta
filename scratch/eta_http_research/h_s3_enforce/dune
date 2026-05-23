@@ -1,0 +1,9 @@
+(library
+ (name h_s3_enforce_policy)
+ (modules default_config_builder)
+ (libraries tls))
+
+(executable
+ (name invariants)
+ (modules invariants)
+ (libraries h_s3_enforce_policy tls ca-certs domain-name ipaddr))

@@ -58,6 +58,44 @@ Revocation fixtures:
 - with a caller-supplied CRL containing the leaf serial, TLS rejects the chain;
 - caller-owned policy classifies revoked, stale, unavailable, and unknown.
 
+## Verification
+
+H-S3-Reach:
+
+- scratch/eta_http_research/h_s3_reach/targets.md
+- scratch/eta_http_research/h_s3_reach/probe.ml
+- scratch/eta_http_research/h_s3_reach/results.md
+- scratch/eta_http_research/h_s3_reach/verdict.md
+
+Verdict: Option 2 stands with caveats. The corrected 13-target reachability
+matrix accepted TLS 1.2 with the narrowed ECDHE-AEAD cipher policy across OTLP,
+LLM-provider, Cloudflare-fronted, and AWS-fronted endpoint classes. No tested
+target required TLS 1.3.
+
+Caveats:
+
+- Azure OpenAI exact data-plane coverage remains unproven because those hosts
+  are tenant/resource-specific.
+- The OpenTelemetry demo collector is compose-internal; the probe covers the
+  public reference host, not a hosted demo collector.
+
+H-S3-Enforce:
+
+- scratch/eta_http_research/h_s3_enforce/default_config_builder.ml
+- scratch/eta_http_research/h_s3_enforce/invariants.ml
+- scratch/eta_http_research/h_s3_enforce/negative_tls13_override.ml
+- scratch/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
+- scratch/eta_http_research/h_s3_enforce/results.md
+
+Verdict: PASS. The lab now has a single internal construction chokepoint whose
+documented paths directly inspect as TLS 1.2 only with exactly the six
+ECDHE-AEAD ciphers. Attempts to pass TLS 1.3 or DHE_RSA overrides through the
+helper fail to compile because the helper exposes no version or cipher labels.
+
+Residual risk: the chokepoint is scratch-internal until eta-http v1 lands. The
+implementation epic must move this helper shape and invariant fixtures with the
+real eta-http TLS API.
+
 ## Consequences
 
 eta-http v1 documentation and implementation must surface this constraint:

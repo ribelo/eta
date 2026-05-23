@@ -14547,3 +14547,123 @@ Verdicts:
 Residual risk:
 
 - H-Q3 is a limit proof, not a full HPACK implementation. The eta-http implementation epic must wire these caps into the chosen h2/HPACK decoder.
+
+## V-Http-S3-Reach - Intended endpoint classes accept the constrained TLS 1.2 policy
+
+Question: does ADR 0002's constrained Option 2 policy break eta-http v1's
+intended endpoint classes by requiring TLS 1.3?
+
+Artifacts:
+
+- scratch/eta_http_research/h_s3_reach/targets.md
+- scratch/eta_http_research/h_s3_reach/probe.ml
+- scratch/eta_http_research/h_s3_reach/results.md
+- scratch/eta_http_research/h_s3_reach/verdict.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Option 2 reaches intended v1 endpoint classes | Accepted with caveats | Corrected 13-target matrix negotiated TLS 1.2 for every tested target. |
+| TLS 1.3 is required by at least one tested endpoint class | Not observed | No corrected target returned protocol_version_alert, TLS 1.3-only behavior, or narrowed-cipher refusal. |
+| Initial guessed endpoints are proof-quality targets | Rejected | A guessed Grafana Jaeger host failed under both TLS 1.2 and TLS 1.3; a guessed OTel collector host did not resolve. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_s3_reach/probe.exe
+h_s3_reach name=honeycomb_otlp class=otlp_collector host=api.honeycomb.io outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=datadog_otlp_us1 class=otlp_collector host=otlp.datadoghq.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD CHACHA20 POLY1305" policy=tls12_ecdhe_aead_only
+h_s3_reach name=grafana_cloud_otlp_us_central class=otlp_collector host=otlp-gateway-prod-us-central-0.grafana.net outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=logzio_jaeger_us class=otlp_collector host=listener.logz.io outcome=ok version=tls12 alpn=http/1.1 cipher="ECDHE RSA AEAD AES256 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=otel_reference_demo_frontdoor class=otlp_collector host=opentelemetry.io outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=openai_api class=llm_provider host=api.openai.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=anthropic_api class=llm_provider host=api.anthropic.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=google_ai_generative_language class=llm_provider host=generativelanguage.googleapis.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES256 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=azure_ai_inference class=llm_provider host=models.inference.ai.azure.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=cohere_api class=llm_provider host=api.cohere.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=mistral_api class=llm_provider host=api.mistral.ai outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=cloudflare_api class=cdn_reference host=api.cloudflare.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE ECDSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach name=aws_sts class=cdn_reference host=sts.amazonaws.com outcome=ok version=tls12 alpn=http/1.1 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
+h_s3_reach_summary verdict=PASS targets=13 failed=<none> policy=tls12_ecdhe_aead_only
+~~~
+
+Verdict:
+
+- V-Http-S3-Reach-1 - Option 2 stands with caveats.
+  Decision: accepted. Evidence: all corrected concrete targets accepted TLS 1.2
+  under the narrowed ECDHE-AEAD policy.
+- V-Http-S3-Reach-2 - Reopener trigger.
+  Decision: accepted. Evidence: Azure OpenAI resource-specific endpoints and a
+  future public OTel demo collector remain unprobed; any failure there reopens
+  ADR 0002.
+
+Residual risk:
+
+- Azure OpenAI data-plane hosts are tenant/resource-specific, so the lab used a
+  concrete Azure AI inference endpoint.
+- The OpenTelemetry demo collector is compose-internal; opentelemetry.io proves
+  the public reference host, not hosted collector ingest.
+
+## V-Http-S3-Enforce - ADR 0002 TLS policy has a config-builder chokepoint
+
+Question: can ADR 0002's TLS 1.2-only, ECDHE-AEAD-only policy be enforced by
+code inspection instead of relying on fixture convention?
+
+Artifacts:
+
+- scratch/eta_http_research/h_s3_enforce/default_config_builder.ml
+- scratch/eta_http_research/h_s3_enforce/invariants.ml
+- scratch/eta_http_research/h_s3_enforce/negative_tls13_override.ml
+- scratch/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
+- scratch/eta_http_research/h_s3_enforce/run_negative_compile.sh
+- scratch/eta_http_research/h_s3_enforce/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Single helper chokepoint | Accepted | default_client is the only documented construction path in the lab and exposes no version/cipher override labels. |
+| Direct Tls.Config inspection | Accepted | Four helper paths inspect as TLS 1.2 only with exactly the six policy ciphers. |
+| Compile-fail override attempts | Accepted | Attempts to pass ~version or ~ciphers fail to compile. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_s3_enforce/invariants.exe
+PASS default_path version_range_tls12_only
+PASS default_path ciphers_exact_policy_set
+PASS default_path ciphers_no_dhe
+PASS default_path no_tls13_ciphers
+PASS peer_name_path version_range_tls12_only
+PASS peer_name_path ciphers_exact_policy_set
+PASS peer_name_path ciphers_no_dhe
+PASS peer_name_path no_tls13_ciphers
+PASS ip_literal_path version_range_tls12_only
+PASS ip_literal_path ciphers_exact_policy_set
+PASS ip_literal_path ciphers_no_dhe
+PASS ip_literal_path no_tls13_ciphers
+PASS custom_alpn_path version_range_tls12_only
+PASS custom_alpn_path ciphers_exact_policy_set
+PASS custom_alpn_path ciphers_no_dhe
+PASS custom_alpn_path no_tls13_ciphers
+h_s3_enforce_invariants passed
+
+nix develop -c bash scratch/eta_http_research/h_s3_enforce/run_negative_compile.sh
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+~~~
+
+Verdicts:
+
+- V-Http-S3-Enforce-1 - Use a single TLS config chokepoint.
+  Decision: accepted. Evidence: helper construction paths all inspect to the
+  ADR 0002 policy.
+- V-Http-S3-Enforce-2 - Version and cipher widening are not ordinary overrides.
+  Decision: accepted. Evidence: ~version and ~ciphers attempts fail to compile
+  against the helper.
+
+Residual risk:
+
+- The chokepoint is scratch-internal. The eta-http implementation epic must
+  move this helper and its invariant tests into the real eta-http API boundary.
