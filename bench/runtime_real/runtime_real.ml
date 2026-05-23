@@ -56,7 +56,7 @@ let fanout_bounded_512x50_k8 () =
 let retry_flaky () =
   let counter = ref 0 in
   let attempt =
-    Effect.sync "retry.attempt" (fun () ->
+    Effect.sync (fun () ->
         let n = !counter + 1 in
         counter := n;
         n)
@@ -111,11 +111,11 @@ let scope_acquire_release_64 () =
   let acquire_one =
     Effect.acquire_release
       ~acquire:
-        (Effect.sync "acq" (fun () ->
+        (Effect.sync (fun () ->
              incr counter;
              !counter))
       ~release:(fun _ ->
-        Effect.sync "rel" (fun () ->
+        Effect.sync (fun () ->
             decr counter;
             ()))
   in

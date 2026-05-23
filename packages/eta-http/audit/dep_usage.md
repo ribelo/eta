@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: `bash packages/eta-http/audit/run.sh`
-Last updated: 2026-05-23T19:11:00Z
+Last updated: 2026-05-23T20:51:41Z
 Current sites: 283
 
 Every eta-http call site for an allowed external dependency is listed here.

@@ -127,7 +127,7 @@ let run_policy () =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let policy value =
-    Effect.sync "policy" (fun () ->
+    Effect.sync (fun () ->
         if deps#feature_allowed then value else value)
   in
   ignore (Runtime.run rt (Schema.decode_with_policy record3_schema policy record3_json)

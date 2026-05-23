@@ -77,7 +77,7 @@ let workloads =
     item "race.success" (fun () ->
         run_effect
           (Effect.race
-             [ Effect.sync "race.fast" (fun () -> 1); Effect.sync "race.slow" (fun () -> 2) ]));
+             [ Effect.sync (fun () -> 1); Effect.sync (fun () -> 2) ]));
     item "race.all_fail" (fun () ->
         run_effect (Effect.race [ Effect.fail `Left; Effect.fail `Right ]));
     item "supervisor.start_await.1" (fun () ->

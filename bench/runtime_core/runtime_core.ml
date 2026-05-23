@@ -28,7 +28,7 @@ let sync_chain n =
     else
       Effect.bind
         (fun _ -> go (i - 1))
-        (Effect.sync "bench.sync" (fun () -> i))
+        (Effect.sync (fun () -> i))
   in
   go n
 
