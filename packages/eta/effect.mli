@@ -682,6 +682,9 @@ module Private : sig
   val supervisor_record_failure : ('s, 'err) supervisor -> 'err Cause.t -> unit
   val supervisor_failures : ('s, 'err) supervisor -> 'err Cause.t list
   val supervisor_failure_count : ('s, 'err) supervisor -> int
+  val supervisor_register_child :
+    ('s, 'err) supervisor -> (unit -> unit) -> unit
+  val supervisor_cancel_children : ('s, 'err) supervisor -> unit
   val make_supervisor_child :
     promise:('a, 'err Cause.t) result Eio.Promise.t ->
     cancel:(unit -> unit) ->

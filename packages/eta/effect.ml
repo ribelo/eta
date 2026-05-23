@@ -647,6 +647,7 @@ and ('s, !'err) supervisor = {
   max_failures : int option;
   failures : 'err Cause.t list Atomic.t;
   failure_count : int Atomic.t;
+  children : (unit -> unit) list Atomic.t;
 }
 
 and ('s, !'err, !'a) supervisor_child = {
@@ -1015,6 +1016,7 @@ module Private = struct
       max_failures;
       failures = Atomic.make [];
       failure_count = Atomic.make 0;
+      children = Atomic.make [];
     }
 
   let supervisor_fork supervisor body = Eio.Fiber.fork ~sw:supervisor.sw body
@@ -1030,6 +1032,17 @@ module Private = struct
 
   let supervisor_failures supervisor = Atomic.get supervisor.failures
   let supervisor_failure_count supervisor = Atomic.get supervisor.failure_count
+  let supervisor_register_child supervisor cancel =
+    let rec push () =
+      let children = Atomic.get supervisor.children in
+      if not (Atomic.compare_and_set supervisor.children children (cancel :: children))
+      then push ()
+    in
+    push ()
+
+  let supervisor_cancel_children supervisor =
+    List.iter (fun cancel -> cancel ()) (Atomic.get supervisor.children)
+
   let make_supervisor_child ~promise ~cancel = { promise; cancel }
   let supervisor_child_promise child = child.promise
   let supervisor_child_cancel child = child.cancel

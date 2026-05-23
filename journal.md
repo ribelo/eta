@@ -13879,3 +13879,64 @@ allocation moved from 1728.0 to 1411.0 words/op, and contended allocation moved
 from 2606.4 to 2275.5 words/op. The remaining gap is primarily Eta's lazy
 Effect/finalizer structure and effectful health-check surface, not the mutex or
 idle-storage policy.
+
+## V-Http-D1 - Eta primitives carry h2-style multiplexing
+
+Question: can Eta primitives model the HTTP/2 single-connection, many-stream
+multiplexer shape without escaping into raw Eio promises or using Eta.Pool?
+
+Artifacts:
+
+- scratch/eta_http_research/h_d1_dogfood_multiplex/frame.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/fake_multiplex_connection.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/stream_state.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/writer_fiber.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/multiplexer.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/stress.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/alloc_sample.ml
+- scratch/eta_http_research/h_d1_dogfood_multiplex/results.md
+
+Decision: yes for the H-D1 dogfood proof.
+
+Primitive usage:
+
+- `Eta.Channel.try_send` for outbound writer intent and read-loop stream wakeup;
+- `Eta.Channel.send` for stream-level flow-control backpressure;
+- `Effect.acquire_release` for stream lifetime and cleanup;
+- `Effect.timeout_as` for typed fixture deadlines and mid-flight cancellation;
+- `Effect.race` for the blocked-writer teardown guard;
+- `Supervisor.scoped` for writer/read child ownership.
+
+Stress evidence:
+
+~~~text
+PASS flow-control blocks at 8KB window
+PASS flow-control resumes after WINDOW_UPDATE
+PASS rst cleanup returns to baseline
+PASS mid-flight cancellation queues RST and cleans streams
+PASS deadlock teardown is not extended by blocked writer
+PASS rapid reset admission counts active and cancelled
+~~~
+
+Allocation evidence:
+
+~~~text
+h_d1_alloc streams=12800 concurrent=128 elapsed_ms=45 minor_words=14459006 promoted_words=1815712 major_words=1815712 words_per_stream=1129.6 max_inflight=128 opened=12800 completed=12800 local_resets=0 remote_resets=0 admission_rejected=0
+~~~
+
+LOC:
+
+~~~text
+25 frame.ml
+121 fake_multiplex_connection.ml
+152 stream_state.ml
+10 writer_fiber.ml
+161 multiplexer.ml
+169 stress.ml
+52 alloc_sample.ml
+690 total
+~~~
+
+Eta fix: Eta-9sd was fixed during this dogfood pass. `Supervisor.scoped` now
+cancels unresolved children when the scope body settles, so the multiplexer can
+rely on Supervisor teardown for long-lived writer/read children.

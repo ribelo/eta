@@ -1,0 +1,9 @@
+(executable
+ (name stress)
+ (modules frame fake_multiplex_connection stream_state writer_fiber multiplexer stress)
+ (libraries eta eio eio_main unix))
+
+(executable
+ (name alloc_sample)
+ (modules frame fake_multiplex_connection stream_state writer_fiber multiplexer alloc_sample)
+ (libraries eta eio eio_main unix))

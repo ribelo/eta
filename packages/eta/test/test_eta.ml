@@ -1496,6 +1496,54 @@ let test_supervisor_cancel_before_await_does_not_deadlock () =
         cause
   | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
 
+let test_supervisor_scope_cancels_unawaited_children_on_return () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let child_started, child_started_resolver = Eio.Promise.create () in
+  let released = Atomic.make false in
+  let child =
+    Effect.acquire_release
+      ~acquire:
+        (Effect.sync (fun () ->
+             Eio.Promise.resolve child_started_resolver ();
+             ()))
+      ~release:(fun () -> Effect.sync (fun () -> Atomic.set released true))
+    |> Effect.bind (fun () -> Effect.sync Eio.Fiber.await_cancel)
+  in
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_child : (s, [> `Boom ], unit) Supervisor.child) =
+            start sup (lift child)
+          in
+          let* () =
+            lift (Effect.sync (fun () -> Eio.Promise.await child_started))
+          in
+          pure ();
+    }
+  in
+  let result =
+    Eio.Fiber.first
+      (fun () ->
+        match Runtime.run rt program with
+        | Exit.Ok () -> `Returned
+        | Exit.Error cause -> `Failed cause)
+      (fun () ->
+        Eio.Time.sleep (Eio.Stdenv.clock stdenv) 0.1;
+        `Timed_out)
+  in
+  (match result with
+  | `Returned -> ()
+  | `Timed_out -> Alcotest.fail "supervisor scope waited on unawaited child"
+  | `Failed cause ->
+      Alcotest.failf "unexpected supervisor failure: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause);
+  Alcotest.(check bool) "child finalizer ran" true (Atomic.get released)
+
 let test_supervisor_threshold_failure () =
   with_runtime @@ fun rt ->
   let program =
@@ -3519,6 +3567,8 @@ let () =
             test_supervisor_cancel_runs_finalizer;
           Alcotest.test_case "cancel before await does not deadlock" `Quick
             test_supervisor_cancel_before_await_does_not_deadlock;
+          Alcotest.test_case "scope cancels unawaited children" `Quick
+            test_supervisor_scope_cancels_unawaited_children_on_return;
           Alcotest.test_case "threshold failure" `Quick
             test_supervisor_threshold_failure;
           Alcotest.test_case "records multiple failures" `Quick

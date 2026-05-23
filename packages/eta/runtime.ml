@@ -602,9 +602,12 @@ let rec interpret :
       in
       let supervisor_finalizers = ref [] in
       with_finalizers ~runtime ~fail_key supervisor_finalizers (fun () ->
-          interpret_supervisor_scope ~runtime ~error_renderer ~fail_key
-            ~sw:supervisor_sw
-            ~finalizers:supervisor_finalizers (body.run supervisor))
+          Fun.protect
+            ~finally:(fun () -> EP.supervisor_cancel_children supervisor)
+            (fun () ->
+              interpret_supervisor_scope ~runtime ~error_renderer ~fail_key
+                ~sw:supervisor_sw
+                ~finalizers:supervisor_finalizers (body.run supervisor)))
   | EP.Render_error (render, e) ->
       interpret ~runtime ~error_renderer:render ~fail_key ~sw ~finalizers e
   | EP.Named (kind, name, e) ->
@@ -894,18 +897,20 @@ and interpret_supervisor_scope :
           | Error cause ->
               E.Private.supervisor_record_failure supervisor cause);
           resolve result);
-      E.Private.make_supervisor_child ~promise
-        ~cancel:
-          (fun () ->
-            Atomic.set cancel_requested true;
-            match !child_cancel with
-            | None -> resolve (Error Cause.interrupt)
-            | Some cancel_context ->
-                Eio.Cancel.cancel cancel_context Exit;
-                (match !child_sw with
-                | None -> ()
-                | Some child_switch ->
-                    (try Eio.Switch.fail child_switch Exit with _ -> ())))
+      let cancel () =
+        if not (Atomic.get resolved) then (
+          Atomic.set cancel_requested true;
+          match !child_cancel with
+          | None -> resolve (Error Cause.interrupt)
+          | Some cancel_context ->
+              Eio.Cancel.cancel cancel_context Exit;
+              (match !child_sw with
+              | None -> ()
+              | Some child_switch ->
+                  (try Eio.Switch.fail child_switch Exit with _ -> ())))
+      in
+      E.Private.supervisor_register_child supervisor cancel;
+      E.Private.make_supervisor_child ~promise ~cancel
   | E.Supervisor_await child -> (
       match Eio.Promise.await (E.Private.supervisor_child_promise child) with
       | Ok value -> value
