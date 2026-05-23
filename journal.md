@@ -16745,3 +16745,85 @@ Verdicts:
 - V-LogLevel-3 - OTel severityNumber mapping matches the spec ranges.
   Decision: accepted. Evidence: boundary tests for 1, 4, 5, 8, 9, 12, 13, 16,
   17, 20, 21, 24 all pass.
+
+## V-Semaphore-Extract — Eta.Semaphore from Pool wait-slot
+
+Extraction decision: **option (a) plain Semaphore + Pool wraps it**.
+
+The wait-slot mechanism previously lived inline inside `Eta.Pool`. It
+handled bounded permits, blocking acquire, cancellation-safe waiters,
+and ordered wake. Extracting it to a public `Eta.Semaphore` gives
+upcoming consumers (HTTP rate-limiting, otel batch admission, sql
+prepared-statement bounds) a focused primitive without instantiating
+Pool machinery.
+
+### Public API
+
+```ocaml
+type t
+val make : permits:int -> t
+val try_acquire : t -> int -> bool
+val acquire : t -> int -> (unit, 'err) Effect.t
+val release : t -> int -> unit
+val with_permits : t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effect.t
+val available : t -> int
+val waiting : t -> int
+val cancelled_waiters : t -> int
+```
+
+`acquire` is cancellation-safe: a fibre cancelled while waiting does
+not consume permits. `release` clamps at the original capacity.
+`with_permits` brackets acquire and release across success, typed
+failure, and cancellation.
+
+### Pool refactor scope
+
+Pool now owns a `Semaphore.t` initialised to `max_size` permits.
+The old promise-based waiters queue, `take_waiter`, `enqueue_waiter`,
+`wake_open_slots_locked`, and `close_waiters_locked` are removed.
+
+Flow change:
+1. `acquire_entry` acquires one semaphore permit.
+2. `reserve` (under the Pool mutex) checks for idle, expired, or
+   open slots. If nothing is available it returns `Wait`, which causes
+   `acquire_entry` to release the permit and re-acquire (blocking on
+   the Semaphore until a release wakes it).
+3. On release, the connection goes to idle or is closed. In both
+   cases the semaphore permit is released, waking a blocked waiter.
+4. Handoff of a connection directly to a waiter is eliminated; the
+   connection briefly goes idle before the waiter takes it. This
+   preserves FIFO waiter order and LIFO idle storage.
+5. Shutdown releases `max_size` permits so blocked waiters drain
+   themselves: each wakes, calls `reserve`, sees `shutting_down`,
+   releases its permit, and fails with `Pool_shutdown`.
+
+Observability preserved: `stats.waiting` and `stats.cancelled_waiters`
+are forwarded to `Semaphore.waiting` and `Semaphore.cancelled_waiters`.
+
+### Regression gate
+
+All existing Pool tests pass unchanged:
+- `test_pool_reuses_idle_lifo`
+- `test_pool_timeout_cleans_waiter_and_preserves_timeout_cause`
+- `test_pool_health_rejection_reopens`
+- `test_pool_cancel_during_health_check_closes_reserved`
+- `test_pool_idle_eviction`
+- `test_pool_shutdown_wakes_waiters_and_drains`
+- `test_pool_shutdown_deadline_timeout`
+- `test_pool_observability_signals`
+
+New Semaphore-specific tests cover:
+1. `make ~permits:8` then `available` returns 8.
+2. `acquire t 1` then `available` returns 7.
+3. `release t 1` then `available` returns 8.
+4. `with_permits t 3 f` runs `f` with 3 permits held, releases on success.
+5. `with_permits t 3 f` releases permits when `f` fails with a typed error.
+6. `with_permits t 3 f` releases permits when `f` is cancelled by `Effect.timeout`.
+7. Cancellation stress: 8 holders + 50 waiters with timeout; all cancelled
+   waiters cleaned, final `available` returns 8.
+8. Multi-permit contention: acquirer asking for 3 permits waits when 2 are
+   available; a release of 2 unblocks it; final state consistent.
+
+Files added: `packages/eta/semaphore.{ml,mli}`.
+Files modified: `packages/eta/pool.ml`, `packages/eta/test/test_eta.ml`.
+No `dune` change required (auto-discovered modules).
