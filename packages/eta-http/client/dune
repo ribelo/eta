@@ -1,0 +1,14 @@
+(library
+ (name eta_http_client)
+ (package eta-http)
+ (libraries
+  eta
+  eta-stream
+  eta_http_body
+  eta_http_core
+  eta_http_error
+  eta_http_h1
+  eta_http_h2
+  eta_http_transport
+  eio
+  x509))

@@ -1,0 +1,49 @@
+(* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
+
+(** Public entry point for eta-http. *)
+
+module Core = struct
+  module Header = Eta_http_core.Header
+  module Method = Eta_http_core.Method
+  module Span = Eta_http_core.Span
+  module Status = Eta_http_core.Status
+  module Url = Eta_http_core.Url
+  module Version = Eta_http_core.Version
+end
+
+module Body = struct
+  module Stream = Eta_http_body.Stream
+end
+
+module Client = Eta_http_client.Client
+module Request = Eta_http_client.Request
+module Response = Eta_http_client.Response
+module Error = Eta_http_error.Error
+module Error_projection = Eta_http_error.Projection
+module Redaction = Eta_http_error.Redaction
+
+let request = Client.request
+
+module Tls = struct
+  module Config = Eta_http_tls.Config
+end
+
+module Transport = struct
+  module Alpn = Eta_http_transport.Alpn
+  module Connect = Eta_http_transport.Connect
+  module Dispatch = Eta_http_transport.Dispatch
+end
+
+module H1 = struct
+  module Client = Eta_http_h1.Client
+  module Parse = Eta_http_h1.Parse
+  module Write = Eta_http_h1.Write
+end
+
+module H2 = struct
+  module Admission = Eta_http_h2.Admission
+  module Frame = Eta_http_h2.Frame
+  module Multiplexer = Eta_http_h2.Multiplexer
+  module Stream_state = Eta_http_h2.Stream_state
+  module Writer = Eta_http_h2.Writer
+end

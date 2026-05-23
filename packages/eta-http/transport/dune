@@ -1,0 +1,13 @@
+(library
+ (name eta_http_transport)
+ (package eta-http)
+ (libraries
+  eta
+  eta_http_core
+  eta_http_error
+  eta_http_tls
+  eio
+  tls-eio
+  x509
+  domain-name
+  ipaddr))

@@ -1,0 +1,14 @@
+(library
+ (name eta_http)
+ (public_name eta-http)
+ (libraries
+  eta
+  eta-stream
+  eta_http_body
+  eta_http_client
+  eta_http_core
+  eta_http_error
+  eta_http_h1
+  eta_http_h2
+  eta_http_tls
+  eta_http_transport))

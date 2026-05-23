@@ -1,0 +1,4 @@
+(library
+ (name eta_http_body)
+ (package eta-http)
+ (libraries eta eta-stream eta_http_error))
