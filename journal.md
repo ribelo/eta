@@ -14422,3 +14422,69 @@ Verdicts:
 Residual risk:
 
 - Frame-level malicious behavior and resource plateau checks remain for H-Q2/H-Q3.
+
+## V-Http-Q2 - malicious peer stream churn is bounded by circuit breakers
+
+Question: can a malicious HTTP/2 server cause unbounded eta-http client memory, stream state, fiber, or fd growth through stream churn and frame-rate abuse?
+
+Artifacts:
+
+- scratch/eta_http_research/h_q2_malicious_peer_churn/churn.ml
+- scratch/eta_http_research/h_q2_malicious_peer_churn/fixtures.ml
+- scratch/eta_http_research/h_q2_malicious_peer_churn/mitigation_design.md
+- scratch/eta_http_research/h_q2_malicious_peer_churn/monitoring.csv
+- scratch/eta_http_research/h_q2_malicious_peer_churn/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Threshold circuit breakers and disconnect | Accepted | All six attack fixtures trigger a breaker and return active stream/fiber state to baseline. |
+| Sustain malicious peer indefinitely | Rejected | The v1 defense is bounded growth plus clean disconnect, not graceful service under hostile peer input. |
+| Add ping-specific error variant now | Deferred | H-D-Errors has no `Ping_rate_exceeded`; PING flood maps to `Connection_closed` for v1 unless the taxonomy grows. |
+
+Public config knobs:
+
+- `max_concurrent_stream_attempts`;
+- `max_rst_per_second_per_connection`;
+- `max_ping_per_second`;
+- `response_header_max_change_rate`.
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_q2_malicious_peer_churn/fixtures.exe
+sampling malicious peer churn every 1s for 30s
+ATTACK headers_rst_every_stream samples=30 ... error=stream_admission_rejected
+PASS headers_rst_every_stream circuit breaker triggered
+PASS headers_rst_every_stream returned to baseline
+PASS headers_rst_every_stream plateaued
+...
+ATTACK rst_rate_exceeded samples=30 ... error=rst_rate_exceeded
+PASS rst_rate_exceeded circuit breaker triggered
+PASS rst_rate_exceeded returned to baseline
+PASS rst_rate_exceeded plateaued
+h_q2_malicious_peer_churn fixtures passed
+~~~
+
+Error mapping:
+
+- HEADERS+RST_STREAM churn -> `Stream_admission_rejected`;
+- GOAWAY mid-flight -> `Connection_closed`;
+- PING flood -> `Connection_closed`;
+- header churn -> `Response_header_timeout`;
+- stream-id jumps -> `Stream_admission_rejected`;
+- RST_STREAM rate -> `Rst_rate_exceeded`.
+
+Verdicts:
+
+- V-Http-Q2-1 - Bound malicious peer churn with public knobs.
+  Decision: accepted. Evidence: each fixture trips the relevant knob and disconnects.
+- V-Http-Q2-2 - State returns to baseline post-disconnect.
+  Decision: accepted. Evidence: active streams and fixture-owned fiber counts end at zero for all six attacks.
+- V-Http-Q2-3 - Resource sampling plateaus within 30 seconds.
+  Decision: accepted. Evidence: each attack has 30 samples of Gc live words, RSS, fixture fiber count, and fd count; last-window deltas remain within threshold.
+
+Residual risk:
+
+- Eta does not expose a runtime fiber census, so the H-Q2 fixture tracks fixture-owned fiber counts while sampling real GC/RSS/fd values.

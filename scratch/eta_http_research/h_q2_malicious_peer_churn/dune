@@ -1,0 +1,10 @@
+(library
+ (name h_q2_malicious_peer_churn)
+ (wrapped false)
+ (modules churn)
+ (libraries h_d_errors eta unix))
+
+(executable
+ (name fixtures)
+ (modules fixtures)
+ (libraries h_q2_malicious_peer_churn h_d_errors eta unix))
