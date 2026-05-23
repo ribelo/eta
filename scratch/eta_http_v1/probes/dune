@@ -1,0 +1,35 @@
+(executable
+ (name openai_401)
+ (libraries
+  eta
+  eta-http
+  eio_main
+  ca-certs
+  mirage-crypto-rng
+  mirage-crypto-rng-eio))
+
+(executable
+ (name reach_13)
+ (libraries
+  eta
+  eta-http
+  eio_main
+  ca-certs
+  mirage-crypto-rng
+  mirage-crypto-rng-eio))
+
+(executable
+ (name stale_idle)
+ (libraries
+  eta
+  eta-http
+  eio_main
+  ca-certs))
+
+(executable
+ (name writer_alloc)
+ (libraries eta-http))
+
+(executable
+ (name parser_alloc)
+ (libraries eta-http))

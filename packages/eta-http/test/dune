@@ -1,0 +1,6 @@
+(test
+ (name test_eta_http)
+ (libraries eta-http eta-test alcotest eio_main eio.mock unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
