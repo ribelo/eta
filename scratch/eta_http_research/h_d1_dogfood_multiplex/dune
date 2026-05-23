@@ -1,9 +1,15 @@
-(executable
- (name stress)
- (modules frame fake_multiplex_connection stream_state writer_fiber multiplexer stress)
+(library
+ (name h_d1_dogfood_multiplex)
+ (wrapped false)
+ (modules frame fake_multiplex_connection stream_state writer_fiber multiplexer)
  (libraries eta eio eio_main unix))
 
 (executable
+ (name stress)
+ (modules stress)
+ (libraries h_d1_dogfood_multiplex eta eio eio_main unix))
+
+(executable
  (name alloc_sample)
- (modules frame fake_multiplex_connection stream_state writer_fiber multiplexer alloc_sample)
- (libraries eta eio eio_main unix))
+ (modules alloc_sample)
+ (libraries h_d1_dogfood_multiplex eta eio eio_main unix))

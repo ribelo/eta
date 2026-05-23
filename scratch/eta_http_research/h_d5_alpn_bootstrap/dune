@@ -1,0 +1,4 @@
+(executable
+ (name stress)
+ (modules pending_connection fixture_server pool_dispatch stress)
+ (libraries h_d1_dogfood_multiplex eta eio eio_main unix))

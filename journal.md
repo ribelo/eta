@@ -13940,3 +13940,79 @@ LOC:
 Eta fix: Eta-9sd was fixed during this dogfood pass. `Supervisor.scoped` now
 cancels unresolved children when the scope body settles, so the multiplexer can
 rely on Supervisor teardown for long-lived writer/read children.
+
+## V-Effect-Soundness - nonportable Eta values stay out of domains
+
+Question: does the repo gate reject known-unsound captures of Eta and Eio
+same-domain values into portable/domain-safe contexts?
+
+Artifacts:
+
+- packages/eta/test/dune
+- packages/eta/test/soundness/run.sh
+- packages/eta/test/soundness/*_negative.ml
+- packages/eta/test/soundness/results.md
+
+Decision: landed Eta-hku as an in-tree compile-fail suite.
+
+Coverage:
+
+- Effect.t captured by Domain.Safe.spawn;
+- Runtime.t captured by an Effect.Island portable closure;
+- Effect.t published through Portable.Atomic and read from a Domain.Safe.spawn;
+- Eio.Switch.t captured by Domain.Safe.spawn;
+- Capabilities tracer, meter, and logger captured by portable closures;
+- Channel.t captured by Domain.Safe.spawn;
+- Pool.t captured by Domain.Safe.spawn.
+
+Evidence:
+
+~~~text
+nix develop -c bash packages/eta/test/soundness/run.sh _build/default/packages/eta/eta.cmxa
+~~~
+
+All fixtures compile-failed for mode-safety reasons. No residual soundness gap
+was exposed in this pass.
+
+## V-Http-D5 - ALPN dispatch state machine proved
+
+Question: can H-D5 route concurrent first-arrival requests through ALPN without
+leaking the pending state or creating more than one h2 multiplexer per host?
+
+Artifacts:
+
+- scratch/eta_http_research/h_d1_dogfood_multiplex/dune
+- scratch/eta_http_research/h_d5_alpn_bootstrap/pending_connection.ml
+- scratch/eta_http_research/h_d5_alpn_bootstrap/fixture_server.ml
+- scratch/eta_http_research/h_d5_alpn_bootstrap/pool_dispatch.ml
+- scratch/eta_http_research/h_d5_alpn_bootstrap/stress.ml
+- scratch/eta_http_research/h_d5_alpn_bootstrap/results.md
+
+Decision: H-D5 is proved in the scratch lab.
+
+Shape:
+
+- Pending_connection models Connecting -> TLS_handshaking -> ALPN_resolved_h1
+  or ALPN_resolved_h2 and remains internal to dispatch.
+- h1 dispatch uses Eta.Pool.with_resource over a host-scoped pool.
+- h2 dispatch creates one single-cell multiplexer per host and reuses the H-D1
+  modules through a private scratch library.
+- Concurrent pending first-arrivals collapse onto the first pending connection;
+  redundant candidates are cancelled and freed.
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_d5_alpn_bootstrap/stress.exe
+PASS single request opens one h2 connection cleanly
+PASS two concurrent h2 requests share one multiplexer
+PASS pending first-arrivals collapse and free redundant connection
+PASS third request waits for in-flight ALPN and dispatches h2
+PASS unexpected h1 ALPN falls back to pool dispatch
+h_d5_alpn_bootstrap stress passed
+~~~
+
+The stress harness drains the Eta runtime after each fixture, so the h2 owner
+daemon and writer/read fibers have to terminate cleanly before the fixture can
+finish. H-D1 stress still passes after exposing its lab modules as a private
+scratch library.

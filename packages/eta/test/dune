@@ -15,3 +15,11 @@
   (:eta_cmxa ../eta.cmxa))
  (action
   (run bash island_negative/run.sh %{eta_cmxa})))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree soundness)
+  (:eta_cmxa ../eta.cmxa))
+ (action
+  (run bash soundness/run.sh %{eta_cmxa})))
