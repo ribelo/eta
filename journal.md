@@ -14270,3 +14270,78 @@ Verdicts:
 Residual risk:
 
 - The fake h2 response body bytes live above H-D1 frames. H-Q1/H-Q2/H-Q3 must continue testing frame-level cleanup and attack behavior directly against the multiplexer.
+
+## V-Http-O1 - eta-http client observability maps to OTel semconv without eta-otel recursion
+
+Question: can eta-http emit OTel-compatible client spans, metrics, logs, and propagation headers while avoiding recursive eta-otel transport spans?
+
+Artifacts:
+
+- scratch/eta_http_research/h_o1_observability/semconv.ml
+- scratch/eta_http_research/h_o1_observability/eta_http_stub.ml
+- scratch/eta_http_research/h_o1_observability/fixtures.ml
+- scratch/eta_http_research/h_o1_observability/recursion_test.ml
+- scratch/eta_http_research/h_o1_observability/semconv_attributes.md
+- scratch/eta_http_research/h_o1_observability/results.md
+
+Semconv source: OpenTelemetry HTTP client spans documentation, fetched from https://opentelemetry.io/docs/specs/semconv/http/http-spans/ on 2026-05-23. The current published docs reference semantic convention version `v1.56.0` for the HTTP client attributes used by this lab.
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Standard HTTP client span keys | Accepted | Fixtures assert `http.request.method`, `url.full`, `server.address`, `server.port`, `network.protocol.version`, `http.response.status_code`, `http.request.resend_count`, and `error.type`. |
+| Retry/redirect child spans | Accepted | Retry and redirect fixtures produce parent spans plus child client spans for attempts/follow-ups. |
+| Suppress eta-http transport spans for eta-otel | Accepted | Recursion test shows unsuppressed transport spans recurse and filtered transport reaches quiet state. |
+| Duration histogram in Eta meter today | Deferred | Eta's current meter has gauges/counters only; the scratch records `http.client.request.duration` as a gauge and documents histogram support as follow-up. |
+
+Decision: accept the semconv mapping and the explicit eta-otel transport span filter.
+
+Emitted fields:
+
+- spans: method, URL, server address/port, protocol name/version, status, resend count, and error type;
+- metrics: request duration, active requests, request body size, response body size, plus Eta pool active/idle extensions;
+- logs: connect error, TLS error, retry decision, redirect;
+- propagation: W3C `traceparent`, `tracestate`, and `baggage` via `Trace_context.inject` from the active client span.
+
+Evidence:
+
+~~~text
+nix develop -c bash -lc 'dune exec scratch/eta_http_research/h_o1_observability/fixtures.exe && dune exec scratch/eta_http_research/h_o1_observability/recursion_test.exe'
+PASS successful GET returns 200
+PASS successful GET has one client span
+PASS successful GET semconv attrs
+PASS W3C trace context injected from active client span
+PASS successful GET emits HTTP metrics
+PASS connect error marks span error
+PASS connect error emits log
+PASS TLS certificate error attrs
+PASS TLS handshake error attrs
+PASS TLS errors emit logs
+PASS HTTP 500 retry succeeds on attempt 2
+PASS retry parent and child spans
+PASS first retry child records 500 error
+PASS retry decision logged
+PASS redirect chain lands on 200
+PASS redirect child spans carry 301 and 200
+PASS redirect event logged
+PASS h2 request returns 200
+PASS h2 semconv protocol differs from h1
+h_o1_observability fixtures passed (semconv v1.56.0)
+PASS unsuppressed eta-http transport spans recurse
+PASS eta-otel transport filter reaches quiet state
+h_o1 recursion_test passed
+~~~
+
+Verdicts:
+
+- V-Http-O1-1 - Use current OTel HTTP client semconv names.
+  Decision: accepted. Evidence: semconv_attributes.md lists each emitted key and fixtures assert representative values.
+- V-Http-O1-2 - Retry and redirect attempts are child client spans.
+  Decision: accepted. Evidence: fixtures inspect retry and redirect child spans separately from the parent span.
+- V-Http-O1-3 - eta-otel transport must suppress eta-http client spans.
+  Decision: accepted. Evidence: recursion_test.ml simulates export-until-quiet; unsuppressed transport keeps producing new spans, filtered transport stops after the application span.
+
+Residual risk:
+
+- Production eta-http should switch `http.client.request.duration` from a gauge to a histogram when Eta's meter grows a histogram instrument.
