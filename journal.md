@@ -14194,3 +14194,79 @@ Would change if:
   H-S3 grid; or
 - eta-http v1 requires TLS 1.3, in which case Option 2 no longer satisfies the
   product constraint and Option 1 or Option 3 must win.
+
+## V-Http-D2a - eta-http request API hides h1/h2 lifecycle differences
+
+Question: can eta-http expose one request API while h1 holds a connection and h2 holds a stream permit until the response body is consumed, discarded, or cancelled?
+
+Artifacts:
+
+- scratch/eta_http_research/h_d2a_request_api/request_api.mli
+- scratch/eta_http_research/h_d2a_request_api/h1_internal.ml
+- scratch/eta_http_research/h_d2a_request_api/h2_internal.ml
+- scratch/eta_http_research/h_d2a_request_api/caller_demo.ml
+- scratch/eta_http_research/h_d2a_request_api/fixtures.ml
+- scratch/eta_http_research/h_d2a_request_api/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Request-layer abstraction | Accepted | One `Caller_demo.run` path drives h1 and h2 with identical traces. |
+| Unified public pool primitive | Rejected | h1 needs connection checkout lifetime; h2 needs stream permit lifetime. The shared abstraction belongs above both. |
+| Return response after body buffering | Rejected | Would erase the streaming body lifecycle H-D2a is meant to prove. |
+
+Decision: accept the request-layer API shape:
+
+~~~ocaml
+val request : Client.t -> Request.t -> (Response.t, error) Effect.t
+~~~
+
+`Response.t` exposes status, headers, body `Stream.t`, and deferred trailers. The caller uses the same `Stream.read`, `Stream.read_all`, and `Stream.discard` operations regardless of protocol.
+
+Implementation evidence:
+
+- h1 uses `Eta.Pool.with_resource` inside a finite owner fiber. The owner sends the response, waits for the returned body stream to release, then lets the pool finalizer return the connection.
+- h2 uses H-D1 `Multiplexer.request_open`, a new releasable stream handle. The stream remains active after response headers and is released by the body stream finalizer.
+- H-D5 is now a scratch private library (`h_d5_alpn_bootstrap`) and H-D2a links it rather than retyping the ALPN dispatcher modules.
+- H-D-Errors `Error.t` is the typed failure payload.
+
+Focused evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_d2a_request_api/fixtures.exe
+TRACE small status=200 body=small trailer=small-done
+TRACE echo status=200 body=echo:alphabeta trailer=echo-done
+TRACE stream first=part-1 trailer=stream-done
+TRACE slow cancelled=response_body_idle_timeout
+H1 protocol=h1 active=0 idle=1 capacity=2 opened=1 released=4
+H2 protocol=h2 active=0 idle=8 capacity=8 opened=4 released=4
+PASS same caller trace across h1 and h2
+PASS h1 releases every response body
+PASS h2 releases every stream permit
+PASS h1 pool checkout is held while body is open
+PASS h2 stream permit is held while body is open
+PASS h-d5 library exposes ALPN dispatcher for reuse
+h_d2a_request_api fixtures passed
+~~~
+
+Guard evidence after touching H-D1/H-D5:
+
+~~~text
+nix develop -c bash -lc 'dune exec scratch/eta_http_research/h_d1_dogfood_multiplex/stress.exe && dune exec scratch/eta_http_research/h_d5_alpn_bootstrap/stress.exe'
+h_d1_dogfood_multiplex stress passed
+h_d5_alpn_bootstrap stress passed
+~~~
+
+Verdicts:
+
+- V-Http-D2a-1 - Hide protocol at the request layer.
+  Decision: accepted. Evidence: `caller_demo.ml` contains no `Client.protocol`, `H1`, or `H2` references, and the trace is identical across both clients.
+- V-Http-D2a-2 - Body stream owns protocol lease release.
+  Decision: accepted. Evidence: open-body probes show active=1 while the body is open and active=0 after discard for both h1 and h2; cancellation via `timeout_as` also increments the release count.
+- V-Http-D2a-3 - Keep Pool protocol-specific.
+  Decision: accepted. Evidence: h1 uses Eta.Pool; h2 uses the H-D1 multiplexer stream permit. Normalized stats make the lifecycle comparable without pretending the primitives are identical.
+
+Residual risk:
+
+- The fake h2 response body bytes live above H-D1 frames. H-Q1/H-Q2/H-Q3 must continue testing frame-level cleanup and attack behavior directly against the multiplexer.

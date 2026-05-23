@@ -3,6 +3,14 @@ open Frame
 
 type stats = Stream_state.stats
 
+type release_error = [ `Closed | `Writer_full ]
+
+type response_stream = {
+  stream_id : int;
+  tag : int;
+  release : unit -> (unit, release_error) Effect.t;
+}
+
 type t = {
   conn : Fake_multiplex_connection.t;
   outbound : Frame.t Channel.t;
@@ -40,6 +48,14 @@ let release_stream t stream =
       (Rst_stream { stream_id = stream.Stream_state.id; error = Cancel })
   else Effect.unit
 
+let release_stream_once t stream =
+  let released = ref false in
+  fun () ->
+    if !released then Effect.unit
+    else (
+      released := true;
+      release_stream t stream)
+
 let with_stream t ~tag body =
   let acquire =
     Effect.sync (fun () -> Stream_state.open_stream t.streams ~tag)
@@ -50,6 +66,23 @@ let with_stream t ~tag body =
   Effect.scoped
     (Effect.acquire_release ~acquire ~release:(release_stream t)
     |> Effect.bind body)
+
+let with_open_stream t ~tag body =
+  let acquire =
+    Effect.sync (fun () -> Stream_state.open_stream t.streams ~tag)
+    |> Effect.bind (function
+         | `Stream stream -> Effect.pure stream
+         | `Rejected -> Effect.fail `Admission_limited)
+  in
+  let armed = ref true in
+  let release stream =
+    if !armed then release_stream t stream else Effect.unit
+  in
+  Effect.scoped
+    (Effect.acquire_release ~acquire ~release
+    |> Effect.bind (fun stream ->
+           let disarm () = armed := false in
+           body ~disarm stream))
 
 let drain_window stream chunks =
   let rec loop remaining =
@@ -129,6 +162,27 @@ let request ?(body_chunks = 0) t ~tag =
   |> Effect.bind (fun () ->
          (if body_chunks = 0 then Effect.unit else send_body t stream ~tag ~chunks:body_chunks)
          |> Effect.bind (fun () -> await_response t stream))
+
+let request_open ?(body_chunks = 0) t ~tag =
+  with_open_stream t ~tag @@ fun ~disarm stream ->
+  enqueue t
+    (Headers
+       {
+         stream_id = stream.Stream_state.id;
+         tag;
+         end_stream = body_chunks = 0;
+       })
+  |> Effect.bind (fun () ->
+         (if body_chunks = 0 then Effect.unit
+          else send_body t stream ~tag ~chunks:body_chunks)
+         |> Effect.bind (fun () -> await_response t stream))
+  |> Effect.map (fun _ ->
+         disarm ();
+         {
+           stream_id = stream.Stream_state.id;
+           tag;
+           release = release_stream_once t stream;
+         })
 
 let ping t n = enqueue t (Ping n)
 
