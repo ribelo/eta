@@ -36,11 +36,15 @@ Relevant shape:
     val with_borrow :
       t -> (borrow @ local unique -> ('a, 'err) Effect.t) -> ('a, 'err) Effect.t
 
-    let use_borrow (b @ local unique) =
-      Effect.sync "use-borrow" (fun () -> ignore b)
+    let bad_capture pool =
+      Pool.with_connection pool (fun borrow ->
+          Effect.named "captures-local-borrow"
+            (Effect.sync (fun () -> Pool.id borrow)))
 
 Why it fails: Effect.sync stores a closure in Effect.t, and that closure must be
-global. Capturing a local borrow into it would let the local value escape.
+global. Effect.named owns instrumentation around that leaf; it does not change
+the closure's mode. Capturing a local borrow into Effect.sync would let the
+local value escape.
 
 ## Frozen Decision
 

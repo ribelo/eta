@@ -140,16 +140,112 @@ Interpretation:
 - Eio.Stream FIFO should not be the idle-storage primitive; keep it as
   wait-queue prior art only.
 
-Evidence still needed before shipping Eta.Pool:
+## Shipped Eta.Pool Probe
 
-- repeat these measurements against the shipped Eta.Pool implementation once it
-  exists.
+Artifact:
+
+~~~sh
+nix develop -c dune build scratch/eta_research/pool_survival/eta_pool_probe.exe
+nix develop -c _build/default/scratch/eta_research/pool_survival/eta_pool_probe.exe
+~~~
+
+Latest local result:
+
+~~~text
+eta_pool_sequential capacity=32 acquirers=1 total=10000 elapsed_ms=17 minor_words=17954275 words_per_acquire_release=1795.4 p50_acquire_us=1 p99_acquire_us=3 warm_reuse_hit_rate=0.9999 opened=1 closed=1 active=0 idle=0 waiting=0 health_rejected=0 cancelled_waiters=0 max_live=1
+eta_pool_contended capacity=64 acquirers=128 total=12800 elapsed_ms=285 minor_words=34310639 words_per_acquire_release=2680.5 p50_acquire_us=1167 p99_acquire_us=1805 warm_reuse_hit_rate=0.9949 opened=65 closed=65 active=0 idle=0 waiting=0 health_rejected=1 cancelled_waiters=0 max_live=64
+~~~
+
+Interpretation:
+
+- The shipped pool keeps live connections bounded under 128 contending
+  acquirers with capacity 64.
+- Warm reuse is effectively saturated in both sequential and contended runs.
+- The hot path is not low-allocation: cancellation guards, Effect nodes,
+  acquire/release finalizers, health-check spans, and metric updates are
+  visible in the per-acquire word count.
+- This is still the right v1 tradeoff. The guard prevents leaks if a fiber is
+  cancelled after a resource is reserved but before the outer acquire_release
+  finalizer is installed.
+
+## Eta.Pool vs Eio.Pool Hot-Loop Comparison
+
+Artifact:
+
+~~~sh
+nix develop -c dune build scratch/eta_research/pool_survival/pool_compare_probe.exe
+nix develop -c _build/default/scratch/eta_research/pool_survival/pool_compare_probe.exe
+~~~
+
+Scope:
+
+- Same fake connection counters and health rejection shape.
+- Same-domain Eio fibers only.
+- Hot acquire/use/release loop measured after pool creation.
+- Eta shutdown and idle eviction are not measured here because Eio.Pool has no
+  equivalent shutdown/lifetime surface.
+- Eio.Pool uses direct-style synchronous validate/dispose; Eta.Pool uses lazy
+  Effect.t acquisition, release, health check, finalizers, and observability
+  effect nodes.
+
+Latest local result:
+
+~~~text
+eta_pool_sequential capacity=32 acquirers=1 iterations=100000 hold_ms=0 total=100000 elapsed_ms=135 minor_words=141102960 promoted_words=334921 major_words=335946 words_per_acquire_release=1411.0 p50_acquire_us=1 p99_acquire_us=2 warm_reuse_hit_rate=1.0000 opened=1 closed=0 live=1 max_live=1
+eio_pool_sequential capacity=32 acquirers=1 iterations=100000 hold_ms=0 total=100000 elapsed_ms=8 minor_words=3526632 promoted_words=775464 major_words=775464 words_per_acquire_release=35.3 p50_acquire_us=0 p99_acquire_us=1 warm_reuse_hit_rate=1.0000 opened=1 closed=0 live=1 max_live=1
+eta_pool_contended capacity=64 acquirers=128 iterations=100 hold_ms=1 total=12800 elapsed_ms=285 minor_words=29126535 promoted_words=1426984 major_words=1428009 words_per_acquire_release=2275.5 p50_acquire_us=1156 p99_acquire_us=1676 warm_reuse_hit_rate=0.9949 opened=65 closed=1 live=64 max_live=64
+eio_pool_contended capacity=64 acquirers=128 iterations=100 hold_ms=1 total=12800 elapsed_ms=280 minor_words=4384038 promoted_words=137737 major_words=137737 words_per_acquire_release=342.5 p50_acquire_us=1040 p99_acquire_us=1973 warm_reuse_hit_rate=0.9949 opened=65 closed=1 live=64 max_live=64
+~~~
+
+One-hour optimization pass:
+
+- Retained: cache Pool observability attrs in the Pool record. This removed
+  repeated list construction and moved sequential allocation from 1728.0 to
+  1608.0 words/op.
+- Rejected: wrap acquisition in one `Effect.uninterruptible`. It reduced
+  apparent structure but broke waiter cancellation accounting
+  (cancelled_waiters stayed 0 instead of 1).
+- Retained: batch gauge metrics as one private Metric_updates node. This moved
+  sequential allocation to 1560.0 words/op and contended allocation to about
+  2433 words/op.
+- Retained: add private Named_attrs so Pool spans do not need two Annotate
+  effect nodes for fixed attrs. This moved sequential allocation to 1544.0
+  words/op and contended allocation to about 2414 words/op.
+- Retained: lazy private Metric_updates_lazy. In the no-meter hot path the
+  runtime now skips metric snapshots, metric value construction, and stat
+  locks. This was the biggest win, moving sequential allocation to about
+  1428.0 words/op.
+- Retained: split the fixed warm-reuse acquisition guard from the open-new
+  mutable-release guard. This removed one ref/closure from the common path and
+  moved sequential allocation to about 1420.0 words/op.
+- Retained: skip idle expiry scans entirely when no idle_lifetime or
+  max_lifetime is configured. This avoids a hot gettimeofday/list scan and
+  moved the final run to 1411.0 words/op sequential and 2275.5 words/op
+  contended.
+- Rejected: branch the last_used_ms write when no expiry policy exists. It did
+  not move allocation or elapsed time enough to justify the extra branch.
+
+Interpretation:
+
+- Sequential hot-loop wall time: Eta.Pool is about 17x slower than Eio.Pool in
+  this no-IO microbenchmark.
+- Sequential allocation: Eta.Pool allocates about 40x more minor words per
+  checkout/release.
+- Contended with 1 ms work: wall time is effectively tied because the hold time
+  dominates. Eta still allocates about 6.6x more minor words per checkout.
+- Reuse quality and max-live bounds are identical in this workload.
+
+Conclusion: use Eio.Pool for direct-style local resource reuse. Eta.Pool is not
+the low-level performance floor; it buys Eta-native typed errors, lazy
+Effect.t callbacks, effectful health checks, scoped cancellation, shutdown, and
+observability. That tradeoff is acceptable for h1/SQL connection checkout but
+not for ultra-hot object pools or h2 per-frame routing.
 
 The precise status is: LIFO is the best-tested idle policy. Mutex LIFO is the
 best v1 candidate for eta-http and arbitrary same-domain Eio connections.
 Treiber over Portable.Atomic is the current leader only for a
-portable-payload/cross-domain Pool. Shipped Eta.Pool still needs its own
-package-level benchmark gate.
+portable-payload/cross-domain Pool. The shipped same-domain Eta.Pool uses
+mutex LIFO and records its own package-level probe above.
 
 ## Decision Diary
 

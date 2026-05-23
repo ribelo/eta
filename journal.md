@@ -13589,6 +13589,12 @@ registration. Pool wants acquire/release; HTTP/2 and grpc admission want
 Permit_set; bounded send/recv wants Channel; SQL query waiting is Pool acquire;
 Cohort_map waits are keyed registry plus Pool or Permit_set.
 
+Channel's shipped v2 internals already use the same implementation ingredients:
+explicit waiter records, FIFO queues, promise wakeups, active flags, and
+cancellation cleanup under a mutex. That is evidence for a future internal
+extraction if Pool duplicates the shape, not evidence that users need a public
+Eta.Wait_slot surface today.
+
 Reopen public Wait_slot only after at least two shipped Eta primitives duplicate
 the same raw waiter data structure and cancellation finalizer surface.
 
@@ -13749,3 +13755,127 @@ needed by nested timeouts and pool-survival cancellation.
 Related cleanup: Effect.sync no longer carries a name at all. Names and spans
 belong on Effect.named. The PPX and examples now expand named leaves as
 Effect.named name (Effect.sync body), so hot primitive leaves can stay unnamed.
+
+## V-Eta-Pool - same-domain bounded Pool shipped
+
+Question: can Eta ship the Pool primitive locked by V-Pool-Shape-Survey?
+
+Artifacts:
+
+- packages/eta/pool.ml
+- packages/eta/pool.mli
+- packages/eta/test/test_eta.ml
+- scratch/eta_research/pool_survival/eta_pool_probe.ml
+
+Decision: shipped Eta.Pool v1 as a same-domain bounded checkout primitive.
+
+API:
+
+~~~ocaml
+val create :
+  ?name:string ->
+  ?kind:string ->
+  max_size:int ->
+  ?max_idle:int ->
+  ?idle_lifetime:Duration.t ->
+  ?max_lifetime:Duration.t ->
+  ?idle_check_interval:Duration.t ->
+  acquire:('conn, ([> `Pool_shutdown ] as 'err)) Effect.t ->
+  release:('conn -> (unit, 'err) Effect.t) ->
+  ?health_check:('conn -> (unit, 'err) Effect.t) ->
+  unit ->
+  (('conn, 'err) Pool.t, 'err) Effect.t
+
+val with_resource :
+  ('conn, ([> `Pool_shutdown ] as 'err)) Pool.t ->
+  ('conn -> ('a, 'err) Effect.t) ->
+  ('a, 'err) Effect.t
+~~~
+
+Implementation:
+
+- same-domain Eio.Mutex state;
+- mutex LIFO idle storage;
+- private wake-one waiter queue with per-waiter active flag and Eio.Promise
+  resolver;
+- effectful health check;
+- daemon idle/max-lifetime eviction through Effect.Private.daemon;
+- graceful shutdown with deadline via Effect.timeout_as;
+- cancellation guard around reserved resources so acquire cancellation before
+  finalizer installation closes or returns the slot.
+
+Observability:
+
+- metrics under eta.pool.* for active, idle, waiting, max_size, opened, closed,
+  health_rejected, cancelled_waiters, and acquire_wait_ms;
+- internal spans for eta.pool.acquire, eta.pool.health_check, eta.pool.close,
+  and eta.pool.shutdown;
+- sparse logs for health rejection, waiter cancellation, shutdown start,
+  shutdown timeout, and close failure.
+
+Evidence:
+
+- Eta Pool tests cover LIFO reuse, timeout cancellation with clean Cause.Fail
+  Timeout, waiter cleanup, health rejection, cancellation during health check,
+  idle eviction, shutdown waiter wakeup, shutdown deadline timeout, and
+  observability signal names.
+- Probe result:
+
+~~~text
+eta_pool_sequential capacity=32 acquirers=1 total=10000 elapsed_ms=17 minor_words=17954275 words_per_acquire_release=1795.4 p50_acquire_us=1 p99_acquire_us=3 warm_reuse_hit_rate=0.9999 opened=1 closed=1 active=0 idle=0 waiting=0 health_rejected=0 cancelled_waiters=0 max_live=1
+eta_pool_contended capacity=64 acquirers=128 total=12800 elapsed_ms=285 minor_words=34310639 words_per_acquire_release=2680.5 p50_acquire_us=1167 p99_acquire_us=1805 warm_reuse_hit_rate=0.9949 opened=65 closed=65 active=0 idle=0 waiting=0 health_rejected=1 cancelled_waiters=0 max_live=64
+~~~
+
+Limits:
+
+- Pool is same-domain only.
+- HTTP/2 multiplexers and Cohort_map remain outside Eta-t59.
+- The hot path is allocation-aware but not zero-allocation. The main known
+  costs are Effect finalizer structure, health-check spans, metric effect
+  nodes, and the acquire cancellation guard.
+
+## V-Eta-Pool-Perf - one-hour allocation pass
+
+Question: how much Pool hot-path allocation can be removed without weakening
+the shipped cancellation, health-check, shutdown, and observability semantics?
+
+Artifacts:
+
+- packages/eta/effect.ml
+- packages/eta/effect.mli
+- packages/eta/runtime.ml
+- packages/eta/pool.ml
+- scratch/eta_research/pool_survival/pool_compare_probe.ml
+- scratch/eta_research/pool_survival/results.md
+
+Decision: keep only measured reductions.
+
+Retained:
+
+- cached Pool observability attrs;
+- private Metric_updates batching and Metric_updates_lazy;
+- private Named_attrs for fixed span attrs;
+- fixed-release acquisition guard for warm reuse;
+- idle_count plus no-expiry fast path to skip hot idle scans and gettimeofday.
+
+Rejected:
+
+- one broad `Effect.uninterruptible` acquisition wrapper, because it broke
+  waiter cancellation accounting;
+- last_used_ms write branch when no expiry policy exists, because it did not
+  move allocation or elapsed time.
+
+Latest pool_compare_probe result:
+
+~~~text
+eta_pool_sequential words_per_acquire_release=1411.0 elapsed_ms=135
+eio_pool_sequential words_per_acquire_release=35.3 elapsed_ms=8
+eta_pool_contended words_per_acquire_release=2275.5 elapsed_ms=285
+eio_pool_contended words_per_acquire_release=342.5 elapsed_ms=280
+~~~
+
+Net result against the initial comparison baseline: Eta.Pool sequential
+allocation moved from 1728.0 to 1411.0 words/op, and contended allocation moved
+from 2606.4 to 2275.5 words/op. The remaining gap is primarily Eta's lazy
+Effect/finalizer structure and effectful health-check surface, not the mutex or
+idle-storage policy.

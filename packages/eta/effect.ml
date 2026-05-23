@@ -579,6 +579,9 @@ type ('a, 'err) t =
   | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) t
   | Named :
       Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) t
+  | Named_attrs :
+      Capabilities.span_kind * string * (string * string) list * ('a, 'err) t
+      -> ('a, 'err) t
   | Annotate : string * string * ('a, 'err) t -> ('a, 'err) t
   | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) t
   | With_external_parent :
@@ -597,6 +600,19 @@ type ('a, 'err) t =
       attrs : (string * string) list;
       value : Capabilities.metric_value;
     }
+      -> (unit, 'err) t
+  | Metric_updates :
+      (string * string * string * Capabilities.metric_kind
+      * (string * string) list
+      * Capabilities.metric_value)
+      list
+      -> (unit, 'err) t
+  | Metric_updates_lazy :
+      (unit ->
+      (string * string * string * Capabilities.metric_kind
+      * (string * string) list
+      * Capabilities.metric_value)
+      list)
       -> (unit, 'err) t
 
 and ('s, 'a, 'err) supervisor_scope =
@@ -764,6 +780,7 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
 let metric_update ?(description = "") ?(unit_ = "") ?(attrs = []) ~name
     ~kind value =
   Metric_update { name; description; unit_; kind; attrs; value }
+
 let here_attr (file, line, col_start, col_end) e =
   Annotate
     ( "loc",
@@ -776,6 +793,7 @@ let fn ?(kind = Capabilities.Internal) ?error_renderer pos name e =
 let rec name : type a err. (a, err) t -> string option = function
   | Render_error (_, e) -> name e
   | Named (_, n, _) -> Some n
+  | Named_attrs (_, n, _, _) -> Some n
   | Annotate (_, _, e) -> name e
   | _ -> None
 
@@ -794,6 +812,7 @@ let collect_names e =
     | Blocking_shutdown _ -> acc
     | Render_error (_, e) -> walk acc e
     | Named (_, n, e) -> walk (n :: acc) e
+    | Named_attrs (_, n, _, e) -> walk (n :: acc) e
     | Annotate (_, _, e) -> walk acc e
     | Link_span (_, e) -> walk acc e
     | With_external_parent (_, e) -> walk acc e
@@ -802,6 +821,8 @@ let collect_names e =
     | Current_context -> acc
     | Log _ -> acc
     | Metric_update _ -> acc
+    | Metric_updates _ -> acc
+    | Metric_updates_lazy _ -> acc
     | Map (e, _) -> walk acc e
     | Delay (_, e) -> walk acc e
     | Timeout (_, e) -> walk acc e
@@ -911,6 +932,9 @@ module Private = struct
     | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) view
     | Named :
         Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) view
+    | Named_attrs :
+        Capabilities.span_kind * string * (string * string) list * ('a, 'err) t
+        -> ('a, 'err) view
     | Annotate : string * string * ('a, 'err) t -> ('a, 'err) view
     | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) view
     | With_external_parent :
@@ -931,6 +955,19 @@ module Private = struct
         value : Capabilities.metric_value;
       }
         -> (unit, 'err) view
+    | Metric_updates :
+        (string * string * string * Capabilities.metric_kind
+        * (string * string) list
+        * Capabilities.metric_value)
+        list
+        -> (unit, 'err) view
+    | Metric_updates_lazy :
+        (unit ->
+        (string * string * string * Capabilities.metric_kind
+        * (string * string) list
+        * Capabilities.metric_value)
+        list)
+        -> (unit, 'err) view
 
   (* [view] is a transparent alias of [t] with the constructors
      re-exposed for the runtime. The previous implementation reallocated
@@ -942,6 +979,9 @@ module Private = struct
   external view : ('a, 'err) t -> ('a, 'err) view = "%identity"
 
   let daemon = daemon_internal
+  let named_attrs ~kind name ~attrs e = Named_attrs (kind, name, attrs, e)
+  let metric_updates updates = Metric_updates updates
+  let metric_updates_lazy make_updates = Metric_updates_lazy make_updates
 
   let island_submit = Island_runtime.submit
   let island_submit_map = Island_runtime.submit_map

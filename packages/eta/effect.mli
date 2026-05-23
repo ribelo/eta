@@ -548,6 +548,9 @@ module Private : sig
     | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) view
     | Named :
         Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) view
+    | Named_attrs :
+        Capabilities.span_kind * string * (string * string) list * ('a, 'err) t
+        -> ('a, 'err) view
     | Annotate : string * string * ('a, 'err) t -> ('a, 'err) view
     | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) view
     | With_external_parent :
@@ -568,9 +571,42 @@ module Private : sig
         value : Capabilities.metric_value;
       }
         -> (unit, 'err) view
+    | Metric_updates :
+        (string * string * string * Capabilities.metric_kind
+        * (string * string) list
+        * Capabilities.metric_value)
+        list
+        -> (unit, 'err) view
+    | Metric_updates_lazy :
+        (unit ->
+        (string * string * string * Capabilities.metric_kind
+        * (string * string) list
+        * Capabilities.metric_value)
+        list)
+        -> (unit, 'err) view
 
   val view : ('a, 'err) t -> ('a, 'err) view
   val daemon : (unit, 'err) t -> (unit, 'err) t
+  val named_attrs :
+    kind:Capabilities.span_kind ->
+    string ->
+    attrs:(string * string) list ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+
+  val metric_updates :
+    (string * string * string * Capabilities.metric_kind
+    * (string * string) list
+    * Capabilities.metric_value)
+    list ->
+    (unit, 'err) t
+  val metric_updates_lazy :
+    (unit ->
+    (string * string * string * Capabilities.metric_kind
+    * (string * string) list
+    * Capabilities.metric_value)
+    list) ->
+    (unit, 'err) t
 
   val island_submit :
     ('input : immutable_data) ('output : immutable_data).

@@ -19,7 +19,31 @@ surface is itself the public primitive.
 | eta-sql query queue | Not outside Pool. Queries wait for a connection checkout. | Yes. | Eta.Pool acquire. |
 | HTTP/2 stream admission | No. It waits for stream permits, not connection values. | Yes. | Permit_set. |
 | Bounded channel send-when-full | No as a public API. The caller wants send/recv/close semantics. | Yes. | Eta.Channel. |
+| Eta.Channel internals | Yes internally: sender/receiver waiter queues carry promise resolvers and active flags. | Yes, blocked senders/receivers are removed on cancellation. | Private waiter protocol inside Channel. |
 | Future Cohort_map quota waits | No initially. Waiting is over key budget or child pool acquire. | Yes. | Cohort_map + Pool/Permit_set internals. |
+
+## Channel Internal Comparison
+
+Eta.Channel now proves that the wait-slot idea is reusable as implementation
+technique. Its v2 implementation has the same core ingredients as Pool acquire
+will need:
+
+- explicit waiter records
+- FIFO waiter queues
+- promise resolver wakeup
+- active/cancelled flag
+- cancellation cleanup under the same mutex
+- wake-one pump after state changes
+
+It is not the same public primitive. Channel has two symmetric queues
+(senders/receivers), value handoff, buffering, and close propagation. Pool
+acquire has one resource-wait queue plus factory, health check, idle storage,
+lifetime policy, and release ownership.
+
+So Channel raises the extraction watch level, but it does not justify a public
+Eta.Wait_slot before Pool ships. The first concrete action is to keep Pool's
+waiter code small and locally named so extraction is mechanical if duplication
+becomes real.
 
 ## Verdict
 
