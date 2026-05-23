@@ -19,6 +19,16 @@
   mirage-crypto-rng-eio))
 
 (executable
+ (name honeycomb_h2)
+ (libraries
+  eta
+  eta-http
+  eio_main
+  ca-certs
+  mirage-crypto-rng
+  mirage-crypto-rng-eio))
+
+(executable
  (name stale_idle)
  (libraries
   eta
@@ -33,3 +43,19 @@
 (executable
  (name parser_alloc)
  (libraries eta-http))
+
+(executable
+ (name h2_api_shape)
+ (libraries h2 bigstringaf))
+
+(executable
+ (name h2_r8_push_priority)
+ (libraries h2 bigstringaf))
+
+(executable
+ (name s3_gzip_rss)
+ (libraries eta eta-http eio_main ca-certs cstruct))
+
+(executable
+ (name s4_envelope_alloc)
+ (libraries eta-http h2 eio cstruct))

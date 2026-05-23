@@ -31,9 +31,10 @@ let connect_error ~method_ target message =
   Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
     (Connect_error { message })
 
-let tls_error ~method_ target message =
+let tls_error ?(stage = Eta_http_error.Error.Tls_handshake) ~method_ target
+    message =
   Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
-    (Tls_handshake_error { stage = Tls_handshake; message })
+    (Tls_handshake_error { stage; message })
 
 let resolve_stream ~net ~method_ target =
   Effect.sync (fun () ->
@@ -99,3 +100,12 @@ let connect_tls ?alpn_protocols ~authenticator ~method_ target flow =
   |> Effect.bind (function
        | Ok flow -> Effect.pure flow
        | Error message -> Effect.fail (tls_error ~method_ target message))
+
+let negotiated_alpn ~method_ target flow =
+  Effect.sync (fun () -> Tls_eio.epoch flow)
+  |> Effect.bind (function
+       | Ok epoch -> Effect.pure epoch.Tls.Core.alpn_protocol
+       | Error () ->
+           Effect.fail
+             (tls_error ~stage:Alpn_negotiation ~method_ target
+                "TLS epoch unavailable after handshake"))

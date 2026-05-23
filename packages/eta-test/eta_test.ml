@@ -112,6 +112,24 @@ let with_traced_test_clock f =
   in
   f sw clock rt tracer
 
+module Async = struct
+  type 'a promise = 'a Eio.Promise.t
+
+  let fork_run sw rt effect =
+    let promise, resolver = Eio.Promise.create () in
+    Eio.Fiber.fork ~sw (fun () ->
+        Eio.Promise.resolve resolver (Eta.Runtime.run rt effect));
+    promise
+
+  let await = Eio.Promise.await
+
+  let unresolved () =
+    let promise, _resolver = Eio.Promise.create () in
+    promise
+
+  let yield = Eio.Fiber.yield
+end
+
 module Expect = struct
   let pp_hidden_error fmt _ = Format.pp_print_string fmt "<err>"
 

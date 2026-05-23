@@ -1,1 +1,68 @@
-(** HTTP/2 multiplexer skeleton. *)
+(** HTTP/2 multiplexer adapter pieces. *)
+
+type t
+type stream = Stream_state.stream
+
+type request_error =
+  | Admission_rejected
+  | Connection_closed
+
+type opened_request = {
+  stream : stream;
+  request_body : H2.Body.Writer.t;
+}
+
+type client_reader
+
+type read_result =
+  | Read of int
+  | Eof of int
+  | Close
+  | Security_error of Eta_http_error.Error.kind
+
+val create :
+  ?max_concurrent:int ->
+  ?config:H2.Config.t ->
+  ?push_handler:
+    (H2.Request.t -> (H2.Client_connection.response_handler, unit) result) ->
+  ?error_handler:(H2.Client_connection.error -> unit) ->
+  unit ->
+  t
+
+val client_connection : t -> H2.Client_connection.t
+val stats : t -> Stream_state.stats
+val mark_complete : t -> stream -> unit
+val mark_remote_reset : t -> int -> unit
+val release : t -> stream -> Stream_state.release
+val shutdown : t -> unit
+
+val request :
+  t ->
+  tag:int ->
+  H2.Request.t ->
+  error_handler:(stream -> H2.Client_connection.error -> unit) ->
+  response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  (opened_request, request_error) result
+
+val create_client_reader :
+  ?buffer_size:int ->
+  ?security_config:Security.config ->
+  H2.Client_connection.t ->
+  client_reader
+val client : client_reader -> H2.Client_connection.t
+
+val read_client_once :
+  flow:[> Eio.Flow.source_ty] Eio.Resource.t ->
+  client_reader ->
+  read_result
+
+val body_stream :
+  ?poll_error:(unit -> Eta_http_error.Error.t option) ->
+  ?on_release:
+    (Stream_state.release -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
+  closed_error:Eta_http_error.Error.t ->
+  pump:(unit -> (read_result, Eta_http_error.Error.t) Eta.Effect.t) ->
+  t ->
+  stream ->
+  H2.Body.Reader.t ->
+  Eta_http_body.Stream.t

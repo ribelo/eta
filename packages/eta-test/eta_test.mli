@@ -60,6 +60,29 @@ val with_traced_test_clock :
 (** [with_traced_test_clock f] is [with_test_clock] plus an in-memory tracer,
     matching the virtual-time traced test patterns in Eta's own suite. *)
 
+module Async : sig
+  type 'a promise = 'a Eio.Promise.t
+  (** Promise returned by Eta test helpers. *)
+
+  val fork_run :
+    Eio.Switch.t ->
+    'err Eta.Runtime.t ->
+    ('a, 'err) Eta.Effect.t ->
+    ('a, 'err) Eta.Exit.t promise
+  (** [fork_run sw rt effect] runs [effect] on [rt] in a child fiber and
+      resolves the returned promise with its [Exit.t]. *)
+
+  val await : 'a promise -> 'a
+  (** [await promise] blocks until [promise] resolves. *)
+
+  val unresolved : unit -> 'a promise
+  (** [unresolved ()] returns a promise that remains unresolved unless an
+      external fixture resolves it. *)
+
+  val yield : unit -> unit
+  (** Yield to sibling fibers in tests that need to observe concurrent state. *)
+end
+
 module Expect : sig
   val expect_ok : ('a, 'err) Eta.Exit.t -> 'a
   (** [expect_ok exit] returns the success value or fails the Alcotest case. *)

@@ -45,3 +45,13 @@ val connect_tls :
     The caller must ensure a Mirage crypto RNG is installed while the handshake
     runs. TLS failures are reported as
     {!Eta_http_error.Error.Tls_handshake_error}. *)
+
+val negotiated_alpn :
+  method_:string ->
+  target ->
+  Tls_eio.t ->
+  (string option, Eta_http_error.Error.t) Eta.Effect.t
+(** Return the negotiated ALPN protocol from a completed TLS flow.
+
+    If the TLS epoch is unavailable, the failure is reported as an ALPN-stage
+    TLS handshake error with request context. *)
