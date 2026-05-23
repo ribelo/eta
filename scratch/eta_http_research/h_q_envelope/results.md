@@ -2,11 +2,37 @@
 
 ## Status
 
-PARTIAL against the original H-Q catalogue. 6 of 12 catalogue attacks pass against the H-D1 SUT. 6 are deferred to byte-level adapter hooks tracked in Eta-h2-raw-frame-envelope. The allocator-pressure falsifier passes against the active-path rate: the three selected active attacks stay <= 281.17 words/admitted-frame against the 2260 envelope. This is a partial v1 client-security claim; the full claim depends on the deferred set landing with the eta-http implementation epic.
+The original H-D1 scratch result was PARTIAL: 6 of 12 catalogue attacks passed
+against the H-D1 SUT and 6 were deferred to byte-level adapter hooks tracked in
+Eta-h2-raw-frame-envelope. S4 closes the deferred set at the real ocaml-h2
+adapter boundary. The accepted v1 claim is now the H-D1 exercisable subset plus
+the S4 byte-envelope addendum below.
 
 Verdict: PASS for the H-D1-exercisable attack subset, PASS for the active-path allocator falsifier, and DEFERRED for byte-level attack classes that the current H-D1 scratch frame model cannot represent.
 
-This is not a full byte-parser PASS. It is a bounded envelope for the current H-D1/H-D-Errors scratch SUT plus an explicit reopener list for the eta-http implementation epic.
+The historical H-D1 section below is preserved for traceability; the S4
+addendum is the current eta-http v1 implementation verdict.
+
+## S4 Addendum
+
+Command:
+
+    nix develop -c dune exec --display=short scratch/eta_http_v1/probes/s4_envelope_alloc.exe
+
+Observed:
+
+    eta_http_s4_envelope_alloc attack=header_normalization outcome=ok error=Header_invalid minor_words=39 limit_words=2260
+    eta_http_s4_envelope_alloc attack=settings_churn outcome=ok error=Settings_churn_rate_exceeded minor_words=61 limit_words=2260
+    eta_http_s4_envelope_alloc attack=header_churn outcome=ok error=Response_header_change_rate_exceeded minor_words=63 limit_words=2260
+    eta_http_s4_envelope_alloc attack=goaway_churn outcome=ok error=Connection_closed minor_words=56 limit_words=2260
+    eta_http_s4_envelope_alloc attack=hpack_block_cap outcome=ok error=Hpack_decode_overflow minor_words=61 limit_words=2260
+    eta_http_s4_envelope_alloc attack=continuation_cap outcome=ok error=Continuation_flood minor_words=62 limit_words=2260
+    eta_http_s4_envelope_alloc_summary verdict=PASS attacks=6 max_minor_words=63 limit_words=2260
+
+Verdict: PASS for the deferred byte-level rows at the eta-http real h2 adapter
+boundary. GOAWAY last-stream-id selective retry remains intentionally
+unclaimed because the pinned `ocaml-h2` line does not expose received
+`last_stream_id`; eta-http v1 uses drop-and-disconnect with no retry.
 
 ## Command
 

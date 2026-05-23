@@ -47,6 +47,7 @@ module H2 = struct
   module Admission = Eta_http_h2.Admission
   module Frame = Eta_http_h2.Frame
   module Multiplexer = Eta_http_h2.Multiplexer
+  module Security = Eta_http_h2.Security
   module Stream_state = Eta_http_h2.Stream_state
   module Writer = Eta_http_h2.Writer
 end

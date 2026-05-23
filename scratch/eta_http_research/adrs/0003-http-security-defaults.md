@@ -1,10 +1,10 @@
 # ADR 0003: eta-http v1 HTTP/2 Security Defaults
 
-Status: Draft
+Status: Accepted
 
-Note: This ADR is provisional. 6 of 12 originally-scoped attack classes have
-not been exercised at byte level. Promotion from Draft to Accepted requires
-Eta-h2-raw-frame-envelope closure.
+Note: S4 moved the six byte-level deferred rows from the H-D1 scratch model to
+the real ocaml-h2 adapter boundary. The accepted v1 posture is
+drop-and-disconnect with typed errors, not sustaining malicious peers.
 
 ## Context
 
@@ -13,8 +13,10 @@ HTTP/2 catalogue. H-D1 provides the current scratch multiplexer SUT, H-D5
 provides ALPN dispatch prior art, H-D2a provides the request API shape, and
 H-D-Errors provides typed error mapping.
 
-The current H-D1 frame model is not a byte-level HTTP/2 parser. It does not
-represent GOAWAY, SETTINGS, HPACK/Huffman, or header names/values.
+The original H-D1 frame model was not a byte-level HTTP/2 parser. It did not
+represent GOAWAY, SETTINGS, HPACK/Huffman, or header names/values. S4 adds an
+eta-http-owned raw-frame scanner before `ocaml-h2` ingestion and decoded-header
+validation before public response exposure.
 
 ## Decision
 
@@ -36,6 +38,9 @@ Artifacts:
 - `scratch/eta_http_research/h_q_envelope/monitor.ml`
 - `scratch/eta_http_research/h_q_envelope/monitoring.csv`
 - `scratch/eta_http_research/h_q_envelope/results.md`
+- `packages/eta-http/h2/security.ml`
+- `packages/eta-http/h2/probes/s4_security_envelope_probe.md`
+- `scratch/eta_http_v1/probes/s4_envelope_alloc.ml`
 
 The H-Q envelope runner sampled all catalogue rows at 1 Hz from second 0
 through second 30. 6 of 12 catalogue attacks passed against H-D1.
@@ -47,18 +52,24 @@ path between attack start and breaker fire. The selected active-path rates
 were 281.17, 153.84, and 98.43 words/admitted-frame against the 2260
 words/frame envelope.
 
-Rows requiring byte-level GOAWAY, SETTINGS, HPACK/Huffman, or header
-normalization hooks are explicitly deferred with the missing capability named.
+S4 exercises the six deferred byte-level rows at the real adapter boundary:
+GOAWAY mid-flight/post-close admission, response header churn, SETTINGS churn,
+GOAWAY churn, HPACK/Huffman fallback caps, and header normalization. The S4
+allocation probe reports all six under the 2260 minor-words/frame envelope.
 
 ## Consequences
 
-The implementation epic must add adapter-level fixtures before eta-http claims
-full malicious-server HTTP/2 coverage. In particular:
+The implementation adds adapter-level fixtures before eta-http claims full
+malicious-server HTTP/2 coverage. In particular:
 
-- GOAWAY needs `last_stream_id` admission cutoff evidence.
-- SETTINGS churn needs parser-level rate enforcement.
-- HPACK/Huffman needs CPU and decoded-size evidence at the decoder boundary.
-- Header normalization needs name/value validation evidence.
+- GOAWAY admission is enforced as drop-and-disconnect. The pinned `ocaml-h2`
+  line does not surface received `last_stream_id`, so eta-http does not claim
+  selective retry by last stream id in v1.
+- SETTINGS churn is enforced before `ocaml-h2` receives the bytes.
+- HPACK/Huffman uses encoded HEADERS and CONTINUATION caps before decode; the
+  pinned substrate does not expose a per-symbol Huffman CPU-budget hook.
+- Header normalization validates decoded names/values before the public
+  response is exposed.
 
 Drop-and-disconnect is an accepted defense. The defaults bound resource use
 under attack; they do not promise to sustain malicious peers indefinitely.
