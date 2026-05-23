@@ -1,0 +1,10 @@
+(library
+ (name h_d_errors)
+ (wrapped false)
+ (modules error redaction projections)
+ (libraries eta))
+
+(executable
+ (name fixtures)
+ (modules fixtures)
+ (libraries h_d_errors eta eio eio_main))

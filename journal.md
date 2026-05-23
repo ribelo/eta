@@ -14016,3 +14016,181 @@ The stress harness drains the Eta runtime after each fixture, so the h2 owner
 daemon and writer/read fibers have to terminate cleanly before the fixture can
 finish. H-D1 stress still passes after exposing its lab modules as a private
 scratch library.
+
+## V-Http-D-Errors - structured eta-http errors cover request and attack outcomes
+
+Question: can eta-http use one structured error payload for Track A request
+failures and Track B malicious-peer outcomes while keeping Eta.Cause generic
+and redacting secrets by default?
+
+Artifacts:
+
+- scratch/eta_http_research/h_d_errors/error.ml
+- scratch/eta_http_research/h_d_errors/error.mli
+- scratch/eta_http_research/h_d_errors/redaction.ml
+- scratch/eta_http_research/h_d_errors/projections.ml
+- scratch/eta_http_research/h_d_errors/fixtures.ml
+- scratch/eta_http_research/h_d_errors/redaction_policy.md
+- scratch/eta_http_research/h_d_errors/cross_tab.md
+- scratch/eta_http_research/h_d_errors/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| One eta-http payload in the typed failure channel | Accepted | Fixtures cover required variants, low-cardinality fields, redaction, Cause.t leaf fit, and source cross-tab. |
+| Add HTTP constructors to Eta.Cause | Rejected by boundary | Would put protocol-specific payloads in Eta's generic failure container. |
+| Stringly errors plus pretty Cause.t output | Rejected by criteria | Cannot drive retry policy or OTel fields without parsing strings. |
+
+Decision: accept a single eta-http Error.t payload carried as the typed
+failure value. Eta.Cause stays unchanged and eta-http owns the HTTP-specific
+fields.
+
+Accepted shape:
+
+- context: method, URI, negotiated protocol;
+- kind: Connect_timeout, Tls_handshake_error, Tls_certificate_error,
+  Connection_closed, Pool_shutdown, Pool_acquire_timeout,
+  Response_header_timeout, Response_body_idle_timeout, Total_request_timeout,
+  HTTP_status, Decode_error, Hpack_decode_overflow, Continuation_flood,
+  Stream_admission_rejected, Rst_rate_exceeded;
+- derived fields: failure layer, retryability, status/status_class, and
+  low-cardinality error_class.
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_d_errors/fixtures.exe
+PASS all required variants expose low-cardinality fields
+PASS layers distinguish TCP/TLS/ALPN/HTTP/body-decode failures
+PASS redaction hides headers, query strings, and bodies in projections
+PASS structured error fits in Eta Cause.t leaf
+PASS H-D1/H-D5/Pool/security outcomes map to class+layer pairs
+h_d_errors fixtures passed
+~~~
+
+Verdicts:
+
+- V-Http-D-Errors-1 - Keep eta-http errors outside Eta.Cause.
+  Decision: accepted. Evidence: the Cause.t leaf fixture renders a structured
+  HTTP_status value through Cause.pp with Error.pp, without adding constructors
+  to Cause.t. Rationale: this preserves Eta's boundary; Eta owns effect
+  description and interpretation, eta-http owns protocol payloads.
+- V-Http-D-Errors-2 - Default projections redact secrets.
+  Decision: accepted. Evidence: pretty and JSON-style projections hide
+  Authorization, Cookie, Set-Cookie, X-API-Key, URL query strings, and body
+  content. Counterevidence considered: redaction as an opt-in formatter would
+  be smaller, but it fails the default logging safety bar.
+- V-Http-D-Errors-3 - Body snippets are deferred.
+  Decision: defer. Evidence: the active bundle requires bodies never be quoted;
+  the scratch projections always emit body=<omitted>. A future debug-only
+  snippet API would need separate opt-in policy and tests.
+
+Cross-tab:
+
+- Eta.Pool shutdown/acquire timeout map to Pool_shutdown and
+  Pool_acquire_timeout.
+- H-D1 admission pressure maps to Stream_admission_rejected.
+- H-Q2 RST circuit breaker maps to Rst_rate_exceeded.
+- H-Q3 HPACK and CONTINUATION attacks map to Hpack_decode_overflow and
+  Continuation_flood.
+- Shared Connection_closed remains one low-cardinality class; the layer
+  distinguishes TCP, HTTP response, and cancellation contexts.
+
+Unresolved risk:
+
+- Retryability is a first-pass classification. H-D3a can refine the policy with
+  body_replayable and Retry-After evidence without changing the core payload.
+
+## V-Http-S3-Pivot - eta-http v1 TLS uses narrowed older-branch policy
+
+Question: after H-S3 failed on the unconstrained tls 0.17.5 stack, which TLS
+pivot can support an eta-http v1 production client TLS claim?
+
+Artifacts:
+
+- scratch/eta_http_research/h_s3_pivot/badssl_rerun.ml
+- scratch/eta_http_research/h_s3_pivot/local_cert_rerun.ml
+- scratch/eta_http_research/h_s3_pivot/revocation_fixtures.ml
+- scratch/eta_http_research/h_s3_pivot/advisory_audit_rerun.md
+- scratch/eta_http_research/h_s3_pivot/option_chosen.md
+- scratch/eta_http_research/h_s3_pivot/results.md
+- scratch/eta_http_research/adrs/0002-tls-substrate-pivot.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Option 1: upgrade to tls/tls-eio 2.1.0 | Deferred | opam can solve the fixed branch, but digestif 1.3.0 still fails under OxCaml. |
+| Option 2: narrowed older-branch policy | Accepted | BadSSL, local cert, revocation, advisory, and shipped-gate evidence pass under explicit TLS 1.2/ECDHE policy. |
+| Option 3: different TLS substrate | Deferred | Not needed for v1 after Option 2 passed; remains available if TLS 1.3 becomes a v1 requirement. |
+
+Decision: accept Option 2 for eta-http v1, with explicit constraints.
+
+Policy:
+
+- tls/tls-eio 0.17.5, x509 0.16.5, ca-certs 0.2.3, mirage-crypto 0.11.3;
+- TLS version range fixed to TLS 1.2 only;
+- cipher suites restricted to ECDHE RSA/ECDSA AEAD suites;
+- DHE_RSA suites not offered;
+- TLS 1.3 not claimed on this substrate;
+- revocation remains caller-owned per ADR 0001.
+
+Option 1 evidence:
+
+    nix develop .#oxcaml -c bash -lc 'opam install --yes digestif.1.3.0 2>&1'
+
+Result: digestif 1.3.0 still fails under OxCaml with a mode mismatch in
+baijiu_rmd160.ml. A one-line eta-expansion probe was insufficient; sibling hash
+modules also fail when the build proceeds. This is deferred, not rejected.
+
+Option 2 focused evidence:
+
+    nix develop .#oxcaml -c bash -lc 'dune exec scratch/eta_http_research/h_d_errors/fixtures.exe && dune exec scratch/eta_http_research/h_s3_pivot/badssl_rerun.exe && dune exec scratch/eta_http_research/h_s3_pivot/local_cert_rerun.exe && dune exec scratch/eta_http_research/h_s3_pivot/revocation_fixtures.exe'
+
+Result:
+
+- BadSSL rerun passes. dh1024.badssl.com now rejects by handshake failure, and
+  hsts.badssl.com accepts with TLS 1.2.
+- Local certificate rerun passes for SAN, wildcard, wildcard-too-deep
+  rejection, multiple SAN, IP literal, IDNA A-label, SNI certificate selection,
+  and TLS 1.2-only. TLS 1.3-only is rejected by policy.
+- Revocation fixtures pass. No-CRL accepts, caller-supplied revoked CRL rejects
+  the TLS chain, and caller-owned policy classifies revoked, stale,
+  unavailable, and unknown.
+
+Advisory evidence:
+
+OSV still reports OSEC-2026-06 and OSEC-2026-07 for tls 0.17.5. The pivot does
+not claim the package is generally fixed. It accepts a narrower eta-http v1
+contract: TLS 1.3 is not offered, so the OSEC-2026-06 TLS 1.3 client KeyUsage
+path is disabled. OSEC-2026-07 is server-side mTLS and outside the eta-http v1
+client claim.
+
+Gate:
+
+    nix develop .#oxcaml -c eta-oxcaml-test-shipped
+
+Result: PASS. The shipped Eta, eta-stream, eta-otel, eta-schema, and ppx_eta
+test suites passed.
+
+Verdicts:
+
+- V-Http-S3-Pivot-1 - Accept Option 2 for v1.
+  Decision: accepted. Evidence: BadSSL, local certificate, revocation, advisory,
+  and shipped-gate evidence all pass under the narrowed policy. Confidence:
+  medium-high for a TLS 1.2-only client claim.
+- V-Http-S3-Pivot-2 - Do not claim TLS 1.3 on the older branch.
+  Decision: accepted. Evidence: OSEC-2026-06 remains attached to tls 0.17.5,
+  and the local TLS 1.3-only row is rejected by policy. Confidence: high.
+- V-Http-S3-Pivot-3 - Keep revocation caller-owned.
+  Decision: accepted. Evidence: TLS accepts without CRLs, rejects with a
+  caller-supplied CRL, and eta-http policy fixtures classify revoked/stale/
+  unavailable/unknown. Confidence: high for the ownership boundary.
+
+Would change if:
+
+- digestif or tls 2.1.0 compiles under OxCaml and the fixed branch passes the
+  H-S3 grid; or
+- eta-http v1 requires TLS 1.3, in which case Option 2 no longer satisfies the
+  product constraint and Option 1 or Option 3 must win.
