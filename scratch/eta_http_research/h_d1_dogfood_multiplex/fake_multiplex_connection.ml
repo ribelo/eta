@@ -99,6 +99,10 @@ let grant_window t ~stream_id ~bytes =
   with_lock t @@ fun () ->
   enqueue_inbound_locked t (Window_update { stream_id; bytes })
 
+let inject_inbound t frame =
+  Effect.sync @@ fun () ->
+  with_lock t @@ fun () -> enqueue_inbound_locked t frame
+
 let close t =
   with_lock t @@ fun () ->
   t.closed <- true;

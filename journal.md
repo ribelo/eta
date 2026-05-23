@@ -14667,3 +14667,110 @@ Residual risk:
 
 - The chokepoint is scratch-internal. The eta-http implementation epic must
   move this helper and its invariant tests into the real eta-http API boundary.
+
+## V-Http-Q2 - Stream-level malicious peer churn is bounded where H-D1 can express it
+
+Question: do H-D1 stream admission and cleanup survive the H-Q2 stream-level
+malicious-server catalogue without leaks or stringly errors?
+
+Artifacts:
+
+- scratch/eta_http_research/h_q_envelope/attack_runner.ml
+- scratch/eta_http_research/h_q_envelope/monitoring.csv
+- scratch/eta_http_research/h_q_envelope/results.md
+- scratch/eta_http_research/h_q_envelope/defaults.md
+
+Hypothesis ledger:
+
+| Attack | Status | Evidence |
+| --- | --- | --- |
+| HEADERS + RST_STREAM after every stream | Accepted | 1000 attempts, 128 opened, 872 rejected, stream state returned to baseline, `Stream_admission_rejected`. |
+| GOAWAY mid-flight | Deferred | H-D1 has no GOAWAY frame or `last_stream_id` cutoff hook; mapped reopener to raw adapter fixture. |
+| Header churn | Deferred | H-D1 headers do not carry names/values; mapped reopener to adapter header block fixture. |
+| Stream-id jumps | Accepted | 10,000 unknown stream frames dropped with no stream state allocation, `Stream_admission_rejected`. |
+| RST_STREAM rate exceeded | Accepted | 250 attempts against 100/sec default, stream state baseline restored, `Rst_rate_exceeded`. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
+ATTACK id=headers_rst_every_stream group=H-Q2 verdict=PASS ... samples=31 ... streams(active=0 cancelled=0 live=0 opened=128 completed=128 remote_resets=128 rejected=872)
+ATTACK id=goaway_mid_flight group=H-Q2 verdict=DEFERRED ... error=connection_closed samples=31
+ATTACK id=header_churn group=H-Q2 verdict=DEFERRED ... error=decode_error samples=31
+ATTACK id=stream_id_jumps group=H-Q2 verdict=PASS ... samples=31 ... streams(active=0 cancelled=0 live=0 opened=0 completed=0 remote_resets=0 rejected=0)
+ATTACK id=rst_rate_exceeded group=H-Q2 verdict=PASS ... error=rst_rate_exceeded samples=31 ... streams(active=0 cancelled=0 live=0 opened=128 completed=128 remote_resets=128 rejected=122)
+~~~
+
+Verdict:
+
+- V-Http-Q2-1 - H-D1-exercisable stream churn is bounded.
+  Decision: accepted. Evidence: stream state returns to baseline and all
+  exercisable rows map to typed H-D-Errors variants.
+- V-Http-Q2-2 - Full byte-level Q2 coverage is not proven.
+  Decision: accepted as residual risk. Evidence: GOAWAY and header churn need
+  adapter hooks absent from H-D1.
+
+Residual risk:
+
+- H-D1 does not model GOAWAY or header block mutation. The implementation epic
+  must close `.backlog/Eta-h2-raw-frame-envelope.md` before claiming full Q2
+  byte-level coverage.
+
+## V-Http-Q5 - Frame/protocol malicious peer envelope is bounded where H-D1 can express it
+
+Question: do the H-Q5 frame/protocol attacks bound memory, fd/fiber, stream
+state, CPU, and allocator pressure under drop-and-disconnect policy?
+
+Artifacts:
+
+- scratch/eta_http_research/h_q_envelope/attack_runner.ml
+- scratch/eta_http_research/h_q_envelope/monitor.ml
+- scratch/eta_http_research/h_q_envelope/monitoring.csv
+- scratch/eta_http_research/h_q_envelope/results.md
+- scratch/eta_http_research/adrs/0003-http-security-defaults.md
+
+Hypothesis ledger:
+
+| Attack | Status | Evidence |
+| --- | --- | --- |
+| PING flood | Accepted | 1000 PING frames, 900 over default policy, no stream state allocation, `Connection_closed`. |
+| SETTINGS_HEADER_TABLE_SIZE churn | Deferred | H-D1 has no SETTINGS frame; adapter parser hook required. |
+| WINDOW_UPDATE accounting | Accepted | 2000 updates, stalled stream released, baseline restored, `Decode_error`. |
+| GOAWAY churn | Deferred | H-D1 has no GOAWAY; H-D5 raw close/reopen fixture still needed. |
+| DATA-frame slowloris | Accepted | trickled DATA timed out, stream released, `Response_body_idle_timeout`. |
+| Huffman CPU amplification | Deferred | H-D1 has no HPACK/Huffman decoder; H-Q3 size cap exists but CPU cost is unproven. |
+| Header normalization edges | Deferred | H-D1 lacks header names/values; adapter normalization hook required. |
+| Allocator pressure | Accepted for current policy | Post-warmup allocation measured `0.00` words per attack frame after disconnect. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
+ATTACK id=ping_flood group=H-Q5 verdict=PASS ... error=connection_closed samples=31
+ATTACK id=settings_header_table_size_churn group=H-Q5 verdict=DEFERRED ... error=decode_error samples=31
+ATTACK id=window_update_accounting group=H-Q5 verdict=PASS ... error=decode_error samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
+ATTACK id=goaway_churn group=H-Q5 verdict=DEFERRED ... error=connection_closed samples=31
+ATTACK id=data_frame_slowloris group=H-Q5 verdict=PASS ... error=response_body_idle_timeout samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
+ATTACK id=huffman_cpu_amplification group=H-Q5 verdict=DEFERRED ... error=hpack_decode_overflow samples=31
+ATTACK id=header_normalization_edges group=H-Q5 verdict=DEFERRED ... error=decode_error samples=31
+ATTACK id=allocator_pressure group=H-Q5-alloc verdict=PASS ... alloc_words_per_frame_after_warmup=0.00
+~~~
+
+Verdict:
+
+- V-Http-Q5-1 - H-D1-exercisable frame attacks are bounded.
+  Decision: accepted. Evidence: PING, WINDOW_UPDATE, and DATA slowloris rows
+  return stream state to baseline and produce typed errors.
+- V-Http-Q5-2 - Allocator pressure is bounded after disconnect.
+  Decision: accepted for current policy. Evidence: post-warmup words per attack
+  frame measured `0.00`; the defense is drop-and-disconnect.
+- V-Http-Q5-3 - Full byte-level Q5 coverage remains open.
+  Decision: accepted as residual risk. Evidence: SETTINGS, GOAWAY, HPACK/
+  Huffman, and header normalization require adapter hooks.
+
+Residual risk:
+
+- The current envelope proves the scratch H-D1 paths, not a complete ocaml-h2
+  byte-parser adapter. ADR 0003 records the defaults and reopeners.
+- Decompression bombs remain out of scope until gzip support exists; see
+  `.backlog/Eta-gzip-bomb.md`.
