@@ -25,11 +25,17 @@ end
 module Client = Eta_http_client.Client
 (** Top-level client API. *)
 
+module Idempotency = Eta_http_client.Idempotency
+(** HTTP method idempotency and request-body replayability classifier. *)
+
 module Request = Eta_http_client.Request
 (** Public request model. *)
 
 module Response = Eta_http_client.Response
 (** Public response model. *)
+
+module Retry_policy = Eta_http_client.Retry
+(** Retry policy and retry runner for eta-http requests. *)
 
 module Error = Eta_http_error.Error
 (** Typed eta-http error taxonomy. *)
@@ -43,6 +49,13 @@ module Redaction = Eta_http_error.Redaction
 val request :
   Client.t -> Request.t -> (Response.t, Error.t) Eta.Effect.t
 (** Submit a request through the supplied client. *)
+
+val request_with_retry :
+  ?policy:Retry_policy.t ->
+  Client.t ->
+  Request.t ->
+  (Response.t, Error.t) Eta.Effect.t
+(** Submit a request through the supplied client with retry policy handling. *)
 
 module Tls : sig
   module Config = Eta_http_tls.Config

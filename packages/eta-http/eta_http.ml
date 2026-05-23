@@ -19,13 +19,16 @@ module Body = struct
 end
 
 module Client = Eta_http_client.Client
+module Idempotency = Eta_http_client.Idempotency
 module Request = Eta_http_client.Request
 module Response = Eta_http_client.Response
+module Retry_policy = Eta_http_client.Retry
 module Error = Eta_http_error.Error
 module Error_projection = Eta_http_error.Projection
 module Redaction = Eta_http_error.Redaction
 
 let request = Client.request
+let request_with_retry = Client.request_with_retry
 
 module Tls = struct
   module Config = Eta_http_tls.Config
