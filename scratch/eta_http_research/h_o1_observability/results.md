@@ -56,3 +56,15 @@ h_o1 recursion_test passed
 ## Follow-Up
 
 - Eta's meter needs a histogram kind before production eta-http can emit `http.client.request.duration` with the preferred OTel instrument shape. The scratch lab records it as a gauge and documents the gap explicitly.
+
+## S6 Package Promotion Note
+
+S6 promoted the stable subset into `packages/eta-http/observability/` rather
+than copying the full scratch stub. The package implementation includes client
+spans, retry attempt spans, response/error attributes, h2 protocol attributes,
+recursion suppression through `~enabled:false`, and pool/client gauges.
+
+The scratch lab also modeled W3C header injection, structured retry/redirect
+logs, request/response size metrics, and automatic redirect child spans. Those
+remain future work for the package because v1 does not own a redirect-following
+client or outbound propagation wrapper.

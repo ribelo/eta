@@ -25,6 +25,11 @@ module Response = Eta_http_client.Response
 module Retry_policy = Eta_http_client.Retry
 module Error = Eta_http_error.Error
 module Error_projection = Eta_http_error.Projection
+module Observability = struct
+  module Meter = Eta_http_observability.Meter
+  module Semconv = Eta_http_observability.Semconv
+  module Tracer = Eta_http_observability.Tracer
+end
 module Redaction = Eta_http_error.Redaction
 
 let request = Client.request

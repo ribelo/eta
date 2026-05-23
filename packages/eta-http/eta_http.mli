@@ -43,6 +43,14 @@ module Error = Eta_http_error.Error
 module Error_projection = Eta_http_error.Projection
 (** Structured error projections. *)
 
+module Observability : sig
+  module Meter = Eta_http_observability.Meter
+  module Semconv = Eta_http_observability.Semconv
+  module Tracer = Eta_http_observability.Tracer
+end
+(** OpenTelemetry semantic-convention helpers using Eta tracer/meter
+    capabilities. *)
+
 module Redaction = Eta_http_error.Redaction
 (** Diagnostic redaction helpers. *)
 

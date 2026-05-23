@@ -30,3 +30,14 @@ Recursion filter:
 - Normal application HTTP calls emit client spans.
 - eta-otel transport calls set `suppress_client_spans=true` on eta-http instrumentation.
 - Metrics/logs may still be emitted, but the client spans that would be re-exported by eta-otel are suppressed.
+
+## S6 Package Subset
+
+`packages/eta-http/observability/` promotes the stable span and pool-stat
+subset from this lab: request/response/error/retry/protocol attributes,
+`http.response.header.location` derivation for redirect evidence, recursion
+suppression through `~enabled:false`, and eta-http connection gauges.
+
+The package does not yet emit W3C propagation headers, structured log events,
+duration histograms, body-size metrics, or automatic redirect-follow child
+spans. Those require a propagation/redirect policy boundary outside S6.

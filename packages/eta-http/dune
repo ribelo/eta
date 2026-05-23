@@ -10,5 +10,6 @@
   eta_http_error
   eta_http_h1
   eta_http_h2
+  eta_http_observability
   eta_http_tls
   eta_http_transport))
