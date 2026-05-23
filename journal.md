@@ -14345,3 +14345,80 @@ Verdicts:
 Residual risk:
 
 - Production eta-http should switch `http.client.request.duration` from a gauge to a histogram when Eta's meter grows a histogram instrument.
+
+## V-Http-Q1a - eta-http adapter state-machine properties cover H-Q invariants
+
+Question: can eta-http's own adapter/state-machine invariants be property-tested without mostly testing ocaml-h2's parser?
+
+Artifacts:
+
+- scratch/eta_http_research/h_q1a_state_machine/generators.ml
+- scratch/eta_http_research/h_q1a_state_machine/model.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_a_permits.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_b_no_body_after_rst.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_c_window_accounting.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_d_trailers.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_e_goaway.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_f_body_exhaustion.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_g_retry_classifier.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_h_pool_arithmetic.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_i_server_push.ml
+- scratch/eta_http_research/h_q1a_state_machine/property_j_priority.ml
+- scratch/eta_http_research/h_q1a_state_machine/coverage.md
+- scratch/eta_http_research/h_q1a_state_machine/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| Adapter-level state-machine properties | Accepted | Ten seeded properties pass and exercise H-D1 `Stream_state` for stream cleanup counters. |
+| ocaml-h2 frame round-trip properties | Rejected for this gate | Would mostly test ocaml-h2; H-Q1a needs eta-http lifecycle invariants. |
+| External QCheck dependency | Deferred | QCheck is not installed in the current switch; the lab uses a small seeded generator/shrinker with the same replay/shrink evidence shape. |
+
+Decision: accept the adapter-level property suite.
+
+Properties covered:
+
+- permits return to baseline after cancellation/RST/release;
+- no response body delivery after RST_STREAM;
+- flow-control accounting stays non-negative for generated transitions;
+- trailers are delivered only after END_STREAM;
+- GOAWAY prevents new streams above `last_stream_id`;
+- response body EOF is exhausted exactly once;
+- retry decisions match H-D-Errors retryability for the same outcomes;
+- pool active/idle arithmetic stays within capacity;
+- PUSH_PROMISE is rejected after SETTINGS_ENABLE_PUSH=0, citing RFC 9113 section 8.4;
+- PRIORITY is accepted and ignored, citing RFC 9113 section 5.3.2.
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_q1a_state_machine/fixtures.exe
+PROPERTY property_a_permits_return_to_baseline seed=47001 trials=300
+COVERAGE sequences_with_cancel_or_rst=300
+SHRINK none
+...
+PROPERTY property_j_priority_accepted_ignored seed=47010 trials=120
+COVERAGE priority_sequences=120
+SHRINK none
+h_q1a_state_machine properties passed
+~~~
+
+Coverage summary:
+
+- all 300-trial properties exceeded the 10 percent interesting-sequence target;
+- PUSH_PROMISE and PRIORITY properties forced at least one target frame and observed 120/120 target sequences;
+- no failures occurred, so no regression fixture was emitted.
+
+Verdicts:
+
+- V-Http-Q1a-1 - Property-test eta-http state, not ocaml-h2 round-trips.
+  Decision: accepted. Evidence: generators drive request/cancel/body/RST/GOAWAY/PUSH_PROMISE/PRIORITY/trailer/release operations and assert eta-http-owned invariants.
+- V-Http-Q1a-2 - H-D1 stream counters are reusable for H-Q gates.
+  Decision: accepted. Evidence: the model calls `Stream_state.open_stream`, `mark_remote_reset`, `release`, and `stats`; permit baseline failures shrink to operation prefixes.
+- V-Http-Q1a-3 - QCheck dependency is optional for the scratch proof.
+  Decision: accepted for now. Evidence: the custom runner records seed, trial count, coverage, and shrunk failing prefix. A future production test suite can port these generators to QCheck if desired.
+
+Residual risk:
+
+- Frame-level malicious behavior and resource plateau checks remain for H-Q2/H-Q3.
