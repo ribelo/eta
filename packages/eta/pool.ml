@@ -16,15 +16,6 @@ type 'conn entry = {
   mutable last_used_ms : int;
 }
 
-type 'conn wait_result =
-  [ `Use of 'conn entry | `Open_new | `Shutdown ]
-
-type 'conn waiter = {
-  resolver : 'conn wait_result Eio.Promise.u;
-  started_ms : int;
-  mutable active : bool;
-}
-
 type ('conn, 'err) t = {
   name : string;
   kind : string option;
@@ -39,16 +30,14 @@ type ('conn, 'err) t = {
   release_conn : 'conn -> (unit, 'err) Effect.t;
   health_check : 'conn -> (unit, 'err) Effect.t;
   mutex : Eio.Mutex.t;
-  waiters : 'conn waiter Queue.t;
+  sem : Semaphore.t;
   mutable idle : 'conn entry list;
   mutable idle_count : int;
   mutable total : int;
   mutable active : int;
-  mutable waiting : int;
   mutable opened : int;
   mutable closed : int;
   mutable health_rejected : int;
-  mutable cancelled_waiters : int;
   mutable shutting_down : bool;
 }
 
@@ -82,12 +71,12 @@ let stats_locked t =
   {
     active = t.active;
     idle = t.idle_count;
-    waiting = t.waiting;
+    waiting = Semaphore.waiting t.sem;
     max_size = t.max_size;
     opened = t.opened;
     closed = t.closed;
     health_rejected = t.health_rejected;
-    cancelled_waiters = t.cancelled_waiters;
+    cancelled_waiters = Semaphore.cancelled_waiters t.sem;
     shutting_down = t.shutting_down;
   }
 
@@ -139,7 +128,7 @@ let emit_health_rejected t =
 let emit_cancelled_waiters t =
   metric_int t ~name:"eta.pool.cancelled_waiters"
     ~kind:Capabilities.Counter_monotonic ~unit_:"{waiter}" (fun () ->
-      Eio.Mutex.use_ro t.mutex @@ fun () -> t.cancelled_waiters)
+      Semaphore.cancelled_waiters t.sem)
 
 let emit_wait_ms t started_ms =
   metric_float t ~name:"eta.pool.acquire_wait_ms"
@@ -160,51 +149,6 @@ let is_expired t now entry =
           duration_expired ~now idle_lifetime entry.last_used_ms
       | None -> false)
 
-let rec take_active_waiter (q : 'conn waiter Queue.t) =
-  if Queue.is_empty q then None
-  else
-    let waiter = Queue.take q in
-    if waiter.active then Some waiter else take_active_waiter q
-
-let take_waiter t =
-  match take_active_waiter t.waiters with
-  | None -> None
-  | Some waiter ->
-      waiter.active <- false;
-      t.waiting <- t.waiting - 1;
-      Some waiter
-
-let enqueue_waiter t =
-  let promise, resolver = Eio.Promise.create () in
-  let waiter = { resolver; started_ms = now_ms (); active = true } in
-  Queue.push waiter t.waiters;
-  t.waiting <- t.waiting + 1;
-  (promise, waiter)
-
-let wake_waiter_with_open_slot_locked t =
-  if (not t.shutting_down) && t.total < t.max_size then
-    match take_waiter t with
-    | None -> false
-    | Some waiter ->
-        t.total <- t.total + 1;
-        t.active <- t.active + 1;
-        Eio.Promise.resolve waiter.resolver `Open_new;
-        true
-  else false
-
-let rec wake_open_slots_locked t =
-  if wake_waiter_with_open_slot_locked t then wake_open_slots_locked t
-
-let close_waiters_locked t =
-  let rec loop () =
-    match take_waiter t with
-    | None -> ()
-    | Some waiter ->
-        Eio.Promise.resolve waiter.resolver `Shutdown;
-        loop ()
-  in
-  loop ()
-
 let take_expired_idle_locked t =
   let now = now_ms () in
   let rec split expired keep keep_count = function
@@ -224,15 +168,14 @@ type 'conn reservation =
   | `Open_new
   | `Shutdown
   | `Use of 'conn entry
-  | `Wait of 'conn wait_result Eio.Promise.t * 'conn waiter
+  | `Wait
   ]
 
 let reserve t =
   with_lock t @@ fun () ->
-  if t.shutting_down then `Shutdown
-  else if t.waiting > 0 then
-    let promise, waiter = enqueue_waiter t in
-    `Wait (promise, waiter)
+  if t.shutting_down then (
+    Semaphore.release t.sem 1;
+    `Shutdown)
   else
     let expired = if t.expires_entries then take_expired_idle_locked t else [] in
     match expired with
@@ -249,45 +192,15 @@ let reserve t =
             t.active <- t.active + 1;
             `Open_new
         | [] ->
-            let promise, waiter = enqueue_waiter t in
-            `Wait (promise, waiter))
-
-let wait_for_resource t promise (waiter : 'conn waiter) =
-  let acquire = Effect.pure () in
-  let release () =
-    let cancelled =
-      Effect.sync @@ fun () ->
-      with_lock t @@ fun () ->
-      if waiter.active then (
-        waiter.active <- false;
-        t.waiting <- t.waiting - 1;
-        t.cancelled_waiters <- t.cancelled_waiters + 1;
-        true)
-      else false
-    in
-    cancelled
-    |> Effect.bind (function
-         | false -> Effect.unit
-         | true ->
-             log t "eta.pool.waiter_cancelled"
-             |> Effect.bind (fun () -> emit_wait_ms t waiter.started_ms)
-             |> Effect.bind (fun () -> emit_cancelled_waiters t)
-             |> Effect.bind (fun () -> emit_gauges t))
-  in
-  Effect.scoped
-    (Effect.acquire_release ~acquire ~release
-    |> Effect.bind (fun () ->
-           Effect.sync (fun () -> Eio.Promise.await promise)
-           |> Effect.bind (fun result ->
-                  emit_wait_ms t waiter.started_ms
-                  |> Effect.bind (fun () -> Effect.pure result))))
+            Semaphore.release t.sem 1;
+            `Wait)
 
 let mark_open_failed t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
   t.active <- max 0 (t.active - 1);
   t.total <- max 0 (t.total - 1);
-  wake_open_slots_locked t
+  Semaphore.release t.sem 1
 
 let mark_opened t =
   Effect.sync @@ fun () ->
@@ -302,7 +215,7 @@ let mark_closed t =
   with_lock t @@ fun () ->
   t.total <- max 0 (t.total - 1);
   t.closed <- t.closed + 1;
-  wake_open_slots_locked t
+  Semaphore.release t.sem 1
 
 let close_entry t entry =
   let close_once =
@@ -348,22 +261,18 @@ let release_entry t entry =
     if close || t.idle_count >= t.max_idle then (
       t.active <- max 0 (t.active - 1);
       `Close)
-    else
-      match take_waiter t with
-      | Some waiter ->
-          entry.last_used_ms <- now;
-          Eio.Promise.resolve waiter.resolver (`Use entry);
-          `Handoff
-      | None ->
-          entry.last_used_ms <- now;
-          t.active <- max 0 (t.active - 1);
-          t.idle <- entry :: t.idle;
-          t.idle_count <- t.idle_count + 1;
-          `Keep
+    else (
+      entry.last_used_ms <- now;
+      t.active <- max 0 (t.active - 1);
+      t.idle <- entry :: t.idle;
+      t.idle_count <- t.idle_count + 1;
+      `Keep)
   in
   decide
   |> Effect.bind (function
-       | `Keep | `Handoff -> emit_gauges t
+       | `Keep ->
+           Semaphore.release t.sem 1;
+           emit_gauges t
        | `Close ->
            emit_gauges t
            |> Effect.bind (fun () -> close_entry t entry))
@@ -445,19 +354,22 @@ let rec acquire_entry t =
         t.acquire_conn
         |> Effect.bind (after_open ~disarm ~set_release))
   in
-  Effect.sync (fun () -> reserve t)
-  |> Effect.bind (function
-       | `Shutdown -> Effect.fail `Pool_shutdown
-       | `Close_expired expired ->
-           close_entries t expired |> Effect.bind (fun () -> acquire_entry t)
-       | `Use entry -> use_entry entry
-       | `Open_new -> open_new
-       | `Wait (promise, waiter) ->
-           wait_for_resource t promise waiter
-           |> Effect.bind (function
-                | `Shutdown -> Effect.fail `Pool_shutdown
-                | `Use entry -> use_entry entry
-                | `Open_new -> open_new))
+  Semaphore.acquire t.sem 1
+  |> Effect.bind (fun () ->
+       let rec try_reserve () =
+         Effect.sync (fun () -> reserve t)
+         |> Effect.bind (function
+              | `Shutdown -> Effect.fail `Pool_shutdown
+              | `Wait ->
+                  Semaphore.acquire t.sem 1
+                  |> Effect.bind (fun () -> try_reserve ())
+              | `Close_expired expired ->
+                  close_entries t expired
+                  |> Effect.bind (fun () -> try_reserve ())
+              | `Use entry -> use_entry entry
+              | `Open_new -> open_new)
+       in
+       try_reserve ())
 
 let with_resource t body =
   Effect.scoped
@@ -470,8 +382,7 @@ let evict_idle_once t =
   let expired =
     Effect.sync @@ fun () ->
     with_lock t @@ fun () ->
-    if t.shutting_down then []
-    else take_expired_idle_locked t
+    if t.shutting_down then [] else take_expired_idle_locked t
   in
   expired |> Effect.bind (close_entries t)
 
@@ -513,16 +424,14 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
       release_conn = release;
       health_check;
       mutex = Eio.Mutex.create ();
-      waiters = Queue.create ();
+      sem = Semaphore.make ~permits:max_size;
       idle = [];
       idle_count = 0;
       total = 0;
       active = 0;
-      waiting = 0;
       opened = 0;
       closed = 0;
       health_rejected = 0;
-      cancelled_waiters = 0;
       shutting_down = false;
     }
   in
@@ -546,9 +455,7 @@ let begin_shutdown t =
   let take_idle =
     Effect.sync @@ fun () ->
     with_lock t @@ fun () ->
-    if not t.shutting_down then (
-      t.shutting_down <- true;
-      close_waiters_locked t);
+    if not t.shutting_down then t.shutting_down <- true;
     let idle = t.idle in
     t.idle <- [];
     t.idle_count <- 0;
@@ -557,6 +464,8 @@ let begin_shutdown t =
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
   |> Effect.bind (fun () -> take_idle)
   |> Effect.bind (close_entries t)
+  |> Effect.bind (fun () ->
+       Effect.sync (fun () -> Semaphore.release t.sem t.max_size))
   |> Effect.bind (fun () -> emit_gauges t)
 
 let shutdown ?deadline t =
