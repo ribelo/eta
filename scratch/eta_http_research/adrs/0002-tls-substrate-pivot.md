@@ -92,9 +92,22 @@ documented paths directly inspect as TLS 1.2 only with exactly the six
 ECDHE-AEAD ciphers. Attempts to pass TLS 1.3 or DHE_RSA overrides through the
 helper fail to compile because the helper exposes no version or cipher labels.
 
-Residual risk: the chokepoint is scratch-internal until eta-http v1 lands. The
-implementation epic must move this helper shape and invariant fixtures with the
-real eta-http TLS API.
+Migrated eta-http chokepoint:
+
+- packages/eta-http/tls/config.ml
+- packages/eta-http/tls/config.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/test/tls/negative_tls13_override.ml
+- packages/eta-http/test/tls/negative_dhe_cipher_override.ml
+- packages/eta-http/test/tls/run_negative_compile.sh
+
+The package API now exposes `Eta_http.Tls.Config.default_client` without
+`~version` or `~ciphers` override labels. `dune runtest packages/eta-http
+--force` checks the migrated policy invariants and compile-fail fixtures.
+
+Residual risk: the S1 live reach probe has not yet migrated to the public
+eta-http transport path. H-S3-Reach remains scratch evidence until the S1
+request path and reach smoke close.
 
 ## Consequences
 

@@ -1,4 +1,4 @@
-(* Scratch-only S1 reach probe through the public eta-http h1 path. *)
+(* Scratch-only reach probe through the public eta-http ALPN dispatch path. *)
 
 type endpoint_class =
   | Otlp_collector
@@ -119,19 +119,20 @@ let request_target rt client target =
   in
   let request_effect =
     Eta_http.request client request
+    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+           Eta_http.Body.Stream.read_all response.body
+           |> Eta.Effect.bind (fun body ->
+                  Eta_http.Client.stats client
+                  |> Eta.Effect.map (fun (stats : Eta_http.Client.stats) ->
+                         ( response.status,
+                           Bytes.length body,
+                           Eta_http.Client.protocol_to_string stats.protocol ))))
     |> Eta.Effect.timeout_as (Eta.Duration.seconds 15) ~on_timeout:timeout_error
   in
   match Eta.Runtime.run rt request_effect with
   | Eta.Exit.Error cause ->
       Error (Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause)
-  | Eta.Exit.Ok response -> (
-      match Eta.Runtime.run rt (Eta_http.Body.Stream.read_all response.body) with
-      | Eta.Exit.Error cause ->
-          Error
-            (Format.asprintf "body read failed: %a"
-               (Eta.Cause.pp Eta_http.Error.pp)
-               cause)
-      | Eta.Exit.Ok body -> Ok (response.status, Bytes.length body))
+  | Eta.Exit.Ok result -> Ok result
 
 let print_target target =
   Printf.printf "target name=%s class=%s url=%s rationale=%S\n%!" target.name
@@ -139,15 +140,15 @@ let print_target target =
     target.url target.rationale
 
 let print_result target = function
-  | Ok (status, body_bytes) ->
+  | Ok (status, body_bytes, protocol) ->
       Printf.printf
-        "eta_http_s1_reach name=%s class=%s outcome=ok status=%d body_bytes=%d protocol=h1 policy=tls12_ecdhe_aead_only\n%!"
+        "eta_http_reach name=%s class=%s outcome=ok status=%d body_bytes=%d protocol=%s policy=tls12_ecdhe_aead_only\n%!"
         target.name
         (string_of_endpoint_class target.endpoint_class)
-        status body_bytes
+        status body_bytes protocol
   | Error detail ->
       Printf.printf
-        "eta_http_s1_reach name=%s class=%s outcome=error detail=%S protocol=h1 policy=tls12_ecdhe_aead_only\n%!"
+        "eta_http_reach name=%s class=%s outcome=error detail=%S protocol=unknown policy=tls12_ecdhe_aead_only\n%!"
         target.name
         (string_of_endpoint_class target.endpoint_class)
         detail
@@ -157,7 +158,7 @@ let run env =
   Eio.Switch.run @@ fun sw ->
   let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let client =
-    Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+    Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
       ~authenticator:(authenticator ()) ()
   in
   List.iter print_target targets;
@@ -173,11 +174,11 @@ let run env =
   match failures with
   | [] ->
       Printf.printf
-        "eta_http_s1_reach_summary verdict=PASS targets=%d failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only\n%!"
+        "eta_http_reach_summary verdict=PASS targets=%d failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only\n%!"
         (List.length targets)
   | failures ->
       Printf.printf
-        "eta_http_s1_reach_summary verdict=FAIL targets=%d failed=%s protocol=h1 policy=tls12_ecdhe_aead_only\n%!"
+        "eta_http_reach_summary verdict=FAIL targets=%d failed=%s protocol=auto_alpn policy=tls12_ecdhe_aead_only\n%!"
         (List.length targets) (String.concat "," failures);
       exit 1
 

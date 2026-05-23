@@ -4,14 +4,14 @@ set -euo pipefail
 root="${1:-packages/eta-http}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='H2\.|Hpack\.|Tls\.|Tls_eio\.|Eio\.|Cstruct\.|X509\.|Ca_certs\.|Mirage_crypto|Domain_name\.|Ipaddr\.|Bigstringaf\.|Eqaf\.'
+dep_pattern='H2\.|Hpack\.|Tls\.|Tls_eio\.|Eio\.|Cstruct\.|X509\.|Ca_certs\.|Mirage_crypto|Domain_name\.|Ipaddr\.|Bigstringaf\.|Eqaf\.|Gz\.|De\.'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"
 escape_sites="$(mktemp)"
 trap 'rm -f "$dep_sites" "$escape_sites"' EXIT
 
-rg -n -t ocaml "$dep_pattern" "$root" >"$dep_sites" || true
+rg -n -t ocaml "$dep_pattern" "$root" | rg -v 'Eta_http\.H2\.' >"$dep_sites" || true
 rg -n -t ocaml "$escape_pattern" "$root" | rg -v 'Atomic\.Portable' >"$escape_sites" || true
 
 dep_count="$(wc -l <"$dep_sites" | tr -d ' ')"

@@ -14788,3 +14788,1914 @@ Residual risk:
   byte-parser adapter. ADR 0003 records the defaults and reopeners.
 - Decompression bombs remain out of scope until gzip support exists; see
   `.backlog/Eta-gzip-bomb.md`.
+
+## V-Http-S0 - eta-http package skeleton and audit infrastructure
+
+Question: can eta-http v1 start as an in-tree package with visible module
+boundaries, package metadata, tests, and audit catalogs before any client
+behavior lands?
+
+Status: Accepted. S0 is structural only; no research probes were required.
+
+Artifacts:
+
+- packages/eta-http/
+- packages/eta-http/README.md
+- packages/eta-http/audit/dep_usage.md
+- packages/eta-http/audit/eta_escapes.md
+- packages/eta-http/audit/run.sh
+- eta-http.opam
+- .backlog/Eta-a45.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| In-tree Dune package | Accepted | `eta-http` builds as a public package alongside the existing Eta packages. |
+| Audit from day one | Accepted | The audit runner updates both catalogs and reports zero current sites for the empty skeleton. |
+| Direct `digestif` dependency | Rejected for the ADR 0002 branch | ADR 0002 and H-S1 results record `digestif` 1.3.0 failing under OxCaml; `eta-http.opam` omits it. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+bash packages/eta-http/audit/run.sh
+Dependency sites: 0
+Eta escape sites: 0
+
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+~~~
+
+Verdicts:
+
+- V-Http-S0-1 - Ship the package skeleton before behavior.
+  Decision: accepted. Evidence: the package builds, tests, and has a public API
+  table-of-contents in README.
+- V-Http-S0-2 - Keep audit catalogs live from the first slice.
+  Decision: accepted. Evidence: `audit/run.sh` rewrites catalog headers and
+  reports zero dependency/Eta-escape sites.
+- V-Http-S0-3 - Do not add `digestif` as a hard dependency on the ADR 0002
+  branch. Decision: accepted. Evidence: repo notes document the OxCaml compile
+  failure; the generated opam file uses the pinned TLS stack without `digestif`.
+
+Residual risk:
+
+- S0 exposes no working HTTP behavior. S1 must migrate the TLS chokepoint,
+  error taxonomy, request/response API, h1 parser/writer probes, reach probe,
+  and real h1 GET-over-TLS smoke.
+
+## V-Http-S1-Foundations - Typed errors, body shape, and TLS chokepoint migrated
+
+Question: can S1 land the concrete foundations that do not depend on the h1
+parser/writer and DNS/pool probes?
+
+Status: Accepted as partial S1 progress. This is not an S1 slice close.
+
+Artifacts:
+
+- packages/eta-http/error/
+- packages/eta-http/core/
+- packages/eta-http/body/
+- packages/eta-http/client/
+- packages/eta-http/tls/
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/test/tls/
+- packages/eta-http/audit/dep_usage.md
+- scratch/eta_http_research/adrs/0002-tls-substrate-pivot.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| One eta-http typed error payload | Accepted | Redaction/projection test covers low-cardinality error class, retryability, header redaction, query redaction, and body omission. |
+| Public request/response/body shape before network path | Accepted as foundation | `Eta_http.request`, `Request.t`, `Response.t`, and `Body.Stream.t` compile and the body stream release-once test passes. |
+| ADR 0002 TLS config chokepoint in eta-http | Accepted | Runtime invariant test verifies TLS 1.2 only, exact policy ciphers, no DHE, no TLS 1.3 ciphers, and default ALPN. Compile-fail tests reject `~version` and `~ciphers`. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 4 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 16
+Eta escape sites: 0
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+~~~
+
+Verdicts:
+
+- V-Http-S1-Foundations-1 - Keep HTTP-specific failures in eta-http, not
+  `Eta.Cause`. Decision: accepted. Evidence: the structured value renders
+  through Eta effects without leaking secrets.
+- V-Http-S1-Foundations-2 - Make the TLS policy a single public construction
+  path. Decision: accepted. Evidence: public API has no version/cipher
+  overrides and compile-fail fixtures reject those labels.
+
+Residual risk:
+
+- R1-R6 remain open. No h1 parser, writer, DNS, pool integration, live OpenAI
+  smoke, or 13-endpoint reach proof has landed yet.
+
+## V-Http-S1-Url-Writer - URL subset and h1 request serialization
+
+Question: can S1 remove two blockers for h1 GET-over-TLS without adding `uri`
+or an HTTP/1.1 writer dependency?
+
+Status: Accepted as partial S1 progress. R3 is accepted for size/dependency
+posture; R2 is partial until the final transport writer proves the allocation
+claim.
+
+Artifacts:
+
+- packages/eta-http/core/url.ml
+- packages/eta-http/core/url.mli
+- packages/eta-http/core/probes/r3_url_probe.md
+- packages/eta-http/h1/write.ml
+- packages/eta-http/h1/write.mli
+- packages/eta-http/h1/probes/r2_writer_probe.md
+- packages/eta-http/test/test_eta_http.ml
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R3 URL parser | Accepted for size/dependency posture | `url.ml` is 248 LOC and parses scheme, host, port, path, query, and fragment with no `uri` dependency. |
+| R2 h1 request writer | Accepted as partial | Writer serializes origin-form requests into caller-owned `Buffer.t`; tests cover GET and fixed body. |
+
+Evidence:
+
+~~~text
+wc -l packages/eta-http/core/url.ml packages/eta-http/h1/write.ml
+  248 packages/eta-http/core/url.ml
+   71 packages/eta-http/h1/write.ml
+
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 8 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 16
+Eta escape sites: 0
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+~~~
+
+Verdicts:
+
+- V-Http-S1-Url-Writer-1 - Keep the URL parser in eta-http.
+  Decision: accepted for S1. Evidence: the clean-room parser is far below the
+  3000 LOC reopener threshold and covers the client subset needed by h1.
+- V-Http-S1-Url-Writer-2 - Serialize h1 requests ourselves.
+  Decision: accepted as partial. Evidence: the writer produces correct
+  origin-form GET and fixed-body requests. The no-dependency posture holds.
+
+Residual risk:
+
+- R1 remains open, so response parsing is not implemented.
+- R2's final zero-allocation claim remains open until the transport path writes
+  through a reusable buffer or directly to the flow.
+- R4, R5, R6, OpenAI 401 smoke, and the 13-endpoint reach probe remain open.
+
+## V-Http-S1-Parser - h1 response parsing span shape
+
+Question: can S1 parse HTTP/1.x response heads and fixed bodies without copying
+parsed fields out of the caller-owned buffer?
+
+Status: Accepted as partial S1 progress. R1 is partial until the streaming
+32 KiB read-buffer state machine and allocation measurement land.
+
+Artifacts:
+
+- packages/eta-http/h1/parse.ml
+- packages/eta-http/h1/parse.mli
+- packages/eta-http/h1/probes/r1_parser_probe.md
+- packages/eta-http/test/test_eta_http.ml
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R1 h1 response parser | Accepted as partial | Parser returns spans into `bytes` for reason, headers, and body; tests cover fixed body, no-body response, and invalid content length. |
+
+Evidence:
+
+~~~text
+wc -l packages/eta-http/h1/parse.ml packages/eta-http/h1/write.ml packages/eta-http/core/url.ml
+  263 packages/eta-http/h1/parse.ml
+   71 packages/eta-http/h1/write.ml
+  248 packages/eta-http/core/url.ml
+
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 11 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 16
+Eta escape sites: 0
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+~~~
+
+Verdicts:
+
+- V-Http-S1-Parser-1 - Use spans into the caller-owned buffer for parsed
+  response data. Decision: accepted as partial. Evidence: the parser exposes
+  `Eta_http_core.Span.t` values and copies only through explicit accessor
+  functions.
+
+Residual risk:
+
+- The parser is not yet the final streaming read-loop parser.
+- It uses ordinary `int` spans, not unboxed `int16#` parser state.
+- Allocation has not been measured. R1 cannot close until the transport parser
+  path is wired and measured.
+
+## V-Http-S1-DNS - Eio DNS boundary and typed resolver failures
+
+Question: can S1 route DNS through Eio's explicit network capability without
+adding another dependency or leaking raw Eio lifecycle primitives?
+
+Status: Accepted as partial S1 progress. R4 is partial until the live
+13-endpoint reach smoke proves the deferred happy-eyeballs posture against real
+hosts.
+
+Artifacts:
+
+- packages/eta-http/transport/connect.ml
+- packages/eta-http/transport/connect.mli
+- packages/eta-http/transport/probes/r4_dns_probe.md
+- packages/eta-http/error/error.ml
+- packages/eta-http/error/error.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R4 DNS resolution | Accepted as partial | `Eio.Net.getaddrinfo_stream` composes inside `Eta.Effect.sync`; deterministic mock tests cover success and typed empty-result failure. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 13 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 21
+Eta escape sites: 0
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+
+git diff --check
+~~~
+
+Verdicts:
+
+- V-Http-S1-DNS-1 - Keep DNS as an explicit Eio network capability.
+  Decision: accepted. Evidence: the resolver takes `net:_ Eio.Net.t`, so
+  applications still own authority and eta-http owns interpretation.
+- V-Http-S1-DNS-2 - Do not add a DNS abstraction dependency for v1.
+  Decision: accepted as partial. Evidence: the Eio primitive returns stream
+  socket addresses directly and has enough local shape for the TCP step.
+
+Residual risk:
+
+- R4's live disproof signatures are still open. The 13-endpoint reach smoke
+  must prove resolver behavior against real IPv4/IPv6 endpoint mixes.
+- TCP/TLS connection establishment is not implemented yet; this is only the DNS
+  half of `transport/connect`.
+
+## V-Http-S1-H1-Request - Public h1 request path and OpenAI 401 smoke
+
+Question: can eta-http perform a real HTTP/1.1 request over the pinned ADR 0002
+TLS stack without using `digestif` or an h1 dependency?
+
+Status: Accepted as partial S1 progress. The OpenAI smoke passes through the
+public `Eta_http.request` path. Later S1 evidence closed pool integration,
+13-endpoint reach, and R2 writer-core allocation. Later evidence closed R1
+parser allocation; R6 body-release closure remains open.
+
+Artifacts:
+
+- packages/eta-http/transport/connect.ml
+- packages/eta-http/transport/connect.mli
+- packages/eta-http/h1/client.ml
+- packages/eta-http/h1/client.mli
+- packages/eta-http/client/client.ml
+- packages/eta-http/client/client.mli
+- packages/eta-http/h1/probes/s1_request_loop_probe.md
+- packages/eta-http/transport/probes/r4_dns_probe.md
+- scratch/eta_http_v1/probes/openai_401.ml
+- scratch/eta_http_v1/probes/dune
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| S1 h1 live request path | Accepted as partial | `Eta_http.Client.make_h1` drives DNS, TCP, TLS, h1 write/read, and body read against OpenAI, returning 401 with a readable body. |
+| digestif workaround | Accepted for S1 path | The live path uses tls/tls-eio 0.17.5 under ADR 0002 and does not add `digestif` as a direct dependency. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 18 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 51
+Eta escape sites: 0
+
+nix develop -c dune build scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+eta-schema tests passed
+ppx_eta: 2 tests passed
+eta-otel: 26 tests passed
+eta-stream: 17 tests passed
+eta: 156 tests passed
+
+git diff --check
+~~~
+
+Verdicts:
+
+- V-Http-S1-H1-Request-1 - Force h1 ALPN on the S1 h1-only path.
+  Decision: accepted. Evidence: the default TLS config still offers h2 first,
+  but `H1.Client.request` passes `["http/1.1"]` so the h1 smoke is honest.
+- V-Http-S1-H1-Request-2 - Keep chunked out of S1.
+  Decision: accepted. Evidence: chunked responses fail as `Decode_error` and
+  S3 owns chunked/gzip support.
+
+Residual risk:
+
+- No pool reuse exists yet; response-body release closes the flow directly.
+- The S1 response body path reads fixed-length bodies eagerly.
+- The 13-endpoint reach smoke has not been ported to the public eta-http path.
+
+## V-Http-S1-Pool - Origin-scoped h1 pooling and idle health rejection
+
+Question: can S1 wire h1 requests through `Eta.Pool` without returning known
+bad idle connections to callers?
+
+Status: Accepted as partial S1 progress. Pool integration is real and
+deterministic tests cover reuse and health rejection. R5 remains partial until
+real-peer failure probes cover the default non-sending health check.
+
+Artifacts:
+
+- packages/eta-http/h1/client.ml
+- packages/eta-http/h1/client.mli
+- packages/eta-http/client/client.ml
+- packages/eta-http/client/client.mli
+- packages/eta-http/h1/probes/r5_pool_health_probe.md
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R5 h1 pool health check | Accepted as partial | Tests prove healthy idle reuse and unhealthy idle rejection/replacement. Default real-peer liveness remains open. |
+| Public h1 pooling | Accepted as partial | `Eta_http.Client.make_h1` now creates one `Eta.Pool` per origin and the OpenAI 401 smoke still passes. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 20 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 63
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+~~~
+
+Verdicts:
+
+- V-Http-S1-Pool-1 - Key h1 pools by origin.
+  Decision: accepted. Evidence: `origin_key` uses scheme, host, and effective
+  port; mismatched request origins fail before pool use.
+- V-Http-S1-Pool-2 - Keep R5 open for real-peer proof.
+  Decision: accepted. Evidence: the default health check can reject EOF or
+  unexpected idle bytes, but a peer can close after any health check. The final
+  proof must include real-peer failure behavior, not only Eio mocks.
+
+Residual risk:
+
+- The S1 body path is eager. Pooled connections return to `Eta.Pool` before
+  callers consume the in-memory body stream.
+- The default health check uses a short read timeout and remains a partial
+  liveness probe, not a perfect guarantee.
+
+## V-Http-S1-Reach - 13-endpoint public h1 reach smoke
+
+Question: does the public eta-http h1 client reach the 13 endpoint classes
+previously covered by the ADR 0002 TLS reach lab?
+
+Status: Accepted for the S1 reach gate. R4 is now closed PASS. Later S1
+evidence closed R2 writer-core allocation and R5 real-peer stale-idle proof.
+Later evidence closed R1 parser allocation. R6 real h1 body-release
+verification remains open.
+
+Artifacts:
+
+- scratch/eta_http_v1/probes/reach_13.ml
+- scratch/eta_http_v1/probes/dune
+- packages/eta-http/transport/probes/s1_reach_probe.md
+- packages/eta-http/transport/probes/r4_dns_probe.md
+- packages/eta-http/h1/client.ml
+- packages/eta-http/test/test_eta_http.ml
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| S1 reach smoke | Accepted | 13/13 targets returned an HTTP response through `Eta_http.Client.make_h1` and `Eta_http.request`. |
+| R4 DNS resolution | Closed PASS | The live matrix exercises `Eio.Net.getaddrinfo_stream` across the endpoint set; no blocking/runtime failure or endpoint-miss falsifier appeared. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 21 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 63
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
+~~~
+
+Target status observations:
+
+| Target | Status |
+| --- | --- |
+| honeycomb_otlp | 405 |
+| datadog_otlp_us1 | 405 |
+| grafana_cloud_otlp_us_central | 405 |
+| logzio_jaeger_us | 405 |
+| otel_reference_demo_frontdoor | 200 |
+| openai_api | 401 |
+| anthropic_api | 405 |
+| google_ai_generative_language | 404 |
+| azure_ai_inference | 401 |
+| cohere_api | 401 |
+| mistral_api | 401 |
+| cloudflare_api | 400 |
+| aws_sts | 302 |
+
+Verdicts:
+
+- V-Http-S1-Reach-1 - Use `HEAD` for the S1 reach smoke.
+  Decision: accepted. Evidence: it exercises the public h1 path without
+  depending on S3 chunked/gzip response bodies.
+- V-Http-S1-Reach-2 - Treat any HTTP status as reachability evidence.
+  Decision: accepted. Evidence: unauthenticated public API and ingest endpoints
+  intentionally return 3xx/4xx statuses; the gate is DNS/TCP/TLS/h1 reach, not
+  business success.
+
+Residual risk:
+
+- This does not prove h2 ALPN dispatch. S2 owns that.
+- This does not prove chunked or compressed body handling. S3 owns that.
+- Azure OpenAI exact tenant resource hosts remain a reopener because they are
+  tenant-specific.
+
+## V-Http-S1-Body-Release - h1 pool checkout held until body release
+
+Question: can S1 keep an h1 pooled connection checked out until the response
+body reaches EOF or is explicitly discarded?
+
+Status: Accepted as partial R6 progress. The h1 EOF/discard lifecycle now
+matches the H-D2a owner-fiber pattern. R6 remains open for body-read
+cancellation and the S2 h2 stream-permit lifecycle.
+
+Artifacts:
+
+- packages/eta-http/h1/client.ml
+- packages/eta-http/h1/client.mli
+- packages/eta-http/body/stream.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h1/probes/r6_body_release_probe.md
+- packages/eta-http/audit/dep_usage.md
+- packages/eta-http/audit/eta_escapes.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R6 h1 EOF/discard release | Accepted as partial | `pool holds checkout until body EOF` and `pool discard releases checkout` prove pool active/idle transitions around body release. |
+| R6 cancellation release | Open | Pre-response cancellation closes channels but does not cancel in-flight socket IO; mid-body cancellation still needs a focused probe. |
+| R6 h2 release | Open | S2 owns h2 stream-permit verification. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+
+nix develop -c dune runtest packages/eta-http --force
+PASS expected compile failure: negative_tls13_override
+PASS expected compile failure: negative_dhe_cipher_override
+eta-http: 23 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 67
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+git diff --check
+~~~
+
+Verdicts:
+
+- V-Http-S1-Body-Release-1 - Hold h1 pool checkout behind the response body.
+  Decision: accepted. Evidence: `request_with_pool` now runs a daemon owner
+  around `Eta.Pool.with_resource`, sends the response over `Eta.Channel`, and
+  waits for body release acknowledgement before letting the pool finalizer run.
+- V-Http-S1-Body-Release-2 - Keep S1 bodies eager.
+  Decision: accepted. Evidence: S3 owns streaming body decoding; S1 only
+  fixes the lease lifecycle around the already-read fixed response bytes.
+
+Residual risk:
+
+- Mid-body cancellation needs a focused h1 probe once the S3 streaming reader
+  exists.
+- R5 stale-idle evidence is closed by V-Http-S1-R5-Stale-Idle below.
+
+## V-Http-S1-R5-Stale-Idle - Real h1 stale-idle rejection
+
+Question: does the default h1 pool health check reject a real idle connection
+that the peer closed after the previous response?
+
+Status: Accepted for R5. Deterministic tests already covered healthy reuse and
+injected health rejection; the loopback probe now covers a real TCP peer that
+closes after a keep-alive response.
+
+Artifacts:
+
+- scratch/eta_http_v1/probes/stale_idle.ml
+- scratch/eta_http_v1/probes/dune
+- packages/eta-http/h1/probes/r5_pool_health_probe.md
+- packages/eta-http/README.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R5 h1 pool health check | Closed PASS for S1 | `stale_idle.exe` leaves a closed connection idle, then the second acquire records `health_rejected=1`, `closed=1`, `opened=2`, and returns the second response body. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_v1/probes/stale_idle.exe
+eta_http_r5_stale_idle_server connection=1 request_header_lines=4 closed_after_response=true
+eta_http_r5_stale_idle_server connection=2 request_header_lines=4 closed_after_response=true
+eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
+
+nix develop -c dune build packages/eta-http
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 23 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 67
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+git diff --check
+~~~
+
+Verdicts:
+
+- V-Http-S1-R5-Stale-Idle-1 - Keep the non-sending default health check.
+  Decision: accepted. Evidence: EOF from a real closed idle peer is detected
+  before request write, the stale entry is closed, and a replacement connection
+  is opened.
+- V-Http-S1-R5-Stale-Idle-2 - Do not claim perfect liveness.
+  Decision: accepted. Evidence: a peer can always close after a successful
+  health check, so request-time `Connection_closed` handling remains part of
+  the h1 safety envelope.
+
+Residual risk:
+
+- R1 parser allocation closure is closed by V-Http-S1-R1-Raw-Parser below.
+- R6 cancellation/h2 release remains open.
+
+## V-Http-S1-R2-Flow-Writer - Direct h1 transport writer
+
+Question: can the real h1 transport path avoid allocating one complete request
+string before writing to the flow?
+
+Status: Accepted as partial R2 progress. The direct writer removed the known
+`to_string` transport blocker. The allocation claim was still open at this
+checkpoint and is closed by V-Http-S1-R2-Zero-Alloc-Core below.
+
+Artifacts:
+
+- packages/eta-http/h1/write.ml
+- packages/eta-http/h1/write.mli
+- packages/eta-http/h1/client.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h1/probes/r2_writer_probe.md
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R2 direct transport writer | Accepted as partial | `write_to_flow` is used by `H1.Client.write_request`; `flow matches string writer` proves byte parity with existing wire fixtures. |
+| R2 zero-allocation writer | Open at this checkpoint | `Url.origin_form`, `Url.authority`, `string_of_int`, and Eio fragment writes still needed measurement before the raw writer core landed. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 24 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 70
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/stale_idle.exe
+eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
+
+nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune build @install
+nix develop -c eta-oxcaml-test-shipped
+git diff --check
+~~~
+
+Verdicts:
+
+- V-Http-S1-R2-Flow-Writer-1 - Stop using `to_string` on the transport path.
+  Decision: accepted. Evidence: `H1.Client.write_request` now calls
+  `Eta_http.H1.Write.write_to_flow` and no longer constructs one complete
+  request string before writing.
+- V-Http-S1-R2-Flow-Writer-2 - Keep `to_string` as a fixture helper.
+  Decision: accepted. Evidence: tests still use `to_string` for expected bytes,
+  and the direct writer has a byte-parity test against it.
+
+Residual risk:
+
+- R2 allocation measurement is closed by V-Http-S1-R2-Zero-Alloc-Core below.
+- R1 final parser allocation is closed by V-Http-S1-R1-Raw-Parser below.
+
+## V-Http-S1-R2-Zero-Alloc-Core - h1 writer raw core
+
+Question: can the h1 request writer maintain a zero-allocation core for
+steady-state request serialization?
+
+Status: Accepted for R2's S1 writer-core gate. The transport-facing
+`write_to_flow` still crosses Eio, but the clean-room writer core writes into a
+caller-owned byte buffer and is both compile-checked and runtime-measured.
+
+Artifacts:
+
+- packages/eta-http/core/url.ml
+- packages/eta-http/core/url.mli
+- packages/eta-http/h1/write.ml
+- packages/eta-http/h1/write.mli
+- packages/eta-http/test/test_eta_http.ml
+- scratch/eta_http_v1/probes/writer_alloc.ml
+- packages/eta-http/h1/probes/r2_writer_probe.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R2 h1 writer zero-allocation core | Closed PASS for S1 | `write_to_bytes_raw` and URL blit helpers carry `[@zero_alloc]`; `writer_alloc.exe` reports 0 minor words over 100,000 writes. |
+| Eio sink writes | Out of zero-allocation core | `write_to_flow` writes fragments through Eio and avoids a full request string, but Eio sink internals are not the R2 zero-allocation subject. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+# zero_alloc annotations on write_to_bytes_raw and URL blit helpers checked
+
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 26 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 70
+Eta escape sites: 0
+
+nix develop -c dune exec scratch/eta_http_v1/probes/writer_alloc.exe
+eta_http_r2_writer_alloc verdict=PASS iterations=100000 minor_words=0 words_per_write=0.000000 checksum=15600000
+~~~
+
+Verdicts:
+
+- V-Http-S1-R2-Zero-Alloc-Core-1 - Use an integer-returning raw writer for the hot path.
+  Decision: accepted. Evidence: returning `int` avoids success-path `result`
+  allocation; typed-error wrappers remain available outside the measured core.
+- V-Http-S1-R2-Zero-Alloc-Core-2 - Move URL target/authority writes behind blit helpers.
+  Decision: accepted. Evidence: `Url.blit_origin_form_raw` and
+  `Url.blit_authority_raw` avoid `origin_form`, `authority`, and `string_of_int`
+  allocation in the writer core.
+
+Residual risk:
+
+- R1 parser zero-allocation closure is closed by V-Http-S1-R1-Raw-Parser below.
+- R6 cancellation/h2 release remains open.
+
+## V-Http-S1-R1-Raw-Parser - h1 parser raw core and 32 KiB read loop
+
+Question: can the h1 response parser close R1 with a zero-allocation parser
+core and a real client read loop instead of the old `Eio.Buf_read.line` path?
+
+Status: Accepted for R1's S1 gate. `Eta_http.H1.Parse.parse_raw` fills
+caller-owned header arrays and a caller-owned response record, carries
+`[@zero_alloc]`, and is measured at 0 minor words over 100,000 parses. The h1
+client now reads transport bytes through Eio's `Cstruct.t` boundary into a
+fixed 32 KiB parser buffer and drives `parse_raw` for response heads.
+
+Artifacts:
+
+- packages/eta-http/h1/parse.ml
+- packages/eta-http/h1/parse.mli
+- packages/eta-http/h1/client.ml
+- packages/eta-http/test/test_eta_http.ml
+- scratch/eta_http_v1/probes/parser_alloc.ml
+- packages/eta-http/h1/probes/r1_parser_probe.md
+- packages/eta-http/audit/dep_usage.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R1 h1 parser zero-allocation core | Closed PASS for S1 | `parse_raw` is compile-checked with `[@zero_alloc]`; `parser_alloc.exe` reports 0 minor words over a small response corpus. |
+| R1 h1 client streaming read loop | Closed PASS for S1 | `read_response_bytes` no longer uses `Eio.Buf_read.line`; the `split response` test covers status/header/body bytes arriving across reads. |
+| Unboxed `int16#` parser state | Not required for S1 | Caller-owned `int array` state satisfies the zero-allocation checker and runtime probe; unboxed spans remain a reopener only if later corpus or pressure evidence requires them. |
+| Eio `Cstruct.t` read boundary | Out of parser-core measurement | Eio exposes flow reads through `Cstruct.t`; the client copies into the parser-owned `bytes` buffer before parsing. |
+
+Evidence:
+
+~~~text
+nix develop -c dune build packages/eta-http
+
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 28 tests passed
+
+nix develop -c dune exec scratch/eta_http_v1/probes/parser_alloc.exe
+eta_http_r1_parser_alloc verdict=PASS iterations=100000 minor_words=0 words_per_parse=0.000000 checksum=28150000
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 71
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S1-R1-Raw-Parser-1 - Use caller-owned mutable parser state for the
+  measured core. Decision: accepted. Evidence: `parse_raw` mutates preallocated
+  arrays/record and returns integer status codes rather than allocating public
+  result values on the success path.
+- V-Http-S1-R1-Raw-Parser-2 - Replace the h1 client line reader. Decision:
+  accepted. Evidence: the client uses a 32 KiB parser buffer and `parse_raw`;
+  split response tests cover partial status/header/body arrival.
+- V-Http-S1-R1-Raw-Parser-3 - Keep public allocating helpers explicit.
+  Decision: accepted. Evidence: `parse`, `span_to_string`, `headers_to_list`,
+  and `body_to_bytes` remain available outside the measured core.
+
+Residual risk:
+
+- S1 bodies are still eager fixed-length byte buffers. S3 owns true streaming
+  response bodies, chunked transfer, and gzip.
+- R6 cancellation/h2 release remains open.
+
+## V-Http-S1-R6-Cancellation - h1 pooled request cancellation releases checkout
+
+Question: can caller cancellation before h1 response headers arrive release an
+active pooled checkout, even when the underlying flow read is still blocked?
+
+Status: Accepted for S1 h1 R6. EOF, discard, and pre-response cancellation
+now prove that the h1 owner does not leak active pool checkouts. S1 response
+bodies are still eager fixed-length byte buffers; S3 owns true streaming-body
+cancellation, and S2 owns h2 stream-permit release.
+
+Artifacts:
+
+- packages/eta-http/h1/client.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h1/probes/r6_body_release_probe.md
+- packages/eta-test/eta_test.ml
+- packages/eta-test/eta_test.mli
+- packages/eta-http/audit/dep_usage.md
+- packages/eta-http/audit/eta_escapes.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R6 h1 EOF/discard release | Closed PASS for S1 h1 | `pool holds checkout until body EOF` and `pool discard releases checkout` prove pool active/idle transitions around body release. |
+| R6 h1 pre-response cancellation release | Closed PASS for S1 h1 | `pool cancellation releases checkout` blocks the mock flow read forever, times the request out, and observes `Eta.Pool.stats.active = 0`. |
+| R6 h1 streaming-body cancellation | Deferred to S3 | S1 eagerly buffers fixed-length bodies before returning the response; S3 introduces true streaming response bodies. |
+| R6 h2 stream permit release | Open for S2 | S2 owns the h2 stream-permit lifecycle on top of real `ocaml-h2`. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 29 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 73
+Eta escape sites: 0
+
+nix develop -c eta-oxcaml-test-shipped
+eta, eta-stream, eta-otel, eta-schema, ppx_eta shipped tests passed
+~~~
+
+Verdicts:
+
+- V-Http-S1-R6-Cancellation-1 - Race owner socket work against caller
+  cancellation. Decision: accepted. Evidence: `request_owner` turns the
+  request attempt into a success variant before `Effect.race`, so raw request
+  failures cannot hang behind the cancel wait, and cancellation wins while the
+  mock flow read remains blocked.
+- V-Http-S1-R6-Cancellation-2 - Keep eta-http escape audit at zero by moving
+  test-only raw fiber/promise helpers into `Eta_test.Async`. Decision:
+  accepted. Evidence: `bash packages/eta-http/audit/run.sh` reports zero
+  eta-http escape sites after the cancellation proof lands.
+
+Residual risk:
+
+- S2 must prove the same public body-release contract releases h2 stream
+  permits.
+- S3 must reopen R6 for true streaming body cancellation once h1 bodies are
+  no longer eagerly buffered.
+
+## V-Http-S2-R7-P1 - ocaml-h2 Sans-IO API shape
+
+Question: can the pinned `ocaml-h2` package expose the direct Sans-IO API
+surface eta-http needs before we port the H-D1 multiplexer shape?
+
+Status: Accepted as R7 P1 evidence. The probe proves client/server
+connection creation, request submission, iovec write draining, peer read
+feeding, response callbacks, body reader scheduling, and server response
+writing are directly available without an external runtime adapter.
+
+Artifacts:
+
+- scratch/eta_http_v1/probes/h2_api_shape.ml
+- scratch/eta_http_v1/probes/dune
+- packages/eta-http/h2/probes/r7_api_shape_probe.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| R7 P1 Sans-IO API shape | Closed PASS | `h2_api_shape.exe` drives a client GET through in-process `H2.Client_connection`/`H2.Server_connection` and observes status 200/body `hello-h2`. |
+| R7 Eio adapter/wakeup shape | Still open for S2 implementation | Prior H-S1 evidence says eta-http must own Eio flow loops and register one h2 wakeup callback per yield state. |
+| R7 GOAWAY/admission semantics | Still open for S2 implementation | Prior H-S1 evidence says `ocaml-h2` does not expose enough graceful GOAWAY cutoff semantics; eta-http must gate admission. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_v1/probes/h2_api_shape.exe
+eta_http_r7_h2_api_shape verdict=PASS status=200 body="hello-h2" target=/r7
+~~~
+
+Verdicts:
+
+- V-Http-S2-R7-P1-1 - Start S2 from the direct Sans-IO `ocaml-h2` API.
+  Decision: accepted. Evidence: no external h2 runtime adapter is needed for
+  the P1 request/response path.
+- V-Http-S2-R7-P1-2 - Keep ownership of lifecycle and admission in eta-http.
+  Decision: accepted. Evidence: H-S1 ownership notes still require eta-http
+  to own Eio loops, wakeup discipline, GOAWAY admission, typed errors, and
+  stream/permit lifecycle.
+
+Residual risk:
+
+- R7 is not fully closed until the Eio-backed h2 adapter runs under
+  `Eta.Supervisor.scoped` with correct wakeup and shutdown behavior.
+- R8 server push rejection and PRIORITY tolerance remain untested in S2.
+
+## V-Http-S2-Admission - ACTIVE+CANCELLED stream cap
+
+Question: can eta-http enforce the H-D1 stream-admission invariant without
+raw Eio mutexes or hidden h2 substrate state?
+
+Status: Accepted for the first concrete S2 implementation cut.
+`Eta_http.H2.Admission` now counts active plus remotely-cancelled streams
+against the same concurrent-stream limit until local release observes the
+stream and frees the permit.
+
+Artifacts:
+
+- packages/eta-http/h2/admission.ml
+- packages/eta-http/h2/admission.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/audit/run.sh
+- packages/eta-http/audit/dep_usage.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| ACTIVE+CANCELLED admission cap | Closed PASS for local counter | `h2-admission/cancelled counts until release` rejects a new permit while one active and one remotely-cancelled permit are inflight. |
+| Idempotent local release | Closed PASS for local counter | Releasing an already released permit returns `No_rst` and does not double-count completion. |
+| Real `ocaml-h2` integration | Open | The counter is not wired to the h2 adapter yet. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 30 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 73
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-Admission-1 - Use an eta-http-owned permit counter rather than
+  asking `ocaml-h2` to expose user-visible stream lifetime. Decision:
+  accepted. Evidence: H-S1 ownership notes already place admission and
+  stream/permit lifecycle on eta-http, and the local counter proves the
+  H-D1 churn invariant.
+- V-Http-S2-Admission-2 - Keep the counter synchronous and Eta-escape-free.
+  Decision: accepted. Evidence: all mutations are local non-yielding updates,
+  and the eta-http escape audit remains at zero.
+- V-Http-S2-Admission-3 - Filter internal `Eta_http.H2.*` names out of the
+  dependency audit. Decision: accepted. Evidence: the audit must count
+  external `H2.*` substrate calls, not eta-http's own public module path.
+
+Residual risk:
+
+- The h2 adapter still has to bind permits to real h2 stream IDs, release
+  them through public body lifecycle, and map admission rejection to
+  `Stream_admission_rejected`.
+
+## V-Http-S2-ALPN-State - Pure first-arrival collapse
+
+Question: can eta-http port the H-D5 ALPN bootstrap decision as a pure
+state machine before wiring real h1/h2 resources?
+
+Status: Accepted for the S2 ALPN state-machine cut. The transport layer now
+has a pure `Eta_http.Transport.Alpn` module that records one leader, collapses
+pending first-arrival waiters, ignores stale pending completions, and decodes
+h2/http1.1 ALPN names.
+
+Artifacts:
+
+- packages/eta-http/transport/alpn.ml
+- packages/eta-http/transport/alpn.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/transport/probes/s2_alpn_state_probe.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| H-D5 pending first-arrival collapse | Closed PASS for pure state | `alpn / pending first-arrivals collapse` proves one leader, one waiter on the same pending id, and one redundant cancellation count. |
+| Stale ALPN completion handling | Closed PASS for pure state | `alpn / stale resolution and decode` proves a cancelled pending id cannot overwrite a later route. |
+| Real h1/h2 resource dispatch | Open | The pure state machine is not yet wired to h1 pools or h2 multiplexers. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 32 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 73
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-ALPN-State-1 - Keep ALPN decision state pure. Decision:
+  accepted. Evidence: no raw Eio synchronization is needed to model leader,
+  waiter, stale completion, and protocol decoding decisions.
+- V-Http-S2-ALPN-State-2 - Treat missing ALPN as h1 fallback for the default
+  h2+h1 offer path. Decision: accepted. Evidence: the decoder maps `None` to
+  `H1`; strict require-h2 behavior remains a later dispatch policy.
+
+Residual risk:
+
+- Transport dispatch still must attach this state to real TCP/TLS flows, h1
+  pools, and h2 multiplexer cells.
+- The same-caller-code h1/h2 acceptance check remains open.
+
+## V-Http-S2-R8-Push-Priority - ocaml-h2 push and PRIORITY hooks
+
+Question: can eta-http rely on pinned `ocaml-h2` for server-push disable
+behavior and PRIORITY tolerance, while still owning adapter-level typed
+errors?
+
+Status: Accepted as R8 evidence. The probe proves that the no-push-handler
+client path advertises push disabled, a server-side `Reqd.push` observes
+`Push_disabled`, a forced PUSH_PROMISE is reported as a protocol error, and
+well-formed PRIORITY frames do not crash or force GOAWAY/error closure.
+
+Artifacts:
+
+- scratch/eta_http_v1/probes/h2_r8_push_priority.ml
+- scratch/eta_http_v1/probes/dune
+- packages/eta-http/h2/probes/r8_push_priority_probe.md
+- scratch/eta_http_v1/OBJECTIVE.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| SETTINGS_ENABLE_PUSH=0 path | Closed PASS | `h2_r8_push_priority.exe` creates a no-push-handler client; server `Reqd.push` returns `Push_disabled`. |
+| Disabled-client PUSH_PROMISE handling | Closed PASS | The probe feeds a raw PUSH_PROMISE frame and observes `ProtocolError` with the push-disabled reason. |
+| PRIORITY tolerance | Closed PASS | The probe feeds well-formed PRIORITY frames to both client and server state machines without GOAWAY/error closure. |
+| Adapter-level typed mapping | Open | The live h2 adapter still has to convert the `ocaml-h2` error surface into eta-http typed errors. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_v1/probes/h2_r8_push_priority.exe
+eta_http_r8_push_priority verdict=PASS push_disabled=true forced_push_protocol_error=true priority_tolerated=true
+~~~
+
+Verdicts:
+
+- V-Http-S2-R8-1 - Use `ocaml-h2` initial SETTINGS and `Reqd.push` as the
+  normal push-disable mechanism. Decision: accepted. Evidence: the server
+  sees `Push_disabled` when the client has no push handler.
+- V-Http-S2-R8-2 - Keep PUSH_PROMISE protocol-error mapping in eta-http's
+  h2 adapter. Decision: accepted. Evidence: `ocaml-h2` reports the protocol
+  error; eta-http still owns the public typed-error taxonomy.
+- V-Http-S2-R8-3 - Tolerate well-formed PRIORITY frames. Decision:
+  accepted. Evidence: both client and server Sans-IO state machines accept
+  the frames without GOAWAY/error closure.
+
+Residual risk:
+
+- This is Sans-IO evidence. Live TLS/Eio dispatch still has to preserve the
+  same behavior once the h2 multiplexer is wired.
+- R8 does not close H-Q2/H-Q5 security fixtures; those still need real
+  `ocaml-h2` attack reproductions in S2/S4.
+
+## V-Http-S2-Stream-State - Portable per-stream lifecycle
+
+Question: can eta-http own the h2 stream lifecycle around `ocaml-h2` with
+per-stream `Portable.Atomic` status and the ACTIVE+CANCELLED admission rule?
+
+Status: Accepted for the local S2 stream-state cut. The module now opens
+streams through `Eta_http.H2.Admission`, stores stream status in
+`Portable.Atomic`, keeps remote-reset streams counted until local release,
+and distinguishes complete release from active local cancellation.
+
+Artifacts:
+
+- packages/eta-http/h2/stream_state.ml
+- packages/eta-http/h2/stream_state.mli
+- packages/eta-http/h2/admission.ml
+- packages/eta-http/h2/admission.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s2_stream_state_probe.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| `Portable.Atomic` per-stream status | Closed PASS | `dune build packages/eta-http` compiles `h2/stream_state.ml` under OxCaml. |
+| Remote reset remains admitted until release | Closed PASS | `h2-stream-state / release decisions` keeps cancelled streams counted as inflight until `release`. |
+| Complete release avoids local RST | Closed PASS | `h2-stream-state / release decisions` returns `No_rst` for completed streams and `Queue_rst` for still-active release. |
+| Live `ocaml-h2` body permit release | Open | The real adapter has not yet wired response-body EOF/discard/cancel to `Stream_state.release`. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 34 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 73
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-Stream-State-1 - Store per-stream lifecycle in
+  `Portable.Atomic`. Decision: accepted. Evidence: the OxCaml build and
+  tests pass without raw `Atomic.t` or raw Eio synchronization.
+- V-Http-S2-Stream-State-2 - Keep admission and stream status separate.
+  Decision: accepted. Evidence: `Admission` owns counters and `Stream_state`
+  owns stream lookup/release decisions, matching the adapter ownership split.
+
+Residual risk:
+
+- This is not yet R6 h2 closure. The h2 adapter must bind real `ocaml-h2`
+  stream callbacks and public response bodies to these release paths.
+- Local RST is only returned as intent; the writer channel has not landed yet.
+
+## V-Http-S2-Writer - h2 iovec drain to Eio flow
+
+Question: can eta-http drive `ocaml-h2` client write operations through an
+Eio flow without converting serialized h2 frame iovecs to strings?
+
+Status: Accepted for the S2 writer-drain cut. The writer converts
+`Bigstringaf.t H2.IOVec.t` slices to `Cstruct.t` views, calls
+`Eio.Flow.single_write`, and reports partial/full progress back to
+`H2.Client_connection`.
+
+Artifacts:
+
+- packages/eta-http/h2/writer.ml
+- packages/eta-http/h2/writer.mli
+- packages/eta-http/h2/dune
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s2_writer_probe.md
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| H2 iovec slice preservation | Closed PASS | `h2-writer / preserves iovec slices` observes the expected `Cstruct.t` view without string conversion. |
+| Client write-operation draining | Closed PASS | `h2-writer / drains client preface and request` drains a real `H2.Client_connection` preface/request into an Eio buffer sink. |
+| Writer wakeup lifecycle | Closed PASS for writer loop | `h2-writer / blocked write teardown` drives `run_client` over a real `H2.Client_connection`, blocks the write callback, and exits through `Eta.Supervisor.scoped` teardown. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 42 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 198
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-Writer-1 - Use `Cstruct.of_bigarray` as the h2-to-Eio write
+  boundary. Decision: accepted. Evidence: Eio sink writes can consume the
+  `ocaml-h2` bigstring iovec slices directly.
+- V-Http-S2-Writer-2 - Keep writer errors mapped outside this low-level
+  module. Decision: accepted. Evidence: the writer has no request context;
+  the future multiplexer owns typed error mapping.
+- V-Http-S2-Writer-3 - Bridge h2 writer wakeups with Eta.Channel, not raw
+  promises. Decision: accepted. Evidence: `run_client` registers
+  `yield_writer` once per yield state and wakes by closing an Eta channel.
+
+Residual risk:
+
+- The writer now has both one-shot drain and Eta-effect loop forms. The h2
+  multiplexer still has to integrate it with the real socket lifecycle.
+- The read path and response/body routing remain open R7 adapter work.
+
+## V-Http-S2-Read - h2 client read adapter over Eio source
+
+Question: can eta-http feed Eio source bytes into a real `ocaml-h2` client
+connection and deliver a response when frame bytes arrive in small chunks?
+
+Status: Accepted for the S2 read-adapter cut. The adapter keeps pending parser
+bytes in a reusable `Bigstringaf.t` buffer, compacts unconsumed bytes when
+`ocaml-h2` makes zero progress on an incomplete prefix, reads more bytes from
+`Eio.Flow.single_read`, and propagates source EOF through
+`H2.Client_connection.read_eof`.
+
+Artifacts:
+
+- packages/eta-http/h2/multiplexer.ml
+- packages/eta-http/h2/multiplexer.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s2_read_probe.md
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| Fragmented response-frame reads | Closed PASS | `h2-multiplexer / reads server response` feeds a real server response through an Eio source split into 7-byte chunks and observes status 200/body `hello-read`. |
+| Pending parser-byte preservation | Closed PASS | The adapter compacts unread bytes and retries after more source bytes arrive instead of treating zero consumed bytes as EOF or protocol failure. |
+| Full h2 multiplexer lifecycle | Open | Wakeup registration, owner-fiber scheduling, dispatch, stream permit release, typed error mapping, GOAWAY admission, and security fixtures remain open. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 37 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 130
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-Read-1 - Keep pending parser bytes inside the read adapter.
+  Decision: accepted. Evidence: `ocaml-h2` can consume zero bytes for an
+  incomplete frame prefix; preserving those bytes lets fragmented reads
+  complete.
+- V-Http-S2-Read-2 - Use `Bigstringaf.t` as the read-buffer owner.
+  Decision: accepted. Evidence: `H2.Client_connection.read` consumes
+  `Bigstringaf.t`, while Eio can fill the same storage through a
+  `Cstruct.of_bigarray` view.
+
+Residual risk:
+
+- The adapter currently fails if the buffer is full and `ocaml-h2` consumes
+  zero bytes. S2/S4 must turn this into a typed protocol/security error when
+  frame and header caps are finalized.
+- This is not yet the H-D1 owner-fiber multiplexer. Public request dispatch,
+  writer/read wakeups, cancellation, h2 stream-permit body release, GOAWAY
+  admission, and attack reproductions remain open.
+
+## V-Http-S2-H-D1-Integration - real ocaml-h2 stream lifecycle
+
+Question: can eta-http bind H-D1 stream-lifecycle obligations to real
+`ocaml-h2` client/server callbacks instead of the fake frame multiplexer?
+
+Status: Accepted for the H-D1 stress rows ported so far. `Eta_http.H2.Multiplexer`
+now has a request-opening wrapper that gates admission through
+`Stream_state`, calls `H2.Client_connection.request`, marks stream-level h2
+errors as remote resets, and releases h2 body readers through eta-http stream
+release. `Eta_http.H2.Writer.run_client` covers the blocked-writer teardown row
+with Eta supervisor cancellation.
+
+Artifacts:
+
+- packages/eta-http/h2/multiplexer.ml
+- packages/eta-http/h2/multiplexer.mli
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s2_hd1_integration_probe.md
+- packages/eta-http/audit/dep_usage.md
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| 100 concurrent GETs | Closed PASS | `h2-multiplexer / 100 concurrent GETs` opens 100 streams on one h2 client connection and releases all permits back to baseline. |
+| Upload flow-control stall/resume | Closed PASS | `h2-multiplexer / upload flow-control resumes` sends a 128 KiB request body, observes no response while the server body is not read, then resumes when server reads reach EOF. |
+| Server reset cleanup | Closed PASS | `h2-multiplexer / server reset admission release` maps real h2 stream errors to cancelled eta-http streams and returns to baseline after release. |
+| ACTIVE+CANCELLED rapid-reset admission | Closed PASS | The same reset fixture rejects 100 new admissions while 32 remotely reset streams remain unreleased. |
+| Mid-flight client cancellation | Closed PASS | `h2-multiplexer / client cancel releases stream` closes the h2 body reader through eta-http release, records one local reset, and completes a follow-up GET. |
+| Blocked writer teardown | Closed PASS for writer loop | `h2-writer / blocked write teardown` starts `Eta_http.H2.Writer.run_client` under `Eta.Supervisor.scoped`, blocks the write callback, and exits by cancelling the writer child. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 42 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 198
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-H-D1-Integration-1 - Gate h2 request admission before calling
+  `ocaml-h2`. Decision: accepted. Evidence: reset streams remain admitted as
+  cancelled until eta-http release, and further requests are rejected at the
+  configured limit.
+- V-Http-S2-H-D1-Integration-2 - Bind response-body release to h2 reader
+  close plus eta-http stream release. Decision: accepted. Evidence: mid-body
+  client cancellation releases live stream state and the connection remains
+  usable.
+- V-Http-S2-H-D1-Integration-3 - Host the h2 writer loop as an Eta effect.
+  Decision: accepted. Evidence: the blocked-writer fixture proves supervised
+  teardown does not wait for a blocked write callback.
+
+Residual risk:
+
+- The H-D1 request wrapper is still the low-level h2 adapter used by the
+  public dispatch path; S3 owns streaming response exposure beyond the S2
+  eager-body client.
+- The public h2 client now owns a supervised real-socket read/write lifecycle.
+  GOAWAY post-close cutoff is closed in S2; local RST emission remains future
+  cleanup for streaming/security work.
+- H-Q2/H-Q5 security attack reproductions remain S4 obligations.
+
+## V-Http-S2-Dispatch - public ALPN route and live h2 smoke
+
+Question: can eta-http expose one public caller path that negotiates ALPN and
+routes `h2` to the real `ocaml-h2` read/write owner loop while preserving h1
+fallback?
+
+Status: Accepted for S2 dispatch. `Eta_http.Client.make` now negotiates
+`h2,http/1.1` for HTTPS requests, dispatches h2 through
+`Eta_http.H2.Multiplexer` plus `Eta_http.H2.Writer.run_client`, and dispatches
+`http/1.1`/missing ALPN through the existing h1 request loop. `Client.make_h1`
+remains the pooled S1 h1 path.
+
+Artifacts:
+
+- packages/eta-http/client/client.ml
+- packages/eta-http/client/client.mli
+- packages/eta-http/transport/dispatch.ml
+- packages/eta-http/transport/dispatch.mli
+- packages/eta-http/transport/connect.ml
+- packages/eta-http/transport/connect.mli
+- packages/eta-http/transport/probes/s2_dispatch_probe.md
+- scratch/eta_http_v1/probes/honeycomb_h2.ml
+- scratch/eta_http_v1/probes/reach_13.ml
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| Public same-caller dispatch | Closed PASS | `reach_13.ml` uses `Eta_http.Client.make` and `Eta_http.request`; it has no caller branch over h1/h2. |
+| Honeycomb h2 live smoke | Closed PASS | `eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2`. |
+| 13-endpoint auto-ALPN reach | Closed PASS | Reach summary PASS for 13 targets: 11 h2 routes and 2 h1 fallbacks. |
+| h2 HEAD with content-length/no body | Closed PASS after falsification | The first Datadog run timed out; h2 now completes HEAD/204/304/no-body responses without waiting for DATA. |
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 43 tests passed
+
+nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 218
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S2-Dispatch-1 - Put ALPN route choice behind public `Client.make`.
+  Decision: accepted. Evidence: live Honeycomb and 13-endpoint probes use the
+  same public request call path.
+- V-Http-S2-Dispatch-2 - Treat no-body h2 responses as complete without DATA.
+  Decision: accepted. Evidence: Datadog HEAD over h2 stopped timing out and
+  the full reach probe passed.
+
+Residual risk:
+
+- The h2 public path is S2 eager-body only; S3 owns streaming body exposure,
+  chunked h1 bodies, gzip, and retransmission.
+- H-Q2/H-Q5 security attack reproductions remain S4 obligations.
+
+## V-Http-S2-GOAWAY - post-GOAWAY admission cutoff
+
+Question: after a peer GOAWAY, can eta-http stop admitting new h2 streams
+without misclassifying the condition as stream-admission pressure?
+
+Status: Accepted for S2. `ocaml-h2` does not expose a received GOAWAY
+`last_stream_id` before follow-up writes are drained, but it marks the client
+closed after that writer drain. Eta-http uses the closed h2 client state as
+the conservative post-GOAWAY cutoff.
+
+Artifacts:
+
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s2_goaway_probe.md
+- scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml
+
+Hypothesis ledger:
+
+| Probe | Status | Evidence |
+| --- | --- | --- |
+| Raw ocaml-h2 GOAWAY close timing | Closed PASS | `closed_before_flush=false closed_after_flush=true` from `goaway_raw_probe.exe`. |
+| Eta mux post-GOAWAY admission | Closed PASS | `h2-multiplexer / GOAWAY rejects new streams` returns `Connection_closed`, leaves `opened=1`, and leaves `admission_rejected=0`. |
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
+h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
+
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 44 tests passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 223
+Eta escape sites: 0
+~~~
+
+Verdict:
+
+- V-Http-S2-GOAWAY-1 - Reject new mux requests after `ocaml-h2` reports the
+  client closed following GOAWAY writer drain. Decision: accepted. Evidence:
+  the fixture returns `Connection_closed` without consuming a new eta-http
+  stream permit.
+
+Residual risk:
+
+- `ocaml-h2` does not expose received `last_stream_id` in this integration
+  shape, so S2 cannot implement selective retry/admission by peer cutoff id.
+- H-Q2/H-Q5 attack reproductions remain S4 obligations.
+
+## V-Http-S2-Closeout - S2 gate closure
+
+Question: does S2 meet its corrected acceptance criteria after the public h2
+dispatch path, H-D1 real-h2 fixtures, GOAWAY cutoff, audits, and shipped
+OxCaml gate are run together?
+
+Status: Accepted. S2 is closed PASS locally. H-Q2/H-Q5 byte-envelope attack
+reproduction is carried to S4 by scope, not hidden under S2.
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 44 tests passed
+
+nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
+
+nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
+h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 223
+Eta escape sites: 0
+
+git diff --check
+
+nix develop -c eta-oxcaml-test-shipped
+eta-schema, ppx_eta, eta-otel, eta-stream, eta pass
+~~~
+
+Verdict:
+
+- V-Http-S2-Closeout-1 - Close S2 with h2 dispatch and real-h2 lifecycle
+  evidence. Decision: accepted. Evidence: all S2 gates above pass together.
+
+Residual risk:
+
+- Local RST emission remains future cleanup for streaming/security behavior.
+- H-Q2/H-Q5 malicious-byte-envelope reproductions remain S4 obligations.
+
+## V-Http-S3-Body-Foundation - chunked h1 bodies and gzip transducer
+
+Question: can S3 land the first body-streaming cut without pulling in
+`digestif`, while keeping chunked transfer coding, gzip, expansion caps, and
+release behavior testable through eta-http-owned APIs?
+
+Status: Accepted for the S3 foundation cut. `decompress.1.5.3` compiles under
+the OxCaml switch and has no `digestif` dependency; the earlier digestif issue
+remains isolated to the deferred TLS 2.1.0 branch.
+
+Artifacts:
+
+- packages/eta-http/body/stream.ml
+- packages/eta-http/body/chunked.ml
+- packages/eta-http/body/source.ml
+- packages/eta-http/body/transducer.ml
+- packages/eta-http/h1/client.ml
+- packages/eta-http/client/request.ml
+- packages/eta-http/test/security/gzip_bomb.ml
+- packages/eta-http/body/probes/s3_body_streaming_probe.md
+- packages/eta-http/audit/dep_usage.md
+
+Evidence:
+
+~~~text
+nix develop -c opam install --yes decompress.1.5.3
+decompress 1.5.3, checkseum 0.5.3, optint 0.3.0 installed under 5.2.0+ox
+
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 49 tests passed
+eta-http-security: 1 test passed
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 252
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S3-Body-Foundation-1 - Use `decompress`, not `digestif`, for S3
+  gzip. Decision: accepted. Evidence: `decompress.1.5.3` installs and the
+  gzip round-trip/cap fixtures pass under OxCaml.
+- V-Http-S3-Body-Foundation-2 - Replace the h1 S1 chunked rejection with a
+  streaming chunked decoder. Decision: accepted. Evidence:
+  `h1-client / decodes chunked response` reads `Wikipedia` and exposes the
+  trailer.
+- V-Http-S3-Body-Foundation-3 - Add the body-stream reader primitive inside
+  eta-http instead of promoting an eta-stream transducer now. Decision:
+  accepted for this cut. Evidence: `Body.Stream.of_reader` release-once tests
+  pass; broader `Stream.transducer` promotion remains open until RSS and gzip
+  edge probes close.
+
+Residual risk:
+
+- RSS-sampled 100 MB gzip request/response smoke is not yet run.
+- gzip truncated-stream, CRC mismatch, and concatenated-member fixtures remain
+  open.
+- h2 public response streaming still uses the S2 eager-body path; only request
+  body streaming was wired through the h2 writer.
+- R11 replayability is represented by `Body.Source` but the final retry-facing
+  ADR remains S5 work.
+
+## V-Http-S3-Closeout - streaming bodies and gzip transducer
+
+Question: does S3 satisfy the eta-http v1 body-streaming gate across h1, h2,
+chunked transfer coding, gzip malformed inputs, expansion caps, and RSS-sampled
+large streaming request/response behavior?
+
+Status: Accepted. S3 closes Eta-a0h and Eta-eor. R11's final retry-facing ADR
+is carried to S5, where retry/idempotency consumes the replayability classifier.
+
+Artifacts:
+
+- packages/eta-http/body/stream.ml
+- packages/eta-http/body/chunked.ml
+- packages/eta-http/body/source.ml
+- packages/eta-http/body/transducer.ml
+- packages/eta-http/h1/client.ml
+- packages/eta-http/h2/multiplexer.ml
+- packages/eta-http/client/client.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/test/security/gzip_bomb.ml
+- scratch/eta_http_v1/probes/s3_gzip_rss.ml
+- packages/eta-http/body/probes/s3_body_streaming_probe.md
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 54 tests passed
+eta-http-security: 1 test passed
+
+nix develop -c dune exec scratch/eta_http_v1/probes/s3_gzip_rss.exe
+eta_http_s3_gzip_rss outcome=ok request_bytes=104857600 response_bytes=104857600 baseline_rss_kib=36580 max_rss_kib=50196 delta_rss_kib=13616 limit_kib=131072
+
+nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 269
+Eta escape sites: 0
+~~~
+
+Verdicts:
+
+- V-Http-S3-Closeout-1 - Keep gzip in eta-http over `decompress` without
+  promoting `Stream.transducer` now. Decision: accepted. Evidence: the gzip
+  round-trip, malformed input, concatenated-member, bomb, and RSS fixtures pass
+  with no `digestif` dependency.
+- V-Http-S3-Closeout-2 - Expose h2 response bodies as pull-driven
+  `Body.Stream` values instead of the S2 eager buffer. Decision: accepted.
+  Evidence: real `ocaml-h2` EOF/discard release fixtures pass and live
+  Honeycomb h2 body read returns 19 bytes.
+- V-Http-S3-Closeout-3 - Treat closed h2 body readers with no stream error as
+  EOF. Decision: accepted. Evidence: live h2 endpoints can send DATA and
+  END_STREAM before the user pulls the public body; scheduled reads capture the
+  data and closed-without-error terminates the stream.
+
+Residual risk:
+
+- S4 still owns the byte-level security envelope, including full H-Q2/H-Q5
+  malicious-frame and decompression-bomb attack reproduction.
+- S5 owns the final retry/idempotency ADR for `Body.Source` replayability.
+
+## V-Http-S4-Frame-Scanner-Foundation - h2 byte-envelope checks enter the real adapter
+
+Question: can eta-http observe hostile HTTP/2 frame shapes before handing
+server-to-client bytes to `ocaml-h2`, while preserving the live h2 client
+path?
+
+Status: Accepted. S4 closes the byte-envelope reopener at the eta-http real h2
+adapter boundary. The v1 GOAWAY posture is drop-and-disconnect with no retry;
+selective retry by received `last_stream_id` remains intentionally unclaimed
+because the pinned `ocaml-h2` line does not surface it.
+
+Artifacts:
+
+- packages/eta-http/h2/security.ml
+- packages/eta-http/h2/security.mli
+- packages/eta-http/h2/multiplexer.ml
+- packages/eta-http/h2/multiplexer.mli
+- packages/eta-http/client/client.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/h2/probes/s4_security_envelope_probe.md
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 60 tests passed
+eta-http-security: 1 test passed
+
+nix develop -c dune exec --display=short scratch/eta_http_v1/probes/s4_envelope_alloc.exe
+eta_http_s4_envelope_alloc attack=header_normalization outcome=ok error=Header_invalid minor_words=39 limit_words=2260
+eta_http_s4_envelope_alloc attack=settings_churn outcome=ok error=Settings_churn_rate_exceeded minor_words=61 limit_words=2260
+eta_http_s4_envelope_alloc attack=header_churn outcome=ok error=Response_header_change_rate_exceeded minor_words=63 limit_words=2260
+eta_http_s4_envelope_alloc attack=goaway_churn outcome=ok error=Connection_closed minor_words=56 limit_words=2260
+eta_http_s4_envelope_alloc attack=hpack_block_cap outcome=ok error=Hpack_decode_overflow minor_words=61 limit_words=2260
+eta_http_s4_envelope_alloc attack=continuation_cap outcome=ok error=Continuation_flood minor_words=62 limit_words=2260
+eta_http_s4_envelope_alloc_summary verdict=PASS attacks=6 max_minor_words=63 limit_words=2260
+
+nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2
+
+nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+eta_http_reach_summary verdict=PASS targets=13 failed=<none>
+~~~
+
+Verdicts:
+
+- V-Http-S4-Frame-Scanner-Foundation-1 - Observe server-to-client frame bytes
+  before `ocaml-h2` ingestion. Decision: accepted. Evidence:
+  `Eta_http.H2.Security.observe` runs in the h2 read adapter before
+  `H2.Client_connection.read`, and the real `Multiplexer.read_client_once`
+  fixture reports security errors.
+- V-Http-S4-Frame-Scanner-Foundation-2 - Bound the first frame-envelope
+  classes with typed errors. Decision: accepted. Evidence: focused tests cover
+  SETTINGS churn, response-header churn, GOAWAY churn, single HEADERS block
+  caps, and HEADERS+CONTINUATION accumulation caps.
+- V-Http-S4-Frame-Scanner-Foundation-3 - Use an encoded-header-block cap as
+  the HPACK/Huffman fallback under the pinned `ocaml-h2` API. Decision:
+  accepted for now. Evidence: the substrate exposes no per-symbol Huffman CPU
+  budget hook; eta-http rejects oversized HEADERS/CONTINUATION blocks before
+  decode.
+- V-Http-S4-Frame-Scanner-Foundation-4 - Validate decoded h2 response-header
+  normalization at the public client boundary. Decision: accepted. Evidence:
+  empty names, NULs, uppercase names, names over 8192 bytes, and values over
+  65536 bytes map to `Header_invalid`, and the public h2 client invokes
+  this check after `ocaml-h2` header decode.
+- V-Http-S4-Frame-Scanner-Foundation-5 - Bound allocator pressure at the real
+  adapter boundary for the six deferred rows. Decision: accepted. Evidence:
+  `s4_envelope_alloc` reports max 63 minor words against the 2260
+  words/frame envelope.
+
+Residual risk:
+
+- The rate-shaped typed fields still report burst counters at the adapter
+  boundary; a future long-lived h2 connection pool may need wall-clock
+  token-bucket accounting.
+- GOAWAY `last_stream_id` selective retry is not claimed in v1 because
+  `ocaml-h2` does not expose the received value.
+
+## V-Http-Q2-S4-Update - byte-level malicious peer churn is closed for v1
+
+Question: do the two V-Http-Q2 deferred rows now have real eta-http h2 adapter
+coverage?
+
+Status: Accepted for v1. The old V-Http-Q2 entry remains the historical H-D1
+scratch verdict; this update closes the byte-level reopener with S4 evidence.
+
+Evidence:
+
+~~~text
+h2-security / header churn: PASS
+h2-multiplexer / GOAWAY rejects new streams: PASS
+eta_http_s4_envelope_alloc attack=header_churn outcome=ok error=Response_header_change_rate_exceeded minor_words=63 limit_words=2260
+eta_http_s4_envelope_alloc_summary verdict=PASS attacks=6 max_minor_words=63 limit_words=2260
+~~~
+
+Verdicts:
+
+- V-Http-Q2-S4-Update-1 - Header churn is bounded at the raw HEADERS boundary.
+  Decision: accepted. Evidence: the scanner returns
+  `Response_header_change_rate_exceeded` before `ocaml-h2` ingestion.
+- V-Http-Q2-S4-Update-2 - GOAWAY mid-flight does not lead to retry or new
+  admission. Decision: accepted for v1. Evidence: post-GOAWAY mux admission is
+  rejected; selective retry by `last_stream_id` is not claimed.
+
+## V-Http-Q5-S4-Update - frame/protocol malicious peer envelope is closed for v1
+
+Question: do the four V-Http-Q5 byte-level deferred rows and allocator
+pressure now have real eta-http h2 adapter coverage?
+
+Status: Accepted for v1. The old V-Http-Q5 entry remains the historical H-D1
+scratch verdict; this update closes the byte-level reopener with S4 evidence.
+
+Evidence:
+
+~~~text
+h2-security / SETTINGS churn reader: PASS
+h2-security / GOAWAY churn: PASS
+h2-security / HPACK block cap: PASS
+h2-security / CONTINUATION cap: PASS
+h2-security / header normalization edges: PASS
+eta_http_s4_envelope_alloc_summary verdict=PASS attacks=6 max_minor_words=63 limit_words=2260
+~~~
+
+Verdicts:
+
+- V-Http-Q5-S4-Update-1 - SETTINGS churn and GOAWAY churn are bounded before
+  `ocaml-h2` ingestion. Decision: accepted.
+- V-Http-Q5-S4-Update-2 - HPACK/Huffman amplification uses the accepted v1
+  fallback: encoded HEADERS and CONTINUATION caps before decode. Decision:
+  accepted with substrate caveat; no per-symbol Huffman hook exists in the
+  pinned `ocaml-h2` line.
+- V-Http-Q5-S4-Update-3 - Header normalization edges map to `Header_invalid`
+  before public response exposure. Decision: accepted.
+- V-Http-Q5-S4-Update-4 - Active adapter allocator pressure remains below the
+  2260 words/frame envelope for the six S4 rows. Decision: accepted.
+
+## V-Http-S5-Retry-Idempotency - retry policy respects replayability
+
+Question: can eta-http provide a default retry policy that honors Retry-After,
+retries replayable transient failures, and refuses unsafe one-shot requests?
+
+Status: Accepted. S5 closes Eta-bvn.
+
+Artifacts:
+
+- packages/eta-http/client/idempotency.ml
+- packages/eta-http/client/retry.ml
+- packages/eta-http/test/test_eta_http.ml
+- packages/eta-http/client/probes/s5_retry_probe.md
+- scratch/eta_http_research/adrs/0005-retry-idempotency-replayability.md
+
+Evidence:
+
+~~~text
+nix develop -c dune runtest packages/eta-http --force
+eta-http: 66 tests passed
+eta-http-security: 1 test passed
+
+retry / idempotency classifier: PASS
+retry / Retry-After parser: PASS
+retry / schedule backoff: PASS
+retry / succeeds on third attempt: PASS
+retry / non-idempotent requires opt-in: PASS
+retry / always requires replayable body: PASS
+~~~
+
+Verdicts:
+
+- V-Http-S5-Retry-Idempotency-1 - Keep retry as an explicit wrapper over the
+  existing request path. Decision: accepted. Evidence:
+  `Eta_http.request_with_retry` and
+  `Eta_http.Client.request_with_retry` compose over any client.
+- V-Http-S5-Retry-Idempotency-2 - Gate retries on idempotency and body
+  replayability. Decision: accepted. Evidence: POST is not retried by default,
+  `Idempotency-Key` opts in, and one-shot streams are refused even under
+  `Retry_policy.always`.
+- V-Http-S5-Retry-Idempotency-3 - Honor `Retry-After` without widening
+  Eta.Schedule. Decision: accepted. Evidence: delta-seconds and IMF-fixdate
+  parsing return `Eta.Duration.t`; fallback delays stay in
+  `Eta.Schedule`, with the default using exponential backoff capped at 30s
+  and full jitter.
+
+Residual risk:
+
+- Attempt-level spans and retry-decision logs are S6 observability work.
+
+## V-Http-S6-Observability - semconv spans without exporter recursion
+
+Question: can eta-http expose HTTP client observability through Eta
+capabilities, match OTel HTTP client semconv names for v1 attributes, and
+avoid recursive eta-otel export spans?
+
+Status: Accepted. S6 closes Eta-ef7 and Eta-2s0. Eta-8w6 remains open because
+scheduled CI wiring is out of scope per user direction.
+
+Artifacts:
+
+- packages/eta-http/observability/semconv.ml
+- packages/eta-http/observability/tracer.ml
+- packages/eta-http/observability/meter.ml
+- packages/eta-http/observability/probes/s6_observability_probe.md
+- scratch/eta_http_research/adrs/0006-http-observability-recursion.md
+- scratch/eta_http_research/h_o1_observability/semconv_attributes.md
+- scratch/eta_http_research/h_o1_observability/results.md
+
+Evidence:
+
+~~~text
+nix develop -c dune exec --display=short packages/eta-http/test/test_eta_http.exe
+eta-http: 75 tests passed
+
+observability / successful GET semconv: PASS
+observability / DNS error semconv: PASS
+observability / TLS error semconv: PASS
+observability / retry success spans: PASS
+observability / redirect semconv: PASS
+observability / h2 protocol attrs: PASS
+observability / recursion disabled: PASS
+observability / pool stats meter: PASS
+
+timeout 25s nix develop -c dune exec --display=short scratch/eta_http_v1/probes/honeycomb_h2.exe
+eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
+
+timeout 240s nix develop -c dune exec --display=short scratch/eta_http_v1/probes/reach_13.exe
+eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
+
+bash packages/eta-http/audit/run.sh
+Dependency sites: 283
+Eta escape sites: 1
+
+nix develop -c eta-oxcaml-test-shipped
+PASS
+~~~
+
+Verdicts:
+
+- V-Http-S6-Observability-1 - Keep eta-http observability explicit at the
+  call site. Decision: accepted. Evidence: plain `Eta_http.request` remains
+  unchanged; `Eta_http.Observability.Tracer.request` and
+  `request_with_retry` add spans through Eta capabilities.
+- V-Http-S6-Observability-2 - Use stable OTel HTTP client names for request,
+  response, error, retry, redirect, and protocol attributes. Decision:
+  accepted. Evidence: in-memory tracer fixtures assert the emitted keys and
+  values.
+- V-Http-S6-Observability-3 - Avoid exporter recursion with an explicit
+  disabled tracing boundary. Decision: accepted. Evidence:
+  `~enabled:false` calls through without emitting eta-http client spans.
+- V-Http-S6-Observability-4 - Emit pool/client stats through the Eta meter
+  without high-cardinality URL attributes. Decision: accepted. Evidence:
+  in-memory meter fixture records the eta-http connection gauges.
+- V-Http-S6-Observability-5 - Recheck h2 non-empty response bodies before
+  closeout. Decision: accepted. Evidence: Honeycomb returned 19 bytes over h2
+  and the local h2 suite now covers inline DATA/END_STREAM before caller body
+  consumption.
+- V-Http-S6-Observability-6 - Keep audit escapes visible and classified.
+  Decision: accepted. Evidence: the audit reports one Structural test harness
+  escape in `packages/eta-http/test/test_eta_http.ml`; no hidden sites remain.
+
+Residual risk:
+
+- Redirect support is semconv attribute derivation in v1, not an automatic
+  redirect-following request loop.
+- Trace-context injection into outbound request headers is deferred to a future
+  propagation wrapper or caller-owned boundary.

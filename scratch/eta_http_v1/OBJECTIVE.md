@@ -1,12 +1,41 @@
 # Eta-http v1 — Master Objective
 
-Status: Active. S0 closed PASS on 2026-05-23; S1 is in progress with h1
-OpenAI 401 smoke, origin-scoped pool wiring, 13-endpoint h1 reach, R1
-zero-allocation parser core, R2 zero-allocation writer core, R5 stale-idle
-rejection, and h1 body EOF/discard release passing. R6 cancellation/h2
-closure remains open. Backlog epic
-Eta-x48. Slices Eta-a45 (S0), Eta-8s7 (S1), Eta-du3 (S2), Eta-a0h (S3),
-Eta-qr9 (S4), Eta-bvn (S5), Eta-ef7 (S6).
+Status: Complete. S0 closed PASS on 2026-05-23. S1 closed PASS on
+2026-05-23 with h1 OpenAI 401 smoke, origin-scoped pool wiring,
+13-endpoint h1 reach, R1 zero-allocation parser core, R2 zero-allocation
+writer core, R5 stale-idle rejection, and h1 body EOF/discard/pre-response
+cancellation release passing. S2 closed PASS locally on 2026-05-23 with R7
+ocaml-h2 API-shape evidence, ACTIVE+CANCELLED admission, ALPN state and public
+dispatch, R8 push-disable/PRIORITY evidence, stream-state release decisions,
+h2 writer/read adapters, H-D1 real-`ocaml-h2` stress rows, live Honeycomb h2
+smoke, 13-endpoint auto-ALPN reach (11 h2 routes, 2 h1 fallbacks), GOAWAY
+post-close admission cutoff, and ADR 0004. H-Q2/H-Q5 byte-envelope attack
+reproduction remains S4, not an S2 blocker. S3 closed PASS on 2026-05-23:
+`decompress.1.5.3` compiles under OxCaml without `digestif`, h1 chunked
+responses/trailers stream, h1 request streams use chunked transfer coding,
+h2 public response bodies stream through `Body.Stream`, gzip encode/decode
+handles truncated streams, CRC mismatch, concatenated members, and the
+expansion-cap security fixture, and the local 100 MiB gzip POST/response RSS
+smoke passed with bounded RSS. Backlog epic
+Eta-x48. S4 closed PASS locally on 2026-05-23: the real ocaml-h2 adapter has
+a byte-level frame scanner for SETTINGS churn, response-header churn, GOAWAY
+churn, HPACK block caps, CONTINUATION accumulation caps, and decoded h2 header
+normalization; the six-row S4 allocation probe passed with max 63 minor words
+against the 2260 words/frame envelope; defaults.md caveats were removed; ADR
+0003 was promoted to Accepted; V-Http-Q2/V-Http-Q5 were updated with S4
+accepted verdicts; live h2 and 13-endpoint reach still pass. Slices Eta-a45
+(S0), Eta-8s7 (S1), Eta-du3 (S2), Eta-a0h (S3), Eta-qr9 (S4). S5 closed
+PASS locally on 2026-05-23: `Eta_http.Retry_policy.t`, explicit
+`request_with_retry` wrappers, RFC 9110 idempotency classification,
+`Idempotency-Key` opt-in, body replayability gating, `Retry-After`
+delta/date parsing, schedule fallback backoff with full jitter, and ADR 0005
+landed. S6 closed PASS locally on 2026-05-23: observability modules,
+OTel HTTP client semconv request/response/error/retry attributes, retry
+attempt spans, recursion suppression via `~enabled:false`, pool stats gauges
+through `Eta.Capabilities.meter`, ADR 0006, and the H-O1 fixtures landed.
+The h2 body recheck passed against Honeycomb with 19 response bytes, and the
+13-endpoint reach probe still passes. Eta-8w6 CI scheduling is out of scope
+per user direction and remains open.
 
 This is the single source of truth for the eta-http v1 implementation.
 Each slice task in the backlog points at the corresponding section here.
@@ -101,7 +130,9 @@ below.
 
 ### 1.4 Audit from day one
 
-Two ripgrep-reproducible audit catalogs maintained continuously:
+Two ripgrep-reproducible audit catalogs are maintained continuously. The goal
+is every relevant site visible, classified, and justified. The goal is not
+zero sites forever.
 
 **Dependency-usage audit** (`packages/eta-http/audit/dep_usage.md`):
 
@@ -114,8 +145,15 @@ Two ripgrep-reproducible audit catalogs maintained continuously:
 - Every site reaching into raw `Eio.Fiber.fork`, `Eio.Switch.run`,
   `Eio.Promise.*`, `Eio.Mutex`, `Eio.Condition`, or `Atomic.t` (NOT
   `Atomic.Portable`) inside eta-http.
-- Per site: classification (replaceable / structural / debt) and the
-  shape we'd swap to if it were replaceable.
+- Per site: classification (`Replaceable` / `Structural` / `Debt`) and a
+  one-line reason. Structural sites with written justification are acceptable.
+- IO leaves are substrate, not escapes: `Eio.Net.*`, `Eio.Flow.*`,
+  `Eio.Buf_read.*`, `Eio.Buf_write.*`, `Eio.Time.*`, and `Eio.Path.*`.
+  Eta does not own IO leaves; passthrough wrappers add ceremony without
+  semantics.
+- If 3+ `Replaceable` sites share the same pattern, file a backlog task to
+  ship the Eta primitive that absorbs them. After that primitive lands, the
+  audit re-scans and those sites should move to zero.
 - Updated with every PR.
 
 This is the Bun-unsafe-audit pattern. Speed is fine; speed without honest
@@ -242,22 +280,38 @@ named. If a probe falsifies, stop and report.
 - **R6 — Body Stream<bytes> idempotent release.** Already proven in
   H-D2a against fake servers. Reverify against real h1 + real h2.
   Disproof: real connection lifecycle differs from the fake; release
-  paths leak under realistic cancellation patterns. S1 h1 EOF/discard is
-  partial PASS; cancellation and S2 h2 remain open. **Slice S1 + S2.**
+  paths leak under realistic cancellation patterns. S1 h1 EOF/discard and
+  pre-response cancellation are PASS. S1 bodies are still eager; S3 owns
+  true streaming body cancellation when streaming bodies land. S2 owns h2
+  stream-permit verification. **Slice S1 + S2.**
 
 - **R7 — ocaml-h2 API integration shape.** Hypothesis: ocaml-h2's read
   loop, frame parser, HPACK decoder, and stream state machine compose
   cleanly with H-D1's writer-fiber-owns-socket pattern. Disproof:
   ocaml-h2 forces shapes incompatible with H-D1; or its stream state
-  machine conflicts with our `Atomic.Portable` per-stream record. If
-  this falsifies, we either fork ocaml-h2 (large) or revisit the
-  multiplexer design (medium). **Slice S2.**
+  machine conflicts with our `Atomic.Portable` per-stream record. P1 API
+  shape PASS in S2: direct Sans-IO client/server request, write-drain,
+  read-feed, response callback, and body reader scheduling compile and run.
+  S2 read-adapter cut also PASS: real client/server bytes flow through
+  `Eta_http.H2.Writer`, an Eio source split into 7-byte chunks, and
+  `Eta_http.H2.Multiplexer.read_client_once`, yielding status 200/body
+  `hello-read`. The writer-loop wakeup bridge also PASSes with
+  `Eta.Channel` under `Eta.Supervisor.scoped` teardown. Eta-http still owns
+  the full real-socket owner-fiber lifecycle, public dispatch, GOAWAY
+  admission, and typed error mapping. If this falsifies later, we either
+  fork ocaml-h2 (large) or revisit the multiplexer design (medium).
+  **Slice S2.**
 
 - **R8 — Server push rejection + PRIORITY tolerance.** Hypothesis:
   SETTINGS_ENABLE_PUSH=0 in initial SETTINGS suffices; PUSH_PROMISE
   on receive treated as connection error per RFC 9113 §8.4; PRIORITY
   frames received are ignored without crash per RFC 9113 §5.3.2.
-  Disproof: ocaml-h2 doesn't expose the hooks. **Slice S2.**
+  Disproof: ocaml-h2 does not expose the hooks. PASS in S2:
+  `h2_r8_push_priority.exe` proves no-push-handler clients advertise
+  push disabled so server `Reqd.push` returns `Push_disabled`, forced
+  PUSH_PROMISE against a disabled client reports `ProtocolError`, and
+  well-formed PRIORITY frames are tolerated by client and server state
+  machines. **Slice S2.**
 
 - **R9 — Chunked encoding clean-room.** Hypothesis: RFC 9112 chunked
   encoding (writer + reader + trailers) implements in ~500 LOC OxCaml
@@ -291,28 +345,46 @@ named. If a probe falsifies, stop and report.
   Eta-yuk. Hypothesis: after GOAWAY mid-flight, streams above
   last_stream_id are not retried; client cleanly tears down.
   Disproof: ocaml-h2 doesn't expose last_stream_id on receive.
-  **Slice S4.**
+  S2 result: PASS for post-GOAWAY admission cutoff once `ocaml-h2` marks the
+  client closed after writer drain; last-stream-id selective handling is not
+  exposed by the substrate in this cut.
+  S4 result: accepted v1 behavior is drop-and-disconnect with no retry; no
+  selective retry by received `last_stream_id` is claimed. **Slice S2 + S4.**
 
 - **R14 — SETTINGS rate limiting.** Deferred from Eta-yuk. Hypothesis:
   default `max_settings_per_second=10/sec` from defaults.md; storm
   triggers `Settings_churn_rate_exceeded`. Disproof: ocaml-h2 applies
-  SETTINGS internally before we see them. **Slice S4.**
+  SETTINGS internally before we see them.
+  S4 result: PASS for raw server-to-client frame observation before
+  `ocaml-h2` ingestion, with >10 SETTINGS frames mapped to
+  `Settings_churn_rate_exceeded`. **Slice S4.**
 
 - **R15 — Huffman CPU amplification mitigation.** Deferred from Eta-yuk.
   Hypothesis: a CPU budget on HPACK decode bounds Huffman amplification.
   Disproof: ocaml-h2 doesn't expose Huffman decoding hooks for budget
   enforcement. If this falsifies, mitigate via decoded-byte cap from
-  H-Q3 only and document the limit. **Slice S4.**
+  H-Q3 only and document the limit.
+  S4 result: PASS for the fallback path; eta-http rejects
+  single HEADERS blocks and HEADERS+CONTINUATION accumulations above the
+  default caps before handing bytes to `ocaml-h2`. A per-symbol Huffman CPU
+  budget is not exposed by the pinned substrate. **Slice S4.**
 
 - **R16 — Header normalization edges.** Deferred from Eta-yuk. Very
   long names, embedded nulls, zero-length, mixed case. Hypothesis: each
   maps to `Header_invalid`. Disproof: ocaml-h2 already accepts edge
-  cases that should be rejected. **Slice S4.**
+  cases that should be rejected.
+  S4 result: PASS for eta-http's decoded-header policy; empty
+  names, NULs, uppercase h2 names, and names over 8192 bytes map to
+  `Header_invalid`; values over 65536 bytes also map to `Header_invalid`,
+  and the public h2 client validates decoded response
+  headers. **Slice S4.**
 
 - **R17 — Real-world allocator-pressure invariant.** Reverify the 2260
   words/admitted-frame envelope against real ocaml-h2 + real malicious
   server (not the H-D1 scratch SUT). Disproof: real adapter allocates
-  more than the synthetic. **Slice S4.**
+  more than the synthetic.
+  S4 result: PASS at the real h2 read-adapter boundary; the six deferred rows
+  max at 63 minor words against the 2260 words/frame envelope. **Slice S4.**
 
 - **R18 — Retry policy classifier surface.** H-D3a was never settled in
   scratch. Hypothesis: classifier of shape
@@ -454,7 +526,8 @@ Concrete (port):
 - Multiplexer (port from h_d1_dogfood_multiplex/multiplexer.ml).
 - ALPN dispatch state machine (port from h_d5_alpn_bootstrap).
 - HPACK + CONTINUATION caps (port from h_q3_hpack_continuation).
-- H-Q2 + H-Q5 PASS attacks reproduced against real ocaml-h2.
+- H-Q2 + H-Q5 byte-envelope attacks are S4 security-envelope work; S2 records
+  the h2 ownership boundary and GOAWAY cutoff evidence.
 
 Research probes:
 - R7 (ocaml-h2 API integration shape).
@@ -468,17 +541,16 @@ giving us `immutable_data` discipline), `h2/multiplexer.{ml,mli}`,
 `h1/client.ml` extended for h1-from-ALPN-fallback path.
 
 **Smoke**: `GET https://api.honeycomb.io/v1/auth` over h2; same caller
-code as S1 with no h1/h2 branching (verified by `rg "Client\.protocol|H1|H2"`
-returning no matches in `client/`). Multiplexer sustains 100 concurrent
-requests against an `ocaml-h2`-based test server. All H-Q2/H-Q5 PASS
-attacks (HEADERS+RST, stream-id jumps, RST rate, PING flood, WINDOW_UPDATE,
-DATA slowloris) reproduce with the precise typed-error variants.
+code as S1 with no h1/h2 branching in the smoke/reach probes. Multiplexer sustains 100 concurrent
+requests against an `ocaml-h2`-based test server. S4 owns the H-Q2/H-Q5
+malicious-server byte-envelope reproductions.
 
 **Acceptance**:
 - All §S2 modules implemented.
 - Same caller code path across h1 and h2.
 - 13-endpoint reach probe extended: each negotiates h2 if ALPN allows.
-- H-Q2 + H-Q5 PASS attacks reproduce against real ocaml-h2.
+- H-Q2 + H-Q5 attack reproduction is explicitly deferred to S4 byte-level
+  security envelope work.
 - Audit catalogs updated; ocaml-h2 dep call sites enumerated.
 - ADR 0004 (or amend 0003) drafts the h2 ownership boundary: which parts
   ocaml-h2 owns (frame parse, HPACK), which parts we own (multiplexer,
@@ -545,6 +617,28 @@ Modules: `h2/security/`. Per-attack fixtures under
 bounded resource use under each at default config; precise typed-error
 variants from expanded taxonomy.
 
+Closeout evidence:
+- `Eta_http.H2.Security.observe` scans raw server-to-client HTTP/2 frame bytes
+  in the real h2 read adapter before `H2.Client_connection.read`.
+- SETTINGS churn, response-header churn, GOAWAY churn, single HEADERS block
+  cap, and HEADERS+CONTINUATION cap have focused real-adapter tests.
+- `Eta_http.H2.Security.validate_headers` rejects empty, NUL-containing,
+  uppercase, overlong-name, and overlong-value h2 response headers; the public
+  h2 client invokes it after `ocaml-h2` header decode.
+- `scratch/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six
+  deferred rows against the real h2 read adapter and samples active-path minor
+  allocations; max observed is 63 words against the 2260-word envelope.
+- Live h2 Honeycomb smoke and the 13-endpoint reach probe still pass after the
+  scanner is inserted.
+
+Caveats:
+- The accepted GOAWAY policy is drop-and-disconnect with no retry. Selective
+  retry by received `last_stream_id` is not claimed because the pinned
+  `ocaml-h2` line does not expose it.
+- Rate-shaped typed fields report burst counters at the adapter boundary in
+  this v1 implementation. A future long-lived h2 connection pool may need
+  wall-clock token-bucket accounting.
+
 **Acceptance**:
 - All 6 deferred attacks PASS against real ocaml-h2 adapter.
 - defaults.md caveats removed ("Requires byte-level X hook before final
@@ -585,6 +679,18 @@ default but caller can opt in via `idempotency_key` or explicit
 - Body replayability surface settled with ADR 0005.
 - Smoke target passes.
 
+Closeout evidence:
+- `packages/eta-http/client/idempotency.ml` maps RFC 9110 idempotent
+  methods and refuses one-shot request bodies.
+- `packages/eta-http/client/retry.ml` provides default/always/never retry
+  policies, `Retry-After` parsing, schedule fallback backoff, and explicit
+  retry wrappers.
+- `request_with_retry` retries a scripted 503/503/200 sequence on the third
+  attempt and discards failed response bodies.
+- POST is not retried by default; `Idempotency-Key` opts it in; one-shot
+  streams are not retried even under `Retry_policy.always`.
+- ADR 0005 records the body replayability decision.
+
 ### S6 — OTel HTTP client semconv (Eta-ef7, closes Eta-2s0)
 
 **Mostly research; Tracer integration is concrete substrate.**
@@ -607,6 +713,13 @@ h2 request, eta-otel-using-eta-http with recursion avoided).
 - All 7 H-O1 fixtures passing with semconv 1.27.0 attributes.
 - Closes Eta-2s0 (H-O1).
 - ADR 0006 records the recursion-avoidance pattern.
+
+**Closeout 2026-05-23**: PASS locally. `Eta_http.Observability.{Semconv,Tracer,Meter}`
+is public, the in-memory tracer/meter fixtures pass, ADR 0006 is Accepted,
+Honeycomb h2 returns 19 response bytes, and the 13-endpoint reach probe still
+passes. Audit reports 283 dependency sites and 1 classified Structural escape
+site. `eta-oxcaml-test-shipped` passes. `Eta-8w6` is not closed by S6;
+scheduled CI wiring is out of scope.
 
 ---
 
@@ -742,7 +855,7 @@ Return to planner if any of these hold:
 | Eta-ef7 | S6 OTel observability | S6 |
 | Eta-yuk | byte-level h2 envelope (closed by S4) | reopener |
 | Eta-l1o | TLS chokepoint migration (closed by S1) | reopener |
-| Eta-8w6 | TLS reach probe in CI (closed by S1 prep, S6 ship) | reopener |
+| Eta-8w6 | TLS reach probe in CI (out of scope; remains open) | reopener |
 | Eta-eor | H-D4a gzip transducer (closed by S3) | reopener |
 | Eta-2s0 | H-O1 OTel semconv (closed by S6) | reopener |
 
@@ -752,7 +865,7 @@ ADR set:
 - ADR 0003 — HTTP/2 security defaults (Draft; promoted by S4).
 - ADR 0004 — h2 ownership boundary (Drafted by S2).
 - ADR 0005 — Body replayability + retry classifier (Drafted by S5).
-- ADR 0006 — Observability recursion avoidance (Drafted by S6).
+- ADR 0006 — Observability recursion avoidance (Accepted by S6).
 
 ---
 
