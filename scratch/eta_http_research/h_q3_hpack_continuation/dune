@@ -1,0 +1,10 @@
+(library
+ (name h_q3_hpack_continuation)
+ (wrapped false)
+ (modules limits)
+ (libraries h_d_errors eta))
+
+(executable
+ (name fixtures)
+ (modules fixtures)
+ (libraries h_q3_hpack_continuation h_d_errors eta))

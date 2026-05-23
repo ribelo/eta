@@ -14488,3 +14488,62 @@ Verdicts:
 Residual risk:
 
 - Eta does not expose a runtime fiber census, so the H-Q2 fixture tracks fixture-owned fiber counts while sampling real GC/RSS/fd values.
+
+## V-Http-Q3 - HPACK bombs and CONTINUATION floods are bounded by defaults
+
+Question: do eta-http's default HTTP/2 header limits stop HPACK decompression bombs and CONTINUATION floods before unbounded memory growth?
+
+Artifacts:
+
+- scratch/eta_http_research/h_q3_hpack_continuation/limits.ml
+- scratch/eta_http_research/h_q3_hpack_continuation/fixtures.ml
+- scratch/eta_http_research/h_q3_hpack_continuation/defaults_justification.md
+- scratch/eta_http_research/h_q3_hpack_continuation/results.md
+
+Hypothesis ledger:
+
+| Candidate | Status | Evidence |
+| --- | --- | --- |
+| 256 KiB default decoded HPACK cap | Accepted | 10 KiB encoded to 100 MiB decoded bomb aborts at 256 KiB. |
+| 64 KiB default CONTINUATION accumulator cap | Accepted | 1000 x 1 KiB CONTINUATION flood aborts at frame 64. |
+| 1 MiB user-elevated decoded cap | Accepted as opt-in | The same 100 MiB HPACK bomb still aborts at 1 MiB. |
+
+Default justification:
+
+- decoded HPACK cap: 256 KiB, 4x the 64 KiB p99 row in the synthetic OTel/header inventory;
+- CONTINUATION cap: 64 KiB, 4x a 16 KiB large-header baseline.
+
+Evidence:
+
+~~~text
+nix develop -c dune exec scratch/eta_http_research/h_q3_hpack_continuation/fixtures.exe
+HPACK encoded=10240 decoded=104857600 limit=262144
+PASS HPACK bomb shape is 10KB to 100MB
+PASS HPACK decoded cap aborts at 256KB
+PASS HPACK user-elevated 1MB cap still aborts
+CONTINUATION frames=1000 frame_bytes=1024 abort_frame=64 accumulated=65536 limit=65536
+PASS CONTINUATION flood has 1000 1KB frames
+PASS CONTINUATION accumulator aborts around frame 64
+PASS CONTINUATION flood maps typed error
+PASS decoded cap is 4x p99 inventory
+PASS continuation cap is 4x large-header baseline
+h_q3_hpack_continuation fixtures passed
+~~~
+
+Typed error mapping:
+
+- HPACK decoded overflow -> `Hpack_decode_overflow`;
+- CONTINUATION flood -> `Continuation_flood`.
+
+Verdicts:
+
+- V-Http-Q3-1 - Default decoded HPACK cap is 256 KiB.
+  Decision: accepted. Evidence: the 100 MiB decoded bomb fails before decode completion.
+- V-Http-Q3-2 - Default CONTINUATION cap is 64 KiB.
+  Decision: accepted. Evidence: 1 KiB frames abort at frame 64.
+- V-Http-Q3-3 - Raised caps remain bounded.
+  Decision: accepted. Evidence: 1 MiB opt-in still aborts the 100 MiB bomb.
+
+Residual risk:
+
+- H-Q3 is a limit proof, not a full HPACK implementation. The eta-http implementation epic must wire these caps into the chosen h2/HPACK decoder.
