@@ -22,7 +22,7 @@ type routing = {
 
 type structured_output = Codec.structured_output = {
   name : string;
-  schema_json : A.raw_json;
+  schema : A.Json.t;
   strict : bool option;
 }
 
@@ -68,35 +68,30 @@ let base_responses_json ?structured_output (request : A.chat_request) =
              request.tools)
       with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools -> (
-          match
-            Option.fold ~none:(Stdlib.Ok None)
-              ~some:(fun output ->
-                Codec.structured_output_json ~schema_value:require_json
-                  ~shape:Codec.Responses_format output
-                |> Result.map (fun value -> Some value))
-              structured_output
-          with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok text_format ->
-              Stdlib.Ok
-                (Json.object_
-                   [
-                     ("model", Some (Json.string request.model));
-                     ( "input",
-                       Some
-                         (request.prompt |> List.concat_map Codec.input_items
-                        |> Json.array) );
-                     ("stream", Some (Json.bool request.stream));
-                     ("temperature", temperature);
-                     ( "max_output_tokens",
-                       Option.map Json.int request.max_output_tokens );
-                     ("tools", if tools = [] then None else Some (Json.array tools));
-                     ( "text",
-                       Option.map
-                         (fun format -> Json.object_ [ ("format", Some format) ])
-                         text_format );
-                   ])))
+      | Stdlib.Ok tools ->
+          let text_format =
+            structured_output
+            |> Option.map
+                 (Codec.structured_output_json ~shape:Codec.Responses_format)
+          in
+          Stdlib.Ok
+            (Json.object_
+               [
+                 ("model", Some (Json.string request.model));
+                 ( "input",
+                   Some
+                     (request.prompt |> List.concat_map Codec.input_items
+                    |> Json.array) );
+                 ("stream", Some (Json.bool request.stream));
+                 ("temperature", temperature);
+                 ( "max_output_tokens",
+                   Option.map Json.int request.max_output_tokens );
+                 ("tools", if tools = [] then None else Some (Json.array tools));
+                 ( "text",
+                   Option.map
+                     (fun format -> Json.object_ [ ("format", Some format) ])
+                     text_format );
+               ]))
 
 let invalid_routing message =
   Stdlib.Error (A.Unsupported { provider = "openrouter"; feature = message })

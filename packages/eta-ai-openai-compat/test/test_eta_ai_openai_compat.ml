@@ -171,6 +171,8 @@ let test_request_uses_compatible_endpoint_and_extra_headers () =
       ~strict:true ()
     |> expect_ok "structured output"
   in
+  Alcotest.(check string)
+    "cached schema" weather_schema (A.Json.compact output.schema);
   let request =
     C.chat_completions_request ~structured_output:output ~provider
       ~api_key:(A.api_key "mk-test") (chat_request ())

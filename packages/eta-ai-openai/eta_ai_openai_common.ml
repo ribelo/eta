@@ -5,7 +5,7 @@ type json = A.Json.t
 
 type structured_output = Codec.structured_output = {
   name : string;
-  schema_json : A.raw_json;
+  schema : A.Json.t;
   strict : bool option;
 }
 

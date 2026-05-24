@@ -76,35 +76,27 @@ let encode ?structured_output (request : A.chat_request) =
              request.tools)
       with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools -> (
-          match
-            Option.fold ~none:(Stdlib.Ok None)
-              ~some:(fun output ->
-                Codec.structured_output_json
-                  ~schema_value:Common.schema_value
-                  ~shape:Codec.Chat_response_format output
-                |> Result.map (fun value -> Some value))
-              structured_output
-          with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok response_format ->
-              Stdlib.Ok
-                (Json.to_string
-                   (Json.object_
-                      [
-                        ("model", Some (Json.string request.model));
-                        ( "messages",
-                          Some
-                            (request.prompt |> List.map message_json
-                           |> Json.array) );
-                        ("stream", Some (Json.bool request.stream));
-                        ("temperature", temperature);
-                        ( "max_tokens",
-                          Option.map Json.int request.max_output_tokens );
-                        ( "tools",
-                          if tools = [] then None else Some (Json.array tools) );
-                        ("response_format", response_format);
-                      ]))))
+      | Stdlib.Ok tools ->
+          let response_format =
+            structured_output
+            |> Option.map
+                 (Codec.structured_output_json
+                    ~shape:Codec.Chat_response_format)
+          in
+          Stdlib.Ok
+            (Json.to_string
+               (Json.object_
+                  [
+                    ("model", Some (Json.string request.model));
+                    ( "messages",
+                      Some
+                        (request.prompt |> List.map message_json |> Json.array) );
+                    ("stream", Some (Json.bool request.stream));
+                    ("temperature", temperature);
+                    ("max_tokens", Option.map Json.int request.max_output_tokens);
+                    ("tools", if tools = [] then None else Some (Json.array tools));
+                    ("response_format", response_format);
+                  ])))
 
 let tool_call_of_json json =
   let function_json = Json.object_member "function" json in

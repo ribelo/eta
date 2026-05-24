@@ -26,36 +26,32 @@ let encode ?structured_output (request : A.chat_request) =
              request.tools)
       with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools -> (
-          match
-            Option.fold ~none:(Stdlib.Ok None)
-              ~some:(fun output ->
-                Codec.structured_output_json
-                  ~schema_value:Common.schema_value
-                  ~shape:Codec.Responses_format output
-                |> Result.map (fun format ->
-                       Some (Json.object_ [ ("format", Some format) ])))
-              structured_output
-          with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok text_format ->
-              Stdlib.Ok
-                (Json.to_string
-                   (Json.object_
-                      [
-                        ("model", Some (Json.string request.model));
-                        ( "input",
-                          Some
-                            (request.prompt |> List.concat_map Codec.input_items
-                           |> Json.array) );
-                        ("stream", Some (Json.bool request.stream));
-                        ("temperature", temperature);
-                        ( "max_output_tokens",
-                          Option.map Json.int request.max_output_tokens );
-                        ( "tools",
-                          if tools = [] then None else Some (Json.array tools) );
-                        ("text", text_format);
-                      ]))))
+      | Stdlib.Ok tools ->
+          let text_format =
+            structured_output
+            |> Option.map (fun output ->
+                   let format =
+                     Codec.structured_output_json ~shape:Codec.Responses_format
+                       output
+                   in
+                   Json.object_ [ ("format", Some format) ])
+          in
+          Stdlib.Ok
+            (Json.to_string
+               (Json.object_
+                  [
+                    ("model", Some (Json.string request.model));
+                    ( "input",
+                      Some
+                        (request.prompt |> List.concat_map Codec.input_items
+                       |> Json.array) );
+                    ("stream", Some (Json.bool request.stream));
+                    ("temperature", temperature);
+                    ( "max_output_tokens",
+                      Option.map Json.int request.max_output_tokens );
+                    ("tools", if tools = [] then None else Some (Json.array tools));
+                    ("text", text_format);
+                  ])))
 
 let output_text item =
   match Json.string_member "type" item with

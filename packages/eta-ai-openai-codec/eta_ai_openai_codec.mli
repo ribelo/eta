@@ -2,7 +2,7 @@
 
 type structured_output = {
   name : string;
-  schema_json : Eta_ai.raw_json;
+  schema : Eta_ai.Json.t;
   strict : bool option;
 }
 
@@ -37,11 +37,9 @@ type structured_output_shape =
   | Responses_format
 
 val structured_output_json :
-  schema_value:
-    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
   shape:structured_output_shape ->
   structured_output ->
-  (Eta_ai.Json.t, Eta_ai.ai_error) result
+  Eta_ai.Json.t
 
 val chat_stream_events :
   finish_reason:(string -> Eta_ai.finish_reason) ->

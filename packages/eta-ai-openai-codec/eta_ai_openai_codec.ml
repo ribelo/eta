@@ -3,7 +3,7 @@ module Json = A.Json
 
 type structured_output = {
   name : string;
-  schema_json : A.raw_json;
+  schema : A.Json.t;
   strict : bool option;
 }
 
@@ -15,7 +15,7 @@ let structured_output ~schema_value ?strict ~name ~schema_json () =
   else
     match schema_value "structured output schema_json" schema_json with
     | Stdlib.Error _ as error -> error
-    | Stdlib.Ok _ -> Stdlib.Ok { name = trimmed; schema_json; strict }
+    | Stdlib.Ok schema -> Stdlib.Ok { name = trimmed; schema; strict }
 
 let content_text = function A.Text text -> text | A.Json raw -> raw
 
@@ -100,35 +100,29 @@ type structured_output_shape =
   | Chat_response_format
   | Responses_format
 
-let structured_output_json ~schema_value ~shape output =
-  match schema_value "structured output schema_json" output.schema_json with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok schema ->
-      let json =
-        match shape with
-        | Chat_response_format ->
-            Json.object_
-              [
-                ("type", Some (Json.string "json_schema"));
-                ( "json_schema",
-                  Some
-                    (Json.object_
-                       [
-                         ("name", Some (Json.string output.name));
-                         ("schema", Some schema);
-                         ("strict", Option.map Json.bool output.strict);
-                       ]) );
-              ]
-        | Responses_format ->
-            Json.object_
-              [
-                ("type", Some (Json.string "json_schema"));
-                ("name", Some (Json.string output.name));
-                ("schema", Some schema);
-                ("strict", Option.map Json.bool output.strict);
-              ]
-      in
-      Stdlib.Ok json
+let structured_output_json ~shape output =
+  match shape with
+  | Chat_response_format ->
+      Json.object_
+        [
+          ("type", Some (Json.string "json_schema"));
+          ( "json_schema",
+            Some
+              (Json.object_
+                 [
+                   ("name", Some (Json.string output.name));
+                   ("schema", Some output.schema);
+                   ("strict", Option.map Json.bool output.strict);
+                 ]) );
+        ]
+  | Responses_format ->
+      Json.object_
+        [
+          ("type", Some (Json.string "json_schema"));
+          ("name", Some (Json.string output.name));
+          ("schema", Some output.schema);
+          ("strict", Option.map Json.bool output.strict);
+        ]
 
 let stream_tool_delta json =
   let index = Json.int_member "index" json in

@@ -13,7 +13,7 @@ type auth = {
 
 type structured_output = Eta_ai_openai_codec.structured_output = {
   name : string;
-  schema_json : Eta_ai.raw_json;
+  schema : Eta_ai.Json.t;
   strict : bool option;
 }
 
