@@ -183,8 +183,6 @@ type ('acc, 'a, 'err) folder = {
 type 'a queue_event = Item of 'a | Done
 type 'a outer_event = Outer_item of 'a | Outer_done
 
-let bind f eff = Eta.Effect.bind f eff
-let map f eff = Eta.Effect.map f eff
 
 let file_error_kind_of_exn = function
   | Eio.Io (Eio.Fs.E (Eio.Fs.Already_exists _), _) -> `Already_exists
@@ -214,7 +212,7 @@ let rec fold_values :
   match values with
   | [] -> Eta.Effect.pure (acc, true)
   | value :: rest ->
-      bind
+      Eta.Effect.bind
         (fun (acc, keep_going) ->
           if keep_going then fold_values rest acc folder
           else Eta.Effect.pure (acc, false))
@@ -230,7 +228,7 @@ and fold_stream :
   match stream with
   | Stream.Empty -> Eta.Effect.pure (acc, true)
   | Chunk values -> fold_values values acc folder
-  | From_effect eff -> bind (fun value -> folder.emit acc value) eff
+  | From_effect eff -> Eta.Effect.bind (fun value -> folder.emit acc value) eff
   | Fail error -> Eta.Effect.fail error
   | Map (inner, f) ->
       fold_stream inner acc { emit = (fun acc value -> folder.emit acc (f value)) }
@@ -239,7 +237,7 @@ and fold_stream :
         {
           emit =
             (fun acc value ->
-              bind (fun mapped -> folder.emit acc mapped) (f value));
+              Eta.Effect.bind (fun mapped -> folder.emit acc mapped) (f value));
         }
   | Filter (inner, f) ->
       fold_stream inner acc
@@ -260,7 +258,7 @@ and fold_stream :
                 if !remaining <= 0 then Eta.Effect.pure (acc, false)
                 else (
                   decr remaining;
-                  map
+                  Eta.Effect.map
                     (fun (acc, keep_going) ->
                       (acc, keep_going && !remaining > 0))
                     (folder.emit acc value)));
@@ -297,7 +295,7 @@ and fold_stream :
             batch_len := 0;
             folder.emit acc (List.rev values)
       in
-      bind
+      Eta.Effect.bind
         (fun (acc, keep_going) ->
           if keep_going then flush acc else Eta.Effect.pure (acc, false))
         (fold_stream inner acc
@@ -310,7 +308,7 @@ and fold_stream :
                  else Eta.Effect.pure (acc, true));
            })
   | Concat (left, right) ->
-      bind
+      Eta.Effect.bind
         (fun (acc, keep_going) ->
           if keep_going then fold_stream right acc folder
           else Eta.Effect.pure (acc, false))
@@ -323,9 +321,9 @@ and fold_stream :
       fold_flat_map_par ~max_concurrency inner f acc folder
   | From_eio_stream stream ->
       let rec loop acc =
-        bind
+        Eta.Effect.bind
           (fun value ->
-            bind
+            Eta.Effect.bind
               (fun (acc, keep_going) ->
                 if keep_going then loop acc else Eta.Effect.pure (acc, false))
               (folder.emit acc value))
@@ -335,11 +333,11 @@ and fold_stream :
       loop acc
   | From_mailbox mailbox ->
       let rec loop acc =
-        bind
+        Eta.Effect.bind
           (function
             | Eta_stream_mailbox.Take_closed -> Eta.Effect.pure (acc, true)
             | Eta_stream_mailbox.Item value ->
-                bind
+                Eta.Effect.bind
                   (fun (acc, keep_going) ->
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
@@ -350,11 +348,11 @@ and fold_stream :
       loop acc
   | From_mailbox_batches (max, mailbox) ->
       let rec loop acc =
-        bind
+        Eta.Effect.bind
           (function
             | Eta_stream_mailbox.Take_closed -> Eta.Effect.pure (acc, true)
             | Eta_stream_mailbox.Item values ->
-                bind
+                Eta.Effect.bind
                   (fun (acc, keep_going) ->
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
@@ -368,7 +366,7 @@ and fold_stream :
       let done_promise, done_resolver = Eio.Promise.create () in
       let stopped = Atomic.make false in
       let producer =
-        bind
+        Eta.Effect.bind
           (function
             | Ok () -> Eta.Effect.unit
             | Error error -> Eta.Effect.fail (on_error error))
@@ -467,15 +465,15 @@ and fold_merge :
       ~release:(fun () ->
         Eta.Effect.named "Stream.merge.done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add queue Done)))
-    |> bind (fun () ->
-           map ignore
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.map ignore
              (fold_stream stream ()
                 {
                   emit =
                     (fun () value ->
                       if Atomic.get stopped then Eta.Effect.pure ((), false)
                       else
-                        map
+                        Eta.Effect.map
                           (fun () -> ((), true))
                           (Eta.Effect.named "Stream.merge.emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add queue (Item value)))));
@@ -541,15 +539,15 @@ and fold_flat_map_par :
         Eta.Effect.named "Stream.flat_map_par.outer_done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then
               Eio.Stream.add outer_queue Outer_done)))
-    |> bind (fun () ->
-           map ignore
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.map ignore
              (fold_stream inner ()
                 {
                   emit =
                     (fun () value ->
                       if Atomic.get stopped then Eta.Effect.pure ((), false)
                       else
-                        map
+                        Eta.Effect.map
                           (fun () -> ((), true))
                           (Eta.Effect.named "Stream.flat_map_par.outer_emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add outer_queue (Outer_item value)))));
@@ -560,16 +558,16 @@ and fold_flat_map_par :
       ~release:(fun () ->
         Eta.Effect.named "Stream.flat_map_par.worker_done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add output_queue Done)))
-    |> bind (fun () ->
+    |> Eta.Effect.bind (fun () ->
            let rec loop () =
-             bind
+             Eta.Effect.bind
                (function
                  | Outer_done ->
                      Eta.Effect.named "Stream.flat_map_par.rebroadcast_done" (Eta.Effect.sync (fun () -> Eio.Stream.add outer_queue Outer_done))
                  | Outer_item value ->
-                     bind
+                     Eta.Effect.bind
                        (fun _ -> loop ())
-                       (map ignore
+                       (Eta.Effect.map ignore
                           (fold_stream (f value) ()
                              {
                                emit =
@@ -577,7 +575,7 @@ and fold_flat_map_par :
                                   if Atomic.get stopped then
                                     Eta.Effect.pure ((), false)
                                   else
-                                    map
+                                    Eta.Effect.map
                                       (fun () -> ((), true))
                                       (Eta.Effect.named "Stream.flat_map_par.inner_emit" (Eta.Effect.sync (fun () ->
                                            Eio.Stream.add output_queue
@@ -664,19 +662,19 @@ and fold_flat_map_par :
 and effect_list :
     type err a. (a, err) Stream.t -> (a list, err) Eta.Effect.t =
  fun stream ->
-  map
+  Eta.Effect.map
     (fun (values, _) -> List.rev values)
     (fold_stream stream []
        { emit = (fun acc value -> Eta.Effect.pure (value :: acc, true)) })
 
 let run stream sink =
-  bind
+  Eta.Effect.bind
     (fun (acc, _) -> sink.Sink.done_ acc)
     (fold_stream stream (sink.Sink.init ())
        {
          emit =
            (fun acc value ->
-             map (fun acc -> (acc, true)) (sink.Sink.step acc value));
+             Eta.Effect.map (fun acc -> (acc, true)) (sink.Sink.step acc value));
        })
 
 let run_collect stream = run stream Sink.collect_to_list
