@@ -109,6 +109,25 @@ let test_counter () =
   let agg = Eta_otel.aggregate_points (Meter.dump meter) in
   Alcotest.(check int) "two distinct attribute sets" 2 (List.length agg)
 
+let test_counter_cumulative_keeps_latest_value () =
+  with_meter @@ fun rt meter ->
+  let prog =
+    Effect.concat
+      [
+        counter ~name:"cumulative" (Capabilities.Int 10);
+        counter ~name:"cumulative" (Capabilities.Int 12);
+        counter ~name:"cumulative" (Capabilities.Int 15);
+      ]
+  in
+  let _ = Runtime.run rt prog in
+  match Eta_otel.aggregate_points (Meter.dump meter) with
+  | [ (_key, (value, _, _)) ] ->
+      Alcotest.check metric_value "latest cumulative value"
+        (Capabilities.Int 15) value
+  | points ->
+      Alcotest.failf "expected one aggregated point, got %d"
+        (List.length points)
+
 (* ------------------------------------------------------------------ *)
 (* Mirrors `it.effect("counter-inc", ...)`. *)
 (* ------------------------------------------------------------------ *)
@@ -231,6 +250,8 @@ let suite =
     [
       Alcotest.test_case "gauge" `Quick test_gauge;
       Alcotest.test_case "counter cumulative" `Quick test_counter;
+      Alcotest.test_case "counter cumulative keeps latest" `Quick
+        test_counter_cumulative_keeps_latest_value;
       Alcotest.test_case "counter monotonic" `Quick test_counter_monotonic;
       Alcotest.test_case "metrics OTLP live" `Quick test_metrics_otlp_live;
     ] )

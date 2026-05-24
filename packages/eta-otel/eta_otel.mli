@@ -66,8 +66,9 @@ val aggregate_points :
   * (Eta.Capabilities.metric_value * int * int))
   list
 (** Aggregate raw meter points by [(name, kind, attrs, description, unit_)].
-    Gauges keep the latest value; counters sum. The returned int pair is
-    [(start_ts_ns, end_ts_ns)]. *)
+    Gauges and cumulative counters keep the latest value in the export window.
+    Monotonic counters are increment records and are summed. The returned int
+    pair is [(start_ts_ns, end_ts_ns)]. *)
 
 module Internal : sig
   type span = {

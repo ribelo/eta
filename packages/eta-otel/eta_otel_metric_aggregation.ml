@@ -29,8 +29,8 @@ end
 
 let merge_metric_value kind acc value =
   match kind with
-  | Eta.Capabilities.Gauge -> value
-  | Counter_cumulative | Counter_monotonic -> (
+  | Eta.Capabilities.Gauge | Counter_cumulative -> value
+  | Counter_monotonic -> (
       match (acc, value) with
       | Eta.Capabilities.Int a, Eta.Capabilities.Int b ->
           Eta.Capabilities.Int (a + b)

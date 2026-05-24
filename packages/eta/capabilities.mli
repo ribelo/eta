@@ -113,8 +113,8 @@ end
 (** Counters and gauges for the metrics signal. Implementations may
     accumulate in memory or stream to an OTLP exporter. *)
 type metric_kind : immutable_data =
-  | Counter_cumulative  (** non-monotonic UpDownCounter *)
-  | Counter_monotonic  (** monotonic Counter *)
+  | Counter_cumulative  (** latest cumulative value for the export window *)
+  | Counter_monotonic  (** monotonic increment summed within the export window *)
   | Gauge
 
 type metric_value : immutable_data = Int of int | Float of float
