@@ -27,34 +27,40 @@ let pp_eta_error fmt (error : Eta_http.Error.t) =
       Format.fprintf fmt " detail=body_too_large:%d>%d" length limit
   | _ -> ()
 
+let normalize_header_list headers =
+  headers
+  |> List.map (fun (k, v) -> (String.lowercase_ascii k, String.trim v))
+  |> List.filter (fun (k, _) ->
+         k <> "date" && k <> "server" && k <> "via" && k <> "set-cookie"
+         && k <> "connection" && k <> "transfer-encoding")
+  |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+
 let run_eta ~rt ~client ~request =
   let start = Util.now_ms () in
   let result =
     Eta_http.request client request
     |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
            Util.body_to_string response.body
-           |> Eta.Effect.map (fun body ->
-                  let headers_list =
-                    Eta_http.Core.Header.to_list response.headers
-                  in
-                  let headers_normalized =
-                    List.map
-                      (fun (k, v) -> (String.lowercase_ascii k, String.trim v))
-                      headers_list
-                    |> List.filter (fun (k, _) ->
-                           k <> "date" && k <> "server" && k <> "via"
-                           && k <> "set-cookie" && k <> "connection"
-                           && k <> "transfer-encoding")
-                    |> List.sort (fun (a, _) (b, _) -> String.compare a b)
-                  in
-                  ( Ok
-                      {
-                        status = response.status;
-                        body_sha256 = Util.sha256_of_string body;
-                        body_length = String.length body;
-                        headers_normalized;
-                      },
-                    None )))
+           |> Eta.Effect.bind (fun body ->
+                  response.trailers ()
+                  |> Eta.Effect.map (fun trailers ->
+                         let headers_normalized =
+                           Eta_http.Core.Header.to_list response.headers
+                           |> normalize_header_list
+                         in
+                         let trailers_normalized =
+                           Eta_http.Core.Header.to_list trailers
+                           |> normalize_header_list
+                         in
+                         ( Ok
+                             {
+                               status = response.status;
+                               body_sha256 = Util.sha256_of_string body;
+                               body_length = String.length body;
+                               headers_normalized;
+                               trailers_normalized;
+                             },
+                           None ))))
     |> Eta.Runtime.run rt
   in
   let duration_ms = Util.now_ms () -. start in

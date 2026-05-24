@@ -55,7 +55,7 @@ Both nginx and Caddy are started fresh per scenario batch on ephemeral loopback 
 
 ## Differential testing
 
-Every interop scenario runs through both `eta-http` and `curl`. Results are normalized (status, body SHA-256, sorted headers with stochastic fields stripped) and compared. Divergence is recorded as `DIVERGENT`, not `FAIL`. Expected divergences are documented in `expected_divergences.md`.
+Every interop scenario runs through both `eta-http` and `curl`. Results are normalized (status, body SHA-256, sorted headers/trailers with stochastic fields stripped) and compared. Divergence is recorded as `DIVERGENT`, not `FAIL`. Expected field-level subtractions are documented in `expected_divergences.md`.
 
 ## Adversarial fixtures
 
@@ -75,7 +75,7 @@ h2 adversarial fixtures use TLS with ALPN `h2` negotiation so that `eta-http` ex
 ## Notes
 
 - The suite is opt-in; `dune runtest` is unchanged.
-- Divergent interop scenarios are recorded in `results/` and documented in `expected_divergences.md`.
+- Divergent interop scenarios are recorded in `results/` for inspection.
 - `@http-bench` is intentionally quick: it covers small/medium GET and POST body paths. The 100 MiB download correctness case remains in `@interop`; concurrent h2 stress is not part of the default bench alias.
 - Stock nginx does not include the `echo` module, so `/echo` and `/reflect` endpoints return an empty body with status 200. Both `eta-http` and `curl` receive the same empty response, so differential testing still passes, but true body echo is only verified against Caddy.
 - Server configs are embedded as OCaml strings in `lib/nginx.ml` and `lib/caddy.ml` and rendered to a per-run temp directory. No checked-in template files are used.

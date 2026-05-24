@@ -37,6 +37,7 @@ let yojson_of_normalized_result (r : normalized_result) =
     ("body_sha256", yojson_of_string r.body_sha256);
     ("body_length", yojson_of_int r.body_length);
     ("headers_normalized", yojson_of_list (yojson_of_pair yojson_of_string yojson_of_string) r.headers_normalized);
+    ("trailers_normalized", yojson_of_list (yojson_of_pair yojson_of_string yojson_of_string) r.trailers_normalized);
   ]
 
 let yojson_of_scenario_result (r : scenario_result) =

@@ -24,6 +24,7 @@ type normalized_result = {
   body_sha256 : string;
   body_length : int;
   headers_normalized : (string * string) list;
+  trailers_normalized : (string * string) list;
 }
 
 type scenario_result = {

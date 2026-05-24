@@ -26,18 +26,6 @@ subtracts these fields before deciding Pass / Divergent.
   `eta-http` uses ALPN on TLS for h2 negotiation.  h2c is not supported by
   the public `eta-http` client, so plain-h2 cells are skipped or documented.
 
-## Known reported divergences
-
-These scenarios remain `DIVERGENT` in the report instead of failing the alias:
-
-* `large_body_1m` against Caddy h2/TLS: Caddy's `{http.request.body}`
-  responder returns 65,535 bytes for eta-http's h2 request body but 1 MiB for
-  curl. The result is retained as a visible interop difference.
-
-* `response_trailers` against nginx h2/TLS: curl records the response trailer
-  field in its dumped headers, while eta-http exposes trailers through the
-  response trailer effect instead of merging them into response headers.
-
 ## How divergence subtraction works
 
 The differential pipeline produces a `normalized_result` for each client:
@@ -47,7 +35,9 @@ The differential pipeline produces a `normalized_result` for each client:
 * `body_length` — byte count.
 * `headers_normalized` — sorted by lower-case name, with the excluded headers
   above stripped and multi-value headers concatenated with `, `.
+* `trailers_normalized` — h2/h1 response trailers, sorted with the same
+  normalization as headers but compared separately from initial headers.
 
-A scenario is `Pass` when both normalized triples are equal after the
+A scenario is `Pass` when both normalized values are equal after the
 subtraction above.  Any remaining difference is `Divergent` and both raw
 results are written to `results/<run-id>/<scenario>/`.

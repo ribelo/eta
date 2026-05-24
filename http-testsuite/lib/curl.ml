@@ -51,6 +51,20 @@ let normalize_headers raw_lines =
   List.sort (fun (a, _) (b, _) -> String.compare a b) !headers
   |> List.map (fun (k, v) -> (k, v))
 
+let split_header_blocks lines =
+  let finish current acc =
+    match List.rev current with
+    | [] -> acc
+    | block -> block :: acc
+  in
+  let rec loop current acc = function
+    | [] -> List.rev (finish current acc)
+    | line :: rest when String.length line = 0 ->
+        loop [] (finish current acc) rest
+    | line :: rest -> loop (line :: current) acc rest
+  in
+  loop [] [] lines
+
 let read_header_lines tmp_dir =
   let path = Filename.concat tmp_dir "curl_headers" in
   if Sys.file_exists path then
@@ -82,12 +96,24 @@ let run ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir =
 	          (Util.sha256_of_file body_out, (Unix.stat body_out).st_size)
 	        else ("", 0)
 	      in
-      let header_lines =
+      let blocks =
         read_header_lines tmp_dir
-        |> List.filter (fun line -> String.length line > 0 && not (String.starts_with ~prefix:"HTTP/" line))
+        |> List.map String.trim
+        |> split_header_blocks
+        |> List.map
+             (List.filter (fun line -> not (String.starts_with ~prefix:"HTTP/" line)))
       in
-      let headers_normalized = normalize_headers header_lines in
-      Ok { status; body_sha256; body_length; headers_normalized }
+      let headers_normalized =
+        match blocks with
+        | headers :: _ -> normalize_headers headers
+        | [] -> []
+      in
+      let trailers_normalized =
+        match List.rev blocks with
+        | trailers :: _ when blocks <> [ trailers ] -> normalize_headers trailers
+        | _ -> []
+      in
+      Ok { status; body_sha256; body_length; headers_normalized; trailers_normalized }
   | Error msg -> Error msg
 
 let result_equal (a : normalized_result) (b : normalized_result) =
@@ -95,3 +121,4 @@ let result_equal (a : normalized_result) (b : normalized_result) =
   && a.body_sha256 = b.body_sha256
   && a.body_length = b.body_length
   && a.headers_normalized = b.headers_normalized
+  && a.trailers_normalized = b.trailers_normalized
