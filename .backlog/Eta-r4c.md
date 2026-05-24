@@ -1,12 +1,16 @@
 ---
 id: Eta-r4c
 title: "P2: h2 1xx informational responses, GOAWAY retry, stream ID mirroring"
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-24T12:52:41.312Z
 created_by: backlog
-updated_at: 2026-05-24T16:00:37Z
+updated_at: 2026-05-24T16:26:57Z
+closed_at: 2026-05-24T16:26:57Z
+close_reason: "Fixed: h2 reader filters interim 1xx HEADERS before ocaml-h2,
+  GOAWAY v1 posture is documented as drop-and-disconnect, and stream ID
+  assumptions are asserted."
 dependencies:
   - issue_id: Eta-r4c
     depends_on_id: Eta-0xe
@@ -37,21 +41,21 @@ Location: packages/eta-http/client/client.ml:195-198, 307-323; packages/eta-http
 
 1xx responses filtered/continued. GOAWAY posture documented. Stream ID assumptions asserted.
 
-## 2026-05-24 triage
+## 2026-05-24 closure
 
-Partial progress landed, but this task remains open.
+Closed for the v1 contract.
 
-- eta-http now classifies 1xx h2 statuses as interim if the substrate surfaces
-  them, and the h2 response handler ignores those statuses rather than
-  returning them as final responses.
-- The pinned ocaml-h2 line still treats the first response HEADERS as the
-  active response. A raw 103 followed by final 200 is rejected as malformed
-  trailers (HEADERS frames containing trailers must set the END_STREAM flag),
-  so robust h2 informational-response support needs a substrate fix or deeper
-  adapter work.
+- eta-http filters h2 interim 1xx response HEADERS, except 101, before bytes
+  reach ocaml-h2. The filter decodes server HPACK blocks, drops interim blocks,
+  re-encodes final response/trailer blocks, and preserves decoder state across
+  dynamic-table references.
+- packages/eta-http/test/test_eta_http_h2_connection.ml has a raw h2 fixture
+  that sends HEADERS(103) -> HEADERS(200) -> DATA(END_STREAM), with a reused
+  HPACK dynamic-table entry across interim and final blocks.
 - GOAWAY remains documented as conservative drop-and-disconnect in
-  packages/eta-http/README.md; selective retry above last_stream_id remains
-  deferred because the pinned substrate does not expose last_stream_id.
-- Stream ID assumptions are now explicit through
+  packages/eta-http/README.md. Selective retry above last_stream_id is not a v1
+  claim because the pinned substrate does not expose received last_stream_id.
+- Stream ID assumptions are explicit through
   Eta_http.H2.Stream_state.is_client_stream_id and an invariant check in
-  open_stream; eta-http tests cover the positive-odd client stream IDs.
+  open_stream; eta-http tests cover positive-odd client stream IDs.
+- Verification: nix develop -c dune runtest packages/eta-http --force.

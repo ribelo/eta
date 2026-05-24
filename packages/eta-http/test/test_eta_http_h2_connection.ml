@@ -87,6 +87,32 @@ let with_h2_server handler client_action =
     ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
     (fun () -> client_action clock rt connection)
 
+let with_raw_h2_server server client_action =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      server flow);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
+      ()
+  in
+  let rt = Eta.Runtime.create ~sw ~clock () in
+  Fun.protect
+    ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
+    (fun () -> client_action clock rt connection)
+
 let request_effect ?body connection target =
   let uri = "https://api.example.test" ^ target in
   let request = Eta_http.Request.make ?body "GET" uri in
@@ -137,6 +163,12 @@ let timeout_error uri =
     (Connection_protocol_violation
        { kind = "test_timeout"; message = "h2 request timed out" })
 
+let pp_http_error_detail fmt (error : Eta_http.Error.t) =
+  match error.kind with
+  | Connection_protocol_violation { kind; message } ->
+      Format.fprintf fmt "%a detail=%s:%s" Eta_http.Error.pp error kind message
+  | _ -> Eta_http.Error.pp fmt error
+
 let test_h2_connection_returns_early_response () =
   with_h2_server
     (fun reqd ->
@@ -155,6 +187,70 @@ let test_h2_connection_returns_early_response () =
       in
       let response = Eta.Runtime.run rt effect |> Eta_test.Expect.expect_ok in
       Alcotest.(check int) "early status" 413 response.status)
+
+let hpack_header name value = { Hpack.name; value; sensitive = false }
+
+let hpack_block encoder headers =
+  let faraday = Faraday.create 0x1000 in
+  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
+  Faraday.serialize_to_string faraday
+
+let raw_headers encoder ?(end_stream = false) ~stream_id headers =
+  let block = hpack_block encoder headers in
+  let flags = 0x4 lor (if end_stream then 0x1 else 0) in
+  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+    ~flags ~stream_id
+  ^ block
+
+let raw_data ?(end_stream = false) ~stream_id data =
+  let flags = if end_stream then 0x1 else 0 in
+  Eta_http.H2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
+    ~stream_id
+  ^ data
+
+let raw_informational_response_server flow =
+  let encoder = Hpack.Encoder.create 4096 in
+  let early =
+    raw_headers encoder ~stream_id:1
+      [ hpack_header ":status" "103"; hpack_header "x-reused" "yes" ]
+  in
+  let final =
+    raw_headers encoder ~stream_id:1
+      [
+        hpack_header ":status" "200";
+        hpack_header "content-length" "5";
+        hpack_header "x-reused" "yes";
+      ]
+  in
+  let body = raw_data ~end_stream:true ~stream_id:1 "final" in
+  let response =
+    String.concat "" [ Eta_http.H2.Frame.settings; early; final; body ]
+  in
+  Eio.Flow.write flow [ Cstruct.of_string response ];
+  let chunk = Cstruct.create 0x4000 in
+  let rec drain () =
+    match Eio.Flow.single_read flow chunk with
+    | _ -> drain ()
+    | exception End_of_file -> ()
+  in
+  drain ()
+
+let test_h2_connection_continues_after_informational_headers () =
+  with_raw_h2_server raw_informational_response_server
+    (fun _clock rt connection ->
+      let effect =
+        request_effect connection "/early-hints"
+        |> Eta.Effect.timeout_as (Eta.Duration.seconds 1)
+             ~on_timeout:(timeout_error "https://api.example.test/early-hints")
+      in
+      match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok (status, body) ->
+          Alcotest.(check int) "final status" 200 status;
+          Alcotest.(check string) "final body" "final" body
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "expected final response, got %a"
+            (Eta.Cause.pp pp_http_error_detail)
+            cause)
 
 let test_h2_client_classifies_informational_response () =
   Alcotest.(check bool) "100" true

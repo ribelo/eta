@@ -109,7 +109,10 @@ end
 type client_reader = {
   client : H2.Client_connection.t;
   security : Security.t;
+  filter : Informational_filter.t;
   buffer : Bigstringaf.t;
+  mutable filtered : string;
+  mutable filtered_off : int;
   mutable off : int;
   mutable len : int;
   mutable eof : bool;
@@ -132,7 +135,10 @@ let create_client_reader ?(buffer_size = 64 * 1024) ?security_config client =
   {
     client;
     security = Security.create ?config:security_config ();
+    filter = Informational_filter.create ();
     buffer;
+    filtered = "";
+    filtered_off = 0;
     off = 0;
     len = 0;
     eof = false;
@@ -169,23 +175,46 @@ let feed_eof reader =
     reader.len <- reader.len - consumed;
     Eof consumed)
 
+let copy_filtered reader =
+  let available = String.length reader.filtered - reader.filtered_off in
+  if available <= 0 then 0
+  else
+    let copied = min available (capacity reader - reader.len) in
+    Bigstringaf.blit_from_string reader.filtered ~src_off:reader.filtered_off
+      reader.buffer ~dst_off:reader.len ~len:copied;
+    reader.filtered_off <- reader.filtered_off + copied;
+    reader.len <- reader.len + copied;
+    if reader.filtered_off >= String.length reader.filtered then (
+      reader.filtered <- "";
+      reader.filtered_off <- 0);
+    copied
+
 let read_more ~flow reader =
   compact reader;
-  if reader.len >= capacity reader then `Buffer_full
-  else
-    let view =
-      Cstruct.of_bigarray ~off:reader.len
-        ~len:(capacity reader - reader.len)
-        reader.buffer
-    in
-    try
-      let read = Eio.Flow.single_read flow view in
-      (match Security.observe reader.security reader.buffer ~off:reader.len ~len:read with
-      | Some error -> `Security_error error
-      | None ->
-          reader.len <- reader.len + read;
-          `Read_more read)
-    with End_of_file -> `Eof
+  match copy_filtered reader with
+  | copied when copied > 0 -> `Read_more copied
+  | _ when reader.len >= capacity reader -> `Buffer_full
+  | _ ->
+      let view = Cstruct.create (capacity reader - reader.len) in
+      try
+        let read = Eio.Flow.single_read flow view in
+        let raw = Cstruct.to_string (Cstruct.sub view 0 read) in
+        let raw_buffer = Bigstringaf.of_string ~off:0 ~len:read raw in
+        (match Security.observe reader.security raw_buffer ~off:0 ~len:read with
+        | Some error -> `Security_error error
+        | None -> (
+            match Informational_filter.feed reader.filter raw ~off:0 ~len:read with
+            | Error error -> `Security_error error
+            | Ok () ->
+                reader.filtered <- Informational_filter.take reader.filter;
+                reader.filtered_off <- 0;
+                let copied = copy_filtered reader in
+                if copied = 0
+                   && Informational_filter.buffered_bytes reader.filter
+                      >= capacity reader
+                then `Buffer_full
+                else `Read_more copied))
+      with End_of_file -> `Eof
 
 let buffer_exhausted reader =
   Security_error

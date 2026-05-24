@@ -6,7 +6,7 @@ priority: 1
 issue_type: epic
 created_at: 2026-05-24T12:49:44.643Z
 created_by: backlog
-updated_at: 2026-05-24T16:00:37Z
+updated_at: 2026-05-24T16:26:57Z
 dependencies:
   - issue_id: Eta-0xe
     depends_on_id: Eta-cu7
@@ -27,7 +27,6 @@ All P0 and P1 child tasks closed with fixes + tests. P2 tasks triaged. P3 tasks 
 
 ## 2026-05-24 status
 
-P0/P1 eta-http child tasks are closed, including Eta-p21. The epic stays open:
-P2/P3 triage remains, and Eta-r4c is still open because robust h2
-informational-response support is blocked by the pinned ocaml-h2 behavior
-described in that task.
+P0/P1 eta-http child tasks are closed, including Eta-p21. Eta-r4c is closed:
+the h2 reader now filters interim 1xx response HEADERS before ocaml-h2. The
+epic stays open because P2 children Eta-1xs, Eta-bdy, and Eta-dwm remain open.

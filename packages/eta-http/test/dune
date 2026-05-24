@@ -20,7 +20,7 @@
   test_eta_http_h2_multiplexer
   test_eta_http_h2_security
   test_eta_http_alpn_dispatch)
- (libraries eta.http eta.test alcotest eio_main eio.mock h2 unix)
+ (libraries eta.http eta.test alcotest eio_main eio.mock h2 hpack faraday unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

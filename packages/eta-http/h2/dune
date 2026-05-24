@@ -8,7 +8,10 @@
   eta_http_core
   eta_http_error
   eta_http_transport
+  angstrom
   cstruct
   eio
+  faraday
   h2
+  hpack
   bigstringaf))

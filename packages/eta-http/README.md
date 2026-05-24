@@ -128,10 +128,9 @@ nix develop -c eta-oxcaml-test-shipped
 - HTTP/1.1 skips interim `100 Continue` and returns the final response, but
   upload-drain recovery is not a product guarantee.
 - HTTP/2 request I/O is owned by a dedicated reader/writer loop. The client
-  classifies 1xx statuses as interim if surfaced by the substrate, but the
-  pinned `ocaml-h2` line rejects a raw 103 followed by final 200 as malformed;
-  eta-http therefore does not claim robust h2 informational-response support in
-  v1.
+  filters interim 1xx response HEADERS, except `101 Switching Protocols`,
+  before handing bytes to `ocaml-h2`; callers receive the final non-1xx
+  response.
 - HTTP/2 GOAWAY handling remains conservative drop-and-disconnect. The pinned
   `ocaml-h2` line does not expose received `last_stream_id`, so eta-http does
   not selectively retry streams above the GOAWAY cutoff in v1.
