@@ -1,0 +1,14 @@
+(rule
+ (alias interop)
+ (deps (alias test/interop/interop))
+ (action (progn)))
+
+(rule
+ (alias cve-regress)
+ (deps (alias test/cve_regress/cve-regress))
+ (action (progn)))
+
+(rule
+ (alias http-bench)
+ (deps (alias test/bench/http-bench))
+ (action (progn)))

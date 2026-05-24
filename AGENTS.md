@@ -54,6 +54,8 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
+The HTTP interop, adversarial, and benchmark suite lives under `http-testsuite/` and is reachable via `dune build @interop`, `dune build @cve-regress`, and `dune build @http-bench`.
+
 Benchmarks are opt-in repo infrastructure under `bench/`. Use
 `nix develop -c bash bench/run.sh --quick` for a fast performance snapshot,
 `nix develop -c bash bench/run.sh` for the full local record, and

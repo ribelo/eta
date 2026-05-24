@@ -2,3 +2,18 @@
  (dirs
   eta_ai_v1
   eta_http_research))
+
+(rule
+ (alias interop)
+ (deps (alias http-testsuite/interop))
+ (action (progn)))
+
+(rule
+ (alias cve-regress)
+ (deps (alias http-testsuite/cve-regress))
+ (action (progn)))
+
+(rule
+ (alias http-bench)
+ (deps (alias http-testsuite/http-bench))
+ (action (progn)))

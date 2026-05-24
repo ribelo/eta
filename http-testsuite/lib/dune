@@ -1,0 +1,17 @@
+(library
+ (name eta_http_testsuite)
+ (libraries
+  eta
+  eta.http
+  eio
+  eio_main
+  yojson
+  tls
+  tls-eio
+  x509
+  ca-certs
+  mirage-crypto
+  mirage-crypto-rng
+  mirage-crypto-rng-eio
+  cstruct
+  unix))

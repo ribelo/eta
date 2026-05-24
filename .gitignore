@@ -11,3 +11,9 @@ journal.md
 .motel-data/
 bench/fixtures/cache/*.bin
 bench/runtime_overhead_ts/node_modules/
+http-testsuite/results/
+http-testsuite/config/certs/*.pem
+http-testsuite/config/certs/*.key
+http-testsuite/config/certs/*.csr
+http-testsuite/config/certs/*.srl
+http-testsuite/config/certs/*.cnf

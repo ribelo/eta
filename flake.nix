@@ -169,8 +169,10 @@
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.gmp
               pkgs.caddy
+              pkgs.jq
               pkgs.libev
               pkgs.libffi
+              pkgs.mkcert
               pkgs.nginx
               pkgs.openssl
               pkgs.zlib

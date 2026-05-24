@@ -229,26 +229,31 @@ let buffer_exhausted reader =
              (capacity reader);
        })
 
+let has_filtered reader =
+  String.length reader.filtered > reader.filtered_off
+
 let rec read_client_once ~flow reader =
+  if reader.len > 0 then
+    match feed_pending reader with
+    | consumed when consumed > 0 -> Read consumed
+    | _ -> read_client_next ~flow reader
+  else if has_filtered reader then
+    match copy_filtered reader with
+    | copied when copied > 0 -> read_client_once ~flow reader
+    | _ -> read_client_next ~flow reader
+  else read_client_next ~flow reader
+
+and read_client_next ~flow reader =
   match H2.Client_connection.next_read_operation reader.client with
   | `Close -> Close
-  | `Read ->
-      if reader.len > 0 then
-        match feed_pending reader with
-        | consumed when consumed > 0 -> Read consumed
-        | _ -> (
-            match read_more ~flow reader with
-            | `Read_more _ -> read_client_once ~flow reader
-            | `Security_error error -> Security_error error
-            | `Eof -> feed_eof reader
-            | `Buffer_full -> buffer_exhausted reader)
-      else if reader.eof then Eof 0
+  | `Read -> (
+      if reader.eof then Eof 0
       else
         match read_more ~flow reader with
         | `Read_more _ -> read_client_once ~flow reader
         | `Security_error error -> Security_error error
         | `Eof -> feed_eof reader
-        | `Buffer_full -> buffer_exhausted reader
+        | `Buffer_full -> buffer_exhausted reader)
 
 let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error ~pump t stream body =
@@ -354,7 +359,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
         Queue.push (Body_chunk chunk) events);
     notify ()
   in
-  let schedule_read () =
+  let rec schedule_read () =
     let should_schedule =
       with_lock (fun () ->
           (not !scheduled) && (not !eof) && not (H2.Body.Reader.is_closed body))
@@ -366,7 +371,8 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
           with_lock (fun () -> scheduled := false);
           finish_eof ())
         ~on_read:(fun bs ~off ~len ->
-          push_chunk (Bytes.of_string (Bigstringaf.substring bs ~off ~len))))
+          push_chunk (Bytes.of_string (Bigstringaf.substring bs ~off ~len));
+          schedule_read ()))
   in
   let release_body () =
     let decision = release t stream in

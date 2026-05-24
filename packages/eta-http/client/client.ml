@@ -136,6 +136,29 @@ let h2_headers request url =
                if h2_skip_header name then None
                else Some (Header.normalize_name name, value))
       in
+      let has_content_length =
+        List.exists
+          (fun (name, _) -> String.equal (Header.normalize_name name) "content-length")
+          user_headers
+      in
+      let content_length =
+        if has_content_length then None
+        else
+          match request.body with
+          | Empty | Stream _ -> None
+          | Fixed chunks ->
+              Some
+                (chunks
+                |> List.fold_left
+                     (fun total chunk -> total + Bytes.length chunk)
+                     0)
+          | Rewindable_stream { length; _ } -> length
+      in
+      let user_headers =
+        match content_length with
+        | None -> user_headers
+        | Some length -> ("content-length", string_of_int length) :: user_headers
+      in
       Ok (H2.Headers.of_list ((":authority", Url.authority url) :: user_headers))
 
 let h2_method = function
@@ -162,8 +185,16 @@ let h2_request_of_request request url =
            (Url.origin_form url))
 
 let h2_write_chunk writer chunk =
-  Eta.Effect.sync (fun () ->
-      H2.Body.Writer.write_string writer (Bytes.to_string chunk))
+  let chunk = Bytes.to_string chunk in
+  let rec loop off =
+    if off >= String.length chunk then Eta.Effect.unit
+    else
+      let len = min 16_384 (String.length chunk - off) in
+      Eta.Effect.sync (fun () ->
+          H2.Body.Writer.write_string writer (String.sub chunk off len))
+      |> Eta.Effect.bind (fun () -> loop (off + len))
+  in
+  loop 0
 
 let rec h2_write_stream writer body =
   Body.read body
@@ -341,11 +372,15 @@ let request_h2_on_connection connection request url =
                    Eta.Effect.fail error)
           in
           let response_or_writer =
-            Eta.Effect.race
-              [
-                wait_for_response ();
-                (write_request |> Eta.Effect.bind (fun () -> wait_for_response ()));
-              ]
+            match request.body with
+            | Empty -> wait_for_response ()
+            | Fixed [] -> wait_for_response ()
+            | Fixed _ | Stream _ | Rewindable_stream _ ->
+                Eta.Effect.race
+                  [
+                    wait_for_response ();
+                    write_request |> Eta.Effect.bind (fun () -> wait_for_response ());
+                  ]
           in
           Eta.Effect.scoped
             (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
