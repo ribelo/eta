@@ -197,17 +197,16 @@ let run_finalizers ~runtime ~fail_key finalizers =
   | [] -> None
   | fs ->
       finalizers := [];
-      let failures = Array.make (List.length fs) None in
-      Eio.Fiber.all
-        (List.mapi
-           (fun i f () ->
-             try f () with exn ->
-               failures.(i) <- Some (cause_of_exn_runtime runtime fail_key exn))
-          fs);
-      failures
-      |> Array.to_list
-      |> List.filter_map Fun.id
-      |> (function [] -> None | causes -> Some (Cause.concurrent causes))
+      fs
+      |> List.filter_map (fun f ->
+             try
+               f ();
+               None
+             with exn -> Some (cause_of_exn_runtime runtime fail_key exn))
+      |> (function
+           | [] -> None
+           | [ cause ] -> Some cause
+           | causes -> Some (Cause.sequential causes))
 
 let with_finalizers ~runtime ~fail_key finalizers body =
   match body () with
@@ -922,7 +921,13 @@ and repeat_eff :
     Sch.t ->
     unit =
  fun ~runtime ~error_renderer ~fail_key ~sw ~finalizers e schedule ->
-  interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e;
+  let run_iteration () =
+    let iteration_finalizers = ref [] in
+    with_finalizers ~runtime ~fail_key iteration_finalizers (fun () ->
+        interpret ~runtime ~error_renderer ~fail_key ~sw
+          ~finalizers:iteration_finalizers e)
+  in
+  run_iteration ();
   let driver = ref (Sch.start ~random:runtime.random schedule) in
   let continue = ref true in
   while !continue do
@@ -931,7 +936,7 @@ and repeat_eff :
     | Some (d, next_driver) ->
         driver := next_driver;
         runtime.sleep d;
-        interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
+        run_iteration ()
   done
 
 and retry_eff :
@@ -950,11 +955,15 @@ and retry_eff :
   let driver = ref (Sch.start ~random:runtime.random schedule) in
   let result : a option ref = ref None in
   while Option.is_none !result do
+    let attempt_finalizers = ref [] in
     (try
-       let v =
-         interpret ~runtime ~error_renderer ~fail_key:attempt_key ~sw ~finalizers e
-       in
-       result := Some v
+      let v =
+        with_finalizers ~runtime ~fail_key:attempt_key attempt_finalizers
+          (fun () ->
+            interpret ~runtime ~error_renderer ~fail_key:attempt_key ~sw
+              ~finalizers:attempt_finalizers e)
+      in
+      result := Some v
      with
      | Raised_cause (k, cause) when k = Typed_fail.int attempt_key -> (
          match Obj.obj cause with

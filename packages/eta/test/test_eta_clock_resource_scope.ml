@@ -60,22 +60,30 @@ let test_clock_set_time_wakes_due_sleepers () =
   check_exit_ok Alcotest.string "elapsed after set_time" "elapsed"
     (Eio.Promise.await promise)
 
-let test_scope_finalizers_run_in_parallel () =
+let test_scope_finalizers_run_lifo_sequentially () =
   with_test_clock @@ fun sw clock rt ->
-  let released = ref 0 in
-  let resource =
+  let released = ref [] in
+  let resource name =
     Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-        Effect.named "release" (Effect.sync (fun () -> incr released))
+        Effect.named ("release." ^ name)
+          (Effect.sync (fun () -> released := name :: !released))
         |> Effect.delay (Duration.seconds 1))
   in
   let promise =
-    fork_run sw rt (Effect.scoped (Effect.concat [ resource; resource; resource ]))
+    fork_run sw rt
+      (Effect.scoped
+         (Effect.concat [ resource "a"; resource "b"; resource "c" ]))
   in
   yield ();
-  wait_for_sleepers clock 3;
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.seconds 1);
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.seconds 1);
+  wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.seconds 1);
   check_exit_ok Alcotest.unit "scope done" () (Eio.Promise.await promise);
-  Alcotest.(check int) "all finalizers released" 3 !released
+  Alcotest.(check (list string))
+    "lifo release order" [ "c"; "b"; "a" ] (List.rev !released)
 
 let test_resource_manual_refresh () =
   with_runtime @@ fun rt ->
@@ -171,5 +179,4 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   yield ();
   Alcotest.(check int) "subsequent refresh updates" 2
     (run_ok rt (Resource.get resource))
-
 

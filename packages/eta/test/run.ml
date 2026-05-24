@@ -111,6 +111,12 @@ let () =
             test_acquire_release_suppresses_release_failure;
           Alcotest.test_case "acquire release release failure after success"
             `Quick test_acquire_release_release_failure_after_success;
+          Alcotest.test_case "acquire release finalizers lifo sequential"
+            `Quick test_acquire_release_finalizers_run_lifo_sequentially;
+          Alcotest.test_case "acquire release finalizer failure keeps running"
+            `Quick test_acquire_release_finalizer_failure_keeps_running_lifo;
+          Alcotest.test_case "repeat releases resources each iteration" `Quick
+            test_repeat_releases_resources_each_iteration;
           Alcotest.test_case "timeout uses virtual clock" `Quick
             test_effect_timeout_uses_virtual_clock;
           Alcotest.test_case "timeout allows fast success" `Quick
@@ -271,8 +277,8 @@ let () =
         ] );
       ( "Scope",
         [
-          Alcotest.test_case "finalizers run in parallel" `Quick
-            test_scope_finalizers_run_in_parallel;
+          Alcotest.test_case "finalizers run lifo sequentially" `Quick
+            test_scope_finalizers_run_lifo_sequentially;
         ] );
       ( "Resource",
         [

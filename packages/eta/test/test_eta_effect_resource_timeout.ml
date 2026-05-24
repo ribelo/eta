@@ -128,6 +128,88 @@ let test_acquire_release_release_failure_after_success () =
   check_exit_error string_cause "release failure" (Cause.Fail "release")
     (Runtime.run rt eff)
 
+let test_acquire_release_finalizers_run_lifo_sequentially () =
+  with_runtime @@ fun rt ->
+  let a_started = Atomic.make false in
+  let b_started = Atomic.make false in
+  let trail = ref [] in
+  let resource release =
+    Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
+        Effect.sync release)
+  in
+  let a =
+    resource (fun () ->
+        Atomic.set a_started true;
+        trail := "a" :: !trail)
+  in
+  let b =
+    resource (fun () ->
+        Atomic.set b_started true;
+        trail := "b" :: !trail)
+  in
+  let c =
+    resource (fun () ->
+        Eio.Fiber.yield ();
+        Alcotest.(check bool) "a not started before c finishes" false
+          (Atomic.get a_started);
+        Alcotest.(check bool) "b not started before c finishes" false
+          (Atomic.get b_started);
+        trail := "c" :: !trail)
+  in
+  let eff =
+    Effect.scoped (Effect.concat [ a; b; c ] |> Effect.map (fun _ -> ()))
+  in
+  run_ok rt eff;
+  Alcotest.(check (list string)) "lifo order" [ "c"; "b"; "a" ]
+    (List.rev !trail)
+
+let test_acquire_release_finalizer_failure_keeps_running_lifo () =
+  with_runtime @@ fun rt ->
+  let trail = ref [] in
+  let resource release =
+    Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
+        Effect.sync release)
+  in
+  let eff =
+    Effect.scoped
+      (Effect.concat
+         [
+           resource (fun () -> trail := "a" :: !trail);
+           resource (fun () ->
+               trail := "b" :: !trail;
+               failwith "b release");
+           resource (fun () ->
+               trail := "c" :: !trail;
+               failwith "c release");
+         ])
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Sequential [ Cause.Die _; Cause.Die _ ]) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected sequential finalizer failures, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok () -> Alcotest.fail "expected finalizer failures");
+  Alcotest.(check (list string)) "all finalizers ran" [ "c"; "b"; "a" ]
+    (List.rev !trail)
+
+let test_repeat_releases_resources_each_iteration () =
+  with_runtime @@ fun rt ->
+  let active = ref 0 in
+  let max_active = ref 0 in
+  let acquire =
+    Effect.sync (fun () ->
+        incr active;
+        max_active := max !max_active !active)
+  in
+  let release () = Effect.sync (fun () -> decr active) in
+  let eff =
+    Effect.repeat (Schedule.recurs 2)
+      (Effect.acquire_release ~acquire ~release)
+  in
+  run_ok rt eff;
+  Alcotest.(check int) "released at end" 0 !active;
+  Alcotest.(check int) "one live resource per iteration" 1 !max_active
+
 let test_effect_timeout_uses_virtual_clock () =
   with_test_clock @@ fun sw clock rt ->
   let eff =
