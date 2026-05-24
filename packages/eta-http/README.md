@@ -19,9 +19,9 @@ surface:
 - DNS, TCP, TLS, ALPN, and protocol dispatch;
 - HTTP/1.1 request serialization, response parsing, chunked trailers, gzip, and
   origin-scoped pooling through `Eta.Pool`;
-- HTTP/2 ALPN client path through `ocaml-h2`, including response-body
-  streaming, trailer delivery, push disabled by default, and PUSH_PROMISE
-  rejection;
+- HTTP/2 ALPN client path through `ocaml-h2`, including an owned reader/writer
+  loop, origin-scoped h2 connection reuse, response-body streaming, trailer
+  delivery, push disabled by default, and PUSH_PROMISE rejection;
 - retry/idempotency policy helpers;
 - OpenTelemetry semantic-convention observability helpers;
 - negative TLS compile fixtures and live audit catalogs.
@@ -58,7 +58,7 @@ nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_m
 | `Eta_http.Tls` | TLS policy chokepoint. |
 | `Eta_http.Transport` | DNS, TCP, TLS, ALPN, and protocol dispatch. |
 | `Eta_http.H1` | HTTP/1.1 parser, writer, and client loop. |
-| `Eta_http.H2` | HTTP/2 frame adapter, multiplexer, writer, and admission state. |
+| `Eta_http.H2` | HTTP/2 connection owner, frame helpers, multiplexer, writer, and admission state. |
 
 ## Constraints
 
@@ -122,10 +122,19 @@ nix develop -c eta-oxcaml-test-shipped
 - Cookies are header-explicit; eta-http has no cookie jar.
 - HTTP/1.1 pipelining is out of scope.
 - Public h2c prior-knowledge is not exposed; plain HTTP routes to HTTP/1.1.
-- The HTTP/2 client path still needs the owner-loop/read-while-write work
-  tracked as `Eta-p21` for stronger early-response and flow-control behavior.
+- TLS certificate revocation checking through OCSP, CRL, or stapling is not
+  performed by eta-http v1. Deployments that require revocation enforcement must
+  provide it outside eta-http or through a future TLS policy surface.
 - HTTP/1.1 skips interim `100 Continue` and returns the final response, but
   upload-drain recovery is not a product guarantee.
+- HTTP/2 request I/O is owned by a dedicated reader/writer loop. The client
+  classifies 1xx statuses as interim if surfaced by the substrate, but the
+  pinned `ocaml-h2` line rejects a raw 103 followed by final 200 as malformed;
+  eta-http therefore does not claim robust h2 informational-response support in
+  v1.
+- HTTP/2 GOAWAY handling remains conservative drop-and-disconnect. The pinned
+  `ocaml-h2` line does not expose received `last_stream_id`, so eta-http does
+  not selectively retry streams above the GOAWAY cutoff in v1.
 - The real-server interop matrix is broad but not exhaustive; exact h2c support,
   handcrafted TCP RST behavior, and pathological h2 stalled-window behavior
   remain caveats in `h_q4a_interop_matrix/coverage_matrix.md`.
