@@ -165,6 +165,8 @@ let now_ms t =
   let secs = Eio.Time.now t.clock in
   int_of_float (secs *. 1_000.0)
 
+let ms_to_ns ms = ms * 1_000_000
+
 (* ------------------------------------------------------------------ *)
 (* Eta exporter programs                                               *)
 (* ------------------------------------------------------------------ *)
@@ -436,7 +438,7 @@ let resolve_parent t ?trace_id ?(trace_flags = 1) ?(trace_state = [])
       | None -> (hex_of_bytes (random_bytes t.rng 16), None, 1, [], []))
 
 let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
-    ?baggage ?(kind = Eta.Capabilities.Internal) ~name ~started_ms:_ () =
+    ?baggage ?(kind = Eta.Capabilities.Internal) ~name ~started_ms () =
   let state = fiber_state t in
   let parent_id =
     match parent_id with
@@ -448,7 +450,7 @@ let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
       (parent_id, external_parent)
   in
   let span_id = hex_of_bytes (random_bytes t.rng 8) in
-  let start_unix_ns = now_ns t in
+  let start_unix_ns = ms_to_ns started_ms in
   let s =
     {
       trace_id;
@@ -484,14 +486,14 @@ let map_status (st : Eta.Capabilities.span_status) =
   | Eta.Capabilities.Error msg -> (2, msg)
   | Eta.Capabilities.Cancelled -> (2, "cancelled")
 
-let end_span t ~span_id ~status ~ended_ms:_ =
+let end_span t ~span_id ~status ~ended_ms =
   let state = fiber_state t in
   state.stack <- List.filter (fun id -> id <> span_id) state.stack;
   match Hashtbl.find_opt t.table span_id with
   | None -> ()
   | Some s ->
       Hashtbl.remove t.table span_id;
-      s.end_unix_ns <- now_ns t;
+      s.end_unix_ns <- ms_to_ns ended_ms;
       let code, message = map_status status in
       s.status_code <- code;
       s.status_message <- message;

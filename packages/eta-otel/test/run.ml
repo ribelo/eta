@@ -42,6 +42,20 @@ let rec json_span_has_attr ~name ~key ~value = function
   | `List xs -> List.exists (json_span_has_attr ~name ~key ~value) xs
   | _ -> false
 
+let rec json_span_has_times ~name ~start_ns ~end_ns = function
+  | `Assoc fields ->
+      let is_span = List.assoc_opt "name" fields = Some (`String name) in
+      let has_times =
+        List.assoc_opt "startTimeUnixNano" fields = Some (`String start_ns)
+        && List.assoc_opt "endTimeUnixNano" fields = Some (`String end_ns)
+      in
+      (is_span && has_times)
+      || List.exists
+           (fun (_, value) -> json_span_has_times ~name ~start_ns ~end_ns value)
+           fields
+  | `List xs -> List.exists (json_span_has_times ~name ~start_ns ~end_ns) xs
+  | _ -> false
+
 let string_contains haystack needle =
   let haystack_len = String.length haystack in
   let needle_len = String.length needle in
@@ -200,6 +214,14 @@ let test_encoder_smoke () =
   let json = Yojson.Safe.from_string body in
   Alcotest.(check bool) "server span kind encoded" true
     (json_has_span_kind ~name:"child" ~kind:2 json);
+  Alcotest.(check bool)
+    "parent explicit timestamps encoded" true
+    (json_span_has_times ~name:"parent" ~start_ns:"1000000000"
+       ~end_ns:"1030000000" json);
+  Alcotest.(check bool)
+    "child explicit timestamps encoded" true
+    (json_span_has_times ~name:"child" ~start_ns:"1010000000"
+       ~end_ns:"1020000000" json);
   Alcotest.(check bool) "tracestate encoded" true
     (json_has_string_field ~key:"traceState" ~value:"rojo=00f067aa0ba902b7" json)
 
