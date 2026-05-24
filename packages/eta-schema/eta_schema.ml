@@ -505,8 +505,6 @@ module Schema = struct
             Result.map Option.some
               (Result.map_error (at_field f.name) (f.schema.decode value)))
 
-  let collect = function Ok _ -> [] | Error issues -> issues
-
   let encode_object fields record =
     let rec loop values issues = function
       | [] ->
@@ -521,145 +519,84 @@ module Schema = struct
     in
     loop [] [] fields
 
-  let record1 ~name make f1 ~equal () =
+  let decode_apply decoded_f decoded_value =
+    match (decoded_f, decoded_value) with
+    | Ok f, Ok value -> Ok (f value)
+    | Error issues, Ok _ | Ok _, Error issues -> Error issues
+    | Error left, Error right -> Error (left @ right)
+
+  let ( <*> ) = decode_apply
+
+  let record ~name ~fields ~decode ~equal =
     {
       decode =
         (function
-        | Json.Object _ as json -> (
-            match decode_field json f1 with
-            | Ok a -> Ok (make a)
-            | Error issues -> Error (with_schema_name name issues))
+        | Json.Object _ as json ->
+            Result.map_error (with_schema_name name) (decode json)
         | json ->
             Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode = (fun record -> Result.map_error (with_schema_name name) (encode_object [ Any_field f1 ] record));
+              [
+                type_mismatch ~schema_name:name ~expected:("object " ^ name)
+                  ~got:(Json.to_string json) ();
+              ]);
+      encode =
+        (fun record ->
+          Result.map_error (with_schema_name name) (encode_object fields record));
       equal;
     }
+
+  let record1 ~name make f1 ~equal () =
+    record ~name ~fields:[ Any_field f1 ]
+      ~decode:(fun json -> Ok make <*> decode_field json f1)
+      ~equal
 
   let record2 ~name make f1 f2 ~equal () =
-    {
-      decode =
-        (function
-        | Json.Object _ as json -> (
-            match (decode_field json f1, decode_field json f2) with
-            | Ok a, Ok b -> Ok (make a b)
-            | a, b -> Error (with_schema_name name (collect a @ collect b)))
-        | json ->
-            Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode =
-        (fun record ->
-          Result.map_error (with_schema_name name)
-            (encode_object [ Any_field f1; Any_field f2 ] record));
-      equal;
-    }
+    record ~name ~fields:[ Any_field f1; Any_field f2 ]
+      ~decode:(fun json ->
+        Ok make <*> decode_field json f1 <*> decode_field json f2)
+      ~equal
 
   let record3 ~name make f1 f2 f3 ~equal () =
-    {
-      decode =
-        (function
-        | Json.Object _ as json -> (
-            match (decode_field json f1, decode_field json f2, decode_field json f3) with
-            | Ok a, Ok b, Ok c -> Ok (make a b c)
-            | a, b, c -> Error (with_schema_name name (collect a @ collect b @ collect c)))
-        | json ->
-            Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode =
-        (fun record ->
-          Result.map_error (with_schema_name name)
-            (encode_object [ Any_field f1; Any_field f2; Any_field f3 ] record));
-      equal;
-    }
+    record ~name ~fields:[ Any_field f1; Any_field f2; Any_field f3 ]
+      ~decode:(fun json ->
+        Ok make <*> decode_field json f1 <*> decode_field json f2
+        <*> decode_field json f3)
+      ~equal
 
   let record4 ~name make f1 f2 f3 f4 ~equal () =
-    {
-      decode =
-        (function
-        | Json.Object _ as json -> (
-            match
-              ( decode_field json f1,
-                decode_field json f2,
-                decode_field json f3,
-                decode_field json f4 )
-            with
-            | Ok a, Ok b, Ok c, Ok d -> Ok (make a b c d)
-            | a, b, c, d ->
-                Error (with_schema_name name (collect a @ collect b @ collect c @ collect d)))
-        | json ->
-            Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode =
-        (fun record ->
-          Result.map_error (with_schema_name name)
-            (encode_object [ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ] record));
-      equal;
-    }
+    record ~name
+      ~fields:[ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ]
+      ~decode:(fun json ->
+        Ok make <*> decode_field json f1 <*> decode_field json f2
+        <*> decode_field json f3 <*> decode_field json f4)
+      ~equal
 
   let record5 ~name make f1 f2 f3 f4 f5 ~equal () =
-    {
-      decode =
-        (function
-        | Json.Object _ as json -> (
-            match
-              ( decode_field json f1,
-                decode_field json f2,
-                decode_field json f3,
-                decode_field json f4,
-                decode_field json f5 )
-            with
-            | Ok a, Ok b, Ok c, Ok d, Ok e -> Ok (make a b c d e)
-            | a, b, c, d, e ->
-                Error
-                  (with_schema_name name (collect a @ collect b @ collect c @ collect d @ collect e)))
-        | json ->
-            Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode =
-        (fun record ->
-          Result.map_error (with_schema_name name)
-            (encode_object
-               [ Any_field f1; Any_field f2; Any_field f3; Any_field f4; Any_field f5 ]
-               record));
-      equal;
-    }
+    record ~name
+      ~fields:
+        [ Any_field f1; Any_field f2; Any_field f3; Any_field f4; Any_field f5 ]
+      ~decode:(fun json ->
+        Ok make <*> decode_field json f1 <*> decode_field json f2
+        <*> decode_field json f3 <*> decode_field json f4
+        <*> decode_field json f5)
+      ~equal
 
   let record6 ~name make f1 f2 f3 f4 f5 f6 ~equal () =
-    {
-      decode =
-        (function
-        | Json.Object _ as json -> (
-            match
-              ( decode_field json f1,
-                decode_field json f2,
-                decode_field json f3,
-                decode_field json f4,
-                decode_field json f5,
-                decode_field json f6 )
-            with
-            | Ok a, Ok b, Ok c, Ok d, Ok e, Ok f -> Ok (make a b c d e f)
-            | a, b, c, d, e, f ->
-                Error
-                  (with_schema_name name
-                     (collect a @ collect b @ collect c @ collect d @ collect e @ collect f)))
-        | json ->
-            Error
-              [ type_mismatch ~schema_name:name ~expected:("object " ^ name) ~got:(Json.to_string json) () ]);
-      encode =
-        (fun record ->
-          Result.map_error (with_schema_name name)
-            (encode_object
-               [
-                 Any_field f1;
-                 Any_field f2;
-                 Any_field f3;
-                 Any_field f4;
-                 Any_field f5;
-                 Any_field f6;
-               ]
-               record));
-      equal;
-    }
+    record ~name
+      ~fields:
+        [
+          Any_field f1;
+          Any_field f2;
+          Any_field f3;
+          Any_field f4;
+          Any_field f5;
+          Any_field f6;
+        ]
+      ~decode:(fun json ->
+        Ok make <*> decode_field json f1 <*> decode_field json f2
+        <*> decode_field json f3 <*> decode_field json f4
+        <*> decode_field json f5 <*> decode_field json f6)
+      ~equal
 
   let refine ~name check schema =
     {
