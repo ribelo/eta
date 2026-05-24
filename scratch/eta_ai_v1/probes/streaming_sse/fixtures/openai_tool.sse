@@ -1,0 +1,9 @@
+data: {"id":"chatcmpl-a2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-a2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-a2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"weather","arguments":"{\"loc"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-a2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ation\":\"SF\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]

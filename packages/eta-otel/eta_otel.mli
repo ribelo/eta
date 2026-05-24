@@ -1,10 +1,9 @@
-(** OTLP/JSON over HTTP/1.1 exporter for Eta's tracer, logger, and meter
-    capabilities.
+(** OTLP/JSON exporter for Eta's tracer, logger, and meter capabilities.
 
-    Hand-rolled to keep the dependency closure to {eta, eta-stream, eio,
-    eio.unix}. The exporter accumulates spans, log records, and metric points
-    on bounded Eta mailboxes. Eta stream pipelines batch and merge the signal
-    streams; one Eta runtime daemon POSTs them to the configured endpoints. *)
+    The exporter accumulates spans, log records, and metric points on bounded
+    Eta mailboxes. Eta stream pipelines batch and merge the signal streams; one
+    Eta runtime daemon POSTs them through eta-http to the configured
+    endpoints. *)
 
 type t
 

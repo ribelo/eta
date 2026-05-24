@@ -41,6 +41,43 @@ let closed_tcp_port net =
   in
   tcp_port (Eio.Net.listening_addr socket)
 
+let parse_content_length line =
+  match String.index_opt line ':' with
+  | None -> None
+  | Some index ->
+      let name =
+        String.sub line 0 index |> String.trim |> String.lowercase_ascii
+      in
+      if name <> "content-length" then None
+      else
+        String.sub line (index + 1) (String.length line - index - 1)
+        |> String.trim |> int_of_string_opt
+
+let parse_request_target line =
+  match String.split_on_char ' ' line with
+  | _method_ :: target :: _ -> Some target
+  | _ -> None
+
+let consume_request flow =
+  try
+    let reader = Eio.Buf_read.of_flow ~max_size:(1024 * 1024) flow in
+    let content_length = ref 0 in
+    let target = parse_request_target (Eio.Buf_read.line reader) in
+    let rec headers () =
+      match Eio.Buf_read.line reader with
+      | "" -> ()
+      | line ->
+          (match parse_content_length line with
+          | Some len -> content_length := len
+          | None -> ());
+          headers ()
+    in
+    headers ();
+    if !content_length > 0 then
+      ignore (Eio.Buf_read.take !content_length reader : string);
+    target
+  with _ -> None
+
 let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
     response =
   let socket =
@@ -50,16 +87,48 @@ let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
   let port = tcp_port (Eio.Net.listening_addr socket) in
   Eio.Fiber.fork_daemon ~sw (fun () ->
       (try
-         for _ = 1 to connections do
-           Eio.Switch.run @@ fun conn_sw ->
-           let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
-           if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
-           Eio.Flow.copy_string response flow;
-           try Eio.Flow.shutdown flow `Send with _ -> ()
+           for _ = 1 to connections do
+             Eio.Switch.run @@ fun conn_sw ->
+             let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+             ignore (consume_request flow);
+             if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
+             Eio.Flow.copy_string response flow;
+             try Eio.Flow.shutdown flow `Send with _ -> ()
          done
        with _ -> ());
       `Stop_daemon);
   port
+
+let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
+    ?(on_request = fun _ -> ())
+    ?(connections = 16) responses =
+  match responses with
+  | [] -> invalid_arg "start_response_sequence_server: empty response list"
+  | responses ->
+      let socket =
+        Eio.Net.listen ~sw ~reuse_addr:true ~backlog:16 net
+          (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+      in
+      let port = tcp_port (Eio.Net.listening_addr socket) in
+      let responses = Array.of_list responses in
+      let hits = ref 0 in
+      Eio.Fiber.fork_daemon ~sw (fun () ->
+          (try
+             for _ = 1 to connections do
+               Eio.Switch.run @@ fun conn_sw ->
+               let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+               let index = min !hits (Array.length responses - 1) in
+               incr hits;
+               (match consume_request flow with
+               | Some target -> on_request target
+               | None -> ());
+               if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
+               Eio.Flow.copy_string responses.(index) flow;
+               try Eio.Flow.shutdown flow `Send with _ -> ()
+             done
+           with _ -> ());
+          `Stop_daemon);
+      (port, hits)
 
 let emit_span (tracer : Capabilities.tracer) name =
   let span = tracer#begin_span ~name ~started_ms:0 () in
@@ -76,7 +145,7 @@ let test_encoder_smoke () =
       ~host:"127.0.0.1" ~port:1
       ~service_name:"eta-otel-encoder-smoke"
       ~on_error:(fun _ -> ())
-      ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
+      ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
       ()
   in
   let tracer = Eta_otel.tracer exporter in
@@ -100,7 +169,12 @@ let test_encoder_smoke () =
     ~status:(Capabilities.Error "boom") ~ended_ms:1030;
   Eta_otel.flush exporter;
   Alcotest.(check pass) "encoder ran without raising" () ();
-  let body = String.concat "\n" (List.rev !bodies) in
+  let body =
+    !bodies
+    |> List.find_map (fun (path, body) ->
+           if String.equal path "/v1/traces" then Some body else None)
+    |> Option.value ~default:"{}"
+  in
   let json = Yojson.Safe.from_string body in
   Alcotest.(check bool) "server span kind encoded" true
     (json_has_span_kind ~name:"child" ~kind:2 json);
@@ -118,7 +192,7 @@ let test_exception_stacktrace_exported () =
       ~clock ~host:"127.0.0.1" ~port:1
       ~service_name:"eta-otel-exception-stacktrace"
       ~on_error:(fun _ -> ())
-      ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
+      ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
       ()
   in
   let rt = Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
@@ -129,7 +203,12 @@ let test_exception_stacktrace_exported () =
   in
   ignore (Runtime.run rt eff : (unit, _) Exit.t);
   Eta_otel.flush exporter;
-  let body = String.concat "\n" (List.rev !bodies) in
+  let body =
+    !bodies
+    |> List.find_map (fun (path, body) ->
+           if String.equal path "/v1/traces" then Some body else None)
+    |> Option.value ~default:"{}"
+  in
   let json = Yojson.Safe.from_string body in
   Alcotest.(check bool) "exception event exported" true
     (json_has_string_field ~key:"name" ~value:"exception" json);
@@ -176,6 +255,64 @@ let test_malformed_response_reports_error () =
   emit_span (Eta_otel.tracer exporter) "malformed";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "collector error reported" true (!errors <> [])
+
+let test_otlp_retry_excludes_408 () =
+  let errors = ref [] in
+  let paths = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port, _hits =
+    start_response_sequence_server ~sw ~net ~clock
+      ~on_request:(fun path -> paths := path :: !paths)
+      [
+        "HTTP/1.1 408 Request Timeout\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      ]
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-no-408-retry"
+      ~on_error:(fun msg -> errors := msg :: !errors)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "no-408-retry";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  let trace_hits =
+    !paths |> List.filter (String.equal "/v1/traces") |> List.length
+  in
+  Alcotest.(check int) "one trace attempt" 1 trace_hits;
+  Alcotest.(check bool) "408 reported" true (!errors <> [])
+
+let test_otlp_retry_includes_429 () =
+  let errors = ref [] in
+  let paths = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port, _hits =
+    start_response_sequence_server ~sw ~net ~clock
+      ~on_request:(fun path -> paths := path :: !paths)
+      [
+        "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      ]
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-429-retry"
+      ~on_error:(fun msg -> errors := msg :: !errors)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "retry-429";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  let trace_hits =
+    !paths |> List.filter (String.equal "/v1/traces") |> List.length
+  in
+  Alcotest.(check int) "two trace attempts" 2 trace_hits;
+  Alcotest.(check bool) "no final error" true (!errors = [])
 
 let test_slow_collector_flush_timeout () =
   Eio_main.run @@ fun stdenv ->
@@ -279,6 +416,49 @@ let test_self_spans_do_not_reenter_export () =
   Alcotest.(check bool) "application span is exported" true
     (string_contains exported "application-span")
 
+let test_self_metrics_export_without_recursion () =
+  let sends = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port =
+    start_response_server ~sw ~net ~clock ~connections:4
+      "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-self-metrics"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body -> sends := (path, body) :: !sends)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "application-span";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  let metrics =
+    !sends
+    |> List.filter (fun (path, _) -> String.equal path "/v1/metrics")
+    |> List.map snd
+  in
+  Alcotest.(check int) "one self metrics export" 1 (List.length metrics);
+  let body =
+    match metrics with
+    | [ body ] -> body
+    | _ -> Alcotest.fail "expected one metrics request body"
+  in
+  let json = Yojson.Safe.from_string body in
+  [
+    "eta_otel.export.batches";
+    "eta_otel.export.items";
+    "eta_otel.queue.depth";
+    "eta_otel.queue.dropped";
+    "eta_otel.in_flight";
+  ]
+  |> List.iter (fun name ->
+         Alcotest.(check bool)
+           ("self metric " ^ name) true
+           (json_has_string_field ~key:"name" ~value:name json))
+
 let motel_reachable net =
   try
     Eio.Switch.run @@ fun sw ->
@@ -350,6 +530,10 @@ let () =
             test_network_partition_reports_error;
           Alcotest.test_case "malformed response" `Quick
             test_malformed_response_reports_error;
+          Alcotest.test_case "OTLP does not retry 408" `Quick
+            test_otlp_retry_excludes_408;
+          Alcotest.test_case "OTLP retries 429" `Quick
+            test_otlp_retry_includes_429;
           Alcotest.test_case "slow collector flush timeout" `Quick
             test_slow_collector_flush_timeout;
           Alcotest.test_case "backpressure overflow" `Quick
@@ -358,6 +542,8 @@ let () =
             test_shutdown_closes_queues;
           Alcotest.test_case "self spans do not re-enter export" `Quick
             test_self_spans_do_not_reenter_export;
+          Alcotest.test_case "self metrics export without recursion" `Quick
+            test_self_metrics_export_without_recursion;
         ] );
       ( "motel",
         [ Alcotest.test_case "live export" `Quick test_motel_live ] );

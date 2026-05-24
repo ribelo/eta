@@ -1,0 +1,22 @@
+{
+  "id": "resp-openrouter-tool",
+  "object": "response",
+  "status": "completed",
+  "created_at": 1779580000,
+  "model": "openrouter/auto",
+  "provider": "openai",
+  "output": [
+    {
+      "type": "function_call",
+      "id": "fc-openrouter-weather",
+      "call_id": "call_weather",
+      "name": "weather",
+      "arguments": "{\"location\":\"Warsaw\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 5,
+    "total_tokens": 17
+  }
+}

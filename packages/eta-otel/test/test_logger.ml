@@ -7,11 +7,16 @@
       active span, and the timestamp comes from a swappable Clock.
 
    Eta's equivalent: Logger.in_memory + Effect.log + Tracer.in_memory.
-   For the active-span identity assertion we use Eta_otel which mints
-   real hex trace_id / span_id; the in-memory tracer records empty
-   strings since it has no need for hex ids. *)
+   For the active-span identity assertion we compare the log record with
+   Effect.current_span inside the active span. *)
 
 open Eta
+
+let is_lower_hex ~len value =
+  String.length value = len
+  && String.for_all
+       (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false)
+       value
 
 let with_logger f =
   Eio_main.run @@ fun stdenv ->
@@ -57,24 +62,34 @@ let test_emits_log_records () =
 (* ------------------------------------------------------------------ *)
 let test_log_carries_active_span_ids () =
   with_logger_and_tracer @@ fun rt logger tracer ->
-  let _ = Runtime.run rt (Effect.named "parent" (Effect.log "test")) in
+  let active =
+    Runtime.run rt
+      (Effect.named "parent"
+         (Effect.bind
+            (fun active ->
+              Effect.map (fun () -> active) (Effect.log "test"))
+            Effect.current_span))
+  in
+  let active =
+    match active with
+    | Exit.Ok (Some active) -> active
+    | Exit.Ok None -> Alcotest.fail "expected active span"
+    | Exit.Error _ -> Alcotest.fail "expected successful log"
+  in
   let logs = Logger.dump logger in
   let spans = Tracer.dump tracer in
   Alcotest.(check int) "one log" 1 (List.length logs);
   Alcotest.(check int) "one span" 1 (List.length spans);
   let log = List.hd logs in
   let span = List.hd spans in
-  (* In-memory tracer uses empty strings for hex ids; assertion is that
-     the runtime fills the log's trace_id/span_id from tracer.inspect of
-     the ACTIVE span, so they equal whatever inspect returned. *)
   Alcotest.(check string) "log trace_id matches span trace_id"
     span.Tracer.trace_id log.Logger.trace_id;
-  (* The in-memory tracer's span.span_id field is an int; the trait
-     surfaces span_id as a string via Capabilities.span_info. The
-     in-memory tracer returns "" for that string, which is what the
-     runtime forwarded to the log record. *)
-  Alcotest.(check string) "log span_id is empty (in-memory tracer)" ""
+  Alcotest.(check string) "log trace_id matches active span"
+    active.trace_id log.Logger.trace_id;
+  Alcotest.(check string) "log span_id matches active span" active.span_id
     log.span_id;
+  Alcotest.(check bool) "log span_id is 16 lower hex" true
+    (is_lower_hex ~len:16 log.span_id);
   Alcotest.(check string) "log body" "test" log.body;
   Alcotest.(check int)
     "log ts_ms within span duration"

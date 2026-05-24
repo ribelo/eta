@@ -26,16 +26,21 @@ type t = {
 }
 
 let default_line_limit = 8 * 1024
-let default_max_decoded_bytes = 256 * 1024 * 1024
+let default_max_decoded_bytes = Stream.default_max_bytes
 
 let create ?(max_decoded_bytes = default_max_decoded_bytes) ~context ~reader () =
   if max_decoded_bytes < 0 then
     invalid_arg "Eta_http.Body.Chunked.create: max_decoded_bytes must be >= 0";
   { context; reader; max_decoded_bytes; decoded_bytes = 0; done_ = false; trailers = Header.empty }
 
-let make_error t message =
+let decode_error t message =
   Error.make ~protocol:t.context.protocol ~method_:t.context.method_
     ~uri:t.context.uri (Decode_error { codec = "chunked"; message })
+
+let body_too_large t length =
+  Error.make ~protocol:t.context.protocol ~method_:t.context.method_
+    ~uri:t.context.uri
+    (Body_too_large { limit = t.max_decoded_bytes; length })
 
 let is_hex = function
   | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
@@ -86,12 +91,12 @@ let rec read_trailers t acc =
   t.reader.read_line ~limit:default_line_limit
   |> Effect.bind (fun line ->
          if String.equal line "" then (
-           t.trailers <- Header.of_list (List.rev acc);
+           t.trailers <- Header.unsafe_of_list (List.rev acc);
            t.done_ <- true;
            Effect.pure None)
          else
            match parse_trailer line with
-           | Error message -> Effect.fail (make_error t message)
+           | Error message -> Effect.fail (decode_error t message)
            | Ok trailer -> read_trailers t (trailer :: acc))
 
 let read t =
@@ -100,22 +105,19 @@ let read t =
     t.reader.read_line ~limit:default_line_limit
     |> Effect.bind (fun line ->
            match parse_size line with
-           | Error message -> Effect.fail (make_error t message)
+           | Error message -> Effect.fail (decode_error t message)
            | Ok 0 -> read_trailers t []
            | Ok size ->
                let next_total = t.decoded_bytes + size in
                if next_total < t.decoded_bytes || next_total > t.max_decoded_bytes then
-                 Effect.fail
-                   (make_error t
-                      (Printf.sprintf
-                         "decoded body exceeds %d bytes" t.max_decoded_bytes))
+                 Effect.fail (body_too_large t next_total)
                else
                  t.reader.read_exact size
                  |> Effect.bind (fun chunk ->
                         t.reader.read_exact 2
                         |> Effect.bind (fun crlf ->
                                if not (Bytes.equal crlf (Bytes.of_string "\r\n")) then
-                                 Effect.fail (make_error t "chunk data missing CRLF")
+                                 Effect.fail (decode_error t "chunk data missing CRLF")
                                else (
                                  t.decoded_bytes <- next_total;
                                  Effect.pure (Some chunk)))))
@@ -145,4 +147,3 @@ let encode_last_chunk ?(trailers = Header.empty) () =
     (List.rev trailers);
   Buffer.add_string buffer "\r\n";
   Bytes.of_string (Buffer.contents buffer)
-

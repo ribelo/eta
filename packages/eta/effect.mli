@@ -328,6 +328,10 @@ val catch :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 
 val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an observer when the effect fails with a typed error, then rethrow the
+    original typed failure. If the observer raises, the runtime reports a
+    suppressed cause with the original [Cause.Fail] as [primary] and the
+    observer exception as [finalizer], so diagnostics retain both failures. *)
 
 val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
 
@@ -343,6 +347,10 @@ val acquire_release :
   acquire:('a, 'err) t ->
   release:('a -> (unit, 'err) t) ->
   ('a, 'err) t
+(** Acquire a resource and register [release] to run when the current runtime
+    boundary, scope, supervisor scope, or daemon body exits. The release effect
+    runs on success and on typed failure; release failures are reported as the
+    run failure or suppressed onto the primary failure. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 
@@ -352,6 +360,15 @@ val supervisor_scoped :
 val with_error_renderer : ('err -> string) -> ('a, 'err) t -> ('a, 'err) t
 (** Render typed failures in observability span status and exception events for
     the wrapped effect. The renderer is scoped to this effect's error channel. *)
+
+val suppress_observability : ('a, 'err) t -> ('a, 'err) t
+(** Run the wrapped effect without emitting tracer, logger, or meter events
+    from inside the subtree.
+
+    This is intended for observability exporters and other observer backends
+    that must call Eta-based libraries without recursively observing their own
+    export path. It does not change typed errors, resource finalization, or
+    defect diagnostics. *)
 
 val supervisor_pure : 'a -> ('s, 'a, 'err) supervisor_scope
 
@@ -464,135 +481,34 @@ val fn :
 
 val name : ('a, 'err) t -> string option
 val collect_names : ('a, 'err) t -> string list
+(** [collect_names effect] returns names that are statically present in
+    [effect]'s current description.
+
+    This is a preflight/documentation helper, not a complete runtime inventory.
+    Continuation-producing nodes such as [bind], [catch], [for_each_par],
+    [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
+    so names created by those continuations are intentionally absent. *)
 
 module Private : sig
-  type ('a, 'err) view =
-    | Pure : 'a -> ('a, _) view
-    | Fail : 'err -> (_, 'err) view
-    | Sync : (unit -> 'a) -> ('a, _) view
-    | Island :
-        ('input : immutable_data) ('output : immutable_data) 'err.
-        {
-          name : string;
-          f : ('input -> 'output) @@ portable;
-          input : 'input;
-        }
-        -> ('output, 'err) view
-    | Island_map :
-        ('input : immutable_data) ('output : immutable_data) 'err.
-        {
-          name : string;
-          pool : Island.pool option;
-          f : ('input -> 'output) @@ portable;
-          inputs : 'input list;
-        }
-        -> ('output list, 'err) view
-    | Island_map_result :
-        ('input : immutable_data)
-        ('output : immutable_data)
-        ('error : immutable_data)
-        'err.
-        {
-          name : string;
-          pool : Island.pool option;
-          f : ('input -> ('output, 'error) result) @@ portable;
-          inputs : 'input list;
-        }
-        -> (('output, 'error) result list, 'err) view
-    | Island_all_settled :
-        ('input : immutable_data)
-        ('output : immutable_data)
-        ('error : immutable_data)
-        'err.
-        {
-          name : string;
-          pool : Island.pool option;
-          f : ('input -> ('output, 'error) result) @@ portable;
-          inputs : 'input list;
-        }
-        -> (('output, 'error) Island.settled list, 'err) view
-    | Blocking : {
-        name : string;
-        pool : Blocking.Pool.t option;
-        f : unit -> 'a;
-      }
-        -> ('a, 'err) view
-    | Blocking_shutdown : Blocking.Pool.t -> (unit, 'err) view
-    | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) view
-    | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) view
-    | Catch :
-        ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) view
-    | Tap_error : ('a, 'err) t * ('err -> unit) -> ('a, 'err) view
-    | Delay : Duration.t * ('a, 'err) t -> ('a, 'err) view
-    | Timeout :
-        Duration.t * ('a, [> `Timeout ] as 'err) t -> ('a, 'err) view
-    | Timeout_as : Duration.t * 'err * ('a, 'err) t -> ('a, 'err) view
-    | Concat : (unit, 'err) t list -> (unit, 'err) view
-    | Race : ('a, 'err) t list -> ('a, 'err) view
-    | Par : ('a, 'err) t * ('b, 'err) t -> ('a * 'b, 'err) view
-    | All : ('a, 'err) t list -> ('a list, 'err) view
-    | All_settled :
-        ('a, 'err) t list -> (('a, 'err Cause.t) result list, _) view
-    | For_each_par : 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) view
-    | For_each_par_bounded :
-        int * 'x list * ('x -> ('a, 'err) t) -> ('a list, 'err) view
-    | Daemon : (unit, 'err) t -> (unit, 'err) view
-    | Uninterruptible : ('a, 'err) t -> ('a, 'err) view
-    | Repeat : (unit, 'err) t * Schedule.t -> (unit, 'err) view
-    | Retry : ('a, 'err) t * Schedule.t * ('err -> bool) -> ('a, 'err) view
-    | Acquire_release :
-        ('a, 'err) t * ('a -> (unit, 'err) t) -> ('a, 'err) view
-    | Scoped : ('a, 'err) t -> ('a, 'err) view
-    | Supervisor_scoped :
-        int option * ('a, 'err) supervisor_body -> ('a, 'err) view
-    | Render_error : ('err -> string) * ('a, 'err) t -> ('a, 'err) view
-    | Named :
-        Capabilities.span_kind * string * ('a, 'err) t -> ('a, 'err) view
-    | Named_attrs :
-        Capabilities.span_kind * string * (string * string) list * ('a, 'err) t
-        -> ('a, 'err) view
-    | Annotate : string * string * ('a, 'err) t -> ('a, 'err) view
-    | Link_span : Capabilities.span_link * ('a, 'err) t -> ('a, 'err) view
-    | With_external_parent :
-        Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) view
-    | With_context :
-        Capabilities.trace_context * ('a, 'err) t -> ('a, 'err) view
-    | Current_span : (Capabilities.span_info option, 'err) view
-    | Current_context : (Capabilities.trace_context option, 'err) view
-    | Log :
-        Capabilities.log_level * string * (string * string) list
-        -> (unit, 'err) view
-    | Metric_update : {
-        name : string;
-        description : string;
-        unit_ : string;
-        kind : Capabilities.metric_kind;
-        attrs : (string * string) list;
-        value : Capabilities.metric_value;
-      }
-        -> (unit, 'err) view
-    | Metric_updates :
-        (string * string * string * Capabilities.metric_kind
-        * (string * string) list
-        * Capabilities.metric_value)
-        list
-        -> (unit, 'err) view
-    | Metric_updates_lazy :
-        (unit ->
-        (string * string * string * Capabilities.metric_kind
-        * (string * string) list
-        * Capabilities.metric_value)
-        list)
-        -> (unit, 'err) view
+  (** Unstable extension hooks for Eta's runtime and sibling packages.
 
-  val view : ('a, 'err) t -> ('a, 'err) view
+      This module intentionally does not expose the interpreter AST. External
+      applications should prefer the public [Effect], [Runtime], [Pool], and
+      [Resource] APIs unless a hook here is explicitly documented for their
+      integration point. *)
+
   val daemon : (unit, 'err) t -> (unit, 'err) t
+  (** Start an effect as a runtime-owned daemon. The daemon is joined/drained by
+      [Runtime.run] finalizer handling; unchecked failures are runtime defects. *)
+
   val named_attrs :
     kind:Capabilities.span_kind ->
     string ->
     attrs:(string * string) list ->
     ('a, 'err) t ->
     ('a, 'err) t
+  (** Attach a span name plus precomputed attributes. Used by internal resource
+      helpers that already own their attribute set. *)
 
   val metric_updates :
     (string * string * string * Capabilities.metric_kind
@@ -600,6 +516,8 @@ module Private : sig
     * Capabilities.metric_value)
     list ->
     (unit, 'err) t
+  (** Emit a prebatched set of metric updates. *)
+
   val metric_updates_lazy :
     (unit ->
     (string * string * string * Capabilities.metric_kind
@@ -607,6 +525,8 @@ module Private : sig
     * Capabilities.metric_value)
     list) ->
     (unit, 'err) t
+  (** Lazily compute metric updates only when interpreted by a runtime with
+      metrics enabled. *)
 
   val island_submit :
     ('input : immutable_data) ('output : immutable_data).
@@ -615,6 +535,7 @@ module Private : sig
     ('input -> 'output) @ portable ->
     'input ->
     'output
+  (** Runtime hook for executing a single island callback. *)
 
   val island_submit_map :
     ('input : immutable_data) ('output : immutable_data).
@@ -623,6 +544,7 @@ module Private : sig
     ('input -> 'output) @ portable ->
     'input list ->
     'output list
+  (** Runtime hook for executing a batch of island callbacks. *)
 
   val island_submit_map_result :
     ('input : immutable_data)
@@ -633,6 +555,7 @@ module Private : sig
     ('input -> ('output, 'error) result) @ portable ->
     'input list ->
     ('output, 'error) result list
+  (** Runtime hook for island callbacks that return typed per-item results. *)
 
   val island_submit_all_settled :
     ('input : immutable_data)
@@ -642,6 +565,8 @@ module Private : sig
     ('input -> ('output, 'error) result) @ portable ->
     'input list ->
     ('output, 'error) Island.settled list
+  (** Runtime hook for island callbacks that keep worker crashes as per-item
+      [Worker_died] results. *)
 
   type blocking_outcome =
     | Blocking_ok
@@ -650,6 +575,7 @@ module Private : sig
     | Blocking_rejected
     | Blocking_shutdown_rejected
     | Blocking_detached
+  (** Blocking worker outcome used for runtime metrics. *)
 
   type blocking_event = {
     pool : string;
@@ -658,8 +584,10 @@ module Private : sig
     run_ms : int;
     outcome : blocking_outcome;
   }
+  (** Blocking worker event emitted after queue/run completion. *)
 
   val blocking_default_config : Blocking.Pool.config
+  (** Runtime default configuration for the implicit blocking pool. *)
 
   val blocking_submit :
     sw:Eio.Switch.t ->
@@ -668,12 +596,17 @@ module Private : sig
     string ->
     (unit -> 'a) ->
     'a
+  (** Runtime hook for submitting one blocking callback. *)
 
   val blocking_shutdown :
     emit:(blocking_event -> unit) -> Blocking.Pool.t -> unit
+  (** Runtime hook for shutting down a blocking pool with metrics emission. *)
 
   val blocking_pool_name : Blocking.Pool.t -> string
+  (** Runtime hook for diagnostic pool names. *)
+
   val in_blocking_worker : unit -> bool
+  (** [true] while running inside an [Effect.Blocking] worker callback. *)
 
   val make_supervisor :
     sw:Eio.Switch.t -> max_failures:int option -> ('s, 'err) supervisor
@@ -692,4 +625,5 @@ module Private : sig
   val supervisor_child_promise :
     ('s, 'err, 'a) supervisor_child -> ('a, 'err Cause.t) result Eio.Promise.t
   val supervisor_child_cancel : ('s, 'err, 'a) supervisor_child -> unit -> unit
+  (** Runtime hooks for interpreting [supervisor_scoped]. *)
 end

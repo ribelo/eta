@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl_together_fixture",
+  "object": "chat.completion",
+  "created": 1779580000,
+  "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Compatible response"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 8,
+    "completion_tokens": 3,
+    "total_tokens": 11
+  }
+}

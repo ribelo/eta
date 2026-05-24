@@ -27,7 +27,9 @@ val write_to_bytes :
   headers:Eta_http_core.Header.t ->
   body:body ->
   (int, Eta_http_error.Error.t) result
-(** Write one HTTP/1.1 request into a caller-owned byte buffer. *)
+(** Write one HTTP/1.1 request into a caller-owned byte buffer.
+
+    Caller-provided headers are validated before any bytes are written. *)
 
 val write :
   Buffer.t ->
@@ -39,7 +41,8 @@ val write :
 (** Append one HTTP/1.1 request to [Buffer.t].
 
     The request target is origin-form. [Host] is added when the caller did not
-    provide one. Fixed bodies get a [Content-Length] header when absent. *)
+    provide one. Fixed bodies get a [Content-Length] header when absent.
+    Caller-provided headers are validated before any bytes are appended. *)
 
 val write_to_flow :
   [> Eio.Flow.sink_ty] Eio.Resource.t ->
@@ -51,7 +54,10 @@ val write_to_flow :
 (** Write one HTTP/1.1 request directly to a flow sink.
 
     This avoids allocating a complete request string on the transport path.
-    The request bytes are written synchronously before the function returns. *)
+    Caller-provided headers are validated before any bytes are emitted. The
+    request bytes are written synchronously before the function returns. Flow
+    write exceptions are translated to [Connection_closed] during the HTTP
+    request instead of escaping. *)
 
 val to_string :
   method_:string ->

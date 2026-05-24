@@ -297,10 +297,12 @@ let test_mailbox_stream_close_and_drop () =
   | Dropped -> ()
   | Enqueued | Closed -> Alcotest.fail "expected full mailbox to drop");
   Alcotest.(check int) "dropped" 1 (Mailbox.dropped mailbox);
+  Alcotest.(check int) "length before close" 2 (Mailbox.length mailbox);
   Mailbox.close mailbox;
   Alcotest.(check (list int))
     "drain queued values" [ 1; 2 ]
-    (run_ok rt (run_collect (Mailbox.to_stream mailbox)))
+    (run_ok rt (run_collect (Mailbox.to_stream mailbox)));
+  Alcotest.(check int) "length after drain" 0 (Mailbox.length mailbox)
 
 let test_mailbox_batch_stream_emits_partial () =
   with_runtime @@ fun _env rt ->

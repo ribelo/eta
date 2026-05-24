@@ -1,4 +1,4 @@
 (library
  (name eta_otel)
  (public_name eta-otel)
- (libraries eta eta-stream eio eio.unix yojson))
+ (libraries eta eta-stream eta-http eio eio.unix yojson))

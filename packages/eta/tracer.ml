@@ -33,6 +33,7 @@ type span : immutable_data = {
 
 type open_span = {
   span_id : int;
+  span_context_id : string;
   parent_id : int option;
   name : string;
   trace_id : string;
@@ -96,12 +97,16 @@ let in_memory () =
     fallback = empty_state ();
   }
 
+let hex16 n = Printf.sprintf "%016x" n
+let root_trace_id t span_id = hex16 t.context_id ^ hex16 (span_id + 1)
+
 let begin_span t ?parent_id
     ?(external_parent : Capabilities.trace_context option) ?(kind = Internal)
     ~name ~started_ms () =
   let state = state t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
+  let span_context_id = hex16 (span_id + 1) in
   let parent_id =
     match parent_id with
     | Some _ as parent -> parent
@@ -116,7 +121,7 @@ let begin_span t ?parent_id
         (ctx.trace_id, ctx.trace_flags, ctx.trace_state, ctx.baggage)
     | Some _, None, parent :: _ ->
         (parent.trace_id, parent.trace_flags, parent.trace_state, parent.baggage)
-    | _ -> ("", 1, [], [])
+    | _ -> (root_trace_id t span_id, 1, [], [])
   in
   let attrs = List.rev state.pending_attrs in
   let links = List.rev state.pending_links in
@@ -125,6 +130,7 @@ let begin_span t ?parent_id
   state.stack <-
     {
       span_id;
+      span_context_id;
       parent_id;
       name;
       trace_id;
@@ -206,7 +212,7 @@ let inspect t ~span_id : Capabilities.span_info option =
       Some
         {
           Capabilities.trace_id = s.trace_id;
-          span_id = "";
+          span_id = s.span_context_id;
           name = s.name;
           trace_flags = s.trace_flags;
           trace_state = s.trace_state;

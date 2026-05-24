@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl_compat_stream","model":"mistral-large-latest","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

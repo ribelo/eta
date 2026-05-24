@@ -1,8 +1,8 @@
 # Dependency Usage Audit
 
 Run: `bash packages/eta-http/audit/run.sh`
-Last updated: 2026-05-23T20:51:41Z
-Current sites: 283
+Last updated: 2026-05-24T01:17:10Z
+Current sites: 285
 
 Every eta-http call site for an allowed external dependency is listed here.
 The catalog is not a gate; it is the truth-of-record.
@@ -23,12 +23,15 @@ rg -n -t ocaml 'H2\.|Hpack\.|Tls\.|Tls_eio\.|Eio\.|Cstruct\.|X509\.|Ca_certs\.|M
 | `tls/config.mli:16` | `x509` | Accept the TLS stack authenticator. | structural | high; authenticator is owned by the TLS/X.509 stack. |
 | `tls/config.mli:18` | `tls` | Return a TLS client config. | structural | high; this is the TLS substrate boundary. |
 | `test/tls/negative_dhe_cipher_override.ml:2` | `ca-certs` | Build an authenticator for the compile-fail policy fixture. | test-only | low; fixture can use any valid authenticator. |
+| `transport/connect.ml:45` | `mirage-crypto-rng` | Probe whether the process-wide TLS RNG is initialized before the first TLS handshake. | structural | medium; ocaml-tls requires Mirage_crypto_rng before client handshakes. |
+| `transport/connect.ml:47` | `mirage-crypto-rng.unix` | Seed the process-wide Mirage crypto RNG from the Unix entropy source when an application has not initialized it. | structural | medium; avoids leaking TLS RNG setup to eta-http callers. |
+| `client/client.ml:36` | `ca-certs` | Lazily load system trust roots for the top-level client's default authenticator. | structural | medium; hides TLS root plumbing behind eta-http while preserving custom authenticator override. |
 | `client/client.mli:23` | `eio` | Accept the caller-owned switch for the pooled S1 h1 client. | structural | medium; connection lifetime is switch-scoped. |
 | `client/client.mli:24` | `eio` | Accept the caller-owned network capability for the pooled S1 h1 client. | structural | medium; eta-http must not own ambient network authority. |
-| `client/client.mli:25` | `x509` | Accept the TLS authenticator for the pooled S1 h1 client. | structural | high; certificate validation stays in the TLS/X.509 stack. |
+| `client/client.mli:25` | `x509` | Accept an optional TLS authenticator override for the pooled S1 h1 client. | structural | high; certificate validation stays in the TLS/X.509 stack. |
 | `client/client.mli:33` | `eio` | Accept the caller-owned switch for the S2 auto-dispatch client. | structural | medium; connection lifetime is switch-scoped. |
 | `client/client.mli:34` | `eio` | Accept the caller-owned network capability for the S2 auto-dispatch client. | structural | medium; eta-http must not own ambient network authority. |
-| `client/client.mli:35` | `x509` | Accept the TLS authenticator for the S2 auto-dispatch client. | structural | high; certificate validation stays in the TLS/X.509 stack. |
+| `client/client.mli:35` | `x509` | Accept an optional TLS authenticator override for the S2 auto-dispatch client. | structural | high; certificate validation stays in the TLS/X.509 stack. |
 | `body/transducer.ml:22` | `bigstringaf` | Copy eta-http byte chunks into the bigstring input shape expected by `decompress`. | structural | medium; `decompress` consumes bigstrings for streaming gzip. |
 | `body/transducer.ml:26` | `bigstringaf` | Copy gzip output bigstrings back into eta-http byte chunks. | structural | medium; `decompress` emits through a bigstring output buffer. |
 | `body/transducer.ml:33` | `decompress` | Allocate the gzip decoder output buffer through `De.bigstring_create`. | structural | medium; gzip codec buffers are owned by `decompress`. |
@@ -82,7 +85,7 @@ rg -n -t ocaml 'H2\.|Hpack\.|Tls\.|Tls_eio\.|Eio\.|Cstruct\.|X509\.|Ca_certs\.|M
 | `test/test_eta_http.ml:637` | `eio` | Build a deterministic mock TCP address for the h1 request-cancellation release test. | test-only | low; can move behind a helper if tests grow. |
 | `test/test_eta_http.ml:644` | `ca-certs` | Build an authenticator for the h1 request-cancellation release test. | test-only | low; fixture can use any valid authenticator. |
 | `test/test_eta_http.ml:688` | `eio` | Build a deterministic mock TCP address for the public h1 client path test. | test-only | low; can move behind a helper if tests grow. |
-| `test/test_eta_http.ml:695` | `ca-certs` | Build an authenticator for the public h1 client path test. | test-only | low; fixture can use any valid authenticator. |
+| `test/test_eta_http.ml:695` | `ca-certs` | Build an authenticator for the h1 pool reuse fixture. | test-only | low; fixture can use any valid authenticator. |
 | `test/test_eta_http.ml:719` | `tls` | Verify policy ciphers exclude FFDHE key exchange. | test-only | low; inspection can move to a helper if needed. |
 | `test/test_eta_http.ml:723` | `ca-certs` | Build an authenticator for the TLS policy invariant test. | test-only | low; fixture can use any valid authenticator. |
 | `test/test_eta_http.ml:727` | `tls` | Exercise the public eta-http TLS config builder. | test-only | low; test subject. |

@@ -56,6 +56,9 @@ let mailbox_close mailbox =
 let mailbox_dropped mailbox =
   Eio.Mutex.use_ro mailbox.mutex (fun () -> mailbox.dropped)
 
+let mailbox_length mailbox =
+  Eio.Mutex.use_ro mailbox.mutex (fun () -> Queue.length mailbox.queue)
+
 let drain_counter_create () =
   { mutex = Eio.Mutex.create (); condition = Eio.Condition.create (); count = 0 }
 
@@ -245,6 +248,7 @@ module Mailbox = struct
   let offer = mailbox_offer
   let close = mailbox_close
   let dropped = mailbox_dropped
+  let length = mailbox_length
   let to_stream mailbox = Stream.From_mailbox mailbox
   let to_batch_stream ~max mailbox =
     if max <= 0 then invalid_arg "Stream.Mailbox.to_batch_stream: max must be > 0";

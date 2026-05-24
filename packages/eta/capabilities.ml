@@ -107,9 +107,18 @@ let random_default () = random_of_seed 0x5eed5
 let next_seed seed =
   ((seed * 1_103_515_245) + 12_345) land 0x3fffffff
 
+let rec advance_random random =
+  let seed = P_atomic.get random.seed in
+  let next = next_seed seed in
+  match
+    P_atomic.compare_and_set random.seed ~if_phys_equal_to:seed
+      ~replace_with:next
+  with
+  | P_atomic.Compare_failed_or_set_here.Set_here -> next
+  | P_atomic.Compare_failed_or_set_here.Compare_failed -> advance_random random
+
 let random_float random bound =
   if bound <= 0.0 then 0.0
   else
-    let seed = next_seed (P_atomic.get random.seed) in
-    P_atomic.set random.seed seed;
+    let seed = advance_random random in
     bound *. (float_of_int (seed land 0xffff) /. 65_536.0)

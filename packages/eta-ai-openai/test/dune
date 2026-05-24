@@ -1,0 +1,8 @@
+(test
+ (name test_eta_ai_openai)
+ (libraries eta eta-ai eta-ai-openai eta-http alcotest eio_main)
+ (deps
+  (source_tree fixtures))
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -33,6 +33,8 @@ val to_string : t -> string
 val scheme : t -> scheme
 val scheme_to_string : scheme -> string
 val host : t -> string
+(** Host without URI brackets. IPv6 literals such as [https://[::1]/] return
+    ["::1"] so transport peer-identity checks can parse the IP literal. *)
 val port : t -> int option
 val default_port : scheme -> int
 val effective_port : t -> int
@@ -40,6 +42,8 @@ val path : t -> string
 val query : t -> string option
 val fragment : t -> string option
 val authority : t -> string
+(** Host plus optional port for HTTP authority and Host headers. IPv6 literals
+    include URI brackets, for example ["[::1]:8443"]. *)
 val origin_form : t -> string
 val blit_authority : bytes -> pos:int -> t -> int
 (** Write the URL authority into [bytes] at [pos]. Returns the next offset, or

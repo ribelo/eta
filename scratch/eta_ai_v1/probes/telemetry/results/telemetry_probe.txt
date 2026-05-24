@@ -1,0 +1,20 @@
+ok otel-genai-spans
+ok otel-genai-registry
+ok span count
+ok chat gpt-4o-mini has gen_ai.operation.name
+ok chat gpt-4o-mini has gen_ai.provider.name
+ok chat gpt-4o-mini has gen_ai.request.model
+ok chat gpt-4o-mini has gen_ai.usage.input_tokens
+ok chat gpt-4o-mini has gen_ai.response.time_to_first_chunk
+ok chat gpt-4o-mini has gen_ai.usage.output_tokens
+ok embeddings text-embedding-3-small has gen_ai.operation.name
+ok embeddings text-embedding-3-small has gen_ai.request.encoding_formats
+ok chat gpt-4o-mini has gen_ai.tool.definitions
+ok execute_tool weather has gen_ai.operation.name
+ok execute_tool weather has gen_ai.tool.name
+ok execute_tool weather has gen_ai.tool.call.id
+ok tool span parent
+telemetry_probe=ok
+spans=5
+semconv_source=semantic-conventions-genai/model/gen-ai/spans.yaml
+attribute_value_encoding=stringified_eta_attrs

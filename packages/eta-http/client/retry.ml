@@ -7,26 +7,39 @@ type mode = Default | Always | Never
 type decision =
   | Stop
   | Retry_after of Eta.Duration.t
-  | Retry_with_new_connection of Eta.Duration.t
 
 type t = {
   mode : mode;
   max_attempts : int;
   schedule : Eta.Schedule.t;
   respect_retry_after : bool;
+  retry_status : int -> bool;
 }
+
+let default_retry_status = function
+  | 408 | 429 | 502 | 503 | 504 -> true
+  | _ -> false
 
 let make ?(mode = Default) ?(max_attempts = 3)
     ?(schedule =
       Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 100)
       |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
       |> Eta.Schedule.jittered ~min:0.0 ~max:1.0)
-    ?(respect_retry_after = true) () =
-  { mode; max_attempts = max 1 max_attempts; schedule; respect_retry_after }
+    ?(respect_retry_after = true) ?(retry_status = default_retry_status) () =
+  {
+    mode;
+    max_attempts = max 1 max_attempts;
+    schedule;
+    respect_retry_after;
+    retry_status;
+  }
 
 let default = make ()
 let never = make ~mode:Never ~max_attempts:1 ()
-let always ?max_attempts ?schedule () = make ?max_attempts ?schedule ~mode:Always ()
+let always ?max_attempts ?schedule ?retry_status () =
+  make ?max_attempts ?schedule ?retry_status ~mode:Always ()
+
+let default_now_s () = Unix.gettimeofday ()
 
 let month_number = function
   | "Jan" -> Some 1
@@ -85,68 +98,68 @@ let request_allowed t request =
 let schedule_delay t ~attempt =
   Eta.Schedule.next_delay t.schedule ~step:(attempt - 1)
 
-let retry_after_header headers =
+let retry_after_header ~now_s headers =
   match Header.get "retry-after" headers with
   | None -> None
-  | Some value -> retry_after value
+  | Some value -> retry_after ~now_s value
 
-let delay_for_error t ~attempt error =
+let delay_for_error t ~now_s ~attempt error =
   if attempt >= t.max_attempts then None
   else
     match t.respect_retry_after, error.Error.kind with
     | true, HTTP_status { headers; _ } -> (
-        match retry_after_header headers with
+        match retry_after_header ~now_s headers with
         | Some delay -> Some delay
         | None -> schedule_delay t ~attempt)
     | _ -> schedule_delay t ~attempt
 
-let retryable_status = function
-  | 408 | 429 | 502 | 503 | 504 -> true
-  | _ -> false
-
-let delay_for_response t ~attempt response =
+let delay_for_response t ~now_s ~attempt response =
   if attempt >= t.max_attempts then None
-  else if retryable_status response.Response.status then
-    match t.respect_retry_after, retry_after_header response.headers with
+  else if t.retry_status response.Response.status then
+    match t.respect_retry_after, retry_after_header ~now_s response.headers with
     | true, Some delay -> Some delay
     | _ -> schedule_delay t ~attempt
   else None
 
-let classify_error t ~request ~attempt error =
+let classify_error ?now_s t ~request ~attempt error =
+  let now_s = Option.value now_s ~default:(default_now_s ()) in
   if not (request_allowed t request) then Stop
   else
     match Error.retryability error with
     | Not_retryable -> Stop
     | Retryable | Retryable_if_body_replayable -> (
-        match delay_for_error t ~attempt error with
+        match delay_for_error t ~now_s ~attempt error with
         | None -> Stop
-        | Some delay -> (
-            match error.kind with
-            | Connection_closed _ -> Retry_with_new_connection delay
-            | _ -> Retry_after delay))
+        | Some delay -> Retry_after delay)
 
-let classify_response t ~request ~attempt response =
+let classify_response ?now_s t ~request ~attempt response =
+  let now_s = Option.value now_s ~default:(default_now_s ()) in
   if not (request_allowed t request) then Stop
   else
-    match delay_for_response t ~attempt response with
+    match delay_for_response t ~now_s ~attempt response with
     | None -> Stop
     | Some delay -> Retry_after delay
 
 let decision_delay = function
   | Stop -> None
-  | Retry_after delay | Retry_with_new_connection delay -> Some delay
+  | Retry_after delay -> Some delay
 
-let run ?(policy = default) request_once request =
+let run ?(policy = default) ?(now_s = default_now_s) request_once request =
   let rec loop attempt =
     Eta.Effect.catch
       (fun error ->
-        match classify_error policy ~request ~attempt error |> decision_delay with
+        match
+          classify_error policy ~now_s:(now_s ()) ~request ~attempt error
+          |> decision_delay
+        with
         | None -> Eta.Effect.fail error
         | Some delay -> Eta.Effect.delay delay (loop (attempt + 1)))
       (request_once request
       |> Eta.Effect.bind (fun response ->
              match
-               classify_response policy ~request ~attempt response |> decision_delay
+               classify_response policy ~now_s:(now_s ()) ~request ~attempt
+                 response
+               |> decision_delay
              with
              | None -> Eta.Effect.pure response
              | Some delay ->

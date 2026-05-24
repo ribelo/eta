@@ -12,35 +12,15 @@ let issue_testable =
 
 let issues_testable = Alcotest.list issue_testable
 
-let rec run_effect : type err a. (a, err) Eta.Effect.t -> (a, err) result =
- fun eff ->
-  match Eta.Effect.Private.view eff with
-  | Eta.Effect.Private.Pure value -> Ok value
-  | Eta.Effect.Private.Fail error -> Error error
-  | Eta.Effect.Private.Sync f -> Ok (f ())
-  | Eta.Effect.Private.Map (inner, f) -> Result.map f (run_effect inner)
-  | Eta.Effect.Private.Bind (inner, f) -> (
-      match run_effect inner with
-      | Ok value -> run_effect (f value)
-      | Error error -> Error error)
-  | Eta.Effect.Private.Catch (inner, f) -> (
-      match run_effect inner with
-      | Ok value -> Ok value
-      | Error error -> run_effect (f error))
-  | Eta.Effect.Private.Tap_error (inner, f) -> (
-      match run_effect inner with
-      | Ok value -> Ok value
-      | Error error ->
-          f error;
-          Error error)
-  | Eta.Effect.Private.Named (_, _, inner)
-  | Eta.Effect.Private.Annotate (_, _, inner)
-  | Eta.Effect.Private.Link_span (_, inner)
-  | Eta.Effect.Private.With_external_parent (_, inner)
-  | Eta.Effect.Private.With_context (_, inner) ->
-      run_effect inner
-  | Eta.Effect.Private.Current_context -> Ok None
-  | _ -> Alcotest.fail "eta-schema-test only supports the pure schema effect subset"
+let run_effect eff =
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  match Eta.Runtime.run rt eff with
+  | Eta.Exit.Ok value -> Ok value
+  | Eta.Exit.Error (Eta.Cause.Fail error) -> Error error
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected schema effect failure: %a"
+        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<schema-error>"))
+        cause
 
 let fail_issues name kind issues =
   Alcotest.failf "%s: %s: %s" name kind (Eta_schema.render_issues issues)

@@ -6,6 +6,7 @@ description:
 depends: [
   "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
+  "eta-redacted" {= version}
   "eio" {>= "1.0"}
   "portable"
   "eio_main" {>= "1.0"}

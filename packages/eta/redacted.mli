@@ -1,4 +1,4 @@
-type 'a t
+type 'a t = 'a Eta_redacted.t
 
 val make : ?label:string -> 'a -> 'a t
 val value : 'a t -> 'a

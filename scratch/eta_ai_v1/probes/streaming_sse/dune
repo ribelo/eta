@@ -1,0 +1,3 @@
+(executable
+ (name sse_probe)
+ (libraries eta eta-http eta-stream yojson eio_main unix))

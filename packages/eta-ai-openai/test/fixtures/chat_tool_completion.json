@@ -1,0 +1,31 @@
+{
+  "id": "chatcmpl_tool_fixture",
+  "object": "chat.completion",
+  "created": 1779580000,
+  "model": "gpt-4o-mini-2024-07-18",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_weather",
+            "type": "function",
+            "function": {
+              "name": "weather",
+              "arguments": "{\"location\":\"Warsaw\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 6,
+    "total_tokens": 18
+  }
+}

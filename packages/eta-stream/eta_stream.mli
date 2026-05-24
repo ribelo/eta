@@ -133,6 +133,9 @@ module Mailbox : sig
   val dropped : 'a t -> int
   (** Number of values dropped by {!offer}. *)
 
+  val length : 'a t -> int
+  (** Number of values currently queued. *)
+
   val to_stream : 'a t -> ('a, 'err) Stream.t
   (** Consume values from the mailbox as a stream. *)
 

@@ -1,4 +1,11 @@
 (library
  (name eta)
  (public_name eta)
- (libraries eio eio.unix portable parallel parallel.scheduler threads))
+ (private_modules
+  blocking_runtime
+  effect_ast
+  effect_view
+  island_runtime
+  runtime_observability
+  runtime_supervisor)
+ (libraries eta-redacted eio eio.unix portable parallel parallel.scheduler threads))

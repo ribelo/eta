@@ -2,12 +2,13 @@
 opam-version: "2.0"
 synopsis: "OTLP/JSON exporter for Eta's tracer capability"
 description:
-  "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP/1.1 protocol. No protobuf, no TLS stack, no ambient-context: just Eio TCP, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses."
+  "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP. No protobuf, no ambient-context: just Eta streams, eta-http transport, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses."
 depends: [
   "ocaml" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-stream" {= version}
+  "eta-http" {= version}
   "eio" {>= "1.0"}
   "eio_main" {>= "1.0"}
   "yojson" {>= "2.0"}

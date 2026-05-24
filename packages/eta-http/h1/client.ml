@@ -50,6 +50,7 @@ type pool_error =
 type pool = {
   origin : string;
   target : Connect.target;
+  max_response_body_bytes : int;
   pool : (conn, pool_error) Eta.Pool.t;
 }
 
@@ -144,8 +145,9 @@ let stream_headers (request : request) length =
   in
   match (length, has_content_length, has_transfer_encoding) with
   | Some length, false, false ->
-      Header.add "Content-Length" (string_of_int length) request.headers
-  | None, false, false -> Header.add "Transfer-Encoding" "chunked" request.headers
+      Header.unsafe_add "Content-Length" (string_of_int length) request.headers
+  | None, false, false ->
+      Header.unsafe_add "Transfer-Encoding" "chunked" request.headers
   | _ -> request.headers
 
 let write_headers_effect request flow ~headers =
@@ -192,12 +194,15 @@ let connection_close_requested headers =
       String.equal "close" (String.lowercase_ascii (String.trim value))
 
 let max_header_bytes = 32 * 1024
-let max_response_body_bytes = 1_048_576
+let default_max_response_body_bytes = Body.default_max_bytes
 let max_response_headers = 256
 let response_chunk_size = 64 * 1024
 
 let parse_error request error =
   protocol_violation request "parse" (Parse.parse_error_to_string error)
+
+let body_too_large request ~limit ~length =
+  make_error request (Body_too_large { limit; length })
 
 let read_more flow read_buffer buffer used =
   if used >= Bytes.length buffer then
@@ -240,7 +245,8 @@ let read_response_head flow request =
           {
             status = Parse.raw_status raw;
             headers =
-              Header.of_list (Parse.raw_headers_to_list buffer raw_headers raw);
+              Header.unsafe_of_list
+                (Parse.raw_headers_to_list buffer raw_headers raw);
             content_length = Parse.raw_content_length raw;
             initial;
           }
@@ -347,14 +353,25 @@ let fixed_body ~release source length =
   in
   Body.of_reader ~release read_next
 
-let close_delimited_body ~release source =
+let close_delimited_body ~max_response_body_bytes ~release source =
+  let total = ref 0 in
   let read_next () =
     source_read_some source response_chunk_size
-    |> Effect.map (function None -> Body.End | Some chunk -> Body.Chunk chunk)
+    |> Effect.bind (function
+         | None -> Effect.pure Body.End
+         | Some chunk ->
+             let length = !total + Bytes.length chunk in
+             if length < !total || length > max_response_body_bytes then
+               Effect.fail
+                 (body_too_large source.request ~limit:max_response_body_bytes
+                    ~length)
+             else (
+               total := length;
+               Effect.pure (Body.Chunk chunk)))
   in
   Body.of_reader ~release read_next
 
-let chunked_body ~release request source =
+let chunked_body ~max_response_body_bytes ~release request source =
   let context =
     { Chunked.protocol = Error.H1; method_ = request.method_; uri = uri request }
   in
@@ -364,18 +381,22 @@ let chunked_body ~release request source =
       read_line = source_read_line source;
     }
   in
-  let decoder = Chunked.create ~context ~reader () in
+  let decoder =
+    Chunked.create ~max_decoded_bytes:max_response_body_bytes ~context ~reader ()
+  in
   let read_next () =
     Chunked.read decoder
     |> Effect.map (function None -> Body.End | Some chunk -> Body.Chunk chunk)
   in
   (Body.of_reader ~release read_next, fun () -> Effect.pure (Chunked.trailers decoder))
 
-let response_body ~release flow request (head : response_head) =
+let response_body ~max_response_body_bytes ~release flow request
+    (head : response_head) =
   let source = make_body_source flow request head.initial in
   if not (response_has_body request head.status) then
     (Body.of_bytes ~release [], fun () -> Effect.pure Header.empty)
-  else if is_chunked head.headers then chunked_body ~release request source
+  else if is_chunked head.headers then
+    chunked_body ~max_response_body_bytes ~release request source
   else
     match head.content_length with
     | Some length ->
@@ -383,16 +404,19 @@ let response_body ~release flow request (head : response_head) =
           let body =
             Body.of_reader ~release (fun () ->
                 Effect.fail
-                  (parse_error request
-                     (Parse.Body_too_large
-                        { limit = max_response_body_bytes; length })))
+                  (body_too_large request ~limit:max_response_body_bytes ~length))
           in
           (body, fun () -> Effect.pure Header.empty)
         else (fixed_body ~release source length, fun () -> Effect.pure Header.empty)
     | None ->
-        (close_delimited_body ~release source, fun () -> Effect.pure Header.empty)
+        ( close_delimited_body ~max_response_body_bytes ~release source,
+          fun () -> Effect.pure Header.empty )
 
-let request_on_flow ?release ~flow request =
+let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
+    ?release ~flow request =
+  if max_response_body_bytes < 0 then
+    invalid_arg
+      "Eta_http.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
   let release = Option.value release ~default:(fun () -> close_flow request flow) in
   write_request flow request
   |> Effect.bind (function
@@ -403,7 +427,9 @@ let request_on_flow ?release ~flow request =
            Effect.catch (fun _ -> Effect.unit) (close_flow request flow)
            |> Effect.bind (fun () -> Effect.fail error)
        | Ok head ->
-           let body, trailers = response_body ~release flow request head in
+           let body, trailers =
+             response_body ~max_response_body_bytes ~release flow request head
+           in
            Effect.pure
              {
                status = head.status;
@@ -483,8 +509,10 @@ let open_conn ~sw ~net ~authenticator (target : Connect.target) =
              |> Effect.map (fun tls -> wrap (tls :> flow)))
   |> map_http_error
 
-let make_pool ?(max_size = 8) ?max_idle ?health_check ~sw ~net ~authenticator
-    url =
+let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
+    ?(max_size = 8) ?max_idle ?health_check ~sw ~net ~authenticator url =
+  if max_response_body_bytes < 0 then
+    invalid_arg "Eta_http.H1.Client.make_pool: max_response_body_bytes must be >= 0";
   let target = Connect.target_of_url url in
   let origin = origin_key url in
   let health_check =
@@ -508,7 +536,7 @@ let make_pool ?(max_size = 8) ?max_idle ?health_check ~sw ~net ~authenticator
   |> Effect.catch (fun err ->
          Effect.fail
            (pool_context_error ~method_:"*" ~uri:(Url.to_string url) err))
-  |> Effect.map (fun pool -> { origin; target; pool })
+  |> Effect.map (fun pool -> { origin; target; max_response_body_bytes; pool })
 
 let request_owner pool request response_ch release_ch cancel_ch =
   let ack = ref None in
@@ -517,7 +545,8 @@ let request_owner pool request response_ch release_ch cancel_ch =
     Eta.Pool.with_resource pool.pool (fun conn ->
         let request_attempt =
           request_on_flow ~release:(fun () -> release_body release_ch)
-            ~flow:conn.flow request
+            ~max_response_body_bytes:pool.max_response_body_bytes ~flow:conn.flow
+            request
           |> Effect.map (fun response -> `Response response)
           |> Effect.catch (fun error -> Effect.pure (`Request_error error))
         in
@@ -602,13 +631,18 @@ let shutdown_pool pool =
            (pool_context_error ~method_:"*" ~uri:(Url.to_string pool.target.url)
               err))
 
-let request ~sw ~net ~authenticator request =
+let request ?(max_response_body_bytes = default_max_response_body_bytes) ~sw ~net
+    ~authenticator request =
+  if max_response_body_bytes < 0 then
+    invalid_arg "Eta_http.H1.Client.request: max_response_body_bytes must be >= 0";
   let target = Connect.target_of_url request.url in
   Connect.connect_tcp ~sw ~net ~method_:request.method_ target
   |> Effect.bind (fun tcp ->
          match target.scheme with
-         | Http -> request_on_flow ~flow:tcp request
+         | Http -> request_on_flow ~max_response_body_bytes ~flow:tcp request
          | Https ->
              Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ~authenticator
                ~method_:request.method_ target tcp
-             |> Effect.bind (fun tls -> request_on_flow ~flow:(tls :> flow) request))
+             |> Effect.bind (fun tls ->
+                    request_on_flow ~max_response_body_bytes ~flow:(tls :> flow)
+                      request))

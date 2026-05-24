@@ -41,6 +41,8 @@ let of_bytes ?(release = fun () -> Effect.unit) chunks =
   in
   of_reader ~release read_next
 
+let default_max_bytes = 1_048_576
+
 let read t =
   if t.released then Effect.pure None
   else
@@ -52,7 +54,12 @@ let read t =
          | Chunk chunk -> Effect.pure (Some chunk)
          | Last chunk -> release_once t |> Effect.map (fun () -> Some chunk))
 
-let read_all t =
+let body_too_large ~limit ~length =
+  Error.make ~method_:"*" ~uri:"*" (Body_too_large { limit; length })
+
+let read_all ?(max_bytes = default_max_bytes) t =
+  if max_bytes < 0 then
+    invalid_arg "Eta_http.Body.Stream.read_all: max_bytes must be >= 0";
   let rec loop acc total =
     read t
     |> Effect.bind (function
@@ -67,7 +74,11 @@ let read_all t =
                  0 (List.rev acc)
              in
              Effect.pure out
-         | Some chunk -> loop (chunk :: acc) (total + Bytes.length chunk))
+         | Some chunk ->
+             let length = total + Bytes.length chunk in
+             if length < total || length > max_bytes then
+               Effect.fail (body_too_large ~limit:max_bytes ~length)
+             else loop (chunk :: acc) length)
   in
   Effect.scoped
     (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () -> release_once t)

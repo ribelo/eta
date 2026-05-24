@@ -25,19 +25,26 @@ type response = {
 
 type pool
 
+val default_max_response_body_bytes : int
+(** Default maximum decoded response-body bytes for fixed-length, chunked, and
+    close-delimited HTTP/1.1 responses. *)
+
 val request_on_flow :
+  ?max_response_body_bytes:int ->
   ?release:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
   flow:[> Eio.Flow.two_way_ty | Eio.Resource.close_ty] Eio.Resource.t ->
   request ->
   (response, Eta_http_error.Error.t) Eta.Effect.t
-(** Write one HTTP/1.1 request to [flow] and read a fixed-length response.
+(** Write one HTTP/1.1 request to [flow] and read the response.
 
-    This is the S1 request loop. Chunked transfer decoding lands in S3. *)
+    [max_response_body_bytes] caps fixed-length, chunked, and
+    close-delimited response bodies. *)
 
 val origin_key : Eta_http_core.Url.t -> string
 (** Stable pool key for the URL's scheme, host, and effective port. *)
 
 val make_pool :
+  ?max_response_body_bytes:int ->
   ?max_size:int ->
   ?max_idle:int ->
   ?health_check:
@@ -62,6 +69,7 @@ val pool_origin : pool -> string
 val shutdown_pool : pool -> (unit, Eta_http_error.Error.t) Eta.Effect.t
 
 val request :
+  ?max_response_body_bytes:int ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   authenticator:X509.Authenticator.t ->

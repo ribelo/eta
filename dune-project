@@ -5,6 +5,16 @@
 (name eta)
 
 (package
+ (name eta-redacted)
+ (synopsis "Redacted value wrapper for Eta packages")
+ (description
+  "Provides a tiny abstract wrapper for secrets and other sensitive values, with labelled redacted formatting and explicit value extraction at IO boundaries.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (alcotest :with-test)))
+
+(package
  (name eta)
  (synopsis "Typed functional effects for OCaml, backed by Eio")
  (description
@@ -12,6 +22,7 @@
  (depends
   (ocaml (= 5.2.0+ox))
   (dune (>= 3.0))
+  (eta-redacted (= :version))
   (eio (>= 1.0))
   portable
   (eio_main (>= 1.0))
@@ -58,15 +69,108 @@
  (name eta-otel)
  (synopsis "OTLP/JSON exporter for Eta's tracer capability")
  (description
-  "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP/1.1 protocol. No protobuf, no TLS stack, no ambient-context: just Eio TCP, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses.")
+  "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP. No protobuf, no ambient-context: just Eta streams, eta-http transport, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses.")
  (depends
   (ocaml (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-stream (= :version))
+  (eta-http (= :version))
   (eio (>= 1.0))
   (eio_main (>= 1.0))
   (yojson (>= 2.0))
+  (alcotest :with-test)))
+
+(package
+ (name eta-ai)
+ (synopsis "Core AI vocabulary for Eta provider packages")
+ (description
+  "Defines Eta-shaped AI message, response, tool, usage, and error vocabulary. Provider packages own provider-specific HTTP encoding and decoding.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-redacted (= :version))
+  (eta-http (= :version))
+  (yojson (>= 2.0))
+  (eio_main :with-test)
+  (alcotest :with-test)))
+
+(package
+ (name eta-ai-openai-codec)
+ (synopsis "Shared OpenAI-family provider codec helpers for eta-ai")
+ (description
+  "Provides shared JSON codec helpers for OpenAI, OpenAI-compatible, and OpenRouter eta-ai provider packages.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta-ai (= :version))))
+
+(package
+ (name eta-ai-openai)
+ (synopsis "OpenAI provider package for eta-ai")
+ (description
+  "Constructs eta-ai provider values and eta-http request runners for OpenAI Responses API calls, explicit legacy Chat Completions compatibility, tools, structured outputs, and streaming.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-ai (= :version))
+  (eta-ai-openai-codec (= :version))
+  (eta-redacted (= :version))
+  (eta-http (= :version))
+  (yojson (>= 2.0))
+  (eio_main :with-test)
+  (alcotest :with-test)))
+
+(package
+ (name eta-ai-anthropic)
+ (synopsis "Anthropic provider package for eta-ai")
+ (description
+  "Constructs eta-ai provider values and eta-http request runners for Anthropic Messages API calls, tool use, streaming, and prompt caching controls.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-ai (= :version))
+  (eta-redacted (= :version))
+  (eta-http (= :version))
+  (yojson (>= 2.0))
+  (eio_main :with-test)
+  (alcotest :with-test)))
+
+(package
+ (name eta-ai-openai-compat)
+ (synopsis "OpenAI-compatible provider package for eta-ai")
+ (description
+  "Constructs configurable eta-ai provider values and eta-http request runners for OpenAI-compatible chat-completions APIs.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-ai (= :version))
+  (eta-ai-openai-codec (= :version))
+  (eta-redacted (= :version))
+  (eta-http (= :version))
+  (yojson (>= 2.0))
+  (eio_main :with-test)
+  (alcotest :with-test)))
+
+(package
+ (name eta-ai-openrouter)
+ (synopsis "OpenRouter provider package for eta-ai")
+ (description
+  "Constructs eta-ai provider values and eta-http request runners for OpenRouter Responses API calls, routing controls, fallback chains, attribution headers, and provider errors.")
+ (depends
+  (ocaml (= 5.2.0+ox))
+  (dune (>= 3.0))
+  (eta (= :version))
+  (eta-ai (= :version))
+  (eta-ai-openai-codec (= :version))
+  (eta-redacted (= :version))
+  (eta-http (= :version))
+  (yojson (>= 2.0))
+  (eio_main :with-test)
   (alcotest :with-test)))
 
 (package

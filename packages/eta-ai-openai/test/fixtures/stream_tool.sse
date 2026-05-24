@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl_stream_fixture","model":"gpt-4o-mini-2024-07-18","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"The weather is "},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"weather","arguments":"{\"location\""}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"Warsaw\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

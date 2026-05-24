@@ -1,11 +1,10 @@
-(* eta-otel: OTLP/JSON over HTTP/1.1 exporter for Eta's tracer, logger,
-   and meter capabilities.
+(* eta-otel: OTLP/JSON exporter for Eta's tracer, logger, and meter
+   capabilities.
 
-   Hand-rolled HTTP/1.1 over Eio TCP keeps the dependency closure to
-   {eta, eta-stream, eio, yojson}. The exporter accumulates spans, log
-   records, and metric points on bounded Eta mailboxes; Eta stream pipelines
-   batch and merge each signal and one Eta runtime daemon exports them. Raw Eio stays at the
-   HTTP and clock leaves. *)
+   The exporter accumulates spans, log records, and metric points on bounded
+   Eta mailboxes. Eta stream pipelines batch and merge each signal; one Eta
+   runtime daemon POSTs batches through eta-http with observation suppressed so
+   exporter transport does not recursively emit telemetry. *)
 
 (* ------------------------------------------------------------------ *)
 (* Hex helpers                                                        *)
@@ -29,28 +28,9 @@ let random_bytes rng n =
   done;
   b
 
-(* ------------------------------------------------------------------ *)
-(* OTLP/JSON helpers (yojson-based)                                   *)
-(* ------------------------------------------------------------------ *)
+module Otlp_json = Eta_otel_otlp_json
 
-type yj = Yojson.Safe.t
-
-let attr_value_string s : yj = `Assoc [ ("stringValue", `String s) ]
-
-let attrs_json (attrs : (string * string) list) : yj =
-  `List
-    (List.map
-       (fun (k, v) ->
-         `Assoc [ ("key", `String k); ("value", attr_value_string v) ])
-       attrs)
-
-let str_int n = `String (string_of_int n)
-
-(* ------------------------------------------------------------------ *)
-(* Span record (one collected span, ready to encode)                  *)
-(* ------------------------------------------------------------------ *)
-
-type span = {
+type span = Otlp_json.span = {
   trace_id : string; (* 32 hex chars *)
   span_id : string; (* 16 hex chars *)
   parent_span_id : string option;
@@ -83,336 +63,48 @@ type signal_batch =
   | Log_batch of Eta.Capabilities.log_record list
   | Metric_batch of Eta.Meter.point list
 
-let event_json (name, ts_ns, attrs) : yj =
-  `Assoc
-    [
-      ("name", `String name);
-      ("timeUnixNano", str_int ts_ns);
-      ("attributes", attrs_json attrs);
-    ]
+type signal_kind = Traces | Logs | Metrics
 
-let link_json (l : Eta.Capabilities.span_link) : yj =
-  let base =
-    [
-      ("traceId", `String l.link_trace_id);
-      ("spanId", `String l.link_span_id);
-    ]
-  in
-  let with_attrs =
-    if l.link_attrs = [] then base
-    else base @ [ ("attributes", attrs_json l.link_attrs) ]
-  in
-  `Assoc with_attrs
-
-let status_json code message : yj option =
-  if code = 0 then None
-  else if message = "" then Some (`Assoc [ ("code", `Int code) ])
-  else
-    Some (`Assoc [ ("code", `Int code); ("message", `String message) ])
-
-let span_kind_int = function
-  | Eta.Capabilities.Internal -> 1
-  | Server -> 2
-  | Client -> 3
-  | Producer -> 4
-  | Consumer -> 5
-
-let span_json (s : span) : yj =
-  let parent =
-    match s.parent_span_id with
-    | Some p -> [ ("parentSpanId", `String p) ]
-    | None -> []
-  in
-  let events =
-    if s.events = [] then []
-    else [ ("events", `List (List.map event_json s.events)) ]
-  in
-  let links =
-    if s.links = [] then []
-    else [ ("links", `List (List.map link_json s.links)) ]
-  in
-  let trace_state =
-    match s.trace_state with
-    | [] -> []
-    | xs ->
-        [
-          ( "traceState",
-            `String
-              (String.concat ","
-                 (List.map (fun (k, v) -> k ^ "=" ^ v) xs)) );
-        ]
-  in
-  let status =
-    match status_json s.status_code s.status_message with
-    | None -> []
-    | Some j -> [ ("status", j) ]
-  in
-  `Assoc
-    ([
-       ("traceId", `String s.trace_id);
-       ("spanId", `String s.span_id);
-     ]
-    @ parent
-    @ [
-        ("name", `String s.name);
-        ("kind", `Int (span_kind_int s.kind));
-        ("startTimeUnixNano", str_int s.start_unix_ns);
-        ("endTimeUnixNano", str_int s.end_unix_ns);
-        ("attributes", attrs_json s.attrs);
-      ]
-    @ trace_state @ events @ links @ status)
-
-let resource_json resource_attrs : yj =
-  `Assoc [ ("attributes", attrs_json resource_attrs) ]
-
-let scope_json scope_name : yj = `Assoc [ ("name", `String scope_name) ]
-
-let encode_traces_request ~resource_attrs ~scope_name spans =
-  let payload : yj =
-    `Assoc
-      [
-        ( "resourceSpans",
-          `List
-            [
-              `Assoc
-                [
-                  ("resource", resource_json resource_attrs);
-                  ( "scopeSpans",
-                    `List
-                      [
-                        `Assoc
-                          [
-                            ("scope", scope_json scope_name);
-                            ("spans", `List (List.map span_json spans));
-                          ];
-                      ] );
-                ];
-            ] );
-      ]
-  in
-  Yojson.Safe.to_string payload
-
+let encode_traces_request = Otlp_json.encode_traces_request
+let encode_logs_request = Otlp_json.encode_logs_request
+let encode_metrics_request = Otlp_json.encode_metrics_request
+module Metric_key = Eta_otel_metric_aggregation.Metric_key
+let aggregate_points = Eta_otel_metric_aggregation.aggregate_points
 (* ------------------------------------------------------------------ *)
-(* OTLP/JSON encoders for logs                                        *)
+(* OTLP/HTTP transport                                                *)
 (* ------------------------------------------------------------------ *)
 
-let severity_number = function
-  | Eta.Capabilities.Trace -> 1
-  | Debug -> 5
-  | Info -> 9
-  | Warn -> 13
-  | Error -> 17
-  | Fatal -> 21
+let otlp_retry_status = function
+  | 429 | 502 | 503 | 504 -> true
+  | _ -> false
 
-let severity_text = function
-  | Eta.Capabilities.Trace -> "TRACE"
-  | Debug -> "DEBUG"
-  | Info -> "INFO"
-  | Warn -> "WARN"
-  | Error -> "ERROR"
-  | Fatal -> "FATAL"
+let otlp_retry_policy =
+  Eta_http.Retry_policy.always ~max_attempts:3
+    ~retry_status:otlp_retry_status ()
 
-let log_json (r : Eta.Capabilities.log_record) : yj =
-  let ts_ns = r.ts_ms * 1_000_000 in
-  let trace =
-    if r.trace_id = "" then [] else [ ("traceId", `String r.trace_id) ]
-  in
-  let span =
-    if r.span_id = "" then [] else [ ("spanId", `String r.span_id) ]
-  in
-  `Assoc
-    ([
-       ("timeUnixNano", str_int ts_ns);
-       ("observedTimeUnixNano", str_int ts_ns);
-       ("severityNumber", `Int (severity_number r.level));
-       ("severityText", `String (severity_text r.level));
-       ("body", `Assoc [ ("stringValue", `String r.body) ]);
-       ("attributes", attrs_json r.attrs);
-     ]
-    @ trace @ span)
+let otlp_headers =
+  Eta_http.Core.Header.unsafe_of_list
+    [ ("content-type", "application/json"); ("accept", "application/json") ]
 
-let encode_logs_request ~resource_attrs ~scope_name records =
-  let payload : yj =
-    `Assoc
-      [
-        ( "resourceLogs",
-          `List
-            [
-              `Assoc
-                [
-                  ("resource", resource_json resource_attrs);
-                  ( "scopeLogs",
-                    `List
-                      [
-                        `Assoc
-                          [
-                            ("scope", scope_json scope_name);
-                            ("logRecords", `List (List.map log_json records));
-                          ];
-                      ] );
-                ];
-            ] );
-      ]
-  in
-  Yojson.Safe.to_string payload
+let otlp_url config path =
+  Printf.sprintf "http://%s:%d%s" config.host config.port path
 
-(* ------------------------------------------------------------------ *)
-(* OTLP/JSON encoders for metrics                                     *)
-(* ------------------------------------------------------------------ *)
+let otlp_request config ~path ~body =
+  Eta_http.Request.make ~headers:otlp_headers
+    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
+    "POST" (otlp_url config path)
 
-module Metric_key = struct
-  type t = {
-    name : string;
-    description : string;
-    unit_ : string;
-    kind : Eta.Capabilities.metric_kind;
-    attrs : (string * string) list;
-  }
-
-  let normalize_attrs = function
-    | [] | [ _ ] as attrs -> attrs
-    | attrs -> List.sort compare attrs
-
-  let normalize (p : Eta.Meter.point) =
-    {
-      name = p.name;
-      description = p.description;
-      unit_ = p.unit_;
-      kind = p.kind;
-      attrs = normalize_attrs p.attrs;
-    }
-end
-
-let aggregate_points (points : Eta.Meter.point list) =
-  let table = Hashtbl.create 16 in
-  List.iter
-    (fun (p : Eta.Meter.point) ->
-      let key = Metric_key.normalize p in
-      let ts_ns = p.ts_ms * 1_000_000 in
-      match Hashtbl.find_opt table key with
-      | None -> Hashtbl.add table key (p.value, ts_ns, ts_ns)
-      | Some (acc, start_ts, _end_ts) ->
-          let new_v =
-            match p.kind with
-            | Eta.Capabilities.Gauge -> p.value
-            | Counter_cumulative | Counter_monotonic -> (
-                match (acc, p.value) with
-                | Eta.Capabilities.Int a, Eta.Capabilities.Int b ->
-                    Eta.Capabilities.Int (a + b)
-                | Float a, Float b -> Float (a +. b)
-                | Int a, Float b -> Float (float_of_int a +. b)
-                | Float a, Int b -> Float (a +. float_of_int b))
-          in
-          Hashtbl.replace table key (new_v, start_ts, ts_ns))
-    points;
-  Hashtbl.fold (fun k v acc -> (k, v) :: acc) table []
-
-let value_field (v : Eta.Capabilities.metric_value) =
-  match v with
-  | Int n -> ("asInt", `String (string_of_int n))
-  | Float f -> ("asDouble", `Float f)
-
-let data_point_json (key : Metric_key.t) (value, start_ts, end_ts) : yj =
-  `Assoc
-    [
-      ("attributes", attrs_json key.attrs);
-      ("startTimeUnixNano", str_int start_ts);
-      ("timeUnixNano", str_int end_ts);
-      value_field value;
-    ]
-
-let metric_json (key : Metric_key.t) point : yj =
-  let body : yj =
-    match key.kind with
-    | Gauge -> `Assoc [ ("dataPoints", `List [ data_point_json key point ]) ]
-    | Counter_cumulative ->
-        `Assoc
-          [
-            ("dataPoints", `List [ data_point_json key point ]);
-            ("aggregationTemporality", `Int 2);
-            ("isMonotonic", `Bool false);
-          ]
-    | Counter_monotonic ->
-        `Assoc
-          [
-            ("dataPoints", `List [ data_point_json key point ]);
-            ("aggregationTemporality", `Int 2);
-            ("isMonotonic", `Bool true);
-          ]
-  in
-  let kind_field =
-    match key.kind with
-    | Gauge -> "gauge"
-    | Counter_cumulative | Counter_monotonic -> "sum"
-  in
-  `Assoc
-    [
-      ("name", `String key.name);
-      ("description", `String key.description);
-      ("unit", `String key.unit_);
-      (kind_field, body);
-    ]
-
-let encode_metrics_request ~resource_attrs ~scope_name points =
-  let aggregated = aggregate_points points in
-  let payload : yj =
-    `Assoc
-      [
-        ( "resourceMetrics",
-          `List
-            [
-              `Assoc
-                [
-                  ("resource", resource_json resource_attrs);
-                  ( "scopeMetrics",
-                    `List
-                      [
-                        `Assoc
-                          [
-                            ("scope", scope_json scope_name);
-                            ( "metrics",
-                              `List
-                                (List.map
-                                   (fun (k, v) -> metric_json k v)
-                                   aggregated) );
-                          ];
-                      ] );
-                ];
-            ] );
-      ]
-  in
-  Yojson.Safe.to_string payload
-
-(* ------------------------------------------------------------------ *)
-(* HTTP/1.1 POST over Eio TCP                                         *)
-(* ------------------------------------------------------------------ *)
-
-let post_json ~sw ~net ~host ~port ~path body =
-  let body_len = String.length body in
-  let request =
-    Printf.sprintf
-      "POST %s HTTP/1.1\r\nHost: %s:%d\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
-      path host port body_len body
-  in
-  Eio.Net.with_tcp_connect ~host ~service:(string_of_int port) net
-  @@ fun flow ->
-  Eio.Flow.copy_string request flow;
-  (try Eio.Flow.shutdown flow `Send with _ -> ());
-  let buf = Eio.Buf_read.of_flow ~max_size:65536 flow in
-  let _ = sw in
-  match Eio.Buf_read.line buf with
-  | exception End_of_file -> Error "no response"
-  | status_line -> (
-      match String.split_on_char ' ' status_line with
-      | _ :: code :: _ when code = "200" || code = "202" -> Ok ()
-      | _ -> Error status_line)
+let render_http_status status body =
+  let body = String.trim (Bytes.to_string body) in
+  if body = "" then Printf.sprintf "HTTP %d" status
+  else Printf.sprintf "HTTP %d: %s" status body
 
 (* ------------------------------------------------------------------ *)
 (* Exporter state                                                     *)
 (* ------------------------------------------------------------------ *)
 
 type t = {
-  net : [ `Generic ] Eio.Net.ty Eio.Std.r;
+  http_client : Eta_http.Client.t;
   clock : float Eio.Time.clock_ty Eio.Std.r;
   eta_clock : Eta.Capabilities.clock;
   config : (export_config, [ `Config ]) Eta.Resource.t;
@@ -433,6 +125,10 @@ let now_ns t =
   let secs = Eio.Time.now t.clock in
   int_of_float (secs *. 1_000_000_000.0)
 
+let now_ms t =
+  let secs = Eio.Time.now t.clock in
+  int_of_float (secs *. 1_000.0)
+
 (* ------------------------------------------------------------------ *)
 (* Eta exporter programs                                               *)
 (* ------------------------------------------------------------------ *)
@@ -440,6 +136,80 @@ let now_ns t =
 let decrement_in_flight t n =
   Eta.Effect.named "eta_otel.export.decrement_in_flight" (Eta.Effect.sync (fun () ->
       Drain_counter.decr_by t.in_flight n))
+
+let enqueue t mailbox value =
+  Drain_counter.incr t.in_flight;
+  match Mailbox.offer mailbox value with
+  | Mailbox.Enqueued -> ()
+  | Mailbox.Dropped | Mailbox.Closed ->
+      Drain_counter.decr t.in_flight
+
+let signal_name = function
+  | Traces -> "traces"
+  | Logs -> "logs"
+  | Metrics -> "metrics"
+
+let self_metric t ~name ~description ~unit_ ~kind ~attrs ~value =
+  {
+    Eta.Meter.name;
+    description;
+    unit_;
+    kind;
+    attrs;
+    value;
+    ts_ms = now_ms t;
+  }
+
+let self_queue_metrics t =
+  [
+    ("traces", Mailbox.length t.queue, Mailbox.dropped t.queue);
+    ("logs", Mailbox.length t.log_queue, Mailbox.dropped t.log_queue);
+    ("metrics", Mailbox.length t.metric_queue, Mailbox.dropped t.metric_queue);
+  ]
+  |> List.concat_map (fun (queue, length, dropped) ->
+         [
+           self_metric t ~name:"eta_otel.queue.depth"
+             ~description:"Current eta-otel exporter queue depth" ~unit_:"item"
+             ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
+             ~value:(Eta.Capabilities.Int length);
+           self_metric t ~name:"eta_otel.queue.dropped"
+             ~description:"Cumulative eta-otel exporter queue drops" ~unit_:"item"
+             ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
+             ~value:(Eta.Capabilities.Int dropped);
+         ])
+
+let self_export_metrics t signal ~batch_size =
+  let signal = signal_name signal in
+  [
+    self_metric t ~name:"eta_otel.export.batches"
+      ~description:"Eta-otel export batch attempts" ~unit_:"batch"
+      ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
+      ~value:(Eta.Capabilities.Int 1);
+    self_metric t ~name:"eta_otel.export.items"
+      ~description:"Eta-otel export items attempted" ~unit_:"item"
+      ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
+      ~value:(Eta.Capabilities.Int batch_size);
+    self_metric t ~name:"eta_otel.in_flight"
+      ~description:"Current eta-otel in-flight export work" ~unit_:"item"
+      ~kind:Eta.Capabilities.Gauge ~attrs:[]
+      ~value:(Eta.Capabilities.Int (Drain_counter.value t.in_flight));
+  ]
+  @ self_queue_metrics t
+
+let enqueue_self_export_metrics t signal ~batch_size =
+  Eta.Effect.named "eta_otel.self_metrics.enqueue" (Eta.Effect.sync (fun () ->
+      self_export_metrics t signal ~batch_size
+      |> List.iter (enqueue t t.metric_queue)))
+
+module Self_metrics = struct
+  let on_export t signal ~batch_size =
+    match signal with
+    | Traces | Logs -> enqueue_self_export_metrics t signal ~batch_size
+    | Metrics -> Eta.Effect.unit
+
+  let append_to_metrics_batch t batch =
+    batch @ self_export_metrics t Metrics ~batch_size:(List.length batch)
+end
 
 let observe_send t ~path ~body =
   Eta.Effect.named "eta_otel.export.on_send" (Eta.Effect.sync (fun () ->
@@ -454,46 +224,39 @@ let render_export_error = function
   | `Timeout -> "export timeout"
 
 let post_effect t config ~path ~body =
-  Eta.Effect.named "eta_otel.export.post_json" (Eta.Effect.sync (fun () ->
-      try
-        Eio.Switch.run @@ fun sw ->
-        post_json ~sw ~net:t.net ~host:config.host ~port:config.port ~path body
-      with exn -> Error (Printexc.to_string exn)))
-  |> Eta.Effect.bind (function
-       | Ok () -> Eta.Effect.unit
-       | Error msg -> Eta.Effect.fail (`Export_error msg))
+  let request = otlp_request config ~path ~body in
+  Eta_http.Observability.Tracer.request_with_retry ~enabled:false
+    ~policy:otlp_retry_policy t.http_client request
+  |> Eta.Effect.bind (fun response ->
+         Eta_http.Body.Stream.read_all response.Eta_http.Response.body
+         |> Eta.Effect.map (fun body ->
+                (response.Eta_http.Response.status, body)))
+  |> Eta.Effect.catch (fun error ->
+         Eta.Effect.fail (`Export_error (Eta_http.Error.to_string error)))
+  |> Eta.Effect.bind (fun (status, body) ->
+         if status = 200 || status = 202 then Eta.Effect.unit
+         else Eta.Effect.fail (`Export_error (render_http_status status body)))
+  |> Eta.Effect.timeout_as (Eta.Duration.seconds 6) ~on_timeout:`Timeout
+  |> Eta.Effect.named "eta_otel.export.post_json"
 
 let post_or_deadline t config ~path ~body =
-  let post =
-    post_effect t config ~path ~body
-    |> Eta.Effect.map (fun () -> `Posted)
-    |> Eta.Effect.catch (fun (`Export_error msg) ->
-           Eta.Effect.pure (`Post_failed msg))
-  in
-  let deadline =
-    Eta.Effect.pure `Timed_out
-    |> Eta.Effect.delay (Eta.Duration.seconds 5)
-  in
-  Eta.Effect.race [ post; deadline ]
-  |> Eta.Effect.timeout (Eta.Duration.seconds 6)
-  |> Eta.Effect.bind (function
-       | `Posted -> Eta.Effect.unit
-       | `Post_failed msg -> Eta.Effect.fail (`Export_error msg)
-       | `Timed_out -> Eta.Effect.fail `Timeout)
+  post_effect t config ~path ~body
 
 let export_body t config ~path ~body =
   observe_send t ~path ~body
   |> Eta.Effect.bind (fun () ->
          post_or_deadline t config ~path ~body
-         |> Eta.Effect.retry (Eta.Schedule.recurs 2) (fun _ -> true)
          |> Eta.Effect.catch (fun error ->
                 observe_error t (render_export_error error)))
 
-let export_batch t config ~path ~body ~n =
+let export_batch t config ~signal ~path ~body ~n =
   Eta.Effect.scoped
     (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
        ~release:(fun () -> decrement_in_flight t n)
-    |> Eta.Effect.bind (fun () -> export_body t config ~path ~body))
+    |> Eta.Effect.bind (fun () ->
+           export_body t config ~path ~body
+           |> Eta.Effect.bind (fun () ->
+                  Self_metrics.on_export t signal ~batch_size:n)))
 
 let signal_batches t =
   let traces =
@@ -510,40 +273,41 @@ let signal_batches t =
   in
   Stream.merge traces (Stream.merge logs metrics)
 
-let encode_signal config = function
+let encode_signal t config = function
   | Trace_batch batch ->
-      ( "traces",
+      ( Traces,
         config.traces_path,
         List.length batch,
         encode_traces_request ~resource_attrs:config.resource_attrs
           ~scope_name:config.scope_name batch )
   | Log_batch batch ->
-      ( "logs",
+      ( Logs,
         config.logs_path,
         List.length batch,
         encode_logs_request ~resource_attrs:config.resource_attrs
           ~scope_name:config.scope_name batch )
   | Metric_batch batch ->
-      ( "metrics",
+      ( Metrics,
         config.metrics_path,
         List.length batch,
         encode_metrics_request ~resource_attrs:config.resource_attrs
-          ~scope_name:config.scope_name batch )
+          ~scope_name:config.scope_name
+          (Self_metrics.append_to_metrics_batch t batch) )
+
+let batch_signal_name = function
+  | Trace_batch _ -> "traces"
+  | Log_batch _ -> "logs"
+  | Metric_batch _ -> "metrics"
 
 let export_signal t config signal =
-  let name =
-    match signal with
-    | Trace_batch _ -> "traces"
-    | Log_batch _ -> "logs"
-    | Metric_batch _ -> "metrics"
-  in
+  let name = batch_signal_name signal in
   Eta.Effect.named ("eta_otel." ^ name ^ ".encode") (Eta.Effect.sync (fun () ->
-      encode_signal config signal))
-  |> Eta.Effect.bind (fun (name, path, n, body) ->
-         export_batch t config ~path ~body ~n
+      encode_signal t config signal))
+  |> Eta.Effect.bind (fun (signal, path, n, body) ->
+         export_batch t config ~signal ~path ~body ~n
          |> Eta.Effect.annotate ~key:"otel.path" ~value:path
          |> Eta.Effect.annotate ~key:"otel.batch_size" ~value:(string_of_int n)
-         |> Eta.Effect.named ("eta_otel.export." ^ name))
+         |> Eta.Effect.named ("eta_otel.export." ^ signal_name signal))
 
 let export_program t =
   Eta.Resource.get t.config
@@ -559,13 +323,6 @@ let start_daemon rt effect =
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error _ -> ()
 
-let enqueue t mailbox value =
-  Drain_counter.incr t.in_flight;
-  match Mailbox.offer mailbox value with
-  | Mailbox.Enqueued -> ()
-  | Mailbox.Dropped | Mailbox.Closed ->
-      Drain_counter.decr t.in_flight
-
 let dropped t =
   Mailbox.dropped t.queue + Mailbox.dropped t.log_queue
   + Mailbox.dropped t.metric_queue
@@ -574,6 +331,13 @@ let close_mailboxes t =
   Mailbox.close t.queue;
   Mailbox.close t.log_queue;
   Mailbox.close t.metric_queue
+
+let shutdown_http_client t =
+  ignore
+    (Eta.Runtime.run t.flush_rt
+       (Eta_http.Client.shutdown t.http_client
+       |> Eta.Effect.catch (fun _ -> Eta.Effect.unit))
+      : (unit, unit) Eta.Exit.t)
 
 let duration_of_timeout_s timeout_s =
   let ms = max 0 (int_of_float (ceil (timeout_s *. 1000.0))) in
@@ -593,7 +357,8 @@ let flush ?(timeout_s = 5.0) t =
 
 let shutdown ?timeout_s t =
   close_mailboxes t;
-  flush ?timeout_s t
+  flush ?timeout_s t;
+  shutdown_http_client t
 
 let start_exporters t ~rt =
   start_daemon rt (export_program t)
@@ -765,10 +530,11 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       scope_name;
     }
   in
+  let http_client = Eta_http.Client.make_h1 ~sw ~net () in
   let config_resource = make_config_resource rt config in
   let t =
     {
-      net;
+      http_client;
       clock;
       eta_clock = Eta.Capabilities.clock_of_eio clock;
       config = config_resource;

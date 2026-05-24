@@ -1,7 +1,9 @@
 (** Tracing wrappers for eta-http client requests.
 
     These functions use the runtime's {!Eta.Capabilities.tracer}; when
-    [enabled=false], they call through without opening spans. *)
+    [enabled=false], they suppress Eta tracer/logger/meter observations for
+    the whole request subtree. This lets observability exporters call eta-http
+    without recursively observing pool or transport internals. *)
 
 val request :
   ?enabled:bool ->

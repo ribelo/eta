@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
 Run: `bash packages/eta-http/audit/run.sh`
-Last updated: 2026-05-23T20:51:41Z
-Current sites: 1
+Last updated: 2026-05-24T01:17:10Z
+Current sites: 4
 
 ## What Is NOT An Escape
 
@@ -51,6 +51,7 @@ No replaceable escapes yet.
 | --- | --- | --- |
 
 | `test/test_eta_http.ml:1271` | `Eio.Switch.run` | Structural test harness for an in-memory meter runtime; `eta-test` has no meter-capable fixture helper yet. |
+| `transport/connect.ml:39-48` | `Atomic.t` | Structural once flag for process-wide Mirage crypto RNG initialization before TLS handshakes; this lives below Eta runtime semantics. |
 
 ## Debt
 

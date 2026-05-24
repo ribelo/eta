@@ -1,0 +1,22 @@
+{
+  "id": "msg_tool_fixture",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet-20241022",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_weather",
+      "name": "weather",
+      "input": {
+        "location": "Warsaw"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 11,
+    "output_tokens": 7
+  }
+}

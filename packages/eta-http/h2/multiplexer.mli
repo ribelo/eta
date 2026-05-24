@@ -55,6 +55,10 @@ val read_client_once :
   flow:[> Eio.Flow.source_ty] Eio.Resource.t ->
   client_reader ->
   read_result
+(** Feed one HTTP/2 client-read step from [flow]. If buffered network bytes fill
+    the adapter buffer without parser progress, returns
+    [Security_error (Connection_protocol_violation { kind =
+    "h2_read_buffer_exhausted"; _ })] instead of raising. *)
 
 val body_stream :
   ?poll_error:(unit -> Eta_http_error.Error.t option) ->

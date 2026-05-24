@@ -7,6 +7,8 @@
   eta_http_error
   eta_http_tls
   eio
+  mirage-crypto-rng
+  mirage-crypto-rng.unix
   tls-eio
   x509
   domain-name

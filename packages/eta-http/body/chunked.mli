@@ -19,6 +19,8 @@ type t
 
 val default_line_limit : int
 val default_max_decoded_bytes : int
+(** Default maximum decoded bytes for chunked bodies. This matches
+    {!Eta_http_body.Stream.default_max_bytes}. *)
 
 val create :
   ?max_decoded_bytes:int ->
@@ -32,4 +34,3 @@ val trailers : t -> Eta_http_core.Header.t
 
 val encode_chunk : bytes -> bytes list
 val encode_last_chunk : ?trailers:Eta_http_core.Header.t -> unit -> bytes
-

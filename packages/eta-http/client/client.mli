@@ -14,6 +14,10 @@ type stats = {
 type t
 
 val protocol_to_string : protocol -> string
+val default_max_response_body_bytes : int
+(** Default maximum decoded response-body bytes for fixed-length, chunked, and
+    close-delimited HTTP/1.1 responses. *)
+
 val protocol : t -> protocol
 val stats : t -> (stats, Eta_http_error.Error.t) Eta.Effect.t
 val shutdown : t -> (unit, Eta_http_error.Error.t) Eta.Effect.t
@@ -27,24 +31,31 @@ val request_with_retry :
 val make_h1 :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  authenticator:X509.Authenticator.t ->
+  ?authenticator:X509.Authenticator.t ->
+  ?max_response_body_bytes:int ->
   unit ->
   t
 (** Build the S1 HTTP/1.1 client path.
 
-    Connections are pooled per origin with {!Eta.Pool}. *)
+    Connections are pooled per origin with {!Eta.Pool}. When omitted,
+    [authenticator] uses eta-http's system certificate roots.
+    [max_response_body_bytes] caps fixed-length, chunked, and
+    close-delimited response bodies. *)
 
 val make :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  authenticator:X509.Authenticator.t ->
+  ?authenticator:X509.Authenticator.t ->
+  ?max_response_body_bytes:int ->
   unit ->
   t
 (** Build the S2 ALPN-dispatch client path.
 
     HTTPS requests negotiate [h2, http/1.1] and dispatch to the h2
     multiplexer or h1 request loop from the same caller API. Plain HTTP uses
-    the h1 request loop. *)
+    the h1 request loop. When omitted, [authenticator] uses eta-http's system
+    certificate roots. [max_response_body_bytes] caps HTTP/1.1 response body
+    decoding. *)
 
 val make_for_test :
   protocol:protocol ->

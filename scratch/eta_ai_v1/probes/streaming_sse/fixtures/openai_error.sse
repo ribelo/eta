@@ -1,0 +1,2 @@
+event: error
+data: {"type":"rate_limit_error","message":"Rate limit exceeded","param":null,"code":"rate_limit_exceeded"}

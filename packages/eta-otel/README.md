@@ -3,12 +3,13 @@
 OTLP/JSON exporter for [Eta](../eta)'s tracer, logger, and meter
 capabilities.
 
-Hand-rolled OpenTelemetry Protocol implementation: JSON encoders and an
-HTTP/1.1 client over Eio TCP at the I/O leaf, with batching, stream merging,
-timeout, retry, backpressure, cached exporter configuration, and daemon
-lifecycle expressed as Eta effects and Eta streams.
-**No protobuf, no TLS stack, no `cohttp`, no ambient dependency context.** The
-dependency closure is `eta`, `eta-stream`, `eio`, and `yojson`.
+OpenTelemetry Protocol implementation with hand-written JSON encoders and
+eta-http transport. Batching, stream merging, timeout, retry, backpressure,
+cached exporter configuration, and daemon lifecycle are expressed as Eta
+effects and Eta streams.
+**No protobuf, no `cohttp`, no ambient dependency context.** The direct
+dependency closure is `eta`, `eta-stream`, `eta-http`, `eio`, and
+`yojson`; TLS dependencies stay behind eta-http.
 
 ## Why a separate package?
 
@@ -118,10 +119,12 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 
 The exporter starts one Eta runtime daemon on the supplied switch. That daemon
 loads cached exporter configuration through `Eta.Resource`, consumes bounded
-`Eta_stream.Mailbox` sources, merges signal streams with `Stream.merge`, exports
-batches with bounded parallelism, retries failed POSTs, and decrements
-in-flight counters through Eta finalizers. Flush waits on
-`Eta_stream.Drain_counter.await_zero` instead of fixed-interval polling.
+`Eta_stream.Mailbox` sources, merges signal streams with `Stream.merge`,
+exports batches with bounded parallelism, and decrements in-flight counters
+through Eta finalizers. Export POSTs go through eta-http with observability
+suppressed so exporter-internal pool and transport spans are not re-exported.
+Flush waits on `Eta_stream.Drain_counter.await_zero` instead of fixed-interval
+polling.
 
 `Eta_otel.flush ?timeout_s exporter` blocks until the queue is drained or
 the timeout elapses. Call it before the program exits to avoid losing spans.
@@ -129,9 +132,27 @@ the timeout elapses. Call it before the program exits to avoid losing spans.
 `Eta_otel.shutdown ?timeout_s exporter` closes the signal mailboxes, drains
 already accepted telemetry, and drops signals submitted after shutdown.
 
+## Self Metrics
+
+eta-otel emits exporter self-metrics to the configured metrics endpoint.
+Trace and log exports enqueue one metrics batch after the export attempt;
+metrics exports append their own self-metrics directly to the outgoing OTLP
+payload. That keeps exporter metrics observable without recursively scheduling
+more metric exports.
+
+The current self-metrics are:
+
+| name                      | kind              | attrs    | meaning                       |
+| ------------------------- | ----------------- | -------- | ----------------------------- |
+| `eta_otel.export.batches` | monotonic counter | `signal` | export batch attempts         |
+| `eta_otel.export.items`   | monotonic counter | `signal` | items attempted for export    |
+| `eta_otel.queue.depth`    | gauge             | `queue`  | current signal queue depth    |
+| `eta_otel.queue.dropped`  | gauge             | `queue`  | cumulative signal queue drops |
+| `eta_otel.in_flight`      | gauge             | none     | in-flight exporter work       |
+
 ## Pointing at a collector
 
-`eta-otel` speaks plain HTTP/1.1 with `Content-Type: application/json`.
+`eta-otel` sends OTLP/HTTP JSON with `Content-Type: application/json`.
 Any OTLP/HTTP-JSON-capable collector works:
 
 - [otelcol](https://opentelemetry.io/docs/collector/) with a `otlp/http`
@@ -144,8 +165,9 @@ Any OTLP/HTTP-JSON-capable collector works:
 
 - **Sampler decisions.** Sampling is made by `Runtime.create ?sampler`; the
   exporter receives only spans the runtime decided to record.
-- **TLS.** Plain HTTP only. Run a sidecar collector or terminate TLS
-  upstream.
+- **Custom TLS policy.** The current constructor exposes host, port, and path
+  settings for OTLP/HTTP. TLS policy remains inside eta-http and is not yet
+  configurable through eta-otel.
 - **Protobuf.** OTLP/JSON only.
 
 If you need a different transport, write an alternate adapter against Eta's

@@ -1,0 +1,8 @@
+(executable
+ (name no_otel_eta_only)
+ (libraries eta eio_main))
+
+(executable
+ (name with_otel_linked)
+ (libraries eta eta_otel))
+

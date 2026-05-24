@@ -35,5 +35,5 @@ let with_idempotency_key key (request : Request.t) =
     Request.headers =
       request.headers
       |> Header.remove "idempotency-key"
-      |> Header.add "Idempotency-Key" key;
+      |> Header.unsafe_add "Idempotency-Key" key;
   }

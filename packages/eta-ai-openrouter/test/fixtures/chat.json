@@ -1,0 +1,26 @@
+{
+  "id": "resp-openrouter-fixture",
+  "object": "response",
+  "status": "completed",
+  "created_at": 1779580000,
+  "model": "openrouter/auto",
+  "provider": "anthropic",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg-openrouter-fixture",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "OpenRouter response"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 9,
+    "output_tokens": 4,
+    "total_tokens": 13
+  }
+}

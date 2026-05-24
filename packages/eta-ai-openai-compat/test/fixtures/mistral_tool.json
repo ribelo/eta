@@ -1,0 +1,31 @@
+{
+  "id": "chatcmpl_mistral_fixture",
+  "object": "chat.completion",
+  "created": 1779580000,
+  "model": "mistral-large-latest",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_weather",
+            "type": "function",
+            "function": {
+              "name": "weather",
+              "arguments": "{\"location\":\"Warsaw\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 6,
+    "total_tokens": 16
+  }
+}

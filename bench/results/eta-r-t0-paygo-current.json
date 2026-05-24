@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "commit": "ee88b6be7167ec08c299a4c116ef48c98127cd5b",
+  "commit_time": "2026-05-23T22:53:41+02:00",
+  "run_time": "2026-05-23T21:21:37Z",
+  "dirty": true,
+  "machine": {
+    "os": "Linux",
+    "kernel": "6.19.13-xanmod1",
+    "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+    "cpu_count": "32",
+    "ocaml_version": "5.2.0+ox",
+    "dune_version": "3.22.2"
+  },
+  "duration_ms": 1542,
+  "benchmarks": [
+    {"name":"effect.observability.noop_tracer.no_auto","metric":"wall_ns","unit":"ns","samples":[1740932.464600],"mean":1740932.464600,"stddev":0.000000,"min":1740932.464600,"max":1740932.464600},
+    {"name":"effect.observability.noop_tracer.no_auto","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_tracer.no_auto","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_tracer.auto","metric":"wall_ns","unit":"ns","samples":[1116991.043091],"mean":1116991.043091,"stddev":0.000000,"min":1116991.043091,"max":1116991.043091},
+    {"name":"effect.observability.noop_tracer.auto","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_tracer.auto","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.in_memory_tracer.no_auto","metric":"wall_ns","unit":"ns","samples":[4373073.577881],"mean":4373073.577881,"stddev":0.000000,"min":4373073.577881,"max":4373073.577881},
+    {"name":"effect.observability.in_memory_tracer.no_auto","metric":"minor_words","unit":"words","samples":[2621409.000000],"mean":2621409.000000,"stddev":0.000000,"min":2621409.000000,"max":2621409.000000},
+    {"name":"effect.observability.in_memory_tracer.no_auto","metric":"major_words","unit":"words","samples":[183489.000000],"mean":183489.000000,"stddev":0.000000,"min":183489.000000,"max":183489.000000},
+    {"name":"effect.observability.in_memory_tracer.auto","metric":"wall_ns","unit":"ns","samples":[3921985.626221],"mean":3921985.626221,"stddev":0.000000,"min":3921985.626221,"max":3921985.626221},
+    {"name":"effect.observability.in_memory_tracer.auto","metric":"minor_words","unit":"words","samples":[2621420.000000],"mean":2621420.000000,"stddev":0.000000,"min":2621420.000000,"max":2621420.000000},
+    {"name":"effect.observability.in_memory_tracer.auto","metric":"major_words","unit":"words","samples":[183425.000000],"mean":183425.000000,"stddev":0.000000,"min":183425.000000,"max":183425.000000},
+    {"name":"effect.observability.noop_logger.log","metric":"wall_ns","unit":"ns","samples":[324964.523315],"mean":324964.523315,"stddev":0.000000,"min":324964.523315,"max":324964.523315},
+    {"name":"effect.observability.noop_logger.log","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_logger.log","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.in_memory_logger.log","metric":"wall_ns","unit":"ns","samples":[726938.247681],"mean":726938.247681,"stddev":0.000000,"min":726938.247681,"max":726938.247681},
+    {"name":"effect.observability.in_memory_logger.log","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.in_memory_logger.log","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_meter.metric","metric":"wall_ns","unit":"ns","samples":[268936.157227],"mean":268936.157227,"stddev":0.000000,"min":268936.157227,"max":268936.157227},
+    {"name":"effect.observability.noop_meter.metric","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.noop_meter.metric","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.in_memory_meter.metric","metric":"wall_ns","unit":"ns","samples":[540018.081665],"mean":540018.081665,"stddev":0.000000,"min":540018.081665,"max":540018.081665},
+    {"name":"effect.observability.in_memory_meter.metric","metric":"minor_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000},
+    {"name":"effect.observability.in_memory_meter.metric","metric":"major_words","unit":"words","samples":[0.000000],"mean":0.000000,"stddev":0.000000,"min":0.000000,"max":0.000000}
+  ]
+}

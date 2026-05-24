@@ -26,11 +26,14 @@ let with_span ?(attrs = []) ~protocol request eff =
 let request ?(enabled = true) ?protocol client request =
   let protocol = Option.value ~default:(Client.protocol client) protocol in
   let eff = Client.request client request in
-  if enabled then with_span ~protocol request eff else eff
+  if enabled then with_span ~protocol request eff
+  else Eta.Effect.suppress_observability eff
 
 let request_with_retry ?(enabled = true) ?policy ?protocol client request =
   let protocol = Option.value ~default:(Client.protocol client) protocol in
-  if not enabled then Client.request_with_retry ?policy client request
+  if not enabled then
+    Client.request_with_retry ?policy client request
+    |> Eta.Effect.suppress_observability
   else
     let attempt = ref 0 in
     let request_once request =

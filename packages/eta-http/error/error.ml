@@ -42,6 +42,7 @@ type kind =
   | Total_request_timeout of timeout
   | HTTP_status of { status : int; headers : (string * string) list }
   | Decode_error of { codec : string; message : string }
+  | Body_too_large of { limit : int; length : int }
   | Connection_protocol_violation of { kind : string; message : string }
   | Hpack_decode_overflow of { decoded_bytes : int; limit_bytes : int }
   | Continuation_flood of {
@@ -107,6 +108,7 @@ let kind_name = function
   | Total_request_timeout _ -> "Total_request_timeout"
   | HTTP_status _ -> "HTTP_status"
   | Decode_error _ -> "Decode_error"
+  | Body_too_large _ -> "Body_too_large"
   | Connection_protocol_violation _ -> "Connection_protocol_violation"
   | Hpack_decode_overflow _ -> "Hpack_decode_overflow"
   | Continuation_flood _ -> "Continuation_flood"
@@ -128,7 +130,7 @@ let layer t =
   | Pool_shutdown | Pool_acquire_timeout _ -> Pool
   | Response_header_timeout _ | Total_request_timeout _ -> Http_request
   | Response_body_idle_timeout _ | HTTP_status _ -> Http_response
-  | Decode_error _ -> Body_decode
+  | Decode_error _ | Body_too_large _ -> Body_decode
   | Connection_protocol_violation _ | Hpack_decode_overflow _
   | Continuation_flood _ | Stream_admission_rejected _ | Rst_rate_exceeded _
   | Ping_rate_exceeded _ | Settings_churn_rate_exceeded _
@@ -140,6 +142,7 @@ let retryability t =
   | Tls_certificate_error _ -> Not_retryable
   | Tls_handshake_error { stage = Alpn_negotiation; _ } -> Not_retryable
   | Decode_error _ -> Retryable_if_body_replayable
+  | Body_too_large _ -> Not_retryable
   | HTTP_status { status; _ } when status = 408 || status = 429 ->
       Retryable_if_body_replayable
   | HTTP_status { status; _ } when status >= 500 && status <= 599 ->
@@ -185,6 +188,7 @@ let error_class t =
       | Some class_ -> "http_status_" ^ class_
       | None -> "http_status")
   | Decode_error _ -> "decode_error"
+  | Body_too_large _ -> "body_too_large"
   | Connection_protocol_violation _ -> "connection_protocol_violation"
   | Hpack_decode_overflow _ -> "hpack_decode_overflow"
   | Continuation_flood _ -> "continuation_flood"

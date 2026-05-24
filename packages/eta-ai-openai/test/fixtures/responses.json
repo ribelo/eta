@@ -1,0 +1,32 @@
+{
+  "id": "resp_fixture",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-4.1-mini-2025-04-14",
+  "output": [
+    {
+      "id": "msg_fixture",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "It is 21C in Warsaw."
+        }
+      ]
+    },
+    {
+      "id": "fc_fixture",
+      "type": "function_call",
+      "call_id": "call_weather",
+      "name": "weather",
+      "arguments": "{\"location\":\"Warsaw\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 10,
+    "output_tokens": 7,
+    "total_tokens": 17
+  }
+}

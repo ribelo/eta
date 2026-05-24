@@ -166,16 +166,17 @@ let has_uppercase value =
 let header_invalid reason = Error.Header_invalid { reason }
 
 let validate_header t (name, value) =
-  if String.equal name "" then Some (header_invalid "empty header name")
-  else if String.length name > t.config.max_header_name_bytes then
+  match Eta_http_core.Header.validate_header (name, value) with
+  | Some error -> Some error
+  | None when String.length name > t.config.max_header_name_bytes ->
     Some (header_invalid "header name exceeds 8192 bytes")
-  else if String.length value > t.config.max_header_value_bytes then
+  | None when String.length value > t.config.max_header_value_bytes ->
     Some (header_invalid "header value exceeds 65536 bytes")
-  else if has_nul name || has_nul value then
-    Some (header_invalid "header contains NUL")
-  else if has_uppercase name then
+  | None when has_nul name || has_nul value ->
+      Some (header_invalid "header contains NUL")
+  | None when has_uppercase name ->
     Some (header_invalid "uppercase h2 header name")
-  else None
+  | None -> None
 
 let rec validate_headers_with t = function
   | [] -> None

@@ -163,6 +163,17 @@ let read_more ~flow reader =
           `Read_more read)
     with End_of_file -> `Eof
 
+let buffer_exhausted reader =
+  Security_error
+    (Eta_http_error.Error.Connection_protocol_violation
+       {
+         kind = "h2_read_buffer_exhausted";
+         message =
+           Printf.sprintf
+             "h2 read buffer of %d bytes filled without parser progress"
+             (capacity reader);
+       })
+
 let rec read_client_once ~flow reader =
   match H2.Client_connection.next_read_operation reader.client with
   | `Close -> Close
@@ -175,16 +186,14 @@ let rec read_client_once ~flow reader =
             | `Read_more _ -> read_client_once ~flow reader
             | `Security_error error -> Security_error error
             | `Eof -> feed_eof reader
-            | `Buffer_full ->
-                failwith
-                  "Eta_http.H2.Multiplexer.read_client_once: read buffer made no parser progress")
+            | `Buffer_full -> buffer_exhausted reader)
       else if reader.eof then Eof 0
       else
         match read_more ~flow reader with
         | `Read_more _ -> read_client_once ~flow reader
         | `Security_error error -> Security_error error
         | `Eof -> feed_eof reader
-        | `Buffer_full -> assert false
+        | `Buffer_full -> buffer_exhausted reader
 
 let body_stream ?(poll_error = fun () -> None)
     ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error ~pump t stream body =

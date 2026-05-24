@@ -21,10 +21,13 @@ type span = {
   len : int;
 }
 
+type host_kind = Reg_name | Ip_literal
+
 type t = {
   raw : string;
   scheme : scheme;
   host : span;
+  host_kind : host_kind;
   port : int option;
   path : span option;
   query : span option;
@@ -110,10 +113,10 @@ let parse_authority raw start finish =
             | Some close when close = start + 1 -> Error Missing_host
             | Some close ->
                 let host = span ~off:(start + 1) ~len:(close - start - 1) in
-                if close + 1 = finish then Ok (host, None)
+                if close + 1 = finish then Ok (host, Ip_literal, None)
                 else if Char.equal raw.[close + 1] ':' then
                   parse_port raw (close + 2) finish
-                  |> Result.map (fun port -> (host, Some port))
+                  |> Result.map (fun port -> (host, Ip_literal, Some port))
                 else Error (Invalid_port (String.sub raw (close + 1) (finish - close - 1))))
         | _ ->
             let colon = find_from raw start finish ':' in
@@ -122,10 +125,10 @@ let parse_authority raw start finish =
             else
               let host = span ~off:start ~len:(host_finish - start) in
               match colon with
-              | None -> Ok (host, None)
+              | None -> Ok (host, Reg_name, None)
               | Some colon ->
                   parse_port raw (colon + 1) finish
-                  |> Result.map (fun port -> (host, Some port)))
+                  |> Result.map (fun port -> (host, Reg_name, Some port)))
 
 let parse_path_query_fragment raw start =
   let len = String.length raw in
@@ -182,7 +185,7 @@ let parse raw =
           let authority_end = find_first_path_mark raw authority_start in
           (match parse_authority raw authority_start authority_end with
           | Error _ as error -> error
-          | Ok (host, port) -> (
+          | Ok (host, host_kind, port) -> (
               match validate_component raw "host" host.off (host.off + host.len) with
               | Error _ as error -> error
               | Ok () ->
@@ -199,7 +202,16 @@ let parse raw =
                       Result.bind (validate_opt "query" query) (fun () ->
                           Result.map
                             (fun () ->
-                              { raw; scheme; host; port; path; query; fragment })
+                              {
+                                raw;
+                                scheme;
+                                host;
+                                host_kind;
+                                port;
+                                path;
+                                query;
+                                fragment;
+                              })
                             (validate_opt "fragment" fragment)))))
 
 let pp_parse_error fmt = function
@@ -236,6 +248,9 @@ let fragment t = Option.map (slice t.raw) t.fragment
 
 let authority t =
   let host = host t in
+  let host =
+    match t.host_kind with Reg_name -> host | Ip_literal -> "[" ^ host ^ "]"
+  in
   match t.port with
   | None -> host
   | Some port -> host ^ ":" ^ string_of_int port
@@ -294,7 +309,16 @@ let[@zero_alloc] blit_int dst pos value =
       pos + digits)
 
 let[@zero_alloc] blit_authority_raw dst pos t =
-  let pos = blit_lowercase_span dst pos t.raw t.host in
+  let pos =
+    match t.host_kind with
+    | Reg_name -> blit_lowercase_span dst pos t.raw t.host
+    | Ip_literal ->
+        let pos = blit_literal dst pos "[" in
+        if pos < 0 then pos
+        else
+          let pos = blit_lowercase_span dst pos t.raw t.host in
+          if pos < 0 then pos else blit_literal dst pos "]"
+  in
   if pos < 0 then pos
   else
     match t.port with

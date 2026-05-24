@@ -1,0 +1,3 @@
+(executable
+ (name telemetry_probe)
+ (libraries eta eio_main unix))

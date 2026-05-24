@@ -85,6 +85,26 @@ Stream.merge traces (Stream.merge logs metrics)
 This is why eta-otel has one runtime-owned daemon but still preserves separate
 trace, log, and metric endpoints and batch sizes.
 
+## OTLP/HTTP Transport
+
+Each batch is encoded as OTLP/JSON and posted through eta-http:
+
+```ocaml
+Eta_http.Observability.Tracer.request_with_retry
+  ~enabled:false
+  ~policy:otlp_retry_policy
+  http_client request
+```
+
+The `~enabled:false` boundary suppresses tracer, logger, meter, and automatic
+instrumentation for the exporter transport subtree. eta-http can still own
+connection pooling, response-body draining, retry, and shutdown; eta-otel does
+not need raw Eio TCP.
+
+The OTLP retry policy retries `429`, `502`, `503`, and `504`. It does not retry
+`408`, because OTLP/HTTP does not define that as retryable for this exporter.
+Successful exports are HTTP `200` or `202`.
+
 ## Cached Configuration
 
 Resolved endpoint and resource attributes are loaded once through `Resource.t`
@@ -120,10 +140,10 @@ branch uses the Eta clock capability produced by `Capabilities.clock_of_eio`.
 
 ## Error Handling
 
-Export failures are non-fatal. The exporter races each HTTP POST against a
-deadline branch with `Effect.race`, keeps an outer `Effect.timeout` as a guard,
-retries each batch with `Schedule.recurs 2`, and reports the final failure
-through `~on_error`.
+Export failures are non-fatal. eta-http classifies transport failures and
+status codes, drains response bodies, and retries according to the OTLP retry
+policy. eta-otel wraps the POST in a six-second `Effect.timeout_as` and reports
+the final failure through `~on_error`.
 
 ```ocaml
 let exporter =
@@ -132,24 +152,41 @@ let exporter =
     ()
 ```
 
-The OTLP body is still built on the calling domain. Use a sidecar collector for
-TLS, compression, and production buffering.
+The OTLP body is still built on the exporter daemon. Use a collector or proxy
+when the deployment needs TLS termination or production buffering.
 
 ## Self Observation
 
 Exporter internals use a private in-memory tracer. Those spans are available to
 tests through `Eta_otel.Internal.self_spans`, but they are not sent to the OTLP
-sink. This prevents recursive exporter telemetry.
+sink.
+
+eta-otel also exports its own health metrics through the configured metrics
+endpoint:
+
+| name | kind | attrs | meaning |
+| --- | --- | --- | --- |
+| `eta_otel.export.batches` | monotonic counter | `signal` | export batch attempts |
+| `eta_otel.export.items` | monotonic counter | `signal` | items attempted for export |
+| `eta_otel.queue.depth` | gauge | `queue` | current queue depth |
+| `eta_otel.queue.dropped` | gauge | `queue` | cumulative queue drops |
+| `eta_otel.in_flight` | gauge | none | in-flight exporter work |
+
+Trace and log exports enqueue one follow-up metrics batch while the original
+batch is still counted as in-flight. Metrics exports append their own
+self-metrics directly to the outgoing payload, so metrics export does not
+schedule another metrics export.
 
 ## Limits
 
-- Transport is plain HTTP/1.1 over Eio TCP.
+- Transport is OTLP/HTTP through eta-http's h1 client.
+- `Eta_otel.create` currently builds `http://host:port/path`; HTTPS/custom TLS
+  is not exposed on eta-otel's constructor.
 - Wire format is OTLP/JSON, not protobuf.
-- TLS is out of scope; terminate it at a collector or proxy.
 - Mailbox overflow drops telemetry by design.
 - `Effect.island` is not used because the encoder benchmark did not prove a
   CPU-offload benefit.
-- `Effect.blocking` is not used because the transport is Eio TCP, not a legacy
-  synchronous I/O client.
+- `Effect.blocking` is not used because eta-http already exposes an Eta effect
+  for transport.
 - Historical scratch files may contain old dependency-row experiments. Current
   benchmark code and results use explicit dependency naming.

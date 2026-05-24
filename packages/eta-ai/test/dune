@@ -1,0 +1,14 @@
+(test
+ (name test_eta_ai)
+ (libraries eta eta-ai eta-redacted eta-http alcotest eio_main)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree negative)
+  (:eta_ai_cma ../eta_ai.cma))
+ (action
+  (run bash negative/run.sh %{eta_ai_cma})))

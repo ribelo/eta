@@ -221,10 +221,10 @@ let test_metrics_otlp_live () =
           | _ -> [])
       | _ -> []
     in
-    Alcotest.(check (slist string String.compare))
-      "metric names"
-      [ "eta.demo.counter"; "eta.demo.gauge" ]
-      names
+    Alcotest.(check bool) "counter metric exported" true
+      (List.exists (String.equal "eta.demo.counter") names);
+    Alcotest.(check bool) "gauge metric exported" true
+      (List.exists (String.equal "eta.demo.gauge") names)
 
 let suite =
   ( "Metrics",

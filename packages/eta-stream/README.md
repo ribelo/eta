@@ -73,6 +73,14 @@ owns the queue and its producers. Because Eio streams do not carry an
 end-of-stream marker, consumers should bound reads with `take` unless another
 fiber is guaranteed to keep producing.
 
+## Mailboxes
+
+`Mailbox.create ?capacity ()` creates a bounded producer-side stream mailbox.
+`Mailbox.offer` never blocks: it returns `Enqueued`, `Dropped`, or `Closed`.
+Use `Mailbox.dropped` for cumulative drops and `Mailbox.length` for current
+queued depth before consuming the mailbox with `to_stream` or
+`to_batch_stream`.
+
 ## Development
 
 Run the stream package tests:

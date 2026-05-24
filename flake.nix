@@ -110,19 +110,37 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
+                packages/eta-redacted \
                 packages/eta \
+                packages/eta-ai \
+                packages/eta-ai-anthropic \
+                packages/eta-ai-openai-compat \
+                packages/eta-ai-openai \
+                packages/eta-ai-openrouter \
                 packages/eta-otel \
                 packages/eta-schema \
                 packages/eta-stream \
                 packages/ppx_eta \
+                packages/eta-redacted/test \
                 packages/eta/test \
+                packages/eta-ai/test \
+                packages/eta-ai-anthropic/test \
+                packages/eta-ai-openai-compat/test \
+                packages/eta-ai-openai/test \
+                packages/eta-ai-openrouter/test \
                 packages/eta-otel/test \
                 packages/eta-schema/test \
                 packages/eta-stream/test \
                 packages/ppx_eta/test
 
               dune runtest \
+                packages/eta-redacted \
                 packages/eta \
+                packages/eta-ai \
+                packages/eta-ai-anthropic \
+                packages/eta-ai-openai-compat \
+                packages/eta-ai-openai \
+                packages/eta-ai-openrouter \
                 packages/eta-otel \
                 packages/eta-schema \
                 packages/eta-stream \

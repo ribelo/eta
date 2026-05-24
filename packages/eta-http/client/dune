@@ -10,5 +10,7 @@
   eta_http_h1
   eta_http_h2
   eta_http_transport
+  ca-certs
   eio
+  unix
   x509))

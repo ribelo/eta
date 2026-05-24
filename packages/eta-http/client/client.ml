@@ -26,11 +26,25 @@ type t = {
 }
 
 let protocol_to_string = function H1 -> "h1" | H2 -> "h2" | Auto -> "auto"
+let default_max_response_body_bytes =
+  Eta_http_h1.Client.default_max_response_body_bytes
+
 let protocol t = t.protocol
 let stats t = t.stats_impl ()
 let shutdown t = t.shutdown_impl ()
 let request t req = t.request_impl req
 let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
+
+let default_authenticator =
+  let authenticator = lazy (Ca_certs.authenticator ()) in
+  fun ?ip ~host certificates ->
+    match Lazy.force authenticator with
+    | Ok authenticate -> authenticate ?ip ~host certificates
+    | Error (`Msg msg) -> Error (`Msg msg)
+
+let resolve_authenticator = function
+  | Some authenticator -> authenticator
+  | None -> default_authenticator
 
 let h1_body = function
   | Request.Empty -> Eta_http_h1.Client.Empty
@@ -94,13 +108,16 @@ let h2_skip_header name =
   | normalized -> String.length normalized > 0 && Char.equal normalized.[0] ':'
 
 let h2_headers request url =
-  let user_headers =
-    request.Request.headers
-    |> List.filter_map (fun (name, value) ->
-           if h2_skip_header name then None
-           else Some (Header.normalize_name name, value))
-  in
-  H2.Headers.of_list ((":authority", Url.authority url) :: user_headers)
+  match Header.validate request.Request.headers with
+  | Some kind -> Error (h2_error request kind)
+  | None ->
+      let user_headers =
+        request.Request.headers
+        |> List.filter_map (fun (name, value) ->
+               if h2_skip_header name then None
+               else Some (Header.normalize_name name, value))
+      in
+      Ok (H2.Headers.of_list ((":authority", Url.authority url) :: user_headers))
 
 let h2_method = function
   | `GET -> `GET
@@ -115,11 +132,15 @@ let h2_method = function
   | `Other method_ -> `Other method_
 
 let h2_request_of_request request url =
-  H2.Request.create
-    ~scheme:(Url.scheme_to_string (Url.scheme url))
-    ~headers:(h2_headers request url)
-    (h2_method (Request.method_value request))
-    (Url.origin_form url)
+  match h2_headers request url with
+  | Error _ as error -> error
+  | Ok headers ->
+      Ok
+        (H2.Request.create
+           ~scheme:(Url.scheme_to_string (Url.scheme url))
+           ~headers
+           (h2_method (Request.method_value request))
+           (Url.origin_form url))
 
 let h2_read_once request flow reader =
   Eta.Effect.sync (fun () ->
@@ -232,8 +253,7 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
       ~pump:(fun () -> h2_body_pump request flow client reader)
       mux stream body
   in
-  let open_request () =
-    let h2_request = h2_request_of_request request url in
+  let open_request h2_request =
     Eta_http_h2.Multiplexer.request mux ~tag:0 h2_request
       ~error_handler:(fun stream error ->
         Eta_http_h2.Multiplexer.mark_remote_reset mux
@@ -263,7 +283,10 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
           ignore (deliver_result_once result_ref (Ok response));
           close_no_body stream body)
   in
-  match open_request () with
+  match h2_request_of_request request url with
+  | Error error -> cleanup_then_fail error
+  | Ok h2_request -> (
+  match open_request h2_request with
   | Error Admission_rejected ->
       cleanup_then_fail
         (h2_error request (Stream_admission_rejected { limit = 128 }))
@@ -298,8 +321,12 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
                             | None ->
                                 cleanup_then_fail (h2_closed request Http_response))))
              in
-             wait_for_response ())
-let make_h1 ~sw ~net ~authenticator () =
+             wait_for_response ()))
+let make_h1 ~sw ~net ?authenticator
+    ?(max_response_body_bytes = default_max_response_body_bytes) () =
+  if max_response_body_bytes < 0 then
+    invalid_arg "Eta_http.Client.make_h1: max_response_body_bytes must be >= 0";
+  let authenticator = resolve_authenticator authenticator in
   let pools = Hashtbl.create 8 in
   let pool_values () = Hashtbl.fold (fun _ pool acc -> pool :: acc) pools [] in
   let pool_for request =
@@ -307,7 +334,8 @@ let make_h1 ~sw ~net ~authenticator () =
     match Hashtbl.find_opt pools key with
     | Some pool -> Eta.Effect.pure pool
     | None ->
-        Eta_http_h1.Client.make_pool ~sw ~net ~authenticator request.url
+        Eta_http_h1.Client.make_pool ~max_response_body_bytes ~sw ~net
+          ~authenticator request.url
         |> Eta.Effect.map (fun pool ->
                Hashtbl.replace pools key pool;
                pool)
@@ -350,7 +378,11 @@ let make_h1 ~sw ~net ~authenticator () =
   { protocol = H1; request_impl; stats_impl; shutdown_impl }
 
 
-let make ~sw ~net ~authenticator () =
+let make ~sw ~net ?authenticator
+    ?(max_response_body_bytes = default_max_response_body_bytes) () =
+  if max_response_body_bytes < 0 then
+    invalid_arg "Eta_http.Client.make: max_response_body_bytes must be >= 0";
+  let authenticator = resolve_authenticator authenticator in
   let opened = ref 0 in
   let released = ref 0 in
   let last_protocol = ref Auto in
@@ -365,7 +397,7 @@ let make ~sw ~net ~authenticator () =
     | Error error -> close_counted flow |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
     | Ok h1_request ->
         Eta_http_h1.Client.request_on_flow ~release:(fun () -> close_counted flow)
-          ~flow h1_request
+          ~max_response_body_bytes ~flow h1_request
         |> Eta.Effect.map response_of_h1
   in
   let unsupported_alpn request protocol =
