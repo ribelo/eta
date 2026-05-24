@@ -56,6 +56,7 @@ type export_config = {
   metrics_path : string;
   resource_attrs : (string * string) list;
   scope_name : string;
+  headers : (string * string) list;
 }
 
 type signal_batch =
@@ -82,15 +83,22 @@ let otlp_retry_policy =
   Eta_http.Retry_policy.always ~max_attempts:3
     ~retry_status:otlp_retry_status ()
 
-let otlp_headers =
+let default_otlp_headers =
   Eta_http.Core.Header.unsafe_of_list
     [ ("content-type", "application/json"); ("accept", "application/json") ]
+
+let otlp_headers config =
+  List.fold_left
+    (fun headers (name, value) ->
+      Eta_http.Core.Header.unsafe_add name value
+        (Eta_http.Core.Header.remove name headers))
+    default_otlp_headers config.headers
 
 let otlp_url config path =
   Printf.sprintf "http://%s:%d%s" config.host config.port path
 
 let otlp_request config ~path ~body =
-  Eta_http.Request.make ~headers:otlp_headers
+  Eta_http.Request.make ~headers:(otlp_headers config)
     ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
     "POST" (otlp_url config path)
 
@@ -556,7 +564,7 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     ?(traces_path = "/v1/traces") ?(logs_path = "/v1/logs")
     ?(metrics_path = "/v1/metrics") ?(service_name = "eta")
     ?service_version ?(resource_attrs = []) ?(scope_name = "eta")
-    ?(queue_capacity = 1024) ?on_error ?on_send () =
+    ?(headers = []) ?(queue_capacity = 1024) ?on_error ?on_send () =
   let net = (net :> [ `Generic ] Eio.Net.ty Eio.Std.r) in
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let on_error =
@@ -594,6 +602,7 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       metrics_path;
       resource_attrs;
       scope_name;
+      headers;
     }
   in
   let http_client = Eta_http.Client.make_h1 ~sw ~net () in

@@ -94,11 +94,28 @@ let parse_request_target line =
   | _method_ :: target :: _ -> Some target
   | _ -> None
 
+let parse_header_line line =
+  match String.index_opt line ':' with
+  | None -> None
+  | Some index ->
+      let name = String.sub line 0 index |> String.trim in
+      let value =
+        String.sub line (index + 1) (String.length line - index - 1)
+        |> String.trim
+      in
+      Some (name, value)
+
+type captured_request = {
+  target : string option;
+  headers : (string * string) list;
+}
+
 let consume_request flow =
   try
     let reader = Eio.Buf_read.of_flow ~max_size:(1024 * 1024) flow in
     let content_length = ref 0 in
     let target = parse_request_target (Eio.Buf_read.line reader) in
+    let captured_headers = ref [] in
     let rec headers () =
       match Eio.Buf_read.line reader with
       | "" -> ()
@@ -106,12 +123,15 @@ let consume_request flow =
           (match parse_content_length line with
           | Some len -> content_length := len
           | None -> ());
+          (match parse_header_line line with
+          | Some header -> captured_headers := header :: !captured_headers
+          | None -> ());
           headers ()
     in
     headers ();
     if !content_length > 0 then
       ignore (Eio.Buf_read.take !content_length reader : string);
-    target
+    Some { target; headers = List.rev !captured_headers }
   with _ -> None
 
 let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
@@ -137,6 +157,7 @@ let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
 
 let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
     ?(on_request = fun _ -> ())
+    ?(on_request_headers = fun _ _ -> ())
     ?(connections = 16) responses =
   match responses with
   | [] -> invalid_arg "start_response_sequence_server: empty response list"
@@ -156,8 +177,10 @@ let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
                let index = min !hits (Array.length responses - 1) in
                incr hits;
                (match consume_request flow with
-               | Some target -> on_request target
-               | None -> ());
+               | Some { target = Some target; headers } ->
+                   on_request target;
+                   on_request_headers target headers
+               | Some { target = None; _ } | None -> ());
                if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
                Eio.Flow.copy_string responses.(index) flow;
                try Eio.Flow.shutdown flow `Send with _ -> ()
@@ -392,6 +415,43 @@ let test_malformed_response_reports_error () =
   emit_span (Eta_otel.tracer exporter) "malformed";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "collector error reported" true (!errors <> [])
+
+let test_custom_otlp_headers_are_sent () =
+  let trace_headers = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port, _hits =
+    start_response_sequence_server ~sw ~net ~clock
+      ~on_request_headers:(fun target headers ->
+        if String.equal target "/v1/traces" then trace_headers := headers)
+      [
+        "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      ]
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-auth-headers"
+      ~headers:
+        [
+          ("authorization", "Bearer test-token");
+          ("x-honeycomb-team", "test-team");
+        ]
+      ~on_error:(fun _ -> ())
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "custom-headers";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  Alcotest.(check (option string))
+    "authorization header" (Some "Bearer test-token")
+    (Eta_http.Core.Header.get "authorization" !trace_headers);
+  Alcotest.(check (option string))
+    "custom team header" (Some "test-team")
+    (Eta_http.Core.Header.get "x-honeycomb-team" !trace_headers);
+  Alcotest.(check (option string))
+    "default content-type" (Some "application/json")
+    (Eta_http.Core.Header.get "content-type" !trace_headers)
 
 let test_encode_failure_drains_in_flight () =
   Eio_main.run @@ fun stdenv ->
@@ -692,6 +752,8 @@ let () =
             test_network_partition_reports_error;
           Alcotest.test_case "malformed response" `Quick
             test_malformed_response_reports_error;
+          Alcotest.test_case "custom OTLP headers" `Quick
+            test_custom_otlp_headers_are_sent;
           Alcotest.test_case "encode failure drains in-flight" `Quick
             test_encode_failure_drains_in_flight;
           Alcotest.test_case "OTLP does not retry 408" `Quick

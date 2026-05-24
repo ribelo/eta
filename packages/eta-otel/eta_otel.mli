@@ -20,6 +20,7 @@ val create :
   ?service_version:string ->
   ?resource_attrs:(string * string) list ->
   ?scope_name:string ->
+  ?headers:(string * string) list ->
   ?queue_capacity:int ->
   ?on_error:(string -> unit) ->
   ?on_send:(path:string -> body:string -> unit) ->
@@ -27,9 +28,9 @@ val create :
   t
 (** Construct an exporter. One Eta runtime daemon is started on [sw] to consume
     merged signal batches. [queue_capacity] bounds each signal mailbox and
-    defaults to 1024. Defaults: host="127.0.0.1", port=4318,
-    traces_path="/v1/traces", logs_path="/v1/logs",
-    metrics_path="/v1/metrics", service_name="eta". *)
+    defaults to 1024. [headers] are merged into every outbound OTLP/HTTP
+    request. Defaults: host="127.0.0.1", port=4318, traces_path="/v1/traces",
+    logs_path="/v1/logs", metrics_path="/v1/metrics", service_name="eta". *)
 
 val tracer : t -> Eta.Capabilities.tracer
 (** Tracer adapter for {!Eta.Runtime.create}. *)
