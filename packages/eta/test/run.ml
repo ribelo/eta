@@ -342,6 +342,8 @@ let () =
             test_pool_shutdown_wakes_waiters_and_drains;
           Alcotest.test_case "shutdown deadline" `Quick
             test_pool_shutdown_deadline_timeout;
+          Alcotest.test_case "release detects active underflow" `Quick
+            test_pool_release_detects_active_underflow;
           Alcotest.test_case "observability signals" `Quick
             test_pool_observability_signals;
         ] );

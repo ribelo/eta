@@ -139,6 +139,17 @@ let with_lock t f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let invariant_violation field =
+  invalid_arg ("Eta.Pool invariant violated: " ^ field ^ " underflow")
+
+let decr_active_locked t =
+  if t.active <= 0 then invariant_violation "active";
+  t.active <- t.active - 1
+
+let decr_total_locked t =
+  if t.total <= 0 then invariant_violation "total";
+  t.total <- t.total - 1
+
 let is_expired t now entry =
   match t.max_lifetime with
   | Some max_lifetime when duration_expired ~now max_lifetime entry.created_ms ->
@@ -198,8 +209,8 @@ let reserve t =
 let mark_open_failed t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
-  t.active <- max 0 (t.active - 1);
-  t.total <- max 0 (t.total - 1);
+  decr_active_locked t;
+  decr_total_locked t;
   Semaphore.release t.sem 1
 
 let mark_opened t =
@@ -213,7 +224,7 @@ let mark_health_rejected t =
 let mark_closed ?(release_permit = true) t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
-  t.total <- max 0 (t.total - 1);
+  decr_total_locked t;
   t.closed <- t.closed + 1;
   if release_permit then Semaphore.release t.sem 1
 
@@ -241,7 +252,7 @@ let close_entries ?(release_permit = true) t entries =
 
 let mark_released_to_close t =
   Effect.sync @@ fun () ->
-  with_lock t @@ fun () -> t.active <- max 0 (t.active - 1)
+  with_lock t @@ fun () -> decr_active_locked t
 
 let release_entry t entry =
   let decide =
@@ -259,11 +270,11 @@ let release_entry t entry =
            | None -> false)
     in
     if close || t.idle_count >= t.max_idle then (
-      t.active <- max 0 (t.active - 1);
+      decr_active_locked t;
       `Close)
     else (
       entry.last_used_ms <- now;
-      t.active <- max 0 (t.active - 1);
+      decr_active_locked t;
       t.idle <- entry :: t.idle;
       t.idle_count <- t.idle_count + 1;
       `Keep)

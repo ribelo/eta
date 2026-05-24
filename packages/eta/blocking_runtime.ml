@@ -160,6 +160,17 @@ let emit_event emit t name submitted_at started_at ended_at outcome =
       outcome;
     }
 
+let invariant_violation field =
+  invalid_arg ("Eta.Blocking.Pool invariant violated: " ^ field ^ " underflow")
+
+let decr_active_locked t =
+  if t.active <= 0 then invariant_violation "active";
+  t.active <- t.active - 1
+
+let decr_queued_locked t =
+  if t.queued <= 0 then invariant_violation "queued";
+  t.queued <- t.queued - 1
+
 let raise_pool_full t name emit submitted_at =
   let ts = now_ms () in
   emit_event emit t name submitted_at ts ts Blocking_rejected;
@@ -222,11 +233,11 @@ let wait_queued_slot t name emit submitted_at =
             Eio.Condition.await t.condition t.mutex
           done;
           if t.shutdown && t.config.shutdown_policy = Detach_started then (
-            t.queued <- max 0 (t.queued - 1);
+            decr_queued_locked t;
             Eio.Condition.broadcast t.condition;
             `Shutdown)
           else if t.active < t.config.max_threads then (
-            t.queued <- max 0 (t.queued - 1);
+            decr_queued_locked t;
             t.active <- t.active + 1;
             Eio.Condition.broadcast t.condition;
             let job_id = t.next_job_id in
@@ -241,7 +252,7 @@ let wait_queued_slot t name emit submitted_at =
   with (Eio.Cancel.Cancelled _ | Exit) ->
     let ts = now_ms () in
     Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
-        t.queued <- max 0 (t.queued - 1);
+        decr_queued_locked t;
         t.cancelled_before_start <- t.cancelled_before_start + 1;
         Eio.Condition.broadcast t.condition);
     emit_event emit t name submitted_at ts ts Blocking_cancelled;
@@ -249,7 +260,9 @@ let wait_queued_slot t name emit submitted_at =
 
 let release_started t job_id =
   Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
-  t.active <- max 0 (t.active - 1);
+  if not (Hashtbl.mem t.active_jobs job_id) then
+    invalid_arg "Eta.Blocking.Pool invariant violated: unknown active job";
+  decr_active_locked t;
   t.completed <- t.completed + 1;
   Hashtbl.remove t.active_jobs job_id;
   Hashtbl.remove t.detached_jobs job_id;

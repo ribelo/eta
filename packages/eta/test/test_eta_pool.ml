@@ -290,6 +290,31 @@ let test_pool_shutdown_deadline_timeout () =
   check_exit_ok Alcotest.unit "holder done" () (Eio.Promise.await holder);
   wait_until (fun () -> (Pool.stats pool).Pool.closed = 1)
 
+let set_pool_active_for_invariant_test pool active =
+  Obj.set_field (Obj.repr pool) 17 (Obj.repr active)
+
+let test_pool_release_detects_active_underflow () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+  let result =
+    Runtime.run rt
+      (Pool.with_resource pool (fun _ ->
+           Effect.sync (fun () -> set_pool_active_for_invariant_test pool 0)))
+  in
+  (match result with
+  | Exit.Error (Cause.Die { exn = Invalid_argument message; _ }) ->
+      Alcotest.(check string)
+        "invariant message"
+        "Eta.Pool invariant violated: active underflow"
+        message
+  | Exit.Error cause ->
+      Alcotest.failf "expected pool invariant Die, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected pool invariant failure");
+  set_pool_active_for_invariant_test pool 0
+
 let test_pool_observability_signals () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
