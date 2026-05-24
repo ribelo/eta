@@ -5,6 +5,10 @@
   blocking_runtime
   effect_ast
   island_runtime
+  runtime_concurrency
+  runtime_core
+  runtime_instrument
+  runtime_interpret
   runtime_observability
   runtime_supervisor)
  (libraries eta.redacted eio eio.unix portable parallel parallel.scheduler threads))

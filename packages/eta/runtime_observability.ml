@@ -1,4 +1,4 @@
-module EP = Effect.Private
+module BR = Blocking_runtime
 
 let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
 let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
@@ -171,12 +171,12 @@ let emit_daemon_failure ~now_ms ~logging_enabled
         ~ended_ms:(now_ms ())))
 
 let string_of_blocking_outcome = function
-  | EP.Blocking_ok -> "ok"
-  | EP.Blocking_error msg -> "error:" ^ msg
-  | EP.Blocking_cancelled -> "cancelled"
-  | EP.Blocking_rejected -> "rejected"
-  | EP.Blocking_shutdown_rejected -> "shutdown"
-  | EP.Blocking_detached -> "detached"
+  | BR.Blocking_ok -> "ok"
+  | BR.Blocking_error msg -> "error:" ^ msg
+  | BR.Blocking_cancelled -> "cancelled"
+  | BR.Blocking_rejected -> "rejected"
+  | BR.Blocking_shutdown_rejected -> "shutdown"
+  | BR.Blocking_detached -> "detached"
 
 let emit_blocking_event ~now_ms ~tracing_enabled
     ~(tracer : Capabilities.tracer) ~metrics_enabled
@@ -184,7 +184,7 @@ let emit_blocking_event ~now_ms ~tracing_enabled
   if tracing_enabled || metrics_enabled then
     let attrs =
       [
-        ("eta.blocking.pool", event.EP.pool);
+        ("eta.blocking.pool", event.BR.pool);
         ("eta.blocking.name", event.name);
         ("eta.blocking.outcome", string_of_blocking_outcome event.outcome);
         ("eta.blocking.queue_wait_ms", string_of_int event.queue_wait_ms);
