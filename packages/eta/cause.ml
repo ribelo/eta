@@ -167,12 +167,12 @@ let interrupt = Interrupt None
 let interrupt_with_id id = Interrupt (Some id)
 
 let sequential = function
-  | [] -> die (Invalid_argument "Cause.sequential: empty")
+  | [] -> invalid_arg "Cause.sequential: empty"
   | [ one ] -> one
   | causes -> Sequential causes
 
 let concurrent = function
-  | [] -> die (Invalid_argument "Cause.concurrent: empty")
+  | [] -> invalid_arg "Cause.concurrent: empty"
   | [ one ] -> one
   | causes -> Concurrent causes
 

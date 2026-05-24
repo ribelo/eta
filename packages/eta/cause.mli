@@ -77,7 +77,9 @@ val die_with_diagnostics :
 val interrupt : 'err t
 val interrupt_with_id : interrupt_id -> 'err t
 val sequential : 'err t list -> 'err t
+(** @raise Invalid_argument if the list is empty. *)
 val concurrent : 'err t list -> 'err t
+(** @raise Invalid_argument if the list is empty. *)
 val suppressed : primary:'err t -> finalizer:'err t -> 'err t
 
 val is_interrupt_only : 'err t -> bool

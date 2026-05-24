@@ -78,6 +78,8 @@ let () =
           Alcotest.test_case "tap_error observer failure preserves typed failure"
             `Quick
             test_effect_tap_error_observer_failure_preserves_typed_failure;
+          Alcotest.test_case "empty cause aggregations reject" `Quick
+            test_cause_empty_aggregations_reject;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
             test_runtime_exit_fail_die_interrupt;
           Alcotest.test_case "die captures diagnostics" `Quick

@@ -41,8 +41,11 @@ let rec cause_of_exn ?backtrace ~capture_backtrace key exn =
             cause_of_exn ~backtrace:bt ~capture_backtrace key exn)
           causes
       in
-      if List.for_all Cause.is_interrupt_only causes then Cause.interrupt
-      else Cause.concurrent causes
+      (match causes with
+      | [] -> failwith "Eio.Exn.Multiple: empty"
+      | causes when List.for_all Cause.is_interrupt_only causes -> Cause.interrupt
+      | [ cause ] -> cause
+      | causes -> Cause.concurrent causes)
   | exn -> RObs.die_of_exn ?backtrace ~capture_backtrace exn
 
 type 'err t = {
@@ -164,7 +167,10 @@ let cause_of_timeout_as_exn runtime fail_key token on_timeout exn =
     | Eio.Exn.Multiple causes ->
         causes
         |> List.map (fun (exn, bt) -> convert ~backtrace:bt exn)
-        |> Cause.concurrent
+        |> (function
+             | [] -> failwith "Eio.Exn.Multiple: empty"
+             | [ cause ] -> cause
+             | causes -> Cause.concurrent causes)
     | exn ->
         cause_of_exn ?backtrace ~capture_backtrace:runtime.capture_backtrace
           fail_key exn

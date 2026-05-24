@@ -105,6 +105,14 @@ let test_effect_tap_error_observer_failure_preserves_typed_failure () =
         cause
   | Exit.Ok () -> Alcotest.fail "expected tap_error failure"
 
+let test_cause_empty_aggregations_reject () =
+  Alcotest.check_raises "empty sequential"
+    (Invalid_argument "Cause.sequential: empty")
+    (fun () -> ignore (Cause.sequential []));
+  Alcotest.check_raises "empty concurrent"
+    (Invalid_argument "Cause.concurrent: empty")
+    (fun () -> ignore (Cause.concurrent []))
+
 let test_runtime_exit_fail_die_interrupt () =
   with_runtime @@ fun rt ->
   let die = Failure "boom" in
@@ -278,5 +286,4 @@ let test_effect_catch_does_not_catch_interrupt () =
   match Runtime.run rt eff with
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
-
 
