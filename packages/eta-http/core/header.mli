@@ -1,8 +1,9 @@
 (** HTTP header list helpers.
 
     Header names accepted by validated constructors are RFC token strings.
-    Header values reject CR, LF, NUL, and other control bytes so callers cannot
-    inject additional wire header lines through serialized requests. *)
+    Header values permit HTAB and reject CR, LF, NUL, and other control bytes
+    so callers cannot inject additional wire header lines through serialized
+    requests. *)
 
 type t = (string * string) list
 type name = private string

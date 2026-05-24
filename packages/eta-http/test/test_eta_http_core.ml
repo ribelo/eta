@@ -3,6 +3,18 @@ open Test_eta_http_support
 let test_skeleton_loads () =
   Alcotest.(check bool) "loaded" true true
 
+let test_header_value_accepts_htab () =
+  let value = "token\twith-tab" in
+  Alcotest.(check bool)
+    "validate value" true
+    (Option.is_none (Eta_http.Core.Header.validate_value value));
+  Alcotest.(check bool)
+    "valid headers" true
+    (Eta_http.Core.Header.valid [ ("X-Test", value) ]);
+  match Eta_http.Core.Header.value value with
+  | Ok _ -> ()
+  | Error _ -> Alcotest.fail "HTAB header value rejected"
+
 let test_error_redaction_and_projection () =
   let uri = "https://api.example.test/v1/models?token=secret#frag" in
   let error =
@@ -42,5 +54,4 @@ let test_error_redaction_and_projection () =
       Alcotest.(check bool) "body omitted" true
         (contains output "body"))
     [ pretty; json ]
-
 

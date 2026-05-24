@@ -25,7 +25,7 @@ let[@zero_alloc] valid_name name =
 
 let[@zero_alloc] invalid_value_char c =
   let code = Char.code c in
-  code < 32 || code = 127
+  (code < 32 && code <> 9) || code = 127
 
 let[@zero_alloc] rec valid_value_loop value len index =
   index = len

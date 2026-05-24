@@ -19,6 +19,11 @@ let () =
   Alcotest.run "eta-http"
     [
       ("skeleton", [ Alcotest.test_case "loads" `Quick test_skeleton_loads ]);
+      ( "header",
+        [
+          Alcotest.test_case "value accepts HTAB" `Quick
+            test_header_value_accepts_htab;
+        ] );
       ( "error",
         [
           Alcotest.test_case "redaction and projection" `Quick
