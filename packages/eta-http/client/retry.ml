@@ -26,9 +26,11 @@ let make ?(mode = Default) ?(max_attempts = 3)
       |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
       |> Eta.Schedule.jittered ~min:0.0 ~max:1.0)
     ?(respect_retry_after = true) ?(retry_status = default_retry_status) () =
+  if max_attempts <= 0 then
+    invalid_arg "Eta_http.Retry_policy.make: max_attempts must be > 0";
   {
     mode;
-    max_attempts = max 1 max_attempts;
+    max_attempts;
     schedule;
     respect_retry_after;
     retry_status;

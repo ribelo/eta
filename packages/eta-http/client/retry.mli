@@ -27,6 +27,8 @@ val make :
   ?retry_status:(int -> bool) ->
   unit ->
   t
+(** [make ~max_attempts ()] raises [Invalid_argument] when [max_attempts] is
+    less than 1. *)
 
 val default : t
 val never : t

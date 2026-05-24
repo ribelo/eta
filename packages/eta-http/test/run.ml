@@ -68,6 +68,10 @@ let () =
             test_retry_after_absolute_date_uses_clock;
           Alcotest.test_case "schedule backoff" `Quick
             test_retry_policy_schedule_backoff;
+          Alcotest.test_case "rejects invalid max_attempts" `Quick
+            test_retry_policy_rejects_invalid_max_attempts;
+          Alcotest.test_case "max_attempts one does not retry" `Quick
+            test_retry_policy_max_attempts_one_does_not_retry;
           Alcotest.test_case "connection closed uses generic retry" `Quick
             test_retry_policy_connection_closed_is_generic_retry;
           Alcotest.test_case "custom status classifier" `Quick

@@ -102,6 +102,30 @@ let test_retry_policy_schedule_backoff () =
       Alcotest.(check int) "delay" 7 (Eta.Duration.to_ms delay)
   | Stop -> Alcotest.fail "retry stopped"
 
+let test_retry_policy_rejects_invalid_max_attempts () =
+  Alcotest.check_raises "max_attempts must be positive"
+    (Invalid_argument "Eta_http.Retry_policy.make: max_attempts must be > 0")
+    (fun () ->
+      ignore
+        (Eta_http.Retry_policy.make ~max_attempts:0 ()
+          : Eta_http.Retry_policy.t))
+
+let test_retry_policy_max_attempts_one_does_not_retry () =
+  let policy =
+    Eta_http.Retry_policy.make ~max_attempts:1
+      ~schedule:(Eta.Schedule.spaced (Eta.Duration.ms 7))
+      ()
+  in
+  let request =
+    Eta_http.Request.make "GET" "https://api.example.test/retry"
+  in
+  match
+    Eta_http.Retry_policy.classify_response policy ~request ~attempt:1
+      (retry_response 503)
+  with
+  | Stop -> ()
+  | Retry_after _ -> Alcotest.fail "retry should stop after one attempt"
+
 let test_retry_policy_connection_closed_is_generic_retry () =
   let policy =
     Eta_http.Retry_policy.make ~max_attempts:2
