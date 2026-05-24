@@ -105,14 +105,19 @@ let clock_of_eio (c : _ Eio.Std.r) : clock =
     method sleep d = Eio.Time.sleep c (Duration.to_seconds_float d)
   end
 
-let random_of_seed seed = { seed = P_atomic.make (seed land 0x3fffffff) }
+let random_mask = max_int
+let random_multiplier = 1_752_450_205_419_405_101
+let random_increment = 1_442_695_040_888_963_407
+let random_float_denominator = 9_007_199_254_740_992.0
 
-let random_set_seed random seed = P_atomic.set random.seed (seed land 0x3fffffff)
+let random_of_seed seed = { seed = P_atomic.make (seed land random_mask) }
+
+let random_set_seed random seed = P_atomic.set random.seed (seed land random_mask)
 
 let random_default () = random_of_seed 0x5eed5
 
 let next_seed seed =
-  ((seed * 1_103_515_245) + 12_345) land 0x3fffffff
+  ((seed * random_multiplier) + random_increment) land random_mask
 
 let rec advance_random random =
   let seed = P_atomic.get random.seed in
@@ -128,4 +133,4 @@ let random_float random bound =
   if bound <= 0.0 then 0.0
   else
     let seed = advance_random random in
-    bound *. (float_of_int (seed land 0xffff) /. 65_536.0)
+    bound *. (float_of_int (seed lsr 9) /. random_float_denominator)

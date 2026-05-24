@@ -132,11 +132,10 @@ let test_effect_retry_jittered_schedule_uses_runtime_random () =
   in
   yield ();
   Alcotest.(check int) "first attempt" 1 !attempts;
-  Test_clock.adjust clock (Duration.ms 138);
+  Test_clock.adjust clock (Duration.ms 176);
   yield ();
   Alcotest.(check int) "still sleeping" 1 !attempts;
   Test_clock.adjust clock (Duration.ms 1);
   check_exit_ok Alcotest.int "retry result" 2 (Eio.Promise.await promise)
-
 
 

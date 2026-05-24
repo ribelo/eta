@@ -140,25 +140,48 @@ let test_schedule_jittered_uses_random_capability () =
     |> Schedule.jittered ~min:1.0 ~max:2.0
   in
   Alcotest.(check some_dur) "jittered factor from capability"
-    (Some (Duration.ms 139))
+    (Some (Duration.ms 177))
     (Schedule.next_delay ~random schedule ~step:0);
   let random = Capabilities.random_of_seed 7 in
-  Alcotest.(check int) "inclusive range" 13
+  Alcotest.(check int) "inclusive range" 20
     (Random.int_in_range random ~min:10 ~max:20);
   let random = Capabilities.random_of_seed 7 in
   Alcotest.(check (float 0.0000001))
-    "float range" 1.6656494140625
+    "float range" 2.945698134713836
     (Random.float_in_range random ~min:1.0 ~max:3.0);
   let random = Capabilities.random_of_seed 7 in
-  Alcotest.(check bool) "bool" false (Random.bool random);
+  Alcotest.(check bool) "bool" true (Random.bool random);
   let random = Capabilities.random_of_seed 7 in
-  Alcotest.(check (list int)) "shuffle" [ 4; 3; 1; 2 ]
+  Alcotest.(check (list int)) "shuffle" [ 1; 2; 3; 4 ]
     (Random.shuffle random [ 1; 2; 3; 4 ]);
   let random = Capabilities.random_of_seed 7 in
   Alcotest.(check (option string))
-    "weighted choice" (Some "b")
+    "weighted choice" (Some "c")
     (Random.weighted_choice random [ ("a", 1.0); ("b", 2.0); ("c", 1.0) ]);
   let random = Capabilities.random_of_seed 7 in
-  Alcotest.(check (option int)) "sample" (Some 20)
+  Alcotest.(check (option int)) "sample" (Some 40)
     (Random.sample random [ 10; 20; 30; 40 ]);
   Alcotest.(check (option int)) "empty" None (Random.sample random [])
+
+let test_random_float_distribution_and_determinism () =
+  let first = Capabilities.random_of_seed 12345 in
+  let second = Capabilities.random_of_seed 12345 in
+  for _ = 1 to 100 do
+    Alcotest.(check (float 0.0)) "same seed sequence"
+      (Capabilities.random_float first 1.0)
+      (Capabilities.random_float second 1.0)
+  done;
+  let random = Capabilities.random_of_seed 12345 in
+  let bins = Array.make 10 0 in
+  for _ = 1 to 100_000 do
+    let sample = Capabilities.random_float random 1.0 in
+    let bin = min 9 (int_of_float (sample *. 10.0)) in
+    bins.(bin) <- bins.(bin) + 1
+  done;
+  Array.iteri
+    (fun bin count ->
+      Alcotest.(check bool)
+        (Printf.sprintf "bin %d roughly uniform" bin)
+        true
+        (count >= 9_000 && count <= 11_000))
+    bins

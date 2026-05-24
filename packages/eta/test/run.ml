@@ -277,6 +277,8 @@ let () =
             test_schedule_and_then_offsets_second_phase;
           Alcotest.test_case "jittered uses random capability" `Quick
             test_schedule_jittered_uses_random_capability;
+          Alcotest.test_case "random float distribution and determinism" `Quick
+            test_random_float_distribution_and_determinism;
         ] );
       ( "Scope",
         [

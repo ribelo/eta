@@ -147,5 +147,6 @@ val random_set_seed : random -> int -> unit
     nondeterministic jitter matters. *)
 val random_default : unit -> random
 
-(** Draw a float in [[0,bound)] from a portable random token. *)
+(** Draw a float in [[0,bound)] from a portable random token using 53 output
+    bits. *)
 val random_float : random -> float -> float
