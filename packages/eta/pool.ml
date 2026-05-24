@@ -318,7 +318,7 @@ let close_acquired_entry t entry =
 let rec acquire_entry t =
   let use_entry entry =
     with_fixed_acquire_guard
-      (fun () -> release_entry t entry)
+      (fun () -> close_acquired_entry t entry)
       (fun ~disarm ->
         let after_health = function
           | `Healthy entry ->

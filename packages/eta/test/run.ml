@@ -322,6 +322,10 @@ let () =
             test_pool_timeout_cleans_waiter_and_preserves_timeout_cause;
           Alcotest.test_case "health rejection reopens" `Quick
             test_pool_health_rejection_reopens;
+          Alcotest.test_case "idle health failure rejects entry" `Quick
+            test_pool_idle_health_failure_rejects_entry;
+          Alcotest.test_case "idle health defect closes entry" `Quick
+            test_pool_idle_health_defect_closes_entry;
           Alcotest.test_case "cancel during health check" `Quick
             test_pool_cancel_during_health_check_closes_reserved;
           Alcotest.test_case "idle eviction" `Quick test_pool_idle_eviction;

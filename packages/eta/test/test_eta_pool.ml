@@ -128,6 +128,58 @@ let test_pool_health_rejection_reopens () =
   Alcotest.(check int) "max live bounded" 1 !(factory.max_live);
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_idle_health_failure_rejects_entry () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let fail_health = ref false in
+  let health conn =
+    if !fail_health && conn.id = 1 then Effect.fail `Health_failed
+    else Effect.unit
+  in
+  let pool =
+    run_ok rt (create_test_pool ~max_size:1 ~health_check:health factory)
+  in
+  let first = run_ok rt (Pool.with_resource pool pool_use) in
+  fail_health := true;
+  let second = run_ok rt (Pool.with_resource pool pool_use) in
+  Alcotest.(check int) "first id" 1 first;
+  Alcotest.(check int) "replacement id" 2 second;
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "opened replacement" 2 stats.Pool.opened;
+  Alcotest.(check int) "rejected idle" 1 stats.Pool.health_rejected;
+  Alcotest.(check int) "closed rejected idle" 1 stats.Pool.closed;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
+let test_pool_idle_health_defect_closes_entry () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let defect_health = ref false in
+  let health conn =
+    if !defect_health && conn.id = 1 then
+      Effect.sync (fun () -> failwith "health defect")
+    else Effect.unit
+  in
+  let pool =
+    run_ok rt (create_test_pool ~max_size:1 ~health_check:health factory)
+  in
+  let first = run_ok rt (Pool.with_resource pool pool_use) in
+  defect_health := true;
+  (match Runtime.run rt (Pool.with_resource pool pool_use) with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected health defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>")) cause
+  | Exit.Ok _ -> Alcotest.fail "expected health defect");
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "first id" 1 first;
+  Alcotest.(check int) "closed defective idle" 1 stats.Pool.closed;
+  Alcotest.(check int) "not returned to idle" 0 stats.Pool.idle;
+  Alcotest.(check int) "no live entries" 0 !(factory.live);
+  defect_health := false;
+  let replacement = run_ok rt (Pool.with_resource pool pool_use) in
+  Alcotest.(check int) "replacement id" 2 replacement;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_cancel_during_health_check_closes_reserved () =
   with_runtime @@ fun rt ->
   let factory = make_pool_factory () in
@@ -277,4 +329,3 @@ let test_pool_observability_signals () =
     (List.exists (String.equal "eta.pool.health_rejected") log_bodies);
   Alcotest.(check bool) "shutdown log" true
     (List.exists (String.equal "eta.pool.shutdown_started") log_bodies)
-
