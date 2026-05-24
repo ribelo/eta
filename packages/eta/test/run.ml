@@ -261,6 +261,7 @@ let () =
           Alcotest.test_case "constructors" `Quick test_duration_constructors;
           Alcotest.test_case "ordering" `Quick test_duration_ordering;
           Alcotest.test_case "algebra" `Quick test_duration_algebra;
+          Alcotest.test_case "overflow" `Quick test_duration_overflow;
           Alcotest.test_case "min max clamp" `Quick test_duration_min_max_clamp;
         ] );
       ( "Schedule",

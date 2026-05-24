@@ -32,6 +32,15 @@ let test_duration_algebra () =
   Alcotest.(check some_dur) "divide by zero" None
     (Duration.divide (Duration.minutes 1) 0)
 
+let test_duration_overflow () =
+  let overflowing_hours = (max_int / 3_600_000) + 1 in
+  Alcotest.check_raises "large hours overflow" (Invalid_argument "Duration.hours")
+    (fun () -> ignore (Duration.hours overflowing_hours));
+  Alcotest.check_raises "add overflow" (Invalid_argument "Duration.add")
+    (fun () -> ignore (Duration.add (Duration.ms max_int) (Duration.ms 1)));
+  Alcotest.check_raises "times overflow" (Invalid_argument "Duration.times")
+    (fun () -> ignore (Duration.times (Duration.ms max_int) 2))
+
 let test_duration_min_max_clamp () =
   Alcotest.(check dur) "max" (Duration.ms 2)
     (Duration.max (Duration.ms 1) (Duration.ms 2));
@@ -153,5 +162,3 @@ let test_schedule_jittered_uses_random_capability () =
   Alcotest.(check (option int)) "sample" (Some 20)
     (Random.sample random [ 10; 20; 30; 40 ]);
   Alcotest.(check (option int)) "empty" None (Random.sample random [])
-
-
