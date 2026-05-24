@@ -25,26 +25,26 @@ type t = {
   config : config;
   header : Bytes.t;
   mutable header_len : int;
-  mutable payload_remaining : int;
-  mutable settings_seen : int;
-  mutable goaway_seen : int;
-  mutable response_headers_seen : int;
-  mutable header_block_bytes : int;
-  mutable header_block_frames : int;
-}
+	  mutable payload_remaining : int;
+	  mutable settings_seen : int;
+	  mutable goaway_seen : int;
+	  response_headers_seen_by_stream : (int, int) Hashtbl.t;
+	  mutable header_block_bytes : int;
+	  mutable header_block_frames : int;
+	}
 
 let create ?(config = default_config) () =
   {
     config;
     header = Bytes.create 9;
     header_len = 0;
-    payload_remaining = 0;
-    settings_seen = 0;
-    goaway_seen = 0;
-    response_headers_seen = 0;
-    header_block_bytes = 0;
-    header_block_frames = 0;
-  }
+	    payload_remaining = 0;
+	    settings_seen = 0;
+	    goaway_seen = 0;
+	    response_headers_seen_by_stream = Hashtbl.create 32;
+	    header_block_bytes = 0;
+	    header_block_frames = 0;
+	  }
 
 let byte t index = Char.code (Bytes.get t.header index)
 
@@ -53,6 +53,9 @@ let frame_length t =
 
 let frame_type t = byte t 3
 let frame_flags t = byte t 4
+let stream_id t =
+  ((byte t 5 land 0x7f) lsl 24)
+  lor (byte t 6 lsl 16) lor (byte t 7 lsl 8) lor byte t 8
 let end_headers flags = flags land 0x4 <> 0
 
 let reset_header_block t =
@@ -76,23 +79,29 @@ let account_goaway t =
     Some (Error.Connection_closed { during = Error.Http_response })
   else None
 
-let account_response_headers t =
-  t.response_headers_seen <- t.response_headers_seen + 1;
-  if t.response_headers_seen > t.config.max_response_headers_per_connection then
+let account_response_headers t stream_id =
+  let seen =
+    Option.value
+      (Hashtbl.find_opt t.response_headers_seen_by_stream stream_id)
+      ~default:0
+    + 1
+  in
+  Hashtbl.replace t.response_headers_seen_by_stream stream_id seen;
+  if seen > t.config.max_response_headers_per_connection then
     Some
       (Error.Response_header_change_rate_exceeded
          {
-           observed_rate_hz = t.response_headers_seen;
+           observed_rate_hz = seen;
            limit_hz = t.config.max_response_headers_per_connection;
          })
   else None
 
-let account_header_bytes t ~frame_type ~flags ~length =
+let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
   match frame_type with
   | 0x1 ->
       t.header_block_bytes <- length;
       t.header_block_frames <- 1;
-      (match account_response_headers t with
+      (match account_response_headers t stream_id with
       | Some error -> Some error
       | None when length > t.config.max_hpack_block_bytes ->
         Some
@@ -126,12 +135,13 @@ let start_frame t =
   let length = frame_length t in
   let frame_type = frame_type t in
   let flags = frame_flags t in
+  let stream_id = stream_id t in
   t.header_len <- 0;
   t.payload_remaining <- length;
   match frame_type with
   | 0x4 -> account_settings t
   | 0x7 -> account_goaway t
-  | 0x1 | 0x9 -> account_header_bytes t ~frame_type ~flags ~length
+  | 0x1 | 0x9 -> account_header_bytes t ~frame_type ~flags ~length ~stream_id
   | _ -> None
 
 let observe_byte t byte =

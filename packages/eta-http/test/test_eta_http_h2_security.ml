@@ -108,9 +108,22 @@ let test_h2_security_header_churn () =
       Alcotest.(check int) "observed" 33 observed_rate_hz;
       Alcotest.(check int) "limit" 32 limit_hz
   | Some kind ->
-      Alcotest.failf "unexpected security error: %s"
+	      Alcotest.failf "unexpected security error: %s"
+	        (Eta_http.Error.kind_name kind)
+	  | None -> Alcotest.fail "header churn was not detected"
+
+let test_h2_security_allows_many_normal_response_headers () =
+  let frame stream_id =
+    h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id
+  in
+  let data =
+    String.concat "" (List.init 100 (fun index -> frame ((index * 2) + 1)))
+  in
+  match h2_observe_security data with
+  | None -> ()
+  | Some kind ->
+      Alcotest.failf "normal response headers tripped security: %s"
         (Eta_http.Error.kind_name kind)
-  | None -> Alcotest.fail "header churn was not detected"
 
 let expect_header_invalid label headers =
   match Eta_http.H2.Security.validate_headers headers with
@@ -136,5 +149,4 @@ let test_h2_security_header_normalization_edges () =
   Alcotest.(check bool) "valid" true
     (Option.is_none
        (Eta_http.H2.Security.validate_headers [ "x-good", "value" ]))
-
 

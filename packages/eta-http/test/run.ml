@@ -233,9 +233,11 @@ let () =
             test_h2_security_continuation_cap;
           Alcotest.test_case "GOAWAY churn" `Quick
             test_h2_security_goaway_churn;
-          Alcotest.test_case "header churn" `Quick
-            test_h2_security_header_churn;
-          Alcotest.test_case "header normalization edges" `Quick
+	          Alcotest.test_case "header churn" `Quick
+	            test_h2_security_header_churn;
+	          Alcotest.test_case "many normal response headers" `Quick
+	            test_h2_security_allows_many_normal_response_headers;
+	          Alcotest.test_case "header normalization edges" `Quick
             test_h2_security_header_normalization_edges;
         ] );
       ( "h2-multiplexer",
