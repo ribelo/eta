@@ -3,122 +3,6 @@ type +'a chunk = 'a list
 let default_file_chunk_size = 64 * 1024
 let file_queue_capacity = 16
 
-type mailbox_offer_result = Enqueued | Dropped | Closed
-type 'a mailbox_take = Mailbox_item of 'a | Mailbox_closed
-
-type drain_counter = {
-  mutex : Eio.Mutex.t;
-  condition : Eio.Condition.t;
-  mutable count : int;
-}
-
-type 'a mailbox = {
-  capacity : int;
-  mutex : Eio.Mutex.t;
-  condition : Eio.Condition.t;
-  queue : 'a Queue.t;
-  mutable closed : bool;
-  mutable dropped : int;
-}
-
-let mailbox_create ?(capacity = 1024) () =
-  if capacity <= 0 then invalid_arg "Stream.Mailbox.create: capacity must be > 0";
-  {
-    capacity;
-    mutex = Eio.Mutex.create ();
-    condition = Eio.Condition.create ();
-    queue = Queue.create ();
-    closed = false;
-    dropped = 0;
-  }
-
-let mailbox_offer mailbox value =
-  let result =
-    Eio.Mutex.use_rw ~protect:false mailbox.mutex (fun () ->
-        if mailbox.closed then Closed
-        else if Queue.length mailbox.queue >= mailbox.capacity then (
-          mailbox.dropped <- mailbox.dropped + 1;
-          Dropped)
-        else (
-          Queue.add value mailbox.queue;
-          Enqueued))
-  in
-  (match result with
-  | Enqueued -> Eio.Condition.broadcast mailbox.condition
-  | Dropped | Closed -> ());
-  result
-
-let mailbox_close mailbox =
-  Eio.Mutex.use_rw ~protect:false mailbox.mutex (fun () ->
-      mailbox.closed <- true);
-  Eio.Condition.broadcast mailbox.condition
-
-let mailbox_dropped mailbox =
-  Eio.Mutex.use_ro mailbox.mutex (fun () -> mailbox.dropped)
-
-let mailbox_length mailbox =
-  Eio.Mutex.use_ro mailbox.mutex (fun () -> Queue.length mailbox.queue)
-
-let drain_counter_create () =
-  { mutex = Eio.Mutex.create (); condition = Eio.Condition.create (); count = 0 }
-
-let drain_counter_value (counter : drain_counter) =
-  Eio.Mutex.use_ro counter.mutex (fun () -> counter.count)
-
-let drain_counter_incr_by (counter : drain_counter) n =
-  if n < 0 then invalid_arg "Drain_counter.incr_by: n must be >= 0";
-  if n > 0 then
-    Eio.Mutex.use_rw ~protect:false counter.mutex (fun () ->
-        counter.count <- counter.count + n)
-
-let drain_counter_decr_by (counter : drain_counter) n =
-  if n < 0 then invalid_arg "Drain_counter.decr_by: n must be >= 0";
-  if n > 0 then
-    Eio.Mutex.use_rw ~protect:false counter.mutex (fun () ->
-        counter.count <- max 0 (counter.count - n);
-        if counter.count = 0 then Eio.Condition.broadcast counter.condition)
-
-let drain_counter_await_zero ?(name = "eta_stream.drain_counter.await_zero")
-    (counter : drain_counter) =
-  Eta.Effect.named name (Eta.Effect.sync (fun () ->
-      Eio.Mutex.use_ro counter.mutex (fun () ->
-          while counter.count <> 0 do
-            Eio.Condition.await counter.condition counter.mutex
-          done)))
-
-let mailbox_take mailbox =
-  Eio.Mutex.lock mailbox.mutex;
-  Fun.protect
-    ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
-    (fun () ->
-      while Queue.is_empty mailbox.queue && not mailbox.closed do
-        Eio.Condition.await mailbox.condition mailbox.mutex
-      done;
-      match Queue.take_opt mailbox.queue with
-      | Some value -> Mailbox_item value
-      | None -> Mailbox_closed)
-
-let mailbox_take_batch mailbox max =
-  if max <= 0 then invalid_arg "Stream.Mailbox.take_batch: max must be > 0";
-  Eio.Mutex.lock mailbox.mutex;
-  Fun.protect
-    ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
-    (fun () ->
-      while Queue.is_empty mailbox.queue && not mailbox.closed do
-        Eio.Condition.await mailbox.condition mailbox.mutex
-      done;
-      match Queue.take_opt mailbox.queue with
-      | None -> Mailbox_closed
-      | Some first ->
-          let rec drain remaining acc =
-            if remaining = 0 then List.rev acc
-            else
-              match Queue.take_opt mailbox.queue with
-              | None -> List.rev acc
-              | Some value -> drain (remaining - 1) (value :: acc)
-          in
-          Mailbox_item (drain (max - 1) [ first ]))
-
 module Stream = struct
   type file_operation = [ `Close | `Open | `Read ]
 
@@ -184,8 +68,10 @@ module Stream = struct
         int * ('a, 'err) t * ('a -> ('b, 'err) t)
         -> ('b, 'err) t
     | From_eio_stream : 'a Eio.Stream.t -> ('a, 'err) t
-    | From_mailbox : 'a mailbox -> ('a, 'err) t
-    | From_mailbox_batches : int * 'a mailbox -> ('a list, 'err) t
+    | From_mailbox : 'a Eta_stream_mailbox.t -> ('a, 'err) t
+    | From_mailbox_batches :
+        int * 'a Eta_stream_mailbox.t
+        -> ('a list, 'err) t
     | From_file :
         {
           chunk_size : int;
@@ -241,31 +127,15 @@ module Stream = struct
 end
 
 module Mailbox = struct
-  type 'a t = 'a mailbox
-  type offer_result = mailbox_offer_result = Enqueued | Dropped | Closed
+  include Eta_stream_mailbox
 
-  let create = mailbox_create
-  let offer = mailbox_offer
-  let close = mailbox_close
-  let dropped = mailbox_dropped
-  let length = mailbox_length
   let to_stream mailbox = Stream.From_mailbox mailbox
   let to_batch_stream ~max mailbox =
     if max <= 0 then invalid_arg "Stream.Mailbox.to_batch_stream: max must be > 0";
     Stream.From_mailbox_batches (max, mailbox)
 end
 
-module Drain_counter = struct
-  type t = drain_counter
-
-  let create = drain_counter_create
-  let value = drain_counter_value
-  let incr_by = drain_counter_incr_by
-  let decr_by = drain_counter_decr_by
-  let incr counter = incr_by counter 1
-  let decr counter = decr_by counter 1
-  let await_zero = drain_counter_await_zero
-end
+module Drain_counter = Eta_stream_drain_counter
 
 module Sink = struct
   type ('in_, 'out, 'err) t = {
@@ -467,30 +337,30 @@ and fold_stream :
       let rec loop acc =
         bind
           (function
-            | Mailbox_closed -> Eta.Effect.pure (acc, true)
-            | Mailbox_item value ->
+            | Eta_stream_mailbox.Take_closed -> Eta.Effect.pure (acc, true)
+            | Eta_stream_mailbox.Item value ->
                 bind
                   (fun (acc, keep_going) ->
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc value))
           (Eta.Effect.named "Stream.Mailbox.take" (Eta.Effect.sync (fun () ->
-               mailbox_take mailbox)))
+               Eta_stream_mailbox.take mailbox)))
       in
       loop acc
   | From_mailbox_batches (max, mailbox) ->
       let rec loop acc =
         bind
           (function
-            | Mailbox_closed -> Eta.Effect.pure (acc, true)
-            | Mailbox_item values ->
+            | Eta_stream_mailbox.Take_closed -> Eta.Effect.pure (acc, true)
+            | Eta_stream_mailbox.Item values ->
                 bind
                   (fun (acc, keep_going) ->
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc values))
           (Eta.Effect.named "Stream.Mailbox.take_batch" (Eta.Effect.sync (fun () ->
-               mailbox_take_batch mailbox max)))
+               Eta_stream_mailbox.take_batch mailbox max)))
       in
       loop acc
   | From_file { chunk_size; path; path_label; on_error } ->
