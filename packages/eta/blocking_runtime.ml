@@ -47,6 +47,9 @@ type t = {
   mutable rejected : int;
   mutable cancelled_before_start : int;
   mutable detached : int;
+  mutable next_job_id : int;
+  active_jobs : (int, unit) Hashtbl.t;
+  detached_jobs : (int, unit) Hashtbl.t;
   mutable shutdown : bool;
 }
 
@@ -86,6 +89,9 @@ let create_with_kind kind ?(name = "blocking") config =
     rejected = 0;
     cancelled_before_start = 0;
     detached = 0;
+    next_job_id = 0;
+    active_jobs = Hashtbl.create 16;
+    detached_jobs = Hashtbl.create 16;
     shutdown = false;
   }
 
@@ -169,8 +175,11 @@ let rec reserve_slot t name emit submitted_at =
     Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
     if t.shutdown then `Shutdown
     else if t.active < t.config.max_threads then (
+      let job_id = t.next_job_id in
+      t.next_job_id <- t.next_job_id + 1;
       t.active <- t.active + 1;
-      `Started)
+      Hashtbl.replace t.active_jobs job_id ();
+      `Started job_id)
     else if t.queued < t.config.max_queued then (
       t.queued <- t.queued + 1;
       `Queued)
@@ -181,7 +190,7 @@ let rec reserve_slot t name emit submitted_at =
           `Reject
       | Wait -> `Wait_full
   with
-  | `Started -> `Started
+  | `Started job_id -> `Started job_id
   | `Queued -> `Queued
   | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
   | `Reject -> raise_pool_full t name emit submitted_at
@@ -220,11 +229,14 @@ let wait_queued_slot t name emit submitted_at =
             t.queued <- max 0 (t.queued - 1);
             t.active <- t.active + 1;
             Eio.Condition.broadcast t.condition;
-            `Started)
+            let job_id = t.next_job_id in
+            t.next_job_id <- t.next_job_id + 1;
+            Hashtbl.replace t.active_jobs job_id ();
+            `Started job_id)
           else assert false)
     in
     match state with
-    | `Started -> ()
+    | `Started job_id -> job_id
     | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
   with (Eio.Cancel.Cancelled _ | Exit) ->
     let ts = now_ms () in
@@ -235,17 +247,23 @@ let wait_queued_slot t name emit submitted_at =
     emit_event emit t name submitted_at ts ts Blocking_cancelled;
     raise Exit
 
-let release_started t =
+let release_started t job_id =
   Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
   t.active <- max 0 (t.active - 1);
   t.completed <- t.completed + 1;
+  Hashtbl.remove t.active_jobs job_id;
+  Hashtbl.remove t.detached_jobs job_id;
   Eio.Condition.broadcast t.condition
 
-let mark_detached t count =
-  if count > 0 then
-    Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
-    t.detached <- t.detached + count;
-    Eio.Condition.broadcast t.condition
+let mark_detached t job_id =
+  Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+  if
+    Hashtbl.mem t.active_jobs job_id
+    && not (Hashtbl.mem t.detached_jobs job_id)
+  then (
+    Hashtbl.replace t.detached_jobs job_id ();
+    t.detached <- t.detached + 1);
+  Eio.Condition.broadcast t.condition
 
 let run_callback f =
   Worker_context.run @@ fun () ->
@@ -275,9 +293,9 @@ let run_worker t name f =
   | Systhread -> run_systhread name f
   | Domain_isolated -> run_domain f
 
-let finish_result t name emit submitted_at started_at outcome =
+let finish_result t job_id name emit submitted_at started_at outcome =
   let ended_at = now_ms () in
-  release_started t;
+  release_started t job_id;
   match outcome with
   | Packed_ok value ->
       emit_event emit t name submitted_at started_at ended_at Blocking_ok;
@@ -290,26 +308,28 @@ let finish_result t name emit submitted_at started_at outcome =
 let submit ~sw ~emit t name f =
   check_not_worker "Effect.Blocking.submit";
   let submitted_at = now_ms () in
-  (try
-     match reserve_slot t name emit submitted_at with
-     | `Started -> ()
-     | `Queued -> wait_queued_slot t name emit submitted_at
-   with Exit -> raise Exit);
+  let job_id =
+    try
+      match reserve_slot t name emit submitted_at with
+      | `Started job_id -> job_id
+      | `Queued -> wait_queued_slot t name emit submitted_at
+    with Exit -> raise Exit
+  in
   let started_at = now_ms () in
   match t.config.shutdown_policy with
   | Drain ->
       Eio.Cancel.protect @@ fun () ->
       let outcome = run_worker t name f in
-      finish_result t name emit submitted_at started_at outcome
+      finish_result t job_id name emit submitted_at started_at outcome
   | Detach_started ->
       let promise =
         Eio.Fiber.fork_promise ~sw (fun () ->
             let outcome = run_worker t name f in
-            finish_result t name emit submitted_at started_at outcome)
+            finish_result t job_id name emit submitted_at started_at outcome)
       in
       (try Eio.Promise.await_exn promise with
       | Eio.Cancel.Cancelled _ as exn ->
-          mark_detached t 1;
+          mark_detached t job_id;
           let ts = now_ms () in
           emit_event emit t name submitted_at started_at ts Blocking_detached;
           raise exn)
@@ -321,7 +341,15 @@ let shutdown ~emit t =
     let detached =
       match t.config.shutdown_policy with
       | Drain -> 0
-      | Detach_started -> t.active
+      | Detach_started ->
+          let count = ref 0 in
+          Hashtbl.iter
+            (fun job_id () ->
+              if not (Hashtbl.mem t.detached_jobs job_id) then (
+                incr count;
+                Hashtbl.replace t.detached_jobs job_id ()))
+            t.active_jobs;
+          !count
     in
     t.detached <- t.detached + detached;
     Eio.Condition.broadcast t.condition;

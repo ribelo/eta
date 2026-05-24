@@ -213,6 +213,8 @@ let () =
             test_blocking_shutdown_drain_waits_for_started;
           Alcotest.test_case "shutdown detach records" `Quick
             test_blocking_shutdown_detach_started_returns_promptly;
+          Alcotest.test_case "detach started counts each job once" `Quick
+            test_blocking_detach_started_counts_each_job_once;
           Alcotest.test_case "named pools isolate" `Quick
             test_blocking_named_pools_prevent_starvation;
           Alcotest.test_case "domain isolated hold-lock" `Quick

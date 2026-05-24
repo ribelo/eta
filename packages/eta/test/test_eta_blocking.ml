@@ -267,8 +267,43 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
             && List.exists
                  (fun (k, v) ->
                    String.equal k "eta.blocking.outcome"
-                   && contains_substring v "error")
+            && contains_substring v "error")
                  point.attrs))
+
+let test_blocking_detach_started_counts_each_job_once () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let pool =
+    BP.create ~name:"detach-once"
+      (blocking_config ~max_threads:2 ~shutdown_policy:BP.Detach_started ())
+  in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let cancel_ctx = ref None in
+  let cancelled =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt
+          (Effect.blocking ~pool ~name:"detach-once.cancelled" (fun () ->
+               Unix.sleepf 0.080)))
+  in
+  wait_until (fun () -> (BP.stats pool).active = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  wait_until (fun () -> (BP.stats pool).detached = 1);
+  let shutdown_detached =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.blocking ~pool ~name:"detach-once.shutdown" (fun () ->
+               Unix.sleepf 0.080)))
+  in
+  wait_until (fun () -> (BP.stats pool).active = 2);
+  run_ok rt (BP.shutdown pool);
+  let stats = BP.stats pool in
+  Alcotest.(check int) "detached once per submitted job" 2 stats.detached;
+  Alcotest.(check bool) "detached does not exceed submitted" true
+    (stats.detached <= 2);
+  ignore (Eio.Promise.await_exn cancelled : (unit, _) Exit.t);
+  ignore (Eio.Promise.await_exn shutdown_detached : (unit, _) Exit.t)
 
 let test_blocking_named_pools_prevent_starvation () =
   Eio_main.run @@ fun stdenv ->
@@ -395,5 +430,4 @@ let test_blocking_observability_labels_and_timings () =
             && List.mem ("eta.blocking.name", "test.label") point.attrs
             &&
             match point.value with Meter.Int ms -> ms >= 15 | Meter.Float _ -> false))
-
 
