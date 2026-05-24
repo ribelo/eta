@@ -542,6 +542,71 @@ let test_stream_handles_named_tool_deltas () =
   Alcotest.(check string) "tool args" "{\"location\":\"SF\"}"
     (stream_tool_args events)
 
+let decode_failing_provider =
+  {
+    stream_provider with
+    decode_stream_event =
+      (fun event ->
+        Error
+          (Decode_error
+             {
+               provider = "stream-fixture";
+               message = "bad stream event";
+               raw = Some event.data;
+             }));
+  }
+
+let chunk_then_eof_body ?release value =
+  let reads = ref [ Eta_http.Body.Stream.Chunk (Bytes.of_string value); End ] in
+  Eta_http.Body.Stream.of_reader ?release (fun () ->
+      match !reads with
+      | [] -> Eta.Effect.pure Eta_http.Body.Stream.End
+      | next :: rest ->
+          reads := rest;
+          Eta.Effect.pure next)
+
+let test_stream_decode_error_survives_successful_close () =
+  with_runtime @@ fun rt ->
+  let body = chunk_then_eof_body "data: bad\n\n" in
+  let stream = stream_of_body decode_failing_provider body in
+  let provider, message, raw =
+    expect_decode_error rt "decode error with close" (read_stream_events stream)
+  in
+  Alcotest.(check string) "provider" "stream-fixture" provider;
+  Alcotest.(check string) "message" "bad stream event" message;
+  Alcotest.(check (option string)) "raw" (Some "bad") raw
+
+let test_stream_decode_error_suppresses_close_failure () =
+  with_runtime @@ fun rt ->
+  let close_error =
+    Eta_http.Error.make ~method_:"GET" ~uri:"https://stream.example"
+      (Eta_http.Error.Connection_closed
+         { during = Eta_http.Error.Http_response })
+  in
+  let body =
+    chunk_then_eof_body
+      ~release:(fun () -> Eta.Effect.fail close_error)
+      "data: bad\n\n"
+  in
+  let stream = stream_of_body decode_failing_provider body in
+  match Eta.Runtime.run rt (read_stream_events stream) with
+  | Eta.Exit.Error
+      (Eta.Cause.Suppressed
+        {
+          primary =
+            Eta.Cause.Fail
+              (Decode_error { provider = "stream-fixture"; message; _ });
+          finalizer = Eta.Cause.Fail (Http_error close);
+        }) ->
+      Alcotest.(check string) "message" "bad stream event" message;
+      Alcotest.(check bool) "same close error" true
+        (close_error = close)
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected cause: %a"
+        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
+        cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected decode error"
+
 let test_stream_errors_are_events () =
   with_runtime @@ fun rt ->
   let body = body_of_string "event: error\ndata: Overloaded\n\n" in
@@ -808,6 +873,10 @@ let () =
             test_stream_rejects_oversized_complete_record_before_decode;
           Alcotest.test_case "named tool deltas" `Quick
             test_stream_handles_named_tool_deltas;
+          Alcotest.test_case "decode error survives close" `Quick
+            test_stream_decode_error_survives_successful_close;
+          Alcotest.test_case "decode error suppresses close failure" `Quick
+            test_stream_decode_error_suppresses_close_failure;
           Alcotest.test_case "error events" `Quick test_stream_errors_are_events;
           Alcotest.test_case "early stop releases body" `Quick
             test_stream_early_stop_releases_body_once;

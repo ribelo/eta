@@ -382,7 +382,10 @@ let close_stream stream =
   release_stream stream
 
 let fail_and_close stream error =
-  close_stream stream |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+       ~release:(fun () -> close_stream stream)
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
 
 let buffer_too_large stream =
   Decode_error
