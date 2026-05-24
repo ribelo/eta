@@ -429,6 +429,8 @@ let () =
             test_observability_sampler_unsampled_parent_suppresses_par_children;
           Alcotest.test_case "noop runtime keeps die diagnostics" `Quick
             test_observability_noop_runtime_keeps_die_diagnostics;
+          Alcotest.test_case "custom noop tracer is explicitly enabled" `Quick
+            test_observability_custom_noop_tracer_is_explicitly_enabled;
           Alcotest.test_case "suppress observability" `Quick
             test_observability_suppress_observability;
           Alcotest.test_case "trace context extract inject" `Quick

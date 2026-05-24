@@ -296,6 +296,36 @@ let test_observability_noop_runtime_keeps_die_diagnostics () =
         (List.assoc_opt "request.id" die.annotations)
   | _ -> Alcotest.fail "expected Die with noop runtime diagnostics"
 
+let counting_noop_tracer count : Capabilities.tracer =
+  object
+    method with_fiber_context : 'a. (unit -> 'a) -> 'a = fun f -> f ()
+
+    method begin_span ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
+        ?trace_state:_ ?baggage:_ ?kind:_ ~name:_ ~started_ms:_ () =
+      incr count;
+      -1
+
+    method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
+    method add_attr ~key:_ ~value:_ = ()
+    method add_attr_to ~span_id:_ ~key:_ ~value:_ = ()
+    method add_event ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
+    method add_link _ = ()
+    method add_link_to ~span_id:_ _ = ()
+    method inspect ~span_id:_ = None
+  end
+
+let test_observability_custom_noop_tracer_is_explicitly_enabled () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let spans_started = ref 0 in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(counting_noop_tracer spans_started) ()
+  in
+  check_exit_ok Alcotest.unit "named" ()
+    (Runtime.run rt (Effect.named "custom.noop" Effect.unit));
+  Alcotest.(check int) "custom tracer enabled" 1 !spans_started
+
 let test_observability_suppress_observability () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -510,4 +540,3 @@ let test_observability_all_for_each_supervisor_inherit_parent () =
       Alcotest.(check (option int)) span.Tracer.name (Some parent.span_id)
         span.parent_id)
     children
-

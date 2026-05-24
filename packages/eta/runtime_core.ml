@@ -74,6 +74,9 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     ?(auto_instrument = false) ?logger ?meter ?random ?island_pool
     ?blocking_pool ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
+  let tracing_enabled = Option.is_some tracer in
+  let logging_enabled = Option.is_some logger in
+  let metrics_enabled = Option.is_some meter in
   let tracer = Option.value tracer ~default:Tracer.noop in
   let logger = Option.value logger ~default:Logger.noop in
   let meter = Option.value meter ~default:Meter.noop in
@@ -102,13 +105,13 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     sleep;
     now_ms;
     tracer;
-    tracing_enabled = tracer != Tracer.noop;
+    tracing_enabled;
     sampler;
     auto_instrument;
     logger;
-    logging_enabled = logger != Logger.noop;
+    logging_enabled;
     meter;
-    metrics_enabled = meter != Meter.noop;
+    metrics_enabled;
     random;
     island_pool;
     blocking_pool;
