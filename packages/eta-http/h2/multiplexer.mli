@@ -101,3 +101,17 @@ val body_stream :
   stream ->
   H2.Body.Reader.t ->
   Eta_http_body.Stream.t
+
+val body_stream_async :
+  ?poll_error:(unit -> Eta_http_error.Error.t option) ->
+  ?on_eof:(unit -> unit) ->
+  ?on_release:
+    (Stream_state.release -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
+  closed_error:Eta_http_error.Error.t ->
+  t ->
+  stream ->
+  H2.Body.Reader.t ->
+  Eta_http_body.Stream.t * (unit -> unit)
+(** Like {!body_stream}, but waits for callbacks delivered by a background
+    owner reader instead of reading the socket itself. The second result wakes a
+    blocked reader when external state such as [poll_error] changes. *)

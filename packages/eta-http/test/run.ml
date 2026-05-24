@@ -10,6 +10,7 @@ open Test_eta_http_observability
 open Test_eta_http_tls
 open Test_eta_http_h2_state
 open Test_eta_http_h2_writer
+open Test_eta_http_h2_connection
 open Test_eta_http_h2_multiplexer
 open Test_eta_http_h2_security
 open Test_eta_http_alpn_dispatch
@@ -204,6 +205,15 @@ let () =
             test_h2_writer_drains_client_preface_and_request;
           Alcotest.test_case "blocked write teardown" `Quick
             test_h2_writer_blocked_write_teardown;
+        ] );
+      ( "h2-connection",
+        [
+          Alcotest.test_case "concurrent streams share owner" `Quick
+            test_h2_connection_concurrent_streams;
+          Alcotest.test_case "early response beats blocked upload" `Quick
+            test_h2_connection_returns_early_response;
+          Alcotest.test_case "classifies informational response" `Quick
+            test_h2_client_classifies_informational_response;
         ] );
       ( "h2-security",
         [

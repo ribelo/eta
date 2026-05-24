@@ -142,53 +142,26 @@ let h2_request_of_request request url =
            (h2_method (Request.method_value request))
            (Url.origin_form url))
 
-let h2_read_once request flow reader =
-  Eta.Effect.sync (fun () ->
-      try Ok (Eta_http_h2.Multiplexer.read_client_once ~flow reader)
-      with
-      | End_of_file -> Ok (Eta_http_h2.Multiplexer.Eof 0)
-      | exn -> Error (Printexc.to_string exn))
-  |> Eta.Effect.bind (function
-       | Ok result -> Eta.Effect.pure result
-       | Error message ->
-           Eta.Effect.fail (h2_protocol_violation request "read" message))
-
-let h2_flush_client request flow client =
-  Eta.Effect.sync (fun () ->
-      try Ok (Eta_http_h2.Writer.drain_client ~flow client)
-      with exn -> Error (Printexc.to_string exn))
-  |> Eta.Effect.bind (function
-       | Ok (Eta_http_h2.Writer.Yield _) -> Eta.Effect.unit
-       | Ok (Close { code; _ }) ->
-           Eta.Effect.fail
-             (h2_protocol_violation request "write"
-                (Printf.sprintf "client writer closed with code %d" code))
-       | Error message ->
-           Eta.Effect.fail (h2_protocol_violation request "write" message))
-
 let h2_write_chunk writer chunk =
   Eta.Effect.sync (fun () ->
       H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk))
 
-let rec h2_write_stream_flushed ~flush writer body =
+let rec h2_write_stream writer body =
   Body.read body
   |> Eta.Effect.bind (function
        | None -> Eta.Effect.unit
        | Some chunk ->
            h2_write_chunk writer chunk
-           |> Eta.Effect.bind (fun () -> flush ())
-           |> Eta.Effect.bind (fun () -> h2_write_stream_flushed ~flush writer body))
+           |> Eta.Effect.bind (fun () -> h2_write_stream writer body))
 
-let h2_write_body_flushed ~flush writer = function
-  | Request.Empty -> flush ()
-  | Fixed chunks ->
-      chunks
-      |> List.map (fun chunk ->
-             h2_write_chunk writer chunk |> Eta.Effect.bind (fun () -> flush ()))
-      |> Eta.Effect.concat
-  | Stream body -> h2_write_stream_flushed ~flush writer body
-  | Rewindable_stream { make; _ } ->
-      h2_write_stream_flushed ~flush writer (make ())
+let h2_write_body writer = function
+  | Request.Empty -> Eta.Effect.unit
+  | Fixed chunks -> chunks |> List.map (h2_write_chunk writer) |> Eta.Effect.concat
+  | Stream body -> h2_write_stream writer body
+  | Rewindable_stream { make; _ } -> h2_write_stream writer (make ())
+
+let h2_close_request_body writer =
+  Eta.Effect.sync (fun () -> try H2.Body.Writer.close writer with _ -> ())
 
 let h2_response_headers response =
   H2.Headers.to_list response.H2.Response.headers
@@ -199,13 +172,6 @@ let h2_response_has_body request status =
   (not (String.equal (String.uppercase_ascii request.Request.method_) "HEAD"))
   && (status < 100 || status >= 200)
   && status <> 204 && status <> 304
-
-let deliver_result_once result_ref value =
-  match !result_ref with
-  | Some _ -> false
-  | None ->
-      result_ref := Some value;
-      true
 
 let h2_trailer_result request =
   let promise, resolver = Eio.Promise.create () in
@@ -232,68 +198,64 @@ let h2_trailer_result request =
   in
   (trailers, resolve_headers, resolve_empty, resolve_error)
 
-let h2_body_pump request flow client reader =
-  h2_flush_client request flow client
-  |> Eta.Effect.bind (fun () ->
-         h2_read_once request flow reader
-         |> Eta.Effect.bind (function
-              | Eta_http_h2.Multiplexer.Security_error kind ->
-                  Eta.Effect.fail (h2_error request kind)
-              | result -> Eta.Effect.pure result))
+let h2_informational_status status =
+  status >= 100 && status < 200 && status <> 101
 
-let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
-    url =
-  let result_ref = ref None in
+let request_h2_on_connection connection request url =
+  let mux = Eta_http_h2.Connection.mux connection in
+  let result, resolver = Eio.Promise.create () in
   let body_error = ref None in
   let response_started = ref false in
-  let cleanup_before_return = ref false in
+  let body_wake = ref (fun () -> ()) in
+  let unregister_failure = ref (fun () -> ()) in
   let trailers, resolve_trailers, resolve_empty_trailers, resolve_trailer_error =
     h2_trailer_result request
   in
+  let unregister () =
+    let f = !unregister_failure in
+    unregister_failure := (fun () -> ());
+    f ()
+  in
+  let resolve_result value = ignore (Eio.Promise.try_resolve resolver value) in
+  let resolve_error error =
+    unregister ();
+    resolve_result (Error error)
+  in
   let set_body_error error =
     body_error := Some error;
-    resolve_trailer_error error
+    resolve_trailer_error error;
+    !body_wake ()
   in
-  let mux =
-    Eta_http_h2.Multiplexer.create ~error_handler:(fun error ->
-        let error =
-          h2_protocol_violation request "connection" (h2_pp_client_error error)
-        in
-        if !response_started then set_body_error error
-        else ignore (deliver_result_once result_ref (Error error)))
-      ()
-  in
-  let client = Eta_http_h2.Multiplexer.client_connection mux in
-  let reader = Eta_http_h2.Multiplexer.create_client_reader client in
-  let cleanup () =
-    Eta.Effect.sync (fun () ->
-        Eta_http_h2.Multiplexer.shutdown mux;
-        try Eio.Flow.close flow with _ -> ())
-    |> Eta.Effect.bind (fun () -> on_release ())
-  in
-  let cleanup_then_fail error =
-    cleanup () |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
-  in
+  unregister_failure :=
+    Eta_http_h2.Connection.register_failure_handler connection (fun kind ->
+        let error = h2_error request kind in
+        if !response_started then set_body_error error else resolve_error error);
   let close_no_body stream body =
     resolve_empty_trailers ();
     H2.Body.Reader.close body;
     Eta_http_h2.Multiplexer.mark_complete mux stream;
     ignore (Eta_http_h2.Multiplexer.release mux stream);
-    cleanup_before_return := true
+    unregister ()
   in
   let response_body stream body =
-    Eta_http_h2.Multiplexer.body_stream
-      ~closed_error:(h2_closed request Http_response)
-      ~poll_error:(fun () -> !body_error)
-      ~on_eof:resolve_empty_trailers
-      ~on_release:(fun _ ->
-        resolve_trailer_error (h2_closed request Http_response);
-        cleanup ())
-      ~pump:(fun () -> h2_body_pump request flow client reader)
-      mux stream body
+    let body, wake =
+      Eta_http_h2.Multiplexer.body_stream_async
+        ~closed_error:(h2_closed request Http_response)
+        ~poll_error:(fun () -> !body_error)
+        ~on_eof:(fun () ->
+          unregister ();
+          resolve_empty_trailers ())
+        ~on_release:(fun _ ->
+          unregister ();
+          resolve_trailer_error (h2_closed request Http_response);
+          Eta.Effect.unit)
+        mux stream body
+    in
+    body_wake := wake;
+    body
   in
   let open_request h2_request =
-    Eta_http_h2.Multiplexer.request mux ~tag:0 h2_request
+    Eta_http_h2.Connection.request connection ~tag:0 h2_request
       ~trailers_handler:(fun headers -> resolve_trailers (H2.Headers.to_list headers))
       ~error_handler:(fun stream error ->
         Eta_http_h2.Multiplexer.mark_remote_reset mux
@@ -301,71 +263,71 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
         let error =
           h2_protocol_violation request "stream" (h2_pp_client_error error)
         in
-        if !response_started then set_body_error error
-        else
-          ignore (deliver_result_once result_ref (Error error)))
+        if !response_started then set_body_error error else resolve_error error)
       ~response_handler:(fun stream response body ->
-        response_started := true;
         let status = H2.Status.to_code response.H2.Response.status in
         let headers = h2_response_headers response in
         match Eta_http_h2.Security.validate_headers headers with
         | Some kind ->
             H2.Body.Reader.close body;
             ignore (Eta_http_h2.Multiplexer.release mux stream);
-            cleanup_before_return := true;
-            ignore (deliver_result_once result_ref (Error (h2_error request kind)))
+            resolve_error (h2_error request kind)
+        | None when h2_informational_status status -> ()
         | None when h2_response_has_body request status ->
-          let body = response_body stream body in
-          let response = Response.make ~status ~headers ~trailers ~body () in
-          ignore (deliver_result_once result_ref (Ok response))
+            response_started := true;
+            let body = response_body stream body in
+            let response = Response.make ~status ~headers ~trailers ~body () in
+            resolve_result (Ok response)
         | None ->
-          let response =
-            Response.make ~status ~headers ~trailers ~body:(Body.empty ()) ()
-          in
-          ignore (deliver_result_once result_ref (Ok response));
-          close_no_body stream body)
+            response_started := true;
+            let response =
+              Response.make ~status ~headers ~trailers ~body:(Body.empty ()) ()
+            in
+            resolve_result (Ok response);
+            close_no_body stream body)
+  in
+  let wait_for_response () =
+    Eta.Effect.sync (fun () -> Eio.Promise.await result)
+    |> Eta.Effect.bind (function
+         | Ok response -> Eta.Effect.pure response
+         | Error error -> Eta.Effect.fail error)
   in
   match h2_request_of_request request url with
-  | Error error -> cleanup_then_fail error
+  | Error error -> resolve_error error; Eta.Effect.fail error
   | Ok h2_request -> (
   match open_request h2_request with
   | Error Admission_rejected ->
-      cleanup_then_fail
-        (h2_error request (Stream_admission_rejected { limit = 128 }))
-  | Error Connection_closed -> cleanup_then_fail (h2_closed request Http_request)
+      let error = h2_error request (Stream_admission_rejected { limit = 128 }) in
+      resolve_error error;
+      Eta.Effect.fail error
+  | Error Connection_closed ->
+      let error = h2_closed request Http_request in
+      resolve_error error;
+      Eta.Effect.fail error
   | Error (Request_failed message) ->
-      cleanup_then_fail (h2_protocol_violation request "request" message)
+      let error = h2_protocol_violation request "request" message in
+      resolve_error error;
+      Eta.Effect.fail error
   | Ok opened ->
-      let flush () = h2_flush_client request flow client in
-      h2_write_body_flushed ~flush opened.request_body request.body
-      |> Eta.Effect.bind (fun () ->
-             Eta.Effect.sync (fun () -> H2.Body.Writer.close opened.request_body))
-      |> Eta.Effect.bind flush
-      |> Eta.Effect.bind (fun () ->
-             let rec wait_for_response () =
-               match !result_ref with
-               | Some (Ok response) ->
-                   if !cleanup_before_return then
-                     cleanup () |> Eta.Effect.map (fun () -> response)
-                   else Eta.Effect.pure response
-               | Some (Error error) -> cleanup_then_fail error
-               | None -> (
-                   h2_read_once request flow reader
-                   |> Eta.Effect.bind (function
-                        | Eta_http_h2.Multiplexer.Read _ -> wait_for_response ()
-                        | Security_error kind ->
-                            cleanup_then_fail (h2_error request kind)
-                        | Eof _ | Close -> (
-                            match !result_ref with
-                            | Some (Ok response) ->
-                                if !cleanup_before_return then
-                                  cleanup () |> Eta.Effect.map (fun () -> response)
-                                else Eta.Effect.pure response
-                            | Some (Error error) -> cleanup_then_fail error
-                            | None ->
-                                cleanup_then_fail (h2_closed request Http_response))))
-             in
-             wait_for_response ()))
+      let write_request =
+        h2_write_body opened.request_body request.body
+        |> Eta.Effect.bind (fun () -> h2_close_request_body opened.request_body)
+        |> Eta.Effect.catch (fun error ->
+               if not !response_started then resolve_error error;
+               Eta.Effect.fail error)
+      in
+      let response_or_writer =
+        Eta.Effect.race
+          [
+            wait_for_response ();
+            (write_request |> Eta.Effect.bind (fun () -> wait_for_response ()));
+          ]
+      in
+      Eta.Effect.scoped
+        (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+           ~release:(fun () -> h2_close_request_body opened.request_body)
+        |> Eta.Effect.bind (fun () -> response_or_writer)))
+
 let make_h1 ~sw ~net ?authenticator
     ?(max_response_body_bytes = default_max_response_body_bytes) () =
   if max_response_body_bytes < 0 then
@@ -430,6 +392,23 @@ let make ~sw ~net ?authenticator
   let opened = ref 0 in
   let released = ref 0 in
   let last_protocol = ref Auto in
+  let h2_connections = Hashtbl.create 8 in
+  let h2_key target =
+    Printf.sprintf "https://%s:%d" target.Connect.host target.port
+  in
+  let h2_connections_values () =
+    Hashtbl.fold (fun _ connection acc -> connection :: acc) h2_connections []
+  in
+  let h2_connection_for target =
+    let key = h2_key target in
+    match Hashtbl.find_opt h2_connections key with
+    | Some connection when not (Eta_http_h2.Connection.is_closed connection) ->
+        Some connection
+    | Some _ ->
+        Hashtbl.remove h2_connections key;
+        None
+    | None -> None
+  in
   let note_open () = Eta.Effect.sync (fun () -> incr opened) in
   let close_counted flow =
     Eta.Effect.sync (fun () ->
@@ -453,6 +432,22 @@ let make ~sw ~net ?authenticator
            message = "unsupported ALPN protocol " ^ protocol;
          })
   in
+  let h2_on_connection connection request url =
+    last_protocol := H2;
+    request_h2_on_connection connection request url
+  in
+  let h2_on_tls target tls request url =
+    let key = h2_key target in
+    let connection =
+      Eta_http_h2.Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
+        ~on_close:(fun () ->
+          incr released;
+          Hashtbl.remove h2_connections key)
+        ()
+    in
+    Hashtbl.replace h2_connections key connection;
+    h2_on_connection connection request url
+  in
   let dispatch_tls target tls request url =
     Connect.negotiated_alpn ~method_:request.Request.method_ target tls
     |> Eta.Effect.bind (fun alpn ->
@@ -462,42 +457,66 @@ let make ~sw ~net ?authenticator
                last_protocol := H1;
                h1_on_flow (tls :> Connect.tcp_flow) request
            | Ok Dispatch.Use_h2 ->
-               last_protocol := H2;
-               request_h2_on_flow
-                 ~on_release:(fun () -> Eta.Effect.sync (fun () -> incr released))
-                 ~flow:(tls :> Connect.tcp_flow) request url)
+               h2_on_tls target tls request url)
   in
   let request_impl request =
     match request_url request with
     | Error error -> Eta.Effect.fail error
     | Ok url ->
         let target = Connect.target_of_url url in
-        Connect.connect_tcp ~sw ~net ~method_:request.method_ target
-        |> Eta.Effect.bind (fun tcp ->
-               note_open ()
-               |> Eta.Effect.bind (fun () ->
-                      match target.Connect.scheme with
-                      | Http ->
-                          last_protocol := H1;
-                          h1_on_flow tcp request
-                      | Https ->
-                          Connect.connect_tls ~authenticator
-                            ~method_:request.method_ target tcp
-                          |> Eta.Effect.bind (fun tls ->
-                                 dispatch_tls target tls request url)))
+        (match (target.Connect.scheme, h2_connection_for target) with
+        | Https, Some connection -> h2_on_connection connection request url
+        | _ ->
+            Connect.connect_tcp ~sw ~net ~method_:request.method_ target
+            |> Eta.Effect.bind (fun tcp ->
+                   note_open ()
+                   |> Eta.Effect.bind (fun () ->
+                          match target.Connect.scheme with
+                          | Http ->
+                              last_protocol := H1;
+                              h1_on_flow tcp request
+                          | Https ->
+                              Connect.connect_tls ~authenticator
+                                ~method_:request.method_ target tcp
+                              |> Eta.Effect.bind (fun tls ->
+                                     dispatch_tls target tls request url))))
   in
   let stats_impl () =
     Eta.Effect.sync (fun () ->
+        let h2_stats =
+          h2_connections_values ()
+          |> List.fold_left
+               (fun acc connection ->
+                 let stats = Eta_http_h2.Connection.stats connection in
+                 {
+                   acc with
+                   active = acc.active + stats.active;
+                   capacity = acc.capacity + stats.max_concurrent;
+                   idle = acc.idle + 1;
+                 })
+               {
+                 protocol = H2;
+                 active = 0;
+                 idle = 0;
+                 capacity = 0;
+                 opened = 0;
+                 released = 0;
+               }
+        in
         {
           protocol = !last_protocol;
-          active = 0;
-          idle = 0;
-          capacity = 0;
+          active = h2_stats.active;
+          idle = h2_stats.idle;
+          capacity = h2_stats.capacity;
           opened = !opened;
           released = !released;
         })
   in
-  let shutdown_impl () = Eta.Effect.unit in
+  let shutdown_impl () =
+    Eta.Effect.sync (fun () ->
+        h2_connections_values () |> List.iter Eta_http_h2.Connection.shutdown;
+        Hashtbl.clear h2_connections)
+  in
   { protocol = Auto; request_impl; stats_impl; shutdown_impl }
 
 let make_for_test ~protocol ~request ~stats ~shutdown =
@@ -507,3 +526,8 @@ let make_for_test ~protocol ~request ~stats ~shutdown =
     stats_impl = stats;
     shutdown_impl = shutdown;
   }
+
+module For_test = struct
+  let h2_informational_status = h2_informational_status
+  let request_h2_on_connection = request_h2_on_connection
+end

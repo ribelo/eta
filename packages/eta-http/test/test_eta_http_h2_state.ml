@@ -56,8 +56,13 @@ let test_h2_stream_state_release_decisions () =
   let second =
     h2_stream "second" (Eta_http.H2.Stream_state.open_stream state ~tag:12)
   in
+  Alcotest.(check bool) "server stream id rejected" false
+    (Eta_http.H2.Stream_state.is_client_stream_id 2);
   Alcotest.(check int) "first stream id" 1
     (Eta_http.H2.Stream_state.id first);
+  Alcotest.(check bool) "first client stream id" true
+    (Eta_http.H2.Stream_state.is_client_stream_id
+       (Eta_http.H2.Stream_state.id first));
   Alcotest.(check int) "second stream id" 3
     (Eta_http.H2.Stream_state.id second);
   Alcotest.(check int) "tag" 11 (Eta_http.H2.Stream_state.tag first);
@@ -130,5 +135,4 @@ let test_h2_stream_state_close_releases_live_state () =
   Alcotest.(check int) "active closed" 0 stats.active;
   Alcotest.(check int) "cancelled closed" 0 stats.cancelled;
   Alcotest.(check int) "live closed" 0 stats.live
-
 

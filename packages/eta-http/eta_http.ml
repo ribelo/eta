@@ -53,6 +53,7 @@ end
 
 module H2 = struct
   module Admission = Eta_http_h2.Admission
+  module Connection = Eta_http_h2.Connection
   module Frame = Eta_http_h2.Frame
   module Multiplexer = Eta_http_h2.Multiplexer
   module Security = Eta_http_h2.Security

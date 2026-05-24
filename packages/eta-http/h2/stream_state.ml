@@ -44,6 +44,7 @@ let create ~max_concurrent =
 let id stream = stream.id
 let tag stream = stream.tag
 let status stream = P_atomic.get stream.status
+let is_client_stream_id id = id > 0 && (id land 1) = 1
 
 let cas_status stream seen replace_with =
   match
@@ -59,6 +60,9 @@ let open_stream t ~tag =
     | Error () -> Error ()
     | Ok permit ->
         let id = Admission.stream_id permit in
+        if not (is_client_stream_id id) then
+          invalid_arg
+            "Eta_http.H2.Stream_state.open_stream: client stream id must be positive odd";
         let stream = { id; tag; permit; status = P_atomic.make Active } in
         Hashtbl.replace t.streams id stream;
         Ok stream

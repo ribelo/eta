@@ -16,6 +16,7 @@
   test_eta_http_h2_state
   test_eta_http_h2_writer
   test_eta_http_h2_support
+  test_eta_http_h2_connection
   test_eta_http_h2_multiplexer
   test_eta_http_h2_security
   test_eta_http_alpn_dispatch)

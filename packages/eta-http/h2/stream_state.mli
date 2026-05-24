@@ -31,6 +31,7 @@ val open_stream : t -> tag:int -> (stream, unit) result
 val id : stream -> int
 val tag : stream -> int
 val status : stream -> status
+val is_client_stream_id : int -> bool
 val find : t -> int -> stream option
 val mark_remote_reset : t -> int -> unit
 val mark_complete : t -> stream -> unit

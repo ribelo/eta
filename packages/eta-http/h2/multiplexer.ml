@@ -290,3 +290,85 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
   in
   schedule_read ();
   Eta_http_body.Stream.of_reader ~release:release_body read_next
+
+let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
+    ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error t stream body =
+  let mutex = Eio.Mutex.create () in
+  let condition = Eio.Condition.create () in
+  let events = Queue.create () in
+  let scheduled = ref false in
+  let eof = ref false in
+  let notify () = Eio.Condition.broadcast condition in
+  let with_lock f =
+    Eio.Mutex.lock mutex;
+    Fun.protect ~finally:(fun () -> Eio.Mutex.unlock mutex) f
+  in
+  let finish_eof () =
+    let first =
+      with_lock (fun () ->
+          if !eof then false
+          else (
+            eof := true;
+            Queue.push Body_eof events;
+            true))
+    in
+    if first then (
+      on_eof ();
+      mark_complete t stream;
+      notify ())
+  in
+  let push_chunk chunk =
+    with_lock (fun () ->
+        scheduled := false;
+        Queue.push (Body_chunk chunk) events);
+    notify ()
+  in
+  let schedule_read () =
+    let should_schedule =
+      with_lock (fun () ->
+          (not !scheduled) && (not !eof) && not (H2.Body.Reader.is_closed body))
+    in
+    if should_schedule then (
+      with_lock (fun () -> scheduled := true);
+      H2.Body.Reader.schedule_read body
+        ~on_eof:(fun () ->
+          with_lock (fun () -> scheduled := false);
+          finish_eof ())
+        ~on_read:(fun bs ~off ~len ->
+          push_chunk (Bytes.of_string (Bigstringaf.substring bs ~off ~len))))
+  in
+  let release_body () =
+    let decision = release t stream in
+    notify ();
+    on_release decision
+  in
+  let emit_event = function
+    | Body_chunk chunk -> Eta.Effect.pure (Eta_http_body.Stream.Chunk chunk)
+    | Body_eof -> Eta.Effect.pure Eta_http_body.Stream.End
+  in
+  let await_event () =
+    schedule_read ();
+    with_lock (fun () ->
+        let rec loop () =
+          match poll_error () with
+          | Some error -> `Error error
+          | None when not (Queue.is_empty events) -> `Event (Queue.take events)
+          | None when !eof -> `Event Body_eof
+          | None when H2.Body.Reader.is_closed body -> `Closed
+          | None ->
+              Eio.Condition.await condition mutex;
+              loop ()
+        in
+        loop ())
+  in
+  let read_next () =
+    Eta.Effect.sync await_event
+    |> Eta.Effect.bind (function
+         | `Event event -> emit_event event
+         | `Error error -> Eta.Effect.fail error
+         | `Closed ->
+             finish_eof ();
+             Eta.Effect.pure Eta_http_body.Stream.End)
+  in
+  schedule_read ();
+  (Eta_http_body.Stream.of_reader ~release:release_body read_next, notify)

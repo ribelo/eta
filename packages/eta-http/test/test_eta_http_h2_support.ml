@@ -199,41 +199,19 @@ let h2_server_read_body reqd ~on_done =
   loop ()
 
 
-let h2_chr n = Char.chr n
-
 let h2_frame_header ~length ~frame_type ~flags ~stream_id =
-  String.init 9 @@ function
-  | 0 -> h2_chr ((length lsr 16) land 0xff)
-  | 1 -> h2_chr ((length lsr 8) land 0xff)
-  | 2 -> h2_chr (length land 0xff)
-  | 3 -> h2_chr frame_type
-  | 4 -> h2_chr flags
-  | 5 -> h2_chr ((stream_id lsr 24) land 0x7f)
-  | 6 -> h2_chr ((stream_id lsr 16) land 0xff)
-  | 7 -> h2_chr ((stream_id lsr 8) land 0xff)
-  | 8 -> h2_chr (stream_id land 0xff)
-  | _ -> assert false
+  Eta_http.H2.Frame.header ~length ~frame_type:(Other frame_type) ~flags
+    ~stream_id
 
-let h2_uint32 n =
-  String.init 4 @@ function
-  | 0 -> h2_chr ((n lsr 24) land 0xff)
-  | 1 -> h2_chr ((n lsr 16) land 0xff)
-  | 2 -> h2_chr ((n lsr 8) land 0xff)
-  | 3 -> h2_chr (n land 0xff)
-  | _ -> assert false
+let h2_uint32 = Eta_http.H2.Frame.uint32
 
-let h2_settings_frame =
-  h2_frame_header ~length:0 ~frame_type:0x4 ~flags:0 ~stream_id:0
+let h2_settings_frame = Eta_http.H2.Frame.settings
 
-let h2_goaway_no_error ~last_stream_id =
-  h2_frame_header ~length:8 ~frame_type:0x7 ~flags:0 ~stream_id:0
-  ^ h2_uint32 last_stream_id
-  ^ h2_uint32 0
+let h2_goaway_no_error = Eta_http.H2.Frame.goaway_no_error
 
-let h2_payload len = String.make len '\000'
+let h2_payload = Eta_http.H2.Frame.payload
 
 let h2_observe_security data =
   let security = Eta_http.H2.Security.create () in
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
   Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
-

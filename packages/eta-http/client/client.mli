@@ -63,3 +63,13 @@ val make_for_test :
   stats:(unit -> (stats, Eta_http_error.Error.t) Eta.Effect.t) ->
   shutdown:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
   t
+
+module For_test : sig
+  val h2_informational_status : int -> bool
+
+  val request_h2_on_connection :
+    Eta_http_h2.Connection.t ->
+    Request.t ->
+    Eta_http_core.Url.t ->
+    (Response.t, Eta_http_error.Error.t) Eta.Effect.t
+end
