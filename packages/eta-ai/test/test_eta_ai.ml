@@ -279,23 +279,38 @@ let test_toolkit_registers_tools_in_order () =
   in
   Alcotest.(check (list string))
     "tool order" [ "weather"; "stock_price" ] names;
-  match find_tool "weather" toolkit with
+  (match find_tool "weather" toolkit with
   | Some tool ->
       Alcotest.(check (option string)) "description"
         (Some "Get weather") tool.description
-  | None -> Alcotest.fail "expected registered weather tool"
+  | None -> Alcotest.fail "expected registered weather tool");
+  match find_tool " weather " toolkit with
+  | Some tool -> Alcotest.(check string) "normalized lookup" "weather" tool.name
+  | None -> Alcotest.fail "expected normalized weather lookup"
 
 let test_toolkit_rejects_duplicate_names () =
   let weather = weather_tool () in
+  let spaced_weather =
+    make_tool ~name:" weather "
+      ~input_schema_json:weather.input_schema_json ()
+    |> expect_ok "spaced weather"
+  in
   let toolkit =
     empty_toolkit |> add_tool weather |> expect_ok "add weather"
   in
-  match add_tool weather toolkit with
+  (match add_tool weather toolkit with
   | Error
       (Invalid_tool
         { name = "weather"; message = "tool name already registered" }) ->
       ()
-  | _ -> Alcotest.fail "expected duplicate tool rejection"
+  | _ -> Alcotest.fail "expected duplicate tool rejection");
+  Alcotest.(check string) "trimmed name" "weather" spaced_weather.name;
+  match add_tool spaced_weather toolkit with
+  | Error
+      (Invalid_tool
+        { name = "weather"; message = "tool name already registered" }) ->
+      ()
+  | _ -> Alcotest.fail "expected spaced duplicate tool rejection"
 
 let test_toolkit_rejects_missing_schema () =
   match make_tool ~name:"bad" ~input_schema_json:" " () with

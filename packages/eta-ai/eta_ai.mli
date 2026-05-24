@@ -144,9 +144,9 @@ val make_tool :
   input_schema_json:raw_json ->
   unit ->
   (tool, ai_error) result
-(** Build one tool after registry-level validation. This checks only eta-ai
-    invariants such as non-empty name and schema text. It does not validate
-    JSON Schema. *)
+(** Build one tool after registry-level validation. This trims the stored tool
+    name and checks only eta-ai invariants such as non-empty name and schema
+    text. It does not validate JSON Schema. *)
 
 val empty_toolkit : toolkit
 val make_toolkit : tool list -> (toolkit, ai_error) result

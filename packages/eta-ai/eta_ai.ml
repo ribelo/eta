@@ -163,13 +163,14 @@ type ai_error =
 type toolkit = { tools : tool list }
 
 let invalid_tool name message = Stdlib.Error (Invalid_tool { name; message })
+let normalize_tool_name = String.trim
 
 let validate_tool tool =
-  let name = String.trim tool.name in
+  let name = normalize_tool_name tool.name in
   if String.equal name "" then invalid_tool tool.name "tool name is required"
   else if String.equal (String.trim tool.input_schema_json) "" then
     invalid_tool tool.name "input_schema_json is required"
-  else Stdlib.Ok tool
+  else Stdlib.Ok { tool with name }
 
 let make_tool ?description ?strict ~name ~input_schema_json () =
   validate_tool { name; description; input_schema_json; strict }
@@ -179,6 +180,7 @@ let empty_toolkit = { tools = [] }
 let toolkit_tools toolkit = toolkit.tools
 
 let find_tool name toolkit =
+  let name = normalize_tool_name name in
   List.find_opt (fun tool -> String.equal tool.name name) toolkit.tools
 
 let add_tool tool toolkit =
