@@ -43,4 +43,12 @@ val structured_output_json :
   structured_output ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
+val chat_stream_events :
+  finish_reason:(string -> Eta_ai.finish_reason) ->
+  Eta_ai.raw_json ->
+  Eta_ai.Json.t ->
+  Eta_ai.stream_event list
+(** Decode OpenAI Chat Completions SSE JSON into stream events, including
+    [delta.tool_calls] argument fragments. *)
+
 val result_all : ('a, 'err) result list -> ('a list, 'err) result

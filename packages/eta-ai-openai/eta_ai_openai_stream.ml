@@ -1,64 +1,13 @@
 module A = Eta_ai
+module Codec = Eta_ai_openai_codec
 module Common = Eta_ai_openai_common
 module Json = Common.Json
 
 let stream_error raw json =
   Common.decode_provider_error_json raw json
 
-let stream_tool_delta json =
-  let index = Json.int_member "index" json in
-  let id = Json.string_member "id" json in
-  let function_json = Json.object_member "function" json in
-  let name = Option.bind function_json (Json.string_member "name") in
-  let arguments_json_delta =
-    match Option.bind function_json (Json.member "arguments") with
-    | Some (`String value) -> value
-    | Some value -> Json.compact value
-    | None -> ""
-  in
-  A.Stream_tool_call_delta { index; id; name; arguments_json_delta }
-
 let chat_events raw json =
-  let choices = Json.array_member "choices" json |> Option.value ~default:[] in
-  let starts =
-    choices
-    |> List.filter_map (fun choice ->
-           match Json.object_member "delta" choice with
-           | Some delta when Json.string_member "role" delta = Some "assistant" ->
-               Some
-                 (A.Stream_message_start
-                    {
-                      id = Json.string_member "id" json;
-                      model = Json.string_member "model" json;
-                      raw = Some raw;
-                    })
-           | _ -> None)
-  in
-  let deltas =
-    choices
-    |> List.concat_map (fun choice ->
-           match Json.object_member "delta" choice with
-           | None -> []
-           | Some delta ->
-               let content =
-                 match Json.string_member "content" delta with
-                 | Some text -> [ A.Stream_content_delta text ]
-                 | None -> []
-               in
-               let tool_calls =
-                 Json.array_member "tool_calls" delta
-                 |> Option.value ~default:[]
-                 |> List.map stream_tool_delta
-               in
-               content @ tool_calls)
-  in
-  let finishes =
-    choices
-    |> List.filter_map (Json.string_member "finish_reason")
-    |> List.map Common.finish_reason
-  in
-  starts @ deltas
-  @ if finishes = [] then [] else [ A.Stream_finish finishes ]
+  Codec.chat_stream_events ~finish_reason:Common.finish_reason raw json
 
 let responses_events event_name json =
   match event_name with

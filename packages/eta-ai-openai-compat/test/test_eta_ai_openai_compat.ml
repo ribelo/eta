@@ -257,6 +257,14 @@ let stream_text events =
        | _ -> None)
   |> String.concat ""
 
+let stream_tool_args events =
+  events
+  |> List.filter_map (function
+       | A.Stream_tool_call_delta { arguments_json_delta; _ } ->
+           Some arguments_json_delta
+       | _ -> None)
+  |> String.concat ""
+
 let has_done events =
   List.exists (function A.Stream_done -> true | _ -> false) events
 
@@ -275,6 +283,8 @@ let test_stream_runner () =
       |> E.bind A.read_stream_events)
   in
   Alcotest.(check string) "text" "Hello" (stream_text events);
+  Alcotest.(check string)
+    "tool args" "{\"location\":\"Warsaw\"}" (stream_tool_args events);
   Alcotest.(check bool) "done" true (has_done events);
   let request =
     match !captured with

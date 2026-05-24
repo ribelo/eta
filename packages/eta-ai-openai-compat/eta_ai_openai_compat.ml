@@ -248,26 +248,7 @@ let decode_stream_event (event : A.sse_event) =
         if Option.is_some (Json.object_member "error" json) then
           Stdlib.Ok [ A.Stream_error (provider_error data) ]
         else
-          let choices =
-            Json.array_member "choices" json |> Option.value ~default:[]
-          in
-          let content =
-            choices
-            |> List.filter_map (fun choice ->
-                   Option.bind (Json.object_member "delta" choice)
-                     (Json.string_member "content"))
-            |> List.filter (fun value -> not (String.equal value ""))
-            |> List.map (fun value -> A.Stream_content_delta value)
-          in
-          let finish =
-            choices
-            |> List.filter_map (Json.string_member "finish_reason")
-            |> List.map finish_reason
-          in
-          let finish =
-            match finish with [] -> [] | reasons -> [ A.Stream_finish reasons ]
-          in
-          Stdlib.Ok (content @ finish)
+          Stdlib.Ok (Codec.chat_stream_events ~finish_reason data json)
 
 let provider ?(name = "openai-compatible")
     ?(chat_path = "/v1/chat/completions") ?(auth = bearer_auth ())
