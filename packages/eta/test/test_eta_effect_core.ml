@@ -113,6 +113,23 @@ let test_cause_empty_aggregations_reject () =
     (Invalid_argument "Cause.concurrent: empty")
     (fun () -> ignore (Cause.concurrent []))
 
+let test_cause_diagnostic_equal_compares_die_payloads () =
+  let left =
+    Cause.die_with_diagnostics ~span_name:"span"
+      ~annotations:[ ("request.id", "a") ] (Failure "same")
+  in
+  let right =
+    Cause.die_with_diagnostics ~span_name:"span"
+      ~annotations:[ ("request.id", "a") ] (Failure "same")
+  in
+  let different = Cause.die (Failure "different") in
+  Alcotest.(check bool) "identity equality stays strict" false
+    (Cause.equal String.equal left right);
+  Alcotest.(check bool) "diagnostic equality matches payload" true
+    (Cause.diagnostic_equal String.equal left right);
+  Alcotest.(check bool) "diagnostic equality checks message" false
+    (Cause.diagnostic_equal String.equal left different)
+
 let test_runtime_exit_fail_die_interrupt () =
   with_runtime @@ fun rt ->
   let die = Failure "boom" in
@@ -286,4 +303,3 @@ let test_effect_catch_does_not_catch_interrupt () =
   match Runtime.run rt eff with
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
-

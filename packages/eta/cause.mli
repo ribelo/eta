@@ -85,5 +85,14 @@ val suppressed : primary:'err t -> finalizer:'err t -> 'err t
 val is_interrupt_only : 'err t -> bool
 
 val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
+(** Structural equality for causes. [Die] causes compare by physical exception
+    identity, plus diagnostic span and annotation metadata. This preserves
+    same-domain exception identity; use {!diagnostic_equal} when test code wants
+    to compare materialized exception diagnostics instead. *)
+
+val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
+(** Diagnostic equality for causes. [Die] causes compare exception slot,
+    rendered exception message, rendered backtrace, span name, and annotations. *)
+
 val pp : (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
 val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t

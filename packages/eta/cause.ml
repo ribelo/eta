@@ -203,6 +203,21 @@ let equal_die left right =
 
 let equal equal_err = equal_tree view ~equal_err ~equal_die
 
+let backtrace_string die = Option.map Printexc.raw_backtrace_to_string die.backtrace
+
+let diagnostic_equal_die left right =
+  String.equal (Printexc.exn_slot_name left.exn)
+    (Printexc.exn_slot_name right.exn)
+  && String.equal (Printexc.to_string left.exn) (Printexc.to_string right.exn)
+  && equal_option String.equal (backtrace_string left) (backtrace_string right)
+  && equal_option String.equal left.span_name right.span_name
+  && equal_list
+       (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
+       left.annotations right.annotations
+
+let diagnostic_equal equal_err =
+  equal_tree view ~equal_err ~equal_die:diagnostic_equal_die
+
 let pp_backtrace fmt = function
   | None -> ()
   | Some bt ->
