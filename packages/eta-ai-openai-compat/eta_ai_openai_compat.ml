@@ -2,7 +2,6 @@ module A = Eta_ai
 module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module H = Eta_http
-module Json = A.Json
 
 type auth = {
   header : string;
@@ -16,20 +15,12 @@ type structured_output = Codec.structured_output = {
 }
 
 let decode_error_result ?raw message =
-  Stdlib.Error
-    (A.Decode_error { provider = "openai-compatible"; message; raw })
+  Codec.decode_error_result ?raw ~provider:"openai-compatible" message
 
-let parse_json raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message -> decode_error_result ~raw message
+let parse_json raw = Codec.parse_json ~provider:"openai-compatible" raw
 
 let require_json label raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message ->
-      decode_error_result ~raw
-        (Printf.sprintf "%s must be valid JSON: %s" label message)
+  Codec.schema_value ~provider:"openai-compatible" label raw
 
 let structured_output ?strict ~name ~schema_json () =
   Codec.structured_output ~schema_value:require_json ?strict ~name ~schema_json
@@ -43,207 +34,24 @@ let raw_header_auth ~header () = { header; prefix = None }
 let auth_value auth api_key =
   Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
 
-let message_json = function
-  | A.System content ->
-      Json.object_
-        [
-          ("role", Some (Json.string "system"));
-          ("content", Some (Json.string content));
-        ]
-  | A.User contents ->
-      Json.object_
-        [
-          ("role", Some (Json.string "user"));
-          ("content", Some (Json.string (Codec.contents_text contents)));
-        ]
-  | A.Assistant { content; tool_calls } ->
-      let tool_calls =
-        match tool_calls with
-        | [] -> None
-        | calls ->
-            calls
-            |> List.map (fun (call : A.tool_call) ->
-                   Json.object_
-                     [
-                       ("id", Some (Json.string call.id));
-                       ("type", Some (Json.string "function"));
-                       ( "function",
-                         Some
-                           (Json.object_
-                              [
-                                ("name", Some (Json.string call.name));
-                                ("arguments", Some (Json.string call.arguments_json));
-                              ]) );
-                     ])
-            |> Json.array |> Option.some
-      in
-      Json.object_
-        [
-          ("role", Some (Json.string "assistant"));
-          ("content", Some (Json.string (Codec.contents_text content)));
-          ("tool_calls", tool_calls);
-        ]
-  | A.Tool { tool_call_id; content } ->
-      Json.object_
-        [
-          ("role", Some (Json.string "tool"));
-          ("tool_call_id", Some (Json.string tool_call_id));
-          ("content", Some (Json.string (Codec.contents_text content)));
-        ]
+let message_json = Codec.chat_message_json
 
-let encode_chat ?structured_output (request : A.chat_request) =
-  let temperature =
-    match request.temperature with
-    | None -> Stdlib.Ok None
-    | Some value -> (
-        match Json.float value with
-        | Some encoded -> Stdlib.Ok (Some encoded)
-        | None ->
-            Stdlib.Error
-              (A.Unsupported
-                 {
-                   provider = "openai-compatible";
-                   feature = "non-finite temperature";
-                 }))
-  in
-  match temperature with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok temperature -> (
-      match
-        Codec.result_all
-          (List.map
-             (Codec.tool_json ~schema_value:require_json
-                ~shape:Codec.Chat_tool)
-             request.tools)
-      with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools ->
-          let response_format =
-            structured_output
-            |> Option.map
-                 (Codec.structured_output_json
-                    ~shape:Codec.Chat_response_format)
-          in
-          Stdlib.Ok
-            (Json.to_string
-               (Json.object_
-                  [
-                    ("model", Some (Json.string request.model));
-                    ( "messages",
-                      Some
-                        (request.prompt |> List.map message_json |> Json.array) );
-                    ("stream", Some (Json.bool request.stream));
-                    ("temperature", temperature);
-                    ("max_tokens", Option.map Json.int request.max_output_tokens);
-                    ("tools", if tools = [] then None else Some (Json.array tools));
-                    ("response_format", response_format);
-                  ])))
-
-let finish_reason = function
-  | "stop" -> A.Stop
-  | "length" -> A.Length
-  | "tool_calls" -> A.Tool_calls
-  | "content_filter" -> A.Content_filter
-  | "error" -> A.Error
-  | other -> A.Other other
-
-let raw_json = function
-  | `String value -> value
-  | json -> Json.compact json
-
-let usage json =
-  let input_tokens = Json.int_member "prompt_tokens" json in
-  let output_tokens = Json.int_member "completion_tokens" json in
-  let total_tokens = Json.int_member "total_tokens" json in
-  {
-    A.input_tokens;
-    output_tokens;
-    total_tokens;
-    raw =
-      [
-        ("prompt_tokens", Option.value ~default:"" (Option.map string_of_int input_tokens));
-        ( "completion_tokens",
-          Option.value ~default:"" (Option.map string_of_int output_tokens) );
-        ("total_tokens", Option.value ~default:"" (Option.map string_of_int total_tokens));
-      ];
-  }
-
-let tool_call json =
-  let function_json = Json.object_member "function" json in
-  match
-    ( Json.string_member "id" json,
-      Option.bind function_json (Json.string_member "name"),
-      Option.bind function_json (Json.member "arguments") )
-  with
-  | Some id, Some name, Some arguments ->
-      Some { A.id; name; arguments_json = raw_json arguments }
-  | _ -> None
+let encode_chat ?structured_output request =
+  Codec.encode_chat ~provider:"openai-compatible" ~schema_value:require_json
+    ?structured_output request
 
 let decode_chat raw =
-  match parse_json raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json -> (
-      match Json.array_member "choices" json with
-      | Some (_ :: _ as choices) -> (
-          match
-            choices
-            |> List.find_map (fun choice -> Json.object_member "message" choice)
-          with
-          | Some message ->
-              let text =
-                match Json.string_member "content" message with
-                | Some value -> [ A.Text value ]
-                | None -> []
-              in
-              let tool_calls =
-                Json.array_member "tool_calls" message
-                |> Option.value ~default:[] |> List.filter_map tool_call
-              in
-              let finish_reasons =
-                choices
-                |> List.filter_map (Json.string_member "finish_reason")
-                |> List.map finish_reason
-              in
-              Stdlib.Ok
-                {
-                  A.id = Json.string_member "id" json;
-                  model = Json.string_member "model" json;
-                  message = A.Assistant { content = text; tool_calls };
-                  finish_reasons;
-                  usage = Option.map usage (Json.object_member "usage" json);
-                  raw = Some raw;
-                }
-          | None ->
-              decode_error_result ~raw "chat completion choice missing message")
-      | _ -> decode_error_result ~raw "chat completion missing choices")
+  Codec.decode_chat ~usage_raw_prompt_names:true
+    ~provider:"openai-compatible" raw
 
 let provider_error ?status ?(provider = "openai-compatible") raw =
-  let error =
-    match parse_json raw with
-    | Stdlib.Ok json -> Json.object_member "error" json
-    | Stdlib.Error _ -> None
-  in
-  let message =
-    Option.bind error (Json.string_member "message")
-    |> Option.value ~default:"provider returned an error"
-  in
-  let code = Option.bind error (Json.scalar_string_member "code") in
-  A.Provider_error { provider; status; code; message; raw = Some raw }
+  Codec.provider_error ?status ~provider raw
 
-let decode_error ~status ~headers:_ raw =
-  provider_error ?status:(Some status) raw
+let decode_error ~status ~headers raw =
+  Codec.decode_error ~provider:"openai-compatible" ~status ~headers raw
 
-let decode_stream_event (event : A.sse_event) =
-  let data = String.trim event.data in
-  if String.equal data "[DONE]" then Stdlib.Ok [ A.Stream_done ]
-  else
-    match parse_json data with
-    | Stdlib.Error _ as error -> error
-    | Stdlib.Ok json ->
-        if Option.is_some (Json.object_member "error" json) then
-          Stdlib.Ok [ A.Stream_error (provider_error data) ]
-        else
-          Stdlib.Ok (Codec.chat_stream_events ~finish_reason data json)
+let decode_stream_event event =
+  Codec.decode_stream_event ~provider:"openai-compatible" event
 
 let provider ?(name = "openai-compatible")
     ?(chat_path = "/v1/chat/completions") ?(auth = bearer_auth ())

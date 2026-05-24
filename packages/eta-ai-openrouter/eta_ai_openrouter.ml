@@ -27,71 +27,16 @@ type structured_output = Codec.structured_output = {
 }
 
 let decode_error_result ?raw message =
-  Stdlib.Error (A.Decode_error { provider = "openrouter"; message; raw })
+  Codec.decode_error_result ?raw ~provider:"openrouter" message
 
-let parse_json raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message -> decode_error_result ~raw message
+let parse_json raw = Codec.parse_json ~provider:"openrouter" raw
 
 let require_json label raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message ->
-      decode_error_result ~raw
-        (Printf.sprintf "%s must be valid JSON: %s" label message)
+  Codec.schema_value ~provider:"openrouter" label raw
 
 let structured_output ?strict ~name ~schema_json () =
   Codec.structured_output ~schema_value:require_json ?strict ~name ~schema_json
     ()
-
-let base_responses_json ?structured_output (request : A.chat_request) =
-  let temperature =
-    match request.temperature with
-    | None -> Stdlib.Ok None
-    | Some value -> (
-        match Json.float value with
-        | Some encoded -> Stdlib.Ok (Some encoded)
-        | None ->
-            Stdlib.Error
-              (A.Unsupported
-                 { provider = "openrouter"; feature = "non-finite temperature" }))
-  in
-  match temperature with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok temperature -> (
-      match
-        Codec.result_all
-          (List.map
-             (Codec.tool_json ~schema_value:require_json
-                ~shape:Codec.Responses_tool)
-             request.tools)
-      with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools ->
-          let text_format =
-            structured_output
-            |> Option.map
-                 (Codec.structured_output_json ~shape:Codec.Responses_format)
-          in
-          Stdlib.Ok
-            (Json.object_
-               [
-                 ("model", Some (Json.string request.model));
-                 ( "input",
-                   Some
-                     (request.prompt |> List.concat_map Codec.input_items
-                    |> Json.array) );
-                 ("stream", Some (Json.bool request.stream));
-                 ("temperature", temperature);
-                 ( "max_output_tokens",
-                   Option.map Json.int request.max_output_tokens );
-                 ("tools", if tools = [] then None else Some (Json.array tools));
-                 ( "text",
-                   Option.map
-                     (fun format -> Json.object_ [ ("format", Some format) ])
-                     text_format );
-               ]))
 
 let invalid_routing message =
   Stdlib.Error (A.Unsupported { provider = "openrouter"; feature = message })
@@ -159,7 +104,10 @@ let add_routing routing json =
                }))
 
 let encode_responses ?structured_output ?routing request =
-  match base_responses_json ?structured_output request with
+  match
+    Codec.encode_responses_json ~provider:"openrouter"
+      ~schema_value:require_json ?structured_output request
+  with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok json -> (
       match add_routing routing json with
@@ -167,180 +115,28 @@ let encode_responses ?structured_output ?routing request =
       | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json))
 
 let encode_chat = encode_responses
-
-let int_member first second json =
-  match Json.int_member first json with
-  | Some _ as value -> value
-  | None -> Json.int_member second json
-
-let usage json =
-  let input_tokens = int_member "input_tokens" "prompt_tokens" json in
-  let output_tokens = int_member "output_tokens" "completion_tokens" json in
-  let total_tokens = Json.int_member "total_tokens" json in
-  {
-    A.input_tokens;
-    output_tokens;
-    total_tokens;
-    raw =
-      [
-        ("input_tokens", Option.value ~default:"" (Option.map string_of_int input_tokens));
-        ( "output_tokens",
-          Option.value ~default:"" (Option.map string_of_int output_tokens) );
-        ("total_tokens", Option.value ~default:"" (Option.map string_of_int total_tokens));
-      ];
-  }
-
-let tool_call json =
-  match Json.string_member "type" json with
-  | Some "function_call" ->
-      let id =
-        match Json.string_member "call_id" json with
-        | Some _ as value -> value
-        | None -> Json.string_member "id" json
-      in
-      let arguments =
-        match Json.member "arguments" json with
-        | Some (`String arguments) -> Some arguments
-        | Some value -> Some (Json.compact value)
-        | None -> None
-      in
-      (match (Json.string_member "name" json, arguments) with
-      | Some name, Some arguments_json ->
-          Some
-            {
-              A.id = Option.value ~default:"" id;
-              name;
-              arguments_json;
-            }
-      | _ -> None)
-  | _ -> None
-
-let output_text item =
-  match Json.string_member "type" item with
-  | Some "message" | None ->
-      Json.array_member "content" item |> Option.value ~default:[]
-      |> List.filter_map (fun part ->
-             match Json.string_member "text" part with
-             | Some text -> Some text
-             | None -> Json.string_member "content" part)
-  | Some "output_text" -> (
-      match Json.string_member "text" item with
-      | Some text -> [ text ]
-      | None -> [])
-  | Some _ -> []
-
-let status_finish json =
-  match Json.string_member "status" json with
-  | Some "completed" -> [ A.Stop ]
-  | Some "incomplete" -> [ A.Length ]
-  | Some "failed" -> [ A.Error ]
-  | Some status -> [ A.Other status ]
-  | None -> []
-
-let decode_responses raw =
-  match parse_json raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json ->
-      let output = Json.array_member "output" json |> Option.value ~default:[] in
-      let text = output |> List.concat_map output_text |> String.concat "" in
-      let tool_calls = output |> List.filter_map tool_call in
-      Stdlib.Ok
-        {
-          A.id = Json.string_member "id" json;
-          model = Json.string_member "model" json;
-          message =
-            A.Assistant
-              {
-                content = (if String.equal text "" then [] else [ A.Text text ]);
-                tool_calls;
-              };
-          finish_reasons = status_finish json;
-          usage = Option.map usage (Json.object_member "usage" json);
-          raw = Some raw;
-        }
-
+let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 let decode_chat = decode_responses
 
-let error_object json =
-  match Json.object_member "error" json with
-  | Some _ as value -> value
-  | None -> Option.bind (Json.object_member "response" json) (Json.object_member "error")
-
 let openrouter_error_json ?status ?raw json =
-  let error = error_object json in
-  let message =
-    Option.bind error (Json.string_member "message")
-    |> Option.value ~default:"provider returned an error"
-  in
-  let code = Option.bind error (Json.scalar_string_member "code") in
-  A.Provider_error
-    {
-      provider = "openrouter";
-      status;
-      code;
-      message;
-      raw;
-    }
+  Codec.provider_error_json ?status ?raw ~nested_response_error:true
+    ~provider:"openrouter" json
 
 let openrouter_error ?status raw =
-  match parse_json raw with
-  | Stdlib.Ok json -> openrouter_error_json ?status ~raw json
-  | Stdlib.Error _ ->
-      A.Provider_error
-        {
-          provider = "openrouter";
-          status;
-          code = None;
-          message = "provider returned an error";
-          raw = Some raw;
-        }
+  Codec.provider_error ?status ~nested_response_error:true
+    ~provider:"openrouter" raw
 
-let decode_error ~status ~headers:_ raw =
-  openrouter_error ~status raw
-
-let stream_tool_delta json =
-  A.Stream_tool_call_delta
-    {
-      index = Json.int_member "output_index" json;
-      id =
-        (match Json.string_member "call_id" json with
-        | Some _ as value -> value
-        | None -> Json.string_member "item_id" json);
-      name = None;
-      arguments_json_delta =
-        Option.value ~default:"" (Json.string_member "delta" json);
-    }
-
-let response_event_name event json =
-  match event.A.event with
-  | Some _ as value -> value
-  | None -> Json.string_member "type" json
+let decode_error ~status ~headers raw =
+  Codec.decode_error ~nested_response_error:true ~provider:"openrouter" ~status
+    ~headers raw
 
 let responses_stream_events raw event_name json =
-  match event_name with
-  | Some "response.output_text.delta" -> (
-      match Json.string_member "delta" json with
-      | Some text -> [ A.Stream_content_delta text ]
-      | None -> [])
-  | Some "response.function_call_arguments.delta" -> [ stream_tool_delta json ]
-  | Some "response.completed" -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
-  | Some "response.incomplete" -> [ A.Stream_finish [ A.Length ] ]
-  | Some "response.failed" ->
-      [ A.Stream_error (openrouter_error_json ~raw json) ]
-  | _ -> []
+  Codec.responses_stream_events ~nested_response_error:true
+    ~provider:"openrouter" raw event_name json
 
 let decode_stream_event event =
-  let data = String.trim event.A.data in
-  if String.equal data "[DONE]" then Stdlib.Ok [ A.Stream_done ]
-  else
-    match parse_json data with
-    | Stdlib.Error _ as error -> error
-    | Stdlib.Ok json ->
-        if Option.is_some (error_object json) then
-          Stdlib.Ok [ A.Stream_error (openrouter_error_json ~raw:data json) ]
-        else
-          Stdlib.Ok
-            (responses_stream_events data (response_event_name event json) json)
+  Codec.decode_stream_event ~nested_response_error:true ~provider:"openrouter"
+    event
 
 let attribution_headers = function
   | None -> []
