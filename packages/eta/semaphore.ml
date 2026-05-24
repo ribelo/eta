@@ -39,27 +39,27 @@ let validate_request name t n =
     invalid_arg
       ("Eta.Semaphore." ^ name ^ ": n must be between 1 and max_permits")
 
-let rec take_active_waiter q =
-  if Queue.is_empty q then None
+let rec take_ready_waiter t =
+  if Queue.is_empty t.waiters then None
   else
-    let waiter = Queue.take q in
+    let waiter = Queue.peek t.waiters in
     match waiter.state with
-    | Waiting -> Some waiter
-    | Resolved_unclaimed | Claimed | Cancelled -> take_active_waiter q
+    | Waiting when t.available >= waiter.permits ->
+        ignore (Queue.take t.waiters : waiter);
+        Some waiter
+    | Waiting -> None
+    | Resolved_unclaimed | Claimed | Cancelled ->
+        ignore (Queue.take t.waiters : waiter);
+        take_ready_waiter t
 
 let rec wake_waiters_locked t =
-  match take_active_waiter t.waiters with
+  match take_ready_waiter t with
   | None -> ()
-  | Some waiter when t.available >= waiter.permits ->
+  | Some waiter ->
       t.available <- t.available - waiter.permits;
       waiter.state <- Resolved_unclaimed;
       Eio.Promise.resolve waiter.resolver ();
       wake_waiters_locked t
-  | Some waiter ->
-      let temp = Queue.create () in
-      Queue.push waiter temp;
-      Queue.transfer t.waiters temp;
-      Queue.transfer temp t.waiters
 
 let try_acquire t n =
   validate_request "try_acquire" t n;
