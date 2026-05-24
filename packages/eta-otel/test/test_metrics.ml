@@ -153,6 +153,59 @@ let test_counter_monotonic () =
       Alcotest.check metric_value "summed value" (Capabilities.Int 2) value
   | _ -> Alcotest.failf "expected one aggregated point, got %d" (List.length agg)
 
+let metric_point ~name ~kind value : Meter.point =
+  {
+    name;
+    description = "";
+    unit_ = "";
+    kind;
+    attrs = [];
+    value;
+    ts_ms = 1;
+  }
+
+let metrics_json body =
+  match Yojson.Safe.from_string body with
+  | `Assoc fields -> (
+      match List.assoc "resourceMetrics" fields with
+      | `List [ `Assoc rm_fields ] -> (
+          match List.assoc "scopeMetrics" rm_fields with
+          | `List [ `Assoc sm_fields ] -> (
+              match List.assoc "metrics" sm_fields with
+              | `List metrics -> metrics
+              | _ -> [])
+          | _ -> [])
+      | _ -> [])
+  | _ -> []
+
+let metric_temporality name body =
+  metrics_json body
+  |> List.find_map (function
+       | `Assoc fields -> (
+           match (List.assoc_opt "name" fields, List.assoc_opt "sum" fields) with
+           | Some (`String metric_name), Some (`Assoc sum_fields)
+             when String.equal metric_name name -> (
+               match List.assoc_opt "aggregationTemporality" sum_fields with
+               | Some (`Int value) -> Some value
+               | _ -> None)
+           | _ -> None)
+       | _ -> None)
+
+let test_counter_temporality_json () =
+  let body =
+    Eta_otel.Internal.encode_metrics_request ~resource_attrs:[] ~scope_name:"test"
+      [
+        metric_point ~name:"cumulative"
+          ~kind:Capabilities.Counter_cumulative (Capabilities.Int 42);
+        metric_point ~name:"delta"
+          ~kind:Capabilities.Counter_monotonic (Capabilities.Int 2);
+      ]
+  in
+  Alcotest.(check (option int)) "cumulative temporality" (Some 1)
+    (metric_temporality "cumulative" body);
+  Alcotest.(check (option int)) "delta temporality" (Some 2)
+    (metric_temporality "delta" body)
+
 (* ------------------------------------------------------------------ *)
 (* Live OTLP integration. *)
 (* ------------------------------------------------------------------ *)
@@ -253,5 +306,7 @@ let suite =
       Alcotest.test_case "counter cumulative keeps latest" `Quick
         test_counter_cumulative_keeps_latest_value;
       Alcotest.test_case "counter monotonic" `Quick test_counter_monotonic;
+      Alcotest.test_case "counter temporality JSON" `Quick
+        test_counter_temporality_json;
       Alcotest.test_case "metrics OTLP live" `Quick test_metrics_otlp_live;
     ] )
