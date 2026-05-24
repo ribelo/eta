@@ -23,7 +23,7 @@ let add_header_line buffer (name, value) =
 let write_string flow value = Eio.Flow.copy_string value flow
 
 let write_bytes flow bytes =
-  Eio.Flow.copy_string (Bytes.unsafe_to_string bytes) flow
+  Eio.Flow.copy_string (Bytes.to_string bytes) flow
 
 let write_header_line flow (name, value) =
   write_string flow name;

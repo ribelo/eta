@@ -106,7 +106,8 @@ let write_sync request f =
   |> Effect.bind (function Ok value -> Effect.pure value | Error error -> Effect.fail error)
 
 let write_bytes_effect request flow bytes =
-  write_sync request (fun () -> Eio.Flow.copy_string (Bytes.unsafe_to_string bytes) flow)
+  write_sync request (fun () ->
+      Eio.Flow.copy_string (Bytes.to_string bytes) flow)
 
 let write_string_effect request flow value =
   write_sync request (fun () -> Eio.Flow.copy_string value flow)

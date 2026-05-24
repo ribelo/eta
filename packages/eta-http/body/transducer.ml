@@ -19,6 +19,8 @@ let make_error context codec message =
     (Decode_error { codec; message })
 
 let bigstring_of_bytes bytes =
+  (* Bigstringaf.of_string copies synchronously; the borrowed string view does
+     not cross an async or retaining writer boundary. *)
   Bigstringaf.of_string ~off:0 ~len:(Bytes.length bytes)
     (Bytes.unsafe_to_string bytes)
 

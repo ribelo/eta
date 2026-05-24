@@ -145,7 +145,7 @@ let h2_request_of_request request url =
 
 let h2_write_chunk writer chunk =
   Eta.Effect.sync (fun () ->
-      H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk))
+      H2.Body.Writer.write_string writer (Bytes.to_string chunk))
 
 let rec h2_write_stream writer body =
   Body.read body
