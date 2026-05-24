@@ -368,27 +368,6 @@ let find_sse_separator s =
   in
   loop 0
 
-let feed_sse stream chunk =
-  stream.buffer <- stream.buffer ^ chunk;
-  let rec drain acc =
-    match find_sse_separator stream.buffer with
-    | None -> List.rev acc
-    | Some (index, sep_len) ->
-        let record = String.sub stream.buffer 0 index in
-        let rest_start = index + sep_len in
-        stream.buffer <-
-          String.sub stream.buffer rest_start
-            (String.length stream.buffer - rest_start);
-        if String.trim record = "" then drain acc
-        else drain (parse_sse_record record :: acc)
-  in
-  drain []
-
-let flush_sse stream =
-  let record = String.trim stream.buffer in
-  stream.buffer <- "";
-  if record = "" then [] else [ parse_sse_record record ]
-
 let release_stream stream =
   if stream.released then Eta.Effect.unit
   else (
@@ -415,6 +394,43 @@ let buffer_too_large stream =
       raw = None;
     }
 
+let would_exceed_buffer stream chunk =
+  String.length stream.buffer + String.length chunk > stream.max_buffer_bytes
+
+let record_too_large stream record =
+  String.length record > stream.max_buffer_bytes
+
+let parse_sse_record_capped stream record =
+  if record_too_large stream record then Stdlib.Error (buffer_too_large stream)
+  else Stdlib.Ok (parse_sse_record record)
+
+let feed_sse stream chunk =
+  if would_exceed_buffer stream chunk then Stdlib.Error (buffer_too_large stream)
+  else (
+    stream.buffer <- stream.buffer ^ chunk;
+    let rec drain acc =
+      match find_sse_separator stream.buffer with
+      | None -> Stdlib.Ok (List.rev acc)
+      | Some (index, sep_len) ->
+          let record = String.sub stream.buffer 0 index in
+          let rest_start = index + sep_len in
+          stream.buffer <-
+            String.sub stream.buffer rest_start
+              (String.length stream.buffer - rest_start);
+          if String.trim record = "" then drain acc
+          else
+            match parse_sse_record_capped stream record with
+            | Stdlib.Ok event -> drain (event :: acc)
+            | Stdlib.Error _ as error -> error
+    in
+    drain [])
+
+let flush_sse stream =
+  let record = String.trim stream.buffer in
+  stream.buffer <- "";
+  if record = "" then Stdlib.Ok []
+  else Result.map (fun event -> [ event ]) (parse_sse_record_capped stream record)
+
 let decode_sse_records stream records =
   let rec loop acc = function
     | [] -> Eta.Effect.pure (List.rev acc)
@@ -435,24 +451,25 @@ let rec read_stream_event stream =
       Eta_http.Body.Stream.read stream.body
       |> Eta.Effect.catch (fun error ->
              fail_and_close stream (Http_error error))
-      |> Eta.Effect.bind (function
-           | None ->
-               stream.eof <- true;
-               let records = flush_sse stream in
-               decode_sse_records stream records
-               |> Eta.Effect.bind (fun events ->
-                      stream.pending <- events;
-                      release_stream stream
-                      |> Eta.Effect.bind (fun () -> read_stream_event stream))
-           | Some chunk ->
-               let records = feed_sse stream (Bytes.to_string chunk) in
-               if String.length stream.buffer > stream.max_buffer_bytes then
-                 fail_and_close stream (buffer_too_large stream)
-               else
-                 decode_sse_records stream records
-                 |> Eta.Effect.bind (fun events ->
-                        stream.pending <- events;
-                        read_stream_event stream))
+	      |> Eta.Effect.bind (function
+	           | None ->
+	               stream.eof <- true;
+	               (match flush_sse stream with
+	               | Stdlib.Error error -> fail_and_close stream error
+	               | Stdlib.Ok records ->
+	                   decode_sse_records stream records
+	                   |> Eta.Effect.bind (fun events ->
+	                          stream.pending <- events;
+	                          release_stream stream
+	                          |> Eta.Effect.bind (fun () -> read_stream_event stream)))
+	           | Some chunk ->
+	               (match feed_sse stream (Bytes.to_string chunk) with
+	               | Stdlib.Error error -> fail_and_close stream error
+	               | Stdlib.Ok records ->
+	                   decode_sse_records stream records
+	                   |> Eta.Effect.bind (fun events ->
+	                          stream.pending <- events;
+	                          read_stream_event stream)))
 
 let read_stream_events ?max_events stream =
   Option.iter

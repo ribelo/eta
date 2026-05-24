@@ -351,6 +351,18 @@ let run_ok rt label effect =
            (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
            cause)
 
+let expect_decode_error rt label effect =
+  match Eta.Runtime.run rt effect with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (Decode_error { provider; message; raw })) ->
+      (provider, message, raw)
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s failed with unexpected cause: %s" label
+        (Format.asprintf "%a"
+           (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
+           cause)
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s unexpectedly succeeded" label
+
 let starts_with ~prefix value =
   let prefix_len = String.length prefix in
   String.length value >= prefix_len
@@ -492,10 +504,32 @@ let test_stream_reads_partial_chunks_and_done () =
   let body =
     body_of_string "data: text:Hel\n\ndata: text:lo\n\ndata: [DONE]\n\n"
   in
-  let stream = stream_of_body stream_provider body in
+  let stream = stream_of_body ~max_buffer_bytes:32 stream_provider body in
   let events = run_ok rt "read text stream" (read_stream_events stream) in
   Alcotest.(check string) "text deltas" "Hello" (stream_text events);
   Alcotest.(check bool) "done" true (stream_has_done events)
+
+let test_stream_rejects_oversized_complete_record_before_decode () =
+  with_runtime @@ fun rt ->
+  let decoded = ref 0 in
+  let provider =
+    {
+      stream_provider with
+      decode_stream_event =
+        (fun _ ->
+          incr decoded;
+          Ok []);
+    }
+  in
+  let payload = "data: text:" ^ String.make 64 'x' ^ "\n\n" in
+  let body = Eta_http.Body.Stream.of_bytes [ Bytes.of_string payload ] in
+  let stream = stream_of_body ~max_buffer_bytes:32 provider body in
+  let provider_name, message, _raw =
+    expect_decode_error rt "oversized SSE record" (read_stream_events stream)
+  in
+  Alcotest.(check string) "provider" "stream-fixture" provider_name;
+  Alcotest.(check bool) "mentions cap" true (String.contains message '3');
+  Alcotest.(check int) "decoder not called" 0 !decoded
 
 let test_stream_handles_named_tool_deltas () =
   with_runtime @@ fun rt ->
@@ -770,6 +804,8 @@ let () =
         [
           Alcotest.test_case "partial chunks and done" `Quick
             test_stream_reads_partial_chunks_and_done;
+          Alcotest.test_case "oversized complete record rejected" `Quick
+            test_stream_rejects_oversized_complete_record_before_decode;
           Alcotest.test_case "named tool deltas" `Quick
             test_stream_handles_named_tool_deltas;
           Alcotest.test_case "error events" `Quick test_stream_errors_are_events;

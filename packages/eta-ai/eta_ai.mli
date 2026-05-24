@@ -219,7 +219,7 @@ type stream
 val stream_of_body :
   ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
 (** Create a pull parser. [max_buffer_bytes] bounds the unframed SSE buffer and
-    defaults to 1 MiB. *)
+    each complete SSE record before provider decoding. It defaults to 1 MiB. *)
 
 val perform_stream :
   provider ->
