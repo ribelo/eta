@@ -115,6 +115,8 @@ let () =
             test_effect_timeout_uses_virtual_clock;
           Alcotest.test_case "timeout allows fast success" `Quick
             test_effect_timeout_allows_fast_success;
+          Alcotest.test_case "timeout preserves user timeout failure" `Quick
+            test_effect_timeout_preserves_user_timeout_failure;
           Alcotest.test_case "nested timeout maps outer timeout" `Quick
             test_effect_timeout_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "timeout_as exact error row" `Quick

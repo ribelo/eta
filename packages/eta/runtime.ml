@@ -313,35 +313,23 @@ let rec interpret :
       runtime.sleep d;
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
   | EV.Timeout (d, e) ->
-      let rec has_timeout : _ Cause.t -> bool = function
-        | Cause.Fail `Timeout -> true
-        | Cause.Sequential causes | Cause.Concurrent causes ->
-            List.exists has_timeout causes
-        | Cause.Suppressed { primary; finalizer } ->
-            has_timeout primary || has_timeout finalizer
-        | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
-      in
-      let rec only_timeout_or_interrupt : _ Cause.t -> bool = function
-        | Cause.Fail `Timeout | Cause.Interrupt _ -> true
-        | Cause.Sequential causes | Cause.Concurrent causes ->
-            List.for_all only_timeout_or_interrupt causes
-        | Cause.Suppressed { primary; finalizer } ->
-            only_timeout_or_interrupt primary
-            && only_timeout_or_interrupt finalizer
-        | Cause.Fail _ | Cause.Die _ -> false
-      in
+      let token = Typed_fail.int (Typed_fail.fresh ()) in
       (try
          Eio.Fiber.first
            (fun () ->
              runtime.sleep d;
-             raise_fail fail_key `Timeout)
+             raise (Timeout_as_fired token))
            (fun () ->
              interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e)
        with exn ->
-         let cause = cause_of_exn_runtime runtime fail_key exn in
-         if has_timeout cause && only_timeout_or_interrupt cause then
+         if
+           has_timeout_as token exn
+           && only_timeout_as_or_interrupt token exn
+         then
            raise_fail fail_key `Timeout
-         else raise_cause fail_key cause)
+         else
+           raise_cause fail_key
+             (cause_of_timeout_as_exn runtime fail_key token `Timeout exn))
   | EV.Timeout_as (d, on_timeout, e) ->
       let token = Typed_fail.int (Typed_fail.fresh ()) in
       (try
