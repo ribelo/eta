@@ -146,10 +146,10 @@ let test_h2_connection_concurrent_streams () =
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "opened streams" 10 stats.opened)
 
-let blocking_body () =
+let blocking_body ?(release = fun () -> Eta.Effect.unit) () =
   let first = ref true in
   let never, _resolver = Eio.Promise.create () in
-  Eta_http.Body.Stream.of_reader (fun () ->
+  Eta_http.Body.Stream.of_reader ~release (fun () ->
       if !first then (
         first := false;
         Eta.Effect.pure
@@ -175,9 +175,16 @@ let test_h2_connection_returns_early_response () =
       H2.Reqd.respond_with_string reqd (H2.Response.create (`Code 413)) "")
     (fun _clock rt connection ->
       let uri = "https://api.example.test/early" in
+      let released = ref 0 in
       let request =
         Eta_http.Request.make "POST" uri
-          ~body:(Eta_http.Request.Stream (blocking_body ()))
+          ~body:
+            (Eta_http.Request.Stream
+               (blocking_body
+                  ~release:(fun () ->
+                    incr released;
+                    Eta.Effect.unit)
+                  ()))
       in
       let effect =
         Eta_http.Client.For_test.request_h2_on_connection connection request
@@ -186,7 +193,35 @@ let test_h2_connection_returns_early_response () =
              ~on_timeout:(timeout_error uri)
       in
       let response = Eta.Runtime.run rt effect |> Eta_test.Expect.expect_ok in
-      Alcotest.(check int) "early status" 413 response.status)
+      Alcotest.(check int) "early status" 413 response.status;
+      Alcotest.(check int) "upload body released" 1 !released)
+
+let test_h2_connection_cancelled_upload_releases_body () =
+  with_h2_server
+    (fun _reqd -> ())
+    (fun _clock rt connection ->
+      let uri = "https://api.example.test/cancel-upload" in
+      let released = ref 0 in
+      let request =
+        Eta_http.Request.make "POST" uri
+          ~body:
+            (Eta_http.Request.Stream
+               (blocking_body
+                  ~release:(fun () ->
+                    incr released;
+                    Eta.Effect.unit)
+                  ()))
+      in
+      let effect =
+        Eta_http.Client.For_test.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
+             ~on_timeout:(timeout_error uri)
+      in
+      (match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok _ -> Alcotest.fail "expected upload cancellation"
+      | Eta.Exit.Error _ -> ());
+      Alcotest.(check int) "cancelled upload body released" 1 !released)
 
 let hpack_header name value = { Hpack.name; value; sensitive = false }
 
