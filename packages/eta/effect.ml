@@ -78,7 +78,11 @@ module Blocking = struct
   module Pool = struct
     include Blocking_runtime.Pool
 
-    let shutdown pool = Blocking_shutdown pool
+    let shutdown pool =
+      Sync
+        (fun () ->
+          Blocking_runtime.shutdown
+            ~emit:Runtime_observability.emit_current_blocking_event pool)
   end
 end
 
@@ -157,7 +161,6 @@ let collect_names e =
     | Island_all_settled { name; _ } ->
         name :: acc
     | Blocking { name; _ } -> name :: acc
-    | Blocking_shutdown _ -> acc
     | Render_error (_, e) -> walk acc e
     | Suppress_observability e -> walk acc e
     | Named (_, n, e) -> walk (n :: acc) e
@@ -226,7 +229,6 @@ module Private = struct
 
   let blocking_default_config = Blocking_runtime.default_config
   let blocking_submit = Blocking_runtime.submit
-  let blocking_shutdown = Blocking_runtime.shutdown
   let blocking_pool_name = Blocking_runtime.name
   let in_blocking_worker = Blocking_runtime.in_worker
 

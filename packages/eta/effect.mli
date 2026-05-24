@@ -598,10 +598,6 @@ module Private : sig
     'a
   (** Runtime hook for submitting one blocking callback. *)
 
-  val blocking_shutdown :
-    emit:(blocking_event -> unit) -> Blocking.Pool.t -> unit
-  (** Runtime hook for shutting down a blocking pool with metrics emission. *)
-
   val blocking_pool_name : Blocking.Pool.t -> string
   (** Runtime hook for diagnostic pool names. *)
 

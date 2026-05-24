@@ -51,11 +51,15 @@ let run ?island_pool ?blocking_pool t eff =
       let finalizers = ref [] in
       try
         Exit.Ok
-          (Runtime_core.with_finalizers ~runtime:t ~fail_key:t.default_fail_key
-             finalizers (fun () ->
-               Runtime_interpret.interpret ~runtime:t
-                 ~error_renderer:RObs.default_error_renderer
-                 ~fail_key:t.Runtime_core.default_fail_key ~sw ~finalizers eff))
+          (RObs.with_blocking_event_emit
+             (Runtime_core.emit_blocking_event t)
+             (fun () ->
+               Runtime_core.with_finalizers ~runtime:t
+                 ~fail_key:t.default_fail_key finalizers (fun () ->
+                   Runtime_interpret.interpret ~runtime:t
+                     ~error_renderer:RObs.default_error_renderer
+                     ~fail_key:t.Runtime_core.default_fail_key ~sw ~finalizers
+                     eff)))
       with exn ->
         Exit.Error
           (Runtime_core.cause_of_exn_runtime t t.Runtime_core.default_fail_key

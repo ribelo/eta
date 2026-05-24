@@ -4,6 +4,8 @@ let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
 let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
 let trace_context_key : Capabilities.trace_context Eio.Fiber.key =
   Eio.Fiber.create_key ()
+let blocking_event_emit_key : (BR.event -> unit) Eio.Fiber.key =
+  Eio.Fiber.create_key ()
 
 type die_context = {
   span_name : string option;
@@ -34,6 +36,14 @@ let with_die_annotations attrs f =
   loop attrs f
 
 let default_error_renderer _ = "<typed failure>"
+
+let with_blocking_event_emit emit f =
+  Eio.Fiber.with_binding blocking_event_emit_key emit f
+
+let emit_current_blocking_event event =
+  match Eio.Fiber.get blocking_event_emit_key with
+  | None -> ()
+  | Some emit -> emit event
 
 let die_of_exn ?backtrace ~capture_backtrace exn =
   let backtrace =

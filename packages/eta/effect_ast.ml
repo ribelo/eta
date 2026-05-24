@@ -49,7 +49,6 @@ type ('a, 'err) t =
       f : unit -> 'a;
     }
       -> ('a, 'err) t
-  | Blocking_shutdown : Blocking_runtime.t -> (unit, 'err) t
   | Bind : ('b, 'err) t * ('b -> ('a, 'err) t) -> ('a, 'err) t
   | Map : ('b, 'err) t * ('b -> 'a) -> ('a, 'err) t
   | Catch : ('a, 'err1) t * ('err1 -> ('a, 'err2) t) -> ('a, 'err2) t
@@ -153,4 +152,3 @@ and ('s, !'err, !'a) supervisor_child = {
   promise : ('a, 'err Cause.t) result Eio.Promise.t;
   cancel : unit -> unit;
 }
-

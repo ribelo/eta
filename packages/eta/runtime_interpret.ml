@@ -61,8 +61,6 @@ let rec interpret :
         Runtime_instrument.instrument_leaf ~runtime ~error_renderer ~fail_key
           ~name run
       else run ()
-  | EV.Blocking_shutdown pool ->
-      Blocking_runtime.shutdown ~emit:(emit_blocking_event runtime) pool
   (* Sequential composition and typed failure handling. *)
   | EV.Bind (e, k) ->
       let v =
