@@ -15,11 +15,16 @@ type point : immutable_data = {
   ts_ms : int;
 }
 
-type in_memory = { mutable points : point list }
+type in_memory = { mutex : Mutex.t; mutable points : point list }
 
-let in_memory () = { points = [] }
-let push t p = t.points <- p :: t.points
-let dump t = List.rev t.points
+let in_memory () = { mutex = Mutex.create (); points = [] }
+
+let with_lock t f =
+  Mutex.lock t.mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock t.mutex) f
+
+let push t p = with_lock t (fun () -> t.points <- p :: t.points)
+let dump t = with_lock t (fun () -> List.rev t.points)
 
 let as_capability t : Capabilities.meter =
   object

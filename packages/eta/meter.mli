@@ -22,6 +22,9 @@ type point : immutable_data = {
 type in_memory
 
 val in_memory : unit -> in_memory
+(** Create a thread-safe in-memory meter. *)
+
 val noop : Capabilities.meter
 val as_capability : in_memory -> Capabilities.meter
 val dump : in_memory -> point list
+(** Return a synchronized snapshot of points in insertion order. *)

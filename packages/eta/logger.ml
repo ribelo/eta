@@ -15,11 +15,16 @@ type record : immutable_data = Capabilities.log_record = {
   span_id : string;
 }
 
-type in_memory = { mutable records : record list }
+type in_memory = { mutex : Mutex.t; mutable records : record list }
 
-let in_memory () = { records = [] }
-let push t r = t.records <- r :: t.records
-let dump t = List.rev t.records
+let in_memory () = { mutex = Mutex.create (); records = [] }
+
+let with_lock t f =
+  Mutex.lock t.mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock t.mutex) f
+
+let push t r = with_lock t (fun () -> t.records <- r :: t.records)
+let dump t = with_lock t (fun () -> List.rev t.records)
 
 let as_capability t : Capabilities.logger =
   object
