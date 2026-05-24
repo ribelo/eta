@@ -186,31 +186,44 @@ let rec reserve_slot t name emit submitted_at =
   | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
   | `Reject -> raise_pool_full t name emit submitted_at
   | `Wait_full ->
-      Eio_unix.sleep 0.001;
+      Eio.Mutex.lock t.mutex;
+      Fun.protect
+        ~finally:(fun () -> Eio.Mutex.unlock t.mutex)
+        (fun () ->
+          while
+            (not t.shutdown)
+            && t.active >= t.config.max_threads
+            && t.queued >= t.config.max_queued
+          do
+            Eio.Condition.await t.condition t.mutex
+          done);
       reserve_slot t name emit submitted_at
 
 let wait_queued_slot t name emit submitted_at =
   try
-    let rec loop () =
-      match
-        Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
-        if t.shutdown && t.config.shutdown_policy = Detach_started then (
-          t.queued <- max 0 (t.queued - 1);
-          Eio.Condition.broadcast t.condition;
-          `Shutdown)
-        else if t.active < t.config.max_threads then (
-          t.queued <- max 0 (t.queued - 1);
-          t.active <- t.active + 1;
-          Eio.Condition.broadcast t.condition;
-          `Started)
-        else `Wait
-      with
-      | `Wait ->
-          Eio_unix.sleep 0.001;
-          loop ()
-      | (`Started | `Shutdown) as state -> state
+    let state =
+      Eio.Mutex.lock t.mutex;
+      Fun.protect
+        ~finally:(fun () -> Eio.Mutex.unlock t.mutex)
+        (fun () ->
+          while
+            (not (t.shutdown && t.config.shutdown_policy = Detach_started))
+            && t.active >= t.config.max_threads
+          do
+            Eio.Condition.await t.condition t.mutex
+          done;
+          if t.shutdown && t.config.shutdown_policy = Detach_started then (
+            t.queued <- max 0 (t.queued - 1);
+            Eio.Condition.broadcast t.condition;
+            `Shutdown)
+          else if t.active < t.config.max_threads then (
+            t.queued <- max 0 (t.queued - 1);
+            t.active <- t.active + 1;
+            Eio.Condition.broadcast t.condition;
+            `Started)
+          else assert false)
     in
-    match loop () with
+    match state with
     | `Started -> ()
     | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
   with (Eio.Cancel.Cancelled _ | Exit) ->
