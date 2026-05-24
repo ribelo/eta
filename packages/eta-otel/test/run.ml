@@ -279,6 +279,59 @@ let test_concurrent_span_attributes_stay_on_active_span () =
   Alcotest.(check bool) "right does not receive left attr" false
     (any_trace (json_span_has_attr ~name:"right" ~key:"side" ~value:"left"))
 
+let test_direct_tracer_attributes_use_fiber_span_stack () =
+  let bodies = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock stdenv in
+  let exporter =
+    Eta_otel.create ~sw
+      ~net:(Eio.Stdenv.net stdenv)
+      ~clock ~host:"127.0.0.1" ~port:1
+      ~service_name:"eta-otel-direct-concurrent-attrs"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
+      ()
+  in
+  let tracer = Eta_otel.tracer exporter in
+  let rt = Runtime.create ~sw ~clock ~tracer () in
+  let right_started, wake_right_started = Eio.Promise.create () in
+  let left_attr_done, wake_left_attr_done = Eio.Promise.create () in
+  let left =
+    Effect.named "left-direct"
+      (Effect.sync (fun () -> Eio.Promise.await right_started)
+      |> Effect.bind (fun () ->
+             Effect.sync (fun () ->
+                 tracer#add_attr ~key:"side" ~value:"left-direct";
+                 Eio.Promise.resolve wake_left_attr_done ())))
+  in
+  let right =
+    Effect.named "right-direct"
+      (Effect.sync (fun () ->
+           Eio.Promise.resolve wake_right_started ();
+           Eio.Promise.await left_attr_done))
+  in
+  (match Runtime.run rt (Effect.par left right) with
+  | Exit.Ok _ -> ()
+  | Exit.Error _ -> Alcotest.fail "expected concurrent spans to succeed");
+  Eta_otel.flush exporter;
+  let trace_jsons =
+    !bodies
+    |> List.filter_map (fun (path, body) ->
+           if String.equal path "/v1/traces" then
+             Some (Yojson.Safe.from_string body)
+           else None)
+  in
+  let any_trace pred = List.exists pred trace_jsons in
+  Alcotest.(check bool) "left direct span has its attr" true
+    (any_trace
+       (json_span_has_attr ~name:"left-direct" ~key:"side"
+          ~value:"left-direct"));
+  Alcotest.(check bool) "right direct span does not receive left attr" false
+    (any_trace
+       (json_span_has_attr ~name:"right-direct" ~key:"side"
+          ~value:"left-direct"))
+
 let test_network_partition_reports_error () =
   let errors = ref [] in
   Eio_main.run @@ fun stdenv ->
@@ -608,6 +661,8 @@ let () =
             test_exception_stacktrace_exported;
           Alcotest.test_case "concurrent span attrs" `Quick
             test_concurrent_span_attributes_stay_on_active_span;
+          Alcotest.test_case "direct concurrent span attrs" `Quick
+            test_direct_tracer_attributes_use_fiber_span_stack;
         ] );
       ( "adversarial",
         [

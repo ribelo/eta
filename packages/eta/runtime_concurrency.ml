@@ -21,7 +21,7 @@ let par_collect :
      List.iteri
        (fun i task ->
          Eio.Fiber.fork ~sw:par_sw (fun () ->
-           Tracer.with_fiber_context @@ fun () ->
+           runtime.tracer#with_fiber_context @@ fun () ->
              try results.(i) <- Some (task ())
              with exn ->
                let cause = cause_of_exn_runtime runtime fail_key exn in
@@ -58,7 +58,7 @@ let race_first :
          List.iter
            (fun child ->
              Eio.Fiber.fork ~sw:race_sw (fun () ->
-                Tracer.with_fiber_context @@ fun () ->
+                runtime.tracer#with_fiber_context @@ fun () ->
                 try
                   let value =
                     interpret_ast ~runtime ~error_renderer ~fail_key
@@ -103,7 +103,7 @@ let par_collect_settled :
    List.iteri
      (fun i child ->
        Eio.Fiber.fork ~sw:par_sw (fun () ->
-           Tracer.with_fiber_context @@ fun () ->
+           runtime.tracer#with_fiber_context @@ fun () ->
            results.(i) <-
              Some
                (try
@@ -133,7 +133,7 @@ let fork_internal :
  fun ~runtime ~interpret_ast eff ->
   P_atomic.incr runtime.active;
   Eio.Fiber.fork_daemon ~sw:runtime.outer_sw (fun () ->
-      Tracer.with_fiber_context @@ fun () ->
+      runtime.tracer#with_fiber_context @@ fun () ->
       Fun.protect
         ~finally:(fun () -> P_atomic.decr runtime.active)
         (fun () ->

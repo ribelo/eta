@@ -113,13 +113,49 @@ type t = {
   metric_queue : Eta.Meter.point Mailbox.t;
   self_tracer : Eta.Tracer.in_memory;
   flush_rt : unit Eta.Runtime.t;
+  context_id : int;
   mutable next_handle : int;
   table : (int, span) Hashtbl.t;
+  fallback : fiber_state;
   rng : Stdlib.Random.State.t;
   in_flight : Drain_counter.t;
   mutable on_error : string -> unit;
   mutable on_send : path:string -> body:string -> unit;
 }
+
+and fiber_state = {
+  mutable stack : int list;
+  mutable pending_attrs : (string * string) list;
+  mutable pending_links : Eta.Capabilities.span_link list;
+}
+
+let fiber_context_key : (int, fiber_state) Hashtbl.t Eio.Fiber.key =
+  Eio.Fiber.create_key ()
+
+let next_context_id = ref 0
+
+let fresh_context_id () =
+  incr next_context_id;
+  !next_context_id
+
+let empty_fiber_state () = { stack = []; pending_attrs = []; pending_links = [] }
+
+let with_fiber_context f =
+  Eio.Fiber.with_binding fiber_context_key (Hashtbl.create 1) f
+
+let fiber_context () =
+  try Eio.Fiber.get fiber_context_key with Stdlib.Effect.Unhandled _ -> None
+
+let fiber_state t =
+  match fiber_context () with
+  | None -> t.fallback
+  | Some context -> (
+      match Hashtbl.find_opt context t.context_id with
+      | Some state -> state
+      | None ->
+          let state = empty_fiber_state () in
+          Hashtbl.add context t.context_id state;
+          state)
 
 let now_ns t =
   let secs = Eio.Time.now t.clock in
@@ -401,6 +437,12 @@ let resolve_parent t ?trace_id ?(trace_flags = 1) ?(trace_state = [])
 
 let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
     ?baggage ?(kind = Eta.Capabilities.Internal) ~name ~started_ms:_ () =
+  let state = fiber_state t in
+  let parent_id =
+    match parent_id with
+    | Some _ as parent -> parent
+    | None -> List.find_opt (fun _ -> true) state.stack
+  in
   let trace_id, parent_span_id, trace_flags, trace_state, baggage =
     resolve_parent t ?trace_id ?trace_flags ?trace_state ?baggage
       (parent_id, external_parent)
@@ -428,6 +470,11 @@ let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
   in
   let handle = t.next_handle in
   t.next_handle <- handle + 1;
+  s.attrs <- List.rev state.pending_attrs;
+  s.links <- List.rev state.pending_links;
+  state.pending_attrs <- [];
+  state.pending_links <- [];
+  state.stack <- handle :: state.stack;
   Hashtbl.replace t.table handle s;
   handle
 
@@ -438,6 +485,8 @@ let map_status (st : Eta.Capabilities.span_status) =
   | Eta.Capabilities.Cancelled -> (2, "cancelled")
 
 let end_span t ~span_id ~status ~ended_ms:_ =
+  let state = fiber_state t in
+  state.stack <- List.filter (fun id -> id <> span_id) state.stack;
   match Hashtbl.find_opt t.table span_id with
   | None -> ()
   | Some s ->
@@ -448,21 +497,14 @@ let end_span t ~span_id ~status ~ended_ms:_ =
       s.status_message <- message;
       enqueue t t.queue s
 
-let pick_latest_open t =
-  let target = ref None in
-  Hashtbl.iter
-    (fun h s ->
-      match !target with
-      | None -> target := Some (h, s)
-      | Some (h', _) when h > h' -> target := Some (h, s)
-      | _ -> ())
-    t.table;
-  !target
-
 let add_attr t ~key ~value =
-  match pick_latest_open t with
-  | Some (_, s) -> s.attrs <- (key, value) :: s.attrs
-  | None -> ()
+  let state = fiber_state t in
+  match state.stack with
+  | span_id :: _ -> (
+      match Hashtbl.find_opt t.table span_id with
+      | Some s -> s.attrs <- (key, value) :: s.attrs
+      | None -> ())
+  | [] -> state.pending_attrs <- (key, value) :: state.pending_attrs
 
 let add_attr_to t ~span_id ~key ~value =
   match Hashtbl.find_opt t.table span_id with
@@ -477,9 +519,13 @@ let add_event t ~span_id ~name ~ts_ms ~attrs =
       s.events <- (name, ts_ns, attrs) :: s.events
 
 let add_link t link =
-  match pick_latest_open t with
-  | Some (_, s) -> s.links <- link :: s.links
-  | None -> ()
+  let state = fiber_state t in
+  match state.stack with
+  | span_id :: _ -> (
+      match Hashtbl.find_opt t.table span_id with
+      | Some s -> s.links <- link :: s.links
+      | None -> ())
+  | [] -> state.pending_links <- link :: state.pending_links
 
 let add_link_to t ~span_id link =
   match Hashtbl.find_opt t.table span_id with
@@ -559,11 +605,13 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();
       metric_queue = Mailbox.create ~capacity:queue_capacity ();
-      self_tracer;
-      flush_rt;
-      next_handle = 1;
-      table = Hashtbl.create 64;
-      rng;
+	      self_tracer;
+	      flush_rt;
+	      context_id = fresh_context_id ();
+	      next_handle = 1;
+	      table = Hashtbl.create 64;
+	      fallback = empty_fiber_state ();
+	      rng;
       in_flight = Drain_counter.create ();
       on_error;
       on_send;
@@ -574,6 +622,8 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
 
 let tracer t : Eta.Capabilities.tracer =
   object
+    method with_fiber_context : 'a. (unit -> 'a) -> 'a = with_fiber_context
+
     method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms () =
       begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags

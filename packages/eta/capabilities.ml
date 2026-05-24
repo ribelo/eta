@@ -57,6 +57,7 @@ type metric_kind : immutable_data =
 type metric_value : immutable_data = Int of int | Float of float
 
 class type tracer = object
+  method with_fiber_context : 'a. (unit -> 'a) -> 'a
   method begin_span :
     ?parent_id:int ->
     ?external_parent:trace_context ->

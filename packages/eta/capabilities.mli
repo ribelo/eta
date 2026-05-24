@@ -77,6 +77,7 @@ type log_record : immutable_data = {
 (** Minimal tracing capability. Implementations may back this with an
     in-memory collector, OpenTelemetry, or a noop sink. *)
 class type tracer = object
+  method with_fiber_context : 'a. (unit -> 'a) -> 'a
   method begin_span :
     ?parent_id:int ->
     ?external_parent:trace_context ->

@@ -46,7 +46,7 @@ let run ?island_pool ?blocking_pool t eff =
   | EV.Pure v -> Exit.Ok v
   | EV.Fail e -> Exit.Error (Cause.Fail e)
   | _ ->
-      Tracer.with_fiber_context @@ fun () ->
+      t.tracer#with_fiber_context @@ fun () ->
       Eio.Switch.run @@ fun sw ->
       let finalizers = ref [] in
       try

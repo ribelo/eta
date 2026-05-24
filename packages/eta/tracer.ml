@@ -237,6 +237,8 @@ let inspect t ~span_id : Capabilities.span_info option =
 
 let as_capability t : Capabilities.tracer =
   object
+    method with_fiber_context : 'a. (unit -> 'a) -> 'a = with_fiber_context
+
     method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms () =
       begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags
@@ -259,6 +261,8 @@ let as_capability t : Capabilities.tracer =
 
 let noop : Capabilities.tracer =
   object
+    method with_fiber_context : 'a. (unit -> 'a) -> 'a = fun f -> f ()
+
     method begin_span ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
         ?trace_state:_ ?baggage:_ ?kind:_ ~name:_ ~started_ms:_ () =
       -1

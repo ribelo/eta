@@ -90,7 +90,7 @@ module Make (I : INTERPRETER) = struct
         let child_sw = ref None in
         let child_cancel = ref None in
         fork supervisor (fun () ->
-            Tracer.with_fiber_context @@ fun () ->
+            runtime.tracer#with_fiber_context @@ fun () ->
             let result =
               try
                 Eio.Cancel.sub @@ fun cancel_context ->
