@@ -107,6 +107,9 @@ module Internal : sig
   val dropped : t -> int
   (** Number of signals dropped because a bounded mailbox was full. *)
 
+  val in_flight : t -> int
+  (** Number of accepted signals not yet drained by the exporter. *)
+
   val self_spans : t -> Eta.Tracer.span list
   (** Exporter-internal Eta spans. These are recorded with an in-memory tracer
       owned by the exporter and are never sent through the OTLP sink. *)

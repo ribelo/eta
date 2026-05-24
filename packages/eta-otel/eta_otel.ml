@@ -250,13 +250,8 @@ let export_body t config ~path ~body =
                 observe_error t (render_export_error error)))
 
 let export_batch t config ~signal ~path ~body ~n =
-  Eta.Effect.scoped
-    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-       ~release:(fun () -> decrement_in_flight t n)
-    |> Eta.Effect.bind (fun () ->
-           export_body t config ~path ~body
-           |> Eta.Effect.bind (fun () ->
-                  Self_metrics.on_export t signal ~batch_size:n)))
+  export_body t config ~path ~body
+  |> Eta.Effect.bind (fun () -> Self_metrics.on_export t signal ~batch_size:n)
 
 let signal_batches t =
   let traces =
@@ -273,26 +268,25 @@ let signal_batches t =
   in
   Stream.merge traces (Stream.merge logs metrics)
 
-let encode_signal t config = function
+let signal_details config = function
   | Trace_batch batch ->
-      ( Traces,
-        config.traces_path,
-        List.length batch,
-        encode_traces_request ~resource_attrs:config.resource_attrs
-          ~scope_name:config.scope_name batch )
+      (Traces, config.traces_path, List.length batch)
   | Log_batch batch ->
-      ( Logs,
-        config.logs_path,
-        List.length batch,
-        encode_logs_request ~resource_attrs:config.resource_attrs
-          ~scope_name:config.scope_name batch )
+      (Logs, config.logs_path, List.length batch)
   | Metric_batch batch ->
-      ( Metrics,
-        config.metrics_path,
-        List.length batch,
-        encode_metrics_request ~resource_attrs:config.resource_attrs
-          ~scope_name:config.scope_name
-          (Self_metrics.append_to_metrics_batch t batch) )
+      (Metrics, config.metrics_path, List.length batch)
+
+let encode_signal_body t config = function
+  | Trace_batch batch ->
+      encode_traces_request ~resource_attrs:config.resource_attrs
+        ~scope_name:config.scope_name batch
+  | Log_batch batch ->
+      encode_logs_request ~resource_attrs:config.resource_attrs
+        ~scope_name:config.scope_name batch
+  | Metric_batch batch ->
+      encode_metrics_request ~resource_attrs:config.resource_attrs
+        ~scope_name:config.scope_name
+        (Self_metrics.append_to_metrics_batch t batch)
 
 let batch_signal_name = function
   | Trace_batch _ -> "traces"
@@ -301,13 +295,21 @@ let batch_signal_name = function
 
 let export_signal t config signal =
   let name = batch_signal_name signal in
-  Eta.Effect.named ("eta_otel." ^ name ^ ".encode") (Eta.Effect.sync (fun () ->
-      encode_signal t config signal))
-  |> Eta.Effect.bind (fun (signal, path, n, body) ->
-         export_batch t config ~signal ~path ~body ~n
-         |> Eta.Effect.annotate ~key:"otel.path" ~value:path
-         |> Eta.Effect.annotate ~key:"otel.batch_size" ~value:(string_of_int n)
-         |> Eta.Effect.named ("eta_otel.export." ^ signal_name signal))
+  let signal_kind, path, n = signal_details config signal in
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+       ~release:(fun () -> decrement_in_flight t n)
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.named
+             ("eta_otel." ^ name ^ ".encode")
+             (Eta.Effect.sync (fun () -> encode_signal_body t config signal))
+           |> Eta.Effect.bind (fun body ->
+                  export_batch t config ~signal:signal_kind ~path ~body ~n
+                  |> Eta.Effect.annotate ~key:"otel.path" ~value:path
+                  |> Eta.Effect.annotate ~key:"otel.batch_size"
+                       ~value:(string_of_int n)
+                  |> Eta.Effect.named
+                       ("eta_otel.export." ^ signal_name signal_kind))))
 
 let export_program t =
   Eta.Resource.get t.config
@@ -634,5 +636,6 @@ module Internal = struct
   let encode_logs_request = encode_logs_request
   let encode_metrics_request = encode_metrics_request
   let dropped = dropped
+  let in_flight t = Drain_counter.value t.in_flight
   let self_spans t = Eta.Tracer.dump t.self_tracer
 end

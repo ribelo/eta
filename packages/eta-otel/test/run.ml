@@ -318,6 +318,27 @@ let test_malformed_response_reports_error () =
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "collector error reported" true (!errors <> [])
 
+let test_encode_failure_drains_in_flight () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-encode-failure"
+      ~on_error:(fun _ -> ())
+      ()
+  in
+  let meter = Eta_otel.meter exporter in
+  meter#record ~name:"bad.float" ~description:"" ~unit_:"1"
+    ~kind:Capabilities.Gauge ~attrs:[]
+    ~value:(Capabilities.Float (0.0 /. 0.0))
+    ~ts_ms:0;
+  Eta_otel.flush ~timeout_s:0.2 exporter;
+  Alcotest.(check int) "in-flight drained after encode failure" 0
+    (Eta_otel.Internal.in_flight exporter)
+
 let test_otlp_retry_excludes_408 () =
   let errors = ref [] in
   let paths = ref [] in
@@ -594,6 +615,8 @@ let () =
             test_network_partition_reports_error;
           Alcotest.test_case "malformed response" `Quick
             test_malformed_response_reports_error;
+          Alcotest.test_case "encode failure drains in-flight" `Quick
+            test_encode_failure_drains_in_flight;
           Alcotest.test_case "OTLP does not retry 408" `Quick
             test_otlp_retry_excludes_408;
           Alcotest.test_case "OTLP retries 429" `Quick
