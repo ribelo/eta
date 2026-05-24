@@ -1,4 +1,4 @@
 (library
  (name eta_stream)
- (public_name eta-stream)
+ (public_name eta.stream)
  (libraries eta eio cstruct))

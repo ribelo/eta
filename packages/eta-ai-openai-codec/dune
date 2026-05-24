@@ -1,4 +1,4 @@
 (library
  (name eta_ai_openai_codec)
- (public_name eta-ai-openai-codec)
- (libraries eta-ai))
+ (public_name eta.ai_openai_codec)
+ (libraries eta.ai))

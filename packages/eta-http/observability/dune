@@ -1,6 +1,6 @@
 (library
  (name eta_http_observability)
- (package eta-http)
+ (package eta)
  (libraries
   eta
   eta_http_client

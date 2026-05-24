@@ -1,4 +1,4 @@
 (library
  (name eta_ai_anthropic)
- (public_name eta-ai-anthropic)
- (libraries eta eta-ai eta-redacted eta-http yojson))
+ (public_name eta.ai_anthropic)
+ (libraries eta eta.ai eta.redacted eta.http yojson))

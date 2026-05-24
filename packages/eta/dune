@@ -8,4 +8,4 @@
   island_runtime
   runtime_observability
   runtime_supervisor)
- (libraries eta-redacted eio eio.unix portable parallel parallel.scheduler threads))
+ (libraries eta.redacted eio eio.unix portable parallel parallel.scheduler threads))

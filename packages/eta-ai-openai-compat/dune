@@ -1,4 +1,4 @@
 (library
  (name eta_ai_openai_compat)
- (public_name eta-ai-openai-compat)
- (libraries eta eta-ai eta-ai-openai-codec eta-redacted eta-http yojson))
+ (public_name eta.ai_openai_compat)
+ (libraries eta eta.ai eta.ai_openai_codec eta.redacted eta.http yojson))

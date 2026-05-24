@@ -1,7 +1,7 @@
 (test
  (name gzip_bomb)
- (package eta-http)
- (libraries eta-http eta-test alcotest eio_main)
+ (package eta)
+ (libraries eta.http eta.test alcotest eio_main)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

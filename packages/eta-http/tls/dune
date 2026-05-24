@@ -1,4 +1,4 @@
 (library
  (name eta_http_tls)
- (package eta-http)
+ (package eta)
  (libraries tls tls-eio x509 ca-certs domain-name ipaddr))

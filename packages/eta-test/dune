@@ -1,4 +1,4 @@
 (library
  (name eta_test)
- (public_name eta-test)
+ (public_name eta.test)
  (libraries eta eio eio_main alcotest))

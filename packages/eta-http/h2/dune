@@ -1,9 +1,9 @@
 (library
  (name eta_http_h2)
- (package eta-http)
+ (package eta)
  (libraries
   eta
-  eta-stream
+  eta.stream
   eta_http_body
   eta_http_core
   eta_http_error

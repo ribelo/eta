@@ -1,9 +1,9 @@
 (library
  (name eta_http)
- (public_name eta-http)
+ (public_name eta.http)
  (libraries
   eta
-  eta-stream
+  eta.stream
   eta_http_body
   eta_http_client
   eta_http_core
