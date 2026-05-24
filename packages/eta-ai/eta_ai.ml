@@ -160,7 +160,9 @@ type ai_error =
       feature : string;
     }
 
-type toolkit = { tools : tool list }
+module Tool_name_set = Set.Make (String)
+
+type toolkit = { rev_tools : tool list; names : Tool_name_set.t }
 
 let invalid_tool name message = Stdlib.Error (Invalid_tool { name; message })
 let normalize_tool_name = String.trim
@@ -175,21 +177,26 @@ let validate_tool tool =
 let make_tool ?description ?strict ~name ~input_schema_json () =
   validate_tool { name; description; input_schema_json; strict }
 
-let empty_toolkit = { tools = [] }
+let empty_toolkit = { rev_tools = []; names = Tool_name_set.empty }
 
-let toolkit_tools toolkit = toolkit.tools
+let toolkit_tools toolkit = List.rev toolkit.rev_tools
 
 let find_tool name toolkit =
   let name = normalize_tool_name name in
-  List.find_opt (fun tool -> String.equal tool.name name) toolkit.tools
+  List.find_opt (fun tool -> String.equal tool.name name) toolkit.rev_tools
 
 let add_tool tool toolkit =
   match validate_tool tool with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok tool -> (
-      match find_tool tool.name toolkit with
-      | Some _ -> invalid_tool tool.name "tool name already registered"
-      | None -> Stdlib.Ok { tools = toolkit.tools @ [ tool ] })
+  | Stdlib.Ok tool ->
+      if Tool_name_set.mem tool.name toolkit.names then
+        invalid_tool tool.name "tool name already registered"
+      else
+        Stdlib.Ok
+          {
+            rev_tools = tool :: toolkit.rev_tools;
+            names = Tool_name_set.add tool.name toolkit.names;
+          }
 
 let make_toolkit tools =
   let rec loop acc = function
