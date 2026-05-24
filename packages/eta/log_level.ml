@@ -6,7 +6,7 @@ type t =
   | Warn
   | Error
   | Fatal
-  | None
+  | Off
 
 let to_string = function
   | All -> "ALL"
@@ -16,7 +16,7 @@ let to_string = function
   | Warn -> "WARN"
   | Error -> "ERROR"
   | Fatal -> "FATAL"
-  | None -> "NONE"
+  | Off -> "NONE"
 
 let of_string s =
   match String.uppercase_ascii s with
@@ -27,7 +27,7 @@ let of_string s =
   | "WARN" -> Some Warn
   | "ERROR" -> Some Error
   | "FATAL" -> Some Fatal
-  | "NONE" -> Some None
+  | "NONE" | "OFF" -> Some Off
   | _ -> None
 
 let to_rank = function
@@ -38,16 +38,16 @@ let to_rank = function
   | Warn -> 4
   | Error -> 5
   | Fatal -> 6
-  | None -> 7
+  | Off -> 7
 
 let compare a b = Int.compare (to_rank a) (to_rank b)
 let equal a b = compare a b = 0
 
 let is_enabled ~at ~threshold =
   match threshold with
-  | None -> false
+  | Off -> false
   | All -> true
-  | _ -> at <> None && compare at threshold >= 0
+  | _ -> at <> Off && compare at threshold >= 0
 
 let to_otel_severity = function
   | All -> 0
@@ -57,7 +57,7 @@ let to_otel_severity = function
   | Warn -> 13
   | Error -> 17
   | Fatal -> 21
-  | None -> 0
+  | Off -> 0
 
 let of_otel_severity n =
   if n <= 0 then All
@@ -70,4 +70,4 @@ let of_otel_severity n =
 
 let pp fmt t = Format.pp_print_string fmt (to_string t)
 
-let all = [ All; Trace; Debug; Info; Warn; Error; Fatal; None ]
+let all = [ All; Trace; Debug; Info; Warn; Error; Fatal; Off ]

@@ -5,7 +5,7 @@ let log_level = Alcotest.testable Log_level.pp Log_level.equal
 
 let test_compare_ordering () =
   let open Log_level in
-  let expected = [ All; Trace; Debug; Info; Warn; Error; Fatal; None ] in
+  let expected = [ All; Trace; Debug; Info; Warn; Error; Fatal; Off ] in
   let rec check_pairs = function
     | [] | [ _ ] -> ()
     | a :: (b :: _ as rest) ->
@@ -16,7 +16,7 @@ let test_compare_ordering () =
         check_pairs rest
   in
   check_pairs expected;
-  Alcotest.(check int) "Fatal < None" (-1) (compare Fatal None);
+  Alcotest.(check int) "Fatal < Off" (-1) (compare Fatal Off);
   Alcotest.(check int) "All < Trace" (-1) (compare All Trace)
 
 let test_equal () =
@@ -65,9 +65,9 @@ let test_is_enabled () =
   List.iter
     (fun level ->
       Alcotest.(check bool)
-        ("none threshold at " ^ to_string level)
+        ("off threshold at " ^ to_string level)
         false
-        (is_enabled ~at:level ~threshold:None))
+        (is_enabled ~at:level ~threshold:Off))
     all;
   List.iter
     (fun level ->
@@ -133,6 +133,8 @@ let test_string_roundtrip () =
     all;
   Alcotest.(check (option log_level))
     "case insensitive" (Some Info) (of_string "info");
+  Alcotest.(check (option log_level)) "NONE alias" (Some Off) (of_string "NONE");
+  Alcotest.(check (option log_level)) "OFF alias" (Some Off) (of_string "OFF");
   Alcotest.(check (option log_level))
     "unknown returns None" None (of_string "unknown")
 
