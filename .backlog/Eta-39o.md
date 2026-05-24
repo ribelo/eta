@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:44:10.280Z
 created_by: backlog
-updated_at: 2026-05-24T11:21:47Z
-close_reason: "Closed by remediation. Chose Option B and added eta-ai-openai-codec as a leaf shared codec package to avoid coupling OpenRouter/OpenAI-compatible providers to the full OpenAI provider. Moved content/message/input/tool/structured-output/result helpers into the shared codec with shape parameters, updated OpenAI, OpenAI-compatible, and OpenRouter providers to consume it, and regenerated package metadata. Verified with nix develop -c dune runtest packages/eta-ai-openai/test packages/eta-ai-openai-compat/test packages/eta-ai-openrouter/test --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Shipped — codec extraction into body/stream.mli, body/chunked.mli (44f46a7)
 dependencies:
   - issue_id: Eta-39o
     depends_on_id: Eta-6j9

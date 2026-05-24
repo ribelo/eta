@@ -7,9 +7,10 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:43:32.687Z
 created_by: backlog
-updated_at: 2026-05-24T11:40:06Z
-closed_at: 2026-05-24T11:40:06Z
-close_reason: "Split effect/runtime internals into private modules (island_runtime, blocking_runtime, effect_ast, runtime_observability, runtime_supervisor); public surface unchanged; verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Shipped — effect.ml/runtime.ml split creates effect_ast.ml,
+  effect_view.ml, runtime_observability.ml, runtime_supervisor.ml (44f46a7)
 dependencies:
   - issue_id: Eta-tkw
     depends_on_id: Eta-6j9

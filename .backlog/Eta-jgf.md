@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:05:39.212Z
 created_by: backlog
-updated_at: 2026-05-24T10:38:51.177Z
-close_reason: "Closed by remediation. Removed the interpreter AST view from the public Effect.Private mli, moved runtime pattern matching to Dune-private effect_view, documented the remaining Private runtime hooks, and replaced eta-schema-test's public AST usage with Runtime.run. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 comments:
   - id: 1
     issue_id: Eta-jgf

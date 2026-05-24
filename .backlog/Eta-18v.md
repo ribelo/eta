@@ -6,8 +6,9 @@ priority: 3
 issue_type: task
 created_at: 2026-05-24T09:07:27.302Z
 created_by: backlog
-updated_at: 2026-05-24T11:12:37Z
-close_reason: "Closed by remediation. Kept the existing Effect.collect_names API and documented in effect.mli that it returns only statically present names, skips continuation-producing nodes, and is not a complete runtime inventory. Audited usages outside backlog metadata; only the focused test suite calls it. Verified with nix develop -c dune runtest packages/eta/test --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P3: Rename or document Effect.collect_names limitation (no red test)

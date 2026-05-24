@@ -6,9 +6,9 @@ priority: 1
 issue_type: epic
 created_at: 2026-05-24T09:43:10.933Z
 created_by: backlog
-updated_at: 2026-05-24T11:47:49Z
-closed_at: 2026-05-24T11:47:49Z
-close_reason: "All remediation child tasks listed in .objectives/code-review-remediation.md are closed; RED-test tasks shipped fixes, structural refactors landed, and nix develop -c dune runtest --force passes."
+updated_at: 2026-05-24T11:54:09.788Z
+closed_at: 2026-05-24T11:54:09.788Z
+close_reason: All 23 children closed — code review remediation complete (44f46a7)
 ---
 
 # Epic: Code review remediation — structural and bug findings

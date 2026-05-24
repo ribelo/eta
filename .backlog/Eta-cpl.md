@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:06:59.561Z
 created_by: backlog
-updated_at: 2026-05-24T10:58:58.715Z
-close_reason: "Chose fix A: removed Retry_with_new_connection from the generic retry policy API because Retry.run has no transport/pool signal to honor it. Added a RED classification test for Connection_closed, then collapsed it to ordinary Retry_after. Verified with nix develop -c dune runtest packages/eta-http/test --force and nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: Retry runner must honor Retry_with_new_connection or remove the variant

@@ -7,8 +7,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:06:46.887Z
 created_by: backlog
-updated_at: 2026-05-24T10:56:23.956Z
-close_reason: "Replaced Capabilities.random_float read/compute/set with a Portable.Atomic CAS retry loop, preserving the portable contended token contract without adding flaky race tests. Verified with nix develop -c dune runtest packages/eta/test --force and nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: Capabilities.random uses CAS update for shared portable use (no red test — race)

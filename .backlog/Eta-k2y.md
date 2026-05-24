@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:05:13.684Z
 created_by: backlog
-updated_at: 2026-05-24T10:25:44.397Z
-close_reason: "Closed by remediation. Added a RED island fanout timing/order test and replaced pairwise fork_join2 recursion with a finite Parallel.Sequence.With_length batch executor for map/map_result/all_settled paths. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — island_runtime.ml uses indexed batch executor, not
+  pairwise fork_join2 (44f46a7)
 ---
 
 # P1: Effect.Island uses real indexed batch executor, not pairwise fork_join2

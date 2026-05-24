@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:03:43.775Z
 created_by: backlog
-updated_at: 2026-05-24T10:05:39.528Z
-close_reason: "Closed by remediation. Schedule now has a stateful driver; And_then starts the second phase with its own local step, and runtime repeat/retry use the driver. Added RED coverage for exponential, linear, and jittered second phases. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — driver rewrite solves and_then step offset; schedule.ml
+  now stateful (44f46a7)
 ---
 
 # P1: Schedule.and_then must offset step for the second schedule

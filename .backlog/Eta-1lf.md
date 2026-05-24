@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:03:27.214Z
 created_by: backlog
-updated_at: 2026-05-24T10:02:29.416Z
-close_reason: "Closed by remediation. Runtime.run and daemon fork bodies now drain acquire_release finalizers through the existing with_finalizers path on success and failure. Added RED tests for root success, root typed failure, and finite daemon finalizer drainage. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — runtime.ml wraps top-level interpret and daemon bodies in
+  with_finalizers (44f46a7)
 ---
 
 # P1: Drain finalizers at every Runtime.run boundary (acquire_release leak)

@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:05:54.354Z
 created_by: backlog
-updated_at: 2026-05-24T10:40:53.919Z
-close_reason: "Closed by remediation. Added a RED tap_error observer-crash test, changed the runtime to report Suppressed { primary = Fail err; finalizer = observer cause } when the observer raises, documented tap_error observer-raise behavior, and verified the existing non-raising observer regression. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: Effect.tap_error preserves typed failure when observer raises

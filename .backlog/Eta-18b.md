@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:05:24.167Z
 created_by: backlog
-updated_at: 2026-05-24T10:29:24.652Z
-close_reason: "Closed by remediation. Added a RED all_settled Worker_died diagnostics test, then captured per-exception message and raw backtrace string inside Island_runtime capture handlers without crossing raw exceptions over the island boundary. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — island_runtime.ml captures per-exception message and
+  backtrace in worker_die (44f46a7)
 ---
 
 # P1: Effect.Island worker_die captures exception message and backtrace

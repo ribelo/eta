@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:04:55.678Z
 created_by: backlog
-updated_at: 2026-05-24T10:20:59.592Z
-close_reason: "Closed by remediation. Added RED tests for Body.Stream.read_all and H1 close-delimited responses, introduced typed Body_too_large, aligned fixed/chunked/close-delimited/read_all defaults at 1 MiB, added max_response_body_bytes client configuration, and documented the cap in client interfaces. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — all body shapes capped at configurable default, uniform
+  across close-delimited/chunked/fixed (44f46a7)
 ---
 
 # P1: Cap close-delimited and read_all body sizes

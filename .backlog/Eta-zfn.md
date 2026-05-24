@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:06:05.293Z
 created_by: backlog
-updated_at: 2026-05-24T10:42:35.365Z
-close_reason: "Closed by remediation. Added a RED retry test for Eio.Exn.Multiple, changed retry_eff's catch-all from die_of_exn_runtime to cause_of_exn_runtime with the attempt key, and audited runtime.ml for remaining die_of_exn_runtime catch-alls. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: retry_eff catch-all must use cause_of_exn_runtime

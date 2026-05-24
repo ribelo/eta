@@ -6,9 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:43:48.880Z
 created_by: backlog
-updated_at: 2026-05-24T11:47:27Z
-closed_at: 2026-05-24T11:47:27Z
-close_reason: "Split eta and eta-http monolithic test files into focused runner/module layouts; preserved Alcotest suite and case names; verified targeted package tests and nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Shipped — test split into 17 focused modules with run.ml runner (44f46a7)
 dependencies:
   - issue_id: Eta-ev7
     depends_on_id: Eta-6j9

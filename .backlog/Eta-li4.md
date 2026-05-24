@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:07:09.544Z
 created_by: backlog
-updated_at: 2026-05-24T11:02:50.154Z
-close_reason: "Added RED coverage for a flow write failure escaping write_to_flow, then translated synchronous flow write exceptions to typed Connection_closed(Http_request) errors and documented the contract in write.mli. Existing success-path writer coverage remains green. Verified with nix develop -c dune runtest packages/eta-http/test --force and nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: H1 write_to_flow must return typed errors instead of raising

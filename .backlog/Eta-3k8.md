@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:03:55.219Z
 created_by: backlog
-updated_at: 2026-05-24T10:08:21.213Z
-close_reason: "Closed by remediation. Retry-After absolute dates now receive a clock through classify_error/classify_response and Retry.run, defaulting to Unix.gettimeofday; numeric and past-date behavior is covered. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — retry.ml threads now_s through
+  classify_error/classify_response/Retry.run (44f46a7)
 ---
 
 # P1: Plumb a clock into Retry-After absolute-date parsing

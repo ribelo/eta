@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:03:04.689Z
 created_by: backlog
-updated_at: 2026-05-24T09:59:52.353Z
-close_reason: "Closed by remediation. Header constructors validate RFC-token names and CTL-free values; H1 byte/string/flow writers and the H2 client/header validation path reject CR/LF/NUL injection before emitting request bytes. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — header.ml/h1/write.ml/h2/multiplexer.ml validate
+  names/values, CRLF rejected (44f46a7)
 ---
 
 # P0: Validate HTTP header names and values to prevent CRLF injection

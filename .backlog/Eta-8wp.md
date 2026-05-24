@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:04:32.819Z
 created_by: backlog
-updated_at: 2026-05-24T10:33:19.610Z
-close_reason: "Closed by remediation. Added a RED counted-flow test for connect_tls peer-identity failure and changed connect_tls to close the original TCP flow before returning typed TLS failures, including setup and client_of_flow exceptions. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
 # P2: Close TCP flow when TLS upgrade fails

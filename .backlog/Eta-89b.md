@@ -6,8 +6,9 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:04:17.094Z
 created_by: backlog
-updated_at: 2026-05-24T10:11:27.878Z
-close_reason: "Closed by remediation. Url tracks IP-literal host kind so host remains unbracketed while authority/blit_authority/H1 Host restore IPv6 brackets; reg-name authority unchanged. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — url.ml tracks host_kind, authority re-adds brackets for IPv6 (44f46a7)
 ---
 
 # P1: Url.authority must restore brackets for IPv6 literals

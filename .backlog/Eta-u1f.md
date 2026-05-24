@@ -6,8 +6,10 @@ priority: 1
 issue_type: task
 created_at: 2026-05-24T09:04:44.521Z
 created_by: backlog
-updated_at: 2026-05-24T10:15:26.503Z
-close_reason: "Closed by remediation. Added a RED h2 multiplexer buffer-full fixture, mapped buffer exhaustion to Security_error (Connection_protocol_violation kind=h2_read_buffer_exhausted), documented read_client_once behavior, and audited multiplexer.ml for failwith/assert false. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — h2/multiplexer.ml replaces failwith/assert with typed
+  Security_error (44f46a7)
 ---
 
 # P1: H2 read loop must surface buffer-full as typed Security_error

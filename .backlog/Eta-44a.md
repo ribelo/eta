@@ -6,8 +6,9 @@ priority: 2
 issue_type: task
 created_at: 2026-05-24T09:06:19.326Z
 created_by: backlog
-updated_at: 2026-05-24T10:45:37.370Z
-close_reason: "Closed by remediation. Added RED daemon diagnostic tests, changed daemon failure handling to capture causes instead of swallowing them, emitted logger/tracer diagnostics for non-interrupt causes, and preserved quiet handling for interrupt-only daemon exits. Existing Resource.failures regression remains green. Verified with nix develop -c dune runtest --force."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 dependencies:
   - issue_id: Eta-44a
     depends_on_id: Eta-1lf
