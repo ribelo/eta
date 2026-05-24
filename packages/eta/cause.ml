@@ -17,6 +17,67 @@ type 'err t =
 
 type 'err same_domain_t = 'err t
 
+type ('err, 'die, 'cause) tree_view =
+  | VFail of 'err
+  | VDie of 'die
+  | VInterrupt of interrupt_id option
+  | VSequential of 'cause list
+  | VConcurrent of 'cause list
+  | VSuppressed of 'cause * 'cause
+
+let equal_option equal_a left right =
+  match (left, right) with
+  | None, None -> true
+  | Some a, Some b -> equal_a a b
+  | _ -> false
+
+let equal_list equal_a left right =
+  List.length left = List.length right && List.for_all2 equal_a left right
+
+let rec equal_tree view ~equal_err ~equal_die left right =
+  match (view left, view right) with
+  | VFail a, VFail b -> equal_err a b
+  | VDie a, VDie b -> equal_die a b
+  | VInterrupt a, VInterrupt b -> equal_option Int.equal a b
+  | VSequential a, VSequential b | VConcurrent a, VConcurrent b ->
+      equal_list (equal_tree view ~equal_err ~equal_die) a b
+  | VSuppressed (primary_a, finalizer_a), VSuppressed (primary_b, finalizer_b) ->
+      equal_tree view ~equal_err ~equal_die primary_a primary_b
+      && equal_tree view ~equal_err ~equal_die finalizer_a finalizer_b
+  | _ -> false
+
+let pp_annotations fmt annotations =
+  Format.fprintf fmt "[%a]"
+    (Format.pp_print_list
+       ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+       (fun fmt (key, value) -> Format.fprintf fmt "%s=%S" key value))
+    annotations
+
+let rec pp_tree view ~pp_err ~pp_die fmt cause =
+  match view cause with
+  | VFail err -> Format.fprintf fmt "Fail(%a)" pp_err err
+  | VDie die -> pp_die fmt die
+  | VInterrupt None -> Format.pp_print_string fmt "Interrupt"
+  | VInterrupt (Some id) -> Format.fprintf fmt "Interrupt(%d)" id
+  | VSequential causes ->
+      Format.fprintf fmt "Sequential[%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+           (pp_tree view ~pp_err ~pp_die))
+        causes
+  | VConcurrent causes ->
+      Format.fprintf fmt "Concurrent[%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+           (pp_tree view ~pp_err ~pp_die))
+        causes
+  | VSuppressed (primary, finalizer) ->
+      Format.fprintf fmt "Suppressed{primary=%a; finalizer=%a}"
+        (pp_tree view ~pp_err ~pp_die)
+        primary
+        (pp_tree view ~pp_err ~pp_die)
+        finalizer
+
 module Portable = struct
   type die : value mod portable = {
     kind : string;
@@ -58,15 +119,6 @@ module Portable = struct
             finalizer = of_cause convert finalizer;
           }
 
-  let equal_option equal_a left right =
-    match (left, right) with
-    | None, None -> true
-    | Some a, Some b -> equal_a a b
-    | _ -> false
-
-  let equal_list equal_a left right =
-    List.length left = List.length right && List.for_all2 equal_a left right
-
   let equal_die left right =
     String.equal left.kind right.kind
     && String.equal left.message right.message
@@ -76,24 +128,15 @@ module Portable = struct
          (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
          left.annotations right.annotations
 
-  let rec equal equal_err left right =
-    match (left, right) with
-    | Fail a, Fail b -> equal_err a b
-    | Die a, Die b -> equal_die a b
-    | Interrupt a, Interrupt b -> equal_option Int.equal a b
-    | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-        equal_list (equal equal_err) a b
-    | Suppressed a, Suppressed b ->
-        equal equal_err a.primary b.primary
-        && equal equal_err a.finalizer b.finalizer
-    | _ -> false
+  let view = function
+    | Fail err -> VFail err
+    | Die die -> VDie die
+    | Interrupt id -> VInterrupt id
+    | Sequential causes -> VSequential causes
+    | Concurrent causes -> VConcurrent causes
+    | Suppressed { primary; finalizer } -> VSuppressed (primary, finalizer)
 
-  let pp_annotations fmt annotations =
-    Format.fprintf fmt "[%a]"
-      (Format.pp_print_list
-         ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-         (fun fmt (key, value) -> Format.fprintf fmt "%s=%S" key value))
-      annotations
+  let equal equal_err = equal_tree view ~equal_err ~equal_die
 
   let pp_backtrace fmt = function
     | None -> ()
@@ -111,26 +154,7 @@ module Portable = struct
     pp_backtrace fmt die.backtrace;
     Format.pp_print_string fmt "}"
 
-  let rec pp pp_err fmt = function
-    | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
-    | Die die -> pp_die fmt die
-    | Interrupt None -> Format.pp_print_string fmt "Interrupt"
-    | Interrupt (Some id) -> Format.fprintf fmt "Interrupt(%d)" id
-    | Sequential causes ->
-        Format.fprintf fmt "Sequential[%a]"
-          (Format.pp_print_list
-             ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-             (pp pp_err))
-          causes
-    | Concurrent causes ->
-        Format.fprintf fmt "Concurrent[%a]"
-          (Format.pp_print_list
-             ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-             (pp pp_err))
-          causes
-    | Suppressed { primary; finalizer } ->
-        Format.fprintf fmt "Suppressed{primary=%a; finalizer=%a}" (pp pp_err)
-          primary (pp pp_err) finalizer
+  let pp pp_err = pp_tree view ~pp_err ~pp_die
 end
 
 let fail err = Fail err
@@ -162,71 +186,38 @@ let rec is_interrupt_only = function
       is_interrupt_only primary && is_interrupt_only finalizer
   | Fail _ | Die _ -> false
 
-let equal_option equal_a left right =
-  match (left, right) with
-  | None, None -> true
-  | Some a, Some b -> equal_a a b
-  | _ -> false
+let view = function
+  | Fail err -> VFail err
+  | Die die -> VDie die
+  | Interrupt id -> VInterrupt id
+  | Sequential causes -> VSequential causes
+  | Concurrent causes -> VConcurrent causes
+  | Suppressed { primary; finalizer } -> VSuppressed (primary, finalizer)
 
-let equal_list equal_a left right =
-  List.length left = List.length right && List.for_all2 equal_a left right
+let equal_die left right =
+  left.exn == right.exn
+  && equal_option String.equal left.span_name right.span_name
+  && equal_list
+       (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
+       left.annotations right.annotations
 
-let rec equal equal_err left right =
-  match (left, right) with
-  | Fail a, Fail b -> equal_err a b
-  | Die a, Die b ->
-      a.exn == b.exn
-      && equal_option String.equal a.span_name b.span_name
-      && equal_list
-           (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-           a.annotations b.annotations
-  | Interrupt a, Interrupt b -> equal_option Int.equal a b
-  | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-      equal_list (equal equal_err) a b
-  | Suppressed a, Suppressed b ->
-      equal equal_err a.primary b.primary
-      && equal equal_err a.finalizer b.finalizer
-  | _ -> false
-
-let pp_annotations fmt annotations =
-  Format.fprintf fmt "[%a]"
-    (Format.pp_print_list
-       ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-       (fun fmt (key, value) -> Format.fprintf fmt "%s=%S" key value))
-    annotations
+let equal equal_err = equal_tree view ~equal_err ~equal_die
 
 let pp_backtrace fmt = function
   | None -> ()
   | Some bt ->
       Format.fprintf fmt "; backtrace=%S" (Printexc.raw_backtrace_to_string bt)
 
-let rec pp pp_err fmt = function
-  | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
-  | Die die ->
-      Format.fprintf fmt "Die{exn=%S" (Printexc.to_string die.exn);
-      (match die.span_name with
-      | None -> ()
-      | Some name -> Format.fprintf fmt "; span_name=%S" name);
-      (match die.annotations with
-      | [] -> ()
-      | annotations ->
-          Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
-      pp_backtrace fmt die.backtrace;
-      Format.pp_print_string fmt "}"
-  | Interrupt None -> Format.pp_print_string fmt "Interrupt"
-  | Interrupt (Some id) -> Format.fprintf fmt "Interrupt(%d)" id
-  | Sequential causes ->
-      Format.fprintf fmt "Sequential[%a]"
-        (Format.pp_print_list
-           ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-           (pp pp_err))
-        causes
-  | Concurrent causes ->
-      Format.fprintf fmt "Concurrent[%a]"
-        (Format.pp_print_list
-           ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
-           (pp pp_err))
-        causes
-  | Suppressed { primary; finalizer } ->
-      Format.fprintf fmt "Suppressed{primary=%a; finalizer=%a}" (pp pp_err)
-        primary (pp pp_err) finalizer
+let pp_die fmt die =
+  Format.fprintf fmt "Die{exn=%S" (Printexc.to_string die.exn);
+  (match die.span_name with
+  | None -> ()
+  | Some name -> Format.fprintf fmt "; span_name=%S" name);
+  (match die.annotations with
+  | [] -> ()
+  | annotations ->
+      Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
+  pp_backtrace fmt die.backtrace;
+  Format.pp_print_string fmt "}"
+
+let pp pp_err = pp_tree view ~pp_err ~pp_die
