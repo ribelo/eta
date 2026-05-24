@@ -36,7 +36,7 @@ let test_observability_success_get_semconv () =
   Alcotest.(check (option string)) "method" (Some "GET")
     (span_attr "http.request.method" span);
   Alcotest.(check (option string)) "url"
-    (Some "https://api.example.test:8443/a?b=c")
+    (Some "https://api.example.test:8443/a?<redacted>")
     (span_attr "url.full" span);
   Alcotest.(check (option string)) "server" (Some "api.example.test")
     (span_attr "server.address" span);
@@ -46,6 +46,38 @@ let test_observability_success_get_semconv () =
     (span_attr "network.protocol.version" span);
   Alcotest.(check (option string)) "status attr" (Some "200")
     (span_attr "http.response.status_code" span)
+
+let test_observability_redacts_url_query_by_default () =
+  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  let client =
+    observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
+  in
+  let request =
+    Eta_http.Request.make "GET"
+      "https://api.example.test/private?token=secret&email=a@example.test#frag"
+  in
+  ignore
+    (Eta.Runtime.run rt (Eta_http.Observability.Tracer.request client request)
+    |> Eta_test.Expect.expect_ok);
+  let span = find_span "HTTP GET" tracer in
+  Alcotest.(check (option string)) "redacted url"
+    (Some "https://api.example.test/private?<redacted>#frag")
+    (span_attr "url.full" span)
+
+let test_observability_can_emit_raw_url_full () =
+  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  let client =
+    observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
+  in
+  let uri = "https://api.example.test/private?token=secret#frag" in
+  let request = Eta_http.Request.make "GET" uri in
+  ignore
+    (Eta.Runtime.run rt
+       (Eta_http.Observability.Tracer.request ~emit_url_full:true client request)
+    |> Eta_test.Expect.expect_ok);
+  let span = find_span "HTTP GET" tracer in
+  Alcotest.(check (option string)) "raw url" (Some uri)
+    (span_attr "url.full" span)
 
 let test_observability_dns_error_semconv () =
   Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
@@ -178,5 +210,4 @@ let test_observability_pool_stats_meter () =
   let names = List.map (fun point -> point.Eta.Meter.name) (Eta.Meter.dump meter) in
   Alcotest.(check bool) "active metric" true
     (List.mem "eta_http.client.connections.active" names)
-
 

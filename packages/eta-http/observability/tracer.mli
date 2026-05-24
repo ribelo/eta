@@ -7,13 +7,17 @@
 
 val request :
   ?enabled:bool ->
+  ?emit_url_full:bool ->
   ?protocol:Eta_http_client.Client.protocol ->
   Eta_http_client.Client.t ->
   Eta_http_client.Request.t ->
   (Eta_http_client.Response.t, Eta_http_error.Error.t) Eta.Effect.t
+(** [emit_url_full] defaults to [false], so [url.full] redacts query strings.
+    Set it to [true] only for trusted tracing environments. *)
 
 val request_with_retry :
   ?enabled:bool ->
+  ?emit_url_full:bool ->
   ?policy:Eta_http_client.Retry.t ->
   ?protocol:Eta_http_client.Client.protocol ->
   Eta_http_client.Client.t ->

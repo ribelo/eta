@@ -78,6 +78,10 @@ let () =
         [
           Alcotest.test_case "successful GET semconv" `Quick
             test_observability_success_get_semconv;
+          Alcotest.test_case "redacts URL query by default" `Quick
+            test_observability_redacts_url_query_by_default;
+          Alcotest.test_case "can emit raw url.full" `Quick
+            test_observability_can_emit_raw_url_full;
           Alcotest.test_case "DNS error semconv" `Quick
             test_observability_dns_error_semconv;
           Alcotest.test_case "TLS error semconv" `Quick

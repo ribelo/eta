@@ -1,5 +1,6 @@
 module Client = Eta_http_client.Client
 module Error = Eta_http_error.Error
+module Redaction = Eta_http_error.Redaction
 module Request = Eta_http_client.Request
 module Response = Eta_http_client.Response
 module Url = Eta_http_core.Url
@@ -11,11 +12,14 @@ let protocol_version = function
 
 let protocol_name _ = "http"
 
-let request_attrs ~protocol request =
+let request_attrs ?(emit_url_full = false) ~protocol request =
+  let url_full =
+    if emit_url_full then request.Request.uri else Redaction.uri request.uri
+  in
   let base =
     [
       ("http.request.method", String.uppercase_ascii request.Request.method_);
-      ("url.full", request.uri);
+      ("url.full", url_full);
       ("network.protocol.name", protocol_name protocol);
       ("network.protocol.version", protocol_version protocol);
     ]
