@@ -194,6 +194,11 @@ let add_attr t ~key ~value =
   | span :: _ -> span.attrs <- (key, value) :: span.attrs
   | [] -> state.pending_attrs <- (key, value) :: state.pending_attrs
 
+let add_attr_to t ~span_id ~key ~value =
+  match find_open t span_id with
+  | Some span -> span.attrs <- (key, value) :: span.attrs
+  | None -> ()
+
 let add_event t ~span_id ~name ~ts_ms ~attrs =
   match find_open t span_id with
   | Some s ->
@@ -205,6 +210,11 @@ let add_link t link =
   match state.stack with
   | s :: _ -> s.links <- link :: s.links
   | [] -> state.pending_links <- link :: state.pending_links
+
+let add_link_to t ~span_id link =
+  match find_open t span_id with
+  | Some span -> span.links <- link :: span.links
+  | None -> ()
 
 let inspect t ~span_id : Capabilities.span_info option =
   match find_open t span_id with
@@ -229,11 +239,13 @@ let as_capability t : Capabilities.tracer =
       end_span t ~span_id ~status ~ended_ms
 
     method add_attr ~key ~value = add_attr t ~key ~value
+    method add_attr_to ~span_id ~key ~value = add_attr_to t ~span_id ~key ~value
 
     method add_event ~span_id ~name ~ts_ms ~attrs =
       add_event t ~span_id ~name ~ts_ms ~attrs
 
     method add_link link = add_link t link
+    method add_link_to ~span_id link = add_link_to t ~span_id link
 
     method inspect ~span_id = inspect t ~span_id
   end
@@ -245,8 +257,10 @@ let noop : Capabilities.tracer =
       -1
     method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
     method add_attr ~key:_ ~value:_ = ()
+    method add_attr_to ~span_id:_ ~key:_ ~value:_ = ()
     method add_event ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
     method add_link _ = ()
+    method add_link_to ~span_id:_ _ = ()
     method inspect ~span_id:_ = None
   end
 

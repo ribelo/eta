@@ -129,6 +129,29 @@ let test_channel_cancel_blocked_recv_cleans_waiter () =
   Alcotest.(check int)
     "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers
 
+let test_channel_cancel_receiver_after_delivery_requeues_message () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  let cancel_ctx = ref None in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt (Channel.recv ch))
+  in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  run_ok rt (Channel.send ch 42);
+  (match Eio.Promise.await_exn receiver with
+  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
+  | Exit.Error _ -> ());
+  Alcotest.(check int)
+    "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers;
+  Alcotest.(check int) "requeued depth" 1 (Channel.stats ch).Channel.depth;
+  Alcotest.(check int) "next receiver gets value" 42 (run_ok rt (Channel.recv ch))
+
 let test_channel_parent_switch_teardown_does_not_hang () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -149,5 +172,3 @@ let test_channel_parent_switch_teardown_does_not_hang () =
   (match outcome with `Returned | `Cancelled -> ());
   Alcotest.(check int)
     "waiting senders" 0 (Channel.stats ch).Channel.waiting_senders
-
-

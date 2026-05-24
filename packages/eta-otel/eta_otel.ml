@@ -456,6 +456,11 @@ let add_attr t ~key ~value =
   | Some (_, s) -> s.attrs <- (key, value) :: s.attrs
   | None -> ()
 
+let add_attr_to t ~span_id ~key ~value =
+  match Hashtbl.find_opt t.table span_id with
+  | Some s -> s.attrs <- (key, value) :: s.attrs
+  | None -> ()
+
 let add_event t ~span_id ~name ~ts_ms ~attrs =
   match Hashtbl.find_opt t.table span_id with
   | None -> ()
@@ -466,6 +471,11 @@ let add_event t ~span_id ~name ~ts_ms ~attrs =
 let add_link t link =
   match pick_latest_open t with
   | Some (_, s) -> s.links <- link :: s.links
+  | None -> ()
+
+let add_link_to t ~span_id link =
+  match Hashtbl.find_opt t.table span_id with
+  | Some s -> s.links <- link :: s.links
   | None -> ()
 
 let inspect t ~span_id : Eta.Capabilities.span_info option =
@@ -563,9 +573,11 @@ let tracer t : Eta.Capabilities.tracer =
       end_span t ~span_id ~status ~ended_ms
 
     method add_attr ~key ~value = add_attr t ~key ~value
+    method add_attr_to ~span_id ~key ~value = add_attr_to t ~span_id ~key ~value
     method add_event ~span_id ~name ~ts_ms ~attrs =
       add_event t ~span_id ~name ~ts_ms ~attrs
     method add_link link = add_link t link
+    method add_link_to ~span_id link = add_link_to t ~span_id link
     method inspect ~span_id = inspect t ~span_id
   end
 

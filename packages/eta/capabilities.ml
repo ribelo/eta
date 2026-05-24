@@ -66,6 +66,7 @@ class type tracer = object
     unit -> int
   method end_span : span_id:int -> status:span_status -> ended_ms:int -> unit
   method add_attr : key:string -> value:string -> unit
+  method add_attr_to : span_id:int -> key:string -> value:string -> unit
   method add_event :
     span_id:int ->
     name:string ->
@@ -73,6 +74,7 @@ class type tracer = object
     attrs:(string * string) list ->
     unit
   method add_link : span_link -> unit
+  method add_link_to : span_id:int -> span_link -> unit
   method inspect : span_id:int -> span_info option
 end
 

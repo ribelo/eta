@@ -164,6 +164,36 @@ let test_pool_idle_eviction () =
       stats.Pool.idle = 0 && stats.Pool.closed = 1);
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let factory = make_pool_factory () in
+  let pool =
+    run_ok rt
+      (create_test_pool ~max_size:2 ~max_idle:2
+         ~idle_lifetime:(Duration.ms 1)
+         ~idle_check_interval:(Duration.seconds 60) factory)
+  in
+  let hold ms =
+    Pool.with_resource pool (fun _ -> Effect.delay (Duration.ms ms) Effect.unit)
+  in
+  let warm_a = fork_run sw rt (hold 5) in
+  let warm_b = fork_run sw rt (hold 5) in
+  check_exit_ok Alcotest.unit "warm a" () (Eio.Promise.await warm_a);
+  check_exit_ok Alcotest.unit "warm b" () (Eio.Promise.await warm_b);
+  wait_until (fun () -> (Pool.stats pool).Pool.idle = 2);
+  Eio_unix.sleep 0.01;
+  let holders = List.init 4 (fun _ -> fork_run sw rt (hold 50)) in
+  wait_until (fun () ->
+      let stats = Pool.stats pool in
+      stats.Pool.active = 2 && stats.Pool.waiting = 2);
+  Alcotest.(check int) "max live bounded" 2 !(factory.max_live);
+  List.iter
+    (fun p -> check_exit_ok Alcotest.unit "holder done" () (Eio.Promise.await p))
+    holders;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_shutdown_wakes_waiters_and_drains () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -247,5 +277,4 @@ let test_pool_observability_signals () =
     (List.exists (String.equal "eta.pool.health_rejected") log_bodies);
   Alcotest.(check bool) "shutdown log" true
     (List.exists (String.equal "eta.pool.shutdown_started") log_bodies)
-
 

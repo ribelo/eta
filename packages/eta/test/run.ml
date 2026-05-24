@@ -301,6 +301,8 @@ let () =
             test_channel_cancel_blocked_send_cleans_waiter;
           Alcotest.test_case "cancel blocked recv" `Quick
             test_channel_cancel_blocked_recv_cleans_waiter;
+          Alcotest.test_case "cancel delivered recv requeues" `Quick
+            test_channel_cancel_receiver_after_delivery_requeues_message;
           Alcotest.test_case "parent switch teardown" `Quick
             test_channel_parent_switch_teardown_does_not_hang;
         ] );
@@ -315,6 +317,8 @@ let () =
           Alcotest.test_case "cancel during health check" `Quick
             test_pool_cancel_during_health_check_closes_reserved;
           Alcotest.test_case "idle eviction" `Quick test_pool_idle_eviction;
+          Alcotest.test_case "expired idle preserves capacity waiters" `Quick
+            test_pool_expired_idle_cleanup_preserves_capacity_waiters;
           Alcotest.test_case "shutdown wakes and drains" `Quick
             test_pool_shutdown_wakes_waiters_and_drains;
           Alcotest.test_case "shutdown deadline" `Quick
@@ -338,6 +342,8 @@ let () =
             test_semaphore_with_permits_releases_on_timeout;
           Alcotest.test_case "cancellation stress" `Quick
             test_semaphore_cancellation_stress;
+          Alcotest.test_case "cancel after wakeup returns permit" `Quick
+            test_semaphore_cancel_after_wakeup_returns_permit;
           Alcotest.test_case "multi-permit contention" `Quick
             test_semaphore_multi_permit_contention;
         ] );

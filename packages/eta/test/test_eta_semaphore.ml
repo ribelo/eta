@@ -85,6 +85,28 @@ let test_semaphore_cancellation_stress () =
   List.iter (fun p -> ignore (Eio.Promise.await p : (unit, _) Exit.t)) holders;
   Alcotest.(check int) "final available" 8 (Semaphore.available sem)
 
+let test_semaphore_cancel_after_wakeup_returns_permit () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sem = Semaphore.make ~permits:1 in
+  run_ok rt (Semaphore.acquire sem 1);
+  let cancel_ctx = ref None in
+  let waiter =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt (Semaphore.acquire sem 1))
+  in
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  Semaphore.release sem 1;
+  (match Eio.Promise.await_exn waiter with
+  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
+  | Exit.Error _ -> ());
+  Alcotest.(check int) "permit returned" 1 (Semaphore.available sem);
+  Alcotest.(check int) "cancelled waiter" 1 (Semaphore.cancelled_waiters sem)
+
 let test_semaphore_multi_permit_contention () =
   with_test_clock @@ fun sw clock rt ->
   let sem = Semaphore.make ~permits:5 in
@@ -124,5 +146,3 @@ let test_semaphore_multi_permit_contention () =
   Test_clock.adjust clock (Duration.ms 50);
   ignore (Eio.Promise.await h2 : (unit, _) Exit.t);
   Alcotest.(check int) "final available" 5 (Semaphore.available sem)
-
-

@@ -210,14 +210,14 @@ let mark_health_rejected t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () -> t.health_rejected <- t.health_rejected + 1
 
-let mark_closed t =
+let mark_closed ?(release_permit = true) t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
   t.total <- max 0 (t.total - 1);
   t.closed <- t.closed + 1;
-  Semaphore.release t.sem 1
+  if release_permit then Semaphore.release t.sem 1
 
-let close_entry t entry =
+let close_entry ?(release_permit = true) t entry =
   let close_once =
     span t "eta.pool.close"
       (t.release_conn entry.conn
@@ -228,7 +228,7 @@ let close_entry t entry =
   in
   close_once
   |> Effect.bind (fun result ->
-         mark_closed t
+         mark_closed ~release_permit t
          |> Effect.bind (fun () -> emit_closed t)
          |> Effect.bind (fun () -> emit_gauges t)
          |> Effect.bind (fun () ->
@@ -236,8 +236,8 @@ let close_entry t entry =
                 | `Closed -> Effect.unit
                 | `Close_failed err -> Effect.fail err))
 
-let close_entries t entries =
-  entries |> List.map (close_entry t) |> Effect.concat
+let close_entries ?(release_permit = true) t entries =
+  entries |> List.map (close_entry ~release_permit t) |> Effect.concat
 
 let mark_released_to_close t =
   Effect.sync @@ fun () ->
@@ -364,7 +364,7 @@ let rec acquire_entry t =
                   Semaphore.acquire t.sem 1
                   |> Effect.bind (fun () -> try_reserve ())
               | `Close_expired expired ->
-                  close_entries t expired
+                  close_entries ~release_permit:false t expired
                   |> Effect.bind (fun () -> try_reserve ())
               | `Use entry -> use_entry entry
               | `Open_new -> open_new)
@@ -384,7 +384,7 @@ let evict_idle_once t =
     with_lock t @@ fun () ->
     if t.shutting_down then [] else take_expired_idle_locked t
   in
-  expired |> Effect.bind (close_entries t)
+  expired |> Effect.bind (close_entries ~release_permit:false t)
 
 let rec eviction_loop t =
   Effect.delay t.idle_check_interval (evict_idle_once t)
@@ -463,7 +463,7 @@ let begin_shutdown t =
   in
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
   |> Effect.bind (fun () -> take_idle)
-  |> Effect.bind (close_entries t)
+  |> Effect.bind (close_entries ~release_permit:false t)
   |> Effect.bind (fun () ->
        Effect.sync (fun () -> Semaphore.release t.sem t.max_size))
   |> Effect.bind (fun () -> emit_gauges t)

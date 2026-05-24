@@ -1,4 +1,4 @@
-type waiter_state = Waiting | Resolved | Cancelled
+type waiter_state = Waiting | Resolved_unclaimed | Claimed | Cancelled
 
 type waiter = {
   permits : int;
@@ -40,14 +40,14 @@ let rec take_active_waiter q =
     let waiter = Queue.take q in
     match waiter.state with
     | Waiting -> Some waiter
-    | Resolved | Cancelled -> take_active_waiter q
+    | Resolved_unclaimed | Claimed | Cancelled -> take_active_waiter q
 
 let rec wake_waiters_locked t =
   match take_active_waiter t.waiters with
   | None -> ()
   | Some waiter when t.available >= waiter.permits ->
       t.available <- t.available - waiter.permits;
-      waiter.state <- Resolved;
+      waiter.state <- Resolved_unclaimed;
       Eio.Promise.resolve waiter.resolver ();
       wake_waiters_locked t
   | Some waiter ->
@@ -92,14 +92,24 @@ let acquire t n =
                  waiter.state <- Cancelled;
                  t.cancelled_waiters <- t.cancelled_waiters + 1;
                  wake_waiters_locked t
-             | Resolved | Cancelled -> ())
+             | Resolved_unclaimed ->
+                 waiter.state <- Cancelled;
+                 t.cancelled_waiters <- t.cancelled_waiters + 1;
+                 t.available <- min t.max_permits (t.available + waiter.permits);
+                 wake_waiters_locked t
+             | Claimed | Cancelled -> ())
          in
          Effect.scoped
            (Effect.acquire_release
               ~acquire:Effect.unit
               ~release:(fun () -> cleanup ())
            |> Effect.bind (fun () ->
-                  Effect.sync (fun () -> Eio.Promise.await promise))))
+                  Effect.sync (fun () ->
+                      Eio.Promise.await promise;
+                      with_lock t @@ fun () ->
+                      match waiter.state with
+                      | Resolved_unclaimed -> waiter.state <- Claimed
+                      | Waiting | Claimed | Cancelled -> ()))))
 
 let with_permits t n f =
   Effect.scoped

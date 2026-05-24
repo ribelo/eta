@@ -18,8 +18,8 @@ module Typed_fail : sig
   val int : key -> int
 end = struct
   type key = int
-  let counter = ref 0
-  let fresh () = incr counter; !counter
+  let counter = Atomic.make 0
+  let fresh () = Atomic.fetch_and_add counter 1 + 1
   let int key = key
 end
 
@@ -472,14 +472,20 @@ let rec interpret :
       interpret_named ~runtime ~error_renderer ~fail_key ~sw ~finalizers ~kind
         ~name ~attrs e
   | EV.Annotate (key, value, e) ->
-      (if runtime.tracing_enabled then runtime.tracer#add_attr ~key ~value);
+      (if runtime.tracing_enabled then
+         match Eio.Fiber.get RObs.active_span_key with
+         | Some span_id -> runtime.tracer#add_attr_to ~span_id ~key ~value
+         | None -> runtime.tracer#add_attr ~key ~value);
       RObs.with_die_annotation key value @@ fun () ->
       (try
          interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
        with exn ->
          raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn))
   | EV.Link_span (link, e) ->
-      (if runtime.tracing_enabled then runtime.tracer#add_link link);
+      (if runtime.tracing_enabled then
+         match Eio.Fiber.get RObs.active_span_key with
+         | Some span_id -> runtime.tracer#add_link_to ~span_id link
+         | None -> runtime.tracer#add_link link);
       interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e
   | EV.With_external_parent (ctx, e) | EV.With_context (ctx, e) ->
       if runtime.tracing_enabled then
@@ -622,7 +628,7 @@ and interpret_named :
       Eio.Fiber.with_binding RObs.sampled_key true @@ fun () ->
       try
         List.iter
-          (fun (key, value) -> runtime.tracer#add_attr ~key ~value)
+          (fun (key, value) -> runtime.tracer#add_attr_to ~span_id ~key ~value)
           attrs;
         let value =
           interpret ~runtime ~error_renderer ~fail_key ~sw ~finalizers e

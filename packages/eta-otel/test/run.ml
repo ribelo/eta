@@ -20,6 +20,28 @@ let rec json_has_string_field ~key ~value = function
   | `List xs -> List.exists (json_has_string_field ~key ~value) xs
   | _ -> false
 
+let json_attr_has ~key ~value = function
+  | `Assoc fields ->
+      List.assoc_opt "key" fields = Some (`String key)
+      && (match List.assoc_opt "value" fields with
+         | Some (`Assoc value_fields) ->
+             List.assoc_opt "stringValue" value_fields = Some (`String value)
+         | _ -> false)
+  | _ -> false
+
+let rec json_span_has_attr ~name ~key ~value = function
+  | `Assoc fields ->
+      let is_span = List.assoc_opt "name" fields = Some (`String name) in
+      let has_attr =
+        match List.assoc_opt "attributes" fields with
+        | Some (`List attrs) -> List.exists (json_attr_has ~key ~value) attrs
+        | _ -> false
+      in
+      (is_span && has_attr)
+      || List.exists (fun (_, v) -> json_span_has_attr ~name ~key ~value v) fields
+  | `List xs -> List.exists (json_span_has_attr ~name ~key ~value) xs
+  | _ -> false
+
 let string_contains haystack needle =
   let haystack_len = String.length haystack in
   let needle_len = String.length needle in
@@ -216,6 +238,46 @@ let test_exception_stacktrace_exported () =
     (json_has_string_field ~key:"key" ~value:"exception.stacktrace" json);
   Alcotest.(check bool) "annotation attr exported" true
     (json_has_string_field ~key:"key" ~value:"eta.annotation.phase" json)
+
+let test_concurrent_span_attributes_stay_on_active_span () =
+  let bodies = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock stdenv in
+  let exporter =
+    Eta_otel.create ~sw
+      ~net:(Eio.Stdenv.net stdenv)
+      ~clock ~host:"127.0.0.1" ~port:1
+      ~service_name:"eta-otel-concurrent-attrs"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
+      ()
+  in
+  let rt = Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
+  let left =
+    Effect.named "left"
+      (Effect.delay (Duration.ms 5)
+         (Effect.annotate ~key:"side" ~value:"left" Effect.unit))
+  in
+  let right =
+    Effect.named "right" (Effect.delay (Duration.ms 20) Effect.unit)
+  in
+  (match Runtime.run rt (Effect.par left right) with
+  | Exit.Ok _ -> ()
+  | Exit.Error _ -> Alcotest.fail "expected concurrent spans to succeed");
+  Eta_otel.flush exporter;
+  let trace_jsons =
+    !bodies
+    |> List.filter_map (fun (path, body) ->
+           if String.equal path "/v1/traces" then
+             Some (Yojson.Safe.from_string body)
+           else None)
+  in
+  let any_trace pred = List.exists pred trace_jsons in
+  Alcotest.(check bool) "left has its attr" true
+    (any_trace (json_span_has_attr ~name:"left" ~key:"side" ~value:"left"));
+  Alcotest.(check bool) "right does not receive left attr" false
+    (any_trace (json_span_has_attr ~name:"right" ~key:"side" ~value:"left"))
 
 let test_network_partition_reports_error () =
   let errors = ref [] in
@@ -523,6 +585,8 @@ let () =
           Alcotest.test_case "smoke" `Quick test_encoder_smoke;
           Alcotest.test_case "exception stacktrace" `Quick
             test_exception_stacktrace_exported;
+          Alcotest.test_case "concurrent span attrs" `Quick
+            test_concurrent_span_attributes_stay_on_active_span;
         ] );
       ( "adversarial",
         [
