@@ -34,6 +34,11 @@ let with_lock t f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let validate_request name t n =
+  if n <= 0 || n > t.max_permits then
+    invalid_arg
+      ("Eta.Semaphore." ^ name ^ ": n must be between 1 and max_permits")
+
 let rec take_active_waiter q =
   if Queue.is_empty q then None
   else
@@ -57,7 +62,7 @@ let rec wake_waiters_locked t =
       Queue.transfer temp t.waiters
 
 let try_acquire t n =
-  if n <= 0 then invalid_arg "Eta.Semaphore.try_acquire: n must be > 0";
+  validate_request "try_acquire" t n;
   with_lock t @@ fun () ->
   if t.available >= n then (
     t.available <- t.available - n;
@@ -70,7 +75,7 @@ let release t n =
   wake_waiters_locked t
 
 let acquire t n =
-  if n <= 0 then invalid_arg "Eta.Semaphore.acquire: n must be > 0";
+  validate_request "acquire" t n;
   let promise, resolver = Eio.Promise.create () in
   let waiter = { permits = n; resolver; state = Waiting } in
   Effect.sync (fun () ->

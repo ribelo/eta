@@ -19,6 +19,25 @@ let test_semaphore_release_increases_available () =
   Semaphore.release sem 1;
   Alcotest.(check int) "available 8" 8 (Semaphore.available sem)
 
+let test_semaphore_rejects_over_capacity_acquire () =
+  let sem = Semaphore.make ~permits:2 in
+  Alcotest.check_raises "acquire over capacity"
+    (Invalid_argument "Eta.Semaphore.acquire: n must be between 1 and max_permits")
+    (fun () -> ignore (Semaphore.acquire sem 3 : (unit, _) Effect.t))
+
+let test_semaphore_rejects_over_capacity_try_acquire () =
+  let sem = Semaphore.make ~permits:2 in
+  Alcotest.check_raises "try_acquire over capacity"
+    (Invalid_argument
+       "Eta.Semaphore.try_acquire: n must be between 1 and max_permits")
+    (fun () -> ignore (Semaphore.try_acquire sem 3 : bool))
+
+let test_semaphore_acquire_at_capacity_succeeds () =
+  with_runtime @@ fun rt ->
+  let sem = Semaphore.make ~permits:2 in
+  run_ok rt (Semaphore.acquire sem 2);
+  Alcotest.(check int) "available 0" 0 (Semaphore.available sem)
+
 let test_semaphore_with_permits_releases_on_success () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:5 in

@@ -16,14 +16,16 @@ val make : permits:int -> t
 val try_acquire : t -> int -> bool
 (** [try_acquire t n] attempts to acquire [n] permits without blocking.
     Returns [true] if permits were available and atomically decremented,
-    [false] otherwise. *)
+    [false] otherwise.
+    @raise Invalid_argument if [n <= 0] or [n] exceeds the semaphore capacity. *)
 
 val acquire : t -> int -> (unit, 'err) Effect.t
 (** [acquire t n] blocks until [n] permits are available, then atomically
     decrements the available count by [n].
 
     Cancellation-safe: if the calling fiber is cancelled while waiting, the
-    waiter slot is removed and no permits are consumed. *)
+    waiter slot is removed and no permits are consumed.
+    @raise Invalid_argument if [n <= 0] or [n] exceeds the semaphore capacity. *)
 
 val release : t -> int -> unit
 (** [release t n] returns [n] permits. Never blocks. Wakes waiters whose
