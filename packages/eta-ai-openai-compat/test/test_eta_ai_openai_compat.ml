@@ -215,6 +215,20 @@ let test_decode_compatible_fixtures () =
         "arguments" "{\"location\":\"Warsaw\"}" call.arguments_json
   | _ -> Alcotest.fail "expected one tool call"
 
+let test_decode_missing_choices_fails () =
+  let raw = "{\"id\":\"bad\",\"model\":\"fixture\"}" in
+  match C.decode_chat raw with
+  | Error
+      (A.Decode_error
+        {
+          provider = "openai-compatible";
+          message = "chat completion missing choices";
+          raw = Some actual;
+        }) ->
+      Alcotest.(check string) "raw" raw actual
+  | Ok _ -> Alcotest.fail "missing choices decoded successfully"
+  | Error _ -> Alcotest.fail "unexpected error"
+
 let test_runner_suppresses_transport_span () =
   with_traced_runtime @@ fun rt tracer ->
   let captured = ref None in
@@ -342,6 +356,8 @@ let () =
         [
           Alcotest.test_case "decode compatible fixtures" `Quick
             test_decode_compatible_fixtures;
+          Alcotest.test_case "missing choices decode error" `Quick
+            test_decode_missing_choices_fails;
         ] );
       ( "http",
         [

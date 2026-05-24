@@ -182,38 +182,40 @@ let tool_call json =
 let decode_chat raw =
   match parse_json raw with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json ->
-      let choices = Json.array_member "choices" json |> Option.value ~default:[] in
-      let message =
-        choices
-        |> List.find_map (fun choice -> Json.object_member "message" choice)
-      in
-      let text =
-        match Option.bind message (Json.string_member "content") with
-        | Some value -> [ A.Text value ]
-        | None -> []
-      in
-      let tool_calls =
-        match message with
-        | Some message ->
-            Json.array_member "tool_calls" message
-            |> Option.value ~default:[] |> List.filter_map tool_call
-        | None -> []
-      in
-      let finish_reasons =
-        choices
-        |> List.filter_map (Json.string_member "finish_reason")
-        |> List.map finish_reason
-      in
-      Stdlib.Ok
-        {
-          A.id = Json.string_member "id" json;
-          model = Json.string_member "model" json;
-          message = A.Assistant { content = text; tool_calls };
-          finish_reasons;
-          usage = Option.map usage (Json.object_member "usage" json);
-          raw = Some raw;
-        }
+  | Stdlib.Ok json -> (
+      match Json.array_member "choices" json with
+      | Some (_ :: _ as choices) -> (
+          match
+            choices
+            |> List.find_map (fun choice -> Json.object_member "message" choice)
+          with
+          | Some message ->
+              let text =
+                match Json.string_member "content" message with
+                | Some value -> [ A.Text value ]
+                | None -> []
+              in
+              let tool_calls =
+                Json.array_member "tool_calls" message
+                |> Option.value ~default:[] |> List.filter_map tool_call
+              in
+              let finish_reasons =
+                choices
+                |> List.filter_map (Json.string_member "finish_reason")
+                |> List.map finish_reason
+              in
+              Stdlib.Ok
+                {
+                  A.id = Json.string_member "id" json;
+                  model = Json.string_member "model" json;
+                  message = A.Assistant { content = text; tool_calls };
+                  finish_reasons;
+                  usage = Option.map usage (Json.object_member "usage" json);
+                  raw = Some raw;
+                }
+          | None ->
+              decode_error_result ~raw "chat completion choice missing message")
+      | _ -> decode_error_result ~raw "chat completion missing choices")
 
 let provider_error ?status ?(provider = "openai-compatible") raw =
   let error =
