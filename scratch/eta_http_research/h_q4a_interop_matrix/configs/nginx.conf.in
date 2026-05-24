@@ -1,0 +1,82 @@
+daemon off;
+pid __TMP_DIR__/nginx.pid;
+error_log __TMP_DIR__/nginx-error.log info;
+
+events {
+  worker_connections 256;
+}
+
+http {
+  access_log __TMP_DIR__/nginx-access.log;
+  client_body_temp_path __TMP_DIR__/client_body_temp;
+
+  server {
+    listen 127.0.0.1:__NGINX_HTTP_PORT__;
+    listen 127.0.0.1:__NGINX_HTTPS_PORT__ ssl http2;
+    server_name localhost 127.0.0.1;
+
+    ssl_certificate __CERT_FILE__;
+    ssl_certificate_key __KEY_FILE__;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root __WWW_DIR__;
+
+    location = /ok {
+      add_header Content-Type text/plain;
+      return 200 "nginx-ok\n";
+    }
+
+    location = /redirect {
+      return 302 /ok;
+    }
+
+    location = /empty {
+      add_header Content-Type text/plain;
+      return 200 "";
+    }
+
+    location = /head {
+      add_header Content-Type text/plain;
+      return 200 "head-body";
+    }
+
+    location = /trailers {
+      add_header Trailer X-Trailer always;
+      add_trailer X-Trailer nginx-trailer always;
+      return 200 "nginx-trailer-body\n";
+    }
+
+    location = /early413 {
+      client_max_body_size 1;
+      return 200 "accepted\n";
+    }
+
+    location = /continue {
+      return 200 "continued\n";
+    }
+
+    location = /sse {
+      default_type text/event-stream;
+      return 200 ":\n\ndata: heartbeat\n\n";
+    }
+
+    location = /sse-long {
+      default_type text/event-stream;
+      limit_rate 65536;
+      alias __WWW_DIR__/sse-long.txt;
+    }
+
+    location = /ws {
+      add_header Connection close always;
+      return 426 "upgrade rejected\n";
+    }
+
+    location = /large.bin {
+    }
+
+    location = /large-slow.bin {
+      limit_rate 1024;
+      alias __WWW_DIR__/large.bin;
+    }
+  }
+}

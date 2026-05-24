@@ -156,6 +156,7 @@
               pkgs.git
               pkgs.gnumake
               pkgs.m4
+              pkgs.nghttp2
               pkgs.opam
               pkgs.patch
               pkgs.pkg-config
@@ -167,8 +168,10 @@
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.gmp
+              pkgs.caddy
               pkgs.libev
               pkgs.libffi
+              pkgs.nginx
               pkgs.openssl
               pkgs.zlib
             ];
