@@ -36,5 +36,6 @@ val register_failure_handler :
 val mux : t -> Multiplexer.t
 val client : t -> H2.Client_connection.t
 val stats : t -> Stream_state.stats
+val fork_daemon : t -> (unit -> unit) -> unit
 val is_closed : t -> bool
 val shutdown : t -> unit

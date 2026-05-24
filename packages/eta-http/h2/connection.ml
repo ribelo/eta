@@ -12,6 +12,7 @@ type failure_waiter = {
 }
 
 type t = {
+  sw : Eio.Switch.t;
   mux : Multiplexer.t;
   client : H2.Client_connection.t;
   reader : Multiplexer.client_reader;
@@ -143,6 +144,7 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
   let client = Multiplexer.client_connection mux in
   let t =
     {
+      sw;
       mux;
       client;
       reader = Multiplexer.create_client_reader client;
@@ -186,3 +188,8 @@ let register_failure_handler t notify =
 let mux t = t.mux
 let client t = t.client
 let stats t = Multiplexer.stats t.mux
+
+let fork_daemon t f =
+  Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
+      f ();
+      `Stop_daemon)

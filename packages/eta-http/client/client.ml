@@ -196,6 +196,28 @@ let h2_write_chunk writer chunk =
   in
   loop 0
 
+let h2_flush_body_writer writer =
+  let promise, resolver = Eio.Promise.create () in
+  H2.Body.Writer.flush writer (fun result ->
+      ignore (Eio.Promise.try_resolve resolver result));
+  Eio.Promise.await promise
+
+let h2_write_fixed_body_sync writer chunks =
+  let write_chunk chunk =
+    let chunk = Bytes.to_string chunk in
+    let rec loop off =
+      if off < String.length chunk then (
+        let len = min 16_384 (String.length chunk - off) in
+        H2.Body.Writer.write_string writer (String.sub chunk off len);
+        match h2_flush_body_writer writer with
+        | `Written -> loop (off + len)
+        | `Closed -> ())
+    in
+    loop 0
+  in
+  List.iter write_chunk chunks;
+  H2.Body.Writer.close writer
+
 let rec h2_write_stream writer body =
   Body.read body
   |> Eta.Effect.bind (function
@@ -308,6 +330,9 @@ let request_h2_on_connection connection request url =
     body_wake := wake;
     body
   in
+  let note_upload_error error =
+    if !response_started then set_body_error error else resolve_error error
+  in
   let open_request h2_request =
     Eta_http_h2.Connection.request connection ~tag:0 h2_request
       ~trailers_handler:(fun headers -> resolve_trailers (H2.Headers.to_list headers))
@@ -375,17 +400,31 @@ let request_h2_on_connection connection request url =
             match request.body with
             | Empty -> wait_for_response ()
             | Fixed [] -> wait_for_response ()
-            | Fixed _ | Stream _ | Rewindable_stream _ ->
+            | Fixed chunks ->
+                Eta.Effect.sync (fun () ->
+                    Eta_http_h2.Connection.fork_daemon connection (fun () ->
+                        try h2_write_fixed_body_sync opened.request_body chunks
+                        with exn ->
+                          let error =
+                            h2_protocol_violation request "request_body"
+                              (Printexc.to_string exn)
+                          in
+                          note_upload_error error))
+                |> Eta.Effect.bind (fun () -> wait_for_response ())
+            | Stream _ | Rewindable_stream _ ->
                 Eta.Effect.race
                   [
                     wait_for_response ();
                     write_request |> Eta.Effect.bind (fun () -> wait_for_response ());
                   ]
           in
-          Eta.Effect.scoped
-            (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-               ~release:(fun () -> h2_close_request_body opened.request_body)
-            |> Eta.Effect.bind (fun () -> response_or_writer))))
+          match request.body with
+          | Fixed _ -> response_or_writer
+          | Empty | Stream _ | Rewindable_stream _ ->
+              Eta.Effect.scoped
+                (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+                   ~release:(fun () -> h2_close_request_body opened.request_body)
+                |> Eta.Effect.bind (fun () -> response_or_writer))))
 
 let make_h1 ~sw ~net ?authenticator
     ?(max_response_body_bytes = default_max_response_body_bytes) () =
