@@ -41,7 +41,9 @@ let cas_state queue seen replace_with =
 let rec wait_empty slots index =
   match P_atomic_array.get slots index with
   | None -> ()
-  | Some _ -> wait_empty slots index
+  | Some _ ->
+      Domain.cpu_relax ();
+      wait_empty slots index
 
 let rec try_push queue value =
   let state = P_atomic.get queue.state in
@@ -76,4 +78,3 @@ let rec close queue =
   if state.closed then ()
   else if cas_state queue state { state with closed = true } then ()
   else close queue
-
