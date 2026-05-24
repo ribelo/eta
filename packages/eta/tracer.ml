@@ -101,8 +101,9 @@ let hex16 n = Printf.sprintf "%016x" n
 let root_trace_id t span_id = hex16 t.context_id ^ hex16 (span_id + 1)
 
 let begin_span t ?parent_id
-    ?(external_parent : Capabilities.trace_context option) ?(kind = Internal)
-    ~name ~started_ms () =
+    ?(external_parent : Capabilities.trace_context option) ?trace_id
+    ?(trace_flags = 1) ?(trace_state = []) ?(baggage = [])
+    ?(kind = Internal) ~name ~started_ms () =
   let state = state t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
@@ -121,7 +122,11 @@ let begin_span t ?parent_id
         (ctx.trace_id, ctx.trace_flags, ctx.trace_state, ctx.baggage)
     | Some _, None, parent :: _ ->
         (parent.trace_id, parent.trace_flags, parent.trace_state, parent.baggage)
-    | _ -> (root_trace_id t span_id, 1, [], [])
+    | _ ->
+        ( Option.value trace_id ~default:(root_trace_id t span_id),
+          trace_flags,
+          trace_state,
+          baggage )
   in
   let attrs = List.rev state.pending_attrs in
   let links = List.rev state.pending_links in
@@ -232,8 +237,10 @@ let inspect t ~span_id : Capabilities.span_info option =
 
 let as_capability t : Capabilities.tracer =
   object
-    method begin_span ?parent_id ?external_parent ?kind ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ?kind ~name ~started_ms ()
+    method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
+        ?trace_state ?baggage ?kind ~name ~started_ms () =
+      begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags
+        ?trace_state ?baggage ?kind ~name ~started_ms ()
 
     method end_span ~span_id ~status ~ended_ms =
       end_span t ~span_id ~status ~ended_ms
@@ -252,8 +259,8 @@ let as_capability t : Capabilities.tracer =
 
 let noop : Capabilities.tracer =
   object
-    method begin_span ?parent_id:_ ?external_parent:_ ?kind:_ ~name:_
-        ~started_ms:_ () =
+    method begin_span ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
+        ?trace_state:_ ?baggage:_ ?kind:_ ~name:_ ~started_ms:_ () =
       -1
     method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
     method add_attr ~key:_ ~value:_ = ()

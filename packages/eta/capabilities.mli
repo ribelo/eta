@@ -80,6 +80,10 @@ class type tracer = object
   method begin_span :
     ?parent_id:int ->
     ?external_parent:trace_context ->
+    ?trace_id:string ->
+    ?trace_flags:int ->
+    ?trace_state:(string * string) list ->
+    ?baggage:(string * string) list ->
     ?kind:span_kind ->
     name:string ->
     started_ms:int ->

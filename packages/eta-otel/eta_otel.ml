@@ -377,9 +377,14 @@ let make_config_resource rt config :
 (* Tracer methods                                                     *)
 (* ------------------------------------------------------------------ *)
 
-let resolve_parent t = function
+let resolve_parent t ?trace_id ?(trace_flags = 1) ?(trace_state = [])
+    ?(baggage = []) = function
   | None, None ->
-      (hex_of_bytes (random_bytes t.rng 16), None, 1, [], [])
+      ( Option.value trace_id ~default:(hex_of_bytes (random_bytes t.rng 16)),
+        None,
+        trace_flags,
+        trace_state,
+        baggage )
   | _, Some (ctx : Eta.Capabilities.trace_context) ->
       ( ctx.trace_id,
         Some ctx.span_id,
@@ -392,10 +397,11 @@ let resolve_parent t = function
           (p.trace_id, Some p.span_id, p.trace_flags, p.trace_state, p.baggage)
       | None -> (hex_of_bytes (random_bytes t.rng 16), None, 1, [], []))
 
-let begin_span t ?parent_id ?external_parent ?(kind = Eta.Capabilities.Internal)
-    ~name ~started_ms:_ () =
+let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
+    ?baggage ?(kind = Eta.Capabilities.Internal) ~name ~started_ms:_ () =
   let trace_id, parent_span_id, trace_flags, trace_state, baggage =
-    resolve_parent t (parent_id, external_parent)
+    resolve_parent t ?trace_id ?trace_flags ?trace_state ?baggage
+      (parent_id, external_parent)
   in
   let span_id = hex_of_bytes (random_bytes t.rng 8) in
   let start_unix_ns = now_ns t in
@@ -566,8 +572,10 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
 
 let tracer t : Eta.Capabilities.tracer =
   object
-    method begin_span ?parent_id ?external_parent ?kind ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ?kind ~name ~started_ms ()
+    method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
+        ?trace_state ?baggage ?kind ~name ~started_ms () =
+      begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags
+        ?trace_state ?baggage ?kind ~name ~started_ms ()
 
     method end_span ~span_id ~status ~ended_ms =
       end_span t ~span_id ~status ~ended_ms

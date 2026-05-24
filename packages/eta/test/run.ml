@@ -409,6 +409,8 @@ let () =
             test_observability_sampler_always_off;
           Alcotest.test_case "sampler ratio" `Quick
             test_observability_sampler_ratio;
+          Alcotest.test_case "sampler ratio same name uses trace id" `Quick
+            test_observability_sampler_ratio_same_name_uses_trace_id;
           Alcotest.test_case "sampler parent based" `Quick
             test_observability_sampler_parent_based;
           Alcotest.test_case "sampler suppresses par children" `Quick

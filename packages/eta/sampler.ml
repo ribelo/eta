@@ -20,7 +20,7 @@ let rec sample t ~trace_id ~name ~attrs ~parent =
   | Always_off -> false
   | Ratio p ->
       let bound = 1 lsl 30 in
-      let hash = Hashtbl.hash (trace_id, name) land (bound - 1) in
+      let hash = Hashtbl.hash trace_id land (bound - 1) in
       float_of_int hash /. float_of_int bound < p
   | Parent_based root ->
       if parent then true else sample root ~trace_id ~name ~attrs ~parent

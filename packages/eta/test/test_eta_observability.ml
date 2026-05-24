@@ -247,6 +247,20 @@ let test_observability_sampler_ratio () =
   let count = List.length (Tracer.dump tracer) in
   Alcotest.(check bool) "roughly half sampled" true (count > 350 && count < 650)
 
+let test_observability_sampler_ratio_same_name_uses_trace_id () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Tracer.as_capability tracer) ~sampler:(Sampler.ratio 0.5)
+      ~random:(Capabilities.random_of_seed 0x51a7) ()
+  in
+  let spans = List.init 200 (fun _ -> Effect.named "same" Effect.unit) in
+  run_ok rt (Effect.concat spans);
+  let count = List.length (Tracer.dump tracer) in
+  Alcotest.(check bool) "same-name roots mixed" true (count > 0 && count < 200)
+
 let test_observability_sampler_parent_based () =
   with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun rt tracer ->
   run_ok rt (Effect.named "parent" (Effect.named "child" Effect.unit));
@@ -496,5 +510,4 @@ let test_observability_all_for_each_supervisor_inherit_parent () =
       Alcotest.(check (option int)) span.Tracer.name (Some parent.span_id)
         span.parent_id)
     children
-
 

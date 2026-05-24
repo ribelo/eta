@@ -1,5 +1,19 @@
 open Runtime_core
 
+let random_hex16 random =
+  Printf.sprintf "%04x"
+    (int_of_float (Capabilities.random_float random 65_536.0))
+
+let random_trace_id runtime =
+  let rec loop () =
+    let trace_id =
+      String.concat ""
+        (List.init 8 (fun _ -> random_hex16 runtime.random))
+    in
+    if String.exists (( <> ) '0') trace_id then trace_id else loop ()
+  in
+  loop ()
+
 let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
   let with_die_context f =
     RObs.with_die_span_name name @@ fun () ->
@@ -25,9 +39,22 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
       | Some _ -> None
       | None -> ambient_context
     in
+    let trace_id, root_trace_id =
+      match (parent_id, ambient_context) with
+      | Some span_id, _ -> (
+          match runtime.tracer#inspect ~span_id with
+          | Some info -> (info.trace_id, None)
+          | None ->
+              let trace_id = random_trace_id runtime in
+              (trace_id, None))
+      | None, Some ctx -> (ctx.trace_id, None)
+      | None, None ->
+          let trace_id = random_trace_id runtime in
+          (trace_id, Some trace_id)
+    in
     let sampled =
       parent_sampled
-      && Sampler.sample runtime.sampler ~trace_id:"" ~name ~attrs:[]
+      && Sampler.sample runtime.sampler ~trace_id ~name ~attrs:[]
            ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
     in
     if not sampled then
@@ -36,8 +63,8 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
     else
       let started_ms = runtime.now_ms () in
       let span_id =
-        runtime.tracer#begin_span ?parent_id ?external_parent ~name ~kind
-          ~started_ms ()
+        runtime.tracer#begin_span ?parent_id ?external_parent
+          ?trace_id:root_trace_id ~name ~kind ~started_ms ()
       in
       let finish status =
         runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
