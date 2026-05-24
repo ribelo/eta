@@ -61,7 +61,7 @@ let run_h2_server flow handler =
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () -> try run_server_reader flow server with End_of_file -> ())
 
-let with_h2_server handler client_action =
+let with_h2_server ?max_concurrent handler client_action =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
@@ -80,7 +80,7 @@ let with_h2_server handler client_action =
   in
   let connection =
     Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
-      ()
+      ?max_concurrent ()
   in
   let rt = Eta.Runtime.create ~sw ~clock () in
   Fun.protect
@@ -122,6 +122,56 @@ let request_effect ?body connection target =
          Eta_http.Body.Stream.read_all response.body
          |> Eta.Effect.map (fun body ->
                 (response.Eta_http.Response.status, Bytes.to_string body)))
+
+let open_h2_request connection tag target =
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET target
+  in
+  match
+    Eta_http.H2.Connection.request connection ~tag request
+      ~error_handler:(fun _ _ -> ())
+      ~response_handler:(fun _ _ _ -> ())
+  with
+  | Ok opened -> opened
+  | Error (Eta_http.H2.Multiplexer.Admission_rejected { limit }) ->
+      Alcotest.failf "request %d unexpectedly rejected at limit %d" tag limit
+  | Error Eta_http.H2.Multiplexer.Connection_closed ->
+      Alcotest.failf "request %d saw closed connection" tag
+  | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+      Alcotest.failf "request %d failed: %s" tag message
+
+let test_h2_connection_admission_error_reports_configured_limit () =
+  with_h2_server ~max_concurrent:64
+    (fun _reqd -> ())
+    (fun _clock rt connection ->
+      let held =
+        List.init 64 (fun index ->
+            open_h2_request connection index
+              (Printf.sprintf "/held/%d" index))
+      in
+      ignore (held : Eta_http.H2.Multiplexer.opened_request list);
+      let request =
+        Eta_http.Request.make "GET" "https://api.example.test/overflow"
+      in
+      match
+        Eta.Runtime.run rt
+          (Eta_http.Client.For_test.request_h2_on_connection connection request
+             (Eta_http.Request.url request))
+      with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind = Stream_admission_rejected { limit };
+              _;
+            }) ->
+          Alcotest.(check int) "configured limit" 64 limit
+      | Eta.Exit.Ok _ -> Alcotest.fail "admission-limited request succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected failure: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
 
 let test_h2_connection_concurrent_streams () =
   with_h2_server

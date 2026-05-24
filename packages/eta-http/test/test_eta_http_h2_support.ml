@@ -174,7 +174,8 @@ let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
         result.mux_status <- Some (H2.Status.to_code response.status);
         h2_schedule_mux_body mux result stream response_body)
   with
-  | Error Eta_http.H2.Multiplexer.Admission_rejected -> Error `Admission_rejected
+  | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
+      Error `Admission_rejected
   | Error Eta_http.H2.Multiplexer.Connection_closed -> Error `Connection_closed
   | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
       Error (`Request_failed message)

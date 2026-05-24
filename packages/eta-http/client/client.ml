@@ -319,8 +319,8 @@ let request_h2_on_connection connection request url =
   | Error error -> resolve_error error; Eta.Effect.fail error
   | Ok h2_request -> (
   match open_request h2_request with
-  | Error Admission_rejected ->
-      let error = h2_error request (Stream_admission_rejected { limit = 128 }) in
+  | Error (Admission_rejected { limit }) ->
+      let error = h2_error request (Stream_admission_rejected { limit }) in
       resolve_error error;
       Eta.Effect.fail error
   | Error Connection_closed ->

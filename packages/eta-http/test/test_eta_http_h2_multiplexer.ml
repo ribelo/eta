@@ -154,7 +154,7 @@ let test_h2_request_exception_releases_admission () =
   in
   let expect_request_failed label = function
     | Error (Eta_http.H2.Multiplexer.Request_failed _) -> ()
-    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
         Alcotest.failf "%s leaked admission permit" label
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.failf "%s saw unexpected closed connection" label
@@ -203,7 +203,7 @@ let h2_open_streaming_body mux client server held_writer body_ref =
   let opened =
     match opened with
     | Ok opened -> opened
-    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
         Alcotest.fail "streaming body rejected by admission"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "streaming body saw closed connection"
@@ -271,7 +271,7 @@ let test_h2_body_stream_reads_inline_data_after_header_pump () =
   let opened =
     match opened with
     | Ok opened -> opened
-    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
         Alcotest.fail "inline body rejected by admission"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "inline body saw closed connection"
@@ -334,7 +334,7 @@ let test_h2_multiplexer_delivers_response_trailers () =
   let opened =
     match opened with
     | Ok opened -> opened
-    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
         Alcotest.fail "trailers request rejected by admission"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "trailers request saw closed connection"
@@ -574,7 +574,7 @@ let test_h2_multiplexer_client_cancel_releases_stream () =
                 Some (Eta_http.H2.Multiplexer.release mux stream)))
     with
     | Ok opened -> opened
-    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
         Alcotest.fail "slow request rejected"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "slow request saw closed connection"

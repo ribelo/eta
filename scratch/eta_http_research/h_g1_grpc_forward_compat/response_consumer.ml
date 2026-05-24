@@ -104,7 +104,8 @@ let open_response server =
   let opened =
     match opened with
     | Ok opened -> opened
-    | Error Multiplexer.Admission_rejected -> failwith "request rejected by admission"
+    | Error (Multiplexer.Admission_rejected _) ->
+        failwith "request rejected by admission"
     | Error Multiplexer.Connection_closed -> failwith "connection closed before request"
     | Error (Multiplexer.Request_failed message) ->
         failwith ("request failed before response: " ^ message)

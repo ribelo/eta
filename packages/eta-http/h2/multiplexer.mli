@@ -4,7 +4,7 @@ type t
 type stream = Stream_state.stream
 
 type request_error =
-  | Admission_rejected
+  | Admission_rejected of { limit : int }
   | Connection_closed
   | Request_failed of string
 

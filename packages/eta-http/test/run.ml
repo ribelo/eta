@@ -237,6 +237,8 @@ let () =
         [
           Alcotest.test_case "concurrent streams share owner" `Quick
             test_h2_connection_concurrent_streams;
+          Alcotest.test_case "admission error reports configured limit" `Quick
+            test_h2_connection_admission_error_reports_configured_limit;
           Alcotest.test_case "early response beats blocked upload" `Quick
             test_h2_connection_returns_early_response;
           Alcotest.test_case "cancelled upload releases body" `Quick

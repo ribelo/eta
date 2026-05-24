@@ -6,7 +6,7 @@ module Security = Security
 type stream = Stream_state.stream
 
 type request_error =
-  | Admission_rejected
+  | Admission_rejected of { limit : int }
   | Connection_closed
   | Request_failed of string
 
@@ -78,7 +78,9 @@ let request_with_h2_request h2_request t ~tag ?trailers_handler request
     Error Connection_closed
   else
     match Stream_state.open_stream t.streams ~tag with
-    | Error () -> Error Admission_rejected
+    | Error () ->
+        let stats = Stream_state.stats t.streams in
+        Error (Admission_rejected { limit = stats.max_concurrent })
     | Ok stream ->
         let stream_id = Stream_state.id stream in
         try
