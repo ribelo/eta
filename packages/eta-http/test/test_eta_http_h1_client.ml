@@ -140,6 +140,86 @@ let test_h1_client_streaming_request_body_releases () =
   Alcotest.(check string) "response" "ok" (Bytes.to_string response_body);
   Alcotest.(check int) "request body released" 1 !released
 
+let h1_blocking_body ~released () =
+  let first = ref true in
+  let never, _resolver = Eio.Promise.create () in
+  Eta_http.Body.Stream.of_reader
+    ~release:(fun () ->
+      incr released;
+      Eta.Effect.unit)
+    (fun () ->
+      if !first then (
+        first := false;
+        Eta.Effect.pure
+          (Eta_http.Body.Stream.Chunk (Bytes.of_string (String.make 1024 'x'))))
+      else
+        Eta.Effect.sync (fun () -> Eio.Promise.await never)
+        |> Eta.Effect.map (fun () -> Eta_http.Body.Stream.End))
+
+let h1_timeout_error uri =
+  Eta_http.Error.make ~protocol:H1 ~method_:"POST" ~uri
+    (Connection_closed { during = Cancellation })
+
+let test_h1_client_cancelled_streaming_request_body_releases () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-stream-cancel-flow" in
+  let released = ref 0 in
+  let uri = "http://example.test/cancel-upload" in
+  let url = Eta_http.Core.Url.of_string uri in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [];
+      body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
+    }
+  in
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let timed =
+    Eta_http.H1.Client.request_on_flow ~flow request
+    |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
+         ~on_timeout:(h1_timeout_error uri)
+  in
+  let result = Eta_test.Async.fork_run sw rt timed in
+  let rec wait_for_timeout attempts =
+    if Eta_test.Test_clock.sleeper_count clock > 0 then ()
+    else if attempts = 0 then Alcotest.fail "request timeout was not registered"
+    else (
+      Eta_test.Async.yield ();
+      wait_for_timeout (attempts - 1))
+  in
+  wait_for_timeout 50;
+  Eta_test.Test_clock.adjust clock (Eta.Duration.ms 5);
+  let result = Eta_test.Async.await result in
+  Eta_test.Expect.expect_typed_failure result (function
+    | { Eta_http.Error.kind = Connection_closed { during = Cancellation }; _ } ->
+        true
+    | _ -> false);
+  Alcotest.(check int) "cancelled body released" 1 !released
+
+let test_h1_client_streaming_request_body_releases_on_write_failure () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-stream-write-fail-flow" in
+  Eio_mock.Flow.on_copy_bytes flow
+    [ `Raise (Unix.Unix_error (Unix.EPIPE, "write", "")) ];
+  let released = ref 0 in
+  let url = Eta_http.Core.Url.of_string "http://example.test/write-fail" in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [];
+      body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
+    }
+  in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
+  in
+  Eta_test.Expect.expect_typed_failure result (function
+    | { Eta_http.Error.kind = Connection_closed { during = Http_request }; _ } ->
+        true
+    | _ -> false);
+  Alcotest.(check int) "failed write body released" 1 !released
+
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
   Eio_mock.Flow.on_copy_bytes flow

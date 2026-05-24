@@ -169,11 +169,15 @@ let write_request flow (request : request) =
       |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
   | Some (length, body) ->
       let headers = stream_headers request length in
-      write_headers_effect request flow ~headers
-      |> Effect.bind (fun () ->
-             if transfer_encoding_chunked headers then
-               write_chunked_stream request flow body
-             else write_raw_stream request flow body)
+      Effect.scoped
+        (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
+             Body.discard body)
+        |> Effect.bind (fun () ->
+               write_headers_effect request flow ~headers
+               |> Effect.bind (fun () ->
+                      if transfer_encoding_chunked headers then
+                        write_chunked_stream request flow body
+                      else write_raw_stream request flow body)))
 
 let is_chunked headers =
   match Header.get "transfer-encoding" headers with

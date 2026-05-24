@@ -136,6 +136,10 @@ let () =
             test_h1_client_caps_close_delimited_body;
           Alcotest.test_case "streaming request body releases" `Quick
             test_h1_client_streaming_request_body_releases;
+          Alcotest.test_case "stream cancel releases request body" `Quick
+            test_h1_client_cancelled_streaming_request_body_releases;
+          Alcotest.test_case "stream write failure releases request body" `Quick
+            test_h1_client_streaming_request_body_releases_on_write_failure;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick
