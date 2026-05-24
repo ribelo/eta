@@ -628,8 +628,38 @@ let test_json_number_rendering () =
   check_string "large int literal stays exact" "9007199254740993"
     (Json.to_string (Json.intlit "9007199254740993"));
   ignore
-    (run_effect (Schema.decode Schema.int (Json.number 1e100))
-    |> expect_decode_error ~name:"large integer")
+	    (run_effect (Schema.decode Schema.int (Json.number 1e100))
+	    |> expect_decode_error ~name:"large integer")
+
+let check_json_string_roundtrip name value =
+  let rendered = Json.to_string (Json.string value) in
+  match Yojson.Safe.from_string rendered with
+  | `String actual -> check_string name value actual
+  | _ -> failwith (name ^ ": expected JSON string")
+
+let test_json_string_rendering () =
+  let quote_backslash = "backslash \\ quote \"" in
+  check_string "quote and backslash escaping" "\"backslash \\\\ quote \\\"\""
+    (Json.to_string (Json.string quote_backslash));
+  check_json_string_roundtrip "quote and backslash roundtrip" quote_backslash;
+  let controls = "line\ncol\tcarriage\rbackspace\bform\012nul\000" in
+  check_string "control escaping"
+    "\"line\\ncol\\tcarriage\\rbackspace\\bform\\fnul\\u0000\""
+    (Json.to_string (Json.string controls));
+  check_json_string_roundtrip "control roundtrip" controls;
+  let non_ascii = "é 😀 中" in
+  check_string "non-ascii stays utf8" ("\"" ^ non_ascii ^ "\"")
+    (Json.to_string (Json.string non_ascii));
+  check_json_string_roundtrip "non-ascii roundtrip" non_ascii;
+  let separators = "line\226\128\168para\226\128\169end" in
+  check_string "line separators stay utf8" ("\"" ^ separators ^ "\"")
+    (Json.to_string (Json.string separators));
+  check_json_string_roundtrip "line separators roundtrip" separators;
+  ignore
+    (Yojson.Safe.from_string
+       (Json.to_string
+          (Json.object_ [ ("key\"\\", Json.string quote_backslash) ]))
+      : Yojson.Safe.t)
 
 type request_user = { request_id : user_id }
 type canonical_user = { canonical_id : user_id; canonical_name : string }
@@ -783,6 +813,7 @@ let () =
   test_issue_paths_distinguish_fields_and_indexes ();
   test_issue_source_discriminator ();
   test_json_number_rendering ();
+  test_json_string_rendering ();
   test_decode_with_policy_enriches_type ();
   test_json_adapter_make_functor ();
   test_encode_failures_are_typed ();

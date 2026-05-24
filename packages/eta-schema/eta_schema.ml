@@ -99,16 +99,42 @@ module Json = struct
              a b
     | _ -> false
 
+  let hex_digit n =
+    Char.unsafe_chr (if n < 10 then Char.code '0' + n else Char.code 'a' + n - 10)
+
+  let add_json_escape buffer c =
+    match c with
+    | '"' -> Buffer.add_string buffer "\\\""
+    | '\\' -> Buffer.add_string buffer "\\\\"
+    | '\b' -> Buffer.add_string buffer "\\b"
+    | '\012' -> Buffer.add_string buffer "\\f"
+    | '\n' -> Buffer.add_string buffer "\\n"
+    | '\r' -> Buffer.add_string buffer "\\r"
+    | '\t' -> Buffer.add_string buffer "\\t"
+    | c when Char.code c < 0x20 ->
+        let code = Char.code c in
+        Buffer.add_string buffer "\\u00";
+        Buffer.add_char buffer (hex_digit (code lsr 4));
+        Buffer.add_char buffer (hex_digit (code land 0xf))
+    | c -> Buffer.add_char buffer c
+
+  let json_string s =
+    let buffer = Buffer.create (String.length s + 2) in
+    Buffer.add_char buffer '"';
+    String.iter (add_json_escape buffer) s;
+    Buffer.add_char buffer '"';
+    Buffer.contents buffer
+
   let rec to_string = function
     | Null -> "null"
     | Bool true -> "true"
     | Bool false -> "false"
     | Number n -> number_to_string n
-    | String s -> Printf.sprintf "%S" s
+    | String s -> json_string s
     | Array xs -> "[" ^ String.concat ", " (List.map to_string xs) ^ "]"
     | Object fields ->
         let field (key, value) =
-          Printf.sprintf "%S: %s" key (to_string value)
+          json_string key ^ ": " ^ to_string value
         in
         "{" ^ String.concat ", " (List.map field fields) ^ "}"
 end
