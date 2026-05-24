@@ -8,11 +8,20 @@ type stream = Stream_state.stream
 type request_error =
   | Admission_rejected
   | Connection_closed
+  | Request_failed of string
 
 type opened_request = {
   stream : stream;
   request_body : H2.Body.Writer.t;
 }
+
+type h2_request =
+  H2.Client_connection.t ->
+  ?trailers_handler:(H2.Headers.t -> unit) ->
+  H2.Request.t ->
+  error_handler:(H2.Client_connection.error -> unit) ->
+  response_handler:(H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  H2.Body.Writer.t
 
 type t = {
   client : H2.Client_connection.t;
@@ -63,7 +72,8 @@ let shutdown t =
     Stream_state.close t.streams;
     Hashtbl.clear t.response_bodies)
 
-let request t ~tag request ~error_handler ~response_handler =
+let request_with_h2_request h2_request t ~tag ?trailers_handler request
+    ~error_handler ~response_handler =
   if t.closed || H2.Client_connection.is_closed t.client then
     Error Connection_closed
   else
@@ -71,16 +81,30 @@ let request t ~tag request ~error_handler ~response_handler =
     | Error () -> Error Admission_rejected
     | Ok stream ->
         let stream_id = Stream_state.id stream in
-        let request_body =
-          H2.Client_connection.request t.client request
-            ~error_handler:(fun error ->
-              Stream_state.mark_remote_reset t.streams stream_id;
-              error_handler stream error)
-            ~response_handler:(fun response body ->
-              Hashtbl.replace t.response_bodies stream_id body;
-              response_handler stream response body)
-        in
-        Ok { stream; request_body }
+        try
+          let request_body =
+            h2_request t.client ?trailers_handler request
+              ~error_handler:(fun error ->
+                Stream_state.mark_remote_reset t.streams stream_id;
+                error_handler stream error)
+              ~response_handler:(fun response body ->
+                Hashtbl.replace t.response_bodies stream_id body;
+                response_handler stream response body)
+          in
+          Ok { stream; request_body }
+        with exn ->
+          ignore (release t stream);
+          Error (Request_failed (Printexc.to_string exn))
+
+let request =
+  request_with_h2_request (fun client ?trailers_handler request ~error_handler
+                              ~response_handler ->
+      H2.Client_connection.request client request ?trailers_handler ~error_handler
+        ~response_handler)
+
+module For_test = struct
+  let request_with_h2_request = request_with_h2_request
+end
 
 type client_reader = {
   client : H2.Client_connection.t;
@@ -101,7 +125,7 @@ type body_event =
   | Body_chunk of bytes
   | Body_eof
 
-let create_client_reader ?(buffer_size = 16 * 1024) ?security_config client =
+let create_client_reader ?(buffer_size = 64 * 1024) ?security_config client =
   if buffer_size <= 0 then
     invalid_arg "Eta_http.H2.Multiplexer.create_client_reader: buffer_size must be > 0";
   let buffer = Bigstringaf.create buffer_size in
@@ -195,7 +219,7 @@ let rec read_client_once ~flow reader =
         | `Eof -> feed_eof reader
         | `Buffer_full -> buffer_exhausted reader
 
-let body_stream ?(poll_error = fun () -> None)
+let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error ~pump t stream body =
   let events = Queue.create () in
   let scheduled = ref false in
@@ -204,14 +228,19 @@ let body_stream ?(poll_error = fun () -> None)
   let pop_event () =
     if Queue.is_empty events then None else Some (Queue.take events)
   in
+  let finish_eof () =
+    if not !eof then (
+      eof := true;
+      on_eof ();
+      mark_complete t stream)
+  in
   let schedule_read () =
     if (not !scheduled) && (not !eof) && not (H2.Body.Reader.is_closed body) then (
       scheduled := true;
       H2.Body.Reader.schedule_read body
         ~on_eof:(fun () ->
           scheduled := false;
-          eof := true;
-          mark_complete t stream;
+          finish_eof ();
           push_event Body_eof)
         ~on_read:(fun bs ~off ~len ->
           scheduled := false;
@@ -228,7 +257,9 @@ let body_stream ?(poll_error = fun () -> None)
   let closed_or_error () =
     match poll_error () with
     | Some error -> Eta.Effect.fail error
-    | None when !eof || H2.Body.Reader.is_closed body ->
+    | None when !eof -> Eta.Effect.pure Eta_http_body.Stream.End
+    | None when H2.Body.Reader.is_closed body ->
+        finish_eof ();
         Eta.Effect.pure Eta_http_body.Stream.End
     | None -> Eta.Effect.fail closed_error
   in
@@ -240,6 +271,7 @@ let body_stream ?(poll_error = fun () -> None)
         | Some error -> Eta.Effect.fail error
         | None when !eof -> Eta.Effect.pure Eta_http_body.Stream.End
         | None when H2.Body.Reader.is_closed body ->
+            finish_eof ();
             Eta.Effect.pure Eta_http_body.Stream.End
         | None -> read_after_schedule ())
   and read_after_schedule () =

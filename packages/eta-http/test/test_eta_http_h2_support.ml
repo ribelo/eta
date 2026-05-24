@@ -176,6 +176,8 @@ let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
   with
   | Error Eta_http.H2.Multiplexer.Admission_rejected -> Error `Admission_rejected
   | Error Eta_http.H2.Multiplexer.Connection_closed -> Error `Connection_closed
+  | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+      Error (`Request_failed message)
   | Ok opened ->
       result.mux_stream <- Some opened.stream;
       (match body with
@@ -234,5 +236,4 @@ let h2_observe_security data =
   let security = Eta_http.H2.Security.create () in
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
   Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
-
 

@@ -190,7 +190,10 @@ let h2_write_body_flushed ~flush writer = function
   | Rewindable_stream { make; _ } ->
       h2_write_stream_flushed ~flush writer (make ())
 
-let h2_response_headers response = H2.Headers.to_list response.H2.Response.headers
+let h2_response_headers response =
+  H2.Headers.to_list response.H2.Response.headers
+  |> List.filter (fun (name, _) ->
+         String.length name = 0 || not (Char.equal name.[0] ':'))
 
 let h2_response_has_body request status =
   (not (String.equal (String.uppercase_ascii request.Request.method_) "HEAD"))
@@ -203,6 +206,31 @@ let deliver_result_once result_ref value =
   | None ->
       result_ref := Some value;
       true
+
+let h2_trailer_result request =
+  let promise, resolver = Eio.Promise.create () in
+  let resolver_ref = ref (Some resolver) in
+  let resolve value =
+    match !resolver_ref with
+    | None -> ()
+    | Some resolver ->
+        resolver_ref := None;
+        Eio.Promise.resolve resolver value
+  in
+  let resolve_headers headers =
+    match Eta_http_h2.Security.validate_headers headers with
+    | Some kind -> resolve (Error (h2_error request kind))
+    | None -> resolve (Ok headers)
+  in
+  let resolve_empty () = resolve (Ok Header.empty) in
+  let resolve_error error = resolve (Error error) in
+  let trailers () =
+    Eta.Effect.sync (fun () -> Eio.Promise.await promise)
+    |> Eta.Effect.bind (function
+         | Ok headers -> Eta.Effect.pure headers
+         | Error error -> Eta.Effect.fail error)
+  in
+  (trailers, resolve_headers, resolve_empty, resolve_error)
 
 let h2_body_pump request flow client reader =
   h2_flush_client request flow client
@@ -219,12 +247,19 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
   let body_error = ref None in
   let response_started = ref false in
   let cleanup_before_return = ref false in
+  let trailers, resolve_trailers, resolve_empty_trailers, resolve_trailer_error =
+    h2_trailer_result request
+  in
+  let set_body_error error =
+    body_error := Some error;
+    resolve_trailer_error error
+  in
   let mux =
     Eta_http_h2.Multiplexer.create ~error_handler:(fun error ->
         let error =
           h2_protocol_violation request "connection" (h2_pp_client_error error)
         in
-        if !response_started then body_error := Some error
+        if !response_started then set_body_error error
         else ignore (deliver_result_once result_ref (Error error)))
       ()
   in
@@ -240,6 +275,7 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
     cleanup () |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
   in
   let close_no_body stream body =
+    resolve_empty_trailers ();
     H2.Body.Reader.close body;
     Eta_http_h2.Multiplexer.mark_complete mux stream;
     ignore (Eta_http_h2.Multiplexer.release mux stream);
@@ -249,19 +285,23 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
     Eta_http_h2.Multiplexer.body_stream
       ~closed_error:(h2_closed request Http_response)
       ~poll_error:(fun () -> !body_error)
-      ~on_release:(fun _ -> cleanup ())
+      ~on_eof:resolve_empty_trailers
+      ~on_release:(fun _ ->
+        resolve_trailer_error (h2_closed request Http_response);
+        cleanup ())
       ~pump:(fun () -> h2_body_pump request flow client reader)
       mux stream body
   in
   let open_request h2_request =
     Eta_http_h2.Multiplexer.request mux ~tag:0 h2_request
+      ~trailers_handler:(fun headers -> resolve_trailers (H2.Headers.to_list headers))
       ~error_handler:(fun stream error ->
         Eta_http_h2.Multiplexer.mark_remote_reset mux
           (Eta_http_h2.Stream_state.id stream);
         let error =
           h2_protocol_violation request "stream" (h2_pp_client_error error)
         in
-        if !response_started then body_error := Some error
+        if !response_started then set_body_error error
         else
           ignore (deliver_result_once result_ref (Error error)))
       ~response_handler:(fun stream response body ->
@@ -276,10 +316,12 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
             ignore (deliver_result_once result_ref (Error (h2_error request kind)))
         | None when h2_response_has_body request status ->
           let body = response_body stream body in
-          let response = Response.make ~status ~headers ~body () in
+          let response = Response.make ~status ~headers ~trailers ~body () in
           ignore (deliver_result_once result_ref (Ok response))
         | None ->
-          let response = Response.make ~status ~headers ~body:(Body.empty ()) () in
+          let response =
+            Response.make ~status ~headers ~trailers ~body:(Body.empty ()) ()
+          in
           ignore (deliver_result_once result_ref (Ok response));
           close_no_body stream body)
   in
@@ -291,6 +333,8 @@ let request_h2_on_flow ?(on_release = fun () -> Eta.Effect.unit) ~flow request
       cleanup_then_fail
         (h2_error request (Stream_admission_rejected { limit = 128 }))
   | Error Connection_closed -> cleanup_then_fail (h2_closed request Http_request)
+  | Error (Request_failed message) ->
+      cleanup_then_fail (h2_protocol_violation request "request" message)
   | Ok opened ->
       let flush () = h2_flush_client request flow client in
       h2_write_body_flushed ~flush opened.request_body request.body

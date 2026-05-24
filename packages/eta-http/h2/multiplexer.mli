@@ -6,11 +6,24 @@ type stream = Stream_state.stream
 type request_error =
   | Admission_rejected
   | Connection_closed
+  | Request_failed of string
 
 type opened_request = {
   stream : stream;
   request_body : H2.Body.Writer.t;
 }
+
+(**/**)
+
+type h2_request =
+  H2.Client_connection.t ->
+  ?trailers_handler:(H2.Headers.t -> unit) ->
+  H2.Request.t ->
+  error_handler:(H2.Client_connection.error -> unit) ->
+  response_handler:(H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  H2.Body.Writer.t
+
+(**/**)
 
 type client_reader
 
@@ -39,10 +52,27 @@ val shutdown : t -> unit
 val request :
   t ->
   tag:int ->
+  ?trailers_handler:(H2.Headers.t -> unit) ->
   H2.Request.t ->
   error_handler:(stream -> H2.Client_connection.error -> unit) ->
   response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
   (opened_request, request_error) result
+
+(**/**)
+
+module For_test : sig
+  val request_with_h2_request :
+    h2_request ->
+    t ->
+    tag:int ->
+    ?trailers_handler:(H2.Headers.t -> unit) ->
+    H2.Request.t ->
+    error_handler:(stream -> H2.Client_connection.error -> unit) ->
+    response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
+    (opened_request, request_error) result
+end
+
+(**/**)
 
 val create_client_reader :
   ?buffer_size:int ->
@@ -62,6 +92,7 @@ val read_client_once :
 
 val body_stream :
   ?poll_error:(unit -> Eta_http_error.Error.t option) ->
+  ?on_eof:(unit -> unit) ->
   ?on_release:
     (Stream_state.release -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
   closed_error:Eta_http_error.Error.t ->

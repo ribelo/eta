@@ -135,8 +135,14 @@ let () =
             test_h1_client_caps_close_delimited_body;
           Alcotest.test_case "streaming request body releases" `Quick
             test_h1_client_streaming_request_body_releases;
+          Alcotest.test_case "custom release on write failure" `Quick
+            test_h1_client_custom_release_on_write_failure;
+          Alcotest.test_case "custom release on response header failure" `Quick
+            test_h1_client_custom_release_on_response_header_failure;
           Alcotest.test_case "HEAD ignores chunked body headers" `Quick
             test_h1_client_head_ignores_chunked_body_headers;
+          Alcotest.test_case "skips 100 Continue" `Quick
+            test_h1_client_skips_100_continue;
           Alcotest.test_case "pool reuses healthy idle connection" `Quick
             test_h1_pool_reuses_healthy_idle_connection;
           Alcotest.test_case "pool rejects unhealthy idle connection" `Quick
@@ -218,10 +224,16 @@ let () =
         [
           Alcotest.test_case "reads server response" `Quick
             test_h2_multiplexer_reads_server_response;
+          Alcotest.test_case "default reader accepts max DATA frame" `Quick
+            test_h2_default_reader_accepts_max_sized_data_frame;
+          Alcotest.test_case "request exception releases admission" `Quick
+            test_h2_request_exception_releases_admission;
           Alcotest.test_case "body stream releases on EOF" `Quick
             test_h2_body_stream_releases_on_eof;
           Alcotest.test_case "body stream reads inline data" `Quick
             test_h2_body_stream_reads_inline_data_after_header_pump;
+          Alcotest.test_case "response trailers" `Quick
+            test_h2_multiplexer_delivers_response_trailers;
           Alcotest.test_case "body stream discard releases" `Quick
             test_h2_body_stream_discard_releases_active_stream;
           Alcotest.test_case "100 concurrent GETs" `Quick
@@ -238,4 +250,3 @@ let () =
             test_h2_multiplexer_rejects_after_goaway;
         ] );
     ]
-

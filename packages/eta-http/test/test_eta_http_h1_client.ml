@@ -139,6 +139,53 @@ let test_h1_client_streaming_request_body_releases () =
   in
   Alcotest.(check string) "response" "ok" (Bytes.to_string response_body);
   Alcotest.(check int) "request body released" 1 !released
+
+let test_h1_client_custom_release_on_write_failure () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
+  Eio_mock.Flow.on_copy_bytes flow
+    [ `Raise (Unix.Unix_error (Unix.EPIPE, "write", "")) ];
+  let released = ref 0 in
+  let url = Eta_http.Core.Url.of_string "http://example.test/write-fail" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "POST"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http.H1.Client.request_on_flow
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      ~flow request
+    |> Eta.Runtime.run rt
+  in
+  Eta_test.Expect.expect_typed_failure result (function
+    | { Eta_http.Error.kind = Connection_closed { during = Http_request }; _ } ->
+        true
+    | _ -> false);
+  Alcotest.(check int) "released" 1 !released
+
+let test_h1_client_custom_release_on_response_header_failure () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-read-release-flow" in
+  let released = ref 0 in
+  let url = Eta_http.Core.Url.of_string "http://example.test/read-fail" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http.H1.Client.request_on_flow
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      ~flow request
+    |> Eta.Runtime.run rt
+  in
+  Eta_test.Expect.expect_typed_failure result (function
+    | { Eta_http.Error.kind = Connection_closed { during = Http_response }; _ } ->
+        true
+    | _ -> false);
+  Alcotest.(check int) "released" 1 !released
+
 let test_h1_client_head_ignores_chunked_body_headers () =
   let flow = Eio_mock.Flow.make "eta-http-h1-head-flow" in
   Eio_mock.Flow.on_read flow
@@ -160,6 +207,39 @@ let test_h1_client_head_ignores_chunked_body_headers () =
     |> Eta_test.Expect.expect_ok
   in
   Alcotest.(check int) "empty body" 0 (Bytes.length body)
+
+let test_h1_client_skips_100_continue () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-continue-flow" in
+  Eio_mock.Flow.on_read flow
+    [
+      `Return
+        "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    ];
+  let url = Eta_http.Core.Url.of_string "http://example.test/continue" in
+  let headers =
+    Eta_http.Core.Header.unsafe_of_list [ "Expect", "100-continue" ]
+  in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers;
+      body = Eta_http.H1.Client.Fixed [ Bytes.of_string "abc" ];
+    }
+  in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let response =
+    Eta_http.H1.Client.request_on_flow ~flow request
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 200 response.status;
+  let body =
+    Eta_http.Body.Stream.read_all response.body
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check string) "body" "ok" (Bytes.to_string body)
 
 let test_h1_pool_reuses_healthy_idle_connection () =
   let net = Eio_mock.Net.make "eta-http-h1-pool-net" in
@@ -426,5 +506,3 @@ let test_client_make_h1_request_path () =
     |> Eta_test.Expect.expect_ok
   in
   Alcotest.(check string) "body" "ok" (Bytes.to_string body)
-
-

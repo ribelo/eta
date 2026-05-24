@@ -226,39 +226,48 @@ type response_head = {
   initial : bytes;
 }
 
-let read_response_head flow request =
+let read_response_head ?(initial = Bytes.empty) flow request =
   let buffer = Bytes.create max_header_bytes in
-  let read_buffer = Cstruct.create max_header_bytes in
-  let raw_headers = Parse.create_raw_headers max_response_headers in
-  let raw = Parse.create_raw_response () in
-  let rec loop used =
-    match
-      Parse.parse_raw buffer ~len:used ~max_header_bytes ~headers:raw_headers
-        raw
-    with
-    | code when code = Parse.raw_ok || code = Parse.raw_body_truncated ->
-        let body_off = Parse.raw_body_off raw in
-        let available = max 0 (used - body_off) in
-        let initial = Bytes.create available in
-        if available > 0 then Bytes.blit buffer body_off initial 0 available;
-        Ok
-          {
-            status = Parse.raw_status raw;
-            headers =
-              Header.unsafe_of_list
-                (Parse.raw_headers_to_list buffer raw_headers raw);
-            content_length = Parse.raw_content_length raw;
-            initial;
-          }
-    | code when code = Parse.raw_partial -> (
-        match read_more flow read_buffer buffer used with
-        | Ok used -> loop used
-        | Error Parse.Partial -> Error (io_closed request Http_response)
-        | Error error -> Error (parse_error request error))
-    | code ->
-        Error (parse_error request (Parse.raw_error buffer raw ~max_header_bytes code))
-  in
-  loop 0
+  let initial_len = Bytes.length initial in
+  if initial_len > max_header_bytes then
+    Error
+      (parse_error request
+         (Parse.Header_section_too_large { limit = max_header_bytes }))
+  else (
+    if initial_len > 0 then Bytes.blit initial 0 buffer 0 initial_len;
+    let read_buffer = Cstruct.create max_header_bytes in
+    let raw_headers = Parse.create_raw_headers max_response_headers in
+    let raw = Parse.create_raw_response () in
+    let rec loop used =
+      match
+        Parse.parse_raw buffer ~len:used ~max_header_bytes ~headers:raw_headers
+          raw
+      with
+      | code when code = Parse.raw_ok || code = Parse.raw_body_truncated ->
+          let body_off = Parse.raw_body_off raw in
+          let available = max 0 (used - body_off) in
+          let initial = Bytes.create available in
+          if available > 0 then Bytes.blit buffer body_off initial 0 available;
+          Ok
+            {
+              status = Parse.raw_status raw;
+              headers =
+                Header.unsafe_of_list
+                  (Parse.raw_headers_to_list buffer raw_headers raw);
+              content_length = Parse.raw_content_length raw;
+              initial;
+            }
+      | code when code = Parse.raw_partial -> (
+          match read_more flow read_buffer buffer used with
+          | Ok used -> loop used
+          | Error Parse.Partial -> Error (io_closed request Http_response)
+          | Error error -> Error (parse_error request error))
+      | code ->
+          Error
+            (parse_error request
+               (Parse.raw_error buffer raw ~max_header_bytes code))
+    in
+    loop initial_len)
 
 type body_source = {
   request : request;
@@ -418,28 +427,36 @@ let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
     invalid_arg
       "Eta_http.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
   let release = Option.value release ~default:(fun () -> close_flow request flow) in
+  let release_on_error error =
+    Effect.catch (fun _ -> Effect.unit) (release ())
+    |> Effect.bind (fun () -> Effect.fail error)
+  in
   write_request flow request
-  |> Effect.bind (function
-       | () ->
-           Effect.sync (fun () -> read_response_head flow request))
-  |> Effect.bind (function
-       | Error error ->
-           Effect.catch (fun _ -> Effect.unit) (close_flow request flow)
-           |> Effect.bind (fun () -> Effect.fail error)
-       | Ok head ->
-           let body, trailers =
-             response_body ~max_response_body_bytes ~release flow request head
-           in
-           Effect.pure
-             {
-               status = head.status;
-               headers = head.headers;
-               body;
-               trailers;
-             })
-  |> Effect.catch (fun error ->
-         Effect.catch (fun _ -> Effect.unit) (close_flow request flow)
-         |> Effect.bind (fun () -> Effect.fail error))
+  |> Effect.catch release_on_error
+  |> Effect.bind (fun () ->
+         let rec read_final_response initial =
+           Effect.sync (fun () -> read_response_head ~initial flow request)
+           |> Effect.catch release_on_error
+           |> Effect.bind (function
+                | Error error -> release_on_error error
+                | Ok head
+                  when head.status >= 100 && head.status < 200
+                       && head.status <> 101 ->
+                    read_final_response head.initial
+                | Ok head ->
+                    let body, trailers =
+                      response_body ~max_response_body_bytes ~release flow request
+                        head
+                    in
+                    Effect.pure
+                      {
+                        status = head.status;
+                        headers = head.headers;
+                        body;
+                        trailers;
+                      })
+         in
+         read_final_response Bytes.empty)
 
 type release_ack = unit Channel.t
 type cancel_signal = Cancel

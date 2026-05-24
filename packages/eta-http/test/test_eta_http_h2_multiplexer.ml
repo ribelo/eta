@@ -63,6 +63,8 @@ let h2_opened label = function
   | Ok opened -> opened
   | Error `Admission_rejected -> Alcotest.failf "%s rejected by admission" label
   | Error `Connection_closed -> Alcotest.failf "%s rejected by closed connection" label
+  | Error (`Request_failed message) ->
+      Alcotest.failf "%s failed before open: %s" label message
 
 let h2_stream_of_result label result =
   match result.mux_stream with
@@ -76,6 +78,96 @@ let h2_response_body label = function
 let h2_response_writer label = function
   | Some body -> body
   | None -> Alcotest.failf "%s did not install response writer" label
+
+let test_h2_default_reader_accepts_max_sized_data_frame () =
+  let payload = String.make (16 * 1024) 'x' in
+  let result = h2_read_result () in
+  let server =
+    H2.Server_connection.create (fun reqd ->
+        H2.Reqd.respond_with_string reqd (H2.Response.create `OK) payload)
+  in
+  let client =
+    H2.Client_connection.create
+      ~error_handler:(fun _ -> result.client_errors <- result.client_errors + 1)
+      ()
+  in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/max-data"
+  in
+  let request_body =
+    H2.Client_connection.request client request
+      ~error_handler:(fun _ -> result.stream_errors <- result.stream_errors + 1)
+      ~response_handler:(fun response body ->
+        result.status <- Some (H2.Status.to_code response.status);
+        h2_schedule_body result body)
+  in
+  H2.Body.Writer.close request_body;
+  let request_bytes = Buffer.create 256 in
+  let request_flow = Eio.Flow.buffer_sink request_bytes in
+  (match Eta_http.H2.Writer.drain_client ~flow:request_flow client with
+  | Yield _ -> ()
+  | Close { code; _ } -> Alcotest.failf "unexpected client writer close=%d" code);
+  h2_feed_server server (Buffer.contents request_bytes);
+  let response_bytes = h2_drain_server_output server [] in
+  let source =
+    Eio.Flow.cstruct_source
+      (h2_cstruct_chunks ~chunk_size:(String.length response_bytes) response_bytes)
+  in
+  let reader = Eta_http.H2.Multiplexer.create_client_reader client in
+  let rec loop reads =
+    if reads > 100 then Alcotest.fail "h2 reader did not deliver max DATA frame"
+    else if result.eof then ()
+    else
+      match Eta_http.H2.Multiplexer.read_client_once ~flow:source reader with
+      | Read _ | Eof _ -> loop (reads + 1)
+      | Security_error kind ->
+          Alcotest.failf "unexpected h2 security error: %s"
+            (Eta_http.Error.kind_name kind)
+      | Close -> Alcotest.fail "client reader closed before max DATA EOF"
+  in
+  loop 0;
+  Alcotest.(check (option int)) "status" (Some 200) result.status;
+  Alcotest.(check int) "body bytes" (String.length payload)
+    (Buffer.length result.body);
+  Alcotest.(check string) "body" payload (Buffer.contents result.body);
+  Alcotest.(check int) "client errors" 0 result.client_errors;
+  Alcotest.(check int) "stream errors" 0 result.stream_errors
+
+let test_h2_request_exception_releases_admission () =
+  let mux = Eta_http.H2.Multiplexer.create ~max_concurrent:1 () in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/raises"
+  in
+  let raising_request _client ?trailers_handler:_ _request ~error_handler:_
+      ~response_handler:_ =
+    raise (Failure "synthetic h2 request failure")
+  in
+  let open_bad tag =
+    Eta_http.H2.Multiplexer.For_test.request_with_h2_request raising_request mux
+      ~tag request
+      ~error_handler:(fun _ _ -> ())
+      ~response_handler:(fun _ _ _ -> ())
+  in
+  let expect_request_failed label = function
+    | Error (Eta_http.H2.Multiplexer.Request_failed _) -> ()
+    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+        Alcotest.failf "%s leaked admission permit" label
+    | Error Eta_http.H2.Multiplexer.Connection_closed ->
+        Alcotest.failf "%s saw unexpected closed connection" label
+    | Ok _ -> Alcotest.failf "%s unexpectedly opened stream" label
+  in
+  expect_request_failed "first request" (open_bad 1);
+  let stats = Eta_http.H2.Multiplexer.stats mux in
+  Alcotest.(check int) "active after exception" 0 stats.active;
+  Alcotest.(check int) "live after exception" 0 stats.live;
+  expect_request_failed "second request" (open_bad 2);
+  let stats = Eta_http.H2.Multiplexer.stats mux in
+  Alcotest.(check int) "active after second exception" 0 stats.active;
+  Alcotest.(check int) "live after second exception" 0 stats.live
 
 let h2_body_pump_effect client server =
   Eta.Effect.sync (fun () ->
@@ -115,6 +207,8 @@ let h2_open_streaming_body mux client server held_writer body_ref =
         Alcotest.fail "streaming body rejected by admission"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "streaming body saw closed connection"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "streaming body request failed: %s" message
   in
   H2.Body.Writer.close opened.request_body;
   h2_pump_pair client server;
@@ -181,6 +275,8 @@ let test_h2_body_stream_reads_inline_data_after_header_pump () =
         Alcotest.fail "inline body rejected by admission"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "inline body saw closed connection"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "inline body request failed: %s" message
   in
   H2.Body.Writer.close opened.request_body;
   h2_pump_pair client server;
@@ -194,6 +290,76 @@ let test_h2_body_stream_reads_inline_data_after_header_pump () =
   let stats = Eta_http.H2.Multiplexer.stats mux in
   Alcotest.(check int) "active" 0 stats.active;
   Alcotest.(check int) "completed" 1 stats.completed
+
+let test_h2_multiplexer_delivers_response_trailers () =
+  let body_ref = ref None in
+  let trailers_ref = ref None in
+  let server =
+    H2.Server_connection.create (fun reqd ->
+        let response_body =
+          H2.Reqd.respond_with_streaming reqd
+            (H2.Response.create
+               ~headers:(H2.Headers.of_list [ "content-type", "application/grpc+proto" ])
+               `OK)
+        in
+        H2.Body.Writer.write_string response_body "\000\000\000\000\005hello";
+        H2.Reqd.schedule_trailers reqd
+          (H2.Headers.of_list [ "grpc-status", "0"; "grpc-message", "" ]);
+        H2.Body.Writer.close response_body)
+  in
+  let mux = h2_mux_create (h2_mux_result ()) () in
+  let client = Eta_http.H2.Multiplexer.client_connection mux in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `POST "/grpc.Service/Unary"
+  in
+  let opened =
+    Eta_http.H2.Multiplexer.request mux ~tag:1
+      ~trailers_handler:(fun trailers ->
+        trailers_ref := Some (H2.Headers.to_list trailers))
+      request
+      ~error_handler:(fun _ error ->
+        Alcotest.failf "unexpected h2 stream error: %s"
+          (h2_pp_client_error error))
+      ~response_handler:(fun stream response body ->
+        Alcotest.(check int) "status" 200 (H2.Status.to_code response.status);
+        body_ref :=
+          Some
+            (Eta_http.H2.Multiplexer.body_stream
+               ~closed_error:h2_body_closed_error
+               ~pump:(fun () -> h2_body_pump_effect client server)
+               mux stream body))
+  in
+  let opened =
+    match opened with
+    | Ok opened -> opened
+    | Error Eta_http.H2.Multiplexer.Admission_rejected ->
+        Alcotest.fail "trailers request rejected by admission"
+    | Error Eta_http.H2.Multiplexer.Connection_closed ->
+        Alcotest.fail "trailers request saw closed connection"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "trailers request failed: %s" message
+  in
+  H2.Body.Writer.close opened.request_body;
+  h2_pump_pair client server;
+  let early_trailers =
+    match !trailers_ref with
+    | Some trailers -> trailers
+    | None -> Alcotest.fail "trailers were not delivered by END_STREAM"
+  in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let body =
+    Eta_http.Body.Stream.read_all (h2_response_body "trailers" !body_ref)
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check string) "raw grpc body" "\000\000\000\000\005hello"
+    (Bytes.to_string body);
+  Alcotest.(check (option string)) "grpc status" (Some "0")
+    (Eta_http.Core.Header.get "grpc-status" early_trailers);
+  Alcotest.(check (option string)) "grpc message" (Some "")
+    (Eta_http.Core.Header.get "grpc-message" early_trailers)
 
 let test_h2_body_stream_discard_releases_active_stream () =
   let held_writer = ref None in
@@ -344,6 +510,8 @@ let test_h2_multiplexer_server_reset_admission_release () =
         match h2_open_mux_request ~tag:(1000 + i) ~target:"/rst" mux result with
         | Error `Admission_rejected -> 1
         | Error `Connection_closed -> Alcotest.fail "connection closed"
+        | Error (`Request_failed message) ->
+            Alcotest.failf "request failed: %s" message
         | Ok _ -> Alcotest.fail "cancelled streams should still occupy admission")
     |> List.fold_left ( + ) 0
   in
@@ -410,6 +578,8 @@ let test_h2_multiplexer_client_cancel_releases_stream () =
         Alcotest.fail "slow request rejected"
     | Error Eta_http.H2.Multiplexer.Connection_closed ->
         Alcotest.fail "slow request saw closed connection"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "slow request failed: %s" message
   in
   H2.Body.Writer.close opened.request_body;
   h2_pump_pair client server;
@@ -468,9 +638,9 @@ let test_h2_multiplexer_rejects_after_goaway () =
   (match h2_open_mux_request ~tag:2 ~target:"/after-goaway" mux after with
   | Error `Connection_closed -> ()
   | Error `Admission_rejected -> Alcotest.fail "GOAWAY reported as admission pressure"
+  | Error (`Request_failed message) ->
+      Alcotest.failf "GOAWAY request failed: %s" message
   | Ok _ -> Alcotest.fail "post-GOAWAY request was admitted");
   let stats = Eta_http.H2.Multiplexer.stats mux in
   Alcotest.(check int) "opened before only" 1 stats.opened;
   Alcotest.(check int) "no admission pressure" 0 stats.admission_rejected
-
-
