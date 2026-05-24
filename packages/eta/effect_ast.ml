@@ -140,15 +140,8 @@ and ('a, 'err) supervisor_body = {
   run : 's. ('s, 'err) supervisor -> ('s, 'a, 'err) supervisor_scope;
 }
 
-and ('s, !'err) supervisor = {
-  sw : Eio.Switch.t;
-  max_failures : int option;
-  failures : 'err Cause.t list Atomic.t;
-  failure_count : int Atomic.t;
-  children : (unit -> unit) list Atomic.t;
-}
+and ('s, !'err) supervisor =
+  ('s, 'err) Runtime_supervisor_types.supervisor
 
-and ('s, !'err, !'a) supervisor_child = {
-  promise : ('a, 'err Cause.t) result Eio.Promise.t;
-  cancel : unit -> unit;
-}
+and ('s, !'err, !'a) supervisor_child =
+  ('s, 'err, 'a) Runtime_supervisor_types.child

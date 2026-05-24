@@ -10,5 +10,6 @@
   runtime_instrument
   runtime_interpret
   runtime_observability
-  runtime_supervisor)
+  runtime_supervisor
+  runtime_supervisor_types)
  (libraries eta.redacted eio eio.unix portable parallel parallel.scheduler threads))
