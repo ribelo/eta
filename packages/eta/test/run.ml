@@ -292,6 +292,10 @@ let () =
             test_resource_auto_refreshes_on_schedule;
           Alcotest.test_case "auto failed refresh keeps cached value" `Quick
             test_resource_auto_failed_refresh_keeps_cached_value;
+          Alcotest.test_case "auto records loader defect and continues" `Quick
+            test_resource_auto_records_loader_defect_and_continues;
+          Alcotest.test_case "auto records on_error defect and continues" `Quick
+            test_resource_auto_records_on_error_defect_and_continues;
         ] );
       ( "Portable_queue",
         [

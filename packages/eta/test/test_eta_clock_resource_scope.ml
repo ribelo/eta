@@ -180,3 +180,68 @@ let test_resource_auto_failed_refresh_keeps_cached_value () =
   Alcotest.(check int) "subsequent refresh updates" 2
     (run_ok rt (Resource.get resource))
 
+let test_resource_auto_records_loader_defect_and_continues () =
+  with_test_clock @@ fun _sw clock rt ->
+  let results = ref [ Ok 1; Error (Failure "loader boom"); Ok 2 ] in
+  let load =
+    Effect.named "resource.auto.load" (Effect.sync (fun () ->
+        match !results with
+        | [] -> 999
+        | Ok value :: rest ->
+            results := rest;
+            value
+        | Error exn :: rest ->
+            results := rest;
+            raise exn))
+  in
+  let resource =
+    run_ok rt (Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5)) ())
+  in
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "loader defect keeps old value" 1
+    (run_ok rt (Resource.get resource));
+  (match run_ok rt (Resource.failures resource) with
+  | [ Cause.Die die ] ->
+      Alcotest.(check string) "loader defect" "Failure(\"loader boom\")"
+        (Printexc.to_string die.exn)
+  | _ -> Alcotest.fail "expected loader defect to be recorded");
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "refresh loop continued" 2
+    (run_ok rt (Resource.get resource))
+
+let test_resource_auto_records_on_error_defect_and_continues () =
+  with_test_clock @@ fun _sw clock rt ->
+  let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
+  let load =
+    Effect.named "resource.auto.load" (Effect.sync (fun () ->
+        match !results with
+        | [] -> Ok 999
+        | result :: rest ->
+            results := rest;
+            result))
+    |> Effect.bind (function
+         | Ok value -> Effect.pure value
+         | Error message -> Effect.fail (`Refresh_failed message))
+  in
+  let resource =
+    run_ok rt
+      (Resource.auto ~load ~schedule:(Schedule.spaced (Duration.ms 5))
+         ~on_error:(fun (`Refresh_failed _) -> failwith "observer boom") ())
+  in
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  (match run_ok rt (Resource.failures resource) with
+  | [ Cause.Fail (`Refresh_failed "boom"); Cause.Die die ] ->
+      Alcotest.(check string) "on_error defect" "Failure(\"observer boom\")"
+        (Printexc.to_string die.exn)
+  | _ -> Alcotest.fail "expected typed failure and on_error defect");
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  Alcotest.(check int) "refresh loop continued" 2
+    (run_ok rt (Resource.get resource))
