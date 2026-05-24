@@ -122,4 +122,51 @@ let test_transport_connect_tls_closes_flow_on_failure () =
         (Eta.Cause.pp Eta_http.Error.pp)
         cause
 
+let close_effect flow = Eta.Effect.sync (fun () -> Eio.Flow.close flow)
+
+let test_transport_dispatch_unsupported_alpn_closes_flow () =
+  let request = Eta_http.Request.make "GET" "https://example.test/path" in
+  let closed = ref 0 in
+  let flow = counted_tls_flow closed in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  match
+    Eta_http.Client.For_test.dispatch_alpn
+      ~close:(fun () -> close_effect flow)
+      ~use_h1:(fun () -> Eta.Effect.pure `H1)
+      ~use_h2:(fun () -> Eta.Effect.pure `H2)
+      request (Some "spdy/3")
+    |> Eta.Runtime.run rt
+  with
+  | Eta.Exit.Ok _ -> Alcotest.fail "unsupported ALPN unexpectedly succeeded"
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Tls_handshake_error
+              { stage = Alpn_negotiation; message };
+          _;
+        }) ->
+      Alcotest.(check bool) "message" true (contains message "spdy/3");
+      Alcotest.(check int) "flow closed" 1 !closed
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected ALPN failure shape: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+
+let test_transport_dispatch_supported_alpn_keeps_flow_open () =
+  let request = Eta_http.Request.make "GET" "https://example.test/path" in
+  let closed = ref 0 in
+  let flow = counted_tls_flow closed in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http.Client.For_test.dispatch_alpn
+      ~close:(fun () -> close_effect flow)
+      ~use_h1:(fun () -> Eta.Effect.pure `H1)
+      ~use_h2:(fun () -> Eta.Effect.pure `H2)
+      request (Some "h2")
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check bool) "h2 selected" true
+    (match result with `H2 -> true | `H1 -> false);
+  Alcotest.(check int) "flow still owned" 0 !closed
 

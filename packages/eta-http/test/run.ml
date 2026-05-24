@@ -179,6 +179,10 @@ let () =
             test_transport_connect_tcp_failure_is_typed;
           Alcotest.test_case "connect tls closes flow on failure" `Quick
             test_transport_connect_tls_closes_flow_on_failure;
+          Alcotest.test_case "unsupported ALPN closes TLS flow" `Quick
+            test_transport_dispatch_unsupported_alpn_closes_flow;
+          Alcotest.test_case "supported ALPN keeps TLS flow open" `Quick
+            test_transport_dispatch_supported_alpn_keeps_flow_open;
         ] );
       ( "alpn",
         [

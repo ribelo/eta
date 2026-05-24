@@ -85,6 +85,24 @@ let request_url request =
         (Error.make ~method_:request.Request.method_ ~uri:request.uri
            (Connection_protocol_violation { kind = "url"; message }))
 
+let unsupported_alpn request protocol =
+  Error.make ~protocol:Error.Unknown ~method_:request.Request.method_
+    ~uri:request.uri
+    (Tls_handshake_error
+       {
+         stage = Alpn_negotiation;
+         message = "unsupported ALPN protocol " ^ protocol;
+       })
+
+let dispatch_alpn ~close ~use_h1 ~use_h2 request alpn =
+  match Dispatch.decide_alpn alpn with
+  | Error protocol ->
+      close ()
+      |> Eta.Effect.bind (fun () ->
+             Eta.Effect.fail (unsupported_alpn request protocol))
+  | Ok Dispatch.Use_h1 -> use_h1 ()
+  | Ok Dispatch.Use_h2 -> use_h2 ()
+
 let h2_error request kind =
   Error.make ~protocol:Error.H2 ~method_:request.Request.method_ ~uri:request.uri
     kind
@@ -429,15 +447,6 @@ let make ~sw ~net ?authenticator
           ~max_response_body_bytes ~flow h1_request
         |> Eta.Effect.map response_of_h1
   in
-  let unsupported_alpn request protocol =
-    Error.make ~protocol:Error.Unknown ~method_:request.Request.method_
-      ~uri:request.uri
-      (Tls_handshake_error
-         {
-           stage = Alpn_negotiation;
-           message = "unsupported ALPN protocol " ^ protocol;
-         })
-  in
   let h2_on_connection connection request url =
     last_protocol := H2;
     request_h2_on_connection connection request url
@@ -457,13 +466,13 @@ let make ~sw ~net ?authenticator
   let dispatch_tls target tls request url =
     Connect.negotiated_alpn ~method_:request.Request.method_ target tls
     |> Eta.Effect.bind (fun alpn ->
-           match Dispatch.decide_alpn alpn with
-           | Error protocol -> Eta.Effect.fail (unsupported_alpn request protocol)
-           | Ok Dispatch.Use_h1 ->
+           dispatch_alpn
+             ~close:(fun () -> close_counted (tls :> Connect.tcp_flow))
+             ~use_h1:(fun () ->
                last_protocol := H1;
-               h1_on_flow (tls :> Connect.tcp_flow) request
-           | Ok Dispatch.Use_h2 ->
-               h2_on_tls target tls request url)
+               h1_on_flow (tls :> Connect.tcp_flow) request)
+             ~use_h2:(fun () -> h2_on_tls target tls request url)
+             request alpn)
   in
   let request_impl request =
     match request_url request with
@@ -534,6 +543,7 @@ let make_for_test ~protocol ~request ~stats ~shutdown =
   }
 
 module For_test = struct
+  let dispatch_alpn = dispatch_alpn
   let h2_informational_status = h2_informational_status
   let request_h2_on_connection = request_h2_on_connection
 end

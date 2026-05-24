@@ -65,6 +65,14 @@ val make_for_test :
   t
 
 module For_test : sig
+  val dispatch_alpn :
+    close:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
+    use_h1:(unit -> ('a, Eta_http_error.Error.t) Eta.Effect.t) ->
+    use_h2:(unit -> ('a, Eta_http_error.Error.t) Eta.Effect.t) ->
+    Request.t ->
+    string option ->
+    ('a, Eta_http_error.Error.t) Eta.Effect.t
+
   val h2_informational_status : int -> bool
 
   val request_h2_on_connection :
