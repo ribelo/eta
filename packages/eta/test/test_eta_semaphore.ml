@@ -19,6 +19,23 @@ let test_semaphore_release_increases_available () =
   Semaphore.release sem 1;
   Alcotest.(check int) "available 8" 8 (Semaphore.available sem)
 
+let test_semaphore_release_rejects_negative_count () =
+  let sem = Semaphore.make ~permits:2 in
+  Alcotest.check_raises "negative release"
+    (Invalid_argument "Eta.Semaphore.release: n must be > 0")
+    (fun () -> Semaphore.release sem (-1))
+
+let test_semaphore_release_rejects_zero_count () =
+  let sem = Semaphore.make ~permits:2 in
+  Alcotest.check_raises "zero release"
+    (Invalid_argument "Eta.Semaphore.release: n must be > 0")
+    (fun () -> Semaphore.release sem 0)
+
+let test_semaphore_release_over_capacity_clamps () =
+  let sem = Semaphore.make ~permits:2 in
+  Semaphore.release sem 3;
+  Alcotest.(check int) "clamped at capacity" 2 (Semaphore.available sem)
+
 let test_semaphore_rejects_over_capacity_acquire () =
   let sem = Semaphore.make ~permits:2 in
   Alcotest.check_raises "acquire over capacity"

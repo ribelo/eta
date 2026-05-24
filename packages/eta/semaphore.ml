@@ -70,6 +70,7 @@ let try_acquire t n =
   else false
 
 let release t n =
+  if n <= 0 then invalid_arg "Eta.Semaphore.release: n must be > 0";
   with_lock t @@ fun () ->
   t.available <- min t.max_permits (t.available + n);
   wake_waiters_locked t

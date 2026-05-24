@@ -334,6 +334,12 @@ let () =
             test_semaphore_acquire_reduces_available;
           Alcotest.test_case "release increases available" `Quick
             test_semaphore_release_increases_available;
+          Alcotest.test_case "release rejects negative count" `Quick
+            test_semaphore_release_rejects_negative_count;
+          Alcotest.test_case "release rejects zero count" `Quick
+            test_semaphore_release_rejects_zero_count;
+          Alcotest.test_case "release over capacity clamps" `Quick
+            test_semaphore_release_over_capacity_clamps;
           Alcotest.test_case "rejects over-capacity acquire" `Quick
             test_semaphore_rejects_over_capacity_acquire;
           Alcotest.test_case "rejects over-capacity try_acquire" `Quick

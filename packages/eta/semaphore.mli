@@ -32,7 +32,8 @@ val release : t -> int -> unit
     requests can now be satisfied.
 
     Releasing more permits than the semaphore's capacity is documented as a
-    programmer error; the current behaviour clamps at the original capacity. *)
+    programmer error; the current behaviour clamps at the original capacity.
+    @raise Invalid_argument if [n <= 0]. *)
 
 val with_permits : t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effect.t
 (** [with_permits t n f] acquires [n] permits, runs [f ()], and releases the
