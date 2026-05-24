@@ -4,7 +4,8 @@ synopsis: "Redacted value wrapper for Eta packages"
 description:
   "Provides a tiny abstract wrapper for secrets and other sensitive values, with labelled redacted formatting and explicit value extraction at IO boundaries."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "alcotest" {with-test}
   "odoc" {with-doc}

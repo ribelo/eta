@@ -4,7 +4,8 @@ synopsis: "Schema testing helpers for Eta Schema"
 description:
   "Provides Alcotest-oriented helpers for Eta Schema decode, encode, issue, and round-trip assertions."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-schema" {= version}

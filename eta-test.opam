@@ -4,7 +4,8 @@ synopsis: "Testing helpers for Eta"
 description:
   "Provides Eta-shaped testing helpers: a virtual-time test clock, deterministic random tokens, and cause assertion helpers."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eio" {>= "1.0"}

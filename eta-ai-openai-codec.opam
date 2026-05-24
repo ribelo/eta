@@ -4,7 +4,8 @@ synopsis: "Shared OpenAI-family provider codec helpers for eta-ai"
 description:
   "Provides shared JSON codec helpers for OpenAI, OpenAI-compatible, and OpenRouter eta-ai provider packages."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta-ai" {= version}
   "odoc" {with-doc}

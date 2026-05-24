@@ -4,7 +4,8 @@ synopsis: "PPX rewriter for Eta span sugar"
 description:
   "Provides [%eta.fn body] sugar for Eta.fn __POS__ __FUNCTION__ body."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "ppxlib" {>= "0.30"}

@@ -4,7 +4,8 @@ synopsis: "Core AI vocabulary for Eta provider packages"
 description:
   "Defines Eta-shaped AI message, response, tool, usage, and error vocabulary. Provider packages own provider-specific HTTP encoding and decoding."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-redacted" {= version}

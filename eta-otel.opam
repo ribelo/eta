@@ -4,7 +4,8 @@ synopsis: "OTLP/JSON exporter for Eta's tracer capability"
 description:
   "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP. No protobuf, no ambient-context: just Eta streams, eta-http transport, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-stream" {= version}

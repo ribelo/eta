@@ -10,7 +10,8 @@
  (description
   "Provides a tiny abstract wrapper for secrets and other sensitive values, with labelled redacted formatting and explicit value extraction at IO boundaries.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (alcotest :with-test)))
 
@@ -20,7 +21,8 @@
  (description
   "Eta ports the core ideas of TypeScript Effect and Scala ZIO to idiomatic OCaml: typed failures, success values, resource scopes, schedules, retry, race, timeout, and detached fibers.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta-redacted (= :version))
   (eio (>= 1.0))
@@ -34,7 +36,8 @@
  (description
   "Adds pull-based, chunked Stream and fold-based Sink abstractions on top of Eta's typed effect runtime.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (cstruct (>= 6.0.0))
@@ -48,7 +51,8 @@
  (description
   "Adds an idiomatic OCaml schema, decode, validation, JSON Schema, and nominal-type contract layer for Eta applications migrating from Effect Schema.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))))
 
@@ -58,7 +62,8 @@
  (description
   "Provides Alcotest-oriented helpers for Eta Schema decode, encode, issue, and round-trip assertions.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-schema (= :version))
@@ -71,7 +76,8 @@
  (description
   "Implements Eta's Capabilities.tracer trait against the OpenTelemetry OTLP/JSON over HTTP. No protobuf, no ambient-context: just Eta streams, eta-http transport, a hand-written JSON encoder, and the same fiber-local span context Eta's runtime already uses.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-stream (= :version))
@@ -87,7 +93,8 @@
  (description
   "Defines Eta-shaped AI message, response, tool, usage, and error vocabulary. Provider packages own provider-specific HTTP encoding and decoding.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-redacted (= :version))
@@ -102,7 +109,8 @@
  (description
   "Provides shared JSON codec helpers for OpenAI, OpenAI-compatible, and OpenRouter eta-ai provider packages.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta-ai (= :version))))
 
@@ -112,7 +120,8 @@
  (description
   "Constructs eta-ai provider values and eta-http request runners for OpenAI Responses API calls, explicit legacy Chat Completions compatibility, tools, structured outputs, and streaming.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-ai (= :version))
@@ -129,7 +138,8 @@
  (description
   "Constructs eta-ai provider values and eta-http request runners for Anthropic Messages API calls, tool use, streaming, and prompt caching controls.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-ai (= :version))
@@ -145,7 +155,8 @@
  (description
   "Constructs configurable eta-ai provider values and eta-http request runners for OpenAI-compatible chat-completions APIs.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-ai (= :version))
@@ -162,7 +173,8 @@
  (description
   "Constructs eta-ai provider values and eta-http request runners for OpenRouter Responses API calls, routing controls, fallback chains, attribution headers, and provider errors.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-ai (= :version))
@@ -179,7 +191,8 @@
  (description
   "Clean-room HTTP client package for Eta. v1 owns HTTP/1.1, client lifecycle, retries, streaming bodies, and observability while using ocaml-h2 for HTTP/2 frame/HPACK handling and ocaml-tls for TLS.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eta-stream (= :version))
@@ -208,7 +221,8 @@
  (description
   "Provides Eta-shaped testing helpers: a virtual-time test clock, deterministic random tokens, and cause assertion helpers.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (eio (>= 1.0))
@@ -220,7 +234,8 @@
  (synopsis "PPX rewriter for Eta span sugar")
  (description "Provides [%eta.fn body] sugar for Eta.fn __POS__ __FUNCTION__ body.")
  (depends
-  (ocaml (= 5.2.0+ox))
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   (eta (= :version))
   (ppxlib (>= 0.30))

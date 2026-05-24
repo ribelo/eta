@@ -4,7 +4,8 @@ synopsis: "Typed chunked streams for Eta"
 description:
   "Adds pull-based, chunked Stream and fold-based Sink abstractions on top of Eta's typed effect runtime."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "cstruct" {>= "6.0.0"}

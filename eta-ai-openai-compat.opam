@@ -4,7 +4,8 @@ synopsis: "OpenAI-compatible provider package for eta-ai"
 description:
   "Constructs configurable eta-ai provider values and eta-http request runners for OpenAI-compatible chat-completions APIs."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-ai" {= version}

@@ -4,7 +4,8 @@ synopsis: "HTTP/1.1 and HTTP/2 client for Eta"
 description:
   "Clean-room HTTP client package for Eta. v1 owns HTTP/1.1, client lifecycle, retries, streaming bodies, and observability while using ocaml-h2 for HTTP/2 frame/HPACK handling and ocaml-tls for TLS."
 depends: [
-  "ocaml" {= "5.2.0+ox"}
+  "ocaml" {= "5.2.0"}
+  "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta" {= version}
   "eta-stream" {= version}
