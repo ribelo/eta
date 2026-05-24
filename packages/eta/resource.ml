@@ -25,10 +25,10 @@ let failures resource =
   Effect.named "resource.failures" (Effect.sync (fun () -> List.rev !(resource.failures)))
 
 let auto ?on_error ~load ?random ~schedule () =
-  let rec refresh_loop resource step =
-    match Schedule.next_delay ?random schedule ~step with
+  let rec refresh_loop resource driver =
+    match Schedule.next driver with
     | None -> Effect.unit
-    | Some delay ->
+    | Some (delay, driver') ->
         let refresh_once =
           refresh resource
           |> Effect.catch (fun err ->
@@ -38,10 +38,11 @@ let auto ?on_error ~load ?random ~schedule () =
         in
         refresh_once
         |> Effect.delay delay
-        |> Effect.bind (fun () -> refresh_loop resource (step + 1))
+        |> Effect.bind (fun () -> refresh_loop resource driver')
   in
   load
   |> Effect.map (fun value -> { load; value = Some value; failures = ref [] })
   |> Effect.bind (fun resource ->
-         Effect.Private.daemon (refresh_loop resource 0)
+         let driver = Schedule.start ?random schedule in
+         Effect.Private.daemon (refresh_loop resource driver)
          |> Effect.map (fun () -> resource))
