@@ -294,6 +294,15 @@ let make_entry t conn =
   let now = if t.expires_entries then now_ms () else 0 in
   { conn; created_ms = now; last_used_ms = now }
 
+type 'conn acquisition_state =
+  | Acquire_permit
+  | Reserve_slot
+  | Wait_for_permit
+  | Close_expired_entries of 'conn entry list
+  | Check_reserved_entry of 'conn entry
+  | Open_entry
+  | Entry_acquired of 'conn entry
+
 let with_acquire_guard release f =
   let armed = ref true in
   let release_ref = ref release in
@@ -315,61 +324,64 @@ let with_fixed_acquire_guard release f =
 let close_acquired_entry t entry =
   mark_released_to_close t |> Effect.bind (fun () -> close_entry t entry)
 
-let rec acquire_entry t =
-  let use_entry entry =
-    with_fixed_acquire_guard
-      (fun () -> close_acquired_entry t entry)
-      (fun ~disarm ->
-        let after_health = function
-          | `Healthy entry ->
-              disarm ();
-              emit_gauges t |> Effect.map (fun () -> entry)
-          | `Rejected entry ->
-              disarm ();
-              reject_entry t entry |> Effect.bind (fun () -> acquire_entry t)
-        in
-        check_health t entry |> Effect.bind after_health)
+let state_of_reservation = function
+  | `Shutdown -> Effect.fail `Pool_shutdown
+  | `Wait -> Effect.pure Wait_for_permit
+  | `Close_expired entries -> Effect.pure (Close_expired_entries entries)
+  | `Use entry -> Effect.pure (Check_reserved_entry entry)
+  | `Open_new -> Effect.pure Open_entry
+
+let health_transition t ~disarm = function
+  | `Healthy entry ->
+      disarm ();
+      emit_gauges t |> Effect.map (fun () -> Entry_acquired entry)
+  | `Rejected entry ->
+      disarm ();
+      reject_entry t entry |> Effect.map (fun () -> Acquire_permit)
+
+let check_reserved_entry t entry =
+  with_fixed_acquire_guard
+    (fun () -> close_acquired_entry t entry)
+    (fun ~disarm ->
+      check_health t entry |> Effect.bind (health_transition t ~disarm))
+
+let open_entry t =
+  let release_on_open_failure () =
+    mark_open_failed t |> Effect.bind (fun () -> emit_gauges t)
   in
   let after_open ~disarm ~set_release conn =
     let entry = make_entry t conn in
     set_release (fun () -> close_acquired_entry t entry);
-    let after_health = function
-      | `Healthy entry ->
-          disarm ();
-          emit_gauges t |> Effect.map (fun () -> entry)
-      | `Rejected entry ->
-          disarm ();
-          reject_entry t entry |> Effect.bind (fun () -> acquire_entry t)
-    in
     mark_opened t
     |> Effect.bind (fun () -> emit_opened t)
     |> Effect.bind (fun () -> emit_gauges t)
     |> Effect.bind (fun () -> check_health t entry)
-    |> Effect.bind after_health
+    |> Effect.bind (health_transition t ~disarm)
   in
-  let open_new =
-    with_acquire_guard
-      (fun () -> mark_open_failed t |> Effect.bind (fun () -> emit_gauges t))
-      (fun ~disarm ~set_release ->
-        t.acquire_conn
-        |> Effect.bind (after_open ~disarm ~set_release))
-  in
-  Semaphore.acquire t.sem 1
-  |> Effect.bind (fun () ->
-       let rec try_reserve () =
-         Effect.sync (fun () -> reserve t)
-         |> Effect.bind (function
-              | `Shutdown -> Effect.fail `Pool_shutdown
-              | `Wait ->
-                  Semaphore.acquire t.sem 1
-                  |> Effect.bind (fun () -> try_reserve ())
-              | `Close_expired expired ->
-                  close_entries ~release_permit:false t expired
-                  |> Effect.bind (fun () -> try_reserve ())
-              | `Use entry -> use_entry entry
-              | `Open_new -> open_new)
-       in
-       try_reserve ())
+  with_acquire_guard release_on_open_failure (fun ~disarm ~set_release ->
+      t.acquire_conn |> Effect.bind (after_open ~disarm ~set_release))
+
+let next_state t = function
+  | Acquire_permit ->
+      Semaphore.acquire t.sem 1 |> Effect.map (fun () -> Reserve_slot)
+  | Reserve_slot ->
+      Effect.sync (fun () -> reserve t) |> Effect.bind state_of_reservation
+  | Wait_for_permit ->
+      Semaphore.acquire t.sem 1 |> Effect.map (fun () -> Reserve_slot)
+  | Close_expired_entries entries ->
+      close_entries ~release_permit:false t entries
+      |> Effect.map (fun () -> Reserve_slot)
+  | Check_reserved_entry entry -> check_reserved_entry t entry
+  | Open_entry -> open_entry t
+  | Entry_acquired _ as state -> Effect.pure state
+
+let rec run_acquisition t state =
+  next_state t state
+  |> Effect.bind (function
+       | Entry_acquired entry -> Effect.pure entry
+       | next -> run_acquisition t next)
+
+let acquire_entry t = run_acquisition t Acquire_permit
 
 let with_resource t body =
   Effect.scoped
