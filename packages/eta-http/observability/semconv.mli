@@ -14,4 +14,7 @@ val request_attrs :
 val response_attrs : Eta_http_client.Response.t -> (string * string) list
 val error_attrs : Eta_http_error.Error.t -> (string * string) list
 val retry_attrs : attempt:int -> (string * string) list
-val redirect_attrs : location:string -> (string * string) list
+val redirect_attrs :
+  ?emit_location_full:bool -> location:string -> unit -> (string * string) list
+(** Redirect response attributes. By default [Location] redacts query strings
+    and fragments; pass [emit_location_full=true] only for trusted traces. *)

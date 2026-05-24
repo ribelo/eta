@@ -144,12 +144,21 @@ let test_observability_retry_success_spans () =
        spans)
 
 let test_observability_redirect_semconv () =
+  let location = "https://api.example.test/next?token=secret#frag" in
   let attrs =
-    Eta_http.Observability.Semconv.redirect_attrs
-      ~location:"https://api.example.test/next"
+    Eta_http.Observability.Semconv.redirect_attrs ~location ()
   in
-  Alcotest.(check (option string)) "location"
-    (Some "https://api.example.test/next")
+  Alcotest.(check (option string)) "redacted location"
+    (Some "https://api.example.test/next?<redacted>#<redacted>")
+    (List.assoc_opt "http.response.header.location" attrs)
+
+let test_observability_redirect_semconv_can_emit_raw () =
+  let location = "https://api.example.test/next?token=secret#frag" in
+  let attrs =
+    Eta_http.Observability.Semconv.redirect_attrs ~emit_location_full:true
+      ~location ()
+  in
+  Alcotest.(check (option string)) "raw location" (Some location)
     (List.assoc_opt "http.response.header.location" attrs)
 
 let test_observability_h2_protocol_attrs () =
@@ -210,4 +219,3 @@ let test_observability_pool_stats_meter () =
   let names = List.map (fun point -> point.Eta.Meter.name) (Eta.Meter.dump meter) in
   Alcotest.(check bool) "active metric" true
     (List.mem "eta_http.client.connections.active" names)
-

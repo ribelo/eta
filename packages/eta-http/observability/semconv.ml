@@ -46,4 +46,14 @@ let error_attrs error =
 let retry_attrs ~attempt =
   [ ("http.request.resend_count", string_of_int (max 0 (attempt - 1))) ]
 
-let redirect_attrs ~location = [ ("http.response.header.location", location) ]
+let redact_fragment uri =
+  match String.index_opt uri '#' with
+  | None -> uri
+  | Some fragment_start ->
+      String.sub uri 0 fragment_start ^ "#<redacted>"
+
+let redirect_attrs ?(emit_location_full = false) ~location () =
+  let location =
+    if emit_location_full then location else Redaction.uri location |> redact_fragment
+  in
+  [ ("http.response.header.location", location) ]

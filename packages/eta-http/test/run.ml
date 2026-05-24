@@ -99,6 +99,8 @@ let () =
             test_observability_retry_success_spans;
           Alcotest.test_case "redirect semconv" `Quick
             test_observability_redirect_semconv;
+          Alcotest.test_case "redirect semconv raw opt-in" `Quick
+            test_observability_redirect_semconv_can_emit_raw;
           Alcotest.test_case "h2 protocol attrs" `Quick
             test_observability_h2_protocol_attrs;
           Alcotest.test_case "recursion disabled" `Quick
