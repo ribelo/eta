@@ -185,7 +185,7 @@ let probes =
       model = "openai/gpt-4o-mini";
       run =
         (fun client ~api_key request ->
-          Eta_ai_openrouter.chat_completions client ~api_key request);
+          Eta_ai_openrouter.responses client ~api_key request);
     };
     {
       name = "mistral";

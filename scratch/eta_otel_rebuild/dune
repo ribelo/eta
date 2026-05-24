@@ -4,7 +4,7 @@
 
 (executable
  (name mailbox_probe)
- (libraries eta eta-stream eio_main))
+ (libraries eta eta.stream eio_main))
 
 (executable
  (name exporter_e2e_bench)

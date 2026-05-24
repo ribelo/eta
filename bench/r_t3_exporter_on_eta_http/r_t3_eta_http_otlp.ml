@@ -65,11 +65,10 @@ let run ~host ~port ~count =
   let request =
     Eta_http.Request.make "POST" uri
       ~headers:
-        (Eta_http.Core.Header.of_list
-           [
-             ("content-type", "application/json");
-             ("accept", "application/json");
-           ])
+        [
+          ("content-type", "application/json");
+          ("accept", "application/json");
+        ]
       ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
   in
   let policy =

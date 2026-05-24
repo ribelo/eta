@@ -4,7 +4,6 @@
  (private_modules
   blocking_runtime
   effect_ast
-  effect_view
   island_runtime
   runtime_observability
   runtime_supervisor)
