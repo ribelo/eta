@@ -1,6 +1,7 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 module Body = Eta_http_body.Stream
+module Body_source = Eta_http_body.Source
 module Connect = Eta_http_transport.Connect
 module Dispatch = Eta_http_transport.Dispatch
 module Error = Eta_http_error.Error
@@ -154,29 +155,18 @@ let rec h2_write_stream writer body =
            h2_write_chunk writer chunk
            |> Eta.Effect.bind (fun () -> h2_write_stream writer body))
 
-let h2_write_body writer = function
-  | Request.Empty -> Eta.Effect.unit
-  | Fixed chunks -> chunks |> List.map (h2_write_chunk writer) |> Eta.Effect.concat
-  | Stream body -> h2_write_stream writer body
-  | Rewindable_stream { make; _ } -> h2_write_stream writer (make ())
-
-let h2_owned_body = function
-  | Request.Empty -> (Request.Empty, None)
-  | Fixed _ as body -> (body, None)
-  | Stream body -> (Request.Stream body, Some body)
-  | Rewindable_stream { make; _ } ->
-      let body = make () in
-      (Request.Stream body, Some body)
+let h2_write_body writer request_body upload =
+  match upload with
+  | Some { Body_source.stream; _ } -> h2_write_stream writer stream
+  | None -> (
+      match request_body with
+      | Request.Empty -> Eta.Effect.unit
+      | Fixed chunks ->
+          chunks |> List.map (h2_write_chunk writer) |> Eta.Effect.concat
+      | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
 
 let h2_close_request_body writer =
   Eta.Effect.sync (fun () -> try H2.Body.Writer.close writer with _ -> ())
-
-let h2_release_upload writer body =
-  h2_close_request_body writer
-  |> Eta.Effect.bind (fun () ->
-         match body with
-         | None -> Eta.Effect.unit
-         | Some body -> Body.discard body)
 
 let h2_response_headers response =
   H2.Headers.to_list response.H2.Response.headers
@@ -324,25 +314,25 @@ let request_h2_on_connection connection request url =
       resolve_error error;
       Eta.Effect.fail error
   | Ok opened ->
-      let upload_body, upload_source = h2_owned_body request.body in
-      let write_request =
-        h2_write_body opened.request_body upload_body
-        |> Eta.Effect.bind (fun () -> h2_close_request_body opened.request_body)
-        |> Eta.Effect.catch (fun error ->
-               if not !response_started then resolve_error error;
-               Eta.Effect.fail error)
-      in
-      let response_or_writer =
-        Eta.Effect.race
-          [
-            wait_for_response ();
-            (write_request |> Eta.Effect.bind (fun () -> wait_for_response ()));
-          ]
-      in
-      Eta.Effect.scoped
-        (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-           ~release:(fun () -> h2_release_upload opened.request_body upload_source)
-        |> Eta.Effect.bind (fun () -> response_or_writer)))
+      Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
+          let write_request =
+            h2_write_body opened.request_body request.body upload
+            |> Eta.Effect.bind (fun () -> h2_close_request_body opened.request_body)
+            |> Eta.Effect.catch (fun error ->
+                   if not !response_started then resolve_error error;
+                   Eta.Effect.fail error)
+          in
+          let response_or_writer =
+            Eta.Effect.race
+              [
+                wait_for_response ();
+                (write_request |> Eta.Effect.bind (fun () -> wait_for_response ()));
+              ]
+          in
+          Eta.Effect.scoped
+            (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+               ~release:(fun () -> h2_close_request_body opened.request_body)
+            |> Eta.Effect.bind (fun () -> response_or_writer))))
 
 let make_h1 ~sw ~net ?authenticator
     ?(max_response_body_bytes = default_max_response_body_bytes) () =

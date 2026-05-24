@@ -24,5 +24,13 @@ let body_chunks t =
   | Empty -> 0
   | Fixed chunks -> List.length chunks
   | Stream _ | Rewindable_stream _ -> -1
+
+let body_source = function
+  | Empty -> Eta_http_body.Source.Empty
+  | Fixed chunks -> Eta_http_body.Source.Fixed chunks
+  | Stream body -> Eta_http_body.Source.Stream body
+  | Rewindable_stream { length; make } ->
+      Eta_http_body.Source.Rewindable_stream { length; make }
+
 let method_value t = Eta_http_core.Method.of_string t.method_
 let url t = Eta_http_core.Url.of_string t.uri

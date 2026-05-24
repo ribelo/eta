@@ -52,6 +52,55 @@ let test_body_stream_reader_release_once () =
     |> Eta_test.Expect.expect_ok);
   Alcotest.(check int) "release once" 1 !released
 
+let test_body_source_owned_stream_releases_on_scope_exit () =
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let released = ref 0 in
+  let stream =
+    Eta_http.Body.Stream.of_bytes
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      [ Bytes.of_string "abc" ]
+  in
+  let effect =
+    Eta_http.Body.Source.with_owned_stream
+      (Eta_http.Body.Source.stream stream)
+      (function
+        | None -> Alcotest.fail "expected owned stream"
+        | Some owned ->
+            Alcotest.(check (option int)) "length" None owned.length;
+            Eta.Effect.unit)
+  in
+  ignore (Eta.Runtime.run rt effect |> Eta_test.Expect.expect_ok);
+  Alcotest.(check int) "released" 1 !released
+
+let test_body_source_rewindable_stream_is_owned_per_call () =
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let made = ref 0 in
+  let released = ref 0 in
+  let source =
+    Eta_http.Body.Source.rewindable ~length:3 (fun () ->
+        incr made;
+        Eta_http.Body.Stream.of_bytes
+          ~release:(fun () ->
+            incr released;
+            Eta.Effect.unit)
+          [ Bytes.of_string "abc" ])
+  in
+  let run_once () =
+    Eta_http.Body.Source.with_owned_stream source (function
+      | None -> Alcotest.fail "expected owned stream"
+      | Some owned ->
+          Alcotest.(check (option int)) "length" (Some 3) owned.length;
+          Eta_http.Body.Stream.read_all owned.stream |> Eta.Effect.map ignore)
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  run_once ();
+  run_once ();
+  Alcotest.(check int) "made" 2 !made;
+  Alcotest.(check int) "released" 2 !released
+
 let test_body_stream_read_all_caps_default () =
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   let stream =
@@ -219,4 +268,3 @@ let test_gzip_transducer_decodes_concatenated_members () =
     |> Eta_test.Expect.expect_ok
   in
   Alcotest.(check string) "body" "hello world" (Bytes.to_string body)
-

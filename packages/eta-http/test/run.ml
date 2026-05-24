@@ -29,6 +29,10 @@ let () =
           Alcotest.test_case "release once" `Quick test_body_stream_release_once;
           Alcotest.test_case "reader release once" `Quick
             test_body_stream_reader_release_once;
+          Alcotest.test_case "source owned stream release" `Quick
+            test_body_source_owned_stream_releases_on_scope_exit;
+          Alcotest.test_case "source rewindable stream ownership" `Quick
+            test_body_source_rewindable_stream_is_owned_per_call;
           Alcotest.test_case "read_all caps default" `Quick
             test_body_stream_read_all_caps_default;
           Alcotest.test_case "chunked trailers" `Quick

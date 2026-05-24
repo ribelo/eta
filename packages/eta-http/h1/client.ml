@@ -3,6 +3,7 @@
 open Eta
 
 module Body = Eta_http_body.Stream
+module Body_source = Eta_http_body.Source
 module Chunked = Eta_http_body.Chunked
 module Connect = Eta_http_transport.Connect
 module Error = Eta_http_error.Error
@@ -92,10 +93,12 @@ let write_body = function
   | Fixed chunks -> Write.Fixed chunks
   | Stream _ | Rewindable_stream _ -> Write.Empty
 
-let request_body_stream = function
-  | Empty | Fixed _ -> None
-  | Stream body -> Some (None, body)
-  | Rewindable_stream { length; make } -> Some (length, make ())
+let request_body_source = function
+  | Empty -> Body_source.Empty
+  | Fixed chunks -> Body_source.Fixed chunks
+  | Stream body -> Body_source.Stream body
+  | Rewindable_stream { length; make } ->
+      Body_source.Rewindable_stream { length; make }
 
 let write_sync request f =
   Effect.sync (fun () ->
@@ -159,25 +162,23 @@ let write_headers_effect request flow ~headers =
   |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
 
 let write_request flow (request : request) =
-  match request_body_stream request.body with
-  | None ->
-      Effect.sync (fun () ->
-          try
-            Write.write_to_flow flow ~method_:request.method_ ~url:request.url
-              ~headers:request.headers ~body:(write_body request.body)
-          with _ -> Error (io_closed request Http_request))
-      |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
-  | Some (length, body) ->
-      let headers = stream_headers request length in
-      Effect.scoped
-        (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-             Body.discard body)
+  Body_source.with_owned_stream (request_body_source request.body) (function
+    | None ->
+        Effect.sync (fun () ->
+            try
+              Write.write_to_flow flow ~method_:request.method_ ~url:request.url
+                ~headers:request.headers ~body:(write_body request.body)
+            with _ -> Error (io_closed request Http_request))
+        |> Effect.bind (function
+             | Ok () -> Effect.unit
+             | Error error -> Effect.fail error)
+    | Some { length; stream } ->
+        let headers = stream_headers request length in
+        write_headers_effect request flow ~headers
         |> Effect.bind (fun () ->
-               write_headers_effect request flow ~headers
-               |> Effect.bind (fun () ->
-                      if transfer_encoding_chunked headers then
-                        write_chunked_stream request flow body
-                      else write_raw_stream request flow body)))
+               if transfer_encoding_chunked headers then
+                 write_chunked_stream request flow stream
+               else write_raw_stream request flow stream))
 
 let is_chunked headers =
   match Header.get "transfer-encoding" headers with
