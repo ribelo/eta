@@ -333,13 +333,17 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
   schedule_read ();
   Eta_http_body.Stream.of_reader ~release:release_body read_next
 
+type body_async_state = {
+  mutable scheduled : bool;
+  mutable eof : bool;
+}
+
 let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error t stream body =
   let mutex = Eio.Mutex.create () in
   let condition = Eio.Condition.create () in
   let events = Queue.create () in
-  let scheduled = ref false in
-  let eof = ref false in
+  let state = { scheduled = false; eof = false } in
   let notify () = Eio.Condition.broadcast condition in
   let with_lock f =
     Eio.Mutex.lock mutex;
@@ -348,9 +352,9 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
   let finish_eof () =
     let first =
       with_lock (fun () ->
-          if !eof then false
+          if state.eof then false
           else (
-            eof := true;
+            state.eof <- true;
             Queue.push Body_eof events;
             true))
     in
@@ -363,20 +367,20 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     let chunk = Bytes.create len in
     Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
     with_lock (fun () ->
-        scheduled := false;
+        state.scheduled <- false;
         Queue.push (Body_chunk chunk) events);
     notify ()
   in
   let rec schedule_read () =
     let should_schedule =
       with_lock (fun () ->
-          (not !scheduled) && (not !eof) && not (H2.Body.Reader.is_closed body))
+          (not state.scheduled) && (not state.eof) && not (H2.Body.Reader.is_closed body))
     in
     if should_schedule then (
-      with_lock (fun () -> scheduled := true);
+      with_lock (fun () -> state.scheduled <- true);
       H2.Body.Reader.schedule_read body
         ~on_eof:(fun () ->
-          with_lock (fun () -> scheduled := false);
+          with_lock (fun () -> state.scheduled <- false);
           finish_eof ())
         ~on_read:(fun bs ~off ~len ->
           push_chunk bs ~off ~len;
@@ -401,7 +405,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
         let event = Queue.take events in
         Eio.Mutex.unlock mutex;
         `Event event
-    | None when !eof ->
+    | None when state.eof ->
         Eio.Mutex.unlock mutex;
         `Event Body_eof
     | None when H2.Body.Reader.is_closed body ->
@@ -420,7 +424,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
               let event = Queue.take events in
               Eio.Mutex.unlock mutex;
               `Event event
-          | None when !eof ->
+          | None when state.eof ->
               Eio.Mutex.unlock mutex;
               `Event Body_eof
           | None when H2.Body.Reader.is_closed body ->
