@@ -1,14 +1,12 @@
 ---
 id: Eta-hac
 title: "P0: Typed_fail exception key counter is not domain-safe"
-status: closed
+status: open
 priority: 0
 issue_type: bug
 created_at: 2026-05-24T12:50:24.520Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Fixed — Typed_fail uses Atomic.fetch_and_add for domain-safe keys.
+updated_at: 2026-05-24T12:50:30.298Z
 dependencies:
   - issue_id: Eta-hac
     depends_on_id: Eta-4ob

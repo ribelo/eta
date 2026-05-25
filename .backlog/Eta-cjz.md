@@ -1,14 +1,12 @@
 ---
 id: Eta-cjz
 title: "eta-otel: Span attribution findings"
-status: closed
+status: open
 priority: 1
 issue_type: epic
 created_at: 2026-05-24T12:49:44.342Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Closed — Eta-b4i is fixed and verified by eta-otel tests.
+updated_at: 2026-05-24T12:49:51.605Z
 dependencies:
   - issue_id: Eta-cjz
     depends_on_id: Eta-cu7

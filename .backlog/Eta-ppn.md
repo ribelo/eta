@@ -1,15 +1,12 @@
 ---
 id: Eta-ppn
 title: "P1: Pool expiry over-releases capacity semaphore, violating max_size"
-status: closed
+status: open
 priority: 1
 issue_type: bug
 created_at: 2026-05-24T12:50:24.620Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Fixed — idle expiry cleanup no longer over-releases pool capacity
-  permits; regression test added.
+updated_at: 2026-05-24T12:50:34.861Z
 dependencies:
   - issue_id: Eta-ppn
     depends_on_id: Eta-4ob

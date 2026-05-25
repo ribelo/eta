@@ -2,15 +2,12 @@
 id: Eta-2ap
 title: "H-Q4a: Scripted fixture interop (curl, nghttp2, production-like local
   server) replaces public-server scope"
-status: closed
+status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-22T15:25:54.321Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Proven — h_q4a_interop_matrix contains curl/nghttp2/nginx/Caddy
-  scripted fixtures; run_matrix.sh passes 25/25 rows.
+updated_at: 2026-05-22T19:30:33.727Z
 dependencies:
   - issue_id: Eta-2ap
     depends_on_id: Eta-adr

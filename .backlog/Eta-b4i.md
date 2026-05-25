@@ -2,15 +2,12 @@
 id: Eta-b4i
 title: "P1: add_attr/add_link use global latest-open span, corrupting concurrent
   trace attributes"
-status: closed
+status: open
 priority: 1
 issue_type: bug
 created_at: 2026-05-24T12:53:30.085Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Fixed — runtime passes the active span id to explicit
-  add_attr_to/add_link_to tracer methods; eta-otel concurrency regression added.
+updated_at: 2026-05-24T12:53:35.827Z
 dependencies:
   - issue_id: Eta-b4i
     depends_on_id: Eta-cjz

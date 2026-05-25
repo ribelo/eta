@@ -1,15 +1,12 @@
 ---
 id: Eta-adr
 title: "Phase H-Q: Quality, conformance, security for eta-http"
-status: closed
+status: open
 priority: 2
 issue_type: epic
 created_at: 2026-05-22T14:41:20.161Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Closed — H-Q1a, H-Q2, H-Q3, H-Q5, H-Q4a, H-G1, H-P1, and H-Ops1
-  all now have explicit scratch evidence and verdicts.
+updated_at: 2026-05-22T14:41:40.596Z
 dependencies:
   - issue_id: Eta-adr
     depends_on_id: Eta-7ov

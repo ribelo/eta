@@ -2,15 +2,12 @@
 id: Eta-aea
 title: "H-Ops1: eta-http dependency closure, license, build-time, and CVE
   process are acceptable for an Eta core package"
-status: closed
+status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-22T15:25:54.624Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Closed as risk-documented — h_ops1_dependency_posture records
-  closure, timings, licenses, CVE monitoring, pin policy, and TLS advisory risk.
+updated_at: 2026-05-22T19:03:57.876Z
 dependencies:
   - issue_id: Eta-aea
     depends_on_id: Eta-adr

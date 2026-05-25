@@ -26,7 +26,20 @@ type sample_set = {
   error : string option;
 }
 
-let warmup_iterations = 10
+let env_int name default =
+  match Sys.getenv_opt name with
+  | None | Some "" -> default
+  | Some s -> (
+      match int_of_string_opt (String.trim s) with
+      | Some n -> n
+      | None -> default)
+
+let warmup_iterations = env_int "ETA_PERF_WARMUP" 10
+let iterations_override = env_int "ETA_PERF_ITERS" 0
+let timeout_ms = env_int "ETA_PERF_TIMEOUT_MS" 2000
+
+let effective_iterations scenario_iters =
+  if iterations_override > 0 then iterations_override else scenario_iters
 
 let server_name = function
   | Types.Nginx -> "nginx"
@@ -100,14 +113,14 @@ let eta_protocol = function
 let eta_timeout_error scenario url =
   Eta_http.Error.make ~protocol:(eta_protocol scenario.protocol)
     ~method_:(method_name scenario.method_) ~uri:url
-    (Total_request_timeout { timeout_ms = Some 2000 })
+    (Total_request_timeout { timeout_ms = Some timeout_ms })
 
 let run_eta_once ~rt ~client ~scenario ~url request =
   let t0 = Unix.gettimeofday () in
   let result =
     Eta_http.request client request
     |> Eta.Effect.bind consume_eta_response
-    |> Eta.Effect.timeout_as (Eta.Duration.seconds 2)
+    |> Eta.Effect.timeout_as (Eta.Duration.ms timeout_ms)
          ~on_timeout:(eta_timeout_error scenario url)
     |> Eta.Runtime.run rt
   in
@@ -136,8 +149,9 @@ let run_eta ~env ~scenario ~url ~cert_dir =
         let request = make_eta_request scenario url body in
         ignore (run_eta_once ~rt ~client ~scenario ~url request)
       done;
-      for i = 1 to scenario.iterations do
-        if i mod 10 = 0 then Printf.printf "    eta %d/%d\n%!" i scenario.iterations;
+      let iters = effective_iterations scenario.iterations in
+      for i = 1 to iters do
+        if i mod 10 = 0 then Printf.printf "    eta %d/%d\n%!" i iters;
         let request = make_eta_request scenario url body in
         samples := run_eta_once ~rt ~client ~scenario ~url request :: !samples
       done;
@@ -278,7 +292,8 @@ let run_go ~go_helper ~scenario ~url =
       (Filename.quote url)
       (Filename.quote (protocol_name scenario.protocol))
       (match scenario.transport with Types.Plain -> "false" | TLS -> "true")
-      scenario.body_bytes warmup_iterations scenario.iterations
+      scenario.body_bytes warmup_iterations
+      (effective_iterations scenario.iterations)
   in
   match Util.run_cmd_out cmd with
   | Ok lines -> parse_go_samples lines
@@ -320,7 +335,8 @@ let run_curl_cli ~scenario ~url ~temp_dir =
   for _ = 1 to warmup_iterations do
     ignore (run_curl_once ~scenario ~url ~body_path)
   done;
-  List.init scenario.iterations (fun _ -> run_curl_once ~scenario ~url ~body_path)
+  List.init (effective_iterations scenario.iterations)
+    (fun _ -> run_curl_once ~scenario ~url ~body_path)
 
 let start_server scenario ~temp_dir =
   ignore (Fixtures.generate ~dir:temp_dir);

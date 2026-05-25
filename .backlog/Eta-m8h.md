@@ -1,15 +1,12 @@
 ---
 id: Eta-m8h
 title: "H-G1: eta-http h2 response/trailer model is forward-compatible with gRPC"
-status: closed
+status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-22T15:25:54.422Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Proven — h_g1_grpc_forward_compat fixture exposes raw body bytes
-  and grpc-status trailers independently; response_consumer passes.
+updated_at: 2026-05-22T19:03:57.674Z
 dependencies:
   - issue_id: Eta-m8h
     depends_on_id: Eta-adr

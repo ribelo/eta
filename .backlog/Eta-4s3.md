@@ -1,15 +1,12 @@
 ---
 id: Eta-4s3
 title: "P1: Channel.recv loses messages on cancellation race with delivery"
-status: closed
+status: open
 priority: 1
 issue_type: bug
 created_at: 2026-05-24T12:50:24.419Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Fixed — channel receive delivery is claim-based and cancellation
-  requeues unclaimed messages; regression test added.
+updated_at: 2026-05-24T12:50:34.763Z
 dependencies:
   - issue_id: Eta-4s3
     depends_on_id: Eta-4ob

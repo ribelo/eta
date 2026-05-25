@@ -1,16 +1,12 @@
 ---
 id: Eta-dgp
 title: "P3: TLS revocation gap; stale README; empty h2/frame.ml skeleton"
-status: closed
+status: open
 priority: 3
 issue_type: bug
 created_at: 2026-05-24T12:52:41.211Z
 created_by: backlog
-updated_at: 2026-05-24T16:00:37Z
-closed_at: 2026-05-24T16:00:37Z
-close_reason: "Fixed: README status/limits now match shipped eta-http,
-  revocation is documented as unsupported/delegated in v1, and H2.Frame
-  exposes concrete frame helpers used by tests."
+updated_at: 2026-05-24T12:52:47.973Z
 dependencies:
   - issue_id: Eta-dgp
     depends_on_id: Eta-0xe

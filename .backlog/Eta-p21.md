@@ -2,16 +2,12 @@
 id: Eta-p21
 title: "P1: h2 request path writes entire body before reading response — needs
   owner-loop"
-status: closed
+status: open
 priority: 1
 issue_type: bug
 created_at: 2026-05-24T12:51:57.656Z
 created_by: backlog
-updated_at: 2026-05-24T16:00:37Z
-closed_at: 2026-05-24T16:00:37Z
-close_reason: "Fixed: Eta_http.H2.Connection owns reader/writer fibers,
-  Client.make reuses origin-scoped h2 connections, and eta-http tests cover
-  concurrent streams plus early response before a blocked upload."
+updated_at: 2026-05-24T12:52:02.651Z
 dependencies:
   - issue_id: Eta-p21
     depends_on_id: Eta-0xe

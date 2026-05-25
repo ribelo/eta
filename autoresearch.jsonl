@@ -1,0 +1,1 @@
+{"type":"config","name":"Eta HTTP warm-loop performance vs Go net/http","metricName":"eta_total_ms","metricUnit":"ms","bestDirection":"lower"}

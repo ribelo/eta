@@ -1,37 +1,34 @@
 ---
 id: Eta-onp
-title: "P3: Keep Effect.sync canonical; remove stale old spelling"
+title: "P3: Rename Effect.sync to Effect.sync (no red test — pure rename)"
 status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-24T09:07:18.743Z
 created_by: backlog
-updated_at: 2026-05-24T11:13:37Z
-close_reason: "Closed by user correction. Effect.sync is the canonical API; no thunk alias was added. Verified no stale dotted old spelling remains outside journal.md and scratch/, which are excluded by user instruction."
+updated_at: 2026-05-24T11:54:09.787Z
+closed_at: 2026-05-24T11:54:09.787Z
+close_reason: Fixed — part of code review remediation commit (44f46a7)
 ---
 
-# P3: Keep Effect.sync canonical; remove stale old spelling
+# P3: Rename Effect.sync to Effect.sync (no red test — pure rename)
 
 ## description
 
-Issue: the review task was superseded by the user correction that
-`Effect.sync` is the canonical API. Do not introduce a thunk alias or migrate
-callers away from `Effect.sync`.
+Issue: packages/eta/effect.mli line 53 exposes 'val sync : (unit -> 'a) -> ('a, 'err) t'. Journal records the design preference for thunk since Eio has no JS-style sync/async function-color split; sync carries misleading Effect-TS connotations.
 
 Location: packages/eta/effect.mli line 53 (val sync)
 
 ## design
 
-No red test. Pure metadata/codebase cleanup; behavior is unchanged.
+No red test. Pure rename; behavior is unchanged.
 
 Fix shape:
-- Keep `Effect.sync` as the public API and documented spelling.
-- Do not add a thunk alias.
-- Remove stale dotted old spelling from tracked files, except historical
-  `journal.md` and `scratch/` content which the user explicitly excluded.
+- Add 'val thunk : (unit -> 'a) -> ('a, 'err) t' as the primary name.
+- Either remove val sync (if SemVer permits at this stage), or keep it as a deprecated alias for one release with [@@ocaml.deprecated 'use Effect.sync'].
+- Migrate internal call sites (runtime.ml, transport/connect.ml, client/*, h1/*, h2/*, etc.) to Effect.sync.
+- Update README/docs and any mli docstrings that mention sync.
 
 ## acceptance criteria
 
-`Effect.sync` exists and remains the documented form. No thunk alias exists.
-Search for the stale dotted old spelling has no matches outside `journal.md`
-and `scratch/`.
+Effect.sync exists and is the documented form. Effect.sync is either removed or deprecated with a clear pointer to Effect.sync. All in-repo callers use Effect.sync.

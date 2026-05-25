@@ -6,7 +6,7 @@ priority: 1
 issue_type: epic
 created_at: 2026-05-24T12:49:44.643Z
 created_by: backlog
-updated_at: 2026-05-24T16:26:57Z
+updated_at: 2026-05-24T12:49:51.100Z
 dependencies:
   - issue_id: Eta-0xe
     depends_on_id: Eta-cu7
@@ -24,9 +24,3 @@ P0/P1/P2/P3 findings from the 2026-05-24 code review affecting packages/eta-http
 ## acceptance criteria
 
 All P0 and P1 child tasks closed with fixes + tests. P2 tasks triaged. P3 tasks acknowledged.
-
-## 2026-05-24 status
-
-P0/P1 eta-http child tasks are closed, including Eta-p21. Eta-r4c is closed:
-the h2 reader now filters interim 1xx response HEADERS before ocaml-h2. The
-epic stays open because P2 children Eta-1xs, Eta-bdy, and Eta-dwm remain open.

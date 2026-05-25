@@ -2,15 +2,12 @@
 id: Eta-k4r
 title: "H-P1: eta-http v1 has explicit product semantics for redirects,
   trailers, HEAD, early responses; cookies are out-of-scope"
-status: closed
+status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-22T15:25:54.523Z
 created_by: backlog
-updated_at: 2026-05-24T15:19:28Z
-closed_at: 2026-05-24T15:19:28Z
-close_reason: Documented — h_p1_product_semantics records redirect, cookie,
-  trailer, HEAD, early-response, and pipelining defaults as v1 contract.
+updated_at: 2026-05-22T19:03:57.775Z
 dependencies:
   - issue_id: Eta-k4r
     depends_on_id: Eta-adr
