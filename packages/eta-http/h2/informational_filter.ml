@@ -189,29 +189,30 @@ let handle_continuation t ~flags ~stream_id payload =
         t.headers <- None;
         complete_headers t pending)
 
-let pass_frame t frame_type flags stream_id frame =
+let pass_frame t frame_type flags stream_id ~off ~total =
   if frame_type = frame_rst_stream then Hashtbl.remove t.final_seen stream_id;
   if frame_type = frame_data && flags land flag_end_stream <> 0 then
     Hashtbl.remove t.final_seen stream_id;
-  Buffer.add_string t.output frame;
+  Buffer.add_substring t.output t.pending off total;
   Ok ()
 
-let handle_frame t frame =
-  let length = frame_length frame 0 in
-  let frame_type = frame_type frame 0 in
-  let flags = frame_flags frame 0 in
-  let stream_id = frame_stream_id frame 0 in
-  let payload = String.sub frame 9 length in
+let handle_frame t ~off ~total =
+  let length = frame_length t.pending off in
+  let frame_type = frame_type t.pending off in
+  let flags = frame_flags t.pending off in
+  let stream_id = frame_stream_id t.pending off in
   match (t.headers, frame_type) with
   | Some _, frame when frame <> frame_continuation ->
       error "non-CONTINUATION frame arrived while a header block is open"
   | _, frame when frame = frame_headers && stream_id > 0 ->
+      let payload = String.sub t.pending (off + 9) length in
       handle_headers t ~flags ~stream_id payload
   | _, frame when frame = frame_continuation -> (
+      let payload = String.sub t.pending (off + 9) length in
       match handle_continuation t ~flags ~stream_id payload with
       | Error _ as error -> error
       | Ok () -> Ok ())
-  | _ -> pass_frame t frame_type flags stream_id frame
+  | _ -> pass_frame t frame_type flags stream_id ~off ~total
 
 let rec process t =
   let available = String.length t.pending - t.pending_off in
@@ -221,9 +222,9 @@ let rec process t =
     let total = 9 + length in
     if available < total then Ok ()
     else
-      let frame = String.sub t.pending t.pending_off total in
+      let frame_off = t.pending_off in
       t.pending_off <- t.pending_off + total;
-      match handle_frame t frame with
+      match handle_frame t ~off:frame_off ~total with
       | Error _ as error -> error
       | Ok () -> process t
 
