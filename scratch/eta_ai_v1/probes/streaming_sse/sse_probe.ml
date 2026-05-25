@@ -1,7 +1,7 @@
 open Eta
 
-module Body = Eta_http.Body.Stream
-module Http_error = Eta_http.Error
+module Body = Http.Body.Stream
+module Http_error = Http.Error
 module Json = Yojson.Safe
 
 type provider = Openai | Anthropic | Openrouter

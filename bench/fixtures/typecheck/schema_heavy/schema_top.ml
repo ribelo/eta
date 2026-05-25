@@ -1,4 +1,4 @@
-open Eta_schema
+open Schema
 
 type event =
   | One of Schema_m01.t

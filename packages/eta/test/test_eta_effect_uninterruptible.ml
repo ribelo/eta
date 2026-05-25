@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 open Test_eta_support
 
 let test_effect_uninterruptible_defers_race_cancellation () =

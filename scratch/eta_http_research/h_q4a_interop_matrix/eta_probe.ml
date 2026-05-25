@@ -90,23 +90,23 @@ let authenticator ~insecure =
 
 let request_of_args args url =
   let headers =
-    match Eta_http.Core.Header.of_list (List.rev args.headers) with
+    match Http.Core.Header.of_list (List.rev args.headers) with
     | Ok headers -> headers
     | Error kind ->
         failf "eta_probe outcome=error stage=headers detail=%S"
-          (Eta_http.Error.kind_name kind)
+          (Http.Error.kind_name kind)
   in
   let body =
-    if args.body_size <= 0 then Eta_http.Request.Empty
-    else Eta_http.Request.Fixed [ Bytes.make args.body_size 'x' ]
+    if args.body_size <= 0 then Http.Request.Empty
+    else Http.Request.Fixed [ Bytes.make args.body_size 'x' ]
   in
-  Eta_http.Request.make ~headers ~body args.method_ url
+  Http.Request.make ~headers ~body args.method_ url
 
 let rec drain_body ?limit total chunks body =
   match limit with
   | Some limit when chunks >= limit -> Eta.Effect.pure (total, chunks, false)
   | _ -> (
-      Eta_http.Body.Stream.read body
+      Http.Body.Stream.read body
       |> Eta.Effect.bind (function
            | None -> Eta.Effect.pure (total, chunks, true)
            | Some chunk ->
@@ -114,12 +114,12 @@ let rec drain_body ?limit total chunks body =
                  body))
 
 let header name headers =
-  Eta_http.Core.Header.get name headers |> Option.value ~default:"<none>"
+  Http.Core.Header.get name headers |> Option.value ~default:"<none>"
 
 let one_request rt client args url index =
   let request = request_of_args args url in
-  Eta_http.request client request
-  |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+  Http.request client request
+  |> Eta.Effect.bind (fun (response : Http.Response.t) ->
          drain_body ?limit:args.read_chunks 0 0 response.body
          |> Eta.Effect.bind (fun (body_bytes, chunks, complete) ->
                 let print trailers =
@@ -132,13 +132,13 @@ let one_request rt client args url index =
                     (header "x-trailer" trailers)
                 in
                 if complete then response.trailers () |> Eta.Effect.map print
-                else Eta.Effect.sync (fun () -> print Eta_http.Core.Header.empty)))
+                else Eta.Effect.sync (fun () -> print Http.Core.Header.empty)))
   |> Eta.Runtime.run rt
   |> function
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error cause ->
       failf "eta_probe outcome=error repeat=%d detail=%S" index
-        (Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause)
+        (Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause)
 
 let run env =
   let args = default_args () in
@@ -149,16 +149,16 @@ let run env =
   let authenticator = authenticator ~insecure:args.insecure in
   let client =
     if args.h1_only then
-      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env) ~authenticator
+      Http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env) ~authenticator
         ~max_response_body_bytes:args.max_h1_bytes ()
     else
-      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env) ~authenticator
+      Http.Client.make ~sw ~net:(Eio.Stdenv.net env) ~authenticator
         ~max_response_body_bytes:args.max_h1_bytes ()
   in
   for index = 1 to args.repeat do
     one_request rt client args url index
   done;
   if Option.is_none args.read_chunks then
-    Eta_http.Client.shutdown client |> Eta.Runtime.run rt |> ignore
+    Http.Client.shutdown client |> Eta.Runtime.run rt |> ignore
 
 let () = Eio_main.run run

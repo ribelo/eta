@@ -14,33 +14,33 @@ let run env =
   Eio.Switch.run @@ fun sw ->
   let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let client =
-    Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+    Http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
       ~authenticator:(authenticator ()) ()
   in
   let request =
-    Eta_http.Request.make "GET" "https://api.openai.com/v1/models"
+    Http.Request.make "GET" "https://api.openai.com/v1/models"
   in
-  match Eta.Runtime.run rt (Eta_http.request client request) with
+  match Eta.Runtime.run rt (Http.request client request) with
   | Eta.Exit.Error cause ->
-      Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause |> fail
+      Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause |> fail
   | Eta.Exit.Ok response ->
       let content_length =
-        Eta_http.Core.Header.get "content-length" response.headers
+        Http.Core.Header.get "content-length" response.headers
         |> Option.value ~default:"<none>"
       in
       let transfer_encoding =
-        Eta_http.Core.Header.get "transfer-encoding" response.headers
+        Http.Core.Header.get "transfer-encoding" response.headers
         |> Option.value ~default:"<none>"
       in
       let body =
-        Eta.Runtime.run rt (Eta_http.Body.Stream.read_all response.body)
+        Eta.Runtime.run rt (Http.Body.Stream.read_all response.body)
       in
       let body_len =
         match body with
         | Eta.Exit.Ok bytes -> Bytes.length bytes
         | Eta.Exit.Error cause ->
             Format.asprintf "body read failed: %a"
-              (Eta.Cause.pp Eta_http.Error.pp)
+              (Eta.Cause.pp Http.Error.pp)
               cause
             |> fail
       in

@@ -1,0 +1,26 @@
+(test
+ (name run)
+ (modules
+  run
+  test_eta_http_support
+  test_eta_http_core
+  test_eta_http_body
+  test_eta_http_url
+  test_eta_http_h1_write
+  test_eta_http_h1_parse
+  test_eta_http_transport
+  test_eta_http_h1_client
+  test_eta_http_retry
+  test_eta_http_observability
+  test_eta_http_tls
+  test_eta_http_h2_state
+  test_eta_http_h2_writer
+  test_eta_http_h2_support
+  test_eta_http_h2_connection
+  test_eta_http_h2_multiplexer
+  test_eta_http_h2_security
+  test_eta_http_alpn_dispatch)
+ (libraries http test alcotest eio_main eio.mock h2 hpack faraday unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

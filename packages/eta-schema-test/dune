@@ -1,4 +1,0 @@
-(library
- (name eta_schema_test)
- (public_name eta.schema_test)
- (libraries eta eta.schema eta.test alcotest))

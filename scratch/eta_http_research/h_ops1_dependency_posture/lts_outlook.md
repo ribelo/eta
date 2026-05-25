@@ -21,6 +21,6 @@ available fixed version that cannot be adopted quickly because the OxCaml
 switch, TLS branch, and transitive packages do not solve together.
 
 The practical mitigation is to keep the TLS stack isolated behind
-`Eta_http.Tls.Config` and `Eta_http.Transport.Connect`, maintain a weekly
+`Http.Tls.Config` and `Http.Transport.Connect`, maintain a weekly
 OSV/OSEC check, and treat TLS/X.509 advisories as release-blocking until the
 fixed branch is proven on the pinned compiler.

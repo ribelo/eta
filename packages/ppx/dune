@@ -1,0 +1,4 @@
+(library
+ (name ppx_eta)
+ (kind ppx_rewriter)
+ (libraries ppxlib))

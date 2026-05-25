@@ -1,5 +1,5 @@
 open Eta
-open Eta_schema
+open Schema
 
 type record3 = { name : string; count : int; active : bool }
 type record6 = { a : string; b : int; c : bool; d : float; e : string option; f : int }

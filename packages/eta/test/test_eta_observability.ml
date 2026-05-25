@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 open Test_eta_support
 
 let test_tracer_manual_spans () =

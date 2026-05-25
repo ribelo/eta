@@ -2,7 +2,7 @@
  (name openai_401)
  (libraries
   eta
-  eta.http
+  http
   eio_main
   ca-certs
   mirage-crypto-rng
@@ -12,7 +12,7 @@
  (name reach_13)
  (libraries
   eta
-  eta.http
+  http
   eio_main
   ca-certs
   mirage-crypto-rng
@@ -22,7 +22,7 @@
  (name honeycomb_h2)
  (libraries
   eta
-  eta.http
+  http
   eio_main
   ca-certs
   mirage-crypto-rng
@@ -32,17 +32,17 @@
  (name stale_idle)
  (libraries
   eta
-  eta.http
+  http
   eio_main
   ca-certs))
 
 (executable
  (name writer_alloc)
- (libraries eta.http))
+ (libraries http))
 
 (executable
  (name parser_alloc)
- (libraries eta.http))
+ (libraries http))
 
 (executable
  (name h2_api_shape)
@@ -54,8 +54,8 @@
 
 (executable
  (name s3_gzip_rss)
- (libraries eta eta.http eio_main ca-certs cstruct))
+ (libraries eta http eio_main ca-certs cstruct))
 
 (executable
  (name s4_envelope_alloc)
- (libraries eta.http h2 eio cstruct))
+ (libraries http h2 eio cstruct))

@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 open Test_eta_support
 
 let test_effect_retry_does_not_retry_interrupt () =

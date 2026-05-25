@@ -12,8 +12,8 @@ Worktree recovery check:
 Package correction:
 
 - Added `packages/eta-redacted/` as the standalone `eta-redacted` library.
-- Kept `Eta.Redacted` as a compatibility alias over `Eta_redacted`.
-- Switched eta-ai API keys and provider auth boundaries to `Eta_redacted`.
+- Kept `Eta.Redacted` as a compatibility alias over `Redacted`.
+- Switched eta-ai API keys and provider auth boundaries to `Redacted`.
 - Generated `eta-redacted.opam` and added explicit eta-redacted dependencies to
   eta, eta-ai, and provider package metadata.
 

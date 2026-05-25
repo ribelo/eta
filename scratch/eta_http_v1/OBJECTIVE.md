@@ -25,7 +25,7 @@ against the 2260 words/frame envelope; defaults.md caveats were removed; ADR
 0003 was promoted to Accepted; V-Http-Q2/V-Http-Q5 were updated with S4
 accepted verdicts; live h2 and 13-endpoint reach still pass. Slices Eta-a45
 (S0), Eta-8s7 (S1), Eta-du3 (S2), Eta-a0h (S3), Eta-qr9 (S4). S5 closed
-PASS locally on 2026-05-23: `Eta_http.Retry_policy.t`, explicit
+PASS locally on 2026-05-23: `Http.Retry_policy.t`, explicit
 `request_with_retry` wrappers, RFC 9110 idempotency classification,
 `Idempotency-Key` opt-in, body replayability gating, `Retry-After`
 delta/date parsing, schedule fallback backoff with full jitter, and ADR 0005
@@ -293,8 +293,8 @@ named. If a probe falsifies, stop and report.
   shape PASS in S2: direct Sans-IO client/server request, write-drain,
   read-feed, response callback, and body reader scheduling compile and run.
   S2 read-adapter cut also PASS: real client/server bytes flow through
-  `Eta_http.H2.Writer`, an Eio source split into 7-byte chunks, and
-  `Eta_http.H2.Multiplexer.read_client_once`, yielding status 200/body
+  `Http.H2.Writer`, an Eio source split into 7-byte chunks, and
+  `Http.H2.Multiplexer.read_client_once`, yielding status 200/body
   `hello-read`. The writer-loop wakeup bridge also PASSes with
   `Eta.Channel` under `Eta.Supervisor.scoped` teardown. Eta-http still owns
   the full real-socket owner-fiber lifecycle, public dispatch, GOAWAY
@@ -453,7 +453,7 @@ Each slice has its own README + smoke target + audit update.
 - `dune-project` package stanza for eta-http.
 - `eta-http.opam` with the §1.2 allowed-deps list.
 - Empty `.ml`/`.mli` files with copyright headers and module documentation.
-- Test harness scaffolding (alcotest + Eta_test).
+- Test harness scaffolding (alcotest + Test).
 - Audit document templates: `audit/dep_usage.md` and `audit/eta_escapes.md`,
   each with the ripgrep command and an empty initial ledger.
 - `audit/run.sh` — script that re-runs both ripgrep commands and updates
@@ -505,8 +505,8 @@ cipher policy via h1 path.
 
 **Acceptance**:
 - All §S1 modules implemented.
-- Public API: `Eta_http.Client.t`, `Eta_http.request`, `Eta_http.Request.t`,
-  `Eta_http.Response.t`, `Eta_http.Error.t`.
+- Public API: `Http.Client.t`, `Http.request`, `Http.Request.t`,
+  `Http.Response.t`, `Http.Error.t`.
 - Smoke target passes against real OpenAI (401).
 - Reach probe passes 13/13.
 - Audit catalogs updated with every external call site and Eta-escape
@@ -618,11 +618,11 @@ bounded resource use under each at default config; precise typed-error
 variants from expanded taxonomy.
 
 Closeout evidence:
-- `Eta_http.H2.Security.observe` scans raw server-to-client HTTP/2 frame bytes
+- `Http.H2.Security.observe` scans raw server-to-client HTTP/2 frame bytes
   in the real h2 read adapter before `H2.Client_connection.read`.
 - SETTINGS churn, response-header churn, GOAWAY churn, single HEADERS block
   cap, and HEADERS+CONTINUATION cap have focused real-adapter tests.
-- `Eta_http.H2.Security.validate_headers` rejects empty, NUL-containing,
+- `Http.H2.Security.validate_headers` rejects empty, NUL-containing,
   uppercase, overlong-name, and overlong-value h2 response headers; the public
   h2 client invokes it after `ocaml-h2` header decode.
 - `scratch/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six
@@ -673,7 +673,7 @@ default but caller can opt in via `idempotency_key` or explicit
 
 **Acceptance**:
 - §S5 modules implemented.
-- Public API: `Eta_http.Retry_policy.t` with default + ergonomic
+- Public API: `Http.Retry_policy.t` with default + ergonomic
   constructors.
 - Idempotency map documented with RFC 9110 §9.2.2 citations.
 - Body replayability surface settled with ADR 0005.
@@ -714,7 +714,7 @@ h2 request, eta-otel-using-eta-http with recursion avoided).
 - Closes Eta-2s0 (H-O1).
 - ADR 0006 records the recursion-avoidance pattern.
 
-**Closeout 2026-05-23**: PASS locally. `Eta_http.Observability.{Semconv,Tracer,Meter}`
+**Closeout 2026-05-23**: PASS locally. `Http.Observability.{Semconv,Tracer,Meter}`
 is public, the in-memory tracer/meter fixtures pass, ADR 0006 is Accepted,
 Honeycomb h2 returns 19 response bytes, and the 13-endpoint reach probe still
 passes. Audit reports 283 dependency sites and 1 classified Structural escape

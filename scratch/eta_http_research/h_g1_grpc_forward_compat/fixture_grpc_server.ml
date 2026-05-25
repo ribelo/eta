@@ -1,6 +1,6 @@
 let iovecs_to_string iovecs =
   iovecs
-  |> Eta_http.H2.Writer.cstructs_of_iovecs
+  |> Http.H2.Writer.cstructs_of_iovecs
   |> List.map Cstruct.to_string
   |> String.concat ""
 

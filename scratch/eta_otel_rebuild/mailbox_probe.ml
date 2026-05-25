@@ -1,5 +1,5 @@
 open Eta
-open Eta_stream
+open Stream
 
 type t = {
   mailbox : int Mailbox.t;

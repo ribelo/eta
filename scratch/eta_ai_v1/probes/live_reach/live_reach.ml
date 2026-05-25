@@ -1,6 +1,6 @@
-module A = Eta_ai
+module A = Ai
 module E = Eta.Effect
-module H = Eta_http
+module H = Http
 
 type probe = {
   name : string;
@@ -159,7 +159,7 @@ let run_probe rt client probe =
           false)
 
 let compat_provider ~name ~base_url () =
-  Eta_ai_openai_compat.provider ~name ~base_url ()
+  Ai_openai_compat.provider ~name ~base_url ()
 
 let probes =
   [
@@ -169,7 +169,7 @@ let probes =
       model = "gpt-4o-mini";
       run =
         (fun client ~api_key request ->
-          Eta_ai_openai.chat_completions client ~api_key request);
+          Ai_openai.chat_completions client ~api_key request);
     };
     {
       name = "anthropic";
@@ -177,7 +177,7 @@ let probes =
       model = "claude-haiku-4-5-20251001";
       run =
         (fun client ~api_key request ->
-          Eta_ai_anthropic.messages client ~api_key request);
+          Ai_anthropic.messages client ~api_key request);
     };
     {
       name = "openrouter";
@@ -185,7 +185,7 @@ let probes =
       model = "openai/gpt-4o-mini";
       run =
         (fun client ~api_key request ->
-          Eta_ai_openrouter.responses client ~api_key request);
+          Ai_openrouter.responses client ~api_key request);
     };
     {
       name = "mistral";
@@ -197,7 +197,7 @@ let probes =
             compat_provider ~name:"mistral" ~base_url:"https://api.mistral.ai"
               ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "groq";
@@ -209,7 +209,7 @@ let probes =
             compat_provider ~name:"groq"
               ~base_url:"https://api.groq.com/openai" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "deepseek";
@@ -221,7 +221,7 @@ let probes =
             compat_provider ~name:"deepseek" ~base_url:"https://api.deepseek.com"
               ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "kimi-code";
@@ -230,11 +230,11 @@ let probes =
       run =
         (fun client ~api_key request ->
           let provider =
-            Eta_ai_openai_compat.provider ~name:"kimi-code"
+            Ai_openai_compat.provider ~name:"kimi-code"
               ~base_url:"https://api.kimi.com/coding/v1"
               ~chat_path:"/chat/completions" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "novita";
@@ -243,11 +243,11 @@ let probes =
       run =
         (fun client ~api_key request ->
           let provider =
-            Eta_ai_openai_compat.provider ~name:"novita"
+            Ai_openai_compat.provider ~name:"novita"
               ~base_url:"https://api.novita.ai/v3/openai"
               ~chat_path:"/chat/completions" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "zai";
@@ -256,11 +256,11 @@ let probes =
       run =
         (fun client ~api_key request ->
           let provider =
-            Eta_ai_openai_compat.provider ~name:"zai"
+            Ai_openai_compat.provider ~name:"zai"
               ~base_url:"https://open.bigmodel.cn/api/paas/v4"
               ~chat_path:"/chat/completions" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "moonshot";
@@ -269,11 +269,11 @@ let probes =
       run =
         (fun client ~api_key request ->
           let provider =
-            Eta_ai_openai_compat.provider ~name:"moonshot"
+            Ai_openai_compat.provider ~name:"moonshot"
               ~base_url:"https://api.moonshot.ai/v1"
               ~chat_path:"/chat/completions" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "perplexity";
@@ -282,11 +282,11 @@ let probes =
       run =
         (fun client ~api_key request ->
           let provider =
-            Eta_ai_openai_compat.provider ~name:"perplexity"
+            Ai_openai_compat.provider ~name:"perplexity"
               ~base_url:"https://api.perplexity.ai"
               ~chat_path:"/chat/completions" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "together";
@@ -298,7 +298,7 @@ let probes =
             compat_provider ~name:"together"
               ~base_url:"https://api.together.xyz" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
     {
       name = "fireworks";
@@ -310,7 +310,7 @@ let probes =
             compat_provider ~name:"fireworks"
               ~base_url:"https://api.fireworks.ai/inference" ()
           in
-          Eta_ai_openai_compat.chat_completions ~provider client ~api_key request);
+          Ai_openai_compat.chat_completions ~provider client ~api_key request);
     };
   ]
 

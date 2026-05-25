@@ -1,6 +1,6 @@
 open Eta
 
-let span i : Eta_otel.Internal.span =
+let span i : Otel.Internal.span =
   {
     trace_id = "0af7651916cd43dd8448eb211c80319c";
     span_id = Printf.sprintf "%016x" i;
@@ -58,19 +58,19 @@ let run_one name f =
     name wall minor major
 
 let encode_spans count () =
-  Eta_otel.Internal.encode_traces_request
+  Otel.Internal.encode_traces_request
     ~resource_attrs:[ ("service.name", "bench") ]
     ~scope_name:"bench" (List.init count span)
   |> String.length |> ignore
 
 let encode_logs count () =
-  Eta_otel.Internal.encode_logs_request
+  Otel.Internal.encode_logs_request
     ~resource_attrs:[ ("service.name", "bench") ]
     ~scope_name:"bench" (List.init count log)
   |> String.length |> ignore
 
 let encode_metrics count () =
-  Eta_otel.Internal.encode_metrics_request
+  Otel.Internal.encode_metrics_request
     ~resource_attrs:[ ("service.name", "bench") ]
     ~scope_name:"bench" (List.init count point)
   |> String.length |> ignore

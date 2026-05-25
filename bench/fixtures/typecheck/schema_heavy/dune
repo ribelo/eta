@@ -1,4 +1,4 @@
 (library
  (name bench_typecheck_schema_heavy)
  (wrapped false)
- (libraries eta.schema eta))
+ (libraries schema eta))

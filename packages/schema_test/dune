@@ -1,0 +1,3 @@
+(library
+ (name schema_test)
+ (libraries eta schema test alcotest))

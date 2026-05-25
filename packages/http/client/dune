@@ -1,0 +1,15 @@
+(library
+ (name http_client)
+ (libraries
+  eta
+  stream
+  http_body
+  http_core
+  http_error
+  http_h1
+  http_h2
+  http_transport
+  ca-certs
+  eio
+  unix
+  x509))

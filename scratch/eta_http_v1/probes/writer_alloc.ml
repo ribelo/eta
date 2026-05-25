@@ -7,7 +7,7 @@ let fail msg =
 let iterations = 100_000
 
 let run_once buffer url headers body =
-  Eta_http.H1.Write.write_to_bytes_raw buffer ~pos:0 ~method_:"POST" ~url
+  Http.H1.Write.write_to_bytes_raw buffer ~pos:0 ~method_:"POST" ~url
     ~headers ~body
 
 let rec loop buffer url headers body remaining checksum =
@@ -18,10 +18,10 @@ let rec loop buffer url headers body remaining checksum =
     loop buffer url headers body (remaining - 1) (checksum + written)
 
 let () =
-  let url = Eta_http.Core.Url.of_string "https://API.Example.test:8443/v1/echo?mode=alloc" in
+  let url = Http.Core.Url.of_string "https://API.Example.test:8443/v1/echo?mode=alloc" in
   let headers = [ ("Accept", "application/json"); ("X-Test", "r2") ] in
   let body =
-    Eta_http.H1.Write.Fixed [ Bytes.of_string "alpha"; Bytes.of_string "beta" ]
+    Http.H1.Write.Fixed [ Bytes.of_string "alpha"; Bytes.of_string "beta" ]
   in
   let buffer = Bytes.create 1024 in
   Gc.full_major ();

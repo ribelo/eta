@@ -79,45 +79,45 @@ let make_eta_client ~env ~sw ~protocol ~_transport ~cert_dir =
   in
   match protocol with
   | Types.H1 ->
-      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+      Http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ?ca_file ()
   | H2 ->
-      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+      Http.Client.make ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ?ca_file ()
 
 let headers_for = function
-  | Get -> Eta_http.Core.Header.empty
+  | Get -> Http.Core.Header.empty
   | Post -> (
-      match Eta_http.Core.Header.of_list [ ("Content-Type", "text/plain") ] with
+      match Http.Core.Header.of_list [ ("Content-Type", "text/plain") ] with
       | Ok h -> h
-      | Error _ -> Eta_http.Core.Header.empty)
+      | Error _ -> Http.Core.Header.empty)
 
 let make_eta_request scenario url body =
   let request_body =
     match scenario.method_ with
-    | Get -> Eta_http.Request.Empty
-    | Post -> Eta_http.Request.Fixed [ Bytes.of_string body ]
+    | Get -> Http.Request.Empty
+    | Post -> Http.Request.Fixed [ Bytes.of_string body ]
   in
-  Eta_http.Request.make ~headers:(headers_for scenario.method_) ~body:request_body
+  Http.Request.make ~headers:(headers_for scenario.method_) ~body:request_body
     (method_name scenario.method_) url
 
-let consume_eta_response (response : Eta_http.Response.t) =
+let consume_eta_response (response : Http.Response.t) =
   Util.body_to_string response.body
   |> Eta.Effect.map (fun body -> (response.status, String.length body))
 
 let eta_protocol = function
-  | Types.H1 -> Eta_http.Error.H1
+  | Types.H1 -> Http.Error.H1
   | H2 -> H2
 
 let eta_timeout_error scenario url =
-  Eta_http.Error.make ~protocol:(eta_protocol scenario.protocol)
+  Http.Error.make ~protocol:(eta_protocol scenario.protocol)
     ~method_:(method_name scenario.method_) ~uri:url
     (Total_request_timeout { timeout_ms = Some timeout_ms })
 
 let run_eta_once ~rt ~client ~scenario ~url request =
   let t0 = Unix.gettimeofday () in
   let result =
-    Eta_http.request client request
+    Http.request client request
     |> Eta.Effect.bind consume_eta_response
     |> Eta.Effect.timeout_as (Eta.Duration.ms timeout_ms)
          ~on_timeout:(eta_timeout_error scenario url)
@@ -132,7 +132,7 @@ let run_eta_once ~rt ~client ~scenario ~url request =
   | Eta.Exit.Error cause ->
       failwith
         (Format.asprintf "eta request failed: %a"
-           (Eta.Cause.pp Eta_http.Error.pp)
+           (Eta.Cause.pp Http.Error.pp)
            cause)
 
 let run_eta ~env ~scenario ~url ~cert_dir =
@@ -154,7 +154,7 @@ let run_eta ~env ~scenario ~url ~cert_dir =
         let request = make_eta_request scenario url body in
         samples := run_eta_once ~rt ~client ~scenario ~url request :: !samples
       done;
-      ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client)));
+      ignore (Eta.Runtime.run rt (Http.Client.shutdown client)));
   List.rev !samples
 
 let go_source =

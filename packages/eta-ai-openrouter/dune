@@ -1,4 +1,0 @@
-(library
- (name eta_ai_openrouter)
- (public_name eta.ai_openrouter)
- (libraries eta eta.ai eta.ai_openai_codec eta.redacted eta.http yojson))

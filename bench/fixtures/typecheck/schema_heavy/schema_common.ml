@@ -1,4 +1,4 @@
-open Eta_schema
+open Schema
 
 let positive_int =
   Schema.refine ~name:"positive_int"

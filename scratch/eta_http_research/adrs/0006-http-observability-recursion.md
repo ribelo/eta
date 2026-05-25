@@ -19,12 +19,12 @@ eta-http observability is an explicit wrapper, not ambient instrumentation.
 
 Public surface:
 
-- `Eta_http.Observability.Semconv` derives HTTP client attributes.
-- `Eta_http.Observability.Tracer.request` opens one client span around a
+- `Http.Observability.Semconv` derives HTTP client attributes.
+- `Http.Observability.Tracer.request` opens one client span around a
   request.
-- `Eta_http.Observability.Tracer.request_with_retry` opens a parent retry span
+- `Http.Observability.Tracer.request_with_retry` opens a parent retry span
   and attempt-level child spans with `http.request.resend_count`.
-- `Eta_http.Observability.Meter.record_client_stats` records client connection
+- `Http.Observability.Meter.record_client_stats` records client connection
   gauges through `Eta.Capabilities.meter`.
 
 Recursion boundary:
@@ -73,7 +73,7 @@ eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn 
 
 ## Consequences
 
-eta-http users opt into tracing at the call site. Plain `Eta_http.request`
+eta-http users opt into tracing at the call site. Plain `Http.request`
 does not create hidden spans.
 
 eta-otel can use eta-http as a transport by disabling eta-http spans on the

@@ -1,5 +1,5 @@
 open Eta
-open Eta_stream
+open Stream
 
 let run_stream stream sink =
   Eio_main.run @@ fun stdenv ->

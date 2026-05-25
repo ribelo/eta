@@ -2,7 +2,7 @@
  (name eta_probe)
  (libraries
   eta
-  eta.http
+  http
   eio_main
   ca-certs
   x509))

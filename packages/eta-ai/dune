@@ -1,4 +1,0 @@
-(library
- (name eta_ai)
- (public_name eta.ai)
- (libraries eta eta.redacted eta.http yojson))

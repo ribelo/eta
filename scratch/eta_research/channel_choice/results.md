@@ -5,7 +5,7 @@
 Eta needs a public bounded channel or permit primitive for eta-http backpressure.
 Neither existing candidate is enough:
 
-- Eta_stream.Mailbox is useful for nonblocking wakeups, but it drops on full and
+- Stream.Mailbox is useful for nonblocking wakeups, but it drops on full and
   cannot model HTTP/2 flow-control WAIT semantics.
 - Eio.Stream blocks on full, but has no close protocol. A sender blocked in
   Eio.Stream.add can still enqueue after an external close flag is set.
@@ -53,7 +53,7 @@ because it closes over the value "Eio.Mutex.lock" ... expected to be "portable".
 
 | Candidate | Strongest case | Evidence against | Status |
 | --- | --- | --- | --- |
-| Eta_stream.Mailbox | Already exists; nonblocking offer is good for cancellation wakeups and writer-intent queues. | Drops on full by design: capacity 1 gives first=enqueued, second=dropped. Not a WAIT/backpressure primitive. | Keep for nonblocking wakeups, not flow-control channel. |
+| Stream.Mailbox | Already exists; nonblocking offer is good for cancellation wakeups and writer-intent queues. | Drops on full by design: capacity 1 gives first=enqueued, second=dropped. Not a WAIT/backpressure primitive. | Keep for nonblocking wakeups, not flow-control channel. |
 | Eio.Stream | Existing bounded blocking queue. | No close/error propagation. The close-gap smoke shows a blocked sender enqueues value 2 after close=true. | Reject as public Eta.Channel core. |
 | Mutex + Queue | Correct semantics: blocking send, cancellation cleanup, close propagation. Simple and generic. | Allocates more than ring in hot-path probe; not portable under Domain.Safe if implemented with Eio.Mutex. | Viable fallback. |
 | Mutex + fixed ring | Correct semantics; lower hot-path allocation than Queue; preallocated capacity matches bounded channel semantics. | Int-specialized lab; generic implementation needs a careful representation for payload storage. Same-domain only. | Preferred v1 direction. |
@@ -72,7 +72,7 @@ File Eta.Channel as a same-domain Eta primitive with:
   cancelled_senders;
 - no cross-domain promise in v1.
 
-Keep Eta_stream.Mailbox for nonblocking notification paths such as best-effort
+Keep Stream.Mailbox for nonblocking notification paths such as best-effort
 stream wakeups or outbound RST intent queues where dropping or closed reporting
 is the right behavior. Do not use it for HTTP/2 flow-control backpressure.
 

@@ -37,7 +37,7 @@ let payload len = String.make len '\000'
 type attack = {
   id : string;
   data : string;
-  expect : Eta_http.Error.kind -> bool;
+  expect : Http.Error.kind -> bool;
 }
 
 let attacks =
@@ -46,20 +46,20 @@ let attacks =
       id = "settings_churn";
       data = String.concat "" (List.init 11 (fun _ -> settings_frame));
       expect =
-        (function Eta_http.Error.Settings_churn_rate_exceeded _ -> true | _ -> false);
+        (function Http.Error.Settings_churn_rate_exceeded _ -> true | _ -> false);
     };
     {
       id = "header_churn";
       data = String.concat "" (List.init 33 (fun _ -> headers_frame));
       expect =
         (function
-        | Eta_http.Error.Response_header_change_rate_exceeded _ -> true
+        | Http.Error.Response_header_change_rate_exceeded _ -> true
         | _ -> false);
     };
     {
       id = "goaway_churn";
       data = goaway_frame ^ goaway_frame;
-      expect = (function Eta_http.Error.Connection_closed _ -> true | _ -> false);
+      expect = (function Http.Error.Connection_closed _ -> true | _ -> false);
     };
     {
       id = "hpack_block_cap";
@@ -67,7 +67,7 @@ let attacks =
         h2_frame_header ~length:(300 * 1024) ~frame_type:0x1 ~flags:0x4
           ~stream_id:1;
       expect =
-        (function Eta_http.Error.Hpack_decode_overflow _ -> true | _ -> false);
+        (function Http.Error.Hpack_decode_overflow _ -> true | _ -> false);
     };
     {
       id = "continuation_cap";
@@ -78,14 +78,14 @@ let attacks =
         ^ h2_frame_header ~length:(30 * 1024) ~frame_type:0x9 ~flags:0x4
             ~stream_id:1;
       expect =
-        (function Eta_http.Error.Continuation_flood _ -> true | _ -> false);
+        (function Http.Error.Continuation_flood _ -> true | _ -> false);
     };
   ]
 
 let run_attack attack =
   let client = H2.Client_connection.create ~error_handler:(fun _ -> ()) () in
   let reader =
-    Eta_http.H2.Multiplexer.create_client_reader ~buffer_size:(128 * 1024)
+    Http.H2.Multiplexer.create_client_reader ~buffer_size:(128 * 1024)
       client
   in
   let source = Eio.Flow.cstruct_source [ Cstruct.of_string attack.data ] in
@@ -94,7 +94,7 @@ let run_attack attack =
   let rec loop remaining =
     if remaining = 0 then failwith (attack.id ^ ": no security error")
     else
-      match Eta_http.H2.Multiplexer.read_client_once ~flow:source reader with
+      match Http.H2.Multiplexer.read_client_once ~flow:source reader with
       | Security_error kind -> kind
       | Read _ | Eof _ -> loop (remaining - 1)
       | Close -> failwith (attack.id ^ ": closed before security error")
@@ -105,22 +105,22 @@ let run_attack attack =
   if not (attack.expect kind) then
     failwith
       (Printf.sprintf "%s: unexpected %s" attack.id
-         (Eta_http.Error.kind_name kind));
+         (Http.Error.kind_name kind));
   Printf.printf
     "eta_http_s4_envelope_alloc attack=%s outcome=ok error=%s minor_words=%.0f \
      limit_words=2260\n%!"
-    attack.id (Eta_http.Error.kind_name kind) minor_words;
+    attack.id (Http.Error.kind_name kind) minor_words;
   minor_words
 
 let run_header_validation () =
   Gc.compact ();
   let before = (Gc.stat ()).Gc.minor_words in
   let kind =
-    Eta_http.H2.Security.validate_headers [ String.make 8193 'x', "value" ]
+    Http.H2.Security.validate_headers [ String.make 8193 'x', "value" ]
   in
   let after = (Gc.stat ()).Gc.minor_words in
   match kind with
-  | Some (Eta_http.Error.Header_invalid _) ->
+  | Some (Http.Error.Header_invalid _) ->
       let minor_words = after -. before in
       Printf.printf
         "eta_http_s4_envelope_alloc attack=header_normalization outcome=ok \
@@ -130,7 +130,7 @@ let run_header_validation () =
   | Some kind ->
       failwith
         (Printf.sprintf "header_normalization: unexpected %s"
-           (Eta_http.Error.kind_name kind))
+           (Http.Error.kind_name kind))
   | None -> failwith "header_normalization: no security error"
 
 let () =

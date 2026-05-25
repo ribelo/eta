@@ -1,4 +1,4 @@
-open Eta_schema
+open Schema
 open Schema_common
 
 type t = { a : string; b : int; c : bool; d : float; e : string option; f : int }

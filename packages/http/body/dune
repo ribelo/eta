@@ -1,0 +1,3 @@
+(library
+ (name http_body)
+ (libraries eta stream http_core http_error bigstringaf decompress.gz))

@@ -84,17 +84,17 @@ let emit_metric (meter : Capabilities.meter) i =
 let emit kind exporter count =
   match kind with
   | Span ->
-      let tracer = Eta_otel.tracer exporter in
+      let tracer = Otel.tracer exporter in
       for i = 1 to count do
         emit_span tracer i
       done
   | Log ->
-      let logger = Eta_otel.logger exporter in
+      let logger = Otel.logger exporter in
       for i = 1 to count do
         emit_log logger i
       done
   | Metric ->
-      let meter = Eta_otel.meter exporter in
+      let meter = Otel.meter exporter in
       for i = 1 to count do
         emit_metric meter i
       done
@@ -107,12 +107,12 @@ let measure_once kind count =
   let clock = Eio.Stdenv.clock stdenv in
   let port, requests, bytes = start_collector ~sw ~net in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-e2e-bench" ~on_error:(fun _ -> ()) ()
   in
   let start = Unix.gettimeofday () in
   emit kind exporter count;
-  Eta_otel.flush ~timeout_s:10.0 exporter;
+  Otel.flush ~timeout_s:10.0 exporter;
   let stop = Unix.gettimeofday () in
   let elapsed_ns = (stop -. start) *. 1_000_000_000.0 in
   (elapsed_ns, Atomic.get requests, Atomic.get bytes)

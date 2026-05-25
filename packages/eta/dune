@@ -9,7 +9,7 @@
   runtime_observability
   runtime_supervisor
   runtime_supervisor_types)
- (libraries eta.redacted eio eio.unix portable parallel parallel.scheduler threads))
+ (libraries eio eio.unix portable parallel parallel.scheduler threads))
 
 (env
  (release

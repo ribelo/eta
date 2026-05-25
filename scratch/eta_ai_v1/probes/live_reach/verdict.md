@@ -44,7 +44,7 @@ Disproof signature outcome:
 - Triggered for eta-http transport setup: without the RNG fix, no provider
   could perform TLS handshakes through eta-http.
 - Not triggered for the provider value shape: successful canaries all used the
-  shipped provider packages over Eta_http.Client.make.
+  shipped provider packages over Http.Client.make.
 
 Open release evidence:
 

@@ -13,7 +13,7 @@ The candidates are deliberately small:
 - mutex + Queue;
 - mutex + fixed int ring;
 - Eio.Stream as a baseline close-propagation check;
-- Eta_stream.Mailbox as a nonblocking/drop baseline.
+- Stream.Mailbox as a nonblocking/drop baseline.
 
 The decision target is not a general stream abstraction. eta-http needs a
 bounded channel/permit primitive that supports blocking send, cancellation-safe

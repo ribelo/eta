@@ -1,0 +1,13 @@
+(library
+ (name http_h1)
+ (libraries
+  eta
+  stream
+  http_body
+  http_core
+  http_error
+  http_transport
+  cstruct
+  eio
+  x509
+  bigstringaf))

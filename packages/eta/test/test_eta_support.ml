@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 
 let run_ok rt eff =
   match Runtime.run rt eff with

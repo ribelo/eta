@@ -53,18 +53,18 @@ Observed local state:
 
 | OTLP requirement | Spec evidence | Eta / eta-http mapping | Status |
 | --- | --- | --- | --- |
-| Use HTTP POST for telemetry. | OTLP/HTTP sends telemetry data via HTTP POST. | `Eta_http.Request.make "POST" uri ~body:(Fixed [bytes])`; `Eta_http.request` or wrapped request. | Covered |
+| Use HTTP POST for telemetry. | OTLP/HTTP sends telemetry data via HTTP POST. | `Http.Request.make "POST" uri ~body:(Fixed [bytes])`; `Http.request` or wrapped request. | Covered |
 | Default endpoints are `/v1/traces`, `/v1/metrics`, `/v1/logs`. | OTLP/HTTP request section names all three paths and request messages. | eta-otel config should keep per-signal paths. | Covered |
-| JSON payload uses `Content-Type: application/json`. | OTLP JSON section requires request and response content type. | `Eta_http.Core.Header.add "content-type" "application/json"`. | Covered |
+| JSON payload uses `Content-Type: application/json`. | OTLP JSON section requires request and response content type. | `Http.Core.Header.add "content-type" "application/json"`. | Covered |
 | Trace IDs and span IDs in OTLP JSON are hex strings, not base64. | OTLP JSON section overrides standard protobuf JSON mapping for `traceId` and `spanId`. | Eta trace IDs are already hex strings; exporter must generate and preserve 16-char hex OTLP span IDs for internal Eta span ids. | Covered with encoder obligation |
 | Enum fields are encoded as integer values. | OTLP JSON section requires integer enum values. | Local encoder maps span kind, status, severity, temporality to ints. | Covered |
 | 64-bit integer fields are decimal strings. | OTLP JSON section requires 64-bit JSON numbers as decimal strings. | Local encoder must string-encode nanosecond timestamps and int64 counters. Existing old encoder does this for many fields. | Covered with tests |
 | Client may gzip request content only with `Content-Encoding: gzip`; may request gzip responses with `Accept-Encoding: gzip`. | OTLP/HTTP request and response sections. | eta-http body transducers cover gzip; v2 can start uncompressed and gate gzip behind explicit scope. | Deferred unless gzip is in scope |
 | Partial success must not be retried. | OTLP partial success says client MUST NOT retry populated `partial_success`. | eta-otel must read success response bodies enough to detect `partial_success` for all three signals. | Required OS3 behavior |
-| Retryable HTTP response codes are only 429, 502, 503, 504; all other 4xx/5xx must not be retried. | OTLP/HTTP retryable response code table. | `Eta_http.Retry_policy.make ?retry_status` lets eta-otel use the OTLP set while preserving eta-http's default 408 behavior for normal HTTP clients. | Covered |
-| Honor `Retry-After` on 429/503 and use exponential backoff otherwise. | OTLP/HTTP throttling and connection sections. | `Eta_http.Retry_policy.retry_after` parses the header; `Eta.Schedule` can express backoff/jitter. | Covered |
+| Retryable HTTP response codes are only 429, 502, 503, 504; all other 4xx/5xx must not be retried. | OTLP/HTTP retryable response code table. | `Http.Retry_policy.make ?retry_status` lets eta-otel use the OTLP set while preserving eta-http's default 408 behavior for normal HTTP clients. | Covered |
+| Honor `Retry-After` on 429/503 and use exponential backoff otherwise. | OTLP/HTTP throttling and connection sections. | `Http.Retry_policy.retry_after` parses the header; `Eta.Schedule` can express backoff/jitter. | Covered |
 | Keep connections alive and allow configurable parallel connections. | OTLP/HTTP connection/concurrent requests sections. | eta-http owns pooling; `Eta.Semaphore` can bound exporter-side concurrent exports if needed. | Covered |
-| Disable exporter recursion. | Objective and ADR 0006. | `Eta_http.Observability.Tracer.request ~enabled:false`. | Covered |
+| Disable exporter recursion. | Objective and ADR 0006. | `Http.Observability.Tracer.request ~enabled:false`. | Covered |
 
 ## Signal Inventory
 

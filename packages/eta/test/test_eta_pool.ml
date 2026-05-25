@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 open Test_eta_support
 
 type pool_test_error =

@@ -1,6 +1,6 @@
 let () =
   let body =
-    Eta_otel.Internal.encode_traces_request ~resource_attrs:[] ~scope_name:"r-t0"
+    Otel.Internal.encode_traces_request ~resource_attrs:[] ~scope_name:"r-t0"
       []
   in
   Printf.printf "with_otel_linked=%d\n" (String.length body)

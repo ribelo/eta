@@ -1,0 +1,3 @@
+(library
+ (name test)
+ (libraries eta eio eio_main alcotest))

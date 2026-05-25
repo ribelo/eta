@@ -1,6 +1,6 @@
 (executable
  (name runtime_schema)
- (libraries bench_lib eta eta.schema eio_main))
+ (libraries bench_lib eta schema eio_main))
 
 (rule
  (alias bench)

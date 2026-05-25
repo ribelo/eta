@@ -5,17 +5,17 @@ open Eta
 let make_stream ~chunk_size ~chunk_count =
   let remaining = ref chunk_count in
   let read_next () =
-    if !remaining = 0 then Effect.pure Eta_http_body.Stream.End
+    if !remaining = 0 then Effect.pure Http_body.Stream.End
     else (
       decr remaining;
       let chunk = Bytes.create chunk_size in
-      Effect.pure (Eta_http_body.Stream.Chunk chunk))
+      Effect.pure (Http_body.Stream.Chunk chunk))
   in
-  Eta_http_body.Stream.of_reader read_next
+  Http_body.Stream.of_reader read_next
 
 let body_length stream =
   let rec loop total =
-    Eta_http_body.Stream.read stream
+    Http_body.Stream.read stream
     |> Effect.bind (function
          | None -> Effect.pure total
          | Some chunk -> loop (total + Bytes.length chunk))

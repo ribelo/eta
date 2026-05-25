@@ -2,9 +2,9 @@
  (name h_g1_grpc_forward_compat)
  (wrapped false)
  (modules fixture_grpc_server)
- (libraries eta.http h2))
+ (libraries http h2))
 
 (executable
  (name response_consumer)
  (modules response_consumer)
- (libraries h_g1_grpc_forward_compat eta.http h2 eio eio.unix eio_main))
+ (libraries h_g1_grpc_forward_compat http h2 eio eio.unix eio_main))

@@ -1,0 +1,6 @@
+(test
+ (name run)
+ (libraries schema_test schema eta yojson)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

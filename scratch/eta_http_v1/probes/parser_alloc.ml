@@ -8,7 +8,7 @@ let iterations = 100_000
 let max_header_bytes = 32 * 1024
 
 let run_once buffer headers raw =
-  Eta_http.H1.Parse.parse_raw buffer ~len:(Bytes.length buffer)
+  Http.H1.Parse.parse_raw buffer ~len:(Bytes.length buffer)
     ~max_header_bytes ~headers raw
 
 let rec loop corpus headers raw remaining checksum =
@@ -16,11 +16,11 @@ let rec loop corpus headers raw remaining checksum =
   else
     let buffer = Array.unsafe_get corpus (remaining mod Array.length corpus) in
     let code = run_once buffer headers raw in
-    if code <> Eta_http.H1.Parse.raw_ok then
+    if code <> Http.H1.Parse.raw_ok then
       fail (Printf.sprintf "parser returned %d" code);
     loop corpus headers raw (remaining - 1)
-      (checksum + Eta_http.H1.Parse.raw_status raw
-     + Eta_http.H1.Parse.raw_body_len raw)
+      (checksum + Http.H1.Parse.raw_status raw
+     + Http.H1.Parse.raw_body_len raw)
 
 let () =
   let corpus =
@@ -35,8 +35,8 @@ let () =
         "HTTP/1.1 302 Found\r\nLocation: https://example.test/next\r\nContent-Length: 0\r\n\r\n";
     |]
   in
-  let headers = Eta_http.H1.Parse.create_raw_headers 16 in
-  let raw = Eta_http.H1.Parse.create_raw_response () in
+  let headers = Http.H1.Parse.create_raw_headers 16 in
+  let raw = Http.H1.Parse.create_raw_response () in
   Gc.full_major ();
   let before = (Gc.quick_stat ()).Gc.minor_words in
   let checksum = loop corpus headers raw iterations 0 in
@@ -47,6 +47,6 @@ let () =
   Printf.printf
     "eta_http_r1_parser_alloc verdict=%s iterations=%d minor_words=%.0f words_per_parse=%.6f checksum=%d body_off=%d body_len=%d\n%!"
     verdict iterations minor_words words_per_parse checksum
-    (Eta_http.H1.Parse.raw_body_off raw)
-    (Eta_http.H1.Parse.raw_body_len raw);
+    (Http.H1.Parse.raw_body_off raw)
+    (Http.H1.Parse.raw_body_len raw);
   if minor_words <> 0.0 then exit 1

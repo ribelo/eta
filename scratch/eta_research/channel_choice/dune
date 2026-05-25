@@ -1,7 +1,7 @@
 (executable
  (name channel_choice)
  (modules channel_choice)
- (libraries eta eta.stream eio eio_main unix))
+ (libraries eta stream eio eio_main unix))
 
 (executable
  (name channel_impl_probe)

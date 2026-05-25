@@ -1,6 +1,6 @@
-module Body_stream = Eta_http.Body.Stream
-module Chunked = Eta_http.Body.Chunked
-module Transducer = Eta_http.Body.Transducer
+module Body_stream = Http.Body.Stream
+module Chunked = Http.Body.Chunked
+module Transducer = Http.Body.Transducer
 
 let total_bytes = 100 * 1024 * 1024
 let chunk_size = 64 * 1024
@@ -51,7 +51,7 @@ let run_or_fail rt label effect =
   | Eta.Exit.Error cause ->
       failwith
         (Format.asprintf "%s: %a" label
-           (Eta.Cause.pp Eta_http.Error.pp)
+           (Eta.Cause.pp Http.Error.pp)
            cause)
 
 let rec count_stream rss stream total =
@@ -82,7 +82,7 @@ let rec write_chunked_stream rss flow stream =
            |> Eta.Effect.bind (fun () -> write_chunked_stream rss flow stream))
 
 let make_error message =
-  Eta_http.Error.make ~protocol:H1 ~method_:"POST" ~uri:"/rss"
+  Http.Error.make ~protocol:H1 ~method_:"POST" ~uri:"/rss"
     (Decode_error { codec = "s3-gzip-rss"; message })
 
 let read_exact_blocking flow len =
@@ -211,17 +211,17 @@ let run env =
       in
       Eio.Promise.resolve server_resolver result);
   let client =
-    Eta_http.Client.make_h1 ~sw ~net ~authenticator:(authenticator ()) ()
+    Http.Client.make_h1 ~sw ~net ~authenticator:(authenticator ()) ()
   in
   let url = Printf.sprintf "http://127.0.0.1:%d/rss" port in
   let request_body = generated_stream total_bytes |> Transducer.gzip_encode in
   let request =
-    Eta_http.Request.make ~headers:[ "Content-Encoding", "gzip" ]
-      ~body:(Eta_http.Request.Stream request_body)
+    Http.Request.make ~headers:[ "Content-Encoding", "gzip" ]
+      ~body:(Http.Request.Stream request_body)
       "POST" url
   in
   let response =
-    run_or_fail rt "client request" (Eta_http.request client request)
+    run_or_fail rt "client request" (Http.request client request)
   in
   if response.status <> 200 then
     failwith (Printf.sprintf "expected status 200, got %d" response.status);

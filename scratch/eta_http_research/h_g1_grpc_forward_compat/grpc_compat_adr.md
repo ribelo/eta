@@ -16,7 +16,7 @@ make this pattern impossible for a future gRPC layer.
 
 ## Decision
 
-Keep Eta_http.Response.t as status, headers, body, and a deferred trailers
+Keep Http.Response.t as status, headers, body, and a deferred trailers
 thunk. HTTP/2 trailing headers are delivered through the trailers thunk. Body
 bytes remain raw and unbuffered at eta-http's layer.
 

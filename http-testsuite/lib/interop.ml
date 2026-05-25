@@ -5,19 +5,19 @@ open Eio.Std
 
 let make_request ~method_ ~url ~headers ?body () =
   let headers =
-    match Eta_http.Core.Header.of_list headers with
+    match Http.Core.Header.of_list headers with
     | Ok h -> h
-    | Error _ -> Eta_http.Core.Header.empty
+    | Error _ -> Http.Core.Header.empty
   in
   let body =
     match body with
-    | None -> Eta_http.Request.Empty
-    | Some b -> Eta_http.Request.Fixed [ Bytes.of_string b ]
+    | None -> Http.Request.Empty
+    | Some b -> Http.Request.Fixed [ Bytes.of_string b ]
   in
-  Eta_http.Request.make ~headers ~body method_ url
+  Http.Request.make ~headers ~body method_ url
 
-let pp_eta_error fmt (error : Eta_http.Error.t) =
-  Format.fprintf fmt "%a" Eta_http.Error.pp error;
+let pp_eta_error fmt (error : Http.Error.t) =
+  Format.fprintf fmt "%a" Http.Error.pp error;
   match error.kind with
   | Connection_protocol_violation { kind; message } ->
       Format.fprintf fmt " detail=%s:%s" kind message
@@ -38,18 +38,18 @@ let normalize_header_list headers =
 let run_eta ~rt ~client ~request =
   let start = Util.now_ms () in
   let result =
-    Eta_http.request client request
-    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+    Http.request client request
+    |> Eta.Effect.bind (fun (response : Http.Response.t) ->
            Util.body_to_string response.body
            |> Eta.Effect.bind (fun body ->
                   response.trailers ()
                   |> Eta.Effect.map (fun trailers ->
                          let headers_normalized =
-                           Eta_http.Core.Header.to_list response.headers
+                           Http.Core.Header.to_list response.headers
                            |> normalize_header_list
                          in
                          let trailers_normalized =
-                           Eta_http.Core.Header.to_list trailers
+                           Http.Core.Header.to_list trailers
                            |> normalize_header_list
                          in
                          ( Ok
@@ -78,10 +78,10 @@ let make_client ~env ~sw ~protocol ~transport ~cert_dir =
   let max_response_body_bytes = 128 * 1024 * 1024 in
   match protocol with
   | H1 ->
-      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+      Http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
   | H2 ->
-      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+      Http.Client.make ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
 
 type scenario = {
@@ -262,7 +262,7 @@ let run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario =
         let url = build_url ~transport ~port ~path:scenario.path in
         let request = make_request ~method_:scenario.method_ ~url ~headers:scenario.headers ?body:scenario.body () in
         let eta_res, duration_ms = run_eta ~rt ~client ~request in
-        ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
+        ignore (Eta.Runtime.run rt (Http.Client.shutdown client));
         let body_path =
           match scenario.body with
           | Some b ->

@@ -110,28 +110,28 @@ let authenticator () =
 
 let request_target rt client target =
   let request =
-    Eta_http.Request.make ~headers:[ ("User-Agent", "eta-http-s1-reach") ]
+    Http.Request.make ~headers:[ ("User-Agent", "eta-http-s1-reach") ]
       "HEAD" target.url
   in
   let timeout_error =
-    Eta_http.Error.make ~method_:"HEAD" ~uri:target.url
+    Http.Error.make ~method_:"HEAD" ~uri:target.url
       (Total_request_timeout { timeout_ms = Some 15_000 })
   in
   let request_effect =
-    Eta_http.request client request
-    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
-           Eta_http.Body.Stream.read_all response.body
+    Http.request client request
+    |> Eta.Effect.bind (fun (response : Http.Response.t) ->
+           Http.Body.Stream.read_all response.body
            |> Eta.Effect.bind (fun body ->
-                  Eta_http.Client.stats client
-                  |> Eta.Effect.map (fun (stats : Eta_http.Client.stats) ->
+                  Http.Client.stats client
+                  |> Eta.Effect.map (fun (stats : Http.Client.stats) ->
                          ( response.status,
                            Bytes.length body,
-                           Eta_http.Client.protocol_to_string stats.protocol ))))
+                           Http.Client.protocol_to_string stats.protocol ))))
     |> Eta.Effect.timeout_as (Eta.Duration.seconds 15) ~on_timeout:timeout_error
   in
   match Eta.Runtime.run rt request_effect with
   | Eta.Exit.Error cause ->
-      Error (Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause)
+      Error (Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause)
   | Eta.Exit.Ok result -> Ok result
 
 let print_target target =
@@ -158,7 +158,7 @@ let run env =
   Eio.Switch.run @@ fun sw ->
   let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let client =
-    Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+    Http.Client.make ~sw ~net:(Eio.Stdenv.net env)
       ~authenticator:(authenticator ()) ()
   in
   List.iter print_target targets;
@@ -170,7 +170,7 @@ let run env =
         match result with Ok _ -> None | Error _ -> Some target.name)
       targets
   in
-  ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
+  ignore (Eta.Runtime.run rt (Http.Client.shutdown client));
   match failures with
   | [] ->
       Printf.printf

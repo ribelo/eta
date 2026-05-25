@@ -418,13 +418,13 @@ let allocation_probe (module C : CHANNEL) =
     (after.major_words -. before.major_words)
 
 let mailbox_drop_smoke () =
-  let mailbox = Eta_stream.Mailbox.create ~capacity:1 () in
-  let first = Eta_stream.Mailbox.offer mailbox 1 in
-  let second = Eta_stream.Mailbox.offer mailbox 2 in
+  let mailbox = Stream.Mailbox.create ~capacity:1 () in
+  let first = Stream.Mailbox.offer mailbox 1 in
+  let second = Stream.Mailbox.offer mailbox 2 in
   Printf.printf "mailbox_drop_smoke first=%s second=%s dropped=%d\n%!"
     (match first with Enqueued -> "enqueued" | Dropped -> "dropped" | Closed -> "closed")
     (match second with Enqueued -> "enqueued" | Dropped -> "dropped" | Closed -> "closed")
-    (Eta_stream.Mailbox.dropped mailbox)
+    (Stream.Mailbox.dropped mailbox)
 
 type stream_event = Item of int | Closed_marker
 

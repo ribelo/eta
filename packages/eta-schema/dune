@@ -1,4 +1,0 @@
-(library
- (name eta_schema)
- (public_name eta.schema)
- (libraries eta))

@@ -14,7 +14,7 @@ research and implementation in this directory uses Effect.sync.
 | Obligation | Why it matters | Minimum fair evidence | Current result | Status |
 | --- | --- | --- | --- | --- |
 | O1. Preserve wire shape | This is a structural rebuild, not an OTLP protocol change. | Encoder JSON smoke tests and golden/path checks stay green. | eta-otel tests pass after the rewrite. | Proven. |
-| O2. Eta owns exporter lifecycle | The package should teach Eta idioms. | Export loop expressed with Effect.Private.daemon, Effect.acquire_release, Effect.retry, Effect.race, Effect.timeout, Resource.t, Capabilities.clock, and Stream processing. | eta-otel uses one Eta runtime daemon over merged Eta_stream mailbox batches; raw exporter Eio is limited to HTTP/time leaves. | Proven. |
+| O2. Eta owns exporter lifecycle | The package should teach Eta idioms. | Export loop expressed with Effect.Private.daemon, Effect.acquire_release, Effect.retry, Effect.race, Effect.timeout, Resource.t, Capabilities.clock, and Stream processing. | eta-otel uses one Eta runtime daemon over merged Stream mailbox batches; raw exporter Eio is limited to HTTP/time leaves. | Proven. |
 | O3. Capability methods stay cheap | Tracing/logging/metrics calls run on hot paths. | Enqueue path stays bounded and does not run network I/O. | Capability methods mutate local state and call nonblocking Mailbox.offer only. | Proven. |
 | O4. Backpressure is explicit | Exporter queues can overflow under partitions. | Adversarial tests for overflow and slow collector. | Queue capacity is configurable; overflow is drop-with-count and covered by tests. | Proven. |
 | O5. Self-instrumentation avoids recursion | Exporter must be observable without exporting its own exporter spans recursively. | Test proving exporter self-spans do not re-enter the export sink. | Export daemons use a private in-memory tracer; recursion test passes. | Proven. |
@@ -25,8 +25,8 @@ research and implementation in this directory uses Effect.sync.
 | Candidate | Why it is plausible | Evidence needed to win | Falsifier | Current evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | A. Keep public API, internal Eta exporter daemon | Preserves existing create, tracer, logger, meter, flush API while moving loops into Eta. | Tests remain green; raw Eio limited to queue adapter and HTTP leaf; benchmarks no worse. | Capability methods cannot enqueue without raw Eio/concurrency primitives, or Eta actor adds visible latency. | Implemented with one Eta runtime daemon over merged typed signal batch streams. | Accepted. |
-| B. Add an Eta-native signal queue/stream source | Makes push ingestion and pull stream consumption an Eta-owned primitive. | Small queue API rejects overflow deterministically and powers eta-otel without raw Eio.Stream in exporter. | Public API is too broad for one package or duplicates existing stream internals. | Implemented as Eta_stream.Mailbox plus to_batch_stream. | Accepted, scoped to eta-stream. |
-| C. Expose eta-otel as Resource.t / effectful constructor only | Most honest Eta lifecycle: construction, daemons, and shutdown are scoped effects. | Tutorial reads better; tests can migrate; compatibility wrapper remains possible. | Breaks existing simple Eta_otel.create call sites or forces users to run Eta before they can configure Runtime. | Compatibility create API can start internal Eta daemons without forcing app construction through Eta. | Dominated for this package boundary. |
+| B. Add an Eta-native signal queue/stream source | Makes push ingestion and pull stream consumption an Eta-owned primitive. | Small queue API rejects overflow deterministically and powers eta-otel without raw Eio.Stream in exporter. | Public API is too broad for one package or duplicates existing stream internals. | Implemented as Stream.Mailbox plus to_batch_stream. | Accepted, scoped to eta-stream. |
+| C. Expose eta-otel as Resource.t / effectful constructor only | Most honest Eta lifecycle: construction, daemons, and shutdown are scoped effects. | Tutorial reads better; tests can migrate; compatibility wrapper remains possible. | Breaks existing simple Otel.create call sites or forces users to run Eta before they can configure Runtime. | Compatibility create API can start internal Eta daemons without forcing app construction through Eta. | Dominated for this package boundary. |
 | D. Algebraic-effect dispatch plus PPX elision for transparent cost | Ticket names this as leading transparent-cost candidate. | Microbench shows no-otel calls are cheaper than object-capability branch/allocation path. | Requires wide runtime/PPX design beyond eta-otel rebuild, or cannot preserve explicit Runtime service boundary. | Untested; high consequence. | Deferred until exporter architecture is stable. |
 | E. Keep current hand-rolled Eio exporter | It is small, working, and tested. | It would need to meet tutorial/primitive acceptance. | Current raw-Eio surface remains the main behavior. | 20 tests pass, but it fails the flagship signal requirement. | Rejected for Eta-5zo scope. |
 
@@ -62,17 +62,17 @@ raw Eio.Stream directly.
 
 Eta-5zo implemented Candidate A plus the small Candidate B primitive:
 
-- `Eta_stream.Mailbox` is the producer-side bounded stream source.
-- `Eta_stream.Mailbox.to_batch_stream` supports online partial batches.
+- `Stream.Mailbox` is the producer-side bounded stream source.
+- `Stream.Mailbox.to_batch_stream` supports online partial batches.
 - `eta-otel` no longer owns raw `Eio.Stream`, `Eio.Fiber.fork_daemon`,
   `take_nonblocking`, or manual `while true` exporter loops.
 - Signal batches are merged with `Stream.merge` and exported from one
   `Effect.Private.daemon` with bounded `Stream.flat_map_par` concurrency.
 - Export attempts use `Effect.sync`, `Effect.race`, `Effect.timeout`,
   `Effect.retry`, `Effect.acquire_release`, `Effect.scoped`,
-  `Eta_stream.run_drain`, and `Effect.Private.daemon`.
+  `Stream.run_drain`, and `Effect.Private.daemon`.
 - Resolved exporter configuration is cached in `Resource.t`; `flush` races
-  `Eta_stream.Drain_counter.await_zero` against a timeout branch that uses
+  `Stream.Drain_counter.await_zero` against a timeout branch that uses
   `Capabilities.clock`.
 - Exporter self-spans are recorded through a private in-memory tracer and are
   not re-exported.

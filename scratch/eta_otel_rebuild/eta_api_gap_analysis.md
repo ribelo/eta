@@ -17,7 +17,7 @@ Sources:
 | Retry export | Effect.retry plus Schedule | Good for retrying typed network/export errors. |
 | Runtime-owned export daemon | Effect.Private.daemon | Usable, but private. Ticket explicitly asks to exercise it. |
 | Scoped shutdown | Effect.acquire_release, Effect.scoped | Good for resource-like exporter lifecycle. |
-| Stream processing | Eta_stream.Stream | Good for pull processing; producer side is the gap. |
+| Stream processing | Stream.Stream | Good for pull processing; producer side is the gap. |
 | Merge signal streams | Stream.merge | Implemented by merging typed per-signal batch streams before export. |
 | Cached config/resource | Resource.t | Implemented for resolved exporter configuration. |
 | Self-instrumentation | Effect.named, Effect.annotate, Effect.log, Effect.metric_update | Good if runtime uses non-exporting observer. |
@@ -68,14 +68,14 @@ Implementation follow-up:
 
 - Mailbox.offer is nonblocking and returns Enqueued, Dropped, or Closed.
 - eta-otel increments in-flight only for accepted telemetry and exposes
-  Eta_otel.Internal.dropped for overflow tests.
+  Otel.Internal.dropped for overflow tests.
 - The eta-otel backpressure overflow test verifies producers do not wait for a
   collector recovery path.
 
 ### G3. Runtime-owned daemons from library constructors
 
 Effect.Private.daemon starts background work when interpreted by a Runtime.
-Eta_otel.create is currently an ordinary function that receives sw, net, and
+Otel.create is currently an ordinary function that receives sw, net, and
 clock, not an Eta effect. To use Eta lifecycle fully, eta-otel needs either:
 
 - an internal runtime used only by eta-otel;
@@ -84,7 +84,7 @@ clock, not an Eta effect. To use Eta lifecycle fully, eta-otel needs either:
 
 Implementation follow-up:
 
-Eta_otel.create keeps the compatibility constructor, creates an internal Eta
+Otel.create keeps the compatibility constructor, creates an internal Eta
 runtime on the caller's switch, builds a cached config Resource.t, and starts
 one Effect.Private.daemon that consumes the merged signal stream.
 

@@ -1,0 +1,7 @@
+(library
+ (name http_observability)
+ (libraries
+  eta
+  http_client
+  http_core
+  http_error))

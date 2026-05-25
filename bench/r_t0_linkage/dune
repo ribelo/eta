@@ -4,5 +4,5 @@
 
 (executable
  (name with_otel_linked)
- (libraries eta eta_otel))
+ (libraries eta otel))
 

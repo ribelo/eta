@@ -19,10 +19,10 @@ safe method with a one-shot upload still cannot be retried automatically.
 
 eta-http exposes:
 
-- `Eta_http.Idempotency` for method and body replayability classification.
-- `Eta_http.Retry_policy.t` for retry decisions.
-- `Eta_http.request_with_retry` and
-  `Eta_http.Client.request_with_retry` as wrappers around the existing request
+- `Http.Idempotency` for method and body replayability classification.
+- `Http.Retry_policy.t` for retry decisions.
+- `Http.request_with_retry` and
+  `Http.Client.request_with_retry` as wrappers around the existing request
   path.
 
 Default retry behavior:
@@ -60,7 +60,7 @@ retry / always requires replayable body: PASS
 ## Consequences
 
 The request record stays stable. Retry is an explicit wrapper, so callers that
-need exact attempt control can keep using `Eta_http.request`.
+need exact attempt control can keep using `Http.request`.
 
 The current wrapper does not expose attempt callbacks or observability hooks.
 S6 owns retry child spans and retry-decision logging.

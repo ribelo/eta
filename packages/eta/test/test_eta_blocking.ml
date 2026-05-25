@@ -1,5 +1,5 @@
 open Eta
-open Eta_test
+open Test
 open Test_eta_support
 
 external hold_lock_sleep : float -> unit = "eta_test_hold_lock_sleep"

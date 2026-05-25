@@ -1,0 +1,16 @@
+(library
+ (name http_h2)
+ (libraries
+  eta
+  stream
+  http_body
+  http_core
+  http_error
+  http_transport
+  angstrom
+  cstruct
+  eio
+  faraday
+  h2
+  hpack
+  bigstringaf))

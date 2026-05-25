@@ -51,7 +51,7 @@ Eta consequence:
 
 Decision for Eta:
 
-Use explicit Eta resource/lifecycle primitives internally. Keep compatibility with Eta_otel.create, but design the implementation around a scoped program.
+Use explicit Eta resource/lifecycle primitives internally. Keep compatibility with Otel.create, but design the implementation around a scoped program.
 
 ## OpenTelemetry Rust SDK
 

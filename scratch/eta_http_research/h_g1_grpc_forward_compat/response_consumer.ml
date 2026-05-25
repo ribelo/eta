@@ -1,6 +1,6 @@
-module Error = Eta_http.Error
-module Header = Eta_http.Core.Header
-module Multiplexer = Eta_http.H2.Multiplexer
+module Error = Http.Error
+module Header = Http.Core.Header
+module Multiplexer = Http.H2.Multiplexer
 
 let request_uri = "https://grpc.example.test/grpc.Service/Unary"
 
@@ -39,7 +39,7 @@ let make_trailers () =
         Eio.Promise.resolve resolver value
   in
   let resolve_headers headers =
-    match Eta_http.H2.Security.validate_headers headers with
+    match Http.H2.Security.validate_headers headers with
     | Some kind ->
         resolve (Error (Error.make ~protocol:H2 ~method_:"POST" ~uri:request_uri kind))
     | None -> resolve (Ok headers)
@@ -99,7 +99,7 @@ let open_response server =
               Eta.Effect.unit)
             ~pump mux stream body
         in
-        result := Some (Eta_http.Response.make ~status ~headers ~trailers ~body ()))
+        result := Some (Http.Response.make ~status ~headers ~trailers ~body ()))
   in
   let opened =
     match opened with
@@ -126,7 +126,7 @@ let run_one rt ~label ~grpc_status ~grpc_message =
     |> expect_ok (label ^ " trailers")
   in
   let body =
-    Eta_http.Body.Stream.read_all response.body
+    Http.Body.Stream.read_all response.body
     |> Eta.Runtime.run rt
     |> expect_ok (label ^ " body")
   in

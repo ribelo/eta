@@ -21,7 +21,7 @@ Evidence:
 Consequence:
 
 The bounded enqueue policy is public Eta stream infrastructure:
-Eta_stream.Mailbox.offer accepts, drops, or reports closed without blocking the
+Stream.Mailbox.offer accepts, drops, or reports closed without blocking the
 application callback.
 
 ## ADR-2: single actor vs per-signal actor
@@ -110,7 +110,7 @@ items consistently after close.
 Implementation result:
 
 Implemented with Mailbox.close plus bounded flush. Flush races
-`Eta_stream.Drain_counter.await_zero` against a timeout branch that sleeps
+`Stream.Drain_counter.await_zero` against a timeout branch that sleeps
 through the Eta clock capability. Each POST is raced against a deadline branch
 and guarded by Effect.timeout. The shutdown test verifies accepted telemetry
 drains and later submissions do not enqueue more work.

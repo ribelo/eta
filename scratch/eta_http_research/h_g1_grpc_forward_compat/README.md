@@ -22,7 +22,7 @@ Fixture:
   HEADERS (:status 200, content-type: application/grpc+proto) -> DATA ->
   HEADERS (END_STREAM, grpc-status, grpc-message).
 - response_consumer.ml opens the response through eta-http's h2 multiplexer,
-  builds an Eta_http.Response.t, reads response.trailers () before body
+  builds an Http.Response.t, reads response.trailers () before body
   consumption, then drains response.body.
 
 Run:

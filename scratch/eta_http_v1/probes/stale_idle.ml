@@ -59,22 +59,22 @@ let start_stale_idle_server ~sw ~net =
   (port, done_p)
 
 let make_timeout_error url =
-  Eta_http.Error.make ~method_:"GET" ~uri:url
+  Http.Error.make ~method_:"GET" ~uri:url
     (Total_request_timeout { timeout_ms = Some 5_000 })
 
 let request_once rt pool url =
-  let request : Eta_http.H1.Client.request =
+  let request : Http.H1.Client.request =
     {
       method_ = "GET";
-      url = Eta_http.Core.Url.of_string url;
+      url = Http.Core.Url.of_string url;
       headers = [ ("User-Agent", "eta-http-r5-stale-idle") ];
-      body = Eta_http.H1.Client.Empty;
+      body = Http.H1.Client.Empty;
     }
   in
   let effect =
-    Eta_http.H1.Client.request_with_pool pool request
-    |> Eta.Effect.bind (fun (response : Eta_http.H1.Client.response) ->
-           Eta_http.Body.Stream.read_all response.body
+    Http.H1.Client.request_with_pool pool request
+    |> Eta.Effect.bind (fun (response : Http.H1.Client.response) ->
+           Http.Body.Stream.read_all response.body
            |> Eta.Effect.map (fun body -> (response.status, body)))
     |> Eta.Effect.timeout_as (Eta.Duration.seconds 5)
          ~on_timeout:(make_timeout_error url)
@@ -82,7 +82,7 @@ let request_once rt pool url =
   match Eta.Runtime.run rt effect with
   | Eta.Exit.Ok (status, body) -> (status, Bytes.to_string body)
   | Eta.Exit.Error cause ->
-      Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause |> fail
+      Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause |> fail
 
 let require label cond detail = if not cond then fail (label ^ ": " ^ detail)
 
@@ -93,21 +93,21 @@ let run env =
   let port, server_done = start_stale_idle_server ~sw ~net in
   let url = Printf.sprintf "http://127.0.0.1:%d/r5-stale-idle" port in
   let pool =
-    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net
+    Http.H1.Client.make_pool ~max_size:1 ~sw ~net
       ~authenticator:(authenticator ())
-      (Eta_http.Core.Url.of_string url)
+      (Http.Core.Url.of_string url)
     |> Eta.Runtime.run rt
   in
   let pool =
     match pool with
     | Eta.Exit.Ok pool -> pool
     | Eta.Exit.Error cause ->
-        Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause |> fail
+        Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause |> fail
   in
   let first_status, first_body = request_once rt pool url in
-  let after_first = Eta_http.H1.Client.pool_stats pool in
+  let after_first = Http.H1.Client.pool_stats pool in
   let second_status, second_body = request_once rt pool url in
-  let after_second = Eta_http.H1.Client.pool_stats pool in
+  let after_second = Http.H1.Client.pool_stats pool in
   let server_result = Eio.Promise.await server_done in
   require "first status" (first_status = 200)
     (Printf.sprintf "got %d" first_status);

@@ -101,7 +101,7 @@ Migrated eta-http chokepoint:
 - packages/eta-http/test/tls/negative_dhe_cipher_override.ml
 - packages/eta-http/test/tls/run_negative_compile.sh
 
-The package API now exposes `Eta_http.Tls.Config.default_client` without
+The package API now exposes `Http.Tls.Config.default_client` without
 `~version` or `~ciphers` override labels. `dune runtest packages/eta-http
 --force` checks the migrated policy invariants and compile-fail fixtures.
 

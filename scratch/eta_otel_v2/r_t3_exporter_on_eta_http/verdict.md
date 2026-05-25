@@ -72,7 +72,7 @@ The fix is in Eta, not hidden inside eta-otel:
 
 - Eta.Effect.suppress_observability disables tracer, logger, meter, and
   auto-instrumentation for a subtree.
-- Eta_http.Observability.Tracer.request and request_with_retry wrap disabled
+- Http.Observability.Tracer.request and request_with_retry wrap disabled
   calls in suppress_observability.
 - eta-http regression coverage now proves enabled:false suppresses an inner
   named span as well as the wrapper span.
@@ -123,8 +123,8 @@ contract is now backed by Eta.Effect.suppress_observability.
 
 ## Consequences For OS3
 
-- The exporter should call Eta_http.Observability.Tracer.request_with_retry
-  with enabled:false, not bare Eta_http.request, so the recursion policy is
+- The exporter should call Http.Observability.Tracer.request_with_retry
+  with enabled:false, not bare Http.request, so the recursion policy is
   visible at the call site.
 - The exporter should use Retry_policy.always with the OTLP retry status set
   429, 502, 503, and 504. The request body must be replayable.

@@ -24,7 +24,7 @@
  (foreign_stubs
   (language c)
   (names blocking_test_stubs))
- (libraries eta eta.test alcotest eio_main eio.unix unix threads)
+ (libraries eta test redacted alcotest eio_main eio.unix unix threads)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
