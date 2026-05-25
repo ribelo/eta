@@ -67,14 +67,14 @@ and ('s, !'err, !'a) supervisor_child =
   ('s, 'err, 'a) Runtime_supervisor_types.child
 
 let ok value = Exit.Ok value
-let[@cold] error cause = Exit.Error cause
+let[@cold][@zero_alloc assume error] error cause = Exit.Error cause
 let default_renderer _ = "<typed failure>"
 
 let[@inline always][@zero_alloc opt] exit_to_value frame = function
   | Exit.Ok value -> value
   | Exit.Error cause -> Runtime_core.raise_cause frame.fail_key cause
 
-let[@cold] exit_of_exn frame exn =
+let[@cold][@zero_alloc assume error] exit_of_exn frame exn =
   Exit.Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
 
 let run_to_exit frame effect =

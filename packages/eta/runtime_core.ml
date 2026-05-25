@@ -22,10 +22,10 @@ end = struct
   let int key = key
 end
 
-let raise_cause key cause =
+let[@cold][@zero_alloc assume error] raise_cause key cause =
   raise (Raised_cause (Typed_fail.int key, Obj.repr cause))
 
-let raise_fail key err = raise_cause key (Cause.Fail err)
+let[@cold][@zero_alloc assume error] raise_fail key err = raise_cause key (Cause.Fail err)
 
 let rec cause_of_exn ?backtrace ~capture_backtrace key exn =
   match exn with
