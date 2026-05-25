@@ -7,6 +7,7 @@
   eta_http_error
   eta_http_tls
   eio
+  eio.unix
   mirage-crypto-rng
   mirage-crypto-rng.unix
   tls-eio

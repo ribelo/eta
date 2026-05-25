@@ -398,8 +398,12 @@ let request_h2_on_connection connection request url =
           in
           let response_or_writer =
             match request.body with
-            | Empty -> wait_for_response ()
-            | Fixed [] -> wait_for_response ()
+            | Empty ->
+                h2_close_request_body opened.request_body
+                |> Eta.Effect.bind (fun () -> wait_for_response ())
+            | Fixed [] ->
+                h2_close_request_body opened.request_body
+                |> Eta.Effect.bind (fun () -> wait_for_response ())
             | Fixed chunks ->
                 Eta.Effect.sync (fun () ->
                     Eta_http_h2.Connection.fork_daemon connection (fun () ->

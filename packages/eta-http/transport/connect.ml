@@ -60,8 +60,19 @@ let resolve_stream ~net ~method_ target =
              (dns_error ~method_ target "resolver returned no stream addresses")
        | Error message -> Effect.fail (dns_error ~method_ target message))
 
+let set_nodelay flow =
+  match Eio_unix.Resource.fd_opt flow with
+  | None -> ()
+  | Some fd ->
+      Eio_unix.Fd.use fd
+        (fun unix_fd -> Unix.setsockopt unix_fd Unix.TCP_NODELAY true)
+        ~if_closed:(fun () -> ())
+
 let connect_one ~sw ~net addr =
-  try Ok (Eio.Net.connect ~sw net addr :> tcp_flow)
+  try
+    let flow = (Eio.Net.connect ~sw net addr :> tcp_flow) in
+    set_nodelay flow;
+    Ok flow
   with exn -> Error (Printexc.to_string exn)
 
 let rec connect_first ~sw ~net errors = function
