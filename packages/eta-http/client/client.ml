@@ -204,11 +204,13 @@ let h2_flush_body_writer writer =
 
 let h2_write_fixed_body_sync writer chunks =
   let write_chunk chunk =
-    let chunk = Bytes.to_string chunk in
+    let bs = Bigstringaf.of_string ~off:0 ~len:(Bytes.length chunk)
+      (Bytes.unsafe_to_string chunk)
+    in
     let rec loop off =
-      if off < String.length chunk then (
-        let len = min 16_384 (String.length chunk - off) in
-        H2.Body.Writer.write_string writer (String.sub chunk off len);
+      if off < Bytes.length chunk then (
+        let len = min 65_536 (Bytes.length chunk - off) in
+        H2.Body.Writer.write_bigstring writer bs ~off ~len;
         match h2_flush_body_writer writer with
         | `Written -> loop (off + len)
         | `Closed -> ())
