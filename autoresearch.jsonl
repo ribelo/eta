@@ -1,0 +1,1 @@
+{"type":"config","name":"Eta v2 watchlist: drive composite score down without breaking allocation invariants","metricName":"watchlist_score","metricUnit":"","bestDirection":"lower"}
