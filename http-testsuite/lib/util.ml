@@ -61,16 +61,8 @@ let sha256_of_file path =
   read_file path |> sha256_of_string
 
 let body_to_string stream =
-  let buf = Buffer.create 4096 in
-  let rec loop () =
-    Eta_http.Body.Stream.read stream
-    |> Eta.Effect.bind (function
-         | None -> Eta.Effect.pure (Buffer.contents buf)
-         | Some chunk ->
-             Buffer.add_bytes buf chunk;
-             loop ())
-  in
-  loop ()
+  Eta_http.Body.Stream.read_all stream
+  |> Eta.Effect.map Bytes.unsafe_to_string
 
 let now_ms () =
   Unix.gettimeofday () *. 1000.0
