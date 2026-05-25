@@ -203,19 +203,23 @@ let read_more ~flow reader =
         let read = Eio.Flow.single_read flow view in
         (match Security.observe reader.security reader.buffer ~off:reader.len ~len:read with
         | Some error -> `Security_error error
-        | None -> (
-            let raw = Bigstringaf.substring reader.buffer ~off:reader.len ~len:read in
-            match Informational_filter.feed reader.filter raw ~off:0 ~len:read with
-            | Error error -> `Security_error error
-            | Ok () ->
-                reader.filtered <- Informational_filter.take reader.filter;
-                reader.filtered_off <- 0;
-                let copied = copy_filtered reader in
-                if copied = 0
-                   && Informational_filter.buffered_bytes reader.filter
-                      >= capacity reader
-                then `Buffer_full
-                else `Read_more copied))
+        | None ->
+            if Informational_filter.is_passthrough reader.filter then (
+              reader.len <- reader.len + read;
+              `Read_more read)
+            else (
+              let raw = Bigstringaf.substring reader.buffer ~off:reader.len ~len:read in
+              match Informational_filter.feed reader.filter raw ~off:0 ~len:read with
+              | Error error -> `Security_error error
+              | Ok () ->
+                  reader.filtered <- Informational_filter.take reader.filter;
+                  reader.filtered_off <- 0;
+                  let copied = copy_filtered reader in
+                  if copied = 0
+                     && Informational_filter.buffered_bytes reader.filter
+                        >= capacity reader
+                  then `Buffer_full
+                  else `Read_more copied))
       with End_of_file -> `Eof
 
 let buffer_exhausted reader =

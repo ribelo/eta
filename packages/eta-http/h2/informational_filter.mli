@@ -20,3 +20,8 @@ val feed :
 val take : t -> string
 
 val buffered_bytes : t -> int
+
+(** [is_passthrough t] is true when the filter has no pending data, no open
+    header block, and has already processed a final response. In this state,
+    feeding data through the filter is a no-op. *)
+val is_passthrough : t -> bool

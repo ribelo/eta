@@ -243,3 +243,8 @@ let buffered_bytes t =
   match t.headers with
   | None -> 0
   | Some headers -> Buffer.length headers.block
+
+let is_passthrough t =
+  String.length t.pending - t.pending_off = 0
+  && t.headers = None
+  && Hashtbl.length t.final_seen > 0
