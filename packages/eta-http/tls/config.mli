@@ -18,12 +18,16 @@ val default_client :
   ?peer_name:[ `host ] Domain_name.t ->
   ?ip:Ipaddr.t ->
   ?alpn_protocols:string list ->
+  ?ca_file:string ->
   unit ->
   t
 (** Build the only supported eta-http client TLS config.
 
-    The API intentionally exposes no [~version] or [~ciphers] override. *)
+    [ca_file] is an optional PEM file added to the trust store on top of
+    the system roots. The API intentionally exposes no [~version] or
+    [~ciphers] override. *)
 
 val peer_name : t -> [ `host ] Domain_name.t option
 val ip : t -> Ipaddr.t option
 val alpn_protocols : t -> string list
+val ca_file : t -> string option

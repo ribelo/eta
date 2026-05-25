@@ -92,7 +92,7 @@ let peer_identity target =
           | Ok host -> Ok (`Host host)
           | Error (`Msg message) -> Error message))
 
-let connect_tls ?alpn_protocols ~method_ target flow =
+let connect_tls ?alpn_protocols ?ca_file ~method_ target flow =
   let close_flow () =
     try Eio.Flow.close flow with _ -> ()
   in
@@ -102,7 +102,7 @@ let connect_tls ?alpn_protocols ~method_ target flow =
         | Error message -> Error message
         | Ok (`Host host) ->
             let config =
-              Eta_http_tls.Config.default_client ?alpn_protocols
+              Eta_http_tls.Config.default_client ?alpn_protocols ?ca_file
                 ~peer_name:host ()
             in
             let tls = Eta_http_tls.Eio.client_of_flow config ~host flow in
@@ -110,7 +110,7 @@ let connect_tls ?alpn_protocols ~method_ target flow =
             Ok (tls, alpn)
         | Ok (`Ip ip) ->
             let config =
-              Eta_http_tls.Config.default_client ?alpn_protocols ~ip ()
+              Eta_http_tls.Config.default_client ?alpn_protocols ?ca_file ~ip ()
             in
             let tls = Eta_http_tls.Eio.client_of_flow config flow in
             let alpn = Eta_http_tls.Eio.alpn_protocol tls in

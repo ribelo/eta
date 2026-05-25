@@ -35,12 +35,14 @@ val connect_tcp :
 
 val connect_tls :
   ?alpn_protocols:string list ->
+  ?ca_file:string ->
   method_:string ->
   target ->
   tcp_flow ->
   (tcp_flow * string option, Eta_http_error.Error.t) Eta.Effect.t
 (** Wrap a TCP flow in the ADR 0002 TLS client policy.
 
+    [ca_file] adds a PEM CA bundle on top of the system trust store.
     Returns the TLS-wrapped flow and the negotiated ALPN protocol.
     TLS failures are reported as
     {!Eta_http_error.Error.Tls_handshake_error}. *)

@@ -173,6 +173,25 @@ CAMLprim value eta_openssl_ctx_create(value v_unit)
   CAMLreturn(v);
 }
 
+CAMLprim value eta_openssl_ctx_load_ca(value v_ctx, value v_path)
+{
+  CAMLparam2(v_ctx, v_path);
+  SSL_CTX *ctx = eta_ssl_ctx_val(v_ctx);
+  const char *path = String_val(v_path);
+  if (SSL_CTX_load_verify_locations(ctx, path, NULL) != 1) {
+    char buf[256];
+    unsigned long e = ERR_peek_error();
+    if (e != 0) {
+      ERR_error_string_n(e, buf, sizeof(buf));
+      ERR_clear_error();
+      caml_failwith(buf);
+    } else {
+      caml_failwith("SSL_CTX_load_verify_locations failed");
+    }
+  }
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value eta_openssl_ssl_create(value v_ctx, value v_hostname,
                                       value v_alpn)
 {

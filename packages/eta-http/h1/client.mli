@@ -50,11 +50,13 @@ val make_pool :
   ?health_check:
     (([ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t ->
      (unit, Eta_http_error.Error.t) Eta.Effect.t)) ->
+  ?ca_file:string ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   Eta_http_core.Url.t ->
   (pool, Eta_http_error.Error.t) Eta.Effect.t
-(** Build an origin-scoped h1 connection pool. *)
+(** Build an origin-scoped h1 connection pool. [ca_file] is an optional PEM
+    CA bundle added to the trust store on top of the system roots. *)
 
 val request_with_pool :
   pool -> request -> (response, Eta_http_error.Error.t) Eta.Effect.t
@@ -69,8 +71,10 @@ val shutdown_pool : pool -> (unit, Eta_http_error.Error.t) Eta.Effect.t
 
 val request :
   ?max_response_body_bytes:int ->
+  ?ca_file:string ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   request ->
   (response, Eta_http_error.Error.t) Eta.Effect.t
-(** Connect, wrap TLS for HTTPS URLs, and execute one HTTP/1.1 request. *)
+(** Connect, wrap TLS for HTTPS URLs, and execute one HTTP/1.1 request.
+    [ca_file] is an optional PEM CA bundle added to the trust store. *)

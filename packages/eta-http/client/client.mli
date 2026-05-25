@@ -32,18 +32,21 @@ val make_h1 :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   ?max_response_body_bytes:int ->
+  ?ca_file:string ->
   unit ->
   t
 (** Build the S1 HTTP/1.1 client path.
 
     Connections are pooled per origin with {!Eta.Pool}.
     [max_response_body_bytes] caps fixed-length, chunked, and
-    close-delimited response bodies. *)
+    close-delimited response bodies. [ca_file] adds a PEM CA bundle to
+    the trust store on top of the system roots. *)
 
 val make :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   ?max_response_body_bytes:int ->
+  ?ca_file:string ->
   unit ->
   t
 (** Build the S2 ALPN-dispatch client path.
@@ -51,7 +54,7 @@ val make :
     HTTPS requests negotiate [h2, http/1.1] and dispatch to the h2
     multiplexer or h1 request loop from the same caller API. Plain HTTP uses
     the h1 request loop. [max_response_body_bytes] caps HTTP/1.1 response body
-    decoding. *)
+    decoding. [ca_file] adds a PEM CA bundle to the trust store. *)
 
 val make_for_test :
   protocol:protocol ->

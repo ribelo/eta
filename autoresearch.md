@@ -1,152 +1,168 @@
-# Autoresearch: Eta v2 watchlist regression loop
+# Autoresearch: Eta HTTP client warm-loop performance
 
 ## Objective
 
-Drive Eta's runtime overhead measurably below the v2-ship baseline (commit
-`37ab859`) on the four locked watchlist rows, while preserving the
-zero-allocation invariants that make v2 viable. The loop compares Eta to
-itself only — no Go, no curl, no cross-runtime baselines.
+Make Eta's `eta-http` warm-loop client competitive with Go's `net/http` on
+the perf_compare benchmark. Two concrete problems frame the work:
 
-The two structural targets called out in `AUDIT.md`:
+1. **H1 plain GET 1k has a ~44 ms per-request floor.** Go does the same
+   work in ~18 µs. That is roughly 2400× slower and almost certainly a
+   bug (a stray sleep, a synchronous flush waiting on something, or
+   pool/scheduling pessimism), not raw CPU cost.
+2. **H2/TLS warm reuse is broken.** Every H2 GET after the warmup pool
+   is established times out. Go and curl both succeed. Whatever Eta is
+   doing on the second request over a kept-alive TLS+H2 connection is
+   wrong.
 
-1. **`overhead.eta.fail_catch.100k.prebuilt` allocation regression.** v2
-   pays ~6× minor words and 242 major words vs v1 for 100k fail/catch
-   round trips. Either fix it, or land a representation change that
-   recovers most of the gap.
-2. **`overhead.eta.pure.reused_rt` warm cost.** v1 was below the timer
-   floor; v2 sits around 2 µs. The previous marker-on-record fix was
-   rejected because it polluted bind allocation. The acceptance bar
-   here is **strict**: any improvement must keep
-   `overhead.eta.bind.100k.prebuilt` at zero minor words.
+Once those two are addressed we expect H1 latency to fall by orders of
+magnitude and H2 to start producing real samples; tightening the
+remaining gap (e.g. caddy h2 POST 1m where Eta is ~3× slower than Go) is
+follow-on work.
 
-Wins that drop the composite score without violating those invariants are
-also welcome.
+## Reference numbers (release, commit a11749b, full iteration counts)
 
-## Watchlist (locked rows)
+```
+scenario               |    Eta warm |  Go warm | curl CLI
+nginx h1 plain GET 1k  |      44.015 |    0.018 |    3.195   ms median
+nginx h2 tls   GET 1k  | timeout >2s |    0.023 |    4.741
+nginx h2 tls   GET 1m  | timeout >2s |    0.432 |    4.893
+caddy h2 tls   POST 1m |       5.395 |    1.731 |    7.900
+```
 
-| Row                                              | Source bench                  | Direction | Hard invariant                |
-|--------------------------------------------------|-------------------------------|-----------|-------------------------------|
-| `overhead.eta.bind.100k.prebuilt`                | `bench/runtime_watchlist`     | lower     | minor_words **must be 0**     |
-| `overhead.eta.fail_catch.100k.prebuilt`          | `bench/runtime_watchlist`     | lower     | (target: ≤ v1 1,048,573 minor)|
-| `overhead.eta.pure.reused_rt`                    | `bench/runtime_watchlist`     | lower     | minor_words **must be 0**     |
-| `realuse.retry.flaky.fail4_then_ok`              | `bench/runtime_watchlist`     | lower     | minor_words **must be 0**     |
-
-These rows are mirrored in `bench/runtime_overhead/` and
-`bench/runtime_real/` and remain unchanged there. The watchlist bench is
-the focused regression bench; the original benches stay as the broader
-sanity suite.
+Goal posts:
+- nginx h1 plain GET 1k: **target < 0.5 ms** (within ~25× of Go is the
+  first milestone; Go itself is 18 µs).
+- nginx h2 tls GET 1k / 1m: **stop timing out**, then drive median into
+  the sub-millisecond range.
+- caddy h2 tls POST 1m: **within 2× of Go** (~3.5 ms).
 
 ## Metrics
 
-The driver script (`autoresearch.sh`) emits METRIC lines parsed by
-`run_experiment`.
+The benchmark runs in a reduced "loop mode" (15 iters per scenario,
+3 warmup, 500 ms Eta timeout cap) so each iteration stays under ~60 s.
 
-- **Primary**: `watchlist_score` — lower is better. Composite of the four
-  rows normalized against the v2-ship baseline so each row contributes
-  ~1.0 at start. A score of 4.0 means "exactly v2 baseline"; 2.0 means
-  "halved across the watchlist on average". Wall-time components use
-  `min` over samples (more reproducible than `mean` near the timer floor).
-
-- **Secondary** (lower is better unless noted):
-  - `fail_catch_minor` — minor words on `overhead.eta.fail_catch.100k.prebuilt`.
-  - `fail_catch_major` — major words on the same row.
-  - `fail_catch_min_ns` — wall-time floor for fail/catch.
-  - `pure_reused_rt_min_ns` — warm pure cost.
-  - `bind_min_ns` — bind chain cost.
-  - `retry_min_ns` — retry round-trip cost.
-  - `bind_minor_invariant`, `pure_minor_invariant`, `retry_minor_invariant`
-    — must remain 0; surfaced for dashboard visibility. The official
-    enforcement is in `autoresearch.checks.sh`.
+- **Primary**: `eta_total_ms` — sum of Eta median ms across the 4
+  scenarios. Errored scenarios contribute the timeout cap (currently
+  500 ms each), so the baseline is dominated by H2 failures. **Lower is
+  better.**
+- **Secondary**:
+  - `eta_errors` — count of scenarios where Eta failed (target: 0).
+  - `eta_h1_get_1k_ms`, `eta_h2_get_1k_ms`, `eta_h2_get_1m_ms`,
+    `eta_h2_post_1m_ms` — per-scenario Eta median.
+  - `go_total_ms`, `go_h1_get_1k_ms`, ... — Go medians, used as a sanity
+    check that the host is not under load. Should be roughly stable
+    across runs.
 
 ## How to run
 
 ```
-bash autoresearch.sh
+./autoresearch.sh
 ```
 
 Internally:
-1. `nix develop -c dune build --profile=release bench/runtime_watchlist/runtime_watchlist.exe`
-2. Runs the watchlist exe with `--samples 20` and `EIO_BACKEND=posix`.
-3. A short Python summariser parses the JSON and prints `METRIC` lines.
+1. `nix develop -c dune build --profile release http-testsuite/test/perf_compare/run.exe`
+2. `nix develop -c dune exec --profile release --no-build` of the same
+   target, with `ETA_PERF_ITERS / ETA_PERF_WARMUP / ETA_PERF_TIMEOUT_MS`
+   exported.
+3. Locate the JSON written under `http-testsuite/results/<run-id>/`
+   and emit `METRIC name=value` lines from a small Python summariser.
 
-Sample count is configurable via `ETA_WATCHLIST_SAMPLES`.
+The `perf_compare` executable was modified (this branch) to honour those
+three env vars; without them it preserves the original full-suite
+behaviour.
 
-## Regression gate (`autoresearch.checks.sh`)
+## Files in scope (likely places to fix things)
 
-Runs every iteration before the metric is logged. Hard fail conditions:
-
-- `dune build --profile=release packages/eta/eta.cmxa` fails.
-- The soundness gate (`packages/eta/test/soundness/run.sh`) rejects a
-  fixture or accepts a negative one.
-- `dune runtest --force` fails.
-- Any of the three zero-allocation invariants is nonzero.
-- Wall-time ceilings are breached (1.5–2× v2-ship baseline):
-  - `pure.reused_rt` min wall_ns > 8 000
-  - `realuse.retry.flaky` min wall_ns > 80 000
-  - `overhead.eta.bind.100k` min wall_ns > 700 000
-
-Tests run on every iteration on purpose: a faster but unsound effect
-representation is not a win.
-
-## Files in scope (likely places to change)
-
-- `packages/eta/effect_direct.ml` — public effect record, bind/catch/pure
-  wiring, supervisor scope. Both targets live here.
-- `packages/eta/runtime.ml`, `runtime_core.ml` — runtime entry, typed-fail
-  key generation, frame setup. `fail_catch` cost includes per-iteration
-  `Typed_fail.fresh ()` and inner-frame allocation.
-- `packages/eta/cause.ml` — `Cause.Fail` round trip on the catch path.
-- `packages/eta/exit.ml` — `Exit.Ok` / `Exit.Error` representation.
-- `packages/eta/effect.mli` — only widen the public API as a last resort.
-- `bench/runtime_watchlist/` — the bench itself. Fine to add per-phase
-  METRIC signals but do not weaken the workload (e.g. fewer iterations
-  per row) just to bring the score down.
+- `packages/eta-http/client/client.ml(.mli)` — connection pool, request
+  pipelining, idle reuse. The H1 44 ms latency and H2 reuse bug both
+  most likely live here.
+- `packages/eta-http/client/retry.ml`, `idempotency.ml` — retry policy
+  and idempotency keys; check whether retry/back-off is silently adding
+  delay.
+- `packages/eta-http/h1/client.ml`, `h1/parse.ml`, `h1/write.ml` — H1
+  request/response framing and the per-request lifecycle.
+- `packages/eta-http/h2/connection.ml`, `multiplexer.ml`, `writer.ml`,
+  `stream_state.ml`, `frame.ml`, `admission.ml` — H2 connection,
+  multiplexer, stream lifecycle. The "second request after warmup
+  hangs" symptom likely involves stream state, window updates, or
+  multiplexer dispatch.
+- `packages/eta-http/transport/alpn.ml` — ALPN selection during TLS.
+- `packages/eta-http/tls/config.ml` — TLS handshake wiring.
+- `packages/eta-http/body/{chunked,source,stream,transducer}.ml` —
+  body sourcing/sinking; could matter for the 1 MiB cases.
+- `packages/eta/effect.ml`, `runtime.ml`, `schedule.ml`, `duration.ml` —
+  if profiling fingers a runtime/scheduler issue rather than HTTP
+  framing.
+- `http-testsuite/test/perf_compare/run.ml` — the benchmark itself.
+  Modify if you need additional instrumentation (per-phase timings,
+  more scenarios). Remember the `ETA_PERF_*` env-var hooks already
+  exist.
+- `http-testsuite/lib/*.ml` — shared fixture helpers (servers, certs,
+  bodies). Touch only if a test scaffolding bug is in the way.
 
 ## Off limits
 
-- Do **not** weaken the watchlist (drop a row, lower the iteration count,
-  swap `min` for `max` on wall-time, etc.) just to make the metric look
-  better.
-- Do **not** disable the soundness gate or `dune runtest --force` in
-  `autoresearch.checks.sh`.
-- Do **not** widen public `.mli` signatures silently.
+- Do **not** alter the reference clients (Go helper string in `run.ml`,
+  curl invocation). They are the comparison baseline.
+- Do **not** weaken the workload (e.g. switch to a smaller body, drop a
+  scenario, raise the timeout silently) just to make the metric look
+  better. Loosen iteration counts via `ETA_PERF_ITERS` only when
+  intentionally trading stability for speed; document it.
 - Do **not** edit `.backlog/`, `.review/`, `journal.md`, `_build/`.
-- Do **not** alter `AUDIT.md`'s recorded baseline numbers; if they need a
-  refresh, do it in a separate commit with new measurements.
+  `.backlog/` files show as dirty in `git status` but are gitignored —
+  ignore them.
 
 ## Constraints
 
 - `nix develop -c dune build` and `nix develop -c dune runtest --force`
-  must keep passing every iteration. The checks script enforces this.
+  must keep passing. There is no `autoresearch.checks.sh` yet; add one
+  if you want regressions caught automatically per iteration.
 - No new opam dependencies without a clear reason.
+- Public APIs in `.mli` files should not silently widen.
 - Preserve the Eta boundary called out in `AGENTS.md`: applications own
   state, Eta owns effect description and interpretation.
 
 ## What's been tried
 
-### Pre-merge marker fast path (REJECTED, see `AUDIT.md`)
+### Iteration #2 — H1 write coalescing (KEPT, 8132915)
 
-Attempted to add `is_pure` / `is_fail` marker fields to the direct effect
-record so `Runtime.run` could shortcut the trivial cases. Recovering
-`pure.reused_rt` was easy; the cost was that the compiler kept an
-`Effect.pure` allocation inside the bind hot path, regressing
-`overhead.eta.bind.100k.prebuilt` from 0 to 1,048,575 minor words per
-sample. **The acceptance bar for any new pure/fail fast path is that
-`bind.100k.prebuilt` minor_words stays 0.**
+**Root cause**: `write_to_flow` sent ~10 separate `Eio.Flow.copy_string` calls
+(one per header line, the method, path, etc.). On a reused TCP connection,
+this created a Nagle + delayed-ACK interaction: the first small write
+filled a segment and was sent, subsequent writes got Nagled (waiting for
+ACK), the server delayed its ACK up to 40 ms (TCP_DELACK_MIN). Result:
+`read_response_head` blocked for ~43 ms on every reused request.
 
-## Notes / hints for the next iteration
+**Fix**: Buffer the entire request into a single `Buffer` and flush with
+one `write_string` call. Single TCP segment → no Nagle/delayed-ACK.
 
-- The fail_catch allocation regression has two suspects worth profiling
-  before guessing:
-  1. `Runtime_core.Typed_fail.fresh ()` per `catch` allocates a new key
-     (`packages/eta/effect_direct.ml` line ~109). v1 may have batched
-     keys differently.
-  2. Inner-frame record copy on every `catch` (`{ frame with fail_key; ... }`).
-  Run with `--samples 20`, halve the iteration count for one of the two
-  to see which dominates.
-- `pure.reused_rt` is a single record-allocation + a single `eval ()`
-  invocation. The 2 µs is plausibly the `Eio.Fiber.with_binding` round
-  trip — measure that path before committing to a representation change.
-- Major-words on `fail_catch` (242) is suspicious; it implies Cause
-  payloads are escaping the minor heap. Worth a `Gc.minor_words` /
-  `Gc.major_words` split if `fail_catch_minor` doesn't move on its own.
+**Impact**: H1 GET 1k median 47.87 ms → 1.05 ms (46×). Total 1053.76 →
+1006.71 (modest because H2 timeouts dominate at 500 ms each).
+
+### Diagnostic probes (reverted)
+
+- Added per-phase timing to `request_on_flow` and `request_owner`.
+  Confirmed write=0.02ms, read_head=43ms (the bottleneck).
+- Disabled health check (`Effect.unit`). No change — the 43ms persists.
+  Health check is innocent; the delay is pure Nagle + delayed ACK from
+  the write pattern.
+
+## Notes / hints for the next agent
+
+- The H2 warmup itself (first request) is reported to succeed; only the
+  *kept-alive* path stalls. Watching for unsent WINDOW_UPDATEs, missing
+  SETTINGS ACK, half-closed streams that never get cleaned up, or a
+  stream-id allocator that wraps incorrectly are good first hypotheses.
+- 44 ms is suspiciously close to a round figure. Look for any literal
+  delay (`Duration.ms 40` etc.), a default Nagle/cork toggle, or a
+  retry that always fires once before succeeding. Search across
+  `packages/eta-http/` and `packages/eta/`.
+- `Eta.Effect.timeout_as` uses `Eta.Duration.ms` — if you bump the
+  timeout for diagnostic runs, do it via `ETA_PERF_TIMEOUT_MS` rather
+  than editing `run.ml`.
+- The Go helper is rebuilt every iteration into a temp dir; that is
+  ~1–2 s of overhead you can skip by caching, but it is not currently
+  the bottleneck.
+- If you need finer-grained signal, add `METRIC` lines for per-phase
+  timings (connect, handshake, request write, response read) inside
+  `run.ml` and surface them through `autoresearch.sh`.

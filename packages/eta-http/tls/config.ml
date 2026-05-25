@@ -18,11 +18,13 @@ type t = {
   peer_name : [ `host ] Domain_name.t option;
   ip : Ipaddr.t option;
   alpn_protocols : string list;
+  ca_file : string option;
 }
 
-let default_client ?peer_name ?ip ?(alpn_protocols = default_alpn) () =
-  { peer_name; ip; alpn_protocols }
+let default_client ?peer_name ?ip ?(alpn_protocols = default_alpn) ?ca_file () =
+  { peer_name; ip; alpn_protocols; ca_file }
 
 let peer_name t = t.peer_name
 let ip t = t.ip
 let alpn_protocols t = t.alpn_protocols
+let ca_file t = t.ca_file

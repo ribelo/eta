@@ -422,7 +422,7 @@ let request_h2_on_connection connection request url =
                 |> Eta.Effect.bind (fun () -> response_or_writer))))
 
 let make_h1 ~sw ~net
-    ?(max_response_body_bytes = default_max_response_body_bytes) () =
+    ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.Client.make_h1: max_response_body_bytes must be >= 0";
   let pools = Hashtbl.create 8 in
@@ -432,7 +432,7 @@ let make_h1 ~sw ~net
     match Hashtbl.find_opt pools key with
     | Some pool -> Eta.Effect.pure pool
     | None ->
-        Eta_http_h1.Client.make_pool ~max_response_body_bytes ~sw ~net
+        Eta_http_h1.Client.make_pool ~max_response_body_bytes ?ca_file ~sw ~net
           request.url
         |> Eta.Effect.map (fun pool ->
                Hashtbl.replace pools key pool;
@@ -477,7 +477,7 @@ let make_h1 ~sw ~net
 
 
 let make ~sw ~net
-    ?(max_response_body_bytes = default_max_response_body_bytes) () =
+    ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.Client.make: max_response_body_bytes must be >= 0";
   let opened = ref 0 in
@@ -564,7 +564,7 @@ let make ~sw ~net
                               last_protocol := H1;
                               h1_on_flow tcp request
                           | Https ->
-                              Connect.connect_tls
+                              Connect.connect_tls ?ca_file
                                 ~method_:request.method_ target tcp
                               |> Eta.Effect.bind (fun (tls, alpn) ->
                                      dispatch_tls target (tls, alpn) request url))))

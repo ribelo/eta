@@ -12,6 +12,11 @@ val create_ctx : unit -> ctx
 (** Create a client SSL_CTX with TLS 1.2-only policy ciphers, default
     system trust store, and peer verification enabled. *)
 
+val ctx_load_ca : ctx -> string -> unit
+(** [ctx_load_ca ctx path] adds [path] (a PEM CA file) to the trust
+    store of [ctx]. The default system trust store remains in effect.
+    Raises [Failure] if the file cannot be loaded. *)
+
 val create_ssl : ctx -> hostname:string option -> alpn_protocols:string list -> ssl
 (** Create an SSL connection with memory BIOs. [hostname] sets SNI.
     [alpn_protocols] are sent in wire order. *)
