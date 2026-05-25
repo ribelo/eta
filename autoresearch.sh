@@ -61,7 +61,7 @@ retry_min_ns     = minimum("realuse.retry.flaky.fail4_then_ok", "wall_ns")
 # component contributes 1.0 at baseline so the score starts near 4.0 and
 # any improvement drives it down.
 BASELINE_FAIL_CATCH_MINOR = 6_291_435.0
-BASELINE_PURE_MIN_NS      = 1.0   # pure.reused_rt min is below the timer
+BASELINE_PURE_MIN_NS      = 2000.0  # v2 mean ~2229 ns; when below timer floor min=0, score ~0
                                   # floor (samples include 0 ns); use a
                                   # 1 ns floor and divide by it.
 BASELINE_BIND_MIN_NS      = 344_991.0

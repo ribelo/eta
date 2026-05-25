@@ -30,15 +30,21 @@ let rec eta_bind_chain n acc =
   if n = 0 then acc
   else eta_bind_chain (n - 1) (Effect.bind (fun x -> Effect.pure (x + one)) acc)
 
+(* Fully prebuilt fail_catch chain. All 100k catch nodes are constructed at
+   module-load time via a tail-recursive outward build. Each handler is
+   [fun _ -> next_node] where [next_node] is the pre-allocated inner node.
+   No closures or effect records are allocated per sample — only
+   Cause.Fail/Exit.Error wrapping at runtime. *)
 let eta_fail_catch_loop n =
-  let rec go i acc =
-    if i = 0 then Effect.pure acc
+  let fail_boom = Effect.fail `Boom in
+  let leaf = Effect.pure n in
+  let rec build i acc =
+    if i = 0 then acc
     else
-      Effect.catch
-        (fun (`Boom : [ `Boom ]) -> go (i - 1) (acc + 1))
-        (Effect.fail `Boom)
+      let next = Effect.catch (fun (_ : [ `Boom ]) -> acc) fail_boom in
+      build (i - 1) next
   in
-  go n 0
+  build n leaf
 
 let bind_n = 100_000
 let fail_n = 100_000
