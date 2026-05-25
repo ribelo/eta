@@ -724,14 +724,13 @@ let run ?island_pool ?blocking_pool runtime effect =
         }
   in
   runtime.tracer#with_fiber_context @@ fun () ->
-  Eio.Switch.run @@ fun sw ->
   let finalizers = ref [] in
   let frame =
     {
       runtime = (Obj.magic runtime : Obj.t Runtime_core.t);
       error_renderer = default_renderer;
       fail_key = runtime.Runtime_core.default_fail_key;
-      sw;
+      sw = runtime.Runtime_core.outer_sw;
       finalizers;
     }
   in
