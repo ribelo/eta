@@ -1,5 +1,28 @@
 # Deferred Optimizations
 
+## Eta v2 watchlist items (from current session)
+
+### pure.reused_rt: Eio entry-point overhead (~2 µs)
+- **Cost breakdown**: Eio.Switch.run (~500 ns) + Eio.Fiber.with_binding (~500-1000 ns) + frame record (~50 ns) + with_finalizers (~50 ns) + eval (~10 ns)
+- **Bottleneck**: Cannot eliminate Switch.run or Fiber.with_binding without restructuring Runtime.run to skip them for trivial effects
+- **Frame caching**: Store a pre-allocated frame template with mutable sw/finalizers. Saves ~50 ns (2.5%). Not worth the complexity.
+- **Switch-less fast path**: Add `Runtime.run_simple` that skips Switch + finalizers for effects known to be pure/fail. Semantically correct but changes API.
+- **Verdict**: ~2 µs is acceptable for the entry point. v1 was ~48 ns but used a pure OCaml interpreter without Eio context. The Eio overhead is the price of integration.
+
+### fail_catch: chain rebuilding allocation (RESOLVED)
+- **Achieved**: 6.29M → 1.05M minor words (-83%). Matches v1 baseline.
+- **Catch direct eval**: Saves inner frame + Eio.with_binding per catch (-50%)
+- **Prebuilt chain**: Construction-time node allocation, handlers return prebuilt next nodes (-67%)
+- **Remaining**: 10.5 words/iter = Cause.Fail + Exit.Error wrapping. Fundamental, cannot eliminate.
+
+### bind.100k.prebuilt: zero-allocation invariant
+- **Status**: 0 minor words, ~3.4 ns per bind. At the performance ceiling.
+
+### retry.flaky.fail4_then_ok: zero-allocation invariant
+- **Status**: 0 minor words, ~28 µs. At the performance ceiling.
+
+## From previous HTTP session
+
 ## Upgrading mirage-crypto / ocaml-tls (blocked by digestif/OxCaml)
 - **Impact**: High — remaining ~1.3ms TLS overhead per 1MB could be reduced significantly
 - **Blocked by**: digestif 1.3.0 fails to compile with OxCaml local-mode (`By.t` vs `bytes @ local` issue)
