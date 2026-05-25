@@ -204,15 +204,14 @@ let h2_flush_body_writer writer =
 
 let h2_write_fixed_body_sync writer chunks =
   let write_chunk chunk =
-    let bs = Bigstringaf.of_string ~off:0 ~len:(Bytes.length chunk)
-      (Bytes.unsafe_to_string chunk)
-    in
+    let s = Bytes.unsafe_to_string chunk in
+    let len = Bytes.length chunk in
     let rec loop off =
-      if off < Bytes.length chunk then (
-        let len = min 65_536 (Bytes.length chunk - off) in
-        H2.Body.Writer.write_bigstring writer bs ~off ~len;
+      if off < len then (
+        let write_len = min 65_536 (len - off) in
+        H2.Body.Writer.write_string writer s ~off ~len:write_len;
         match h2_flush_body_writer writer with
-        | `Written -> loop (off + len)
+        | `Written -> loop (off + write_len)
         | `Closed -> ())
     in
     loop 0
@@ -541,7 +540,7 @@ let make ~sw ~net ?authenticator
     let key = h2_key target in
     let connection =
       Eta_http_h2.Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
-        ~config:h2_config ~reader_buffer_size:(128 * 1024)
+        ~config:h2_config ~reader_buffer_size:(256 * 1024)
         ~on_close:(fun () ->
           incr released;
           Hashtbl.remove h2_connections key)
