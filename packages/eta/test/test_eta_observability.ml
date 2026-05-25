@@ -140,7 +140,7 @@ let test_observability_statuses () =
   | events ->
       Alcotest.failf "expected one custom exception event, got %d"
         (List.length events));
-  check_error_message "inner default" "<typed failure>" (find "inner").status;
+  check_error_message "inner default" "<unexpected>" (find "inner").status;
   check_error_message "outer custom" "outer" (find "outer").status;
   check_status "die" (Tracer.Error "") (find "die").status;
   check_status "interrupt" Tracer.Cancelled (find "interrupt").status

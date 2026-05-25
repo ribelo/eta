@@ -109,18 +109,10 @@ let concat effects =
 let catch handler effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
-  let inner_key = Runtime_core.Typed_fail.fresh () in
-  let inner_frame =
-    {
-      frame with
-      fail_key = inner_key;
-      error_renderer = default_renderer;
-    }
-  in
-  match run_to_exit inner_frame effect with
-  | Exit.Ok _ as ok -> ok
-  | Exit.Error (Cause.Fail err) -> (handler err).eval ()
-  | Exit.Error cause -> error (Obj.magic cause)
+  (match try effect.eval () with exn -> exit_of_exn frame exn with
+   | Exit.Ok _ as ok -> ok
+   | Exit.Error (Cause.Fail err) -> (handler err).eval ()
+   | Exit.Error cause -> error (Obj.magic cause))
 
 let tap_error observe effect =
   preserve effect @@ fun () ->
