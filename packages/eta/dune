@@ -3,12 +3,10 @@
  (public_name eta)
  (private_modules
   blocking_runtime
-  effect_ast
+  effect_direct
   island_runtime
-  runtime_concurrency
   runtime_core
   runtime_instrument
-  runtime_interpret
   runtime_observability
   runtime_supervisor
   runtime_supervisor_types)

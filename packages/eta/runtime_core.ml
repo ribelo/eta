@@ -1,4 +1,3 @@
-module EV = Effect_ast
 module P_atomic = Portable.Atomic
 module RObs = Runtime_observability
 module Sch = Schedule
