@@ -154,12 +154,25 @@ let observe_byte t byte =
     if t.header_len = 9 then start_frame t else None)
 
 let observe t bs ~off ~len =
-  let rec loop index =
-    if index = off + len then None
+  let stop = off + len in
+  let rec loop i =
+    if i >= stop then None
+    else if t.payload_remaining > 0 then (
+      let skipped = min t.payload_remaining (stop - i) in
+      t.payload_remaining <- t.payload_remaining - skipped;
+      loop (i + skipped))
     else
-      match observe_byte t (Bigstringaf.get bs index) with
-      | Some error -> Some error
-      | None -> loop (index + 1)
+      let needed = 9 - t.header_len in
+      let take = min needed (stop - i) in
+      for j = 0 to take - 1 do
+        Bytes.set t.header (t.header_len + j) (Bigstringaf.get bs (i + j))
+      done;
+      t.header_len <- t.header_len + take;
+      if t.header_len = 9 then
+        match start_frame t with
+        | Some error -> Some error
+        | None -> loop (i + take)
+      else loop (i + take)
   in
   loop off
 
