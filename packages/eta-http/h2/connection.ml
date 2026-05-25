@@ -124,7 +124,7 @@ let run_owner_loop ?(on_error = fun _ -> ()) loop t =
 
 let create ~sw ~flow ?max_concurrent ?config ?push_handler
     ?(error_handler = fun _ -> ()) ?(security_error_handler = fun _ -> ())
-    ?(on_close = fun () -> ()) () =
+    ?(on_close = fun () -> ()) ?(reader_buffer_size = 64 * 1024) () =
   let holder = ref None in
   let mux =
     Multiplexer.create ?max_concurrent ?config ?push_handler
@@ -147,7 +147,7 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
       sw;
       mux;
       client;
-      reader = Multiplexer.create_client_reader client;
+      reader = Multiplexer.create_client_reader ~buffer_size:reader_buffer_size client;
       flow;
       mutex = Eio.Mutex.create ();
       closed = false;

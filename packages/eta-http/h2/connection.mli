@@ -18,6 +18,7 @@ val create :
   ?error_handler:(H2.Client_connection.error -> unit) ->
   ?security_error_handler:(Eta_http_error.Error.kind -> unit) ->
   ?on_close:(unit -> unit) ->
+  ?reader_buffer_size:int ->
   unit ->
   t
 
