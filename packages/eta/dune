@@ -3,7 +3,6 @@
  (public_name eta)
  (private_modules
   blocking_runtime
-  effect_direct
   island_runtime
   runtime_core
   runtime_instrument

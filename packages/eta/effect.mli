@@ -489,6 +489,10 @@ val collect_names : ('a, 'err) t -> string list
     [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)
 
+val run : 'err Runtime_core.t -> ('a, 'err) t -> ('a, 'err) Exit.t
+(** Run an effect to completion against a runtime. The wrapper-level pool
+    overrides live on {!Runtime.run}. *)
+
 module Private : sig
   (** Unstable extension hooks for Eta's runtime and sibling packages.
 

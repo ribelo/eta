@@ -1,11 +1,9 @@
-module E = Effect
 module P_atomic = Portable.Atomic
 
-external direct : ('a, 'err) E.t -> ('a, 'err) Effect_direct.t = "%identity"
-external island_pool_of_public : E.Island.pool -> Island_runtime.pool
+external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
   = "%identity"
 
-external blocking_pool_of_public : E.Blocking.Pool.t -> Blocking_runtime.t
+external blocking_pool_of_public : Effect.Blocking.Pool.t -> Blocking_runtime.t
   = "%identity"
 
 type 'err t = 'err Runtime_core.t
@@ -17,10 +15,24 @@ let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
   Runtime_core.create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument
     ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace ()
 
-let run ?island_pool ?blocking_pool t eff =
-  let island_pool = Option.map island_pool_of_public island_pool in
-  let blocking_pool = Option.map blocking_pool_of_public blocking_pool in
-  Effect_direct.run ?island_pool ?blocking_pool t (direct eff)
+let run ?island_pool ?blocking_pool runtime eff =
+  let runtime =
+    match (island_pool, blocking_pool) with
+    | None, None -> runtime
+    | _ ->
+        {
+          runtime with
+          Runtime_core.island_pool =
+            (match island_pool with
+             | Some pool -> Some (island_pool_of_public pool)
+             | None -> runtime.Runtime_core.island_pool);
+          Runtime_core.blocking_pool =
+            (match blocking_pool with
+             | Some pool -> Some (blocking_pool_of_public pool)
+             | None -> runtime.Runtime_core.blocking_pool);
+        }
+  in
+  Effect.run runtime eff
 
 let run_exn t eff =
   match run t eff with
