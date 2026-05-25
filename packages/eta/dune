@@ -11,3 +11,8 @@
   runtime_supervisor
   runtime_supervisor_types)
  (libraries eta.redacted eio eio.unix portable parallel parallel.scheduler threads))
+
+(env
+ (release
+  (ocamlopt_flags
+   (:standard -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2))))
