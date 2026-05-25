@@ -124,9 +124,28 @@ behaviour.
 
 ## What's been tried
 
-(empty — populate as iterations accumulate. Note both wins and dead
-ends, especially for runs that get reverted; the JSON line + ASI is
-otherwise the only durable record.)
+### Iteration #2 — H1 write coalescing (KEPT, 8132915)
+
+**Root cause**: `write_to_flow` sent ~10 separate `Eio.Flow.copy_string` calls
+(one per header line, the method, path, etc.). On a reused TCP connection,
+this created a Nagle + delayed-ACK interaction: the first small write
+filled a segment and was sent, subsequent writes got Nagled (waiting for
+ACK), the server delayed its ACK up to 40 ms (TCP_DELACK_MIN). Result:
+`read_response_head` blocked for ~43 ms on every reused request.
+
+**Fix**: Buffer the entire request into a single `Buffer` and flush with
+one `write_string` call. Single TCP segment → no Nagle/delayed-ACK.
+
+**Impact**: H1 GET 1k median 47.87 ms → 1.05 ms (46×). Total 1053.76 →
+1006.71 (modest because H2 timeouts dominate at 500 ms each).
+
+### Diagnostic probes (reverted)
+
+- Added per-phase timing to `request_on_flow` and `request_owner`.
+  Confirmed write=0.02ms, read_head=43ms (the bottleneck).
+- Disabled health check (`Effect.unit`). No change — the 43ms persists.
+  Health check is innocent; the delay is pure Nagle + delayed ACK from
+  the write pattern.
 
 ## Notes / hints for the next agent
 
