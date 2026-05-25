@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 export EIO_BACKEND="${EIO_BACKEND:-posix}"
-SAMPLES="${ETA_WATCHLIST_SAMPLES:-20}"
+SAMPLES="${ETA_WATCHLIST_SAMPLES:-50}"
 
 # Build silently. Any build failure is a hard fail (autoresearch will
 # log a crash and revert).

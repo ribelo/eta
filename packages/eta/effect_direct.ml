@@ -735,12 +735,18 @@ let run ?island_pool ?blocking_pool runtime effect =
     }
   in
   try
+    let body () =
+      Runtime_core.with_finalizers ~runtime ~fail_key:runtime.default_fail_key
+        finalizers (fun () -> run_to_value frame effect)
+    in
     ok
-      (RObs.with_blocking_event_emit
-         (Runtime_core.emit_blocking_event runtime)
-         (fun () ->
-           Runtime_core.with_finalizers ~runtime ~fail_key:runtime.default_fail_key
-             finalizers (fun () -> run_to_value frame effect)))
+      (if runtime.Runtime_core.tracing_enabled
+       || runtime.Runtime_core.metrics_enabled
+      then
+        RObs.with_blocking_event_emit
+          (Runtime_core.emit_blocking_event runtime)
+          body
+      else body ())
   with exn ->
     error (Runtime_core.cause_of_exn_runtime runtime runtime.default_fail_key exn)
 
