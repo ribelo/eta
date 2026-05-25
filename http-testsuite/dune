@@ -12,3 +12,8 @@
  (alias http-bench)
  (deps (alias test/bench/http-bench))
  (action (progn)))
+
+(rule
+ (alias perf-compare)
+ (deps (alias test/perf_compare/perf-compare))
+ (action (progn)))

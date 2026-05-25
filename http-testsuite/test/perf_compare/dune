@@ -1,0 +1,11 @@
+(executable
+ (name run)
+ (libraries eta_http_testsuite eio_main))
+
+(rule
+ (alias perf-compare)
+ (deps
+  (source_tree ../../lib)
+  (source_tree ../../config))
+ (action
+  (run %{dep:run.exe})))
