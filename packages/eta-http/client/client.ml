@@ -532,6 +532,7 @@ let make ~sw ~net ?authenticator
   in
   let h2_config =
     { H2.Config.default with
+      read_buffer_size = 65536;
       response_body_buffer_size = 65536;
       request_body_buffer_size = 65536;
     }
