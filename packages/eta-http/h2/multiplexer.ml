@@ -197,14 +197,14 @@ let read_more ~flow reader =
   | copied when copied > 0 -> `Read_more copied
   | _ when reader.len >= capacity reader -> `Buffer_full
   | _ ->
-      let view = Cstruct.create (capacity reader - reader.len) in
+      let free_space = capacity reader - reader.len in
+      let view = Cstruct.of_bigarray reader.buffer ~off:reader.len ~len:free_space in
       try
         let read = Eio.Flow.single_read flow view in
-        let raw = Cstruct.to_string (Cstruct.sub view 0 read) in
-        let raw_buffer = Bigstringaf.of_string ~off:0 ~len:read raw in
-        (match Security.observe reader.security raw_buffer ~off:0 ~len:read with
+        (match Security.observe reader.security reader.buffer ~off:reader.len ~len:read with
         | Some error -> `Security_error error
         | None -> (
+            let raw = Bigstringaf.substring reader.buffer ~off:reader.len ~len:read in
             match Informational_filter.feed reader.filter raw ~off:0 ~len:read with
             | Error error -> `Security_error error
             | Ok () ->
