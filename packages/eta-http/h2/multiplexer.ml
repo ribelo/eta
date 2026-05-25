@@ -280,7 +280,9 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
           push_event Body_eof)
         ~on_read:(fun bs ~off ~len ->
           scheduled := false;
-          push_event (Body_chunk (Bytes.of_string (Bigstringaf.substring bs ~off ~len)))))
+          let chunk = Bytes.create len in
+          Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
+          push_event (Body_chunk chunk)))
   in
   let release_body () =
     let decision = release t stream in
@@ -353,7 +355,9 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
       mark_complete t stream;
       notify ())
   in
-  let push_chunk chunk =
+  let push_chunk bs ~off ~len =
+    let chunk = Bytes.create len in
+    Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
     with_lock (fun () ->
         scheduled := false;
         Queue.push (Body_chunk chunk) events);
@@ -371,7 +375,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
           with_lock (fun () -> scheduled := false);
           finish_eof ())
         ~on_read:(fun bs ~off ~len ->
-          push_chunk (Bytes.of_string (Bigstringaf.substring bs ~off ~len));
+          push_chunk bs ~off ~len;
           schedule_read ()))
   in
   let release_body () =
