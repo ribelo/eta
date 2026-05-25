@@ -388,19 +388,45 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     | Body_eof -> Eta.Effect.pure Eta_http_body.Stream.End
   in
   let await_event () =
-    schedule_read ();
-    with_lock (fun () ->
+    Eio.Mutex.lock mutex;
+    match poll_error () with
+    | Some error ->
+        Eio.Mutex.unlock mutex;
+        `Error error
+    | None when not (Queue.is_empty events) ->
+        let event = Queue.take events in
+        Eio.Mutex.unlock mutex;
+        `Event event
+    | None when !eof ->
+        Eio.Mutex.unlock mutex;
+        `Event Body_eof
+    | None when H2.Body.Reader.is_closed body ->
+        Eio.Mutex.unlock mutex;
+        `Closed
+    | None ->
+        Eio.Mutex.unlock mutex;
+        schedule_read ();
+        Eio.Mutex.lock mutex;
         let rec loop () =
           match poll_error () with
-          | Some error -> `Error error
-          | None when not (Queue.is_empty events) -> `Event (Queue.take events)
-          | None when !eof -> `Event Body_eof
-          | None when H2.Body.Reader.is_closed body -> `Closed
+          | Some error ->
+              Eio.Mutex.unlock mutex;
+              `Error error
+          | None when not (Queue.is_empty events) ->
+              let event = Queue.take events in
+              Eio.Mutex.unlock mutex;
+              `Event event
+          | None when !eof ->
+              Eio.Mutex.unlock mutex;
+              `Event Body_eof
+          | None when H2.Body.Reader.is_closed body ->
+              Eio.Mutex.unlock mutex;
+              `Closed
           | None ->
               Eio.Condition.await condition mutex;
               loop ()
         in
-        loop ())
+        loop ()
   in
   let read_next () =
     Eta.Effect.sync await_event

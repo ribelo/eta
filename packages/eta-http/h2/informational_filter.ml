@@ -12,6 +12,7 @@ type t = {
   output : Buffer.t;
   final_seen : (int, unit) Hashtbl.t;
   mutable pending : string;
+  mutable pending_off : int;
   mutable headers : pending_headers option;
 }
 
@@ -34,6 +35,7 @@ let create () =
     output = Buffer.create 4096;
     final_seen = Hashtbl.create 16;
     pending = "";
+    pending_off = 0;
     headers = None;
   }
 
@@ -44,20 +46,30 @@ let error message =
 
 let code s i = Char.code (String.unsafe_get s i)
 
-let frame_length s =
-  (code s 0 lsl 16) lor (code s 1 lsl 8) lor code s 2
+let frame_length s off =
+  (code s (off + 0) lsl 16) lor (code s (off + 1) lsl 8) lor code s (off + 2)
 
-let frame_type s = code s 3
-let frame_flags s = code s 4
+let frame_type s off = code s (off + 3)
+let frame_flags s off = code s (off + 4)
 
-let frame_stream_id s =
-  ((code s 5 land 0x7f) lsl 24)
-  lor (code s 6 lsl 16)
-  lor (code s 7 lsl 8)
-  lor code s 8
+let frame_stream_id s off =
+  ((code s (off + 5) land 0x7f) lsl 24)
+  lor (code s (off + 6) lsl 16)
+  lor (code s (off + 7) lsl 8)
+  lor code s (off + 8)
 
 let append_pending t data ~off ~len =
-  if len > 0 then t.pending <- t.pending ^ String.sub data off len
+  if len > 0 then (
+    let remaining = String.length t.pending - t.pending_off in
+    if remaining = 0 then (
+      t.pending <- String.sub data off len;
+      t.pending_off <- 0)
+    else (
+      let buf = Bytes.create (remaining + len) in
+      Bytes.blit_string t.pending t.pending_off buf 0 remaining;
+      Bytes.blit_string data off buf remaining len;
+      t.pending <- Bytes.unsafe_to_string buf;
+      t.pending_off <- 0))
 
 let emit_frame t ~frame_type ~flags ~stream_id payload =
   Buffer.add_string t.output
@@ -185,10 +197,10 @@ let pass_frame t frame_type flags stream_id frame =
   Ok ()
 
 let handle_frame t frame =
-  let length = frame_length frame in
-  let frame_type = frame_type frame in
-  let flags = frame_flags frame in
-  let stream_id = frame_stream_id frame in
+  let length = frame_length frame 0 in
+  let frame_type = frame_type frame 0 in
+  let flags = frame_flags frame 0 in
+  let stream_id = frame_stream_id frame 0 in
   let payload = String.sub frame 9 length in
   match (t.headers, frame_type) with
   | Some _, frame when frame <> frame_continuation ->
@@ -202,15 +214,15 @@ let handle_frame t frame =
   | _ -> pass_frame t frame_type flags stream_id frame
 
 let rec process t =
-  if String.length t.pending < 9 then Ok ()
+  let available = String.length t.pending - t.pending_off in
+  if available < 9 then Ok ()
   else
-    let length = frame_length t.pending in
+    let length = frame_length t.pending t.pending_off in
     let total = 9 + length in
-    if String.length t.pending < total then Ok ()
+    if available < total then Ok ()
     else
-      let frame = String.sub t.pending 0 total in
-      t.pending <-
-        String.sub t.pending total (String.length t.pending - total);
+      let frame = String.sub t.pending t.pending_off total in
+      t.pending_off <- t.pending_off + total;
       match handle_frame t frame with
       | Error _ as error -> error
       | Ok () -> process t
@@ -225,7 +237,7 @@ let take t =
   data
 
 let buffered_bytes t =
-  String.length t.pending
+  String.length t.pending - t.pending_off
   +
   match t.headers with
   | None -> 0
