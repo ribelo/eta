@@ -1,0 +1,106 @@
+(* Focused regression watchlist for the four rows locked in after the v2
+   direct-runtime ship. Lower-is-better composite score combines:
+
+     - overhead.eta.bind.100k.prebuilt        (zero-allocation bind)
+     - overhead.eta.fail_catch.100k.prebuilt  (typed fail/catch round trip)
+     - overhead.eta.pure.reused_rt            (warm pure cost)
+     - realuse.retry.flaky.fail4_then_ok      (retry on a Schedule)
+
+   Allocation invariants (hard constraints):
+     - bind.100k.prebuilt minor_words MUST stay 0
+     - retry.flaky.fail4_then_ok minor_words MUST stay 0
+     - pure.reused_rt minor_words MUST stay 0
+
+   Composite score is normalized against the v2 ship baselines so each
+   contribution starts at 1.0. Lower is better. The autoresearch loop drives
+   this score downward while [autoresearch.checks.sh] enforces the hard
+   constraints. *)
+
+open Eta
+
+let int_sink = ref 0
+let one = Sys.opaque_identity 1
+
+let run_eta_int rt program =
+  match Runtime.run rt program with
+  | Exit.Ok v -> int_sink := Sys.opaque_identity v
+  | Exit.Error _ -> failwith "unexpected Eta failure"
+
+let rec eta_bind_chain n acc =
+  if n = 0 then acc
+  else eta_bind_chain (n - 1) (Effect.bind (fun x -> Effect.pure (x + one)) acc)
+
+let eta_fail_catch_loop n =
+  let rec go i acc =
+    if i = 0 then Effect.pure acc
+    else
+      Effect.catch
+        (fun (`Boom : [ `Boom ]) -> go (i - 1) (acc + 1))
+        (Effect.fail `Boom)
+  in
+  go n 0
+
+let bind_n = 100_000
+let fail_n = 100_000
+
+(* ---- realuse.retry.flaky.fail4_then_ok (mirror of runtime_real) ---- *)
+let retry_flaky_program () =
+  let counter = ref 0 in
+  let attempt =
+    Effect.sync (fun () ->
+        let n = !counter + 1 in
+        counter := n;
+        n)
+  in
+  let flaky =
+    Effect.bind
+      (fun n -> if n < 5 then Effect.fail `Boom else Effect.pure n)
+      attempt
+  in
+  let one_run =
+    counter := 0;
+    Effect.retry (Schedule.recurs 10) (fun (_ : [ `Boom ]) -> true) flaky
+  in
+  let rec loop n acc =
+    if n = 0 then Effect.pure acc
+    else
+      Effect.bind
+        (fun v ->
+          counter := 0;
+          loop (n - 1) (acc + v))
+        one_run
+  in
+  loop 100 0
+
+let run_retry_flaky_sample () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  match Runtime.run rt (retry_flaky_program ()) with
+  | Exit.Ok _ -> ()
+  | Exit.Error _ -> failwith "retry should succeed"
+
+let workload name run = { Bench_lib.name; run; samples = None }
+
+let overhead_workloads rt =
+  let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
+  let eta_fail = eta_fail_catch_loop fail_n in
+  [
+    workload "overhead.eta.pure.reused_rt" (fun () ->
+        run_eta_int rt (Effect.pure 0));
+    workload "overhead.eta.bind.100k.prebuilt" (fun () ->
+        run_eta_int rt eta_bind);
+    workload "overhead.eta.fail_catch.100k.prebuilt" (fun () ->
+        run_eta_int rt eta_fail);
+  ]
+
+let realuse_workloads () =
+  [ workload "realuse.retry.flaky.fail4_then_ok" run_retry_flaky_sample ]
+
+let () =
+  let opts = Bench_lib.parse_args () in
+  Bench_lib.run opts (realuse_workloads ());
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  Bench_lib.run opts (overhead_workloads rt)

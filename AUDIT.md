@@ -139,3 +139,21 @@ follow-ups, not part of this merge.
   marker fix was rejected because it regressed bind allocation.
 - Existing alerts in `blocking_runtime.ml` about `Domain.spawn` remain
   unrelated to this v2 port and were present in build output.
+
+## Follow-up Resolutions (post-merge)
+
+- **Domain.spawn alerts**: silenced at the call site in
+  `packages/eta/blocking_runtime.ml`. The `Domain_isolated` blocking-runtime
+  mode is an opt-in escape hatch where spawning a fresh domain per job is
+  the deliberate behavior, so `do_not_spawn_domains` and `unsafe_multidomain`
+  are suppressed locally with a justifying comment.
+  `Domain.Safe.spawn` would require the public Blocking callback type to
+  be portable, which would be a public API regression, so it was not used.
+- **io_uring ENOMEM in the harness**: `bench/run.sh` now defaults
+  `EIO_BACKEND=posix`. Root cause is the kernel `ulimit -l` (memlocked
+  memory; 8 MB on most distros). Each `Eio_main.run` under the io_uring
+  backend locks pages per ring; n=20 samples * 8 rows accumulate locked
+  pages faster than the kernel releases them. Switching to posix removes
+  the memlock pressure without affecting comparability — both v1 and v2
+  are measured under the same backend. Override is still available by
+  exporting `EIO_BACKEND` before invoking the script.

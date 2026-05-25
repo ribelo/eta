@@ -286,11 +286,21 @@ let run_callback f =
 let run_systhread name f =
   Eio_unix.run_in_systhread ~label:name (fun () -> run_callback f)
 
+(* [Domain_isolated] is an opt-in blocking-runtime mode that deliberately
+   pays the cost of a fresh domain per job to fully isolate the callback
+   from the calling fiber's domain. The OxCaml [do_not_spawn_domains] /
+   [unsafe_multidomain] alerts are the right default for application code;
+   this primitive is the lower-level escape hatch users opted into via the
+   kind=Domain_isolated pool config, so the alerts are suppressed locally.
+   [Domain.Safe.spawn] is not used because it would require the callback
+   to be portable, which the public Blocking API does not enforce. *)
 let run_domain f =
   let finished = Atomic.make false in
   let result = Atomic.make None in
   let domain =
-    Domain.spawn (fun () ->
+    (Domain.spawn
+       [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      (fun () ->
         let r = run_callback f in
         Atomic.set result (Some r);
         Atomic.set finished true)

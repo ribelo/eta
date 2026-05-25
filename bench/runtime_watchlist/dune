@@ -1,0 +1,9 @@
+(executable
+ (name runtime_watchlist)
+ (libraries bench_lib eta eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./runtime_watchlist.exe --samples 5))))

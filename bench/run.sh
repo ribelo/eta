@@ -3,6 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Default to the posix Eio backend for harness stability. The io_uring backend
+# locks pages per-ring; repeated [Eio_main.run] cycles in benches like
+# runtime_real (n=20 samples * 8 rows) accumulate memlocked pages faster than
+# the kernel releases them, hitting ENOMEM on hosts with default
+# `ulimit -l` (8 MB on most distros). Both v1 and v2 are measured under the
+# same backend, so this does not bias A/B comparisons. Override by exporting
+# EIO_BACKEND before invoking this script.
+export EIO_BACKEND="${EIO_BACKEND:-posix}"
+
 quick=false
 filter=""
 out=""
