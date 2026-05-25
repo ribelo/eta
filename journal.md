@@ -16827,3 +16827,35 @@ New Semaphore-specific tests cover:
 Files added: `packages/eta/semaphore.{ml,mli}`.
 Files modified: `packages/eta/pool.ml`, `packages/eta/test/test_eta.ml`.
 No `dune` change required (auto-discovered modules).
+
+## V-Eta-V2-Build
+
+Decision: complete; ready for merge decision after phase-tagged commits are
+created from this dirty worktree.
+
+This build experiment implemented the V-Eio-Direct-2 abstract bare-arrow
+verdict in `packages/`. `Effect.t` is now an abstract direct record
+representation implemented by `packages/eta/effect_direct.ml`; the public
+`Effect` module includes it; `Runtime.run` delegates directly to the hidden
+executor. The old AST execution path was removed from shipped Eta:
+`effect_ast.ml`, `runtime_interpret.ml`, and `runtime_concurrency.ml` are
+gone, and the unused AST supervisor functor was removed.
+
+Evidence:
+
+- `AUDIT.md` records the phase matrix, commands, and risk register.
+- `dune build packages/eta/eta.cmxa` passes.
+- `bash packages/eta/test/soundness/run.sh _build/default/packages/eta/eta.cmxa`
+  passes against the current 10 soundness negative fixtures.
+- `dune build @runtest` passes across Eta core and consumers, including
+  eta-test, eta-stream, eta-http, eta-otel, eta-ai/providers, schema, ppx, and
+  redacted.
+- `dune exec scratch/eta_research/eio_direct_probe/p5_tracer/fork_propagation.exe`
+  passes with active-span FLS propagation through v2 fork.
+- Release quick overhead sample shows the temporary metadata-table regression
+  was removed by switching to hidden record metadata; `overhead.eta.bind.100k.prebuilt`
+  measured 1096010.208130 ns with 0 minor/major words in the quick sample.
+
+No hard blocker fired. Phase 4's eta-http reopen criterion did not fire:
+retry/classify/idempotency tests pass without AST inspection or extra
+user-visible mode/kind annotations. The verdict remains **V1-bare**.
