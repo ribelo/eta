@@ -76,20 +76,13 @@ let build_url ~transport ~port ~path =
 
 let make_client ~env ~sw ~protocol ~transport ~cert_dir =
   let max_response_body_bytes = 128 * 1024 * 1024 in
-  let authenticator =
-    match transport with
-    | Plain -> None
-    | TLS ->
-        let dir = Eio.Path.(Eio.Stdenv.cwd env / cert_dir) in
-        Some (X509_eio.authenticator (`Ca_file Eio.Path.(dir / "ca.pem")))
-  in
   match protocol with
   | H1 ->
       Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
   | H2 ->
       Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
 
 type scenario = {
   name : string;

@@ -1,0 +1,9 @@
+(executable
+ (name tls_openssl)
+ (libraries bench_lib eta eta.http eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./tls_openssl.exe --quick))))

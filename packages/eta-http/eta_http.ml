@@ -37,6 +37,7 @@ let request_with_retry = Client.request_with_retry
 
 module Tls = struct
   module Config = Eta_http_tls.Config
+  module Eio = Eta_http_tls.Eio
 end
 
 module Transport = struct

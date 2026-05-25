@@ -99,16 +99,11 @@ let test_transport_connect_tls_closes_flow_on_failure () =
   let target =
     { (Eta_http.Transport.Connect.target_of_url url) with host = "bad host" }
   in
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg message) -> Alcotest.fail message
-  in
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Connect.connect_tls ~authenticator ~method_:"GET" target
+    Eta_http.Transport.Connect.connect_tls ~method_:"GET" target
       flow
     |> Eta.Runtime.run rt
   with

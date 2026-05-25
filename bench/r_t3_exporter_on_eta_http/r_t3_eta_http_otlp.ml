@@ -45,11 +45,6 @@ let make_payload count =
       ]
     ~scope_name:"eta.r_t3" (loop count [])
 
-let authenticator () =
-  match Ca_certs.authenticator () with
-  | Ok authenticator -> authenticator
-  | Error _ -> failwith "ca-certs authenticator unavailable"
-
 let run ~host ~port ~count =
   let uri = Printf.sprintf "http://%s:%d/v1/traces" host port in
   let body = make_payload count in
@@ -57,7 +52,7 @@ let run ~host ~port ~count =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
-  let client = Eta_http.Client.make_h1 ~sw ~net ~authenticator:(authenticator ()) () in
+  let client = Eta_http.Client.make_h1 ~sw ~net () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
     Eta.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()

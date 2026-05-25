@@ -35,23 +35,12 @@ val connect_tcp :
 
 val connect_tls :
   ?alpn_protocols:string list ->
-  authenticator:X509.Authenticator.t ->
   method_:string ->
   target ->
   tcp_flow ->
-  (Tls_eio.t, Eta_http_error.Error.t) Eta.Effect.t
+  (tcp_flow * string option, Eta_http_error.Error.t) Eta.Effect.t
 (** Wrap a TCP flow in the ADR 0002 TLS client policy.
 
-    The caller must ensure a Mirage crypto RNG is installed while the handshake
-    runs. TLS failures are reported as
+    Returns the TLS-wrapped flow and the negotiated ALPN protocol.
+    TLS failures are reported as
     {!Eta_http_error.Error.Tls_handshake_error}. *)
-
-val negotiated_alpn :
-  method_:string ->
-  target ->
-  Tls_eio.t ->
-  (string option, Eta_http_error.Error.t) Eta.Effect.t
-(** Return the negotiated ALPN protocol from a completed TLS flow.
-
-    If the TLS epoch is unavailable, the failure is reported as an ALPN-stage
-    TLS handshake error with request context. *)

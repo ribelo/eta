@@ -8,7 +8,7 @@ obj_dir="_build/default/packages/eta-http/tls/.eta_http_tls.objs/byte"
 run_negative() {
   local name="$1"
   local source="packages/eta-http/test/tls/${name}.ml"
-  if ocamlfind ocamlc -package tls,ca-certs,domain-name,ipaddr \
+  if ocamlfind ocamlc -package ca-certs,domain-name,ipaddr,cstruct,eio \
     -I "$obj_dir" -c "$source" >/tmp/eta-http-${name}.out 2>&1
   then
     cat "/tmp/eta-http-${name}.out"

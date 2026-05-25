@@ -10,22 +10,15 @@ let major_words (_, x, _, _) = x
 let promoted_words (_, _, x, _) = x
 let top_heap_words (_, _, _, x) = x
 
-let make_eta_client ~env ~sw ~protocol ~transport ~cert_dir =
+let make_eta_client ~env ~sw ~protocol ~transport ~cert_dir:_ =
   let max_response_body_bytes = 128 * 1024 * 1024 in
-  let authenticator =
-    match transport with
-    | Plain -> None
-    | TLS ->
-        let dir = Eio.Path.(Eio.Stdenv.cwd env / cert_dir) in
-        Some (X509_eio.authenticator (`Ca_file Eio.Path.(dir / "ca.pem")))
-  in
   match protocol with
   | H1 ->
       Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
   | H2 ->
       Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
 
 let run_eta_get ~rt ~client ~url =
   let request =

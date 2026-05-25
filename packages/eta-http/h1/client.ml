@@ -526,7 +526,7 @@ let default_health_check (target : Connect.target) conn =
          | `Health_probe_timeout -> Effect.unit
          | `Http error -> Effect.fail (`Http error))
 
-let open_conn ~sw ~net ~authenticator (target : Connect.target) =
+let open_conn ~sw ~net (target : Connect.target) =
   let wrap flow =
     { flow; used = false; reusable = true; last_used_ms = 0 }
   in
@@ -535,13 +535,13 @@ let open_conn ~sw ~net ~authenticator (target : Connect.target) =
          match target.Connect.scheme with
          | Http -> Effect.pure (wrap (tcp :> flow))
          | Https ->
-             Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ~authenticator
+             Connect.connect_tls ~alpn_protocols:[ "http/1.1" ]
                ~method_:"*" target tcp
-             |> Effect.map (fun tls -> wrap (tls :> flow)))
+             |> Effect.map (fun (tls, _alpn) -> wrap (tls :> flow)))
   |> map_http_error
 
 let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?(max_size = 8) ?max_idle ?health_check ~sw ~net ~authenticator url =
+    ?(max_size = 8) ?max_idle ?health_check ~sw ~net url =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.H1.Client.make_pool: max_response_body_bytes must be >= 0";
   let target = Connect.target_of_url url in
@@ -562,7 +562,7 @@ let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
           else default_health_check target conn
   in
   Eta.Pool.create ~name:"eta-http.h1.pool" ~kind:"http.client" ~max_size
-    ?max_idle ~acquire:(open_conn ~sw ~net ~authenticator target)
+    ?max_idle ~acquire:(open_conn ~sw ~net target)
     ~release:close_conn ~health_check ()
   |> Effect.catch (fun err ->
          Effect.fail
@@ -665,7 +665,7 @@ let shutdown_pool pool =
               err))
 
 let request ?(max_response_body_bytes = default_max_response_body_bytes) ~sw ~net
-    ~authenticator request =
+    request =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.H1.Client.request: max_response_body_bytes must be >= 0";
   let target = Connect.target_of_url request.url in
@@ -674,8 +674,8 @@ let request ?(max_response_body_bytes = default_max_response_body_bytes) ~sw ~ne
          match target.scheme with
          | Http -> request_on_flow ~max_response_body_bytes ~flow:tcp request
          | Https ->
-             Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ~authenticator
+             Connect.connect_tls ~alpn_protocols:[ "http/1.1" ]
                ~method_:request.method_ target tcp
-             |> Effect.bind (fun tls ->
+             |> Effect.bind (fun (tls, _alpn) ->
                     request_on_flow ~max_response_body_bytes ~flow:(tls :> flow)
                       request))

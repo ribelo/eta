@@ -4,17 +4,25 @@ let policy_version = (`TLS_1_2, `TLS_1_2)
 
 let policy_ciphers =
   [
-    `ECDHE_RSA_WITH_AES_128_GCM_SHA256;
-    `ECDHE_RSA_WITH_AES_256_GCM_SHA384;
-    `ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256;
-    `ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
-    `ECDHE_ECDSA_WITH_AES_256_GCM_SHA384;
-    `ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256;
+    "ECDHE-RSA-AES128-GCM-SHA256";
+    "ECDHE-RSA-AES256-GCM-SHA384";
+    "ECDHE-RSA-CHACHA20-POLY1305";
+    "ECDHE-ECDSA-AES128-GCM-SHA256";
+    "ECDHE-ECDSA-AES256-GCM-SHA384";
+    "ECDHE-ECDSA-CHACHA20-POLY1305";
   ]
 
 let default_alpn = [ "h2"; "http/1.1" ]
 
-let default_client ?peer_name ?ip ?(alpn_protocols = default_alpn)
-    ~authenticator () =
-  Tls.Config.client ~authenticator ?peer_name ?ip ~alpn_protocols
-    ~version:policy_version ~ciphers:policy_ciphers ()
+type t = {
+  peer_name : [ `host ] Domain_name.t option;
+  ip : Ipaddr.t option;
+  alpn_protocols : string list;
+}
+
+let default_client ?peer_name ?ip ?(alpn_protocols = default_alpn) () =
+  { peer_name; ip; alpn_protocols }
+
+let peer_name t = t.peer_name
+let ip t = t.ip
+let alpn_protocols t = t.alpn_protocols

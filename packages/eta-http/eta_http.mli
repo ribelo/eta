@@ -67,6 +67,7 @@ val request_with_retry :
 
 module Tls : sig
   module Config = Eta_http_tls.Config
+  module Eio = Eta_http_tls.Eio
 end
 (** TLS policy chokepoint. *)
 

@@ -36,16 +36,6 @@ let shutdown t = t.shutdown_impl ()
 let request t req = t.request_impl req
 let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
 
-let default_authenticator =
-  let authenticator = lazy (Ca_certs.authenticator ()) in
-  fun ?ip ~host certificates ->
-    match Lazy.force authenticator with
-    | Ok authenticate -> authenticate ?ip ~host certificates
-    | Error (`Msg msg) -> Error (`Msg msg)
-
-let resolve_authenticator = function
-  | Some authenticator -> authenticator
-  | None -> default_authenticator
 
 let h1_body = function
   | Request.Empty -> Eta_http_h1.Client.Empty
@@ -431,11 +421,10 @@ let request_h2_on_connection connection request url =
                    ~release:(fun () -> h2_close_request_body opened.request_body)
                 |> Eta.Effect.bind (fun () -> response_or_writer))))
 
-let make_h1 ~sw ~net ?authenticator
+let make_h1 ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) () =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.Client.make_h1: max_response_body_bytes must be >= 0";
-  let authenticator = resolve_authenticator authenticator in
   let pools = Hashtbl.create 8 in
   let pool_values () = Hashtbl.fold (fun _ pool acc -> pool :: acc) pools [] in
   let pool_for request =
@@ -444,7 +433,7 @@ let make_h1 ~sw ~net ?authenticator
     | Some pool -> Eta.Effect.pure pool
     | None ->
         Eta_http_h1.Client.make_pool ~max_response_body_bytes ~sw ~net
-          ~authenticator request.url
+          request.url
         |> Eta.Effect.map (fun pool ->
                Hashtbl.replace pools key pool;
                pool)
@@ -487,11 +476,10 @@ let make_h1 ~sw ~net ?authenticator
   { protocol = H1; request_impl; stats_impl; shutdown_impl }
 
 
-let make ~sw ~net ?authenticator
+let make ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) () =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.Client.make: max_response_body_bytes must be >= 0";
-  let authenticator = resolve_authenticator authenticator in
   let opened = ref 0 in
   let released = ref 0 in
   let last_protocol = ref Auto in
@@ -550,16 +538,14 @@ let make ~sw ~net ?authenticator
     Hashtbl.replace h2_connections key connection;
     h2_on_connection connection request url
   in
-  let dispatch_tls target tls request url =
-    Connect.negotiated_alpn ~method_:request.Request.method_ target tls
-    |> Eta.Effect.bind (fun alpn ->
-           dispatch_alpn
-             ~close:(fun () -> close_counted (tls :> Connect.tcp_flow))
-             ~use_h1:(fun () ->
-               last_protocol := H1;
-               h1_on_flow (tls :> Connect.tcp_flow) request)
-             ~use_h2:(fun () -> h2_on_tls target tls request url)
-             request alpn)
+  let dispatch_tls target (tls, alpn) request url =
+    dispatch_alpn
+      ~close:(fun () -> close_counted (tls :> Connect.tcp_flow))
+      ~use_h1:(fun () ->
+        last_protocol := H1;
+        h1_on_flow (tls :> Connect.tcp_flow) request)
+      ~use_h2:(fun () -> h2_on_tls target tls request url)
+      request alpn
   in
   let request_impl request =
     match request_url request with
@@ -578,10 +564,10 @@ let make ~sw ~net ?authenticator
                               last_protocol := H1;
                               h1_on_flow tcp request
                           | Https ->
-                              Connect.connect_tls ~authenticator
+                              Connect.connect_tls
                                 ~method_:request.method_ target tcp
-                              |> Eta.Effect.bind (fun tls ->
-                                     dispatch_tls target tls request url))))
+                              |> Eta.Effect.bind (fun (tls, alpn) ->
+                                     dispatch_tls target (tls, alpn) request url))))
   in
   let stats_impl () =
     Eta.Effect.sync (fun () ->

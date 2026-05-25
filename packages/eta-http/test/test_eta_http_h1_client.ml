@@ -337,11 +337,6 @@ let test_h1_pool_reuses_healthy_idle_connection () =
     incr health_checks;
     Eta.Effect.unit
   in
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg msg) -> Alcotest.fail msg
-  in
   let url = Eta_http.Core.Url.of_string "http://example.test/pool" in
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
@@ -349,7 +344,7 @@ let test_h1_pool_reuses_healthy_idle_connection () =
   Eta_test.with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net
-      ~authenticator url
+      url
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in
@@ -389,11 +384,6 @@ let test_h1_pool_rejects_unhealthy_idle_connection () =
       (Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:"http://example.test"
          (Connection_closed { during = Pool }))
   in
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg msg) -> Alcotest.fail msg
-  in
   let url = Eta_http.Core.Url.of_string "http://example.test/pool" in
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
@@ -401,7 +391,7 @@ let test_h1_pool_rejects_unhealthy_idle_connection () =
   Eta_test.with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net
-      ~authenticator url
+      url
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in
@@ -432,18 +422,13 @@ let test_h1_pool_holds_checkout_until_body_eof () =
     [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello" ];
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Return flow ];
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg msg) -> Alcotest.fail msg
-  in
   let url = Eta_http.Core.Url.of_string "http://example.test/release" in
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
   Eta_test.with_test_clock @@ fun sw _clock rt ->
   let pool =
-    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net ~authenticator url
+    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in
@@ -473,18 +458,13 @@ let test_h1_pool_discard_releases_checkout () =
     [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndrop" ];
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Return flow ];
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg msg) -> Alcotest.fail msg
-  in
   let url = Eta_http.Core.Url.of_string "http://example.test/discard" in
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
   Eta_test.with_test_clock @@ fun sw _clock rt ->
   let pool =
-    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net ~authenticator url
+    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in
@@ -521,18 +501,13 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   Eio_mock.Flow.on_read flow [ `Await never ];
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Return flow ];
-  let authenticator =
-    match Ca_certs.authenticator () with
-    | Ok authenticator -> authenticator
-    | Error (`Msg msg) -> Alcotest.fail msg
-  in
   let url = Eta_http.Core.Url.of_string "http://example.test/cancel" in
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let pool =
-    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net ~authenticator url
+    Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in

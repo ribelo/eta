@@ -36,19 +36,6 @@ let tls_error ?(stage = Eta_http_error.Error.Tls_handshake) ~method_ target
   Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
     (Tls_handshake_error { stage; message })
 
-let tls_rng_initialized = Atomic.make false
-
-let ensure_tls_rng_initialized () =
-  if Atomic.get tls_rng_initialized then Ok ()
-  else
-    try
-      (try ignore (Mirage_crypto_rng.generate 1)
-       with _ ->
-         Mirage_crypto_rng_unix.initialize (module Mirage_crypto_rng.Fortuna));
-      Atomic.set tls_rng_initialized true;
-      Ok ()
-    with exn -> Error (Printexc.to_string exn)
-
 let resolve_stream ~net ~method_ target =
   Effect.sync (fun () ->
       try Ok (Eio.Net.getaddrinfo_stream net target.host ~service:target.service)
@@ -105,42 +92,33 @@ let peer_identity target =
           | Ok host -> Ok (`Host host)
           | Error (`Msg message) -> Error message))
 
-let connect_tls ?alpn_protocols ~authenticator ~method_ target flow =
+let connect_tls ?alpn_protocols ~method_ target flow =
   let close_flow () =
     try Eio.Flow.close flow with _ -> ()
   in
   Effect.sync (fun () ->
       try
-        match ensure_tls_rng_initialized () with
-        | Error message -> Error ("TLS RNG initialization failed: " ^ message)
-        | Ok () -> (
-            match peer_identity target with
-            | Error message -> Error message
-            | Ok (`Host host) ->
-                let config =
-                  Eta_http_tls.Config.default_client ?alpn_protocols
-                    ~authenticator ~peer_name:host ()
-                in
-                Ok (Tls_eio.client_of_flow config ~host flow)
-            | Ok (`Ip ip) ->
-                let config =
-                  Eta_http_tls.Config.default_client ?alpn_protocols
-                    ~authenticator ~ip ()
-                in
-                Ok (Tls_eio.client_of_flow config flow))
+        match peer_identity target with
+        | Error message -> Error message
+        | Ok (`Host host) ->
+            let config =
+              Eta_http_tls.Config.default_client ?alpn_protocols
+                ~peer_name:host ()
+            in
+            let tls = Eta_http_tls.Eio.client_of_flow config ~host flow in
+            let alpn = Eta_http_tls.Eio.alpn_protocol tls in
+            Ok (tls, alpn)
+        | Ok (`Ip ip) ->
+            let config =
+              Eta_http_tls.Config.default_client ?alpn_protocols ~ip ()
+            in
+            let tls = Eta_http_tls.Eio.client_of_flow config flow in
+            let alpn = Eta_http_tls.Eio.alpn_protocol tls in
+            Ok (tls, alpn)
       with exn -> Error (Printexc.to_string exn))
   |> Effect.bind (function
-       | Ok flow -> Effect.pure flow
+       | Ok (flow, alpn) -> Effect.pure ((flow :> tcp_flow), alpn)
        | Error message ->
            Effect.sync close_flow
            |> Effect.bind (fun () ->
                   Effect.fail (tls_error ~method_ target message)))
-
-let negotiated_alpn ~method_ target flow =
-  Effect.sync (fun () -> Tls_eio.epoch flow)
-  |> Effect.bind (function
-       | Ok epoch -> Effect.pure epoch.Tls.Core.alpn_protocol
-       | Error () ->
-           Effect.fail
-             (tls_error ~stage:Alpn_negotiation ~method_ target
-                "TLS epoch unavailable after handshake"))

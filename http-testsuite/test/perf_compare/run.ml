@@ -69,22 +69,15 @@ let url ~port scenario =
   in
   Printf.sprintf "%s://127.0.0.1:%d%s" scheme port scenario.path
 
-let make_eta_client ~env ~sw ~protocol ~transport ~cert_dir =
+let make_eta_client ~env ~sw ~protocol ~_transport ~_cert_dir =
   let max_response_body_bytes = 128 * 1024 * 1024 in
-  let authenticator =
-    match transport with
-    | Types.Plain -> None
-    | TLS ->
-        let dir = Eio.Path.(Eio.Stdenv.cwd env / cert_dir) in
-        Some (X509_eio.authenticator (`Ca_file Eio.Path.(dir / "ca.pem")))
-  in
   match protocol with
   | Types.H1 ->
       Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
   | H2 ->
       Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
-        ?authenticator ~max_response_body_bytes ()
+        ~max_response_body_bytes ()
 
 let headers_for = function
   | Get -> Eta_http.Core.Header.empty
@@ -142,7 +135,7 @@ let run_eta ~env ~scenario ~url ~cert_dir =
       let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
       let client =
         make_eta_client ~env ~sw ~protocol:scenario.protocol
-          ~transport:scenario.transport ~cert_dir
+          ~_transport:scenario.transport ~_cert_dir:cert_dir
       in
       let body = String.make scenario.body_bytes 'x' in
       for _ = 1 to warmup_iterations do

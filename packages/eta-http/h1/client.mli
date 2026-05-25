@@ -52,7 +52,6 @@ val make_pool :
      (unit, Eta_http_error.Error.t) Eta.Effect.t)) ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  authenticator:X509.Authenticator.t ->
   Eta_http_core.Url.t ->
   (pool, Eta_http_error.Error.t) Eta.Effect.t
 (** Build an origin-scoped h1 connection pool. *)
@@ -72,7 +71,6 @@ val request :
   ?max_response_body_bytes:int ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  authenticator:X509.Authenticator.t ->
   request ->
   (response, Eta_http_error.Error.t) Eta.Effect.t
 (** Connect, wrap TLS for HTTPS URLs, and execute one HTTP/1.1 request. *)
