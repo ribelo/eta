@@ -226,25 +226,27 @@ let write_to_flow flow ~method_ ~url ~headers ~body =
     match validate_headers ~method_ ~url headers with
     | Error _ as error -> error
     | Ok () ->
+        let buf = Buffer.create 512 in
         (try
-           write_string flow method_;
-           write_string flow " ";
-           write_string flow (Eta_http_core.Url.origin_form url);
-           write_string flow " HTTP/1.1\r\n";
+           Buffer.add_string buf method_;
+           Buffer.add_char buf ' ';
+           Buffer.add_string buf (Eta_http_core.Url.origin_form url);
+           Buffer.add_string buf " HTTP/1.1\r\n";
            if not (has_header "host" headers) then
-             write_header_line flow ("Host", Eta_http_core.Url.authority url);
+             add_header_line buf ("Host", Eta_http_core.Url.authority url);
            if not (has_header "connection" headers) then
-             write_header_line flow ("Connection", "keep-alive");
+             add_header_line buf ("Connection", "keep-alive");
            (match content_length body with
            | None -> ()
            | Some length ->
                if not (has_header "content-length" headers) then
-                 write_header_line flow ("Content-Length", string_of_int length));
-           List.iter (write_header_line flow) (List.rev headers);
-           write_string flow "\r\n";
+                 add_header_line buf ("Content-Length", string_of_int length));
+           List.iter (add_header_line buf) (List.rev headers);
+           Buffer.add_string buf "\r\n";
            (match body with
            | Empty -> ()
-           | Fixed chunks -> List.iter (write_bytes flow) chunks);
+           | Fixed chunks -> List.iter (fun chunk -> Buffer.add_bytes buf chunk) chunks);
+           write_string flow (Buffer.contents buf);
            Ok ()
          with _ -> Error (flow_write_error ~method_ ~url))
 

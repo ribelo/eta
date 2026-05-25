@@ -568,8 +568,8 @@ let request_owner pool request response_ch release_ch cancel_ch =
     Eta.Pool.with_resource pool.pool (fun conn ->
         let request_attempt =
           request_on_flow ~release:(fun () -> release_body release_ch)
-            ~max_response_body_bytes:pool.max_response_body_bytes ~flow:conn.flow
-            request
+            ~max_response_body_bytes:pool.max_response_body_bytes
+            ~flow:conn.flow request
           |> Effect.map (fun response -> `Response response)
           |> Effect.catch (fun error -> Effect.pure (`Request_error error))
         in
@@ -597,7 +597,8 @@ let request_owner pool request response_ch release_ch cancel_ch =
                  |> Effect.bind (function
                       | `Sent ->
                           Channel.recv release_ch
-                          |> Effect.map (fun release_ack -> ack := Some release_ack)
+                          |> Effect.map (fun release_ack ->
+                               ack := Some release_ack)
                           |> Effect.catch (function `Closed -> Effect.unit)
                       | `Full | `Closed -> Effect.unit)))
   in
