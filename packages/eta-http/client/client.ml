@@ -531,10 +531,17 @@ let make ~sw ~net ?authenticator
     last_protocol := H2;
     request_h2_on_connection connection request url
   in
+  let h2_config =
+    { H2.Config.default with
+      response_body_buffer_size = 65536;
+      request_body_buffer_size = 65536;
+    }
+  in
   let h2_on_tls target tls request url =
     let key = h2_key target in
     let connection =
       Eta_http_h2.Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
+        ~config:h2_config
         ~on_close:(fun () ->
           incr released;
           Hashtbl.remove h2_connections key)
