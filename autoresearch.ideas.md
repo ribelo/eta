@@ -1,34 +1,31 @@
 # Deferred Optimizations
 
-## H2 Informational_filter zero-copy pass-through
-- **Idea**: Eliminate the 3-4 copies per DATA frame in `Informational_filter` by processing frames in-place in `t.pending` instead of extracting via `String.sub`, copying to `Buffer.t`, then `Buffer.contents`, then `blit_from_string`.
-- **Approach**: Change `t.pending` to `bytes`, track an offset instead of extracting substrings, and for pass-through frames (DATA), copy directly from `t.pending` to the reader buffer bypassing `t.output` entirely.
-- **Expected impact**: ~1-2MB less copying per 1MB response body. Could save ~0.2-0.5ms on H2 GET 1M / POST 1M.
-- **Status**: Partially tried (Bytes_buffer to eliminate `Buffer.contents` copy) but yielded no measurable improvement. The bigger win is eliminating `String.sub` + `Buffer.add_string` copies too.
+## Upgrading mirage-crypto / ocaml-tls (blocked by digestif/OxCaml)
+- **Impact**: High — remaining ~1.3ms TLS overhead per 1MB could be reduced significantly
+- **Blocked by**: digestif 1.3.0 fails to compile with OxCaml local-mode (`By.t` vs `bytes @ local` issue)
+- **Workaround**: Compile with plain OCaml 5.2 (not OxCaml), or upstream digestif fix
+- **Key finding**: h2c (plain H2) GET 1M is 0.35ms vs Go 0.17ms — only 2× off. TLS adds ~1.0ms overhead.
 
-## H2 read_buffer_size negotiation
-- **Idea**: Increase the advertised HTTP/2 max frame size to reduce the number of frames (and thus callbacks/allocs) for large bodies.
-- **Approach**: Set `H2.Config.read_buffer_size` to 64KB+ and increase the `client_reader` buffer size to `read_buffer_size + 9` to fit the largest possible frame.
-- **Expected impact**: Fewer `on_read` callbacks (16 instead of 64 for 1MB), fewer mutex/condition ops, fewer allocations.
-- **Status**: Tried but broke POST 1M. The `Informational_filter` or h2 internal buffering may have issues with larger frames. Need deeper investigation before retrying.
+## body_stream_async batching with state machine (oracle #7)
+- **Idea**: Replace `scheduled`/`eof` bool refs with explicit `type read_state = Idle | Scheduled | Done` state machine
+- **Approach**: Batch chunks in consumer side (pop multiple chunks from queue under one lock), flush on EOF or batch-full
+- **Expected impact**: Small — maybe -0.05 to -0.25ms. The per-chunk overhead is now minimal after Security.observe and Informational_filter optimizations.
+- **Risk**: Previous batching attempt deadlocked. State machine should fix it.
 
-## H2 body_stream_async batching
-- **Idea**: Accumulate multiple small h2 body chunks in a local batch buffer before pushing to the async queue, reducing mutex/condition operations.
-- **Approach**: In `body_stream_async`, batch chunks up to 64KB and flush on batch-full or EOF.
-- **Expected impact**: Reduces queue operations from 64 to ~16 per 1MB body.
-- **Status**: Attempted but caused H2 GET 1M timeouts. The `scheduled` ref tracking got out of sync with the batched pushes. Needs careful redesign of the `schedule_read` / `on_read` / `on_eof` callback logic.
+## Body.Stream.read_all fast path (oracle #6)
+- **Idea**: When content-length is known, pre-allocate final buffer and copy H2 chunks directly into it
+- **Approach**: Add optional `content_length` parameter to body_stream_async; allocate Bytes.create once; each on_read copies to appropriate offset
+- **Expected impact**: Small — eliminates list accumulation and final concatenation. But these are <0.05ms based on synthetic benchmark.
 
-## Eio.Stream instead of mutex+queue+condition
-- **Idea**: Replace the manual `Eio.Mutex` + `Queue` + `Eio.Condition` in `body_stream_async` with `Eio.Stream`, which is designed for producer-consumer communication.
-- **Expected impact**: Simpler code, potentially more efficient synchronization.
-- **Status**: Not tried.
+## ocaml-tls send_buf optimization
+- **Idea**: Like recv_buf, tls-eio's write path may benefit from larger buffers
+- **Expected impact**: Unknown. The write_t function in tls_eio.ml uses Flow.copy_string per record.
 
-## TLS cipher suite tuning
-- **Idea**: `ocaml-tls` may be using slower cipher suites than Go's `crypto/tls`. Explicitly configuring faster ciphers (e.g. AES-128-GCM instead of AES-256-GCM, or ChaCha20-Poly1305 on non-AES-NI CPUs) might help.
-- **Expected impact**: Unknown. Could be 10-50% improvement on TLS-heavy workloads.
-- **Status**: Not tried. Requires understanding `Eta_http_tls.Config` and `ocaml-tls` configuration.
-
-## Body stream API with bigstring chunks
-- **Idea**: Change `Body.Stream.read_result` to support `Bigstringaf.t` chunks natively, eliminating the `Bigstringaf.blit_to_bytes` copy in `push_chunk` entirely.
-- **Expected impact**: 1MB less copying per 1MB response body. ~0.5-1ms savings on H2 large body scenarios.
-- **Status**: Not tried. Invasive API change affecting multiple modules.
+## Learned lessons from this session (May 25)
+1. **tls-eio recv_buf** was the biggest single TLS win: 4KB→256KB saved ~0.6ms for 1MB
+2. **Security.observe batch-skip** was the biggest CPU win: avoiding 1M per-byte Bigstringaf.get calls saved ~1.0ms
+3. **Informational_filter** had two wins: offset tracking (eliminated O(N²) string copying) and zero-copy DATA pass-through
+4. **h2_write_fixed_body_sync no-flush** regressed POST — per-chunk flush is needed for request-body latency
+5. **Larger reader buffer** (64KB→128KB→256KB) had diminishing returns but net positive
+6. **Bigstringaf.of_string** in POST body writing was wasteful — direct write_string is better
+7. **Diagnostic h2c scenario** proved TLS is the remaining bottleneck (plain H2 within 2× of Go)
