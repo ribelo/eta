@@ -16854,7 +16854,7 @@ Evidence:
   passes with active-span FLS propagation through v2 fork.
 - Release quick overhead sample shows the temporary metadata-table regression
   was removed by switching to hidden record metadata; `overhead.eta.bind.100k.prebuilt`
-  measured 1096010.208130 ns with 0 minor/major words in the quick sample.
+  measured 1333951.950073 ns with 0 minor/major words in the quick sample.
 
 No hard blocker fired. Phase 4's eta-http reopen criterion did not fire:
 retry/classify/idempotency tests pass without AST inspection or extra

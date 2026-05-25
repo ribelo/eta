@@ -5,7 +5,8 @@ Status: complete for build experiment evidence; ready for merge decision.
 Base commit at audit time: `ef0da28d0a8f6ff508e1d3ce41c1373067e27bb8`.
 
 Note on pins: the package rewrite is pinned to the phase-1 commit below.
-The phase-A audit row pins the commit that introduced this audit artifact.
+The phase-A audit row pins the commit that introduced this audit artifact;
+later phase-A commits may refresh measurements or pin metadata.
 
 ## Phase Evidence
 
@@ -74,10 +75,10 @@ Observed quick results from this worktree:
 
 | Workload | wall_ns | minor_words | major_words |
 |---|---:|---:|---:|
-| overhead.eta.setup_pure | 140190.124512 | 0 | 0 |
-| overhead.eta.pure.reused_rt | 9059.906006 | 0 | 0 |
-| overhead.eta.bind.100k.prebuilt | 1096010.208130 | 0 | 0 |
-| overhead.eta.fail_catch.100k.prebuilt | 3591060.638428 | 6291435 | 242 |
+| overhead.eta.setup_pure | 137090.682983 | 0 | 0 |
+| overhead.eta.pure.reused_rt | 5960.464478 | 0 | 0 |
+| overhead.eta.bind.100k.prebuilt | 1333951.950073 | 0 | 0 |
+| overhead.eta.fail_catch.100k.prebuilt | 3663063.049316 | 6291435 | 242 |
 | realuse.pipeline.bind_catch.1k | 163078.308105 | 0 | 0 |
 | realuse.scope.acquire_release.64 | 87022.781372 | 0 | 0 |
 
