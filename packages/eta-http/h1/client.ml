@@ -39,6 +39,7 @@ type conn = {
   flow : flow;
   mutable used : bool;
   mutable reusable : bool;
+  mutable last_used_ms : int;
 }
 
 type pool_error =
@@ -501,27 +502,34 @@ let health_error (target : Connect.target) message =
   Error.make ~protocol:H1 ~method_:"*" ~uri:(Url.to_string target.Connect.url)
     (Connection_protocol_violation { kind = "pool_health"; message })
 
-let default_health_check (target : Connect.target) flow =
-  let probe =
-    Effect.sync (fun () ->
-        let reader = Eio.Buf_read.of_flow ~initial_size:1 ~max_size:1 flow in
-        match Eio.Buf_read.peek_char reader with
-        | None -> `Closed
-        | Some _ -> `Unexpected_data)
-    |> Effect.bind (function
-         | `Closed ->
-             Effect.fail (`Http (health_error target "idle connection closed"))
-         | `Unexpected_data ->
-             Effect.fail
-               (`Http (health_error target "idle connection had unread bytes")))
-  in
-  Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
-  |> Effect.catch (function
-       | `Health_probe_timeout -> Effect.unit
-       | `Http error -> Effect.fail (`Http error))
+let default_health_check (target : Connect.target) conn =
+  let now_ms = int_of_float (Unix.gettimeofday () *. 1000.0) in
+  if now_ms - conn.last_used_ms < 5000 then Effect.unit
+  else
+    let probe =
+      Effect.sync (fun () ->
+          let reader =
+            Eio.Buf_read.of_flow ~initial_size:1 ~max_size:1 conn.flow
+          in
+          match Eio.Buf_read.peek_char reader with
+          | None -> `Closed
+          | Some _ -> `Unexpected_data)
+      |> Effect.bind (function
+           | `Closed ->
+               Effect.fail (`Http (health_error target "idle connection closed"))
+           | `Unexpected_data ->
+               Effect.fail
+                 (`Http (health_error target "idle connection had unread bytes")))
+    in
+    Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
+    |> Effect.catch (function
+         | `Health_probe_timeout -> Effect.unit
+         | `Http error -> Effect.fail (`Http error))
 
 let open_conn ~sw ~net ~authenticator (target : Connect.target) =
-  let wrap flow = { flow; used = false; reusable = true } in
+  let wrap flow =
+    { flow; used = false; reusable = true; last_used_ms = 0 }
+  in
   Connect.connect_tcp ~sw ~net ~method_:"*" target
   |> Effect.bind (fun tcp ->
          match target.Connect.scheme with
@@ -551,7 +559,7 @@ let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
           if not conn.reusable then
             Effect.fail (`Http (health_error target "connection marked unreusable"))
           else if not conn.used then Effect.unit
-          else default_health_check target conn.flow
+          else default_health_check target conn
   in
   Eta.Pool.create ~name:"eta-http.h1.pool" ~kind:"http.client" ~max_size
     ?max_idle ~acquire:(open_conn ~sw ~net ~authenticator target)
@@ -591,6 +599,7 @@ let request_owner pool request response_ch release_ch cancel_ch =
                         Effect.fail (`Http (io_closed request Cancellation)))
              | `Response (response : response) ->
                  conn.used <- true;
+                 conn.last_used_ms <- int_of_float (Unix.gettimeofday () *. 1000.0);
                  if connection_close_requested response.headers then
                    conn.reusable <- false;
                  Channel.try_send response_ch (Ok response)
