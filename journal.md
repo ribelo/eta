@@ -16830,8 +16830,7 @@ No `dune` change required (auto-discovered modules).
 
 ## V-Eta-V2-Build
 
-Decision: complete; ready for merge decision after phase-tagged commits are
-created from this dirty worktree.
+Decision: complete; shipped to the linear merge gate.
 
 This build experiment implemented the V-Eio-Direct-2 abstract bare-arrow
 verdict in `packages/`. `Effect.t` is now an abstract direct record
@@ -16843,18 +16842,27 @@ gone, and the unused AST supervisor functor was removed.
 
 Evidence:
 
-- `AUDIT.md` records the phase matrix, commands, and risk register.
+- `AUDIT.md` records the phase matrix, commands, n=20 v1/v2 performance
+  comparison, fast-path investigation, and risk register.
 - `dune build packages/eta/eta.cmxa` passes.
 - `bash packages/eta/test/soundness/run.sh _build/default/packages/eta/eta.cmxa`
   passes against the current 10 soundness negative fixtures.
 - `dune build @runtest` passes across Eta core and consumers, including
   eta-test, eta-stream, eta-http, eta-otel, eta-ai/providers, schema, ppx, and
   redacted.
-- `dune exec scratch/eta_research/eio_direct_probe/p5_tracer/fork_propagation.exe`
-  passes with active-span FLS propagation through v2 fork.
-- Release quick overhead sample shows the temporary metadata-table regression
-  was removed by switching to hidden record metadata; `overhead.eta.bind.100k.prebuilt`
-  measured 1333951.950073 ns with 0 minor/major words in the quick sample.
+- Tracked observability tests cover the P5 propagation concern: Eta core keeps
+  trace-context baggage across `par`, and eta-otel's direct concurrent
+  attribute test keeps span-local attributes on the active fiber span.
+- Release n=20 comparison against current master `aa4b269` shows:
+  `overhead.eta.bind.100k.prebuilt` 0.64x wall with 0 minor/major words;
+  `realuse.retry.flaky.fail4_then_ok` 0.45x wall with 0 minor/major words;
+  `overhead.eta.fail_catch.100k.prebuilt` 1.48x wall and 6x minor words;
+  `overhead.eta.pure.reused_rt` about 2.2 us absolute on v2 and below the
+  timer floor on v1.
+- A pre-merge pure/fail marker fast path was tested and rejected because it
+  changed the bind hot path from 0 to 1048575 minor words per 100k row. The
+  pure terminal and fail/catch allocation fixes remain documented follow-ups,
+  not merge blockers.
 
 No hard blocker fired. Phase 4's eta-http reopen criterion did not fire:
 retry/classify/idempotency tests pass without AST inspection or extra
