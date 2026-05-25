@@ -1,13 +1,11 @@
 # Eta V2 Build Audit
 
-Status: complete for build experiment evidence; ready for merge decision after
-the audit commit is pinned below.
+Status: complete for build experiment evidence; ready for merge decision.
 
 Base commit at audit time: `ef0da28d0a8f6ff508e1d3ce41c1373067e27bb8`.
 
 Note on pins: the package rewrite is pinned to the phase-1 commit below.
-The phase-A audit row is pinned by the follow-up commit that records this
-audit artifact.
+The phase-A audit row pins the commit that introduced this audit artifact.
 
 ## Phase Evidence
 
@@ -21,7 +19,7 @@ audit artifact.
 | 5 eta-otel | PASS | 32f8222086a8fde9690c92d9b81672cb4cf5fc62 | Covered by `dune build @runtest`; `eta-otel` reports 35 tests passing. |
 | 6 eta-ai/providers | PASS | 32f8222086a8fde9690c92d9b81672cb4cf5fc62 | Covered by `dune build @runtest`; `eta-ai` and OpenAI/Anthropic/OpenRouter/OpenAI-compatible provider tests pass. |
 | 7 remaining packages | PASS | 32f8222086a8fde9690c92d9b81672cb4cf5fc62 | `eta-redacted`, `eta-schema-test`, and `ppx_eta` tests pass under `dune build @runtest`. |
-| A audit | PASS | pending | Soundness, span propagation, runtime tests, and quick allocation/wall evidence are recorded below. |
+| A audit | PASS | 45bdd145af286eca2addf72c7dd48c821d8be7dc | Soundness, span propagation, runtime tests, and quick allocation/wall evidence are recorded below. |
 
 ## Reproducible Commands
 
