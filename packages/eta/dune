@@ -15,4 +15,4 @@
 (env
  (release
   (ocamlopt_flags
-   (:standard -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2))))
+   (:standard -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2 -zero-alloc-check all))))
