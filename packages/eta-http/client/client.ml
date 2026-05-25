@@ -529,7 +529,7 @@ let make ~sw ~net
     let key = h2_key target in
     let connection =
       Eta_http_h2.Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
-        ~config:h2_config ~reader_buffer_size:(256 * 1024)
+        ~config:h2_config ~reader_buffer_size:(512 * 1024)
         ~on_close:(fun () ->
           incr released;
           Hashtbl.remove h2_connections key)

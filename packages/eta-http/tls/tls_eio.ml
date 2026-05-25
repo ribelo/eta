@@ -41,7 +41,7 @@ let debug_io direction storage ~storage_off ~display_off ~len =
 
 (* Helper: read encrypted data from underlying flow into OpenSSL's read BIO. *)
 let feed_bio t =
-  let buf = Cstruct.create 16384 in
+  let buf = Cstruct.create 32768 in
   Eio.Mutex.use_rw ~protect:false t.read_mutex (fun () ->
       let n = Eio.Flow.single_read t.flow buf in
       let rec write_all off len =
