@@ -41,8 +41,6 @@
   eta
   (eio (>= 1.0))
   (eio_main (>= 1.0))
-  (cstruct (>= 6.0.0))
-  mirage-crypto
   conf-sqlite3
   (alcotest :with-test)))
 

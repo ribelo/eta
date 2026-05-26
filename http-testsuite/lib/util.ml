@@ -47,15 +47,7 @@ let mkdir_p path =
 let absolute_path path =
   if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
 
-let sha256_of_bytes b =
-  Mirage_crypto.Hash.SHA256.digest b
-  |> Cstruct.to_string
-  |> String.to_seq
-  |> Seq.map (fun c -> Printf.sprintf "%02x" (Char.code c))
-  |> List.of_seq
-  |> String.concat ""
-
-let sha256_of_string s = sha256_of_bytes (Cstruct.of_string s)
+let sha256_of_string = Sha256.hex
 
 let sha256_of_file path =
   read_file path |> sha256_of_string

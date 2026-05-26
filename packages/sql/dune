@@ -7,7 +7,7 @@
   (names sqlite_stubs)
   (flags :standard (:include sqlite_c_flags.sexp)))
  (c_library_flags :standard (:include sqlite_c_library_flags.sexp))
- (libraries eta eio unix threads cstruct mirage-crypto))
+ (libraries eta eio unix threads))
 
 (rule
  (targets sqlite_c_flags.sexp sqlite_c_library_flags.sexp)

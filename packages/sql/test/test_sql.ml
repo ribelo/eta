@@ -946,6 +946,22 @@ let with_temp_dir f =
 let test_sql_migration_source_resolution_metadata () =
   let module M = Q.Migrate in
   let v1 = M.Version.from_int 1 |> Result.get_ok in
+  let checksum_vector =
+    M.Migration.make ~version:v1 ~description:"sha256 vector"
+      ~migration_type:M.Simple ~sql:"abc" ()
+  in
+  Alcotest.(check string) "sha256 abc"
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    checksum_vector.M.Migration.checksum;
+  let checksum_multiblock =
+    M.Migration.make ~version:v1 ~description:"sha256 multiblock"
+      ~migration_type:M.Simple
+      ~sql:"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+      ()
+  in
+  Alcotest.(check string) "sha256 multiblock"
+    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    checksum_multiblock.M.Migration.checksum;
   with_temp_dir @@ fun dir ->
   write_file (Filename.concat dir "2_add_orders.up.sql")
     "CREATE TABLE orders (id INTEGER PRIMARY KEY);";

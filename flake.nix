@@ -22,21 +22,41 @@
           pkgs = import nixpkgs { inherit system; };
           ocamlPackages = pkgs.ocamlPackages;
           oxCamlSwitch = "5.2.0+ox";
-          oxCamlOpamRoot = ".opam-oxcaml";
+          oxCamlOpamRoot = "$HOME/.cache/opam";
+          nativePkgConfigPath = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" (
+            [ pkgs.sqlite ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.openssl
+              pkgs.zlib
+            ]
+          );
           oxCamlSetup = pkgs.writeShellApplication {
             name = "eta-oxcaml-init";
             runtimeInputs = [
+              pkgs.autoconf
               pkgs.git
+              pkgs.gnumake
+              pkgs.m4
               pkgs.opam
+              pkgs.patch
+              pkgs.pkg-config
               pkgs.python3
+              pkgs.sqlite
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.gmp
+              pkgs.libev
+              pkgs.libffi
+              pkgs.openssl
+              pkgs.zlib
             ];
             text = ''
               switch_name="''${1:-${oxCamlSwitch}}"
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
-              export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
+              export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export OPAMYES=1
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
 
               if [ ! -d "$OPAMROOT" ]; then
                 opam init --bare --disable-sandboxing --no-setup --yes
@@ -51,6 +71,7 @@
 
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
+              opam install 'uring=0.9' --assume-depexts --yes
               opam install . --deps-only --with-test --assume-depexts --yes
               opam install \
                 'dune=3.22.2+ox' \
@@ -76,14 +97,20 @@
             runtimeInputs = [
               pkgs.git
               pkgs.opam
+              pkgs.pkg-config
               pkgs.python3
+              pkgs.sqlite
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.openssl
+              pkgs.zlib
             ];
             text = ''
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
-              export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
+              export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export OPAMSWITCH="${oxCamlSwitch}"
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
 
               test "$(ocamlc -version)" = "${oxCamlSwitch}"
@@ -93,7 +120,7 @@
               opam list --installed --short ocaml-lsp-server | grep -Fxq ocaml-lsp-server
 
               mode_probe="scratch/oxcaml_research/toolchain_probe/mode_syntax.ml"
-              dune build scratch/oxcaml_research/toolchain_probe/mode_syntax.exe
+              dune build ./scratch/oxcaml_research/toolchain_probe/mode_syntax.exe
               ocamlformat --enable-outside-detected-project --check "$mode_probe"
               probe_source="$(cat "$mode_probe")"
               printf '%s\n' "$probe_source" \
@@ -112,8 +139,9 @@
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
-              export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
+              export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export OPAMSWITCH="$switch_name"
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
@@ -193,18 +221,17 @@
             packages = oxCamlHostPackages;
 
             shellHook = ''
-              if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-                export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
-              else
-                export OPAMROOT="''${OPAMROOT:-$PWD/${oxCamlOpamRoot}}"
-              fi
+              export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
               fi
-              echo "Eta OxCaml shell (${oxCamlSwitch})"
-              echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
-              echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
+              if [ -t 1 ]; then
+                echo "Eta OxCaml shell (${oxCamlSwitch})"
+                echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+                echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
+              fi
             '';
           };
 
@@ -212,18 +239,17 @@
             packages = oxCamlHostPackages;
 
             shellHook = ''
-              if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-                export OPAMROOT="''${OPAMROOT:-$repo_root/${oxCamlOpamRoot}}"
-              else
-                export OPAMROOT="''${OPAMROOT:-$PWD/${oxCamlOpamRoot}}"
-              fi
+              export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
               fi
-              echo "Eta OxCaml research shell (${oxCamlSwitch})"
-              echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
-              echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
+              if [ -t 1 ]; then
+                echo "Eta OxCaml research shell (${oxCamlSwitch})"
+                echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+                echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
+              fi
             '';
           };
 
@@ -238,7 +264,6 @@
               ocamlPackages.eio_main
               ocamlPackages.alcotest
               ocamlPackages.cstruct
-              ocamlPackages.mirage-crypto
               ocamlPackages.yojson
               ocamlPackages.ppxlib
             ];
