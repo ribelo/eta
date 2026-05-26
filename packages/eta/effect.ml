@@ -267,18 +267,41 @@ let for_each_par xs f = all (List.map f xs)
 
 let for_each_par_bounded ~max xs f =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
+  let n = List.length xs in
+  let xs_arr = Array.of_list xs in
+  let tasks = Array.map f xs_arr in
   make @@ fun () ->
-    let semaphore = Eio.Semaphore.make max in
-    (all
-      (List.map
-         (fun x ->
-           make @@ fun () ->
-           Eio.Semaphore.acquire semaphore;
-           Fun.protect
-             ~finally:(fun () -> Eio.Semaphore.release semaphore)
-             (fun () -> (f x).eval ()))
-         xs))
-      .eval ()
+    let frame = current_frame () in
+    let results = Array.make n None in
+    let causes = ref [] in
+    let next = P_atomic.make 0 in
+    let exception Stop in
+    let workers = min max n in
+    (try
+       Eio.Switch.run @@ fun sw ->
+       for _ = 1 to workers do
+         Eio.Fiber.fork ~sw (fun () ->
+             frame.runtime.tracer#with_fiber_context @@ fun () ->
+             try
+               let rec loop () =
+                 let i = P_atomic.fetch_and_add next 1 in
+                 if i < n then begin
+                   results.(i) <- Some (run_to_value frame tasks.(i));
+                   loop ()
+                 end
+               in
+               loop ()
+             with exn ->
+               let cause =
+                 Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+               in
+               causes := cause :: !causes;
+               (try Eio.Switch.fail sw Stop with _ -> ()))
+       done
+     with Stop -> ());
+    match List.rev !causes with
+    | [] -> ok (Array.to_list results |> List.map Option.get)
+    | causes -> error (Cause.concurrent causes)
 
 let uninterruptible effect =
   preserve effect @@ fun () -> Eio.Cancel.protect (fun () -> effect.eval ())
