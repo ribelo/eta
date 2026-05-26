@@ -244,15 +244,15 @@ object RuntimeOverheadZio:
     go(n, 0)
 
   private def zioRunSyncPureLoop(n: Int): Unit =
-    val program = ZIO.succeed(0)
+    val programs = Array(ZIO.succeed(0), ZIO.succeed(1))
     var i = 0
-    var last = 0
+    var acc = 0
     while i < n do
-      last = Unsafe.unsafe { implicit unsafe =>
-        Runtime.default.unsafe.run(program).getOrThrowFiberFailure()
+      acc = acc + Unsafe.unsafe { implicit unsafe =>
+        Runtime.default.unsafe.run(programs(i & 1)).getOrThrowFiberFailure()
       }
       i += 1
-    intSink = last
+    intSink = acc
 
   private def work50(): UIO[Int] =
     zioBindChain(50, ZIO.succeed(0))

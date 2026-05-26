@@ -308,10 +308,10 @@ function runEffectInt(p: Effect.Effect<number>): void {
 // per-call by dividing on the analysis side.
 
 function effectRunSyncPureLoop(n: number): void {
-  const p = Effect.succeed(0)
-  let last = 0
-  for (let i = 0; i < n; i++) last = Effect.runSync(p)
-  intSink = last
+  const programs = [Effect.succeed(0), Effect.succeed(1)] as const
+  let acc = 0
+  for (let i = 0; i < n; i++) acc += Effect.runSync(programs[i & 1])
+  intSink = acc
 }
 
 // 5. Real-use workloads (mirrored 1:1 with bench/runtime_real/runtime_real.ml)
