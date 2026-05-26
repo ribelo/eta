@@ -11,6 +11,8 @@ journal.md
 .motel-data/
 bench/fixtures/cache/*.bin
 bench/runtime_overhead_ts/node_modules/
+bench/runtime_overhead_zio/.scala-build/
+bench/runtime_overhead_zio/.bsp/
 http-testsuite/results/
 http-testsuite/config/certs/*.pem
 http-testsuite/config/certs/*.key

@@ -178,11 +178,13 @@
               pkgs.gmp
               pkgs.caddy
               pkgs.jq
+              pkgs.jdk21_headless
               pkgs.libev
               pkgs.libffi
               pkgs.mkcert
               pkgs.nginx
               pkgs.openssl
+              pkgs.scala-cli
               pkgs.zlib
             ];
         in
