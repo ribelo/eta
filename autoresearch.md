@@ -106,7 +106,7 @@ fanout rows with `EIO_BACKEND=posix`, and emits `METRIC name=value` lines.
 ### Architecture change
 `for_each_par` and `for_each_par_bounded` now use an inlined worker-pool pattern:
 - Build task array from input list
-- Fork exactly `workers` fibers (n for unbounded, min max n for bounded)
+- Fork exactly `workers` fibers (min n 8 for unbounded, min max n for bounded)
 - Each worker loops: atomically claim index → evaluate task → store in result array
 - Collect results ordered by index
 
@@ -121,10 +121,11 @@ Replaced `for_each_par_bounded`'s semaphore-gated `all` (forking all 512 fibers)
 worker pool: only `max` fibers, pulling work indices from an atomic counter.
 **fanout_total_ns**: 330,234 → 241,184 (-27.0%). Bounded: 255,299 → 164,080 (-35.7%).
 
-### Experiment #5 — Inlined worker pool for unbounded fanout (KEPT, -31.6%)
-Applied the same worker-pool pattern inlined directly into `for_each_par` (workers=n).
-Bypassed `all`/`par_collect` overhead entirely. Both unbounded AND bounded improved.
-**fanout_total_ns**: 330,234 → 225,925 (-31.6%). Unbounded: 75k → 68k (-9.5%).
+### Experiment #7 — Cap for_each_par workers at 8 (KEPT, -33.1%)
+Capped `for_each_par` internal workers at 8 instead of n. On single-threaded Eio,
+fewer fibers executing multiple tasks in tight loops beats spawning one fiber per
+task. Better cache locality and less fiber scheduling overhead.
+**fanout_total_ns**: 330,234 → 220,799 (-33.1%). Unbounded: 68k → 63k (-6.8%).
 
 ### Discarded approaches
 - Refactoring into shared function: OxCaml didn't inline, caused 40% regression.
