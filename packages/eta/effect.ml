@@ -273,9 +273,10 @@ let for_each_par xs f =
     let causes = ref [] in
     let next = P_atomic.make 0 in
     let exception Stop in
+    let workers = min n 8 in
     (try
        Eio.Switch.run @@ fun sw ->
-       for _ = 1 to n do
+       for _ = 1 to workers do
          Eio.Fiber.fork ~sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
              try
