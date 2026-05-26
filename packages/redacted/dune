@@ -1,2 +1,3 @@
 (library
- (name redacted))
+ (name redacted)
+ (public_name eta.redacted))

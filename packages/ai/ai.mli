@@ -36,9 +36,23 @@ val api_key : string -> api_key
 type model = string
 type provider_name = string
 
+type audio_format = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
+
+type audio_data = Base64 of string | Bytes of bytes
+
+type audio = {
+  data : audio_data;
+  format : audio_format;
+  transcript : string option;
+}
+
 type content =
   | Text of string
   | Json of raw_json
+  | Audio of audio
+
+val audio_pcm16_base64 : ?transcript:string -> string -> content
+(** Build PCM16 audio content from provider-ready base64 data. *)
 
 type tool_call = {
   id : string;

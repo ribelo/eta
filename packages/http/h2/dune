@@ -1,5 +1,6 @@
 (library
  (name http_h2)
+ (package eta)
  (libraries
   eta
   stream

@@ -1,3 +1,4 @@
 (library
  (name ai)
+ (public_name eta.ai)
  (libraries eta redacted http yojson))

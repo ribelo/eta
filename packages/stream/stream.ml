@@ -52,6 +52,9 @@ module Stream = struct
         -> ('b, 'err) t
     | Filter : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
+    | Take_until_effect :
+        ('a, 'err) t * ('a -> (bool, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
     | Drop : int * ('a, 'err) t -> ('a, 'err) t
     | Scan : ('s -> 'a -> 's) * 's * ('a, 'err) t -> ('s, 'err) t
     | Grouped : int * ('a, 'err) t -> ('a list, 'err) t
@@ -68,6 +71,7 @@ module Stream = struct
         int * ('a, 'err) t * ('a -> ('b, 'err) t)
         -> ('b, 'err) t
     | From_eio_stream : 'a Eio.Stream.t -> ('a, 'err) t
+    | From_queue : ('a, 'err) Eta.Queue.t -> ('a, 'err) t
     | From_mailbox : 'a Mailbox_internal.t -> ('a, 'err) t
     | From_mailbox_batches :
         int * 'a Mailbox_internal.t
@@ -95,6 +99,7 @@ module Stream = struct
   let map_effect f stream = Map_effect (stream, f)
   let filter f stream = Filter (stream, f)
   let take n stream = Take (n, stream)
+  let take_until_effect f stream = Take_until_effect (stream, f)
   let drop n stream = Drop (n, stream)
   let scan f init stream = Scan (f, init, stream)
   let grouped n stream =
@@ -110,6 +115,7 @@ module Stream = struct
     Flat_map_par (max_concurrency, stream, f)
 
   let from_eio_stream stream = From_eio_stream stream
+  let from_queue queue = From_queue queue
 
   let from_file_map_error ?(chunk_size = default_file_chunk_size) ~on_error path =
     if chunk_size <= 0 then
@@ -263,6 +269,20 @@ and fold_stream :
                       (acc, keep_going && !remaining > 0))
                     (folder.emit acc value)));
           }
+  | Take_until_effect (inner, predicate) ->
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              Eta.Effect.bind
+                (fun (acc, keep_going) ->
+                  if not keep_going then Eta.Effect.pure (acc, false)
+                  else
+                    Eta.Effect.map
+                      (fun stop -> (acc, not stop))
+                      (predicate value))
+                (folder.emit acc value));
+        }
   | Drop (n, inner) ->
       let remaining = ref (max 0 n) in
       fold_stream inner acc
@@ -329,6 +349,22 @@ and fold_stream :
               (folder.emit acc value))
           (Eta.Effect.named "Stream.from_eio_stream.take" (Eta.Effect.sync (fun () ->
                Eio.Stream.take stream)))
+      in
+      loop acc
+  | From_queue queue ->
+      let rec loop acc =
+        Eta.Queue.recv queue
+        |> Eta.Effect.map (fun value -> `Item value)
+        |> Eta.Effect.catch (function
+             | `Closed -> Eta.Effect.pure `Closed
+             | `Closed_with_error error -> Eta.Effect.fail error)
+        |> Eta.Effect.bind (function
+             | `Closed -> Eta.Effect.pure (acc, true)
+             | `Item value ->
+                 folder.emit acc value
+                 |> Eta.Effect.bind (fun (acc, keep_going) ->
+                        if keep_going then loop acc
+                        else Eta.Effect.pure (acc, false)))
       in
       loop acc
   | From_mailbox mailbox ->

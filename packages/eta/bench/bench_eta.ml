@@ -32,9 +32,60 @@ let sync_chain n =
   in
   go n
 
+let rec queue_send_loop q i n =
+  if i = n then Effect.unit
+  else Queue.send q i |> Effect.bind (fun () -> queue_send_loop q (i + 1) n)
+
+let rec queue_recv_loop q remaining acc =
+  if remaining = 0 then Effect.pure acc
+  else
+    Queue.recv q
+    |> Effect.bind (fun value -> queue_recv_loop q (remaining - 1) (acc + value))
+
+let queue_send_recv n =
+  let q = Queue.create () in
+  queue_send_loop q 0 n
+  |> Effect.bind (fun () -> queue_recv_loop q n 0)
+  |> Effect.map ignore
+  |> run_effect
+
+let rec queue_try_send_loop q i n =
+  if i = n then Effect.unit
+  else
+    Queue.try_send q i
+    |> Effect.bind (function
+         | `Sent -> queue_try_send_loop q (i + 1) n
+         | `Closed | `Closed_with_error _ ->
+             Effect.sync (fun () -> failwith "queue closed during bench"))
+
+let rec queue_try_recv_loop q remaining acc =
+  if remaining = 0 then Effect.pure acc
+  else
+    Queue.try_recv q
+    |> Effect.bind (function
+         | `Item value -> queue_try_recv_loop q (remaining - 1) (acc + value)
+         | `Empty | `Closed | `Closed_with_error _ ->
+             Effect.sync (fun () -> failwith "queue recv missed item during bench"))
+
+let queue_try_send_recv n =
+  let q = Queue.create () in
+  queue_try_send_loop q 0 n
+  |> Effect.bind (fun () -> queue_try_recv_loop q n 0)
+  |> Effect.map ignore
+  |> run_effect
+
+let queue_handoff n =
+  let q = Queue.create () in
+  Effect.par (queue_send_loop q 0 n) (queue_recv_loop q n 0)
+  |> Effect.map ignore
+  |> run_effect
+
 let workloads =
   let core name run =
     { Bench_lib.name = "effect.core." ^ name; run; samples = None }
+  in
+  let queue name run =
+    { Bench_lib.name = "eta.queue." ^ name; run; samples = None }
   in
   [
     core "pure_run" (fun () -> run_effect (Effect.pure 0));
@@ -64,6 +115,10 @@ let workloads =
           (Effect.fail `Boom
           |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 1)));
     core "runtime_create_run_shutdown" (fun () -> run_effect (Effect.pure 0));
+    queue "send_recv.10k" (fun () -> queue_send_recv 10_000);
+    queue "send_recv.100k" (fun () -> queue_send_recv 100_000);
+    queue "try_send_try_recv.100k" (fun () -> queue_try_send_recv 100_000);
+    queue "handoff.10k" (fun () -> queue_handoff 10_000);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads

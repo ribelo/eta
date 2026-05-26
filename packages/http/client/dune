@@ -1,5 +1,6 @@
 (library
  (name http_client)
+ (package eta)
  (libraries
   eta
   stream
@@ -9,7 +10,5 @@
   http_h1
   http_h2
   http_transport
-  ca-certs
   eio
-  unix
-  x509))
+  unix))

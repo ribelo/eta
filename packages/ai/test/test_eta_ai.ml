@@ -31,6 +31,13 @@ let test_tool_schema_stays_raw_json () =
   Alcotest.(check bool) "raw schema preserved" true
     (String.contains tool.input_schema_json '{')
 
+let test_audio_content_variant () =
+  match audio_pcm16_base64 ~transcript:"hello" "AAECAw==" with
+  | Audio { data = Base64 data; format = Pcm16; transcript = Some transcript } ->
+      Alcotest.(check string) "data" "AAECAw==" data;
+      Alcotest.(check string) "transcript" "hello" transcript
+  | _ -> Alcotest.fail "expected pcm16 base64 audio content"
+
 let test_provider_error_preserves_raw_body () =
   let error =
     Provider_error
@@ -855,6 +862,8 @@ let () =
           Alcotest.test_case "messages" `Quick test_message_vocabulary;
           Alcotest.test_case "raw tool schema" `Quick
             test_tool_schema_stays_raw_json;
+          Alcotest.test_case "audio content variant" `Quick
+            test_audio_content_variant;
           Alcotest.test_case "provider error raw body" `Quick
             test_provider_error_preserves_raw_body;
           Alcotest.test_case "api key prints redacted" `Quick

@@ -17,9 +17,27 @@ let structured_output ~schema_value ?strict ~name ~schema_json () =
     | Stdlib.Error _ as error -> error
     | Stdlib.Ok schema -> Stdlib.Ok { name = trimmed; schema; strict }
 
-let content_text = function A.Text text -> text | A.Json raw -> raw
+let content_text = function
+  | A.Text text -> text
+  | A.Json raw -> raw
+  | A.Audio _ -> invalid_arg "audio content cannot be encoded as text"
 
 let contents_text contents = contents |> List.map content_text |> String.concat ""
+
+let content_has_audio = function A.Audio _ -> true | A.Text _ | A.Json _ -> false
+
+let message_has_audio = function
+  | A.System _ -> false
+  | A.User contents | A.Assistant { content = contents; _ }
+  | A.Tool { content = contents; _ } ->
+      List.exists content_has_audio contents
+
+let reject_audio_prompt ~provider prompt =
+  if List.exists message_has_audio prompt then
+    Stdlib.Error
+      (A.Unsupported
+         { provider; feature = "audio content requires OpenAI Realtime" })
+  else Stdlib.Ok ()
 
 let decode_error_result ?raw ~provider message =
   Stdlib.Error (A.Decode_error { provider; message; raw })
@@ -206,9 +224,12 @@ let temperature_json ~provider = function
 
 let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
-  match temperature_json ~provider request.temperature with
+  match reject_audio_prompt ~provider request.prompt with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok temperature -> (
+  | Stdlib.Ok () -> (
+      match temperature_json ~provider request.temperature with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok temperature -> (
       match
         result_all
           (List.map
@@ -233,7 +254,7 @@ let encode_chat_json ~provider ~schema_value ?structured_output
                  ("max_tokens", Option.map Json.int request.max_output_tokens);
                  ("tools", if tools = [] then None else Some (Json.array tools));
                  ("response_format", response_format);
-               ]))
+               ])))
 
 let encode_chat ~provider ~schema_value ?structured_output request =
   match encode_chat_json ~provider ~schema_value ?structured_output request with
@@ -242,9 +263,12 @@ let encode_chat ~provider ~schema_value ?structured_output request =
 
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
-  match temperature_json ~provider request.temperature with
+  match reject_audio_prompt ~provider request.prompt with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok temperature -> (
+  | Stdlib.Ok () -> (
+      match temperature_json ~provider request.temperature with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok temperature -> (
       match
         result_all
           (List.map
@@ -274,7 +298,7 @@ let encode_responses_json ~provider ~schema_value ?structured_output
                    Option.map Json.int request.max_output_tokens );
                  ("tools", if tools = [] then None else Some (Json.array tools));
                  ("text", text_format);
-               ]))
+               ])))
 
 let encode_responses ~provider ~schema_value ?structured_output request =
   match

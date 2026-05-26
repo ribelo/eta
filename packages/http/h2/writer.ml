@@ -34,7 +34,8 @@ let wait_writer client =
   H2.Client_connection.yield_writer client (fun () -> Eta.Channel.close wake);
   Eta.Channel.recv wake
   |> Eta.Effect.map (fun _ -> ())
-  |> Eta.Effect.catch (function `Closed -> Eta.Effect.unit)
+  |> Eta.Effect.catch (function
+       | `Closed | `Closed_with_error _ -> Eta.Effect.unit)
 
 let rec run_client ~write client =
   match H2.Client_connection.next_write_operation client with

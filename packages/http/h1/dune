@@ -1,5 +1,6 @@
 (library
  (name http_h1)
+ (package eta)
  (libraries
   eta
   stream
@@ -9,5 +10,4 @@
   http_transport
   cstruct
   eio
-  x509
   bigstringaf))

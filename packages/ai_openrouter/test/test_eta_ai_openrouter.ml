@@ -49,7 +49,9 @@ let chat_request ?(stream = false) () : A.chat_request =
 let assistant_text = function
   | A.Assistant { content; _ } ->
       content
-      |> List.filter_map (function A.Text text -> Some text | A.Json _ -> None)
+      |> List.filter_map (function
+           | A.Text text -> Some text
+           | A.Json _ | A.Audio _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 

@@ -15,6 +15,7 @@ let decode_chat = Chat.decode
 let decode_responses = Responses.decode
 let decode_stream_event = Stream_codec.decode_event
 let decode_error = Common.decode_error
+module Realtime = Realtime
 
 let auth_headers api_key =
   Http.Core.Header.unsafe_of_list

@@ -465,12 +465,12 @@ let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
          in
          read_final_response Bytes.empty)
 
-type release_ack = unit Channel.t
+type release_ack = (unit, unit) Channel.t
 type cancel_signal = Cancel
 
 let send_best_effort ch value =
   Channel.try_send ch value
-  |> Effect.map (function `Sent | `Full | `Closed -> ())
+  |> Effect.map (function `Sent | `Full | `Closed | `Closed_with_error _ -> ())
 
 let close_channel ch = Effect.sync (fun () -> Channel.close ch)
 
@@ -480,8 +480,9 @@ let release_body release_ch =
   |> Effect.bind (function
        | `Sent ->
            Channel.recv ack
-           |> Effect.catch (function `Closed -> Effect.unit)
-       | `Full | `Closed -> Effect.unit)
+           |> Effect.catch (function
+                | `Closed | `Closed_with_error _ -> Effect.unit)
+       | `Full | `Closed | `Closed_with_error _ -> Effect.unit)
 
 let origin_key url =
   Printf.sprintf "%s://%s:%d"
@@ -584,7 +585,8 @@ let request_owner pool request response_ch release_ch cancel_ch =
         let cancel_wait =
           Channel.recv cancel_ch
           |> Effect.map (fun Cancel -> `Cancelled)
-          |> Effect.catch (function `Closed -> Effect.pure `Cancelled)
+          |> Effect.catch (function
+               | `Closed | `Closed_with_error _ -> Effect.pure `Cancelled)
         in
         Effect.race [ request_attempt; cancel_wait ]
         |> Effect.bind (function
@@ -608,8 +610,9 @@ let request_owner pool request response_ch release_ch cancel_ch =
                           Channel.recv release_ch
                           |> Effect.map (fun release_ack ->
                                ack := Some release_ack)
-                          |> Effect.catch (function `Closed -> Effect.unit)
-                      | `Full | `Closed -> Effect.unit)))
+                          |> Effect.catch (function
+                               | `Closed | `Closed_with_error _ -> Effect.unit)
+                      | `Full | `Closed | `Closed_with_error _ -> Effect.unit)))
   in
   hold_resource
   |> Effect.bind (fun () ->
@@ -645,7 +648,7 @@ let request_with_pool pool request =
              |> Effect.bind (fun () ->
                     Channel.recv response_ch
                     |> Effect.catch (function
-                         | `Closed ->
+                         | `Closed | `Closed_with_error _ ->
                              Effect.pure
                                (Error (io_closed request Http_response)))
                     |> Effect.bind (function

@@ -284,6 +284,20 @@ let test_grouped_batches () =
     "batches" [ [ 1; 2 ]; [ 3; 4 ]; [ 5 ] ]
     (run_ok rt (run_collect stream))
 
+let test_take_until_effect_includes_terminal_value () =
+  with_runtime @@ fun _env rt ->
+  let seen = ref [] in
+  let stream =
+    Stream.from_iterable [ 1; 2; 3; 4; 5 ]
+    |> Stream.take_until_effect (fun value ->
+           Effect.sync (fun () ->
+               seen := value :: !seen;
+               value >= 3))
+  in
+  Alcotest.(check (list int))
+    "values" [ 1; 2; 3 ] (run_ok rt (run_collect stream));
+  Alcotest.(check (list int)) "predicate calls" [ 1; 2; 3 ] (List.rev !seen)
+
 let test_mailbox_stream_close_and_drop () =
   with_runtime @@ fun _env rt ->
   let mailbox = Mailbox.create ~capacity:2 () in
@@ -317,6 +331,44 @@ let test_mailbox_batch_stream_emits_partial () =
   Alcotest.(check (list (list int)))
     "partial batches" [ [ 1; 2 ]; [ 3 ] ]
     (run_ok rt (run_collect (Mailbox.to_batch_stream ~max:2 mailbox)))
+
+let test_from_queue_clean_close_ends_stream () =
+  with_runtime @@ fun _env rt ->
+  let queue = Queue.create () in
+  run_ok rt (Queue.send queue 1);
+  run_ok rt (Queue.send queue 2);
+  Queue.close queue;
+  Alcotest.(check (list int))
+    "queued values" [ 1; 2 ]
+    (run_ok rt (Stream.from_queue queue |> run_collect))
+
+let test_from_queue_error_close_fails_after_drain () =
+  with_runtime @@ fun _env rt ->
+  let queue = Queue.create () in
+  run_ok rt (Queue.send queue 1);
+  run_ok rt (Queue.send queue 2);
+  Queue.close_with_error queue `Broken;
+  let seen = ref [] in
+  let effect =
+    let stream = Stream.from_queue queue in
+    run stream
+      (Sink.fold_effect
+         (fun values value ->
+           Effect.sync (fun () ->
+               seen := value :: !seen;
+               value :: values))
+         [])
+  in
+  (match Runtime.run rt effect with
+  | Exit.Error (Cause.Fail `Broken) -> ()
+  | Exit.Ok values ->
+      Alcotest.failf "error-closed queue unexpectedly succeeded with %d values"
+        (List.length values)
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected queue stream failure: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause);
+  Alcotest.(check (list int)) "drained first" [ 1; 2 ] (List.rev !seen)
 
 let test_drain_counter_await_zero () =
   with_runtime @@ fun _env rt ->
@@ -364,10 +416,16 @@ let suite =
       Alcotest.test_case "explicit deps/error rows compose" `Quick
         test_row_pipeline_runtime;
       Alcotest.test_case "grouped batches" `Quick test_grouped_batches;
+      Alcotest.test_case "take_until_effect includes terminal value" `Quick
+        test_take_until_effect_includes_terminal_value;
       Alcotest.test_case "mailbox closes and drops" `Quick
         test_mailbox_stream_close_and_drop;
       Alcotest.test_case "mailbox batch stream emits partial batches" `Quick
         test_mailbox_batch_stream_emits_partial;
+      Alcotest.test_case "from_queue clean close ends stream" `Quick
+        test_from_queue_clean_close_ends_stream;
+      Alcotest.test_case "from_queue error close fails after drain" `Quick
+        test_from_queue_error_close_fails_after_drain;
       Alcotest.test_case "drain counter await zero" `Quick
         test_drain_counter_await_zero;
     ] )

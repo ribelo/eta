@@ -1,5 +1,6 @@
 (library
  (name http_transport)
+ (package eta)
  (libraries
   eta
   http_core
@@ -7,9 +8,5 @@
   http_tls
   eio
   eio.unix
-  mirage-crypto-rng
-  mirage-crypto-rng.unix
-  tls-eio
-  x509
   domain-name
   ipaddr))

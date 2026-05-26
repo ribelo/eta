@@ -49,7 +49,9 @@ let chat_request ?(stream = false) () : A.chat_request =
 let assistant_text = function
   | A.Assistant { content; _ } ->
       content
-      |> List.filter_map (function A.Text text -> Some text | A.Json _ -> None)
+      |> List.filter_map (function
+           | A.Text text -> Some text
+           | A.Json _ | A.Audio _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 
@@ -377,6 +379,71 @@ let test_responses_request_uses_responses_endpoint () =
   require_contains "responses body" ~needle:"\"input\":["
     (request_body_string request)
 
+let test_chat_and_responses_reject_audio_content () =
+  let request =
+    { (chat_request ()) with prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ] }
+  in
+  match O.encode_responses request with
+  | Stdlib.Error
+      (A.Unsupported
+        { provider = "openai"; feature = "audio content requires OpenAI Realtime" }) ->
+      ()
+  | Stdlib.Ok _ -> Alcotest.fail "expected audio content rejection"
+  | Stdlib.Error _ -> Alcotest.fail "unexpected audio content rejection shape"
+
+let test_realtime_session_json () =
+  let session =
+    O.Realtime.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
+      ~input_audio_format:A.Pcm16 ~output_audio_format:A.G711_ulaw ~voice:"verse"
+      ~max_output_tokens:128 ()
+  in
+  let raw = O.Realtime.session_to_string session in
+  require_contains "realtime type" ~needle:"\"type\":\"realtime\"" raw;
+  require_contains "modalities" ~needle:"\"output_modalities\":[\"text\",\"audio\"]" raw;
+  require_contains "pcm format" ~needle:"\"type\":\"audio/pcm\"" raw;
+  require_contains "ulaw format" ~needle:"\"type\":\"audio/pcmu\"" raw;
+  require_contains "voice" ~needle:"\"voice\":\"verse\"" raw
+
+let test_realtime_client_secret_request () =
+  let session = O.Realtime.session ~model:"gpt-realtime-2" () in
+  let request =
+    O.Realtime.client_secret_request ~base_url:"https://api.openai.test"
+      ~api_key:(A.api_key "sk-test") session
+  in
+  Alcotest.(check string)
+    "uri" "https://api.openai.test/v1/realtime/client_secrets" request.uri;
+  Alcotest.(check (option string))
+    "auth" (Some "Bearer sk-test")
+    (H.Core.Header.get "authorization" request.headers);
+  require_contains "session body" ~needle:"\"session\":{" (request_body_string request)
+
+let test_realtime_client_event_audio_append () =
+  let audio =
+    match A.audio_pcm16_base64 "AAECAw==" with
+    | A.Audio audio -> audio
+    | _ -> Alcotest.fail "expected audio"
+  in
+  let raw =
+    O.Realtime.client_event_to_string (O.Realtime.Input_audio_buffer_append audio)
+    |> expect_ok "audio append event"
+  in
+  require_contains "append type" ~needle:"\"type\":\"input_audio_buffer.append\"" raw;
+  require_contains "audio data" ~needle:"\"audio\":\"AAECAw==\"" raw
+
+let test_realtime_decode_server_events () =
+  (match
+     O.Realtime.decode_server_event
+       "{\"type\":\"response.output_audio.delta\",\"delta\":\"abc\"}"
+   with
+  | O.Realtime.Response_audio_delta "abc" -> ()
+  | _ -> Alcotest.fail "expected audio delta");
+  match
+    O.Realtime.decode_server_event
+      "{\"type\":\"error\",\"error\":{\"code\":\"bad_request\",\"message\":\"nope\"}}"
+  with
+  | O.Realtime.Server_error { code = Some "bad_request"; message = "nope"; _ } -> ()
+  | _ -> Alcotest.fail "expected realtime error event"
+
 let () =
   Alcotest.run "eta-ai-openai"
     [
@@ -385,6 +452,8 @@ let () =
           Alcotest.test_case "value" `Quick test_provider_value;
           Alcotest.test_case "encode chat and responses" `Quick
             test_encode_chat_and_responses;
+          Alcotest.test_case "rejects audio outside realtime" `Quick
+            test_chat_and_responses_reject_audio_content;
         ] );
       ( "decode",
         [
@@ -406,5 +475,15 @@ let () =
             test_responses_runner_provider_error;
           Alcotest.test_case "responses request" `Quick
             test_responses_request_uses_responses_endpoint;
+        ] );
+      ( "realtime",
+        [
+          Alcotest.test_case "session JSON" `Quick test_realtime_session_json;
+          Alcotest.test_case "client secret request" `Quick
+            test_realtime_client_secret_request;
+          Alcotest.test_case "audio append event" `Quick
+            test_realtime_client_event_audio_append;
+          Alcotest.test_case "server event decode" `Quick
+            test_realtime_decode_server_events;
         ] );
     ]

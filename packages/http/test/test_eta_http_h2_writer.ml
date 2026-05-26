@@ -91,8 +91,10 @@ let test_h2_writer_blocked_write_teardown () =
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error cause ->
       Alcotest.failf "blocked writer scope failed: %a"
-        (Eta.Cause.pp (fun fmt `Closed -> Format.pp_print_string fmt "closed"))
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed -> Format.pp_print_string fmt "closed"
+          | `Closed_with_error _ ->
+              Format.pp_print_string fmt "closed_with_error"))
         cause);
   Alcotest.(check bool) "write started" true !write_started
-
 

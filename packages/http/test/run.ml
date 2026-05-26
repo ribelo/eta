@@ -5,6 +5,7 @@ open Test_eta_http_h1_write
 open Test_eta_http_h1_parse
 open Test_eta_http_transport
 open Test_eta_http_h1_client
+open Test_eta_http_ws
 open Test_eta_http_retry
 open Test_eta_http_observability
 open Test_eta_http_tls
@@ -177,6 +178,29 @@ let () =
             test_h1_pool_discard_releases_checkout;
           Alcotest.test_case "pool cancellation releases checkout" `Quick
             test_h1_pool_request_cancellation_releases_checkout;
+        ] );
+      ( "ws",
+        [
+          Alcotest.test_case "accept key vector" `Quick test_ws_accept_key_vector;
+          Alcotest.test_case "masked text roundtrip" `Quick
+            test_ws_codec_masked_text_roundtrip;
+          Alcotest.test_case "upgrade reads inbound text" `Quick
+            test_ws_connect_reads_inbound_text;
+          Alcotest.test_case "send text masks client frame" `Quick
+            test_ws_send_text_masks_client_frame;
+          Alcotest.test_case "ping is internal and sends pong" `Quick
+            test_ws_ping_is_internal_and_pong_is_sent;
+          Alcotest.test_case "1011 close fails inbound stream" `Quick
+            test_ws_close_1011_fails_inbound_stream;
+          Alcotest.test_case "selected subprotocol" `Quick
+            test_ws_selected_subprotocol;
+          Alcotest.test_case "fragmented text reassembles" `Quick
+            test_ws_fragmented_text_reassembles;
+          Alcotest.test_case "clean close ends inbound" `Quick
+            test_ws_clean_close_ends_inbound_stream;
+          Alcotest.test_case "masked server frame fails" `Quick
+            test_ws_server_masked_frame_is_protocol_error;
+          Alcotest.test_case "real tcp echo" `Quick test_ws_connect_real_tcp_echo;
         ] );
       ( "transport",
         [

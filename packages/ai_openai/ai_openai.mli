@@ -48,6 +48,8 @@ val decode_stream_event :
 val decode_error :
   status:int -> headers:Ai.headers -> Ai.raw_json -> Ai.ai_error
 
+module Realtime = Realtime
+
 val chat_completions_request :
   ?structured_output:structured_output ->
   ?provider:Ai.provider ->

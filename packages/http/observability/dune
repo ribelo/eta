@@ -1,5 +1,6 @@
 (library
  (name http_observability)
+ (package eta)
  (libraries
   eta
   http_client

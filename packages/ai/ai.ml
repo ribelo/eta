@@ -63,9 +63,22 @@ let api_key value = Redacted.make ~label:"api_key" value
 type model = string
 type provider_name = string
 
+type audio_format = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
+
+type audio_data = Base64 of string | Bytes of bytes
+
+type audio = {
+  data : audio_data;
+  format : audio_format;
+  transcript : string option;
+}
+
 type content =
   | Text of string
   | Json of raw_json
+  | Audio of audio
+
+let audio_pcm16_base64 ?transcript data = Audio { data = Base64 data; format = Pcm16; transcript }
 
 type tool_call = {
   id : string;

@@ -61,3 +61,8 @@ module H2 = struct
   module Stream_state = Http_h2.Stream_state
   module Writer = Http_h2.Writer
 end
+
+module Ws = struct
+  module Client = Http_ws.Client
+  module Codec = Http_ws.Codec
+end

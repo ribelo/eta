@@ -4,8 +4,8 @@ Clean-room HTTP/1.1 and HTTP/2 client package for Eta.
 
 eta-http v1 provides a production-shape client for Eta applications. The
 package owns client lifecycle, typed errors, pooling, streaming request and
-response bodies, retries, trailers, and observability. It delegates TLS to
-`tls`/`tls-eio` and HTTP/2 frame + HPACK handling to `h2`.
+response bodies, retries, trailers, and observability. It handles TLS through
+the local OpenSSL binding and delegates HTTP/2 frame + HPACK handling to `h2`.
 
 ## Status
 
@@ -71,9 +71,8 @@ nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_m
 - `cstruct` is a direct dependency because `Eio.Flow.single_read` exposes
   flow reads through `Cstruct.t`; it is already in the Eta dependency closure
   through `eta-stream`/Eio.
-- `digestif` is not a direct dependency on the ADR 0002 TLS branch. The newer
-  TLS branch pulls it in, but `digestif` 1.3.0 is documented as failing under
-  the current OxCaml switch.
+- `digestif`, `tls-eio`, `x509`, `ca-certs`, and Mirage Crypto are not
+  eta-http dependencies. TLS is owned by the local OpenSSL binding.
 
 ## Audit Catalogs
 

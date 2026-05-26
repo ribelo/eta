@@ -86,6 +86,14 @@ When a precondition is violated or state is invalid, raise an error or return
 an `` `Error`` exit immediately. Prefer compile-time rejection via types where
 possible; at runtime, fail clearly rather than no-op, default, or skip.
 
+## Eio Wrapping Policy
+
+H-W4: Wrap an Eio primitive when naked Eio would force callers to reimplement an Eta-owned protocol or invariant: typed failure preservation, cancellation cleanup, scoped lifecycle, close fences, backpressure ownership, mode/portability fences, or runtime observability. Otherwise expose Eio directly via a `from_eio_X` bridge or document the recipe.
+
+The rule predicts the current surface: `Pool`, `Channel`, `Resource`, `Mailbox`, and `Effect.timeout_as` wrap; `Eio.Mutex`, `Eio.Condition`, `Eio.Path`, and `Eio.Buf_read` stay direct; `Stream.from_eio_stream` is a bridge with an explicit semantic gap.
+
+Evidence sources: V-Realtime-Substrate, V-Channel-Choice, V-Pool-Survival, and V-Rs.
+
 ## Commit & Pull Request Guidelines
 
 The short history uses conventional-style commits such as `feat: par / all /

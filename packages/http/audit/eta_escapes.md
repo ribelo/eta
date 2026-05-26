@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
-Run: `bash packages/eta-http/audit/run.sh`
-Last updated: 2026-05-24T13:42:03Z
-Current sites: 7
+Run: `bash packages/http/audit/run.sh`
+Last updated: 2026-05-26T22:38:53Z
+Current sites: 78
 
 ## What Is NOT An Escape
 
@@ -37,7 +37,7 @@ escape.
 Search:
 
 ```sh
-rg -n -t ocaml 'Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+' packages/eta-http | rg -v 'Atomic\.Portable'
+rg -n -t ocaml 'Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+' packages/http | rg -v 'Atomic\.Portable'
 ```
 
 ## Replaceable
@@ -53,7 +53,6 @@ No replaceable escapes yet.
 | --- | --- | --- |
 
 | `test/test_eta_http_observability.ml:167` | `Eio.Switch.run` | Structural test harness for an in-memory meter runtime; `eta-test` has no meter-capable fixture helper yet. |
-| `transport/connect.ml:39-48` | `Atomic.t` | Structural once flag for process-wide Mirage crypto RNG initialization before TLS handshakes; this lives below Eta runtime semantics. |
 
 ## Debt
 

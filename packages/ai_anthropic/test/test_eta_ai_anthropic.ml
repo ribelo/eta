@@ -50,7 +50,9 @@ let chat_request ?(stream = false) ?(max_output_tokens = Some 64) () :
 let assistant_text = function
   | A.Assistant { content; _ } ->
       content
-      |> List.filter_map (function A.Text text -> Some text | A.Json _ -> None)
+      |> List.filter_map (function
+           | A.Text text -> Some text
+           | A.Json _ | A.Audio _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 

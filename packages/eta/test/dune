@@ -14,6 +14,7 @@
   test_eta_clock_resource_scope
   test_eta_properties
   test_eta_portable_queue
+  test_eta_queue
   test_eta_island
   test_eta_blocking
   test_eta_channel

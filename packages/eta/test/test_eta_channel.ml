@@ -82,6 +82,25 @@ let test_channel_close_wakes_blocked_senders_and_receivers () =
   | Exit.Error (Cause.Fail `Closed) -> ()
   | _ -> Alcotest.fail "expected blocked receiver closed"
 
+let test_channel_close_with_error_drains_buffer () =
+  with_runtime @@ fun rt ->
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch 1);
+  Channel.close_with_error ch `Boom;
+  Alcotest.(check int) "buffered value" 1 (run_ok rt (Channel.recv ch));
+  (match Runtime.run rt (Channel.recv ch) with
+  | Exit.Error (Cause.Fail (`Closed_with_error `Boom)) -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected close_with_error after drain"
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected channel close cause: %a"
+        (Cause.pp (fun fmt -> function
+          | `Closed -> Format.pp_print_string fmt "closed"
+          | `Closed_with_error `Boom -> Format.pp_print_string fmt "boom"))
+        cause);
+  match run_ok rt (Channel.try_send ch 2) with
+  | `Closed_with_error `Boom -> ()
+  | _ -> Alcotest.fail "expected try_send to see close_with_error"
+
 let test_channel_cancel_blocked_send_cleans_waiter () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

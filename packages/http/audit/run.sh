@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="${1:-packages/eta-http}"
+root="${1:-packages/http}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='H2\.|Hpack\.|Tls\.|Tls_eio\.|Eio\.|Cstruct\.|X509\.|Ca_certs\.|Mirage_crypto|Domain_name\.|Ipaddr\.|Bigstringaf\.|Eqaf\.|Gz\.|De\.'
+dep_pattern='H2\.|Hpack\.|Eio\.|Cstruct\.|Domain_name\.|Ipaddr\.|Bigstringaf\.|Gz\.|De\.'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"

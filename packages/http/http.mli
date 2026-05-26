@@ -95,3 +95,9 @@ module H2 : sig
   module Writer = Http_h2.Writer
 end
 (** HTTP/2 implementation modules. *)
+
+module Ws : sig
+  module Client = Http_ws.Client
+  module Codec = Http_ws.Codec
+end
+(** WebSocket upgrade client and RFC 6455 codec. *)

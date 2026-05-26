@@ -10,6 +10,7 @@ open Test_eta_supervisor
 open Test_eta_clock_resource_scope
 open Test_eta_duration_schedule
 open Test_eta_portable_queue
+open Test_eta_queue
 open Test_eta_channel
 open Test_eta_pool
 open Test_eta_semaphore
@@ -308,6 +309,15 @@ let () =
           Alcotest.test_case "backpressure and close" `Quick
             test_portable_queue_backpressure_and_close;
         ] );
+      ( "Queue",
+        [
+          Alcotest.test_case "send recv close" `Quick test_queue_send_recv_close;
+          Alcotest.test_case "close fence" `Quick test_queue_close_fence;
+          Alcotest.test_case "close with error drains" `Quick
+            test_queue_close_with_error_drains;
+          Alcotest.test_case "cancel blocked recv" `Quick
+            test_queue_cancel_blocked_recv_cleans_waiter;
+        ] );
       ( "Channel",
         [
           Alcotest.test_case "try send recv" `Quick test_channel_try_send_try_recv;
@@ -318,6 +328,8 @@ let () =
           Alcotest.test_case "blocking recv" `Quick test_channel_blocking_recv;
           Alcotest.test_case "close wakes blocked users" `Quick
             test_channel_close_wakes_blocked_senders_and_receivers;
+          Alcotest.test_case "close with error drains" `Quick
+            test_channel_close_with_error_drains_buffer;
           Alcotest.test_case "cancel blocked send" `Quick
             test_channel_cancel_blocked_send_cleans_waiter;
           Alcotest.test_case "cancel blocked recv" `Quick

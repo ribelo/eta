@@ -32,7 +32,10 @@ let result_all values =
 
 let contents_text contents =
   contents
-  |> List.map (function A.Text text -> text | A.Json raw -> raw)
+  |> List.map (function
+       | A.Text text -> text
+       | A.Json raw -> raw
+       | A.Audio _ -> invalid_arg "audio content cannot be encoded as text")
   |> String.concat ""
 
 let cache_control_json =
@@ -49,6 +52,10 @@ let text_block ?cache_control text =
 let content_block = function
   | A.Text text -> Stdlib.Ok (text_block text)
   | A.Json raw -> parse_raw_json "content block" raw
+  | A.Audio _ ->
+      Stdlib.Error
+        (A.Unsupported
+           { provider = "anthropic"; feature = "audio content requires realtime" })
 
 let content_blocks contents = result_all (List.map content_block contents)
 

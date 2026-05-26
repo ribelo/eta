@@ -10,7 +10,7 @@ type t = {
   max_permits : int;
   mutex : Eio.Mutex.t;
   mutable available : int;
-  waiters : waiter Queue.t;
+  waiters : waiter Stdlib.Queue.t;
   mutable cancelled_waiters : int;
 }
 
@@ -20,12 +20,12 @@ let make ~permits =
     max_permits = permits;
     mutex = Eio.Mutex.create ();
     available = permits;
-    waiters = Queue.create ();
+    waiters = Stdlib.Queue.create ();
     cancelled_waiters = 0;
   }
 
 let available t = Eio.Mutex.use_ro t.mutex @@ fun () -> t.available
-let waiting t = Eio.Mutex.use_ro t.mutex @@ fun () -> Queue.length t.waiters
+let waiting t = Eio.Mutex.use_ro t.mutex @@ fun () -> Stdlib.Queue.length t.waiters
 
 let cancelled_waiters t =
   Eio.Mutex.use_ro t.mutex @@ fun () -> t.cancelled_waiters
@@ -40,16 +40,16 @@ let validate_request name t n =
       ("Eta.Semaphore." ^ name ^ ": n must be between 1 and max_permits")
 
 let rec take_ready_waiter t =
-  if Queue.is_empty t.waiters then None
+  if Stdlib.Queue.is_empty t.waiters then None
   else
-    let waiter = Queue.peek t.waiters in
+    let waiter = Stdlib.Queue.peek t.waiters in
     match waiter.state with
     | Waiting when t.available >= waiter.permits ->
-        ignore (Queue.take t.waiters : waiter);
+        ignore (Stdlib.Queue.take t.waiters : waiter);
         Some waiter
     | Waiting -> None
     | Resolved_unclaimed | Claimed | Cancelled ->
-        ignore (Queue.take t.waiters : waiter);
+        ignore (Stdlib.Queue.take t.waiters : waiter);
         take_ready_waiter t
 
 let rec wake_waiters_locked t =
@@ -85,7 +85,7 @@ let acquire t n =
       t.available <- t.available - n;
       true)
     else (
-      Queue.push waiter t.waiters;
+      Stdlib.Queue.push waiter t.waiters;
       false))
   |> Effect.bind (fun got_now ->
        if got_now then Effect.unit

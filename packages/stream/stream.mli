@@ -43,6 +43,10 @@ module Stream : sig
     ('b, 'err) t
   val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   val take : int -> ('a, 'err) t -> ('a, 'err) t
+  val take_until_effect :
+    ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
+  (** Emit values until [predicate] returns [true]. The value that satisfies
+      [predicate] is emitted before the stream stops. *)
   val drop : int -> ('a, 'err) t -> ('a, 'err) t
   val scan : ('s -> 'a -> 's) -> 's -> ('a, 'err) t -> ('s, 'err) t
   val grouped : int -> ('a, 'err) t -> ('a list, 'err) t
@@ -75,6 +79,10 @@ module Stream : sig
   (** Pull values from an existing [Eio.Stream.t]. Ownership of the queue and
       its producers remains with the caller. This source has no end-of-stream
       marker; use operators such as {!take} when consuming finite prefixes. *)
+
+  val from_queue : ('a, 'err) Eta.Queue.t -> ('a, 'err) t
+  (** Pull values from an Eta queue. A clean queue close ends the stream;
+      [Queue.close_with_error err] fails the stream with [err]. *)
 
   val from_file :
     ?chunk_size:int ->
