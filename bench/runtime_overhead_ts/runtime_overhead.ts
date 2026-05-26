@@ -19,6 +19,7 @@ interface Opts {
   filter: RegExp | null
   filterRaw: string | null
   samples: number
+  warmupMs: number
 }
 
 function parseArgs(argv: string[]): Opts {
@@ -26,20 +27,23 @@ function parseArgs(argv: string[]): Opts {
   let filter: RegExp | null = null
   let filterRaw: string | null = null
   let samples: number | null = null
+  let warmupMs: number | null = null
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--quick") quick = true
     else if (a === "--filter") {
       filterRaw = argv[++i] ?? ""
       filter = new RegExp(filterRaw)
-    } else if (a === "--samples") samples = Number.parseInt(argv[++i] ?? "5", 10)
+    } else if (a === "--samples") samples = Number.parseInt(argv[++i] ?? "10", 10)
+    else if (a === "--warmup-ms") warmupMs = Number.parseInt(argv[++i] ?? "2000", 10)
     else throw new Error(`unknown bench argument: ${a}`)
   }
   return {
     quick,
     filter,
     filterRaw,
-    samples: samples ?? (quick ? 1 : 5),
+    samples: samples ?? (quick ? 1 : 10),
+    warmupMs: warmupMs ?? (quick ? 100 : 2000),
   }
 }
 
@@ -123,12 +127,21 @@ function measureOnce(run: () => void): number {
   return stop - start
 }
 
+function warmup(run: () => void, warmupMs: number): void {
+  if (warmupMs <= 0) {
+    run()
+    return
+  }
+  const deadline = Bun.nanoseconds() + warmupMs * 1_000_000
+  do {
+    run()
+  } while (Bun.nanoseconds() < deadline)
+}
+
 function runWorkload(opts: Opts, w: Workload): void {
   if (!shouldRun(opts, w.name)) return
   const samples = w.samples ?? opts.samples
-  // One untimed warmup pass per workload, so JIT effects don't dominate
-  // sample 0 the way they would on a cold start.
-  w.run()
+  warmup(w.run, opts.warmupMs)
   const walls: number[] = []
   for (let i = 0; i < samples; i++) walls.push(measureOnce(w.run))
   emit(w.name, "wall_ns", "ns", walls)

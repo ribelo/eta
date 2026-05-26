@@ -13,4 +13,9 @@ if ! command -v scala-cli >/dev/null 2>&1; then
   exit 0
 fi
 
-exec scala-cli --server=false "$dir/RuntimeOverheadZio.scala" -- "$@"
+exec scala-cli \
+  --server=false \
+  --java-opt -Xms1g \
+  --java-opt -Xmx1g \
+  --java-opt -XX:+AlwaysPreTouch \
+  "$dir/RuntimeOverheadZio.scala" -- "$@"

@@ -2,9 +2,9 @@
 
 Mirrors `bench/runtime_overhead/runtime_overhead.ml` so that each
 `overhead.ts.X` row maps 1:1 to the OCaml `overhead.X` row. Wall time is
-sampled with `Bun.nanoseconds()` from inside the Bun process, after one
-untimed warmup pass and a forced `Bun.gc(true)` between samples. Bun
-startup is excluded from every measurement.
+sampled with `Bun.nanoseconds()` from inside the Bun process, after a
+timed warmup for each workload and a forced `Bun.gc(true)` between measured
+samples. Bun startup is excluded from every measurement.
 
 ## What It Measures
 
@@ -66,6 +66,7 @@ The script is invoked automatically by `bench/run.sh` when `bun` is on
 bench/runtime_overhead_ts/run.sh
 bench/runtime_overhead_ts/run.sh --quick
 bench/runtime_overhead_ts/run.sh --quick --filter 'effect.bind'
+bench/runtime_overhead_ts/run.sh --samples 30 --warmup-ms 5000
 ```
 
 If `bun` is missing, the wrapper prints a notice on stderr and exits 0
@@ -73,9 +74,9 @@ so the OCaml-side bench still produces a result file.
 
 ## Apples-to-Apples Caveats
 
-- OCaml is AOT-compiled, Bun is JIT-compiled. The first sample on each
-  workload is discarded (untimed warmup) so JIT compilation does not
-  dominate sample 0.
+- OCaml is AOT-compiled, Bun is JIT-compiled. Each workload is warmed for
+  2 seconds by default before sampling, or 100 ms with `--quick`. Use
+  `--warmup-ms` for longer steady-state runs.
 - `Bun.gc(true)` is called between samples, mirroring `Gc.compact ()`
   in `bench_lib.ml`, but the JSC heap model and the OCaml heap model are
   not directly comparable. Treat per-row deltas as the headline numbers,

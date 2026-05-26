@@ -12,7 +12,8 @@ object RuntimeOverheadZio:
       quick: Boolean,
       filterRaw: Option[String],
       filter: Option[Regex],
-      samples: Int
+      samples: Int,
+      warmupMs: Long
   )
 
   final case class Workload(name: String, run: () => Unit, samples: Option[Int] = None)
@@ -32,6 +33,7 @@ object RuntimeOverheadZio:
     var filterRaw: Option[String] = None
     var filter: Option[Regex] = None
     var samples: Option[Int] = None
+    var warmupMs: Option[Long] = None
     var rest = args
     while rest.nonEmpty do
       rest match
@@ -46,9 +48,18 @@ object RuntimeOverheadZio:
         case "--samples" :: value :: tail =>
           samples = Some(value.toInt)
           rest = tail
+        case "--warmup-ms" :: value :: tail =>
+          warmupMs = Some(value.toLong)
+          rest = tail
         case arg :: _ =>
           throw IllegalArgumentException(s"unknown bench argument: $arg")
-    Opts(quick, filterRaw, filter, samples.getOrElse(if quick then 1 else 5))
+    Opts(
+      quick,
+      filterRaw,
+      filter,
+      samples.getOrElse(if quick then 1 else 10),
+      warmupMs.getOrElse(if quick then 100L else 2000L)
+    )
 
   private def shouldRun(opts: Opts, name: String): Boolean =
     opts.filter match
@@ -109,9 +120,17 @@ object RuntimeOverheadZio:
     run()
     (JSystem.nanoTime() - start).toDouble
 
+  private def warmup(run: () => Unit, warmupMs: Long): Unit =
+    if warmupMs <= 0 then run()
+    else
+      val deadline = JSystem.nanoTime() + (warmupMs * 1_000_000L)
+      run()
+      while JSystem.nanoTime() < deadline do
+        run()
+
   private def runWorkload(opts: Opts, workload: Workload): Unit =
     if shouldRun(opts, workload.name) then
-      workload.run()
+      warmup(workload.run, opts.warmupMs)
       val count = workload.samples.getOrElse(opts.samples)
       val samples = Vector.fill(count)(measureOnce(workload.run))
       emit(workload.name, "wall_ns", "ns", samples)
