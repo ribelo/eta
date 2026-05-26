@@ -10,7 +10,6 @@ time. It is opt-in infrastructure, not a CI gate.
 | Core interpreter | `effect.core.*` | Per-bind, sync leaf, catch, and typed-failure boundary cost. |
 | Overhead controls | `overhead.*` | Paired Eta-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
 | Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `for_each_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
-| Bun + Effect reference | `overhead.ts.*` and `realuse.ts.*` | Same workloads as `overhead.*` and `realuse.*`, run on Bun + Effect v4 (`effect-smol`). Wall time is sampled inside the Bun process so startup is excluded. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Streams | `eta_stream.*` | Representative `eta-stream` pipelines and file reads. |
@@ -121,18 +120,11 @@ Avoid committing dirty-tree results unless the commit message explains why.
 
 ## Caveats
 
-- The `overhead.*` controls answer only the core interpreter question. They do
-  not yet compare every stream/schema/observability workload against a direct
-  hand-written equivalent.
-- All OCaml benchmark executables are built with `--profile=release` so
-  assertions are stripped and flambda-style optimisations apply when
-  available. The `dune build @bench` alias runs in the active profile;
-  prefer `bench/run.sh` for performance numbers.
-- The `overhead.ts.*` rows require `bun` on `PATH`. If it is missing,
-  `bench/run.sh` prints a notice on stderr and produces a result file without
-  those rows. The pinned Effect version lives in
-  `bench/runtime_overhead_ts/package.json` and the row map is documented in
-  `bench/runtime_overhead_ts/README.md`.
+- Runtime benchmark sources live beside their owning package under
+  `packages/<pkg>/bench/`. Root `bench/` owns only shared harness code,
+  result files, compile-time fixtures, and comparison tools.
+- OCaml benchmark executables are built in the active Dune profile. Use the
+  same profile for both baseline and candidate runs when comparing results.
 - Compile-time benchmarks mutate file timestamps with `touch`; they do not edit
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter

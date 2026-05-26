@@ -3,7 +3,7 @@
  (libraries bench_lib eta eio_main))
 
 (rule
- (alias bench)
+ (alias legacy_bench)
  (action
   (setenv EIO_BACKEND posix
    (run ./runtime_concurrency.exe --quick))))

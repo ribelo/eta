@@ -53,29 +53,49 @@ run_runtime() {
   "$exe" "${args[@]}" >> "$tmp"
 }
 
-dune build --profile=release \
-  bench/runtime_core/runtime_core.exe \
-  bench/runtime_concurrency/runtime_concurrency.exe \
-  bench/runtime_observability/runtime_observability.exe \
-  bench/runtime_overhead/runtime_overhead.exe \
-  bench/runtime_real/runtime_real.exe \
-  bench/runtime_stream/runtime_stream.exe \
-  bench/runtime_schema/runtime_schema.exe \
-  bench/compare.exe \
+build_targets=(
+  packages/eta/bench/bench_eta.exe
+  packages/stream/bench/bench_stream.exe
+  packages/schema/bench/bench_schema.exe
+  packages/otel/bench/bench_otel.exe
+  packages/par/bench/bench_par.exe
+  packages/http/bench/bench_http.exe
+  packages/sql/bench/bench_sql.exe
+  packages/ai/bench/bench_ai.exe
+  packages/ai_openai_codec/bench/bench_ai_openai_codec.exe
+  packages/ai_openai/bench/bench_ai_openai.exe
+  packages/ai_anthropic/bench/bench_ai_anthropic.exe
+  packages/ai_openai_compat/bench/bench_ai_openai_compat.exe
+  packages/ai_openrouter/bench/bench_ai_openrouter.exe
+  packages/redacted/bench/bench_redacted.exe
+  packages/test/bench/bench_test.exe
+  packages/schema_test/bench/bench_schema_test.exe
+  packages/ppx/bench/bench_ppx.exe
+  bench/compare.exe
   bench/overhead.exe
+)
 
-run_runtime _build/default/bench/runtime_core/runtime_core.exe
-run_runtime _build/default/bench/runtime_concurrency/runtime_concurrency.exe
-run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
-run_runtime _build/default/bench/runtime_overhead/runtime_overhead.exe
-run_runtime _build/default/bench/runtime_real/runtime_real.exe
-run_runtime _build/default/bench/runtime_stream/runtime_stream.exe
-run_runtime _build/default/bench/runtime_schema/runtime_schema.exe
+for target in "${build_targets[@]}"; do
+  dune build -j 1 "$target"
+done
 
-ts_args=()
-if [ "$quick" = true ]; then ts_args+=("--quick"); fi
-if [ -n "$filter" ]; then ts_args+=("--filter" "$filter"); fi
-bench/runtime_overhead_ts/run.sh "${ts_args[@]}" >> "$tmp"
+run_runtime _build/default/packages/eta/bench/bench_eta.exe
+run_runtime _build/default/packages/stream/bench/bench_stream.exe
+run_runtime _build/default/packages/schema/bench/bench_schema.exe
+run_runtime _build/default/packages/otel/bench/bench_otel.exe
+run_runtime _build/default/packages/par/bench/bench_par.exe
+run_runtime _build/default/packages/http/bench/bench_http.exe
+run_runtime _build/default/packages/sql/bench/bench_sql.exe
+run_runtime _build/default/packages/ai/bench/bench_ai.exe
+run_runtime _build/default/packages/ai_openai_codec/bench/bench_ai_openai_codec.exe
+run_runtime _build/default/packages/ai_openai/bench/bench_ai_openai.exe
+run_runtime _build/default/packages/ai_anthropic/bench/bench_ai_anthropic.exe
+run_runtime _build/default/packages/ai_openai_compat/bench/bench_ai_openai_compat.exe
+run_runtime _build/default/packages/ai_openrouter/bench/bench_ai_openrouter.exe
+run_runtime _build/default/packages/redacted/bench/bench_redacted.exe
+run_runtime _build/default/packages/test/bench/bench_test.exe
+run_runtime _build/default/packages/schema_test/bench/bench_schema_test.exe
+run_runtime _build/default/packages/ppx/bench/bench_ppx.exe
 
 compile_args=()
 if [ "$quick" = true ]; then compile_args+=("--quick"); fi

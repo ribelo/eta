@@ -1,0 +1,9 @@
+(executable
+ (name bench_otel)
+ (libraries bench_lib eta otel eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_otel.exe --quick))))

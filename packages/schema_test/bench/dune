@@ -1,0 +1,9 @@
+(executable
+ (name bench_schema_test)
+ (libraries bench_lib schema_test schema eta alcotest))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_schema_test.exe --quick))))

@@ -1,9 +1,9 @@
 (executable
- (name runtime_schema)
+ (name bench_schema)
  (libraries bench_lib eta schema eio_main))
 
 (rule
- (alias legacy_bench)
+ (alias bench)
  (action
   (setenv EIO_BACKEND posix
-   (run ./runtime_schema.exe --quick))))
+   (run ./bench_schema.exe --quick))))

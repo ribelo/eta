@@ -1,0 +1,8 @@
+(executable
+ (name bench_ppx)
+ (libraries bench_lib))
+
+(rule
+ (alias bench)
+ (action
+  (run ./bench_ppx.exe --quick)))

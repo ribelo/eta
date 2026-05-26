@@ -1,9 +1,9 @@
 (executable
- (name runtime_stream)
+ (name bench_stream)
  (libraries bench_lib eta stream eio_main unix))
 
 (rule
- (alias legacy_bench)
+ (alias bench)
  (action
   (setenv EIO_BACKEND posix
-   (run ./runtime_stream.exe --quick))))
+   (run ./bench_stream.exe --quick))))

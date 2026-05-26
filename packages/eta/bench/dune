@@ -1,9 +1,9 @@
 (executable
- (name runtime_overhead)
+ (name bench_eta)
  (libraries bench_lib eta eio_main))
 
 (rule
- (alias legacy_bench)
+ (alias bench)
  (action
   (setenv EIO_BACKEND posix
-   (run ./runtime_overhead.exe --quick))))
+   (run ./bench_eta.exe --quick))))

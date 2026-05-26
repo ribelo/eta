@@ -3,6 +3,6 @@
  (libraries par unix))
 
 (rule
- (alias bench)
+ (alias legacy_bench)
  (action
   (run ./runtime_par.exe --quick)))

@@ -1,0 +1,8 @@
+(executable
+ (name bench_ai_openai_compat)
+ (libraries bench_lib ai ai_openai_compat http redacted))
+
+(rule
+ (alias bench)
+ (action
+  (run ./bench_ai_openai_compat.exe --quick)))

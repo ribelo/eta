@@ -1,0 +1,9 @@
+(executable
+ (name bench_http)
+ (libraries bench_lib eta http eio_main unix))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_http.exe --quick))))

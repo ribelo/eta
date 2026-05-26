@@ -1,0 +1,9 @@
+(executable
+ (name bench_sql)
+ (libraries bench_lib sql eta eio_main eio.unix unix threads))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_sql.exe --quick))))

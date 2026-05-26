@@ -67,7 +67,7 @@ measure_ocamlc_i() {
   local file="$2"
   local includes="$3"
   if ! want "$name"; then return 0; fi
-  dune build packages/eta packages/eta-schema packages/ppx_eta >/dev/null
+  dune build packages/eta packages/schema packages/ppx >/dev/null
   local out="$(mktemp)"
   ocamlc -i $includes "$file" > "$out" 2>/dev/null || true
   local bytes="$(wc -c < "$out" | tr -d ' ')"
@@ -77,10 +77,11 @@ measure_ocamlc_i() {
   emit "$name.lines" "lines" "lines" "$lines"
 }
 
-packages="eta eta-stream eta-schema eta-otel ppx_eta"
+packages="ai ai_anthropic ai_openai ai_openai_codec ai_openai_compat ai_openrouter eta http otel par ppx redacted schema schema_test sql stream test"
 for pkg in $packages; do
   path="packages/$pkg"
   safe="$(printf '%s' "$pkg" | tr '-' '_')"
+  if [ "$pkg" = "ppx" ]; then safe="ppx_eta"; fi
   main_ml="$(find "$path" -maxdepth 1 -name '*.ml' | sort | head -n 1)"
   test_ml="$(find "$path/test" -maxdepth 1 -name '*.ml' 2>/dev/null | sort | head -n 1 || true)"
   measure_cmd "compile.$safe.clean" "rm -rf _build/default/$path && dune build $path"
@@ -108,7 +109,7 @@ measure_ocamlc_i "compile.fixture.explicit_deps.ocamlc_i" "bench/fixtures/typech
 measure_cmd "compile.fixture.schema_heavy.clean" "rm -rf _build/default/bench/fixtures/typecheck/schema_heavy && dune build bench/fixtures/typecheck/schema_heavy"
 measure_cmd "compile.fixture.schema_heavy.touch_top" "dune build bench/fixtures/typecheck/schema_heavy && touch bench/fixtures/typecheck/schema_heavy/schema_top.ml && dune build bench/fixtures/typecheck/schema_heavy"
 measure_cmd "compile.fixture.schema_heavy.touch_internal" "dune build bench/fixtures/typecheck/schema_heavy && touch bench/fixtures/typecheck/schema_heavy/schema_m05.ml && dune build bench/fixtures/typecheck/schema_heavy"
-measure_ocamlc_i "compile.fixture.schema_heavy.ocamlc_i" "bench/fixtures/typecheck/schema_heavy/schema_top.ml" "-I _build/default/packages/eta-schema/.eta_schema.objs/byte -I _build/default/bench/fixtures/typecheck/schema_heavy/.bench_typecheck_schema_heavy.objs/byte"
+measure_ocamlc_i "compile.fixture.schema_heavy.ocamlc_i" "bench/fixtures/typecheck/schema_heavy/schema_top.ml" "-I _build/default/packages/schema/.schema.objs/byte -I _build/default/bench/fixtures/typecheck/schema_heavy/.bench_typecheck_schema_heavy.objs/byte"
 
 measure_cmd "compile.fixture.ppx_heavy.clean" "rm -rf _build/default/bench/fixtures/typecheck/ppx_heavy && dune build bench/fixtures/typecheck/ppx_heavy"
 measure_cmd "compile.fixture.ppx_heavy.touch_top" "dune build bench/fixtures/typecheck/ppx_heavy && touch bench/fixtures/typecheck/ppx_heavy/ppx_top.ml && dune build bench/fixtures/typecheck/ppx_heavy"
