@@ -1,0 +1,61 @@
+(library
+ (name sqlite_fast_p0)
+ (modules p0_sqlite)
+ (foreign_stubs
+  (language c)
+  (names p0_sqlite_stubs)
+  (flags :standard (:include c_flags.sexp)))
+ (c_library_flags :standard (:include c_library_flags.sexp)))
+
+(executable
+ (name p0_link_probe)
+ (modules p0_link_probe)
+ (libraries sqlite_fast_p0))
+
+(library
+ (name sqlite_fast_direct)
+ (modules direct_sqlite)
+ (foreign_stubs
+  (language c)
+  (names direct_sqlite_stubs)
+  (flags :standard (:include c_flags.sexp)))
+ (c_library_flags :standard (:include c_library_flags.sexp)))
+
+(executable
+ (name p1_direct_smoke)
+ (modules p1_direct_smoke)
+ (libraries sqlite_fast_direct))
+
+(executable
+ (name p2_scan_bench)
+ (modules p2_scan_bench)
+ (libraries sqlite_fast_direct unix))
+
+(executable
+ (name p2_sqlite3_scan_bench)
+ (modules p2_sqlite3_scan_bench)
+ (libraries sqlite3 unix))
+
+(executable
+ (name p2_bind_bench)
+ (modules p2_bind_bench)
+ (libraries sqlite_fast_direct sqlite3 unix))
+
+(executable
+ (name p2_caqti_bench)
+ (modules p2_caqti_bench)
+ (libraries caqti.blocking caqti-driver-sqlite3 unix))
+
+(executable
+ (name p3_failure_smoke)
+ (modules p3_failure_smoke)
+ (libraries sqlite_fast_direct))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (progn
+   (with-stdout-to c_flags.sexp
+    (bash "echo '('; pkg-config sqlite3 --cflags | tr ' ' '\n'; echo ')'"))
+   (with-stdout-to c_library_flags.sexp
+    (bash "echo '('; pkg-config sqlite3 --libs | tr ' ' '\n'; echo ')'")))))

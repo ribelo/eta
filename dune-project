@@ -29,3 +29,20 @@
   (decompress (= 1.5.3))
   ppxlib
   (alcotest :with-test)))
+
+(package
+ (name eta-sql)
+ (synopsis "Fast SQLite connector and SQL query toolkit for Eta")
+ (description
+  "Eta SQL provides a low-allocation SQLite connector plus explicit SQL query, schema, pool, and migration helpers. It is not an ORM.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta
+  (eio (>= 1.0))
+  (eio_main (>= 1.0))
+  (cstruct (>= 6.0.0))
+  mirage-crypto
+  conf-sqlite3
+  (alcotest :with-test)))

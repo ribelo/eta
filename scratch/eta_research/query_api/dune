@@ -1,0 +1,14 @@
+(executable
+ (name p0_api_candidates)
+ (modules p0_api_candidates)
+ (libraries eta-sql unix))
+
+(executable
+ (name p1_eta_pool_typed)
+ (modules p1_eta_pool_typed)
+ (libraries eta eta-sql eio_main eio.unix unix threads))
+
+(executable
+ (name p2_query_surface)
+ (modules p2_query_surface)
+ (libraries eta eta-sql eio_main eio.unix unix threads))

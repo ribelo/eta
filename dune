@@ -1,5 +1,6 @@
 (subdir scratch
  (dirs
+  eta_research
   eta_ai_v1
   eta_http_research))
 

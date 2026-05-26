@@ -1,0 +1,7 @@
+(test
+ (name run)
+ (modules run test_sql test_sqlite)
+ (libraries sql eta alcotest eio_main eio.unix unix threads)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -59,6 +59,13 @@
                 'ocaml-lsp-server=1.19.0+ox1' \
                 --assume-depexts \
                 --yes
+              opam install \
+                'sqlite3=5.4.1' \
+                'caqti=2.3.0' \
+                'caqti-driver-sqlite3=2.3.0' \
+                'caqti-eio=2.3.0' \
+                --assume-depexts \
+                --yes
 
               echo "OxCaml switch is ready: $switch_name"
               echo "Enter it with: nix develop .#oxcaml"
@@ -160,6 +167,7 @@
               pkgs.opam
               pkgs.patch
               pkgs.pkg-config
+              pkgs.sqlite
               pkgs.unzip
               pkgs.which
               oxCamlSetup
@@ -227,6 +235,8 @@
               ocamlPackages.eio
               ocamlPackages.eio_main
               ocamlPackages.alcotest
+              ocamlPackages.cstruct
+              ocamlPackages.mirage-crypto
               ocamlPackages.yojson
               ocamlPackages.ppxlib
             ];
