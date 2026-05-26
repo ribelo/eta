@@ -141,7 +141,10 @@ type users = {
 ```
 
 It expands to the ordinary `Sql.Table.Make` module shape, typed columns, a
-`users_row` record, `Users.all`, and `Users.schema`.
+`users_row` record, `Users.all`, and `Users.schema`. The input declaration is
+consumed by the PPX; application code refers to `users_row` for all-column
+result records. Partial projections still use the ordinary tuple-returning
+builder helpers.
 
 The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
 `Tag`, implicit service lookup, inferred dependency construction, or argument

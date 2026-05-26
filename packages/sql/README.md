@@ -143,11 +143,23 @@ This generates:
 - `Users.schema`, a `Sql.Schema.create_table` artifact preserving supported
   column attributes
 
+The input declaration is syntax for the PPX; the row type users write against is
+the generated `users_row`:
+
+```ocaml
+let print_user (row : users_row) =
+  Printf.printf "%s\\n" row.name
+```
+
 Supported field types are `int`, `int64`, `string`, `bool`, `float`, `bytes`,
 and nullable forms such as `string option`. Supported column attributes are
 `[@primary_key]`, `[@not_null]`, `[@unique]`, `[@default "..."]`, and
 `[@references Other.column]` with optional `[@on_delete "..."]` and
 `[@on_update "..."]`.
+
+The schema PPX is intentionally small. JSON columns, custom decoders, sum
+types, generated `CHECK` constraints, and generated indexes still use manual
+table modules or explicit `Sql.Schema` values.
 
 Use it by adding the PPX to the target that declares tables:
 
@@ -166,6 +178,10 @@ let active_users =
     |> order_by Users.id
     |> compile)
 ```
+
+`Users.all` is the record-producing projection. Partial projections keep the
+ordinary builder behavior, so `Q.Projection.(t2 Users.id Users.name)` returns
+`int * string`.
 
 Use a dedicated SQL blocking pool for production SQLite work. The fanout probe
 ran 8 scan fibers plus 8 ad-hoc query fibers over `max_threads=4`; the pool
