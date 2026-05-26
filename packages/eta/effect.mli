@@ -241,12 +241,20 @@ module Blocking : sig
   end
 
   val submit :
-    ?pool:Pool.t -> ?name:string -> (unit -> 'a) -> ('a, 'err) effect
+    ?pool:Pool.t ->
+    ?name:string ->
+    ?on_cancel:(unit -> unit) ->
+    (unit -> 'a) ->
+    ('a, 'err) effect
   (** Namespaced spelling for {!blocking}. *)
 end
 
 val blocking :
-  ?pool:Blocking.Pool.t -> ?name:string -> (unit -> 'a) -> ('a, 'err) t
+  ?pool:Blocking.Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  (unit -> 'a) ->
+  ('a, 'err) t
 (** [Effect.blocking f] runs [f ()] on a bounded blocking pool. Use this for
     legacy synchronous I/O that cannot or should not be rewritten to Eio:
     old DB clients, blocking filesystem libraries, sync SDKs, and blocking C
@@ -263,8 +271,8 @@ val blocking :
 
     Effect.blocking does NOT preempt running callbacks. Parent cancellation
     while a job is started is honored only when the pool is configured with
-    [shutdown_policy = Detach_started] or via an explicit cooperative cancel
-    hook (not in v1).
+    [shutdown_policy = Detach_started] or when [?on_cancel] cooperatively
+    unblocks the underlying operation.
 
     Blocking worker callbacks are ordinary synchronous OCaml functions. They may
     call legacy blocking libraries. They must not call Eio operations, run Eta
@@ -278,7 +286,14 @@ val blocking :
 
     For lock-holding C bindings, see {!Blocking.Pool.create_domain_isolated}.
     The [?name] label propagates to tracing and metrics as the blocking
-    operation name. *)
+    operation name.
+
+    [?on_cancel] runs in the calling domain when parent cancellation reaches a
+    started blocking job. Use it only for thread-safe cancellation hooks such as
+    [sqlite3_interrupt]. The hook must be thread-safe with respect to the
+    worker callback it is trying to interrupt. It must not call Eio operations,
+    Eta runtimes, or submit nested blocking jobs. If it raises, the blocking
+    effect raises that exception after the worker callback returns. *)
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
@@ -598,6 +613,7 @@ module Private : sig
     emit:(blocking_event -> unit) ->
     Blocking.Pool.t ->
     string ->
+    ?on_cancel:(unit -> unit) ->
     (unit -> 'a) ->
     'a
   (** Runtime hook for submitting one blocking callback. *)

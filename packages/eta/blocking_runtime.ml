@@ -328,7 +328,49 @@ let finish_result t job_id name emit submitted_at started_at outcome =
         (Blocking_error (Printexc.to_string exn));
       Printexc.raise_with_backtrace exn bt
 
-let submit ~sw ~emit t name f =
+let run_cancel_hook = function
+  | None -> None
+  | Some hook -> (
+      try
+        hook ();
+        None
+      with exn -> Some (exn, Printexc.get_raw_backtrace ()))
+
+let maybe_raise_cancel_hook_error = function
+  | None -> ()
+  | Some (exn, bt) -> Printexc.raise_with_backtrace exn bt
+
+let run_worker_with_cancel_hook t name f on_cancel =
+  match on_cancel with
+  | None -> Eio.Cancel.protect @@ fun () -> run_worker t name f
+  | Some _ ->
+      let hook_error = Atomic.make None in
+      let running = Atomic.make true in
+      let set_hook_error error =
+        match error with
+        | None -> ()
+        | Some _ ->
+            let current = Atomic.get hook_error in
+            if Option.is_none current then Atomic.set hook_error error
+      in
+      let outcome =
+        Eio.Switch.run @@ fun sw ->
+        Eio.Fiber.fork_daemon ~sw (fun () ->
+            (try Eio.Fiber.await_cancel () with
+            | Eio.Cancel.Cancelled _ | Exit ->
+                if Atomic.get running then
+                  set_hook_error (run_cancel_hook on_cancel)
+            | exn -> set_hook_error (Some (exn, Printexc.get_raw_backtrace ())));
+            `Stop_daemon);
+        Eio.Cancel.protect @@ fun () ->
+        Fun.protect ~finally:(fun () -> Atomic.set running false) (fun () ->
+            run_worker t name f)
+      in
+      (match Atomic.get hook_error with
+      | None -> outcome
+      | Some (exn, bt) -> Packed_error (exn, bt))
+
+let submit ~sw ~emit t name ?on_cancel f =
   check_not_worker "Effect.Blocking.submit";
   let submitted_at = now_ms () in
   let job_id =
@@ -341,8 +383,7 @@ let submit ~sw ~emit t name f =
   let started_at = now_ms () in
   match t.config.shutdown_policy with
   | Drain ->
-      Eio.Cancel.protect @@ fun () ->
-      let outcome = run_worker t name f in
+      let outcome = run_worker_with_cancel_hook t name f on_cancel in
       finish_result t job_id name emit submitted_at started_at outcome
   | Detach_started ->
       let promise =
@@ -352,9 +393,11 @@ let submit ~sw ~emit t name f =
       in
       (try Eio.Promise.await_exn promise with
       | Eio.Cancel.Cancelled _ as exn ->
+          let hook_error = run_cancel_hook on_cancel in
           mark_detached t job_id;
           let ts = now_ms () in
           emit_event emit t name submitted_at started_at ts Blocking_detached;
+          maybe_raise_cancel_hook_error hook_error;
           raise exn)
 
 let shutdown ~emit t =

@@ -640,14 +640,14 @@ module Blocking = struct
       with exn -> exit_of_exn frame exn
   end
 
-  let submit ?pool ?(name = "blocking") f =
+  let submit ?pool ?(name = "blocking") ?on_cancel f =
     Blocking_runtime.check_not_worker "Effect.Blocking.submit";
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
     let run () =
       Blocking_runtime.submit ~sw:frame.runtime.outer_sw
         ~emit:(Runtime_core.emit_blocking_event frame.runtime)
-        (Runtime_core.blocking_pool frame.runtime pool) name f
+        (Runtime_core.blocking_pool frame.runtime pool) name ?on_cancel f
     in
     try
       ok
@@ -658,7 +658,8 @@ module Blocking = struct
     with exn -> exit_of_exn frame exn
 end
 
-let blocking ?pool ?(name = "blocking") f = Blocking.submit ?pool ~name f
+let blocking ?pool ?(name = "blocking") ?on_cancel f =
+  Blocking.submit ?pool ~name ?on_cancel f
 
 let supervisor_pure value = Supervisor_pure value
 let supervisor_lift effect = Supervisor_lift effect
