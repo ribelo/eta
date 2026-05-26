@@ -1,0 +1,1 @@
+{"type":"config","name":"Eta fanout performance","metricName":"fanout_total_ns","metricUnit":"ns","bestDirection":"lower"}
