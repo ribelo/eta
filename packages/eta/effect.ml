@@ -274,16 +274,21 @@ let for_each_par xs f =
     let next = P_atomic.make 0 in
     let exception Stop in
     let workers = min n 8 in
+    let run_task effect =
+      exit_to_value frame
+        (try effect.eval () with exn -> exit_of_exn frame exn)
+    in
     (try
        Eio.Switch.run @@ fun sw ->
        for _ = 1 to workers do
          Eio.Fiber.fork ~sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
+             with_frame frame @@ fun () ->
              try
                let rec loop () =
                  let i = P_atomic.fetch_and_add next 1 in
                  if i < n then begin
-                   results.(i) <- Some (run_to_value frame tasks.(i));
+                   results.(i) <- Some (run_task (Array.unsafe_get tasks i));
                    loop ()
                  end
                in
@@ -312,16 +317,21 @@ let for_each_par_bounded ~max xs f =
     let next = P_atomic.make 0 in
     let exception Stop in
     let workers = min max n in
+    let run_task effect =
+      exit_to_value frame
+        (try effect.eval () with exn -> exit_of_exn frame exn)
+    in
     (try
        Eio.Switch.run @@ fun sw ->
        for _ = 1 to workers do
          Eio.Fiber.fork ~sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
+             with_frame frame @@ fun () ->
              try
                let rec loop () =
                  let i = P_atomic.fetch_and_add next 1 in
                  if i < n then begin
-                   results.(i) <- Some (run_to_value frame tasks.(i));
+                   results.(i) <- Some (run_task (Array.unsafe_get tasks i));
                    loop ()
                  end
                in
