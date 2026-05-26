@@ -12,3 +12,17 @@
  (name p2_query_surface)
  (modules p2_query_surface)
  (libraries eta eta-sql eio_main eio.unix unix threads))
+
+(executable
+ (name p3_schema_ppx)
+ (modules p3_schema_ppx)
+ (libraries eta eta-sql eio_main eio.unix unix threads)
+ (preprocess
+  (pps ppx_eta)))
+
+(executable
+ (name wrong_table_ppx_negative)
+ (modules wrong_table_ppx_negative)
+ (libraries eta-sql)
+ (preprocess
+  (pps ppx_eta)))

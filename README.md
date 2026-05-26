@@ -129,6 +129,20 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
  (pps ppx_eta))
 ```
 
+For `eta-sql`, the same PPX also provides optional table declaration sugar:
+
+```ocaml
+[%%eta.sql.table
+type users = {
+  id : int [@primary_key];
+  name : string [@not_null];
+  active : bool [@not_null];
+}]
+```
+
+It expands to the ordinary `Sql.Table.Make` module shape, typed columns, a
+`users_row` record, `Users.all`, and `Users.schema`.
+
 The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
 `Tag`, implicit service lookup, inferred dependency construction, or argument
 conversion.

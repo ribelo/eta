@@ -118,6 +118,55 @@ The old public `query_cursor` surface was removed because it looked like
 streaming while buffering rows up front. Use `select` for materialized
 typed reads and `fold_select` for scans.
 
+## Optional Schema PPX
+
+The `ppx_eta` package includes optional table-declaration sugar for eta-sql.
+It does not create a parallel query system; it expands to the same generative
+table module, typed columns, schema artifact, and compiled `Sql.Eta_pool` path
+shown above.
+
+```ocaml
+[%%eta.sql.table
+type users = {
+  id : int [@primary_key];
+  name : string [@not_null];
+  active : bool [@not_null];
+}]
+```
+
+This generates:
+
+- `type users_row = { id : int; name : string; active : bool }`
+- `module Users`, with `Users.table`, `Users.id`, `Users.name`, and
+  `Users.active`
+- `Users.all`, an all-column projection returning `users_row`
+- `Users.schema`, a `Sql.Schema.create_table` artifact preserving supported
+  column attributes
+
+Supported field types are `int`, `int64`, `string`, `bool`, `float`, `bytes`,
+and nullable forms such as `string option`. Supported column attributes are
+`[@primary_key]`, `[@not_null]`, `[@unique]`, `[@default "..."]`, and
+`[@references Other.column]` with optional `[@on_delete "..."]` and
+`[@on_update "..."]`.
+
+Use it by adding the PPX to the target that declares tables:
+
+```lisp
+(preprocess
+ (pps ppx_eta))
+```
+
+Queries remain ordinary typed builder values:
+
+```ocaml
+let active_users =
+  Q.Select.(
+    from Users.table Users.all
+    |> where Q.Expr.(eq Users.active true)
+    |> order_by Users.id
+    |> compile)
+```
+
 Use a dedicated SQL blocking pool for production SQLite work. The fanout probe
 ran 8 scan fibers plus 8 ad-hoc query fibers over `max_threads=4`; the pool
 saturated at 4 active workers, queued up to 12 jobs, and ad-hoc query p99 rose

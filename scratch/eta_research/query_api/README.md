@@ -27,7 +27,9 @@ The selected API must:
 | --- | --- | --- | --- |
 | A. Generative table modules + typed builder | Drizzle-like enough while staying idiomatic OCaml; table phantom types reject wrong-table composition; no PPX build cost. | Cannot express core CRUD ergonomically, or call sites become noisier than raw SQL. | Selected |
 | B. Raw typed request records | Minimal, explicit, fast to implement, and close to Caqti's proven request separation. | Manual SQL/bind/decode duplication dominates normal use. | Baseline |
-| C. PPX-generated request modules | Can validate SQL literals and generate bind/decode boilerplate. | Adds generated code and still cannot improve host-language composability for this slice. | Deferred / untested |
+| C. Builder-generation PPX | Can generate request modules around selected builder/raw query shapes. | Adds generated code and still does not improve host-language composability for this slice. | Not selected |
+| D. Schema/table PPX | Removes per-table module ceremony while preserving the selected typed builder and Eta_pool execution path. | Generated code fails to preserve phantom-table rejection, records, or schema metadata. | Accepted as optional sugar |
+| E. SQL-literal PPX | Can validate SQL literals and generate bind/decode boilerplate for SQL-shaped queries. | Parser/introspection cost outweighs concrete consumer need, or generated types cannot compose with Eta_pool. | Deferred / untested |
 
 ## Proof Ladder
 
@@ -39,7 +41,17 @@ The selected API must:
 6. P5: production SQL surface: aggregates, GROUP BY/HAVING, DISTINCT,
    subqueries, CTEs, UPSERT, RETURNING, and window functions.
 7. P6: release build and package tests.
+8. P7: schema/table PPX expands to the same generative table module shape,
+   preserves wrong-table rejection, and executes typed records through
+   `Sql.Eta_pool`.
 
 Current P5 status: DISTINCT, COUNT, SUM, GROUP BY, HAVING, subquery
 predicates, CTEs, UPSERT/ON CONFLICT, RETURNING, and ROW_NUMBER window
 projection have fixture or package-test coverage.
+
+Current P7 status: [%%eta.sql.table type users = { ... }] expands to a
+users_row record, a Users generative table module, typed columns, Users.all as
+an all-column record projection, and Users.schema as a schema artifact. The
+positive fixture executes the generated typed record projection through
+Sql.Eta_pool; the negative fixture proves generated phantom table types still
+reject wrong-table projections.

@@ -46,3 +46,18 @@
   mirage-crypto
   conf-sqlite3
   (alcotest :with-test)))
+
+(package
+ (name ppx_eta)
+ (synopsis "PPX syntax helpers for Eta")
+ (description
+  "ppx_eta provides small syntax helpers for Eta effects and eta-sql table declarations.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  ppxlib
+  (eta :with-test)
+  (eta-sql :with-test)
+  (eio_main :with-test)
+  (alcotest :with-test)))

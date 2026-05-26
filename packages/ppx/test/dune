@@ -1,8 +1,16 @@
 (test
  (name test_ppx_eta)
+ (modules test_ppx_eta)
  (libraries eta alcotest eio_main)
  (preprocess
   (pps ppx_eta))
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(test
+ (name test_ppx_sql_table)
+ (modules test_ppx_sql_table)
+ (libraries eta-sql alcotest)
+ (preprocess
+  (pps ppx_eta)))
