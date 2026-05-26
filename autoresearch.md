@@ -1,168 +1,120 @@
-# Autoresearch: Eta HTTP client warm-loop performance
+# Autoresearch: Eta fanout performance
 
 ## Objective
 
-Make Eta's `eta-http` warm-loop client competitive with Go's `net/http` on
-the perf_compare benchmark. Two concrete problems frame the work:
+Improve Eta's real-use fanout performance against Eta's own baseline,
+specifically the two workloads in `bench/runtime_real/runtime_real.ml`:
 
-1. **H1 plain GET 1k has a ~44 ms per-request floor.** Go does the same
-   work in ~18 µs. That is roughly 2400× slower and almost certainly a
-   bug (a stray sleep, a synchronous flush waiting on something, or
-   pool/scheduling pessimism), not raw CPU cost.
-2. **H2/TLS warm reuse is broken.** Every H2 GET after the warmup pool
-   is established times out. Go and curl both succeed. Whatever Eta is
-   doing on the second request over a kept-alive TLS+H2 connection is
-   wrong.
+- `realuse.fanout.par.success.64x50` — 64 concurrent tasks, each a 50-step bind
+  chain, collected with `Effect.for_each_par`.
+- `realuse.fanout.bounded.512x50.k=8` — 512 tasks bounded to 8 in flight, each a
+  50-step bind chain, collected with `Effect.for_each_par_bounded ~max:8`.
 
-Once those two are addressed we expect H1 latency to fall by orders of
-magnitude and H2 to start producing real samples; tightening the
-remaining gap (e.g. caddy h2 POST 1m where Eta is ~3× slower than Go) is
-follow-on work.
+External warmed comparison context from before this session, for motivation
+only. Do not run external comparisons during the autoresearch loop:
 
-## Reference numbers (release, commit a11749b, full iteration counts)
-
-```
-scenario               |    Eta warm |  Go warm | curl CLI
-nginx h1 plain GET 1k  |      44.015 |    0.018 |    3.195   ms median
-nginx h2 tls   GET 1k  | timeout >2s |    0.023 |    4.741
-nginx h2 tls   GET 1m  | timeout >2s |    0.432 |    4.893
-caddy h2 tls   POST 1m |       5.395 |    1.731 |    7.900
+```text
+fanout par 64x50:          Eta 124,407 ns | Effect 282,520 ns (2.27x) | ZIO 98,790 ns (0.79x)
+bounded fanout 512x50 k=8: Eta 448,370 ns | Effect 1,809,476 ns (4.04x) | ZIO 177,357 ns (0.40x)
 ```
 
-Goal posts:
-- nginx h1 plain GET 1k: **target < 0.5 ms** (within ~25× of Go is the
-  first milestone; Go itself is 18 µs).
-- nginx h2 tls GET 1k / 1m: **stop timing out**, then drive median into
-  the sub-millisecond range.
-- caddy h2 tls POST 1m: **within 2× of Go** (~3.5 ms).
+The first milestone is to reduce Eta's own `fanout_total_ns` baseline without
+regressing the non-fanout Eta runtime rows.
 
 ## Metrics
 
-The benchmark runs in a reduced "loop mode" (15 iters per scenario,
-3 warmup, 500 ms Eta timeout cap) so each iteration stays under ~60 s.
-
-- **Primary**: `eta_total_ms` — sum of Eta median ms across the 4
-  scenarios. Errored scenarios contribute the timeout cap (currently
-  500 ms each), so the baseline is dominated by H2 failures. **Lower is
-  better.**
+- **Primary**: `fanout_total_ns` (ns, lower is better) — sum of the two fanout
+  wall-time means from a release build.
 - **Secondary**:
-  - `eta_errors` — count of scenarios where Eta failed (target: 0).
-  - `eta_h1_get_1k_ms`, `eta_h2_get_1k_ms`, `eta_h2_get_1m_ms`,
-    `eta_h2_post_1m_ms` — per-scenario Eta median.
-  - `go_total_ms`, `go_h1_get_1k_ms`, ... — Go medians, used as a sanity
-    check that the host is not under load. Should be roughly stable
-    across runs.
+  - `fanout_par_64x50_ns` — unbounded fanout wall-time mean.
+  - `fanout_bounded_512x50_k8_ns` — bounded fanout wall-time mean.
+  - `fanout_par_64x50_min_ns`, `fanout_bounded_512x50_k8_min_ns` — fastest
+    samples, useful when mean is noisy.
+  - `fanout_*_minor_words`, `fanout_*_major_words` — allocation monitors.
+  - `concurrency_for_each_par_64_ns`, `concurrency_for_each_par_bounded_512_8_ns`
+    — lower-level concurrency rows from `bench/runtime_concurrency`.
 
-## How to run
+## How to Run
 
-```
+```sh
 ./autoresearch.sh
 ```
 
-Internally:
-1. `nix develop -c dune build --profile release http-testsuite/test/perf_compare/run.exe`
-2. `nix develop -c dune exec --profile release --no-build` of the same
-   target, with `ETA_PERF_ITERS / ETA_PERF_WARMUP / ETA_PERF_TIMEOUT_MS`
-   exported.
-3. Locate the JSON written under `http-testsuite/results/<run-id>/`
-   and emit `METRIC name=value` lines from a small Python summariser.
+The script builds only the relevant release benchmark executables, runs the
+fanout rows with `EIO_BACKEND=posix`, and emits `METRIC name=value` lines.
 
-The `perf_compare` executable was modified (this branch) to honour those
-three env vars; without them it preserves the original full-suite
-behaviour.
+## Files in Scope
 
-## Files in scope (likely places to fix things)
+- `packages/eta/effect.ml` — definitions of `par_collect`, `par`, `all`,
+  `for_each_par`, and `for_each_par_bounded`. This is the primary optimization
+  surface.
+- `packages/eta/effect.mli` — only if a public API change is truly necessary;
+  prefer preserving the current API.
+- `packages/eta/runtime.ml`, `packages/eta/runtime_core.ml` — runtime/frame
+  plumbing if profiling shows fanout overhead comes from runtime setup or typed
+  failure handling.
+- `packages/eta/tracer.ml`, observability/runtime modules — only if tracer or
+  context propagation shows up as fanout overhead.
+- `bench/runtime_real/runtime_real.ml` — benchmark instrumentation only; do not
+  weaken workload sizes or semantics.
+- `bench/runtime_concurrency/runtime_concurrency.ml` — secondary benchmark
+  instrumentation only.
+- `bench/lib/bench_lib.ml` — benchmark harness improvements only if they improve
+  measurement quality without changing workload semantics.
+- `packages/eta/test/test_eta.ml` and related Eta tests — add/adjust tests for
+  changed fanout behavior.
 
-- `packages/eta-http/client/client.ml(.mli)` — connection pool, request
-  pipelining, idle reuse. The H1 44 ms latency and H2 reuse bug both
-  most likely live here.
-- `packages/eta-http/client/retry.ml`, `idempotency.ml` — retry policy
-  and idempotency keys; check whether retry/back-off is silently adding
-  delay.
-- `packages/eta-http/h1/client.ml`, `h1/parse.ml`, `h1/write.ml` — H1
-  request/response framing and the per-request lifecycle.
-- `packages/eta-http/h2/connection.ml`, `multiplexer.ml`, `writer.ml`,
-  `stream_state.ml`, `frame.ml`, `admission.ml` — H2 connection,
-  multiplexer, stream lifecycle. The "second request after warmup
-  hangs" symptom likely involves stream state, window updates, or
-  multiplexer dispatch.
-- `packages/eta-http/transport/alpn.ml` — ALPN selection during TLS.
-- `packages/eta-http/tls/config.ml` — TLS handshake wiring.
-- `packages/eta-http/body/{chunked,source,stream,transducer}.ml` —
-  body sourcing/sinking; could matter for the 1 MiB cases.
-- `packages/eta/effect.ml`, `runtime.ml`, `schedule.ml`, `duration.ml` —
-  if profiling fingers a runtime/scheduler issue rather than HTTP
-  framing.
-- `http-testsuite/test/perf_compare/run.ml` — the benchmark itself.
-  Modify if you need additional instrumentation (per-phase timings,
-  more scenarios). Remember the `ETA_PERF_*` env-var hooks already
-  exist.
-- `http-testsuite/lib/*.ml` — shared fixture helpers (servers, certs,
-  bodies). Touch only if a test scaffolding bug is in the way.
+## Off Limits
 
-## Off limits
-
-- Do **not** alter the reference clients (Go helper string in `run.ml`,
-  curl invocation). They are the comparison baseline.
-- Do **not** weaken the workload (e.g. switch to a smaller body, drop a
-  scenario, raise the timeout silently) just to make the metric look
-  better. Loosen iteration counts via `ETA_PERF_ITERS` only when
-  intentionally trading stability for speed; document it.
-- Do **not** edit `.backlog/`, `.review/`, `journal.md`, `_build/`.
-  `.backlog/` files show as dirty in `git status` but are gitignored —
-  ignore them.
+- Do not change the TypeScript Effect or JVM ZIO comparison runners to make Eta
+  look better.
+- Do not reduce the fanout sizes, bind-chain length, bounded concurrency level,
+  sample count, or Eio backend in the benchmark script just to improve the
+  metric.
+- Do not introduce compatibility shims or old-code fallbacks. Eta's repo rules
+  prefer updating/removing stale paths over preserving both.
+- Do not touch unrelated packages or HTTP benchmark code for this session.
+- Ignore pre-existing untracked benchmark result files unless this session
+  explicitly creates a result worth preserving.
 
 ## Constraints
 
-- `nix develop -c dune build` and `nix develop -c dune runtest --force`
-  must keep passing. There is no `autoresearch.checks.sh` yet; add one
-  if you want regressions caught automatically per iteration.
-- No new opam dependencies without a clear reason.
-- Public APIs in `.mli` files should not silently widen.
-- Preserve the Eta boundary called out in `AGENTS.md`: applications own
-  state, Eta owns effect description and interpretation.
+- Keep `nix develop -c dune build --profile=release packages/eta/eta.cmxa`
+  passing.
+- Keep `nix develop -c dune runtest --force packages/eta/test` passing.
+- Preserve result ordering and error semantics for `all`, `for_each_par`, and
+  `for_each_par_bounded`.
+- No new dependencies.
+- Public APIs in `.mli` files should not widen unless the optimization requires
+  it and all callers/tests are updated.
 
-## What's been tried
+## Current Implementation Notes
 
-### Iteration #2 — H1 write coalescing (KEPT, 8132915)
+- `Effect.for_each_par xs f` is currently `all (List.map f xs)`.
+- `Effect.all` builds a list of tasks and delegates to `par_collect`.
+- `par_collect` computes `List.length`, allocates `Array.make n None`, forks one
+  Eio fiber per task, stores `Some result` per index, then converts the array to
+  a list with `Array.to_list |> List.map Option.get`.
+- `Effect.for_each_par_bounded` wraps every task in an effect that acquires and
+  releases an `Eio.Semaphore`, then still forks all 512 fibers up front via
+  `all`. This likely explains why the bounded row is much slower than ZIO.
+- Each real-use sample pays a fresh `Eio_main.run + Switch.run + Runtime.create`,
+  so optimize fanout internals without assuming a reused runtime.
 
-**Root cause**: `write_to_flow` sent ~10 separate `Eio.Flow.copy_string` calls
-(one per header line, the method, path, etc.). On a reused TCP connection,
-this created a Nagle + delayed-ACK interaction: the first small write
-filled a segment and was sent, subsequent writes got Nagled (waiting for
-ACK), the server delayed its ACK up to 40 ms (TCP_DELACK_MIN). Result:
-`read_response_head` blocked for ~43 ms on every reused request.
+## Promising First Experiments
 
-**Fix**: Buffer the entire request into a single `Buffer` and flush with
-one `write_string` call. Single TCP segment → no Nagle/delayed-ACK.
+1. Specialize `for_each_par_bounded` so it launches at most `max` worker fibers
+   instead of 512 fibers gated by a semaphore. Preserve output order and failure
+   behavior. This directly targets the 512x50 k=8 row.
+2. Remove avoidable result wrapping/conversion in `par_collect`: avoid `Some`
+   allocations if possible, or fill an `Obj.t array` plus a completion/error
+   path. Validate typed failures and cancellation semantics carefully.
+3. Add a fast path for empty/singleton `all`/`for_each_par` if it helps the
+   lower-level concurrency rows, but do not overfit if fanout rows do not move.
+4. Check whether `frame.runtime.tracer#with_fiber_context` inside every child is
+   expensive with the default tracer. If it is, consider a safe no-op fast path.
 
-**Impact**: H1 GET 1k median 47.87 ms → 1.05 ms (46×). Total 1053.76 →
-1006.71 (modest because H2 timeouts dominate at 500 ms each).
+## What's Been Tried
 
-### Diagnostic probes (reverted)
-
-- Added per-phase timing to `request_on_flow` and `request_owner`.
-  Confirmed write=0.02ms, read_head=43ms (the bottleneck).
-- Disabled health check (`Effect.unit`). No change — the 43ms persists.
-  Health check is innocent; the delay is pure Nagle + delayed ACK from
-  the write pattern.
-
-## Notes / hints for the next agent
-
-- The H2 warmup itself (first request) is reported to succeed; only the
-  *kept-alive* path stalls. Watching for unsent WINDOW_UPDATEs, missing
-  SETTINGS ACK, half-closed streams that never get cleaned up, or a
-  stream-id allocator that wraps incorrectly are good first hypotheses.
-- 44 ms is suspiciously close to a round figure. Look for any literal
-  delay (`Duration.ms 40` etc.), a default Nagle/cork toggle, or a
-  retry that always fires once before succeeding. Search across
-  `packages/eta-http/` and `packages/eta/`.
-- `Eta.Effect.timeout_as` uses `Eta.Duration.ms` — if you bump the
-  timeout for diagnostic runs, do it via `ETA_PERF_TIMEOUT_MS` rather
-  than editing `run.ml`.
-- The Go helper is rebuilt every iteration into a temp dir; that is
-  ~1–2 s of overhead you can skip by caching, but it is not currently
-  the bottleneck.
-- If you need finer-grained signal, add `METRIC` lines for per-phase
-  timings (connect, handshake, request write, response read) inside
-  `run.ml` and surface them through `autoresearch.sh`.
+- Session initialized for fanout on branch
+  `autoresearch/fanout-performance-20260526`.
