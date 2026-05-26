@@ -1,3 +1,5 @@
+(dirs eta_research)
+
 (executable
  (name bench_body_stream)
  (libraries http eio_main))

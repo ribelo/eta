@@ -1,0 +1,4 @@
+(executable
+ (name p1_locality)
+ (modules p1_locality)
+ (libraries eta eio eio_posix))

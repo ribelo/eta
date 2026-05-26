@@ -1,4 +1,4 @@
-(dirs :standard \ scratch)
+(dirs :standard)
 
 (env
  (release

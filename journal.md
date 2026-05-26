@@ -16867,3 +16867,84 @@ Evidence:
 No hard blocker fired. Phase 4's eta-http reopen criterion did not fire:
 retry/classify/idempotency tests pass without AST inspection or extra
 user-visible mode/kind annotations. The verdict remains **V1-bare**.
+
+## Eta-effect-services GPT-Pro review - user-created algebraic-effect services
+
+Decision: **reject generic user-created algebraic-effect services**.
+
+The `scratch/eta_research/effect_services/` lab and GPT-Pro review agree on the
+core result: OCaml 5 native effects can make attractive direct-style call sites,
+but they do not provide typed service requirements. Without an `R`/environment
+type or effect rows, missing handlers compile and become runtime failures.
+Eta can harden individual runtime-owned APIs, but a generic public
+`Effect.Service` / user-defined service substrate collapses into ambient lookup
+through FLS/DLS plus runtime missing-service errors.
+
+### Evidence
+
+- P1 locality proved a root-installed native handler does not reliably cover
+  Eio child fibers or Eta `Supervisor.scoped` children. User-owned Eio fork
+  sites can be wrapped, but Eta-owned supervisor child fibers cannot be rescued
+  by application code at the actual fork point.
+- P1's only external rescue for supervisor children was per-service-leaf
+  reinstall, which is not one wrapper per fork site. It is service-call-site tax
+  and effectively becomes "native effect as syntax over ambient lookup".
+- P9 Logger proved a narrower runtime-owned shape can work: hide the raw effect
+  constructor, install the handler in runtime scopes, carry the configured
+  logger through Eio FLS and Domain DLS fallback, fail loudly outside runtime,
+  and use a synchronized sink.
+- GPT-Pro confirmed the P9 result does **not** generalize to arbitrary user
+  services. Logger is append-only, `unit`-returning, cross-cutting, and can be
+  protected by a mutex. DB handles, transactions, pools, Eio resources,
+  request-local mutable state, scoped borrows, and lifecycle-bound services do
+  not share those properties.
+
+### Final position
+
+For Eta-owned cross-cutting APIs, especially Logger and possibly a narrow
+observability surface, algebraic effects remain a candidate implementation
+technique. The public API must hide native constructors and define clear
+runtime/fallback semantics.
+
+For user-created services, do not pursue a generic algebraic-effect service
+system. The only robust design would require generated hidden constructors,
+typed service keys, an ambient registry, FLS/DLS propagation, scoped binding,
+startup manifests, and service-specific domain-safety rules. That is an
+ambient service registry with weaker guarantees than explicit OCaml values,
+records, modules, functors, or existing Eta runtime capabilities.
+
+### Remaining Logger-only probes
+
+Before any production Logger facade is considered, run only probes that can
+change the Logger-specific verdict:
+
+1. **Nested runtime + sibling raw domain.** Outer runtime starts sibling fibers;
+   one enters an inner runtime while the other spawns a raw domain and logs.
+   The raw domain must log to the outer sink, not inherit the inner DLS sink.
+2. **Catch-all native handler disruption.** Inside the logger runtime, install
+   a user `Effect.Deep.try_with` whose `effc` catches `_` and discontinues.
+   This determines whether the guarantee is merely "users cannot name the
+   hidden constructor" rather than "users cannot disrupt Logger with native
+   handlers".
+3. **Production Logger integration spike.** Compare a real `Logger.info` facade
+   against current `Effect.log` semantics: trace/span enrichment, `par`, `all`,
+   `for_each_par`, `Supervisor.scoped`, daemon diagnostics, finalizers,
+   cancellation, blocking workers, raw Eio fibers, raw domains, and nested
+   runtimes.
+4. **Domain-safety gate.** If DLS fallback remains in the design, prove the
+   propagated logger backend is safe across domains or restrict this mechanism
+   to explicitly domain-safe Eta-owned services.
+
+### Not worth further research
+
+- Generic user-facing `Eta.Service.Make` as a DI system.
+- Startup-check-only service registries; without static requirements they give
+  false confidence.
+- PPX that merely hides dynamic lookup without adding real service manifests or
+  domain-safety evidence.
+- Native-effect services for DB handles, pools, scoped resources, transactions,
+  clocks, random, Eio capabilities, or CPU islands.
+
+The durable rule is: **Eta-owned cross-cutting convenience APIs may use hidden
+algebraic effects internally; user-created capabilities remain ordinary OCaml
+values.**

@@ -1,1 +1,1 @@
-(dirs sqlite_fast query_api sqlite_eta_effect)
+(dirs sqlite_fast query_api sqlite_eta_effect effect_services)
