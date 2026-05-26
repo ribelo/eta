@@ -15,7 +15,6 @@
   (dune (>= 3.0))
   (eio (>= 1.0))
   portable
-  parallel
   (eio_main (>= 1.0))
   (cstruct (>= 6.0.0))
   (yojson (>= 2.0))

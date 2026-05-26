@@ -1,0 +1,6 @@
+(library
+ (name par)
+ (public_name eta.par)
+ (private_modules scheduler)
+ (libraries unix)
+ (flags (:standard -alert -unsafe_multidomain -alert -do_not_spawn_domains)))

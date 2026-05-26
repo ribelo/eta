@@ -4,6 +4,7 @@ set -u
 cmxa="$1"
 fixture_dir="$(dirname "$0")"
 obj_dir="$(dirname "$cmxa")/.eta.objs/byte"
+par_obj_dir="$(dirname "$cmxa")/../par/.par.objs/byte"
 tmp_dir="${TMPDIR:-/tmp}/eta-soundness-negative-$$"
 mkdir -p "$tmp_dir"
 
@@ -15,8 +16,8 @@ for src in "$fixture_dir"/*_negative.ml; do
   obj="$tmp_dir/${name%.ml}.cmx"
 
   if ocamlfind ocamlopt -extension-universe alpha \
-      -package "eio,eio_main,portable,parallel,parallel.scheduler,unix" \
-      -I "$obj_dir" -c "$src" -o "$obj" >"$log" 2>&1; then
+      -package "eio,eio_main,portable,unix,threads" \
+      -I "$par_obj_dir" -I "$obj_dir" -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
   elif ! grep -Eiq "portable|shareable|contended|local|mode|nonportable|immutable|global|uniqueness" "$log"; then

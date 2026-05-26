@@ -88,7 +88,7 @@ module Island : sig
       own result channel; [Worker_died] is an unchecked worker crash. *)
 
   type pool
-  (** Reusable OxCaml [Parallel_scheduler] pool. Create it once, pass it to the
+  (** Reusable heartbeat-backed island pool. Create it once, pass it to the
       runtime or to a batch override, and shut it down at program exit. Pool
       creation is intentionally not hidden because it is comparatively
       expensive and because missing configuration must fail loudly. *)

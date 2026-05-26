@@ -91,6 +91,11 @@ callback-based only: no timeout, cancellation, preemption, online queue, public
 `Effect.Portable.t`, or portable Resource/Supervisor/Stream/OTel surface is
 implied.
 
+For structured CPU parallelism over arrays or recursive fork/join algorithms,
+use the `eta.par` sublibrary (`Par.run`, `Par.join`, `Par.par_map`,
+`Par.Iter`). See [Concurrency primitives in Eta](docs/concurrency-guide.md) for
+the decision flow between `Effect.sync`, Islands, `Par`, and Blocking.
+
 ## PPX Helpers
 
 The optional `ppx_eta` package provides small syntax helpers. They expand to

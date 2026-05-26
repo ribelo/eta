@@ -16,15 +16,16 @@ for src in "$fixture_dir"/*_negative.ml; do
   obj="$tmp_dir/${name%.ml}.cmo"
 
   if ocamlfind ocamlc -extension-universe alpha \
-      -package "eio,eio_main,portable,parallel,parallel.scheduler,threads" \
-      -I "$eta_ai_dir/.eta_ai.objs/byte" \
+      -package "eio,eio_main,portable,threads" \
+      -I "$eta_ai_dir/.ai.objs/byte" \
+      -I "$build_root/packages/par/.par.objs/byte" \
       -I "$build_root/packages/eta/.eta.objs/byte" \
-      -I "$build_root/packages/eta-redacted/.eta_redacted.objs/byte" \
-      -I "$build_root/packages/eta-http/.eta_http.objs/byte" \
-      -I "$build_root/packages/eta-http/core/.eta_http_core.objs/byte" \
-      -I "$build_root/packages/eta-http/body/.eta_http_body.objs/byte" \
-      -I "$build_root/packages/eta-http/client/.eta_http_client.objs/byte" \
-      -I "$build_root/packages/eta-http/error/.eta_http_error.objs/byte" \
+      -I "$build_root/packages/redacted/.redacted.objs/byte" \
+      -I "$build_root/packages/http/.http.objs/byte" \
+      -I "$build_root/packages/http/core/.http_core.objs/byte" \
+      -I "$build_root/packages/http/body/.http_body.objs/byte" \
+      -I "$build_root/packages/http/client/.http_client.objs/byte" \
+      -I "$build_root/packages/http/error/.http_error.objs/byte" \
       -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1

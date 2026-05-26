@@ -10,7 +10,7 @@ type ('a : immutable_data, 'e : immutable_data) settled : immutable_data =
   | Worker_died of worker_die
 
 type pool = {
-  scheduler : Parallel_scheduler.t;
+  pool : Par.Pool.t;
   mutable stopped : bool;
 }
 
@@ -23,11 +23,6 @@ type ('a : immutable_data, 'e : immutable_data) result_outcome :
   | Result_ok of 'a
   | Result_error of 'e
   | Result_worker_died of worker_die
-
-type ('a : immutable_data) batch_state : immutable_data = {
-  batch_items : 'a list;
-  batch_len : int;
-}
 
 let (worker_die_of_exn @ portable) exn =
   let backtrace =
@@ -50,14 +45,14 @@ module Pool = struct
     if domains <= 0 then
       invalid_arg "Effect.Island.Pool.create: domains must be > 0";
     {
-      scheduler = Parallel_scheduler.create ~max_domains:domains ();
+      pool = Par.Pool.create ~n_workers:(domains + 1) ();
       stopped = false;
     }
 
   let shutdown pool =
     if not pool.stopped then (
       pool.stopped <- true;
-      Parallel_scheduler.stop pool.scheduler)
+      Par.Pool.shutdown pool.pool)
 end
 
 let ensure_running pool =
@@ -73,66 +68,17 @@ let (capture_result @ portable) (f @ portable) input =
     | Stdlib.Error error -> Result_error error
   with exn -> Result_worker_died (worker_die_of_exn exn)
 
-let rec (split_batch_items @ portable) n acc items =
-  if n = 0 then (List.rev acc, items)
-  else
-    match items with
-    | [] -> (List.rev acc, [])
-    | item :: rest -> split_batch_items (n - 1) (item :: acc) rest
-
-let map_outcomes_with_parallel parallel (f @ portable) inputs =
-  let sequence =
-    Parallel.Sequence.With_length.unfold
-      ~init:{ batch_items = inputs; batch_len = List.length inputs }
-      ~next:(fun _ state ->
-        match state.batch_items with
-        | item :: rest ->
-            #(item, { batch_items = rest; batch_len = state.batch_len - 1 })
-        | [] -> assert false)
-      ~split_at:(fun _ state ~n ->
-        let left, right = split_batch_items n [] state.batch_items in
-        #( { batch_items = left; batch_len = n },
-           { batch_items = right; batch_len = state.batch_len - n } ))
-      ~length:(fun state -> state.batch_len)
-  in
-  let mapped =
-    Parallel.Sequence.With_length.map sequence ~f:(fun _ input ->
-        capture_map f input)
-  in
-  let result = Parallel.Sequence.With_length.to_list parallel mapped in
-  match result with [] -> [] | _ -> result
-
-let result_outcomes_with_parallel parallel (f @ portable) inputs =
-  let sequence =
-    Parallel.Sequence.With_length.unfold
-      ~init:{ batch_items = inputs; batch_len = List.length inputs }
-      ~next:(fun _ state ->
-        match state.batch_items with
-        | item :: rest ->
-            #(item, { batch_items = rest; batch_len = state.batch_len - 1 })
-        | [] -> assert false)
-      ~split_at:(fun _ state ~n ->
-        let left, right = split_batch_items n [] state.batch_items in
-        #( { batch_items = left; batch_len = n },
-           { batch_items = right; batch_len = state.batch_len - n } ))
-      ~length:(fun state -> state.batch_len)
-  in
-  let mapped =
-    Parallel.Sequence.With_length.map sequence ~f:(fun _ input ->
-        capture_result f input)
-  in
-  let result = Parallel.Sequence.With_length.to_list parallel mapped in
-  match result with [] -> [] | _ -> result
-
 let map_outcomes pool (f @ portable) inputs =
   ensure_running pool;
-  Parallel_scheduler.parallel pool.scheduler ~f:(fun parallel ->
-      map_outcomes_with_parallel parallel f inputs)
+  inputs
+  |> List.map (fun input () -> capture_map f input)
+  |> Par.Pool.run_many_on_workers pool.pool
 
 let result_outcomes pool (f @ portable) inputs =
   ensure_running pool;
-  Parallel_scheduler.parallel pool.scheduler ~f:(fun parallel ->
-      result_outcomes_with_parallel parallel f inputs)
+  inputs
+  |> List.map (fun input () -> capture_result f input)
+  |> Par.Pool.run_many_on_workers pool.pool
 
 let submit name pool (f @ portable) input =
   match map_outcomes pool f [ input ] with

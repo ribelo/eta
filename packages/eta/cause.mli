@@ -38,7 +38,7 @@ type 'err same_domain_t = 'err t
 
     Same-domain {!t} keeps raw [exn] and [Printexc.raw_backtrace] so local
     diagnostics preserve OCaml exception identity. [Portable.t] materializes
-    those raw fields into strings before moving causes through Parallel. *)
+    those raw fields into strings before moving causes across domains. *)
 module Portable : sig
   type die : value mod portable = {
     kind : string;
