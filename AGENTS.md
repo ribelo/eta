@@ -63,6 +63,29 @@ Benchmarks are opt-in repo infrastructure under `bench/`. Use
 `nix develop -c dune build @bench` for runtime-only benchmark executables.
 Benchmarks are deliberately not attached to `dune runtest`.
 
+## Engineering Rules
+
+**Churn and friction are not design objections.**
+Change volume and migration effort are never valid reasons to keep a stale
+code path, introduce a compatibility shim, or avoid the correct fix. The cost
+of maintaining dead or transitional code always exceeds the one-time cost of
+updating callers. Do not invoke "churn" or "friction" as arguments.
+
+**No fallback logic, compatibility shims, or silent defaults.**
+Every code path serves the current contract. If a signature changes, update all
+callers or delete the old signature entirely. Do not add runtime branches to
+support old callers.
+
+**Delete old paths instead of deprecating them.**
+When a behavior changes, remove the old behavior. Eta does not carry migration
+paths within the library. The changelog and commit history are the migration
+guide for consumers.
+
+**Break loudly and clearly.**
+When a precondition is violated or state is invalid, raise an error or return
+an `` `Error`` exit immediately. Prefer compile-time rejection via types where
+possible; at runtime, fail clearly rather than no-op, default, or skip.
+
 ## Commit & Pull Request Guidelines
 
 The short history uses conventional-style commits such as `feat: par / all /
