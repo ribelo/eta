@@ -101,20 +101,33 @@ fanout rows with `EIO_BACKEND=posix`, and emits `METRIC name=value` lines.
 - Each real-use sample pays a fresh `Eio_main.run + Switch.run + Runtime.create`,
   so optimize fanout internals without assuming a reused runtime.
 
-## Promising First Experiments
+## Session Summary
 
-1. Specialize `for_each_par_bounded` so it launches at most `max` worker fibers
-   instead of 512 fibers gated by a semaphore. Preserve output order and failure
-   behavior. This directly targets the 512x50 k=8 row.
-2. Remove avoidable result wrapping/conversion in `par_collect`: avoid `Some`
-   allocations if possible, or fill an `Obj.t array` plus a completion/error
-   path. Validate typed failures and cancellation semantics carefully.
-3. Add a fast path for empty/singleton `all`/`for_each_par` if it helps the
-   lower-level concurrency rows, but do not overfit if fanout rows do not move.
-4. Check whether `frame.runtime.tracer#with_fiber_context` inside every child is
-   expensive with the default tracer. If it is, consider a safe no-op fast path.
+### Architecture change
+`for_each_par` and `for_each_par_bounded` now use an inlined worker-pool pattern:
+- Build task array from input list
+- Fork exactly `workers` fibers (n for unbounded, min max n for bounded)
+- Each worker loops: atomically claim index → evaluate task → store in result array
+- Collect results ordered by index
+
+Previously, `for_each_par` routed through `all` → `par_collect` (forking all fibers,
+wrapping results in `Some`). `for_each_par_bounded` routed through `all` of
+semaphore-gated fibers (forking ALL n fibers gated by `Eio.Semaphore`).
 
 ## What's Been Tried
 
-- Session initialized for fanout on branch
-  `autoresearch/fanout-performance-20260526`.
+### Experiment #2 — Worker pool for bounded fanout (KEPT, -27.0%)
+Replaced `for_each_par_bounded`'s semaphore-gated `all` (forking all 512 fibers) with a
+worker pool: only `max` fibers, pulling work indices from an atomic counter.
+**fanout_total_ns**: 330,234 → 241,184 (-27.0%). Bounded: 255,299 → 164,080 (-35.7%).
+
+### Experiment #5 — Inlined worker pool for unbounded fanout (KEPT, -31.6%)
+Applied the same worker-pool pattern inlined directly into `for_each_par` (workers=n).
+Bypassed `all`/`par_collect` overhead entirely. Both unbounded AND bounded improved.
+**fanout_total_ns**: 330,234 → 225,925 (-31.6%). Unbounded: 75k → 68k (-9.5%).
+
+### Discarded approaches
+- Refactoring into shared function: OxCaml didn't inline, caused 40% regression.
+- Lazy task construction inside workers: cache thrashing, 8% regression.
+- `Obj.t` array for results (eliminating `Some`): Obj overhead cancelled savings.
+- Extraction micro-optimizations: within noise floor.
