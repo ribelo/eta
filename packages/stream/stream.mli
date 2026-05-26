@@ -33,6 +33,7 @@ module Stream : sig
   val succeed : 'a -> ('a, 'err) t
   val from_chunk : 'a chunk -> ('a, 'err) t
   val from_iterable : 'a list -> ('a, 'err) t
+  val range : start:int -> stop:int -> (int, 'err) t
   val from_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
   val fail : 'err -> ('a, 'err) t
 

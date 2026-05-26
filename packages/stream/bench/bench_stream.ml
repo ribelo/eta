@@ -9,19 +9,33 @@ let run_stream stream sink =
   in
   ignore (Runtime.run rt (run stream sink) : (_, _) Exit.t)
 
-let range n = Stream.from_iterable (List.init n (fun i -> i + 1))
+let range n = Stream.range ~start:1 ~stop:n
+
+let range_list n = Stream.from_iterable (List.init n (fun i -> i + 1))
 
 let map_filter_fold n =
   range n |> Stream.map (fun x -> x * 2) |> Stream.filter (fun x -> x mod 3 = 0)
   |> fun s -> run_stream s (Sink.fold ( + ) 0)
+
+let map_filter_fold_list n =
+  range_list n |> Stream.map (fun x -> x * 2) |> Stream.filter (fun x -> x mod 3 = 0)
+  |> fun s -> run_stream s (Sink.fold ( + ) 0)
+
+let direct_map_filter_fold n =
+  let mutable acc = 0 in
+  for i = 1 to n do
+    let y = i * 2 in
+    if y mod 3 = 0 then acc <- acc + y
+  done;
+  assert (acc > 0)
 
 let map_take_fold n k =
   range n |> Stream.map (fun x -> x * 2) |> Stream.take k
   |> fun s -> run_stream s (Sink.fold ( + ) 0)
 
 let merge_count ?(take = max_int) () =
-  let left = range 10_000 in
-  let right = range 10_000 in
+  let left = range_list 10_000 in
+  let right = range_list 10_000 in
   Stream.merge left right |> Stream.take take |> fun s -> run_stream s Sink.count
 
 let flat_map_par n c =
@@ -69,6 +83,8 @@ let workloads =
     item "range.map.filter.fold.1k" (fun () -> map_filter_fold 1_000);
     item "range.map.filter.fold.100k" (fun () -> map_filter_fold 100_000);
     item "range.map.filter.fold.1M" (fun () -> map_filter_fold 1_000_000);
+    item "range_list.map.filter.fold.1M" (fun () -> map_filter_fold_list 1_000_000);
+    item "direct.map.filter.fold.1M" (fun () -> direct_map_filter_fold 1_000_000);
     item "range.map.take.fold.1M.100" (fun () -> map_take_fold 1_000_000 100);
     item "merge.simple" (fun () -> merge_count ());
     item "merge.early_take.5" (fun () -> merge_count ~take:5 ());
