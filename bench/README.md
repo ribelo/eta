@@ -3,6 +3,9 @@
 The bench suite records runtime and compile-time measurements for Eta over
 time. It is opt-in infrastructure, not a CI gate.
 
+Package-level optimization status is tracked separately in
+[docs/optimization-matrix.md](../docs/optimization-matrix.md).
+
 ## What It Measures
 
 | Category | Prefix | Purpose |
@@ -12,7 +15,9 @@ time. It is opt-in infrastructure, not a CI gate.
 | Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `for_each_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
+| Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
 | Streams | `eta_stream.*` | Representative `eta-stream` pipelines and file reads. |
+| HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
