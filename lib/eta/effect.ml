@@ -434,11 +434,14 @@ let scoped effect =
   let frame = current_frame () in
   try
     ok
-      (Eio.Switch.run @@ fun sw ->
-       let finalizers = ref [] in
-       let child_frame = { frame with sw; finalizers } in
-       Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-         finalizers (fun () -> run_to_value child_frame effect))
+      (let run_scoped sw =
+         let finalizers = ref [] in
+         let child_frame = { frame with sw; finalizers } in
+         Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
+           finalizers (fun () -> run_to_value child_frame effect)
+       in
+       if Runtime_core.has_eio_fiber_context () then Eio.Switch.run run_scoped
+       else run_scoped frame.sw)
   with exn -> exit_of_exn frame exn
 
 let rec interpret_supervisor_scope :

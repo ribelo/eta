@@ -14,6 +14,7 @@ val create :
   ?random:Capabilities.random ->
   ?island_pool:Effect.Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
+  ?blocking_runner:Effect.Blocking.Pool.runner ->
   ?capture_backtrace:bool ->
   unit ->
   'err t
@@ -28,6 +29,10 @@ val create :
     {!Effect.blocking} when a call does not pass [?pool]. If omitted, the
     runtime lazily creates a bounded Phase 1 pool using the measured default
     config documented on {!Effect.Blocking.Pool.create}.
+
+    [blocking_runner] configures the worker substrate for that lazy default
+    blocking pool. Pass a runner built from the host application's Eio instance
+    when using [dune utop] workflows that load Eta before [eio_main].
 
     [capture_backtrace] controls whether unchecked exceptions captured as
     [Cause.Die] carry [Printexc.raw_backtrace]. It defaults to [true]. Disable

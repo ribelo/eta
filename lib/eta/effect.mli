@@ -167,7 +167,24 @@ module Blocking : sig
       detached : int;
     }
 
-    val create : ?name:string -> config -> t
+    type runner = {
+      run_in_systhread : 'a. label:string -> (unit -> 'a) -> 'a;
+    }
+    (** Worker substrate used by systhread blocking pools. In normal compiled
+        applications the default runner is sufficient. In [dune utop] workflows
+        that load Eta before [eio_main], pass a runner built from the host
+        toplevel's Eio instance:
+
+        {[
+          {
+            Effect.Blocking.Pool.run_in_systhread =
+              Eio_unix.run_in_systhread;
+          }
+        ]} *)
+
+    val default_runner : runner
+
+    val create : ?name:string -> ?runner:runner -> config -> t
     (** Create a bounded blocking pool.
 
         Use a separate pool per resource class when one class can saturate

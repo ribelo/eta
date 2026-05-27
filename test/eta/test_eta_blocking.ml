@@ -81,6 +81,27 @@ let test_blocking_submit_alias_and_stats () =
   Alcotest.(check int) "active" 0 stats.active;
   Alcotest.(check int) "queued" 0 stats.queued
 
+let test_blocking_pool_custom_runner () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let calls = Atomic.make 0 in
+  let runner =
+    {
+      BP.run_in_systhread =
+        (fun ~label f ->
+          Alcotest.(check string) "label" "custom.runner" label;
+          Atomic.incr calls;
+          Eio_unix.run_in_systhread ~label f);
+    }
+  in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~blocking_runner:runner
+      ()
+  in
+  Alcotest.(check int) "blocking" 45
+    (run_ok rt (Effect.blocking ~name:"custom.runner" (fun () -> 45)));
+  Alcotest.(check int) "runner calls" 1 (Atomic.get calls)
+
 let test_blocking_direct_control_and_blocking_heartbeat () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -430,4 +451,3 @@ let test_blocking_observability_labels_and_timings () =
             && List.mem ("eta.blocking.name", "test.label") point.attrs
             &&
             match point.value with Meter.Int ms -> ms >= 15 | Meter.Float _ -> false))
-

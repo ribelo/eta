@@ -35,10 +35,18 @@ type event = {
 
 type kind = Systhread | Domain_isolated
 
+type runner = {
+  run_in_systhread : 'a. label:string -> (unit -> 'a) -> 'a;
+}
+
+let default_runner =
+  { run_in_systhread = (fun ~label f -> Eio_unix.run_in_systhread ~label f) }
+
 type t = {
   name : string;
   config : config;
   kind : kind;
+  runner : runner;
   mutex : Eio.Mutex.t;
   condition : Eio.Condition.t;
   mutable active : int;
@@ -59,6 +67,19 @@ exception Pool_full of string
 exception Pool_shutting_down of string
 exception Blocking_worker_invariant_violation of string
 
+let eio_context_key : unit Eio.Fiber.key = Eio.Fiber.create_key ()
+
+let has_eio_fiber_context () =
+  try
+    ignore (Eio.Fiber.get eio_context_key);
+    true
+  with Stdlib.Effect.Unhandled _ -> false
+
+let mutex_use_rw t f = Eio.Mutex.use_rw ~protect:(has_eio_fiber_context ()) t f
+
+let cancel_protect f =
+  if has_eio_fiber_context () then Eio.Cancel.protect f else f ()
+
 let now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
 
 let default_config =
@@ -75,12 +96,13 @@ let validate_config config =
   if config.max_queued < 0 then
     invalid_arg "Effect.Blocking.Pool.create: max_queued must be >= 0"
 
-let create_with_kind kind ?(name = "blocking") config =
+let create_with_kind kind ?(runner = default_runner) ?(name = "blocking") config =
   validate_config config;
   {
     name;
     config;
     kind;
+    runner;
     mutex = Eio.Mutex.create ();
     condition = Eio.Condition.create ();
     active = 0;
@@ -140,7 +162,7 @@ let check_not_worker operation =
 let name t = t.name
 
 let stats t =
-  Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+  mutex_use_rw t.mutex @@ fun () ->
   {
     active = t.active;
     queued = t.queued;
@@ -183,7 +205,7 @@ let raise_pool_shutting_down t name emit submitted_at =
 
 let rec reserve_slot t name emit submitted_at =
   match
-    Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+    mutex_use_rw t.mutex @@ fun () ->
     if t.shutdown then `Shutdown
     else if t.active < t.config.max_threads then (
       let job_id = t.next_job_id in
@@ -251,7 +273,7 @@ let wait_queued_slot t name emit submitted_at =
     | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
   with (Eio.Cancel.Cancelled _ | Exit) ->
     let ts = now_ms () in
-    Eio.Mutex.use_rw ~protect:true t.mutex (fun () ->
+    mutex_use_rw t.mutex (fun () ->
         decr_queued_locked t;
         t.cancelled_before_start <- t.cancelled_before_start + 1;
         Eio.Condition.broadcast t.condition);
@@ -259,7 +281,7 @@ let wait_queued_slot t name emit submitted_at =
     raise Exit
 
 let release_started t job_id =
-  Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+  mutex_use_rw t.mutex @@ fun () ->
   if not (Hashtbl.mem t.active_jobs job_id) then
     invalid_arg "Eta.Blocking.Pool invariant violated: unknown active job";
   decr_active_locked t;
@@ -269,7 +291,7 @@ let release_started t job_id =
   Eio.Condition.broadcast t.condition
 
 let mark_detached t job_id =
-  Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+  mutex_use_rw t.mutex @@ fun () ->
   if
     Hashtbl.mem t.active_jobs job_id
     && not (Hashtbl.mem t.detached_jobs job_id)
@@ -283,8 +305,8 @@ let run_callback f =
   try Packed_ok (Obj.repr (f ())) with exn ->
     Packed_error (exn, Printexc.get_raw_backtrace ())
 
-let run_systhread name f =
-  Eio_unix.run_in_systhread ~label:name (fun () -> run_callback f)
+let run_systhread t name f =
+  t.runner.run_in_systhread ~label:name (fun () -> run_callback f)
 
 (* [Domain_isolated] is an opt-in blocking-runtime mode that deliberately
    pays the cost of a fresh domain per job to fully isolate the callback
@@ -313,7 +335,7 @@ let run_domain f =
 
 let run_worker t name f =
   match t.kind with
-  | Systhread -> run_systhread name f
+  | Systhread -> run_systhread t name f
   | Domain_isolated -> run_domain f
 
 let finish_result t job_id name emit submitted_at started_at outcome =
@@ -342,7 +364,7 @@ let maybe_raise_cancel_hook_error = function
 
 let run_worker_with_cancel_hook t name f on_cancel =
   match on_cancel with
-  | None -> Eio.Cancel.protect @@ fun () -> run_worker t name f
+  | None -> cancel_protect @@ fun () -> run_worker t name f
   | Some _ ->
       let hook_error = Atomic.make None in
       let running = Atomic.make true in
@@ -362,7 +384,7 @@ let run_worker_with_cancel_hook t name f on_cancel =
                   set_hook_error (run_cancel_hook on_cancel)
             | exn -> set_hook_error (Some (exn, Printexc.get_raw_backtrace ())));
             `Stop_daemon);
-        Eio.Cancel.protect @@ fun () ->
+        cancel_protect @@ fun () ->
         Fun.protect ~finally:(fun () -> Atomic.set running false) (fun () ->
             run_worker t name f)
       in
@@ -402,7 +424,7 @@ let submit ~sw ~emit t name ?on_cancel f =
 
 let shutdown ~emit t =
   let detached =
-    Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+    mutex_use_rw t.mutex @@ fun () ->
     t.shutdown <- true;
     let detached =
       match t.config.shutdown_policy with
@@ -433,7 +455,7 @@ let shutdown ~emit t =
   match t.config.shutdown_policy with
   | Detach_started -> ()
   | Drain ->
-      Eio.Mutex.use_rw ~protect:true t.mutex @@ fun () ->
+      mutex_use_rw t.mutex @@ fun () ->
       while t.active > 0 || t.queued > 0 do
         Eio.Condition.await t.condition t.mutex
       done
@@ -459,7 +481,12 @@ module Pool = struct
     detached : int;
   }
 
-  let create ?name config = create_with_kind Systhread ?name config
+  type nonrec runner = runner = {
+    run_in_systhread : 'a. label:string -> (unit -> 'a) -> 'a;
+  }
+
+  let default_runner = default_runner
+  let create ?name ?runner config = create_with_kind Systhread ?name ?runner config
   let create_domain_isolated ?name config =
     create_with_kind Domain_isolated ?name config
 

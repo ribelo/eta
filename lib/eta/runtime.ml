@@ -6,14 +6,22 @@ external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
 external blocking_pool_of_public : Effect.Blocking.Pool.t -> Blocking_runtime.t
   = "%identity"
 
+let blocking_runner_of_public runner =
+  {
+    Blocking_runtime.run_in_systhread =
+      runner.Effect.Blocking.Pool.run_in_systhread;
+  }
+
 type 'err t = 'err Runtime_core.t
 
 let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
-    ?random ?island_pool ?blocking_pool ?capture_backtrace () =
+    ?random ?island_pool ?blocking_pool ?blocking_runner ?capture_backtrace () =
   let island_pool = Option.map island_pool_of_public island_pool in
   let blocking_pool = Option.map blocking_pool_of_public blocking_pool in
+  let blocking_runner = Option.map blocking_runner_of_public blocking_runner in
   Runtime_core.create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument
-    ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace ()
+    ?logger ?meter ?random ?island_pool ?blocking_pool ?blocking_runner
+    ?capture_backtrace ()
 
 let run ?island_pool ?blocking_pool runtime eff =
   let runtime =

@@ -202,6 +202,8 @@ let () =
         [
           Alcotest.test_case "submit alias and stats" `Quick
             test_blocking_submit_alias_and_stats;
+          Alcotest.test_case "custom runner" `Quick
+            test_blocking_pool_custom_runner;
           Alcotest.test_case "direct control and heartbeat" `Quick
             test_blocking_direct_control_and_blocking_heartbeat;
           Alcotest.test_case "wait caps active and queue" `Quick

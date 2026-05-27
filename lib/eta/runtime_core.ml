@@ -82,7 +82,7 @@ type 'err t = {
 
 let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     ?(auto_instrument = false) ?logger ?meter ?random ?island_pool
-    ?blocking_pool ?(capture_backtrace = true) () =
+    ?blocking_pool ?blocking_runner ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let tracing_enabled = Option.is_some tracer in
   let logging_enabled = Option.is_some logger in
@@ -127,8 +127,13 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     blocking_pool;
     default_blocking_pool =
       lazy
-        (Blocking_runtime.Pool.create ~name:"runtime.default"
-           Blocking_runtime.default_config);
+        (match blocking_runner with
+         | None ->
+             Blocking_runtime.Pool.create ~name:"runtime.default"
+               Blocking_runtime.default_config
+         | Some runner ->
+             Blocking_runtime.Pool.create ~name:"runtime.default" ~runner
+               Blocking_runtime.default_config);
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;
