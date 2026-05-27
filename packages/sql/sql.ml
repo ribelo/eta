@@ -202,12 +202,17 @@ let nullable typ =
     sql_type = typ.sql_type;
   }
 
-type 'table table = { table_name : string }
+type 'table table = {
+  table_name : string;
+  quoted_table_name : string;
+}
 
 type ('table, 'a) column = {
   table_name : string;
   column_name : string;
   typ : 'a typ;
+  quoted_column_name : string;
+  qualified_column_name : string;
 }
 
 type param = Param : 'a typ * 'a -> param
@@ -245,26 +250,34 @@ end
 let quote_ident name =
   if name = "" then
     invalid_arg "SQL identifiers must not be empty";
-  let buffer = Buffer.create (String.length name + 2) in
-  Buffer.add_char buffer '"';
-  String.iter
-    (fun c ->
-      if Char.equal c '"' then
-        Buffer.add_string buffer "\"\""
-      else
-        Buffer.add_char buffer c)
-    name;
-  Buffer.add_char buffer '"';
-  Buffer.contents buffer
-
-let table_sql (table : _ table) = quote_ident table.table_name
-let column_ident (column : (_, _) column) = quote_ident column.column_name
-
-let column_sql (column : (_, _) column) =
-  quote_ident column.table_name ^ "." ^ quote_ident column.column_name
+  let len = String.length name in
+  let extra_quotes = ref 0 in
+  for i = 0 to len - 1 do
+    if Char.equal (String.unsafe_get name i) '"' then
+      incr extra_quotes
+  done;
+  let out = Bytes.create (len + !extra_quotes + 2) in
+  Bytes.unsafe_set out 0 '"';
+  let pos = ref 1 in
+  for i = 0 to len - 1 do
+    let c = String.unsafe_get name i in
+    Bytes.unsafe_set out !pos c;
+    incr pos;
+    if Char.equal c '"' then begin
+      Bytes.unsafe_set out !pos '"';
+      incr pos
+    end
+  done;
+  Bytes.unsafe_set out !pos '"';
+  Bytes.unsafe_to_string out
+let table_sql (table : _ table) = table.quoted_table_name
+let column_ident (column : (_, _) column) = column.quoted_column_name
+let column_sql (column : (_, _) column) = column.qualified_column_name
 
 let coerce_column column =
-  { table_name = column.table_name; column_name = column.column_name; typ = column.typ }
+  { table_name = column.table_name; column_name = column.column_name; typ = column.typ;
+    quoted_column_name = column.quoted_column_name;
+    qualified_column_name = column.qualified_column_name }
 
 let sqlite_result = function
   | Ok value -> Ok value
@@ -384,8 +397,15 @@ module Table = struct
   struct
     type table
 
-    let table = { table_name = Name.name }
-    let column name typ = { table_name = Name.name; column_name = name; typ }
+    let quoted_table_name = quote_ident Name.name
+
+    let table = { table_name = Name.name; quoted_table_name }
+
+    let column name typ =
+      let quoted_column_name = quote_ident name in
+      { table_name = Name.name; column_name = name; typ;
+        quoted_column_name;
+        qualified_column_name = quoted_table_name ^ "." ^ quoted_column_name }
   end
 
   let name (table : _ t) = table.table_name
@@ -409,8 +429,8 @@ module Expr = struct
   let param column value = { sql = "?"; params = [ Param (column.typ, value) ] }
 
   let binary op column value =
-    let rhs = param column value in
-    { sql = column_sql column ^ " " ^ op ^ " " ^ rhs.sql; params = rhs.params }
+    { sql = String.concat " " [ column_sql column; op; "?" ];
+      params = [ Param (column.typ, value) ] }
 
   let eq column value = binary "=" column value
   let ne column value = binary "<>" column value
@@ -421,7 +441,7 @@ module Expr = struct
   let like column value = binary "LIKE" column value
 
   let eq_col left right =
-    { sql = column_sql left ^ " = " ^ column_sql right; params = [] }
+    { sql = String.concat " = " [ column_sql left; column_sql right ]; params = [] }
 
   let is_null column = { sql = column_sql column ^ " IS NULL"; params = [] }
   let is_not_null column = { sql = column_sql column ^ " IS NOT NULL"; params = [] }
@@ -439,14 +459,25 @@ module Expr = struct
     { sql = "EXISTS (" ^ query.sql ^ ")"; params = query.params }
 
   let join op left right =
-    {
-      sql = "(" ^ left.sql ^ " " ^ op ^ " " ^ right.sql ^ ")";
-      params = left.params @ right.params;
-    }
+    let len = String.length left.sql + String.length op + String.length right.sql + 5 in
+    let buf = Buffer.create len in
+    Buffer.add_char buf '(';
+    Buffer.add_string buf left.sql;
+    Buffer.add_char buf ' ';
+    Buffer.add_string buf op;
+    Buffer.add_char buf ' ';
+    Buffer.add_string buf right.sql;
+    Buffer.add_char buf ')';
+    { sql = Buffer.contents buf; params = left.params @ right.params }
 
   let and_ left right = join "AND" left right
   let or_ left right = join "OR" left right
-  let not_ expr = { sql = "NOT (" ^ expr.sql ^ ")"; params = expr.params }
+  let not_ expr =
+    let buf = Buffer.create (String.length expr.sql + 6) in
+    Buffer.add_string buf "NOT (";
+    Buffer.add_string buf expr.sql;
+    Buffer.add_char buf ')';
+    { sql = Buffer.contents buf; params = expr.params }
 end
 
 module Projection = struct
@@ -623,12 +654,15 @@ module Source = struct
   let table table = { sql = table_sql table; params = [] }
 
   let join kind left right ~on =
-    {
-      sql =
-        table_sql left ^ " " ^ kind ^ " JOIN " ^ table_sql right ^ " ON "
-        ^ on.Expr.sql;
-      params = on.Expr.params;
-    }
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf (table_sql left);
+    Buffer.add_char buf ' ';
+    Buffer.add_string buf kind;
+    Buffer.add_string buf " JOIN ";
+    Buffer.add_string buf (table_sql right);
+    Buffer.add_string buf " ON ";
+    Buffer.add_string buf on.Expr.sql;
+    { sql = Buffer.contents buf; params = on.Expr.params }
 
   let inner_join left right ~on = join "INNER" left right ~on
   let left_join left right ~on = join "LEFT" left right ~on
@@ -717,46 +751,55 @@ module Select = struct
     cte_params @ query.source.Source.params @ where_params @ having_params
 
   let to_sql query =
-    let with_ =
-      match query.ctes with
-      | [] -> ""
-      | ctes ->
-          "WITH " ^ String.concat ", " (List.map fst ctes) ^ " "
-    in
-    let select =
-      "SELECT "
-      ^ (if query.distinct then "DISTINCT " else "")
-      ^ String.concat ", " query.row.Projection.columns
-    in
-    let from = " FROM " ^ query.source.Source.sql in
-    let where =
-      match query.where_ with
-      | None -> ""
-      | Some expr -> " WHERE " ^ expr.Expr.sql
-    in
-    let group =
-      match query.group_by with
-      | [] -> ""
-      | columns -> " GROUP BY " ^ String.concat ", " columns
-    in
-    let having =
-      match query.having with
-      | None -> ""
-      | Some expr -> " HAVING " ^ expr.Expr.sql
-    in
-    let order =
-      match query.order_by with
-      | [] -> ""
-      | orders ->
-          let render { sql; desc } = sql ^ if desc then " DESC" else " ASC" in
-          " ORDER BY " ^ String.concat ", " (List.map render orders)
-    in
-    let limit =
-      match query.limit with
-      | None -> ""
-      | Some count -> " LIMIT " ^ string_of_int count
-    in
-    with_ ^ select ^ from ^ where ^ group ^ having ^ order ^ limit
+    let buf = Buffer.create 192 in
+    begin match query.ctes with
+    | [] -> ()
+    | ctes ->
+        Buffer.add_string buf "WITH ";
+        List.iteri (fun i (sql, _) ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf sql) ctes;
+        Buffer.add_char buf ' '
+    end;
+    Buffer.add_string buf "SELECT ";
+    if query.distinct then Buffer.add_string buf "DISTINCT ";
+    List.iteri (fun i col ->
+      if i > 0 then Buffer.add_string buf ", ";
+      Buffer.add_string buf col) query.row.Projection.columns;
+    Buffer.add_string buf " FROM ";
+    Buffer.add_string buf query.source.Source.sql;
+    begin match query.where_ with
+    | None -> ()
+    | Some expr -> Buffer.add_string buf " WHERE "; Buffer.add_string buf expr.Expr.sql
+    end;
+    begin match query.group_by with
+    | [] -> ()
+    | columns ->
+        Buffer.add_string buf " GROUP BY ";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col) columns
+    end;
+    begin match query.having with
+    | None -> ()
+    | Some expr -> Buffer.add_string buf " HAVING "; Buffer.add_string buf expr.Expr.sql
+    end;
+    begin match query.order_by with
+    | [] -> ()
+    | orders ->
+        Buffer.add_string buf " ORDER BY ";
+        List.iteri (fun i { sql; desc } ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf sql;
+          Buffer.add_string buf (if desc then " DESC" else " ASC")) orders
+    end;
+    begin match query.limit with
+    | None -> ()
+    | Some count ->
+        Buffer.add_string buf " LIMIT ";
+        Buffer.add_string buf (Int.to_string count)
+    end;
+    Buffer.contents buf
 
   let compile query : _ Compiled.select =
     Compiled.{ sql = to_sql query; params = params query; decode = query.row.decode }
@@ -853,40 +896,66 @@ module Insert = struct
   let conflict_sql = function
     | None -> ""
     | Some (Do_nothing target) ->
-        " ON CONFLICT (" ^ String.concat ", " target ^ ") DO NOTHING"
+        let buf = Buffer.create 32 in
+        Buffer.add_string buf " ON CONFLICT (";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col) target;
+        Buffer.add_string buf ") DO NOTHING";
+        Buffer.contents buf
     | Some (Do_update_excluded (target, set)) ->
-        let assignments =
-          set
-          |> List.map (fun column -> column ^ " = excluded." ^ column)
-          |> String.concat ", "
-        in
-        " ON CONFLICT (" ^ String.concat ", " target ^ ") DO UPDATE SET "
-        ^ assignments
+        let buf = Buffer.create 64 in
+        Buffer.add_string buf " ON CONFLICT (";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col) target;
+        Buffer.add_string buf ") DO UPDATE SET ";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col;
+          Buffer.add_string buf " = excluded.";
+          Buffer.add_string buf col) set;
+        Buffer.contents buf
+
+  let to_sql_precomputed (columns, placeholders) query =
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf "INSERT INTO ";
+    Buffer.add_string buf (table_sql query.table);
+    Buffer.add_string buf " (";
+    Buffer.add_string buf columns;
+    Buffer.add_string buf ") VALUES (";
+    Buffer.add_string buf placeholders;
+    Buffer.add_char buf ')';
+    let conflict = conflict_sql query.conflict in
+    if conflict <> "" then Buffer.add_string buf conflict;
+    Buffer.contents buf
 
   let to_sql query =
     match render_values query.values with
     | Result.Error err -> raise_error err
     | Ok (columns, placeholders) ->
-        "INSERT INTO " ^ table_sql query.table ^ " (" ^ columns ^ ") VALUES ("
-        ^ placeholders ^ ")"
-        ^ conflict_sql query.conflict
+        to_sql_precomputed (columns, placeholders) query
 
   let params query = List.map Assignment.value query.values
 
   let compile query =
     match render_values query.values with
     | Result.Error err -> raise_error err
-    | Ok _ -> Compiled.{ sql = to_sql query; params = params query }
+    | Ok cols -> Compiled.{ sql = to_sql_precomputed cols query; params = params query }
 
   let returning projection query =
     match render_values query.values with
     | Result.Error err -> raise_error err
-    | Ok _ ->
+    | Ok cols ->
+        let buf = Buffer.create 64 in
+        Buffer.add_string buf (to_sql_precomputed cols query);
+        Buffer.add_string buf " RETURNING ";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col) projection.Projection.columns;
         Compiled.
           {
-            sql =
-              to_sql query ^ " RETURNING "
-              ^ String.concat ", " projection.Projection.columns;
+            sql = Buffer.contents buf;
             params = params query;
             decode = projection.decode;
           }
@@ -930,32 +999,46 @@ module Update = struct
     | None -> set_params
     | Some expr -> set_params @ expr.Expr.params
 
-  let to_sql query =
-    match query.sets with
+  let render_sets sets =
+    match sets with
     | [] -> raise_error (Invalid_query "UPDATE requires at least one set")
-    | sets ->
-        let set_sql = List.map Assignment.set_sql sets |> String.concat ", " in
-        let where =
-          match query.where_ with
-          | None -> ""
-          | Some expr -> " WHERE " ^ expr.Expr.sql
-        in
-        "UPDATE " ^ table_sql query.table ^ " SET " ^ set_sql ^ where
+    | _ ->
+        let buf = Buffer.create 64 in
+        List.iteri (fun i assignment ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf (Assignment.set_sql assignment)) sets;
+        Buffer.contents buf
+
+  let to_sql query =
+    let set_sql = render_sets query.sets in
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf "UPDATE ";
+    Buffer.add_string buf (table_sql query.table);
+    Buffer.add_string buf " SET ";
+    Buffer.add_string buf set_sql;
+    begin match query.where_ with
+    | None -> ()
+    | Some expr -> Buffer.add_string buf " WHERE "; Buffer.add_string buf expr.Expr.sql
+    end;
+    Buffer.contents buf
 
   let compile query =
-    match query.sets with
-    | [] -> raise_error (Invalid_query "UPDATE requires at least one set")
-    | _ -> Compiled.{ sql = to_sql query; params = params query }
+    let _ = render_sets query.sets in
+    Compiled.{ sql = to_sql query; params = params query }
 
   let returning projection query =
     match query.sets with
     | [] -> raise_error (Invalid_query "UPDATE requires at least one set")
     | _ ->
+        let buf = Buffer.create 64 in
+        Buffer.add_string buf (to_sql query);
+        Buffer.add_string buf " RETURNING ";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf col) projection.Projection.columns;
         Compiled.
           {
-            sql =
-              to_sql query ^ " RETURNING "
-              ^ String.concat ", " projection.Projection.columns;
+            sql = Buffer.contents buf;
             params = params query;
             decode = projection.decode;
           }
@@ -994,21 +1077,27 @@ module Delete = struct
     | Some expr -> expr.Expr.params
 
   let to_sql query =
-    let where =
-      match query.where_ with
-      | None -> ""
-      | Some expr -> " WHERE " ^ expr.Expr.sql
-    in
-    "DELETE FROM " ^ table_sql query.table ^ where
+    let buf = Buffer.create 32 in
+    Buffer.add_string buf "DELETE FROM ";
+    Buffer.add_string buf (table_sql query.table);
+    begin match query.where_ with
+    | None -> ()
+    | Some expr -> Buffer.add_string buf " WHERE "; Buffer.add_string buf expr.Expr.sql
+    end;
+    Buffer.contents buf
 
   let compile query = Compiled.{ sql = to_sql query; params = params query }
 
   let returning projection query =
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf (to_sql query);
+    Buffer.add_string buf " RETURNING ";
+    List.iteri (fun i col ->
+      if i > 0 then Buffer.add_string buf ", ";
+      Buffer.add_string buf col) projection.Projection.columns;
     Compiled.
       {
-        sql =
-          to_sql query ^ " RETURNING "
-          ^ String.concat ", " projection.Projection.columns;
+        sql = Buffer.contents buf;
         params = params query;
         decode = projection.decode;
       }
@@ -1107,51 +1196,77 @@ module Schema = struct
       }
 
   let reference_sql reference =
-    let column =
-      match reference.column_name with
-      | None -> ""
-      | Some column -> " (" ^ quote_ident column ^ ")"
-    in
-    let on_delete =
-      match reference.on_delete with
-      | None -> ""
-      | Some action -> " ON DELETE " ^ action
-    in
-    let on_update =
-      match reference.on_update with
-      | None -> ""
-      | Some action -> " ON UPDATE " ^ action
-    in
-    " REFERENCES " ^ quote_ident reference.table_name ^ column ^ on_delete ^ on_update
+    let buf = Buffer.create 48 in
+    Buffer.add_string buf " REFERENCES ";
+    Buffer.add_string buf (quote_ident reference.table_name);
+    begin match reference.column_name with
+    | None -> ()
+    | Some column ->
+        Buffer.add_string buf " (";
+        Buffer.add_string buf (quote_ident column);
+        Buffer.add_char buf ')'
+    end;
+    begin match reference.on_delete with
+    | None -> ()
+    | Some action -> Buffer.add_string buf " ON DELETE "; Buffer.add_string buf action
+    end;
+    begin match reference.on_update with
+    | None -> ()
+    | Some action -> Buffer.add_string buf " ON UPDATE "; Buffer.add_string buf action
+    end;
+    Buffer.contents buf
 
   let column_sql def =
-    let constraints =
-      [
-        (if def.primary_key then Some "PRIMARY KEY" else None);
-        (if def.not_null then Some "NOT NULL" else None);
-        (if def.unique then Some "UNIQUE" else None);
-        Option.map (fun value -> "DEFAULT " ^ value) def.default;
-        Option.map reference_sql def.references;
-      ]
-      |> List.filter_map Fun.id
-    in
-    String.concat " " (quote_ident def.name :: def.sql_type :: constraints)
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf (quote_ident def.name);
+    Buffer.add_char buf ' ';
+    Buffer.add_string buf def.sql_type;
+    if def.primary_key then Buffer.add_string buf " PRIMARY KEY";
+    if def.not_null then Buffer.add_string buf " NOT NULL";
+    if def.unique then Buffer.add_string buf " UNIQUE";
+    begin match def.default with
+    | None -> ()
+    | Some value -> Buffer.add_string buf " DEFAULT "; Buffer.add_string buf value
+    end;
+    begin match def.references with
+    | None -> ()
+    | Some ref -> Buffer.add_string buf (reference_sql ref)
+    end;
+    Buffer.contents buf
 
   let to_sql = function
     | Create_table { if_not_exists; table; columns } ->
-        "CREATE TABLE "
-        ^ (if if_not_exists then "IF NOT EXISTS " else "")
-        ^ quote_ident table ^ " ("
-        ^ String.concat ", " (List.map column_sql columns)
-        ^ ")"
+        let buf = Buffer.create 128 in
+        Buffer.add_string buf "CREATE TABLE ";
+        if if_not_exists then Buffer.add_string buf "IF NOT EXISTS ";
+        Buffer.add_string buf (quote_ident table);
+        Buffer.add_string buf " (";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf (column_sql col)) columns;
+        Buffer.add_char buf ')';
+        Buffer.contents buf
     | Drop_table { if_exists; table } ->
-        "DROP TABLE " ^ (if if_exists then "IF EXISTS " else "") ^ quote_ident table
+        let buf = Buffer.create 32 in
+        Buffer.add_string buf "DROP TABLE ";
+        if if_exists then Buffer.add_string buf "IF EXISTS ";
+        Buffer.add_string buf (quote_ident table);
+        Buffer.contents buf
     | Create_index { unique; if_not_exists; name; table; columns } ->
-        "CREATE " ^ (if unique then "UNIQUE " else "") ^ "INDEX "
-        ^ (if if_not_exists then "IF NOT EXISTS " else "")
-        ^ quote_ident name ^ " ON " ^ quote_ident table ^ " ("
-        ^ String.concat ", " (List.map quote_ident columns)
-        ^ ")"
+        let buf = Buffer.create 64 in
+        Buffer.add_string buf "CREATE ";
+        if unique then Buffer.add_string buf "UNIQUE ";
+        Buffer.add_string buf "INDEX ";
+        if if_not_exists then Buffer.add_string buf "IF NOT EXISTS ";
+        Buffer.add_string buf (quote_ident name);
+        Buffer.add_string buf " ON ";
+        Buffer.add_string buf (quote_ident table);
+        Buffer.add_string buf " (";
+        List.iteri (fun i col ->
+          if i > 0 then Buffer.add_string buf ", ";
+          Buffer.add_string buf (quote_ident col)) columns;
+        Buffer.add_char buf ')';
+        Buffer.contents buf
 
   let compile schema = Compiled.{ sql = to_sql schema }
 

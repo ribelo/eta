@@ -19,3 +19,10 @@ http-testsuite/config/certs/*.key
 http-testsuite/config/certs/*.csr
 http-testsuite/config/certs/*.srl
 http-testsuite/config/certs/*.cnf
+
+# Autoresearch local artifacts (not tracked)
+autoresearch.md
+autoresearch.sh
+autoresearch.checks.sh
+autoresearch.ideas.md
+autoresearch.jsonl
