@@ -31,8 +31,6 @@ type ('s, 'a, 'err) supervisor_scope =
   | Supervisor_await :
       ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
-      ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
-  | Supervisor_stop :
       ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
   | Supervisor_failures :
       ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
@@ -434,9 +432,6 @@ val supervisor_await :
   ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
 
 val supervisor_cancel :
-  ('s, 'err, 'a) supervisor_child -> ('s, unit, 'outer_err) supervisor_scope
-
-val supervisor_stop :
   ('s, 'err, 'a) supervisor_child -> ('s, unit, 'err) supervisor_scope
 
 val supervisor_failures :

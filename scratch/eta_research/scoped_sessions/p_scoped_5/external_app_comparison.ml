@@ -10,7 +10,6 @@ module Fiber_scope = struct
   let ( let* ) = Supervisor.Scope.( let* )
   let await = Supervisor.Scope.await
   let cancel = Supervisor.Scope.cancel
-  let stop = Supervisor.Scope.stop
 
   type ('child, 'a, 'err) body = {
     run : 's. ('s, 'child, 'err) fiber -> ('s, 'a, 'err) t;
@@ -62,7 +61,7 @@ let app_explicit_await () =
           pure value);
     }
 
-let app_explicit_stop () =
+let app_explicit_cancel () =
   let finalized = Atomic.make false in
   let child =
     Effect.acquire_release ~acquire:Effect.unit
@@ -75,7 +74,7 @@ let app_explicit_stop () =
         (fun fiber ->
           let open Fiber_scope in
           let* () = lift (Effect.delay (Duration.ms 1) Effect.unit) in
-          let* () = stop fiber in
+          let* () = cancel fiber in
           lift (Effect.sync (fun () -> Atomic.get finalized)));
     }
 
@@ -96,8 +95,8 @@ let () =
   check "background" "false" bg;
   let awaited = Runtime.run rt (app_explicit_await ()) in
   check "await" "ready" awaited;
-  let stopped =
-    Runtime.run rt (app_explicit_stop () |> Effect.map string_of_bool)
+  let cancelled =
+    Runtime.run rt (app_explicit_cancel () |> Effect.map string_of_bool)
   in
-  check "stop" "true" stopped;
+  check "cancel" "true" cancelled;
   print_endline "external_app_comparison: ok"

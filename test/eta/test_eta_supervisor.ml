@@ -96,7 +96,7 @@ let test_supervisor_cancel_before_await_does_not_deadlock () =
         cause
   | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
 
-let test_supervisor_stop_waits_for_finalizer () =
+let test_supervisor_cancel_waits_for_finalizer () =
   with_test_clock @@ fun _sw clock rt ->
   let finalizer_ran = ref false in
   let child =
@@ -117,15 +117,15 @@ let test_supervisor_stop_waits_for_finalizer () =
               (Effect.named "supervisor.wait_for_child" (Effect.sync (fun () ->
                    wait_for_sleepers clock 1)))
           in
-          let* () = stop child in
+          let* () = cancel child in
           lift (Effect.sync (fun () -> !finalizer_ran));
     }
   in
   match Runtime.run rt program with
   | Exit.Ok true -> ()
-  | Exit.Ok false -> Alcotest.fail "expected stop to wait for finalizer"
+  | Exit.Ok false -> Alcotest.fail "expected cancel to wait for finalizer"
   | Exit.Error cause ->
-      Alcotest.failf "unexpected stop failure: %a"
+      Alcotest.failf "unexpected cancel failure: %a"
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
         cause
 

@@ -17030,8 +17030,8 @@ Ship:
 
 - `Effect.with_background` for "run this background loop while foreground work
   executes."
-- `Supervisor.Scope.stop` for "cancel this child and wait for cleanup to
-  finish."
+- cleanup-completing `Supervisor.Scope.cancel` for "cancel this child and wait
+  for cleanup to finish."
 
 Do not ship a public handle-returning daemon or a broad `scoped_session`
 abstraction.
@@ -17046,21 +17046,21 @@ P-Scoped-5 tested external application-shaped fixtures under
 - `fiber_scope_with_handle.ml` proves a smaller scoped-fiber facade can express
   explicit child await.
 - `external_app_comparison.ml` covers background loop, explicit await, and
-  explicit stop.
+  explicit cleanup-completing cancel.
 - `negative/fiber_scope_escape_negative.ml` proves scoped fiber handles still
   cannot escape.
 
 ### Surprise finding
 
-`Supervisor.Scope.cancel` is only cancellation request. It does not guarantee
-that child finalizers have completed before the parent continues. The first
-external comparison fixture observed `cancel: expected "true" got "false"` for
-cleanup completion.
+The first implementation treated `Supervisor.Scope.cancel` as a cancellation
+request. It did not guarantee that child finalizers had completed before the
+parent continued. The first external comparison fixture observed
+`cancel: expected "true" got "false"` for cleanup completion.
 
 That is the real missing protocol for external applications, not a session
-wrapper. `Supervisor.Scope.stop` fills this gap by requesting cancellation,
-waiting for the child promise, treating pure interruption as successful
-shutdown, and re-raising real child/finalizer failures.
+wrapper. The corrected contract makes `Supervisor.Scope.cancel` itself request
+cancellation, wait for the child promise, treat pure interruption as successful
+cancellation, and re-raise real child/finalizer failures.
 
 ### Verification
 
@@ -17071,14 +17071,15 @@ shutdown, and re-raising real child/finalizer failures.
 - `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/fiber_scope_with_handle.exe`
   - Result: passed.
 - `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/external_app_comparison.exe`
-  - Result: passed after adding `Supervisor.Scope.stop`.
+  - Result: passed after making `Supervisor.Scope.cancel` cleanup-completing.
 - `nix develop .#oxcaml -c dune build ./scratch/eta_research/scoped_sessions/p_scoped_5/negative/fiber_scope_escape_negative.exe`
   - Result: expected compile failure.
 
 ### Confidence
 
 **Medium-high.** The no-handle background API is small and directly addresses
-external daemon pressure without weakening structured ownership. `stop` is a
-real semantic addition over `cancel` and has focused tests. A separate public
-`Fiber_scope` facade remains deferred until external call sites prove that
-`Supervisor.scoped` plus `stop` is still too awkward.
+external daemon pressure without weakening structured ownership.
+Cleanup-completing `cancel` matches the least-astonishment contract and has
+focused tests. A separate public `Fiber_scope` facade remains deferred until
+external call sites prove that `Supervisor.scoped` plus cleanup-completing
+`cancel` is still too awkward.

@@ -10,7 +10,6 @@ module Fiber_scope = struct
   let ( let* ) = Supervisor.Scope.( let* )
   let await = Supervisor.Scope.await
   let cancel = Supervisor.Scope.cancel
-  let stop = Supervisor.Scope.stop
 
   type ('child, 'a, 'err) body = {
     run : 's. ('s, 'child, 'err) fiber -> ('s, 'a, 'err) t;

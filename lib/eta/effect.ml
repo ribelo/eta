@@ -69,8 +69,6 @@ type ('s, 'a, 'err) supervisor_scope =
   | Supervisor_await :
       ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
-      ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
-  | Supervisor_stop :
       ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
   | Supervisor_failures :
       ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
@@ -493,7 +491,7 @@ let rec interpret_supervisor_scope :
         if not (Atomic.get resolved) then (
           Atomic.set cancel_requested true;
           match !child_cancel with
-          | None -> resolve (Error Cause.interrupt)
+          | None -> ()
           | Some cancel_context ->
               Eio.Cancel.cancel cancel_context Exit;
               (match !child_sw with
@@ -507,8 +505,7 @@ let rec interpret_supervisor_scope :
       match Eio.Promise.await (Runtime_supervisor.child_promise child) with
       | Ok value -> value
       | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
-  | Supervisor_cancel child -> Runtime_supervisor.child_cancel child ()
-  | Supervisor_stop child -> (
+  | Supervisor_cancel child -> (
       Runtime_supervisor.child_cancel child ();
       match Eio.Promise.await (Runtime_supervisor.child_promise child) with
       | Ok _ -> ()
@@ -779,7 +776,6 @@ let supervisor_bind k effect = Supervisor_bind (effect, k)
 let supervisor_start supervisor effect = Supervisor_start (supervisor, effect)
 let supervisor_await child = Supervisor_await child
 let supervisor_cancel child = Supervisor_cancel child
-let supervisor_stop child = Supervisor_stop child
 let supervisor_failures supervisor = Supervisor_failures supervisor
 let supervisor_check supervisor = Supervisor_check supervisor
 let supervisor_yield = Supervisor_yield

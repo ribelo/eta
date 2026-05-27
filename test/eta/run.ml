@@ -245,8 +245,8 @@ let () =
             test_supervisor_cancel_runs_finalizer;
           Alcotest.test_case "cancel before await does not deadlock" `Quick
             test_supervisor_cancel_before_await_does_not_deadlock;
-          Alcotest.test_case "stop waits for finalizer" `Quick
-            test_supervisor_stop_waits_for_finalizer;
+          Alcotest.test_case "cancel waits for finalizer" `Quick
+            test_supervisor_cancel_waits_for_finalizer;
           Alcotest.test_case "with_background cancels child" `Quick
             test_effect_with_background_cancels_child;
           Alcotest.test_case "scope cancels unawaited children" `Quick
