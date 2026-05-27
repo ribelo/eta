@@ -10,9 +10,13 @@ type target = {
 
 type tcp_flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
+module type EIO_NET = Eta.Host_eio.NET
+(** Minimal host module shape needed by eta-http transport hooks. *)
+
 val target_of_url : Url.t -> target
 
 val resolve_stream :
+  ?host_eio:Eta.Host_eio.t ->
   net:_ Eio.Net.t ->
   method_:string ->
   target ->
@@ -23,6 +27,7 @@ val resolve_stream :
     {!Error.Dns_error} failures. *)
 
 val connect_tcp :
+  ?host_eio:Eta.Host_eio.t ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   method_:string ->
@@ -34,6 +39,7 @@ val connect_tcp :
     attempts are collapsed into {!Error.Connect_error}. *)
 
 val connect_tls :
+  ?host_eio:Eta.Host_eio.t ->
   ?alpn_protocols:string list ->
   ?ca_file:string ->
   method_:string ->

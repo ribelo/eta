@@ -4,110 +4,82 @@
 
 Decide how Eta should support Exergy-style `dune utop` workflows where user
 code runs under `Eio_main.run`, but Eta runtime combinators execute from the
-compiled Eta library loaded by `dune utop <library>`.
+compiled Eta libraries loaded by `dune utop <library>`.
+
+## Current Verdict
+
+Use one explicit host-substrate value, `Eta.Host_eio.t`, and route the Eta
+operations that trigger Eio runtime effects through modules captured from the
+same toplevel instance that installed `Eio_main.run`.
+
+The compact Exergy shape is:
+
+```ocaml
+#require "eio_main";;
+
+let host = Eta.Host_eio.make ~unix:(module Eio_unix) ~eio:(module Eio) ();;
+
+Eio_main.run @@ fun env ->
+Eio.Switch.run @@ fun sw ->
+Eta_http.Client.run_host_h1 host ~sw
+  ~clock:(Eio.Stdenv.clock env)
+  ~net:(Eio.Stdenv.net env)
+  ~random:(Eta.Capabilities.random_of_seed 1)
+@@ fun client ->
+existing_exergy_effect client
+```
+
+This keeps Exergy code on the normal `Eta_http.Client.t` API. The only REPL
+setup is the host value and the host-backed runner.
 
 ## Proof Obligations
 
 | # | Obligation | Evidence | Status |
 | --- | --- | --- | --- |
-| O1 | `Runtime.run (Effect.pure _)` works in `dune utop`. | Previous committed fixture returned `Eta.Exit.Ok 42`. | Proven |
-| O2 | `Effect.scoped` works in `dune utop`. | With fiberless scoped switch patch, `Eta.Runtime.run rt (Eta.Effect.scoped (Eta.Effect.pure 42))` returns `Eta.Exit.Ok 42`. | Proven for minimal scoped fixture |
-| O3 | `Effect.Blocking.submit` works in `dune utop`. | With mutex/cancel guards, failure moves from `Cancel.Get_context` to `Eio_unix__Thread_pool.Run_in_systhread`. | Contradicted |
-| O4 | A thread-per-job replacement using Eta-compiled `Eio.Promise.await` fixes blocking. | Temporary `run_systhread` using `Thread.create` + `Eio.Promise.await` fails with `Eio__core__Suspend.Suspend`. | Rejected |
-| O5 | Linking `eio_main` into `lib/eta` fixes blocking. | Temporary `lib/eta/dune` dependency on `eio_main` still returns `Eta.Exit.Error (Cause.Die (Unhandled _))`. | Rejected |
+| O1 | `Runtime.run (Effect.pure _)` works in `dune utop`. | Minimal fixture returned `Eta.Exit.Ok 42`. | Proven |
+| O2 | Eta scoped/cancellation primitives work under the host runtime. | Host-backed runtime fixture using `delay`, `blocking`, and `for_each_par_bounded` returned `OK 2,3,4`. | Proven |
+| O3 | Eta blocking uses the host worker substrate in `dune utop`. | Same fixture called `Eta.Effect.blocking` through `Runtime.run_host_eio` and completed. | Proven |
+| O4 | eta-http one-shot H1 can use host DNS/TCP/TLS/body IO. | `dune utop lib/http` Yahoo fixture returned `Eta.Exit.Ok (429, 19)`, proving a normal HTTP response rather than `Effect.Unhandled`. | Proven |
+| O5 | Exergy ingest can run unchanged with only REPL setup. | `dune utop lib/ingest` returned `OK fetched=0 skipped=0 failed=1 errors=1`; the remaining failure is ordinary provider/HTTP data, not `Cancel.Get_context`. | Proven |
 
 ## Candidate Ledger
 
-| Candidate | Why plausible | Evidence needed to win | Current evidence | Status |
-| --- | --- | --- | --- | --- |
-| A. Guard only Eta frame/die-context/finalizer/scoped APIs in fiberless path | Minimal change; preserves normal Eio semantics when a current Eio fiber context exists. | `pure`, `scoped`, and tests pass; blocking either passes or is shown to need separate substrate work. | `pure` and `scoped` pass; blocking still fails later at worker dispatch. | Partial |
-| B. Add `eio_main` as an Eta library dependency | Might force Eta and utop to use the same Eio backend instance. | Blocking fixture returns `Ok 43`. | Blocking fixture still fails. | Rejected |
-| C. Replace Eta blocking worker wait with `Thread.create` + Eta-compiled `Eio.Promise.await` | Avoids `Eio_unix.Thread_pool.Run_in_systhread`. | Blocking fixture returns `Ok 43`; normal tests pass. | Fails at Eta-compiled `Eio__core__Suspend.Suspend`. | Rejected |
-| D. Provide an explicit host-owned blocking substrate to Eta runtime/pool | Lets Exergy pass the Eio function from the same toplevel/backend instance that `Eio_main.run` handles. | A fixture passing the host runner returns `Ok 43`. | Host runner fixtures return `Eta.Exit.Ok 43` via `Runtime.create ~blocking_runner` and `Eta.Exit.Ok 44` via `Pool.create ~runner`. | Accepted |
+| Candidate | Evidence | Status |
+| --- | --- | --- |
+| Link or require `eio_main` differently. | `dune utop lib/http -- -require eio_main` and Eta-side linking experiments still left compiled Eta calls raising `Cancel.Get_context`. | Rejected |
+| Add a separate `eta.repl` or `eta.http.repl` package. | It would require Exergy to opt into a different library path and does not match the desired normal Eta API workflow. | Rejected |
+| Only inject a host blocking runner. | Blocking then works, but eta-http still fails later at DNS/TLS/body operations and Eta parallel/scoped primitives still need host Eio calls. | Rejected as incomplete |
+| Single `Eta.Host_eio.t` used by `Runtime.with_host_eio` and `Eta_http.Client.run_host_h1`. | Covers runtime sleep, blocking, frame binding, switch/fiber/cancel operations, DNS/connect, and TLS underlying flow IO. | Accepted |
 
-## Verdict
+## Design Notes
 
-V-UTOP-1 - Keep the fiberless `scoped` fix.
-Status: ACCEPT
-Decision: In a fiberless Eta root path, `Effect.scoped` should reuse the runtime
-switch while preserving a fresh Eta finalizer list. In a normal Eio fiber, keep
-`Eio.Switch.run`.
-Evidence: Minimal `scoped (pure 42)` fixture returns `Eta.Exit.Ok 42`.
-Counterevidence considered: This does not prove every scoped cancellation
-interaction in utop, only the Exergy Yahoo fetch failure class where
-`Eio.Switch.run` immediately trips `Cancel.Get_context`.
-Confidence: Medium.
+`Eta.Host_eio.t` deliberately captures modules rather than storing individual
+closures for every operation. The failure mode is module identity: compiled Eta
+calls can perform Eio effects that the toplevel-installed `Eio_main.run` handler
+does not handle. Routing those calls through the host modules keeps the effect
+handler and the operation constructors aligned.
 
-V-UTOP-2 - Do not claim blocking is fixed by mutex/cancel guards.
-Status: REJECT PARTIAL AS COMPLETE FIX
-Decision: Guarding `Mutex.use_rw ~protect:true` and `Cancel.protect` is
-insufficient. It removes the first `Cancel.Get_context` failure but exposes
-Eta's compiled `Eio_unix.Thread_pool.Run_in_systhread` effect as unhandled.
-Evidence: `Effect.Blocking.submit ~name:"x" (fun () -> 43)` returns
-`Eta.Exit.Error (Cause.Die (Unhandled Run_in_systhread))`.
-Confidence: High.
+The eta-http helper is one-shot H1. It avoids the pooled client ownership
+fibers, creates a normal `Eta_http.Client.t`, and lets existing code run without
+being rewritten against a REPL-only API.
 
-V-UTOP-3 - Treat blocking as a substrate identity problem.
-Status: ACCEPT
-Decision: The remaining blocking fix needs a host-owned or otherwise same-backend
-worker substrate, not another local guard around cancellation.
-Evidence: Direct toplevel `Eio_unix.run_in_systhread` works, but Eta's compiled
-`Blocking_runtime.submit` path performs an unhandled `Run_in_systhread`
-effect. Eta-compiled `Eio.Promise.await` fails similarly at `Suspend`.
-Confidence: Medium-high.
+## Representative Commands
 
-V-UTOP-4 - Add an explicit host-owned blocking runner.
-Status: ACCEPT
-Decision: Expose `Effect.Blocking.Pool.runner`, `Effect.Blocking.Pool.runner_of_eio_unix`, accept runners on `Effect.Blocking.Pool.create`, accept [?blocking_runner] on `Runtime.create`, and provide `Runtime.with_host_eio_unix` for the common toplevel setup.
-Evidence: In `dune utop lib/eta`, a runner value built from the host toplevel's `Eio_unix.run_in_systhread` returns `Eta.Exit.Ok 43` through `Runtime.create ~blocking_runner` and `Eta.Exit.Ok 44` through `Pool.create ~runner`.
-Counterevidence considered: The default runner remains insufficient for this specific `dune utop <library>` loading shape; the fix is explicit rather than a silent fallback.
-Confidence: High for the minimal Exergy REPL blocking failure class.
-
-## Commands
-
-Representative fixtures were run with:
+Runtime fixture:
 
 ```sh
-nix develop -c dune utop --build-dir _build_eta_evidence lib/eta
+nix develop -c bash -lc 'printf "%s\\n" ... | dune utop lib/eta'
 ```
 
-The successful scoped fixture:
+HTTP fixture:
 
-```ocaml
-#require "eio_main";;
-Eio_main.run @@ fun env ->
-Eio.Switch.run @@ fun sw ->
-let rt =
-  Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-    ~random:(Eta.Capabilities.random_of_seed 1) ()
-in
-Eta.Runtime.run rt (Eta.Effect.scoped (Eta.Effect.pure 42));;
+```sh
+nix develop -c bash -lc 'printf "%s\\n" ... | dune utop lib/http'
 ```
 
-The failing blocking fixture:
+Exergy fixture:
 
-```ocaml
-#require "eio_main";;
-Eio_main.run @@ fun env ->
-Eio.Switch.run @@ fun sw ->
-let rt =
-  Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-    ~random:(Eta.Capabilities.random_of_seed 1) ()
-in
-Eta.Runtime.run rt
-  (Eta.Effect.Blocking.submit ~name:"x" (fun () -> 43));;
-```
-
-The successful host-runner blocking fixture:
-
-```ocaml
-#require "eio_main";;
-Eio_main.run @@ fun env ->
-Eta.Runtime.with_host_eio_unix (module Eio_unix)
-  ~clock:(Eio.Stdenv.clock env)
-  ~random:(Eta.Capabilities.random_of_seed 1)
-@@ fun _sw rt ->
-Eta.Runtime.run rt
-  (Eta.Effect.scoped
-    (Eta.Effect.Blocking.submit ~name:"x" (fun () -> 43)));;
+```sh
+cd /home/ribelo/projects/exergy
+nix develop -c bash -lc 'printf "%s\\n" ... | dune utop lib/ingest'
 ```

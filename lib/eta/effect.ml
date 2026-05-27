@@ -18,6 +18,13 @@ let fiberless_frame = ref None
 let fiber_get key =
   try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
 
+let host_fiber_get frame key =
+  match frame.runtime.host_eio with
+  | None -> None
+  | Some host -> (
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      try Fiber.get key with Stdlib.Effect.Unhandled _ -> None)
+
 let has_fiber_context () =
   try
     ignore (Eio.Fiber.get frame_key);
@@ -29,7 +36,10 @@ let current_frame () =
   | Some frame -> frame
   | None -> (
       match !fiberless_frame with
-      | Some frame -> frame
+      | Some frame -> (
+          match host_fiber_get frame frame_key with
+          | Some frame -> frame
+          | None -> frame)
       | None -> failwith "Eta effect requires Runtime.run")
 
 let with_fiberless_frame frame f =
@@ -38,8 +48,78 @@ let with_fiberless_frame frame f =
   Fun.protect ~finally:(fun () -> fiberless_frame := previous) f
 
 let with_frame frame f =
-  if has_fiber_context () then Eio.Fiber.with_binding frame_key frame f
-  else with_fiberless_frame frame f
+  match frame.runtime.host_eio with
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      let bind () = Fiber.with_binding frame_key frame f in
+      if Option.is_some !fiberless_frame then bind ()
+      else with_fiberless_frame frame bind
+  | None ->
+      if has_fiber_context () then Eio.Fiber.with_binding frame_key frame f
+      else with_fiberless_frame frame f
+
+let switch_run frame f =
+  match frame.runtime.host_eio with
+  | None -> Eio.Switch.run f
+  | Some host ->
+      let module Switch = (val Host_eio.switch host : Host_eio.SWITCH) in
+      Switch.run f
+
+let switch_fail frame sw exn =
+  match frame.runtime.host_eio with
+  | None -> Eio.Switch.fail sw exn
+  | Some host ->
+      let module Switch = (val Host_eio.switch host : Host_eio.SWITCH) in
+      Switch.fail sw exn
+
+let fiber_first frame left right =
+  match frame.runtime.host_eio with
+  | None -> Eio.Fiber.first left right
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      Fiber.first left right
+
+let fiber_fork frame ~sw f =
+  match frame.runtime.host_eio with
+  | None -> Eio.Fiber.fork ~sw f
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      Fiber.fork ~sw f
+
+let fiber_fork_daemon frame ~sw f =
+  match frame.runtime.host_eio with
+  | None -> Eio.Fiber.fork_daemon ~sw f
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      Fiber.fork_daemon ~sw f
+
+let fiber_await_cancel frame =
+  match frame.runtime.host_eio with
+  | None -> Eio.Fiber.await_cancel ()
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      Fiber.await_cancel ()
+
+let fiber_yield frame =
+  match frame.runtime.host_eio with
+  | None -> Eio.Fiber.yield ()
+  | Some host ->
+      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+      Fiber.yield ()
+
+let cancel_sub frame f =
+  match frame.runtime.host_eio with
+  | None -> Eio.Cancel.sub f
+  | Some host ->
+      let module Cancel = (val Host_eio.cancel host : Host_eio.CANCEL) in
+      Cancel.sub f
+
+let cancel_cancel frame cancel_context exn =
+  match frame.runtime.host_eio with
+  | None -> Eio.Cancel.cancel cancel_context exn
+  | Some host ->
+      let module Cancel = (val Host_eio.cancel host : Host_eio.CANCEL) in
+      Cancel.cancel cancel_context exn
 
 let render_error frame err = frame.error_renderer (Obj.repr err)
 
@@ -162,7 +242,7 @@ let timeout_as duration ~on_timeout effect =
   let token = Runtime_core.Typed_fail.int (Runtime_core.Typed_fail.fresh ()) in
   try
     ok
-      (Eio.Fiber.first
+      (fiber_first frame
          (fun () ->
            frame.runtime.sleep duration;
            raise (Runtime_core.Timeout_as_fired token))
@@ -189,10 +269,10 @@ let par_collect frame tasks =
   let causes = ref [] in
   let exception Stop in
   (try
-     Eio.Switch.run @@ fun par_sw ->
+     switch_run frame @@ fun par_sw ->
      List.iteri
        (fun index task ->
-         Eio.Fiber.fork ~sw:par_sw (fun () ->
+         fiber_fork frame ~sw:par_sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
              try results.(index) <- Some (task ())
              with exn ->
@@ -200,7 +280,7 @@ let par_collect frame tasks =
                  Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
                in
                causes := cause :: !causes;
-               (try Eio.Switch.fail par_sw Stop with _ -> ())))
+               (try switch_fail frame par_sw Stop with _ -> ())))
        tasks
    with Stop -> ());
   match List.rev !causes with
@@ -216,11 +296,11 @@ let race effects () =
       let causes = ref [] in
       let exception Race_won in
       (try
-         Eio.Switch.run @@ fun race_sw ->
+         switch_run frame @@ fun race_sw ->
          let results = Eio.Stream.create (List.length effects) in
          List.iter
            (fun effect ->
-             Eio.Fiber.fork ~sw:race_sw (fun () ->
+             fiber_fork frame ~sw:race_sw (fun () ->
                  Eio.Stream.add results (run_child frame race_sw effect)))
            effects;
          let rec collect failed remaining =
@@ -229,8 +309,8 @@ let race effects () =
              match Eio.Stream.take results with
              | Exit.Ok value ->
                  winner := Some (Obj.repr value);
-                 Eio.Switch.fail race_sw Race_won;
-                 Eio.Fiber.await_cancel ()
+                 switch_fail frame race_sw Race_won;
+                 fiber_await_cancel frame
              | Exit.Error cause -> collect (cause :: failed) (remaining - 1)
          in
          collect [] (List.length effects)
@@ -269,10 +349,10 @@ let all effects = make ~names:(concat_names effects) (all effects)
 let all_settled effects () =
   let frame = current_frame () in
   let results = Array.make (List.length effects) None in
-  Eio.Switch.run (fun sw ->
+  switch_run frame (fun sw ->
       List.iteri
         (fun index effect ->
-          Eio.Fiber.fork ~sw (fun () ->
+          fiber_fork frame ~sw (fun () ->
               results.(index) <-
                 Some
                   (match run_child frame sw effect with
@@ -300,9 +380,9 @@ let for_each_par xs f =
         (try effect.eval () with exn -> exit_of_exn frame exn)
     in
     (try
-       Eio.Switch.run @@ fun sw ->
+       switch_run frame @@ fun sw ->
        for _ = 1 to workers do
-         Eio.Fiber.fork ~sw (fun () ->
+         fiber_fork frame ~sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
              with_frame frame @@ fun () ->
              try
@@ -319,7 +399,7 @@ let for_each_par xs f =
                  Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
                in
                causes := cause :: !causes;
-               (try Eio.Switch.fail sw Stop with _ -> ()))
+               (try switch_fail frame sw Stop with _ -> ()))
        done
      with Stop -> ());
     match List.rev !causes with
@@ -343,9 +423,9 @@ let for_each_par_bounded ~max xs f =
         (try effect.eval () with exn -> exit_of_exn frame exn)
     in
     (try
-       Eio.Switch.run @@ fun sw ->
+       switch_run frame @@ fun sw ->
        for _ = 1 to workers do
-         Eio.Fiber.fork ~sw (fun () ->
+         fiber_fork frame ~sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
              with_frame frame @@ fun () ->
              try
@@ -362,7 +442,7 @@ let for_each_par_bounded ~max xs f =
                  Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
                in
                causes := cause :: !causes;
-               (try Eio.Switch.fail sw Stop with _ -> ()))
+               (try switch_fail frame sw Stop with _ -> ()))
        done
      with Stop -> ());
     match List.rev !causes with
@@ -440,7 +520,7 @@ let scoped effect =
          Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
            finalizers (fun () -> run_to_value child_frame effect)
        in
-       if Runtime_core.has_eio_fiber_context () then Eio.Switch.run run_scoped
+       if Runtime_core.has_eio_fiber_context () then switch_run frame run_scoped
        else run_scoped frame.sw)
   with exn -> exit_of_exn frame exn
 
@@ -468,10 +548,10 @@ let rec interpret_supervisor_scope :
           frame.runtime.tracer#with_fiber_context @@ fun () ->
           let result =
             try
-              Eio.Cancel.sub @@ fun cancel_context ->
+              cancel_sub frame @@ fun cancel_context ->
               child_cancel := Some cancel_context;
-              if Atomic.get cancel_requested then Eio.Cancel.cancel cancel_context Exit;
-              Eio.Switch.run @@ fun sw ->
+              if Atomic.get cancel_requested then cancel_cancel frame cancel_context Exit;
+              switch_run frame @@ fun sw ->
               child_sw := Some sw;
               let finalizers = ref [] in
               let child_frame =
@@ -493,11 +573,11 @@ let rec interpret_supervisor_scope :
           match !child_cancel with
           | None -> ()
           | Some cancel_context ->
-              Eio.Cancel.cancel cancel_context Exit;
+              cancel_cancel frame cancel_context Exit;
               (match !child_sw with
               | None -> ()
               | Some child_switch ->
-                  (try Eio.Switch.fail child_switch Exit with _ -> ())))
+                  (try switch_fail frame child_switch Exit with _ -> ())))
       in
       Runtime_supervisor.register_child supervisor cancel;
       Runtime_supervisor.make_child ~promise ~cancel
@@ -518,14 +598,14 @@ let rec interpret_supervisor_scope :
       | Some max ->
           let count = Runtime_supervisor.failure_count supervisor in
           if count >= max then Runtime_core.raise_fail frame.fail_key (`Supervisor_failed count))
-  | Supervisor_yield -> Eio.Fiber.yield ()
+  | Supervisor_yield -> fiber_yield frame
 
 let supervisor_scoped ?max_failures body =
   make @@ fun () ->
   let frame = current_frame () in
   try
     ok
-      (Eio.Switch.run @@ fun sw ->
+      (switch_run frame @@ fun sw ->
        let supervisor = Runtime_supervisor.make ~sw ~max_failures in
        let finalizers = ref [] in
        let child_frame = { frame with sw; finalizers } in
@@ -795,13 +875,13 @@ let daemon_internal effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   P_atomic.incr frame.runtime.active;
-  Eio.Fiber.fork_daemon ~sw:frame.runtime.outer_sw (fun () ->
+  fiber_fork_daemon frame ~sw:frame.runtime.outer_sw (fun () ->
       frame.runtime.tracer#with_fiber_context @@ fun () ->
       Fun.protect
         ~finally:(fun () -> P_atomic.decr frame.runtime.active)
         (fun () ->
           (try
-             Eio.Switch.run @@ fun sw ->
+             switch_run frame @@ fun sw ->
              let finalizers = ref [] in
              let child_frame =
                { frame with sw; finalizers; error_renderer = default_renderer }

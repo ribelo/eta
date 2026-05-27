@@ -85,13 +85,18 @@ let test_blocking_pool_custom_runner () =
   Eio_main.run @@ fun stdenv ->
   let calls = Atomic.make 0 in
   let module Host = struct
-    let run_in_systhread ~label f =
+    let run_in_systhread ?label f =
+      let label = Option.value ~default:"" label in
       Alcotest.(check string) "label" "custom.runner" label;
       Atomic.incr calls;
       Eio_unix.run_in_systhread ~label f
   end in
-  Runtime.with_host_eio_unix (module Host) ~clock:(Eio.Stdenv.clock stdenv)
-  @@ fun _sw rt ->
+  Eio.Switch.run @@ fun sw ->
+  let host =
+    Host_eio.make ~unix:(module Host) ~eio:(module Eio) ()
+  in
+  Runtime.with_host_eio host ~sw ~clock:(Eio.Stdenv.clock stdenv)
+  @@ fun rt ->
   Alcotest.(check int) "blocking" 45
     (run_ok rt (Effect.blocking ~name:"custom.runner" (fun () -> 45)));
   Alcotest.(check int) "runner calls" 1 (Atomic.get calls)

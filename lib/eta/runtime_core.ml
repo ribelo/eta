@@ -73,6 +73,7 @@ type 'err t = {
   island_pool : Island_runtime.pool option;
   blocking_pool : Blocking_runtime.t option;
   default_blocking_pool : Blocking_runtime.t Lazy.t;
+  host_eio : Host_eio.t option;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
   active : int P_atomic.t;
@@ -134,6 +135,7 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
          | Some runner ->
              Blocking_runtime.Pool.create ~name:"runtime.default" ~runner
                Blocking_runtime.default_config);
+    host_eio = None;
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;

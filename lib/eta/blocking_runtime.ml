@@ -486,12 +486,12 @@ module Pool = struct
   }
 
   module type EIO_UNIX = sig
-    val run_in_systhread : label:string -> (unit -> 'a) -> 'a
+    val run_in_systhread : ?label:string -> (unit -> 'a) -> 'a
   end
 
   let default_runner = default_runner
   let runner_of_eio_unix (module Host : EIO_UNIX) =
-    { run_in_systhread = Host.run_in_systhread }
+    { run_in_systhread = (fun ~label f -> Host.run_in_systhread ~label f) }
 
   let create ?name ?runner config = create_with_kind Systhread ?name ?runner config
   let create_domain_isolated ?name config =

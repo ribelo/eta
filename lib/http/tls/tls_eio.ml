@@ -7,9 +7,14 @@ type epoch = { alpn_protocol : string option }
 type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t
 
+module type EIO_FLOW = Eta.Host_eio.FLOW
+
+module Default_eio_flow : EIO_FLOW = Eio.Flow
+
 type 'a t_rec = {
   ssl : Openssl.ssl;
   flow : 'a;
+  eio_flow : (module EIO_FLOW);
   ssl_mutex : Eio.Mutex.t;
   read_mutex : Eio.Mutex.t;
   write_mutex : Eio.Mutex.t;
@@ -41,9 +46,10 @@ let debug_io direction storage ~storage_off ~display_off ~len =
 
 (* Helper: read encrypted data from underlying flow into OpenSSL's read BIO. *)
 let feed_bio t =
+  let module Flow = (val t.eio_flow : EIO_FLOW) in
   let buf = Cstruct.create 32768 in
   Eio.Mutex.use_rw ~protect:false t.read_mutex (fun () ->
-      let n = Eio.Flow.single_read t.flow buf in
+      let n = Flow.single_read t.flow buf in
       let rec write_all off len =
         if len > 0 then (
           let written =
@@ -57,6 +63,7 @@ let feed_bio t =
 
 (* Helper: drain OpenSSL's write BIO to the underlying flow. *)
 let drain_bio t =
+  let module Flow = (val t.eio_flow : EIO_FLOW) in
   Eio.Mutex.use_rw ~protect:false t.write_mutex (fun () ->
       let rec loop () =
         let pending = with_ssl t (fun () -> Openssl.bio_write_pending t.ssl) in
@@ -67,7 +74,7 @@ let drain_bio t =
                 Openssl.bio_read t.ssl (Cstruct.to_bigarray buf) 0 pending)
           in
           if n > 0 then (
-            Eio.Flow.write t.flow [ Cstruct.sub buf 0 n ];
+            Flow.write t.flow [ Cstruct.sub buf 0 n ];
             loop ()))
       in
       loop ())
@@ -193,7 +200,15 @@ let ops =
     @ [ Eio.Resource.H (Eio.Resource.Close, close) ]
   )
 
-let client_of_flow (config : config) ?host (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) : flow =
+let flow_module = function
+  | None -> (module Default_eio_flow : EIO_FLOW)
+  | Some host_eio ->
+      let module Flow = (val Eta.Host_eio.flow host_eio : Eta.Host_eio.FLOW) in
+      (module Flow : EIO_FLOW)
+
+let client_of_flow ?host_eio (config : config) ?host
+    (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
+    flow =
   let hostname =
     match host with
     | Some h -> Some (Domain_name.to_string h)
@@ -208,6 +223,7 @@ let client_of_flow (config : config) ?host (flow : [ Eio.Flow.two_way_ty | Eio.R
     {
       ssl;
       flow;
+      eio_flow = flow_module host_eio;
       ssl_mutex = Eio.Mutex.create ();
       read_mutex = Eio.Mutex.create ();
       write_mutex = Eio.Mutex.create ();

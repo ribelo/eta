@@ -12,6 +12,10 @@ type target = {
 
 type tcp_flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
+module type EIO_NET = Host_eio.NET
+
+module Default_eio_net : EIO_NET = Eio.Net
+
 let target_of_url url =
   let scheme = Url.scheme url in
   let port = Url.effective_port url in
@@ -36,9 +40,16 @@ let tls_error ?(stage = Error.Tls_handshake) ~method_ target
   Error.make ~method_ ~uri:(Url.to_string target.url)
     (Tls_handshake_error { stage; message })
 
-let resolve_stream ~net ~method_ target =
+let net_module = function
+  | None -> (module Default_eio_net : EIO_NET)
+  | Some host_eio ->
+      let module Net = (val Host_eio.net host_eio : Host_eio.NET) in
+      (module Net : EIO_NET)
+
+let resolve_stream ?host_eio ~net ~method_ target =
+  let module Net = (val net_module host_eio : EIO_NET) in
   Effect.sync (fun () ->
-      try Ok (Eio.Net.getaddrinfo_stream net target.host ~service:target.service)
+      try Ok (Net.getaddrinfo_stream net target.host ~service:target.service)
       with exn -> Error (Printexc.to_string exn))
   |> Effect.bind (function
        | Ok (_ :: _ as addrs) -> Effect.pure addrs
@@ -55,24 +66,25 @@ let set_nodelay flow =
         (fun unix_fd -> Unix.setsockopt unix_fd Unix.TCP_NODELAY true)
         ~if_closed:(fun () -> ())
 
-let connect_one ~sw ~net addr =
+let connect_one (module Net : EIO_NET) ~sw ~net addr =
   try
-    let flow = (Eio.Net.connect ~sw net addr :> tcp_flow) in
+    let flow = (Net.connect ~sw net addr :> tcp_flow) in
     set_nodelay flow;
     Ok flow
   with exn -> Error (Printexc.to_string exn)
 
-let rec connect_first ~sw ~net errors = function
+let rec connect_first eio_net ~sw ~net errors = function
   | [] -> Error (String.concat "; " (List.rev errors))
   | addr :: rest -> (
-      match connect_one ~sw ~net addr with
+      match connect_one eio_net ~sw ~net addr with
       | Ok flow -> Ok flow
-      | Error message -> connect_first ~sw ~net (message :: errors) rest)
+      | Error message -> connect_first eio_net ~sw ~net (message :: errors) rest)
 
-let connect_tcp ~sw ~net ~method_ target =
-  resolve_stream ~net ~method_ target
+let connect_tcp ?host_eio ~sw ~net ~method_ target =
+  let eio_net = net_module host_eio in
+  resolve_stream ?host_eio ~net ~method_ target
   |> Effect.bind (fun addrs ->
-         Effect.sync (fun () -> connect_first ~sw ~net [] addrs)
+         Effect.sync (fun () -> connect_first eio_net ~sw ~net [] addrs)
          |> Effect.bind (function
               | Ok flow -> Effect.pure flow
               | Error "" ->
@@ -92,7 +104,7 @@ let peer_identity target =
           | Ok host -> Ok (`Host host)
           | Error (`Msg message) -> Error message))
 
-let connect_tls ?alpn_protocols ?ca_file ~method_ target flow =
+let connect_tls ?host_eio ?alpn_protocols ?ca_file ~method_ target flow =
   let close_flow () =
     try Eio.Flow.close flow with _ -> ()
   in
@@ -105,14 +117,14 @@ let connect_tls ?alpn_protocols ?ca_file ~method_ target flow =
               Config.default_client ?alpn_protocols ?ca_file
                 ~peer_name:host ()
             in
-            let tls = Tls_eio.client_of_flow config ~host flow in
+            let tls = Tls_eio.client_of_flow ?host_eio config ~host flow in
             let alpn = Tls_eio.alpn_protocol tls in
             Ok (tls, alpn)
         | Ok (`Ip ip) ->
             let config =
               Config.default_client ?alpn_protocols ?ca_file ~ip ()
             in
-            let tls = Tls_eio.client_of_flow config flow in
+            let tls = Tls_eio.client_of_flow ?host_eio config flow in
             let alpn = Tls_eio.alpn_protocol tls in
             Ok (tls, alpn)
       with exn -> Error (Printexc.to_string exn))

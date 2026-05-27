@@ -12,6 +12,8 @@ module Url = Url
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
+module type EIO_FLOW = Eta.Host_eio.FLOW
+
 type request_body =
   | Empty
   | Fixed of bytes list
@@ -106,12 +108,13 @@ let write_sync request f =
       try Ok (f ()) with _ -> Error (io_closed request Http_request))
   |> Effect.bind (function Ok value -> Effect.pure value | Error error -> Effect.fail error)
 
-let write_bytes_effect request flow bytes =
+let write_bytes_effect ?host_eio request flow bytes =
   write_sync request (fun () ->
-      Eio.Flow.copy_string (Bytes.to_string bytes) flow)
-
-let write_string_effect request flow value =
-  write_sync request (fun () -> Eio.Flow.copy_string value flow)
+      match host_eio with
+      | None -> Eio.Flow.copy_string (Bytes.to_string bytes) flow
+      | Some host_eio ->
+          let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+          Flow.write flow [ Cstruct.of_bytes bytes ])
 
 let transfer_encoding_chunked headers =
   match Header.get "transfer-encoding" headers with
@@ -120,24 +123,25 @@ let transfer_encoding_chunked headers =
       value |> String.lowercase_ascii |> String.split_on_char ','
       |> List.exists (fun token -> String.equal (String.trim token) "chunked")
 
-let write_raw_stream request flow body =
+let write_raw_stream ?host_eio request flow body =
   let rec loop () =
     Body.read body
     |> Effect.bind (function
          | None -> Effect.unit
-         | Some chunk -> write_bytes_effect request flow chunk |> Effect.bind loop)
+         | Some chunk ->
+             write_bytes_effect ?host_eio request flow chunk |> Effect.bind loop)
   in
   loop ()
 
-let write_chunked_stream request flow body =
+let write_chunked_stream ?host_eio request flow body =
   let rec loop () =
     Body.read body
     |> Effect.bind (function
          | None ->
-             write_bytes_effect request flow (Chunked.encode_last_chunk ())
+             write_bytes_effect ?host_eio request flow (Chunked.encode_last_chunk ())
          | Some chunk ->
              Chunked.encode_chunk chunk
-             |> List.map (write_bytes_effect request flow)
+             |> List.map (write_bytes_effect ?host_eio request flow)
              |> Effect.concat
              |> Effect.bind loop)
   in
@@ -155,32 +159,53 @@ let stream_headers (request : request) length =
       Header.unsafe_add "Transfer-Encoding" "chunked" request.headers
   | _ -> request.headers
 
-let write_headers_effect request flow ~headers =
+let write_to_host_flow host_eio request flow ~headers ~body =
+  match
+    Write.to_string ~method_:request.method_ ~url:request.url ~headers ~body
+  with
+  | Error _ as error -> error
+  | Ok bytes -> (
+      try
+        let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+        Flow.write flow [ Cstruct.of_string bytes ];
+        Ok ()
+      with _ -> Error (io_closed request Http_request))
+
+let write_headers_effect ?host_eio request flow ~headers =
   Effect.sync (fun () ->
       try
-        Write.write_to_flow flow ~method_:request.method_ ~url:request.url
-          ~headers ~body:Write.Empty
+        match host_eio with
+        | None ->
+            Write.write_to_flow flow ~method_:request.method_ ~url:request.url
+              ~headers ~body:Write.Empty
+        | Some host_eio ->
+            write_to_host_flow host_eio request flow ~headers ~body:Write.Empty
       with _ -> Error (io_closed request Http_request))
   |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
 
-let write_request flow (request : request) =
+let write_request ?host_eio flow (request : request) =
   Body_source.with_owned_stream (request_body_source request.body) (function
     | None ->
         Effect.sync (fun () ->
             try
-              Write.write_to_flow flow ~method_:request.method_ ~url:request.url
-                ~headers:request.headers ~body:(write_body request.body)
+              match host_eio with
+              | None ->
+                  Write.write_to_flow flow ~method_:request.method_ ~url:request.url
+                    ~headers:request.headers ~body:(write_body request.body)
+              | Some host_eio ->
+                  write_to_host_flow host_eio request flow ~headers:request.headers
+                    ~body:(write_body request.body)
             with _ -> Error (io_closed request Http_request))
         |> Effect.bind (function
              | Ok () -> Effect.unit
              | Error error -> Effect.fail error)
     | Some { length; stream } ->
         let headers = stream_headers request length in
-        write_headers_effect request flow ~headers
+        write_headers_effect ?host_eio request flow ~headers
         |> Effect.bind (fun () ->
                if transfer_encoding_chunked headers then
-                 write_chunked_stream request flow stream
-               else write_raw_stream request flow stream))
+                 write_chunked_stream ?host_eio request flow stream
+               else write_raw_stream ?host_eio request flow stream))
 
 let is_chunked headers =
   match Header.get "transfer-encoding" headers with
@@ -211,14 +236,18 @@ let parse_error request error =
 let body_too_large request ~limit ~length =
   make_error request (Body_too_large { limit; length })
 
-let read_more flow read_buffer buffer used =
+let read_more ?host_eio flow read_buffer buffer used =
   if used >= Bytes.length buffer then
     Error (Parse.Header_section_too_large { limit = max_header_bytes })
   else
     let len = Bytes.length buffer - used in
     try
       let read =
-        Eio.Flow.single_read flow (Cstruct.sub read_buffer used len)
+        match host_eio with
+        | None -> Eio.Flow.single_read flow (Cstruct.sub read_buffer used len)
+        | Some host_eio ->
+            let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+            Flow.single_read flow (Cstruct.sub read_buffer used len)
       in
       if read = 0 then Error Parse.Partial
       else (
@@ -233,7 +262,7 @@ type response_head = {
   initial : bytes;
 }
 
-let read_response_head ?(initial = Bytes.empty) flow request =
+let read_response_head ?host_eio ?(initial = Bytes.empty) flow request =
   let buffer = Bytes.create max_header_bytes in
   let initial_len = Bytes.length initial in
   if initial_len > max_header_bytes then
@@ -265,7 +294,7 @@ let read_response_head ?(initial = Bytes.empty) flow request =
               initial;
             }
       | code when code = Parse.raw_partial -> (
-          match read_more flow read_buffer buffer used with
+          match read_more ?host_eio flow read_buffer buffer used with
           | Ok used -> loop used
           | Error Parse.Partial -> Error (io_closed request Http_response)
           | Error error -> Error (parse_error request error))
@@ -284,13 +313,19 @@ type body_source = {
   read_into : Cstruct.t -> int;
 }
 
-let make_body_source flow request initial =
+let make_body_source ?host_eio flow request initial =
   {
     request;
     initial;
     off = 0;
     scratch = Cstruct.create response_chunk_size;
-    read_into = (fun buffer -> Eio.Flow.single_read flow buffer);
+    read_into =
+      (fun buffer ->
+        match host_eio with
+        | None -> Eio.Flow.single_read flow buffer
+        | Some host_eio ->
+            let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+            Flow.single_read flow buffer);
   }
 
 let source_pending source = Bytes.length source.initial - source.off
@@ -406,9 +441,9 @@ let chunked_body ~max_response_body_bytes ~release request source =
   in
   (Body.of_reader ~release read_next, fun () -> Effect.pure (Chunked.trailers decoder))
 
-let response_body ~max_response_body_bytes ~release flow request
+let response_body ?host_eio ~max_response_body_bytes ~release flow request
     (head : response_head) =
-  let source = make_body_source flow request head.initial in
+  let source = make_body_source ?host_eio flow request head.initial in
   if not (response_has_body request head.status) then
     (Body.of_bytes ~release [], fun () -> Effect.pure Header.empty)
   else if is_chunked head.headers then
@@ -428,7 +463,8 @@ let response_body ~max_response_body_bytes ~release flow request
         ( close_delimited_body ~max_response_body_bytes ~release source,
           fun () -> Effect.pure Header.empty )
 
-let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
+let request_on_flow ?host_eio
+    ?(max_response_body_bytes = default_max_response_body_bytes)
     ?release ~flow request =
   if max_response_body_bytes < 0 then
     invalid_arg
@@ -438,11 +474,11 @@ let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
     Effect.catch (fun _ -> Effect.unit) (release ())
     |> Effect.bind (fun () -> Effect.fail error)
   in
-  write_request flow request
+  write_request ?host_eio flow request
   |> Effect.catch release_on_error
   |> Effect.bind (fun () ->
          let rec read_final_response initial =
-           Effect.sync (fun () -> read_response_head ~initial flow request)
+           Effect.sync (fun () -> read_response_head ?host_eio ~initial flow request)
            |> Effect.catch release_on_error
            |> Effect.bind (function
                 | Error error -> release_on_error error
@@ -452,8 +488,8 @@ let request_on_flow ?(max_response_body_bytes = default_max_response_body_bytes)
                     read_final_response head.initial
                 | Ok head ->
                     let body, trailers =
-                      response_body ~max_response_body_bytes ~release flow request
-                        head
+                      response_body ?host_eio ~max_response_body_bytes ~release
+                        flow request head
                     in
                     Effect.pure
                       {
@@ -668,16 +704,16 @@ let shutdown_pool pool =
               err))
 
 let request ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?ca_file ~sw ~net request =
+    ?host_eio ?ca_file ~sw ~net request =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http.H1.Client.request: max_response_body_bytes must be >= 0";
   let target = Connect.target_of_url request.url in
-  Connect.connect_tcp ~sw ~net ~method_:request.method_ target
+  Connect.connect_tcp ?host_eio ~sw ~net ~method_:request.method_ target
   |> Effect.bind (fun tcp ->
          match target.scheme with
-         | Http -> request_on_flow ~max_response_body_bytes ~flow:tcp request
+         | Http -> request_on_flow ?host_eio ~max_response_body_bytes ~flow:tcp request
          | Https ->
-             Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
+             Connect.connect_tls ?host_eio ~alpn_protocols:[ "http/1.1" ] ?ca_file
                ~method_:request.method_ target tcp
              |> Effect.bind (fun (tls, _alpn) ->
                     request_on_flow ~max_response_body_bytes ~flow:(tls :> flow)

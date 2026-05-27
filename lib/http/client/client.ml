@@ -475,6 +475,43 @@ let make_h1 ~sw ~net
   in
   { protocol = H1; request_impl; stats_impl; shutdown_impl }
 
+let make_h1_direct ~sw ~net ?host_eio
+    ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
+  if max_response_body_bytes < 0 then
+    invalid_arg
+      "Eta_http.Client.make_h1_direct: max_response_body_bytes must be >= 0";
+  let request_impl request =
+    match h1_request_of_request request with
+    | Error error -> Eta.Effect.fail error
+    | Ok request ->
+        H1_client.request ~max_response_body_bytes ?host_eio ?ca_file ~sw ~net
+          request
+        |> Eta.Effect.map response_of_h1
+  in
+  let stats_impl () =
+    Eta.Effect.pure
+      {
+        protocol = H1;
+        active = 0;
+        idle = 0;
+        capacity = 0;
+        opened = 0;
+        released = 0;
+      }
+  in
+  let shutdown_impl () = Eta.Effect.unit in
+  { protocol = H1; request_impl; stats_impl; shutdown_impl }
+
+let run_host_h1 host_eio ~sw ~clock ~net ?tracer ?sampler ?auto_instrument
+    ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace
+    ?max_response_body_bytes ?ca_file f =
+  Eta.Runtime.with_host_eio host_eio ~sw ~clock ?tracer ?sampler
+    ?auto_instrument ?logger ?meter ?random ?island_pool ?blocking_pool
+    ?capture_backtrace @@ fun runtime ->
+  let client =
+    make_h1_direct ~sw ~net ~host_eio ?max_response_body_bytes ?ca_file ()
+  in
+  Eta.Runtime.run runtime (f client)
 
 let make ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =

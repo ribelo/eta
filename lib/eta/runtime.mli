@@ -31,18 +31,17 @@ val create :
     config documented on {!Effect.Blocking.Pool.create}.
 
     [blocking_runner] configures the worker substrate for that lazy default
-    blocking pool. Pass a runner built from the host application's Eio instance
-    when using [dune utop] workflows that load Eta before [eio_main].
+    blocking pool.
 
     [capture_backtrace] controls whether unchecked exceptions captured as
     [Cause.Die] carry [Printexc.raw_backtrace]. It defaults to [true]. Disable
     it only for runtimes where defect-path allocation cost matters more than
     diagnostics. *)
 
-val with_host_eio_unix :
-  (module Effect.Blocking.Pool.EIO_UNIX) ->
+val with_host_eio :
+  Host_eio.t ->
+  sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
-  ?sleep:(Duration.t -> unit) ->
   ?tracer:Capabilities.tracer ->
   ?sampler:Sampler.t ->
   ?auto_instrument:bool ->
@@ -52,10 +51,10 @@ val with_host_eio_unix :
   ?island_pool:Effect.Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
-  (Eio.Switch.t -> 'err t -> 'a) ->
+  ('err t -> 'a) ->
   'a
-(** Create a runtime in a fresh switch using the host application's [Eio_unix]
-    module as the blocking substrate.
+(** Create a runtime from a host switch using host Eio operations for blocking
+    workers and sleeps.
 
     This is mainly for [dune utop] workflows where Eta is loaded before
     [eio_main]:
@@ -63,13 +62,38 @@ val with_host_eio_unix :
     {[
       #require "eio_main";;
 
+      let host =
+        Host_eio.make
+          ~unix:(module Eio_unix)
+          ~eio:(module Eio)
+          ()
+      ;;
+
       Eio_main.run @@ fun env ->
-      Runtime.with_host_eio_unix (module Eio_unix)
+      Eio.Switch.run @@ fun sw ->
+      Runtime.with_host_eio host ~sw
         ~clock:(Eio.Stdenv.clock env)
         ~random:(Capabilities.random_of_seed 1)
-      @@ fun _sw rt ->
+      @@ fun rt ->
       Runtime.run rt effect
     ]} *)
+
+val run_host_eio :
+  Host_eio.t ->
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?tracer:Capabilities.tracer ->
+  ?sampler:Sampler.t ->
+  ?auto_instrument:bool ->
+  ?logger:Capabilities.logger ->
+  ?meter:Capabilities.meter ->
+  ?random:Capabilities.random ->
+  ?island_pool:Effect.Island.pool ->
+  ?blocking_pool:Effect.Blocking.Pool.t ->
+  ?capture_backtrace:bool ->
+  ('a, 'err) Effect.t ->
+  ('a, 'err) Exit.t
+(** Create a host-backed runtime and run one effect to completion. *)
 
 val run :
   ?island_pool:Effect.Island.pool ->

@@ -175,7 +175,7 @@ module Blocking : sig
         that load Eta before [eio_main], use {!runner_of_eio_unix}. *)
 
     module type EIO_UNIX = sig
-      val run_in_systhread : label:string -> (unit -> 'a) -> 'a
+      val run_in_systhread : ?label:string -> (unit -> 'a) -> 'a
     end
     (** Minimal host module shape needed by {!runner_of_eio_unix}. *)
 
@@ -185,7 +185,7 @@ module Blocking : sig
     (** Build a blocking runner from the host application's [Eio_unix] module.
         This is mainly for [dune utop] workflows where Eta is loaded before
         [eio_main]. For a runtime-owned default blocking pool, prefer
-        {!Runtime.with_host_eio_unix}. Use this helper directly when creating a
+        {!Runtime.with_host_eio}. Use this helper directly when creating a
         standalone pool with {!create}. *)
 
     val create : ?name:string -> ?runner:runner -> config -> t

@@ -23,15 +23,43 @@ let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
     ?logger ?meter ?random ?island_pool ?blocking_pool ?blocking_runner
     ?capture_backtrace ()
 
-let with_host_eio_unix eio_unix ~clock ?sleep ?tracer ?sampler ?auto_instrument
-    ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace f =
-  Eio.Switch.run @@ fun sw ->
-  let blocking_runner = Effect.Blocking.Pool.runner_of_eio_unix eio_unix in
+let host_sleep host clock duration =
+  let module Time = (val Host_eio.time host : Host_eio.TIME) in
+  let seconds = Duration.to_seconds_float duration in
+  if seconds > 0.0 then Time.sleep clock seconds
+
+let host_now_ms host clock =
+  let module Time = (val Host_eio.time host : Host_eio.TIME) in
+  fun () -> int_of_float (Time.now clock *. 1000.0)
+
+let host_blocking_runner host =
+  let module Unix = (val Host_eio.unix host : Host_eio.UNIX) in
+  {
+    Effect.Blocking.Pool.run_in_systhread =
+      (fun ~label f -> Unix.run_in_systhread ~label f);
+  }
+
+let with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
+    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace f =
+  let sleep = host_sleep host clock in
+  let blocking_runner = host_blocking_runner host in
   let runtime =
-    create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
-      ?random ?island_pool ?blocking_pool ~blocking_runner ?capture_backtrace ()
+    {
+      (create ~sw ~clock ~sleep ?tracer ?sampler ?auto_instrument ?logger
+         ?meter ?random ?island_pool ?blocking_pool ~blocking_runner
+         ?capture_backtrace ())
+      with
+      Runtime_core.host_eio = Some host;
+      now_ms = host_now_ms host clock;
+    }
   in
-  f sw runtime
+  f runtime
+
+let run_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
+    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace effect =
+  with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger ?meter
+    ?random ?island_pool ?blocking_pool ?capture_backtrace (fun runtime ->
+      Effect.run runtime effect)
 
 let run ?island_pool ?blocking_pool runtime eff =
   let runtime =
@@ -61,6 +89,13 @@ let run_exn t eff =
   | Exit.Error _ -> failwith "Eta.Runtime.run_exn"
 
 let drain t =
+  let yield =
+    match t.Runtime_core.host_eio with
+    | None -> Eio.Fiber.yield
+    | Some host ->
+        let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
+        Fiber.yield
+  in
   while P_atomic.get t.Runtime_core.active > 0 do
-    Eio.Fiber.yield ()
+    yield ()
   done
