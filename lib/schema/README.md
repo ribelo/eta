@@ -1,19 +1,19 @@
 # eta-schema
 
 `eta-schema` is a companion package for Eta applications that need a
-contract layer similar to Effect Schema, shaped for OCaml.
+contract layer similar to Effect Eta_schema, shaped for OCaml.
 
 The core value is pure:
 
 ```ocaml
-type 'a Schema.Schema.t
+type 'a Eta_schema.Eta_schema.t
 ```
 
 A schema can decode JSON, encode values, and derive equality. It does not carry
 an Eta environment. Decode and encode failures are typed Eta failures
-through `Schema.decode` and `Schema.encode`; direct callers can use
+through `Eta_schema.decode` and `Eta_schema.encode`; direct callers can use
 `decode_result` / `encode_result`. Effectful validation belongs at the decode
-boundary through `Schema.decode_with_policy`, so service requirements remain
+boundary through `Eta_schema.decode_with_policy`, so service requirements remain
 ordinary OCaml arguments or captured values.
 
 The built-in JSON representation preserves number shape:
@@ -26,19 +26,19 @@ type number =
 ```
 
 Use `Json.intlit` for integer tokens that do not fit OCaml `int` or must not
-round through IEEE 754. `Schema.int` only accepts values that fit OCaml `int`;
-`Schema.float` accepts finite numeric tokens.
+round through IEEE 754. `Eta_schema.int` only accepts values that fit OCaml `int`;
+`Eta_schema.float` accepts finite numeric tokens.
 
 Recommended application style is module-first: domain modules expose `type t`,
 `val schema`, `val decode`, `val encode`, and `val equal`.
 
 Validated nominal values are ordinary OCaml domain types built with
-`Schema.transform`, not a public TypeScript-style wrapper:
+`Eta_schema.transform`, not a public TypeScript-style wrapper:
 
 ```ocaml
 module User_id : sig
   type t = private string
-  val schema : t Schema.Schema.t
+  val schema : t Eta_schema.Eta_schema.t
   val value : t -> string
   val equal : t -> t -> bool
 end = struct
@@ -48,17 +48,17 @@ end = struct
   let equal = String.equal
 
   let schema =
-    Schema.Schema.transform ~name:"user_id"
+    Eta_schema.Eta_schema.transform ~name:"user_id"
       ~decode:(fun s ->
         if String.starts_with ~prefix:"usr_" s then Ok s
-        else Error [ Schema.issue "Expected user_id" ])
+        else Error [ Eta_schema.issue "Expected user_id" ])
       ~encode:value
       ~equal
-      Schema.Schema.string
+      Eta_schema.Eta_schema.string
 end
 ```
 
-`Schema.transform` requires `~equal`. There is no polymorphic equality
+`Eta_schema.transform` requires `~equal`. There is no polymorphic equality
 default because transformed values can be abstract, functional, cyclic, or
 otherwise unsafe for `Stdlib.( = )`.
 
@@ -70,7 +70,7 @@ type user = { id : User_id.t; name : string }
 
 let decode_user json =
   let lookup_user id = User_directory.lookup id in
-  Schema.Schema.decode_with_policy input_schema
+  Eta_schema.Eta_schema.decode_with_policy input_schema
     (fun input ->
       Eta.Effect.map
         (fun name -> { id = input.id; name })
@@ -82,7 +82,7 @@ let decode_user json =
 Decode issues carry structured paths:
 
 ```ocaml
-Schema.issue_to_json_pointer issue
+Eta_schema.issue_to_json_pointer issue
 ```
 
 `Field "users"; Index 0; Field "id"` renders as `users[0].id` and converts
@@ -113,7 +113,7 @@ for programmatic handling.
 Concrete JSON libraries plug in through `JSON_ADAPTER` and `Make`:
 
 ```ocaml
-module Codec = Schema.Make (My_json_adapter)
+module Codec = Eta_schema.Make (My_json_adapter)
 
 let decode_user external_json =
   Codec.decode User.schema external_json
@@ -127,7 +127,7 @@ boundary where an application chooses its JSON library.
 
 Limits:
 
-- This package no longer exposes placeholder `Schema.samples`.
-- This package no longer exposes placeholder `Schema.json_schema`. JSON Schema
+- This package no longer exposes placeholder `Eta_schema.samples`.
+- This package no longer exposes placeholder `Eta_schema.json_schema`. JSON Eta_schema
   generation should be a separate module with a chosen draft, real `$ref`
   handling, and validator tests.

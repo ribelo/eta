@@ -95,7 +95,7 @@ module Stream = struct
   let from_chunk chunk = Chunk chunk
   let from_iterable values = Chunk values
   let range ~start ~stop =
-    if stop < start then invalid_arg "Stream.range: stop must be >= start";
+    if stop < start then invalid_arg "Eta_stream.range: stop must be >= start";
     Range { start; stop }
   let from_effect eff = From_effect eff
   let fail error = Fail error
@@ -107,7 +107,7 @@ module Stream = struct
   let drop n stream = Drop (n, stream)
   let scan f init stream = Scan (f, init, stream)
   let grouped n stream =
-    if n <= 0 then invalid_arg "Stream.grouped: n must be > 0";
+    if n <= 0 then invalid_arg "Eta_stream.grouped: n must be > 0";
     Grouped (n, stream)
   let concat left right = Concat (left, right)
   let flat_map f stream = Flat_map (stream, f)
@@ -115,7 +115,7 @@ module Stream = struct
 
   let flat_map_par ~max_concurrency f stream =
     if max_concurrency <= 0 then
-      invalid_arg "Stream.flat_map_par: max_concurrency must be > 0";
+      invalid_arg "Eta_stream.flat_map_par: max_concurrency must be > 0";
     Flat_map_par (max_concurrency, stream, f)
 
   let from_eio_stream stream = From_eio_stream stream
@@ -123,7 +123,7 @@ module Stream = struct
 
   let from_file_map_error ?(chunk_size = default_file_chunk_size) ~on_error path =
     if chunk_size <= 0 then
-      invalid_arg "Stream.from_file: chunk_size must be > 0";
+      invalid_arg "Eta_stream.from_file: chunk_size must be > 0";
     let path_label = Format.asprintf "%a" Eio.Path.pp path in
     From_file { chunk_size; path; path_label; on_error }
 
@@ -141,7 +141,7 @@ module Mailbox = struct
 
   let to_stream mailbox = Stream.From_mailbox mailbox
   let to_batch_stream ~max mailbox =
-    if max <= 0 then invalid_arg "Stream.Mailbox.to_batch_stream: max must be > 0";
+    if max <= 0 then invalid_arg "Eta_stream.Mailbox.to_batch_stream: max must be > 0";
     Stream.From_mailbox_batches (max, mailbox)
 end
 
@@ -516,7 +516,7 @@ and fold_stream :
               (fun (acc, keep_going) ->
                 if keep_going then loop acc else Eta.Effect.pure (acc, false))
               (folder.emit acc value))
-          (Eta.Effect.named "Stream.from_eio_stream.take" (Eta.Effect.sync (fun () ->
+          (Eta.Effect.named "Eta_stream.from_eio_stream.take" (Eta.Effect.sync (fun () ->
                Eio.Stream.take stream)))
       in
       loop acc
@@ -547,7 +547,7 @@ and fold_stream :
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc value))
-          (Eta.Effect.named "Stream.Mailbox_internal.take" (Eta.Effect.sync (fun () ->
+          (Eta.Effect.named "Eta_stream.Mailbox_internal.take" (Eta.Effect.sync (fun () ->
                Mailbox_internal.take mailbox)))
       in
       loop acc
@@ -562,7 +562,7 @@ and fold_stream :
                     if keep_going then loop acc
                     else Eta.Effect.pure (acc, false))
                   (folder.emit acc values))
-          (Eta.Effect.named "Stream.Mailbox_internal.take_batch" (Eta.Effect.sync (fun () ->
+          (Eta.Effect.named "Eta_stream.Mailbox_internal.take_batch" (Eta.Effect.sync (fun () ->
                Mailbox_internal.take_batch mailbox max)))
       in
       loop acc
@@ -575,14 +575,14 @@ and fold_stream :
           (function
             | Ok () -> Eta.Effect.unit
             | Error error -> Eta.Effect.fail (on_error error))
-          (Eta.Effect.named "Stream.from_file.read" (Eta.Effect.sync (fun () ->
+          (Eta.Effect.named "Eta_stream.from_file.read" (Eta.Effect.sync (fun () ->
                let finish () =
                  ignore (Eio.Promise.try_resolve done_resolver ())
                in
                Fun.protect ~finally:finish (fun () ->
                    let operation = ref `Open in
                    try
-                     Eio.Switch.run ~name:"Stream.from_file" @@ fun sw ->
+                     Eio.Switch.run ~name:"Eta_stream.from_file" @@ fun sw ->
                      let flow = Eio.Path.open_in ~sw path in
                      operation := `Read;
                      let buffer = Cstruct.create chunk_size in
@@ -633,7 +633,7 @@ and fold_stream :
               let rec consume acc =
                 let* event =
                   lift
-                    (Eta.Effect.named "Stream.from_file.take" (Eta.Effect.sync (fun () ->
+                    (Eta.Effect.named "Eta_stream.from_file.take" (Eta.Effect.sync (fun () ->
                          next_event ())))
                 in
                 match event with
@@ -687,7 +687,7 @@ and fold_merge :
   let producer stream =
     Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
       ~release:(fun () ->
-        Eta.Effect.named "Stream.merge.done" (Eta.Effect.sync (fun () ->
+        Eta.Effect.named "Eta_stream.merge.done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add queue Done)))
     |> Eta.Effect.bind (fun () ->
            Eta.Effect.map ignore
@@ -699,7 +699,7 @@ and fold_merge :
                       else
                         Eta.Effect.map
                           (fun () -> ((), true))
-                          (Eta.Effect.named "Stream.merge.emit" (Eta.Effect.sync (fun () ->
+                          (Eta.Effect.named "Eta_stream.merge.emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add queue (Item value)))));
                   pure_cont = None;
                   pure_stop = None;
@@ -731,7 +731,7 @@ and fold_merge :
             else
               let* event =
                 lift
-                  (Eta.Effect.named "Stream.merge.take" (Eta.Effect.sync (fun () ->
+                  (Eta.Effect.named "Eta_stream.merge.take" (Eta.Effect.sync (fun () ->
                        Eio.Stream.take queue)))
               in
               match event with
@@ -762,7 +762,7 @@ and fold_flat_map_par :
   let outer_producer =
     Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
       ~release:(fun () ->
-        Eta.Effect.named "Stream.flat_map_par.outer_done" (Eta.Effect.sync (fun () ->
+        Eta.Effect.named "Eta_stream.flat_map_par.outer_done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then
               Eio.Stream.add outer_queue Outer_done)))
     |> Eta.Effect.bind (fun () ->
@@ -775,7 +775,7 @@ and fold_flat_map_par :
                       else
                         Eta.Effect.map
                           (fun () -> ((), true))
-                          (Eta.Effect.named "Stream.flat_map_par.outer_emit" (Eta.Effect.sync (fun () ->
+                          (Eta.Effect.named "Eta_stream.flat_map_par.outer_emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add outer_queue (Outer_item value)))));
                   pure_cont = None;
                   pure_stop = None;
@@ -784,14 +784,14 @@ and fold_flat_map_par :
   let worker =
     Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
       ~release:(fun () ->
-        Eta.Effect.named "Stream.flat_map_par.worker_done" (Eta.Effect.sync (fun () ->
+        Eta.Effect.named "Eta_stream.flat_map_par.worker_done" (Eta.Effect.sync (fun () ->
             if not (Atomic.get stopped) then Eio.Stream.add output_queue Done)))
     |> Eta.Effect.bind (fun () ->
            let rec loop () =
              Eta.Effect.bind
                (function
                  | Outer_done ->
-                     Eta.Effect.named "Stream.flat_map_par.rebroadcast_done" (Eta.Effect.sync (fun () -> Eio.Stream.add outer_queue Outer_done))
+                     Eta.Effect.named "Eta_stream.flat_map_par.rebroadcast_done" (Eta.Effect.sync (fun () -> Eio.Stream.add outer_queue Outer_done))
                  | Outer_item value ->
                      Eta.Effect.bind
                        (fun _ -> loop ())
@@ -805,13 +805,13 @@ and fold_flat_map_par :
                                   else
                                     Eta.Effect.map
                                       (fun () -> ((), true))
-                                      (Eta.Effect.named "Stream.flat_map_par.inner_emit" (Eta.Effect.sync (fun () ->
+                                      (Eta.Effect.named "Eta_stream.flat_map_par.inner_emit" (Eta.Effect.sync (fun () ->
                                            Eio.Stream.add output_queue
                                              (Item item)))));
                                pure_cont = None;
                                pure_stop = None;
                              })))
-               (Eta.Effect.named "Stream.flat_map_par.outer_take" (Eta.Effect.sync (fun () ->
+               (Eta.Effect.named "Eta_stream.flat_map_par.outer_take" (Eta.Effect.sync (fun () ->
                     Eio.Stream.take outer_queue)))
            in
            loop ())
@@ -850,7 +850,7 @@ and fold_flat_map_par :
             let* () = cancel outer_child in
             let* () =
               lift
-                (Eta.Effect.named "Stream.flat_map_par.wake_workers" (Eta.Effect.sync (fun () ->
+                (Eta.Effect.named "Eta_stream.flat_map_par.wake_workers" (Eta.Effect.sync (fun () ->
                      let rec drain_outer () =
                        match Eio.Stream.take_nonblocking outer_queue with
                        | None -> ()
@@ -874,7 +874,7 @@ and fold_flat_map_par :
             else
               let* event =
                 lift
-                  (Eta.Effect.named "Stream.flat_map_par.take" (Eta.Effect.sync (fun () ->
+                  (Eta.Effect.named "Eta_stream.flat_map_par.take" (Eta.Effect.sync (fun () ->
                        Eio.Stream.take output_queue)))
               in
               match event with

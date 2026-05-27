@@ -1,5 +1,5 @@
-module Q = Sql
-module S = Sqlite
+module Q = Eta_sql
+module S = Eta_sql.Sqlite
 
 module Manual_users = struct
   module T = Q.Table.Make (struct

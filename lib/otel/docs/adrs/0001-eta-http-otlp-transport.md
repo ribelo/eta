@@ -14,7 +14,7 @@ classification, connection pooling, and HTTP error reporting.
 R-T3 proved that calling eta-http from inside eta-otel can recurse into
 observability unless the whole request subtree suppresses tracer, logger, and
 meter observations. eta-http now exposes that through
-Http.Observability.Tracer.request_with_retry ~enabled:false.
+Eta_http.Observability.Tracer.request_with_retry ~enabled:false.
 
 Dogfooding also exposed an eta-http API leak: the top-level client required
 callers to pass an X509 authenticator even for plain OTLP/HTTP. eta-http now
@@ -27,8 +27,8 @@ CA roots.
 eta-otel sends every trace, log, and metric batch through eta-http:
 
 - Build a fixed-body POST request with Content-Type: application/json.
-- Use Http.Client.make_h1 for the v1 exporter client.
-- Use Http.Observability.Tracer.request_with_retry ~enabled:false to
+- Use Eta_http.Client.make_h1 for the v1 exporter client.
+- Use Eta_http.Observability.Tracer.request_with_retry ~enabled:false to
   suppress recursive exporter telemetry.
 - Use an OTLP-specific retry classifier: retry 429, 502, 503, and 504; do not
   retry 408.

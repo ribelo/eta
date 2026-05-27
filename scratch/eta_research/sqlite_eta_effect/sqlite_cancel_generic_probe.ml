@@ -1,5 +1,5 @@
-module Q = Sql
-module S = Sqlite
+module Q = Eta_sql
+module S = Eta_sql.Sqlite
 module E = Eta.Effect
 
 let elapsed_us start =

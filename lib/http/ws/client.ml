@@ -467,7 +467,7 @@ let connect ?ca_file ?key ?headers ?protocols ~sw ~net raw_url =
       |> map_http_error
       |> Effect.bind (fun tcp ->
              match Url.scheme url with
-             | Eta_http -> connect_on_flow ?key ?headers ?protocols ~sw ~flow:tcp url
+             | Http -> connect_on_flow ?key ?headers ?protocols ~sw ~flow:tcp url
              | Https ->
                  Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
                    ~method_:"GET" target tcp

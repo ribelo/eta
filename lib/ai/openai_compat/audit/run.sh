@@ -4,7 +4,7 @@ set -euo pipefail
 root="${1:-lib/ai/openai_compat}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='Ai\.|Ai_openai\.|Redacted\.|Http\.|Eta\.(Effect|Redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken'
+dep_pattern='Eta_ai\.|Eta_ai_openai\.|Eta_redacted\.|Eta_http\.|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"

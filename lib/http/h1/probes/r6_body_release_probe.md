@@ -8,11 +8,11 @@ the response arrives?
 
 ## Implementation
 
-- `Http.H1.Client.request_with_pool` starts an owner effect around
+- `Eta_http.H1.Client.request_with_pool` starts an owner effect around
   `Eta.Pool.with_resource`.
 - The owner sends the response over `Eta.Channel`, then waits for a body
   release acknowledgement before the pool finalizer can return the connection.
-- `Http.Body.Stream.read_all` releases at EOF. `Body.Stream.discard`
+- `Eta_http.Body.Stream.read_all` releases at EOF. `Body.Stream.discard`
   releases without reading the body.
 - If the request is cancelled before a response is returned, the request scope
   sends a cancel signal to the owner and closes the response/release channels.

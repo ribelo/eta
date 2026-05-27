@@ -17,9 +17,9 @@ Yojson is allowed for structured JSON.
 
 Search:
 
-    rg -n -t ocaml 'Ai\.|Ai_openai\.|Redacted\.|Http\.|Eta\.(Effect|Redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/openai_compat
+    rg -n -t ocaml 'Eta_ai\.|Eta_ai_openai\.|Eta_redacted\.|Eta_http\.|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/openai_compat
 
-The search includes Ai_openai to catch forbidden cross-provider usage.
+The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 
 | Site | Dependency | What | Replaceable? | Replacement cost |
 | --- | --- | --- | --- | --- |
@@ -32,32 +32,32 @@ The search includes Ai_openai to catch forbidden cross-provider usage.
 ## Current Matches
 
 <!-- BEGIN DEP_MATCHES -->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:16:  schema_json : Ai.raw_json;
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:23:  schema_json:Ai.raw_json ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:25:  (structured_output, Ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:39:  ?extra_headers:Ai.headers ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:42:  Ai.provider
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:47:  Ai.chat_request ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:48:  (Ai.raw_json, Ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:50:val decode_chat : Ai.raw_json -> (Ai.response, Ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:52:  Ai.sse_event -> (Ai.stream_event list, Ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:54:  status:int -> headers:Ai.headers -> Ai.raw_json -> Ai.ai_error
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:58:  provider:Ai.provider ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:59:  api_key:Ai.api_key ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:60:  Ai.chat_request ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:61:  (Http.Request.t, Ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:65:  provider:Ai.provider ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:66:  Http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:67:  api_key:Ai.api_key ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:68:  Ai.chat_request ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:69:  (Ai.response, Ai.ai_error) Eta.Effect.t
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:73:  provider:Ai.provider ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:74:  Http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:75:  api_key:Ai.api_key ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:76:  Ai.chat_request ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:77:  (Ai.stream, Ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:16:  schema_json : Eta_ai.raw_json;
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:23:  schema_json:Eta_ai.raw_json ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:25:  (structured_output, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:39:  ?extra_headers:Eta_ai.headers ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:42:  Eta_ai.provider
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:47:  Eta_ai.chat_request ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:48:  (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:50:val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:52:  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:54:  status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:58:  provider:Eta_ai.provider ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:59:  api_key:Eta_ai.api_key ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:60:  Eta_ai.chat_request ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:61:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:65:  provider:Eta_ai.provider ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:66:  Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:67:  api_key:Eta_ai.api_key ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:68:  Eta_ai.chat_request ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:69:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:73:  provider:Eta_ai.provider ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:74:  Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:75:  api_key:Eta_ai.api_key ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:76:  Eta_ai.chat_request ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:77:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openai_compat/eta_ai_openai_compat.ml:2:module E = Eta.Effect
-- lib/ai/openai_compat/eta_ai_openai_compat.ml:81:  Option.value ~default:"" auth.prefix ^ Redacted.value api_key
+- lib/ai/openai_compat/eta_ai_openai_compat.ml:81:  Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
 - test/ai/openai_compat/test_eta_ai_openai_compat.ml:3:module E = Eta.Effect
 - test/ai/openai_compat/test_eta_ai_openai_compat.ml:78:  Eio.Switch.run @@ fun sw ->
 - test/ai/openai_compat/test_eta_ai_openai_compat.ml:79:  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in

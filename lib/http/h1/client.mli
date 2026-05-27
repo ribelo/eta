@@ -3,7 +3,7 @@
 type request_body =
   | Empty
   | Fixed of bytes list
-  | Eta_stream of Eta_http_body.Stream.t
+  | Stream of Eta_http_body.Stream.t
   | Rewindable_stream of {
       length : int option;
       make : unit -> Eta_http_body.Stream.t;

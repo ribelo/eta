@@ -1,4 +1,4 @@
-module S = Sqlite
+module S = Eta_sql.Sqlite
 module E = Eta.Effect
 
 let iterations = 100_000

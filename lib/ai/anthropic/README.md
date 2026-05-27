@@ -17,13 +17,13 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "ANTHROPIC_API_KEY" with
-      | Some value -> Ai.api_key value
+      | Some value -> Eta_ai.api_key value
       | None -> failwith "ANTHROPIC_API_KEY is required"
 
     let request =
       {
-        Ai.model = "claude-3-5-sonnet-latest";
-        prompt = [ Ai.User [ Ai.Text "weather in Warsaw" ] ];
+        Eta_ai.model = "claude-3-5-sonnet-latest";
+        prompt = [ Eta_ai.User [ Eta_ai.Text "weather in Warsaw" ] ];
         tools = [];
         temperature = Some 0.2;
         max_output_tokens = Some 64;
@@ -31,23 +31,23 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
       }
 
     let effect =
-      Ai_anthropic.messages client ~api_key request
+      Eta_ai_anthropic.messages client ~api_key request
 
 Override the API version only when Anthropic changes the required
 anthropic-version header:
 
     let provider =
-      Ai_anthropic.provider ~version:"2023-06-01" ()
+      Eta_ai_anthropic.provider ~version:"2023-06-01" ()
 
 ## Prompt Caching
 
 Prompt caching is request-local in eta-ai-anthropic:
 
     let prompt_cache =
-      Ai_anthropic.prompt_cache ~cache_system:true ()
+      Eta_ai_anthropic.prompt_cache ~cache_system:true ()
 
     let effect =
-      Ai_anthropic.messages ~prompt_cache client ~api_key request
+      Eta_ai_anthropic.messages ~prompt_cache client ~api_key request
 
 This adds the Anthropic beta header and encodes system text as a text block with
 an ephemeral cache_control object. eta-ai's current message vocabulary does not

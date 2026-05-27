@@ -3,16 +3,16 @@
 Eta SQL is Eta's SQL package. It contains:
 
 - `Sqlite`: a low-level SQLite connector over libsqlite3;
-- `Sql`: explicit SQL values, rows, schema/query builders, pools,
+- `Eta_sql`: explicit SQL values, rows, schema/query builders, pools,
   transactions, and migrations;
-- `Sql.Eta_pool`: the Eta-native pool and execution surface for SQLite.
+- `Eta_sql.Eta_pool`: the Eta-native pool and execution surface for SQLite.
 
 This package is not an ORM. Applications own their data model and state; Eta SQL
 owns rendering, binding, execution, decoding, pooling, and migration mechanics.
 
 ## SQLite Execution Model
 
-SQLite is synchronous embedded I/O. Eta applications should use `Sql.Eta_pool`
+SQLite is synchronous embedded I/O. Eta applications should use `Eta_sql.Eta_pool`
 so database work runs through `Eta.Effect.blocking` instead of pinning the Eio
 calling domain.
 
@@ -36,13 +36,13 @@ optimum in the 200k-row fixture (about 28.5 ms and 3.2 MB allocated), but it
 held the calling Eio domain for the whole scan. Batched `Effect.blocking` at
 1024 rows paid about 12% wall time and 23% allocation in that run (about
 32.0 ms and 3.9 MB allocated) while keeping heartbeat p99/max near 39 us. This
-package optimizes for co-fiber fairness, so `Sql.Eta_pool.fold` uses bounded
+package optimizes for co-fiber fairness, so `Eta_sql.Eta_pool.fold` uses bounded
 blocking batches.
 
 ## Eta Usage
 
 ```ocaml
-module Q = Sql
+module Q = Eta_sql
 module S = Sqlite
 
 module Items = struct
@@ -67,7 +67,7 @@ let program =
   in
   let timeout = Eta.Duration.ms 250 in
   let create_items =
-    Q.Schema.(
+    Q.Eta_schema.(
       create_table ~if_not_exists:true Items.table
         [ column ~primary_key:true Items.id ]
       |> compile)
@@ -88,29 +88,29 @@ let program =
                 Q.Eta_pool.select ~blocking_pool ~timeout pool select_items))
 ```
 
-Use `Sql.Pool` only for synchronous/Riot-parity experiments and low-level tests.
-Production Eta code should prefer `Sql.Eta_pool`. The top-level synchronous
-helpers use `Sql.Pool`; they are not the evidence-backed Eta execution surface.
+Use `Eta_sql.Pool` only for synchronous/Riot-parity experiments and low-level tests.
+Production Eta code should prefer `Eta_sql.Eta_pool`. The top-level synchronous
+helpers use `Eta_sql.Pool`; they are not the evidence-backed Eta execution surface.
 
 Typed builder values compile before execution. Use `Select.compile`,
 `Insert.compile`, `Update.compile`, `Delete.compile`, and
-`Schema.compile`, then route those values through `Sql.Eta_pool.select`,
-`Sql.Eta_pool.fold_select`, `Sql.Eta_pool.execute_compiled`, or
-`Sql.Eta_pool.run_schema`. That keeps table/column type safety on the same
+`Eta_schema.compile`, then route those values through `Eta_sql.Eta_pool.select`,
+`Eta_sql.Eta_pool.fold_select`, `Eta_sql.Eta_pool.execute_compiled`, or
+`Eta_sql.Eta_pool.run_schema`. That keeps table/column type safety on the same
 path as the blocking-pool timeout and cancellation protocol.
 
 The typed SELECT builder supports ordinary predicates, joins, DISTINCT, COUNT,
 SUM over integer columns, GROUP BY, HAVING, subquery predicates, CTEs, and
 ROW_NUMBER window projections. INSERT supports ON CONFLICT DO NOTHING, ON
 CONFLICT DO UPDATE from excluded values, and RETURNING through
-`Sql.Eta_pool.returning`. UPDATE and DELETE also expose typed RETURNING.
+`Eta_sql.Eta_pool.returning`. UPDATE and DELETE also expose typed RETURNING.
 
-Every `Sql.Eta_pool` operation that runs SQLite requires a `~timeout`. This is
+Every `Eta_sql.Eta_pool` operation that runs SQLite requires a `~timeout`. This is
 part of the cancellation contract: the operation races the blocking SQLite call
 against `sqlite3_interrupt`, so an outer `Eta.Effect.timeout` does not leave an
 in-flight `sqlite3_step` waiting for SQLite's busy timeout.
 
-For large reads, use `Sql.Eta_pool.fold_select ?batch_size` instead of
+For large reads, use `Eta_sql.Eta_pool.fold_select ?batch_size` instead of
 fetching one row per effect. The fold path steps SQLite in bounded blocking
 batches and folds typed rows on the caller fiber.
 
@@ -118,11 +118,11 @@ The old public `query_cursor` surface was removed because it looked like
 streaming while buffering rows up front. Use `select` for materialized
 typed reads and `fold_select` for scans.
 
-## Optional Schema PPX
+## Optional Eta_schema PPX
 
 The `ppx_eta` package includes optional table-declaration sugar for Eta SQL.
 It does not create a parallel query system; it expands to the same generative
-table module, typed columns, schema artifact, and compiled `Sql.Eta_pool` path
+table module, typed columns, schema artifact, and compiled `Eta_sql.Eta_pool` path
 shown above.
 
 ```ocaml
@@ -140,7 +140,7 @@ This generates:
 - `module Users`, with `Users.table`, `Users.id`, `Users.name`, and
   `Users.active`
 - `Users.all`, an all-column projection returning `users_row`
-- `Users.schema`, a `Sql.Schema.create_table` artifact preserving supported
+- `Users.schema`, a `Eta_sql.Eta_schema.create_table` artifact preserving supported
   column attributes
 
 The input declaration is syntax for the PPX; the row type users write against is
@@ -159,7 +159,7 @@ and nullable forms such as `string option`. Supported column attributes are
 
 The schema PPX is intentionally small. JSON columns, custom decoders, sum
 types, generated `CHECK` constraints, and generated indexes still use manual
-table modules or explicit `Sql.Schema` values.
+table modules or explicit `Eta_sql.Eta_schema` values.
 
 Use it by adding the PPX to the target that declares tables:
 
@@ -192,7 +192,7 @@ matters; otherwise scan batches and ad-hoc queries will queue behind each other.
 
 ## Migrations
 
-`Sql.Migrate` resolves SQL files named like `1_create_users.sql`,
+`Eta_sql.Migrate` resolves SQL files named like `1_create_users.sql`,
 `2_add_orders.up.sql`, and `2_add_orders.down.sql`. Non-file directory
 entries are ignored. Applied migrations store SHA-256 checksums, detect dirty
 rows and checksum drift, and support `run`, `run_to`, and `undo`.

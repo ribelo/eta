@@ -229,7 +229,7 @@ let test_h2_connection_returns_early_response () =
       let request =
         Eta_http.Request.make "POST" uri
           ~body:
-            (Eta_http.Request.Eta_stream
+            (Eta_http.Request.Stream
                (blocking_body
                   ~release:(fun () ->
                     incr released;
@@ -255,7 +255,7 @@ let test_h2_connection_cancelled_upload_releases_body () =
       let request =
         Eta_http.Request.make "POST" uri
           ~body:
-            (Eta_http.Request.Eta_stream
+            (Eta_http.Request.Stream
                (blocking_body
                   ~release:(fun () ->
                     incr released;

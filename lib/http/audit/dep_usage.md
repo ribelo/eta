@@ -11,7 +11,7 @@ it when the raw count changes before making call-site-specific claims.
 Search:
 
 ```sh
-rg -n -t ocaml 'H2\.|Hpack\.|Eio\.|Cstruct\.|Domain_name\.|Ipaddr\.|Bigstringaf\.|Gz\.|De\.' lib/http | rg -v 'Http\.H2\.'
+rg -n -t ocaml 'H2\.|Hpack\.|Eio\.|Cstruct\.|Domain_name\.|Ipaddr\.|Bigstringaf\.|Gz\.|De\.' lib/http | rg -v 'Eta_http\.H2\.'
 ```
 
 | Site | Dependency | What | Replaceable? | Replacement cost |

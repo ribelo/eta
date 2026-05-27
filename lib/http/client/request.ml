@@ -3,7 +3,7 @@
 type body =
   | Empty
   | Fixed of bytes list
-  | Eta_stream of Eta_http_body.Stream.t
+  | Stream of Eta_http_body.Stream.t
   | Rewindable_stream of {
       length : int option;
       make : unit -> Eta_http_body.Stream.t;
@@ -23,12 +23,12 @@ let body_chunks t =
   match t.body with
   | Empty -> 0
   | Fixed chunks -> List.length chunks
-  | Eta_stream _ | Rewindable_stream _ -> -1
+  | Stream _ | Rewindable_stream _ -> -1
 
 let body_source = function
   | Empty -> Eta_http_body.Source.Empty
   | Fixed chunks -> Eta_http_body.Source.Fixed chunks
-  | Eta_stream body -> Eta_http_body.Source.Stream body
+  | Stream body -> Eta_http_body.Source.Stream body
   | Rewindable_stream { length; make } ->
       Eta_http_body.Source.Rewindable_stream { length; make }
 

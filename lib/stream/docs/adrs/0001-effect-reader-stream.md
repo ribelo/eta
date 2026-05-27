@@ -6,13 +6,13 @@ Proposed.
 
 ## Context
 
-Stream currently supports finite in-memory streams, files, mailboxes, Eio
+Eta_stream currently supports finite in-memory streams, files, mailboxes, Eio
 streams, merge, and parallel flat-map. It does not expose a public constructor
 for an owned effectful pull source with a finalizer.
 
 eta-ai A2 needs to parse SSE events from eta-http Body.Stream. The parser can
 read chunks and discard the body correctly when used directly, but eta-ai wants
-to expose parsed events as Stream.Stream so callers can compose with take,
+to expose parsed events as Eta_stream.Stream so callers can compose with take,
 map, grouped, merge, and sinks.
 
 The missing invariant is ownership: if downstream stops early, fails, or is
@@ -22,7 +22,7 @@ queue RST_STREAM for active streams.
 
 ## Decision
 
-Add a public Stream.Stream source constructor for effectful pull readers
+Add a public Eta_stream.Stream source constructor for effectful pull readers
 with finalization. The exact name can still change, but the required shape is:
 
     val from_effect_reader :
@@ -30,7 +30,7 @@ with finalization. The exact name can still change, but the required shape is:
       read:(unit -> ('a option, 'err) Eta.Effect.t) ->
       release:(unit -> (unit, 'err) Eta.Effect.t) ->
       unit ->
-      ('a, 'err) Stream.t
+      ('a, 'err) Eta_stream.t
 
 Required behavior:
 
@@ -49,14 +49,14 @@ the resource when the stream is run:
       acquire:('resource, 'err) Eta.Effect.t ->
       read:('resource -> ('a option, 'err) Eta.Effect.t) ->
       release:('resource -> (unit, 'err) Eta.Effect.t) ->
-      ('a, 'err) Stream.t
+      ('a, 'err) Eta_stream.t
 
 ## Alternatives Considered
 
-- Use Stream.Mailbox.to_stream with a producer fiber. Rejected for eta-ai
+- Use Eta_stream.Mailbox.to_stream with a producer fiber. Rejected for eta-ai
   public streaming because downstream cancellation does not own or stop the
   producer by construction.
-- Use Stream.Stream.from_eio_stream. Rejected because the source has no
+- Use Eta_stream.Stream.from_eio_stream. Rejected because the source has no
   end-of-stream marker and no finalizer.
 - Parse the entire SSE response into a list and call from_iterable. Rejected
   because it loses streaming, back-pressure, and bounded-memory behavior.
@@ -67,16 +67,16 @@ the resource when the stream is run:
 
 Positive:
 
-- eta-ai can expose provider streams as Stream.Stream without leaking HTTP
+- eta-ai can expose provider streams as Eta_stream.Stream without leaking HTTP
   bodies on early stop.
 - Other libraries can wrap pull APIs, cursors, and decoder loops without
   ad-hoc mailbox producers.
-- The source ownership rule lives in eta-stream, where Stream.take already owns
+- The source ownership rule lives in eta-stream, where Eta_stream.take already owns
   downstream stop semantics.
 
 Negative:
 
-- Stream gains one more primitive constructor and must test EOF, failure,
+- Eta_stream gains one more primitive constructor and must test EOF, failure,
   downstream stop, and interruption release paths.
 - The API must decide whether finalizer errors are emitted, suppressed under a
   primary failure, or reported as suppressed causes.

@@ -49,16 +49,16 @@ nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_m
 
 | Module | Purpose |
 | --- | --- |
-| `Http.Client` | Top-level client API. |
-| `Http.Request` | Request model. |
-| `Http.Response` | Response model. |
-| `Http.Error` | Typed eta-http failures and projections. |
-| `Http.Core` | URL, method, version, header, status, and span helpers. |
-| `Http.Body` | Request and response body surfaces. |
-| `Http.Tls` | TLS policy chokepoint. |
-| `Http.Transport` | DNS, TCP, TLS, ALPN, and protocol dispatch. |
-| `Http.H1` | HTTP/1.1 parser, writer, and client loop. |
-| `Http.H2` | HTTP/2 connection owner, frame helpers, multiplexer, writer, and admission state. |
+| `Eta_http.Client` | Top-level client API. |
+| `Eta_http.Request` | Request model. |
+| `Eta_http.Response` | Response model. |
+| `Eta_http.Error` | Typed eta-http failures and projections. |
+| `Eta_http.Core` | URL, method, version, header, status, and span helpers. |
+| `Eta_http.Body` | Request and response body surfaces. |
+| `Eta_http.Tls` | TLS policy chokepoint. |
+| `Eta_http.Transport` | DNS, TCP, TLS, ALPN, and protocol dispatch. |
+| `Eta_http.H1` | HTTP/1.1 parser, writer, and client loop. |
+| `Eta_http.H2` | HTTP/2 connection owner, frame helpers, multiplexer, writer, and admission state. |
 
 ## Constraints
 

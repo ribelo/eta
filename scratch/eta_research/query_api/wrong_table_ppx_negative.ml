@@ -1,4 +1,4 @@
-module Q = Sql
+module Q = Eta_sql
 
 [%%eta.sql.table
 type users = {

@@ -6,7 +6,7 @@ type t = {
 }
 
 let make ~off ~len =
-  if off < 0 || len < 0 then invalid_arg "Eta_http.Span.make";
+  if off < 0 || len < 0 then invalid_arg "Http.Span.make";
   { off; len }
 
 let empty = { off = 0; len = 0 }

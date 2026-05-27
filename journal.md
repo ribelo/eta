@@ -528,7 +528,7 @@ The runtime in `lib/runtime.ml` proved several non-obvious things:
 
 ## TestClock port — virtual time through the runtime
 
-Ported `.reference/effect-smol/packages/effect/test/TestClock.test.ts`
+Ported `.reference/effect-smol/lib/effect/test/TestClock.test.ts`
 to OCaml as the `Clock` Alcotest group in `test/test_apsis.ml`.
 
 The reference behaviors are:
@@ -580,10 +580,10 @@ Result: 15 tests passing, including 4 Clock tests, in 0.007s.
 
 Ported the applicable core behaviors from:
 
-- `.reference/effect-smol/packages/effect/test/Duration.test.ts`
-- `.reference/effect-smol/packages/effect/test/Schedule.test.ts`
-- `.reference/effect-smol/packages/effect/test/Scope.test.ts`
-- `.reference/effect-smol/packages/effect/test/Resource.test.ts`
+- `.reference/effect-smol/lib/effect/test/Duration.test.ts`
+- `.reference/effect-smol/lib/effect/test/Schedule.test.ts`
+- `.reference/effect-smol/lib/effect/test/Scope.test.ts`
+- `.reference/effect-smol/lib/effect/test/Resource.test.ts`
 
 Duration decision: keep the OCaml type millisecond-precision and
 nonnegative. The reference Duration module includes bigint nanoseconds,
@@ -634,7 +634,7 @@ parallel scope-finalizer port, and two Resource tests.
 
 ## Effect.test.ts curated slice
 
-Started porting `.reference/effect-smol/packages/effect/test/Effect.test.ts`
+Started porting `.reference/effect-smol/lib/effect/test/Effect.test.ts`
 by behavior group, not by file order. The file is the whole Effect-TS
 runtime ecosystem (fibers, causes, contexts, transactions, logging,
 platform runners), so the first high-value OCaml slice targets the
@@ -2520,12 +2520,12 @@ Status codes per spec: 0 = UNSET, 1 = OK, 2 = ERROR. Cancelled maps to
 
 ### Implementation cost (this session)
 
-- `packages/effet/runtime.ml`: timestamp + cause rendering fixes (~15 LOC).
-- `packages/effet-otel/dune`, `packages/effet-otel/dune-project` package
+- `lib/effet/runtime.ml`: timestamp + cause rendering fixes (~15 LOC).
+- `lib/effet-otel/dune`, `lib/effet-otel/dune-project` package
   stanza: ~20 LOC.
-- `packages/effet-otel/effet_otel.ml{,i}`: ~250 LOC for JSON encoder,
+- `lib/effet-otel/effet_otel.ml{,i}`: ~250 LOC for JSON encoder,
   HTTP/1.1 client over Eio TCP, batching daemon, Capabilities.tracer adapter.
-- `packages/effet-otel/test/`: integration test that emits spans against a
+- `lib/effet-otel/test/`: integration test that emits spans against a
   spawned mock OTLP server (or against motel if available).
 
 
@@ -2535,7 +2535,7 @@ Status codes per spec: 0 = UNSET, 1 = OK, 2 = ERROR. Cancelled maps to
 
 To confirm Effet+effet-otel reach behavioural parity with `@effect/opentelemetry`'s
 public surface, all three test files in
-`.reference/effect-smol/packages/opentelemetry/test/` were ported into the
+`.reference/effect-smol/lib/opentelemetry/test/` were ported into the
 effet-otel test suite. Porting tests is the cheapest way to surface gaps:
 each test that cannot be expressed in the Effet idiom is a documented gap.
 
@@ -2669,7 +2669,7 @@ metrics; no architectural surprises.
 
 ### Trait surface
 
-`packages/effet/capabilities.{ml,mli}` gained:
+`lib/effet/capabilities.{ml,mli}` gained:
 
 ```ocaml
 type log_level = Trace | Debug | Info | Warn | Error | Fatal
@@ -2752,7 +2752,7 @@ transitive closure, added to flake.nix.
 
 ### Test ports
 
-`packages/effet-otel/test/test_logger.ml` and `test_metrics.ml`
+`lib/effet-otel/test/test_logger.ml` and `test_metrics.ml`
 graduated from `Alcotest.skip` stubs to passing test cases:
 
 | Test | Coverage |
@@ -2796,7 +2796,7 @@ Effet has the core `('env, 'err, 'a) Effect.t` runtime, typed failures,
 resource scopes, parallel combinators, and runtime-parameter tracing. It does
 not yet have a streaming package. Effect-TS has a large Stream/Sink/Channel
 surface, but its public types were shaped by TypeScript's type system. This
-entry decides the OCaml shape before any real `packages/effet-stream/`
+entry decides the OCaml shape before any real `lib/effet-stream/`
 implementation.
 
 Methodology follows V-R10 and V-F1: build a compiler-checked scratch lab first,
@@ -2812,7 +2812,7 @@ Produce an implementable contract for `effet-stream`:
 - a final stub interface in `scratch/stream_research/STUB_stream.mli`;
 - a backlog handoff in `scratch/stream_research/BACKLOG.md`.
 
-User update during the session: creating the real `packages/effet-stream/`
+User update during the session: creating the real `lib/effet-stream/`
 package is allowed if the research settles with enough time left. This entry
 still treats research evidence as the first gate.
 
@@ -3117,12 +3117,12 @@ does not prove a type invariant.
 ### Implementation follow-up in the same session
 
 Because the user clarified that a real package was in scope after research, I
-started `packages/effet-stream/` after V-S1..V-S10 settled:
+started `lib/effet-stream/` after V-S1..V-S10 settled:
 
 - `dune-project` now has an `effet-stream` package stanza.
-- `packages/effet-stream/dune` defines public library `effet-stream`.
-- `packages/effet-stream/effet_stream.mli` mirrors the selected public shape.
-- `packages/effet-stream/effet_stream.ml` implements the sequential skeleton:
+- `lib/effet-stream/dune` defines public library `effet-stream`.
+- `lib/effet-stream/effet_stream.mli` mirrors the selected public shape.
+- `lib/effet-stream/effet_stream.ml` implements the sequential skeleton:
   constructors, `map`, `map_effect`, `filter`, `take`, `drop`, `scan`,
   `concat`, sequential `flat_map`, `Sink`, and runners.
 
@@ -3138,7 +3138,7 @@ Known skeleton gaps:
 Validation:
 
 ```text
-nix develop -c dune build packages/effet-stream/ scratch/stream_research/
+nix develop -c dune build lib/effet-stream/ scratch/stream_research/
 nix develop -c dune exec scratch/stream_research/runtime_smoke.exe
 ```
 
@@ -3329,8 +3329,8 @@ toward "build a small `Effet.Decode`, skip Schema entirely", but that was a
 prose conclusion. This entry reruns the question lab-first, with H-S0 through
 H-S5 treated as real candidates.
 
-The scope is research only. No code in `packages/effet/` or
-`packages/effet-otel/` was touched.
+The scope is research only. No code in `lib/effet/` or
+`lib/effet-otel/` was touched.
 
 ### Goal
 
@@ -3596,7 +3596,7 @@ how to map external decoder errors into `Effect.fail (`Decode issues)`.
 #### V-Schema7 — Package placement if this is reopened
 
 If a real Effet artifact is demanded later, it should be a companion package,
-not `packages/effet/`: `effet-codec` or `effet-decode`. Start from H-S5, not
+not `lib/effet/`: `effet-codec` or `effet-decode`. Start from H-S5, not
 H-S1 or H-S3. Acceptance for reopening: one real application needs effectful
 decode with env-row services and Cause integration across multiple codecs, and
 existing libraries cannot supply it with a small adapter.
@@ -3650,7 +3650,7 @@ H-S0: no Effet package work now.
 
 ### What we are deliberately not building
 
-- No `packages/effet-schema/` or `packages/effet-decode/`.
+- No `lib/effet-schema/` or `lib/effet-decode/`.
 - No production JSON Schema generator, arbitrary generator, or equivalence
   derivation.
 - No dependency on Yojson, Base, data-encoding, atdgen, or repr in Effet core.
@@ -3839,7 +3839,7 @@ without TypeScript-style intersection machinery.
 
 #### V-Schema11 — Build a companion package, not core Effet
 
-The implementation target is `packages/effet-schema/`, not `packages/effet/`.
+The implementation target is `lib/effet-schema/`, not `lib/effet/`.
 Effet core should stay the effect runtime. `effet-schema` depends on Effet and
 uses `Effect.t` for decode results, but schema should not add new constructors
 to `Effect.t` or a second failure model.
@@ -3923,7 +3923,7 @@ V-Schema8..V-Schema14, and avoid adding schema machinery to Effet core.
 
 ### Implemented shape
 
-The package lives under `packages/effet-schema/` with public library
+The package lives under `lib/effet-schema/` with public library
 `effet-schema` / module `Effet_schema`. It follows V-Schema9 and
 V-Schema11:
 
@@ -3947,20 +3947,20 @@ and schemas built from `Schema.transform`.
 
 ### Files added
 
-- `packages/effet-schema/dune`
-- `packages/effet-schema/effet_schema.mli`
-- `packages/effet-schema/effet_schema.ml`
-- `packages/effet-schema/README.md`
-- `packages/effet-schema/test/dune`
-- `packages/effet-schema/test/run.ml`
+- `lib/effet-schema/dune`
+- `lib/effet-schema/effet_schema.mli`
+- `lib/effet-schema/effet_schema.ml`
+- `lib/effet-schema/README.md`
+- `lib/effet-schema/test/dune`
+- `lib/effet-schema/test/run.ml`
 - `effet-schema.opam`
 
 `dune-project` now declares the `effet-schema` package. No files under
-`packages/effet/` or `packages/effet-otel/` were intentionally changed.
+`lib/effet/` or `lib/effet-otel/` were intentionally changed.
 
 ### Test fixture implemented
 
-`packages/effet-schema/test/run.ml` ports the second-pass migration fixture to
+`lib/effet-schema/test/run.ml` ports the second-pass migration fixture to
 the public package API:
 
 - nominal `User_id.t`, `Email.t`, and `Flag_key.t` private string types;
@@ -3982,15 +3982,15 @@ The implementation and interface type-check against the already-built Effet
 interfaces:
 
 ```text
-ocamlc -I _build/default/packages/effet/.effet.objs/byte \
-  -I _build/default/packages/effet \
-  -c packages/effet-schema/effet_schema.mli \
+ocamlc -I _build/default/lib/effet/.effet.objs/byte \
+  -I _build/default/lib/effet \
+  -c lib/effet-schema/effet_schema.mli \
   -o /tmp/effet_schema.cmi
 
 ocamlc -I /tmp \
-  -I _build/default/packages/effet/.effet.objs/byte \
-  -I _build/default/packages/effet \
-  -c packages/effet-schema/effet_schema.ml \
+  -I _build/default/lib/effet/.effet.objs/byte \
+  -I _build/default/lib/effet \
+  -c lib/effet-schema/effet_schema.ml \
   -o /tmp/effet_schema.cmo
 ```
 
@@ -4000,9 +4000,9 @@ The public-package migration test also type-checks against the new API:
 
 ```text
 ocamlc -I /tmp \
-  -I _build/default/packages/effet/.effet.objs/byte \
-  -I _build/default/packages/effet \
-  -c packages/effet-schema/test/run.ml \
+  -I _build/default/lib/effet/.effet.objs/byte \
+  -I _build/default/lib/effet \
+  -c lib/effet-schema/test/run.ml \
   -o /tmp/effet_schema_test.cmo
 ```
 
@@ -4012,14 +4012,14 @@ Full Dune verification was blocked by the local shell environment, not by a
 schema compile error:
 
 ```text
-_opam/bin/dune build packages/effet-schema @runtest
+_opam/bin/dune build lib/effet-schema @runtest
 Error: Library "eio" not found.
 Error: Library "eio_main" not found.
 Error: Library "alcotest" not found.
 Error: Library "ppxlib" not found.
 ```
 
-`nix develop -c dune build packages/effet-schema` required daemon access; when
+`nix develop -c dune build lib/effet-schema` required daemon access; when
 run with approval, it produced no compiler output for more than a minute and
 was terminated rather than treated as a successful verification.
 
@@ -4265,7 +4265,7 @@ Concrete direction:
   advanced module rather than teaching it first.
 
 Implementation follow-up: this recommendation was materialized immediately in
-`packages/effet-schema/`. The public `Brand` module and `Schema.brand` were
+`lib/effet-schema/`. The public `Brand` module and `Schema.brand` were
 removed, the package fixture now uses `User_id`, `Email`, and `Flag_key`
 modules with `type t = private string`, and README examples teach
 `Schema.transform` as the nominality primitive. The rejected public-brand
@@ -4523,7 +4523,7 @@ hiding ownership.
 
 ### What we are deliberately not building in this entry
 
-- No production `packages/effet/supervisor.ml` yet.
+- No production `lib/effet/supervisor.ml` yet.
 - No rewrite of `Resource.auto` yet.
 - No restart-tree API yet.
 - No public raw `Fiber.t`.
@@ -4542,7 +4542,7 @@ The approved recommendation was materialized in the live Effet package.
 
 Changed surface:
 
-- Added `packages/effet/supervisor.{ml,mli}`.
+- Added `lib/effet/supervisor.{ml,mli}`.
 - Added `Supervisor.scoped` with rank-2 body record.
 - Added `Supervisor.Scope` operations: `pure`, `lift`, `fail`, `bind`,
   `start`, `await`, `cancel`, `failures`, `check`, and `yield`.
@@ -4757,7 +4757,7 @@ runtime-internal defects until a concrete diagnostics surface is designed.
 
 Implementation update:
 
-- `packages/effet/effect.mli` now exposes `type ('env, 'err, 'a) t` abstractly.
+- `lib/effet/effect.mli` now exposes `type ('env, 'err, 'a) t` abstractly.
 - `Effect.Private.view` gives `Runtime` the interpreter-facing AST view.
 - `Effect.Private.daemon` is the internal runtime-owned background primitive.
 - `Resource.auto` uses `Effect.Private.daemon` instead of public `Effect.detach`.
@@ -4987,7 +4987,7 @@ Follow-up implementation should update:
 - `run_finalizers`, `Acquire_release`, `Scoped`, and supervisor child
   cleanup to report `Suppressed` instead of swallowing release failures;
 - tracer status rendering and exception event flattening to preserve role/path;
-- `packages/effet-otel` tests if they assert exception flattening.
+- `lib/effet-otel` tests if they assert exception flattening.
 
 ### Recommendation
 
@@ -4998,8 +4998,8 @@ scoped finalizers, supervision, concurrent operators, and trace diagnostics.
 
 ### What we are deliberately not doing in this entry
 
-- No production `packages/effet/` change yet.
-- No `packages/effet-otel/` change yet.
+- No production `lib/effet/` change yet.
+- No `lib/effet-otel/` change yet.
 - No attempt to reproduce the whole Effect-smol Cause API. Effet needs the
   capability, not the TS surface.
 - No restart/supervision policy change. Supervision remains a consumer of
@@ -5188,7 +5188,7 @@ Delete Effect.provide as unearned. Keep the object-row env channel from V-R10, b
 ### What we are deliberately not doing in this entry
 
 - No production deletion yet.
-- No change to packages/effet in this research pass.
+- No change to lib/effet in this research pass.
 - No Layer revival. The lab strengthens the no-Layer decision rather than weakening it.
 
 ### Implementation follow-up - 2026-05-20
@@ -6244,8 +6244,8 @@ Lab: scratch/ppx_env_research/
 
 Production implementation:
 
-- packages/ppx_effet/ppx_effet.ml
-- packages/ppx_effet/test/test_ppx_effet.ml
+- lib/ppx_effet/ppx_effet.ml
+- lib/ppx_effet/test/test_ppx_effet.ml
 - README.md
 - docs/services.md
 
@@ -6598,12 +6598,12 @@ propagation context; otherwise it returns the ambient context installed by
 
 Implemented:
 
-- `packages/effet/trace_context.{ml,mli}`
+- `lib/effet/trace_context.{ml,mli}`
 - `Capabilities.trace_context` and widened `span_info`
 - `Effect.with_context` and `Effect.current_context`
 - Runtime fiber-local propagation of full context and sampled flag
 - `effet-otel` tracer storage/export of trace flags, tracestate, and baggage
-- README and `packages/effet-otel/README.md` propagation docs
+- README and `lib/effet-otel/README.md` propagation docs
 
 Verification:
 
@@ -6653,8 +6653,8 @@ axes raised by the reviews:
 
 Current code:
 
-- packages/effet-otel/effet_otel.ml: 710 LOC.
-- packages/effet-otel/effet_otel.mli: 65 LOC.
+- lib/effet-otel/effet_otel.ml: 710 LOC.
+- lib/effet-otel/effet_otel.mli: 65 LOC.
 - Current package direct dependencies in dune-project: effet, eio, eio_main,
   yojson, and alcotest for tests.
 
@@ -6742,8 +6742,8 @@ but it is a large increase for a small companion exporter.
 Current implementation:
 
 ~~~text
-710 packages/effet-otel/effet_otel.ml
- 65 packages/effet-otel/effet_otel.mli
+710 lib/effet-otel/effet_otel.ml
+ 65 lib/effet-otel/effet_otel.mli
 ~~~
 
 The scratch adapter model is only 73 LOC, but that is not a real adapter. A real
@@ -6930,15 +6930,15 @@ Scratch model LOC:
 Relevant live-code LOC:
 
 ~~~text
- 32 packages/effet/logger.ml
- 27 packages/effet/logger.mli
- 35 packages/effet/meter.ml
- 27 packages/effet/meter.mli
-360 packages/effet/effect.ml
-349 packages/effet/effect.mli
-773 packages/effet/runtime.ml
-155 packages/effet-otel/test/test_logger.ml
-240 packages/effet-otel/test/test_metrics.ml
+ 32 lib/effet/logger.ml
+ 27 lib/effet/logger.mli
+ 35 lib/effet/meter.ml
+ 27 lib/effet/meter.mli
+360 lib/effet/effect.ml
+349 lib/effet/effect.mli
+773 lib/effet/runtime.ml
+155 lib/effet-otel/test/test_logger.ml
+240 lib/effet-otel/test/test_metrics.ml
 ~~~
 
 Logs is available in the current Nix shell. No metrics or prometheus package is
@@ -6975,8 +6975,8 @@ isolation costs that Runtime.create ?logger avoids.
 ### Test equivalence
 
 The scratch fixtures pass with identical correlation assertions. The existing
-ports in packages/effet-otel/test/test_logger.ml and
-packages/effet-otel/test/test_metrics.ml would not pass unchanged because they
+ports in lib/effet-otel/test/test_logger.ml and
+lib/effet-otel/test/test_metrics.ml would not pass unchanged because they
 intentionally exercise Effect.log and Effect.metric_update. Branch B would
 require test-body rewrites to Logs.info and registry calls.
 
@@ -7025,7 +7025,7 @@ library.
 
 #### V-LMv5 - No live code changes required
 
-Decision: no packages/ implementation changes are made for this task.
+Decision: no lib/ implementation changes are made for this task.
 
 Rationale: the lab rejects the deletion hypothesis. The only durable artifact
 needed is this journal entry plus the scratch lab. V-O10/V-O11 survive with a
@@ -7089,12 +7089,12 @@ stream.
 
 ### Tests
 
-New package tests live in `packages/effet-stream/test/test_effet_stream.ml`.
+New package tests live in `lib/effet-stream/test/test_effet_stream.ml`.
 
 Focused command:
 
 ~~~sh
-nix develop -c dune runtest packages/effet-stream --force
+nix develop -c dune runtest lib/effet-stream --force
 ~~~
 
 Result:
@@ -7186,11 +7186,11 @@ pipeline to the expected object-row env and polymorphic-variant error row.
 
 ### Artifacts
 
-- packages/effet-stream/effet_stream.ml
-- packages/effet-stream/effet_stream.mli
-- packages/effet-stream/README.md
-- packages/effet-stream/test/dune
-- packages/effet-stream/test/test_effet_stream.ml
+- lib/effet-stream/effet_stream.ml
+- lib/effet-stream/effet_stream.mli
+- lib/effet-stream/README.md
+- lib/effet-stream/test/dune
+- lib/effet-stream/test/test_effet_stream.ml
 
 ## V-Rs - Resource module survival lab
 
@@ -7211,7 +7211,7 @@ failures as Cause.t values.
 
 Compare two branches against the existing Resource behavioral slice:
 
-- Branch A: keep packages/effet/resource.ml as today.
+- Branch A: keep lib/effet/resource.ml as today.
 - Branch B: implement the cached-loader recipe directly with Atomic.t and
   Effect primitives.
 
@@ -7248,8 +7248,8 @@ resource_survival runtime smoke passed
 ### LOC and shape comparison
 
 ~~~text
- 47 packages/effet/resource.ml
- 27 packages/effet/resource.mli
+ 47 lib/effet/resource.ml
+ 27 lib/effet/resource.mli
   9 scratch/resource_survival/branch_a_resource.ml
  61 scratch/resource_survival/branch_b_atomic.ml
 127 scratch/resource_survival/runtime_smoke.ml
@@ -7321,7 +7321,7 @@ match auto-refresh by calling Effect.Private.daemon. That primitive exists so
 packages can own runtime-daemon behavior without restoring public detach.
 
 Rationale: branch_b_atomic.ml line using Effect.Private.daemon is the same
-lifecycle dependency as packages/effet/resource.ml. Removing Resource would
+lifecycle dependency as lib/effet/resource.ml. Removing Resource would
 push users toward Private or raw Eio fibers for the exact behavior Effet already
 centralizes.
 
@@ -7346,7 +7346,7 @@ detach deletion work.
 
 #### V-Rsv5 - No live implementation change
 
-Decision: no packages/ code change is required from this survival lab.
+Decision: no lib/ code change is required from this survival lab.
 
 Rationale: Resource survives. The Atomic.t replacement did not expose a better
 implementation target for today's documented runtime model. The existing test
@@ -7400,7 +7400,7 @@ errors still surface through Effet's `Cause.Die` path.
 Focused command:
 
 ~~~sh
-nix develop -c dune runtest packages/effet-stream --force
+nix develop -c dune runtest lib/effet-stream --force
 ~~~
 
 Result:
@@ -7479,10 +7479,10 @@ missing-path fixture verifies it.
 
 ### Artifacts
 
-- packages/effet-stream/effet_stream.ml
-- packages/effet-stream/effet_stream.mli
-- packages/effet-stream/README.md
-- packages/effet-stream/test/test_effet_stream.ml
+- lib/effet-stream/effet_stream.ml
+- lib/effet-stream/effet_stream.mli
+- lib/effet-stream/README.md
+- lib/effet-stream/test/test_effet_stream.ml
 - dune-project
 - effet-stream.opam
 
@@ -7604,7 +7604,7 @@ Runtime behavior:
 Focused command:
 
 ~~~sh
-nix develop -c dune runtest packages/effet-stream --force
+nix develop -c dune runtest lib/effet-stream --force
 ~~~
 
 Result:
@@ -7947,10 +7947,10 @@ Rationale: Dune's stored `.pp.ml` artifact is not a stable text golden in this s
 Focused commands run during this pass:
 
 ~~~sh
-nix develop -c dune build packages/effet packages/effet-stream packages/effet-schema packages/effet-otel packages/ppx_effet scratch/ppx_survival scratch/duration_survival
+nix develop -c dune build lib/effet lib/effet-stream lib/effet-schema lib/effet-otel lib/ppx_effet scratch/ppx_survival scratch/duration_survival
 nix develop -c dune exec scratch/duration_survival/runtime_smoke.exe
 nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
-nix develop -c dune runtest packages/ppx_effet --force
+nix develop -c dune runtest lib/ppx_effet --force
 nix develop -c env PPX_SURVIVAL_NEG=async_removed dune build scratch/ppx_survival/neg_async_removed.exe
 ~~~
 
@@ -7967,7 +7967,7 @@ The purpose is regression coverage and semantic evidence for later runtime work.
 
 ### Artifacts
 
-All tests were added to `packages/effet/test/test_effet.ml`.
+All tests were added to `lib/effet/test/test_effet.ml`.
 
 New failure-baseline tests:
 
@@ -8023,8 +8023,8 @@ Rationale: nested masking, blocking protected finalizers, timeout inside protect
 Focused commands run during this pass:
 
 ~~~sh
-nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 29-34 --show-errors
-nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 40-44 --show-errors
+nix develop -c dune exec lib/effet/test/test_effet.exe -- test Effect 29-34 --show-errors
+nix develop -c dune exec lib/effet/test/test_effet.exe -- test Effect 40-44 --show-errors
 nix develop -c dune runtest --force
 ~~~
 
@@ -8078,7 +8078,7 @@ New focused fixtures:
   effect preserves diagnostics on both the primary `Die` and suppressed finalizer `Die`.
 - `auto instrument failure status`: an auto-instrumented failing thunk span now records
   an exception event with `exception.stacktrace`.
-- `exception stacktrace` in `packages/effet-otel/test/run.ml`: OTLP/JSON export contains
+- `exception stacktrace` in `lib/effet-otel/test/run.ml`: OTLP/JSON export contains
   an exception event with an `exception.stacktrace` attribute and propagated Effet
   annotation attributes.
 
@@ -8190,10 +8190,10 @@ val Runtime.create : ... -> ?capture_backtrace:bool -> ...
 Focused commands run during this pass:
 
 ~~~sh
-nix develop -c dune build packages/effet packages/effet-otel
-nix develop -c dune exec packages/effet/test/test_effet.exe -- test Effect 19-24 --show-errors
-nix develop -c dune exec packages/effet/test/test_effet.exe -- test Observability 23 --show-errors
-nix develop -c dune exec packages/effet-otel/test/run.exe -- test encoder --show-errors
+nix develop -c dune build lib/effet lib/effet-otel
+nix develop -c dune exec lib/effet/test/test_effet.exe -- test Effect 19-24 --show-errors
+nix develop -c dune exec lib/effet/test/test_effet.exe -- test Observability 23 --show-errors
+nix develop -c dune exec lib/effet-otel/test/run.exe -- test encoder --show-errors
 nix develop -c dune runtest --force
 ~~~
 
@@ -8413,7 +8413,7 @@ promote focused protocols when they earn ownership, and keep local coordination 
 
 ### What we deliberately did not build
 
-- No packages/effet Queue/Deferred/PubSub/Latch modules.
+- No lib/effet Queue/Deferred/PubSub/Latch modules.
 - No effet-concurrent package.
 - No new runtime primitive.
 - No new scheduler/cancellation model around Eio data structures.
@@ -8607,7 +8607,7 @@ The backlog suggested QCheck or qcheck-alcotest. The pinned test environment doe
 not currently provide QCheck, and the law surface that matters here is small
 enough to cover with deterministic finite enumeration under Alcotest. I therefore
 did not add a new dependency for this slice. The new tests live in
-packages/effet/test/test_effet.ml under the Alcotest group named Properties.
+lib/effet/test/test_effet.ml under the Alcotest group named Properties.
 
 The fixture enumerates small deterministic effects over a fixed environment:
 
@@ -8721,7 +8721,7 @@ public resource-safety invariant and is now machine-checked.
 Focused:
 
 ~~~sh
-nix develop -c dune exec packages/effet/test/test_effet.exe -- test Properties --show-errors
+nix develop -c dune exec lib/effet/test/test_effet.exe -- test Properties --show-errors
 ~~~
 
 Full:
@@ -8736,7 +8736,7 @@ passed.
 
 ### Artifacts
 
-- packages/effet/test/test_effet.ml
+- lib/effet/test/test_effet.ml
 - .backlog/Effet-dmo.md
 
 ## V-O8r - Typed failure rendering without unsafe Obj printers
@@ -8802,9 +8802,9 @@ an effect with an existentially different error type, it falls back to
 ### Verification
 
 ~~~sh
-nix develop -c dune build packages/effet packages/effet-otel packages/effet/test packages/effet-otel/test
-OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet packages/effet-otel
-nix develop -c dune runtest packages/effet packages/effet-otel --force
+nix develop -c dune build lib/effet lib/effet-otel lib/effet/test lib/effet-otel/test
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build lib/effet lib/effet-otel
+nix develop -c dune runtest lib/effet lib/effet-otel --force
 ~~~
 
 Result: package build passed, strict-formats package build passed, and the
@@ -8821,13 +8821,13 @@ this change.
 
 ### Artifacts
 
-- packages/effet/effect.ml
-- packages/effet/effect.mli
-- packages/effet/runtime.ml
-- packages/effet/runtime.mli
-- packages/effet/test/test_effet.ml
+- lib/effet/effect.ml
+- lib/effet/effect.mli
+- lib/effet/runtime.ml
+- lib/effet/runtime.mli
+- lib/effet/test/test_effet.ml
 - README.md
-- packages/effet-otel/README.md
+- lib/effet-otel/README.md
 
 ## V-O9 - Obj.t boundary audit
 
@@ -8841,14 +8841,14 @@ extension point.
 
 | Location | Use | Classification | Boundary proof |
 |---|---|---|---|
-| `packages/effet/runtime.ml:5-8` | `Raised_cause of int * Obj.t` | Internal existential failure transport | Exception is private to `runtime.ml`; payload is paired with a fresh `Typed_fail.key`. |
-| `packages/effet/runtime.ml:47` | `Obj.repr cause` | Internal existential failure transport | Packed only by `raise_cause` with the active interpreter key. |
-| `packages/effet/runtime.ml:65` | `Obj.obj cause` | Internal existential failure transport | Unpacked only when `Raised_cause` key equals the current frame key. |
-| `packages/effet/runtime.ml:286` | `Obj.obj cause` in `catch` | Internal existential failure transport | Inner catch frame creates a fresh key; handler failures use the outer key and are not recaught by the inner frame. |
-| `packages/effet/runtime.ml:300` | `Obj.obj cause` in `tap_error` | Internal existential failure transport | Same-key unpack to observe and rethrow the original typed failure. |
-| `packages/effet/runtime.ml:330-343` | `Obj.t`, `Obj.repr`, `Obj.obj` in `par` | Internal heterogeneous success transport | The homogeneous task list packs each child result and immediately unpacks the two fixed slots into the typed pair. |
-| `packages/effet/runtime.ml:749-756` | `Obj.repr`, `Obj.obj` in `race` | Internal local-success transport | The local `Race_won` exception cannot carry existential `'a`; `winner` is local to the frame and unpacked before returning. |
-| `packages/effet/runtime.ml:858` | `Obj.obj cause` in `retry` | Internal existential failure transport | Attempt frame uses a fresh key; only matching attempt failures are inspected for retry policy. |
+| `lib/effet/runtime.ml:5-8` | `Raised_cause of int * Obj.t` | Internal existential failure transport | Exception is private to `runtime.ml`; payload is paired with a fresh `Typed_fail.key`. |
+| `lib/effet/runtime.ml:47` | `Obj.repr cause` | Internal existential failure transport | Packed only by `raise_cause` with the active interpreter key. |
+| `lib/effet/runtime.ml:65` | `Obj.obj cause` | Internal existential failure transport | Unpacked only when `Raised_cause` key equals the current frame key. |
+| `lib/effet/runtime.ml:286` | `Obj.obj cause` in `catch` | Internal existential failure transport | Inner catch frame creates a fresh key; handler failures use the outer key and are not recaught by the inner frame. |
+| `lib/effet/runtime.ml:300` | `Obj.obj cause` in `tap_error` | Internal existential failure transport | Same-key unpack to observe and rethrow the original typed failure. |
+| `lib/effet/runtime.ml:330-343` | `Obj.t`, `Obj.repr`, `Obj.obj` in `par` | Internal heterogeneous success transport | The homogeneous task list packs each child result and immediately unpacks the two fixed slots into the typed pair. |
+| `lib/effet/runtime.ml:749-756` | `Obj.repr`, `Obj.obj` in `race` | Internal local-success transport | The local `Race_won` exception cannot carry existential `'a`; `winner` is local to the frame and unpacked before returning. |
+| `lib/effet/runtime.ml:858` | `Obj.obj cause` in `retry` | Internal existential failure transport | Attempt frame uses a fresh key; only matching attempt failures are inspected for retry policy. |
 | `scratch/fiber_research/*.ml` | `Obj.t`, `Obj.magic`, `Obj.repr`, `Obj.obj` | Scratch research only | Files are outside published packages and are not part of the library API. |
 | Historical `journal.md` notes | `Obj.t`, `Obj.repr`, `Obj.magic` | Historical record | These lines describe prior rejected or superseded designs. |
 
@@ -8902,15 +8902,15 @@ Commands run:
 
 ~~~sh
 rg -n "\\bObj\\.(t|repr|obj)\\b|\\bObj\\." packages --glob '*.mli'
-nix develop -c dune build packages/effet packages/effet/test
-nix develop -c dune runtest packages/effet --force
-nix develop -c dune build packages/effet packages/effet-otel packages/effet/test packages/effet-otel/test
-nix develop -c dune runtest packages/effet packages/effet-otel --force
+nix develop -c dune build lib/effet lib/effet/test
+nix develop -c dune runtest lib/effet --force
+nix develop -c dune build lib/effet lib/effet-otel lib/effet/test lib/effet-otel/test
+nix develop -c dune runtest lib/effet lib/effet-otel --force
 ~~~
 
 Result: public interface search returned no matches. The focused package build
-passed, the broader shipped-package build passed, `packages/effet` tests passed
-with 105 tests run, and `packages/effet-otel` tests passed with 20 tests run.
+passed, the broader shipped-package build passed, `lib/effet` tests passed
+with 105 tests run, and `lib/effet-otel` tests passed with 20 tests run.
 
 ## V-Schema-P2 - Schema cleanup and survival decisions
 
@@ -8987,12 +8987,12 @@ test generated output with an external validator.
 Commands run so far:
 
 ~~~sh
-nix develop -c dune build packages/effet-schema packages/effet-schema/test
-nix develop -c dune runtest packages/effet-schema --force
-OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet-schema packages/effet-schema/test
-nix develop -c dune build packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet packages/effet/test packages/effet-otel/test packages/effet-schema/test packages/effet-stream/test packages/ppx_effet/test
-nix develop -c dune runtest packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet --force
-rg -n "val json_schema|val samples|json_schema :|samples :|\\?samples|Stdlib\\.\\( = \\)" packages/effet-schema --glob '*.ml' --glob '*.mli'
+nix develop -c dune build lib/effet-schema lib/effet-schema/test
+nix develop -c dune runtest lib/effet-schema --force
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build lib/effet-schema lib/effet-schema/test
+nix develop -c dune build lib/effet lib/effet-otel lib/effet-schema lib/effet-stream lib/ppx_effet lib/effet/test lib/effet-otel/test lib/effet-schema/test lib/effet-stream/test lib/ppx_effet/test
+nix develop -c dune runtest lib/effet lib/effet-otel lib/effet-schema lib/effet-stream lib/ppx_effet --force
+rg -n "val json_schema|val samples|json_schema :|samples :|\\?samples|Stdlib\\.\\( = \\)" lib/effet-schema --glob '*.ml' --glob '*.mli'
 ~~~
 
 Result: focused schema build/test passed, strict-formats schema build passed,
@@ -9060,11 +9060,11 @@ Focused tests added:
 Commands run so far:
 
 ~~~sh
-nix develop -c dune build packages/effet-schema packages/effet-schema/test
-nix develop -c dune runtest packages/effet-schema --force
-OCAMLPARAM='_,strict-formats=1' nix develop -c dune build packages/effet-schema packages/effet-schema/test
-nix develop -c dune build packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet packages/effet/test packages/effet-otel/test packages/effet-schema/test packages/effet-stream/test packages/ppx_effet/test
-nix develop -c dune runtest packages/effet packages/effet-otel packages/effet-schema packages/effet-stream packages/ppx_effet --force
+nix develop -c dune build lib/effet-schema lib/effet-schema/test
+nix develop -c dune runtest lib/effet-schema --force
+OCAMLPARAM='_,strict-formats=1' nix develop -c dune build lib/effet-schema lib/effet-schema/test
+nix develop -c dune build lib/effet lib/effet-otel lib/effet-schema lib/effet-stream lib/ppx_effet lib/effet/test lib/effet-otel/test lib/effet-schema/test lib/effet-stream/test lib/ppx_effet/test
+nix develop -c dune runtest lib/effet lib/effet-otel lib/effet-schema lib/effet-stream lib/ppx_effet --force
 ~~~
 
 Result: focused schema build/test passed, strict-formats schema build passed,
@@ -9815,9 +9815,9 @@ Question: can shipped `Cause.t` keep raw same-domain diagnostics while exposing 
 
 Artifacts:
 
-- `packages/effet/cause.ml`
-- `packages/effet/cause.mli`
-- `packages/effet/test/test_effet.ml`
+- `lib/effet/cause.ml`
+- `lib/effet/cause.mli`
+- `lib/effet/test/test_effet.ml`
 - `scratch/oxcaml_research/phase1_cause_portable_probe/portable_cause_parallel_positive.ml`
 - `scratch/oxcaml_research/phase1_cause_portable_probe/raw_cause_parallel_negative.ml`
 - `scratch/oxcaml_research/phase1_cause_portable_probe/portable_payload_ref_negative.ml`
@@ -9829,7 +9829,7 @@ Verification commands:
 
 Last result: `summary: pass=3 fail=0`.
 
-`nix develop .#oxcaml -c bash -lc 'dune runtest packages/effet --force'`
+`nix develop .#oxcaml -c bash -lc 'dune runtest lib/effet --force'`
 
 Last result: 106 Effet tests pass.
 
@@ -9867,14 +9867,14 @@ Question: can Effet's pure value surfaces carry explicit OxCaml kind annotations
 
 Artifacts:
 
-- `packages/effet/duration.ml{,i}`
-- `packages/effet/schedule.ml{,i}`
-- `packages/effet/trace_context.ml{,i}`
-- `packages/effet/sampler.ml{,i}`
-- `packages/effet/capabilities.ml{,i}`
-- `packages/effet/logger.ml{,i}`
-- `packages/effet/meter.ml{,i}`
-- `packages/effet/tracer.ml{,i}`
+- `lib/effet/duration.ml{,i}`
+- `lib/effet/schedule.ml{,i}`
+- `lib/effet/trace_context.ml{,i}`
+- `lib/effet/sampler.ml{,i}`
+- `lib/effet/capabilities.ml{,i}`
+- `lib/effet/logger.ml{,i}`
+- `lib/effet/meter.ml{,i}`
+- `lib/effet/tracer.ml{,i}`
 - `scratch/oxcaml_research/phase1_pure_data_probe/results/compile.out`
 
 Verification commands:
@@ -9922,8 +9922,8 @@ Question: can Phase 2 make finalizer execution and daemon accounting safer witho
 
 Artifacts:
 
-- `packages/effet/runtime.ml`
-- `packages/effet/dune`
+- `lib/effet/runtime.ml`
+- `lib/effet/dune`
 - `dune-project`
 - `effet.opam`
 - `scratch/oxcaml_research/phase2_once_finalizer_probe/results.md`
@@ -9978,10 +9978,10 @@ Question: can Phase 3 improve supervisor mutation safety without replacing the a
 
 Artifacts:
 
-- `packages/effet/effect.ml`
-- `packages/effet/effect.mli`
-- `packages/effet/runtime.ml`
-- `packages/effet/test/test_effet.ml`
+- `lib/effet/effect.ml`
+- `lib/effet/effect.mli`
+- `lib/effet/runtime.ml`
+- `lib/effet/test/test_effet.ml`
 - `scratch/oxcaml_research/supervisor_state_probe/results/compile.out`
 
 Verification commands:
@@ -9994,11 +9994,11 @@ Last result: `summary: pass=3 fail=0`.
 
 Last result: `summary: pass=8 fail=0`.
 
-`nix develop .#oxcaml -c bash -lc 'dune runtest packages/effet --force; echo EFFET_EXIT:$?'`
+`nix develop .#oxcaml -c bash -lc 'dune runtest lib/effet --force; echo EFFET_EXIT:$?'`
 
 Last result: `EFFET_EXIT:0`; 107 Effet tests pass.
 
-`nix develop .#oxcaml -c bash -lc 'set +e; dune build packages/effet >/tmp/phase3_build.log 2>&1; b=$?; dune runtest packages/effet --force >/tmp/phase3_effet.log 2>&1; t=$?; tail -8 /tmp/phase3_effet.log; echo BUILD_EXIT:$b TEST_EXIT:$t; test $b -eq 0 && test $t -eq 0'`
+`nix develop .#oxcaml -c bash -lc 'set +e; dune build lib/effet >/tmp/phase3_build.log 2>&1; b=$?; dune runtest lib/effet --force >/tmp/phase3_effet.log 2>&1; t=$?; tail -8 /tmp/phase3_effet.log; echo BUILD_EXIT:$b TEST_EXIT:$t; test $b -eq 0 && test $t -eq 0'`
 
 Last result: `BUILD_EXIT:0 TEST_EXIT:0`.
 
@@ -10085,7 +10085,7 @@ Deferred:
 
 Status: preparatory for Effet-OxCaml-7dp and Effet-OxCaml-675. No shipped Resource rewrite is included in this entry.
 
-Question: can `packages/effet/resource.ml` move from `ref`/mutable fields to `Portable.Atomic` before the Phase 4 `Effect.t` payload boundary is mode-aware?
+Question: can `lib/effet/resource.ml` move from `ref`/mutable fields to `Portable.Atomic` before the Phase 4 `Effect.t` payload boundary is mode-aware?
 
 Artifacts:
 
@@ -10105,9 +10105,9 @@ Last result: `summary: pass=3 fail=0`.
 Evidence:
 
 - `effet_resource_portable_probe.ml` proves the target state shape works in isolation: cached value and failure history can live in `Portable.Atomic.t`, and a two-domain Parallel smoke can update value/failure state over immutable payloads.
-- A direct shipped edit to `packages/effet/resource.ml` failed at `P_atomic.make (Some value)` because the current `Effect.map` callback argument is nonportable. The reduced `effect_map_payload_negative.ml` fixture preserves that compiler diagnostic.
+- A direct shipped edit to `lib/effet/resource.ml` failed at `P_atomic.make (Some value)` because the current `Effect.map` callback argument is nonportable. The reduced `effect_map_payload_negative.ml` fixture preserves that compiler diagnostic.
 - The same shipped edit also failed at existing tests using `[> \`Refresh_failed of string ]`; `open_variant_error_negative.ml` proves open polymorphic variants are not `immutable_data` and cannot be used directly as portable Resource failure payloads.
-- After reverting the direct shipped Resource edit, `nix develop .#oxcaml -c bash -lc 'dune build packages/effet 2>&1'` exits 0.
+- After reverting the direct shipped Resource edit, `nix develop .#oxcaml -c bash -lc 'dune build lib/effet 2>&1'` exits 0.
 - `nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped >/tmp/effet_shipped_gate_after_resource_probe.log 2>&1'` also exits 0 after the Resource probe updates.
 
 Decision diary:
@@ -10121,7 +10121,7 @@ Decision diary:
 
 Deferred:
 
-- After Phase 4, port `packages/effet/resource.ml` to `value : 'a option Portable.Atomic.t` and `failures : 'err Cause.t list Portable.Atomic.t` or to `Cause.Portable.t` failures if raw `Cause.t` remains same-domain.
+- After Phase 4, port `lib/effet/resource.ml` to `value : 'a option Portable.Atomic.t` and `failures : 'err Cause.t list Portable.Atomic.t` or to `Cause.Portable.t` failures if raw `Cause.t` remains same-domain.
 - Move the positive Resource probe into shipped tests once `Effect.t` and Resource signatures expose the required payload kinds.
 
 ## V-P10-Partial - Package metadata and default shell are OxCaml-first
@@ -10555,7 +10555,7 @@ constraints for Phase 6 and Phase 8.
 | --- | --- |
 | C1 | scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/results.md |
 | C2 | scratch/oxcaml_research/concurrency_model/h3_caveats/c2_phase8/scope.md |
-| C3 | packages/effet/supervisor.mli and scratch/oxcaml_research/concurrency_model/h3_caveats/c3_supervisor_order/results.md |
+| C3 | lib/effet/supervisor.mli and scratch/oxcaml_research/concurrency_model/h3_caveats/c3_supervisor_order/results.md |
 | C4 | scratch/oxcaml_research/concurrency_model/h3_caveats/c4_timeout_slo/slo.md |
 | C5 | .github/workflows/h3-hardening.yml and .github/pull_request_template.md |
 | C6 | scratch/oxcaml_research/concurrency_model/h3_caveats/c6_h4_reopen/telemetry.md |
@@ -10565,8 +10565,8 @@ constraints for Phase 6 and Phase 8.
 
 - C1 random probe: summary pass=7 fail=0.
 - C3 supervisor-order probe: summary pass=1 fail=0.
-- Core scheduling grep: no Random.* in packages/effet/schedule.ml,
-  packages/effet/runtime.ml, or packages/effet/capabilities.ml.
+- Core scheduling grep: no Random.* in lib/effet/schedule.ml,
+  lib/effet/runtime.ml, or lib/effet/capabilities.ml.
 - Full H3 hardening gate:
   nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh,
   T1-T9 all pass with fail=0.
@@ -10925,7 +10925,7 @@ Artifacts:
 
 | Fixture | Result |
 | --- | --- |
-| packages/effet/portable_queue.ml and packages/effet/portable_queue.mli | Shipped Effet-owned bounded MPSC FIFO with try_push, try_take, close, and Full/Closed backpressure. |
+| lib/effet/portable_queue.ml and lib/effet/portable_queue.mli | Shipped Effet-owned bounded MPSC FIFO with try_push, try_take, close, and Full/Closed backpressure. |
 | scratch/oxcaml_research/recovery/r3_online_queue/mpsc_queue_positive.ml | Exercised Effet.Portable_queue across Parallel_scheduler with 3 producers, 1 consumer, capacity 32, total=1500, sum=300374250. |
 | scratch/oxcaml_research/recovery/r3_online_queue/h3_batch_inbox_online_negative.ml | Proved batch inbox online_push_take=false and drain_requires_close=true. |
 | scratch/oxcaml_research/recovery/r3_online_queue/primitive_survey.md | Records the local primitive survey. |
@@ -10969,7 +10969,7 @@ Stage B implementation remains open.
 
 ### Gap Audit
 
-The GPT Pro audit was correct: the current packages/ runtime is still the
+The GPT Pro audit was correct: the current lib/ runtime is still the
 same-domain Eio interpreter plus useful portable data-boundary work. It is not
 the H3 runtime. H3 recovery must build a fresh portable core and runtime path
 instead of mutating Runtime.run into cross-domain execution.
@@ -11259,10 +11259,10 @@ tests are the active verdict.
 
 Compiler-facing migration:
 
-- `packages/effet/effect.ml/.mli`: `('env, 'err, 'a) t` became
+- `lib/effet/effect.ml/.mli`: `('env, 'err, 'a) t` became
   `('a, 'err) t`; `Thunk` now stores `unit -> 'a`; supervisor scope/body types
   were reordered and made envless.
-- `packages/effet/runtime.ml/.mli`: runtime type became `'err Runtime.t`; the
+- `lib/effet/runtime.ml/.mli`: runtime type became `'err Runtime.t`; the
   stored `env` field and `Runtime.create ~env` were removed; interpreter
   helpers no longer thread env through `interpret`, `race`, `par_collect`,
   daemon, repeat, retry, or supervisor scopes.
@@ -11284,7 +11284,7 @@ Result: no matches in shipped packages or README.
 Gate:
 
 ```sh
-nix develop -c dune runtest packages/effet packages/effet-stream packages/effet-schema packages/effet-otel packages/ppx_effet --force
+nix develop -c dune runtest lib/effet lib/effet-stream lib/effet-schema lib/effet-otel lib/ppx_effet --force
 ```
 
 Result:
@@ -11394,22 +11394,22 @@ and intentionally not raw `Cause.t`.
 
 Implemented files:
 
-- `packages/effet/effect.ml/.mli`: island constructors, public API, pool wrapper,
+- `lib/effet/effect.ml/.mli`: island constructors, public API, pool wrapper,
   portable callback constraints, immutable input/output/error constraints,
   ordered batch execution.
-- `packages/effet/runtime.ml/.mli`: runtime-owned `?island_pool`, per-run
+- `lib/effet/runtime.ml/.mli`: runtime-owned `?island_pool`, per-run
   override, no-pool defect, auto-instrumented island leaves.
-- `packages/effet/dune`: explicit `parallel` and `parallel.scheduler` libraries.
-- `packages/effet/test/test_effet.ml`: single island, missing-pool, run override,
+- `lib/effet/dune`: explicit `parallel` and `parallel.scheduler` libraries.
+- `lib/effet/test/test_effet.ml`: single island, missing-pool, run override,
   order preservation, `map_result`, `all_settled`, worker crash, and three
   workload fixtures.
-- `packages/effet/test/island_negative/*`: compile-fail fixtures for ref capture,
+- `lib/effet/test/island_negative/*`: compile-fail fixtures for ref capture,
   Eio stream capture, runtime capture, logger capture, and raw `Cause.t` capture.
 
 Gate:
 
 ```sh
-nix develop -c dune runtest packages/effet --force
+nix develop -c dune runtest lib/effet --force
 ```
 
 Result: 118 Alcotest cases passed, and the negative island compile-fail rule
@@ -11561,7 +11561,7 @@ val Effect.Blocking.submit :
   ('a, 'err) Effect.t
 ```
 
-Public pool surface is in `packages/effet/effect.mli`:
+Public pool surface is in `lib/effet/effect.mli`:
 
 - `Effect.Blocking.Pool.t`: line 149.
 - `queue_policy = Wait | Reject`: line 151.
@@ -11575,7 +11575,7 @@ Public pool surface is in `packages/effet/effect.mli`:
 - `Effect.blocking`: lines 248-281.
 
 `Runtime.create` and `Runtime.run` accept `?blocking_pool` overrides in
-`packages/effet/runtime.mli` lines 15-17 and 37-44. If omitted, the runtime
+`lib/effet/runtime.mli` lines 15-17 and 37-44. If omitted, the runtime
 lazily creates a default pool.
 
 ### Phase 1 Substrate
@@ -11681,7 +11681,7 @@ nested `Runtime.run` from inside a worker callback.
 ### Gate State
 
 All 15 V-Blocking-Impl gate items are covered by
-`packages/effet/test/test_effet.ml`, registered under the `Blocking` group at
+`lib/effet/test/test_effet.ml`, registered under the `Blocking` group at
 lines 2992-3023.
 
 | Gate | Test |
@@ -11705,7 +11705,7 @@ lines 2992-3023.
 Gate command:
 
 ```sh
-nix develop -c dune runtest packages/effet --force
+nix develop -c dune runtest lib/effet --force
 ```
 
 Result: 133 Alcotest cases passed, including 15 Blocking cases. The existing
@@ -11737,7 +11737,7 @@ the project wants that API polish.
 
 ### Consequences
 
-The V-Blocking-A research expectation is now implemented in `packages/effet`.
+The V-Blocking-A research expectation is now implemented in `lib/effet`.
 This does not change the island API from Effet-OxCaml-p1x and does not imply
 portable `Resource`, `Supervisor`, `Stream`, OTel, or `Cause` behavior.
 
@@ -11764,12 +11764,12 @@ excluding it from verification.
 
 ### Implementation
 
-- `packages/eta-stream` now exposes `Mailbox.create`, `Mailbox.offer`,
+- `lib/eta-stream` now exposes `Mailbox.create`, `Mailbox.offer`,
   `Mailbox.close`, `Mailbox.dropped`, `Mailbox.to_stream`, and
   `Mailbox.to_batch_stream`.
 - `Stream.grouped` covers finite upstream grouping; `Mailbox.to_batch_stream`
   covers online exporter batches that must flush partial batches.
-- `packages/eta-otel` now consumes bounded mailboxes with Eta streams and one
+- `lib/eta-otel` now consumes bounded mailboxes with Eta streams and one
   Eta runtime daemon. Typed per-signal batches are merged with `Stream.merge`
   and exported with bounded `Stream.flat_map_par` concurrency.
 - Export attempts use `Effect.sync`, `Effect.race`, `Effect.timeout`,
@@ -11782,7 +11782,7 @@ excluding it from verification.
   mailboxes and drains accepted telemetry; `Eta_otel.Internal.dropped` exposes
   overflow evidence for tests.
 - Exporter self-spans use a private in-memory tracer and are not re-exported.
-- `docs/tutorial-eta-otel.md` and `packages/eta-otel/README.md` now describe
+- `docs/tutorial-eta-otel.md` and `lib/eta-otel/README.md` now describe
   explicit dependency passing, merged stream batching, cached configuration,
   deadline racing, bounded backpressure, shutdown, and nonrecursive
   self-observation.
@@ -11812,7 +11812,7 @@ eta-otel raw concurrency scan:
 
 ```sh
 rg -n "Eio\\.Stream|Eio\\.Fiber|take_nonblocking|while true|fork_daemon" \
-  packages/eta-otel/eta_otel.ml packages/eta-otel/eta_otel.mli
+  lib/eta-otel/eta_otel.ml lib/eta-otel/eta_otel.mli
 ```
 
 Result: no matches.
@@ -11820,7 +11820,7 @@ Result: no matches.
 Focused tests:
 
 ```sh
-dune runtest packages/eta-stream packages/eta-otel --force
+dune runtest lib/eta-stream lib/eta-otel --force
 ```
 
 Result: eta-stream 17 tests passed; eta-otel 26 tests passed.
@@ -11828,7 +11828,7 @@ Result: eta-stream 17 tests passed; eta-otel 26 tests passed.
 Shipped package gate:
 
 ```sh
-dune runtest packages/eta packages/eta-stream packages/eta-schema packages/eta-otel packages/ppx_eta --force
+dune runtest lib/eta lib/eta-stream lib/eta-schema lib/eta-otel lib/ppx_eta --force
 ```
 
 Result: eta 133 tests passed, eta-stream 17, eta-schema passed, eta-otel 26,
@@ -11950,7 +11950,7 @@ Implementation:
 
 Regression tests:
 
-    nix develop -c dune runtest packages/eta packages/eta-otel --force
+    nix develop -c dune runtest lib/eta lib/eta-otel --force
 
 Result: eta 134 tests passed, including
 Observability/noop runtime keeps die diagnostics; eta-otel 26 tests passed.
@@ -13089,7 +13089,7 @@ consumers depend on it implicitly.
 
 ### Consequences
 
-If V-Pool-Survival verdict is library: ship Eta.Pool in packages/eta with its
+If V-Pool-Survival verdict is library: ship Eta.Pool in lib/eta with its
 own ADR and journal entry V-Eta-Pool. eta-http h1 connection pool and h2
 multiplexer connection cache both build on Eta.Pool. Future eta-sql /
 eta-grpc / eta-llm inherit the primitive without reopening this question.
@@ -13497,7 +13497,7 @@ Command:
 
 ~~~sh
 nix develop .#oxcaml -c dune exec scratch/eta_research/timeout_choice/timeout_choice.exe
-nix develop .#oxcaml -c dune runtest packages/eta/test --force
+nix develop .#oxcaml -c dune runtest lib/eta/test --force
 nix develop .#oxcaml -c eta-oxcaml-test-shipped
 ~~~
 
@@ -13521,10 +13521,10 @@ Runtime finding:
 
 - Layered timeouts initially exposed an internal cancellation/race cause instead
   of the typed timeout observed by Effect.catch.
-- packages/eta/runtime.ml now normalizes timeout/cancellation races in
+- lib/eta/runtime.ml now normalizes timeout/cancellation races in
   EP.Timeout and normalizes internal Raised_cause exceptions in EP.Catch and
   EP.Tap_error.
-- packages/eta/test/test_eta.ml adds the regressions "all_settled timeout
+- lib/eta/test/test_eta.ml adds the regressions "all_settled timeout
   scoped resource typed" and "nested timeout maps outer timeout".
 - The pool survival runtime smoke passes again after the fix.
 
@@ -13647,8 +13647,8 @@ Question: did G1's runtime fix land and cover the pool-survival failure?
 
 Artifacts:
 
-- packages/eta/runtime.ml
-- packages/eta/test/test_eta.ml
+- lib/eta/runtime.ml
+- lib/eta/test/test_eta.ml
 - scratch/eta_research/pool_survival/runtime_smoke.ml
 
 Decision: fixed.
@@ -13669,9 +13669,9 @@ Question: did Eta-duy ship the Channel primitive accepted by V-Channel-Choice?
 
 Artifacts:
 
-- packages/eta/channel.ml
-- packages/eta/channel.mli
-- packages/eta/test/test_eta.ml
+- lib/eta/channel.ml
+- lib/eta/channel.mli
+- lib/eta/test/test_eta.ml
 - scratch/eta_research/channel_choice/channel_impl_probe.ml
 
 Decision: shipped for v1 as same-domain only.
@@ -13706,7 +13706,7 @@ Question: does explicit wake-one waiter handling pay for Eta.Channel?
 
 Artifacts:
 
-- packages/eta/channel.ml
+- lib/eta/channel.ml
 - scratch/eta_research/channel_choice/channel_v2_probe.ml
 - scratch/eta_research/channel_choice/results.md
 
@@ -13734,10 +13734,10 @@ the wrapped effect's public error row?
 
 Artifacts:
 
-- packages/eta/effect.ml
-- packages/eta/effect.mli
-- packages/eta/runtime.ml
-- packages/eta/test/test_eta.ml
+- lib/eta/effect.ml
+- lib/eta/effect.mli
+- lib/eta/runtime.ml
+- lib/eta/test/test_eta.ml
 
 Decision: shipped Effect.timeout_as.
 
@@ -13762,9 +13762,9 @@ Question: can Eta ship the Pool primitive locked by V-Pool-Shape-Survey?
 
 Artifacts:
 
-- packages/eta/pool.ml
-- packages/eta/pool.mli
-- packages/eta/test/test_eta.ml
+- lib/eta/pool.ml
+- lib/eta/pool.mli
+- lib/eta/test/test_eta.ml
 - scratch/eta_research/pool_survival/eta_pool_probe.ml
 
 Decision: shipped Eta.Pool v1 as a same-domain bounded checkout primitive.
@@ -13841,10 +13841,10 @@ the shipped cancellation, health-check, shutdown, and observability semantics?
 
 Artifacts:
 
-- packages/eta/effect.ml
-- packages/eta/effect.mli
-- packages/eta/runtime.ml
-- packages/eta/pool.ml
+- lib/eta/effect.ml
+- lib/eta/effect.mli
+- lib/eta/runtime.ml
+- lib/eta/pool.ml
 - scratch/eta_research/pool_survival/pool_compare_probe.ml
 - scratch/eta_research/pool_survival/results.md
 
@@ -13948,10 +13948,10 @@ same-domain values into portable/domain-safe contexts?
 
 Artifacts:
 
-- packages/eta/test/dune
-- packages/eta/test/soundness/run.sh
-- packages/eta/test/soundness/*_negative.ml
-- packages/eta/test/soundness/results.md
+- lib/eta/test/dune
+- lib/eta/test/soundness/run.sh
+- lib/eta/test/soundness/*_negative.ml
+- lib/eta/test/soundness/results.md
 
 Decision: landed Eta-hku as an in-tree compile-fail suite.
 
@@ -13968,7 +13968,7 @@ Coverage:
 Evidence:
 
 ~~~text
-nix develop -c bash packages/eta/test/soundness/run.sh _build/default/packages/eta/eta.cmxa
+nix develop -c bash lib/eta/test/soundness/run.sh _build/default/lib/eta/eta.cmxa
 ~~~
 
 All fixtures compile-failed for mode-safety reasons. No residual soundness gap
@@ -14799,11 +14799,11 @@ Status: Accepted. S0 is structural only; no research probes were required.
 
 Artifacts:
 
-- packages/eta-http/
-- packages/eta-http/README.md
-- packages/eta-http/audit/dep_usage.md
-- packages/eta-http/audit/eta_escapes.md
-- packages/eta-http/audit/run.sh
+- lib/eta-http/
+- lib/eta-http/README.md
+- lib/eta-http/audit/dep_usage.md
+- lib/eta-http/audit/eta_escapes.md
+- lib/eta-http/audit/run.sh
 - eta-http.opam
 - .backlog/Eta-a45.md
 - scratch/eta_http_v1/OBJECTIVE.md
@@ -14819,9 +14819,9 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
-bash packages/eta-http/audit/run.sh
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
+bash lib/eta-http/audit/run.sh
 Dependency sites: 0
 Eta escape sites: 0
 
@@ -14860,14 +14860,14 @@ Status: Accepted as partial S1 progress. This is not an S1 slice close.
 
 Artifacts:
 
-- packages/eta-http/error/
-- packages/eta-http/core/
-- packages/eta-http/body/
-- packages/eta-http/client/
-- packages/eta-http/tls/
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/test/tls/
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/error/
+- lib/eta-http/core/
+- lib/eta-http/body/
+- lib/eta-http/client/
+- lib/eta-http/tls/
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/test/tls/
+- lib/eta-http/audit/dep_usage.md
 - scratch/eta_http_research/adrs/0002-tls-substrate-pivot.md
 
 Hypothesis ledger:
@@ -14881,13 +14881,13 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 4 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 16
 Eta escape sites: 0
 
@@ -14925,13 +14925,13 @@ claim.
 
 Artifacts:
 
-- packages/eta-http/core/url.ml
-- packages/eta-http/core/url.mli
-- packages/eta-http/core/probes/r3_url_probe.md
-- packages/eta-http/h1/write.ml
-- packages/eta-http/h1/write.mli
-- packages/eta-http/h1/probes/r2_writer_probe.md
-- packages/eta-http/test/test_eta_http.ml
+- lib/eta-http/core/url.ml
+- lib/eta-http/core/url.mli
+- lib/eta-http/core/probes/r3_url_probe.md
+- lib/eta-http/h1/write.ml
+- lib/eta-http/h1/write.mli
+- lib/eta-http/h1/probes/r2_writer_probe.md
+- lib/eta-http/test/test_eta_http.ml
 
 Hypothesis ledger:
 
@@ -14943,17 +14943,17 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-wc -l packages/eta-http/core/url.ml packages/eta-http/h1/write.ml
-  248 packages/eta-http/core/url.ml
-   71 packages/eta-http/h1/write.ml
+wc -l lib/eta-http/core/url.ml lib/eta-http/h1/write.ml
+  248 lib/eta-http/core/url.ml
+   71 lib/eta-http/h1/write.ml
 
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 8 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 16
 Eta escape sites: 0
 
@@ -14992,10 +14992,10 @@ Status: Accepted as partial S1 progress. R1 is partial until the streaming
 
 Artifacts:
 
-- packages/eta-http/h1/parse.ml
-- packages/eta-http/h1/parse.mli
-- packages/eta-http/h1/probes/r1_parser_probe.md
-- packages/eta-http/test/test_eta_http.ml
+- lib/eta-http/h1/parse.ml
+- lib/eta-http/h1/parse.mli
+- lib/eta-http/h1/probes/r1_parser_probe.md
+- lib/eta-http/test/test_eta_http.ml
 
 Hypothesis ledger:
 
@@ -15006,18 +15006,18 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-wc -l packages/eta-http/h1/parse.ml packages/eta-http/h1/write.ml packages/eta-http/core/url.ml
-  263 packages/eta-http/h1/parse.ml
-   71 packages/eta-http/h1/write.ml
-  248 packages/eta-http/core/url.ml
+wc -l lib/eta-http/h1/parse.ml lib/eta-http/h1/write.ml lib/eta-http/core/url.ml
+  263 lib/eta-http/h1/parse.ml
+   71 lib/eta-http/h1/write.ml
+  248 lib/eta-http/core/url.ml
 
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 11 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 16
 Eta escape sites: 0
 
@@ -15055,13 +15055,13 @@ hosts.
 
 Artifacts:
 
-- packages/eta-http/transport/connect.ml
-- packages/eta-http/transport/connect.mli
-- packages/eta-http/transport/probes/r4_dns_probe.md
-- packages/eta-http/error/error.ml
-- packages/eta-http/error/error.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/transport/connect.ml
+- lib/eta-http/transport/connect.mli
+- lib/eta-http/transport/probes/r4_dns_probe.md
+- lib/eta-http/error/error.ml
+- lib/eta-http/error/error.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -15072,13 +15072,13 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 13 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 21
 Eta escape sites: 0
 
@@ -15121,14 +15121,14 @@ parser allocation; R6 body-release closure remains open.
 
 Artifacts:
 
-- packages/eta-http/transport/connect.ml
-- packages/eta-http/transport/connect.mli
-- packages/eta-http/h1/client.ml
-- packages/eta-http/h1/client.mli
-- packages/eta-http/client/client.ml
-- packages/eta-http/client/client.mli
-- packages/eta-http/h1/probes/s1_request_loop_probe.md
-- packages/eta-http/transport/probes/r4_dns_probe.md
+- lib/eta-http/transport/connect.ml
+- lib/eta-http/transport/connect.mli
+- lib/eta-http/h1/client.ml
+- lib/eta-http/h1/client.mli
+- lib/eta-http/client/client.ml
+- lib/eta-http/client/client.mli
+- lib/eta-http/h1/probes/s1_request_loop_probe.md
+- lib/eta-http/transport/probes/r4_dns_probe.md
 - scratch/eta_http_v1/probes/openai_401.ml
 - scratch/eta_http_v1/probes/dune
 
@@ -15142,13 +15142,13 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 18 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 51
 Eta escape sites: 0
 
@@ -15193,13 +15193,13 @@ real-peer failure probes cover the default non-sending health check.
 
 Artifacts:
 
-- packages/eta-http/h1/client.ml
-- packages/eta-http/h1/client.mli
-- packages/eta-http/client/client.ml
-- packages/eta-http/client/client.mli
-- packages/eta-http/h1/probes/r5_pool_health_probe.md
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h1/client.ml
+- lib/eta-http/h1/client.mli
+- lib/eta-http/client/client.ml
+- lib/eta-http/client/client.mli
+- lib/eta-http/h1/probes/r5_pool_health_probe.md
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -15211,12 +15211,12 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 20 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 63
 Eta escape sites: 0
 
@@ -15255,10 +15255,10 @@ Artifacts:
 
 - scratch/eta_http_v1/probes/reach_13.ml
 - scratch/eta_http_v1/probes/dune
-- packages/eta-http/transport/probes/s1_reach_probe.md
-- packages/eta-http/transport/probes/r4_dns_probe.md
-- packages/eta-http/h1/client.ml
-- packages/eta-http/test/test_eta_http.ml
+- lib/eta-http/transport/probes/s1_reach_probe.md
+- lib/eta-http/transport/probes/r4_dns_probe.md
+- lib/eta-http/h1/client.ml
+- lib/eta-http/test/test_eta_http.ml
 
 Hypothesis ledger:
 
@@ -15270,10 +15270,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 21 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 63
 Eta escape sites: 0
 
@@ -15327,13 +15327,13 @@ cancellation and the S2 h2 stream-permit lifecycle.
 
 Artifacts:
 
-- packages/eta-http/h1/client.ml
-- packages/eta-http/h1/client.mli
-- packages/eta-http/body/stream.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h1/probes/r6_body_release_probe.md
-- packages/eta-http/audit/dep_usage.md
-- packages/eta-http/audit/eta_escapes.md
+- lib/eta-http/h1/client.ml
+- lib/eta-http/h1/client.mli
+- lib/eta-http/body/stream.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h1/probes/r6_body_release_probe.md
+- lib/eta-http/audit/dep_usage.md
+- lib/eta-http/audit/eta_escapes.md
 
 Hypothesis ledger:
 
@@ -15346,14 +15346,14 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
+nix develop -c dune build lib/eta-http
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 eta-http: 23 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 67
 Eta escape sites: 0
 
@@ -15397,8 +15397,8 @@ Artifacts:
 
 - scratch/eta_http_v1/probes/stale_idle.ml
 - scratch/eta_http_v1/probes/dune
-- packages/eta-http/h1/probes/r5_pool_health_probe.md
-- packages/eta-http/README.md
+- lib/eta-http/h1/probes/r5_pool_health_probe.md
+- lib/eta-http/README.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15415,11 +15415,11 @@ eta_http_r5_stale_idle_server connection=1 request_header_lines=4 closed_after_r
 eta_http_r5_stale_idle_server connection=2 request_header_lines=4 closed_after_response=true
 eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
 
-nix develop -c dune build packages/eta-http
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune build lib/eta-http
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 23 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 67
 Eta escape sites: 0
 
@@ -15461,12 +15461,12 @@ checkpoint and is closed by V-Http-S1-R2-Zero-Alloc-Core below.
 
 Artifacts:
 
-- packages/eta-http/h1/write.ml
-- packages/eta-http/h1/write.mli
-- packages/eta-http/h1/client.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h1/probes/r2_writer_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h1/write.ml
+- lib/eta-http/h1/write.mli
+- lib/eta-http/h1/client.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h1/probes/r2_writer_probe.md
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -15478,12 +15478,12 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
+nix develop -c dune build lib/eta-http
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 24 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 70
 Eta escape sites: 0
 
@@ -15527,13 +15527,13 @@ caller-owned byte buffer and is both compile-checked and runtime-measured.
 
 Artifacts:
 
-- packages/eta-http/core/url.ml
-- packages/eta-http/core/url.mli
-- packages/eta-http/h1/write.ml
-- packages/eta-http/h1/write.mli
-- packages/eta-http/test/test_eta_http.ml
+- lib/eta-http/core/url.ml
+- lib/eta-http/core/url.mli
+- lib/eta-http/h1/write.ml
+- lib/eta-http/h1/write.mli
+- lib/eta-http/test/test_eta_http.ml
 - scratch/eta_http_v1/probes/writer_alloc.ml
-- packages/eta-http/h1/probes/r2_writer_probe.md
+- lib/eta-http/h1/probes/r2_writer_probe.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15546,13 +15546,13 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
+nix develop -c dune build lib/eta-http
 # zero_alloc annotations on write_to_bytes_raw and URL blit helpers checked
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 26 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 70
 Eta escape sites: 0
 
@@ -15588,13 +15588,13 @@ fixed 32 KiB parser buffer and drives `parse_raw` for response heads.
 
 Artifacts:
 
-- packages/eta-http/h1/parse.ml
-- packages/eta-http/h1/parse.mli
-- packages/eta-http/h1/client.ml
-- packages/eta-http/test/test_eta_http.ml
+- lib/eta-http/h1/parse.ml
+- lib/eta-http/h1/parse.mli
+- lib/eta-http/h1/client.ml
+- lib/eta-http/test/test_eta_http.ml
 - scratch/eta_http_v1/probes/parser_alloc.ml
-- packages/eta-http/h1/probes/r1_parser_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h1/probes/r1_parser_probe.md
+- lib/eta-http/audit/dep_usage.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15609,15 +15609,15 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune build packages/eta-http
+nix develop -c dune build lib/eta-http
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 28 tests passed
 
 nix develop -c dune exec scratch/eta_http_v1/probes/parser_alloc.exe
 eta_http_r1_parser_alloc verdict=PASS iterations=100000 minor_words=0 words_per_parse=0.000000 checksum=28150000
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 71
 Eta escape sites: 0
 ~~~
@@ -15653,13 +15653,13 @@ cancellation, and S2 owns h2 stream-permit release.
 
 Artifacts:
 
-- packages/eta-http/h1/client.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h1/probes/r6_body_release_probe.md
-- packages/eta-test/eta_test.ml
-- packages/eta-test/eta_test.mli
-- packages/eta-http/audit/dep_usage.md
-- packages/eta-http/audit/eta_escapes.md
+- lib/eta-http/h1/client.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h1/probes/r6_body_release_probe.md
+- lib/eta-test/eta_test.ml
+- lib/eta-test/eta_test.mli
+- lib/eta-http/audit/dep_usage.md
+- lib/eta-http/audit/eta_escapes.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15674,10 +15674,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 29 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 73
 Eta escape sites: 0
 
@@ -15694,7 +15694,7 @@ Verdicts:
   mock flow read remains blocked.
 - V-Http-S1-R6-Cancellation-2 - Keep eta-http escape audit at zero by moving
   test-only raw fiber/promise helpers into `Eta_test.Async`. Decision:
-  accepted. Evidence: `bash packages/eta-http/audit/run.sh` reports zero
+  accepted. Evidence: `bash lib/eta-http/audit/run.sh` reports zero
   eta-http escape sites after the cancellation proof lands.
 
 Residual risk:
@@ -15718,7 +15718,7 @@ Artifacts:
 
 - scratch/eta_http_v1/probes/h2_api_shape.ml
 - scratch/eta_http_v1/probes/dune
-- packages/eta-http/h2/probes/r7_api_shape_probe.md
+- lib/eta-http/h2/probes/r7_api_shape_probe.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15764,11 +15764,11 @@ stream and frees the permit.
 
 Artifacts:
 
-- packages/eta-http/h2/admission.ml
-- packages/eta-http/h2/admission.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/audit/run.sh
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h2/admission.ml
+- lib/eta-http/h2/admission.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/audit/run.sh
+- lib/eta-http/audit/dep_usage.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15782,10 +15782,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 30 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 73
 Eta escape sites: 0
 ~~~
@@ -15822,10 +15822,10 @@ h2/http1.1 ALPN names.
 
 Artifacts:
 
-- packages/eta-http/transport/alpn.ml
-- packages/eta-http/transport/alpn.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/transport/probes/s2_alpn_state_probe.md
+- lib/eta-http/transport/alpn.ml
+- lib/eta-http/transport/alpn.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/transport/probes/s2_alpn_state_probe.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15839,10 +15839,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 32 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 73
 Eta escape sites: 0
 ~~~
@@ -15877,7 +15877,7 @@ Artifacts:
 
 - scratch/eta_http_v1/probes/h2_r8_push_priority.ml
 - scratch/eta_http_v1/probes/dune
-- packages/eta-http/h2/probes/r8_push_priority_probe.md
+- lib/eta-http/h2/probes/r8_push_priority_probe.md
 - scratch/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
@@ -15927,18 +15927,18 @@ and distinguishes complete release from active local cancellation.
 
 Artifacts:
 
-- packages/eta-http/h2/stream_state.ml
-- packages/eta-http/h2/stream_state.mli
-- packages/eta-http/h2/admission.ml
-- packages/eta-http/h2/admission.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s2_stream_state_probe.md
+- lib/eta-http/h2/stream_state.ml
+- lib/eta-http/h2/stream_state.mli
+- lib/eta-http/h2/admission.ml
+- lib/eta-http/h2/admission.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s2_stream_state_probe.md
 
 Hypothesis ledger:
 
 | Probe | Status | Evidence |
 | --- | --- | --- |
-| `Portable.Atomic` per-stream status | Closed PASS | `dune build packages/eta-http` compiles `h2/stream_state.ml` under OxCaml. |
+| `Portable.Atomic` per-stream status | Closed PASS | `dune build lib/eta-http` compiles `h2/stream_state.ml` under OxCaml. |
 | Remote reset remains admitted until release | Closed PASS | `h2-stream-state / release decisions` keeps cancelled streams counted as inflight until `release`. |
 | Complete release avoids local RST | Closed PASS | `h2-stream-state / release decisions` returns `No_rst` for completed streams and `Queue_rst` for still-active release. |
 | Live `ocaml-h2` body permit release | Open | The real adapter has not yet wired response-body EOF/discard/cancel to `Stream_state.release`. |
@@ -15946,10 +15946,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 34 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 73
 Eta escape sites: 0
 ~~~
@@ -15981,12 +15981,12 @@ Status: Accepted for the S2 writer-drain cut. The writer converts
 
 Artifacts:
 
-- packages/eta-http/h2/writer.ml
-- packages/eta-http/h2/writer.mli
-- packages/eta-http/h2/dune
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s2_writer_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h2/writer.ml
+- lib/eta-http/h2/writer.mli
+- lib/eta-http/h2/dune
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s2_writer_probe.md
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -15999,10 +15999,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 42 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 198
 Eta escape sites: 0
 ~~~
@@ -16038,11 +16038,11 @@ bytes in a reusable `Bigstringaf.t` buffer, compacts unconsumed bytes when
 
 Artifacts:
 
-- packages/eta-http/h2/multiplexer.ml
-- packages/eta-http/h2/multiplexer.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s2_read_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h2/multiplexer.ml
+- lib/eta-http/h2/multiplexer.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s2_read_probe.md
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -16055,10 +16055,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 37 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 130
 Eta escape sites: 0
 ~~~
@@ -16097,11 +16097,11 @@ with Eta supervisor cancellation.
 
 Artifacts:
 
-- packages/eta-http/h2/multiplexer.ml
-- packages/eta-http/h2/multiplexer.mli
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s2_hd1_integration_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/h2/multiplexer.ml
+- lib/eta-http/h2/multiplexer.mli
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s2_hd1_integration_probe.md
+- lib/eta-http/audit/dep_usage.md
 
 Hypothesis ledger:
 
@@ -16117,10 +16117,10 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 42 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 198
 Eta escape sites: 0
 ~~~
@@ -16163,13 +16163,13 @@ remains the pooled S1 h1 path.
 
 Artifacts:
 
-- packages/eta-http/client/client.ml
-- packages/eta-http/client/client.mli
-- packages/eta-http/transport/dispatch.ml
-- packages/eta-http/transport/dispatch.mli
-- packages/eta-http/transport/connect.ml
-- packages/eta-http/transport/connect.mli
-- packages/eta-http/transport/probes/s2_dispatch_probe.md
+- lib/eta-http/client/client.ml
+- lib/eta-http/client/client.mli
+- lib/eta-http/transport/dispatch.ml
+- lib/eta-http/transport/dispatch.mli
+- lib/eta-http/transport/connect.ml
+- lib/eta-http/transport/connect.mli
+- lib/eta-http/transport/probes/s2_dispatch_probe.md
 - scratch/eta_http_v1/probes/honeycomb_h2.ml
 - scratch/eta_http_v1/probes/reach_13.ml
 
@@ -16185,7 +16185,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 43 tests passed
 
 nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
@@ -16194,7 +16194,7 @@ eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls
 nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 218
 Eta escape sites: 0
 ~~~
@@ -16226,8 +16226,8 @@ the conservative post-GOAWAY cutoff.
 
 Artifacts:
 
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s2_goaway_probe.md
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s2_goaway_probe.md
 - scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml
 
 Hypothesis ledger:
@@ -16243,10 +16243,10 @@ Evidence:
 nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
 h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 44 tests passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 223
 Eta escape sites: 0
 ~~~
@@ -16276,7 +16276,7 @@ reproduction is carried to S4 by scope, not hidden under S2.
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 44 tests passed
 
 nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
@@ -16288,7 +16288,7 @@ eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn 
 nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
 h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 223
 Eta escape sites: 0
 
@@ -16320,15 +16320,15 @@ remains isolated to the deferred TLS 2.1.0 branch.
 
 Artifacts:
 
-- packages/eta-http/body/stream.ml
-- packages/eta-http/body/chunked.ml
-- packages/eta-http/body/source.ml
-- packages/eta-http/body/transducer.ml
-- packages/eta-http/h1/client.ml
-- packages/eta-http/client/request.ml
-- packages/eta-http/test/security/gzip_bomb.ml
-- packages/eta-http/body/probes/s3_body_streaming_probe.md
-- packages/eta-http/audit/dep_usage.md
+- lib/eta-http/body/stream.ml
+- lib/eta-http/body/chunked.ml
+- lib/eta-http/body/source.ml
+- lib/eta-http/body/transducer.ml
+- lib/eta-http/h1/client.ml
+- lib/eta-http/client/request.ml
+- lib/eta-http/test/security/gzip_bomb.ml
+- lib/eta-http/body/probes/s3_body_streaming_probe.md
+- lib/eta-http/audit/dep_usage.md
 
 Evidence:
 
@@ -16336,11 +16336,11 @@ Evidence:
 nix develop -c opam install --yes decompress.1.5.3
 decompress 1.5.3, checkseum 0.5.3, optint 0.3.0 installed under 5.2.0+ox
 
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 49 tests passed
 eta-http-security: 1 test passed
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 252
 Eta escape sites: 0
 ~~~
@@ -16381,22 +16381,22 @@ is carried to S5, where retry/idempotency consumes the replayability classifier.
 
 Artifacts:
 
-- packages/eta-http/body/stream.ml
-- packages/eta-http/body/chunked.ml
-- packages/eta-http/body/source.ml
-- packages/eta-http/body/transducer.ml
-- packages/eta-http/h1/client.ml
-- packages/eta-http/h2/multiplexer.ml
-- packages/eta-http/client/client.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/test/security/gzip_bomb.ml
+- lib/eta-http/body/stream.ml
+- lib/eta-http/body/chunked.ml
+- lib/eta-http/body/source.ml
+- lib/eta-http/body/transducer.ml
+- lib/eta-http/h1/client.ml
+- lib/eta-http/h2/multiplexer.ml
+- lib/eta-http/client/client.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/test/security/gzip_bomb.ml
 - scratch/eta_http_v1/probes/s3_gzip_rss.ml
-- packages/eta-http/body/probes/s3_body_streaming_probe.md
+- lib/eta-http/body/probes/s3_body_streaming_probe.md
 
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 54 tests passed
 eta-http-security: 1 test passed
 
@@ -16409,7 +16409,7 @@ eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls
 nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 269
 Eta escape sites: 0
 ~~~
@@ -16448,18 +16448,18 @@ because the pinned `ocaml-h2` line does not surface it.
 
 Artifacts:
 
-- packages/eta-http/h2/security.ml
-- packages/eta-http/h2/security.mli
-- packages/eta-http/h2/multiplexer.ml
-- packages/eta-http/h2/multiplexer.mli
-- packages/eta-http/client/client.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/h2/probes/s4_security_envelope_probe.md
+- lib/eta-http/h2/security.ml
+- lib/eta-http/h2/security.mli
+- lib/eta-http/h2/multiplexer.ml
+- lib/eta-http/h2/multiplexer.mli
+- lib/eta-http/client/client.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/h2/probes/s4_security_envelope_probe.md
 
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 60 tests passed
 eta-http-security: 1 test passed
 
@@ -16580,16 +16580,16 @@ Status: Accepted. S5 closes Eta-bvn.
 
 Artifacts:
 
-- packages/eta-http/client/idempotency.ml
-- packages/eta-http/client/retry.ml
-- packages/eta-http/test/test_eta_http.ml
-- packages/eta-http/client/probes/s5_retry_probe.md
+- lib/eta-http/client/idempotency.ml
+- lib/eta-http/client/retry.ml
+- lib/eta-http/test/test_eta_http.ml
+- lib/eta-http/client/probes/s5_retry_probe.md
 - scratch/eta_http_research/adrs/0005-retry-idempotency-replayability.md
 
 Evidence:
 
 ~~~text
-nix develop -c dune runtest packages/eta-http --force
+nix develop -c dune runtest lib/eta-http --force
 eta-http: 66 tests passed
 eta-http-security: 1 test passed
 
@@ -16632,10 +16632,10 @@ scheduled CI wiring is out of scope per user direction.
 
 Artifacts:
 
-- packages/eta-http/observability/semconv.ml
-- packages/eta-http/observability/tracer.ml
-- packages/eta-http/observability/meter.ml
-- packages/eta-http/observability/probes/s6_observability_probe.md
+- lib/eta-http/observability/semconv.ml
+- lib/eta-http/observability/tracer.ml
+- lib/eta-http/observability/meter.ml
+- lib/eta-http/observability/probes/s6_observability_probe.md
 - scratch/eta_http_research/adrs/0006-http-observability-recursion.md
 - scratch/eta_http_research/h_o1_observability/semconv_attributes.md
 - scratch/eta_http_research/h_o1_observability/results.md
@@ -16643,7 +16643,7 @@ Artifacts:
 Evidence:
 
 ~~~text
-nix develop -c dune exec --display=short packages/eta-http/test/test_eta_http.exe
+nix develop -c dune exec --display=short lib/eta-http/test/test_eta_http.exe
 eta-http: 75 tests passed
 
 observability / successful GET semconv: PASS
@@ -16661,7 +16661,7 @@ eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls
 timeout 240s nix develop -c dune exec --display=short scratch/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
-bash packages/eta-http/audit/run.sh
+bash lib/eta-http/audit/run.sh
 Dependency sites: 283
 Eta escape sites: 1
 
@@ -16691,7 +16691,7 @@ Verdicts:
   consumption.
 - V-Http-S6-Observability-6 - Keep audit escapes visible and classified.
   Decision: accepted. Evidence: the audit reports one Structural test harness
-  escape in `packages/eta-http/test/test_eta_http.ml`; no hidden sites remain.
+  escape in `lib/eta-http/test/test_eta_http.ml`; no hidden sites remain.
 
 Residual risk:
 
@@ -16707,8 +16707,8 @@ total order, OTel severityNumber mapping, and threshold filtering.
 
 Artifacts:
 
-- `packages/eta/log_level.{ml,mli}` — canonical type and helpers.
-- `packages/eta/test/test_eta.ml` — 7 Alcotest cases covering the 10 test items
+- `lib/eta/log_level.{ml,mli}` — canonical type and helpers.
+- `lib/eta/test/test_eta.ml` — 7 Alcotest cases covering the 10 test items
   from the port plan.
 
 Design choice:
@@ -16824,8 +16824,8 @@ New Semaphore-specific tests cover:
 8. Multi-permit contention: acquirer asking for 3 permits waits when 2 are
    available; a release of 2 unblocks it; final state consistent.
 
-Files added: `packages/eta/semaphore.{ml,mli}`.
-Files modified: `packages/eta/pool.ml`, `packages/eta/test/test_eta.ml`.
+Files added: `lib/eta/semaphore.{ml,mli}`.
+Files modified: `lib/eta/pool.ml`, `lib/eta/test/test_eta.ml`.
 No `dune` change required (auto-discovered modules).
 
 ## V-Eta-V2-Build
@@ -16833,8 +16833,8 @@ No `dune` change required (auto-discovered modules).
 Decision: complete; shipped to the linear merge gate.
 
 This build experiment implemented the V-Eio-Direct-2 abstract bare-arrow
-verdict in `packages/`. `Effect.t` is now an abstract direct record
-representation implemented by `packages/eta/effect_direct.ml`; the public
+verdict in `lib/`. `Effect.t` is now an abstract direct record
+representation implemented by `lib/eta/effect_direct.ml`; the public
 `Effect` module includes it; `Runtime.run` delegates directly to the hidden
 executor. The old AST execution path was removed from shipped Eta:
 `effect_ast.ml`, `runtime_interpret.ml`, and `runtime_concurrency.ml` are
@@ -16844,8 +16844,8 @@ Evidence:
 
 - `AUDIT.md` records the phase matrix, commands, n=20 v1/v2 performance
   comparison, fast-path investigation, and risk register.
-- `dune build packages/eta/eta.cmxa` passes.
-- `bash packages/eta/test/soundness/run.sh _build/default/packages/eta/eta.cmxa`
+- `dune build lib/eta/eta.cmxa` passes.
+- `bash lib/eta/test/soundness/run.sh _build/default/lib/eta/eta.cmxa`
   passes against the current 10 soundness negative fixtures.
 - `dune build @runtest` passes across Eta core and consumers, including
   eta-test, eta-stream, eta-http, eta-otel, eta-ai/providers, schema, ppx, and

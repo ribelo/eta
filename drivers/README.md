@@ -1,14 +1,25 @@
 # Eta Drivers
 
 `drivers/` is reserved for optional integration packages that bind Eta-owned
-protocols to concrete external engines or services.
+protocols to concrete external engines or services. This directory follows the
+Eta-4atr repository layout policy.
 
-Keep drivers outside `lib/` unless they are promoted into Eta's core library
-surface. A driver may depend on Eta libraries, third-party client libraries, and
-engine-specific system packages; core Eta libraries must not depend on drivers.
+Drivers live in `drivers/eta-NAME/`. Each driver has a matching opam package at
+the repository root named `eta-NAME.opam`, and that package depends on `eta`.
+The opam package boundary is the dependency boundary: optional engine-specific
+dependencies stay out of the core `eta` package, so consumers only install the
+drivers they choose.
 
-Use engine-specific subdirectories when the external dependency is concrete, for
-example `drivers/duckdb/` or `drivers/postgres/`. Use a capability or protocol
+Use this naming convention for driver libraries:
+
+- directory: `drivers/eta-NAME/`
+- opam package: `eta-NAME.opam`
+- dune library name: `(name eta_NAME)`
+- public library name: `(public_name eta-NAME)`
+- OCaml module: `Eta_NAME`
+
+Use engine-specific names when the external dependency is concrete, for example
+`drivers/eta-duckdb/` or `drivers/eta-postgres/`. Use a capability or protocol
 name only when the driver is genuinely engine-generic.
 
 Driver packages should make ownership clear:
@@ -21,3 +32,6 @@ Driver packages should make ownership clear:
 
 Do not add compatibility shims for old driver paths. Rename or delete stale
 paths and update callers in the same change.
+
+See the repository-level `AGENTS.md` for the general ownership rules that also
+apply to drivers.

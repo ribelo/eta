@@ -36,14 +36,14 @@ let () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let exporter =
-    Otel.create ~sw ~net ~clock
+    Eta_otel.create ~sw ~net ~clock
       ~host:"127.0.0.1" ~port:4318
       ~service_name:"my-app"
       ~service_version:"0.1.0"
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Otel.tracer exporter) ()
+    Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
   in
   let work =
     Effect.fn __POS__ __FUNCTION__
@@ -53,7 +53,7 @@ let () =
           |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure ())))
   in
   let _ = Runtime.run rt work in
-  Otel.flush exporter
+  Eta_otel.flush exporter
 ```
 
 That program emits one parent span with two children. `Effect.fn __POS__
@@ -100,7 +100,7 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 
 ## Configuration
 
-`Otel.create` accepts:
+`Eta_otel.create` accepts:
 
 | label             | default          | meaning                                      |
 | ----------------- | ---------------- | -------------------------------------------- |
@@ -119,17 +119,17 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 
 The exporter starts one Eta runtime daemon on the supplied switch. That daemon
 loads cached exporter configuration through `Eta.Resource`, consumes bounded
-`Stream.Mailbox` sources, merges signal streams with `Stream.merge`,
+`Eta_stream.Mailbox` sources, merges signal streams with `Eta_stream.merge`,
 exports batches with bounded parallelism, and decrements in-flight counters
 through Eta finalizers. Export POSTs go through eta-http with observability
 suppressed so exporter-internal pool and transport spans are not re-exported.
-Flush waits on `Stream.Drain_counter.await_zero` instead of fixed-interval
+Flush waits on `Eta_stream.Drain_counter.await_zero` instead of fixed-interval
 polling.
 
-`Otel.flush ?timeout_s exporter` blocks until the queue is drained or
+`Eta_otel.flush ?timeout_s exporter` blocks until the queue is drained or
 the timeout elapses. Call it before the program exits to avoid losing spans.
 
-`Otel.shutdown ?timeout_s exporter` closes the signal mailboxes, drains
+`Eta_otel.shutdown ?timeout_s exporter` closes the signal mailboxes, drains
 already accepted telemetry, and drops signals submitted after shutdown.
 
 ## Self Metrics

@@ -4,7 +4,7 @@ set -euo pipefail
 root="${1:-lib/otel}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='Http\.|Stream\.|Eio\.|Yojson\.'
+dep_pattern='Eta_http\.|Eta_stream\.|Eio\.|Yojson\.'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"

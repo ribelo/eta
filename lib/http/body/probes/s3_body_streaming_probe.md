@@ -8,18 +8,18 @@ through the public body stream surface?
 
 - `decompress.1.5.3` installs under the current `5.2.0+ox` switch with
   `checkseum` and `optint`; it does not depend on `digestif`.
-- `Http.Body.Stream.of_reader` releases exactly once on EOF, discard, or
+- `Eta_http.Body.Stream.of_reader` releases exactly once on EOF, discard, or
   read failure.
-- `Http.Body.Chunked` decodes chunk extensions and response trailers.
+- `Eta_http.Body.Chunked` decodes chunk extensions and response trailers.
 - h1 response bodies now stream fixed-length, chunked, and close-delimited
-  bodies through `Http.Body.Stream` instead of the S1 eager buffer.
-- h1 request bodies accept `Request.Stream` and use chunked transfer coding
+  bodies through `Eta_http.Body.Stream` instead of the S1 eager buffer.
+- h1 request bodies accept `Request.Eta_stream` and use chunked transfer coding
   when no length is known.
-- `Http.Body.Transducer.gzip_encode` and `gzip_decode` round-trip over
+- `Eta_http.Body.Transducer.gzip_encode` and `gzip_decode` round-trip over
   streaming body chunks through `decompress`.
 - gzip decode enforces the eta-http expansion cap and maps failures to a typed
   `Decode_error { codec = "gzip"; ... }`.
-- h2 response bodies now expose a pull-driven `Http.Body.Stream.t` through
+- h2 response bodies now expose a pull-driven `Eta_http.Body.Stream.t` through
   the public client path; EOF and discard release are verified against real
   `ocaml-h2` body readers.
 - gzip decode rejects truncated streams and CRC mismatch, and decodes

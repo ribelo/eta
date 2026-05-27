@@ -1,4 +1,4 @@
-# ADR 0002: SSE Pull Stream
+# ADR 0002: SSE Pull Eta_stream
 
 Status: accepted.
 
@@ -20,7 +20,7 @@ eta-ai exposes an abstract pull parser:
     type stream
 
     val stream_of_body :
-      ?max_buffer_bytes:int -> provider -> Http.Body.Stream.t -> stream
+      ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
 
     val read_stream_event :
       stream -> (stream_event option, ai_error) Eta.Effect.t
@@ -39,7 +39,7 @@ reached, which covers early-stop callers.
 
 ## Rejected
 
-- Exposing Stream.Stream now. eta-stream does not yet have the required
+- Exposing Eta_stream.Stream now. eta-stream does not yet have the required
   owned source primitive.
 - Parsing the whole response through read_all before decoding. That loses
   early-stop release and bounded streaming behavior.

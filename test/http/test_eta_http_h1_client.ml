@@ -124,7 +124,7 @@ let test_h1_client_streaming_request_body_releases () =
   in
   let url = Eta_http.Core.Url.of_string "http://example.test/upload" in
   let request : Eta_http.H1.Client.request =
-    { method_ = "POST"; url; headers = []; body = Eta_http.H1.Client.Eta_stream body }
+    { method_ = "POST"; url; headers = []; body = Eta_http.H1.Client.Stream body }
   in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   let response =
@@ -170,7 +170,7 @@ let test_h1_client_cancelled_streaming_request_body_releases () =
       method_ = "POST";
       url;
       headers = [];
-      body = Eta_http.H1.Client.Eta_stream (h1_blocking_body ~released ());
+      body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
     }
   in
   Eta_test.with_test_clock @@ fun sw clock rt ->
@@ -207,7 +207,7 @@ let test_h1_client_streaming_request_body_releases_on_write_failure () =
       method_ = "POST";
       url;
       headers = [];
-      body = Eta_http.H1.Client.Eta_stream (h1_blocking_body ~released ());
+      body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
     }
   in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->

@@ -77,10 +77,10 @@ measure_ocamlc_i() {
   emit "$name.lines" "lines" "lines" "$lines"
 }
 
-packages="ai ai_anthropic ai_openai ai_openai_codec ai_openai_compat ai_openrouter eta http otel par ppx redacted schema schema_test sql stream test"
+packages="ai ai/anthropic ai/openai ai/openai_codec ai/openai_compat ai/openrouter eta http otel par ppx redacted schema schema_test sql stream test"
 for pkg in $packages; do
   path="lib/$pkg"
-  safe="$(printf '%s' "$pkg" | tr '-' '_')"
+  safe="$(printf '%s' "$pkg" | tr '/-' '__')"
   if [ "$pkg" = "ppx" ]; then safe="ppx_eta"; fi
   main_ml="$(find "$path" -maxdepth 1 -name '*.ml' | sort | head -n 1)"
   test_ml="$(find "$path/test" -maxdepth 1 -name '*.ml' 2>/dev/null | sort | head -n 1 || true)"

@@ -1,4 +1,4 @@
-module S = Sqlite
+module S = Eta_sql.Sqlite
 module E = Eta.Effect
 
 let sample_count = 2_000

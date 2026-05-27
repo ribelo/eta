@@ -1,4 +1,4 @@
-# S2 H2 Stream State Probe
+# S2 H2 Eta_stream State Probe
 
 ## Question
 
@@ -7,7 +7,7 @@ per-stream state while keeping admission bounded by ACTIVE+CANCELLED streams?
 
 ## Implementation
 
-- `Http.H2.Stream_state` wraps `Http.H2.Admission` permits.
+- `Eta_http.H2.Stream_state` wraps `Eta_http.H2.Admission` permits.
 - Each stream stores its public lifecycle status in `Portable.Atomic`:
   `Active`, `Remote_reset`, `Complete`, or `Released`.
 - Remote reset moves the stream from active to cancelled admission, but the

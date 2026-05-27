@@ -6,7 +6,7 @@
 
 type t
 
-type scheme = Eta_http | Https
+type scheme = Http | Https
 
 type parse_error =
   | Empty

@@ -17,13 +17,13 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "OPENAI_API_KEY" with
-      | Some value -> Ai.api_key value
+      | Some value -> Eta_ai.api_key value
       | None -> failwith "OPENAI_API_KEY is required"
 
     let request =
       {
-        Ai.model = "gpt-4o-mini";
-        prompt = [ Ai.User [ Ai.Text "weather in Warsaw" ] ];
+        Eta_ai.model = "gpt-4o-mini";
+        prompt = [ Eta_ai.User [ Eta_ai.Text "weather in Warsaw" ] ];
         tools = [];
         temperature = Some 0.2;
         max_output_tokens = Some 64;
@@ -31,13 +31,13 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
       }
 
     let effect =
-      Ai_openai.responses client ~api_key request
+      Eta_ai_openai.responses client ~api_key request
 
 Use the explicit legacy provider only when a target still requires the Chat
 Completions wire shape:
 
     let provider =
-      Ai_openai.chat_completions_provider
+      Eta_ai_openai.chat_completions_provider
         ~base_url:"https://api.openai.example"
         ()
 
@@ -52,19 +52,19 @@ base-path behavior.
   structured outputs, streaming flag, temperature, and max_tokens.
 - Streaming: OpenAI chat completion chunks, Responses output text deltas,
   function-call argument deltas, done markers, and error events.
-- Errors: OpenAI error objects are decoded into Ai.Provider_error with
+- Errors: OpenAI error objects are decoded into Eta_ai.Provider_error with
   status, code, message, and raw body.
 
 ## Quirks
 
 - Tool schemas and structured-output schemas are raw JSON text until eta-schema
-  exposes JSON Schema export.
+  exposes JSON Eta_schema export.
 - Token counting is intentionally absent. Use provider usage fields from
   responses.
 - The default provider uses the Responses endpoint. The legacy Chat
   Completions encoder uses max_tokens when called explicitly.
 - Provider HTTP calls are wrapped in
-  Ai.suppress_provider_transport_observability by default so eta-http spans
+  Eta_ai.suppress_provider_transport_observability by default so eta-http spans
   do not nest under GenAI spans unless an application deliberately adds them.
 - Offline fixtures prove codec and eta-http integration behavior. They do not
   prove current OpenAI service behavior; run the release reach probe when an API

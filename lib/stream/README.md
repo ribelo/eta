@@ -12,12 +12,12 @@ Streams keep Eta's two channels:
 
 ```ocaml
 open Eta
-open Stream
+open Eta_stream
 
 let program =
-  Stream.from_iterable [ 1; 2; 3; 4; 5; 6 ]
-  |> Stream.map (( * ) 2)
-  |> Stream.take 5
+  Eta_stream.from_iterable [ 1; 2; 3; 4; 5; 6 ]
+  |> Eta_stream.map (( * ) 2)
+  |> Eta_stream.take 5
   |> fun stream -> run stream (Sink.fold ( + ) 0)
 ```
 
@@ -34,17 +34,17 @@ Runtime.run rt program
 
 ## Concurrency
 
-`Stream.merge left right` runs both producers concurrently and interleaves
+`Eta_stream.merge left right` runs both producers concurrently and interleaves
 values through a bounded internal queue. If downstream stops early, both
 producer fibers are cancelled.
 
-`Stream.flat_map_par ~max_concurrency f stream` starts inner streams in bounded
+`Eta_stream.flat_map_par ~max_concurrency f stream` starts inner streams in bounded
 parallel. A semaphore enforces the concurrency limit; downstream early
 completion cancels remaining inner producers.
 
 ## Resources
 
-`Stream.from_file ?chunk_size path` opens the file when the stream is run and
+`Eta_stream.from_file ?chunk_size path` opens the file when the stream is run and
 emits bounded `bytes` chunks. The default chunk size is 64 KiB. Downstream
 early completion, for example `take 1`, cancels the file reader instead of
 reading the rest of the file, and the descriptor is closed on normal
@@ -53,22 +53,22 @@ completion, failure, or cancellation.
 File I/O exceptions fail the stream through the typed error channel:
 
 ```ocaml
-Stream.from_file path
-(* (bytes, [> `File_error of Stream.file_error ]) Stream.t *)
+Eta_stream.from_file path
+(* (bytes, [> `File_error of Eta_stream.file_error ]) Eta_stream.t *)
 ```
 
-Use `Stream.from_file_map_error` to map file errors into an application error
+Use `Eta_stream.from_file_map_error` to map file errors into an application error
 row at the boundary:
 
 ```ocaml
-Stream.from_file_map_error
+Eta_stream.from_file_map_error
   ~on_error:(fun error -> `Storage_unavailable error)
   path
 ```
 
 Cancellation remains `Cause.Interrupt`; downstream failures are not wrapped.
 
-`Stream.from_eio_stream queue` consumes an existing `Eio.Stream.t`. The caller
+`Eta_stream.from_eio_stream queue` consumes an existing `Eio.Stream.t`. The caller
 owns the queue and its producers. Because Eio streams do not carry an
 end-of-stream marker, consumers should bound reads with `take` unless another
 fiber is guaranteed to keep producing.

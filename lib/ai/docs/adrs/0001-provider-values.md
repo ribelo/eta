@@ -32,7 +32,7 @@ eta-ai exposes a provider as a record value:
       decode_error : status:int -> headers:headers -> raw_json -> ai_error;
     }
 
-api_key is string Redacted.t. The provider auth boundary is public API, so
+api_key is string Eta_redacted.t. The provider auth boundary is public API, so
 it starts with the redacted key shape required by AC6 instead of accepting
 plain strings and changing later.
 
@@ -44,13 +44,13 @@ can reject an unsupported common feature, such as tools on a minimal provider.
 - Data-only providers. Anthropic and OpenRouter require provider-local codecs.
 - Provider modules or functors as the first public shape. A1 did not find
   provider-specific runtime ownership or control flow that needs modules.
-- Public Stream.Stream streaming in AC2. A2 showed eta-http can provide
+- Public Eta_stream.Stream streaming in AC2. A2 showed eta-http can provide
   body chunks, but eta-stream still needs an owned effect-reader source before
   eta-ai exposes stream ownership publicly.
 
 ## Consequences
 
-- Provider packages should mostly construct Ai.provider values.
+- Provider packages should mostly construct Eta_ai.provider values.
 - Provider-specific JSON remains behind encode/decode functions.
 - Common eta-ai code can inspect endpoint fields and capability flags without
   knowing provider-specific envelopes.

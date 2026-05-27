@@ -15,7 +15,7 @@ type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 type request_body =
   | Empty
   | Fixed of bytes list
-  | Eta_stream of Body.t
+  | Stream of Body.t
   | Rewindable_stream of {
       length : int option;
       make : unit -> Body.t;
@@ -43,7 +43,7 @@ type conn = {
 }
 
 type pool_error =
-  [ `Eta_http of Error.t
+  [ `Http of Error.t
   | `Pool_shutdown
   | `Pool_shutdown_timeout
   | `Health_probe_timeout
@@ -68,7 +68,7 @@ let io_closed request during =
   make_error request (Connection_closed { during })
 
 let pool_context_error ~method_ ~uri = function
-  | `Eta_http error -> error
+  | `Http error -> error
   | `Pool_shutdown | `Pool_shutdown_timeout ->
       Error.make ~protocol:H1 ~method_ ~uri Pool_shutdown
   | `Health_probe_timeout ->
@@ -76,7 +76,7 @@ let pool_context_error ~method_ ~uri = function
         (Connection_protocol_violation
            { kind = "pool_health"; message = "health probe timed out" })
 
-let map_http_error effect = Effect.catch (fun e -> Effect.fail (`Eta_http e)) effect
+let map_http_error effect = Effect.catch (fun e -> Effect.fail (`Http e)) effect
 
 let close_flow request flow =
   Effect.sync (fun () ->
@@ -92,12 +92,12 @@ let close_conn conn =
 let write_body = function
   | Empty -> Write.Empty
   | Fixed chunks -> Write.Fixed chunks
-  | Eta_stream _ | Rewindable_stream _ -> Write.Empty
+  | Stream _ | Rewindable_stream _ -> Write.Empty
 
 let request_body_source = function
   | Empty -> Body_source.Empty
   | Fixed chunks -> Body_source.Fixed chunks
-  | Eta_stream body -> Body_source.Stream body
+  | Stream body -> Body_source.Stream body
   | Rewindable_stream { length; make } ->
       Body_source.Rewindable_stream { length; make }
 
@@ -517,15 +517,15 @@ let default_health_check (target : Connect.target) conn =
           | Some _ -> `Unexpected_data)
       |> Effect.bind (function
            | `Closed ->
-               Effect.fail (`Eta_http (health_error target "idle connection closed"))
+               Effect.fail (`Http (health_error target "idle connection closed"))
            | `Unexpected_data ->
                Effect.fail
-                 (`Eta_http (health_error target "idle connection had unread bytes")))
+                 (`Http (health_error target "idle connection had unread bytes")))
     in
     Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
     |> Effect.catch (function
          | `Health_probe_timeout -> Effect.unit
-         | `Eta_http error -> Effect.fail (`Eta_http error))
+         | `Http error -> Effect.fail (`Http error))
 
 let open_conn ?ca_file ~sw ~net (target : Connect.target) =
   let wrap flow =
@@ -534,7 +534,7 @@ let open_conn ?ca_file ~sw ~net (target : Connect.target) =
   Connect.connect_tcp ~sw ~net ~method_:"*" target
   |> Effect.bind (fun tcp ->
          match target.Connect.scheme with
-         | Eta_http -> Effect.pure (wrap (tcp :> flow))
+         | Http -> Effect.pure (wrap (tcp :> flow))
          | Https ->
              Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
                ~method_:"*" target tcp
@@ -552,13 +552,13 @@ let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
     | Some health_check ->
         fun conn ->
           if not conn.reusable then
-            Effect.fail (`Eta_http (health_error target "connection marked unreusable"))
+            Effect.fail (`Http (health_error target "connection marked unreusable"))
           else if not conn.used then Effect.unit
           else health_check conn.flow |> map_http_error
     | None ->
         fun conn ->
           if not conn.reusable then
-            Effect.fail (`Eta_http (health_error target "connection marked unreusable"))
+            Effect.fail (`Http (health_error target "connection marked unreusable"))
           else if not conn.used then Effect.unit
           else default_health_check target conn
   in
@@ -592,13 +592,13 @@ let request_owner pool request response_ch release_ch cancel_ch =
         |> Effect.bind (function
              | `Request_error error ->
                  conn.reusable <- false;
-                 Effect.fail (`Eta_http error)
+                 Effect.fail (`Http error)
              | `Cancelled ->
                  conn.reusable <- false;
                  close_flow request conn.flow
                  |> Effect.catch (fun _ -> Effect.unit)
                  |> Effect.bind (fun () ->
-                        Effect.fail (`Eta_http (io_closed request Cancellation)))
+                        Effect.fail (`Http (io_closed request Cancellation)))
              | `Response (response : response) ->
                  conn.used <- true;
                  conn.last_used_ms <- int_of_float (Unix.gettimeofday () *. 1000.0);
@@ -675,7 +675,7 @@ let request ?(max_response_body_bytes = default_max_response_body_bytes)
   Connect.connect_tcp ~sw ~net ~method_:request.method_ target
   |> Effect.bind (fun tcp ->
          match target.scheme with
-         | Eta_http -> request_on_flow ~max_response_body_bytes ~flow:tcp request
+         | Http -> request_on_flow ~max_response_body_bytes ~flow:tcp request
          | Https ->
              Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
                ~method_:request.method_ target tcp

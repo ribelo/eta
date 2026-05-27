@@ -4,7 +4,7 @@ set -euo pipefail
 root="${1:-lib/ai}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='Redacted\.|Eta\.(Redacted|Effect|Tracer|Logger|Capabilities|Runtime)|Http\.|Stream\.|Eio\.|Tiktoken'
+dep_pattern='Eta_redacted\.|Eta\.(Eta_redacted|Effect|Tracer|Logger|Capabilities|Runtime)|Eta_http\.|Eta_stream\.|Eio\.|Tiktoken'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"

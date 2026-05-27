@@ -40,7 +40,7 @@ let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
 let h1_body = function
   | Request.Empty -> Eta_http_h1.Client.Empty
   | Fixed chunks -> Eta_http_h1.Client.Fixed chunks
-  | Eta_stream body -> Eta_http_h1.Client.Eta_stream body
+  | Stream body -> Eta_http_h1.Client.Stream body
   | Rewindable_stream { length; make } ->
       Eta_http_h1.Client.Rewindable_stream { length; make }
 
@@ -135,7 +135,7 @@ let h2_headers request url =
         if has_content_length then None
         else
           match request.body with
-          | Empty | Eta_stream _ -> None
+          | Empty | Stream _ -> None
           | Fixed chunks ->
               Some
                 (chunks
@@ -225,7 +225,7 @@ let h2_write_body writer request_body upload =
       | Request.Empty -> Eta.Effect.unit
       | Fixed chunks ->
           chunks |> List.map (h2_write_chunk writer) |> Eta.Effect.concat
-      | Eta_stream _ | Rewindable_stream _ -> Eta.Effect.unit)
+      | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
 
 let h2_close_request_body writer =
   Eta.Effect.sync (fun () -> try H2.Body.Writer.close writer with _ -> ())
@@ -406,7 +406,7 @@ let request_h2_on_connection connection request url =
                           in
                           note_upload_error error))
                 |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Eta_stream _ | Rewindable_stream _ ->
+            | Stream _ | Rewindable_stream _ ->
                 Eta.Effect.race
                   [
                     wait_for_response ();
@@ -415,7 +415,7 @@ let request_h2_on_connection connection request url =
           in
           match request.body with
           | Fixed _ -> response_or_writer
-          | Empty | Eta_stream _ | Rewindable_stream _ ->
+          | Empty | Stream _ | Rewindable_stream _ ->
               Eta.Effect.scoped
                 (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
                    ~release:(fun () -> h2_close_request_body opened.request_body)
@@ -560,7 +560,7 @@ let make ~sw ~net
                    note_open ()
                    |> Eta.Effect.bind (fun () ->
                           match target.Connect.scheme with
-                          | Eta_http ->
+                          | Http ->
                               last_protocol := H1;
                               h1_on_flow tcp request
                           | Https ->

@@ -9,7 +9,7 @@ work-stealing scheduler.
 ## Quick start
 
 ```ocaml
-open Par
+open Eta_par
 
 (* Top-level convenience: spin up a pool, run, tear down. *)
 let () =
@@ -71,7 +71,7 @@ is:
 
 | API | Lives in | Pool | Closures | Payloads |
 |---|---|---|---|---|
-| `Par.join`, `par_*`, `Iter` | `par` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
+| `Eta_par.join`, `par_*`, `Iter` | `par` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
 | `Effect.island`, `Island.map` | `eta` | Heartbeat domain pool | typed (`@ portable`); compiler-forbids shared mutable state | `: immutable_data` |
 
 See [Concurrency Guide](../../docs/concurrency-guide.md) for the full

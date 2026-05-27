@@ -7,15 +7,15 @@ deliver a server response when frame bytes arrive in small chunks?
 
 ## Implementation
 
-- `Http.H2.Multiplexer.create_client_reader` owns a reusable
+- `Eta_http.H2.Multiplexer.create_client_reader` owns a reusable
   `Bigstringaf.t` read buffer and pending parser offset/length.
-- `Http.H2.Multiplexer.read_client_once` feeds pending bytes to
+- `Eta_http.H2.Multiplexer.read_client_once` feeds pending bytes to
   `H2.Client_connection.read`, compacts unconsumed bytes, reads more bytes
   from `Eio.Flow.single_read`, and sends EOF through
   `H2.Client_connection.read_eof`.
 - The focused test builds a real in-process `H2.Client_connection` and
   `H2.Server_connection`, writes a client request through
-  `Http.H2.Writer.drain_client`, feeds it to the server, drains the
+  `Eta_http.H2.Writer.drain_client`, feeds it to the server, drains the
   server response, then reads the response back through an Eio source split
   into 7-byte chunks.
 

@@ -7,7 +7,7 @@ let of_int status = if status >= 100 && status <= 599 then Some status else None
 let unsafe_of_int status =
   match of_int status with
   | Some status -> status
-  | None -> invalid_arg "Eta_http.Status.unsafe_of_int"
+  | None -> invalid_arg "Http.Status.unsafe_of_int"
 
 let to_int status = status
 let class_ status = string_of_int (status / 100) ^ "xx"

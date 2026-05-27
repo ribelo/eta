@@ -1,15 +1,15 @@
-# ADR 0005: Redacted API Keys
+# ADR 0005: Eta_redacted API Keys
 
 Status: accepted.
 
 ## Context
 
 Provider packages need API keys to build HTTP Authorization headers. AC6
-requires those keys to travel as Redacted.t and not leak through eta-ai
-logs or traces. Eta keeps Eta.Redacted as a compatibility alias, but eta-ai
+requires those keys to travel as Eta_redacted.t and not leak through eta-ai
+logs or traces. Eta keeps Eta.Eta_redacted as a compatibility alias, but eta-ai
 depends on the standalone eta-redacted package directly.
 
-Redacted.t deliberately allows explicit value extraction at an IO boundary.
+Eta_redacted.t deliberately allows explicit value extraction at an IO boundary.
 That is required for constructing provider headers. The safety boundary is that
 the key is not a string in ordinary eta-ai APIs and its formatter prints a
 redacted marker.
@@ -18,13 +18,13 @@ redacted marker.
 
 eta-ai exposes:
 
-    type api_key = string Redacted.t
+    type api_key = string Eta_redacted.t
     val api_key : string -> api_key
 
-The constructor labels keys as api_key, so Redacted.pp renders
+The constructor labels keys as api_key, so Eta_redacted.pp renders
 <redacted:api_key>.
 
-Provider auth builders accept api_key. They may call Redacted.value only at
+Provider auth builders accept api_key. They may call Eta_redacted.value only at
 the HTTP header boundary. eta-ai telemetry wrappers do not inspect headers and
 do not emit prompt, output, tool argument, tool result, or API-key attributes.
 
@@ -51,10 +51,10 @@ spans do not leak headers inside AI spans.
 
 The negative fixture must fail to compile:
 
-    let key : Ai.api_key = Ai.api_key "sk-test-negative" in
+    let key : Eta_ai.api_key = Eta_ai.api_key "sk-test-negative" in
     print_endline key
 
 Expected compiler shape:
 
-    This expression has type Ai.api_key = string Redacted.t
+    This expression has type Eta_ai.api_key = string Eta_redacted.t
     but an expression was expected of type string

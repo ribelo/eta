@@ -5,10 +5,10 @@ Status: accepted.
 ## Context
 
 AC4 needs a composable tool registry for provider requests. OpenAI and
-Anthropic both require tool schemas as JSON Schema documents.
+Anthropic both require tool schemas as JSON Eta_schema documents.
 
 A3 found that eta-schema can decode and encode application values, but it
-cannot emit provider-ready JSON Schema. It has no public exporter for required
+cannot emit provider-ready JSON Eta_schema. It has no public exporter for required
 provider vocabulary such as oneOf, anyOf, allOf, $ref, or
 additionalProperties.
 
@@ -35,15 +35,15 @@ The toolkit checks only eta-ai registry invariants:
 - duplicate tool names are rejected;
 - registration order is preserved.
 
-It does not parse or validate JSON Schema. Provider packages pass the raw schema
+It does not parse or validate JSON Eta_schema. Provider packages pass the raw schema
 through to their request encoders.
 
 ## Rejected
 
-- eta-ai-local JSON Schema generation. That would duplicate eta-schema work and
+- eta-ai-local JSON Eta_schema generation. That would duplicate eta-schema work and
   create a second schema language.
 - Depending on eta-schema in eta-ai v1. A3 falsified that integration until
-  eta-schema grows JSON Schema export.
+  eta-schema grows JSON Eta_schema export.
 - Silent duplicate names. Provider APIs key tool calls by name, so duplicate
   registration is an application error.
 
@@ -52,7 +52,7 @@ through to their request encoders.
 - Tool registration is pipe-friendly through add_tool.
 - Provider packages can share the common toolkit representation.
 - Applications that need local argument validation must validate outside
-  eta-ai v1 or wait for eta-schema JSON Schema export.
+  eta-ai v1 or wait for eta-schema JSON Eta_schema export.
 
 ## Evidence
 

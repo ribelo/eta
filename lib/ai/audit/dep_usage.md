@@ -17,56 +17,56 @@ Allowed production dependencies for eta-ai core:
 
 Search:
 
-    rg -n -t ocaml 'Redacted\.|Eta\.(Redacted|Effect|Tracer|Logger|Capabilities|Runtime)|Http\.|Stream\.|Eio\.|Tiktoken' lib/ai
+    rg -n -t ocaml 'Eta_redacted\.|Eta\.(Eta_redacted|Effect|Tracer|Logger|Capabilities|Runtime)|Eta_http\.|Eta_stream\.|Eio\.|Tiktoken' lib/ai
 
 | Site | Dependency | What | Replaceable? | Replacement cost |
 | --- | --- | --- | --- | --- |
 | eta_ai.ml | eta-http | Preserve typed eta-http errors in Ai_error. | structural | low; could erase to string, but that loses retry/status details. |
 | eta_ai.mli | eta-http | Expose typed eta-http errors in the public error vocabulary. | structural | low; public type can change before providers ship. |
-| eta_ai.ml | eta-redacted | Use Redacted.t for API-key typed provider auth. | structural | low; public auth type can still change before provider packages ship. |
-| eta_ai.mli | eta-redacted | Expose Redacted.t for API-key typed provider auth. | structural | low; aligns AC6 before provider auth becomes widely used. |
+| eta_ai.ml | eta-redacted | Use Eta_redacted.t for API-key typed provider auth. | structural | low; public auth type can still change before provider packages ship. |
+| eta_ai.mli | eta-redacted | Expose Eta_redacted.t for API-key typed provider auth. | structural | low; aligns AC6 before provider auth becomes widely used. |
 | eta_ai.ml / eta_ai.mli | eta / eta-http | AC3 pull stream uses Eta effects over eta-http body streams. | structural | medium; this is the current A2-approved streaming substrate. |
 | eta_ai.ml / eta_ai.mli | eta / eta-http | AC5 GenAI telemetry wraps Eta effects, parses provider base URLs, and suppresses provider transport observability. | structural | medium; this is the common telemetry shape provider packages use. |
-| eta_ai.ml / eta_ai.mli | eta-redacted | AC6 API keys use Redacted.t with the eta-ai API-key label. | structural | low; this is the required redaction boundary for provider keys. |
-| test/test_eta_ai.ml | eta-redacted / eta-http | Prove provider auth builders can consume Redacted.t and produce eta-http headers. | replaceable | low; test-only fixture. |
+| eta_ai.ml / eta_ai.mli | eta-redacted | AC6 API keys use Eta_redacted.t with the eta-ai API-key label. | structural | low; this is the required redaction boundary for provider keys. |
+| test/test_eta_ai.ml | eta-redacted / eta-http | Prove provider auth builders can consume Eta_redacted.t and produce eta-http headers. | replaceable | low; test-only fixture. |
 | test/test_eta_ai.ml | Eio / eta / eta-http | Run eta-http body-stream, tracer, and logger effects under local Eta runtimes. | replaceable | low; eta-test could provide a shared runtime fixture. |
 
 ## Current Matches
 
 <!-- BEGIN DEP_MATCHES -->
-- lib/ai/eta_ai.ml:2:type headers = Http.Core.Header.t
-- lib/ai/eta_ai.ml:3:type api_key = string Redacted.t
-- lib/ai/eta_ai.ml:4:let api_key value = Redacted.make ~label:"api_key" value
-- lib/ai/eta_ai.ml:84:  | Http_error of Http.Error.t
-- lib/ai/eta_ai.ml:199:  Http.Request.make ~headers
-- lib/ai/eta_ai.ml:200:    ~body:(Http.Request.Fixed [ Bytes.of_string raw ])
-- lib/ai/eta_ai.ml:204:  Http.Body.Stream.read_all body
-- lib/ai/eta_ai.ml:205:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Http_error error))
+- lib/ai/eta_ai.ml:2:type headers = Eta_http.Core.Header.t
+- lib/ai/eta_ai.ml:3:type api_key = string Eta_redacted.t
+- lib/ai/eta_ai.ml:4:let api_key value = Eta_redacted.make ~label:"api_key" value
+- lib/ai/eta_ai.ml:84:  | Eta_http_error of Eta_http.Error.t
+- lib/ai/eta_ai.ml:199:  Eta_http.Request.make ~headers
+- lib/ai/eta_ai.ml:200:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string raw ])
+- lib/ai/eta_ai.ml:204:  Eta_http.Body.Stream.read_all body
+- lib/ai/eta_ai.ml:205:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
 - lib/ai/eta_ai.ml:206:  |> Eta.Effect.map Bytes.to_string
 - lib/ai/eta_ai.ml:209:  | Stdlib.Ok value -> Eta.Effect.pure value
 - lib/ai/eta_ai.ml:210:  | Stdlib.Error error -> Eta.Effect.fail error
-- lib/ai/eta_ai.ml:213:  Http.request client request
+- lib/ai/eta_ai.ml:213:  Eta_http.request client request
 - lib/ai/eta_ai.ml:214:  |> Eta.Effect.suppress_observability
-- lib/ai/eta_ai.ml:215:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Http_error error))
+- lib/ai/eta_ai.ml:215:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
 - lib/ai/eta_ai.ml:219:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:221:           response.Http.Response.status >= 200
+- lib/ai/eta_ai.ml:221:           response.Eta_http.Response.status >= 200
 - lib/ai/eta_ai.ml:225:           |> Eta.Effect.bind (fun raw ->
 - lib/ai/eta_ai.ml:229:           |> Eta.Effect.bind (fun raw ->
 - lib/ai/eta_ai.ml:230:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:236:  body : Http.Body.Stream.t;
+- lib/ai/eta_ai.ml:236:  body : Eta_http.Body.Stream.t;
 - lib/ai/eta_ai.ml:261:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:263:           response.Http.Response.status >= 200
+- lib/ai/eta_ai.ml:263:           response.Eta_http.Response.status >= 200
 - lib/ai/eta_ai.ml:265:         then Eta.Effect.pure (stream_of_body provider response.body)
 - lib/ai/eta_ai.ml:268:           |> Eta.Effect.bind (fun raw ->
 - lib/ai/eta_ai.ml:269:                  Eta.Effect.fail
 - lib/ai/eta_ai.ml:336:  if stream.released then Eta.Effect.unit
-- lib/ai/eta_ai.ml:339:    Http.Body.Stream.discard stream.body
-- lib/ai/eta_ai.ml:340:    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Http_error error)))
+- lib/ai/eta_ai.ml:339:    Eta_http.Body.Stream.discard stream.body
+- lib/ai/eta_ai.ml:340:    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
 - lib/ai/eta_ai.ml:349:  close_stream stream |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
 - lib/ai/eta_ai.ml:363:    | [] -> Eta.Effect.pure (List.rev acc)
 - lib/ai/eta_ai.ml:375:      Eta.Effect.pure (Some event)
 - lib/ai/eta_ai.ml:376:  | [] when stream.eof -> Eta.Effect.pure None
-- lib/ai/eta_ai.ml:378:      Http.Body.Stream.read stream.body
+- lib/ai/eta_ai.ml:378:      Eta_http.Body.Stream.read stream.body
 - lib/ai/eta_ai.ml:379:      |> Eta.Effect.catch (fun error ->
 - lib/ai/eta_ai.ml:381:      |> Eta.Effect.bind (function
 - lib/ai/eta_ai.ml:386:               |> Eta.Effect.bind (fun events ->
@@ -77,10 +77,10 @@ Search:
 - lib/ai/eta_ai.ml:411:        read_stream_event stream |> Eta.Effect.bind (function
 - lib/ai/eta_ai.ml:412:          | None -> Eta.Effect.pure (List.rev acc)
 - lib/ai/eta_ai.ml:423:    (fun (key, value) acc -> Eta.Effect.annotate ~key ~value acc)
-- lib/ai/eta_ai.ml:466:  match Http.Core.Url.parse provider.base_url with
-- lib/ai/eta_ai.ml:469:        ("server.address", Http.Core.Url.host url);
-- lib/ai/eta_ai.ml:470:        ("server.port", string_of_int (Http.Core.Url.effective_port url));
-- lib/ai/eta_ai.ml:491:  | Http_error error -> Http.Error.to_string error
+- lib/ai/eta_ai.ml:466:  match Eta_http.Core.Url.parse provider.base_url with
+- lib/ai/eta_ai.ml:469:        ("server.address", Eta_http.Core.Url.host url);
+- lib/ai/eta_ai.ml:470:        ("server.port", string_of_int (Eta_http.Core.Url.effective_port url));
+- lib/ai/eta_ai.ml:491:  | Eta_http_error error -> Eta_http.Error.to_string error
 - lib/ai/eta_ai.ml:500:  |> Eta.Effect.catch (fun error ->
 - lib/ai/eta_ai.ml:501:         Eta.Effect.fail error
 - lib/ai/eta_ai.ml:506:  |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
@@ -91,16 +91,16 @@ Search:
 - lib/ai/eta_ai.ml:547:  with_span ~kind:Eta.Capabilities.Client
 - lib/ai/eta_ai.ml:560:  with_span ~kind:Eta.Capabilities.Internal
 - lib/ai/eta_ai.ml:565:  Eta.Effect.suppress_observability
-- lib/ai/eta_ai.mli:10:type headers = Http.Core.Header.t
-- lib/ai/eta_ai.mli:11:type api_key = string Redacted.t
-- lib/ai/eta_ai.mli:93:  | Http_error of Http.Error.t
-- lib/ai/eta_ai.mli:181:  provider -> api_key -> raw_json -> Http.Request.t
-- lib/ai/eta_ai.mli:186:  Http.Client.t ->
-- lib/ai/eta_ai.mli:187:  Http.Request.t ->
+- lib/ai/eta_ai.mli:10:type headers = Eta_http.Core.Header.t
+- lib/ai/eta_ai.mli:11:type api_key = string Eta_redacted.t
+- lib/ai/eta_ai.mli:93:  | Eta_http_error of Eta_http.Error.t
+- lib/ai/eta_ai.mli:181:  provider -> api_key -> raw_json -> Eta_http.Request.t
+- lib/ai/eta_ai.mli:186:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:187:  Eta_http.Request.t ->
 - lib/ai/eta_ai.mli:188:  (response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:199:  ?max_buffer_bytes:int -> provider -> Http.Body.Stream.t -> stream
-- lib/ai/eta_ai.mli:205:  Http.Client.t ->
-- lib/ai/eta_ai.mli:206:  Http.Request.t ->
+- lib/ai/eta_ai.mli:199:  ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
+- lib/ai/eta_ai.mli:205:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:206:  Eta_http.Request.t ->
 - lib/ai/eta_ai.mli:207:  (stream, ai_error) Eta.Effect.t
 - lib/ai/eta_ai.mli:211:val read_stream_event : stream -> (stream_event option, ai_error) Eta.Effect.t
 - lib/ai/eta_ai.mli:215:  ?max_events:int -> stream -> (stream_event list, ai_error) Eta.Effect.t
@@ -114,11 +114,11 @@ Search:
 - lib/ai/eta_ai.mli:250:  ('a, ai_error) Eta.Effect.t ->
 - lib/ai/eta_ai.mli:251:  ('a, ai_error) Eta.Effect.t
 - lib/ai/eta_ai.mli:256:  ('a, 'err) Eta.Effect.t -> ('a, 'err) Eta.Effect.t
-- test/ai/core/test_eta_ai.ml:54:  let rendered = Format.asprintf "%a" Redacted.pp key in
-- test/ai/core/test_eta_ai.ml:75:          Http.Core.Header.of_list
-- test/ai/core/test_eta_ai.ml:77:              ("Authorization", "Bearer " ^ Redacted.value api_key);
-- test/ai/core/test_eta_ai.ml:121:  let headers = provider.auth_headers (Redacted.make "sk-test") in
-- test/ai/core/test_eta_ai.ml:125:    (Option.get (Http.Core.Header.get "authorization" headers));
+- test/ai/core/test_eta_ai.ml:54:  let rendered = Format.asprintf "%a" Eta_redacted.pp key in
+- test/ai/core/test_eta_ai.ml:75:          Eta_http.Core.Header.of_list
+- test/ai/core/test_eta_ai.ml:77:              ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- test/ai/core/test_eta_ai.ml:121:  let headers = provider.auth_headers (Eta_redacted.make "sk-test") in
+- test/ai/core/test_eta_ai.ml:125:    (Option.get (Eta_http.Core.Header.get "authorization" headers));
 - test/ai/core/test_eta_ai.ml:319:  Eio.Switch.run @@ fun sw ->
 - test/ai/core/test_eta_ai.ml:320:  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
 - test/ai/core/test_eta_ai.ml:325:  Eio.Switch.run @@ fun sw ->
@@ -132,8 +132,8 @@ Search:
 - test/ai/core/test_eta_ai.ml:340:      ~tracer:(Eta.Tracer.as_capability tracer)
 - test/ai/core/test_eta_ai.ml:341:      ~logger:(Eta.Logger.as_capability logger) ()
 - test/ai/core/test_eta_ai.ml:346:  match Eta.Runtime.run rt effect with
-- test/ai/core/test_eta_ai.ml:377:  | Some release -> Http.Body.Stream.of_bytes ~release (chunk_string value)
-- test/ai/core/test_eta_ai.ml:378:  | None -> Http.Body.Stream.of_bytes (chunk_string value)
+- test/ai/core/test_eta_ai.ml:377:  | Some release -> Eta_http.Body.Stream.of_bytes ~release (chunk_string value)
+- test/ai/core/test_eta_ai.ml:378:  | None -> Eta_http.Body.Stream.of_bytes (chunk_string value)
 - test/ai/core/test_eta_ai.ml:526:        Eta.Effect.unit)
 - test/ai/core/test_eta_ai.ml:558:let span_attr key (span : Eta.Tracer.span) = List.assoc_opt key span.attrs
 - test/ai/core/test_eta_ai.ml:566:      (fun (span : Eta.Tracer.span) -> String.equal span.name name && pred span)
@@ -159,7 +159,7 @@ Search:
 - test/ai/core/test_eta_ai.ml:697:let span_contains_secret secret (span : Eta.Tracer.span) =
 - test/ai/core/test_eta_ai.ml:705:let log_contains_secret secret (record : Eta.Logger.record) =
 - test/ai/core/test_eta_ai.ml:719:    Eta.Effect.log
-- test/ai/core/test_eta_ai.ml:720:      ~attrs:[ ("authorization", "Bearer " ^ Redacted.value key) ]
+- test/ai/core/test_eta_ai.ml:720:      ~attrs:[ ("authorization", "Bearer " ^ Eta_redacted.value key) ]
 - test/ai/core/test_eta_ai.ml:723:    |> Eta.Effect.bind (fun () -> Eta.Effect.pure (telemetry_response ()))
 - test/ai/core/test_eta_ai.ml:728:  let spans = Eta.Tracer.dump tracer in
 - test/ai/core/test_eta_ai.ml:729:  let logs = Eta.Logger.dump logger in

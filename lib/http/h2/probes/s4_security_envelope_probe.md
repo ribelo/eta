@@ -7,7 +7,7 @@ ocaml-h2 adapter boundary before hostile frame shapes enter the substrate?
 
 ## Evidence
 
-- `Http.H2.Security.observe` scans raw server-to-client frame bytes in the
+- `Eta_http.H2.Security.observe` scans raw server-to-client frame bytes in the
   h2 read adapter before calling `H2.Client_connection.read`.
 - SETTINGS churn is detected through real `Multiplexer.read_client_once` and
   returns `Settings_churn_rate_exceeded`.

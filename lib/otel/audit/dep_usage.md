@@ -10,7 +10,7 @@ truth-of-record for where eta-otel reaches outside Eta core.
 
 Search:
 
-    rg -n -t ocaml 'Http\.|Stream\.|Eio\.|Yojson\.' lib/otel
+    rg -n -t ocaml 'Eta_http\.|Eta_stream\.|Eio\.|Yojson\.' lib/otel
 
 ## Classification
 
@@ -36,30 +36,30 @@ Search:
 - test/otel/test_logger.ml:119:    Eio.Switch.run @@ fun sw ->
 - test/otel/test_logger.ml:120:    let net = Eio.Stdenv.net stdenv in
 - test/otel/test_logger.ml:121:    let clock = Eio.Stdenv.clock stdenv in
-- lib/otel/eta_otel.ml:13:module Stream = Stream.Stream
-- lib/otel/eta_otel.ml:14:module Mailbox = Stream.Mailbox
-- lib/otel/eta_otel.ml:15:module Drain_counter = Stream.Drain_counter
+- lib/otel/eta_otel.ml:13:module Eta_stream = Eta_stream.Stream
+- lib/otel/eta_otel.ml:14:module Mailbox = Eta_stream.Mailbox
+- lib/otel/eta_otel.ml:15:module Drain_counter = Eta_stream.Drain_counter
 - lib/otel/eta_otel.ml:35:type yj = Yojson.Safe.t
 - lib/otel/eta_otel.ml:194:  Yojson.Safe.to_string payload
 - lib/otel/eta_otel.ml:258:  Yojson.Safe.to_string payload
 - lib/otel/eta_otel.ml:411:  Yojson.Safe.to_string payload
-- lib/otel/eta_otel.ml:422:  Http.Retry_policy.always ~max_attempts:3
-- lib/otel/eta_otel.ml:426:  Http.Core.Header.of_list
-- lib/otel/eta_otel.ml:433:  Http.Request.make ~headers:otlp_headers
-- lib/otel/eta_otel.ml:434:    ~body:(Http.Request.Fixed [ Bytes.of_string body ])
-- lib/otel/eta_otel.ml:447:  http_client : Http.Client.t;
+- lib/otel/eta_otel.ml:422:  Eta_http.Retry_policy.always ~max_attempts:3
+- lib/otel/eta_otel.ml:426:  Eta_http.Core.Header.of_list
+- lib/otel/eta_otel.ml:433:  Eta_http.Request.make ~headers:otlp_headers
+- lib/otel/eta_otel.ml:434:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
+- lib/otel/eta_otel.ml:447:  http_client : Eta_http.Client.t;
 - lib/otel/eta_otel.ml:448:  clock : float Eio.Time.clock_ty Eio.Std.r;
 - lib/otel/eta_otel.ml:465:  let secs = Eio.Time.now t.clock in
 - lib/otel/eta_otel.ml:469:  let secs = Eio.Time.now t.clock in
-- lib/otel/eta_otel.ml:558:  Http.Observability.Tracer.request_with_retry ~enabled:false
-- lib/otel/eta_otel.ml:561:         Http.Body.Stream.read_all response.Http.Response.body
-- lib/otel/eta_otel.ml:563:                (response.Http.Response.status, body)))
-- lib/otel/eta_otel.ml:565:         Eta.Effect.fail (`Export_error (Http.Error.to_string error)))
-- lib/otel/eta_otel.ml:653:         |> Stream.run_drain)
-- lib/otel/eta_otel.ml:673:       (Http.Client.shutdown t.http_client
+- lib/otel/eta_otel.ml:558:  Eta_http.Observability.Tracer.request_with_retry ~enabled:false
+- lib/otel/eta_otel.ml:561:         Eta_http.Body.Stream.read_all response.Eta_http.Response.body
+- lib/otel/eta_otel.ml:563:                (response.Eta_http.Response.status, body)))
+- lib/otel/eta_otel.ml:565:         Eta.Effect.fail (`Export_error (Eta_http.Error.to_string error)))
+- lib/otel/eta_otel.ml:653:         |> Eta_stream.run_drain)
+- lib/otel/eta_otel.ml:673:       (Eta_http.Client.shutdown t.http_client
 - lib/otel/eta_otel.ml:829:  let net = (net :> [ `Generic ] Eio.Net.ty Eio.Std.r) in
 - lib/otel/eta_otel.ml:830:  let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
-- lib/otel/eta_otel.ml:868:  let http_client = Http.Client.make_h1 ~sw ~net () in
+- lib/otel/eta_otel.ml:868:  let http_client = Eta_http.Client.make_h1 ~sw ~net () in
 - test/otel/test_tracer.ml:12:  Eio.Switch.run @@ fun sw ->
 - test/otel/test_tracer.ml:16:      ~clock:(Eio.Stdenv.clock stdenv)
 - test/otel/test_tracer.ml:23:  Eio.Switch.run @@ fun sw ->

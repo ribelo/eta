@@ -1,6 +1,6 @@
 # Thermo-Nuclear Code Quality Review — Eta OCaml Library
 
-**Scope:** `packages/eta/` (published library), `packages/eta-test/` (test helpers), `dune-project`, `README.md`
+**Scope:** `lib/eta/` (published library), `lib/eta-test/` (test helpers), `dune-project`, `README.md`
 **Excluded:** `scratch/` (research experiments, explicitly out of scope per `AGENTS.md`)
 
 ---
@@ -32,7 +32,7 @@ surfaces below.
 
 ### 1. `runtime.ml` is 1,039 lines and must be decomposed
 
-**Finding:** `packages/eta/runtime.ml` is the second-largest file in the library
+**Finding:** `lib/eta/runtime.ml` is the second-largest file in the library
 and the most important. It contains:
 
 - Exception key machinery (`Typed_fail`, `Raised_cause`)

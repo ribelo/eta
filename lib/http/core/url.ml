@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type scheme = Eta_http | Https
+type scheme = Http | Https
 
 type parse_error =
   | Empty
@@ -78,7 +78,7 @@ let parse_scheme raw =
   | Some colon ->
       let scheme = String.sub raw 0 colon |> String.lowercase_ascii in
       match scheme with
-      | "http" -> Ok (Eta_http, colon)
+      | "http" -> Ok (Http, colon)
       | "https" -> Ok (Https, colon)
       | other -> Error (Unsupported_scheme other)
 
@@ -233,14 +233,14 @@ let parse_error_to_string error = Format.asprintf "%a" pp_parse_error error
 let of_string raw =
   match parse raw with
   | Ok t -> t
-  | Error error -> invalid_arg ("Eta_http.Url.of_string: " ^ parse_error_to_string error)
+  | Error error -> invalid_arg ("Http.Url.of_string: " ^ parse_error_to_string error)
 
 let to_string t = t.raw
 let scheme t = t.scheme
-let scheme_to_string = function Eta_http -> "http" | Https -> "https"
+let scheme_to_string = function Http -> "http" | Https -> "https"
 let host t = slice t.raw t.host |> String.lowercase_ascii
 let port t = t.port
-let default_port = function Eta_http -> 80 | Https -> 443
+let default_port = function Http -> 80 | Https -> 443
 let effective_port t = Option.value ~default:(default_port t.scheme) t.port
 let path t = match t.path with None -> "/" | Some span -> slice t.raw span
 let query t = Option.map (slice t.raw) t.query

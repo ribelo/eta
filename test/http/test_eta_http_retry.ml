@@ -18,7 +18,7 @@ let test_idempotency_classifier () =
     (Eta_http.Idempotency.retryable post_with_key);
   let one_shot =
     Eta_http.Request.make
-      ~body:(Eta_stream (Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ]))
+      ~body:(Stream (Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ]))
       "GET" "https://api.example.test/resource"
   in
   Alcotest.(check bool) "one-shot body" false
@@ -281,7 +281,7 @@ let test_retry_always_still_requires_replayable_body () =
   in
   let request =
     Eta_http.Request.make
-      ~body:(Eta_stream (Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ]))
+      ~body:(Stream (Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ]))
       "POST" "https://api.example.test/retry"
   in
   let policy =

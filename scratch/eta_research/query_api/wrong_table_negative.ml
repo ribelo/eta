@@ -1,4 +1,4 @@
-module Q = Sql
+module Q = Eta_sql
 
 module Users = struct
   module T = Q.Table.Make (struct

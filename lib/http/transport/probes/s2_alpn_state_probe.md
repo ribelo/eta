@@ -7,7 +7,7 @@ coordination primitives and before the full h1/h2 dispatcher lands?
 
 ## Implementation
 
-- `Http.Transport.Alpn` is a pure state machine.
+- `Eta_http.Transport.Alpn` is a pure state machine.
 - `begin_request` returns one `Leader` while no protocol route exists.
 - Concurrent first arrivals see `Wait` on the same pending id and increment
   `redundant_cancelled`, matching the H-D5 redundant-connection collapse

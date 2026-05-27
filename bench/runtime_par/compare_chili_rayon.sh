@@ -139,5 +139,5 @@ echo " - rust_baseline:  pure recursion, no scheduler (chili divan 'no_overhead'
 echo " - ocaml_baseline: pure recursion, no scheduler (par 'baseline')"
 echo " - rayon:          rayon::join at every node (chili divan 'rayon_overhead')"
 echo " - chili:          chili::join at every node (chili divan 'chili_overhead')"
-echo " - par:        Par.join at every node (par bench_tree_sum)"
+echo " - par:        Eta_par.join at every node (par bench_tree_sum)"
 echo " - par/chili:      par median \u00f7 chili median"

@@ -12,7 +12,7 @@ a drain counter, and one Eta daemon that merges trace, log, and metric
 batches. Recording self-metrics through the public meter capability would
 feed the exporter back into itself and risk an unbounded metric-export loop.
 
-Dogfooding exposed one missing Eta primitive: Stream.Mailbox tracked
+Dogfooding exposed one missing Eta primitive: Eta_stream.Mailbox tracked
 dropped values but did not expose current queue depth. eta-stream now exposes
 Mailbox.length so consumers can report depth without reaching into mailbox
 internals.

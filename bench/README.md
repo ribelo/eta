@@ -134,5 +134,5 @@ Avoid committing dirty-tree results unless the commit message explains why.
   file contents.
 - Runtime concurrent stream workloads can be noisier than pure interpreter
   workloads because they include Eio scheduling.
-- The OTLP adapter benchmark uses `Otel.Internal` encoders. It records
+- The OTLP adapter benchmark uses `Eta_otel.Internal` encoders. It records
   encoding cost, not a live collector round trip.

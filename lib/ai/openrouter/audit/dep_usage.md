@@ -17,15 +17,15 @@ packages. Yojson is allowed for structured JSON.
 
 Search:
 
-    rg -n -t ocaml 'Ai\.|Ai_openai\.|Redacted\.|Http\.|Eta\.(Effect|Redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/openrouter
+    rg -n -t ocaml 'Eta_ai\.|Eta_ai_openai\.|Eta_redacted\.|Eta_http\.|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/openrouter
 
-The search includes Ai_openai to catch forbidden cross-provider usage.
+The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 
 | Site | Dependency | What | Replaceable? | Replacement cost |
 | --- | --- | --- | --- | --- |
 | eta_ai_openrouter.ml / eta_ai_openrouter.mli | eta-ai | Public provider vocabulary, effects, redacted API keys, and telemetry wrappers. | structural | high; this is the provider package contract. |
 | eta_ai_openrouter.ml | eta-redacted | Extract API key value only at the HTTP Authorization header boundary. | structural | low; required by provider auth. |
-| eta_ai_openrouter.ml / eta_ai_openrouter.mli | local codec | Responses-style request, response, SSE, structured-output, routing, and OpenRouter error mapping through Ai.Json. | structural | medium; required by the provider dependency policy. |
+| eta_ai_openrouter.ml / eta_ai_openrouter.mli | local codec | Responses-style request, response, SSE, structured-output, routing, and OpenRouter error mapping through Eta_ai.Json. | structural | medium; required by the provider dependency policy. |
 | eta_ai_openrouter.ml / eta_ai_openrouter.mli | eta-http | Public request/response runner type. | structural | high; AP4 must dogfood eta-http directly. |
 | test/test_eta_ai_openrouter.ml | eta / eta-http | Run provider effects against fixture-backed eta-http clients. | replaceable | low; test harness only. |
 
@@ -39,31 +39,31 @@ The search includes Ai_openai to catch forbidden cross-provider usage.
 - test/ai/openrouter/test_eta_ai_openrouter.ml:86:    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
 - test/ai/openrouter/test_eta_ai_openrouter.ml:92:  match Eta.Runtime.run rt effect with
 - test/ai/openrouter/test_eta_ai_openrouter.ml:274:    Eta.Runtime.run rt
-- lib/ai/openrouter/eta_ai_openrouter.mli:38:  (routing, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:43:  ?extra_headers:Ai.headers ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:45:  Ai.provider
-- lib/ai/openrouter/eta_ai_openrouter.mli:51:  schema_json : Ai.raw_json;
-- lib/ai/openrouter/eta_ai_openrouter.mli:58:  schema_json:Ai.raw_json ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:60:  (structured_output, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:65:  Ai.chat_request ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:66:  (Ai.raw_json, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:68:val decode_chat : Ai.raw_json -> (Ai.response, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:70:  Ai.sse_event -> (Ai.stream_event list, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:72:  status:int -> headers:Ai.headers -> Ai.raw_json -> Ai.ai_error
-- lib/ai/openrouter/eta_ai_openrouter.mli:77:  ?provider:Ai.provider ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:78:  api_key:Ai.api_key ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:79:  Ai.chat_request ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:80:  (Http.Request.t, Ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:85:  ?provider:Ai.provider ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:86:  Http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:87:  api_key:Ai.api_key ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:88:  Ai.chat_request ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:89:  (Ai.response, Ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:94:  ?provider:Ai.provider ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:95:  Http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:96:  api_key:Ai.api_key ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:97:  Ai.chat_request ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:98:  (Ai.stream, Ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:38:  (routing, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:43:  ?extra_headers:Eta_ai.headers ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:45:  Eta_ai.provider
+- lib/ai/openrouter/eta_ai_openrouter.mli:51:  schema_json : Eta_ai.raw_json;
+- lib/ai/openrouter/eta_ai_openrouter.mli:58:  schema_json:Eta_ai.raw_json ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:60:  (structured_output, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:65:  Eta_ai.chat_request ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:66:  (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:68:val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:70:  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:72:  status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
+- lib/ai/openrouter/eta_ai_openrouter.mli:77:  ?provider:Eta_ai.provider ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:78:  api_key:Eta_ai.api_key ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:79:  Eta_ai.chat_request ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:80:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:85:  ?provider:Eta_ai.provider ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:86:  Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:87:  api_key:Eta_ai.api_key ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:88:  Eta_ai.chat_request ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:89:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:94:  ?provider:Eta_ai.provider ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:95:  Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:96:  api_key:Eta_ai.api_key ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:97:  Eta_ai.chat_request ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:98:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.ml:2:module E = Eta.Effect
-- lib/ai/openrouter/eta_ai_openrouter.ml:475:       ("Authorization", "Bearer " ^ Redacted.value api_key);
+- lib/ai/openrouter/eta_ai_openrouter.ml:475:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
 <!-- END DEP_MATCHES -->

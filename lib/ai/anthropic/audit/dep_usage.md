@@ -17,7 +17,7 @@ structured JSON.
 
 Search:
 
-    rg -n -t ocaml 'Ai\.|Redacted\.|Http\.|Eta\.(Effect|Redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/anthropic
+    rg -n -t ocaml 'Eta_ai\.|Eta_redacted\.|Eta_http\.|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken' lib/ai/anthropic
 
 | Site | Dependency | What | Replaceable? | Replacement cost |
 | --- | --- | --- | --- | --- |
@@ -40,28 +40,28 @@ Search:
 - lib/ai/anthropic/eta_ai_anthropic.mli:3:    This package owns Anthropic-specific request encoding, response decoding,
 - lib/ai/anthropic/eta_ai_anthropic.mli:13:    [beta_header] is added as [Anthropic-Beta]. When [cache_system] is true,
 - lib/ai/anthropic/eta_ai_anthropic.mli:14:    system text is encoded as an Anthropic text block with ephemeral
-- lib/ai/anthropic/eta_ai_anthropic.mli:25:  Ai.provider
-- lib/ai/anthropic/eta_ai_anthropic.mli:31:  Ai.chat_request ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:32:  (Ai.raw_json, Ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:34:val decode_message : Ai.raw_json -> (Ai.response, Ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:36:  Ai.sse_event -> (Ai.stream_event list, Ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:38:  status:int -> headers:Ai.headers -> Ai.raw_json -> Ai.ai_error
-- lib/ai/anthropic/eta_ai_anthropic.mli:42:  ?provider:Ai.provider ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:43:  api_key:Ai.api_key ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:44:  Ai.chat_request ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:45:  (Http.Request.t, Ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:49:  ?provider:Ai.provider ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:50:  Http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:51:  api_key:Ai.api_key ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:52:  Ai.chat_request ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:53:  (Ai.response, Ai.ai_error) Eta.Effect.t
-- lib/ai/anthropic/eta_ai_anthropic.mli:57:  ?provider:Ai.provider ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:58:  Http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:59:  api_key:Ai.api_key ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:60:  Ai.chat_request ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:61:  (Ai.stream, Ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.mli:25:  Eta_ai.provider
+- lib/ai/anthropic/eta_ai_anthropic.mli:31:  Eta_ai.chat_request ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:32:  (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:34:val decode_message : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:36:  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:38:  status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
+- lib/ai/anthropic/eta_ai_anthropic.mli:42:  ?provider:Eta_ai.provider ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:43:  api_key:Eta_ai.api_key ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:44:  Eta_ai.chat_request ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:45:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:49:  ?provider:Eta_ai.provider ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:50:  Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:51:  api_key:Eta_ai.api_key ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:52:  Eta_ai.chat_request ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:53:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.mli:57:  ?provider:Eta_ai.provider ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:58:  Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:59:  api_key:Eta_ai.api_key ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:60:  Eta_ai.chat_request ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:61:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/anthropic/eta_ai_anthropic.ml:2:module E = Eta.Effect
 - lib/ai/anthropic/eta_ai_anthropic.ml:691:    | headers -> [ ("Anthropic-Beta", String.concat "," headers) ]
-- lib/ai/anthropic/eta_ai_anthropic.ml:695:       ("x-api-key", Redacted.value api_key);
+- lib/ai/anthropic/eta_ai_anthropic.ml:695:       ("x-api-key", Eta_redacted.value api_key);
 - lib/ai/anthropic/eta_ai_anthropic.ml:731:      |> H.Core.Header.add "Anthropic-Beta" value
 <!-- END DEP_MATCHES -->

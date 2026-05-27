@@ -1,4 +1,4 @@
-module S = Sqlite
+module S = Eta_sql.Sqlite
 module E = Eta.Effect
 
 let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)

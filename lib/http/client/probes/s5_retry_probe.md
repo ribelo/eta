@@ -7,14 +7,14 @@ requests by default?
 
 ## Evidence
 
-- `Http.Idempotency` classifies RFC 9110 section 9.2.2 idempotent
+- `Eta_http.Idempotency` classifies RFC 9110 section 9.2.2 idempotent
   methods and refuses one-shot bodies.
-- `Http.Retry_policy` retries HTTP 408, 429, 502, 503, and 504 for
+- `Eta_http.Retry_policy` retries HTTP 408, 429, 502, 503, and 504 for
   replayable requests.
 - `Retry-After` delta-seconds and IMF-fixdate values parse to
   `Eta.Duration.t`.
 - Schedule fallback backoff is used when `Retry-After` is absent.
-- `Http.request_with_retry` discards failed response bodies before the
+- `Eta_http.request_with_retry` discards failed response bodies before the
   next attempt.
 - POST/PATCH require `Idempotency-Key` or `Retry_policy.always`, and
   even `always` refuses one-shot streams.

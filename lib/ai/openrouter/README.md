@@ -17,28 +17,28 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "OPENROUTER_API_KEY" with
-      | Some value -> Ai.api_key value
+      | Some value -> Eta_ai.api_key value
       | None -> failwith "OPENROUTER_API_KEY is required"
 
     let attribution =
-      Ai_openrouter.attribution
+      Eta_ai_openrouter.attribution
         ~referer:"https://example.com"
         ~title:"Eta example"
         ()
 
     let provider =
-      Ai_openrouter.provider ~attribution ()
+      Eta_ai_openrouter.provider ~attribution ()
 
     let routing =
-      Ai_openrouter.routing
+      Eta_ai_openrouter.routing
         ~order:[ "anthropic"; "openai" ]
         ~allow_fallbacks:true
         ()
 
     let request =
       {
-        Ai.model = "openrouter/auto";
-        prompt = [ Ai.User [ Ai.Text "weather in Warsaw" ] ];
+        Eta_ai.model = "openrouter/auto";
+        prompt = [ Eta_ai.User [ Eta_ai.Text "weather in Warsaw" ] ];
         tools = [];
         temperature = Some 0.2;
         max_output_tokens = Some 64;
@@ -49,7 +49,7 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
       match routing with
       | Error error -> Eta.Effect.fail error
       | Ok routing ->
-          Ai_openrouter.responses
+          Eta_ai_openrouter.responses
             ~provider ~routing client ~api_key request
 
 ## Quirks
@@ -58,7 +58,7 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
   object.
 - Ordered `routing.order` models a fallback chain.
 - OpenRouter may emit mid-stream errors as ordinary data frames with a top-level
-  `error` object; these become `Ai.Stream_error` events.
+  `error` object; these become `Eta_ai.Stream_error` events.
 - Offline fixtures prove codec and eta-http integration behavior. They do not
   prove current OpenRouter service behavior; run the release reach probe when an
   API key is available.

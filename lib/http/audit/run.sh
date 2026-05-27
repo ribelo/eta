@@ -11,7 +11,7 @@ dep_sites="$(mktemp)"
 escape_sites="$(mktemp)"
 trap 'rm -f "$dep_sites" "$escape_sites"' EXIT
 
-rg -n -t ocaml "$dep_pattern" "$root" | rg -v 'Http\.H2\.' >"$dep_sites" || true
+rg -n -t ocaml "$dep_pattern" "$root" | rg -v 'Eta_http\.H2\.' >"$dep_sites" || true
 rg -n -t ocaml "$escape_pattern" "$root" | rg -v 'Atomic\.Portable' >"$escape_sites" || true
 
 dep_count="$(wc -l <"$dep_sites" | tr -d ' ')"

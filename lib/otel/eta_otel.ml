@@ -11,7 +11,7 @@
 (* ------------------------------------------------------------------ *)
 
 module S = Eta_stream
-module Stream = S.Stream
+module Eta_stream = S.Stream
 module Mailbox = S.Mailbox
 module Drain_counter = S.Drain_counter
 
@@ -303,17 +303,17 @@ let export_batch t config ~signal ~path ~body ~n =
 let signal_batches t =
   let traces =
     Mailbox.to_batch_stream ~max:32 t.queue
-    |> Eta_stream.Stream.map (fun batch -> Trace_batch batch)
+    |> Eta_stream.map (fun batch -> Trace_batch batch)
   in
   let logs =
     Mailbox.to_batch_stream ~max:64 t.log_queue
-    |> Eta_stream.Stream.map (fun batch -> Log_batch batch)
+    |> Eta_stream.map (fun batch -> Log_batch batch)
   in
   let metrics =
     Mailbox.to_batch_stream ~max:128 t.metric_queue
-    |> Eta_stream.Stream.map (fun batch -> Metric_batch batch)
+    |> Eta_stream.map (fun batch -> Metric_batch batch)
   in
-  Eta_stream.Stream.merge traces (Eta_stream.Stream.merge logs metrics)
+  Eta_stream.merge traces (Eta_stream.merge logs metrics)
 
 let signal_details config = function
   | Trace_batch batch ->
@@ -362,8 +362,8 @@ let export_program t =
   Eta.Resource.get t.config
   |> Eta.Effect.bind (fun config ->
          signal_batches t
-         |> Eta_stream.Stream.flat_map_par ~max_concurrency:3 (fun signal ->
-                Eta_stream.Stream.from_effect (export_signal t config signal))
+         |> Eta_stream.flat_map_par ~max_concurrency:3 (fun signal ->
+                Eta_stream.from_effect (export_signal t config signal))
          |> S.run_drain)
   |> Eta.Effect.named "eta_otel.exporter"
 

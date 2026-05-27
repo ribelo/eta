@@ -7,15 +7,15 @@ with happy eyeballs deferred to v1.x?
 
 ## Implementation
 
-- `Http.Transport.Connect.target_of_url` turns an absolute client URL into
+- `Eta_http.Transport.Connect.target_of_url` turns an absolute client URL into
   a target containing scheme, host, effective port, and numeric service.
-- `Http.Transport.Connect.resolve_stream` calls
+- `Eta_http.Transport.Connect.resolve_stream` calls
   `Eio.Net.getaddrinfo_stream` inside an `Eta.Effect.sync`.
-- `Http.Transport.Connect.connect_tcp` tries the resolved stream
+- `Eta_http.Transport.Connect.connect_tcp` tries the resolved stream
   addresses in resolver order and returns the first TCP connection that opens.
 - Resolver exceptions and empty resolver results become typed
-  `Http.Error.Dns_error` failures. Failed connection attempts become
-  typed `Http.Error.Connect_error` failures.
+  `Eta_http.Error.Dns_error` failures. Failed connection attempts become
+  typed `Eta_http.Error.Connect_error` failures.
 
 ## Evidence
 
