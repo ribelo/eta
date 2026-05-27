@@ -13,13 +13,34 @@ type frame = {
 }
 
 let frame_key : frame Eio.Fiber.key = Eio.Fiber.create_key ()
+let fiberless_frame = ref None
+
+let fiber_get key =
+  try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
+
+let has_fiber_context () =
+  try
+    ignore (Eio.Fiber.get frame_key);
+    true
+  with Stdlib.Effect.Unhandled _ -> false
 
 let current_frame () =
-  match Eio.Fiber.get frame_key with
+  match fiber_get frame_key with
   | Some frame -> frame
-  | None -> failwith "Eta effect requires Runtime.run"
+  | None -> (
+      match !fiberless_frame with
+      | Some frame -> frame
+      | None -> failwith "Eta effect requires Runtime.run")
 
-let with_frame frame f = Eio.Fiber.with_binding frame_key frame f
+let with_fiberless_frame frame f =
+  let previous = !fiberless_frame in
+  fiberless_frame := Some frame;
+  Fun.protect ~finally:(fun () -> fiberless_frame := previous) f
+
+let with_frame frame f =
+  if has_fiber_context () then Eio.Fiber.with_binding frame_key frame f
+  else with_fiberless_frame frame f
+
 let render_error frame err = frame.error_renderer (Obj.repr err)
 
 type ('a, 'err) t = {
@@ -349,7 +370,7 @@ let for_each_par_bounded ~max xs f =
     | causes -> error (Cause.concurrent causes)
 
 let uninterruptible effect =
-  preserve effect @@ fun () -> Eio.Cancel.protect (fun () -> effect.eval ())
+  preserve effect @@ fun () -> Runtime_core.cancel_protect (fun () -> effect.eval ())
 
 let repeat schedule effect =
   preserve effect @@ fun () ->

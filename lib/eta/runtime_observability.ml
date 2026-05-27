@@ -14,17 +14,40 @@ type die_context = {
 
 let die_context_key : die_context Eio.Fiber.key = Eio.Fiber.create_key ()
 let empty_die_context = { span_name = None; annotations = [] }
+let fiberless_die_context = ref empty_die_context
+
+let fiber_get key =
+  try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
+
+let has_fiber_context key =
+  try
+    ignore (Eio.Fiber.get key);
+    true
+  with Stdlib.Effect.Unhandled _ -> false
+
 let current_die_context () =
-  Option.value (Eio.Fiber.get die_context_key) ~default:empty_die_context
+  match fiber_get die_context_key with
+  | Some context -> context
+  | None -> !fiberless_die_context
+
+let with_fiberless_die_context context f =
+  let previous = !fiberless_die_context in
+  fiberless_die_context := context;
+  Fun.protect ~finally:(fun () -> fiberless_die_context := previous) f
+
+let with_die_context context f =
+  if has_fiber_context die_context_key then
+    Eio.Fiber.with_binding die_context_key context f
+  else with_fiberless_die_context context f
 
 let with_die_span_name name f =
   let context = current_die_context () in
-  Eio.Fiber.with_binding die_context_key { context with span_name = Some name } f
+  with_die_context { context with span_name = Some name } f
 
 let with_die_annotation key value f =
   let context = current_die_context () in
   let annotations = context.annotations @ [ (key, value) ] in
-  Eio.Fiber.with_binding die_context_key { context with annotations } f
+  with_die_context { context with annotations } f
 
 let with_die_annotations attrs f =
   let rec loop attrs k =
@@ -38,10 +61,12 @@ let with_die_annotations attrs f =
 let default_error_renderer _ = "<typed failure>"
 
 let with_blocking_event_emit emit f =
-  Eio.Fiber.with_binding blocking_event_emit_key emit f
+  if has_fiber_context blocking_event_emit_key then
+    Eio.Fiber.with_binding blocking_event_emit_key emit f
+  else f ()
 
 let emit_current_blocking_event event =
-  match Eio.Fiber.get blocking_event_emit_key with
+  match fiber_get blocking_event_emit_key with
   | None -> ()
   | Some emit -> emit event
 

@@ -4,6 +4,17 @@ module Sch = Schedule
 
 let option_map f = function None -> None | Some value -> Some (f value)
 
+let eio_context_key : unit Eio.Fiber.key = Eio.Fiber.create_key ()
+
+let has_eio_fiber_context () =
+  try
+    ignore (Eio.Fiber.get eio_context_key);
+    true
+  with Stdlib.Effect.Unhandled _ -> false
+
+let cancel_protect f =
+  if has_eio_fiber_context () then Eio.Cancel.protect f else f ()
+
 (* Typed failures cross Eio fibers through OCaml exceptions. The [Obj.t] payload
    is private to this module and is unpacked only after the fresh [Typed_fail]
    key matches the interpreter frame that packed it. *)
@@ -201,7 +212,7 @@ let emit_blocking_event runtime event =
     ~metrics_enabled:runtime.metrics_enabled ~meter:runtime.meter event
 
 let run_finalizers ~runtime ~fail_key finalizers =
-  Eio.Cancel.protect @@ fun () ->
+  cancel_protect @@ fun () ->
   match !finalizers with
   | [] -> None
   | fs ->
