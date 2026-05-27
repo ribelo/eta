@@ -1,0 +1,4 @@
+(executables
+ (names branch_c_supervised_session branch_b_local_wrapper)
+ (libraries eta eio_main))
+

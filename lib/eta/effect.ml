@@ -70,6 +70,8 @@ type ('s, 'a, 'err) supervisor_scope =
       ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
       ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
+  | Supervisor_stop :
+      ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
   | Supervisor_failures :
       ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
   | Supervisor_check :
@@ -506,6 +508,12 @@ let rec interpret_supervisor_scope :
       | Ok value -> value
       | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
   | Supervisor_cancel child -> Runtime_supervisor.child_cancel child ()
+  | Supervisor_stop child -> (
+      Runtime_supervisor.child_cancel child ();
+      match Eio.Promise.await (Runtime_supervisor.child_promise child) with
+      | Ok _ -> ()
+      | Error cause when Cause.is_interrupt_only cause -> ()
+      | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
   | Supervisor_failures supervisor -> List.rev (Runtime_supervisor.failures supervisor)
   | Supervisor_check supervisor -> (
       match Runtime_supervisor.max_failures supervisor with
@@ -568,6 +576,17 @@ let named_kind ?error_renderer ~kind name effect =
 
 let named ?error_renderer name effect =
   named_kind ?error_renderer ~kind:Capabilities.Internal name effect
+
+let with_background ?name background use =
+  let background = match name with None -> background | Some name -> named name background in
+  supervisor_scoped
+    {
+      run =
+        (fun supervisor ->
+          Supervisor_bind
+            ( Supervisor_start (supervisor, Supervisor_lift background),
+              fun _ -> Supervisor_lift (use ()) ));
+    }
 
 let annotate ~key ~value effect =
   preserve effect @@ fun () ->
@@ -760,6 +779,7 @@ let supervisor_bind k effect = Supervisor_bind (effect, k)
 let supervisor_start supervisor effect = Supervisor_start (supervisor, effect)
 let supervisor_await child = Supervisor_await child
 let supervisor_cancel child = Supervisor_cancel child
+let supervisor_stop child = Supervisor_stop child
 let supervisor_failures supervisor = Supervisor_failures supervisor
 let supervisor_check supervisor = Supervisor_check supervisor
 let supervisor_yield = Supervisor_yield

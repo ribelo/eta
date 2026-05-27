@@ -1,0 +1,10 @@
+File "scratch/eta_research/scoped_sessions/p_scoped_5/negative/fiber_scope_escape_negative.ml", lines 29-31, characters 8-21:
+29 | ........(fun fiber ->
+30 |           let open Fiber_scope in
+31 |           pure fiber).
+Error: This field value has type
+         "('a, unit, 'b) Fiber_scope.fiber ->
+         ('a, ('a, unit, 'b) Fiber_scope.fiber, 'b) Fiber_scope.t"
+       which is less general than
+         "'s. ('s, 'c, 'd) Fiber_scope.fiber -> ('s, 'e, 'd) Fiber_scope.t"
+exit=1

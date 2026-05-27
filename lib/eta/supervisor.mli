@@ -43,6 +43,11 @@ module Scope : sig
   val cancel : ('s, 'err, 'a) child -> ('s, unit, 'outer_err) t
   (** Cancel a child. Awaiting the child afterwards returns interruption. *)
 
+  val stop : ('s, 'err, 'a) child -> ('s, unit, 'err) t
+  (** Cancel a child and wait for it to settle. Pure interruption is treated as
+      successful shutdown; a child failure or finalizer failure is re-raised in
+      the scope's typed failure channel. *)
+
   val failures :
     ('s, 'err) supervisor -> ('s, 'err Cause.t list, 'outer_err) t
   (** Return observed child failures in same-domain observation order.

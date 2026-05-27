@@ -1,0 +1,244 @@
+Testing `eta-log-level'.
+This run has ID `X6DJJYQX'.
+
+  [OK]          Log_level          0   compare ordering.
+  [OK]          Log_level          1   equal reflexivity symmetry transitivity.
+  [OK]          Log_level          2   is_enabled.
+  [OK]          Log_level          3   otel severity roundtrip.
+  [OK]          Log_level          4   otel severity boundaries.
+  [OK]          Log_level          5   otel severity out of range.
+  [OK]          Log_level          6   string roundtrip.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-scoped-sessions/_build/default/test/eta/_build/_tests/eta-log-level'.
+Test Successful in 0.000s. 7 tests run.
+Testing `eta'.
+This run has ID `AI4KV9PO'.
+
+  [OK]          MutableRef              0   make get.
+  [OK]          MutableRef              1   set.
+  [OK]          MutableRef              2   update.
+  [OK]          MutableRef              3   update_and_get.
+  [OK]          MutableRef              4   get_and_set.
+  [OK]          MutableRef              5   compare_and_set.
+  [OK]          MutableRef              6   concurrent update.
+  [OK]          MutableRef              7   incr decr.
+  [OK]          Effect                  0   Pure.
+  [OK]          Effect                  1   Map.
+  [OK]          Effect                  2   explicit dependency passing.
+  [OK]          Effect                  3   par returns pair.
+  [OK]          Effect                  4   par keeps heterogeneous successes...
+  [OK]          Effect                  5   par fail-fast cancels sibling.
+  [OK]          Effect                  6   all collects in input order.
+  [OK]          Effect                  7   all fail-fast.
+  [OK]          Effect                  8   all_settled collects outcomes.
+  [OK]          Effect                  9   all_settled runs all children.
+  [OK]          Effect                 10   all_settled timeout scoped resour...
+  [OK]          Effect                 11   all_settled empty.
+  [OK]          Effect                 12   for_each_par success.
+  [OK]          Effect                 13   for_each_par one fails.
+  [OK]          Effect                 14   for_each_par_bounded caps concurr...
+  [OK]          Effect                 15   for_each_par_bounded max one is s...
+  [OK]          Effect                 16   for_each_par_bounded fail-fast.
+  [OK]          Effect                 17   collect_names.
+  [OK]          Effect                 18   map bind tap runtime.
+  [OK]          Effect                 19   catch success and failure.
+  [OK]          Effect                 20   catch handler failure uses outer ...
+  [OK]          Effect                 21   tap_error observes and rethrows.
+  [OK]          Effect                 22   tap_error observer failure preser...
+  [OK]          Effect                 23   empty cause aggregations reject.
+  [OK]          Effect                 24   diagnostic cause equality.
+  [OK]          Effect                 25   runtime exit fail die interrupt.
+  [OK]          Effect                 26   die captures diagnostics.
+  [OK]          Effect                 27   portable cause materializes diagn...
+  [OK]          Effect                 28   die backtrace capture flag.
+  [OK]          Effect                 29   run_exn preserves backtrace.
+  [OK]          Effect                 30   concurrent child die captures dia...
+  [OK]          Effect                 31   finalizer die captures diagnostics.
+  [OK]          Effect                 32   catch does not catch interrupt.
+  [OK]          Effect                 33   acquire release.
+  [OK]          Effect                 34   acquire release root finalizer.
+  [OK]          Effect                 35   acquire release root failure fina...
+  [OK]          Effect                 36   daemon drains acquire release fin...
+  [OK]          Effect                 37   daemon failure logs diagnostic.
+  [OK]          Effect                 38   daemon interrupt stays quiet.
+  [OK]          Effect                 39   acquire release on failure.
+  [OK]          Effect                 40   acquire release suppresses releas...
+  [OK]          Effect                 41   acquire release release failure a...
+  [OK]          Effect                 42   acquire release finalizers lifo s...
+  [OK]          Effect                 43   acquire release finalizer failure...
+  [OK]          Effect                 44   repeat releases resources each it...
+  [OK]          Effect                 45   timeout uses virtual clock.
+  [OK]          Effect                 46   timeout allows fast success.
+  [OK]          Effect                 47   timeout preserves user timeout fa...
+  [OK]          Effect                 48   nested timeout maps outer timeout.
+  [OK]          Effect                 49   timeout_as exact error row.
+  [OK]          Effect                 50   timeout_as maps delayed effect.
+  [OK]          Effect                 51   timeout_as nested maps outer time...
+  [OK]          Effect                 52   race ignores early failure until ...
+  [OK]          Effect                 53   race all failures returns concurr...
+  [OK]          Effect                 54   par simultaneous failures baseline.
+  [OK]          Effect                 55   par finalizer cancellation baseline.
+  [OK]          Effect                 56   all finalizer cancellation baseline.
+  [OK]          Effect                 57   for_each_par simultaneous failure...
+  [OK]          Effect                 58   for_each_par finalizer cancellati...
+  [OK]          Effect                 59   par nested race failures baseline.
+  [OK]          Effect                 60   repeat schedule.
+  [OK]          Effect                 61   repeat schedule uses virtual delays.
+  [OK]          Effect                 62   retry schedule until success.
+  [OK]          Effect                 63   retry schedule uses virtual delays.
+  [OK]          Effect                 64   retry jittered schedule uses runt...
+  [OK]          Effect                 65   retry does not retry interrupt.
+  [OK]          Effect                 66   retry preserves structured except...
+  [OK]          Effect                 67   uninterruptible defers race cance...
+  [OK]          Effect                 68   uninterruptible nested masks.
+  [OK]          Effect                 69   uninterruptible blocking finalizer.
+  [OK]          Effect                 70   uninterruptible timeout inside pr...
+  [OK]          Effect                 71   uninterruptible no-checkpoint loser.
+  [OK]          Island                  0   single uses runtime pool.
+  [OK]          Island                  1   requires pool.
+  [OK]          Island                  2   run pool override.
+  [OK]          Island                  3   map preserves order.
+  [OK]          Island                  4   map uses pool fanout.
+  [OK]          Island                  5   map_result returns item results.
+  [OK]          Island                  6   all_settled returns worker_died.
+  [OK]          Island                  7   worker_died captures exception de...
+  [OK]          Island                  8   map worker crash fails outer effect.
+  [OK]          Island                  9   workloads.
+  [OK]          Blocking                0   submit alias and stats.
+  [OK]          Blocking                1   direct control and heartbeat.
+  [OK]          Blocking                2   wait caps active and queue.
+  [OK]          Blocking                3   reject deterministic.
+  [OK]          Blocking                4   pending cancellation.
+  [OK]          Blocking                5   started cancellation nonpreemptive.
+  [OK]          Blocking                6   shutdown rejects new jobs.
+  [OK]          Blocking                7   shutdown drain waits.
+  [OK]          Blocking                8   shutdown detach records.
+  [OK]          Blocking                9   detach started counts each job once.
+  [OK]          Blocking               10   named pools isolate.
+  [OK]          Blocking               11   domain isolated hold-lock.
+  [OK]          Blocking               12   worker rejects nested submit.
+  [OK]          Blocking               13   worker rejects runtime run.
+  [OK]          Blocking               14   cpu antipattern.
+  [OK]          Blocking               15   observability labels timings.
+  [OK]          Supervisor              0   observes child failure.
+  [OK]          Supervisor              1   await rethrows child failure.
+  [OK]          Supervisor              2   cancel runs finalizer.
+  [OK]          Supervisor              3   cancel before await does not dead...
+  [OK]          Supervisor              4   stop waits for finalizer.
+  [OK]          Supervisor              5   with_background cancels child.
+  [OK]          Supervisor              6   scope cancels unawaited children.
+  [OK]          Supervisor              7   threshold failure.
+  [OK]          Supervisor              8   records multiple failures.
+  [OK]          Supervisor              9   nested scopes compose.
+  [OK]          Clock                   0   sleep without wall time.
+  [OK]          Clock                   1   sleep delays until adjusted.
+  [OK]          Clock                   2   multiple sleeps.
+  [OK]          Clock                   3   set_time wakes due sleepers.
+  [OK]          Duration                0   constructors.
+  [OK]          Duration                1   ordering.
+  [OK]          Duration                2   algebra.
+  [OK]          Duration                3   overflow.
+  [OK]          Duration                4   min max clamp.
+  [OK]          Schedule                0   recurs.
+  [OK]          Schedule                1   exponential.
+  [OK]          Schedule                2   spaced fixed linear.
+  [OK]          Schedule                3   composition.
+  [OK]          Schedule                4   and_then offsets second phase.
+  [OK]          Schedule                5   jittered uses random capability.
+  [OK]          Schedule                6   random float distribution and det...
+  [OK]          Scope                   0   finalizers run lifo sequentially.
+  [OK]          Resource                0   manual refresh.
+  [OK]          Resource                1   failed refresh keeps cached value.
+  [OK]          Resource                2   auto refreshes on schedule.
+  [OK]          Resource                3   auto failed refresh keeps cached ...
+  [OK]          Resource                4   auto records loader defect and co...
+  [OK]          Resource                5   auto records on_error defect and ...
+  [OK]          Portable_queue          0   backpressure and close.
+  [OK]          Queue                   0   send recv close.
+  [OK]          Queue                   1   close fence.
+  [OK]          Queue                   2   close with error drains.
+  [OK]          Queue                   3   cancel blocked recv.
+  [OK]          Channel                 0   try send recv.
+  [OK]          Channel                 1   blocking send backpressure.
+  [OK]          Channel                 2   blocked sender not passed.
+  [OK]          Channel                 3   blocking recv.
+  [OK]          Channel                 4   close wakes blocked users.
+  [OK]          Channel                 5   close with error drains.
+  [OK]          Channel                 6   cancel blocked send.
+  [OK]          Channel                 7   cancel blocked recv.
+  [OK]          Channel                 8   cancel delivered recv requeues.
+  [OK]          Channel                 9   parent switch teardown.
+  [OK]          Pool                    0   reuses idle LIFO.
+  [OK]          Pool                    1   timeout cleans waiter.
+  [OK]          Pool                    2   health rejection reopens.
+  [OK]          Pool                    3   idle health failure rejects entry.
+  [OK]          Pool                    4   idle health defect closes entry.
+  [OK]          Pool                    5   cancel during health check.
+  [OK]          Pool                    6   idle eviction.
+  [OK]          Pool                    7   expired idle preserves capacity w...
+  [OK]          Pool                    8   shutdown wakes and drains.
+  [OK]          Pool                    9   shutdown deadline.
+  [OK]          Pool                   10   release detects active underflow.
+  [OK]          Pool                   11   observability signals.
+  [OK]          Semaphore               0   make and available.
+  [OK]          Semaphore               1   acquire reduces available.
+  [OK]          Semaphore               2   release increases available.
+  [OK]          Semaphore               3   release rejects negative count.
+  [OK]          Semaphore               4   release rejects zero count.
+  [OK]          Semaphore               5   release over capacity clamps.
+  [OK]          Semaphore               6   rejects over-capacity acquire.
+  [OK]          Semaphore               7   rejects over-capacity try_acquire.
+  [OK]          Semaphore               8   acquire at capacity succeeds.
+  [OK]          Semaphore               9   with_permits releases on success.
+  [OK]          Semaphore              10   with_permits releases on failure.
+  [OK]          Semaphore              11   with_permits releases on timeout.
+  [OK]          Semaphore              12   cancellation stress.
+  [OK]          Semaphore              13   cancel after wakeup returns permit.
+  [OK]          Semaphore              14   multi-permit contention.
+  [OK]          Properties              0   monad laws.
+  [OK]          Properties              1   catch laws.
+  [OK]          Properties              2   race success invariant.
+  [OK]          Properties              3   retry and repeat laws.
+  [OK]          Properties              4   scope finalizers exactly once.
+  [OK]          Observability           0   manual tracer spans.
+  [OK]          Observability           1   named span status ok.
+  [OK]          Observability           2   span kind.
+  [OK]          Observability           3   fn records location.
+  [OK]          Observability           4   annotation order.
+  [OK]          Observability           5   nested spans.
+  [OK]          Observability           6   statuses.
+  [OK]          Observability           7   concurrent status.
+  [OK]          Observability           8   cancelled child status.
+  [OK]          Observability           9   uninterruptible child status.
+  [OK]          Observability          10   par children inherit parent.
+  [OK]          Observability          11   par pending attrs links are fiber...
+  [OK]          Observability          12   sampler always off.
+  [OK]          Observability          13   sampler ratio.
+  [OK]          Observability          14   sampler ratio same name uses trac...
+  [OK]          Observability          15   sampler parent based.
+  [OK]          Observability          16   sampler suppresses par children.
+  [OK]          Observability          17   noop runtime keeps die diagnostics.
+  [OK]          Observability          18   custom noop tracer is explicitly ...
+  [OK]          Observability          19   suppress observability.
+  [OK]          Observability          20   trace context extract inject.
+  [OK]          Observability          21   trace context rejects malformed t...
+  [OK]          Observability          22   trace context par inherits baggage.
+  [OK]          Observability          23   in-memory tracer current span has...
+  [OK]          Observability          24   in-memory tracer child inherits t...
+  [OK]          Observability          25   in-memory tracer external trace i...
+  [OK]          Observability          26   trace context unsampled parent su...
+  [OK]          Observability          27   auto instrument default off.
+  [OK]          Observability          28   auto instrument sync leaves.
+  [OK]          Observability          29   auto instrument leaves nest.
+  [OK]          Observability          30   auto instrument failure status.
+  [OK]          Observability          31   all for_each_par supervisor inher...
+  [OK]          Eta_redacted            0   pp unlabelled.
+  [OK]          Eta_redacted            1   pp labelled.
+  [OK]          Eta_redacted            2   equal.
+  [OK]          Eta_redacted            3   hash.
+  [OK]          Eta_redacted            4   wipe_unsafe.
+  [OK]          Eta_redacted            5   label.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-scoped-sessions/_build/default/test/eta/_build/_tests/eta'.
+Test Successful in 1.421s. 224 tests run.
+exit=0

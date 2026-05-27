@@ -1,0 +1,7 @@
+(executables
+ (names
+  background_no_handle
+  fiber_scope_with_handle
+  external_app_comparison)
+ (libraries eta eio_main))
+

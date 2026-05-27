@@ -16948,3 +16948,137 @@ change the Logger-specific verdict:
 The durable rule is: **Eta-owned cross-cutting convenience APIs may use hidden
 algebraic effects internally; user-created capabilities remain ordinary OCaml
 values.**
+
+## V-Scoped-Sessions — reject public helper, ship recipe in docs
+
+### Decision
+
+**Branch C wins.** No new public API. Ship a recipe and worked examples
+documenting the "long-lived supervised child + callback" pattern using
+existing primitives.
+
+### Hypothesis space — final status
+
+| Branch | Description | Status |
+|--------|-------------|--------|
+| A | `Supervisor.with_child` helper | **REJECTED** — poor fit for only matching consumer; `child` handle mismatches shared-state handle |
+| B | `Resource.with_session` | **REJECTED** — does not centralize a real protocol beyond existing primitives; only serves one known consumer |
+| C | Recipe in docs, no new API | **ACCEPTED** — existing primitives express the pattern; well-written recipe + examples suffice |
+| D | Refactor WebSocket alone | **PARTIAL** — WebSocket refactor is correct (separate branch), but recipe still needs docs |
+
+### Evidence
+
+**P-Scoped-1 (consumer survey):** Surveyed 5 consumers. Only 1 (WebSocket
+`lib/http/ws/ws_client.ml`) matches the "long-lived child + handle escape"
+pattern. The other 4 use `Effect.Private.daemon` for unrelated background
+patterns where `daemon` is correct.
+
+**P-Scoped-2 (protocol centralization):** Tested 5 claimed protocol elements
+for Branch B. Close fences and mode/portability fences are already centralized
+by `Effect.acquire_release` and `Supervisor.scoped`. Typed failure propagation
+and cancellation cleanup are partially centralized by existing primitives.
+Observability is manual but low-value. No new invariant is centralized.
+
+**P-Scoped-3 (camelpie/WebSocket refactor):** Refactored `ws_client.ml` from
+`Effect.Private.daemon` to `Supervisor.scoped` + `Effect.acquire_release`.
++10 LOC, daemon fully removable. Compositional cost is real (callback nesting
+for multiple connections). WebSocket-specific cleanup (close frame, queue drain)
+cannot be centralized in a generic helper.
+
+### Surprise finding
+
+HTTP/1 pooled request (`lib/http/h1/h1_client.ml:646`) uses `daemon` for a
+one-shot background request handler. This could trivially use
+`Supervisor.scoped` — the `daemon` usage is convenience, not necessity.
+This suggests some existing `daemon` usage is low-hanging fruit for migration
+without any new API.
+
+### What was not measured
+
+- Actual camelpie PTT streaming code (not in repo)
+- OpenAI Realtime session runtime (only tests exist)
+- HTTP/2 multiplexer writer-fiber (not found in codebase)
+- Performance delta between daemon and supervised approaches
+- Contributor survey on discoverability
+
+### Recommendation for production
+
+1. Document the recipe in Eta docs: `Supervisor.scoped` + `Scope.start` +
+   `Scope.await/cancel` + `Effect.acquire_release` for session-like lifetimes.
+2. Refactor WebSocket on a separate branch; diff captured at
+   `scratch/eta_research/scoped_sessions/p_scoped_3/refactor.diff`.
+3. Audit `lib/http/h1/h1_client.ml` for `Supervisor.scoped` migration.
+4. Defer any public helper until a second concrete consumer emerges.
+
+### Confidence
+
+**High.** The evidence is narrow (one consumer) but that narrowness is itself
+strong evidence against broadening the public surface. The protocol
+centralization test found no new invariant. The refactor diff proves the
+recipe is viable.
+
+## V-Scoped-External — add structured background ergonomics
+
+### Decision
+
+**Supersedes the public-surface part of V-Scoped-Sessions.** The WebSocket-only
+lab was too narrow for external Eta applications. Eta still should not expose
+raw daemon, but external users do need a smaller structured replacement for the
+common daemon-shaped case.
+
+Ship:
+
+- `Effect.with_background` for "run this background loop while foreground work
+  executes."
+- `Supervisor.Scope.stop` for "cancel this child and wait for cleanup to
+  finish."
+
+Do not ship a public handle-returning daemon or a broad `scoped_session`
+abstraction.
+
+### Evidence
+
+P-Scoped-5 tested external application-shaped fixtures under
+`scratch/eta_research/scoped_sessions/p_scoped_5/`:
+
+- `background_no_handle.ml` proves `Effect.with_background` expresses the
+  daemon-shaped no-handle case.
+- `fiber_scope_with_handle.ml` proves a smaller scoped-fiber facade can express
+  explicit child await.
+- `external_app_comparison.ml` covers background loop, explicit await, and
+  explicit stop.
+- `negative/fiber_scope_escape_negative.ml` proves scoped fiber handles still
+  cannot escape.
+
+### Surprise finding
+
+`Supervisor.Scope.cancel` is only cancellation request. It does not guarantee
+that child finalizers have completed before the parent continues. The first
+external comparison fixture observed `cancel: expected "true" got "false"` for
+cleanup completion.
+
+That is the real missing protocol for external applications, not a session
+wrapper. `Supervisor.Scope.stop` fills this gap by requesting cancellation,
+waiting for the child promise, treating pure interruption as successful
+shutdown, and re-raising real child/finalizer failures.
+
+### Verification
+
+- `nix develop .#oxcaml -c dune runtest test/eta --force`
+  - Result: 224 tests passed.
+- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/background_no_handle.exe`
+  - Result: passed.
+- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/fiber_scope_with_handle.exe`
+  - Result: passed.
+- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/external_app_comparison.exe`
+  - Result: passed after adding `Supervisor.Scope.stop`.
+- `nix develop .#oxcaml -c dune build ./scratch/eta_research/scoped_sessions/p_scoped_5/negative/fiber_scope_escape_negative.exe`
+  - Result: expected compile failure.
+
+### Confidence
+
+**Medium-high.** The no-handle background API is small and directly addresses
+external daemon pressure without weakening structured ownership. `stop` is a
+real semantic addition over `cancel` and has focused tests. A separate public
+`Fiber_scope` facade remains deferred until external call sites prove that
+`Supervisor.scoped` plus `stop` is still too awkward.

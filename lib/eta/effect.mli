@@ -32,6 +32,8 @@ type ('s, 'a, 'err) supervisor_scope =
       ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
   | Supervisor_cancel :
       ('s, _, _) supervisor_child -> ('s, unit, _) supervisor_scope
+  | Supervisor_stop :
+      ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
   | Supervisor_failures :
       ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
   | Supervisor_check :
@@ -390,6 +392,12 @@ val acquire_release :
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 
+val with_background :
+  ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
+(** Run [background] while [use] executes, then cancel the background child when
+    [use] returns or fails. This is the structured replacement for
+    daemon-shaped application work that does not need to expose a child handle. *)
+
 val supervisor_scoped :
   ?max_failures:int -> ('a, 'err) supervisor_body -> ('a, 'err) t
 
@@ -427,6 +435,9 @@ val supervisor_await :
 
 val supervisor_cancel :
   ('s, 'err, 'a) supervisor_child -> ('s, unit, 'outer_err) supervisor_scope
+
+val supervisor_stop :
+  ('s, 'err, 'a) supervisor_child -> ('s, unit, 'err) supervisor_scope
 
 val supervisor_failures :
   ('s, 'err) supervisor -> ('s, 'err Cause.t list, 'outer_err) supervisor_scope

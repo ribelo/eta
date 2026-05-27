@@ -1,0 +1,230 @@
+Testing `[1meta[0m'.
+[2mThis run has ID `MSGUKY3N'.
+
+[0m  [33m[SKIP][0m        [36mMutableRef[0m              0   make get.
+  [33m[SKIP][0m        [36mMutableRef[0m              1   set.
+  [33m[SKIP][0m        [36mMutableRef[0m              2   update.
+  [33m[SKIP][0m        [36mMutableRef[0m              3   update_and_get.
+  [33m[SKIP][0m        [36mMutableRef[0m              4   get_and_set.
+  [33m[SKIP][0m        [36mMutableRef[0m              5   compare_and_set.
+  [33m[SKIP][0m        [36mMutableRef[0m              6   concurrent update.
+  [33m[SKIP][0m        [36mMutableRef[0m              7   incr decr.
+  [33m[SKIP][0m        [36mEffect[0m                  0   Pure.
+  [33m[SKIP][0m        [36mEffect[0m                  1   Map.
+  [33m[SKIP][0m        [36mEffect[0m                  2   explicit dependency passing.
+  [33m[SKIP][0m        [36mEffect[0m                  3   par returns pair.
+  [33m[SKIP][0m        [36mEffect[0m                  4   par keeps heterogeneous successes...
+  [33m[SKIP][0m        [36mEffect[0m                  5   par fail-fast cancels sibling.
+  [33m[SKIP][0m        [36mEffect[0m                  6   all collects in input order.
+  [33m[SKIP][0m        [36mEffect[0m                  7   all fail-fast.
+  [33m[SKIP][0m        [36mEffect[0m                  8   all_settled collects outcomes.
+  [33m[SKIP][0m        [36mEffect[0m                  9   all_settled runs all children.
+  [33m[SKIP][0m        [36mEffect[0m                 10   all_settled timeout scoped resour...
+  [33m[SKIP][0m        [36mEffect[0m                 11   all_settled empty.
+  [33m[SKIP][0m        [36mEffect[0m                 12   for_each_par success.
+  [33m[SKIP][0m        [36mEffect[0m                 13   for_each_par one fails.
+  [33m[SKIP][0m        [36mEffect[0m                 14   for_each_par_bounded caps concurr...
+  [33m[SKIP][0m        [36mEffect[0m                 15   for_each_par_bounded max one is s...
+  [33m[SKIP][0m        [36mEffect[0m                 16   for_each_par_bounded fail-fast.
+  [33m[SKIP][0m        [36mEffect[0m                 17   collect_names.
+  [33m[SKIP][0m        [36mEffect[0m                 18   map bind tap runtime.
+  [33m[SKIP][0m        [36mEffect[0m                 19   catch success and failure.
+  [33m[SKIP][0m        [36mEffect[0m                 20   catch handler failure uses outer ...
+  [33m[SKIP][0m        [36mEffect[0m                 21   tap_error observes and rethrows.
+  [33m[SKIP][0m        [36mEffect[0m                 22   tap_error observer failure preser...
+  [33m[SKIP][0m        [36mEffect[0m                 23   empty cause aggregations reject.
+  [33m[SKIP][0m        [36mEffect[0m                 24   diagnostic cause equality.
+  [33m[SKIP][0m        [36mEffect[0m                 25   runtime exit fail die interrupt.
+  [33m[SKIP][0m        [36mEffect[0m                 26   die captures diagnostics.
+  [33m[SKIP][0m        [36mEffect[0m                 27   portable cause materializes diagn...
+  [33m[SKIP][0m        [36mEffect[0m                 28   die backtrace capture flag.
+  [33m[SKIP][0m        [36mEffect[0m                 29   run_exn preserves backtrace.
+  [33m[SKIP][0m        [36mEffect[0m                 30   concurrent child die captures dia...
+  [33m[SKIP][0m        [36mEffect[0m                 31   finalizer die captures diagnostics.
+  [33m[SKIP][0m        [36mEffect[0m                 32   catch does not catch interrupt.
+  [33m[SKIP][0m        [36mEffect[0m                 33   acquire release.
+  [33m[SKIP][0m        [36mEffect[0m                 34   acquire release root finalizer.
+  [33m[SKIP][0m        [36mEffect[0m                 35   acquire release root failure fina...
+  [33m[SKIP][0m        [36mEffect[0m                 36   daemon drains acquire release fin...
+  [33m[SKIP][0m        [36mEffect[0m                 37   daemon failure logs diagnostic.
+  [33m[SKIP][0m        [36mEffect[0m                 38   daemon interrupt stays quiet.
+  [33m[SKIP][0m        [36mEffect[0m                 39   acquire release on failure.
+  [33m[SKIP][0m        [36mEffect[0m                 40   acquire release suppresses releas...
+  [33m[SKIP][0m        [36mEffect[0m                 41   acquire release release failure a...
+  [33m[SKIP][0m        [36mEffect[0m                 42   acquire release finalizers lifo s...
+  [33m[SKIP][0m        [36mEffect[0m                 43   acquire release finalizer failure...
+  [33m[SKIP][0m        [36mEffect[0m                 44   repeat releases resources each it...
+  [33m[SKIP][0m        [36mEffect[0m                 45   timeout uses virtual clock.
+  [33m[SKIP][0m        [36mEffect[0m                 46   timeout allows fast success.
+  [33m[SKIP][0m        [36mEffect[0m                 47   timeout preserves user timeout fa...
+  [33m[SKIP][0m        [36mEffect[0m                 48   nested timeout maps outer timeout.
+  [33m[SKIP][0m        [36mEffect[0m                 49   timeout_as exact error row.
+  [33m[SKIP][0m        [36mEffect[0m                 50   timeout_as maps delayed effect.
+  [33m[SKIP][0m        [36mEffect[0m                 51   timeout_as nested maps outer time...
+  [33m[SKIP][0m        [36mEffect[0m                 52   race ignores early failure until ...
+  [33m[SKIP][0m        [36mEffect[0m                 53   race all failures returns concurr...
+  [33m[SKIP][0m        [36mEffect[0m                 54   par simultaneous failures baseline.
+  [33m[SKIP][0m        [36mEffect[0m                 55   par finalizer cancellation baseline.
+  [33m[SKIP][0m        [36mEffect[0m                 56   all finalizer cancellation baseline.
+  [33m[SKIP][0m        [36mEffect[0m                 57   for_each_par simultaneous failure...
+  [33m[SKIP][0m        [36mEffect[0m                 58   for_each_par finalizer cancellati...
+  [33m[SKIP][0m        [36mEffect[0m                 59   par nested race failures baseline.
+  [33m[SKIP][0m        [36mEffect[0m                 60   repeat schedule.
+  [33m[SKIP][0m        [36mEffect[0m                 61   repeat schedule uses virtual delays.
+  [33m[SKIP][0m        [36mEffect[0m                 62   retry schedule until success.
+  [33m[SKIP][0m        [36mEffect[0m                 63   retry schedule uses virtual delays.
+  [33m[SKIP][0m        [36mEffect[0m                 64   retry jittered schedule uses runt...
+  [33m[SKIP][0m        [36mEffect[0m                 65   retry does not retry interrupt.
+  [33m[SKIP][0m        [36mEffect[0m                 66   retry preserves structured except...
+  [33m[SKIP][0m        [36mEffect[0m                 67   uninterruptible defers race cance...
+  [33m[SKIP][0m        [36mEffect[0m                 68   uninterruptible nested masks.
+  [33m[SKIP][0m        [36mEffect[0m                 69   uninterruptible blocking finalizer.
+  [33m[SKIP][0m        [36mEffect[0m                 70   uninterruptible timeout inside pr...
+  [33m[SKIP][0m        [36mEffect[0m                 71   uninterruptible no-checkpoint loser.
+  [33m[SKIP][0m        [36mIsland[0m                  0   single uses runtime pool.
+  [33m[SKIP][0m        [36mIsland[0m                  1   requires pool.
+  [33m[SKIP][0m        [36mIsland[0m                  2   run pool override.
+  [33m[SKIP][0m        [36mIsland[0m                  3   map preserves order.
+  [33m[SKIP][0m        [36mIsland[0m                  4   map uses pool fanout.
+  [33m[SKIP][0m        [36mIsland[0m                  5   map_result returns item results.
+  [33m[SKIP][0m        [36mIsland[0m                  6   all_settled returns worker_died.
+  [33m[SKIP][0m        [36mIsland[0m                  7   worker_died captures exception de...
+  [33m[SKIP][0m        [36mIsland[0m                  8   map worker crash fails outer effect.
+  [33m[SKIP][0m        [36mIsland[0m                  9   workloads.
+  [33m[SKIP][0m        [36mBlocking[0m                0   submit alias and stats.
+  [33m[SKIP][0m        [36mBlocking[0m                1   direct control and heartbeat.
+  [33m[SKIP][0m        [36mBlocking[0m                2   wait caps active and queue.
+  [33m[SKIP][0m        [36mBlocking[0m                3   reject deterministic.
+  [33m[SKIP][0m        [36mBlocking[0m                4   pending cancellation.
+  [33m[SKIP][0m        [36mBlocking[0m                5   started cancellation nonpreemptive.
+  [33m[SKIP][0m        [36mBlocking[0m                6   shutdown rejects new jobs.
+  [33m[SKIP][0m        [36mBlocking[0m                7   shutdown drain waits.
+  [33m[SKIP][0m        [36mBlocking[0m                8   shutdown detach records.
+  [33m[SKIP][0m        [36mBlocking[0m                9   detach started counts each job once.
+  [33m[SKIP][0m        [36mBlocking[0m               10   named pools isolate.
+  [33m[SKIP][0m        [36mBlocking[0m               11   domain isolated hold-lock.
+  [33m[SKIP][0m        [36mBlocking[0m               12   worker rejects nested submit.
+  [33m[SKIP][0m        [36mBlocking[0m               13   worker rejects runtime run.
+  [33m[SKIP][0m        [36mBlocking[0m               14   cpu antipattern.
+  [33m[SKIP][0m        [36mBlocking[0m               15   observability labels timings.
+  [32m[OK][0m          [36mSupervisor[0m              0   observes child failure.
+  [32m[OK][0m          [36mSupervisor[0m              1   await rethrows child failure.
+  [32m[OK][0m          [36mSupervisor[0m              2   cancel runs finalizer.
+  [32m[OK][0m          [36mSupervisor[0m              3   cancel before await does not dead...
+  [32m[OK][0m          [36mSupervisor[0m              4   stop waits for finalizer.
+  [32m[OK][0m          [36mSupervisor[0m              5   scope cancels unawaited children.
+  [32m[OK][0m          [36mSupervisor[0m              6   threshold failure.
+  [32m[OK][0m          [36mSupervisor[0m              7   records multiple failures.
+  [32m[OK][0m          [36mSupervisor[0m              8   nested scopes compose.
+  [33m[SKIP][0m        [36mClock[0m                   0   sleep without wall time.
+  [33m[SKIP][0m        [36mClock[0m                   1   sleep delays until adjusted.
+  [33m[SKIP][0m        [36mClock[0m                   2   multiple sleeps.
+  [33m[SKIP][0m        [36mClock[0m                   3   set_time wakes due sleepers.
+  [33m[SKIP][0m        [36mDuration[0m                0   constructors.
+  [33m[SKIP][0m        [36mDuration[0m                1   ordering.
+  [33m[SKIP][0m        [36mDuration[0m                2   algebra.
+  [33m[SKIP][0m        [36mDuration[0m                3   overflow.
+  [33m[SKIP][0m        [36mDuration[0m                4   min max clamp.
+  [33m[SKIP][0m        [36mSchedule[0m                0   recurs.
+  [33m[SKIP][0m        [36mSchedule[0m                1   exponential.
+  [33m[SKIP][0m        [36mSchedule[0m                2   spaced fixed linear.
+  [33m[SKIP][0m        [36mSchedule[0m                3   composition.
+  [33m[SKIP][0m        [36mSchedule[0m                4   and_then offsets second phase.
+  [33m[SKIP][0m        [36mSchedule[0m                5   jittered uses random capability.
+  [33m[SKIP][0m        [36mSchedule[0m                6   random float distribution and det...
+  [33m[SKIP][0m        [36mScope[0m                   0   finalizers run lifo sequentially.
+  [33m[SKIP][0m        [36mResource[0m                0   manual refresh.
+  [33m[SKIP][0m        [36mResource[0m                1   failed refresh keeps cached value.
+  [33m[SKIP][0m        [36mResource[0m                2   auto refreshes on schedule.
+  [33m[SKIP][0m        [36mResource[0m                3   auto failed refresh keeps cached ...
+  [33m[SKIP][0m        [36mResource[0m                4   auto records loader defect and co...
+  [33m[SKIP][0m        [36mResource[0m                5   auto records on_error defect and ...
+  [33m[SKIP][0m        [36mPortable_queue[0m          0   backpressure and close.
+  [33m[SKIP][0m        [36mQueue[0m                   0   send recv close.
+  [33m[SKIP][0m        [36mQueue[0m                   1   close fence.
+  [33m[SKIP][0m        [36mQueue[0m                   2   close with error drains.
+  [33m[SKIP][0m        [36mQueue[0m                   3   cancel blocked recv.
+  [33m[SKIP][0m        [36mChannel[0m                 0   try send recv.
+  [33m[SKIP][0m        [36mChannel[0m                 1   blocking send backpressure.
+  [33m[SKIP][0m        [36mChannel[0m                 2   blocked sender not passed.
+  [33m[SKIP][0m        [36mChannel[0m                 3   blocking recv.
+  [33m[SKIP][0m        [36mChannel[0m                 4   close wakes blocked users.
+  [33m[SKIP][0m        [36mChannel[0m                 5   close with error drains.
+  [33m[SKIP][0m        [36mChannel[0m                 6   cancel blocked send.
+  [33m[SKIP][0m        [36mChannel[0m                 7   cancel blocked recv.
+  [33m[SKIP][0m        [36mChannel[0m                 8   cancel delivered recv requeues.
+  [33m[SKIP][0m        [36mChannel[0m                 9   parent switch teardown.
+  [33m[SKIP][0m        [36mPool[0m                    0   reuses idle LIFO.
+  [33m[SKIP][0m        [36mPool[0m                    1   timeout cleans waiter.
+  [33m[SKIP][0m        [36mPool[0m                    2   health rejection reopens.
+  [33m[SKIP][0m        [36mPool[0m                    3   idle health failure rejects entry.
+  [33m[SKIP][0m        [36mPool[0m                    4   idle health defect closes entry.
+  [33m[SKIP][0m        [36mPool[0m                    5   cancel during health check.
+  [33m[SKIP][0m        [36mPool[0m                    6   idle eviction.
+  [33m[SKIP][0m        [36mPool[0m                    7   expired idle preserves capacity w...
+  [33m[SKIP][0m        [36mPool[0m                    8   shutdown wakes and drains.
+  [33m[SKIP][0m        [36mPool[0m                    9   shutdown deadline.
+  [33m[SKIP][0m        [36mPool[0m                   10   release detects active underflow.
+  [33m[SKIP][0m        [36mPool[0m                   11   observability signals.
+  [33m[SKIP][0m        [36mSemaphore[0m               0   make and available.
+  [33m[SKIP][0m        [36mSemaphore[0m               1   acquire reduces available.
+  [33m[SKIP][0m        [36mSemaphore[0m               2   release increases available.
+  [33m[SKIP][0m        [36mSemaphore[0m               3   release rejects negative count.
+  [33m[SKIP][0m        [36mSemaphore[0m               4   release rejects zero count.
+  [33m[SKIP][0m        [36mSemaphore[0m               5   release over capacity clamps.
+  [33m[SKIP][0m        [36mSemaphore[0m               6   rejects over-capacity acquire.
+  [33m[SKIP][0m        [36mSemaphore[0m               7   rejects over-capacity try_acquire.
+  [33m[SKIP][0m        [36mSemaphore[0m               8   acquire at capacity succeeds.
+  [33m[SKIP][0m        [36mSemaphore[0m               9   with_permits releases on success.
+  [33m[SKIP][0m        [36mSemaphore[0m              10   with_permits releases on failure.
+  [33m[SKIP][0m        [36mSemaphore[0m              11   with_permits releases on timeout.
+  [33m[SKIP][0m        [36mSemaphore[0m              12   cancellation stress.
+  [33m[SKIP][0m        [36mSemaphore[0m              13   cancel after wakeup returns permit.
+  [33m[SKIP][0m        [36mSemaphore[0m              14   multi-permit contention.
+  [33m[SKIP][0m        [36mProperties[0m              0   monad laws.
+  [33m[SKIP][0m        [36mProperties[0m              1   catch laws.
+  [33m[SKIP][0m        [36mProperties[0m              2   race success invariant.
+  [33m[SKIP][0m        [36mProperties[0m              3   retry and repeat laws.
+  [33m[SKIP][0m        [36mProperties[0m              4   scope finalizers exactly once.
+  [33m[SKIP][0m        [36mObservability[0m           0   manual tracer spans.
+  [33m[SKIP][0m        [36mObservability[0m           1   named span status ok.
+  [33m[SKIP][0m        [36mObservability[0m           2   span kind.
+  [33m[SKIP][0m        [36mObservability[0m           3   fn records location.
+  [33m[SKIP][0m        [36mObservability[0m           4   annotation order.
+  [33m[SKIP][0m        [36mObservability[0m           5   nested spans.
+  [33m[SKIP][0m        [36mObservability[0m           6   statuses.
+  [33m[SKIP][0m        [36mObservability[0m           7   concurrent status.
+  [33m[SKIP][0m        [36mObservability[0m           8   cancelled child status.
+  [33m[SKIP][0m        [36mObservability[0m           9   uninterruptible child status.
+  [33m[SKIP][0m        [36mObservability[0m          10   par children inherit parent.
+  [33m[SKIP][0m        [36mObservability[0m          11   par pending attrs links are fiber...
+  [33m[SKIP][0m        [36mObservability[0m          12   sampler always off.
+  [33m[SKIP][0m        [36mObservability[0m          13   sampler ratio.
+  [33m[SKIP][0m        [36mObservability[0m          14   sampler ratio same name uses trac...
+  [33m[SKIP][0m        [36mObservability[0m          15   sampler parent based.
+  [33m[SKIP][0m        [36mObservability[0m          16   sampler suppresses par children.
+  [33m[SKIP][0m        [36mObservability[0m          17   noop runtime keeps die diagnostics.
+  [33m[SKIP][0m        [36mObservability[0m          18   custom noop tracer is explicitly ...
+  [33m[SKIP][0m        [36mObservability[0m          19   suppress observability.
+  [33m[SKIP][0m        [36mObservability[0m          20   trace context extract inject.
+  [33m[SKIP][0m        [36mObservability[0m          21   trace context rejects malformed t...
+  [33m[SKIP][0m        [36mObservability[0m          22   trace context par inherits baggage.
+  [33m[SKIP][0m        [36mObservability[0m          23   in-memory tracer current span has...
+  [33m[SKIP][0m        [36mObservability[0m          24   in-memory tracer child inherits t...
+  [33m[SKIP][0m        [36mObservability[0m          25   in-memory tracer external trace i...
+  [33m[SKIP][0m        [36mObservability[0m          26   trace context unsampled parent su...
+  [33m[SKIP][0m        [36mObservability[0m          27   auto instrument default off.
+  [33m[SKIP][0m        [36mObservability[0m          28   auto instrument sync leaves.
+  [33m[SKIP][0m        [36mObservability[0m          29   auto instrument leaves nest.
+  [33m[SKIP][0m        [36mObservability[0m          30   auto instrument failure status.
+  [33m[SKIP][0m        [36mObservability[0m          31   all for_each_par supervisor inher...
+  [33m[SKIP][0m        [36mEta_redacted[0m            0   pp unlabelled.
+  [33m[SKIP][0m        [36mEta_redacted[0m            1   pp labelled.
+  [33m[SKIP][0m        [36mEta_redacted[0m            2   equal.
+  [33m[SKIP][0m        [36mEta_redacted[0m            3   hash.
+  [33m[SKIP][0m        [36mEta_redacted[0m            4   wipe_unsafe.
+  [33m[SKIP][0m        [36mEta_redacted[0m            5   label.
+
+Full test results in `[36m~/projects/ribelo/ocaml/Eta-scoped-sessions/_build/_tests/eta[0m'.
+[32mTest Successful[0m in 0.002s. 9 tests run.
+exit=0

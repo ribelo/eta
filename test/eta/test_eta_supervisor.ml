@@ -96,6 +96,65 @@ let test_supervisor_cancel_before_await_does_not_deadlock () =
         cause
   | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
 
+let test_supervisor_stop_waits_for_finalizer () =
+  with_test_clock @@ fun _sw clock rt ->
+  let finalizer_ran = ref false in
+  let child =
+    Effect.acquire_release
+      ~acquire:(Effect.named "supervisor.acquire" (Effect.sync (fun () -> ())))
+      ~release:(fun () ->
+        Effect.named "supervisor.release" (Effect.sync (fun () -> finalizer_ran := true)))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let program =
+    Supervisor.scoped {
+      run =
+        fun sup ->
+          let open Supervisor.Scope in
+          let* child = start sup (lift child) in
+          let* () =
+            lift
+              (Effect.named "supervisor.wait_for_child" (Effect.sync (fun () ->
+                   wait_for_sleepers clock 1)))
+          in
+          let* () = stop child in
+          lift (Effect.sync (fun () -> !finalizer_ran));
+    }
+  in
+  match Runtime.run rt program with
+  | Exit.Ok true -> ()
+  | Exit.Ok false -> Alcotest.fail "expected stop to wait for finalizer"
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected stop failure: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+
+let test_effect_with_background_cancels_child () =
+  with_test_clock @@ fun _sw clock rt ->
+  let finalizer_ran = ref false in
+  let child_started = ref false in
+  let background =
+    Effect.acquire_release
+      ~acquire:
+        (Effect.sync (fun () ->
+             child_started := true;
+             ()))
+      ~release:(fun () -> Effect.sync (fun () -> finalizer_ran := true))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let program =
+    Effect.with_background background (fun () ->
+        Effect.sync (fun () -> wait_for_sleepers clock 1)
+        |> Effect.map (fun () -> !child_started))
+  in
+  match Runtime.run rt program with
+  | Exit.Ok true -> Alcotest.(check bool) "finalizer ran" true !finalizer_ran
+  | Exit.Ok false -> Alcotest.fail "background did not start"
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected with_background failure: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+
 let test_supervisor_scope_cancels_unawaited_children_on_return () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -218,5 +277,3 @@ let test_supervisor_nested_scopes_compose () =
     }
   in
   Alcotest.(check int) "inner failure observed" 1 (run_ok rt outer)
-
-

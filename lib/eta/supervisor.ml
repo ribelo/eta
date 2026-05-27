@@ -13,6 +13,7 @@ module Scope = struct
   let start = Effect.supervisor_start
   let await = Effect.supervisor_await
   let cancel = Effect.supervisor_cancel
+  let stop = Effect.supervisor_stop
   let failures = Effect.supervisor_failures
   let check = Effect.supervisor_check
   let yield = Effect.supervisor_yield
