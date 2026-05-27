@@ -3,16 +3,16 @@ name: H3 hardening
 on:
   pull_request:
     paths:
-      - "packages/eta/runtime.ml"
-      - "packages/eta/runtime.mli"
-      - "packages/eta/schedule.ml"
-      - "packages/eta/schedule.mli"
-      - "packages/eta/capabilities.ml"
-      - "packages/eta/capabilities.mli"
-      - "packages/eta/supervisor.ml"
-      - "packages/eta/supervisor.mli"
-      - "packages/eta-stream/**"
-      - "packages/eta-otel/**"
+      - "lib/eta/runtime.ml"
+      - "lib/eta/runtime.mli"
+      - "lib/eta/schedule.ml"
+      - "lib/eta/schedule.mli"
+      - "lib/eta/capabilities.ml"
+      - "lib/eta/capabilities.mli"
+      - "lib/eta/supervisor.ml"
+      - "lib/eta/supervisor.mli"
+      - "lib/stream/**"
+      - "lib/otel/**"
       - "scratch/oxcaml_research/concurrency_model/**"
       - ".github/workflows/h3-hardening.yml"
       - ".github/pull_request_template.md"
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v15
       - name: Reject ambient jitter random
-        run: nix develop -c bash -lc 'if rg "Random\\." packages/eta/schedule.ml packages/eta/runtime.ml packages/eta/capabilities.ml; then exit 1; fi'
+        run: nix develop -c bash -lc 'if rg "Random\\." lib/eta/schedule.ml lib/eta/runtime.ml lib/eta/capabilities.ml; then exit 1; fi'
       - name: Run H3 hardening gate
         run: nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh
       - name: Run H3 caveat probes

@@ -1,0 +1,4 @@
+(library
+ (name eta_http_core)
+ (package eta)
+ (libraries eta eta_stream eta_http_error eio bigstringaf domain-name ipaddr))

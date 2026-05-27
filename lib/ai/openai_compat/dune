@@ -1,0 +1,3 @@
+(library
+ (name eta_ai_openai_compat)
+ (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http yojson))

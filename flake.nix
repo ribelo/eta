@@ -145,41 +145,41 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
-                packages/eta-redacted \
-                packages/eta \
-                packages/eta-ai \
-                packages/eta-ai-anthropic \
-                packages/eta-ai-openai-compat \
-                packages/eta-ai-openai \
-                packages/eta-ai-openrouter \
-                packages/eta-otel \
-                packages/eta-schema \
-                packages/eta-stream \
-                packages/ppx_eta \
-                packages/eta-redacted/test \
-                packages/eta/test \
-                packages/eta-ai/test \
-                packages/eta-ai-anthropic/test \
-                packages/eta-ai-openai-compat/test \
-                packages/eta-ai-openai/test \
-                packages/eta-ai-openrouter/test \
-                packages/eta-otel/test \
-                packages/eta-schema/test \
-                packages/eta-stream/test \
-                packages/ppx_eta/test
+                lib/redacted \
+                lib/eta \
+                lib/ai \
+                lib/ai/anthropic \
+                lib/ai/openai_compat \
+                lib/ai/openai \
+                lib/ai/openrouter \
+                lib/otel \
+                lib/schema \
+                lib/stream \
+                lib/ppx \
+                test/redacted \
+                test/eta \
+                test/ai/core \
+                test/ai/anthropic \
+                test/ai/openai_compat \
+                test/ai/openai \
+                test/ai/openrouter \
+                test/otel \
+                test/schema \
+                test/stream \
+                test/ppx
 
               dune runtest \
-                packages/eta-redacted \
-                packages/eta \
-                packages/eta-ai \
-                packages/eta-ai-anthropic \
-                packages/eta-ai-openai-compat \
-                packages/eta-ai-openai \
-                packages/eta-ai-openrouter \
-                packages/eta-otel \
-                packages/eta-schema \
-                packages/eta-stream \
-                packages/ppx_eta \
+                lib/redacted \
+                lib/eta \
+                lib/ai \
+                lib/ai/anthropic \
+                lib/ai/openai_compat \
+                lib/ai/openai \
+                lib/ai/openrouter \
+                lib/otel \
+                lib/schema \
+                lib/stream \
+                lib/ppx \
                 --force
             '';
           };

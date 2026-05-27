@@ -1,8 +1,0 @@
-(test
- (name test_eta_ai_anthropic)
- (libraries eta ai ai_anthropic http alcotest eio_main)
- (deps
-  (source_tree fixtures))
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

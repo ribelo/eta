@@ -126,7 +126,7 @@ Avoid committing dirty-tree results unless the commit message explains why.
 ## Caveats
 
 - Runtime benchmark sources live beside their owning package under
-  `packages/<pkg>/bench/`. Root `bench/` owns only shared harness code,
+  `lib/<pkg>/bench/`. Root `bench/` owns only shared harness code,
   result files, compile-time fixtures, and comparison tools.
 - OCaml benchmark executables are built in the active Dune profile. Use the
   same profile for both baseline and candidate runs when comparing results.

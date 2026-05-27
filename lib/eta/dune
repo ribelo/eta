@@ -1,0 +1,17 @@
+(library
+ (name eta)
+ (public_name eta)
+ (private_modules
+  blocking_runtime
+  island_runtime
+  runtime_core
+  runtime_instrument
+  runtime_observability
+  runtime_supervisor
+  runtime_supervisor_types)
+ (libraries eio eio.unix portable eta_par threads))
+
+(env
+ (release
+  (ocamlopt_flags
+   (:standard -zero-alloc-check all))))

@@ -67,7 +67,7 @@ measure_ocamlc_i() {
   local file="$2"
   local includes="$3"
   if ! want "$name"; then return 0; fi
-  dune build packages/eta packages/schema packages/ppx >/dev/null
+  dune build lib/eta lib/schema lib/ppx >/dev/null
   local out="$(mktemp)"
   ocamlc -i $includes "$file" > "$out" 2>/dev/null || true
   local bytes="$(wc -c < "$out" | tr -d ' ')"
@@ -79,7 +79,7 @@ measure_ocamlc_i() {
 
 packages="ai ai_anthropic ai_openai ai_openai_codec ai_openai_compat ai_openrouter eta http otel par ppx redacted schema schema_test sql stream test"
 for pkg in $packages; do
-  path="packages/$pkg"
+  path="lib/$pkg"
   safe="$(printf '%s' "$pkg" | tr '-' '_')"
   if [ "$pkg" = "ppx" ]; then safe="ppx_eta"; fi
   main_ml="$(find "$path" -maxdepth 1 -name '*.ml' | sort | head -n 1)"
@@ -99,19 +99,19 @@ done
 measure_cmd "compile.fixture.deep_bind.clean" "rm -rf _build/default/bench/fixtures/typecheck/deep_bind && dune build bench/fixtures/typecheck/deep_bind"
 measure_cmd "compile.fixture.deep_bind.touch_top" "dune build bench/fixtures/typecheck/deep_bind && touch bench/fixtures/typecheck/deep_bind/tp_top.ml && dune build bench/fixtures/typecheck/deep_bind"
 measure_cmd "compile.fixture.deep_bind.touch_internal" "dune build bench/fixtures/typecheck/deep_bind && touch bench/fixtures/typecheck/deep_bind/tp_m25.ml && dune build bench/fixtures/typecheck/deep_bind"
-measure_ocamlc_i "compile.fixture.deep_bind.ocamlc_i" "bench/fixtures/typecheck/deep_bind/tp_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/deep_bind/.bench_typecheck_deep_bind.objs/byte"
+measure_ocamlc_i "compile.fixture.deep_bind.ocamlc_i" "bench/fixtures/typecheck/deep_bind/tp_top.ml" "-I _build/default/lib/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/deep_bind/.bench_typecheck_deep_bind.objs/byte"
 
 measure_cmd "compile.fixture.explicit_deps.clean" "rm -rf _build/default/bench/fixtures/typecheck/explicit_deps && dune build bench/fixtures/typecheck/explicit_deps"
 measure_cmd "compile.fixture.explicit_deps.touch_top" "dune build bench/fixtures/typecheck/explicit_deps && touch bench/fixtures/typecheck/explicit_deps/deps_top.ml && dune build bench/fixtures/typecheck/explicit_deps"
 measure_cmd "compile.fixture.explicit_deps.touch_internal" "dune build bench/fixtures/typecheck/explicit_deps && touch bench/fixtures/typecheck/explicit_deps/deps_m10.ml && dune build bench/fixtures/typecheck/explicit_deps"
-measure_ocamlc_i "compile.fixture.explicit_deps.ocamlc_i" "bench/fixtures/typecheck/explicit_deps/deps_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/explicit_deps/.bench_typecheck_explicit_deps.objs/byte"
+measure_ocamlc_i "compile.fixture.explicit_deps.ocamlc_i" "bench/fixtures/typecheck/explicit_deps/deps_top.ml" "-I _build/default/lib/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/explicit_deps/.bench_typecheck_explicit_deps.objs/byte"
 
 measure_cmd "compile.fixture.schema_heavy.clean" "rm -rf _build/default/bench/fixtures/typecheck/schema_heavy && dune build bench/fixtures/typecheck/schema_heavy"
 measure_cmd "compile.fixture.schema_heavy.touch_top" "dune build bench/fixtures/typecheck/schema_heavy && touch bench/fixtures/typecheck/schema_heavy/schema_top.ml && dune build bench/fixtures/typecheck/schema_heavy"
 measure_cmd "compile.fixture.schema_heavy.touch_internal" "dune build bench/fixtures/typecheck/schema_heavy && touch bench/fixtures/typecheck/schema_heavy/schema_m05.ml && dune build bench/fixtures/typecheck/schema_heavy"
-measure_ocamlc_i "compile.fixture.schema_heavy.ocamlc_i" "bench/fixtures/typecheck/schema_heavy/schema_top.ml" "-I _build/default/packages/schema/.schema.objs/byte -I _build/default/bench/fixtures/typecheck/schema_heavy/.bench_typecheck_schema_heavy.objs/byte"
+measure_ocamlc_i "compile.fixture.schema_heavy.ocamlc_i" "bench/fixtures/typecheck/schema_heavy/schema_top.ml" "-I _build/default/lib/schema/.schema.objs/byte -I _build/default/bench/fixtures/typecheck/schema_heavy/.bench_typecheck_schema_heavy.objs/byte"
 
 measure_cmd "compile.fixture.ppx_heavy.clean" "rm -rf _build/default/bench/fixtures/typecheck/ppx_heavy && dune build bench/fixtures/typecheck/ppx_heavy"
 measure_cmd "compile.fixture.ppx_heavy.touch_top" "dune build bench/fixtures/typecheck/ppx_heavy && touch bench/fixtures/typecheck/ppx_heavy/ppx_top.ml && dune build bench/fixtures/typecheck/ppx_heavy"
 measure_cmd "compile.fixture.ppx_heavy.touch_internal" "dune build bench/fixtures/typecheck/ppx_heavy && touch bench/fixtures/typecheck/ppx_heavy/ppx_m03.ml && dune build bench/fixtures/typecheck/ppx_heavy"
-measure_ocamlc_i "compile.fixture.ppx_heavy.ocamlc_i" "bench/fixtures/typecheck/ppx_heavy/ppx_top.ml" "-I _build/default/packages/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/ppx_heavy/.bench_typecheck_ppx_heavy.objs/byte"
+measure_ocamlc_i "compile.fixture.ppx_heavy.ocamlc_i" "bench/fixtures/typecheck/ppx_heavy/ppx_top.ml" "-I _build/default/lib/eta/.eta.objs/byte -I _build/default/bench/fixtures/typecheck/ppx_heavy/.bench_typecheck_ppx_heavy.objs/byte"

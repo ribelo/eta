@@ -1,0 +1,3 @@
+(library
+ (name eta_ai_anthropic)
+ (libraries eta eta_ai eta_redacted eta_http yojson))

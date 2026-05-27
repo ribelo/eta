@@ -1,0 +1,4 @@
+(library
+ (name eta_ai_openai)
+ (public_name eta.ai.openai)
+ (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http eta_stream yojson))

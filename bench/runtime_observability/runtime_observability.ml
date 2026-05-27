@@ -77,7 +77,7 @@ let attrs_work n =
   in
   go n (Effect.pure 0)
 
-let span i : Otel.Internal.span =
+let span i : Eta_otel.Internal.span =
   {
     trace_id = "0af7651916cd43dd8448eb211c80319c";
     span_id = Printf.sprintf "%016x" i;
@@ -121,15 +121,15 @@ let run_otel kind count =
   let payload =
     match kind with
     | `Span ->
-        Otel.Internal.encode_traces_request
+        Eta_otel.Internal.encode_traces_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count span)
     | `Log ->
-        Otel.Internal.encode_logs_request
+        Eta_otel.Internal.encode_logs_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count log)
     | `Metric ->
-        Otel.Internal.encode_metrics_request
+        Eta_otel.Internal.encode_metrics_request
           ~resource_attrs:[ ("service.name", "bench") ] ~scope_name:"bench"
           (List.init count point)
   in

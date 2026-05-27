@@ -1,0 +1,9 @@
+(executable
+ (name bench_test)
+ (libraries bench_lib eta_test eta eio_main unix))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_test.exe --quick))))

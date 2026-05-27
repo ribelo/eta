@@ -2,7 +2,7 @@
 
 Eight kernels covering the workload taxonomy work-stealing schedulers
 care about. Used both for human-readable health checks and as the
-numeric target for autoresearch loops over `packages/par/src/`.
+numeric target for autoresearch loops over `lib/par/src/`.
 
 ## Kernels
 
@@ -23,16 +23,16 @@ that affects per-join cost shows up here first.
 
 ## Boundary: scheduler vs benchmark
 
-The benchmarks live outside `packages/par/` on purpose. The dune
+The benchmarks live outside `lib/par/` on purpose. The dune
 file declares one library dependency:
 
 ```
-(libraries par unix)
+(libraries eta_par unix)
 ```
 
 That is all every kernel can see: the public surface of `Par` plus
 `Unix` for clocks. The internal `Scheduler` module is `private_modules`
-in `packages/par/src/dune`, and there is no escape hatch.
+in `lib/par/src/dune`, and there is no escape hatch.
 
 Implications:
 

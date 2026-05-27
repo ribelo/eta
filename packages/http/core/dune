@@ -1,4 +1,0 @@
-(library
- (name http_core)
- (package eta)
- (libraries eta stream http_error eio bigstringaf domain-name ipaddr))

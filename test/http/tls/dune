@@ -1,0 +1,11 @@
+(rule
+ (alias runtest)
+ (deps
+  run_negative_compile.sh
+  negative_tls13_override.ml
+  negative_dhe_cipher_override.ml
+  ../../../lib/http/tls/config.ml
+  ../../../lib/http/tls/config.mli)
+ (action
+  (chdir %{workspace_root}
+   (run bash test/http/tls/run_negative_compile.sh))))

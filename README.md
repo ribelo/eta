@@ -134,7 +134,7 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
  (pps ppx_eta))
 ```
 
-For `eta-sql`, the same PPX also provides optional table declaration sugar:
+For Eta SQL (`eta.sql`), the same PPX also provides optional table declaration sugar:
 
 ```ocaml
 [%%eta.sql.table

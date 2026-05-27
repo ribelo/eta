@@ -9,7 +9,7 @@ let otlp_retry_status = function 429 | 502 | 503 | 504 -> true | _ -> false
 let hex32 i = Printf.sprintf "%032x" i
 let hex16 i = Printf.sprintf "%016x" i
 
-let make_span i : Otel.Internal.span =
+let make_span i : Eta_otel.Internal.span =
   let start_unix_ns = 1_700_000_000_000_000_000 + (i * 1_000_000) in
   {
     trace_id = hex32 (0x1000 + i);
@@ -37,7 +37,7 @@ let make_payload count =
   let rec loop i acc =
     if i = 0 then acc else loop (i - 1) (make_span i :: acc)
   in
-  Otel.Internal.encode_traces_request
+  Eta_otel.Internal.encode_traces_request
     ~resource_attrs:
       [
         ("service.name", "eta-r-t3");
@@ -52,31 +52,31 @@ let run ~host ~port ~count =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
-  let client = Http.Client.make_h1 ~sw ~net () in
+  let client = Eta_http.Client.make_h1 ~sw ~net () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
     Eta.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   let request =
-    Http.Request.make "POST" uri
+    Eta_http.Request.make "POST" uri
       ~headers:
         [
           ("content-type", "application/json");
           ("accept", "application/json");
         ]
-      ~body:(Http.Request.Fixed [ Bytes.of_string body ])
+      ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
   in
   let policy =
-    Http.Retry_policy.always ~max_attempts:3 ~retry_status:otlp_retry_status
+    Eta_http.Retry_policy.always ~max_attempts:3 ~retry_status:otlp_retry_status
       ()
   in
   let effect =
-    Http.Observability.Tracer.request_with_retry ~enabled:false ~policy client
+    Eta_http.Observability.Tracer.request_with_retry ~enabled:false ~policy client
       request
     |> Eta.Effect.bind (fun response ->
-           Http.Body.Stream.read_all response.body
+           Eta_http.Body.Stream.read_all response.body
            |> Eta.Effect.map (fun response_body ->
-                  (response.Http.Response.status, response_body)))
+                  (response.Eta_http.Response.status, response_body)))
   in
   match Eta.Runtime.run rt effect with
   | Eta.Exit.Ok (status, response_body) ->
@@ -97,7 +97,7 @@ let run ~host ~port ~count =
         exit 2)
   | Eta.Exit.Error cause ->
       Format.eprintf "r_t3_eta_http_otlp error=%a@."
-        (Eta.Cause.pp Http.Error.pp)
+        (Eta.Cause.pp Eta_http.Error.pp)
         cause;
       exit 1
 

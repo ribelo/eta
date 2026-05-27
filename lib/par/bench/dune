@@ -1,0 +1,8 @@
+(executable
+ (name bench_par)
+ (libraries bench_lib eta_par unix))
+
+(rule
+ (alias bench)
+ (action
+  (run ./bench_par.exe --quick)))

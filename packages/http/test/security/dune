@@ -1,6 +1,0 @@
-(test
- (name gzip_bomb)
- (libraries http test alcotest eio_main)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

@@ -20,6 +20,7 @@ depends: [
   "ipaddr"
   "bigstringaf"
   "decompress" {= "1.5.3"}
+  "conf-sqlite3"
   "ppxlib"
   "alcotest" {with-test}
   "odoc" {with-doc}

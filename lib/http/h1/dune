@@ -1,0 +1,13 @@
+(library
+ (name eta_http_h1)
+ (package eta)
+ (libraries
+  eta
+  eta_stream
+  eta_http_body
+  eta_http_core
+  eta_http_error
+  eta_http_transport
+  cstruct
+  eio
+  bigstringaf))

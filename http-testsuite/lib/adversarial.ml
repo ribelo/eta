@@ -13,7 +13,7 @@ let major_words (_, x, _, _) = x
 
 let timeout_error ~url ~deadline_sec =
   let timeout_ms = max 1 (int_of_float (deadline_sec *. 1000.0)) in
-  Http.Error.make ~method_:"GET" ~uri:url
+  Eta_http.Error.make ~method_:"GET" ~uri:url
     (Total_request_timeout { timeout_ms = Some timeout_ms })
 
 let not_implemented name =
@@ -55,18 +55,18 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
                 (fun () -> try server_fn ~env flow with _ -> ()));
           `Stop_daemon);
       let url = url_builder port in
-      let client = Http.Client.make ~sw ~net:(Eio.Stdenv.net env) () in
-      let request = Http.Request.make "GET" url in
+      let client = Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env) () in
+      let request = Eta_http.Request.make "GET" url in
       let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
       let consume_response =
         match consume_response with
         | Some consume -> consume
         | None ->
-            fun (response : Http.Response.t) ->
+            fun (response : Eta_http.Response.t) ->
               Util.body_to_string response.body |> Eta.Effect.map (fun _ -> `Ok)
       in
       let result =
-        Http.request client request
+        Eta_http.request client request
         |> Eta.Effect.bind consume_response
         |> Eta.Effect.timeout_as
              (Eta.Duration.ms (max 1 (int_of_float (deadline_sec *. 1000.0))))
@@ -75,10 +75,10 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
         |> function
         | Eta.Exit.Ok `Ok -> `Completed
         | Eta.Exit.Error cause ->
-            let msg = Format.asprintf "%a" (Eta.Cause.pp Http.Error.pp) cause in
+            let msg = Format.asprintf "%a" (Eta.Cause.pp Eta_http.Error.pp) cause in
             `Error msg
       in
-      ignore (Eta.Runtime.run rt (Http.Client.shutdown client));
+      ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
       let duration_ms = Util.now_ms () -. start in
       let peak_rss = rss_kb () in
       let fd_after = fd_count () in
@@ -210,12 +210,12 @@ let decompression_bomb ~env =
   run_malicious_request ~env ~name:"decompression_bomb"
     ~server_fn:decompression_bomb_server
     ~url_builder:(fun port -> Printf.sprintf "http://127.0.0.1:%d/" port)
-    ~consume_response:(fun (response : Http.Response.t) ->
+    ~consume_response:(fun (response : Eta_http.Response.t) ->
       let decoded =
-        Http.Body.Transducer.gzip_decode ~max_decoded_bytes:(1024 * 1024)
+        Eta_http.Body.Transducer.gzip_decode ~max_decoded_bytes:(1024 * 1024)
           response.body
       in
-      Http.Body.Stream.read_all decoded |> Eta.Effect.map (fun _ -> `Ok))
+      Eta_http.Body.Stream.read_all decoded |> Eta.Effect.map (fun _ -> `Ok))
     ~deadline_sec:10.0 ()
 
 (* ---------------------------------------------------------------------------

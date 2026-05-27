@@ -1,0 +1,4 @@
+(library
+ (name eta_ai_openai_codec)
+ (package eta)
+ (libraries eta_ai))

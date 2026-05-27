@@ -1,6 +1,6 @@
 (executables
  (names runtime_par bench_tree_sum)
- (libraries par unix))
+ (libraries eta_par unix))
 
 (rule
  (alias legacy_bench)

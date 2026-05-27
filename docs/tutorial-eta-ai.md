@@ -343,28 +343,28 @@ Tool arguments and results are not recorded by default.
 
 Run the package gate after changing eta-ai core:
 
-    bash packages/eta-ai/audit/run.sh
-    nix develop -c dune runtest packages/eta-ai --force
+    bash lib/ai/audit/run.sh
+    nix develop -c dune runtest lib/ai --force
     nix develop -c dune build
     nix develop -c eta-oxcaml-test-shipped
 
 Run the OpenAI provider gate after changing eta-ai-openai:
 
-    bash packages/eta-ai-openai/audit/run.sh
-    nix develop -c dune runtest packages/eta-ai-openai --force
+    bash lib/ai/openai/audit/run.sh
+    nix develop -c dune runtest lib/ai/openai --force
 
 Run the Anthropic provider gate after changing eta-ai-anthropic:
 
-    bash packages/eta-ai-anthropic/audit/run.sh
-    nix develop -c dune runtest packages/eta-ai-anthropic --force
+    bash lib/ai/anthropic/audit/run.sh
+    nix develop -c dune runtest lib/ai/anthropic --force
 
 Run the OpenAI-compatible provider gate after changing
 eta-ai-openai-compat:
 
-    bash packages/eta-ai-openai-compat/audit/run.sh
-    nix develop -c dune runtest packages/eta-ai-openai-compat --force
+    bash lib/ai/openai_compat/audit/run.sh
+    nix develop -c dune runtest lib/ai/openai_compat --force
 
 Run the OpenRouter provider gate after changing eta-ai-openrouter:
 
-    bash packages/eta-ai-openrouter/audit/run.sh
-    nix develop -c dune runtest packages/eta-ai-openrouter --force
+    bash lib/ai/openrouter/audit/run.sh
+    nix develop -c dune runtest lib/ai/openrouter --force

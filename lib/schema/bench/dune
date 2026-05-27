@@ -1,0 +1,9 @@
+(executable
+ (name bench_schema)
+ (libraries bench_lib eta eta_schema eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_schema.exe --quick))))

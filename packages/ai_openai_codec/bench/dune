@@ -1,8 +1,0 @@
-(executable
- (name bench_ai_openai_codec)
- (libraries bench_lib ai ai_openai_codec))
-
-(rule
- (alias bench)
- (action
-  (run ./bench_ai_openai_codec.exe --quick)))

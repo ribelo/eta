@@ -2,17 +2,19 @@
 
 ## Project Structure & Module Organization
 
-Eta is a small OCaml 5 library built with Dune. Public code lives in `packages/eta/`;
+Eta is a small OCaml 5 library built with Dune. Public code lives in `lib/eta/`;
 each exported module has a paired implementation and interface, for example
 `effect.ml` and `effect.mli`. The core modules are `Effect`, `Runtime`,
 `Cause`, `Exit`, `Duration`, `Schedule`, `Resource`, `Capabilities`, and
 `Tracer`.
 
-Tests live in `packages/eta/test/test_eta.ml` and are registered by
-`packages/eta/test/dune`. Research
+Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
 experiments live under `scratch/`; keep them out of the published library unless
-they are deliberately promoted into `packages/eta/`. Generated artifacts belong in
+they are deliberately promoted into `lib/eta/`. Generated artifacts belong in
 `_build/` and local switches in `_opam/`.
+
+Optional external-engine integrations live under `drivers/`. Driver packages may
+depend on Eta, but Eta core libraries under `lib/` must not depend on drivers.
 
 ## Reference Code
 
@@ -48,7 +50,7 @@ and run Dune before submitting changes.
 ## Testing Guidelines
 
 Tests use Alcotest plus Eio runtime helpers. Add focused `let test_* ()`
-functions in `packages/eta/test/test_eta.ml`, then register them in the suite in that file.
+functions in `test/eta/test_eta.ml`, then register them in the suite in that file.
 Prefer deterministic helpers such as the existing test clock for timeouts,
 delays, and fiber scheduling. Cover both `Exit.Ok` and `Exit.Error` paths when
 changing runtime interpretation or typed failures.

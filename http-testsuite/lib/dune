@@ -2,7 +2,7 @@
  (name eta_http_testsuite)
  (libraries
   eta
-  http
+  eta_http
   eio
   eio_main
   yojson

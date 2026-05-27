@@ -1,4 +1,4 @@
-(* runtime_par — Par benchmark suite.
+(* runtime_par — Eta_par benchmark suite.
 
    Orchestrates all kernels under a single pool, validates correctness
    (parallel checksum must equal serial checksum), and emits METRIC
@@ -18,7 +18,7 @@ module type KERNEL = sig
   val name : string
   val description : string
   val run_serial : quick:bool -> unit -> string
-  val run_parallel : quick:bool -> Par.Pool.t -> string
+  val run_parallel : quick:bool -> Eta_par.Pool.t -> string
 end
 
 let kernels : (module KERNEL) list =
@@ -223,7 +223,7 @@ let () =
   end;
   Printf.printf "par bench suite — workers=%d iters=%d quick=%b kernels=%d\n%!"
     !workers !iters !quick (List.length selected);
-  Par.Pool.with_pool ~n_workers:!workers (fun pool ->
+  Eta_par.Pool.with_pool ~n_workers:!workers (fun pool ->
     let results = List.map (run_kernel ~quick:!quick ~iters:!iters pool) selected in
     report_human results;
     print_endline "";

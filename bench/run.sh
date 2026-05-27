@@ -54,23 +54,23 @@ run_runtime() {
 }
 
 build_targets=(
-  packages/eta/bench/bench_eta.exe
-  packages/stream/bench/bench_stream.exe
-  packages/schema/bench/bench_schema.exe
-  packages/otel/bench/bench_otel.exe
-  packages/par/bench/bench_par.exe
-  packages/http/bench/bench_http.exe
-  packages/sql/bench/bench_sql.exe
-  packages/ai/bench/bench_ai.exe
-  packages/ai_openai_codec/bench/bench_ai_openai_codec.exe
-  packages/ai_openai/bench/bench_ai_openai.exe
-  packages/ai_anthropic/bench/bench_ai_anthropic.exe
-  packages/ai_openai_compat/bench/bench_ai_openai_compat.exe
-  packages/ai_openrouter/bench/bench_ai_openrouter.exe
-  packages/redacted/bench/bench_redacted.exe
-  packages/test/bench/bench_test.exe
-  packages/schema_test/bench/bench_schema_test.exe
-  packages/ppx/bench/bench_ppx.exe
+  lib/eta/bench/bench_eta.exe
+  lib/stream/bench/bench_stream.exe
+  lib/schema/bench/bench_schema.exe
+  lib/otel/bench/bench_otel.exe
+  lib/par/bench/bench_par.exe
+  lib/http/bench/bench_http.exe
+  lib/sql/bench/bench_sql.exe
+  lib/ai/bench/bench_ai.exe
+  lib/ai/openai_codec/bench/bench_ai_openai_codec.exe
+  lib/ai/openai/bench/bench_ai_openai.exe
+  lib/ai/anthropic/bench/bench_ai_anthropic.exe
+  lib/ai/openai_compat/bench/bench_ai_openai_compat.exe
+  lib/ai/openrouter/bench/bench_ai_openrouter.exe
+  lib/redacted/bench/bench_redacted.exe
+  lib/test/bench/bench_test.exe
+  lib/schema_test/bench/bench_schema_test.exe
+  lib/ppx/bench/bench_ppx.exe
   bench/compare.exe
   bench/overhead.exe
 )
@@ -79,23 +79,23 @@ for target in "${build_targets[@]}"; do
   dune build -j 1 "$target"
 done
 
-run_runtime _build/default/packages/eta/bench/bench_eta.exe
-run_runtime _build/default/packages/stream/bench/bench_stream.exe
-run_runtime _build/default/packages/schema/bench/bench_schema.exe
-run_runtime _build/default/packages/otel/bench/bench_otel.exe
-run_runtime _build/default/packages/par/bench/bench_par.exe
-run_runtime _build/default/packages/http/bench/bench_http.exe
-run_runtime _build/default/packages/sql/bench/bench_sql.exe
-run_runtime _build/default/packages/ai/bench/bench_ai.exe
-run_runtime _build/default/packages/ai_openai_codec/bench/bench_ai_openai_codec.exe
-run_runtime _build/default/packages/ai_openai/bench/bench_ai_openai.exe
-run_runtime _build/default/packages/ai_anthropic/bench/bench_ai_anthropic.exe
-run_runtime _build/default/packages/ai_openai_compat/bench/bench_ai_openai_compat.exe
-run_runtime _build/default/packages/ai_openrouter/bench/bench_ai_openrouter.exe
-run_runtime _build/default/packages/redacted/bench/bench_redacted.exe
-run_runtime _build/default/packages/test/bench/bench_test.exe
-run_runtime _build/default/packages/schema_test/bench/bench_schema_test.exe
-run_runtime _build/default/packages/ppx/bench/bench_ppx.exe
+run_runtime _build/default/lib/eta/bench/bench_eta.exe
+run_runtime _build/default/lib/stream/bench/bench_stream.exe
+run_runtime _build/default/lib/schema/bench/bench_schema.exe
+run_runtime _build/default/lib/otel/bench/bench_otel.exe
+run_runtime _build/default/lib/par/bench/bench_par.exe
+run_runtime _build/default/lib/http/bench/bench_http.exe
+run_runtime _build/default/lib/sql/bench/bench_sql.exe
+run_runtime _build/default/lib/ai/bench/bench_ai.exe
+run_runtime _build/default/lib/ai/openai_codec/bench/bench_ai_openai_codec.exe
+run_runtime _build/default/lib/ai/openai/bench/bench_ai_openai.exe
+run_runtime _build/default/lib/ai/anthropic/bench/bench_ai_anthropic.exe
+run_runtime _build/default/lib/ai/openai_compat/bench/bench_ai_openai_compat.exe
+run_runtime _build/default/lib/ai/openrouter/bench/bench_ai_openrouter.exe
+run_runtime _build/default/lib/redacted/bench/bench_redacted.exe
+run_runtime _build/default/lib/test/bench/bench_test.exe
+run_runtime _build/default/lib/schema_test/bench/bench_schema_test.exe
+run_runtime _build/default/lib/ppx/bench/bench_ppx.exe
 
 compile_args=()
 if [ "$quick" = true ]; then compile_args+=("--quick"); fi

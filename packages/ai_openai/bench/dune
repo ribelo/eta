@@ -1,8 +1,0 @@
-(executable
- (name bench_ai_openai)
- (libraries bench_lib ai ai_openai http redacted))
-
-(rule
- (alias bench)
- (action
-  (run ./bench_ai_openai.exe --quick)))

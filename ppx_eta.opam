@@ -2,14 +2,13 @@
 opam-version: "2.0"
 synopsis: "PPX syntax helpers for Eta"
 description:
-  "ppx_eta provides small syntax helpers for Eta effects and eta-sql table declarations."
+  "ppx_eta provides small syntax helpers for Eta effects and Eta SQL table declarations."
 depends: [
   "ocaml" {= "5.2.0"}
   "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "ppxlib"
   "eta" {with-test}
-  "eta-sql" {with-test}
   "eio_main" {with-test}
   "alcotest" {with-test}
   "odoc" {with-doc}

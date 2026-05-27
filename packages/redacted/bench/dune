@@ -1,8 +1,0 @@
-(executable
- (name bench_redacted)
- (libraries bench_lib redacted))
-
-(rule
- (alias bench)
- (action
-  (run ./bench_redacted.exe --quick)))

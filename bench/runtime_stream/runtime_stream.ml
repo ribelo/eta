@@ -1,5 +1,5 @@
 open Eta
-open Stream
+open Eta_stream
 
 let run_stream stream sink =
   Eio_main.run @@ fun stdenv ->
@@ -9,24 +9,24 @@ let run_stream stream sink =
   in
   ignore (Runtime.run rt (run stream sink) : (_, _) Exit.t)
 
-let range n = Stream.from_iterable (List.init n (fun i -> i + 1))
+let range n = Eta_stream.Stream.from_iterable (List.init n (fun i -> i + 1))
 
 let map_filter_fold n =
-  range n |> Stream.map (fun x -> x * 2) |> Stream.filter (fun x -> x mod 3 = 0)
+  range n |> Eta_stream.Stream.map (fun x -> x * 2) |> Eta_stream.Stream.filter (fun x -> x mod 3 = 0)
   |> fun s -> run_stream s (Sink.fold ( + ) 0)
 
 let map_take_fold n k =
-  range n |> Stream.map (fun x -> x * 2) |> Stream.take k
+  range n |> Eta_stream.Stream.map (fun x -> x * 2) |> Eta_stream.Stream.take k
   |> fun s -> run_stream s (Sink.fold ( + ) 0)
 
 let merge_count ?(take = max_int) () =
   let left = range 10_000 in
   let right = range 10_000 in
-  Stream.merge left right |> Stream.take take |> fun s -> run_stream s Sink.count
+  Eta_stream.Stream.merge left right |> Eta_stream.Stream.take take |> fun s -> run_stream s Sink.count
 
 let flat_map_par n c =
   range n
-  |> Stream.flat_map_par ~max_concurrency:c (fun _ -> range 100)
+  |> Eta_stream.Stream.flat_map_par ~max_concurrency:c (fun _ -> range 100)
   |> fun s -> run_stream s Sink.count
 
 let ensure_file path size =
@@ -58,7 +58,7 @@ let from_file size chunk take =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let path = Eio.Path.(Eio.Stdenv.cwd stdenv / file) in
-  let stream = Stream.from_file ~chunk_size:chunk path |> Stream.take take in
+  let stream = Eta_stream.Stream.from_file ~chunk_size:chunk path |> Eta_stream.Stream.take take in
   ignore (Runtime.run rt (run stream Sink.count) : (_, _) Exit.t)
 
 let workloads =

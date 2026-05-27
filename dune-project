@@ -26,35 +26,20 @@
   ipaddr
   bigstringaf
   (decompress (= 1.5.3))
-  ppxlib
-  (alcotest :with-test)))
-
-(package
- (name eta-sql)
- (synopsis "Fast SQLite connector and SQL query toolkit for Eta")
- (description
-  "Eta SQL provides a low-allocation SQLite connector plus explicit SQL query, schema, pool, and migration helpers. It is not an ORM.")
- (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
-  (dune (>= 3.0))
-  eta
-  (eio (>= 1.0))
-  (eio_main (>= 1.0))
   conf-sqlite3
+  ppxlib
   (alcotest :with-test)))
 
 (package
  (name ppx_eta)
  (synopsis "PPX syntax helpers for Eta")
  (description
-  "ppx_eta provides small syntax helpers for Eta effects and eta-sql table declarations.")
+  "ppx_eta provides small syntax helpers for Eta effects and Eta SQL table declarations.")
  (depends
   (ocaml (= 5.2.0))
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   ppxlib
   (eta :with-test)
-  (eta-sql :with-test)
   (eio_main :with-test)
   (alcotest :with-test)))

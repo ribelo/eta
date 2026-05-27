@@ -1,4 +1,0 @@
-(library
- (name http_ws)
- (package eta)
- (libraries eta stream http_core http_error http_transport eio cstruct))

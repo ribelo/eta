@@ -1,0 +1,8 @@
+(library
+ (name eta_http_observability)
+ (package eta)
+ (libraries
+  eta
+  eta_http_client
+  eta_http_core
+  eta_http_error))

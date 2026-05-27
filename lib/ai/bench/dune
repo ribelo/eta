@@ -1,0 +1,8 @@
+(executable
+ (name bench_ai)
+ (libraries bench_lib eta_ai eta_redacted eta_http))
+
+(rule
+ (alias bench)
+ (action
+  (run ./bench_ai.exe --quick)))

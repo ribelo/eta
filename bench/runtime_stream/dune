@@ -1,6 +1,6 @@
 (executable
  (name runtime_stream)
- (libraries bench_lib eta stream eio_main unix))
+ (libraries bench_lib eta eta_stream eio_main unix))
 
 (rule
  (alias legacy_bench)

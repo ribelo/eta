@@ -1,0 +1,3 @@
+(library
+ (name eta_http_error)
+ (package eta))

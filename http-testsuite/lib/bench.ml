@@ -14,27 +14,27 @@ let make_eta_client ~env ~sw ~protocol ~transport ~cert_dir:_ =
   let max_response_body_bytes = 128 * 1024 * 1024 in
   match protocol with
   | H1 ->
-      Http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
   | H2 ->
-      Http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
 
 let run_eta_get ~rt ~client ~url =
   let request =
     let headers =
-      match Http.Core.Header.of_list [] with
+      match Eta_http.Core.Header.of_list [] with
       | Ok h -> h
-      | Error _ -> Http.Core.Header.empty
+      | Error _ -> Eta_http.Core.Header.empty
     in
-    Http.Request.make ~headers "GET" url
+    Eta_http.Request.make ~headers "GET" url
   in
   let gc_before = Util.gc_stat () in
   let rss_before = Util.rss_kb () in
   let t0 = Unix.gettimeofday () in
   let result =
-    Http.request client request
-    |> Eta.Effect.bind (fun (response : Http.Response.t) ->
+    Eta_http.request client request
+    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
            Util.body_to_string response.body
            |> Eta.Effect.bind (fun _body ->
                   Eta.Effect.pure (Ok response.status)))
@@ -53,21 +53,21 @@ let run_eta_get ~rt ~client ~url =
     rss_kb = max rss_before rss_after }
 
 let run_eta_post ~rt ~client ~url ~body_bytes =
-  let body = Http.Request.Fixed [ Bytes.of_string body_bytes ] in
+  let body = Eta_http.Request.Fixed [ Bytes.of_string body_bytes ] in
   let request =
     let headers =
-      match Http.Core.Header.of_list [("Content-Type", "text/plain")] with
+      match Eta_http.Core.Header.of_list [("Content-Type", "text/plain")] with
       | Ok h -> h
-      | Error _ -> Http.Core.Header.empty
+      | Error _ -> Eta_http.Core.Header.empty
     in
-    Http.Request.make ~headers ~body "POST" url
+    Eta_http.Request.make ~headers ~body "POST" url
   in
   let gc_before = Util.gc_stat () in
   let rss_before = Util.rss_kb () in
   let t0 = Unix.gettimeofday () in
   let result =
-    Http.request client request
-    |> Eta.Effect.bind (fun (response : Http.Response.t) ->
+    Eta_http.request client request
+    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
            Util.body_to_string response.body
            |> Eta.Effect.bind (fun _body ->
                   Eta.Effect.pure (Ok response.status)))
@@ -151,7 +151,7 @@ let run_get_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~iterations
 	        let r = run_eta_get ~rt ~client ~url in
 	        eta_iters := { r with scenario = name; iteration = i } :: !eta_iters
 	      done;
-	      ignore (Eta.Runtime.run rt (Http.Client.shutdown client)));
+	      ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client)));
   for i = 1 to iterations do
     let r = run_curl_get ~url ~insecure:(transport = TLS) ~http2:(protocol = H2) ~tmp_dir in
     curl_iters := { r with scenario = name; iteration = i } :: !curl_iters
@@ -172,7 +172,7 @@ let run_post_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~iteration
 	        let r = run_eta_post ~rt ~client ~url ~body_bytes in
 	        eta_iters := { r with scenario = name; iteration = i } :: !eta_iters
 	      done;
-	      ignore (Eta.Runtime.run rt (Http.Client.shutdown client)));
+	      ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client)));
   for i = 1 to iterations do
     let r = run_curl_post ~url ~insecure:(transport = TLS) ~http2:(protocol = H2) ~tmp_dir ~body_bytes in
     curl_iters := { r with scenario = name; iteration = i } :: !curl_iters
@@ -196,7 +196,7 @@ let run_concurrent_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~con
               run_eta_get ~rt ~client ~url |> ignore)
       in
 	      Eio.Fiber.List.iter (fun f -> f ()) fibers;
-	      ignore (Eta.Runtime.run rt (Http.Client.shutdown client)));
+	      ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client)));
   let eta_t1 = Unix.gettimeofday () in
   let eta_rss_after = Util.rss_kb () in
   let eta_gc_after = Util.gc_stat () in

@@ -1,3 +1,0 @@
-(library
- (name ai_anthropic)
- (libraries eta ai redacted http yojson))

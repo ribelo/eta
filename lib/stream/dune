@@ -1,0 +1,5 @@
+(library
+ (name eta_stream)
+ (public_name eta.stream)
+ (private_modules mailbox_internal drain_counter_internal)
+ (libraries eta eio cstruct))

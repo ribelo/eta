@@ -1,0 +1,3 @@
+(library
+ (name eta_otel)
+ (libraries eta eta_stream eta_http eio eio.unix yojson))
