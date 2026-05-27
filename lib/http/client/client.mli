@@ -19,14 +19,14 @@ val default_max_response_body_bytes : int
     close-delimited HTTP/1.1 responses. *)
 
 val protocol : t -> protocol
-val stats : t -> (stats, Eta_http_error.Error.t) Eta.Effect.t
-val shutdown : t -> (unit, Eta_http_error.Error.t) Eta.Effect.t
-val request : t -> Request.t -> (Response.t, Eta_http_error.Error.t) Eta.Effect.t
+val stats : t -> (stats, Error.t) Eta.Effect.t
+val shutdown : t -> (unit, Error.t) Eta.Effect.t
+val request : t -> Request.t -> (Response.t, Error.t) Eta.Effect.t
 val request_with_retry :
   ?policy:Retry.t ->
   t ->
   Request.t ->
-  (Response.t, Eta_http_error.Error.t) Eta.Effect.t
+  (Response.t, Error.t) Eta.Effect.t
 
 val make_h1 :
   sw:Eio.Switch.t ->
@@ -58,25 +58,25 @@ val make :
 
 val make_for_test :
   protocol:protocol ->
-  request:(Request.t -> (Response.t, Eta_http_error.Error.t) Eta.Effect.t) ->
-  stats:(unit -> (stats, Eta_http_error.Error.t) Eta.Effect.t) ->
-  shutdown:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
+  request:(Request.t -> (Response.t, Error.t) Eta.Effect.t) ->
+  stats:(unit -> (stats, Error.t) Eta.Effect.t) ->
+  shutdown:(unit -> (unit, Error.t) Eta.Effect.t) ->
   t
 
 module For_test : sig
   val dispatch_alpn :
-    close:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
-    use_h1:(unit -> ('a, Eta_http_error.Error.t) Eta.Effect.t) ->
-    use_h2:(unit -> ('a, Eta_http_error.Error.t) Eta.Effect.t) ->
+    close:(unit -> (unit, Error.t) Eta.Effect.t) ->
+    use_h1:(unit -> ('a, Error.t) Eta.Effect.t) ->
+    use_h2:(unit -> ('a, Error.t) Eta.Effect.t) ->
     Request.t ->
     string option ->
-    ('a, Eta_http_error.Error.t) Eta.Effect.t
+    ('a, Error.t) Eta.Effect.t
 
   val h2_informational_status : int -> bool
 
   val request_h2_on_connection :
-    Eta_http_h2.Connection.t ->
+    Connection.t ->
     Request.t ->
-    Eta_http_core.Url.t ->
-    (Response.t, Eta_http_error.Error.t) Eta.Effect.t
+    Url.t ->
+    (Response.t, Error.t) Eta.Effect.t
 end

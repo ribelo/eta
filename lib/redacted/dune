@@ -1,3 +1,4 @@
 (library
  (name eta_redacted)
- (public_name eta.redacted))
+ (public_name eta.redacted)
+ (synopsis "Secret-wrapping types that hide values from logs and traces"))

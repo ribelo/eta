@@ -31,7 +31,7 @@ type read_result =
   | Read of int
   | Eof of int
   | Close
-  | Security_error of Eta_http_error.Error.kind
+  | Security_error of Error.kind
 
 val create :
   ?max_concurrent:int ->
@@ -91,27 +91,27 @@ val read_client_once :
     "h2_read_buffer_exhausted"; _ })] instead of raising. *)
 
 val body_stream :
-  ?poll_error:(unit -> Eta_http_error.Error.t option) ->
+  ?poll_error:(unit -> Error.t option) ->
   ?on_eof:(unit -> unit) ->
   ?on_release:
-    (Stream_state.release -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
-  closed_error:Eta_http_error.Error.t ->
-  pump:(unit -> (read_result, Eta_http_error.Error.t) Eta.Effect.t) ->
+    (Stream_state.release -> (unit, Error.t) Eta.Effect.t) ->
+  closed_error:Error.t ->
+  pump:(unit -> (read_result, Error.t) Eta.Effect.t) ->
   t ->
   stream ->
   H2.Body.Reader.t ->
-  Eta_http_body.Stream.t
+  Stream.t
 
 val body_stream_async :
-  ?poll_error:(unit -> Eta_http_error.Error.t option) ->
+  ?poll_error:(unit -> Error.t option) ->
   ?on_eof:(unit -> unit) ->
   ?on_release:
-    (Stream_state.release -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
-  closed_error:Eta_http_error.Error.t ->
+    (Stream_state.release -> (unit, Error.t) Eta.Effect.t) ->
+  closed_error:Error.t ->
   t ->
   stream ->
   H2.Body.Reader.t ->
-  Eta_http_body.Stream.t * (unit -> unit)
+  Stream.t * (unit -> unit)
 (** Like {!body_stream}, but waits for callbacks delivered by a background
     owner reader instead of reading the socket itself. The second result wakes a
     blocked reader when external state such as [poll_error] changes. *)

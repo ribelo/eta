@@ -41,7 +41,7 @@ let create () =
 
 let error message =
   Error
-    (Eta_http_error.Error.Connection_protocol_violation
+    (Error.Connection_protocol_violation
        { kind = "h2_informational_filter"; message })
 
 let code s i = Char.code (String.unsafe_get s i)

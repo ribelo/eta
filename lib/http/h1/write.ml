@@ -32,7 +32,7 @@ let write_header_line flow (name, value) =
   write_string flow "\r\n"
 
 let has_header name headers =
-  Option.is_some (Eta_http_core.Header.get name headers)
+  Option.is_some (Header.get name headers)
 
 let[@zero_alloc] lowercase_ascii c =
   match c with 'A' .. 'Z' -> Char.chr (Char.code c + 32) | _ -> c
@@ -129,17 +129,17 @@ let[@zero_alloc] rec blit_body dst pos = function
 
 let[@zero_alloc] write_to_bytes_raw dst ~pos ~method_ ~url ~headers ~body =
   if not (validate_method method_) then invalid_method
-  else if not (Eta_http_core.Header.valid headers) then invalid_header
+  else if not (Header.valid headers) then invalid_header
   else
     let pos = blit_literal dst pos method_ in
     let pos = blit_literal dst pos " " in
-    let pos = Eta_http_core.Url.blit_origin_form_raw dst pos url in
+    let pos = Url.blit_origin_form_raw dst pos url in
     let pos = blit_literal dst pos " HTTP/1.1\r\n" in
     let pos =
       if has_header_raw "host" headers then pos
       else
         let pos = blit_literal dst pos "Host: " in
-        let pos = Eta_http_core.Url.blit_authority_raw dst pos url in
+        let pos = Url.blit_authority_raw dst pos url in
         blit_literal dst pos "\r\n"
     in
     let pos =
@@ -163,35 +163,35 @@ let write_to_bytes dst ~pos ~method_ ~url ~headers ~body =
   | n when n >= 0 -> Ok n
   | n when n = invalid_method ->
       Error
-        (Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string url)
+        (Error.make ~method_ ~uri:(Url.to_string url)
            (Header_invalid { reason = "invalid request method" }))
   | n when n = invalid_header ->
       Error
-        (Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string url)
+        (Error.make ~method_ ~uri:(Url.to_string url)
            (Header_invalid { reason = "invalid request header" }))
   | _ ->
       Error
-        (Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string url)
+        (Error.make ~method_ ~uri:(Url.to_string url)
            (Header_invalid { reason = "request buffer too small" }))
 
 let validate_headers ~method_ ~url headers =
-  match Eta_http_core.Header.validate headers with
+  match Header.validate headers with
   | None -> Ok ()
   | Some kind ->
       Error
-        (Eta_http_error.Error.make ~method_
-           ~uri:(Eta_http_core.Url.to_string url)
+        (Error.make ~method_
+           ~uri:(Url.to_string url)
            kind)
 
 let flow_write_error ~method_ ~url =
-  Eta_http_error.Error.make ~protocol:H1 ~method_
-    ~uri:(Eta_http_core.Url.to_string url)
+  Error.make ~protocol:H1 ~method_
+    ~uri:(Url.to_string url)
     (Connection_closed { during = Http_request })
 
 let write buffer ~method_ ~url ~headers ~body =
   if not (validate_method method_) then
     Error
-      (Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string url)
+      (Error.make ~method_ ~uri:(Url.to_string url)
          (Header_invalid { reason = "invalid request method" }))
   else
     match validate_headers ~method_ ~url headers with
@@ -199,10 +199,10 @@ let write buffer ~method_ ~url ~headers ~body =
     | Ok () ->
         Buffer.add_string buffer method_;
         Buffer.add_char buffer ' ';
-        Buffer.add_string buffer (Eta_http_core.Url.origin_form url);
+        Buffer.add_string buffer (Url.origin_form url);
         Buffer.add_string buffer " HTTP/1.1\r\n";
         if not (has_header "host" headers) then
-          add_header_line buffer ("Host", Eta_http_core.Url.authority url);
+          add_header_line buffer ("Host", Url.authority url);
         if not (has_header "connection" headers) then
           add_header_line buffer ("Connection", "keep-alive");
         (match content_length body with
@@ -220,7 +220,7 @@ let write buffer ~method_ ~url ~headers ~body =
 let write_to_flow flow ~method_ ~url ~headers ~body =
   if not (validate_method method_) then
     Error
-      (Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string url)
+      (Error.make ~method_ ~uri:(Url.to_string url)
          (Header_invalid { reason = "invalid request method" }))
   else
     match validate_headers ~method_ ~url headers with
@@ -230,10 +230,10 @@ let write_to_flow flow ~method_ ~url ~headers ~body =
         (try
            Buffer.add_string buf method_;
            Buffer.add_char buf ' ';
-           Buffer.add_string buf (Eta_http_core.Url.origin_form url);
+           Buffer.add_string buf (Url.origin_form url);
            Buffer.add_string buf " HTTP/1.1\r\n";
            if not (has_header "host" headers) then
-             add_header_line buf ("Host", Eta_http_core.Url.authority url);
+             add_header_line buf ("Host", Url.authority url);
            if not (has_header "connection" headers) then
              add_header_line buf ("Connection", "keep-alive");
            (match content_length body with

@@ -12,16 +12,16 @@ type parse_error =
   | Body_truncated of { expected : int; available : int }
 
 type header = {
-  name : Eta_http_core.Span.t;
-  value : Eta_http_core.Span.t;
+  name : Span.t;
+  value : Span.t;
 }
 
 type response = {
-  version : Eta_http_core.Version.t;
+  version : Version.t;
   status : int;
-  reason : Eta_http_core.Span.t;
+  reason : Span.t;
   headers : header list;
-  body : Eta_http_core.Span.t;
+  body : Span.t;
 }
 
 let pp_parse_error fmt = function
@@ -45,7 +45,7 @@ let pp_parse_error fmt = function
 let parse_error_to_string error = Format.asprintf "%a" pp_parse_error error
 
 let span_to_string buf span =
-  Bytes.sub_string buf span.Eta_http_core.Span.off span.len
+  Bytes.sub_string buf span.Span.off span.len
 
 let raw_ok = 0
 let raw_partial = -1
@@ -399,20 +399,20 @@ let headers_to_list buf headers =
 let header_of_raw headers index =
   {
     name =
-      Eta_http_core.Span.make
+      Span.make
         ~off:(Array.unsafe_get headers.name_offs index)
         ~len:(Array.unsafe_get headers.name_lens index);
     value =
-      Eta_http_core.Span.make
+      Span.make
         ~off:(Array.unsafe_get headers.value_offs index)
         ~len:(Array.unsafe_get headers.value_lens index);
   }
 
 let raw_version raw =
   match raw.version_code with
-  | 10 -> Eta_http_core.Version.H1_0
-  | 11 -> Eta_http_core.Version.H1_1
-  | _ -> Eta_http_core.Version.H1_1
+  | 10 -> Version.H1_0
+  | 11 -> Version.H1_1
+  | _ -> Version.H1_1
 
 let response_of_raw headers raw =
   let rec build index acc =
@@ -423,9 +423,9 @@ let response_of_raw headers raw =
     version = raw_version raw;
     status = raw.status_code;
     reason =
-      Eta_http_core.Span.make ~off:raw.reason_off ~len:raw.reason_len;
+      Span.make ~off:raw.reason_off ~len:raw.reason_len;
     headers = build (raw.header_count - 1) [];
-    body = Eta_http_core.Span.make ~off:raw.body_off ~len:raw.body_len;
+    body = Span.make ~off:raw.body_off ~len:raw.body_len;
   }
 
 let parse ?(max_header_bytes = 32 * 1024) buf ~len =

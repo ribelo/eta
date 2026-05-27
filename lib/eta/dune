@@ -1,6 +1,7 @@
 (library
  (name eta)
  (public_name eta)
+ (synopsis "Typed functional effects for OCaml: typed failures, exits, schedules, retry, race, timeout, and detached fibers; backed by Eio")
  (private_modules
   blocking_runtime
   island_runtime

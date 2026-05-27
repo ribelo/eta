@@ -6,7 +6,7 @@
   (alias ../lib/schema/bench/bench)
   (alias ../lib/otel/bench/bench)
   (alias ../lib/par/bench/bench)
-  (alias ../lib/http/bench/bench)
+  (alias ../lib/http_bench/bench)
   (alias ../lib/sql/bench/bench)
   (alias ../lib/ai/bench/bench)
   (alias ../lib/ai/openai_codec/bench/bench)

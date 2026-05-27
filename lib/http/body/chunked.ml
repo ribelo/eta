@@ -2,8 +2,8 @@
 
 open Eta
 
-module Error = Eta_http_error.Error
-module Header = Eta_http_core.Header
+module Error = Error
+module Header = Header
 
 type context = {
   protocol : Error.protocol;

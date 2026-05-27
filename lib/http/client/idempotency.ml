@@ -1,4 +1,4 @@
-module Header = Eta_http_core.Header
+module Header = Header
 
 type classification =
   | Retryable

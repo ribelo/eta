@@ -1,4 +1,5 @@
 (library
  (name eta_ai_openai_codec)
- (package eta)
+ (public_name eta.ai.openai_codec)
+ (synopsis "Shared OpenAI wire-format codec used by openai, openai_compat, and openrouter")
  (libraries eta_ai))

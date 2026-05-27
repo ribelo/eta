@@ -33,6 +33,6 @@ val observe :
   Bigstringaf.t ->
   off:int ->
   len:int ->
-  Eta_http_error.Error.kind option
+  Error.kind option
 
-val validate_headers : (string * string) list -> Eta_http_error.Error.kind option
+val validate_headers : (string * string) list -> Error.kind option

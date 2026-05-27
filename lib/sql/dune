@@ -1,6 +1,7 @@
 (library
  (name eta_sql)
  (public_name eta.sql)
+ (synopsis "SQLite client for Eta with prepared statements and a typed effect surface")
  (foreign_stubs
   (language c)
   (names sqlite_stubs)

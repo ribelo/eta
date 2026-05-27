@@ -15,18 +15,18 @@ type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
 val connect_on_flow :
   ?key:string ->
-  ?headers:Eta_http_core.Header.t ->
+  ?headers:Header.t ->
   ?protocols:string list ->
   sw:Eio.Switch.t ->
   flow:flow ->
-  Eta_http_core.Url.t ->
+  Url.t ->
   (t, ws_error) Eta.Effect.t
 (** Send the WebSocket upgrade request on an already-connected HTTP/1.1 flow. *)
 
 val connect :
   ?ca_file:string ->
   ?key:string ->
-  ?headers:Eta_http_core.Header.t ->
+  ?headers:Header.t ->
   ?protocols:string list ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->

@@ -1,3 +1,5 @@
 (library
  (name eta_ai_openai_compat)
+ (public_name eta.ai.openai_compat)
+ (synopsis "OpenAI-compatible provider adapter for eta.ai (Together, Groq, Fireworks, ...)")
  (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http yojson))

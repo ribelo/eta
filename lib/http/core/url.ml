@@ -345,4 +345,4 @@ let[@zero_alloc] blit_origin_form_raw dst pos t =
 
 let blit_origin_form dst ~pos t = blit_origin_form_raw dst pos t
 
-let redacted t = Eta_http_error.Redaction.uri t.raw
+let redacted t = Redaction.uri t.raw

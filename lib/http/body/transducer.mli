@@ -4,7 +4,7 @@
     caps and typed error mapping; [decompress] owns gzip format and CRC checks. *)
 
 type context = {
-  protocol : Eta_http_error.Error.protocol;
+  protocol : Error.protocol;
   method_ : string;
   uri : string;
 }

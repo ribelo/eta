@@ -1,4 +1,4 @@
-module Client = Eta_http_client.Client
+module Client = Client
 
 let protocol_attr protocol =
   ("network.protocol.version", Client.protocol_to_string protocol)

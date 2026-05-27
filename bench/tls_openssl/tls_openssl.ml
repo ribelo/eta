@@ -7,9 +7,9 @@ let run_handshake () =
   let addrs = Eio.Net.getaddrinfo_stream net "example.com" ~service:"443" in
   let addr = List.hd addrs in
   let flow = (Eio.Net.connect ~sw net addr :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) in
-  let config = Eta_http_tls.Config.default_client
+  let config = Eta_http.Tls.Config.default_client
     ~peer_name:(Domain_name.host_exn (Domain_name.of_string_exn "example.com")) () in
-  let _tls = Eta_http_tls.Eio.client_of_flow config
+  let _tls = Eta_http.Tls.Eio.client_of_flow config
     ~host:(Domain_name.host_exn (Domain_name.of_string_exn "example.com")) flow in
   ()
 

@@ -1,6 +1,6 @@
-module Body = Eta_http_body.Stream
-module Error = Eta_http_error.Error
-module Header = Eta_http_core.Header
+module Body = Stream
+module Error = Error
+module Header = Header
 
 type mode = Default | Always | Never
 

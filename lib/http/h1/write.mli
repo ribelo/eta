@@ -8,8 +8,8 @@ val write_to_bytes_raw :
   bytes ->
   pos:int ->
   method_:string ->
-  url:Eta_http_core.Url.t ->
-  headers:Eta_http_core.Header.t ->
+  url:Url.t ->
+  headers:Header.t ->
   body:body ->
   int
 (** Low-level writer core for allocation probes.
@@ -23,10 +23,10 @@ val write_to_bytes :
   bytes ->
   pos:int ->
   method_:string ->
-  url:Eta_http_core.Url.t ->
-  headers:Eta_http_core.Header.t ->
+  url:Url.t ->
+  headers:Header.t ->
   body:body ->
-  (int, Eta_http_error.Error.t) result
+  (int, Error.t) result
 (** Write one HTTP/1.1 request into a caller-owned byte buffer.
 
     Caller-provided headers are validated before any bytes are written. *)
@@ -34,10 +34,10 @@ val write_to_bytes :
 val write :
   Buffer.t ->
   method_:string ->
-  url:Eta_http_core.Url.t ->
-  headers:Eta_http_core.Header.t ->
+  url:Url.t ->
+  headers:Header.t ->
   body:body ->
-  (unit, Eta_http_error.Error.t) result
+  (unit, Error.t) result
 (** Append one HTTP/1.1 request to [Buffer.t].
 
     The request target is origin-form. [Host] is added when the caller did not
@@ -47,10 +47,10 @@ val write :
 val write_to_flow :
   [> Eio.Flow.sink_ty] Eio.Resource.t ->
   method_:string ->
-  url:Eta_http_core.Url.t ->
-  headers:Eta_http_core.Header.t ->
+  url:Url.t ->
+  headers:Header.t ->
   body:body ->
-  (unit, Eta_http_error.Error.t) result
+  (unit, Error.t) result
 (** Write one HTTP/1.1 request directly to a flow sink.
 
     This avoids allocating a complete request string on the transport path.
@@ -61,7 +61,7 @@ val write_to_flow :
 
 val to_string :
   method_:string ->
-  url:Eta_http_core.Url.t ->
-  headers:Eta_http_core.Header.t ->
+  url:Url.t ->
+  headers:Header.t ->
   body:body ->
-  (string, Eta_http_error.Error.t) result
+  (string, Error.t) result

@@ -5,53 +5,53 @@
     pool integration, and live request path land later in S1. *)
 
 module Core : sig
-  module Header = Eta_http_core.Header
-  module Method = Eta_http_core.Method
-  module Span = Eta_http_core.Span
-  module Status = Eta_http_core.Status
-  module Url = Eta_http_core.Url
-  module Version = Eta_http_core.Version
+  module Header = Header
+  module Method = Method
+  module Span = Span
+  module Status = Status
+  module Url = Url
+  module Version = Version
 end
 (** Core protocol values shared by HTTP/1.1 and HTTP/2. *)
 
 module Body : sig
-  module Chunked = Eta_http_body.Chunked
-  module Source = Eta_http_body.Source
-  module Stream = Eta_http_body.Stream
-  module Transducer = Eta_http_body.Transducer
+  module Chunked = Chunked
+  module Source = Source
+  module Stream = Stream
+  module Transducer = Transducer
 end
 (** Request and response body surfaces. *)
 
-module Client = Eta_http_client.Client
+module Client = Client
 (** Top-level client API. *)
 
-module Idempotency = Eta_http_client.Idempotency
+module Idempotency = Idempotency
 (** HTTP method idempotency and request-body replayability classifier. *)
 
-module Request = Eta_http_client.Request
+module Request = Request
 (** Public request model. *)
 
-module Response = Eta_http_client.Response
+module Response = Response
 (** Public response model. *)
 
-module Retry_policy = Eta_http_client.Retry
+module Retry_policy = Retry
 (** Retry policy and retry runner for eta-http requests. *)
 
-module Error = Eta_http_error.Error
+module Error = Error
 (** Typed eta-http error taxonomy. *)
 
-module Error_projection = Eta_http_error.Projection
+module Error_projection = Projection
 (** Structured error projections. *)
 
 module Observability : sig
-  module Meter = Eta_http_observability.Meter
-  module Semconv = Eta_http_observability.Semconv
-  module Tracer = Eta_http_observability.Tracer
+  module Meter = Meter
+  module Semconv = Semconv
+  module Tracer = Tracer
 end
 (** OpenTelemetry semantic-convention helpers using Eta tracer/meter
     capabilities. *)
 
-module Redaction = Eta_http_error.Redaction
+module Redaction = Redaction
 (** Diagnostic redaction helpers. *)
 
 val request :
@@ -66,38 +66,38 @@ val request_with_retry :
 (** Submit a request through the supplied client with retry policy handling. *)
 
 module Tls : sig
-  module Config = Eta_http_tls.Config
-  module Eio = Eta_http_tls.Eio
+  module Config = Config
+  module Eio = Tls_eio
 end
 (** TLS policy chokepoint. *)
 
 module Transport : sig
-  module Alpn = Eta_http_transport.Alpn
-  module Connect = Eta_http_transport.Connect
-  module Dispatch = Eta_http_transport.Dispatch
+  module Alpn = Alpn
+  module Connect = Connect
+  module Dispatch = Dispatch
 end
 (** DNS, TCP, TLS, ALPN, and protocol dispatch. *)
 
 module H1 : sig
-  module Client = Eta_http_h1.Client
-  module Parse = Eta_http_h1.Parse
-  module Write = Eta_http_h1.Write
+  module Client = H1_client
+  module Parse = Parse
+  module Write = Write
 end
 (** HTTP/1.1 implementation modules. *)
 
 module H2 : sig
-  module Admission = Eta_http_h2.Admission
-  module Connection = Eta_http_h2.Connection
-  module Frame = Eta_http_h2.Frame
-  module Multiplexer = Eta_http_h2.Multiplexer
-  module Security = Eta_http_h2.Security
-  module Stream_state = Eta_http_h2.Stream_state
-  module Writer = Eta_http_h2.Writer
+  module Admission = Admission
+  module Connection = Connection
+  module Frame = Frame
+  module Multiplexer = Multiplexer
+  module Security = Security
+  module Stream_state = Stream_state
+  module Writer = Writer
 end
 (** HTTP/2 implementation modules. *)
 
 module Ws : sig
-  module Client = Eta_http_ws.Client
-  module Codec = Eta_http_ws.Codec
+  module Client = Ws_client
+  module Codec = Codec
 end
 (** WebSocket upgrade client and RFC 6455 codec. *)

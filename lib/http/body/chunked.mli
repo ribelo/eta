@@ -5,14 +5,14 @@
     eta-http error context. *)
 
 type context = {
-  protocol : Eta_http_error.Error.protocol;
+  protocol : Error.protocol;
   method_ : string;
   uri : string;
 }
 
 type reader = {
-  read_exact : int -> (bytes, Eta_http_error.Error.t) Eta.Effect.t;
-  read_line : limit:int -> (string, Eta_http_error.Error.t) Eta.Effect.t;
+  read_exact : int -> (bytes, Error.t) Eta.Effect.t;
+  read_line : limit:int -> (string, Error.t) Eta.Effect.t;
 }
 
 type t
@@ -20,7 +20,7 @@ type t
 val default_line_limit : int
 val default_max_decoded_bytes : int
 (** Default maximum decoded bytes for chunked bodies. This matches
-    {!Eta_http_body.Stream.default_max_bytes}. *)
+    {!Stream.default_max_bytes}. *)
 
 val create :
   ?max_decoded_bytes:int ->
@@ -29,8 +29,8 @@ val create :
   unit ->
   t
 
-val read : t -> (bytes option, Eta_http_error.Error.t) Eta.Effect.t
-val trailers : t -> Eta_http_core.Header.t
+val read : t -> (bytes option, Error.t) Eta.Effect.t
+val trailers : t -> Header.t
 
 val encode_chunk : bytes -> bytes list
-val encode_last_chunk : ?trailers:Eta_http_core.Header.t -> unit -> bytes
+val encode_last_chunk : ?trailers:Header.t -> unit -> bytes

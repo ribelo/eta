@@ -124,7 +124,7 @@ type read_result =
   | Read of int
   | Eof of int
   | Close
-  | Security_error of Eta_http_error.Error.kind
+  | Security_error of Error.kind
 
 type body_event =
   | Body_chunk of bytes
@@ -224,7 +224,7 @@ let read_more ~flow reader =
 
 let buffer_exhausted reader =
   Security_error
-    (Eta_http_error.Error.Connection_protocol_violation
+    (Error.Connection_protocol_violation
        {
          kind = "h2_read_buffer_exhausted";
          message =
@@ -293,16 +293,16 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     on_release decision
   in
   let emit_event = function
-    | Body_chunk chunk -> Eta.Effect.pure (Eta_http_body.Stream.Chunk chunk)
-    | Body_eof -> Eta.Effect.pure Eta_http_body.Stream.End
+    | Body_chunk chunk -> Eta.Effect.pure (Stream.Chunk chunk)
+    | Body_eof -> Eta.Effect.pure Stream.End
   in
   let closed_or_error () =
     match poll_error () with
     | Some error -> Eta.Effect.fail error
-    | None when !eof -> Eta.Effect.pure Eta_http_body.Stream.End
+    | None when !eof -> Eta.Effect.pure Stream.End
     | None when H2.Body.Reader.is_closed body ->
         finish_eof ();
-        Eta.Effect.pure Eta_http_body.Stream.End
+        Eta.Effect.pure Stream.End
     | None -> Eta.Effect.fail closed_error
   in
   let rec read_next () =
@@ -311,10 +311,10 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     | None -> (
         match poll_error () with
         | Some error -> Eta.Effect.fail error
-        | None when !eof -> Eta.Effect.pure Eta_http_body.Stream.End
+        | None when !eof -> Eta.Effect.pure Stream.End
         | None when H2.Body.Reader.is_closed body ->
             finish_eof ();
-            Eta.Effect.pure Eta_http_body.Stream.End
+            Eta.Effect.pure Stream.End
         | None -> read_after_schedule ())
   and read_after_schedule () =
     schedule_read ();
@@ -331,7 +331,7 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
                    | Security_error _ | Eof _ | Close -> closed_or_error ()))
   in
   schedule_read ();
-  Eta_http_body.Stream.of_reader ~release:release_body read_next
+  Stream.of_reader ~release:release_body read_next
 
 type body_async_state = {
   mutable scheduled : bool;
@@ -392,8 +392,8 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     on_release decision
   in
   let emit_event = function
-    | Body_chunk chunk -> Eta.Effect.pure (Eta_http_body.Stream.Chunk chunk)
-    | Body_eof -> Eta.Effect.pure Eta_http_body.Stream.End
+    | Body_chunk chunk -> Eta.Effect.pure (Stream.Chunk chunk)
+    | Body_eof -> Eta.Effect.pure Stream.End
   in
   let await_event () =
     Eio.Mutex.lock mutex;
@@ -443,7 +443,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
          | `Error error -> Eta.Effect.fail error
          | `Closed ->
              finish_eof ();
-             Eta.Effect.pure Eta_http_body.Stream.End)
+             Eta.Effect.pure Stream.End)
   in
   schedule_read ();
-  (Eta_http_body.Stream.of_reader ~release:release_body read_next, notify)
+  (Stream.of_reader ~release:release_body read_next, notify)

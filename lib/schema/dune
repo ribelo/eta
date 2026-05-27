@@ -1,3 +1,5 @@
 (library
  (name eta_schema)
+ (public_name eta.schema)
+ (synopsis "Schema definitions and JSON codecs for Eta")
  (libraries eta))

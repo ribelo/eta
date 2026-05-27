@@ -1,4 +1,4 @@
-module Error = Eta_http_error.Error
+module Error = Error
 
 type config = {
   max_settings_per_connection : int;
@@ -189,7 +189,7 @@ let has_uppercase value =
 let header_invalid reason = Error.Header_invalid { reason }
 
 let validate_header t (name, value) =
-  match Eta_http_core.Header.validate_header (name, value) with
+  match Header.validate_header (name, value) with
   | Some error -> Some error
   | None when String.length name > t.config.max_header_name_bytes ->
     Some (header_invalid "header name exceeds 8192 bytes")

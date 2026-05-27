@@ -3,66 +3,66 @@
 (** Public entry point for eta-http. *)
 
 module Core = struct
-  module Header = Eta_http_core.Header
-  module Method = Eta_http_core.Method
-  module Span = Eta_http_core.Span
-  module Status = Eta_http_core.Status
-  module Url = Eta_http_core.Url
-  module Version = Eta_http_core.Version
+  module Header = Header
+  module Method = Method
+  module Span = Span
+  module Status = Status
+  module Url = Url
+  module Version = Version
 end
 
 module Body = struct
-  module Chunked = Eta_http_body.Chunked
-  module Source = Eta_http_body.Source
-  module Stream = Eta_http_body.Stream
-  module Transducer = Eta_http_body.Transducer
+  module Chunked = Chunked
+  module Source = Source
+  module Stream = Stream
+  module Transducer = Transducer
 end
 
-module Client = Eta_http_client.Client
-module Idempotency = Eta_http_client.Idempotency
-module Request = Eta_http_client.Request
-module Response = Eta_http_client.Response
-module Retry_policy = Eta_http_client.Retry
-module Error = Eta_http_error.Error
-module Error_projection = Eta_http_error.Projection
+module Client = Client
+module Idempotency = Idempotency
+module Request = Request
+module Response = Response
+module Retry_policy = Retry
+module Error = Error
+module Error_projection = Projection
 module Observability = struct
-  module Meter = Eta_http_observability.Meter
-  module Semconv = Eta_http_observability.Semconv
-  module Tracer = Eta_http_observability.Tracer
+  module Meter = Meter
+  module Semconv = Semconv
+  module Tracer = Tracer
 end
-module Redaction = Eta_http_error.Redaction
+module Redaction = Redaction
 
 let request = Client.request
 let request_with_retry = Client.request_with_retry
 
 module Tls = struct
-  module Config = Eta_http_tls.Config
-  module Eio = Eta_http_tls.Eio
+  module Config = Config
+  module Eio = Tls_eio
 end
 
 module Transport = struct
-  module Alpn = Eta_http_transport.Alpn
-  module Connect = Eta_http_transport.Connect
-  module Dispatch = Eta_http_transport.Dispatch
+  module Alpn = Alpn
+  module Connect = Connect
+  module Dispatch = Dispatch
 end
 
 module H1 = struct
-  module Client = Eta_http_h1.Client
-  module Parse = Eta_http_h1.Parse
-  module Write = Eta_http_h1.Write
+  module Client = H1_client
+  module Parse = Parse
+  module Write = Write
 end
 
 module H2 = struct
-  module Admission = Eta_http_h2.Admission
-  module Connection = Eta_http_h2.Connection
-  module Frame = Eta_http_h2.Frame
-  module Multiplexer = Eta_http_h2.Multiplexer
-  module Security = Eta_http_h2.Security
-  module Stream_state = Eta_http_h2.Stream_state
-  module Writer = Eta_http_h2.Writer
+  module Admission = Admission
+  module Connection = Connection
+  module Frame = Frame
+  module Multiplexer = Multiplexer
+  module Security = Security
+  module Stream_state = Stream_state
+  module Writer = Writer
 end
 
 module Ws = struct
-  module Client = Eta_http_ws.Client
-  module Codec = Eta_http_ws.Codec
+  module Client = Ws_client
+  module Codec = Codec
 end

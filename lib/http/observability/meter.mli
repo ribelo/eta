@@ -2,5 +2,5 @@
 
 val record_client_stats :
   ?attrs:(string * string) list ->
-  Eta_http_client.Client.t ->
-  (unit, Eta_http_error.Error.t) Eta.Effect.t
+  Client.t ->
+  (unit, Error.t) Eta.Effect.t

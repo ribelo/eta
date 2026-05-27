@@ -1,3 +1,5 @@
 (library
  (name eta_ai_anthropic)
+ (public_name eta.ai.anthropic)
+ (synopsis "Anthropic provider for eta.ai")
  (libraries eta eta_ai eta_redacted eta_http yojson))

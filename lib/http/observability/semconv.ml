@@ -1,9 +1,9 @@
-module Client = Eta_http_client.Client
-module Error = Eta_http_error.Error
-module Redaction = Eta_http_error.Redaction
-module Request = Eta_http_client.Request
-module Response = Eta_http_client.Response
-module Url = Eta_http_core.Url
+module Client = Client
+module Error = Error
+module Redaction = Redaction
+module Request = Request
+module Response = Response
+module Url = Url
 
 let protocol_version = function
   | Client.H1 -> "1.1"

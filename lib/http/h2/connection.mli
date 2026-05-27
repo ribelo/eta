@@ -6,7 +6,7 @@
 
 type t
 
-type flow = Eta_http_transport.Connect.tcp_flow
+type flow = Connect.tcp_flow
 
 val create :
   sw:Eio.Switch.t ->
@@ -16,7 +16,7 @@ val create :
   ?push_handler:
     (H2.Request.t -> (H2.Client_connection.response_handler, unit) result) ->
   ?error_handler:(H2.Client_connection.error -> unit) ->
-  ?security_error_handler:(Eta_http_error.Error.kind -> unit) ->
+  ?security_error_handler:(Error.kind -> unit) ->
   ?on_close:(unit -> unit) ->
   ?reader_buffer_size:int ->
   unit ->
@@ -32,7 +32,7 @@ val request :
   (Multiplexer.opened_request, Multiplexer.request_error) result
 
 val register_failure_handler :
-  t -> (Eta_http_error.Error.kind -> unit) -> (unit -> unit)
+  t -> (Error.kind -> unit) -> (unit -> unit)
 
 val mux : t -> Multiplexer.t
 val client : t -> H2.Client_connection.t

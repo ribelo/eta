@@ -1,12 +1,12 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-module Body = Eta_http_body.Stream
-module Body_source = Eta_http_body.Source
-module Connect = Eta_http_transport.Connect
-module Dispatch = Eta_http_transport.Dispatch
-module Error = Eta_http_error.Error
-module Header = Eta_http_core.Header
-module Url = Eta_http_core.Url
+module Body = Stream
+module Body_source = Source
+module Connect = Connect
+module Dispatch = Dispatch
+module Error = Error
+module Header = Header
+module Url = Url
 
 type protocol = H1 | H2 | Auto
 
@@ -21,14 +21,14 @@ type stats = {
 
 type t = {
   protocol : protocol;
-  request_impl : Request.t -> (Response.t, Eta_http_error.Error.t) Eta.Effect.t;
-  stats_impl : unit -> (stats, Eta_http_error.Error.t) Eta.Effect.t;
-  shutdown_impl : unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t;
+  request_impl : Request.t -> (Response.t, Error.t) Eta.Effect.t;
+  stats_impl : unit -> (stats, Error.t) Eta.Effect.t;
+  shutdown_impl : unit -> (unit, Error.t) Eta.Effect.t;
 }
 
 let protocol_to_string = function H1 -> "h1" | H2 -> "h2" | Auto -> "auto"
 let default_max_response_body_bytes =
-  Eta_http_h1.Client.default_max_response_body_bytes
+  H1_client.default_max_response_body_bytes
 
 let protocol t = t.protocol
 let stats t = t.stats_impl ()
@@ -38,11 +38,11 @@ let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
 
 
 let h1_body = function
-  | Request.Empty -> Eta_http_h1.Client.Empty
-  | Fixed chunks -> Eta_http_h1.Client.Fixed chunks
-  | Stream body -> Eta_http_h1.Client.Stream body
+  | Request.Empty -> H1_client.Empty
+  | Fixed chunks -> H1_client.Fixed chunks
+  | Stream body -> H1_client.Stream body
   | Rewindable_stream { length; make } ->
-      Eta_http_h1.Client.Rewindable_stream { length; make }
+      H1_client.Rewindable_stream { length; make }
 
 let h1_request_of_request request =
   match
@@ -51,18 +51,18 @@ let h1_request_of_request request =
   | Ok url ->
       Ok
         {
-          Eta_http_h1.Client.method_ = request.Request.method_;
+          H1_client.method_ = request.Request.method_;
           url;
           headers = request.headers;
           body = h1_body request.body;
         }
   | Error message ->
       Error
-        (Eta_http_error.Error.make ~method_:request.method_ ~uri:request.uri
+        (Error.make ~method_:request.method_ ~uri:request.uri
            (Connection_protocol_violation { kind = "url"; message }))
 
-let response_of_h1 (response : Eta_http_h1.Client.response) =
-  Response.make ~status:response.Eta_http_h1.Client.status
+let response_of_h1 (response : H1_client.response) =
+  Response.make ~status:response.H1_client.status
     ~headers:response.headers ~trailers:response.trailers ~body:response.body ()
 
 let request_url request =
@@ -251,7 +251,7 @@ let h2_trailer_result request =
         Eio.Promise.resolve resolver value
   in
   let resolve_headers headers =
-    match Eta_http_h2.Security.validate_headers headers with
+    match Security.validate_headers headers with
     | Some kind -> resolve (Error (h2_error request kind))
     | None -> resolve (Ok headers)
   in
@@ -269,7 +269,7 @@ let h2_informational_status status =
   status >= 100 && status < 200 && status <> 101
 
 let request_h2_on_connection connection request url =
-  let mux = Eta_http_h2.Connection.mux connection in
+  let mux = Connection.mux connection in
   let result, resolver = Eio.Promise.create () in
   let body_error = ref None in
   let response_started = ref false in
@@ -294,19 +294,19 @@ let request_h2_on_connection connection request url =
     !body_wake ()
   in
   unregister_failure :=
-    Eta_http_h2.Connection.register_failure_handler connection (fun kind ->
+    Connection.register_failure_handler connection (fun kind ->
         let error = h2_error request kind in
         if !response_started then set_body_error error else resolve_error error);
   let close_no_body stream body =
     resolve_empty_trailers ();
     H2.Body.Reader.close body;
-    Eta_http_h2.Multiplexer.mark_complete mux stream;
-    ignore (Eta_http_h2.Multiplexer.release mux stream);
+    Multiplexer.mark_complete mux stream;
+    ignore (Multiplexer.release mux stream);
     unregister ()
   in
   let response_body stream body =
     let body, wake =
-      Eta_http_h2.Multiplexer.body_stream_async
+      Multiplexer.body_stream_async
         ~closed_error:(h2_closed request Http_response)
         ~poll_error:(fun () -> !body_error)
         ~on_eof:(fun () ->
@@ -325,11 +325,11 @@ let request_h2_on_connection connection request url =
     if !response_started then set_body_error error else resolve_error error
   in
   let open_request h2_request =
-    Eta_http_h2.Connection.request connection ~tag:0 h2_request
+    Connection.request connection ~tag:0 h2_request
       ~trailers_handler:(fun headers -> resolve_trailers (H2.Headers.to_list headers))
       ~error_handler:(fun stream error ->
-        Eta_http_h2.Multiplexer.mark_remote_reset mux
-          (Eta_http_h2.Stream_state.id stream);
+        Multiplexer.mark_remote_reset mux
+          (Stream_state.id stream);
         let error =
           h2_protocol_violation request "stream" (h2_pp_client_error error)
         in
@@ -337,10 +337,10 @@ let request_h2_on_connection connection request url =
       ~response_handler:(fun stream response body ->
         let status = H2.Status.to_code response.H2.Response.status in
         let headers = h2_response_headers response in
-        match Eta_http_h2.Security.validate_headers headers with
+        match Security.validate_headers headers with
         | Some kind ->
             H2.Body.Reader.close body;
-            ignore (Eta_http_h2.Multiplexer.release mux stream);
+            ignore (Multiplexer.release mux stream);
             resolve_error (h2_error request kind)
         | None when h2_informational_status status -> ()
         | None when h2_response_has_body request status ->
@@ -397,7 +397,7 @@ let request_h2_on_connection connection request url =
                 |> Eta.Effect.bind (fun () -> wait_for_response ())
             | Fixed chunks ->
                 Eta.Effect.sync (fun () ->
-                    Eta_http_h2.Connection.fork_daemon connection (fun () ->
+                    Connection.fork_daemon connection (fun () ->
                         try h2_write_fixed_body_sync opened.request_body chunks
                         with exn ->
                           let error =
@@ -428,11 +428,11 @@ let make_h1 ~sw ~net
   let pools = Hashtbl.create 8 in
   let pool_values () = Hashtbl.fold (fun _ pool acc -> pool :: acc) pools [] in
   let pool_for request =
-    let key = Eta_http_h1.Client.origin_key request.Eta_http_h1.Client.url in
+    let key = H1_client.origin_key request.H1_client.url in
     match Hashtbl.find_opt pools key with
     | Some pool -> Eta.Effect.pure pool
     | None ->
-        Eta_http_h1.Client.make_pool ~max_response_body_bytes ?ca_file ~sw ~net
+        H1_client.make_pool ~max_response_body_bytes ?ca_file ~sw ~net
           request.url
         |> Eta.Effect.map (fun pool ->
                Hashtbl.replace pools key pool;
@@ -444,7 +444,7 @@ let make_h1 ~sw ~net
     | Ok request ->
         pool_for request
         |> Eta.Effect.bind (fun pool ->
-               Eta_http_h1.Client.request_with_pool pool request)
+               H1_client.request_with_pool pool request)
         |> Eta.Effect.map response_of_h1
   in
   let stats_impl () =
@@ -452,7 +452,7 @@ let make_h1 ~sw ~net
         pool_values ()
         |> List.fold_left
              (fun acc pool ->
-               let stats = Eta_http_h1.Client.pool_stats pool in
+               let stats = H1_client.pool_stats pool in
                {
                  protocol = H1;
                  active = acc.active + stats.Eta.Pool.active;
@@ -471,7 +471,7 @@ let make_h1 ~sw ~net
              })
   in
   let shutdown_impl () =
-    pool_values () |> List.map Eta_http_h1.Client.shutdown_pool |> Eta.Effect.concat
+    pool_values () |> List.map H1_client.shutdown_pool |> Eta.Effect.concat
   in
   { protocol = H1; request_impl; stats_impl; shutdown_impl }
 
@@ -493,7 +493,7 @@ let make ~sw ~net
   let h2_connection_for target =
     let key = h2_key target in
     match Hashtbl.find_opt h2_connections key with
-    | Some connection when not (Eta_http_h2.Connection.is_closed connection) ->
+    | Some connection when not (Connection.is_closed connection) ->
         Some connection
     | Some _ ->
         Hashtbl.remove h2_connections key;
@@ -510,7 +510,7 @@ let make ~sw ~net
     match h1_request_of_request request with
     | Error error -> close_counted flow |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
     | Ok h1_request ->
-        Eta_http_h1.Client.request_on_flow ~release:(fun () -> close_counted flow)
+        H1_client.request_on_flow ~release:(fun () -> close_counted flow)
           ~max_response_body_bytes ~flow h1_request
         |> Eta.Effect.map response_of_h1
   in
@@ -528,7 +528,7 @@ let make ~sw ~net
   let h2_on_tls target tls request url =
     let key = h2_key target in
     let connection =
-      Eta_http_h2.Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
+      Connection.create ~sw ~flow:(tls :> Connect.tcp_flow)
         ~config:h2_config ~reader_buffer_size:(512 * 1024)
         ~on_close:(fun () ->
           incr released;
@@ -575,7 +575,7 @@ let make ~sw ~net
           h2_connections_values ()
           |> List.fold_left
                (fun acc connection ->
-                 let stats = Eta_http_h2.Connection.stats connection in
+                 let stats = Connection.stats connection in
                  {
                    acc with
                    active = acc.active + stats.active;
@@ -602,7 +602,7 @@ let make ~sw ~net
   in
   let shutdown_impl () =
     Eta.Effect.sync (fun () ->
-        h2_connections_values () |> List.iter Eta_http_h2.Connection.shutdown;
+        h2_connections_values () |> List.iter Connection.shutdown;
         Hashtbl.clear h2_connections)
   in
   { protocol = Auto; request_impl; stats_impl; shutdown_impl }

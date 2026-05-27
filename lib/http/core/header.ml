@@ -5,7 +5,7 @@ type name = string
 type value = string
 
 let empty = []
-let header_invalid reason = Eta_http_error.Error.Header_invalid { reason }
+let header_invalid reason = Error.Header_invalid { reason }
 
 let[@zero_alloc] is_tchar = function
   | '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_'

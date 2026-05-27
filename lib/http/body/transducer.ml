@@ -2,7 +2,7 @@
 
 open Eta
 
-module Error = Eta_http_error.Error
+module Error = Error
 module Stream = Stream
 
 type context = {

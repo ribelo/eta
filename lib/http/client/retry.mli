@@ -46,7 +46,7 @@ val classify_error :
   t ->
   request:Request.t ->
   attempt:int ->
-  Eta_http_error.Error.t ->
+  Error.t ->
   decision
 
 val classify_response :
@@ -60,6 +60,6 @@ val classify_response :
 val run :
   ?policy:t ->
   ?now_s:(unit -> float) ->
-  (Request.t -> (Response.t, Eta_http_error.Error.t) Eta.Effect.t) ->
+  (Request.t -> (Response.t, Error.t) Eta.Effect.t) ->
   Request.t ->
-  (Response.t, Eta_http_error.Error.t) Eta.Effect.t
+  (Response.t, Error.t) Eta.Effect.t

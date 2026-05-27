@@ -1,6 +1,6 @@
-module Client = Eta_http_client.Client
-module Request = Eta_http_client.Request
-module Retry = Eta_http_client.Retry
+module Client = Client
+module Request = Request
+module Retry = Retry
 module Semconv = Semconv
 
 let annotate attrs eff =

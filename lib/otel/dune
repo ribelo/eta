@@ -1,3 +1,5 @@
 (library
  (name eta_otel)
+ (public_name eta.otel)
+ (synopsis "OpenTelemetry exporter for Eta logger/tracer/meter capabilities")
  (libraries eta eta_stream eta_http eio eio.unix yojson))

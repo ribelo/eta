@@ -15,7 +15,7 @@ val feed :
   string ->
   off:int ->
   len:int ->
-  (unit, Eta_http_error.Error.kind) result
+  (unit, Error.kind) result
 
 val take : t -> string
 

@@ -1,3 +1,5 @@
 (library
  (name eta_ai_openrouter)
+ (public_name eta.ai.openrouter)
+ (synopsis "OpenRouter provider for eta.ai")
  (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http yojson))

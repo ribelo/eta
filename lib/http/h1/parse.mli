@@ -15,16 +15,16 @@ type parse_error =
   | Body_truncated of { expected : int; available : int }
 
 type header = {
-  name : Eta_http_core.Span.t;
-  value : Eta_http_core.Span.t;
+  name : Span.t;
+  value : Span.t;
 }
 
 type response = {
-  version : Eta_http_core.Version.t;
+  version : Version.t;
   status : int;
-  reason : Eta_http_core.Span.t;
+  reason : Span.t;
   headers : header list;
-  body : Eta_http_core.Span.t;
+  body : Span.t;
 }
 
 val pp_parse_error : Format.formatter -> parse_error -> unit
@@ -72,7 +72,7 @@ val raw_body_len : raw_response -> int
 val parse :
   ?max_header_bytes:int -> bytes -> len:int -> (response, parse_error) result
 
-val span_to_string : bytes -> Eta_http_core.Span.t -> string
+val span_to_string : bytes -> Span.t -> string
 val header_name : bytes -> header -> string
 val header_value : bytes -> header -> string
 val headers_to_list : bytes -> header list -> (string * string) list

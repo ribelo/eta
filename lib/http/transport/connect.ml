@@ -3,8 +3,8 @@
 open Eta
 
 type target = {
-  url : Eta_http_core.Url.t;
-  scheme : Eta_http_core.Url.scheme;
+  url : Url.t;
+  scheme : Url.scheme;
   host : string;
   port : int;
   service : string;
@@ -13,27 +13,27 @@ type target = {
 type tcp_flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
 let target_of_url url =
-  let scheme = Eta_http_core.Url.scheme url in
-  let port = Eta_http_core.Url.effective_port url in
+  let scheme = Url.scheme url in
+  let port = Url.effective_port url in
   {
     url;
     scheme;
-    host = Eta_http_core.Url.host url;
+    host = Url.host url;
     port;
     service = string_of_int port;
   }
 
 let dns_error ~method_ target message =
-  Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
+  Error.make ~method_ ~uri:(Url.to_string target.url)
     (Dns_error { host = target.host; message })
 
 let connect_error ~method_ target message =
-  Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
+  Error.make ~method_ ~uri:(Url.to_string target.url)
     (Connect_error { message })
 
-let tls_error ?(stage = Eta_http_error.Error.Tls_handshake) ~method_ target
+let tls_error ?(stage = Error.Tls_handshake) ~method_ target
     message =
-  Eta_http_error.Error.make ~method_ ~uri:(Eta_http_core.Url.to_string target.url)
+  Error.make ~method_ ~uri:(Url.to_string target.url)
     (Tls_handshake_error { stage; message })
 
 let resolve_stream ~net ~method_ target =
@@ -102,18 +102,18 @@ let connect_tls ?alpn_protocols ?ca_file ~method_ target flow =
         | Error message -> Error message
         | Ok (`Host host) ->
             let config =
-              Eta_http_tls.Config.default_client ?alpn_protocols ?ca_file
+              Config.default_client ?alpn_protocols ?ca_file
                 ~peer_name:host ()
             in
-            let tls = Eta_http_tls.Eio.client_of_flow config ~host flow in
-            let alpn = Eta_http_tls.Eio.alpn_protocol tls in
+            let tls = Tls_eio.client_of_flow config ~host flow in
+            let alpn = Tls_eio.alpn_protocol tls in
             Ok (tls, alpn)
         | Ok (`Ip ip) ->
             let config =
-              Eta_http_tls.Config.default_client ?alpn_protocols ?ca_file ~ip ()
+              Config.default_client ?alpn_protocols ?ca_file ~ip ()
             in
-            let tls = Eta_http_tls.Eio.client_of_flow config flow in
-            let alpn = Eta_http_tls.Eio.alpn_protocol tls in
+            let tls = Tls_eio.client_of_flow config flow in
+            let alpn = Tls_eio.alpn_protocol tls in
             Ok (tls, alpn)
       with exn -> Error (Printexc.to_string exn))
   |> Effect.bind (function

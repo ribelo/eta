@@ -1,10 +1,10 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-module Error = Eta_http_error.Error
+module Error = Error
 module Multiplexer = Multiplexer
 module Writer = Writer
 
-type flow = Eta_http_transport.Connect.tcp_flow
+type flow = Connect.tcp_flow
 
 type failure_waiter = {
   mutable active : bool;

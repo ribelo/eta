@@ -26,8 +26,8 @@ val content_length : t -> int option
 val to_stream : t -> Stream.t
 val with_owned_stream :
   t ->
-  (owned_stream option -> ('a, Eta_http_error.Error.t) Eta.Effect.t) ->
-  ('a, Eta_http_error.Error.t) Eta.Effect.t
+  (owned_stream option -> ('a, Error.t) Eta.Effect.t) ->
+  ('a, Error.t) Eta.Effect.t
 (** Run [f] with a stream that this scope owns. Streaming and rewindable bodies
     are discarded when the scope exits; fixed and empty bodies do not allocate a
     stream. *)

@@ -2,7 +2,7 @@
 
 open Eta
 
-module Error = Eta_http_error.Error
+module Error = Error
 
 type read_result = Chunk of bytes | Last of bytes | End
 

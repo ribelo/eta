@@ -1,6 +1,7 @@
 (library
  (name eta_par)
  (public_name eta.par)
+ (synopsis "Domain-pool parallelism scheduler for Eta")
  (private_modules scheduler)
  (libraries unix)
  (flags (:standard -alert -unsafe_multidomain -alert -do_not_spawn_domains)))

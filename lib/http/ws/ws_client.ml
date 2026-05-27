@@ -2,9 +2,9 @@
 
 open Eta
 
-module Header = Eta_http_core.Header
-module Url = Eta_http_core.Url
-module Connect = Eta_http_transport.Connect
+module Header = Header
+module Url = Url
+module Connect = Connect
 
 type ws_error =
   [ `Connect of string
@@ -31,7 +31,7 @@ let read_chunk_size = 4096
 let close_flow flow = try Eio.Flow.close flow with _ -> ()
 
 let http_error_to_connect error =
-  `Connect (Format.asprintf "%a" Eta_http_error.Error.pp error)
+  `Connect (Format.asprintf "%a" Error.pp error)
 
 let map_http_error effect =
   Effect.catch (fun error -> Effect.fail (http_error_to_connect error)) effect

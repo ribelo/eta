@@ -3,24 +3,24 @@
 type request_body =
   | Empty
   | Fixed of bytes list
-  | Stream of Eta_http_body.Stream.t
+  | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : unit -> Eta_http_body.Stream.t;
+      make : unit -> Stream.t;
     }
 
 type request = {
   method_ : string;
-  url : Eta_http_core.Url.t;
-  headers : Eta_http_core.Header.t;
+  url : Url.t;
+  headers : Header.t;
   body : request_body;
 }
 
 type response = {
   status : int;
-  headers : Eta_http_core.Header.t;
-  body : Eta_http_body.Stream.t;
-  trailers : unit -> (Eta_http_core.Header.t, Eta_http_error.Error.t) Eta.Effect.t;
+  headers : Header.t;
+  body : Stream.t;
+  trailers : unit -> (Header.t, Error.t) Eta.Effect.t;
 }
 
 type pool
@@ -31,16 +31,16 @@ val default_max_response_body_bytes : int
 
 val request_on_flow :
   ?max_response_body_bytes:int ->
-  ?release:(unit -> (unit, Eta_http_error.Error.t) Eta.Effect.t) ->
+  ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
   flow:[> Eio.Flow.two_way_ty | Eio.Resource.close_ty] Eio.Resource.t ->
   request ->
-  (response, Eta_http_error.Error.t) Eta.Effect.t
+  (response, Error.t) Eta.Effect.t
 (** Write one HTTP/1.1 request to [flow] and read the response.
 
     [max_response_body_bytes] caps fixed-length, chunked, and
     close-delimited response bodies. *)
 
-val origin_key : Eta_http_core.Url.t -> string
+val origin_key : Url.t -> string
 (** Stable pool key for the URL's scheme, host, and effective port. *)
 
 val make_pool :
@@ -49,17 +49,17 @@ val make_pool :
   ?max_idle:int ->
   ?health_check:
     (([ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t ->
-     (unit, Eta_http_error.Error.t) Eta.Effect.t)) ->
+     (unit, Error.t) Eta.Effect.t)) ->
   ?ca_file:string ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  Eta_http_core.Url.t ->
-  (pool, Eta_http_error.Error.t) Eta.Effect.t
+  Url.t ->
+  (pool, Error.t) Eta.Effect.t
 (** Build an origin-scoped h1 connection pool. [ca_file] is an optional PEM
     CA bundle added to the trust store on top of the system roots. *)
 
 val request_with_pool :
-  pool -> request -> (response, Eta_http_error.Error.t) Eta.Effect.t
+  pool -> request -> (response, Error.t) Eta.Effect.t
 (** Execute [request] through [pool].
 
     [request.url] must match the pool origin. The h1 connection stays checked
@@ -67,7 +67,7 @@ val request_with_pool :
 
 val pool_stats : pool -> Eta.Pool.stats
 val pool_origin : pool -> string
-val shutdown_pool : pool -> (unit, Eta_http_error.Error.t) Eta.Effect.t
+val shutdown_pool : pool -> (unit, Error.t) Eta.Effect.t
 
 val request :
   ?max_response_body_bytes:int ->
@@ -75,6 +75,6 @@ val request :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   request ->
-  (response, Eta_http_error.Error.t) Eta.Effect.t
+  (response, Error.t) Eta.Effect.t
 (** Connect, wrap TLS for HTTPS URLs, and execute one HTTP/1.1 request.
     [ca_file] is an optional PEM CA bundle added to the trust store. *)

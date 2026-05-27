@@ -2,13 +2,13 @@
 
 open Eta
 
-module Body = Eta_http_body.Stream
-module Body_source = Eta_http_body.Source
-module Chunked = Eta_http_body.Chunked
-module Connect = Eta_http_transport.Connect
-module Error = Eta_http_error.Error
-module Header = Eta_http_core.Header
-module Url = Eta_http_core.Url
+module Body = Stream
+module Body_source = Source
+module Chunked = Chunked
+module Connect = Connect
+module Error = Error
+module Header = Header
+module Url = Url
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
