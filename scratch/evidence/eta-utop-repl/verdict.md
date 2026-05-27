@@ -58,7 +58,7 @@ Confidence: Medium-high.
 
 V-UTOP-4 - Add an explicit host-owned blocking runner.
 Status: ACCEPT
-Decision: Expose `Effect.Blocking.Pool.runner`, accept it on `Effect.Blocking.Pool.create`, and accept [?blocking_runner] on `Runtime.create` for the runtime-owned default blocking pool.
+Decision: Expose `Effect.Blocking.Pool.runner`, `Effect.Blocking.Pool.runner_of_eio_unix`, accept runners on `Effect.Blocking.Pool.create`, accept [?blocking_runner] on `Runtime.create`, and provide `Runtime.with_host_eio_unix` for the common toplevel setup.
 Evidence: In `dune utop lib/eta`, a runner value built from the host toplevel's `Eio_unix.run_in_systhread` returns `Eta.Exit.Ok 43` through `Runtime.create ~blocking_runner` and `Eta.Exit.Ok 44` through `Pool.create ~runner`.
 Counterevidence considered: The default runner remains insufficient for this specific `dune utop <library>` loading shape; the fix is explicit rather than a silent fallback.
 Confidence: High for the minimal Exergy REPL blocking failure class.
@@ -102,19 +102,11 @@ The successful host-runner blocking fixture:
 
 ```ocaml
 #require "eio_main";;
-let runner =
-  {
-    Eta.Effect.Blocking.Pool.run_in_systhread =
-      (fun ~label f -> Eio_unix.run_in_systhread ~label f);
-  };;
-
 Eio_main.run @@ fun env ->
-Eio.Switch.run @@ fun sw ->
-let rt =
-  Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-    ~random:(Eta.Capabilities.random_of_seed 1)
-    ~blocking_runner:runner ()
-in
+Eta.Runtime.with_host_eio_unix (module Eio_unix)
+  ~clock:(Eio.Stdenv.clock env)
+  ~random:(Eta.Capabilities.random_of_seed 1)
+@@ fun _sw rt ->
 Eta.Runtime.run rt
   (Eta.Effect.scoped
     (Eta.Effect.Blocking.submit ~name:"x" (fun () -> 43)));;

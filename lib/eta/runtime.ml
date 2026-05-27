@@ -23,6 +23,16 @@ let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
     ?logger ?meter ?random ?island_pool ?blocking_pool ?blocking_runner
     ?capture_backtrace ()
 
+let with_host_eio_unix eio_unix ~clock ?sleep ?tracer ?sampler ?auto_instrument
+    ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace f =
+  Eio.Switch.run @@ fun sw ->
+  let blocking_runner = Effect.Blocking.Pool.runner_of_eio_unix eio_unix in
+  let runtime =
+    create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
+      ?random ?island_pool ?blocking_pool ~blocking_runner ?capture_backtrace ()
+  in
+  f sw runtime
+
 let run ?island_pool ?blocking_pool runtime eff =
   let runtime =
     match (island_pool, blocking_pool) with

@@ -172,17 +172,21 @@ module Blocking : sig
     }
     (** Worker substrate used by systhread blocking pools. In normal compiled
         applications the default runner is sufficient. In [dune utop] workflows
-        that load Eta before [eio_main], pass a runner built from the host
-        toplevel's Eio instance:
+        that load Eta before [eio_main], use {!runner_of_eio_unix}. *)
 
-        {[
-          {
-            Effect.Blocking.Pool.run_in_systhread =
-              Eio_unix.run_in_systhread;
-          }
-        ]} *)
+    module type EIO_UNIX = sig
+      val run_in_systhread : label:string -> (unit -> 'a) -> 'a
+    end
+    (** Minimal host module shape needed by {!runner_of_eio_unix}. *)
 
     val default_runner : runner
+
+    val runner_of_eio_unix : (module EIO_UNIX) -> runner
+    (** Build a blocking runner from the host application's [Eio_unix] module.
+        This is mainly for [dune utop] workflows where Eta is loaded before
+        [eio_main]. For a runtime-owned default blocking pool, prefer
+        {!Runtime.with_host_eio_unix}. Use this helper directly when creating a
+        standalone pool with {!create}. *)
 
     val create : ?name:string -> ?runner:runner -> config -> t
     (** Create a bounded blocking pool.
