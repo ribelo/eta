@@ -1,0 +1,228 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Gqa-1 Coverage Probe ===
+
+Candidates: 5
+Queries: 10
+
+## Branch A - Pure typed SQL-style pipe builder
+Q1 simple lookup: Clean
+  call: Match.node Person.as_ "p" |> where (Person.name p = param name) |> return node p
+  why: Linear lookup is readable and pipe-friendly.
+Q2 single-hop join with property filter: Awkward
+  call: Match.node Person.as_ "a" |> out KNOWS (node Person "b") |> where (Person.age a > param min_age) |> return [a.name; b.name]
+  why: Works, but edge/node alternation inside a pipe already needs nested handles.
+Q3 optional match: Awkward
+  call: match_ p |> optional (out WORKS_AT company) |> return [node p; opt company]
+  why: Optional match can be bolted on but makes the pipeline stateful.
+Q4 variable-length path: Escape hatch
+  call: raw_pattern "path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b})"
+  why: Variable-length named path breaks the linear node-first API.
+Q5 multi-stage WITH: Awkward
+  call: match_ posted |> with_ [p; count post as posts] |> where (posts > param min_posts) |> return [p.name; posts]
+  why: WITH is pipe-shaped, but typed aliases need a second expression language.
+Q6 aggregation: Clean
+  call: match_ lives_in |> return [city.name; count person as residents] |> order_by desc residents |> limit param_limit
+  why: Aggregation/order/limit are clause-like and pipe well.
+Q7 list parameter: Clean
+  call: match_ person |> where (Person.id p in_ param_ids) |> return [node p]
+  why: List parameter filter is clause-like.
+Q8 map parameter: Awkward
+  call: match_ person |> where (Person.country p = param_map filter country && Person.active p = param_map filter active)
+  why: Map projection needs special parameter-access combinators.
+Q9 bulk ingest via UNWIND: Escape hatch
+  call: raw "UNWIND $rows AS row MERGE ... SET ..."
+  why: UNWIND/MERGE/SET is not naturally represented by the match-first builder.
+Q10 typed function call: Awkward
+  call: match_any_edge "a" "r" "b" |> where (type_ r = param rel_type) |> return [node a; alias (type_ r) "rt"; node b]
+  why: Works only after adding unlabelled node/rel and function-call helpers.
+  clean=3 awkward=5 escape=2 fails=0 status=Survives with risk
+
+## Branch B - Hybrid pattern DSL plus pipeable clauses
+Q1 simple lookup: Clean
+  call: match_ Pattern.(node "p" Person ~props:[name := param name]) |> return [node "p"]
+  why: Pattern DSL owns graph shape; clauses stay linear.
+Q2 single-hop join with property filter: Clean
+  call: match_ Pattern.(node "a" Person -- rel KNOWS --> node "b" Person) |> where (prop "a" age > param min_age) |> return [prop "a" name; prop "b" name]
+  why: Single-hop pattern is compact.
+Q3 optional match: Clean
+  call: match_ p |> optional Pattern.(node "p" -- rel WORKS_AT --> node "c" Company) |> return [node "p"; nullable_node "c"]
+  why: Optional match is a clause over the same pattern language.
+Q4 variable-length path: Clean
+  call: match_ Pattern.(path "path" (node "a" Person -- rel KNOWS ~hops:(1,6) --> node "b" Person)) |> return [path "path"]
+  why: Variable-length named path fits once pattern DSL has path and hops.
+Q5 multi-stage WITH: Clean
+  call: match_ posted |> with_ [var "p"; count "post" as_ "posts"] |> where (var "posts" > param min_posts) |> return [prop "p" name; var "posts"]
+  why: WITH chains are naturally pipeable.
+Q6 aggregation: Clean
+  call: match_ lives_in |> return [prop "c" name; count "p" as_ "residents"] |> order_by desc "residents" |> limit limit
+  why: Clause builder handles aggregation.
+Q7 list parameter: Clean
+  call: match_ Pattern.(node "p" Person) |> where (prop "p" id |> in_ (param ids)) |> return [node "p"]
+  why: List params are ordinary expressions.
+Q8 map parameter: Awkward
+  call: where (prop "p" country = param_field filter country && prop "p" active = param_field filter active)
+  why: Map params are possible but introduce stringly field access unless schema-typed.
+Q9 bulk ingest via UNWIND: Awkward
+  call: unwind rows "row" |> merge Pattern.(node "p" Person ~props:[id := field "row" id]) |> set [prop "p" name := field "row" name; prop "p" age := field "row" age]
+  why: Expressible, but this adds non-pattern write clauses.
+Q10 typed function call: Clean
+  call: match_ Pattern.(anon_node "a" -- rel_var "r" --> anon_node "b") |> where (type_ "r" = param rel_type) |> return [node "a"; type_ "r" as_ "rt"; node "b"]
+  why: Unlabelled nodes and type(r) fit expression helpers.
+  clean=8 awkward=2 escape=0 fails=0 status=Survives
+
+## Branch C - Cypher literal PPX with parameter typing
+Q1 simple lookup: Clean
+  call: [%cypher {|MATCH (p:Person {name: $name}) RETURN p|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q2 single-hop join with property filter: Clean
+  call: [%cypher {|MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age > $min_age RETURN a.name, b.name|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q3 optional match: Clean
+  call: [%cypher {|MATCH (p:Person {id: $id}) OPTIONAL MATCH (p)-[:WORKS_AT]->(c:Company) RETURN p, c|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q4 variable-length path: Awkward
+  call: [%cypher {|MATCH path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b}) RETURN path|}] ~params ~decode
+  why: Literal is compact, but return/path or write-shape inference needs substantial PPX support.
+Q5 multi-stage WITH: Clean
+  call: [%cypher {|MATCH (p:Person)-[:POSTED]->(post:Post) WITH p, count(post) AS posts WHERE posts > $min_posts RETURN p.name, posts|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q6 aggregation: Clean
+  call: [%cypher {|MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name, count(p) AS residents ORDER BY residents DESC LIMIT $limit|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q7 list parameter: Clean
+  call: [%cypher {|MATCH (p:Person) WHERE p.id IN $ids RETURN p|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q8 map parameter: Clean
+  call: [%cypher {|MATCH (p:Person) WHERE p.country = $filter.country AND p.active = $filter.active RETURN p|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+Q9 bulk ingest via UNWIND: Awkward
+  call: [%cypher {|UNWIND $rows AS row MERGE (p:Person {id: row.id}) SET p.name = row.name, p.age = row.age|}] ~params ~decode
+  why: Literal is compact, but return/path or write-shape inference needs substantial PPX support.
+Q10 typed function call: Clean
+  call: [%cypher {|MATCH (a)-[r]->(b) WHERE type(r) = $rel_type RETURN a, type(r) AS rt, b|}] ~params ~decode
+  why: Cypher remains itself; call-site is compact if PPX validation exists.
+  clean=8 awkward=2 escape=0 fails=0 status=Survives
+
+## Branch D - Parameterized string plus typed decoder baseline
+Q1 simple lookup: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person {name: $name}) RETURN p|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q2 single-hop join with property filter: Clean
+  call: Graph.query conn ~cypher:{|MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age > $min_age RETURN a.name, b.name|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q3 optional match: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person {id: $id}) OPTIONAL MATCH (p)-[:WORKS_AT]->(c:Company) RETURN p, c|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q4 variable-length path: Clean
+  call: Graph.query conn ~cypher:{|MATCH path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b}) RETURN path|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q5 multi-stage WITH: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person)-[:POSTED]->(post:Post) WITH p, count(post) AS posts WHERE posts > $min_posts RETURN p.name, posts|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q6 aggregation: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name, count(p) AS residents ORDER BY residents DESC LIMIT $limit|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q7 list parameter: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person) WHERE p.id IN $ids RETURN p|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q8 map parameter: Clean
+  call: Graph.query conn ~cypher:{|MATCH (p:Person) WHERE p.country = $filter.country AND p.active = $filter.active RETURN p|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q9 bulk ingest via UNWIND: Clean
+  call: Graph.query conn ~cypher:{|UNWIND $rows AS row MERGE (p:Person {id: row.id}) SET p.name = row.name, p.age = row.age|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+Q10 typed function call: Clean
+  call: Graph.query conn ~cypher:{|MATCH (a)-[r]->(b) WHERE type(r) = $rel_type RETURN a, type(r) AS rt, b|} ~params ~decode
+  why: Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+  clean=10 awkward=0 escape=0 fails=0 status=Survives
+
+## Branch E - Named pattern fragments plus raw Cypher clauses
+Q1 simple lookup: Clean
+  call: person_by_name |> return [node p]
+  why: A reusable typed fragment covers common lookup.
+Q2 single-hop join with property filter: Clean
+  call: knows_pair |> where raw_expr "a.age > $min_age" |> return [p "a.name"; p "b.name"]
+  why: Graph shape is typed; scalar predicate is literal.
+Q3 optional match: Clean
+  call: person_by_id |> optional works_at |> return [node p; nullable c]
+  why: Optional reusable fragment is clean.
+Q4 variable-length path: Clean
+  call: path_between ~rel:KNOWS ~hops:(1,6) |> return [path]
+  why: Named path fragment is cleaner than general builder syntax.
+Q5 multi-stage WITH: Awkward
+  call: posted_fragment |> raw_clause "WITH p, count(post) AS posts" |> where raw_expr "posts > $min_posts"
+  why: WITH remains mostly literal.
+Q6 aggregation: Awkward
+  call: lives_in_fragment |> raw_return_order_limit ...
+  why: Aggregation is less typed than Branch B.
+Q7 list parameter: Clean
+  call: person |> where raw_expr "p.id IN $ids" |> return [node p]
+  why: List params are fine through literal predicate.
+Q8 map parameter: Clean
+  call: person |> where raw_expr "p.country = $filter.country AND p.active = $filter.active"
+  why: Map param stays Cypher-shaped.
+Q9 bulk ingest via UNWIND: Clean
+  call: raw_write {|UNWIND $rows AS row MERGE ... SET ...|} ~params
+  why: Bulk ingest is intentionally a raw write clause.
+Q10 typed function call: Clean
+  call: any_edge |> where raw_expr "type(r) = $rel_type" |> return [node a; expr "type(r)" as rt; node b]
+  why: Pattern fragment plus literal type predicate is compact.
+  clean=8 awkward=2 escape=0 fails=0 status=Survives
+
+=== Matrix Rows ===
+A | Clean | Match.node Person.as_ "p" |> where (Person.name p = param name) |> return node p | Linear lookup is readable and pipe-friendly.
+A | Awkward | Match.node Person.as_ "a" |> out KNOWS (node Person "b") |> where (Person.age a > param min_age) |> return [a.name; b.name] | Works, but edge/node alternation inside a pipe already needs nested handles.
+A | Awkward | match_ p |> optional (out WORKS_AT company) |> return [node p; opt company] | Optional match can be bolted on but makes the pipeline stateful.
+A | Escape hatch | raw_pattern "path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b})" | Variable-length named path breaks the linear node-first API.
+A | Awkward | match_ posted |> with_ [p; count post as posts] |> where (posts > param min_posts) |> return [p.name; posts] | WITH is pipe-shaped, but typed aliases need a second expression language.
+A | Clean | match_ lives_in |> return [city.name; count person as residents] |> order_by desc residents |> limit param_limit | Aggregation/order/limit are clause-like and pipe well.
+A | Clean | match_ person |> where (Person.id p in_ param_ids) |> return [node p] | List parameter filter is clause-like.
+A | Awkward | match_ person |> where (Person.country p = param_map filter country && Person.active p = param_map filter active) | Map projection needs special parameter-access combinators.
+A | Escape hatch | raw "UNWIND $rows AS row MERGE ... SET ..." | UNWIND/MERGE/SET is not naturally represented by the match-first builder.
+A | Awkward | match_any_edge "a" "r" "b" |> where (type_ r = param rel_type) |> return [node a; alias (type_ r) "rt"; node b] | Works only after adding unlabelled node/rel and function-call helpers.
+B | Clean | match_ Pattern.(node "p" Person ~props:[name := param name]) |> return [node "p"] | Pattern DSL owns graph shape; clauses stay linear.
+B | Clean | match_ Pattern.(node "a" Person -- rel KNOWS --> node "b" Person) |> where (prop "a" age > param min_age) |> return [prop "a" name; prop "b" name] | Single-hop pattern is compact.
+B | Clean | match_ p |> optional Pattern.(node "p" -- rel WORKS_AT --> node "c" Company) |> return [node "p"; nullable_node "c"] | Optional match is a clause over the same pattern language.
+B | Clean | match_ Pattern.(path "path" (node "a" Person -- rel KNOWS ~hops:(1,6) --> node "b" Person)) |> return [path "path"] | Variable-length named path fits once pattern DSL has path and hops.
+B | Clean | match_ posted |> with_ [var "p"; count "post" as_ "posts"] |> where (var "posts" > param min_posts) |> return [prop "p" name; var "posts"] | WITH chains are naturally pipeable.
+B | Clean | match_ lives_in |> return [prop "c" name; count "p" as_ "residents"] |> order_by desc "residents" |> limit limit | Clause builder handles aggregation.
+B | Clean | match_ Pattern.(node "p" Person) |> where (prop "p" id |> in_ (param ids)) |> return [node "p"] | List params are ordinary expressions.
+B | Awkward | where (prop "p" country = param_field filter country && prop "p" active = param_field filter active) | Map params are possible but introduce stringly field access unless schema-typed.
+B | Awkward | unwind rows "row" |> merge Pattern.(node "p" Person ~props:[id := field "row" id]) |> set [prop "p" name := field "row" name; prop "p" age := field "row" age] | Expressible, but this adds non-pattern write clauses.
+B | Clean | match_ Pattern.(anon_node "a" -- rel_var "r" --> anon_node "b") |> where (type_ "r" = param rel_type) |> return [node "a"; type_ "r" as_ "rt"; node "b"] | Unlabelled nodes and type(r) fit expression helpers.
+C | Clean | [%cypher {|MATCH (p:Person {name: $name}) RETURN p|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Clean | [%cypher {|MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age > $min_age RETURN a.name, b.name|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Clean | [%cypher {|MATCH (p:Person {id: $id}) OPTIONAL MATCH (p)-[:WORKS_AT]->(c:Company) RETURN p, c|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Awkward | [%cypher {|MATCH path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b}) RETURN path|}] ~params ~decode | Literal is compact, but return/path or write-shape inference needs substantial PPX support.
+C | Clean | [%cypher {|MATCH (p:Person)-[:POSTED]->(post:Post) WITH p, count(post) AS posts WHERE posts > $min_posts RETURN p.name, posts|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Clean | [%cypher {|MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name, count(p) AS residents ORDER BY residents DESC LIMIT $limit|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Clean | [%cypher {|MATCH (p:Person) WHERE p.id IN $ids RETURN p|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Clean | [%cypher {|MATCH (p:Person) WHERE p.country = $filter.country AND p.active = $filter.active RETURN p|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+C | Awkward | [%cypher {|UNWIND $rows AS row MERGE (p:Person {id: row.id}) SET p.name = row.name, p.age = row.age|}] ~params ~decode | Literal is compact, but return/path or write-shape inference needs substantial PPX support.
+C | Clean | [%cypher {|MATCH (a)-[r]->(b) WHERE type(r) = $rel_type RETURN a, type(r) AS rt, b|}] ~params ~decode | Cypher remains itself; call-site is compact if PPX validation exists.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person {name: $name}) RETURN p|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age > $min_age RETURN a.name, b.name|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person {id: $id}) OPTIONAL MATCH (p)-[:WORKS_AT]->(c:Company) RETURN p, c|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH path = (a:Person {id: $a})-[:KNOWS*1..6]->(b:Person {id: $b}) RETURN path|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person)-[:POSTED]->(post:Post) WITH p, count(post) AS posts WHERE posts > $min_posts RETURN p.name, posts|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name, count(p) AS residents ORDER BY residents DESC LIMIT $limit|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person) WHERE p.id IN $ids RETURN p|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (p:Person) WHERE p.country = $filter.country AND p.active = $filter.active RETURN p|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|UNWIND $rows AS row MERGE (p:Person {id: row.id}) SET p.name = row.name, p.age = row.age|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+D | Clean | Graph.query conn ~cypher:{|MATCH (a)-[r]->(b) WHERE type(r) = $rel_type RETURN a, type(r) AS rt, b|} ~params ~decode | Smallest working surface; type safety lives in params and decoder, not Cypher authoring.
+E | Clean | person_by_name |> return [node p] | A reusable typed fragment covers common lookup.
+E | Clean | knows_pair |> where raw_expr "a.age > $min_age" |> return [p "a.name"; p "b.name"] | Graph shape is typed; scalar predicate is literal.
+E | Clean | person_by_id |> optional works_at |> return [node p; nullable c] | Optional reusable fragment is clean.
+E | Clean | path_between ~rel:KNOWS ~hops:(1,6) |> return [path] | Named path fragment is cleaner than general builder syntax.
+E | Awkward | posted_fragment |> raw_clause "WITH p, count(post) AS posts" |> where raw_expr "posts > $min_posts" | WITH remains mostly literal.
+E | Awkward | lives_in_fragment |> raw_return_order_limit ... | Aggregation is less typed than Branch B.
+E | Clean | person |> where raw_expr "p.id IN $ids" |> return [node p] | List params are fine through literal predicate.
+E | Clean | person |> where raw_expr "p.country = $filter.country AND p.active = $filter.active" | Map param stays Cypher-shaped.
+E | Clean | raw_write {|UNWIND $rows AS row MERGE ... SET ...|} ~params | Bulk ingest is intentionally a raw write clause.
+E | Clean | any_edge |> where raw_expr "type(r) = $rel_type" |> return [node a; expr "type(r)" as rt; node b] | Pattern fragment plus literal type predicate is compact.
+
+verdict=Branch B, D, and E survive P-Gqa-1; Branch A is weaker but not eliminated; Branch C remains conditional on P-Gqa-4 feasibility.
+surprise=Branch E emerged: typed reusable pattern fragments plus literal clauses is often cleaner than a fully-general pipe builder.

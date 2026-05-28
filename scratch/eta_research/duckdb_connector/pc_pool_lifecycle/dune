@@ -1,0 +1,22 @@
+(library
+ (name pc_duckdb)
+ (modules pc_duckdb)
+ (foreign_stubs
+  (language c)
+  (names pc_lifecycle_stubs)
+  (flags :standard (:include c_flags.sexp)))
+ (c_library_flags :standard (:include c_library_flags.sexp)))
+
+(executable
+ (name pc_pool_probe)
+ (modules pc_pool_probe)
+ (libraries pc_duckdb eta eio_main eio.unix unix))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (progn
+   (with-stdout-to c_flags.sexp
+    (bash "echo '('; pkg-config duckdb --cflags 2>/dev/null || echo '-I'$(dirname $(find /nix/store -maxdepth 4 -name duckdb.h -path '*/include/*' 2>/dev/null | head -1)) | tr ' ' '\n'; echo ')'"))
+   (with-stdout-to c_library_flags.sexp
+    (bash "echo '('; pkg-config duckdb --libs 2>/dev/null || echo '-L'$(dirname $(find /nix/store -maxdepth 4 -name libduckdb.so 2>/dev/null | head -1))' -lduckdb' | tr ' ' '\n'; echo ')'")))))

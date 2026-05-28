@@ -1,0 +1,1 @@
+(dirs p0_duckdb p1_fairness p2_cancel p3_iter p4_type_coverage p5_builder_coverage p6_bulk_load p7_pool p8_generalize pa_engine_signature pb_value_union pc_pool_lifecycle pd_chunk_cancel pe_appender_cancel pf_error_categories)

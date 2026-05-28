@@ -1,0 +1,12 @@
+(library
+ (name value_v7)
+ (modules value_v7))
+
+(library
+ (name value_v15)
+ (modules value_v15))
+
+(executable
+ (name pb_bench)
+ (modules pb_bench)
+ (libraries value_v7 value_v15 unix))

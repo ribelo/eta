@@ -17083,3 +17083,43 @@ Cleanup-completing `cancel` matches the least-astonishment contract and has
 focused tests. A separate public `Fiber_scope` facade remains deferred until
 external call sites prove that `Supervisor.scoped` plus cleanup-completing
 `cancel` is still too awkward.
+
+## V-Database-Connectors — DuckDB, Turso, LadybugDB research import
+
+### Decision
+
+Import the connector research artifacts from `research-duckdb-connector` and
+ship optional connector packages instead of widening the root `eta` package.
+
+- DuckDB ships as an SQL engine package with explicit database/connection
+  ownership, cancellation through `duckdb_interrupt`, and first-class bulk
+  append support.
+- Turso ships as a SQLite-compatible SQL engine package with explicit journal
+  selection. Concurrent transactions require verified MVCC. Timeout
+  cancellation is not advertised because the v2 interrupt probe aborted in the
+  tested Turso/Rust build.
+- LadybugDB ships as a graph connector package, not as an SQL engine. Cypher,
+  graph values, and Arrow-shaped result decoding belong under a graph-specific
+  value/result model.
+
+### Evidence
+
+Research artifacts are under:
+
+- `scratch/eta_research/duckdb_connector/`
+- `scratch/eta_research/turso_connector/`
+- `scratch/eta_research/ladybugdb_connector/`
+- `scratch/eta_research/graph_query_api/`
+
+The Turso and LadybugDB v2 ADRs carry gates into implementation. The DuckDB
+notes include later stress-test refinements: connection survival and appender
+support are confirmed, while chunk-fold leak status and some lifecycle claims
+remain narrower than the first summary stated.
+
+### Production constraints
+
+- Do not add DuckDB, Turso, LadybugDB, C-stub, protocol, or test dependencies
+  to the root `eta` package.
+- Do not silently preserve SQLite WAL defaults when Turso concurrent mode is
+  requested; concurrent mode chooses and verifies MVCC.
+- Do not expose LadybugDB as `eta_sql`; Cypher is not SQL.

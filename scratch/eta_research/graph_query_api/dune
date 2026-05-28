@@ -1,0 +1,8 @@
+(library
+ (name graph_query_api_lab)
+ (modules graph_query_api_lab))
+
+(executables
+ (names p_gqa_1 p_gqa_2 p_gqa_3 p_gqa_4 p_gqa_5 p_gqa_6)
+ (modules p_gqa_1 p_gqa_2 p_gqa_3 p_gqa_4 p_gqa_5 p_gqa_6)
+ (libraries graph_query_api_lab))

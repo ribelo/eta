@@ -1,0 +1,19 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Gqa-3 Schema PPX Probe ===
+input_node=[%%graph.node type person = { id : int64 [@id]; name : string; age : int; active : bool }]
+generated.Person.label=Person
+generated.Person.id_accessor=p.id:int64
+generated.Person.name_accessor=p.name:string
+generated.Person.param={id:Int; name:String; age:Int; active:Bool}
+generated.Person.decoder=Arrow NODE struct _ID,_LABEL,id,name,age,active -> person
+node_fixture.verdict=Clean
+input_rel=[%%graph.rel type knows = { since : int } [@from Person] [@to Person]]
+generated.Knows.label=KNOWS
+generated.Knows.pattern=Pattern.rel KNOWS
+generated.Knows.decoder=Untested
+rel_fixture.verdict=Partial
+blocker=LadybugDB lab did not decode REL/PATH Arrow shapes, so REL PPX can generate label/accessor/pattern metadata but not a proven decoder.
+verdict=Schema PPX earns a place for NODE modules; REL support should be metadata-only until REL Arrow decoding is proven.

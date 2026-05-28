@@ -1,0 +1,13 @@
+(library
+ (name p1_turso)
+ (modules p1_turso)
+ (foreign_stubs
+  (language c)
+  (names p1_fairness_stubs)
+  (flags :standard -I /tmp/turso/sqlite3/include))
+ (c_library_flags :standard -L/tmp/turso/target/release -lturso_sqlite3))
+
+(executable
+ (name p1_fairness_probe)
+ (modules p1_fairness_probe)
+ (libraries p1_turso unix threads))

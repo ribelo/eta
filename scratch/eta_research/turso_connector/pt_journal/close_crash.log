@@ -1,0 +1,9 @@
+close_crash open rc=0 msg=not an error
+close_crash set_wal prepare rc=0 msg=not an error
+close_crash set_wal step rc=100 result=wal msg=not an error
+close_crash set_mvcc prepare rc=0 msg=not an error
+close_crash set_mvcc step rc=100 result=mvcc msg=not an error
+close_crash before sqlite3_close
+close_crash close returned rc=0
+close_crash_returned_unexpectedly
+exit_code: 0

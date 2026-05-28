@@ -1,0 +1,55 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Lbug-4 LadybugDB Error Surface Probe ===
+
+ladybug_version=0.17.0
+syntax_error.state=LbugError
+syntax_error.success=false
+syntax_error.error=unknown
+syntax_error.result_error=Parser exception: Invalid input <MATCH (p:Person RETURN>: expected rule oC_SingleQuery (line: 1, offset: 16)
+"MATCH (p:Person RETURN p"
+                 ^^^^^^
+type_mismatch.state=LbugError
+type_mismatch.success=false
+type_mismatch.error=unknown
+type_mismatch.result_error=Binder exception: Cannot match a built-in function for given function +(INT64,STRING). Supported inputs are
+(INT128,INT128) -> INT128
+(INT64,INT64) -> INT64
+(INT32,INT32) -> INT32
+(INT16,INT16) -> INT16
+(INT8,INT8) -> INT8
+(SERIAL,SERIAL) -> SERIAL
+(UINT128,UINT128) -> UINT128
+(UINT64,UINT64) -> UINT64
+(UINT32,UINT32) -> UINT32
+(UINT16,UINT16) -> UINT16
+(UINT8,UINT8) -> UINT8
+(DOUBLE,DOUBLE) -> DOUBLE
+(FLOAT,FLOAT) -> FLOAT
+(DECIMAL,DECIMAL) -> DECIMAL
+(LIST,LIST) -> LIST
+(STRING,STRING) -> STRING
+(INTERVAL,INTERVAL) -> INTERVAL
+(DATE,INT64) -> DATE
+(INT64,DATE) -> DATE
+(DATE,INTERVAL) -> DATE
+(INTERVAL,DATE) -> DATE
+(TIMESTAMP,INTERVAL) -> TIMESTAMP
+(INTERVAL,TIMESTAMP) -> TIMESTAMP
+
+integrity_violation.state=LbugError
+integrity_violation.success=false
+integrity_violation.error=unknown
+integrity_violation.result_error=Runtime exception: Found duplicated primary key value 1, which violates the uniqueness constraint of the primary key column.
+timeout_interrupt.state=LbugError
+timeout_interrupt.success=false
+timeout_interrupt.error=unknown
+timeout_interrupt.result_error=Interrupted.
+closed_connection_child.exit=10
+closed_connection_child.class=closed_handle_error_or_setup_failure
+recommended_error_variant=Connection_closed_or_invalid | Query_syntax | Type_mismatch | Integrity_violation | Timeout_or_interrupt | Other
+
+
+=== P-Lbug-4 probe completed ===

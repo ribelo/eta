@@ -1,0 +1,14 @@
+(library
+ (name pt_pool)
+ (modules pt_pool)
+ (foreign_stubs
+  (language c)
+  (names pt_pool_stubs)
+  (flags :standard -I /tmp/turso/sqlite3/include))
+ (c_library_flags :standard -L/tmp/turso/target/release -lturso_sqlite3)
+ (libraries eta eio eio_main unix))
+
+(executable
+ (name pt_pool_probe)
+ (modules pt_pool_probe)
+ (libraries pt_pool eta eio eio_main unix))

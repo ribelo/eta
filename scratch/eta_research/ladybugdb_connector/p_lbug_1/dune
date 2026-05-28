@@ -1,0 +1,13 @@
+(library
+ (name p_lbug_1)
+ (modules p_lbug_1)
+ (foreign_stubs
+  (language c)
+  (names p_lbug_1_stubs)
+  (flags :standard -std=c11 -I /tmp/ladybug/src/include/c_api))
+ (c_library_flags :standard -L/tmp/ladybug/build/src -llbug -lstdc++ -lm -ldl -lpthread))
+
+(executable
+ (name p_lbug_1_probe)
+ (modules p_lbug_1_probe)
+ (libraries p_lbug_1))

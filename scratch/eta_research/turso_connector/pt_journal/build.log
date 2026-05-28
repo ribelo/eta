@@ -1,0 +1,2 @@
+command: dune build scratch/eta_research/turso_connector/pt_journal/pt_journal_probe.exe scratch/eta_research/turso_connector/pt_journal/pt_journal_close_crash.exe
+exit_code: 0

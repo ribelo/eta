@@ -1,0 +1,2 @@
+command: dune build scratch/eta_research/turso_connector/pt_engine_fit/pt_engine_fit_probe.exe
+exit_code: 0

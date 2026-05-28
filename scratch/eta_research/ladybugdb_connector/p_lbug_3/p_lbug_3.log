@@ -1,0 +1,42 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Lbug-3 LadybugDB Parameterization Probe ===
+
+ladybug_version=0.17.0
+primitive.prepare_state=LbugSuccess
+primitive.execute_state=LbugSuccess
+primitive.count=1
+primitive.assertion=pass
+empty_string.prepare_state=LbugSuccess
+empty_string.execute_state=LbugSuccess
+empty_string.count=1
+empty_string.assertion=pass
+long_string.prepare_state=LbugSuccess
+long_string.execute_state=LbugSuccess
+long_string.count=1
+long_string.assertion=pass
+large_int64.prepare_state=LbugSuccess
+large_int64.execute_state=LbugSuccess
+large_int64.count=1
+large_int64.assertion=pass
+null_optional.prepare_state=LbugSuccess
+null_optional.execute_state=LbugSuccess
+null_optional.value=true
+null_optional.assertion=pass
+list_value.prepare_state=LbugSuccess
+list_value.execute_state=LbugSuccess
+list_value.count=3
+list_value.assertion=pass
+map_value.prepare_state=LbugSuccess
+map_value.execute_state=LbugSuccess
+map_value.result=$m
+{a=10, b=20}
+
+map_value.assertion=pass
+bytes_parameter.status=Untested
+bytes_parameter.blocker=no lbug_value_create_blob or prepared_statement_bind_blob symbol in c_api/lbug.h
+
+
+=== P-Lbug-3 probe completed ===

@@ -1,0 +1,14 @@
+=== P-Turso-4 file-backed Eta.Pool fit ===
+safe.path=/tmp/nix-shell.JeJ6ty/eta_turso_pool_345414_safe.db
+safe.create=Ok
+safe.use=Ok
+safe.use.ok=true
+safe.shutdown=Ok
+safe.close_db_after_pool=Ok
+unsafe.create=Ok
+unsafe.use_before_close=Ok
+unsafe.use_before_close.ok=true
+unsafe.close_db_while_pool_live=Ok
+unsafe.child=WSIGNALED -2
+verdict=Partial
+note=Safe pool shutdown before database close works; unsafe close is isolated in child and must not be supported.

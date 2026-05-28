@@ -1,0 +1,27 @@
+Eta OxCaml research shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-B Function-Boundary Benchmark ===
+Iterations: 10000000
+
+V7 (7 constructors):
+  sum: 21428609285709
+  time: 0.033 s
+  minor_words: 24117193
+  major_words: 40
+  per_iter: 2.41 words
+
+V15 (15 constructors):
+  sum: 21428609285709
+  time: 0.033 s
+  minor_words: 24117193
+  major_words: 40
+  per_iter: 2.41 words
+
+Delta (V15 - V7):
+  time: 0.001 s (2.4%)
+  minor_words: 0 (0.0%)
+
+=== Verdict ===
+Time delta < 5% — within noise.
+Allocation delta < 5% — within noise.

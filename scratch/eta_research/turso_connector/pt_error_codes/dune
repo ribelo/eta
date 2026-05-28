@@ -1,0 +1,13 @@
+(library
+ (name pt_error_codes)
+ (modules pt_error_codes)
+ (foreign_stubs
+  (language c)
+  (names pt_error_codes_stubs)
+  (flags :standard -I /tmp/turso/sqlite3/include))
+ (c_library_flags :standard -L/tmp/turso/target/release -lturso_sqlite3))
+
+(executable
+ (name pt_error_codes_probe)
+ (modules pt_error_codes_probe)
+ (libraries pt_error_codes))

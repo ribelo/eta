@@ -1,0 +1,18 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Lbug-5 LadybugDB Effect.blocking Fairness Probe ===
+heartbeat_fibers=16
+heartbeat_interval_ms=1
+sample_seconds=5
+setup=begin
+setup=done
+samples=80016
+jitter_p50_ms=0.009
+jitter_p99_ms=0.054
+jitter_max_ms=4.366
+query_result=Error:Timeout
+query_finished=true
+connection_reusable=true
+verdict=Partial_5s_window

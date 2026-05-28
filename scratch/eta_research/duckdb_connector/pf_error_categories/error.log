@@ -1,0 +1,46 @@
+Eta OxCaml research shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-F Error Union + Retry Logic Probe ===
+
+Test 1: SQLITE_BUSY (code=5) through union
+  Mapped to: Common:Connection_error
+  Attempt 1: retry with backoff
+  Attempt 2: retry with backoff
+  Attempt 3: retry with backoff
+  Result: retry loop exhausted
+
+Test 2: SQLITE_LOCKED (code=6) through union
+  Mapped to: Common:Transaction_error
+  Attempt 1: retry immediate
+  Attempt 2: retry immediate
+  Attempt 3: retry immediate
+  Result: retry loop exhausted
+
+Test 3: SQLITE_CONSTRAINT (code=19) through union
+  Mapped to: Common:Constraint_violation
+  Attempt 1: fail
+  Result: fail immediately
+
+Test 4: SQLITE_IOERR (code=10) through union
+  Mapped to: Common:Io_error
+  Attempt 1: retry with backoff
+  Attempt 2: retry with backoff
+  Attempt 3: retry with backoff
+  Result: retry loop exhausted
+
+Test 5: Unknown code (code=99) through union
+  Mapped to: Sqlite variant
+  Attempt 1: fail
+  Result: fail immediately
+
+=== Verdict ===
+P-F: Error union + retry logic
+  - BUSY (5) -> Connection_error -> Retry with backoff: preserved
+  - LOCKED (6) -> Transaction_error -> Retry immediate: preserved
+  - CONSTRAINT (19) -> Constraint_violation -> Fail: preserved
+  - IOERR (10) -> Io_error -> Retry with backoff: preserved
+  - Unknown -> Sqlite variant -> Fail: preserved
+
+The union preserves retry-relevant categories.
+BUSY vs LOCKED distinction is maintained via different Common variants.

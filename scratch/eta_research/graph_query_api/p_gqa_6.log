@@ -1,0 +1,30 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-duckdb' is dirty
+Eta OxCaml shell (5.2.0+ox)
+Run 'eta-oxcaml-init' once to create the 5.2.0+ox opam switch.
+Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only.
+=== P-Gqa-6 Parameter Binding Ergonomics ===
+string.call=Graph.Param.string "name" name
+string.mismatch=runtime if wrong constructor used
+string.verdict=Clean
+int64.call=Graph.Param.int "id" id
+int64.mismatch=runtime if wrong constructor used
+int64.verdict=Clean
+double.call=Graph.Param.float "score" score
+double.mismatch=runtime if wrong constructor used
+double.verdict=Clean
+bool.call=Graph.Param.bool "active" active
+bool.mismatch=runtime if wrong constructor used
+bool.verdict=Clean
+null.call=Graph.Param.null "nickname"
+null.mismatch=runtime nullable policy
+null.verdict=Awkward
+list.call=Graph.Param.list "ids" Graph.Param.int ids
+list.mismatch=runtime element compatibility
+list.verdict=Awkward
+map.call=Graph.Param.map "filter" [field "country" string; field "active" bool]
+map.mismatch=runtime field mismatch
+map.verdict=Awkward
+bytes.call=Graph.Param.bytes "blob" bytes
+bytes.mismatch=blocked by LadybugDB C API
+bytes.verdict=Untested
+verdict=Primitive params are clean in the baseline and Branch B/E. Null/list/map need helpers but are acceptable. Bytes stays Untested until the driver finds a blob bind path.

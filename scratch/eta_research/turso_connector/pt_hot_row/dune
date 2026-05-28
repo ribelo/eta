@@ -1,0 +1,13 @@
+(library
+ (name pt_hot_row)
+ (modules pt_hot_row)
+ (foreign_stubs
+  (language c)
+  (names pt_hot_row_stubs)
+  (flags :standard -I /tmp/turso/sqlite3/include -pthread))
+ (c_library_flags :standard -L/tmp/turso/target/release -lturso_sqlite3 -pthread))
+
+(executable
+ (name pt_hot_row_probe)
+ (modules pt_hot_row_probe)
+ (libraries pt_hot_row))

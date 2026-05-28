@@ -1,0 +1,4 @@
+(executable
+ (name p_lbug_6_probe)
+ (modules p_lbug_6_probe)
+ (libraries p_lbug_2 eta eio_main unix))

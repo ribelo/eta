@@ -1,0 +1,2 @@
+command: dune build scratch/eta_research/turso_connector/pt_cancel/pt_cancel_probe.exe
+exit_code: 0
