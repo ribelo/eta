@@ -49,6 +49,9 @@ and ('s, !'err, !'a) supervisor_child
 val pure : 'a -> ('a, 'err) t
 val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
+val from_result : ('a, 'err) result -> ('a, 'err) t
+(** Convert an OCaml [result] into an effect. [Ok value] succeeds with
+    [value]; [Error err] fails in Eta's typed failure channel. *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an effect. Use {!Effect.named} to
@@ -363,6 +366,12 @@ val uninterruptible : ('a, 'err) t -> ('a, 'err) t
 val catch :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 
+val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
+(** Transform typed failures while preserving unchecked defects, interruption,
+    and the surrounding cause structure. Every [Cause.Fail] in the cause tree is
+    mapped, including failures nested under [Sequential], [Concurrent], or
+    [Suppressed]. *)
+
 val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
 (** Run an observer when the effect fails with a typed error, then rethrow the
     original typed failure. If the observer raises, the runtime reports a
@@ -378,6 +387,18 @@ val timeout_as :
 (** Like {!timeout}, but fails with [on_timeout] instead of widening the error
     row with raw Timeout. *)
 val repeat : Schedule.t -> (unit, 'err) t -> (unit, 'err) t
+
+val finally : (unit, 'err) t -> ('a, 'err) t -> ('a, 'err) t
+(** [finally cleanup effect] runs [cleanup] after [effect] settles, on success,
+    typed failure, unchecked defect, or cancellation.
+
+    [cleanup] runs in a cancellation-protected cleanup frame. If [effect]
+    succeeds but [cleanup] fails, the cleanup failure becomes the result. If
+    both fail, the cleanup failure is reported as a suppressed finalizer failure
+    under the primary cause, matching {!acquire_release} finalizer reporting.
+
+    This is for one-shot cleanup around an effect. Use {!acquire_release} and
+    {!scoped} for resource lifetimes. *)
 
 val acquire_release :
   acquire:('a, 'err) t ->

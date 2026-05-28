@@ -70,6 +70,45 @@ let test_effect_catch_handler_failure_uses_outer_key () =
        ( = ))
     (Runtime.run rt eff) `Outer
 
+let test_effect_from_result () =
+  with_runtime @@ fun rt ->
+  Alcotest.(check int) "ok" 7 (run_ok rt (Effect.from_result (Ok 7)));
+  Expect.expect_typed_failure_eq Alcotest.string
+    (Runtime.run rt (Effect.from_result (Error "bad")))
+    "bad"
+
+let test_effect_map_error_maps_full_cause () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () -> Effect.fail `Release)
+      |> Effect.bind (fun () -> Effect.fail `Body))
+    |> Effect.map_error (function
+         | `Body -> "body"
+         | `Release -> "release")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail "body"; finalizer = Cause.Fail "release" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected mapped suppressed cause, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok () -> Alcotest.fail "expected mapped failure"
+
+let test_effect_syntax_operators () =
+  with_runtime @@ fun rt ->
+  let open Eta.Syntax in
+  let eff =
+    let* a = Effect.pure 2 in
+    let+ b = Effect.pure 3
+    and+ c = Effect.pure 4 in
+    a + b + c
+  in
+  Alcotest.(check int) "syntax result" 9 (run_ok rt eff)
+
 let test_effect_tap_error_observes_and_rethrows () =
   with_runtime @@ fun rt ->
   let observed = ref false in
@@ -104,6 +143,72 @@ let test_effect_tap_error_observer_failure_preserves_typed_failure () =
           | `My_error -> Format.pp_print_string fmt "My_error"))
         cause
   | Exit.Ok () -> Alcotest.fail "expected tap_error failure"
+
+let test_effect_finally_success_and_failure () =
+  with_runtime @@ fun rt ->
+  let finalized = ref 0 in
+  let cleanup = Effect.sync (fun () -> incr finalized) in
+  let success = Effect.pure 42 |> Effect.finally cleanup in
+  let failure = Effect.fail "body" |> Effect.finally cleanup in
+  Alcotest.(check int) "success value" 42 (run_ok rt success);
+  Expect.expect_typed_failure_eq Alcotest.string (Runtime.run rt failure) "body";
+  Alcotest.(check int) "cleanup count" 2 !finalized
+
+let test_effect_finally_cleanup_failure_after_success () =
+  with_runtime @@ fun rt ->
+  let eff = Effect.pure 42 |> Effect.finally (Effect.fail "cleanup") in
+  Expect.expect_typed_failure_eq Alcotest.string (Runtime.run rt eff) "cleanup"
+
+let test_effect_finally_suppresses_cleanup_failure () =
+  with_runtime @@ fun rt ->
+  let eff = Effect.fail "body" |> Effect.finally (Effect.fail "cleanup") in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail "body"; finalizer = Cause.Fail "cleanup" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed cleanup failure, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok () -> Alcotest.fail "expected suppressed failure"
+
+let test_effect_finally_runs_on_cancellation () =
+  with_test_clock @@ fun sw clock rt ->
+  let finalized = ref false in
+  let slow =
+    Effect.delay (Duration.ms 1_000) (Effect.pure "slow")
+    |> Effect.finally (Effect.sync (fun () -> finalized := true))
+  in
+  let fast =
+    Effect.sync (fun () -> wait_for_sleepers clock 1)
+    |> Effect.map (fun () -> "fast")
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; fast ]) in
+  check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
+  Alcotest.(check bool) "cleanup ran" true !finalized
+
+let test_effect_finally_cleanup_failure_not_caught_as_body_failure () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.fail `Body
+    |> Effect.finally (Effect.fail `Cleanup)
+    |> Effect.catch (function
+         | `Body -> Effect.pure `Caught
+         | `Cleanup -> Effect.pure `Caught_cleanup)
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail `Body; finalizer = Cause.Fail `Cleanup }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected uncaught suppressed cleanup failure, got %a"
+        (Cause.pp (fun fmt -> function
+          | `Body -> Format.pp_print_string fmt "body"
+          | `Cleanup -> Format.pp_print_string fmt "cleanup"))
+        cause
+  | Exit.Ok (`Caught | `Caught_cleanup) ->
+      Alcotest.fail "catch should not catch suppressed failure"
 
 let test_cause_empty_aggregations_reject () =
   Alcotest.check_raises "empty sequential"

@@ -186,6 +186,7 @@ let run_to_value frame effect = exit_to_value frame (run_to_exit frame effect)
 let pure value = make (fun () -> ok value)
 let fail err = make (fun () -> error (Cause.Fail err))
 let unit = pure ()
+let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
 let sync f = make (fun () -> try ok (f ()) with exn -> exit_of_exn (current_frame ()) exn)
 
 let map f effect =
@@ -213,6 +214,25 @@ let catch handler effect =
   | Exit.Ok _ as ok -> ok
   | Exit.Error (Cause.Fail err) -> (handler err).eval ()
   | Exit.Error cause -> error (Obj.magic cause)
+
+let rec map_cause_error f = function
+  | Cause.Fail err -> Cause.Fail (f err)
+  | Cause.Die die -> Cause.Die die
+  | Cause.Interrupt id -> Cause.Interrupt id
+  | Cause.Sequential causes -> Cause.Sequential (List.map (map_cause_error f) causes)
+  | Cause.Concurrent causes -> Cause.Concurrent (List.map (map_cause_error f) causes)
+  | Cause.Suppressed { primary; finalizer } ->
+      Cause.Suppressed
+        {
+          primary = map_cause_error f primary;
+          finalizer = map_cause_error f finalizer;
+        }
+
+let map_error f effect =
+  preserve effect @@ fun () ->
+  match effect.eval () with
+  | Exit.Ok _ as ok -> ok
+  | Exit.Error cause -> error (map_cause_error f cause)
 
 let tap_error observe effect =
   preserve effect @@ fun () ->
@@ -258,6 +278,29 @@ let timeout_as duration ~on_timeout effect =
            on_timeout exn)
 
 let timeout duration effect = timeout_as duration ~on_timeout:`Timeout effect
+
+let run_cleanup_to_exit frame cleanup =
+  Runtime_core.cancel_protect @@ fun () ->
+  let cleanup_finalizers = ref [] in
+  let cleanup_frame = { frame with finalizers = cleanup_finalizers } in
+  try
+    ok
+      (Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
+         cleanup_finalizers (fun () -> run_to_value cleanup_frame cleanup))
+  with exn -> exit_of_exn cleanup_frame exn
+
+let finally cleanup effect =
+  preserve effect @@ fun () ->
+  let frame = current_frame () in
+  match run_to_exit frame effect with
+  | Exit.Ok value -> (
+      match run_cleanup_to_exit frame cleanup with
+      | Exit.Ok () -> ok value
+      | Exit.Error cause -> error cause)
+  | Exit.Error primary -> (
+      match run_cleanup_to_exit frame cleanup with
+      | Exit.Ok () -> error primary
+      | Exit.Error finalizer -> error (Cause.suppressed ~primary ~finalizer))
 
 let run_child frame sw effect =
   let child_frame = { frame with sw } in

@@ -27,10 +27,9 @@ environment or layer graph.
 open Eta
 
 let program =
-  Effect.pure 1
-  |> Effect.map (fun n -> n + 1)
-  |> Effect.bind (fun n ->
-         if n < 3 then Effect.fail `Too_small else Effect.pure n)
+  let open Syntax in
+  let* n = Effect.pure 1 |> Effect.map (fun n -> n + 1) in
+  (if n < 3 then Effect.fail `Too_small else Effect.pure n)
   |> Effect.catch (fun `Too_small -> Effect.pure 3)
 
 let () =
@@ -50,6 +49,7 @@ let () =
 | Module | Purpose |
 | --- | --- |
 | `Effect` | Abstract description for pure values, typed failure, sync leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
+| `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `and*`, and `and+`. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
@@ -170,6 +170,19 @@ let with_db k =
     (Effect.acquire_release ~acquire ~release |> Effect.bind k)
 ```
 
+For one-shot cleanup around a single effect, use `Effect.finally`:
+
+```ocaml
+let write_then_flush writer bytes =
+  Writer.write writer bytes
+  |> Effect.finally (Effect.sync (fun () -> Writer.flush writer))
+```
+
+The cleanup runs after success, typed failure, unchecked defect, or
+cancellation. If both the body and cleanup fail, Eta reports the cleanup failure
+as suppressed under the body failure, using the same cause shape as
+`acquire_release`.
+
 ## Services
 
 Eta does not ship `Layer.t`, `Tag`, `Context`, or `Effect.provide`.
@@ -214,6 +227,25 @@ let observed =
 background work stays internal to modules that own that lifecycle. For
 long-lived cached resources, `Resource.auto` keeps the existing returned
 resource shape and records refresh failures through `Resource.failures`.
+
+For background work that exists only while a body runs, prefer
+`Effect.with_background`:
+
+```ocaml
+let with_stream_reader flow use =
+  Effect.with_background
+    ~name:"stream.reader"
+    (Effect.sync (fun () -> read_loop flow))
+    (fun () -> use flow)
+```
+
+This is the structured shape for daemon-like application work without using a
+runtime-owned daemon: accept loops scoped to a server lifetime, stream readers
+scoped to a handle, heartbeat/ticker loops scoped to a session, and resource
+readers scoped by `acquire_release`. The background child is cancelled when the
+body returns or fails. Its failures are not awaited by `with_background`; report
+them through an owned queue, promise, log, or use `Supervisor.scoped` when the
+body must observe child failure.
 
 ## Eio Concurrency Data
 

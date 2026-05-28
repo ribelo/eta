@@ -74,11 +74,26 @@ let () =
             test_effect_catch_success_and_failure;
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
+          Alcotest.test_case "from_result" `Quick test_effect_from_result;
+          Alcotest.test_case "map_error maps full cause" `Quick
+            test_effect_map_error_maps_full_cause;
+          Alcotest.test_case "syntax operators" `Quick
+            test_effect_syntax_operators;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
             test_effect_tap_error_observes_and_rethrows;
           Alcotest.test_case "tap_error observer failure preserves typed failure"
             `Quick
             test_effect_tap_error_observer_failure_preserves_typed_failure;
+          Alcotest.test_case "finally success and failure" `Quick
+            test_effect_finally_success_and_failure;
+          Alcotest.test_case "finally cleanup failure after success" `Quick
+            test_effect_finally_cleanup_failure_after_success;
+          Alcotest.test_case "finally suppresses cleanup failure" `Quick
+            test_effect_finally_suppresses_cleanup_failure;
+          Alcotest.test_case "finally runs on cancellation" `Quick
+            test_effect_finally_runs_on_cancellation;
+          Alcotest.test_case "finally cleanup failure not caught" `Quick
+            test_effect_finally_cleanup_failure_not_caught_as_body_failure;
           Alcotest.test_case "empty cause aggregations reject" `Quick
             test_cause_empty_aggregations_reject;
           Alcotest.test_case "diagnostic cause equality" `Quick
