@@ -28,6 +28,7 @@ module Value : sig
     | String of string
     | List of t list
     | Map of (string * t) list
+    | Struct of (string * t) list
     | Node of node
     | Rel of rel
     | Path of path
@@ -55,6 +56,8 @@ module Param : sig
   val string : string -> string -> t
   val list : string -> Value.t list -> t
   val map : string -> (string * Value.t) list -> t
+  val struct_ : string -> (string * Value.t) list -> t
+  val rows : string -> (string * Value.t) list list -> t
 end
 
 module Decode : sig
@@ -220,12 +223,36 @@ end
 module Connection : sig
   type t = connection
 
+  type timed_error =
+    | Ladybug of error
+    | Timeout
+
   val connect : database -> (t, error) result
   val close : t -> (unit, error) result
   val interrupt : t -> unit
   val query_string : ?params:Param.t list -> t -> string -> (string, error) result
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
+  val query_string_with_timeout :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    ?params:Param.t list ->
+    t ->
+    string ->
+    (string, timed_error) Eta.Effect.t
+  val query_with_timeout :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    'a Query.t ->
+    ('a list, timed_error) Eta.Effect.t
+  val exec_with_timeout :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    ?params:Param.t list ->
+    t ->
+    string ->
+    (unit, timed_error) Eta.Effect.t
   val install_extension :
     ?repo:string -> ?force:bool -> t -> Extension.official -> (unit, error) result
   val update_extension : t -> Extension.official -> (unit, error) result

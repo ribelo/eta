@@ -532,7 +532,87 @@ let test_ladybug_typed_query_runtime () =
               Connection.query conn (query_by_name "Rollback") |> ladybug_ok
             in
             Alcotest.(check int) "rolled back transaction node" 0
-              (List.length rolled_back)))
+              (List.length rolled_back);
+            Connection.exec conn
+              "CREATE NODE TABLE BatchPerson(id INT64, name STRING, active BOOL, PRIMARY KEY(id))"
+            |> ladybug_ok;
+            Connection.exec
+              ~params:
+                [
+                  Param.rows "rows"
+                    [
+                      [
+                        ("id", Value.Int 100L);
+                        ("name", Value.String "Batch Ada");
+                        ("active", Value.Bool true);
+                      ];
+                      [
+                        ("id", Value.Int 101L);
+                        ("name", Value.String "Batch Grace");
+                        ("active", Value.Bool false);
+                      ];
+                    ];
+                ]
+              conn
+              "UNWIND $rows AS row CREATE (:BatchPerson {id: row.id, name: row.name, active: row.active})"
+            |> ladybug_ok;
+            let batch_count =
+              Query.raw
+                ~cypher:"MATCH (p:BatchPerson) RETURN count(p) AS c"
+                ~decode:Decode.(int "c")
+                ()
+              |> Connection.query conn
+              |> ladybug_ok
+            in
+            Alcotest.(check (list int64)) "batch rows" [ 2L ] batch_count))
+
+let test_ladybug_connection_query_timeout () =
+  let open Eta_ladybug in
+  if require_ladybug_available () then
+    Eio_main.run @@ fun stdenv ->
+    Eio.Switch.run @@ fun sw ->
+    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+    let db = Database.open_memory () |> ladybug_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Database.close db))
+      (fun () ->
+        let conn = Connection.connect db |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Connection.close conn))
+          (fun () ->
+            Connection.exec conn "CREATE NODE TABLE N(id INT64, PRIMARY KEY(id))"
+            |> ladybug_ok;
+            Connection.exec conn
+              "UNWIND range(1, 20000) AS i CREATE (:N {id: i})"
+            |> ladybug_ok;
+            let long_query =
+              Query.raw
+                ~cypher:
+                  "MATCH (a:N), (b:N), (c:N) RETURN sum(a.id + b.id + c.id) AS s"
+                ~decode:Decode.(int "s")
+                ()
+            in
+            let result =
+              Connection.query_with_timeout ~timeout:(Eta.Duration.ms 100) conn
+                long_query
+              |> Eta.Runtime.run rt
+            in
+            begin match result with
+            | Eta.Exit.Error (Eta.Cause.Fail Connection.Timeout) -> ()
+            | Eta.Exit.Error cause ->
+                Alcotest.failf "expected timeout, got %a"
+                  (Eta.Cause.pp (fun fmt -> function
+                    | Connection.Timeout -> Format.pp_print_string fmt "Timeout"
+                    | Connection.Ladybug err -> pp_error fmt err))
+                  cause
+            | Eta.Exit.Ok _ -> Alcotest.fail "expected query timeout"
+            end;
+            let reusable =
+              Query.raw ~cypher:"RETURN 1 AS one" ~decode:Decode.(int "one") ()
+              |> Connection.query conn
+              |> ladybug_ok
+            in
+            Alcotest.(check (list int64)) "connection reusable" [ 1L ] reusable))
 
 let () =
   Alcotest.run "Eta database connectors"
@@ -562,5 +642,7 @@ let () =
             test_ladybug_official_extension_install_lifecycle;
           Alcotest.test_case "typed query runtime" `Quick
             test_ladybug_typed_query_runtime;
+          Alcotest.test_case "connection query timeout" `Quick
+            test_ladybug_connection_query_timeout;
         ] );
     ]

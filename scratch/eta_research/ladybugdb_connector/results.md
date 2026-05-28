@@ -75,6 +75,15 @@ Unsafe database close while the pool remained alive did not crash in the isolate
 
 See adr.md.
 
+## Follow-Up Evidence
+
+The later lab at scratch/eta_research/ladybug_bulk_timeout supersedes the
+batch-parameter and direct-connection-timeout follow-up questions. It implements
+Value.Struct, Param.rows, and direct Connection *_with_timeout helpers. Generic
+Connection.copy_from remains deferred there because no public LadybugDB C
+appender/COPY API was found and Param.rows already proved a smaller batch
+insert path.
+
 ## Journal
 
 See V-Lbug-Connector at the bottom of journal.md.

@@ -26,6 +26,7 @@ module Value = struct
     | String of string
     | List of t list
     | Map of (string * t) list
+    | Struct of (string * t) list
     | Node of node
     | Rel of rel
     | Path of path
@@ -73,6 +74,8 @@ module Param = struct
   let string name value = (name, Value.String value)
   let list name values = (name, Value.List values)
   let map name fields = (name, Value.Map fields)
+  let struct_ name fields = (name, Value.Struct fields)
+  let rows name rows = list name (List.map (fun fields -> Value.Struct fields) rows)
 end
 
 module Decode = struct
@@ -591,6 +594,16 @@ end
 module Connection = struct
   type t = connection
 
+  type timed_error =
+    | Ladybug of error
+    | Timeout
+
+  let to_timed_error = function
+    | `Ladybug err -> Ladybug err
+    | `Timeout -> Timeout
+
+  let timed_public effect = Eta.Effect.map_error to_timed_error effect
+
   let connect database =
     if_database_open database @@ fun () ->
     wrap "connection open" (fun () ->
@@ -637,6 +650,41 @@ module Connection = struct
 
   let exec ?params conn cypher =
     exec_with_operation "query" ?params conn cypher
+
+  let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
+    let query =
+      Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:(fun () ->
+          interrupt conn)
+        f
+      |> Eta.Effect.map (function
+           | Ok value -> `Query_ok value
+           | Result.Error err -> `Query_error err)
+    in
+    let timeout =
+      Eta.Effect.delay timeout
+        (Eta.Effect.sync (fun () -> interrupt conn)
+         |> Eta.Effect.map (fun () -> `Timed_out))
+    in
+    Eta.Effect.race [ query; timeout ]
+    |> Eta.Effect.bind (function
+         | `Query_ok value -> Eta.Effect.pure value
+         | `Query_error err -> Eta.Effect.fail (`Ladybug err)
+         | `Timed_out -> Eta.Effect.fail `Timeout)
+
+  let query_string_with_timeout ?blocking_pool ~timeout ?params conn cypher =
+    timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.query"
+      (fun () -> query_string ?params conn cypher)
+    |> timed_public
+
+  let query_with_timeout ?blocking_pool ~timeout conn query_ =
+    timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.typed_query"
+      (fun () -> query conn query_)
+    |> timed_public
+
+  let exec_with_timeout ?blocking_pool ~timeout ?params conn cypher =
+    timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.exec"
+      (fun () -> exec ?params conn cypher)
+    |> timed_public
 
   let install_extension ?repo ?force conn extension =
     match Extension.install_statement ?repo ?force extension with
@@ -742,24 +790,7 @@ module Pool = struct
     |> public
 
   let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-    let query =
-      Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:(fun () ->
-          Connection.interrupt conn)
-        f
-      |> Eta.Effect.map (function
-           | Ok value -> `Query_ok value
-           | Result.Error err -> `Query_error err)
-    in
-    let timeout =
-      Eta.Effect.delay timeout
-        (Eta.Effect.sync (fun () -> Connection.interrupt conn)
-         |> Eta.Effect.map (fun () -> `Timed_out))
-    in
-    Eta.Effect.race [ query; timeout ]
-    |> Eta.Effect.bind (function
-         | `Query_ok value -> Eta.Effect.pure value
-         | `Query_error err -> Eta.Effect.fail (`Ladybug err)
-         | `Timed_out -> Eta.Effect.fail `Timeout)
+    Connection.timed_blocking_result ?blocking_pool ~timeout ~conn ~name f
 
   let query_string ?blocking_pool ~timeout ?params t cypher =
     with_connection t (fun conn ->

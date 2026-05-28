@@ -90,10 +90,13 @@ typedef struct {
   lbug_state (*prepared_statement_bind_double)(lbug_prepared_statement *, const char *, double);
   lbug_state (*prepared_statement_bind_bool)(lbug_prepared_statement *, const char *, bool);
   lbug_value *(*value_create_null)(void);
+  lbug_value *(*value_create_bool)(bool);
   lbug_value *(*value_create_int64)(int64_t);
+  lbug_value *(*value_create_double)(double);
   lbug_value *(*value_create_string)(const char *);
   lbug_state (*value_create_list)(uint64_t, lbug_value **, lbug_value **);
   lbug_state (*value_create_map)(uint64_t, lbug_value **, lbug_value **, lbug_value **);
+  lbug_state (*value_create_struct)(uint64_t, const char **, lbug_value **, lbug_value **);
   void (*value_destroy)(lbug_value *);
   lbug_state (*prepared_statement_bind_value)(lbug_prepared_statement *, const char *, lbug_value *);
   lbug_state (*connection_execute)(lbug_connection *, lbug_prepared_statement *, lbug_query_result *);
@@ -181,9 +184,11 @@ static int load_api(void)
       !LOAD(prepared_statement_bind_int64) ||
       !LOAD(prepared_statement_bind_double) ||
       !LOAD(prepared_statement_bind_bool) ||
-      !LOAD(value_create_null) || !LOAD(value_create_int64) ||
+      !LOAD(value_create_null) || !LOAD(value_create_bool) ||
+      !LOAD(value_create_int64) || !LOAD(value_create_double) ||
       !LOAD(value_create_string) || !LOAD(value_create_list) ||
-      !LOAD(value_create_map) || !LOAD(value_destroy) ||
+      !LOAD(value_create_map) || !LOAD(value_create_struct) ||
+      !LOAD(value_destroy) ||
       !LOAD(prepared_statement_bind_value) || !LOAD(connection_execute)) {
     return 0;
   }
@@ -275,20 +280,55 @@ static lbug_value *create_lbug_map(value fields)
   return map;
 }
 
+static lbug_value *create_lbug_struct(value fields)
+{
+  uint64_t count = 0;
+  for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) count++;
+  const char **names = calloc((size_t)count, sizeof(char *));
+  lbug_value **vals = calloc((size_t)count, sizeof(lbug_value *));
+  if (names == NULL || vals == NULL) {
+    free(names);
+    free(vals);
+    caml_failwith("allocating LadybugDB struct parameter failed");
+  }
+  uint64_t i = 0;
+  for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) {
+    value pair = Field(cur, 0);
+    names[i] = String_val(Field(pair, 0));
+    vals[i] = create_lbug_value(Field(pair, 1));
+    i++;
+  }
+  lbug_value *struct_ = NULL;
+  if (api.value_create_struct(count, names, vals, &struct_) != LbugSuccess) {
+    free(names);
+    destroy_lbug_values(vals, count);
+    caml_failwith("create struct");
+  }
+  free(names);
+  destroy_lbug_values(vals, count);
+  return struct_;
+}
+
 static lbug_value *create_lbug_value(value v)
 {
   if (Is_long(v)) return api.value_create_null();
   switch (Tag_val(v)) {
+  case 0:
+    return api.value_create_bool(Bool_val(Field(v, 0)));
   case 1:
     return api.value_create_int64(Int64_val(Field(v, 0)));
+  case 2:
+    return api.value_create_double(Double_val(Field(v, 0)));
   case 3:
     return api.value_create_string(String_val(Field(v, 0)));
   case 4:
     return create_lbug_list(Field(v, 0));
   case 5:
     return create_lbug_map(Field(v, 0));
+  case 6:
+    return create_lbug_struct(Field(v, 0));
   default:
-    caml_failwith("LadybugDB nested parameter value supports null, int, string, list, and map");
+    caml_failwith("LadybugDB nested parameter value supports null, bool, int, float, string, list, map, and struct");
   }
 }
 
@@ -382,7 +422,8 @@ static void bind_param(lbug_prepared_statement *stmt, value pair)
     case 2: state = api.prepared_statement_bind_double(stmt, name, Double_val(Field(v, 0))); break;
     case 3: state = api.prepared_statement_bind_string(stmt, name, String_val(Field(v, 0))); break;
     case 4:
-    case 5: {
+    case 5:
+    case 6: {
       lbug_value *nested = create_lbug_value(v);
       state = api.prepared_statement_bind_value(stmt, name, nested);
       if (nested != NULL) api.value_destroy(nested);
@@ -554,7 +595,7 @@ static value arrow_node(struct ArrowSchema *schema, struct ArrowArray *array, in
   Store_field(record, 0, id_opt);
   Store_field(record, 1, labels);
   Store_field(record, 2, props);
-  node_v = caml_alloc(1, 6);
+  node_v = caml_alloc(1, 7);
   Store_field(node_v, 0, record);
   CAMLreturn(node_v);
 }
