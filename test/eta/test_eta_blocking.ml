@@ -81,6 +81,21 @@ let test_blocking_submit_alias_and_stats () =
   Alcotest.(check int) "active" 0 stats.active;
   Alcotest.(check int) "queued" 0 stats.queued
 
+let test_blocking_result_lifts_result () =
+  with_runtime @@ fun rt ->
+  let ok = Effect.blocking_result ~name:"blocking.result.ok" (fun () -> Ok 7) in
+  let err =
+    Effect.blocking_result ~name:"blocking.result.err" (fun () -> Error `Bad)
+  in
+  Alcotest.(check int) "ok" 7 (run_ok rt ok);
+  match Runtime.run rt err with
+  | Exit.Ok _ -> Alcotest.fail "expected typed failure"
+  | Exit.Error (Cause.Fail `Bad) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected Cause.Fail `Bad, got %a"
+        (Cause.pp (fun fmt (`Bad : [ `Bad ]) -> Format.pp_print_string fmt "bad"))
+        cause
+
 let test_blocking_pool_custom_runner () =
   Eio_main.run @@ fun stdenv ->
   let calls = Atomic.make 0 in

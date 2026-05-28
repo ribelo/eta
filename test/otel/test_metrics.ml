@@ -262,9 +262,8 @@ let test_metrics_otlp_live () =
     in
     Alcotest.(check bool) "at least one metrics POST" true
       (metrics_sends <> []);
-    let _, body = List.hd metrics_sends in
-    let json = Yojson.Safe.from_string body in
-    let names =
+    let metric_names body =
+      let json = Yojson.Safe.from_string body in
       match json with
       | `Assoc fields -> (
           match List.assoc "resourceMetrics" fields with
@@ -292,6 +291,9 @@ let test_metrics_otlp_live () =
               | _ -> [])
           | _ -> [])
       | _ -> []
+    in
+    let names =
+      List.concat_map (fun (_, body) -> metric_names body) metrics_sends
     in
     Alcotest.(check bool) "counter metric exported" true
       (List.exists (String.equal "eta.demo.counter") names);

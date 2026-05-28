@@ -3,11 +3,6 @@ module Request = Request
 module Retry = Retry
 module Semconv = Semconv
 
-let annotate attrs eff =
-  List.fold_right
-    (fun (key, value) acc -> Eta.Effect.annotate ~key ~value acc)
-    attrs eff
-
 let span_name request =
   "HTTP " ^ String.uppercase_ascii request.Request.method_
 
@@ -18,10 +13,12 @@ let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
   let body =
     eff
     |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response |> annotate (Semconv.response_attrs response))
+           Eta.Effect.pure response
+           |> Eta.Effect.annotate_all (Semconv.response_attrs response))
     |> Eta.Effect.catch (fun error ->
-           Eta.Effect.fail error |> annotate (Semconv.error_attrs error))
-    |> annotate request_attrs
+           Eta.Effect.fail error
+           |> Eta.Effect.annotate_all (Semconv.error_attrs error))
+    |> Eta.Effect.annotate_all request_attrs
   in
   body |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Client (span_name request)
 
@@ -47,9 +44,11 @@ let request_with_retry ?(enabled = true) ?(emit_url_full = false) ?policy
     in
     Retry.run ?policy request_once request
     |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response |> annotate (Semconv.response_attrs response))
+           Eta.Effect.pure response
+           |> Eta.Effect.annotate_all (Semconv.response_attrs response))
     |> Eta.Effect.catch (fun error ->
-           Eta.Effect.fail error |> annotate (Semconv.error_attrs error))
-    |> annotate (Semconv.request_attrs ~emit_url_full ~protocol request)
+           Eta.Effect.fail error
+           |> Eta.Effect.annotate_all (Semconv.error_attrs error))
+    |> Eta.Effect.annotate_all (Semconv.request_attrs ~emit_url_full ~protocol request)
     |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Client
          (span_name request ^ " retry")

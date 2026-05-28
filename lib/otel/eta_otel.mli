@@ -16,6 +16,9 @@ val create :
   ?traces_path:string ->
   ?logs_path:string ->
   ?metrics_path:string ->
+  ?self_metrics_path:string ->
+  ?disable_self_metrics:bool ->
+  ?debug:bool ->
   ?service_name:string ->
   ?service_version:string ->
   ?resource_attrs:(string * string) list ->
@@ -29,7 +32,18 @@ val create :
 (** Construct an exporter. One Eta runtime daemon is started on [sw] to consume
     merged signal batches. [queue_capacity] bounds each signal mailbox and
     defaults to 1024. [headers] are merged into every outbound OTLP/HTTP
-    request. Defaults: host="127.0.0.1", port=4318, traces_path="/v1/traces",
+    request.
+
+    Self-metrics are exported to [self_metrics_path], which defaults to
+    [metrics_path]. Set [disable_self_metrics] to [true] when the collector does
+    not accept OTLP metrics; the application meter returned by {!meter} remains
+    enabled. Supplying both [disable_self_metrics=true] and [self_metrics_path]
+    raises [Invalid_argument].
+
+    [debug=true] prints one line to stderr before every OTLP POST. Use [on_send]
+    when tests or local tools need the full request body.
+
+    Defaults: host="127.0.0.1", port=4318, traces_path="/v1/traces",
     logs_path="/v1/logs", metrics_path="/v1/metrics", service_name="eta". *)
 
 val tracer : t -> Eta.Capabilities.tracer
@@ -48,6 +62,17 @@ val flush : ?timeout_s:float -> t -> unit
 val shutdown : ?timeout_s:float -> t -> unit
 (** Close signal mailboxes and block until already accepted signals are drained
     or [timeout_s] elapses. Signals submitted after shutdown are dropped. *)
+
+val dropped : t -> int
+(** Number of accepted signals later dropped because a bounded exporter mailbox
+    was full or closed. This includes trace, log, metric, and exporter
+    self-metric mailboxes. *)
+
+val in_flight : t -> int
+(** Number of accepted signals not yet drained by the exporter. *)
+
+val queue_depth : t -> int
+(** Current total number of queued trace, log, metric, and self-metric signals. *)
 
 (** {1 Internals exposed for testing} *)
 
@@ -104,12 +129,6 @@ module Internal : sig
     scope_name:string ->
     Eta.Meter.point list ->
     string
-
-  val dropped : t -> int
-  (** Number of signals dropped because a bounded mailbox was full. *)
-
-  val in_flight : t -> int
-  (** Number of accepted signals not yet drained by the exporter. *)
 
   val self_spans : t -> Eta.Tracer.span list
   (** Exporter-internal Eta spans. These are recorded with an in-memory tracer

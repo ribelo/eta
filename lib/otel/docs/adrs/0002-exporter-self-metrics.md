@@ -21,10 +21,13 @@ internals.
 
 eta-otel records self-metrics as internal Eta.Meter.point values:
 
-- Trace and log exports enqueue one follow-up metric batch after each export
-  attempt while the original batch is still counted as in-flight.
-- Metric exports append their own self-metrics directly to the outgoing OTLP
-  metrics payload instead of enqueueing another metric batch.
+- Trace, log, and application metric exports enqueue one follow-up self-metric
+  batch after each export attempt while the original batch is still counted as
+  in-flight.
+- Self-metric exports do not enqueue another self-metric batch.
+- Self-metrics use their own bounded mailbox and configurable OTLP path, so
+  applications can disable or reroute exporter health metrics without corrupting
+  application metrics or logs.
 - Queue depth comes from Mailbox.length; cumulative drops come from
   Mailbox.dropped.
 - Export POSTs still use eta-http with observability suppression, so the
@@ -44,9 +47,9 @@ Exporter health is visible through the same OTLP metrics endpoint as
 application metrics. The design reports export attempts and attempted item
 counts; it does not yet split success and failure counts.
 
-The first trace or log export now causes one follow-up metrics export. Tests
-that inspect raw send counts must count by OTLP path rather than assume one
-POST per emitted application signal.
+The first trace or log export now causes one follow-up self-metrics export.
+Tests that inspect raw send counts must count by OTLP path rather than assume
+one POST per emitted application signal.
 
 eta-stream's new Mailbox.length is intentionally narrow. It exposes observable
 mailbox state without exposing queue mutation or capacity policy.

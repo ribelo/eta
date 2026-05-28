@@ -34,6 +34,9 @@ module Request = Request
 module Response = Response
 (** Public response model. *)
 
+module Trace_context = Trace_context
+(** W3C trace-context helpers for eta-http request values. *)
+
 module Retry_policy = Retry
 (** Retry policy and retry runner for eta-http requests. *)
 

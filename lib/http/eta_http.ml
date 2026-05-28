@@ -22,6 +22,7 @@ module Client = Client
 module Idempotency = Idempotency
 module Request = Request
 module Response = Response
+module Trace_context = Trace_context
 module Retry_policy = Retry
 module Error = Error
 module Error_projection = Projection

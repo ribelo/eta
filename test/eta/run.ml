@@ -226,6 +226,8 @@ let () =
         [
           Alcotest.test_case "submit alias and stats" `Quick
             test_blocking_submit_alias_and_stats;
+          Alcotest.test_case "blocking_result lifts result" `Quick
+            test_blocking_result_lifts_result;
           Alcotest.test_case "custom runner" `Quick
             test_blocking_pool_custom_runner;
           Alcotest.test_case "direct control and heartbeat" `Quick
@@ -469,6 +471,12 @@ let () =
             test_observability_named_ok;
           Alcotest.test_case "span kind" `Quick test_observability_span_kind;
           Alcotest.test_case "fn records location" `Quick test_observability_fn_loc;
+          Alcotest.test_case "annotate_all and fn attrs" `Quick
+            test_observability_annotate_all_and_fn_attrs;
+          Alcotest.test_case "event records current span" `Quick
+            test_observability_event_records_current_span;
+          Alcotest.test_case "with_result_attrs" `Quick
+            test_observability_with_result_attrs;
           Alcotest.test_case "annotation order" `Quick
             test_observability_annotation_order;
           Alcotest.test_case "nested spans" `Quick test_observability_nested_spans;

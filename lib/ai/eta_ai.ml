@@ -752,11 +752,6 @@ let read_stream_events ?max_events stream =
   in
   loop max_events []
 
-let annotate attrs effect =
-  List.fold_right
-    (fun (key, value) acc -> Eta.Effect.annotate ~key ~value acc)
-    attrs effect
-
 let option_attr key = function
   | Some value -> [ (key, value) ]
   | None -> []
@@ -833,17 +828,18 @@ let with_error_type effect =
   effect
   |> Eta.Effect.catch (fun error ->
          Eta.Effect.fail error
-         |> annotate [ ("error.type", ai_error_type error) ])
+         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
 
 let with_span ~kind ~name ~attrs effect =
-  effect |> with_error_type |> annotate attrs
+  effect |> with_error_type |> Eta.Effect.annotate_all attrs
   |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
 
 let with_chat_span provider (request : chat_request) effect =
   let effect =
     effect
     |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response |> annotate (response_attrs response))
+           Eta.Effect.pure response
+           |> Eta.Effect.annotate_all (response_attrs response))
   in
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
@@ -881,7 +877,8 @@ let with_embeddings_span provider (request : embedding_request) effect =
   let effect =
     effect
     |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response |> annotate (embedding_response_attrs response))
+           Eta.Effect.pure response
+           |> Eta.Effect.annotate_all (embedding_response_attrs response))
   in
   let attrs =
     common_attrs ~operation:"embeddings" provider

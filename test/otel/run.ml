@@ -462,6 +462,7 @@ let test_encode_failure_drains_in_flight () =
   let exporter =
     Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-encode-failure"
+      ~disable_self_metrics:true
       ~on_error:(fun _ -> ())
       ()
   in
@@ -472,7 +473,7 @@ let test_encode_failure_drains_in_flight () =
     ~ts_ms:0;
   Eta_otel.flush ~timeout_s:0.2 exporter;
   Alcotest.(check int) "in-flight drained after encode failure" 0
-    (Eta_otel.Internal.in_flight exporter)
+    (Eta_otel.in_flight exporter)
 
 let test_otlp_retry_excludes_408 () =
   let errors = ref [] in
@@ -575,7 +576,7 @@ let test_backpressure_overflow_drops () =
   done;
   Alcotest.(check bool)
     "overflow drops instead of blocking producers" true
-    (Eta_otel.Internal.dropped exporter > 0);
+    (Eta_otel.dropped exporter > 0);
   Eio.Promise.resolve release ();
   Eta_otel.flush ~timeout_s:1.0 exporter
 
@@ -677,6 +678,56 @@ let test_self_metrics_export_without_recursion () =
            ("self metric " ^ name) true
            (json_has_string_field ~key:"name" ~value:name json))
 
+let test_self_metrics_can_be_disabled () =
+  let sends = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port =
+    start_response_server ~sw ~net ~clock ~connections:2
+      "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-self-metrics-disabled"
+      ~disable_self_metrics:true
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body:_ -> sends := path :: !sends)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "application-span";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  Alcotest.(check bool) "trace exported" true
+    (List.exists (String.equal "/v1/traces") !sends);
+  Alcotest.(check bool) "no self metrics export" false
+    (List.exists (String.equal "/v1/metrics") !sends)
+
+let test_self_metrics_path_is_separate () =
+  let sends = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port =
+    start_response_server ~sw ~net ~clock ~connections:4
+      "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-self-metrics-path"
+      ~self_metrics_path:"/internal/metrics"
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body:_ -> sends := path :: !sends)
+      ()
+  in
+  emit_span (Eta_otel.tracer exporter) "application-span";
+  Eta_otel.flush ~timeout_s:1.0 exporter;
+  Alcotest.(check bool) "self metrics custom path" true
+    (List.exists (String.equal "/internal/metrics") !sends);
+  Alcotest.(check bool) "default metrics path unused" false
+    (List.exists (String.equal "/v1/metrics") !sends)
+
 let motel_reachable net =
   try
     Eio.Switch.run @@ fun sw ->
@@ -770,6 +821,10 @@ let () =
             test_self_spans_do_not_reenter_export;
           Alcotest.test_case "self metrics export without recursion" `Quick
             test_self_metrics_export_without_recursion;
+          Alcotest.test_case "self metrics can be disabled" `Quick
+            test_self_metrics_can_be_disabled;
+          Alcotest.test_case "self metrics path is separate" `Quick
+            test_self_metrics_path_is_separate;
         ] );
       ( "motel",
         [ Alcotest.test_case "live export" `Quick test_motel_live ] );

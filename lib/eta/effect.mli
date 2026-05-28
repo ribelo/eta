@@ -319,6 +319,16 @@ val blocking :
     Eta runtimes, or submit nested blocking jobs. If it raises, the blocking
     effect raises that exception after the worker callback returns. *)
 
+val blocking_result :
+  ?pool:Blocking.Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  (unit -> ('a, 'err) result) ->
+  ('a, 'err) t
+(** [blocking_result f] runs [f] like {!blocking} and lifts its OCaml
+    [result] into Eta's typed failure channel. Exceptions raised by [f] remain
+    unchecked defects, exactly as with {!blocking}. *)
+
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
@@ -502,6 +512,43 @@ val named_kind :
   ('a, 'err) t ->
   ('a, 'err) t
 val annotate : key:string -> value:string -> ('a, 'err) t -> ('a, 'err) t
+(** Attach a string attribute to the active span. If no span is active, the
+    attribute is buffered and attached to the next span opened by the same
+    fiber. The same annotation is also included in defect diagnostics produced
+    by the wrapped effect. *)
+
+val annotate_all : (string * string) list -> ('a, 'err) t -> ('a, 'err) t
+(** Attach several span attributes with the same semantics as {!annotate}. The
+    list order is preserved. *)
+
+val event : ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Add an event to the currently active span. If tracing is disabled or no span
+    is active, this is a no-op. Use this for structured progress markers inside
+    a span; use {!log} for log records and {!metric_update} for metrics. *)
+
+val with_result_attrs :
+  ok_attrs:('a -> (string * string) list) ->
+  err_attrs:('err -> (string * string) list) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** Attach attributes derived from the effect outcome to the active span and
+    preserve the original result.
+
+    [ok_attrs] is evaluated after success. [err_attrs] is evaluated for every
+    typed [Cause.Fail] in the failure cause. Defects and interruption are not
+    passed to [err_attrs].
+
+    The attributes are recorded only when a span is active at the point the
+    wrapped effect settles. Put this combinator inside {!named} or {!fn} when
+    the attributes should land on that span:
+
+    {[
+      Effect.named "load.rows"
+        (Effect.with_result_attrs
+           ~ok_attrs:(fun rows -> [ ("row_count", string_of_int (List.length rows)) ])
+           ~err_attrs:(fun `Db_error -> [ ("result", "db_error") ])
+           load_rows)
+    ]} *)
 
 val link_span :
   ?attrs:(string * string) list ->
@@ -560,12 +607,14 @@ val here_attr : string * int * int * int -> ('a, 'err) t -> ('a, 'err) t
 val fn :
   ?kind:Capabilities.span_kind ->
   ?error_renderer:('err -> string) ->
+  ?attrs:(string * string) list ->
   string * int * int * int ->
   string ->
   ('a, 'err) t ->
   ('a, 'err) t
 (** [fn __POS__ __FUNCTION__ body] names [body] after the current binding and
-    records the source location as a [loc] span attribute. *)
+    records the source location as a [loc] span attribute. [?attrs] attaches
+    additional attributes to the same span. *)
 
 val name : ('a, 'err) t -> string option
 val collect_names : ('a, 'err) t -> string list

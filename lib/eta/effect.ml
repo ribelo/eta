@@ -720,6 +720,62 @@ let annotate ~key ~value effect =
     | None -> frame.runtime.tracer#add_attr ~key ~value);
   RObs.with_die_annotation key value @@ fun () -> effect.eval ()
 
+let annotate_all attrs effect =
+  List.fold_right
+    (fun (key, value) acc -> annotate ~key ~value acc)
+    attrs effect
+
+let add_attrs_to_active_span frame attrs =
+  if frame.runtime.tracing_enabled then
+    match Eio.Fiber.get RObs.active_span_key with
+    | None -> ()
+    | Some span_id ->
+        List.iter
+          (fun (key, value) ->
+            frame.runtime.tracer#add_attr_to ~span_id ~key ~value)
+          attrs
+
+let event ?(attrs = []) name =
+  make @@ fun () ->
+  let frame = current_frame () in
+  (if frame.runtime.tracing_enabled then
+     match Eio.Fiber.get RObs.active_span_key with
+     | None -> ()
+     | Some span_id ->
+         frame.runtime.tracer#add_event ~span_id ~name
+           ~ts_ms:(frame.runtime.now_ms ()) ~attrs);
+  ok ()
+
+let rec iter_cause_fail f = function
+  | Cause.Fail err -> f err
+  | Cause.Die _ | Cause.Interrupt _ -> ()
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.iter (iter_cause_fail f) causes
+  | Cause.Suppressed { primary; finalizer } ->
+      iter_cause_fail f primary;
+      iter_cause_fail f finalizer
+
+let with_result_attrs ~ok_attrs ~err_attrs effect =
+  preserve effect @@ fun () ->
+  let frame = current_frame () in
+  match effect.eval () with
+  | Exit.Ok value as ok -> (
+      try
+        add_attrs_to_active_span frame (ok_attrs value);
+        ok
+      with exn -> exit_of_exn frame exn)
+  | Exit.Error cause as original -> (
+      try
+        iter_cause_fail
+          (fun err -> add_attrs_to_active_span frame (err_attrs err))
+          cause;
+        original
+      with exn ->
+        let finalizer =
+          Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+        in
+        error (Cause.suppressed ~primary:cause ~finalizer))
+
 let link_span ?(attrs = []) ~trace_id ~span_id effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
@@ -895,6 +951,9 @@ end
 let blocking ?pool ?(name = "blocking") ?on_cancel f =
   Blocking.submit ?pool ~name ?on_cancel f
 
+let blocking_result ?pool ?name ?on_cancel f =
+  blocking ?pool ?name ?on_cancel f |> bind from_result
+
 let supervisor_pure value = Supervisor_pure value
 let supervisor_lift effect = Supervisor_lift effect
 let supervisor_fail err = Supervisor_fail err
@@ -911,8 +970,8 @@ let here_attr (file, line, col_start, col_end) effect =
     ~value:(Printf.sprintf "%s:%d:%d-%d" file line col_start col_end)
     effect
 
-let fn ?(kind = Capabilities.Internal) ?error_renderer pos name effect =
-  effect |> here_attr pos |> named_kind ?error_renderer ~kind name
+let fn ?(kind = Capabilities.Internal) ?error_renderer ?(attrs = []) pos name effect =
+  effect |> annotate_all attrs |> here_attr pos |> named_kind ?error_renderer ~kind name
 
 let name effect = effect.leaf_name
 let collect_names effect = effect.names
@@ -976,8 +1035,7 @@ let run runtime effect =
 module Private = struct
   let daemon = daemon_internal
   let named_attrs ~kind name ~attrs effect =
-    List.fold_right (fun (key, value) acc -> annotate ~key ~value acc) attrs
-      (named_kind ~kind name effect)
+    annotate_all attrs (named_kind ~kind name effect)
   let metric_updates = metric_updates
   let metric_updates_lazy = metric_updates_lazy
 

@@ -55,3 +55,30 @@ let test_error_redaction_and_projection () =
         (contains output "body"))
     [ pretty; json ]
 
+let test_trace_context_request_helpers () =
+  let traceparent =
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  in
+  let request =
+    Eta_http.Request.make
+      ~headers:(Eta_http.Core.Header.unsafe_of_list [ ("TraceParent", traceparent) ])
+      "GET" "http://example.test/"
+  in
+  let extracted = Eta_http.Trace_context.extract_request request in
+  let ctx =
+    match extracted with
+    | Some ctx -> ctx
+    | None -> Alcotest.fail "expected trace context"
+  in
+  Alcotest.(check string) "trace id" "4bf92f3577b34da6a3ce929d0e0e4736"
+    ctx.trace_id;
+  let replacement =
+    Option.get
+      (Eta.Trace_context.make
+         ~trace_id:"11111111111111111111111111111111"
+         ~span_id:"2222222222222222" ())
+  in
+  let injected = Eta_http.Trace_context.inject_request replacement request in
+  Alcotest.(check (option string)) "traceparent replaced"
+    (Some "00-11111111111111111111111111111111-2222222222222222-01")
+    (Eta_http.Core.Header.get "traceparent" injected.Eta_http.Request.headers)

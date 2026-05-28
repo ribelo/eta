@@ -55,6 +55,7 @@ type export_config = {
   traces_path : string;
   logs_path : string;
   metrics_path : string;
+  self_metrics_path : string option;
   resource_attrs : (string * string) list;
   scope_name : string;
   headers : (string * string) list;
@@ -64,8 +65,9 @@ type signal_batch =
   | Trace_batch of span list
   | Log_batch of Eta.Capabilities.log_record list
   | Metric_batch of Eta.Meter.point list
+  | Self_metric_batch of Eta.Meter.point list
 
-type signal_kind = Traces | Logs | Metrics
+type signal_kind = Traces | Logs | Metrics | Self_metrics
 
 let encode_traces_request = Otlp_json.encode_traces_request
 let encode_logs_request = Otlp_json.encode_logs_request
@@ -120,6 +122,7 @@ type t = {
   queue : span Mailbox.t;
   log_queue : Eta.Capabilities.log_record Mailbox.t;
   metric_queue : Eta.Meter.point Mailbox.t;
+  self_metric_queue : Eta.Meter.point Mailbox.t;
   self_tracer : Eta.Tracer.in_memory;
   flush_rt : unit Eta.Runtime.t;
   context_id : int;
@@ -195,6 +198,7 @@ let signal_name = function
   | Traces -> "traces"
   | Logs -> "logs"
   | Metrics -> "metrics"
+  | Self_metrics -> "self_metrics"
 
 let self_metric t ~name ~description ~unit_ ~kind ~attrs ~value =
   {
@@ -212,6 +216,9 @@ let self_queue_metrics t =
     ("traces", Mailbox.length t.queue, Mailbox.dropped t.queue);
     ("logs", Mailbox.length t.log_queue, Mailbox.dropped t.log_queue);
     ("metrics", Mailbox.length t.metric_queue, Mailbox.dropped t.metric_queue);
+    ( "self_metrics",
+      Mailbox.length t.self_metric_queue,
+      Mailbox.dropped t.self_metric_queue );
   ]
   |> List.concat_map (fun (queue, length, dropped) ->
          [
@@ -243,19 +250,21 @@ let self_export_metrics t signal ~batch_size =
   ]
   @ self_queue_metrics t
 
-let enqueue_self_export_metrics t signal ~batch_size =
-  Eta.Effect.named "eta_otel.self_metrics.enqueue" (Eta.Effect.sync (fun () ->
-      self_export_metrics t signal ~batch_size
-      |> List.iter (enqueue t t.metric_queue)))
+let enqueue_self_export_metrics t config signal ~batch_size =
+  match config.self_metrics_path with
+  | None -> Eta.Effect.unit
+  | Some _ ->
+      Eta.Effect.named "eta_otel.self_metrics.enqueue"
+        (Eta.Effect.sync (fun () ->
+             self_export_metrics t signal ~batch_size
+             |> List.iter (enqueue t t.self_metric_queue)))
 
 module Self_metrics = struct
-  let on_export t signal ~batch_size =
+  let on_export t config signal ~batch_size =
     match signal with
-    | Traces | Logs -> enqueue_self_export_metrics t signal ~batch_size
-    | Metrics -> Eta.Effect.unit
-
-  let append_to_metrics_batch t batch =
-    batch @ self_export_metrics t Metrics ~batch_size:(List.length batch)
+    | Traces | Logs | Metrics ->
+        enqueue_self_export_metrics t config signal ~batch_size
+    | Self_metrics -> Eta.Effect.unit
 end
 
 let observe_send t ~path ~body =
@@ -298,7 +307,7 @@ let export_body t config ~path ~body =
 
 let export_batch t config ~signal ~path ~body ~n =
   export_body t config ~path ~body
-  |> Eta.Effect.bind (fun () -> Self_metrics.on_export t signal ~batch_size:n)
+  |> Eta.Effect.bind (fun () -> Self_metrics.on_export t config signal ~batch_size:n)
 
 let signal_batches t =
   let traces =
@@ -313,7 +322,12 @@ let signal_batches t =
     Mailbox.to_batch_stream ~max:128 t.metric_queue
     |> Eta_stream.map (fun batch -> Metric_batch batch)
   in
-  Eta_stream.merge traces (Eta_stream.merge logs metrics)
+  let self_metrics =
+    Mailbox.to_batch_stream ~max:128 t.self_metric_queue
+    |> Eta_stream.map (fun batch -> Self_metric_batch batch)
+  in
+  Eta_stream.merge traces
+    (Eta_stream.merge logs (Eta_stream.merge metrics self_metrics))
 
 let signal_details config = function
   | Trace_batch batch ->
@@ -322,6 +336,12 @@ let signal_details config = function
       (Logs, config.logs_path, List.length batch)
   | Metric_batch batch ->
       (Metrics, config.metrics_path, List.length batch)
+  | Self_metric_batch batch -> (
+      match config.self_metrics_path with
+      | Some path -> (Self_metrics, path, List.length batch)
+      | None ->
+          invalid_arg
+            "eta-otel: self metrics batch exists while self metrics are disabled")
 
 let encode_signal_body t config = function
   | Trace_batch batch ->
@@ -332,13 +352,16 @@ let encode_signal_body t config = function
         ~scope_name:config.scope_name batch
   | Metric_batch batch ->
       encode_metrics_request ~resource_attrs:config.resource_attrs
-        ~scope_name:config.scope_name
-        (Self_metrics.append_to_metrics_batch t batch)
+        ~scope_name:config.scope_name batch
+  | Self_metric_batch batch ->
+      encode_metrics_request ~resource_attrs:config.resource_attrs
+        ~scope_name:config.scope_name batch
 
 let batch_signal_name = function
   | Trace_batch _ -> "traces"
   | Log_batch _ -> "logs"
   | Metric_batch _ -> "metrics"
+  | Self_metric_batch _ -> "self_metrics"
 
 let export_signal t config signal =
   let name = batch_signal_name signal in
@@ -375,11 +398,20 @@ let start_daemon rt effect =
 let dropped t =
   Mailbox.dropped t.queue + Mailbox.dropped t.log_queue
   + Mailbox.dropped t.metric_queue
+  + Mailbox.dropped t.self_metric_queue
+
+let in_flight t = Drain_counter.value t.in_flight
+
+let queue_depth t =
+  Mailbox.length t.queue + Mailbox.length t.log_queue
+  + Mailbox.length t.metric_queue
+  + Mailbox.length t.self_metric_queue
 
 let close_mailboxes t =
   Mailbox.close t.queue;
   Mailbox.close t.log_queue;
-  Mailbox.close t.metric_queue
+  Mailbox.close t.metric_queue;
+  Mailbox.close t.self_metric_queue
 
 let shutdown_http_client t =
   ignore
@@ -561,18 +593,39 @@ let inspect t ~span_id : Eta.Capabilities.span_info option =
 (* Public constructor                                                 *)
 (* ------------------------------------------------------------------ *)
 
+let debug_on_send ~path ~body =
+  prerr_endline
+    (Printf.sprintf "[eta-otel] POST %s (%d bytes)" path (String.length body))
+
 let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     ?(traces_path = "/v1/traces") ?(logs_path = "/v1/logs")
-    ?(metrics_path = "/v1/metrics") ?(service_name = "eta")
+    ?(metrics_path = "/v1/metrics") ?self_metrics_path
+    ?(disable_self_metrics = false) ?(debug = false) ?(service_name = "eta")
     ?service_version ?(resource_attrs = []) ?(scope_name = "eta")
     ?(headers = []) ?(queue_capacity = 1024) ?on_error ?on_send () =
   let net = (net :> [ `Generic ] Eio.Net.ty Eio.Std.r) in
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
+  let self_metrics_path =
+    match (disable_self_metrics, self_metrics_path) with
+    | true, Some _ ->
+        invalid_arg
+          "Eta_otel.create: disable_self_metrics conflicts with self_metrics_path"
+    | true, None -> None
+    | false, Some path -> Some path
+    | false, None -> Some metrics_path
+  in
   let on_error =
     Option.value on_error ~default:(fun msg ->
         prerr_endline ("[eta-otel] export failed: " ^ msg))
   in
-  let on_send = Option.value on_send ~default:(fun ~path:_ ~body:_ -> ()) in
+  let on_send =
+    let user_on_send =
+      Option.value on_send ~default:(fun ~path:_ ~body:_ -> ())
+    in
+    fun ~path ~body ->
+      if debug then debug_on_send ~path ~body;
+      user_on_send ~path ~body
+  in
   let resource_attrs =
     let base = [ ("service.name", service_name) ] in
     let base =
@@ -601,6 +654,7 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       traces_path;
       logs_path;
       metrics_path;
+      self_metrics_path;
       resource_attrs;
       scope_name;
       headers;
@@ -617,13 +671,14 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();
       metric_queue = Mailbox.create ~capacity:queue_capacity ();
-	      self_tracer;
-	      flush_rt;
-	      context_id = fresh_context_id ();
-	      next_handle = 1;
-	      table = Hashtbl.create 64;
-	      fallback = empty_fiber_state ();
-	      rng;
+      self_metric_queue = Mailbox.create ~capacity:queue_capacity ();
+      self_tracer;
+      flush_rt;
+      context_id = fresh_context_id ();
+      next_handle = 1;
+      table = Hashtbl.create 64;
+      fallback = empty_fiber_state ();
+      rng;
       in_flight = Drain_counter.create ();
       on_error;
       on_send;
@@ -697,7 +752,5 @@ module Internal = struct
   let encode_traces_request = encode_traces_request
   let encode_logs_request = encode_logs_request
   let encode_metrics_request = encode_metrics_request
-  let dropped = dropped
-  let in_flight t = Drain_counter.value t.in_flight
   let self_spans t = Eta.Tracer.dump t.self_tracer
 end

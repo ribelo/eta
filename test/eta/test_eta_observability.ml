@@ -49,6 +49,65 @@ let test_observability_fn_loc () =
   | Some loc -> Alcotest.(check bool) "test file" true (String.contains loc '/')
   | None -> Alcotest.fail "missing loc attr"
 
+let test_observability_annotate_all_and_fn_attrs () =
+  with_traced_runtime @@ fun rt tracer ->
+  let program =
+    Effect.fn
+      ~attrs:[ ("component", "ingest"); ("phase", "assets") ]
+      __POS__ "ingest.assets" Effect.unit
+  in
+  run_ok rt program;
+  let span = only_span tracer in
+  Alcotest.(check (option string)) "component" (Some "ingest")
+    (attr "component" span);
+  Alcotest.(check (option string)) "phase" (Some "assets")
+    (attr "phase" span);
+  Alcotest.(check bool) "loc present" true (Option.is_some (attr "loc" span))
+
+let test_observability_event_records_current_span () =
+  with_traced_runtime @@ fun rt tracer ->
+  let program =
+    Effect.named "ingest.assets"
+      (Effect.event ~attrs:[ ("batch", "1") ] "ingest.assets.progress")
+  in
+  run_ok rt program;
+  let span = only_span tracer in
+  match span.events with
+  | [ event ] ->
+      Alcotest.(check string) "event name" "ingest.assets.progress"
+        event.Tracer.ev_name;
+      Alcotest.(check (option string)) "event attr" (Some "1")
+        (List.assoc_opt "batch" event.Tracer.ev_attrs)
+  | events ->
+      Alcotest.failf "expected one span event, got %d" (List.length events)
+
+let test_observability_with_result_attrs () =
+  with_traced_runtime @@ fun rt tracer ->
+  let observe effect =
+    Effect.with_result_attrs
+      ~ok_attrs:(fun rows ->
+        [ ("result", "ok"); ("row_count", string_of_int (List.length rows)) ])
+      ~err_attrs:(fun (`Bad code) ->
+        [ ("result", "error"); ("error.code", string_of_int code) ])
+      effect
+  in
+  let ok_effect = Effect.named "rows.ok" (observe (Effect.pure [ 1; 2; 3 ])) in
+  let err_effect = Effect.named "rows.err" (observe (Effect.fail (`Bad 7))) in
+  Alcotest.(check (list int)) "ok value" [ 1; 2; 3 ] (run_ok rt ok_effect);
+  ignore (Runtime.run rt err_effect : (int list, [ `Bad of int ]) Exit.t);
+  let spans = Tracer.dump tracer in
+  let find name = List.find (fun span -> String.equal span.Tracer.name name) spans in
+  let ok_span = find "rows.ok" in
+  let err_span = find "rows.err" in
+  Alcotest.(check (option string)) "ok result" (Some "ok")
+    (attr "result" ok_span);
+  Alcotest.(check (option string)) "row count" (Some "3")
+    (attr "row_count" ok_span);
+  Alcotest.(check (option string)) "error result" (Some "error")
+    (attr "result" err_span);
+  Alcotest.(check (option string)) "error code" (Some "7")
+    (attr "error.code" err_span)
+
 let test_observability_annotation_order () =
   let run eff =
     with_traced_runtime @@ fun rt tracer ->

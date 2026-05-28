@@ -338,6 +338,36 @@ Use `Effect.with_error_renderer` when several named spans share the same error
 channel. The renderer is scoped to that effect subtree; caught inner errors keep
 the conservative default unless they provide their own renderer.
 
+Span attributes can be attached one at a time or as a list:
+
+```ocaml
+let load_rows : (int list, [ `Fetch_failed ]) Effect.t =
+  Effect.pure [ 1; 2; 3 ]
+
+let load_assets =
+  Effect.fn
+    ~attrs:[ ("component", "ingest"); ("source", "yahoo") ]
+    __POS__ __FUNCTION__
+    (Effect.with_result_attrs
+       ~ok_attrs:(fun rows ->
+         [ ("result", "ok"); ("row_count", string_of_int (List.length rows)) ])
+       ~err_attrs:(fun `Fetch_failed -> [ ("result", "fetch_failed") ])
+       load_rows)
+```
+
+Use `Effect.event` for structured markers on the active span:
+
+```ocaml
+let symbol = "AAPL"
+
+let progress =
+  Effect.event ~attrs:[ ("asset", symbol) ] "ingest.assets.progress"
+```
+
+`Effect.event` is not a log record. It is dropped when no span is active. Put
+`with_result_attrs` inside `Effect.named` or `Effect.fn`; outcome attributes are
+also dropped when the wrapped effect settles outside an active span.
+
 At service boundaries, extract W3C headers and install the context around the
 request effect:
 
@@ -345,6 +375,17 @@ request effect:
 let handle headers =
   let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
   match Trace_context.extract headers with
+  | None -> body
+  | Some ctx -> Effect.with_context ctx body
+```
+
+For eta-http request values, use the request helper instead of reaching into
+the header list:
+
+```ocaml
+let handle_request request =
+  let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
+  match Eta_http.Trace_context.extract_request request with
   | None -> body
   | Some ctx -> Effect.with_context ctx body
 ```

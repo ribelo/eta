@@ -24,6 +24,8 @@ let () =
         [
           Alcotest.test_case "value accepts HTAB" `Quick
             test_header_value_accepts_htab;
+          Alcotest.test_case "trace context request helpers" `Quick
+            test_trace_context_request_helpers;
         ] );
       ( "error",
         [

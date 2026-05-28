@@ -109,6 +109,9 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 | `~traces_path`    | `"/v1/traces"`   | OTLP traces endpoint                         |
 | `~logs_path`      | `"/v1/logs"`     | OTLP logs endpoint                           |
 | `~metrics_path`   | `"/v1/metrics"`  | OTLP metrics endpoint                        |
+| `~self_metrics_path` | `~metrics_path` | OTLP endpoint for exporter self-metrics      |
+| `~disable_self_metrics` | `false`     | stop exporter self-metrics only              |
+| `~debug`          | `false`          | print one stderr line before each OTLP POST  |
 | `~service_name`   | `"eta"`        | `service.name` resource attribute            |
 | `~service_version`| `None`           | `service.version` resource attribute         |
 | `~resource_attrs` | `[]`             | extra resource attributes (key, value pairs) |
@@ -134,11 +137,26 @@ already accepted telemetry, and drops signals submitted after shutdown.
 
 ## Self Metrics
 
-eta-otel emits exporter self-metrics to the configured metrics endpoint.
-Trace and log exports enqueue one metrics batch after the export attempt;
-metrics exports append their own self-metrics directly to the outgoing OTLP
-payload. That keeps exporter metrics observable without recursively scheduling
-more metric exports.
+eta-otel emits exporter self-metrics to `~self_metrics_path`, which defaults to
+the application `~metrics_path`. Trace, log, and application metric exports
+enqueue one self-metrics batch after the export attempt. Self-metric exports do
+not enqueue another self-metric batch, so the exporter does not recursively
+schedule itself forever.
+
+Use `~disable_self_metrics:true` when a collector accepts traces/logs but does
+not implement `/v1/metrics`. This does not disable the application meter; it
+only stops eta-otel from exporting its own health metrics. Use
+`~self_metrics_path:"/some/path"` when self-metrics must go to a different OTLP
+metrics route.
+
+Applications can expose local exporter health without scraping OTLP by reading:
+
+```ocaml
+let health exporter =
+  ( Eta_otel.dropped exporter,
+    Eta_otel.in_flight exporter,
+    Eta_otel.queue_depth exporter )
+```
 
 The current self-metrics are:
 
