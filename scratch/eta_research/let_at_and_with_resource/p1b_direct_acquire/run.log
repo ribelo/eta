@@ -1,0 +1,43 @@
+Command:
+
+```text
+nix develop -c dune build scratch/eta_research/let_at_and_with_resource/p1b_direct_acquire.exe
+```
+
+Result:
+
+```text
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta' is dirty
+```
+
+Command:
+
+```text
+nix develop -c _build/default/scratch/eta_research/let_at_and_with_resource/p1b_direct_acquire.exe
+```
+
+Result:
+
+```text
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta' is dirty
+semaphore.with_permits H-A applicability=body-bounded lines=5 avg_indent=2.80
+semaphore.with_permits H-B applicability=body-bounded lines=5 avg_indent=3.40
+semaphore.with_permits H-C applicability=body-bounded lines=9 avg_indent=2.67
+semaphore.with_permits H-D applicability=body-bounded lines=7 avg_indent=3.86
+pubsub.subscribe H-A applicability=body-bounded lines=5 avg_indent=2.80
+pubsub.subscribe H-B applicability=body-bounded lines=5 avg_indent=3.40
+pubsub.subscribe H-C applicability=body-bounded lines=9 avg_indent=2.67
+pubsub.subscribe H-D applicability=body-bounded lines=7 avg_indent=3.86
+body_source.with_owned_stream H-A applicability=body-bounded lines=5 avg_indent=2.80
+body_source.with_owned_stream H-B applicability=body-bounded lines=5 avg_indent=3.40
+body_source.with_owned_stream H-C applicability=body-bounded lines=9 avg_indent=2.67
+body_source.with_owned_stream H-D applicability=body-bounded lines=7 avg_indent=3.86
+pool.with_acquire_guard H-A applicability=scope-end-required lines=5 avg_indent=2.80
+pool.with_acquire_guard H-B applicability=scope-end-required lines=5 avg_indent=3.40
+pool.with_acquire_guard H-C applicability=scope-end-required lines=9 avg_indent=2.67
+pool.with_acquire_guard H-D applicability=scope-end-required lines=7 avg_indent=3.86
+mixed.consumer.with_and_direct H-A applicability=body-bounded lines=8 avg_indent=3.50
+mixed.consumer.with_and_direct H-B applicability=body-bounded lines=8 avg_indent=2.25
+mixed.consumer.with_and_direct H-C applicability=body-bounded lines=11 avg_indent=2.18
+mixed.consumer.with_and_direct H-D applicability=body-bounded lines=9 avg_indent=3.33
+```

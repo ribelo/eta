@@ -132,6 +132,14 @@ let () =
             test_acquire_release_suppresses_release_failure;
           Alcotest.test_case "acquire release release failure after success"
             `Quick test_acquire_release_release_failure_after_success;
+          Alcotest.test_case "with_resource success" `Quick
+            test_with_resource_success;
+          Alcotest.test_case "with_resource typed failure releases" `Quick
+            test_with_resource_typed_failure_releases;
+          Alcotest.test_case "with_resource releases on cancel" `Quick
+            test_with_resource_releases_on_cancel;
+          Alcotest.test_case "with_resource release failure after success"
+            `Quick test_with_resource_release_failure_after_success;
           Alcotest.test_case "acquire release finalizers lifo sequential"
             `Quick test_acquire_release_finalizers_run_lifo_sequentially;
           Alcotest.test_case "acquire release finalizer failure keeps running"

@@ -409,6 +409,31 @@ val acquire_release :
     runs on success and on typed failure; release failures are reported as the
     run failure or suppressed onto the primary failure. *)
 
+val with_resource :
+  acquire:('a, 'err) t ->
+  release:('a -> (unit, 'err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+(** CPS companion to {!acquire_release}.
+
+    [with_resource ~acquire ~release body] is equivalent to
+    [acquire_release ~acquire ~release |> bind body]. Release semantics are
+    identical to {!acquire_release}: release is registered with the current
+    runtime boundary, scope, supervisor scope, or daemon body; cancellation
+    safety, release-on-cancel, and suppressed finalizer failures are inherited
+    from {!acquire_release}. Only the binding shape differs.
+
+    Use this for body-shaped acquire/use/release code and existing CPS
+    layouts. Keep {!acquire_release} when the acquired value intentionally
+    participates in a longer monadic chain or when release must be tied to a
+    larger surrounding scope. If {!scoped} wraps a [with_resource] block, the
+    [scoped] call intentionally interrupts a [let@] ladder to mark that scope
+    boundary.
+
+    This differs from {!Pool.with_resource}: [Effect.with_resource] takes
+    [~acquire], [~release], and [body]; [Pool.with_resource] takes a pool and
+    [body]. The module qualifier carries that distinction. *)
+
 val scoped : ('a, 'err) t -> ('a, 'err) t
 
 val with_background :

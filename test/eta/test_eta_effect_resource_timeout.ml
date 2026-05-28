@@ -128,6 +128,84 @@ let test_acquire_release_release_failure_after_success () =
   check_exit_error string_cause "release failure" (Cause.Fail "release")
     (Runtime.run rt eff)
 
+let test_with_resource_success () =
+  with_runtime @@ fun rt ->
+  let trail = ref [] in
+  let mark name = Effect.named name (Effect.sync (fun () -> trail := name :: !trail)) in
+  let eff =
+    Effect.scoped
+      (Effect.with_resource
+         ~acquire:(mark "acquired" |> Effect.map (fun () -> 1))
+         ~release:(fun resource ->
+           mark ("released:" ^ string_of_int resource))
+         (fun resource ->
+           let open Syntax in
+           let@ value = fun k -> k resource in
+           mark ("body:" ^ string_of_int value)
+           |> Effect.map (fun () -> value + 1)))
+  in
+  Alcotest.(check int) "body result" 2 (run_ok rt eff);
+  Alcotest.(check (list string))
+    "ordering"
+    [ "acquired"; "body:1"; "released:1" ]
+    (List.rev !trail)
+
+let test_with_resource_typed_failure_releases () =
+  with_runtime @@ fun rt ->
+  let released = ref false in
+  let eff =
+    Effect.scoped
+      (Effect.with_resource ~acquire:(Effect.pure "resource")
+         ~release:(fun _ ->
+           Effect.sync (fun () -> released := true))
+         (fun _ -> Effect.fail `Boom))
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail `Boom) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected typed failure, got %a"
+        (Cause.pp (fun fmt `Boom -> Format.pp_print_string fmt "Boom"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected typed failure");
+  Alcotest.(check bool) "released" true !released
+
+let test_with_resource_releases_on_cancel () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = ref 0 in
+  let acquired, acquired_u = Eio.Promise.create () in
+  let slow =
+    Effect.scoped
+      (Effect.with_resource
+         ~acquire:
+           (Effect.named "with_resource.acquire.cancelled" (Effect.sync (fun () ->
+                Eio.Promise.resolve acquired_u ())))
+         ~release:(fun () ->
+           Effect.named "with_resource.release.cancelled"
+             (Effect.sync (fun () -> incr released)))
+         (fun () ->
+           Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))
+  in
+  let fast =
+    Effect.named "wait-with-resource-acquired"
+      (Effect.sync (fun () -> Eio.Promise.await acquired))
+    |> Effect.map (fun () -> "fast")
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; fast ]) in
+  wait_for_sleepers clock 2;
+  check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
+  Alcotest.(check int) "cancelled release once" 1 !released
+
+let test_with_resource_release_failure_after_success () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.with_resource ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.fail "release")
+         (fun () -> Effect.pure "body"))
+  in
+  check_exit_error string_cause "release failure" (Cause.Fail "release")
+    (Runtime.run rt eff)
+
 let test_acquire_release_finalizers_run_lifo_sequentially () =
   with_runtime @@ fun rt ->
   let a_started = Atomic.make false in

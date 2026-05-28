@@ -103,11 +103,12 @@ let test_effect_syntax_operators () =
   let open Eta.Syntax in
   let eff =
     let* a = Effect.pure 2 in
+    let@ d = (fun k -> k 5) in
     let+ b = Effect.pure 3
     and+ c = Effect.pure 4 in
-    a + b + c
+    a + b + c + d
   in
-  Alcotest.(check int) "syntax result" 9 (run_ok rt eff)
+  Alcotest.(check int) "syntax result" 14 (run_ok rt eff)
 
 let test_effect_tap_error_observes_and_rethrows () =
   with_runtime @@ fun rt ->

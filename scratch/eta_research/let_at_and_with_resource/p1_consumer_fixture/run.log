@@ -1,0 +1,36 @@
+Command:
+
+```text
+nix develop -c dune build scratch/eta_research/let_at_and_with_resource/p1_consumer_fixture.exe scratch/eta_research/let_at_and_with_resource/p3_soundness_positive.exe
+```
+
+Result:
+
+```text
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta' is dirty
+```
+
+Command:
+
+```text
+nix develop -c _build/default/scratch/eta_research/let_at_and_with_resource/p1_consumer_fixture.exe
+```
+
+Result:
+
+```text
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta' is dirty
+H-A lines=4 avg_indent=0.00
+H-B lines=7 avg_indent=0.57
+H-C lines=4 avg_indent=0.00
+H-D lines=8 avg_indent=1.25
+H-E lines=7 avg_indent=0.57
+H-F lines=5 avg_indent=0.00
+```
+
+Interpretation:
+
+- H-C is the smallest public-syntax candidate with binder-first visual flow for the pre-wrapped consumer chain.
+- H-B and H-D are not discriminated by this fixture when every resource is already exposed as a `with_*` function. The earlier direct `Effect.with_resource` substitution is recorded only as a non-load-bearing orientation variant.
+- H-F is nearly equal to H-C but repeats the local `let@` definition at each consumer file.
+- P1b supplies the direct-acquire evidence needed to evaluate the CPS companion fairly.

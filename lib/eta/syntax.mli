@@ -7,6 +7,14 @@ val ( let* ) :
 val ( let+ ) : ('a, 'err) Effect.t -> ('a -> 'b) -> ('b, 'err) Effect.t
 (** Map over a successful value. *)
 
+val ( let@ ) : (('a -> 'b) -> 'c) -> ('a -> 'b) -> 'c
+(** Callback inversion for CPS [with_*] functions.
+
+    [let@ x = with_thing args in body] is [with_thing args (fun x -> body)].
+    It is intentionally not Eta-effect-specific and does not add RAII or
+    cleanup behavior; lifecycle safety remains owned by the [with_*] function
+    being called. *)
+
 val ( and* ) :
   ('a, 'err) Effect.t -> ('b, 'err) Effect.t -> ('a * 'b, 'err) Effect.t
 (** Run two effects concurrently and bind both successful values. *)

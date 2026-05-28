@@ -552,6 +552,9 @@ let acquire_release ~acquire ~release =
         :: !(frame.finalizers);
       ok value
 
+let with_resource ~acquire ~release body =
+  acquire_release ~acquire ~release |> bind body
+
 let scoped effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
