@@ -156,7 +156,7 @@ static int load_api(void)
   const char *candidates[] = { env, "liblbug.so", "libladybug.so", "liblbug.dylib", NULL };
   for (int i = 0; candidates[i] != NULL; i++) {
     if (candidates[i][0] == '\0') continue;
-    api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
+    api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_GLOBAL);
     if (api.handle != NULL) break;
   }
   if (api.handle == NULL) {

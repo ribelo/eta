@@ -1,3 +1,16 @@
 (test
  (name test_connectors)
- (libraries eta_duckdb eta_turso eta_ladybug alcotest))
+ (libraries eta_duckdb eta_turso eta_ladybug alcotest)
+ (deps
+  (:ladybug_extension libeta_ladybug_test_extension.lbug_extension))
+ (action
+  (setenv
+   ETA_LADYBUG_TEST_EXTENSION
+   %{ladybug_extension}
+   (run %{test}))))
+
+(rule
+ (target libeta_ladybug_test_extension.lbug_extension)
+ (deps ladybug_test_extension.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps})))

@@ -171,6 +171,44 @@ val available : unit -> (unit, error) result
 val version : unit -> (string, error) result
 val classify_error : string -> error_category
 
+module Extension : sig
+  type official
+
+  type source =
+    | Official
+    | User
+    | Static_link
+    | Unknown of string
+
+  type loaded = {
+    name : string;
+    source : source;
+    path : string;
+  }
+
+  type available = {
+    name : string;
+    description : string;
+  }
+
+  val official : string -> (official, error) result
+  val name : official -> string
+  val algo : official
+  val azure : official
+  val delta : official
+  val duckdb : official
+  val fts : official
+  val httpfs : official
+  val iceberg : official
+  val json : official
+  val llm : official
+  val neo4j : official
+  val postgres : official
+  val sqlite : official
+  val unity_catalog : official
+  val vector : official
+end
+
 module Database : sig
   type t = database
 
@@ -188,6 +226,14 @@ module Connection : sig
   val query_string : ?params:Param.t list -> t -> string -> (string, error) result
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
+  val install_extension :
+    ?repo:string -> ?force:bool -> t -> Extension.official -> (unit, error) result
+  val update_extension : t -> Extension.official -> (unit, error) result
+  val uninstall_extension : t -> Extension.official -> (unit, error) result
+  val load_extension : t -> Extension.official -> (unit, error) result
+  val load_extension_path : t -> path:string -> (unit, error) result
+  val loaded_extensions : t -> (Extension.loaded list, error) result
+  val official_extensions : t -> (Extension.available list, error) result
   val begin_transaction : t -> (unit, error) result
   val commit : t -> (unit, error) result
   val rollback : t -> (unit, error) result
@@ -228,6 +274,55 @@ module Pool : sig
     t ->
     'a Query.t ->
     ('a list, error) Eta.Effect.t
+
+  val install_extension :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    ?repo:string ->
+    ?force:bool ->
+    t ->
+    Extension.official ->
+    (unit, error) Eta.Effect.t
+
+  val update_extension :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    Extension.official ->
+    (unit, error) Eta.Effect.t
+
+  val uninstall_extension :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    Extension.official ->
+    (unit, error) Eta.Effect.t
+
+  val load_extension :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    Extension.official ->
+    (unit, error) Eta.Effect.t
+
+  val load_extension_path :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    path:string ->
+    (unit, error) Eta.Effect.t
+
+  val loaded_extensions :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    (Extension.loaded list, error) Eta.Effect.t
+
+  val official_extensions :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    (Extension.available list, error) Eta.Effect.t
 
   val transaction :
     ?blocking_pool:Eta.Effect.Blocking.Pool.t ->

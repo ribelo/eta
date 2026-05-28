@@ -382,6 +382,176 @@ let pp_error ppf = function
 let show_error err = Format.asprintf "%a" pp_error err
 let pp_ladybug_error = pp_error
 
+module Extension = struct
+  type official = string
+
+  type source =
+    | Official
+    | User
+    | Static_link
+    | Unknown of string
+
+  type loaded = {
+    name : string;
+    source : source;
+    path : string;
+  }
+
+  type available = {
+    name : string;
+    description : string;
+  }
+
+  let valid_first = function
+    | 'A' .. 'Z' | 'a' .. 'z' | '_' -> true
+    | _ -> false
+
+  let valid_rest = function
+    | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true
+    | _ -> false
+
+  let official_names =
+    [
+      "algo";
+      "azure";
+      "delta";
+      "duckdb";
+      "fts";
+      "httpfs";
+      "iceberg";
+      "json";
+      "llm";
+      "neo4j";
+      "postgres";
+      "sqlite";
+      "unity_catalog";
+      "vector";
+    ]
+
+  let is_known_official value =
+    List.exists (String.equal value) official_names
+
+  let official value =
+    let len = String.length value in
+    let rec loop index =
+      index = len || (valid_rest value.[index] && loop (index + 1))
+    in
+    if len = 0 then Result.Error (Invalid_value "extension name must not be empty")
+    else if (not (valid_first value.[0])) || not (loop 1) then
+      Result.Error
+        (Invalid_value
+           ("invalid LadybugDB official extension name: " ^ value))
+    else
+      let value = String.lowercase_ascii value in
+      if is_known_official value then Ok value
+      else
+        Result.Error
+          (Invalid_value
+             ("unknown LadybugDB official extension name: " ^ value))
+
+  let unsafe_official value =
+    match official value with
+    | Ok value -> value
+    | Result.Error _ ->
+        invalid_arg ("Eta_ladybug.Extension.unsafe_official: " ^ value)
+
+  let name value = value
+  let algo = unsafe_official "algo"
+  let azure = unsafe_official "azure"
+  let delta = unsafe_official "delta"
+  let duckdb = unsafe_official "duckdb"
+  let fts = unsafe_official "fts"
+  let httpfs = unsafe_official "httpfs"
+  let iceberg = unsafe_official "iceberg"
+  let json = unsafe_official "json"
+  let llm = unsafe_official "llm"
+  let neo4j = unsafe_official "neo4j"
+  let postgres = unsafe_official "postgres"
+  let sqlite = unsafe_official "sqlite"
+  let unity_catalog = unsafe_official "unity_catalog"
+  let vector = unsafe_official "vector"
+
+  let source_of_string = function
+    | "OFFICIAL" -> Official
+    | "USER" -> User
+    | "STATIC LINK" -> Static_link
+    | value -> Unknown value
+
+  let has_nul value =
+    let rec loop index =
+      index < String.length value
+      && (Char.equal value.[index] '\000' || loop (index + 1))
+    in
+    loop 0
+
+  let string_literal ~kind value =
+    if has_nul value then
+      Result.Error (Invalid_value (kind ^ " must not contain NUL bytes"))
+    else
+      let buffer = Buffer.create (String.length value + 2) in
+      Buffer.add_char buffer '\'';
+      String.iter
+        (function
+          | '\\' -> Buffer.add_string buffer "\\\\"
+          | '\'' -> Buffer.add_string buffer "\\'"
+          | '\b' -> Buffer.add_string buffer "\\b"
+          | '\012' -> Buffer.add_string buffer "\\f"
+          | '\n' -> Buffer.add_string buffer "\\n"
+          | '\r' -> Buffer.add_string buffer "\\r"
+          | '\t' -> Buffer.add_string buffer "\\t"
+          | char -> Buffer.add_char buffer char)
+        value;
+      Buffer.add_char buffer '\'';
+      Ok (Buffer.contents buffer)
+
+  let install_statement ?repo ?(force = false) extension =
+    let prefix = if force then "FORCE INSTALL " else "INSTALL " in
+    match repo with
+    | None -> Ok (prefix ^ extension)
+    | Some repo ->
+        Result.map
+          (fun repo -> prefix ^ extension ^ " FROM " ^ repo)
+          (string_literal ~kind:"extension repository" repo)
+
+  let update_statement extension = "UPDATE " ^ extension
+  let uninstall_statement extension = "UNINSTALL " ^ extension
+  let load_official_statement extension = "LOAD EXTENSION " ^ extension
+
+  let load_path_statement ~path =
+    if String.equal path "" then
+      Result.Error (Invalid_value "extension path must not be empty")
+    else
+      Result.map
+        (fun path -> "LOAD EXTENSION " ^ path)
+        (string_literal ~kind:"extension path" path)
+
+  let loaded_decode row =
+    match
+      Decode.(
+        tuple3 (string "extension name") (string "extension source")
+          (string "extension path"))
+        row
+    with
+    | Ok (name, source, path) -> Ok { name; source = source_of_string source; path }
+    | Result.Error _ as err -> err
+
+  let available_decode row =
+    match Decode.(tuple2 (string "name") (string "description")) row with
+    | Ok (name, description) -> Ok { name; description }
+    | Result.Error _ as err -> err
+
+  let loaded_query =
+    Query.raw
+      ~cypher:"CALL SHOW_LOADED_EXTENSIONS() RETURN *"
+      ~decode:loaded_decode ()
+
+  let official_query =
+    Query.raw
+      ~cypher:
+        "CALL SHOW_OFFICIAL_EXTENSIONS() RETURN name, description ORDER BY name"
+      ~decode:available_decode ()
+end
+
 let available () =
   match raw_available () with
   | None -> Ok ()
@@ -433,14 +603,18 @@ module Connection = struct
 
   let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
 
-  let query_string ?(params = []) (conn : connection) cypher =
+  let query_string_with_operation operation ?(params = []) (conn : connection)
+      cypher =
     if_connection_open conn @@ fun () ->
-    wrap "query" (fun () -> raw_query_string conn.raw cypher params)
+    wrap operation (fun () -> raw_query_string conn.raw cypher params)
 
-  let query conn query =
+  let query_string ?params conn cypher =
+    query_string_with_operation "query" ?params conn cypher
+
+  let query_with_operation operation conn query =
     if_connection_open conn @@ fun () ->
     match
-      wrap "query" (fun () ->
+      wrap operation (fun () ->
           raw_query_values conn.raw (Query.cypher query) (Query.params query))
     with
     | Result.Error _ as err -> err
@@ -455,7 +629,43 @@ module Connection = struct
         in
         loop [] rows
 
-  let exec ?params conn cypher = query_string ?params conn cypher |> Result.map (fun _ -> ())
+  let query conn query = query_with_operation "query" conn query
+
+  let exec_with_operation operation ?params conn cypher =
+    query_string_with_operation operation ?params conn cypher
+    |> Result.map (fun _ -> ())
+
+  let exec ?params conn cypher =
+    exec_with_operation "query" ?params conn cypher
+
+  let install_extension ?repo ?force conn extension =
+    match Extension.install_statement ?repo ?force extension with
+    | Result.Error _ as err -> err
+    | Ok statement ->
+        exec_with_operation "extension install" conn statement
+
+  let update_extension conn extension =
+    Extension.update_statement extension
+    |> exec_with_operation "extension update" conn
+
+  let uninstall_extension conn extension =
+    Extension.uninstall_statement extension
+    |> exec_with_operation "extension uninstall" conn
+
+  let load_extension conn extension =
+    Extension.load_official_statement extension
+    |> exec_with_operation "extension load" conn
+
+  let load_extension_path conn ~path =
+    match Extension.load_path_statement ~path with
+    | Result.Error _ as err -> err
+    | Ok statement -> exec_with_operation "extension load" conn statement
+
+  let loaded_extensions conn =
+    query_with_operation "extension list loaded" conn Extension.loaded_query
+
+  let official_extensions conn =
+    query_with_operation "extension list official" conn Extension.official_query
 
   let begin_transaction conn = exec conn "BEGIN TRANSACTION"
   let commit conn = exec conn "COMMIT"
@@ -562,6 +772,45 @@ module Pool = struct
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.typed_query"
           (fun () -> Connection.query conn query)
         |> public)
+
+  let with_timed_connection ?blocking_pool ~timeout ~name t f =
+    with_connection t (fun conn ->
+        timed_blocking_result ?blocking_pool ~timeout ~conn ~name (fun () ->
+            f conn)
+        |> public)
+
+  let install_extension ?blocking_pool ~timeout ?repo ?force t extension =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.install"
+      t
+      (fun conn -> Connection.install_extension ?repo ?force conn extension)
+
+  let update_extension ?blocking_pool ~timeout t extension =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.update"
+      t
+      (fun conn -> Connection.update_extension conn extension)
+
+  let uninstall_extension ?blocking_pool ~timeout t extension =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.uninstall"
+      t
+      (fun conn -> Connection.uninstall_extension conn extension)
+
+  let load_extension ?blocking_pool ~timeout t extension =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.load"
+      t
+      (fun conn -> Connection.load_extension conn extension)
+
+  let load_extension_path ?blocking_pool ~timeout t ~path =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.load"
+      t
+      (fun conn -> Connection.load_extension_path conn ~path)
+
+  let loaded_extensions ?blocking_pool ~timeout t =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.list_loaded"
+      t Connection.loaded_extensions
+
+  let official_extensions ?blocking_pool ~timeout t =
+    with_timed_connection ?blocking_pool ~timeout ~name:"ladybug.extension.list_official"
+      t Connection.official_extensions
 
   let transaction ?blocking_pool ~timeout t f =
     with_connection t (fun conn ->

@@ -40,6 +40,14 @@ let env_configured name =
   | Some value -> not (String.equal value "")
   | None -> false
 
+let rec remove_tree path =
+  if Sys.file_exists path then
+    if Sys.is_directory path then (
+      Sys.readdir path
+      |> Array.iter (fun name -> remove_tree (Filename.concat path name));
+      Sys.rmdir path)
+    else Sys.remove path
+
 let require_turso_available () =
   match Eta_turso.available () with
   | Ok () -> true
@@ -342,6 +350,114 @@ let test_ladybug_typed_query_builder () =
          ("friend.name", Value.String "Grace");
        ])
 
+let test_ladybug_extension_helpers () =
+  let open Eta_ladybug in
+  let json = Extension.official "JSON" |> ladybug_ok in
+  Alcotest.(check string) "canonical official name" "json"
+    (Extension.name json);
+  begin match Extension.official "json;load" with
+  | Result.Error (Invalid_value _) -> ()
+  | Ok _ -> Alcotest.fail "invalid official extension name was accepted"
+  | Result.Error err -> Alcotest.failf "%a" pp_error err
+  end;
+  if require_ladybug_available () then
+    let db = Database.open_memory () |> ladybug_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Database.close db))
+      (fun () ->
+        let conn = Connection.connect db |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Connection.close conn))
+          (fun () ->
+            let official = Connection.official_extensions conn |> ladybug_ok in
+            Alcotest.(check bool) "json is official"
+              true
+              (List.exists
+                 (fun (extension : Extension.available) ->
+                   String.equal extension.name "JSON")
+                 official);
+            begin match Connection.load_extension conn Extension.json with
+            | Result.Error
+                (Driver_error
+                  { operation = "extension load"; _ }) ->
+                ()
+            | Ok () -> Alcotest.fail "uninstalled official extension loaded"
+            | Result.Error err -> Alcotest.failf "%a" pp_error err
+            end;
+            let extension_path =
+              match Sys.getenv_opt "ETA_LADYBUG_TEST_EXTENSION" with
+              | Some path ->
+                  let path =
+                    if Filename.is_relative path then
+                      Filename.concat (Sys.getcwd ()) path
+                    else path
+                  in
+                  if Sys.file_exists path then path
+                  else Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION does not exist"
+              | None -> Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION is not configured"
+            in
+            Connection.load_extension_path conn ~path:extension_path |> ladybug_ok;
+            let loaded = Connection.loaded_extensions conn |> ladybug_ok in
+            let test_extension =
+              List.find_opt
+                (fun (extension : Extension.loaded) ->
+                  String.equal extension.name "ETA_TEST")
+                loaded
+            in
+            begin match test_extension with
+            | Some { Extension.source = User; path; _ } ->
+                Alcotest.(check string) "loaded path" extension_path path
+            | Some _ -> Alcotest.fail "ETA_TEST was not reported as a user extension"
+            | None -> Alcotest.fail "ETA_TEST extension was not reported as loaded"
+            end;
+            begin
+              match
+                Connection.load_extension_path conn
+                  ~path:(extension_path ^ ".missing")
+              with
+              | Result.Error
+                  (Driver_error
+                    { operation = "extension load"; _ }) ->
+                  ()
+              | Ok () -> Alcotest.fail "missing extension path loaded"
+              | Result.Error err -> Alcotest.failf "%a" pp_error err
+            end))
+
+let test_ladybug_official_extension_install_lifecycle () =
+  let open Eta_ladybug in
+  if
+    require_ladybug_available ()
+    && env_configured "ETA_LADYBUG_TEST_REMOTE_EXTENSIONS"
+  then
+    let home = Filename.temp_file "eta-ladybug-extensions-" "" in
+    Sys.remove home;
+    Sys.mkdir home 0o700;
+    Fun.protect
+      ~finally:(fun () -> remove_tree home)
+      (fun () ->
+        let db = Database.open_memory () |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Database.close db))
+          (fun () ->
+            let conn = Connection.connect db |> ladybug_ok in
+            Fun.protect
+              ~finally:(fun () -> ignore (Connection.close conn))
+              (fun () ->
+                Connection.exec conn
+                  ("CALL home_directory = '" ^ String.escaped home ^ "'")
+                |> ladybug_ok;
+                Connection.install_extension conn Extension.json |> ladybug_ok;
+                Connection.load_extension conn Extension.json |> ladybug_ok;
+                let loaded = Connection.loaded_extensions conn |> ladybug_ok in
+                Alcotest.(check bool) "json loaded"
+                  true
+                  (List.exists
+                     (fun (extension : Extension.loaded) ->
+                       String.equal extension.name "JSON"
+                       && extension.source = Extension.Official)
+                     loaded);
+                Connection.install_extension conn Extension.json |> ladybug_ok)))
+
 let test_ladybug_typed_query_runtime () =
   let open Eta_ladybug in
   if require_ladybug_available () then
@@ -440,6 +556,10 @@ let () =
             test_ladybug_available_is_result;
           Alcotest.test_case "typed query builder" `Quick
             test_ladybug_typed_query_builder;
+          Alcotest.test_case "extension helpers" `Quick
+            test_ladybug_extension_helpers;
+          Alcotest.test_case "official extension install lifecycle" `Slow
+            test_ladybug_official_extension_install_lifecycle;
           Alcotest.test_case "typed query runtime" `Quick
             test_ladybug_typed_query_runtime;
         ] );
