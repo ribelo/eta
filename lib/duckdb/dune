@@ -1,0 +1,15 @@
+(library
+ (name eta_duckdb)
+ (public_name eta_duckdb)
+ (synopsis "DuckDB connector for Eta")
+ (foreign_stubs
+  (language c)
+  (names duckdb_stubs)
+  (flags :standard))
+ (c_library_flags :standard -ldl)
+ (libraries eta unix threads))
+
+(env
+ (release
+  (ocamlopt_flags
+   (:standard -zero-alloc-check all))))

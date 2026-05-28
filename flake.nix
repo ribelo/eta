@@ -142,6 +142,7 @@
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export OPAMSWITCH="$switch_name"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
@@ -152,8 +153,11 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
+                lib/duckdb \
                 lib/otel \
+                lib/ladybug \
                 lib/schema \
+                lib/turso \
                 lib/stream \
                 lib/ppx \
                 test/redacted \
@@ -163,6 +167,7 @@
                 test/ai/openai_compat \
                 test/ai/openai \
                 test/ai/openrouter \
+                test/connectors \
                 test/otel \
                 test/schema \
                 test/stream \
@@ -176,10 +181,14 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
+                lib/duckdb \
                 lib/otel \
+                lib/ladybug \
                 lib/schema \
+                lib/turso \
                 lib/stream \
                 lib/ppx \
+                test/connectors \
                 --force
             '';
           };
@@ -188,6 +197,7 @@
               pkgs.autoconf
               pkgs.cacert
               pkgs.curl
+              pkgs.duckdb
               pkgs.git
               pkgs.gnumake
               pkgs.m4
@@ -223,6 +233,7 @@
             shellHook = ''
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
@@ -241,6 +252,7 @@
             shellHook = ''
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"

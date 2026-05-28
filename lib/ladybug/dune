@@ -1,0 +1,15 @@
+(library
+ (name eta_ladybug)
+ (public_name eta_ladybug)
+ (synopsis "LadybugDB graph connector for Eta")
+ (foreign_stubs
+  (language c)
+  (names ladybug_stubs)
+  (flags :standard))
+ (c_library_flags :standard -ldl)
+ (libraries eta unix threads))
+
+(env
+ (release
+  (ocamlopt_flags
+   (:standard -zero-alloc-check all))))

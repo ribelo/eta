@@ -69,6 +69,40 @@
   conf-sqlite3))
 
 (package
+ (name eta_duckdb)
+ (synopsis "DuckDB connector for Eta")
+ (description
+  "eta_duckdb provides an optional DuckDB connector for Eta programs. The DuckDB C library is loaded at runtime by the connector package, not by root eta.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta))
+
+(package
+ (name eta_turso)
+ (synopsis "Turso connector for Eta")
+ (description
+  "eta_turso provides an optional Turso SQL connector for Eta programs. The Turso SQLite-compatible C library is loaded at runtime by the connector package, not by root eta.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta
+  eta_sql))
+
+(package
+ (name eta_ladybug)
+ (synopsis "LadybugDB graph connector for Eta")
+ (description
+  "eta_ladybug provides an optional LadybugDB graph connector for Eta programs. The LadybugDB C library is loaded at runtime by the connector package, not by root eta.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta))
+
+(package
  (name eta_redacted)
  (synopsis "Secret-wrapping types that hide values from logs and traces")
  (description

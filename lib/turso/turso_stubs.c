@@ -1,0 +1,328 @@
+#include <caml/alloc.h>
+#include <caml/custom.h>
+#include <caml/fail.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
+#include <caml/signals.h>
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define SQLITE_OK 0
+#define SQLITE_MISUSE 21
+#define SQLITE_OPEN_READONLY 0x00000001
+#define SQLITE_OPEN_READWRITE 0x00000002
+#define SQLITE_OPEN_CREATE 0x00000004
+#define SQLITE_OPEN_URI 0x00000040
+#define SQLITE_TRANSIENT ((void (*)(void *))-1)
+
+typedef struct sqlite3 sqlite3;
+typedef struct sqlite3_stmt sqlite3_stmt;
+
+typedef struct { sqlite3 *db; } eta_turso_db;
+typedef struct { sqlite3_stmt *stmt; } eta_turso_stmt;
+
+typedef struct {
+  void *handle;
+  char error[512];
+  int attempted;
+  int loaded;
+  int (*open_v2)(const char *, sqlite3 **, int, const char *);
+  int (*close_v2)(sqlite3 *);
+  int (*prepare_v2)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
+  int (*finalize)(sqlite3_stmt *);
+  int (*step)(sqlite3_stmt *);
+  int (*bind_null)(sqlite3_stmt *, int);
+  int (*bind_int64)(sqlite3_stmt *, int, int64_t);
+  int (*bind_double)(sqlite3_stmt *, int, double);
+  int (*bind_text)(sqlite3_stmt *, int, const char *, int, void (*)(void *));
+  int (*bind_blob)(sqlite3_stmt *, int, const void *, int, void (*)(void *));
+  int (*column_count)(sqlite3_stmt *);
+  const char *(*column_name)(sqlite3_stmt *, int);
+  int (*column_type)(sqlite3_stmt *, int);
+  int64_t (*column_int64)(sqlite3_stmt *, int);
+  double (*column_double)(sqlite3_stmt *, int);
+  const unsigned char *(*column_text)(sqlite3_stmt *, int);
+  const void *(*column_blob)(sqlite3_stmt *, int);
+  int (*column_bytes)(sqlite3_stmt *, int);
+  int (*changes)(sqlite3 *);
+  int (*busy_timeout)(sqlite3 *, int);
+  int (*errcode)(sqlite3 *);
+  int (*extended_errcode)(sqlite3 *);
+  const char *(*errmsg)(sqlite3 *);
+} eta_turso_api;
+
+static eta_turso_api api;
+
+static void eta_turso_db_finalize(value v_db)
+{
+  eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
+  if (db->db != NULL && api.loaded) {
+    (void)api.close_v2(db->db);
+    db->db = NULL;
+  }
+}
+
+static void eta_turso_stmt_finalize(value v_stmt)
+{
+  eta_turso_stmt *stmt = (eta_turso_stmt *)Data_custom_val(v_stmt);
+  if (stmt->stmt != NULL && api.loaded) {
+    (void)api.finalize(stmt->stmt);
+    stmt->stmt = NULL;
+  }
+}
+
+static struct custom_operations eta_turso_db_ops = {
+  "eta.turso.db",
+  eta_turso_db_finalize,
+  custom_compare_default,
+  custom_hash_default,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
+static struct custom_operations eta_turso_stmt_ops = {
+  "eta.turso.stmt",
+  eta_turso_stmt_finalize,
+  custom_compare_default,
+  custom_hash_default,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
+static sqlite3 *db_val(value v_db) { return ((eta_turso_db *)Data_custom_val(v_db))->db; }
+static sqlite3_stmt *stmt_val(value v_stmt) { return ((eta_turso_stmt *)Data_custom_val(v_stmt))->stmt; }
+
+static int load_symbol(void **slot, const char *name)
+{
+  *slot = dlsym(api.handle, name);
+  if (*slot == NULL) {
+    snprintf(api.error, sizeof(api.error), "missing symbol %s", name);
+    return 0;
+  }
+  return 1;
+}
+
+#define LOAD(name) load_symbol((void **)&api.name, "sqlite3_" #name)
+
+static int eta_turso_load(void)
+{
+  if (api.loaded) return 1;
+  if (api.attempted) return 0;
+  api.attempted = 1;
+
+  const char *env = getenv("ETA_TURSO_LIBRARY");
+  const char *candidates[] = { env, "libturso_sqlite3.so", "libturso_sqlite3.so.0", "libturso_sqlite3.dylib", NULL };
+
+  for (int i = 0; candidates[i] != NULL; i++) {
+    if (candidates[i][0] == '\0') continue;
+    api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
+    if (api.handle != NULL) break;
+  }
+
+  if (api.handle == NULL) {
+    const char *err = dlerror();
+    snprintf(api.error, sizeof(api.error), "%s", err == NULL ? "could not load libturso_sqlite3" : err);
+    return 0;
+  }
+
+  if (!LOAD(open_v2) || !LOAD(close_v2) || !LOAD(prepare_v2) ||
+      !LOAD(finalize) || !LOAD(step) || !LOAD(bind_null) ||
+      !LOAD(bind_int64) || !LOAD(bind_double) || !LOAD(bind_text) ||
+      !LOAD(bind_blob) || !LOAD(column_count) || !LOAD(column_name) ||
+      !LOAD(column_type) || !LOAD(column_int64) || !LOAD(column_double) ||
+      !LOAD(column_text) || !LOAD(column_blob) || !LOAD(column_bytes) ||
+      !LOAD(changes) || !LOAD(busy_timeout) || !LOAD(errcode) ||
+      !LOAD(extended_errcode) || !LOAD(errmsg)) {
+    return 0;
+  }
+
+  api.loaded = 1;
+  return 1;
+}
+
+static void ensure_loaded(void)
+{
+  if (!eta_turso_load()) caml_failwith(api.error);
+}
+
+static int flags_of_mode(intnat mode)
+{
+  switch (mode) {
+  case 0: return SQLITE_OPEN_READONLY | SQLITE_OPEN_URI;
+  case 1: return SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI;
+  default: return SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
+  }
+}
+
+CAMLprim value eta_turso_available(value v_unit)
+{
+  CAMLparam1(v_unit);
+  CAMLlocal2(some, message);
+  if (eta_turso_load()) CAMLreturn(Val_none);
+  message = caml_copy_string(api.error);
+  some = caml_alloc(1, 0);
+  Store_field(some, 0, message);
+  CAMLreturn(some);
+}
+
+CAMLprim value eta_turso_open(value v_path, intnat mode)
+{
+  CAMLparam1(v_path);
+  CAMLlocal1(v_block);
+  ensure_loaded();
+  sqlite3 *db = NULL;
+  int rc;
+  caml_enter_blocking_section();
+  rc = api.open_v2(String_val(v_path), &db, flags_of_mode(mode), NULL);
+  caml_leave_blocking_section();
+  if (rc != SQLITE_OK) {
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer), "sqlite3_open_v2 rc=%d: %s", rc, db == NULL ? "no handle" : api.errmsg(db));
+    if (db != NULL) (void)api.close_v2(db);
+    caml_failwith(buffer);
+  }
+  v_block = caml_alloc_custom(&eta_turso_db_ops, sizeof(eta_turso_db), 0, 1);
+  ((eta_turso_db *)Data_custom_val(v_block))->db = db;
+  CAMLreturn(v_block);
+}
+
+CAMLprim value eta_turso_open_bc(value v_path, value v_mode) { return eta_turso_open(v_path, Int_val(v_mode)); }
+
+CAMLprim intnat eta_turso_close(value v_db)
+{
+  CAMLparam1(v_db);
+  ensure_loaded();
+  eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
+  int rc;
+  if (db->db == NULL) CAMLreturnT(intnat, SQLITE_OK);
+  caml_enter_blocking_section();
+  rc = api.close_v2(db->db);
+  caml_leave_blocking_section();
+  if (rc == SQLITE_OK) db->db = NULL;
+  CAMLreturnT(intnat, rc);
+}
+
+CAMLprim value eta_turso_close_bc(value v_db) { return Val_int(eta_turso_close(v_db)); }
+
+CAMLprim value eta_turso_prepare(value v_db, value v_sql)
+{
+  CAMLparam2(v_db, v_sql);
+  CAMLlocal1(v_block);
+  ensure_loaded();
+  sqlite3 *db = db_val(v_db);
+  sqlite3_stmt *stmt = NULL;
+  int rc = api.prepare_v2(db, String_val(v_sql), -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer), "sqlite3_prepare_v2 rc=%d: %s", rc, db == NULL ? "closed" : api.errmsg(db));
+    caml_failwith(buffer);
+  }
+  v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
+  ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = stmt;
+  CAMLreturn(v_block);
+}
+
+CAMLprim intnat eta_turso_finalize(value v_stmt)
+{
+  CAMLparam1(v_stmt);
+  ensure_loaded();
+  eta_turso_stmt *stmt = (eta_turso_stmt *)Data_custom_val(v_stmt);
+  int rc;
+  if (stmt->stmt == NULL) CAMLreturnT(intnat, SQLITE_OK);
+  rc = api.finalize(stmt->stmt);
+  if (rc == SQLITE_OK) stmt->stmt = NULL;
+  CAMLreturnT(intnat, rc);
+}
+
+CAMLprim value eta_turso_finalize_bc(value v_stmt) { return Val_int(eta_turso_finalize(v_stmt)); }
+
+CAMLprim intnat eta_turso_step(value v_stmt)
+{
+  CAMLparam1(v_stmt);
+  ensure_loaded();
+  sqlite3_stmt *stmt = stmt_val(v_stmt);
+  int rc;
+  if (stmt == NULL) CAMLreturnT(intnat, SQLITE_MISUSE);
+  caml_enter_blocking_section();
+  rc = api.step(stmt);
+  caml_leave_blocking_section();
+  CAMLreturnT(intnat, rc);
+}
+
+CAMLprim value eta_turso_step_bc(value v_stmt) { return Val_int(eta_turso_step(v_stmt)); }
+
+CAMLprim intnat eta_turso_bind_null(value v_stmt, intnat index) { ensure_loaded(); return api.bind_null(stmt_val(v_stmt), (int)index); }
+CAMLprim value eta_turso_bind_null_bc(value v_stmt, value v_index) { return Val_int(eta_turso_bind_null(v_stmt, Int_val(v_index))); }
+CAMLprim intnat eta_turso_bind_int64(value v_stmt, intnat index, int64_t value) { ensure_loaded(); return api.bind_int64(stmt_val(v_stmt), (int)index, value); }
+CAMLprim value eta_turso_bind_int64_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_int64(v_stmt, Int_val(v_index), Int64_val(v_value))); }
+CAMLprim intnat eta_turso_bind_double(value v_stmt, intnat index, double value) { ensure_loaded(); return api.bind_double(stmt_val(v_stmt), (int)index, value); }
+CAMLprim value eta_turso_bind_double_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_double(v_stmt, Int_val(v_index), Double_val(v_value))); }
+CAMLprim intnat eta_turso_bind_text(value v_stmt, intnat index, value v_value) { ensure_loaded(); return api.bind_text(stmt_val(v_stmt), (int)index, String_val(v_value), (int)caml_string_length(v_value), SQLITE_TRANSIENT); }
+CAMLprim value eta_turso_bind_text_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_text(v_stmt, Int_val(v_index), v_value)); }
+CAMLprim intnat eta_turso_bind_blob(value v_stmt, intnat index, value v_value) { ensure_loaded(); return api.bind_blob(stmt_val(v_stmt), (int)index, Bytes_val(v_value), (int)caml_string_length(v_value), SQLITE_TRANSIENT); }
+CAMLprim value eta_turso_bind_blob_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_blob(v_stmt, Int_val(v_index), v_value)); }
+CAMLprim intnat eta_turso_column_count(value v_stmt) { ensure_loaded(); return api.column_count(stmt_val(v_stmt)); }
+CAMLprim value eta_turso_column_count_bc(value v_stmt) { return Val_int(eta_turso_column_count(v_stmt)); }
+
+CAMLprim value eta_turso_column_name(value v_stmt, intnat index)
+{
+  CAMLparam1(v_stmt);
+  ensure_loaded();
+  const char *name = api.column_name(stmt_val(v_stmt), (int)index);
+  CAMLreturn(caml_copy_string(name == NULL ? "" : name));
+}
+
+CAMLprim value eta_turso_column_name_bc(value v_stmt, value v_index) { return eta_turso_column_name(v_stmt, Int_val(v_index)); }
+CAMLprim intnat eta_turso_column_type(value v_stmt, intnat index) { ensure_loaded(); return api.column_type(stmt_val(v_stmt), (int)index); }
+CAMLprim value eta_turso_column_type_bc(value v_stmt, value v_index) { return Val_int(eta_turso_column_type(v_stmt, Int_val(v_index))); }
+CAMLprim int64_t eta_turso_column_int64(value v_stmt, intnat index) { ensure_loaded(); return api.column_int64(stmt_val(v_stmt), (int)index); }
+CAMLprim value eta_turso_column_int64_bc(value v_stmt, value v_index) { return caml_copy_int64(eta_turso_column_int64(v_stmt, Int_val(v_index))); }
+CAMLprim double eta_turso_column_double(value v_stmt, intnat index) { ensure_loaded(); return api.column_double(stmt_val(v_stmt), (int)index); }
+CAMLprim value eta_turso_column_double_bc(value v_stmt, value v_index) { return caml_copy_double(eta_turso_column_double(v_stmt, Int_val(v_index))); }
+
+CAMLprim value eta_turso_column_text(value v_stmt, intnat index)
+{
+  CAMLparam1(v_stmt);
+  ensure_loaded();
+  const unsigned char *text = api.column_text(stmt_val(v_stmt), (int)index);
+  CAMLreturn(caml_copy_string(text == NULL ? "" : (const char *)text));
+}
+
+CAMLprim value eta_turso_column_text_bc(value v_stmt, value v_index) { return eta_turso_column_text(v_stmt, Int_val(v_index)); }
+
+CAMLprim value eta_turso_column_blob(value v_stmt, intnat index)
+{
+  CAMLparam1(v_stmt);
+  ensure_loaded();
+  sqlite3_stmt *stmt = stmt_val(v_stmt);
+  const void *blob = api.column_blob(stmt, (int)index);
+  int len = api.column_bytes(stmt, (int)index);
+  value out = caml_alloc_string(len);
+  if (len > 0 && blob != NULL) memcpy(Bytes_val(out), blob, (size_t)len);
+  CAMLreturn(out);
+}
+
+CAMLprim value eta_turso_column_blob_bc(value v_stmt, value v_index) { return eta_turso_column_blob(v_stmt, Int_val(v_index)); }
+CAMLprim intnat eta_turso_changes(value v_db) { ensure_loaded(); return api.changes(db_val(v_db)); }
+CAMLprim value eta_turso_changes_bc(value v_db) { return Val_int(eta_turso_changes(v_db)); }
+CAMLprim intnat eta_turso_busy_timeout(value v_db, intnat ms) { ensure_loaded(); return api.busy_timeout(db_val(v_db), (int)ms); }
+CAMLprim value eta_turso_busy_timeout_bc(value v_db, value v_ms) { return Val_int(eta_turso_busy_timeout(v_db, Int_val(v_ms))); }
+CAMLprim intnat eta_turso_errcode(value v_db) { ensure_loaded(); sqlite3 *db = db_val(v_db); return db == NULL ? SQLITE_MISUSE : api.errcode(db); }
+CAMLprim value eta_turso_errcode_bc(value v_db) { return Val_int(eta_turso_errcode(v_db)); }
+CAMLprim intnat eta_turso_extended_errcode(value v_db) { ensure_loaded(); sqlite3 *db = db_val(v_db); return db == NULL ? SQLITE_MISUSE : api.extended_errcode(db); }
+CAMLprim value eta_turso_extended_errcode_bc(value v_db) { return Val_int(eta_turso_extended_errcode(v_db)); }
+
+CAMLprim value eta_turso_errmsg(value v_db)
+{
+  CAMLparam1(v_db);
+  ensure_loaded();
+  sqlite3 *db = db_val(v_db);
+  CAMLreturn(caml_copy_string(db == NULL ? "closed database" : api.errmsg(db)));
+}

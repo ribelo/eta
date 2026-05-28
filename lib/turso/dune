@@ -1,0 +1,15 @@
+(library
+ (name eta_turso)
+ (public_name eta_turso)
+ (synopsis "Turso connector for Eta")
+ (foreign_stubs
+  (language c)
+  (names turso_stubs)
+  (flags :standard))
+ (c_library_flags :standard -ldl)
+ (libraries eta eta_sql unix threads))
+
+(env
+ (release
+  (ocamlopt_flags
+   (:standard -zero-alloc-check all))))
