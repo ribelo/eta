@@ -256,17 +256,36 @@ Use Eio data primitives directly for local coordination:
 | Bounded producer/consumer queue | `Eio.Stream` |
 | One-shot signal or shared result | `Eio.Promise` |
 | Countdown or wait-for-condition | `Eio.Condition` with `Eio.Mutex` |
-| Broadcast with drop/backpressure policy | Application-owned queues or `eta-stream` when it is stream-shaped |
+| Eta-owned FIFO with close/error fences | `Eta.Queue` or `Eta.Channel` |
+| Scoped broadcast with drop/backpressure policy | `Eta.Pubsub` |
 
-Eta does not ship `Effect.Queue`, `Effect.Deferred`, `Effect.PubSub`, or
-`Effect.Latch`. The lab found that adding close/fail state, slow-consumer
-policy, and nonblocking shutdown makes these wrappers policy-owning
-abstractions, not thin aliases.
+`Pubsub` uses a shared hub buffer with scoped subscriptions. Published messages
+are admitted once at the hub, then retained until current subscribers receive
+them or unsubscribe. The overflow policy is explicit:
+
+```ocaml
+let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 64 }) ()
+
+let use_events =
+  Pubsub.subscribe hub @@ fun sub ->
+  let rec loop () =
+    Pubsub.recv sub
+    |> Effect.bind (fun event ->
+           handle event |> Effect.bind loop)
+  in
+  loop ()
+```
+
+Use `Unbounded` only for low-volume signals where unbounded retention is an
+intentional choice. `Drop_new` drops a new message for all current subscribers
+when the hub is full. `Backpressure` waits before admitting a message, and
+publisher cancellation while waiting cannot partially publish to some
+subscribers.
 
 Wrap Eio operations in `Effect.sync` at the leaf when they need typed failure
 conversion or tracing names. If a protocol is reusable
 and owns lifecycle semantics, prefer a focused module such as `Resource` or
-`eta-stream` rather than a generic concurrency-data wrapper.
+`Pubsub` rather than a generic concurrency-data wrapper.
 
 ## Redacted Values
 

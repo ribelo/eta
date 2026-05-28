@@ -12,6 +12,7 @@ open Test_eta_duration_schedule
 open Test_eta_portable_queue
 open Test_eta_queue
 open Test_eta_channel
+open Test_eta_pubsub
 open Test_eta_pool
 open Test_eta_semaphore
 open Test_eta_properties
@@ -359,6 +360,28 @@ let () =
             test_channel_cancel_receiver_after_delivery_requeues_message;
           Alcotest.test_case "parent switch teardown" `Quick
             test_channel_parent_switch_teardown_does_not_hang;
+        ] );
+      ( "Pubsub",
+        [
+          Alcotest.test_case "unbounded broadcasts" `Quick
+            test_pubsub_unbounded_broadcasts_to_current_subscribers;
+          Alcotest.test_case "drop_new global capacity" `Quick
+            test_pubsub_drop_new_uses_global_capacity;
+          Alcotest.test_case "backpressure canceled publish atomic" `Quick
+            test_pubsub_backpressure_canceled_publish_is_atomic;
+          Alcotest.test_case "backpressure waits for lagging subscriber"
+            `Quick
+            test_pubsub_backpressure_waits_for_lagging_subscriber;
+          Alcotest.test_case "backpressure close wakes publisher" `Quick
+            test_pubsub_close_wakes_blocked_backpressure_publisher;
+          Alcotest.test_case "close with error drains" `Quick
+            test_pubsub_close_with_error_drains_buffer;
+          Alcotest.test_case "subscription cancellation cleanup" `Quick
+            test_pubsub_subscription_cleanup_on_body_cancellation;
+          Alcotest.test_case "cancel blocked recv" `Quick
+            test_pubsub_cancel_blocked_recv_cleans_waiter;
+          Alcotest.test_case "invalid capacity rejected" `Quick
+            test_pubsub_invalid_capacity_rejected;
         ] );
       ( "Pool",
         [

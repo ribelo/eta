@@ -1,0 +1,3 @@
+(executable
+ (name runtime_smoke)
+ (libraries eta eio_main alcotest))

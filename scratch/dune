@@ -1,4 +1,4 @@
-(dirs eta_research oxcaml_research)
+(dirs eta_research oxcaml_research deferred_pubsub_research)
 
 (executable
  (name bench_body_stream)

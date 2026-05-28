@@ -18,6 +18,7 @@
   test_eta_island
   test_eta_blocking
   test_eta_channel
+  test_eta_pubsub
   test_eta_pool
   test_eta_redacted
   test_eta_mutable_ref

@@ -1,12 +1,23 @@
 open Eta
 
-let run_effect program =
+let run_effect_exit program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
-  ignore (Runtime.run rt program : (_, _) Exit.t)
+  Runtime.run rt program
+
+let run_effect program = ignore (run_effect_exit program : (_, _) Exit.t)
+
+let run_effect_ok program =
+  match run_effect_exit program with
+  | Exit.Ok _ -> ()
+  | Exit.Error cause ->
+      Format.eprintf "benchmark effect failed: %a@."
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<typed>"))
+        cause;
+      failwith "benchmark effect failed"
 
 let rec bind_chain n acc =
   if n = 0 then acc
@@ -80,12 +91,95 @@ let queue_handoff n =
   |> Effect.map ignore
   |> run_effect
 
+let rec pubsub_publish_recv_loop hub sub i n =
+  if i = n then Effect.unit
+  else
+    Pubsub.publish hub i
+    |> Effect.bind (fun _ ->
+           Pubsub.recv sub
+           |> Effect.bind (fun _ -> pubsub_publish_recv_loop hub sub (i + 1) n))
+
+let pubsub_publish_recv n =
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  Pubsub.subscribe hub (fun sub -> pubsub_publish_recv_loop hub sub 0 n)
+  |> run_effect_ok
+
+let rec pubsub_publish_recv4_loop hub a b c d i n =
+  if i = n then Effect.unit
+  else
+    Pubsub.publish hub i
+    |> Effect.bind (fun _ ->
+           Pubsub.recv a
+           |> Effect.bind (fun _ ->
+                  Pubsub.recv b
+                  |> Effect.bind (fun _ ->
+                         Pubsub.recv c
+                         |> Effect.bind (fun _ ->
+                                Pubsub.recv d
+                                |> Effect.bind (fun _ ->
+                                       pubsub_publish_recv4_loop hub a b c d
+                                         (i + 1) n)))))
+
+let pubsub_publish_recv4 n =
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  Pubsub.subscribe hub (fun a ->
+      Pubsub.subscribe hub (fun b ->
+          Pubsub.subscribe hub (fun c ->
+              Pubsub.subscribe hub (fun d ->
+                  pubsub_publish_recv4_loop hub a b c d 0 n))))
+  |> run_effect_ok
+
+let rec pubsub_publish_only_loop hub i n =
+  if i = n then Effect.unit
+  else
+    Pubsub.publish hub i
+    |> Effect.bind (fun _ -> pubsub_publish_only_loop hub (i + 1) n)
+
+let pubsub_drop_new_full n =
+  let hub = Pubsub.create ~overflow:(Pubsub.Drop_new { capacity = 1 }) () in
+  Pubsub.subscribe hub (fun a ->
+      Pubsub.subscribe hub (fun b ->
+          Pubsub.publish hub 0
+          |> Effect.bind (fun _ ->
+                 pubsub_publish_only_loop hub 1 n
+                 |> Effect.bind (fun () ->
+                        Pubsub.recv a
+                        |> Effect.bind (fun _ ->
+                               Pubsub.recv b |> Effect.map ignore)))))
+  |> run_effect_ok
+
+let rec pubsub_wait_for_blocked_publisher hub =
+  let stats = Pubsub.stats hub in
+  if stats.waiting_publishers > 0 then Effect.unit
+  else
+    Effect.sync Eio.Fiber.yield
+    |> Effect.bind (fun () -> pubsub_wait_for_blocked_publisher hub)
+
+let rec pubsub_backpressure_waiter_loop hub sub i n =
+  if i = n then Pubsub.recv sub |> Effect.map ignore
+  else
+    Effect.par
+      (Pubsub.publish hub i)
+      (pubsub_wait_for_blocked_publisher hub
+      |> Effect.bind (fun () -> Pubsub.recv sub))
+    |> Effect.bind (fun _ -> pubsub_backpressure_waiter_loop hub sub (i + 1) n)
+
+let pubsub_backpressure_waiter n =
+  let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 1 }) () in
+  Pubsub.subscribe hub (fun sub ->
+      Pubsub.publish hub 0
+      |> Effect.bind (fun _ -> pubsub_backpressure_waiter_loop hub sub 1 n))
+  |> run_effect_ok
+
 let workloads =
   let core name run =
     { Bench_lib.name = "effect.core." ^ name; run; samples = None }
   in
   let queue name run =
     { Bench_lib.name = "eta.queue." ^ name; run; samples = None }
+  in
+  let pubsub name run =
+    { Bench_lib.name = "eta.pubsub." ^ name; run; samples = None }
   in
   [
     core "pure_run" (fun () -> run_effect (Effect.pure 0));
@@ -119,6 +213,12 @@ let workloads =
     queue "send_recv.100k" (fun () -> queue_send_recv 100_000);
     queue "try_send_try_recv.100k" (fun () -> queue_try_send_recv 100_000);
     queue "handoff.10k" (fun () -> queue_handoff 10_000);
+    pubsub "unbounded.publish_recv.10k" (fun () -> pubsub_publish_recv 10_000);
+    pubsub "unbounded.publish_recv.100k" (fun () -> pubsub_publish_recv 100_000);
+    pubsub "unbounded.publish_recv_4subs.10k" (fun () ->
+        pubsub_publish_recv4 10_000);
+    pubsub "drop_new.full.100k" (fun () -> pubsub_drop_new_full 100_000);
+    pubsub "backpressure.waiter.1k" (fun () -> pubsub_backpressure_waiter 1_000);
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads
