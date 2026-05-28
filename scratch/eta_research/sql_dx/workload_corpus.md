@@ -18,7 +18,7 @@ INNER JOIN posts ON users.id = posts.author_id
 
 **Intent:** Basic relational join.  
 **Eta typed path:** Y  
-**LOC estimate (Eta):** ~5 lines (Source.inner_join + Select.from_source + Projection.t2)
+**LOC estimate (Eta):** ~6 lines (`Source.from` + `Source.join` + `Select.from_source` + composable `Projection.t2`)
 
 | API | Shape |
 |-----|-------|
@@ -39,10 +39,9 @@ INNER JOIN posts ON users.id = posts.author_id
 LEFT JOIN comments ON posts.id = comments.post_id
 ```
 
-**Intent:** N>=3 join — projected consumer (eta-otel span attribution).  
-**Eta typed path:** N  
-**Reason:** `Source.inner_join` and `Source.left_join` are closed on `'table`,
-not on `Source.t`. Cannot extend a 2-table source with a third table.
+**Intent:** N>=3 join — projected consumer (eta-otel span attribution).
+**Eta typed path:** Y
+**Reason:** Rebuild adds `Source.from` + chainable `Source.join` with explicit `Scope` containment evidence for column promotion.
 
 | API | Shape |
 |-----|-------|
@@ -65,9 +64,9 @@ LEFT JOIN tags t ON p.id = t.post_id
 WHERE u.active = 1
 ```
 
-**Intent:** Deep join — projected consumer (eta-ai audit trail).  
-**Eta typed path:** N  
-**Reason:** Same structural limitation as Q2.
+**Intent:** Deep join — projected consumer (eta-ai audit trail).
+**Eta typed path:** Y
+**Reason:** Covered by the rebuild 4-table mixed inner/left join typed-path test.
 
 ---
 
@@ -81,7 +80,8 @@ LEFT JOIN employees m ON e.manager_id = m.id
 
 **Intent:** Hierarchical self-reference.  
 **Eta typed path:** Y (awkward)  
-**Reason:** Requires two `Table.Make` invocations for the same table.
+**Reason:** Rebuild documents the alias path: `Table.alias` plus alias-bound
+columns from `Table.column`.
 
 | API | Shape |
 |-----|-------|
@@ -98,10 +98,9 @@ LEFT JOIN employees m ON e.manager_id = m.id
 SELECT * FROM items WHERE width < height + 5
 ```
 
-**Intent:** Column-vs-column arithmetic predicate.  
-**Eta typed path:** N  
-**Reason:** `Expr` has no arithmetic operators (`+`, `-`, `*`, `/`).
-`eq_col` exists but `gt_col`, `add`, etc. do not.
+**Intent:** Column-vs-column arithmetic predicate.
+**Eta typed path:** Y
+**Reason:** Rebuild adds typed expression values plus arithmetic and expression comparisons.
 
 | API | Shape |
 |-----|-------|
@@ -128,9 +127,9 @@ SELECT * FROM users WHERE NOT (active = 1 OR (role = 'admin' AND age < 18))
 SELECT * FROM events WHERE timestamp BETWEEN 1000 AND 2000
 ```
 
-**Intent:** Range predicate.  
-**Eta typed path:** N  
-**Reason:** No `Expr.between`.
+**Intent:** Range predicate.
+**Eta typed path:** Y
+**Reason:** Rebuild adds `Expr.between`.
 
 | API | Shape |
 |-----|-------|
@@ -145,10 +144,9 @@ SELECT * FROM events WHERE timestamp BETWEEN 1000 AND 2000
 SELECT * FROM users WHERE status IN ('active', 'pending', 'verified')
 ```
 
-**Intent:** Set membership with literals.  
-**Eta typed path:** N  
-**Reason:** `Expr.in_select` exists for subqueries, but no `Expr.in_values`
-or `Expr.in_list` for literal lists.
+**Intent:** Set membership with literals.
+**Eta typed path:** Y
+**Reason:** Rebuild adds literal-list `Expr.in_values`.
 
 | API | Shape |
 |-----|-------|
@@ -168,9 +166,9 @@ SELECT
 FROM students
 ```
 
-**Intent:** Conditional projection.  
-**Eta typed path:** N  
-**Reason:** No `Expr.case`.
+**Intent:** Conditional projection.
+**Eta typed path:** Y
+**Reason:** Rebuild adds typed `Expr.case`; mixed branch result types are covered by a compile-fail probe.
 
 | API | Shape |
 |-----|-------|
@@ -187,11 +185,10 @@ FROM requests
 GROUP BY user_id
 ```
 
-**Intent:** Multi-aggregate grouped analysis — projected consumer (eta-ai token usage).  
-**Eta typed path:** N (Tested)  
-**Evidence:** `p10_corpus_check/q10/run.log` — single aggregate (count) with GROUP BY compiles as a simpler approximation, but multi-aggregate (count + avg + max) cannot be expressed because Projection.t3 expects columns, not projections. The actual corpus query requires raw SQL.  
-**Reason:** `count` exists, but `avg` and `max` are missing from `Projection`.
-Only `sum_int` exists for aggregates beyond `count`.
+**Intent:** Multi-aggregate grouped analysis — projected consumer (eta-ai token usage).
+**Eta typed path:** Y
+**Evidence:** Rebuild test `between in case aggregates having` covers GROUP BY user_id, COUNT(*), AVG(latency), MAX(latency).
+**Reason:** `Projection` now composes projection values and includes `avg`, `min`, `max`, and `sum_float`.
 
 | API | Shape |
 |-----|-------|
@@ -209,11 +206,10 @@ GROUP BY user_id
 HAVING SUM(amount) > AVG(amount)
 ```
 
-**Intent:** Aggregate predicate — projected consumer (metric histogram buckets).  
-**Eta typed path:** N (Tested)  
-**Evidence:** `p10_corpus_check/q11/run.log` — HAVING with count_ge compiles as a simpler approximation, but the real predicate (SUM > AVG) cannot be expressed because Expr has no aggregate constructors. The actual corpus query requires raw SQL.  
-**Reason:** `having` takes `Expr.t`, but `Expr` has no aggregate constructors.
-Only special-cased `count_eq`, `count_gt`, `count_ge` exist.
+**Intent:** Aggregate predicate — projected consumer (metric histogram buckets).
+**Eta typed path:** Y
+**Evidence:** Rebuild test `between in case aggregates having` covers HAVING SUM(amount) > AVG(amount).
+**Reason:** `Expr` now carries typed aggregate expressions and expression comparisons.
 
 | API | Shape |
 |-----|-------|
@@ -299,16 +295,16 @@ RETURNING id, value
 | Query | Eta typed path | Evidence |
 |-------|----------------|----------|
 | Q1 2-table join | Y | Inferred (positive control) |
-| Q2 3-table join | N | Tested (p1_joins/run.log) |
-| Q3 4-table join | N | Tested (p1_joins/run.log) |
+| Q2 3-table join | Y | Rebuild: chainable `Source.join` |
+| Q3 4-table join | Y | Rebuild: 4-table mixed inner/left join test |
 | Q4 self-join | Y (awkward) | Inferred |
-| Q5 col arithmetic | N | Tested (p2_expressions/neg_arith/run.log) |
+| Q5 col arithmetic | Y | Rebuild: typed expression arithmetic |
 | Q6 boolean tree | Y | Inferred |
-| Q7 BETWEEN | N | Tested (p2_expressions/neg_between/run.log) |
-| Q8 IN-list | N | Tested (p2_expressions/neg_in_list/run.log) |
-| Q9 CASE WHEN | N | Tested (p2_expressions/neg_case/run.log) |
-| Q10 multi-aggregate | N | Tested (p10_corpus_check/q10/run.log) — single aggregate compiles as approximation; multi-aggregate does not |
-| Q11 agg HAVING | N | Tested (p10_corpus_check/q11/run.log) — count_ge HAVING compiles as approximation; SUM > AVG does not |
+| Q7 BETWEEN | Y | Rebuild: `Expr.between` |
+| Q8 IN-list | Y | Rebuild: `Expr.in_values` |
+| Q9 CASE WHEN | Y | Rebuild: typed `Expr.case` |
+| Q10 multi-aggregate | Y | Rebuild: composable aggregate projections |
+| Q11 agg HAVING | Y | Rebuild: aggregate expressions in HAVING |
 | Q12 correlated subq | N | Tested (p10_corpus_check/q12/run.log) |
 | Q13 recursive CTE | N | Tested (p10_corpus_check/q13/run.log) |
 | Q14 cursor pagination | Y | Inferred |
@@ -316,16 +312,16 @@ RETURNING id, value
 
 ### Tested escape rate (Q2, Q3, Q5, Q7, Q8, Q9, Q10, Q11, Q12, Q13)
 
-10 queries tested: 10 require raw SQL escape (100%).
-Note: Q10 and Q11 compile simpler approximations (single aggregate, count_ge HAVING), but the actual corpus queries cannot be expressed.
+10 queries tested: Q12 and Q13 still require raw SQL escape after the rebuild.
+Q2, Q3, Q5, Q7, Q8, Q9, Q10, and Q11 moved to the typed path.
 
 ### Inferred upper bound (all queries)
 
-15 queries total: 10 require raw SQL escape (67%).
-This exceeds the 30% threshold in H10's disproof signature.
+15 queries total: 2 remain raw-SQL escapes (13%): correlated subqueries and
+recursive CTEs.
 
 ### Notes
 
-- Q10 and Q11 compile with simplified typed paths (single aggregate, count_ge HAVING), but cannot express the real predicates (multi-aggregate, aggregate-vs-aggregate). The approximation fixtures are cited as evidence.
+- Q10 and Q11 now express the real predicates (multi-aggregate projection and aggregate-vs-aggregate HAVING).
 - Q13 compiles with non-recursive CTE, but cannot express the recursive self-reference.
 - These partial successes are noted but do not change the N status for the actual corpus queries.

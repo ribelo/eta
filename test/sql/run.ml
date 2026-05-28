@@ -38,6 +38,10 @@ let () =
           Alcotest.test_case
             "eta pool parent cancel interrupts and reuses connection" `Quick
             test_sql_eta_pool_parent_cancel_interrupts_and_reuses_connection;
+          Alcotest.test_case "new expr operator workload" `Quick
+            test_sql_new_expr_operator_workload;
+          Alcotest.test_case "between in case aggregates having" `Quick
+            test_sql_between_in_case_aggregates_having;
           Alcotest.test_case "migrations run run_to and undo" `Quick
             test_sql_migrations_run_run_to_and_undo;
           Alcotest.test_case "migrations reject dirty checksum and missing" `Quick

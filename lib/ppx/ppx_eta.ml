@@ -319,7 +319,10 @@ let projection_constructor ~loc fields =
       pexp_apply ~loc
         (sql_ident ~loc ("Eta_sql.Projection.t" ^ string_of_int arity))
         (List.map
-           (fun field -> (Nolabel, evar ~loc field.field_name))
+           (fun field ->
+             ( Nolabel,
+               pexp_apply ~loc (sql_ident ~loc "Eta_sql.Projection.one")
+                 [ (Nolabel, evar ~loc field.field_name) ] ))
            fields)
 
 let mapper_pattern ~loc fields =

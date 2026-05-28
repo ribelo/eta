@@ -22,3 +22,11 @@
  (release
   (ocamlopt_flags
    (:standard -zero-alloc-check all))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree test/soundness)
+  (:eta_sql_cmxa eta_sql.cmxa))
+ (action
+  (run bash test/soundness/run.sh %{eta_sql_cmxa})))

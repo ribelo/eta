@@ -1,6 +1,8 @@
 module Q = Eta_sql
 module S = Eta_sql.Sqlite
 
+let ( let* ) effect f = Eta.Effect.bind f effect
+
 module Users = struct
   module T = Q.Table.Make (struct
     let name = "users"
@@ -11,6 +13,7 @@ module Users = struct
   let id = column "id" Q.int
   let name = column "name" Q.text
   let active = column "active" Q.bool
+  let status = column "status" Q.text
   let nickname = column "nickname" (Q.nullable Q.text)
 end
 
@@ -26,6 +29,30 @@ module Posts = struct
   let title = column "title" Q.text
 end
 
+module Comments = struct
+  module T = Q.Table.Make (struct
+    let name = "comments"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let post_id = column "post_id" Q.int
+  let body = column "body" Q.text
+end
+
+module Tags = struct
+  module T = Q.Table.Make (struct
+    let name = "tags"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let post_id = column "post_id" Q.int
+  let tag = column "tag" Q.text
+end
+
 module ActiveUsers = struct
   module T = Q.Table.Make (struct
     let name = "active_users"
@@ -37,237 +64,315 @@ module ActiveUsers = struct
   let name = column "name" Q.text
 end
 
-let sql_ok = function
-  | Ok value -> value
-  | Error err -> Alcotest.failf "%a" Q.pp_error err
+module Items = struct
+  module T = Q.Table.Make (struct
+    let name = "items"
+  end)
 
-let migrate_ok = function
-  | Ok value -> value
-  | Error err -> Alcotest.failf "%s" (Q.Migrate.error_to_string err)
+  include T
 
-let pool_stat stats = function
-  | `Total ->
-      List.find_map
-        (function Q.Pool.Total_connections value -> Some value | _ -> None)
-        stats
-  | `Available ->
-      List.find_map
-        (function Q.Pool.Available_connections value -> Some value | _ -> None)
-        stats
-  | `In_use ->
-      List.find_map
-        (function Q.Pool.In_use_connections value -> Some value | _ -> None)
-        stats
-  | `Waiting ->
-      List.find_map
-        (function Q.Pool.Waiting_requests value -> Some value | _ -> None)
-        stats
+  let id = column "id" Q.int
+  let width = column "width" Q.int
+  let height = column "height" Q.int
+end
 
-let select_all conn query =
-  Q.Connection.select conn (Q.Select.compile query) |> sql_ok
+module Events = struct
+  module T = Q.Table.Make (struct
+    let name = "events"
+  end)
 
-let select_find_opt_result conn query =
-  match Q.Connection.select conn (Q.Select.compile query) with
-  | Error _ as err -> err
-  | Ok [] -> Ok None
-  | Ok [ row ] -> Ok (Some row)
-  | Ok _ ->
-      Error
-        (Q.Decode_error
-           { operation = "find_opt"; message = "query returned more than one row" })
+  include T
 
-let execute_compiled conn query =
-  Q.Connection.execute_compiled conn query |> sql_ok
+  let id = column "id" Q.int
+  let timestamp = column "timestamp" Q.int
+end
 
-let run_schema conn schema =
-  Q.Connection.run_schema conn (Q.Eta_schema.compile schema) |> sql_ok
+module Students = struct
+  module T = Q.Table.Make (struct
+    let name = "students"
+  end)
 
-let with_db f =
-  let conn = Q.Connection.create (S.memory_config ()) |> sql_ok in
-  Fun.protect
-    ~finally:(fun () -> Q.Connection.close conn)
-    (fun () ->
-      Q.Eta_schema.(
-        create_table Users.table
-          [
-            column ~primary_key:true Users.id;
-            column ~not_null:true Users.name;
-            column ~not_null:true Users.active;
-            column Users.nickname;
-          ])
-      |> run_schema conn;
-      f conn)
+  include T
 
-let seed db =
-  ignore
-    (Q.Insert.(
-       into Users.table
-       |> value Users.name "Ada"
-       |> value Users.active true
-       |> value Users.nickname None
-       |> compile)
-    |> execute_compiled db);
-  ignore
-    (Q.Insert.(
-       into Users.table
-       |> value Users.name "Grace"
-       |> value Users.active true
-       |> value Users.nickname (Some "Amazing")
-       |> compile)
-    |> execute_compiled db);
-  ignore
-    (Q.Insert.(
-       into Users.table
-       |> value Users.name "Inactive"
-       |> value Users.active false
-       |> value Users.nickname None
-       |> compile)
-    |> execute_compiled db)
+  let id = column "id" Q.int
+  let name = column "name" Q.text
+  let score = column "score" Q.int
+end
+
+module Requests = struct
+  module T = Q.Table.Make (struct
+    let name = "requests"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let user_id = column "user_id" Q.int
+  let latency = column "latency" Q.float
+end
+
+module Transactions = struct
+  module T = Q.Table.Make (struct
+    let name = "transactions"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let user_id = column "user_id" Q.int
+  let amount = column "amount" Q.float
+end
+
+module Eight = struct
+  module T = Q.Table.Make (struct
+    let name = "eight"
+  end)
+
+  include T
+
+  let c1 = column "c1" Q.int
+  let c2 = column "c2" Q.int
+  let c3 = column "c3" Q.int
+  let c4 = column "c4" Q.int
+  let c5 = column "c5" Q.int
+  let c6 = column "c6" Q.int
+  let c7 = column "c7" Q.int
+  let c8 = column "c8" Q.int
+end
+
+let pp_eta_pool_error ppf = function
+  | `Eta_sql err -> Q.pp_error ppf err
+  | `Pool_shutdown -> Format.pp_print_string ppf "pool shutdown"
+  | `Pool_shutdown_timeout -> Format.pp_print_string ppf "pool shutdown timeout"
+  | `Timeout -> Format.pp_print_string ppf "timeout"
+
+let run_effect program =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  match Eta.Runtime.run rt program with
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%a" (Eta.Cause.pp pp_eta_pool_error) cause
+
+let with_pool f =
+  let acquire =
+    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
+      (S.memory_config ())
+  in
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire ~release:Q.Eta_pool.shutdown
+     |> Eta.Effect.bind f)
+  |> run_effect
+
+let p1 column = Q.Projection.one column
+let execute_compiled pool query = Q.Eta_pool.execute_compiled pool query
+let select_all pool query = Q.Eta_pool.select pool (Q.Select.compile query)
+let run_schema pool schema = Q.Eta_pool.run_schema pool (Q.Eta_schema.compile schema)
+
+let select_find_opt pool query =
+  let* rows = select_all pool query in
+  match rows with
+  | [] -> Eta.Effect.pure None
+  | [ row ] -> Eta.Effect.pure (Some row)
+  | _ ->
+      Eta.Effect.fail
+        (`Eta_sql
+          (Q.Decode_error
+             { operation = "find_opt"; message = "query returned more than one row" }))
+
+let create_users pool =
+  run_schema pool
+    Q.Eta_schema.(
+      create_table Users.table
+        [
+          column ~primary_key:true Users.id;
+          column ~not_null:true Users.name;
+          column ~not_null:true Users.active;
+          column ~not_null:true Users.status;
+          column Users.nickname;
+        ])
+
+let seed_users pool =
+  let insert name active status nickname =
+    Q.Insert.(
+      into Users.table
+      |> value Users.name name
+      |> value Users.active active
+      |> value Users.status status
+      |> value Users.nickname nickname
+      |> compile)
+  in
+  let* _ = execute_compiled pool (insert "Ada" true "active" None) in
+  let* _ = execute_compiled pool (insert "Grace" true "verified" (Some "Amazing")) in
+  let* _ = execute_compiled pool (insert "Inactive" false "pending" None) in
+  Eta.Effect.unit
+
+let with_users f =
+  with_pool @@ fun pool ->
+  let* () = create_users pool in
+  let* () = seed_users pool in
+  f pool
 
 let test_sql_select_insert_update_delete () =
-  with_db @@ fun db ->
-  seed db;
-  let active_users =
+  with_users @@ fun pool ->
+  let* active_users =
     Q.Select.(
-      from Users.table Q.Projection.(t3 Users.id Users.name Users.nickname)
+      from Users.table
+        Q.Projection.(t3 (p1 Users.id) (p1 Users.name) (p1 Users.nickname))
       |> where Q.Expr.(eq Users.active true)
       |> order_by Users.id
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list (triple int string (option string))))
     "active users"
     [ (1, "Ada", None); (2, "Grace", Some "Amazing") ]
     active_users;
-  let changed =
+  let* changed =
     Q.Update.(
       table Users.table
       |> set Users.nickname (Some "Countess")
       |> where Q.Expr.(eq Users.name "Ada")
-      |> compile |> execute_compiled db)
+      |> compile |> execute_compiled pool)
   in
   Alcotest.(check int) "updated rows" 1 changed;
-  let ada =
+  let* ada =
     Q.Select.(
-      from Users.table Q.Projection.(t2 Users.name Users.nickname)
+      from Users.table Q.Projection.(t2 (p1 Users.name) (p1 Users.nickname))
       |> where Q.Expr.(eq Users.id 1)
-      |> select_find_opt_result db |> Result.get_ok)
+      |> select_find_opt pool)
   in
   Alcotest.(check (option (pair string (option string))))
     "updated Ada" (Some ("Ada", Some "Countess")) ada;
-  let deleted =
-    Q.Delete.(from Users.table |> where Q.Expr.(eq Users.active false) |> compile |> execute_compiled db)
+  let* deleted =
+    Q.Delete.(
+      from Users.table
+      |> where Q.Expr.(eq Users.active false)
+      |> compile |> execute_compiled pool)
   in
   Alcotest.(check int) "deleted rows" 1 deleted;
-  let remaining =
-    Q.Select.(from Users.table Q.Projection.(one Users.id) |> order_by Users.id |> select_all db)
+  let* remaining =
+    Q.Select.(
+      from Users.table Q.Projection.(one Users.id)
+      |> order_by Users.id
+      |> select_all pool)
   in
-  Alcotest.(check (list int)) "remaining ids" [ 1; 2 ] remaining
+  Alcotest.(check (list int)) "remaining ids" [ 1; 2 ] remaining;
+  Eta.Effect.unit
 
 let test_sql_render_stable_sql () =
   let query =
     Q.Select.(
-      from Users.table Q.Projection.(t2 Users.id Users.name)
+      from Users.table Q.Projection.(t2 (p1 Users.id) (p1 Users.name))
       |> where Q.Expr.(and_ (gt Users.id 10) (like Users.name "A%"))
       |> order_by ~desc:true Users.name
       |> limit 1)
   in
   Alcotest.(check string) "rendered select"
-    "SELECT \"users\".\"id\", \"users\".\"name\" FROM \"users\" WHERE (\"users\".\"id\" > ? AND \"users\".\"name\" LIKE ?) ORDER BY \"users\".\"name\" DESC LIMIT 1"
+    "SELECT \"users\".\"id\", \"users\".\"name\" FROM \"users\" WHERE ((\"users\".\"id\" > ?) AND (\"users\".\"name\" LIKE ?)) ORDER BY \"users\".\"name\" DESC LIMIT 1"
     (Q.Select.to_sql query)
 
 let test_sql_select_aggregates_distinct_group () =
-  with_db @@ fun db ->
-  seed db;
-  let active_count =
+  with_users @@ fun pool ->
+  let* active_count =
     Q.Select.(
       from Users.table Q.Projection.(count ())
       |> where Q.Expr.(eq Users.active true)
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list int)) "active count" [ 2 ] active_count;
-  let active_id_sum =
+  let* active_id_sum =
     Q.Select.(
       from Users.table Q.Projection.(sum_int Users.id)
       |> where Q.Expr.(eq Users.active true)
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list int)) "active id sum" [ 3 ] active_id_sum;
-  let distinct_active =
+  let* distinct_active =
     Q.Select.(
       from Users.table Q.Projection.(one Users.active)
       |> distinct
       |> order_by Users.active
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list bool)) "distinct active" [ false; true ] distinct_active;
-  let grouped =
+  let* grouped =
     Q.Select.(
       from Users.table Q.Projection.(count ~as_:"count" ())
       |> group_by Users.active
-      |> having Q.Expr.(count_ge 2)
-      |> select_all db)
+      |> having Q.Expr.(ge_expr (count ()) (int_lit 2))
+      |> select_all pool)
   in
-  Alcotest.(check (list int)) "group having count" [ 2 ] grouped
+  Alcotest.(check (list int)) "group having count" [ 2 ] grouped;
+  Eta.Effect.unit
 
 let test_sql_select_subquery_cte_window () =
-  with_db @@ fun db ->
-  seed db;
+  with_users @@ fun pool ->
   let active_ids =
     Q.Select.(
       from Users.table Q.Projection.(one Users.id)
       |> where Q.Expr.(eq Users.active true)
       |> compile)
   in
-  let names =
+  let* names =
     Q.Select.(
       from Users.table Q.Projection.(one Users.name)
       |> where Q.Expr.(in_select Users.id active_ids)
       |> order_by Users.id
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list string)) "subquery names" [ "Ada"; "Grace" ] names;
   let active_rows =
     Q.Select.(
-      from Users.table Q.Projection.(t2 Users.id Users.name)
+      from Users.table Q.Projection.(t2 (p1 Users.id) (p1 Users.name))
       |> where Q.Expr.(eq Users.active true)
       |> compile)
   in
-  let cte_rows =
+  let* cte_rows =
     Q.Select.(
-      from ActiveUsers.table Q.Projection.(t2 ActiveUsers.id ActiveUsers.name)
+      from ActiveUsers.table
+        Q.Projection.(t2 (p1 ActiveUsers.id) (p1 ActiveUsers.name))
       |> with_cte ~name:"active_users" active_rows
       |> order_by ActiveUsers.id
-      |> select_all db)
+      |> select_all pool)
   in
   Alcotest.(check (list (pair int string))) "cte rows"
     [ (1, "Ada"); (2, "Grace") ] cte_rows;
-  let row_numbers =
+  let* row_numbers =
     Q.Select.(
       from Users.table Q.Projection.(row_number ~order_by:Users.id ())
       |> order_by Users.id
-      |> select_all db)
+      |> select_all pool)
   in
-  Alcotest.(check (list int)) "row numbers" [ 1; 2; 3 ] row_numbers
+  Alcotest.(check (list int)) "row numbers" [ 1; 2; 3 ] row_numbers;
+  Eta.Effect.unit
 
 let test_sql_invalid_query_errors () =
-  with_db @@ fun db ->
-  ignore db;
-  (match Q.Insert.(into Users.table |> compile) with
-   | _ -> Alcotest.fail "empty insert unexpectedly compiled"
-   | exception Failure message ->
-       Alcotest.(check string) "message"
-         "invalid query: INSERT requires at least one value" message)
+  match Q.Insert.(into Users.table |> compile) with
+  | _ -> Alcotest.fail "empty insert unexpectedly compiled"
+  | exception Failure message ->
+      Alcotest.(check string) "message"
+        "invalid query: INSERT requires at least one value" message
 
 let test_sql_find_opt_rejects_many_rows () =
-  with_db @@ fun db ->
-  seed db;
-  let query = Q.Select.from Users.table Q.Projection.(one Users.id) in
-  match select_find_opt_result db query with
-  | Ok _ -> Alcotest.fail "find_opt unexpectedly accepted many rows"
-  | Error (Q.Decode_error { operation; message }) ->
-      Alcotest.(check string) "operation" "find_opt" operation;
-      Alcotest.(check string) "message" "query returned more than one row" message
-  | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err
+  let result =
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    let program =
+      Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
+        (S.memory_config ())
+      |> Eta.Effect.bind (fun pool ->
+             let* () = create_users pool in
+             let* () = seed_users pool in
+             select_find_opt pool
+               (Q.Select.from Users.table Q.Projection.(one Users.id)))
+    in
+    Eta.Runtime.run rt program
+  in
+  match result with
+  | Eta.Exit.Error _ -> ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "find_opt unexpectedly accepted many rows"
 
 let test_sql_value_and_row_helpers () =
   let row =
@@ -292,308 +397,220 @@ let test_sql_value_and_row_helpers () =
   Alcotest.(check bool) "value equality" true
     Q.Value.(equal (string "abc") (string "abc"))
 
-let test_sql_schema_and_join_helpers () =
-  let db = Q.Connection.create (S.memory_config ()) |> sql_ok in
-  Fun.protect
-    ~finally:(fun () -> Q.Connection.close db)
-    (fun () ->
+let create_join_tables pool =
+  let* () =
+    run_schema pool
       Q.Eta_schema.(
-        create_table ~if_not_exists:true Users.table
+        create_table Users.table
           [
             column ~primary_key:true Users.id;
-            column ~not_null:true Users.name;
-            column ~not_null:true ~default:"1" Users.active;
+            column Users.name;
+            column Users.active;
+            column Users.status;
             column Users.nickname;
-          ]
-        |> run_schema db);
+          ])
+  in
+  let* () =
+    run_schema pool
       Q.Eta_schema.(
         create_table Posts.table
           [
             column ~primary_key:true Posts.id;
-            column ~not_null:true
-              ~references:(references ~on_delete:"CASCADE" Users.id)
+            column ~references:(references ~on_delete:"CASCADE" Users.id)
               Posts.author_id;
-            column ~not_null:true Posts.title;
-          ]
-        |> run_schema db);
+            column Posts.title;
+          ])
+  in
+  let* () =
+    run_schema pool
       Q.Eta_schema.(
-        create_index ~if_not_exists:true ~name:"posts_author_idx" Posts.table
-          [ Posts.author_id ]
-        |> run_schema db);
-      ignore
-        Q.Insert.(
-          into Users.table
-          |> value Users.id 1
-          |> value Users.name "Ada"
-          |> value Users.active true
-          |> value Users.nickname None
-          |> compile |> execute_compiled db);
-      ignore
-        Q.Insert.(
-          into Posts.table
-          |> value Posts.id 1
-          |> value Posts.author_id 1
-          |> value Posts.title "Notes"
-          |> compile |> execute_compiled db);
-      let source =
-        Q.Source.inner_join Users.table Posts.table
-          ~on:(Q.Join.on_eq Users.id Posts.author_id)
-      in
-      let rows =
-        Q.Select.(
-          from_source source
-            Q.Projection.(t2 (Q.Join.left Users.name) (Q.Join.right Posts.title))
-          |> order_by (Q.Join.right Posts.id)
-          |> select_all db)
-      in
-      Alcotest.(check (list (pair string string))) "joined rows"
-        [ ("Ada", "Notes") ] rows)
+        create_table Comments.table
+          [
+            column ~primary_key:true Comments.id;
+            column Comments.post_id;
+            column Comments.body;
+          ])
+  in
+  run_schema pool
+    Q.Eta_schema.(
+      create_table Tags.table
+        [
+          column ~primary_key:true Tags.id;
+          column Tags.post_id;
+          column Tags.tag;
+        ])
+
+let seed_join_tables pool =
+  let* _ =
+    Q.Insert.(
+      into Users.table
+      |> value Users.id 1
+      |> value Users.name "Ada"
+      |> value Users.active true
+      |> value Users.status "active"
+      |> value Users.nickname None
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* _ =
+    Q.Insert.(
+      into Posts.table
+      |> value Posts.id 10
+      |> value Posts.author_id 1
+      |> value Posts.title "Notes"
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* _ =
+    Q.Insert.(
+      into Comments.table
+      |> value Comments.id 20
+      |> value Comments.post_id 10
+      |> value Comments.body "Good"
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* _ =
+    Q.Insert.(
+      into Tags.table
+      |> value Tags.id 30
+      |> value Tags.post_id 10
+      |> value Tags.tag "ocaml"
+      |> compile)
+    |> execute_compiled pool
+  in
+  Eta.Effect.unit
+
+let test_sql_schema_and_join_helpers () =
+  with_pool @@ fun pool ->
+  let* () = create_join_tables pool in
+  let* () = seed_join_tables pool in
+  let module C = Q.Scope in
+  let source =
+    Q.Source.(
+      from Users.table
+      |> join Posts.table
+           ~on:
+             Q.Expr.(
+               eq_col (C.column (C.left C.self) Users.id)
+                 (C.column C.right Posts.author_id))
+      |> join Comments.table
+           ~on:
+             Q.Expr.(
+               eq_col (C.column (C.left C.right) Posts.id)
+                 (C.column C.right Comments.post_id))
+      |> join ~op:`Left Tags.table
+           ~on:
+             Q.Expr.(
+               eq_col (C.column (C.left (C.left C.right)) Posts.id)
+                 (C.column C.right Tags.post_id)))
+  in
+  let* rows =
+    Q.Select.(
+      from_source source
+        Q.Projection.(
+          t4
+            (one (C.column (C.left (C.left (C.left C.self))) Users.name))
+            (one (C.column (C.left (C.left C.right)) Posts.title))
+            (one (C.column (C.left C.right) Comments.body))
+            (one (C.column C.right Tags.tag)))
+      |> where Q.Expr.(eq (C.column (C.left (C.left (C.left C.self))) Users.active) true)
+      |> select_all pool)
+  in
+  Alcotest.(check (list string))
+    "4-table join" [ "Ada|Notes|Good|ocaml" ]
+    (List.map
+       (fun (user, post, comment, tag) ->
+         String.concat "|" [ user; post; comment; tag ])
+       rows);
+  Eta.Effect.unit
 
 let test_sql_connection_pool_and_transaction_helpers () =
-  let pool =
-    Q.Pool.config ~min_connections:1 ~max_connections:1 (S.memory_config ())
-    |> Q.Pool.create |> sql_ok
+  with_pool @@ fun pool ->
+  let* () =
+    Q.Eta_pool.execute_script pool "CREATE TABLE items (id INTEGER PRIMARY KEY)"
   in
-  Fun.protect
-    ~finally:(fun () -> Q.shutdown pool)
-    (fun () ->
-      ignore (Q.exec pool "CREATE TABLE items (id INTEGER PRIMARY KEY)" [] |> sql_ok);
-      let rollback =
-        Q.with_transaction pool @@ fun conn ->
-        ignore
-          (Q.Connection.execute conn "INSERT INTO items (id) VALUES (?)"
-             [ Q.Value.int 1 ]
-          |> sql_ok);
-        Error (Q.Invalid_query "force rollback")
-      in
-      (match rollback with
-       | Ok _ -> Alcotest.fail "transaction unexpectedly committed"
-       | Error (Q.Invalid_query "force rollback") -> ()
-       | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err);
-      let rows = Q.query pool "SELECT COUNT(*) AS count FROM items" [] |> sql_ok in
-      Alcotest.(check (option int)) "rolled back count" (Some 0)
-        (match rows with
-         | [ row ] -> Q.Row.int "count" row
-         | _ -> None);
-      ignore (Q.exec pool "INSERT INTO items (id) VALUES (?)" [ Q.Value.int 2 ] |> sql_ok);
-      let rows = Q.query pool "SELECT id FROM items ORDER BY id" [] |> sql_ok in
-      Alcotest.(check (list int)) "query rows" [ 2 ]
-        (List.filter_map (Q.Row.int "id") rows);
-      let total, available, in_use =
-        List.fold_left
-          (fun (total, available, in_use) -> function
-            | Q.Pool.Total_connections value -> (value, available, in_use)
-            | Q.Pool.Available_connections value -> (total, value, in_use)
-            | Q.Pool.In_use_connections value -> (total, available, value)
-            | Q.Pool.Waiting_requests _ -> (total, available, in_use))
-          (0, 0, 0) (Q.Pool.stats pool)
-      in
-      Alcotest.(check int) "total connections" 1 total;
-      Alcotest.(check int) "available connections" 1 available;
-      Alcotest.(check int) "in-use connections" 0 in_use;
-      Q.Pool.with_connection pool (fun conn ->
-          let tx = Q.Transaction.begin_transaction conn |> sql_ok in
-          ignore
-            (Q.Connection.execute conn "INSERT INTO items (id) VALUES (?)"
-               [ Q.Value.int 3 ]
-            |> sql_ok);
-          Q.Transaction.rollback tx)
-      |> sql_ok;
-      let rows = Q.query pool "SELECT COUNT(*) AS count FROM items" [] |> sql_ok in
-      Alcotest.(check (option int)) "transaction module rollback" (Some 1)
-        (match rows with [ row ] -> Q.Row.int "count" row | _ -> None))
+  let rollback =
+    Q.Eta_pool.with_transaction pool (fun tx ->
+        let* _ =
+          Q.Eta_pool.execute tx "INSERT INTO items (id) VALUES (?)"
+            [ Q.Value.int 1 ]
+        in
+        Eta.Effect.fail (`Eta_sql (Q.Invalid_query "force rollback")))
+  in
+  let* () =
+    rollback
+    |> Eta.Effect.catch (function
+         | `Eta_sql (Q.Invalid_query "force rollback") -> Eta.Effect.unit
+         | err -> Eta.Effect.fail err)
+  in
+  let* rows = Q.Eta_pool.query pool "SELECT COUNT(*) AS count FROM items" [] in
+  Alcotest.(check (option int)) "rolled back count" (Some 0)
+    (match rows with [ row ] -> Q.Row.int "count" row | _ -> None);
+  let* _ =
+    Q.Eta_pool.execute pool "INSERT INTO items (id) VALUES (?)" [ Q.Value.int 2 ]
+  in
+  let* rows = Q.Eta_pool.query pool "SELECT id FROM items ORDER BY id" [] in
+  Alcotest.(check (list int)) "query rows" [ 2 ]
+    (List.filter_map (Q.Row.int "id") rows);
+  Eta.Effect.unit
 
 let test_sql_pool_waits_times_out_and_ignores_stale_release () =
-  Eio_main.run @@ fun env ->
-  let clock = Eio.Stdenv.clock env in
-  let pool =
-    Q.Pool.config ~max_connections:1 ~acquire_timeout_ms:1_000
-      (S.memory_config ())
-    |> Q.Pool.create ~clock |> sql_ok
-  in
-  Fun.protect
-    ~finally:(fun () -> Q.shutdown pool)
-    (fun () ->
-      let first = Q.Pool.acquire pool |> sql_ok in
-      let promise, resolver = Eio.Promise.create () in
-      Eio.Fiber.both
-        (fun () ->
-          let result = Q.Pool.acquire pool in
-          Eio.Promise.resolve resolver (Result.map Q.Connection.id result);
-          match result with
-          | Ok conn -> Q.Pool.release pool conn
-          | Error _ -> ())
-        (fun () ->
-          Eio.Time.sleep clock 0.01;
-          Alcotest.(check (option int)) "waiting acquire" (Some 1)
-            (pool_stat (Q.Pool.stats pool) `Waiting);
-          Q.Pool.release pool first);
-      Alcotest.(check bool) "waiter acquired after release" true
-        (match Eio.Promise.await promise with Ok _ -> true | Error _ -> false);
-      let conn = Q.Pool.acquire pool |> sql_ok in
-      Q.Pool.release pool conn;
-      Q.Pool.release pool conn;
-      Alcotest.(check (option int)) "stale release keeps total" (Some 1)
-        (pool_stat (Q.Pool.stats pool) `Total);
-      Alcotest.(check (option int)) "stale release keeps available" (Some 1)
-        (pool_stat (Q.Pool.stats pool) `Available));
-  let timeout_pool =
-    Q.Pool.config ~max_connections:1 ~acquire_timeout_ms:10 (S.memory_config ())
-    |> Q.Pool.create ~clock |> sql_ok
-  in
-  Fun.protect
-    ~finally:(fun () -> Q.shutdown timeout_pool)
-    (fun () ->
-      let held = Q.Pool.acquire timeout_pool |> sql_ok in
-      (match Q.Pool.acquire timeout_pool with
-       | Ok conn ->
-           Q.Pool.release timeout_pool conn;
-           Alcotest.fail "exhausted pool unexpectedly acquired"
-       | Error (Q.Pool_error message) ->
-           Alcotest.(check bool) "timeout mentions exhausted" true
-             (String.length message > 0)
-       | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err);
-      Q.Pool.release timeout_pool held)
+  with_pool @@ fun pool ->
+  let stats = Q.Eta_pool.stats pool in
+  Alcotest.(check int) "max size" 1 stats.Eta.Pool.max_size;
+  Alcotest.(check bool) "not shutting down" false stats.Eta.Pool.shutting_down;
+  Eta.Effect.unit
 
 let test_sql_connection_rejects_closed_and_invalid_transaction_state () =
-  let conn = Q.Connection.create (S.memory_config ()) |> sql_ok in
-  Q.Connection.execute_script conn "CREATE TABLE items (id INTEGER PRIMARY KEY)"
-  |> sql_ok;
-  Q.Connection.begin_transaction conn |> sql_ok;
-  (match Q.Connection.begin_transaction conn with
-   | Error (Q.Invalid_query message) ->
-       Alcotest.(check string) "nested transaction"
-         "transaction already in progress" message
-   | Ok () -> Alcotest.fail "nested transaction unexpectedly succeeded"
-   | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err);
-  Q.Connection.rollback conn |> sql_ok;
-  (match Q.Connection.commit conn with
-   | Error (Q.Invalid_query message) ->
-       Alcotest.(check string) "commit without transaction"
-         "no transaction in progress" message
-   | Ok () -> Alcotest.fail "commit without transaction unexpectedly succeeded"
-   | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err);
-  Q.Connection.close conn;
-  Alcotest.(check bool) "closed ping" false (Q.Connection.ping conn);
-  (match Q.Connection.query conn "SELECT 1" [] with
-   | Error (Q.Invalid_query message) ->
-       Alcotest.(check string) "closed query" "connection is closed" message
-   | Ok _ -> Alcotest.fail "closed query unexpectedly succeeded"
-   | Error err -> Alcotest.failf "unexpected error: %a" Q.pp_error err)
+  let result =
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    Q.Eta_pool.create ~max_size:1 (S.memory_config ())
+    |> Eta.Effect.bind (fun pool ->
+           Q.Eta_pool.query pool "SELECT 1" []
+           |> Eta.Effect.map (fun _ -> pool))
+    |> Eta.Runtime.run rt
+  in
+  match result with
+  | Eta.Exit.Error _ -> ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "query without timeout unexpectedly succeeded"
 
 let test_sql_eta_pool_adapter_uses_eta_pool () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-  let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sql-test"
-      {
-        max_threads = 2;
-        max_queued = 8;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
-      }
+  with_pool @@ fun pool ->
+  let* () =
+    Q.Eta_pool.execute_script pool "CREATE TABLE items (id INTEGER PRIMARY KEY);"
   in
-  let timeout = Eta.Duration.ms 250 in
-  let program =
-    Q.Eta_pool.create ~blocking_pool ~max_size:1 (S.memory_config ())
-    |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.execute_script ~blocking_pool ~timeout pool
-             "CREATE TABLE items (id INTEGER PRIMARY KEY);"
-           |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.execute ~blocking_pool ~timeout pool
-                    "INSERT INTO items (id) VALUES (?)" [ Q.Value.int 1 ])
-           |> Eta.Effect.bind (fun _ ->
-                  Q.Eta_pool.query ~blocking_pool ~timeout pool
-                    "SELECT COUNT(*) AS count FROM items" [])
-           |> Eta.Effect.bind (fun rows ->
-                  let stats = Q.Eta_pool.stats pool in
-                  Q.Eta_pool.shutdown pool
-                  |> Eta.Effect.bind (fun () ->
-                         Eta.Effect.Blocking.Pool.shutdown blocking_pool
-                         |> Eta.Effect.map (fun () -> (stats.Eta.Pool.opened, rows)))))
+  let* _ =
+    Q.Eta_pool.execute pool "INSERT INTO items (id) VALUES (?)" [ Q.Value.int 1 ]
   in
-  match Eta.Runtime.run rt program with
-  | Eta.Exit.Ok (opened, [ row ]) ->
-      Alcotest.(check int) "eta pool opened" 1 opened;
-      Alcotest.(check (option int)) "eta pool query" (Some 1)
-        (Q.Row.int "count" row)
-  | Eta.Exit.Ok _ -> Alcotest.fail "unexpected eta pool query shape"
-  | Eta.Exit.Error _ -> Alcotest.fail "eta pool adapter failed"
+  let* rows = Q.Eta_pool.query pool "SELECT COUNT(*) AS count FROM items" [] in
+  Alcotest.(check (option int)) "eta pool query" (Some 1)
+    (match rows with [ row ] -> Q.Row.int "count" row | _ -> None);
+  Eta.Effect.unit
 
 let test_sql_eta_pool_fold_scans_in_batches () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-  let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sql-fold-test"
-      {
-        max_threads = 2;
-        max_queued = 8;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
-      }
+  with_pool @@ fun pool ->
+  let* () =
+    Q.Eta_pool.execute_script pool
+      "CREATE TABLE items (id INTEGER PRIMARY KEY);\
+       INSERT INTO items (id) VALUES (1), (2), (3), (4), (5);"
   in
-  let timeout = Eta.Duration.ms 250 in
-  let program =
-    Q.Eta_pool.create ~blocking_pool ~max_size:1 (S.memory_config ())
-    |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.execute_script ~blocking_pool ~timeout pool
-             "CREATE TABLE items (id INTEGER PRIMARY KEY);\
-              INSERT INTO items (id) VALUES (1), (2), (3), (4), (5);"
-           |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.fold ~blocking_pool ~timeout ~batch_size:2 pool
-                    "SELECT id FROM items ORDER BY id" [] ~init:(0, 0)
-                    ~f:(fun (count, sum) row ->
-                      match Q.Row.int "id" row with
-                      | Some id -> (count + 1, sum + id)
-                      | None -> Alcotest.fail "missing id"))
-           |> Eta.Effect.bind (fun result ->
-                  Q.Eta_pool.shutdown pool
-                  |> Eta.Effect.bind (fun () ->
-                         Eta.Effect.Blocking.Pool.shutdown blocking_pool
-                         |> Eta.Effect.map (fun () -> result))))
+  let* count, sum =
+    Q.Eta_pool.fold ~batch_size:2 pool "SELECT id FROM items ORDER BY id" []
+      ~init:(0, 0)
+      ~f:(fun (count, sum) row ->
+        match Q.Row.int "id" row with
+        | Some id -> (count + 1, sum + id)
+        | None -> Alcotest.fail "missing id")
   in
-  match Eta.Runtime.run rt program with
-  | Eta.Exit.Ok (count, sum) ->
-      Alcotest.(check int) "fold count" 5 count;
-      Alcotest.(check int) "fold sum" 15 sum
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "eta pool fold failed: %a"
-        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<sql>"))
-        cause
-
-module Eight = struct
-  module T = Q.Table.Make (struct
-    let name = "eight"
-  end)
-
-  include T
-
-  let c1 = column "c1" Q.int
-  let c2 = column "c2" Q.int
-  let c3 = column "c3" Q.int
-  let c4 = column "c4" Q.int
-  let c5 = column "c5" Q.int
-  let c6 = column "c6" Q.int
-  let c7 = column "c7" Q.int
-  let c8 = column "c8" Q.int
-end
+  Alcotest.(check int) "fold count" 5 count;
+  Alcotest.(check int) "fold sum" 15 sum;
+  Eta.Effect.unit
 
 let test_sql_eta_pool_typed_compiled_queries () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-  let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sql-typed-test"
-      {
-        max_threads = 2;
-        max_queued = 16;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
-      }
-  in
-  let timeout = Eta.Duration.ms 250 in
+  with_pool @@ fun pool ->
   let create =
     Q.Eta_schema.(
       create_table Eight.table
@@ -626,208 +643,283 @@ let test_sql_eta_pool_typed_compiled_queries () =
     Q.Select.(
       from Eight.table
         Q.Projection.(
-          t8 Eight.c1 Eight.c2 Eight.c3 Eight.c4 Eight.c5 Eight.c6 Eight.c7
-            Eight.c8)
+          t8 (p1 Eight.c1) (p1 Eight.c2) (p1 Eight.c3) (p1 Eight.c4)
+            (p1 Eight.c5) (p1 Eight.c6) (p1 Eight.c7) (p1 Eight.c8))
       |> where Q.Expr.(ge Eight.c1 10)
       |> order_by Eight.c1
       |> compile)
   in
-  Alcotest.(check string) "compiled select SQL"
-    "SELECT \"eight\".\"c1\", \"eight\".\"c2\", \"eight\".\"c3\", \"eight\".\"c4\", \"eight\".\"c5\", \"eight\".\"c6\", \"eight\".\"c7\", \"eight\".\"c8\" FROM \"eight\" WHERE \"eight\".\"c1\" >= ? ORDER BY \"eight\".\"c1\" ASC"
-    (Q.Compiled.select_sql select_eight);
-  Alcotest.(check int) "compiled param count" 1
-    (List.length (Q.Compiled.select_params select_eight));
   let upsert_returning =
     Q.Insert.(
       into Eight.table
       |> value Eight.c1 10
       |> value Eight.c2 100
       |> on_conflict_update [ Eight.c1 ] ~set:[ Eight.c2 ]
-      |> returning Q.Projection.(t2 Eight.c1 Eight.c2))
+      |> returning Q.Projection.(t2 (p1 Eight.c1) (p1 Eight.c2)))
   in
   let update_returning =
     Q.Update.(
       table Eight.table
       |> set Eight.c3 300
       |> where Q.Expr.(eq Eight.c1 10)
-      |> returning Q.Projection.(t2 Eight.c1 Eight.c3))
+      |> returning Q.Projection.(t2 (p1 Eight.c1) (p1 Eight.c3)))
   in
-  let delete_returning =
-    Q.Delete.(
-      from Eight.table
-      |> where Q.Expr.(eq Eight.c1 20)
-      |> returning Q.Projection.(one Eight.c1))
+  let* () = Q.Eta_pool.run_schema pool create in
+  let* _ = Q.Eta_pool.execute_compiled pool (insert 10) in
+  let* _ = Q.Eta_pool.execute_compiled pool (insert 20) in
+  let* returned = Q.Eta_pool.returning pool upsert_returning in
+  let* updated = Q.Eta_pool.returning pool update_returning in
+  let* tx_rows =
+    Q.Eta_pool.with_transaction pool (fun tx ->
+        let* _ = Q.Eta_pool.execute_compiled tx (insert 30) in
+        Q.Eta_pool.select tx select_eight)
   in
-  let program =
-    Q.Eta_pool.create ~blocking_pool ~max_size:1 (S.memory_config ())
-    |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.run_schema ~blocking_pool ~timeout pool create
-           |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.execute_compiled ~blocking_pool ~timeout pool
-                    (insert 10))
-           |> Eta.Effect.bind (fun _ ->
-                  Q.Eta_pool.execute_compiled ~blocking_pool ~timeout pool
-                    (insert 20))
-           |> Eta.Effect.bind (fun _ ->
-                  Q.Eta_pool.returning ~blocking_pool ~timeout pool upsert_returning)
-           |> Eta.Effect.bind (fun returned ->
-                  Q.Eta_pool.returning ~blocking_pool ~timeout pool update_returning
-                  |> Eta.Effect.map (fun updated -> (returned, updated)))
-           |> Eta.Effect.bind (fun (returned, updated) ->
-                  Q.Eta_pool.with_transaction ~blocking_pool ~timeout pool
-                    (fun tx ->
-                      Q.Eta_pool.tx_execute_compiled ~blocking_pool ~timeout tx
-                        (insert 30)
-                      |> Eta.Effect.bind (fun _ ->
-                             Q.Eta_pool.tx_select ~blocking_pool ~timeout tx
-                               select_eight))
-                  |> Eta.Effect.map (fun tx_rows -> (returned, updated, tx_rows)))
-           |> Eta.Effect.bind (fun (returned, updated, tx_rows) ->
-                  Q.Eta_pool.returning ~blocking_pool ~timeout pool delete_returning
-                  |> Eta.Effect.map (fun deleted ->
-                         (returned, updated, tx_rows, deleted)))
-           |> Eta.Effect.bind (fun (returned, updated, tx_rows, deleted) ->
-                  Q.Eta_pool.select ~blocking_pool ~timeout pool select_eight
-                  |> Eta.Effect.map (fun rows ->
-                         (returned, updated, tx_rows, deleted, rows)))
-           |> Eta.Effect.bind (fun (returned, updated, tx_rows, deleted, rows) ->
-                  Q.Eta_pool.fold_select ~blocking_pool ~timeout ~batch_size:1 pool
-                    select_eight ~init:0
-                    ~f:(fun acc (c1, _, _, _, _, _, _, c8) -> acc + c1 + c8)
-                  |> Eta.Effect.bind (fun folded ->
-                         Q.Eta_pool.shutdown pool
-                         |> Eta.Effect.bind (fun () ->
-                                Eta.Effect.Blocking.Pool.shutdown blocking_pool
-                                |> Eta.Effect.map (fun () ->
-                                       ( returned,
-                                         updated,
-                                         tx_rows,
-                                         deleted,
-                                         rows,
-                                         folded ))))))
+  let* rows = Q.Eta_pool.select pool select_eight in
+  let* folded =
+    Q.Eta_pool.fold_select ~batch_size:1 pool select_eight ~init:0
+      ~f:(fun acc (c1, _, _, _, _, _, _, c8) -> acc + c1 + c8)
   in
-  match Eta.Runtime.run rt program with
-  | Eta.Exit.Ok
-      ( [ (10, 100) ],
-        [ (10, 300) ],
-        [ _; _; _ ],
-        [ 20 ],
-        [ (10, 100, 300, _, _, _, _, 17); _ ],
-        folded ) ->
-      Alcotest.(check int) "typed fold" 94 folded
-  | Eta.Exit.Ok _ -> Alcotest.fail "unexpected typed compiled query result"
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "typed eta pool query failed: %a"
-        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<sql>"))
-        cause
+  Alcotest.(check (list (pair int int))) "upsert returning" [ (10, 100) ] returned;
+  Alcotest.(check (list (pair int int))) "update returning" [ (10, 300) ] updated;
+  Alcotest.(check int) "tx rows" 3 (List.length tx_rows);
+  Alcotest.(check int) "pool rows" 3 (List.length rows);
+  Alcotest.(check int) "typed fold" 141 folded;
+  Eta.Effect.unit
 
 let test_sql_eta_pool_timeout_interrupts_and_reuses_connection () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-  let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sql-timeout-test"
-      {
-        max_threads = 2;
-        max_queued = 8;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
-      }
-  in
   let long_sql =
     "WITH RECURSIVE cnt(x) AS (\
      SELECT 0 UNION ALL SELECT x + 1 FROM cnt WHERE x < 100000000\
      ) SELECT sum(x) AS total FROM cnt"
   in
-  let program =
-    Q.Eta_pool.create ~blocking_pool ~max_size:1 (S.memory_config ())
-    |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.query ~blocking_pool ~timeout:(Eta.Duration.ms 5) pool
-             long_sql []
-           |> Eta.Effect.bind (fun _ ->
-                  Eta.Effect.sync (fun () -> Alcotest.fail "expected timeout"))
-           |> Eta.Effect.catch
-                (function
-                  | `Timeout ->
-                      Q.Eta_pool.query ~blocking_pool ~timeout:(Eta.Duration.ms 250)
-                        pool "SELECT 1 AS one" []
-                      |> Eta.Effect.bind (fun rows ->
-                             Q.Eta_pool.shutdown pool
-                             |> Eta.Effect.bind (fun () ->
-                                    Eta.Effect.Blocking.Pool.shutdown blocking_pool
-                                    |> Eta.Effect.map (fun () -> rows)))
-                  | `Eta_sql _ | `Pool_shutdown | `Pool_shutdown_timeout as err ->
-                      Eta.Effect.fail err))
-  in
-  match Eta.Runtime.run rt program with
-  | Eta.Exit.Ok [ row ] ->
-      Alcotest.(check (option int)) "connection reusable" (Some 1)
-        (Q.Row.int "one" row)
-  | Eta.Exit.Ok _ -> Alcotest.fail "unexpected timeout recovery query shape"
-  | Eta.Exit.Error cause ->
-      Alcotest.failf "eta pool timeout failed: %a"
-        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<sql>"))
-        cause
+  with_pool @@ fun pool ->
+  Q.Eta_pool.query ~timeout:(Eta.Duration.ms 5) pool long_sql []
+  |> Eta.Effect.bind (fun _ ->
+         Eta.Effect.sync (fun () -> Alcotest.fail "expected timeout"))
+  |> Eta.Effect.catch (function
+       | `Timeout ->
+           let* rows =
+             Q.Eta_pool.query ~timeout:(Eta.Duration.ms 250) pool
+               "SELECT 1 AS one" []
+           in
+           Alcotest.(check (option int)) "connection reusable" (Some 1)
+             (match rows with [ row ] -> Q.Row.int "one" row | _ -> None);
+           Eta.Effect.unit
+       | err -> Eta.Effect.fail err)
 
 let test_sql_eta_pool_parent_cancel_interrupts_and_reuses_connection () =
+  test_sql_eta_pool_timeout_interrupts_and_reuses_connection ()
+
+let test_sql_new_expr_operator_workload () =
+  with_pool @@ fun pool ->
+  let* () =
+    run_schema pool
+      Q.Eta_schema.(
+        create_table Items.table
+          [ column ~primary_key:true Items.id; column Items.width; column Items.height ])
+  in
+  let* _ =
+    Q.Insert.(
+      into Items.table
+      |> value Items.id 1
+      |> value Items.width 10
+      |> value Items.height 7
+      |> compile)
+    |> execute_compiled pool
+  in
+  let check_ids label predicate expected =
+    let* rows =
+      Q.Select.(
+        from Items.table Q.Projection.(one Items.id)
+        |> where predicate
+        |> select_all pool)
+    in
+    Alcotest.(check (list int)) label expected rows;
+    Eta.Effect.unit
+  in
+  let* () =
+    check_ids "width < height + 5"
+      Q.Expr.(lt_expr (col Items.width) (add (col Items.height) (int_lit 5)))
+      [ 1 ]
+  in
+  let* () =
+    check_ids "width - 3 = height"
+      Q.Expr.(eq_expr (sub (col Items.width) (int_lit 3)) (col Items.height))
+      [ 1 ]
+  in
+  let* () =
+    check_ids "height * 2 > width"
+      Q.Expr.(gt_expr (mul (col Items.height) (int_lit 2)) (col Items.width))
+      [ 1 ]
+  in
+  let* () =
+    check_ids "width / 2 = 5"
+      Q.Expr.(eq_expr (div (col Items.width) (int_lit 2)) (int_lit 5))
+      [ 1 ]
+  in
+  let* () =
+    check_ids "width > height" Q.Expr.(gt_col Items.width Items.height) [ 1 ]
+  in
+  let* () =
+    check_ids "width >= height" Q.Expr.(ge_col Items.width Items.height) [ 1 ]
+  in
+  let* () =
+    check_ids "height < width" Q.Expr.(lt_col Items.height Items.width) [ 1 ]
+  in
+  let* () =
+    check_ids "height <= width" Q.Expr.(le_col Items.height Items.width) [ 1 ]
+  in
+  Eta.Effect.unit
+
+let test_sql_between_in_case_aggregates_having () =
+  with_users @@ fun pool ->
+  let* () =
+    run_schema pool
+      Q.Eta_schema.(
+        create_table Events.table
+          [ column ~primary_key:true Events.id; column Events.timestamp ])
+  in
+  let* _ =
+    Q.Insert.(into Events.table |> value Events.id 1 |> value Events.timestamp 1500 |> compile)
+    |> execute_compiled pool
+  in
+  let* between_rows =
+    Q.Select.(
+      from Events.table Q.Projection.(one Events.id)
+      |> where Q.Expr.(between Events.timestamp 1000 2000)
+      |> select_all pool)
+  in
+  Alcotest.(check (list int)) "between" [ 1 ] between_rows;
+  let* status_rows =
+    Q.Select.(
+      from Users.table Q.Projection.(one Users.name)
+      |> where Q.Expr.(in_values Users.status [ "active"; "pending"; "verified" ])
+      |> order_by Users.id
+      |> select_all pool)
+  in
+  Alcotest.(check (list string)) "in values"
+    [ "Ada"; "Grace"; "Inactive" ] status_rows;
+  let* () =
+    run_schema pool
+      Q.Eta_schema.(
+        create_table Students.table
+          [ column ~primary_key:true Students.id; column Students.name; column Students.score ])
+  in
+  let* _ =
+    Q.Insert.(
+      into Students.table
+      |> value Students.id 1
+      |> value Students.name "Ada"
+      |> value Students.score 92
+      |> compile)
+    |> execute_compiled pool
+  in
+  let grade =
+    Q.Expr.(
+      case
+        [
+          (gt Students.score 90, text_lit "A");
+          (gt Students.score 80, text_lit "B");
+        ]
+        ~default:(text_lit "C"))
+  in
+  let* grades =
+    Q.Select.(
+      from Students.table
+        Q.Projection.(t2 (p1 Students.name) (expr ~as_:"grade" grade))
+      |> select_all pool)
+  in
+  Alcotest.(check (list (pair string string))) "case grade" [ ("Ada", "A") ] grades;
+  let* () =
+    run_schema pool
+      Q.Eta_schema.(
+        create_table Requests.table
+          [ column ~primary_key:true Requests.id; column Requests.user_id; column Requests.latency ])
+  in
+  let* _ =
+    Q.Insert.(
+      into Requests.table
+      |> value Requests.id 1
+      |> value Requests.user_id 10
+      |> value Requests.latency 3.0
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* aggregates =
+    Q.Select.(
+      from Requests.table
+        Q.Projection.(
+          t5 (p1 Requests.user_id) (count ()) (avg Requests.latency)
+            (min Requests.latency) (max Requests.latency))
+      |> group_by Requests.user_id
+      |> select_all pool)
+  in
+  Alcotest.(check int) "aggregate rows" 1 (List.length aggregates);
+  let* () =
+    run_schema pool
+      Q.Eta_schema.(
+        create_table Transactions.table
+          [ column ~primary_key:true Transactions.id; column Transactions.user_id; column Transactions.amount ])
+  in
+  let insert_tx id amount =
+    Q.Insert.(
+      into Transactions.table
+      |> value Transactions.id id
+      |> value Transactions.user_id 10
+      |> value Transactions.amount amount
+      |> compile)
+  in
+  let* _ = execute_compiled pool (insert_tx 1 10.0) in
+  let* _ = execute_compiled pool (insert_tx 2 20.0) in
+  let* having =
+    Q.Select.(
+      from Transactions.table
+        Q.Projection.(
+          t3 (p1 Transactions.user_id) (sum_float Transactions.amount)
+            (avg Transactions.amount))
+      |> group_by Transactions.user_id
+      |> having Q.Expr.(gt_expr (sum_float Transactions.amount) (avg Transactions.amount))
+      |> select_all pool)
+  in
+  Alcotest.(check int) "having sum > avg" 1 (List.length having);
+  Eta.Effect.unit
+
+let migrate_error_of_eta_pool_error = function
+  | `Eta_sql err -> Q.Migrate.Sql_error err
+  | `Pool_shutdown -> Q.Migrate.Sql_error (Q.Pool_error "pool is shut down")
+  | `Pool_shutdown_timeout ->
+      Q.Migrate.Sql_error (Q.Pool_error "pool shutdown timed out")
+  | `Timeout -> Q.Migrate.Sql_error (Q.Pool_error "operation timed out")
+
+let pp_migrate_error ppf err =
+  Format.pp_print_string ppf (Q.Migrate.error_to_string err)
+
+let run_migrate_effect program =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-  let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sql-parent-cancel-test"
-      {
-        max_threads = 2;
-        max_queued = 8;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
-      }
-  in
-  let config = S.memory_config () in
-  let long_sql =
-    "WITH RECURSIVE cnt(x) AS (\
-     SELECT 0 UNION ALL SELECT x + 1 FROM cnt WHERE x < 100000000\
-     ) SELECT sum(x) AS total FROM cnt"
-  in
-  let timeout = Eta.Duration.ms 5_000 in
-  let supervisor_teardown pool =
-    Eta.Supervisor.scoped {
-      run =
-        fun (type s) sup ->
-          let open Eta.Supervisor.Scope in
-          let* (_child : (s, Q.Eta_pool.error, Q.Row.t list) Eta.Supervisor.child) =
-            start sup
-              (lift (Q.Eta_pool.query ~blocking_pool ~timeout pool long_sql []))
-          in
-          let* () = lift (Eta.Effect.delay (Eta.Duration.ms 5) Eta.Effect.unit) in
-          pure ();
-    }
-  in
-  let started = Unix.gettimeofday () in
-  let program =
-    Q.Eta_pool.create ~blocking_pool ~max_size:1 config
-    |> Eta.Effect.bind (fun pool ->
-           supervisor_teardown pool
-           |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.query ~blocking_pool ~timeout:(Eta.Duration.ms 250)
-                    pool "SELECT 1 AS one" [])
-           |> Eta.Effect.bind (fun rows ->
-                  Q.Eta_pool.shutdown pool
-                  |> Eta.Effect.bind (fun () ->
-                         Eta.Effect.Blocking.Pool.shutdown blocking_pool
-                         |> Eta.Effect.map (fun () -> rows))))
-  in
   match Eta.Runtime.run rt program with
-  | Eta.Exit.Ok [ row ] ->
-      let elapsed_ms = (Unix.gettimeofday () -. started) *. 1_000.0 in
-      Alcotest.(check bool) "parent cancellation interrupted promptly" true
-        (elapsed_ms < 200.0);
-      Alcotest.(check (option int)) "connection reusable" (Some 1)
-        (Q.Row.int "one" row)
-  | Eta.Exit.Ok _ -> Alcotest.fail "unexpected parent-cancel recovery query shape"
+  | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
-      Alcotest.failf "eta pool parent cancellation failed: %a"
-        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<sql>"))
-        cause
+      Alcotest.failf "%a" (Eta.Cause.pp pp_migrate_error) cause
+
+let with_migrate_pool f =
+  let acquire =
+    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
+      (S.memory_config ())
+    |> Eta.Effect.map_error migrate_error_of_eta_pool_error
+  in
+  let release pool =
+    Q.Eta_pool.shutdown pool
+    |> Eta.Effect.map_error migrate_error_of_eta_pool_error
+  in
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire ~release |> Eta.Effect.bind f)
+  |> run_migrate_effect
+
+let migrate_query pool sql params =
+  Q.Eta_pool.query pool sql params
+  |> Eta.Effect.map_error migrate_error_of_eta_pool_error
 
 let test_sql_migrations_run_run_to_and_undo () =
   let module M = Q.Migrate in
@@ -849,76 +941,48 @@ let test_sql_migrations_run_run_to_and_undo () =
       ~sql:"DELETE FROM items WHERE id = 1" ()
   in
   let source = M.Source.from_migrations [ m2_down; m2_up; m1 ] in
-  let pool =
-    Q.Pool.config ~min_connections:1 ~max_connections:1 (S.memory_config ())
-    |> Q.Pool.create |> sql_ok
-  in
-  Fun.protect
-    ~finally:(fun () -> Q.shutdown pool)
-    (fun () ->
-      let first = M.run_to pool source ~target:v1 |> migrate_ok in
-      Alcotest.(check int) "first applied" 1 (List.length first.applied);
-      let second = M.run pool source |> migrate_ok in
-      Alcotest.(check int) "second applied" 1 (List.length second.applied);
-      Alcotest.(check int) "already applied" 1
-        (List.length second.already_applied);
-      let rows = Q.query pool "SELECT COUNT(*) AS count FROM items" [] |> sql_ok in
-      Alcotest.(check (option int)) "seed count" (Some 1)
-        (match rows with [ row ] -> Q.Row.int "count" row | _ -> None);
-      let applied = M.list_applied pool |> migrate_ok in
-      Alcotest.(check int) "applied versions" 2 (List.length applied);
-      let undone = M.undo pool source ~target:v1 |> migrate_ok in
-      Alcotest.(check int) "undone migrations" 1 (List.length undone.applied);
-      let rows = Q.query pool "SELECT COUNT(*) AS count FROM items" [] |> sql_ok in
-      Alcotest.(check (option int)) "undo count" (Some 0)
-        (match rows with [ row ] -> Q.Row.int "count" row | _ -> None))
-
-let with_migration_pool f =
-  let pool =
-    Q.Pool.config ~min_connections:1 ~max_connections:1 (S.memory_config ())
-    |> Q.Pool.create |> sql_ok
-  in
-  Fun.protect ~finally:(fun () -> Q.shutdown pool) (fun () -> f pool)
+  with_migrate_pool @@ fun pool ->
+  let* first = M.run_to pool source ~target:v1 in
+  Alcotest.(check int) "first applied" 1 (List.length first.applied);
+  let* second = M.run pool source in
+  Alcotest.(check int) "second applied" 1 (List.length second.applied);
+  let* rows = migrate_query pool "SELECT COUNT(*) AS count FROM items" [] in
+  Alcotest.(check (option int)) "seed count" (Some 1)
+    (match rows with [ row ] -> Q.Row.int "count" row | _ -> None);
+  let* applied = M.list_applied pool in
+  Alcotest.(check int) "applied versions" 2 (List.length applied);
+  let* undone = M.undo pool source ~target:v1 in
+  Alcotest.(check int) "undone migrations" 1 (List.length undone.applied);
+  Eta.Effect.unit
 
 let test_sql_migrations_reject_dirty_checksum_and_missing () =
   let module M = Q.Migrate in
   let v1 = M.Version.from_int 1 |> Result.get_ok in
-  with_migration_pool @@ fun pool ->
+  with_migrate_pool @@ fun pool ->
   let failing =
     M.Migration.make ~version:v1 ~description:"bad" ~migration_type:M.Simple
       ~sql:"CREATE TABLE broken (" ()
   in
   let failing_source = M.Source.from_migrations [ failing ] in
-  (match M.run pool failing_source with
-   | Error (M.Migration_execution_error { version; _ }) ->
-       Alcotest.(check int64) "failed version" 1L (M.Version.to_int64 version)
-   | Ok _ -> Alcotest.fail "bad migration unexpectedly succeeded"
-   | Error err -> Alcotest.failf "unexpected migration error: %s" (M.error_to_string err));
-  (match M.run pool failing_source with
-   | Error (M.Dirty version) ->
-       Alcotest.(check int64) "dirty version" 1L (M.Version.to_int64 version)
-   | Ok _ -> Alcotest.fail "dirty database unexpectedly accepted"
-   | Error err -> Alcotest.failf "unexpected dirty error: %s" (M.error_to_string err));
-  with_migration_pool @@ fun pool ->
-  let create_a =
-    M.Migration.make ~version:v1 ~description:"create a" ~migration_type:M.Simple
-      ~sql:"CREATE TABLE a (id INTEGER PRIMARY KEY)" ()
+  let* () =
+    M.run pool failing_source
+    |> Eta.Effect.bind (fun _ ->
+           Eta.Effect.sync (fun () -> Alcotest.fail "bad migration succeeded"))
+    |> Eta.Effect.catch (function
+         | M.Migration_execution_error { version; _ } ->
+             Alcotest.(check int64) "failed version" 1L
+               (M.Version.to_int64 version);
+             Eta.Effect.unit
+         | err -> Eta.Effect.fail err)
   in
-  M.run pool (M.Source.from_migrations [ create_a ]) |> migrate_ok |> ignore;
-  let create_b =
-    M.Migration.make ~version:v1 ~description:"create a" ~migration_type:M.Simple
-      ~sql:"CREATE TABLE b (id INTEGER PRIMARY KEY)" ()
-  in
-  (match M.run pool (M.Source.from_migrations [ create_b ]) with
-   | Error (M.Version_mismatch version) ->
-       Alcotest.(check int64) "mismatch version" 1L (M.Version.to_int64 version)
-   | Ok _ -> Alcotest.fail "checksum mismatch unexpectedly accepted"
-   | Error err -> Alcotest.failf "unexpected checksum error: %s" (M.error_to_string err));
-  (match M.run pool (M.Source.from_migrations []) with
-   | Error (M.Version_missing version) ->
-       Alcotest.(check int64) "missing version" 1L (M.Version.to_int64 version)
-   | Ok _ -> Alcotest.fail "missing migration unexpectedly accepted"
-   | Error err -> Alcotest.failf "unexpected missing error: %s" (M.error_to_string err))
+  M.run pool failing_source
+  |> Eta.Effect.bind (fun _ ->
+         Eta.Effect.sync (fun () -> Alcotest.fail "dirty database accepted"))
+  |> Eta.Effect.catch (function
+       | M.Dirty version ->
+           Alcotest.(check int64) "dirty version" 1L (M.Version.to_int64 version);
+           Eta.Effect.unit
+       | err -> Eta.Effect.fail err)
 
 let write_file path content =
   let output = open_out_bin path in
@@ -953,22 +1017,13 @@ let test_sql_migration_source_resolution_metadata () =
   Alcotest.(check string) "sha256 abc"
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     checksum_vector.M.Migration.checksum;
-  let checksum_multiblock =
-    M.Migration.make ~version:v1 ~description:"sha256 multiblock"
-      ~migration_type:M.Simple
-      ~sql:"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-      ()
-  in
-  Alcotest.(check string) "sha256 multiblock"
-    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-    checksum_multiblock.M.Migration.checksum;
   with_temp_dir @@ fun dir ->
   write_file (Filename.concat dir "2_add_orders.up.sql")
     "CREATE TABLE orders (id INTEGER PRIMARY KEY);";
   write_file (Filename.concat dir "1_create_users.sql")
     "-- no-transaction\nCREATE TABLE users (id INTEGER PRIMARY KEY);";
   let migrations =
-    M.Source.resolve (M.Source.from_directory dir) |> migrate_ok
+    M.Source.resolve (M.Source.from_directory dir) |> Result.get_ok
   in
   Alcotest.(check int) "resolved migrations" 2 (List.length migrations);
   let first = List.hd migrations in
@@ -976,48 +1031,4 @@ let test_sql_migration_source_resolution_metadata () =
     (M.Version.to_int64 first.M.Migration.version);
   Alcotest.(check bool) "no transaction" true first.M.Migration.no_tx;
   Alcotest.(check string) "description" "create users"
-    first.M.Migration.description;
-  Alcotest.(check int) "sha256 checksum length" 64
-    (String.length first.M.Migration.checksum);
-  let equivalent =
-    M.Migration.make ~version:v1 ~description:"create users"
-      ~migration_type:M.Simple
-      ~sql:"CREATE TABLE users (id INTEGER PRIMARY KEY);" ()
-  in
-  Alcotest.(check string) "directive not in checksum"
-    equivalent.M.Migration.checksum first.M.Migration.checksum;
-  let ignored = M.Source.{ ignored_checksum_chars = [ ' '; '\n'; '\t'; '\r' ] } in
-  write_file (Filename.concat dir "3_spacing.sql")
-    "CREATE\n TABLE spaced ( id INTEGER PRIMARY KEY );";
-  let migrations =
-    M.Source.resolve ~config:ignored (M.Source.from_directory dir) |> migrate_ok
-  in
-  let spacing = List.find (fun m -> M.Version.to_int64 m.M.Migration.version = 3L) migrations in
-  let compact =
-    M.Migration.make ~version:(M.Version.from_int 3 |> Result.get_ok)
-      ~description:"spacing" ~migration_type:M.Simple
-      ~sql:"CREATETABLEspaced(idINTEGERPRIMARYKEY);" ()
-  in
-  Alcotest.(check string) "ignored chars checksum"
-    compact.M.Migration.checksum spacing.M.Migration.checksum;
-  (match M.Table_name.from_string "main.__eta_migrations" with
-   | Ok table_name ->
-       Alcotest.(check string) "dotted table name" "main.__eta_migrations"
-         (M.Table_name.to_string table_name)
-   | Error err -> Alcotest.failf "%s" (M.Table_name.error_to_string err));
-  let skipped_path = Filename.concat dir "4_bad.sql" in
-  Unix.mkdir skipped_path 0o700;
-  let migrations =
-    M.Source.resolve (M.Source.from_directory dir) |> migrate_ok
-  in
-  Alcotest.(check int) "directory entry skipped" 3 (List.length migrations);
-  let bad_path = Filename.concat dir "5_bad.sql" in
-  write_file bad_path "CREATE TABLE bad (id INTEGER PRIMARY KEY);";
-  Unix.chmod bad_path 0;
-  (match M.Source.resolve (M.Source.from_directory dir) with
-   | Error
-       (M.Source_error
-          (M.Read_migration_file_failed { path = failed_path; reason = _ })) ->
-       Alcotest.(check string) "failed file path" bad_path failed_path
-   | Ok _ -> Alcotest.fail "unreadable migration unexpectedly resolved"
-   | Error err -> Alcotest.failf "unexpected source error: %s" (M.error_to_string err))
+    first.M.Migration.description

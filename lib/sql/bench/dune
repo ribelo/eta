@@ -1,6 +1,6 @@
 (executable
  (name bench_sql)
- (libraries bench_lib eta_sql eta unix threads))
+ (libraries bench_lib eta_sql eta eio_main eio.unix unix threads))
 
 (rule
  (alias bench)

@@ -206,6 +206,8 @@ let nullable typ =
 type 'table table = {
   table_name : string;
   quoted_table_name : string;
+  from_sql : string;
+  column_qualifier : string;
 }
 
 type ('table, 'a) column = {
@@ -272,6 +274,7 @@ let quote_ident name =
   Bytes.unsafe_set out !pos '"';
   Bytes.unsafe_to_string out
 let table_sql (table : _ table) = table.quoted_table_name
+let table_from_sql (table : _ table) = table.from_sql
 let column_ident (column : (_, _) column) = column.quoted_column_name
 let column_sql (column : (_, _) column) = column.qualified_column_name
 
@@ -400,16 +403,40 @@ module Table = struct
 
     let quoted_table_name = quote_ident Name.name
 
-    let table = { table_name = Name.name; quoted_table_name }
+    let table : table t =
+      {
+        table_name = Name.name;
+        quoted_table_name;
+        from_sql = quoted_table_name;
+        column_qualifier = quoted_table_name;
+      }
 
     let column name typ =
       let quoted_column_name = quote_ident name in
       { table_name = Name.name; column_name = name; typ;
         quoted_column_name;
-        qualified_column_name = quoted_table_name ^ "." ^ quoted_column_name }
+        qualified_column_name = table.column_qualifier ^ "." ^ quoted_column_name }
   end
 
   let name (table : _ t) = table.table_name
+
+  let alias table alias =
+    let quoted_alias = quote_ident alias in
+    {
+      table with
+      from_sql = table.quoted_table_name ^ " AS " ^ quoted_alias;
+      column_qualifier = quoted_alias;
+    }
+
+  let column (table : _ t) name typ =
+    let quoted_column_name = quote_ident name in
+    {
+      table_name = table.table_name;
+      column_name = name;
+      typ;
+      quoted_column_name;
+      qualified_column_name = table.column_qualifier ^ "." ^ quoted_column_name;
+    }
 end
 
 module Column = struct
@@ -420,18 +447,33 @@ module Column = struct
 end
 
 module Expr = struct
-  type 'scope t = {
+  type ('scope, 'a) t = {
     sql : string;
     params : param list;
+    typ : 'a typ;
   }
 
-  let true_ = { sql = "1"; params = [] }
-  let false_ = { sql = "0"; params = [] }
-  let param column value = { sql = "?"; params = [ Param (column.typ, value) ] }
+  let true_ = { sql = "1"; params = []; typ = bool }
+  let false_ = { sql = "0"; params = []; typ = bool }
+  let lit typ value = { sql = "?"; params = [ Param (typ, value) ]; typ }
+  let int_lit value = lit int value
+  let int64_lit value = lit int64 value
+  let float_lit value = lit float value
+  let text_lit value = lit text value
+  let bool_lit value = lit bool value
+  let col column = { sql = column_sql column; params = []; typ = column.typ }
+
+  let render_binary op left right typ =
+    {
+      sql = "(" ^ left.sql ^ " " ^ op ^ " " ^ right.sql ^ ")";
+      params = left.params @ right.params;
+      typ;
+    }
+
+  let compare op left right = render_binary op left right bool
 
   let binary op column value =
-    { sql = String.concat " " [ column_sql column; op; "?" ];
-      params = [ Param (column.typ, value) ] }
+    compare op (col column) (lit column.typ value)
 
   let eq column value = binary "=" column value
   let ne column value = binary "<>" column value
@@ -441,23 +483,96 @@ module Expr = struct
   let le column value = binary "<=" column value
   let like column value = binary "LIKE" column value
 
-  let eq_col left right =
-    { sql = String.concat " = " [ column_sql left; column_sql right ]; params = [] }
+  let eq_expr left right = compare "=" left right
+  let ne_expr left right = compare "<>" left right
+  let gt_expr left right = compare ">" left right
+  let ge_expr left right = compare ">=" left right
+  let lt_expr left right = compare "<" left right
+  let le_expr left right = compare "<=" left right
 
-  let is_null column = { sql = column_sql column ^ " IS NULL"; params = [] }
-  let is_not_null column = { sql = column_sql column ^ " IS NOT NULL"; params = [] }
-  let count_eq value = { sql = "COUNT(*) = ?"; params = [ Param (int, value) ] }
-  let count_gt value = { sql = "COUNT(*) > ?"; params = [ Param (int, value) ] }
-  let count_ge value = { sql = "COUNT(*) >= ?"; params = [ Param (int, value) ] }
+  let eq_col left right = eq_expr (col left) (col right)
+  let gt_col left right = gt_expr (col left) (col right)
+  let ge_col left right = ge_expr (col left) (col right)
+  let lt_col left right = lt_expr (col left) (col right)
+  let le_col left right = le_expr (col left) (col right)
+
+  let add left right = render_binary "+" left right left.typ
+  let sub left right = render_binary "-" left right left.typ
+  let mul left right = render_binary "*" left right left.typ
+  let div left right = render_binary "/" left right left.typ
+
+  let is_null column =
+    { sql = column_sql column ^ " IS NULL"; params = []; typ = bool }
+
+  let is_not_null column =
+    { sql = column_sql column ^ " IS NOT NULL"; params = []; typ = bool }
+
+  let between column lower upper =
+    {
+      sql = column_sql column ^ " BETWEEN ? AND ?";
+      params = [ Param (column.typ, lower); Param (column.typ, upper) ];
+      typ = bool;
+    }
+
+  let in_values column values =
+    match values with
+    | [] -> invalid_arg "Eta_sql.Expr.in_values: values must not be empty"
+    | values ->
+        let placeholders = values |> List.map (fun _ -> "?") |> String.concat ", " in
+        {
+          sql = column_sql column ^ " IN (" ^ placeholders ^ ")";
+          params = List.map (fun value -> Param (column.typ, value)) values;
+          typ = bool;
+        }
 
   let in_select column (query : _ Compiled.select) =
     {
       sql = column_sql column ^ " IN (" ^ query.sql ^ ")";
       params = query.params;
+      typ = bool;
     }
 
   let exists (query : _ Compiled.select) =
-    { sql = "EXISTS (" ^ query.sql ^ ")"; params = query.params }
+    { sql = "EXISTS (" ^ query.sql ^ ")"; params = query.params; typ = bool }
+
+  let count () = { sql = "COUNT(*)"; params = []; typ = int }
+
+  let aggregate name typ (column : (_, _) column) =
+    {
+      sql = name ^ "(" ^ column_sql column ^ ")";
+      params = [];
+      typ;
+    }
+
+  let sum_int column = aggregate "SUM" int column
+  let sum_float column = aggregate "SUM" float column
+  let avg column = aggregate "AVG" float column
+  let min (column : (_, _) column) = aggregate "MIN" column.typ column
+  let max (column : (_, _) column) = aggregate "MAX" column.typ column
+
+  let case branches ~default =
+    match branches with
+    | [] -> invalid_arg "Eta_sql.Expr.case: branches must not be empty"
+    | branches ->
+        let buf = Buffer.create 96 in
+        Buffer.add_string buf "CASE";
+        let params = ref [] in
+        List.iter
+          (fun (condition, value) ->
+            Buffer.add_string buf " WHEN ";
+            Buffer.add_string buf condition.sql;
+            Buffer.add_string buf " THEN ";
+            Buffer.add_string buf value.sql;
+            params := !params @ condition.params @ value.params)
+          branches;
+        Buffer.add_string buf " ELSE ";
+        Buffer.add_string buf default.sql;
+        Buffer.add_string buf " END";
+        {
+          sql = Buffer.contents buf;
+          params = !params @ default.params;
+          typ = default.typ;
+        }
 
   let join op left right =
     let len = String.length left.sql + String.length op + String.length right.sql + 5 in
@@ -469,7 +584,7 @@ module Expr = struct
     Buffer.add_char buf ' ';
     Buffer.add_string buf right.sql;
     Buffer.add_char buf ')';
-    { sql = Buffer.contents buf; params = left.params @ right.params }
+    { sql = Buffer.contents buf; params = left.params @ right.params; typ = bool }
 
   let and_ left right = join "AND" left right
   let or_ left right = join "OR" left right
@@ -478,48 +593,66 @@ module Expr = struct
     Buffer.add_string buf "NOT (";
     Buffer.add_string buf expr.sql;
     Buffer.add_char buf ')';
-    { sql = Buffer.contents buf; params = expr.params }
+    { sql = Buffer.contents buf; params = expr.params; typ = bool }
 end
 
 module Projection = struct
   type ('scope, 'a) t = {
     columns : string list;
-    decode : Sqlite.stmt -> 'a;
+    params : param list;
+    width : int;
+    decode : Sqlite.stmt -> int -> 'a;
   }
 
   let one column =
-    { columns = [ column_sql column ]; decode = (fun stmt -> column.typ.read stmt 0) }
-
-  let t2 c1 c2 =
     {
-      columns = [ column_sql c1; column_sql c2 ];
-      decode = (fun stmt -> (c1.typ.read stmt 0, c2.typ.read stmt 1));
+      columns = [ column_sql column ];
+      params = [];
+      width = 1;
+      decode = (fun stmt offset -> column.typ.read stmt offset);
     }
 
-  let t3 c1 c2 c3 =
+  let expr ?as_ expr =
+    let sql =
+      match as_ with
+      | None -> expr.Expr.sql
+      | Some alias -> expr.sql ^ " AS " ^ quote_ident alias
+    in
     {
-      columns = [ column_sql c1; column_sql c2; column_sql c3 ];
+      columns = [ sql ];
+      params = expr.params;
+      width = 1;
+      decode = (fun stmt offset -> expr.typ.read stmt offset);
+    }
+
+  let map f row =
+    { row with decode = (fun stmt offset -> f (row.decode stmt offset)) }
+
+  let combine left right f =
+    {
+      columns = left.columns @ right.columns;
+      params = left.params @ right.params;
+      width = left.width + right.width;
       decode =
-        (fun stmt ->
-          (c1.typ.read stmt 0, c2.typ.read stmt 1, c3.typ.read stmt 2));
+        (fun stmt offset ->
+          f (left.decode stmt offset) (right.decode stmt (offset + left.width)));
     }
+
+  let t2 p1 p2 = combine p1 p2 (fun a b -> (a, b))
+
+  let t3 p1 p2 p3 =
+    t2 (t2 p1 p2) p3 |> map (fun ((a, b), c) -> (a, b, c))
 
   let count ?as_ () =
-    let sql =
-      match as_ with
-      | None -> "COUNT(*)"
-      | Some alias -> "COUNT(*) AS " ^ quote_ident alias
-    in
-    { columns = [ sql ]; decode = (fun stmt -> Sqlite.column_int stmt 0) }
+    expr ?as_ (Expr.count ())
 
   let sum_int ?as_ column =
-    let sql = "SUM(" ^ column_sql column ^ ")" in
-    let sql =
-      match as_ with
-      | None -> sql
-      | Some alias -> sql ^ " AS " ^ quote_ident alias
-    in
-    { columns = [ sql ]; decode = (fun stmt -> Sqlite.column_int stmt 0) }
+    expr ?as_ (Expr.sum_int column)
+
+  let sum_float ?as_ column = expr ?as_ (Expr.sum_float column)
+  let avg ?as_ column = expr ?as_ (Expr.avg column)
+  let min ?as_ column = expr ?as_ (Expr.min column)
+  let max ?as_ column = expr ?as_ (Expr.max column)
 
   let row_number ?as_ ?(partition_by = []) ?order_by () =
     let clauses =
@@ -540,110 +673,43 @@ module Projection = struct
       | None -> sql
       | Some alias -> sql ^ " AS " ^ quote_ident alias
     in
-    { columns = [ sql ]; decode = (fun stmt -> Sqlite.column_int stmt 0) }
-
-  let t4 c1 c2 c3 c4 =
     {
-      columns = [ column_sql c1; column_sql c2; column_sql c3; column_sql c4 ];
-      decode =
-        (fun stmt ->
-          ( c1.typ.read stmt 0,
-            c2.typ.read stmt 1,
-            c3.typ.read stmt 2,
-            c4.typ.read stmt 3 ));
+      columns = [ sql ];
+      params = [];
+      width = 1;
+      decode = (fun stmt offset -> Sqlite.column_int stmt offset);
     }
 
-  let t5 c1 c2 c3 c4 c5 =
-    {
-      columns =
-        [ column_sql c1; column_sql c2; column_sql c3; column_sql c4; column_sql c5 ];
-      decode =
-        (fun stmt ->
-          ( c1.typ.read stmt 0,
-            c2.typ.read stmt 1,
-            c3.typ.read stmt 2,
-            c4.typ.read stmt 3,
-            c5.typ.read stmt 4 ));
-    }
+  let t4 p1 p2 p3 p4 =
+    t2 (t3 p1 p2 p3) p4 |> map (fun ((a, b, c), d) -> (a, b, c, d))
 
-  let t6 c1 c2 c3 c4 c5 c6 =
-    {
-      columns =
-        [
-          column_sql c1;
-          column_sql c2;
-          column_sql c3;
-          column_sql c4;
-          column_sql c5;
-          column_sql c6;
-        ];
-      decode =
-        (fun stmt ->
-          ( c1.typ.read stmt 0,
-            c2.typ.read stmt 1,
-            c3.typ.read stmt 2,
-            c4.typ.read stmt 3,
-            c5.typ.read stmt 4,
-            c6.typ.read stmt 5 ));
-    }
+  let t5 p1 p2 p3 p4 p5 =
+    t2 (t4 p1 p2 p3 p4) p5
+    |> map (fun ((a, b, c, d), e) -> (a, b, c, d, e))
 
-  let t7 c1 c2 c3 c4 c5 c6 c7 =
-    {
-      columns =
-        [
-          column_sql c1;
-          column_sql c2;
-          column_sql c3;
-          column_sql c4;
-          column_sql c5;
-          column_sql c6;
-          column_sql c7;
-        ];
-      decode =
-        (fun stmt ->
-          ( c1.typ.read stmt 0,
-            c2.typ.read stmt 1,
-            c3.typ.read stmt 2,
-            c4.typ.read stmt 3,
-            c5.typ.read stmt 4,
-            c6.typ.read stmt 5,
-            c7.typ.read stmt 6 ));
-    }
+  let t6 p1 p2 p3 p4 p5 p6 =
+    t2 (t5 p1 p2 p3 p4 p5) p6
+    |> map (fun ((a, b, c, d, e), f) -> (a, b, c, d, e, f))
 
-  let t8 c1 c2 c3 c4 c5 c6 c7 c8 =
-    {
-      columns =
-        [
-          column_sql c1;
-          column_sql c2;
-          column_sql c3;
-          column_sql c4;
-          column_sql c5;
-          column_sql c6;
-          column_sql c7;
-          column_sql c8;
-        ];
-      decode =
-        (fun stmt ->
-          ( c1.typ.read stmt 0,
-            c2.typ.read stmt 1,
-            c3.typ.read stmt 2,
-            c4.typ.read stmt 3,
-            c5.typ.read stmt 4,
-            c6.typ.read stmt 5,
-            c7.typ.read stmt 6,
-            c8.typ.read stmt 7 ));
-    }
+  let t7 p1 p2 p3 p4 p5 p6 p7 =
+    t2 (t6 p1 p2 p3 p4 p5 p6) p7
+    |> map (fun ((a, b, c, d, e, f), g) -> (a, b, c, d, e, f, g))
 
-  let map f row = { row with decode = (fun stmt -> f (row.decode stmt)) }
+  let t8 p1 p2 p3 p4 p5 p6 p7 p8 =
+    t2 (t7 p1 p2 p3 p4 p5 p6 p7) p8
+    |> map (fun ((a, b, c, d, e, f, g), h) -> (a, b, c, d, e, f, g, h))
 end
 
-module Join = struct
-  let left column = coerce_column column
-  let right column = coerce_column column
+module Scope = struct
+  type ('sub, 'super) contains =
+    | Self : ('scope, 'scope) contains
+    | Left : ('sub, 'super) contains -> ('sub, 'super * 'added) contains
+    | Right : ('added, 'existing * 'added) contains
 
-  let on_eq left right =
-    Expr.eq_col (coerce_column left) (coerce_column right)
+  let self = Self
+  let left evidence = Left evidence
+  let right = Right
+  let column (_ : ('sub, 'super) contains) column = coerce_column column
 end
 
 module Source = struct
@@ -652,21 +718,23 @@ module Source = struct
     params : param list;
   }
 
-  let table table = { sql = table_sql table; params = [] }
+  let from table = { sql = table_from_sql table; params = [] }
 
-  let join kind left right ~on =
+  let join ?(op = `Inner) ~on added existing =
+    let kind =
+      match op with
+      | `Inner -> "INNER"
+      | `Left -> "LEFT"
+    in
     let buf = Buffer.create 64 in
-    Buffer.add_string buf (table_sql left);
+    Buffer.add_string buf existing.sql;
     Buffer.add_char buf ' ';
     Buffer.add_string buf kind;
     Buffer.add_string buf " JOIN ";
-    Buffer.add_string buf (table_sql right);
+    Buffer.add_string buf (table_from_sql added);
     Buffer.add_string buf " ON ";
     Buffer.add_string buf on.Expr.sql;
-    { sql = Buffer.contents buf; params = on.Expr.params }
-
-  let inner_join left right ~on = join "INNER" left right ~on
-  let left_join left right ~on = join "LEFT" left right ~on
+    { sql = Buffer.contents buf; params = existing.params @ on.Expr.params }
 end
 
 module Select = struct
@@ -680,9 +748,9 @@ module Select = struct
     source : 'scope Source.t;
     row : ('scope, 'a) Projection.t;
     distinct : bool;
-    where_ : 'scope Expr.t option;
+    where_ : ('scope, bool) Expr.t option;
     group_by : string list;
-    having : 'scope Expr.t option;
+    having : ('scope, bool) Expr.t option;
     order_by : order list;
     limit : int option;
   }
@@ -690,7 +758,7 @@ module Select = struct
   let from table row =
     {
       ctes = [];
-      source = Source.table table;
+      source = Source.from table;
       row;
       distinct = false;
       where_ = None;
@@ -749,7 +817,8 @@ module Select = struct
       | Some expr -> expr.Expr.params
     in
     let cte_params = List.concat_map snd query.ctes in
-    cte_params @ query.source.Source.params @ where_params @ having_params
+    cte_params @ query.row.Projection.params @ query.source.Source.params
+    @ where_params @ having_params
 
   let to_sql query =
     let buf = Buffer.create 192 in
@@ -803,7 +872,12 @@ module Select = struct
     Buffer.contents buf
 
   let compile query : _ Compiled.select =
-    Compiled.{ sql = to_sql query; params = params query; decode = query.row.decode }
+    Compiled.
+      {
+        sql = to_sql query;
+        params = params query;
+        decode = (fun stmt -> query.row.decode stmt 0);
+      }
 
   let all_result db query =
     let compiled = compile query in
@@ -957,8 +1031,8 @@ module Insert = struct
         Compiled.
           {
             sql = Buffer.contents buf;
-            params = params query;
-            decode = projection.decode;
+            params = params query @ projection.Projection.params;
+            decode = (fun stmt -> projection.decode stmt 0);
           }
 
   let run_result db query =
@@ -984,7 +1058,7 @@ module Update = struct
   type 'table t = {
     table : 'table table;
     sets : 'table Assignment.t list;
-    where_ : 'table Expr.t option;
+    where_ : ('table, bool) Expr.t option;
   }
 
   let table table = { table; sets = []; where_ = None }
@@ -1040,8 +1114,8 @@ module Update = struct
         Compiled.
           {
             sql = Buffer.contents buf;
-            params = params query;
-            decode = projection.decode;
+            params = params query @ projection.Projection.params;
+            decode = (fun stmt -> projection.decode stmt 0);
           }
 
   let run_result db query =
@@ -1066,7 +1140,7 @@ end
 module Delete = struct
   type 'table t = {
     table : 'table table;
-    where_ : 'table Expr.t option;
+    where_ : ('table, bool) Expr.t option;
   }
 
   let from table = { table; where_ = None }
@@ -1099,8 +1173,8 @@ module Delete = struct
     Compiled.
       {
         sql = Buffer.contents buf;
-        params = params query;
-        decode = projection.decode;
+        params = params query @ projection.Projection.params;
+        decode = (fun stmt -> projection.decode stmt 0);
       }
 
   let run_result db query =
@@ -1817,8 +1891,30 @@ end
 
 module Eta_pool = struct
   type error = [ `Eta_sql of sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
-  type t = (Connection.t, error) Eta_runtime.Pool.t
-  type tx = Connection.t
+  type pool
+  type tx
+
+  type pool_state = {
+    pool : (Connection.t, error) Eta_runtime.Pool.t;
+    blocking_pool : Eta_runtime.Effect.Blocking.Pool.t option;
+    default_timeout : Eta_runtime.Duration.t option;
+  }
+
+  type tx_state = {
+    conn : Connection.t;
+    blocking_pool : Eta_runtime.Effect.Blocking.Pool.t option;
+    default_timeout : Eta_runtime.Duration.t option;
+  }
+
+  (* A GADT keeps pool and transaction runners distinct while allowing the
+     shared verbs below to dispatch to different runtime carriers. An abstract
+     phantom record would also type-check; this encoding makes the payload
+     split explicit without exposing constructors through the .mli. *)
+  type _ runner =
+    | Pool_runner : pool_state -> pool runner
+    | Tx_runner : tx_state -> tx runner
+
+  type t = pool runner
 
   let lift_sql_result = function
     | Ok value -> Eta_runtime.Effect.pure value
@@ -1872,27 +1968,57 @@ module Eta_pool = struct
            else
              Eta_runtime.Effect.fail (`Eta_sql (Pool_error "connection health check failed")))
 
-  let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
-      ?max_lifetime sqlite =
+  let create ?blocking_pool ?default_timeout ?name ?(max_size = 10) ?max_idle
+      ?idle_lifetime ?max_lifetime sqlite =
     Eta_runtime.Pool.create ?name ~kind:"sql" ~max_size ?max_idle ?idle_lifetime
       ?max_lifetime ~acquire:(acquire_connection ?blocking_pool sqlite)
       ~release:(release_connection ?blocking_pool)
       ~health_check:(health_check ?blocking_pool) ()
+    |> Eta_runtime.Effect.map (fun pool ->
+           Pool_runner { pool; blocking_pool; default_timeout })
 
-  let with_connection = Eta_runtime.Pool.with_resource
+  let with_connection : type kind a.
+      kind runner -> (Connection.t -> (a, error) Eta_runtime.Effect.t) ->
+      (a, error) Eta_runtime.Effect.t =
+   fun runner body ->
+    match runner with
+    | Pool_runner state -> Eta_runtime.Pool.with_resource state.pool body
+    | Tx_runner state -> body state.conn
 
-  let query ?blocking_pool ~timeout t sql params =
-    with_connection t (fun conn ->
+  let blocking_pool : type kind. kind runner -> _ = function
+    | Pool_runner state -> state.blocking_pool
+    | Tx_runner state -> state.blocking_pool
+
+  let default_timeout : type kind. kind runner -> _ = function
+    | Pool_runner state -> state.default_timeout
+    | Tx_runner state -> state.default_timeout
+
+  let resolve_timeout runner override =
+    match (override, default_timeout runner) with
+    | Some timeout, _ -> timeout
+    | None, Some timeout -> timeout
+    | None, None ->
+        invalid_arg
+          "Eta_sql.Eta_pool: operation requires ?timeout or pool ?default_timeout"
+
+  let query ?timeout runner sql params =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.query"
           (fun () -> Connection.query conn sql params))
 
-  let select ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+  let select ?timeout runner query =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.select"
           (fun () -> Connection.select conn query))
 
-  let returning ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+  let returning ?timeout runner query =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.returning"
           (fun () -> Connection.returning conn query))
 
@@ -1961,9 +2087,11 @@ module Eta_pool = struct
     in
     loop batch_size []
 
-  let fold ?blocking_pool ~timeout ?(batch_size = 1024) t sql params ~init ~f =
+  let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
     if batch_size <= 0 then invalid_arg "Eta_sql.Eta_pool.fold: batch_size must be > 0";
-    with_connection t (fun conn ->
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         Eta_runtime.Effect.scoped
           (Eta_runtime.Effect.acquire_release
              ~acquire:
@@ -1985,11 +2113,13 @@ module Eta_pool = struct
                  in
                  loop init)))
 
-  let fold_select ?blocking_pool ~timeout ?(batch_size = 1024) t
+  let fold_select ?timeout ?(batch_size = 1024) runner
       (query : _ Compiled.select) ~init ~f =
     if batch_size <= 0 then
       invalid_arg "Eta_sql.Eta_pool.fold_select: batch_size must be > 0";
-    with_connection t (fun conn ->
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         Eta_runtime.Effect.scoped
           (Eta_runtime.Effect.acquire_release
              ~acquire:
@@ -2011,71 +2141,39 @@ module Eta_pool = struct
                  in
                  loop init)))
 
-  let execute ?blocking_pool ~timeout t sql params =
-    with_connection t (fun conn ->
+  let execute ?timeout runner sql params =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.execute"
           (fun () -> Connection.execute conn sql params))
 
-  let execute_compiled ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+  let execute_compiled ?timeout runner query =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn
           ~name:"sqlite.execute_compiled" (fun () ->
             Connection.execute_compiled conn query))
 
-  let execute_script ?blocking_pool ~timeout t sql =
-    with_connection t (fun conn ->
+  let execute_script ?timeout runner sql =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn
           ~name:"sqlite.execute_script" (fun () -> Connection.execute_script conn sql))
 
-  let run_schema ?blocking_pool ~timeout t schema =
-    with_connection t (fun conn ->
+  let run_schema ?timeout runner schema =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = blocking_pool runner in
+    with_connection runner (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.schema"
           (fun () -> Connection.run_schema conn schema))
 
-  let tx_select ?blocking_pool ~timeout tx query =
-    timed_blocking_result ?blocking_pool ~timeout ~conn:tx ~name:"sqlite.tx.select"
-      (fun () -> Connection.select tx query)
-
-  let tx_returning ?blocking_pool ~timeout tx query =
-    timed_blocking_result ?blocking_pool ~timeout ~conn:tx
-      ~name:"sqlite.tx.returning" (fun () -> Connection.returning tx query)
-
-  let tx_execute_compiled ?blocking_pool ~timeout tx query =
-    timed_blocking_result ?blocking_pool ~timeout ~conn:tx
-      ~name:"sqlite.tx.execute_compiled" (fun () ->
-        Connection.execute_compiled tx query)
-
-  let tx_run_schema ?blocking_pool ~timeout tx schema =
-    timed_blocking_result ?blocking_pool ~timeout ~conn:tx ~name:"sqlite.tx.schema"
-      (fun () -> Connection.run_schema tx schema)
-
-  let tx_fold_select ?blocking_pool ~timeout ?(batch_size = 1024) tx
-      (query : _ Compiled.select) ~init ~f =
-    if batch_size <= 0 then
-      invalid_arg "Eta_sql.Eta_pool.tx_fold_select: batch_size must be > 0";
-    Eta_runtime.Effect.scoped
-      (Eta_runtime.Effect.acquire_release
-         ~acquire:
-           (timed_blocking_result ?blocking_pool ~timeout ~conn:tx
-              ~name:"sqlite.tx.select_fold.prepare" (fun () ->
-                prepare_typed_statement tx query))
-         ~release:(fun stmt ->
-           timed_blocking_result ?blocking_pool ~timeout ~conn:tx
-             ~name:"sqlite.tx.select_fold.finalize" (fun () ->
-               finalize_dynamic_statement tx stmt))
-      |> Eta_runtime.Effect.bind (fun stmt ->
-             let rec loop acc =
-               timed_blocking_result ?blocking_pool ~timeout ~conn:tx
-                 ~name:"sqlite.tx.select_fold.batch" (fun () ->
-                   fetch_typed_batch tx stmt batch_size query.decode)
-               |> Eta_runtime.Effect.bind (fun (rows, done_) ->
-                      let acc = List.fold_left f acc rows in
-                      if done_ then Eta_runtime.Effect.pure acc else loop acc)
-             in
-             loop init))
-
-  let with_transaction ?blocking_pool ~timeout t body =
-    with_connection t (fun conn ->
+  let with_transaction ?timeout (Pool_runner state as runner) body =
+    let timeout = resolve_timeout runner timeout in
+    let blocking_pool = state.blocking_pool in
+    Eta_runtime.Pool.with_resource state.pool (fun conn ->
         let committed = ref false in
         Eta_runtime.Effect.scoped
           (Eta_runtime.Effect.acquire_release
@@ -2090,7 +2188,13 @@ module Eta_pool = struct
                  timed_blocking_result ?blocking_pool ~timeout ~conn
                    ~name:"sqlite.rollback" (fun () -> Connection.rollback conn))
           |> Eta_runtime.Effect.bind (fun () ->
-                 body conn
+                 body
+                   (Tx_runner
+                      {
+                        conn;
+                        blocking_pool;
+                        default_timeout = Some timeout;
+                      })
                  |> Eta_runtime.Effect.bind (fun value ->
                         timed_blocking_result ?blocking_pool ~timeout ~conn
                           ~name:"sqlite.commit" (fun () -> Connection.commit conn)
@@ -2098,8 +2202,10 @@ module Eta_pool = struct
                                committed := true;
                                value)))))
 
-  let shutdown = Eta_runtime.Pool.shutdown
-  let stats = Eta_runtime.Pool.stats
+  let shutdown ?deadline (Pool_runner state) =
+    Eta_runtime.Pool.shutdown ?deadline state.pool
+
+  let stats (Pool_runner state) = Eta_runtime.Pool.stats state.pool
 end
 
 module Migrate = struct
@@ -2588,6 +2694,24 @@ module Migrate = struct
     | Migration_execution_error { version; error } ->
         "migration " ^ Version.to_string version ^ " failed: " ^ show_error error
 
+  let sql_error_of_eta_pool_error = function
+    | `Eta_sql err -> err
+    | `Pool_shutdown -> Pool_error "pool is shut down"
+    | `Pool_shutdown_timeout -> Pool_error "pool shutdown timed out"
+    | `Timeout -> Pool_error "operation timed out"
+
+  let effect_of_result = function
+    | Ok value -> Eta_runtime.Effect.pure value
+    | Result.Error err -> Eta_runtime.Effect.fail err
+
+  let with_pool_connection pool run =
+    Eta_pool.with_connection pool (fun conn ->
+        Eta_runtime.Effect.sync (fun () -> run conn))
+    |> Eta_runtime.Effect.catch (fun err ->
+           Eta_runtime.Effect.pure
+             (Result.Error (Sql_error (sql_error_of_eta_pool_error err))))
+    |> Eta_runtime.Effect.bind effect_of_result
+
   type applied_state = {
     applied_version : Version.t;
     applied_checksum : string;
@@ -2636,7 +2760,7 @@ module Migrate = struct
             loop [] rows)
 
   let list_applied ?(config = Config.default) pool =
-    let run conn =
+    with_pool_connection pool @@ fun conn ->
       match load_applied_states conn config with
       | Result.Error _ as err -> err
       | Ok states ->
@@ -2648,10 +2772,6 @@ module Migrate = struct
                       Applied_migration.version = state.applied_version;
                       checksum = state.applied_checksum;
                     }))
-    in
-    match Pool.acquire pool with
-    | Result.Error err -> Result.Error (Sql_error err)
-    | Ok conn -> Fun.protect ~finally:(fun () -> Pool.release pool conn) (fun () -> run conn)
 
   let up_migrations migrations =
     migrations
@@ -2743,10 +2863,7 @@ module Migrate = struct
             | Ok _ -> Ok { migration; elapsed_ms = elapsed })
 
   let run_migrations config pool migrations =
-    match Pool.acquire pool with
-    | Result.Error err -> Result.Error (Sql_error err)
-    | Ok conn ->
-        Fun.protect ~finally:(fun () -> Pool.release pool conn) @@ fun () ->
+    with_pool_connection pool @@ fun conn ->
         match load_applied_states conn config with
         | Result.Error _ as err -> err
         | Ok applied_states -> (
@@ -2776,16 +2893,16 @@ module Migrate = struct
 
   let run ?(config = Config.default) pool source =
     match Source.resolve source with
-    | Result.Error _ as err -> err
+    | Result.Error err -> Eta_runtime.Effect.fail err
     | Ok migrations -> run_migrations config pool migrations
 
   let run_to ?(config = Config.default) pool source ~target =
     match Source.resolve source with
-    | Result.Error _ as err -> err
+    | Result.Error err -> Eta_runtime.Effect.fail err
     | Ok migrations ->
         let up = up_migrations migrations in
         if not (List.exists (fun migration -> Version.equal migration.Migration.version target) up) then
-          Result.Error (Version_not_present target)
+          Eta_runtime.Effect.fail (Version_not_present target)
         else
           let migrations =
             List.filter
@@ -2806,12 +2923,9 @@ module Migrate = struct
 
   let undo ?(config = Config.default) pool source ~target =
     match Source.resolve source with
-    | Result.Error _ as err -> err
-    | Ok migrations -> (
-        match Pool.acquire pool with
-        | Result.Error err -> Result.Error (Sql_error err)
-        | Ok conn ->
-            Fun.protect ~finally:(fun () -> Pool.release pool conn) @@ fun () ->
+    | Result.Error err -> Eta_runtime.Effect.fail err
+    | Ok migrations ->
+        with_pool_connection pool @@ fun conn ->
             match load_applied_states conn config with
             | Result.Error _ as err -> err
             | Ok applied_states -> (
@@ -2869,39 +2983,5 @@ module Migrate = struct
                                         ({ migration; elapsed_ms = elapsed_ms start } :: acc)
                                         rest)))
                     in
-                    loop [] to_undo))
+                    loop [] to_undo)
 end
-
-let connect ?clock ?min_connections ?max_connections sqlite =
-  let min_connections =
-    match min_connections with
-    | Some value -> value
-    | None -> 0
-  in
-  let max_connections =
-    match max_connections with
-    | Some value -> value
-    | None -> 10
-  in
-  Pool.create ?clock (Pool.config ~min_connections ~max_connections sqlite)
-
-let query pool sql params =
-  Pool.with_connection pool (fun conn -> Connection.query conn sql params)
-
-let exec pool sql params =
-  Pool.with_connection pool (fun conn -> Connection.execute conn sql params)
-
-let with_transaction pool f =
-  Pool.with_connection pool (fun conn -> Connection.with_transaction conn f)
-
-let migrate ?(config = Migrate.Config.default) ?source pool () =
-  let source =
-    match source with
-    | Some source -> source
-    | None -> Migrate.Source.from_directory "migrations"
-  in
-  match Migrate.run ~config pool source with
-  | Ok _ -> Ok ()
-  | Result.Error _ as err -> err
-
-let shutdown = Pool.shutdown

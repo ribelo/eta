@@ -361,67 +361,76 @@ let test_ladybug_extension_helpers () =
   | Result.Error err -> Alcotest.failf "%a" pp_error err
   end;
   if require_ladybug_available () then
-    let db = Database.open_memory () |> ladybug_ok in
+    let home = Filename.temp_file "eta-ladybug-extensions-" "" in
+    Sys.remove home;
+    Sys.mkdir home 0o700;
     Fun.protect
-      ~finally:(fun () -> ignore (Database.close db))
+      ~finally:(fun () -> remove_tree home)
       (fun () ->
-        let conn = Connection.connect db |> ladybug_ok in
+        let db = Database.open_memory () |> ladybug_ok in
         Fun.protect
-          ~finally:(fun () -> ignore (Connection.close conn))
+          ~finally:(fun () -> ignore (Database.close db))
           (fun () ->
-            let official = Connection.official_extensions conn |> ladybug_ok in
-            Alcotest.(check bool) "json is official"
-              true
-              (List.exists
-                 (fun (extension : Extension.available) ->
-                   String.equal extension.name "JSON")
-                 official);
-            begin match Connection.load_extension conn Extension.json with
-            | Result.Error
-                (Driver_error
-                  { operation = "extension load"; _ }) ->
-                ()
-            | Ok () -> Alcotest.fail "uninstalled official extension loaded"
-            | Result.Error err -> Alcotest.failf "%a" pp_error err
-            end;
-            let extension_path =
-              match Sys.getenv_opt "ETA_LADYBUG_TEST_EXTENSION" with
-              | Some path ->
-                  let path =
-                    if Filename.is_relative path then
-                      Filename.concat (Sys.getcwd ()) path
-                    else path
-                  in
-                  if Sys.file_exists path then path
-                  else Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION does not exist"
-              | None -> Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION is not configured"
-            in
-            Connection.load_extension_path conn ~path:extension_path |> ladybug_ok;
-            let loaded = Connection.loaded_extensions conn |> ladybug_ok in
-            let test_extension =
-              List.find_opt
-                (fun (extension : Extension.loaded) ->
-                  String.equal extension.name "ETA_TEST")
-                loaded
-            in
-            begin match test_extension with
-            | Some { Extension.source = User; path; _ } ->
-                Alcotest.(check string) "loaded path" extension_path path
-            | Some _ -> Alcotest.fail "ETA_TEST was not reported as a user extension"
-            | None -> Alcotest.fail "ETA_TEST extension was not reported as loaded"
-            end;
-            begin
-              match
-                Connection.load_extension_path conn
-                  ~path:(extension_path ^ ".missing")
-              with
-              | Result.Error
-                  (Driver_error
-                    { operation = "extension load"; _ }) ->
-                  ()
-              | Ok () -> Alcotest.fail "missing extension path loaded"
-              | Result.Error err -> Alcotest.failf "%a" pp_error err
-            end))
+            let conn = Connection.connect db |> ladybug_ok in
+            Fun.protect
+              ~finally:(fun () -> ignore (Connection.close conn))
+              (fun () ->
+                Connection.exec conn
+                  ("CALL home_directory = '" ^ String.escaped home ^ "'")
+                |> ladybug_ok;
+                let official = Connection.official_extensions conn |> ladybug_ok in
+                Alcotest.(check bool) "json is official"
+                  true
+                  (List.exists
+                     (fun (extension : Extension.available) ->
+                       String.equal extension.name "JSON")
+                     official);
+                begin match Connection.load_extension conn Extension.json with
+                | Result.Error
+                    (Driver_error
+                      { operation = "extension load"; _ }) ->
+                    ()
+                | Ok () -> Alcotest.fail "uninstalled official extension loaded"
+                | Result.Error err -> Alcotest.failf "%a" pp_error err
+                end;
+                let extension_path =
+                  match Sys.getenv_opt "ETA_LADYBUG_TEST_EXTENSION" with
+                  | Some path ->
+                      let path =
+                        if Filename.is_relative path then
+                          Filename.concat (Sys.getcwd ()) path
+                        else path
+                      in
+                      if Sys.file_exists path then path
+                      else Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION does not exist"
+                  | None -> Alcotest.fail "ETA_LADYBUG_TEST_EXTENSION is not configured"
+                in
+                Connection.load_extension_path conn ~path:extension_path |> ladybug_ok;
+                let loaded = Connection.loaded_extensions conn |> ladybug_ok in
+                let test_extension =
+                  List.find_opt
+                    (fun (extension : Extension.loaded) ->
+                      String.equal extension.name "ETA_TEST")
+                    loaded
+                in
+                begin match test_extension with
+                | Some { Extension.source = User; path; _ } ->
+                    Alcotest.(check string) "loaded path" extension_path path
+                | Some _ -> Alcotest.fail "ETA_TEST was not reported as a user extension"
+                | None -> Alcotest.fail "ETA_TEST extension was not reported as loaded"
+                end;
+                begin
+                  match
+                    Connection.load_extension_path conn
+                      ~path:(extension_path ^ ".missing")
+                  with
+                  | Result.Error
+                      (Driver_error
+                        { operation = "extension load"; _ }) ->
+                      ()
+                  | Ok () -> Alcotest.fail "missing extension path loaded"
+                  | Result.Error err -> Alcotest.failf "%a" pp_error err
+                end)))
 
 let test_ladybug_official_extension_install_lifecycle () =
   let open Eta_ladybug in

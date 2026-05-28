@@ -40,7 +40,7 @@ let test_generated_projection () =
   Alcotest.(check string)
     "select sql"
     "SELECT \"users\".\"id\", \"users\".\"name\", \"users\".\"active\" FROM \
-     \"users\" WHERE \"users\".\"active\" = ?"
+     \"users\" WHERE (\"users\".\"active\" = ?)"
     (Q.Compiled.select_sql select);
   Alcotest.(check int) "params" 1 (List.length (Q.Compiled.select_params select))
 

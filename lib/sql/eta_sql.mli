@@ -105,6 +105,12 @@ module Table : sig
   end
 
   val name : 'table t -> string
+  val alias : 'table t -> string -> 'table t
+  (** [alias table name] renders [table AS name] in sources and qualifies
+      columns created from the alias with [name]. *)
+
+  val column : 'table t -> string -> 'a typ -> ('table, 'a) column
+  (** Create a column value bound to a table value, including aliases. *)
 end
 
 module Column : sig
@@ -115,105 +121,221 @@ module Column : sig
 end
 
 module Expr : sig
-  type 'scope t
+  type ('scope, 'a) t
+  (** A typed SQL expression visible in ['scope] and decoding/rendering as ['a]. *)
 
-  val true_ : 'scope t
-  val false_ : 'scope t
-  val eq : ('scope, 'a) column -> 'a -> 'scope t
-  val ne : ('scope, 'a) column -> 'a -> 'scope t
-  val gt : ('scope, 'a) column -> 'a -> 'scope t
-  val ge : ('scope, 'a) column -> 'a -> 'scope t
-  val lt : ('scope, 'a) column -> 'a -> 'scope t
-  val le : ('scope, 'a) column -> 'a -> 'scope t
-  val like : ('scope, string) column -> string -> 'scope t
-  val eq_col : ('scope, 'a) column -> ('scope, 'a) column -> 'scope t
-  val is_null : ('scope, 'a option) column -> 'scope t
-  val is_not_null : ('scope, 'a option) column -> 'scope t
-  val in_select : ('scope, 'a) column -> 'a Compiled.select -> 'scope t
-  val exists : _ Compiled.select -> 'scope t
-  val count_eq : int -> 'scope t
-  val count_gt : int -> 'scope t
-  val count_ge : int -> 'scope t
-  val and_ : 'scope t -> 'scope t -> 'scope t
-  val or_ : 'scope t -> 'scope t -> 'scope t
-  val not_ : 'scope t -> 'scope t
+  val true_ : ('scope, bool) t
+  (** SQL true predicate. *)
+  val false_ : ('scope, bool) t
+  (** SQL false predicate. *)
+  val lit : 'a typ -> 'a -> ('scope, 'a) t
+  (** Parameterized literal with an explicit SQL type. *)
+  val int_lit : int -> ('scope, int) t
+  (** Parameterized integer literal. *)
+  val int64_lit : int64 -> ('scope, int64) t
+  (** Parameterized 64-bit integer literal. *)
+  val float_lit : float -> ('scope, float) t
+  (** Parameterized float literal. *)
+  val text_lit : string -> ('scope, string) t
+  (** Parameterized text literal. *)
+  val bool_lit : bool -> ('scope, bool) t
+  (** Parameterized boolean literal. *)
+  val col : ('scope, 'a) column -> ('scope, 'a) t
+  (** Treat a visible column as a typed expression. *)
+  val eq : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column equals literal. *)
+  val ne : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column does not equal literal. *)
+  val gt : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column is greater than literal. *)
+  val ge : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column is greater than or equal to literal. *)
+  val lt : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column is less than literal. *)
+  val le : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  (** Column is less than or equal to literal. *)
+  val like : ('scope, string) column -> string -> ('scope, bool) t
+  (** Text column matches a SQL LIKE pattern. *)
+  val eq_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression equals expression. *)
+  val ne_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression does not equal expression. *)
+  val gt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression is greater than expression. *)
+  val ge_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression is greater than or equal to expression. *)
+  val lt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression is less than expression. *)
+  val le_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  (** Expression is less than or equal to expression. *)
+  val eq_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  (** Column equals column. *)
+  val gt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  (** Column is greater than column. *)
+  val ge_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  (** Column is greater than or equal to column. *)
+  val lt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  (** Column is less than column. *)
+  val le_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  (** Column is less than or equal to column. *)
+  val add : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  (** SQL addition over same-typed expressions. *)
+  val sub : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  (** SQL subtraction over same-typed expressions. *)
+  val mul : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  (** SQL multiplication over same-typed expressions. *)
+  val div : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  (** SQL division over same-typed expressions. *)
+  val is_null : ('scope, 'a option) column -> ('scope, bool) t
+  (** Nullable column is NULL. *)
+  val is_not_null : ('scope, 'a option) column -> ('scope, bool) t
+  (** Nullable column is not NULL. *)
+  val between : ('scope, 'a) column -> 'a -> 'a -> ('scope, bool) t
+  (** Column lies between two literal bounds. *)
+  val in_values : ('scope, 'a) column -> 'a list -> ('scope, bool) t
+  (** Column is in a non-empty literal list. *)
+  val in_select : ('scope, 'a) column -> 'a Compiled.select -> ('scope, bool) t
+  (** Column is in a typed subquery result. *)
+  val exists : _ Compiled.select -> ('scope, bool) t
+  (** SQL EXISTS predicate for a compiled subquery. *)
+  val count : unit -> ('scope, int) t
+  (** COUNT-star aggregate expression. *)
+  val sum_int : ('scope, int) column -> ('scope, int) t
+  (** SUM aggregate over an integer column. *)
+  val sum_float : ('scope, float) column -> ('scope, float) t
+  (** SUM aggregate over a float column. *)
+  val avg : ('scope, 'a) column -> ('scope, float) t
+  (** AVG aggregate over a numeric SQLite column. *)
+  val min : ('scope, 'a) column -> ('scope, 'a) t
+  (** MIN aggregate preserving the column type. *)
+  val max : ('scope, 'a) column -> ('scope, 'a) t
+  (** MAX aggregate preserving the column type. *)
+  val case :
+    (('scope, bool) t * ('scope, 'a) t) list ->
+    default:('scope, 'a) t ->
+    ('scope, 'a) t
+  (** CASE WHEN expression with same-typed result branches. *)
+  val and_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
+  (** Boolean AND. *)
+  val or_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
+  (** Boolean OR. *)
+  val not_ : ('scope, bool) t -> ('scope, bool) t
+  (** Boolean NOT. *)
 end
 
 module Projection : sig
   type ('scope, 'a) t
+  (** A SELECT projection visible in ['scope] and decoding one output value ['a]. *)
 
   val one : ('scope, 'a) column -> ('scope, 'a) t
-  val t2 : ('scope, 'a) column -> ('scope, 'b) column -> ('scope, 'a * 'b) t
+  (** Project one visible column. *)
+  val expr : ?as_:string -> ('scope, 'a) Expr.t -> ('scope, 'a) t
+  (** Project any typed expression, optionally assigning a SQL alias. *)
+  val t2 : ('scope, 'a) t -> ('scope, 'b) t -> ('scope, 'a * 'b) t
+  (** Combine two projections into a pair. *)
   val t3 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
     ('scope, 'a * 'b * 'c) t
+  (** Combine three projections into a tuple. *)
   val count : ?as_:string -> unit -> ('scope, int) t
+  (** Project COUNT-star. *)
   val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int) t
+  (** Project SUM over an integer column. *)
+  val sum_float : ?as_:string -> ('scope, float) column -> ('scope, float) t
+  (** Project SUM over a float column. *)
+  val avg : ?as_:string -> ('scope, 'a) column -> ('scope, float) t
+  (** Project AVG over a numeric SQLite column. *)
+  val min : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
+  (** Project MIN preserving the column type. *)
+  val max : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
+  (** Project MAX preserving the column type. *)
   val row_number :
     ?as_:string ->
     ?partition_by:('scope, 'a) column list ->
     ?order_by:('scope, 'b) column ->
     unit ->
     ('scope, int) t
+  (** Project ROW_NUMBER() with optional partition and order clauses. *)
   val t4 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
     ('scope, 'a * 'b * 'c * 'd) t
+  (** Combine four projections into a tuple. *)
   val t5 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e) t
+  (** Combine five projections into a tuple. *)
   val t6 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f) t
+  (** Combine six projections into a tuple. *)
   val t7 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
-    ('scope, 'g) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
+    ('scope, 'g) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g) t
+  (** Combine seven projections into a tuple. *)
   val t8 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
-    ('scope, 'g) column ->
-    ('scope, 'h) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
+    ('scope, 'g) t ->
+    ('scope, 'h) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h) t
+  (** Combine eight projections into a tuple. *)
   val map : ('a -> 'b) -> ('scope, 'a) t -> ('scope, 'b) t
+  (** Map the decoded value while preserving the SQL projection. *)
 end
 
-module Join : sig
-  val left : ('left, 'a) column -> ('left * 'right, 'a) column
-  val right : ('right, 'a) column -> ('left * 'right, 'a) column
-  val on_eq : ('left, 'a) column -> ('right, 'a) column -> ('left * 'right) Expr.t
+module Scope : sig
+  type ('sub, 'super) contains
+  (** Evidence that ['super] contains every table visible in ['sub]. *)
+
+  val self : ('scope, 'scope) contains
+  (** A scope contains itself. *)
+  val left : ('sub, 'super) contains -> ('sub, 'super * 'added) contains
+  (** If a scope is contained in the existing side, it is contained after a join. *)
+  val right : ('added, 'existing * 'added) contains
+  (** The newly joined table is contained on the right side of a join. *)
+  val column :
+    ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a) column
+  (** Promote a column only when containment evidence proves it is visible. *)
 end
 
 module Source : sig
   type 'scope t
+  (** A FROM source with the phantom scope of all visible tables. *)
 
-  val table : 'table table -> 'table t
-  val inner_join :
-    'left table -> 'right table -> on:('left * 'right) Expr.t -> ('left * 'right) t
-  val left_join :
-    'left table -> 'right table -> on:('left * 'right) Expr.t -> ('left * 'right) t
+  val from : 'table table -> 'table t
+  (** Start a source from one table. *)
+  val join :
+    ?op:[ `Inner | `Left ] ->
+    on:('existing * 'added, bool) Expr.t ->
+    'added table ->
+    'existing t ->
+    ('existing * 'added) t
+  (** Join one table onto an existing source. [on] is checked against the
+      enlarged scope and can reference both existing columns and the new table. *)
 end
 
 module Select : sig
@@ -224,11 +346,11 @@ module Select : sig
   val with_cte :
     name:string -> _ Compiled.select -> ('scope, 'a) t -> ('scope, 'a) t
   val distinct : ('scope, 'a) t -> ('scope, 'a) t
-  val where : 'scope Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
+  val where : ('scope, bool) Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
   val group_by : ('scope, 'b) column -> ('scope, 'a) t -> ('scope, 'a) t
   val group_by_many :
     ('scope, 'b) column list -> ('scope, 'a) t -> ('scope, 'a) t
-  val having : 'scope Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
+  val having : ('scope, bool) Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
   val order_by : ?desc:bool -> ('scope, 'b) column -> ('scope, 'a) t -> ('scope, 'a) t
   val limit : int -> ('scope, 'a) t -> ('scope, 'a) t
   val to_sql : (_, _) t -> string
@@ -257,7 +379,7 @@ module Update : sig
 
   val table : 'table table -> 'table t
   val set : ('table, 'a) column -> 'a -> 'table t -> 'table t
-  val where : 'table Expr.t -> 'table t -> 'table t
+  val where : ('table, bool) Expr.t -> 'table t -> 'table t
   val to_sql : _ t -> string
   val compile : _ t -> Compiled.change
   val returning : ('table, 'a) Projection.t -> 'table t -> 'a Compiled.returning
@@ -267,7 +389,7 @@ module Delete : sig
   type 'table t
 
   val from : 'table table -> 'table t
-  val where : 'table Expr.t -> 'table t -> 'table t
+  val where : ('table, bool) Expr.t -> 'table t -> 'table t
   val to_sql : _ t -> string
   val compile : _ t -> Compiled.change
   val returning : ('table, 'a) Projection.t -> 'table t -> 'a Compiled.returning
@@ -301,84 +423,16 @@ module Eta_schema : sig
   val compile : t -> Compiled.schema
 end
 
-module Connection : sig
-  type t
-
-  val create : Sqlite.config -> (t, error) result
-  val sqlite : t -> Sqlite.db
-  val query : t -> string -> Value.t list -> (Row.t list, error) result
-  val select : t -> 'a Compiled.select -> ('a list, error) result
-  val returning : t -> 'a Compiled.returning -> ('a list, error) result
-  val execute : t -> string -> Value.t list -> (int, error) result
-  val execute_compiled : t -> Compiled.change -> (int, error) result
-  val execute_script : t -> string -> (unit, error) result
-  val run_schema : t -> Compiled.schema -> (unit, error) result
-  val prepare_migration : t -> string -> (string list, error) result
-  val ping : t -> bool
-  val close : t -> unit
-  val begin_transaction : t -> (unit, error) result
-  val commit : t -> (unit, error) result
-  val rollback : t -> (unit, error) result
-  val with_transaction : t -> (t -> ('a, error) result) -> ('a, error) result
-  val id : t -> string
-  val created_at : t -> float
-  val last_used : t -> float
-  val pool_lease : t -> int
-  val set_pool_lease : t -> int -> unit
-end
-
-module Transaction : sig
-  type t
-
-  val begin_transaction : Connection.t -> (t, error) result
-  val commit : t -> (unit, error) result
-  val rollback : t -> (unit, error) result
-  val with_transaction : Connection.t -> (Connection.t -> ('a, error) result) -> ('a, error) result
-end
-
-module Pool : sig
-  type clock
-
-  type config = {
-    sqlite : Sqlite.config;
-    min_connections : int;
-    max_connections : int;
-    acquire_timeout_ms : int option;
-    idle_timeout_ms : int option;
-    max_lifetime_ms : int option;
-  }
-
-  type t
-
-  type stat =
-    | Total_connections of int
-    | Available_connections of int
-    | In_use_connections of int
-    | Waiting_requests of int
-
-  val config :
-    ?min_connections:int ->
-    ?max_connections:int ->
-    ?acquire_timeout_ms:int ->
-    ?idle_timeout_ms:int ->
-    ?max_lifetime_ms:int ->
-    Sqlite.config ->
-    config
-  val create : ?clock:_ Eio.Time.clock -> config -> (t, error) result
-  val acquire : t -> (Connection.t, error) result
-  val release : t -> Connection.t -> unit
-  val with_connection : t -> (Connection.t -> ('a, error) result) -> ('a, error) result
-  val shutdown : t -> unit
-  val stats : t -> stat list
-end
-
 module Eta_pool : sig
   type error = [ `Eta_sql of sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
-  type t
+  type pool
   type tx
+  type 'kind runner
+  type t = pool runner
 
   val create :
     ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?default_timeout:Eta.Duration.t ->
     ?name:string ->
     ?max_size:int ->
     ?max_idle:int ->
@@ -386,126 +440,95 @@ module Eta_pool : sig
     ?max_lifetime:Eta.Duration.t ->
     Sqlite.config ->
     (t, error) Eta.Effect.t
+  (** Create a SQLite runner pool. [blocking_pool] and [default_timeout] are
+      pool defaults used by every operation unless that operation overrides the
+      timeout. *)
 
   val query :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     string ->
     Value.t list ->
     (Row.t list, error) Eta.Effect.t
+  (** Run raw SQL with dynamic values on either a pool or transaction runner. *)
 
   val select :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     'a Compiled.select ->
     ('a list, error) Eta.Effect.t
+  (** Run a compiled typed SELECT on either a pool or transaction runner. *)
 
   val returning :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     'a Compiled.returning ->
     ('a list, error) Eta.Effect.t
+  (** Run a compiled INSERT/UPDATE/DELETE RETURNING statement. *)
 
   val fold :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
+    ?timeout:Eta.Duration.t ->
     ?batch_size:int ->
-    t ->
+    'kind runner ->
     string ->
     Value.t list ->
     init:'a ->
     f:('a -> Row.t -> 'a) ->
     ('a, error) Eta.Effect.t
+  (** Fold raw-query rows in bounded SQLite stepping batches. *)
 
   val fold_select :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
+    ?timeout:Eta.Duration.t ->
     ?batch_size:int ->
-    t ->
+    'kind runner ->
     'row Compiled.select ->
     init:'a ->
     f:('a -> 'row -> 'a) ->
     ('a, error) Eta.Effect.t
+  (** Fold typed SELECT rows in bounded SQLite stepping batches. *)
 
   val execute :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     string ->
     Value.t list ->
     (int, error) Eta.Effect.t
+  (** Execute raw SQL and return SQLite's changed-row count. *)
 
   val execute_compiled :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     Compiled.change ->
     (int, error) Eta.Effect.t
+  (** Execute a compiled INSERT, UPDATE, or DELETE. *)
 
   val execute_script :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     string ->
     (unit, error) Eta.Effect.t
+  (** Execute a SQLite script. *)
 
   val run_schema :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    t ->
+    ?timeout:Eta.Duration.t ->
+    'kind runner ->
     Compiled.schema ->
     (unit, error) Eta.Effect.t
-
-  val tx_select :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    tx ->
-    'a Compiled.select ->
-    ('a list, error) Eta.Effect.t
-
-  val tx_fold_select :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    ?batch_size:int ->
-    tx ->
-    'row Compiled.select ->
-    init:'a ->
-    f:('a -> 'row -> 'a) ->
-    ('a, error) Eta.Effect.t
-
-  val tx_returning :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    tx ->
-    'a Compiled.returning ->
-    ('a list, error) Eta.Effect.t
-
-  val tx_execute_compiled :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    tx ->
-    Compiled.change ->
-    (int, error) Eta.Effect.t
-
-  val tx_run_schema :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
-    tx ->
-    Compiled.schema ->
-    (unit, error) Eta.Effect.t
+  (** Execute a compiled schema statement. *)
 
   val with_transaction :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
-    timeout:Eta.Duration.t ->
+    ?timeout:Eta.Duration.t ->
     t ->
-    (tx -> ('a, error) Eta.Effect.t) ->
+    (tx runner -> ('a, error) Eta.Effect.t) ->
     ('a, error) Eta.Effect.t
+  (** Run [body] with a transaction runner, committing on success and rolling
+      back on failure or cancellation. *)
 
   val shutdown : ?deadline:Eta.Duration.t -> t -> (unit, error) Eta.Effect.t
+  (** Shut down the runner pool. *)
+
   val stats : t -> Eta.Pool.stats
+  (** Snapshot pool counters. *)
 end
 
 module Migrate : sig
@@ -640,35 +663,24 @@ module Migrate : sig
 
   val error_to_string : error -> string
   val list_applied :
-    ?config:Config.t -> Pool.t -> (Applied_migration.t list, error) result
-  val run : ?config:Config.t -> Pool.t -> Source.t -> (run_report, error) result
+    ?config:Config.t ->
+    Eta_pool.t ->
+    (Applied_migration.t list, error) Eta.Effect.t
+  val run :
+    ?config:Config.t ->
+    Eta_pool.t ->
+    Source.t ->
+    (run_report, error) Eta.Effect.t
   val run_to :
     ?config:Config.t ->
-    Pool.t ->
+    Eta_pool.t ->
     Source.t ->
     target:Version.t ->
-    (run_report, error) result
+    (run_report, error) Eta.Effect.t
   val undo :
     ?config:Config.t ->
-    Pool.t ->
+    Eta_pool.t ->
     Source.t ->
     target:Version.t ->
-    (run_report, error) result
+    (run_report, error) Eta.Effect.t
 end
-
-val connect :
-  ?clock:_ Eio.Time.clock ->
-  ?min_connections:int ->
-  ?max_connections:int ->
-  Sqlite.config ->
-  (Pool.t, error) result
-val query : Pool.t -> string -> Value.t list -> (Row.t list, error) result
-val exec : Pool.t -> string -> Value.t list -> (int, error) result
-val with_transaction : Pool.t -> (Connection.t -> ('a, error) result) -> ('a, error) result
-val migrate :
-  ?config:Migrate.Config.t ->
-  ?source:Migrate.Source.t ->
-  Pool.t ->
-  unit ->
-  (unit, Migrate.error) result
-val shutdown : Pool.t -> unit

@@ -18,6 +18,16 @@ let expect_ok = function
   | Ok value -> value
   | Error err -> failwith (Q.show_error err)
 
+let expect_effect = function
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error _ -> failwith "Eta SQL benchmark effect failed"
+
+let run_effect program =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  Eta.Runtime.run rt program |> expect_effect
+
 let repeat n f =
   for i = 1 to n do
     f i
@@ -25,7 +35,8 @@ let repeat n f =
 
 let select_query () =
   Q.Select.(
-    from Users.table Q.Projection.(t3 Users.id Users.name Users.nickname)
+    from Users.table
+      Q.Projection.(t3 (one Users.id) (one Users.name) (one Users.nickname))
     |> where Q.Expr.(and_ (gt Users.id 10) (like Users.name "A%"))
     |> order_by ~desc:true Users.name
     |> limit 10)
@@ -55,12 +66,8 @@ let render_schema () =
       |> to_sql)
 
 let sqlite_roundtrip rows =
-  let conn = Q.Connection.create (S.memory_config ()) |> expect_ok in
-  Fun.protect
-    ~finally:(fun () -> Q.Connection.close conn)
-    (fun () ->
-      Q.Connection.run_schema conn
-        Q.Eta_schema.(
+  let create =
+    Q.Eta_schema.(
           create_table Users.table
             [
               column ~primary_key:true Users.id;
@@ -69,20 +76,35 @@ let sqlite_roundtrip rows =
               column Users.nickname;
             ]
           |> compile)
-      |> expect_ok;
-      repeat rows (fun i ->
-          ignore
-            (Q.Connection.execute_compiled conn
-               Q.Insert.(
-                 into Users.table
-                 |> value Users.name ("user-" ^ string_of_int i)
-                 |> value Users.active (i land 1 = 0)
-                 |> value Users.nickname None
-                 |> compile)
-            |> expect_ok));
-      ignore
-        (Q.Connection.select conn (Q.Select.compile (select_query ()))
-        |> expect_ok))
+  in
+  let insert i =
+    Q.Insert.(
+      into Users.table
+      |> value Users.name ("user-" ^ string_of_int i)
+      |> value Users.active (i land 1 = 0)
+      |> value Users.nickname None
+      |> compile)
+  in
+  let rec insert_loop pool i =
+    if i > rows then
+      Eta.Effect.unit
+    else
+      Q.Eta_pool.execute_compiled pool (insert i)
+      |> Eta.Effect.bind (fun _ -> insert_loop pool (i + 1))
+  in
+  let program =
+    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
+      (S.memory_config ())
+    |> Eta.Effect.bind (fun pool ->
+           Q.Eta_pool.run_schema pool create
+           |> Eta.Effect.bind (fun () -> insert_loop pool 1)
+           |> Eta.Effect.bind (fun () ->
+                  Q.Eta_pool.select pool (Q.Select.compile (select_query ())))
+           |> Eta.Effect.bind (fun selected ->
+                  Q.Eta_pool.shutdown pool
+                  |> Eta.Effect.map (fun () -> selected)))
+  in
+  ignore (run_effect program)
 
 let check_sqlite db operation rc =
   match S.check db ~operation rc with
@@ -198,12 +220,8 @@ let sqlite_scan rows =
           assert (!checksum > 0)))
 
 let sqlite_connection_select rows =
-  let conn = Q.Connection.create (S.memory_config ()) |> expect_ok in
-  Fun.protect
-    ~finally:(fun () -> Q.Connection.close conn)
-    (fun () ->
-      Q.Connection.run_schema conn
-        Q.Eta_schema.(
+  let create =
+    Q.Eta_schema.(
           create_table Users.table
             [
               column ~primary_key:true Users.id;
@@ -212,29 +230,44 @@ let sqlite_connection_select rows =
               column Users.nickname;
             ]
           |> compile)
-      |> expect_ok;
-      Q.Connection.begin_transaction conn |> expect_ok;
-      repeat rows (fun i ->
-          ignore
-            (Q.Connection.execute_compiled conn
-               Q.Insert.(
-                 into Users.table
-                 |> value Users.id i
-                 |> value Users.name ("user-" ^ string_of_int i)
-                 |> value Users.active (i land 1 = 0)
-                 |> value Users.nickname None
-                 |> compile)
-            |> expect_ok));
-      Q.Connection.commit conn |> expect_ok;
-      let rows =
-        Q.Connection.select conn
-          Q.Select.(
-            from Users.table Q.Projection.(t3 Users.id Users.name Users.active)
-            |> order_by Users.id
-            |> compile)
-        |> expect_ok
-      in
-      assert (List.length rows > 0))
+  in
+  let insert i =
+    Q.Insert.(
+      into Users.table
+      |> value Users.id i
+      |> value Users.name ("user-" ^ string_of_int i)
+      |> value Users.active (i land 1 = 0)
+      |> value Users.nickname None
+      |> compile)
+  in
+  let select =
+    Q.Select.(
+      from Users.table
+        Q.Projection.(t3 (one Users.id) (one Users.name) (one Users.active))
+      |> order_by Users.id
+      |> compile)
+  in
+  let rec insert_loop tx i =
+    if i > rows then
+      Eta.Effect.unit
+    else
+      Q.Eta_pool.execute_compiled tx (insert i)
+      |> Eta.Effect.bind (fun _ -> insert_loop tx (i + 1))
+  in
+  let program =
+    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
+      (S.memory_config ())
+    |> Eta.Effect.bind (fun pool ->
+           Q.Eta_pool.run_schema pool create
+           |> Eta.Effect.bind (fun () ->
+                  Q.Eta_pool.with_transaction pool (fun tx ->
+                      insert_loop tx 1))
+           |> Eta.Effect.bind (fun () -> Q.Eta_pool.select pool select)
+           |> Eta.Effect.bind (fun selected ->
+                  Q.Eta_pool.shutdown pool
+                  |> Eta.Effect.map (fun () -> selected)))
+  in
+  assert (List.length (run_effect program) > 0)
 
 let sqlite_file_wal_insert_tx rows =
   let path = Filename.temp_file "eta-sql-bench-" ".db" in
