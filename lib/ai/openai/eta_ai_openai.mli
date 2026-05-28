@@ -31,6 +31,38 @@ val responses_provider : ?base_url:string -> unit -> Eta_ai.provider
 (** Responses API provider value. The default base URL is
     [https://api.openai.com]. *)
 
+module Chat : sig
+  include Eta_ai.Provider.Chat
+
+  val responses_request :
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val responses :
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+  val stream_responses :
+    ?structured_output:structured_output ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+end
+
+module Embeddings : Eta_ai.Provider.Embeddings
+module Images : Eta_ai.Provider.Images
+module Speech : Eta_ai.Provider.Speech
+module Transcriptions : Eta_ai.Provider.Transcriptions
+
 val encode_chat :
   ?structured_output:structured_output ->
   Eta_ai.chat_request ->
@@ -43,6 +75,18 @@ val encode_responses :
 
 val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
 val decode_responses : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+val encode_embeddings :
+  Eta_ai.embedding_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_embeddings :
+  Eta_ai.raw_json -> (Eta_ai.embedding_response, Eta_ai.ai_error) result
+val encode_image_generation :
+  Eta_ai.image_generation_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_image_response :
+  Eta_ai.raw_json -> (Eta_ai.image_response, Eta_ai.ai_error) result
+val encode_speech :
+  Eta_ai.speech_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_transcription_response :
+  Eta_ai.raw_json -> (Eta_ai.transcription_response, Eta_ai.ai_error) result
 val decode_stream_event :
   Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
 val decode_error :
@@ -64,6 +108,30 @@ val responses_request :
   Eta_ai.chat_request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
+val embeddings_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.embedding_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val image_generation_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.image_generation_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val speech_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.speech_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val transcription_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.transcription_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
 val chat_completions :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
@@ -79,6 +147,34 @@ val responses :
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+val embeddings :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.embedding_request ->
+  (Eta_ai.embedding_response, Eta_ai.ai_error) Eta.Effect.t
+
+val image_generation :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.image_generation_request ->
+  (Eta_ai.image_response, Eta_ai.ai_error) Eta.Effect.t
+
+val speech :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.speech_request ->
+  (Eta_ai.speech_response, Eta_ai.ai_error) Eta.Effect.t
+
+val transcription :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.transcription_request ->
+  (Eta_ai.transcription_response, Eta_ai.ai_error) Eta.Effect.t
 
 val stream_chat_completions :
   ?structured_output:structured_output ->

@@ -4,7 +4,8 @@ OpenAI provider package for eta-ai.
 
 This package constructs eta-ai provider values and eta-http request runners for
 OpenAI Responses API requests, explicit legacy Chat Completions compatibility,
-function tools, structured output schemas, and SSE streaming.
+embeddings, image generation, speech, transcription, function tools, structured
+output schemas, and SSE streaming.
 
 It has no dependency on OpenAI SDKs, generated clients, or tokenizer
 libraries. Provider-specific JSON is encoded and decoded against
@@ -52,6 +53,11 @@ base-path behavior.
   structured outputs, streaming flag, temperature, and max_tokens.
 - Streaming: OpenAI chat completion chunks, Responses output text deltas,
   function-call argument deltas, done markers, and error events.
+- Embeddings: `POST /v1/embeddings`, float and base64 vectors, dimensions,
+  encoding_format, user, and usage decoding.
+- Images: `POST /v1/images/generations` with URL/base64 response decoding.
+- Audio: `POST /v1/audio/speech` for binary speech output and
+  `POST /v1/audio/transcriptions` multipart uploads for speech-to-text.
 - Errors: OpenAI error objects are decoded into Eta_ai.Provider_error with
   status, code, message, and raw body.
 

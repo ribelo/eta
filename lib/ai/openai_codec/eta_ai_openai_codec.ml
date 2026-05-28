@@ -21,10 +21,132 @@ let content_text = function
   | A.Text text -> text
   | A.Json raw -> raw
   | A.Audio _ -> invalid_arg "audio content cannot be encoded as text"
+  | A.Image _ -> invalid_arg "image content cannot be encoded as text"
+  | A.Video _ -> invalid_arg "video content cannot be encoded as text"
 
 let contents_text contents = contents |> List.map content_text |> String.concat ""
 
-let content_has_audio = function A.Audio _ -> true | A.Text _ | A.Json _ -> false
+let content_has_audio = function
+  | A.Audio _ -> true
+  | A.Text _ | A.Json _ | A.Image _ | A.Video _ -> false
+
+let content_is_text = function A.Text _ | A.Json _ -> true | _ -> false
+let contents_are_text contents = List.for_all content_is_text contents
+
+let audio_format = function
+  | A.Pcm16 -> "pcm16"
+  | A.G711_alaw -> "g711_alaw"
+  | A.G711_ulaw -> "g711_ulaw"
+  | A.Mp3 -> "mp3"
+  | A.Opus -> "opus"
+  | A.Wav -> "wav"
+
+let base64_table =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+let base64_encode input =
+  let len = String.length input in
+  let out = Buffer.create (((len + 2) / 3) * 4) in
+  let rec loop index =
+    if index < len then (
+      let b0 = Char.code input.[index] in
+      let b1 = if index + 1 < len then Char.code input.[index + 1] else 0 in
+      let b2 = if index + 2 < len then Char.code input.[index + 2] else 0 in
+      Buffer.add_char out base64_table.[b0 lsr 2];
+      Buffer.add_char out base64_table.[((b0 land 0x03) lsl 4) lor (b1 lsr 4)];
+      if index + 1 < len then
+        Buffer.add_char out base64_table.[((b1 land 0x0f) lsl 2) lor (b2 lsr 6)]
+      else Buffer.add_char out '=';
+      if index + 2 < len then Buffer.add_char out base64_table.[b2 land 0x3f]
+      else Buffer.add_char out '=';
+      loop (index + 3))
+  in
+  loop 0;
+  Buffer.contents out
+
+let audio_data_base64 = function
+  | A.Base64 value -> value
+  | A.Bytes bytes -> base64_encode (Bytes.to_string bytes)
+
+let media_object media =
+  Json.object_
+    [
+      ("url", Some (Json.string media.A.url));
+      ("detail", Option.map Json.string media.detail);
+    ]
+
+let chat_content_part = function
+  | A.Text text -> Json.object_ [ ("type", Some (Json.string "text")); ("text", Some (Json.string text)) ]
+  | A.Json raw -> Json.object_ [ ("type", Some (Json.string "text")); ("text", Some (Json.string raw)) ]
+  | A.Image media ->
+      Json.object_
+        [
+          ("type", Some (Json.string "image_url"));
+          ("image_url", Some (media_object media));
+        ]
+  | A.Audio audio ->
+      Json.object_
+        [
+          ("type", Some (Json.string "input_audio"));
+          (
+            "input_audio",
+            Some
+              (Json.object_
+                 [
+                   ("data", Some (Json.string (audio_data_base64 audio.data)));
+                   ("format", Some (Json.string (audio_format audio.format)));
+                 ]) );
+        ]
+  | A.Video media ->
+      Json.object_
+        [
+          ("type", Some (Json.string "video_url"));
+          ("video_url", Some (media_object media));
+        ]
+
+let chat_content_json contents =
+  if contents_are_text contents then Json.string (contents_text contents)
+  else Json.array (List.map chat_content_part contents)
+
+let responses_content_part = function
+  | A.Text text -> Json.object_ [ ("type", Some (Json.string "input_text")); ("text", Some (Json.string text)) ]
+  | A.Json raw -> Json.object_ [ ("type", Some (Json.string "input_text")); ("text", Some (Json.string raw)) ]
+  | A.Image media ->
+      Json.object_
+        [
+          ("type", Some (Json.string "input_image"));
+          ("image_url", Some (Json.string media.A.url));
+          ("detail", Option.map Json.string media.detail);
+        ]
+  | A.Audio audio ->
+      Json.object_
+        [
+          ("type", Some (Json.string "input_audio"));
+          (
+            "input_audio",
+            Some
+              (Json.object_
+                 [
+                   ("data", Some (Json.string (audio_data_base64 audio.data)));
+                   ("format", Some (Json.string (audio_format audio.format)));
+                 ]) );
+        ]
+  | A.Video media ->
+      Json.object_
+        [
+          ("type", Some (Json.string "input_video"));
+          ("video_url", Some (Json.string media.A.url));
+        ]
+
+let responses_content_json contents =
+  if contents_are_text contents then Json.string (contents_text contents)
+  else Json.array (List.map responses_content_part contents)
+
+let contents_empty contents =
+  match contents with
+  | [] -> true
+  | _ when contents_are_text contents -> String.equal (contents_text contents) ""
+  | _ -> false
 
 let message_has_audio = function
   | A.System _ -> false
@@ -58,7 +180,7 @@ let message_item role contents =
   Json.object_
     [
       ("role", Some (Json.string role));
-      ("content", Some (Json.string (contents_text contents)));
+      ("content", Some (responses_content_json contents));
     ]
 
 let function_call_item (call : A.tool_call) =
@@ -75,7 +197,7 @@ let input_items = function
   | A.User contents -> [ message_item "user" contents ]
   | A.Assistant { content; tool_calls } ->
       let content_item =
-        if String.equal (contents_text content) "" then []
+        if contents_empty content then []
         else [ message_item "assistant" content ]
       in
       content_item @ List.map function_call_item tool_calls
@@ -100,7 +222,7 @@ let chat_message_json = function
       Json.object_
         [
           ("role", Some (Json.string "user"));
-          ("content", Some (Json.string (contents_text contents)));
+          ("content", Some (chat_content_json contents));
         ]
   | A.Assistant { content; tool_calls } ->
       let tool_calls =
@@ -126,7 +248,7 @@ let chat_message_json = function
       Json.object_
         [
           ("role", Some (Json.string "assistant"));
-          ("content", Some (Json.string (contents_text content)));
+          ("content", Some (chat_content_json content));
           ("tool_calls", tool_calls);
         ]
   | A.Tool { tool_call_id; content } ->
@@ -134,7 +256,7 @@ let chat_message_json = function
         [
           ("role", Some (Json.string "tool"));
           ("tool_call_id", Some (Json.string tool_call_id));
-          ("content", Some (Json.string (contents_text content)));
+          ("content", Some (chat_content_json content));
         ]
 
 type tool_shape =
@@ -224,10 +346,7 @@ let temperature_json ~provider = function
 
 let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
-  match reject_audio_prompt ~provider request.prompt with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok () -> (
-      match temperature_json ~provider request.temperature with
+  match temperature_json ~provider request.temperature with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok temperature -> (
       match
@@ -254,7 +373,7 @@ let encode_chat_json ~provider ~schema_value ?structured_output
                  ("max_tokens", Option.map Json.int request.max_output_tokens);
                  ("tools", if tools = [] then None else Some (Json.array tools));
                  ("response_format", response_format);
-               ])))
+               ]))
 
 let encode_chat ~provider ~schema_value ?structured_output request =
   match encode_chat_json ~provider ~schema_value ?structured_output request with
@@ -263,10 +382,7 @@ let encode_chat ~provider ~schema_value ?structured_output request =
 
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
-  match reject_audio_prompt ~provider request.prompt with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok () -> (
-      match temperature_json ~provider request.temperature with
+  match temperature_json ~provider request.temperature with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok temperature -> (
       match
@@ -298,7 +414,7 @@ let encode_responses_json ~provider ~schema_value ?structured_output
                    Option.map Json.int request.max_output_tokens );
                  ("tools", if tools = [] then None else Some (Json.array tools));
                  ("text", text_format);
-               ])))
+               ]))
 
 let encode_responses ~provider ~schema_value ?structured_output request =
   match

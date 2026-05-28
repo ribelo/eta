@@ -25,6 +25,7 @@ let provider () =
     Eta_ai.name = "bench";
     base_url = "https://bench.example";
     chat_path = "/chat";
+    embeddings_path = None;
     auth_headers =
       (fun key ->
         Eta_http.Core.Header.unsafe_of_list
@@ -35,6 +36,16 @@ let provider () =
         tools = true;
         tool_choice = true;
         structured_outputs = true;
+        text = true;
+        image_input = false;
+        audio_input = false;
+        video_input = false;
+        embeddings = false;
+        image_generation = false;
+        speech = false;
+        transcription = false;
+        rerank = false;
+        video_generation = false;
       };
     encode_chat =
       (fun request ->
@@ -52,6 +63,12 @@ let provider () =
             usage = None;
             raw = Some raw;
           });
+    encode_embeddings =
+      (fun _request ->
+        Error (Unsupported { provider = "bench"; feature = "embeddings" }));
+    decode_embeddings =
+      (fun _raw ->
+        Error (Unsupported { provider = "bench"; feature = "embeddings" }));
     decode_stream_event =
       (fun event ->
         if String.equal event.data "[DONE]" then Ok [ Stream_done ]

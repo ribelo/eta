@@ -51,7 +51,7 @@ let assistant_text = function
       content
       |> List.filter_map (function
            | A.Text text -> Some text
-           | A.Json _ | A.Audio _ -> None)
+           | A.Json _ | A.Audio _ | A.Image _ | A.Video _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 
@@ -110,6 +110,11 @@ let zero_stats =
 
 let response_of_fixture ?(status = 200) ?(headers = []) name =
   H.Response.make ~status ~headers ~body:(body_of_fixture name) ()
+
+let response_of_bytes ?(status = 200) ?(headers = []) body =
+  H.Response.make ~status ~headers
+    ~body:(H.Body.Stream.of_bytes [ Bytes.of_string body ])
+    ()
 
 let test_client ?(with_http_span = false) response captured =
   let request http_request =
@@ -379,17 +384,120 @@ let test_responses_request_uses_responses_endpoint () =
   require_contains "responses body" ~needle:"\"input\":["
     (request_body_string request)
 
-let test_chat_and_responses_reject_audio_content () =
+let embedding_request () : A.embedding_request =
+  {
+    embedding_model = "text-embedding-3-small";
+    embedding_input = A.Embedding_text "hello eta";
+    encoding_format = Some "float";
+    dimensions = Some 3;
+    user = Some "eta-test";
+  }
+
+let test_embeddings_request_and_decode () =
+  let request =
+    O.embeddings_request ~api_key:(A.api_key "sk-test") (embedding_request ())
+    |> expect_ok "embeddings request"
+  in
+  Alcotest.(check string)
+    "uri" "https://api.openai.com/v1/embeddings" request.uri;
+  require_contains "embedding model"
+    ~needle:"\"model\":\"text-embedding-3-small\""
+    (request_body_string request);
+  let response =
+    O.decode_embeddings (read_fixture "embeddings.json")
+    |> expect_ok "embeddings fixture"
+  in
+  Alcotest.(check int) "embedding count" 1 (List.length response.embeddings)
+
+let test_image_generation_request_and_decode () =
+  let request =
+    O.image_generation_request ~api_key:(A.api_key "sk-test")
+      {
+        A.image_model = Some "gpt-image-1";
+        image_prompt = "draw eta";
+        image_n = Some 1;
+        image_size = Some "1024x1024";
+        image_quality = None;
+        image_response_format = Some "url";
+        image_user = None;
+        image_extra = [];
+      }
+    |> expect_ok "image request"
+  in
+  Alcotest.(check string)
+    "uri" "https://api.openai.com/v1/images/generations" request.uri;
+  let response =
+    O.decode_image_response (read_fixture "image_generation.json")
+    |> expect_ok "image fixture"
+  in
+  match response.images with
+  | image :: _ ->
+      Alcotest.(check (option string))
+        "image url" (Some "https://example.test/image.png")
+        image.A.image_url
+  | [] -> Alcotest.fail "expected generated image"
+
+let test_speech_runner () =
+  with_runtime @@ fun rt ->
+  let captured = ref None in
+  let client =
+    test_client
+      (response_of_bytes ~headers:[ ("Content-Type", "audio/mpeg") ] "MP3")
+      captured
+  in
+  let response =
+    run_ok rt "speech runner"
+      (O.speech client ~api_key:(A.api_key "sk-test")
+         {
+           A.speech_model = "gpt-4o-mini-tts";
+           speech_input = "hello";
+           speech_voice = "alloy";
+           speech_response_format = Some "mp3";
+           speech_speed = Some 1.0;
+           speech_instructions = None;
+           speech_extra = [];
+         })
+  in
+  Alcotest.(check string) "speech body" "MP3" (Bytes.to_string response.speech_audio);
+  match !captured with
+  | Some request ->
+      Alcotest.(check string)
+        "uri" "https://api.openai.com/v1/audio/speech" request.uri
+  | None -> Alcotest.fail "expected speech request"
+
+let test_transcription_request_and_decode () =
+  let request =
+    O.transcription_request ~api_key:(A.api_key "sk-test")
+      {
+        A.transcription_model = "gpt-4o-transcribe";
+        transcription_file =
+          { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
+        transcription_language = Some "en";
+        transcription_prompt = None;
+        transcription_response_format = Some "json";
+        transcription_temperature = Some 0.0;
+        transcription_extra_fields = [];
+      }
+    |> expect_ok "transcription request"
+  in
+  Alcotest.(check string)
+    "uri" "https://api.openai.com/v1/audio/transcriptions" request.uri;
+  Alcotest.(check bool)
+    "multipart" true
+    (Option.is_some (H.Core.Header.get "content-type" request.headers));
+  let response =
+    O.decode_transcription_response (read_fixture "transcription.json")
+    |> expect_ok "transcription fixture"
+  in
+  Alcotest.(check (option string)) "text" (Some "hello eta") response.transcription_text
+
+let test_chat_and_responses_encode_audio_content () =
   let request =
     { (chat_request ()) with prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ] }
   in
-  match O.encode_responses request with
-  | Stdlib.Error
-      (A.Unsupported
-        { provider = "openai"; feature = "audio content requires OpenAI Realtime" }) ->
-      ()
-  | Stdlib.Ok _ -> Alcotest.fail "expected audio content rejection"
-  | Stdlib.Error _ -> Alcotest.fail "unexpected audio content rejection shape"
+  let raw = O.encode_responses request |> expect_ok "audio responses" in
+  require_contains "audio part" ~needle:"\"type\":\"input_audio\"" raw;
+  require_contains "audio data" ~needle:"\"data\":\"AAE=\"" raw
 
 let test_realtime_session_json () =
   let session =
@@ -452,8 +560,8 @@ let () =
           Alcotest.test_case "value" `Quick test_provider_value;
           Alcotest.test_case "encode chat and responses" `Quick
             test_encode_chat_and_responses;
-          Alcotest.test_case "rejects audio outside realtime" `Quick
-            test_chat_and_responses_reject_audio_content;
+          Alcotest.test_case "encodes audio content" `Quick
+            test_chat_and_responses_encode_audio_content;
         ] );
       ( "decode",
         [
@@ -475,6 +583,13 @@ let () =
             test_responses_runner_provider_error;
           Alcotest.test_case "responses request" `Quick
             test_responses_request_uses_responses_endpoint;
+          Alcotest.test_case "embeddings request and decode" `Quick
+            test_embeddings_request_and_decode;
+          Alcotest.test_case "image generation request and decode" `Quick
+            test_image_generation_request_and_decode;
+          Alcotest.test_case "speech runner" `Quick test_speech_runner;
+          Alcotest.test_case "transcription request and decode" `Quick
+            test_transcription_request_and_decode;
         ] );
       ( "realtime",
         [

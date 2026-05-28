@@ -42,6 +42,37 @@ val provider :
   Eta_ai.provider
 (** Build an OpenAI-compatible Chat Completions provider value. *)
 
+module Chat : sig
+  include Eta_ai.Provider.Chat
+
+  val chat_completions_request :
+    ?structured_output:structured_output ->
+    provider:Eta_ai.provider ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val chat_completions :
+    ?structured_output:structured_output ->
+    provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+  val stream_chat_completions :
+    ?structured_output:structured_output ->
+    provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+end
+
+module Embeddings : sig
+  include Eta_ai.Provider.Embeddings
+end
+
 val encode_chat :
   ?structured_output:structured_output ->
   Eta_ai.chat_request ->

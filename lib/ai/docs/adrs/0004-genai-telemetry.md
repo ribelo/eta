@@ -31,10 +31,9 @@ eta-ai exposes effect wrappers:
       ('a, ai_error) Eta.Effect.t
 
     val with_embeddings_span :
-      ?usage:embedding_usage ->
       provider -> embedding_request ->
-      ('a, ai_error) Eta.Effect.t ->
-      ('a, ai_error) Eta.Effect.t
+      (embedding_response, ai_error) Eta.Effect.t ->
+      (embedding_response, ai_error) Eta.Effect.t
 
     val with_tool_span :
       ?tool_call_id:string ->
@@ -88,6 +87,9 @@ policy for provider eta-http request subtrees.
   option.
 - Response usage fields from providers become OTel usage attributes when
   available.
+- Embeddings usage is read from the decoded embedding response, so provider
+  runners cannot accidentally report telemetry that disagrees with the returned
+  value.
 
 ## Evidence
 

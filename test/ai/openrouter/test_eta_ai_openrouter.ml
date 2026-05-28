@@ -46,12 +46,21 @@ let chat_request ?(stream = false) () : A.chat_request =
     stream;
   }
 
+let embedding_request () : A.embedding_request =
+  {
+    embedding_model = "openai/text-embedding-3-small";
+    embedding_input = A.Embedding_text "The quick brown fox";
+    encoding_format = Some "float";
+    dimensions = Some 1536;
+    user = Some "eta-test-user";
+  }
+
 let assistant_text = function
   | A.Assistant { content; _ } ->
       content
       |> List.filter_map (function
            | A.Text text -> Some text
-           | A.Json _ | A.Audio _ -> None)
+           | A.Json _ | A.Audio _ | A.Image _ | A.Video _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 
@@ -111,6 +120,11 @@ let zero_stats =
 let response_of_fixture ?(status = 200) ?(headers = []) name =
   H.Response.make ~status ~headers ~body:(body_of_fixture name) ()
 
+let response_of_bytes ?(status = 200) ?(headers = []) body =
+  H.Response.make ~status ~headers
+    ~body:(H.Body.Stream.of_bytes [ Bytes.of_string body ])
+    ()
+
 let test_client ?(with_http_span = false) response captured =
   let request http_request =
     captured := Some http_request;
@@ -149,6 +163,7 @@ let test_provider_headers () =
     "base" "https://openrouter.ai" provider.base_url;
   Alcotest.(check string)
     "path" "/api/v1/responses" provider.chat_path;
+  Alcotest.(check bool) "embeddings" true provider.capabilities.embeddings;
   let headers = provider.auth_headers (A.api_key "or-test") in
   Alcotest.(check (option string))
     "auth" (Some "Bearer or-test")
@@ -199,6 +214,66 @@ let test_request_uses_openrouter_endpoint () =
   require_contains "routing body" ~needle:"\"provider\":{"
     (request_body_string request)
 
+let test_unified_provider_modules () =
+  let provider = provider () in
+  let chat =
+    O.Chat.request ~provider ~api_key:(A.api_key "or-test") (chat_request ())
+    |> expect_ok "unified chat request"
+  in
+  Alcotest.(check string)
+    "chat uri" "https://openrouter.ai/api/v1/responses" chat.uri;
+  let embeddings =
+    O.Embeddings.request ~provider ~api_key:(A.api_key "or-test")
+      (embedding_request ())
+    |> expect_ok "unified embeddings request"
+  in
+  Alcotest.(check string)
+    "embeddings uri" "https://openrouter.ai/api/v1/embeddings"
+    embeddings.uri;
+  let raw =
+    O.Embeddings.encode ~provider (embedding_request ())
+    |> expect_ok "unified embeddings encode"
+  in
+  require_contains "unified embeddings model"
+    ~needle:"\"model\":\"openai/text-embedding-3-small\"" raw
+
+let test_encode_embeddings_and_request_endpoint () =
+  let raw =
+    O.encode_embeddings ~routing:(routing ()) ~input_type:"search_document"
+      (embedding_request ())
+    |> expect_ok "embeddings encode"
+  in
+  require_contains "model" ~needle:"\"model\":\"openai/text-embedding-3-small\""
+    raw;
+  require_contains "input" ~needle:"\"input\":\"The quick brown fox\"" raw;
+  require_contains "format" ~needle:"\"encoding_format\":\"float\"" raw;
+  require_contains "dimensions" ~needle:"\"dimensions\":1536" raw;
+  require_contains "user" ~needle:"\"user\":\"eta-test-user\"" raw;
+  require_contains "input type" ~needle:"\"input_type\":\"search_document\"" raw;
+  require_contains "routing" ~needle:"\"provider\":{" raw;
+  let request =
+    O.embeddings_request ~routing:(routing ()) ~input_type:"search_document"
+      ~provider:(provider ()) ~api_key:(A.api_key "or-test")
+      (embedding_request ())
+    |> expect_ok "embeddings request"
+  in
+  Alcotest.(check string)
+    "uri" "https://openrouter.ai/api/v1/embeddings" request.uri;
+  require_contains "request body" ~needle:"\"dimensions\":1536"
+    (request_body_string request);
+  (match
+     O.encode_embeddings
+       { (embedding_request ()) with dimensions = Some 0 }
+   with
+  | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
+  | _ -> Alcotest.fail "expected invalid dimensions rejection");
+  match
+    O.encode_embeddings
+      { (embedding_request ()) with encoding_format = Some "binary" }
+  with
+  | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
+  | _ -> Alcotest.fail "expected invalid encoding_format rejection"
+
 let test_decode_responses_fixtures () =
   let text = O.decode_responses (read_fixture "chat.json") |> expect_ok "chat" in
   Alcotest.(check string) "text" "OpenRouter response"
@@ -210,6 +285,34 @@ let test_decode_responses_fixtures () =
       Alcotest.(check string)
         "arguments" "{\"location\":\"Warsaw\"}" call.arguments_json
   | _ -> Alcotest.fail "expected one tool call"
+
+let test_decode_embeddings_fixture () =
+  let response =
+    O.decode_embeddings (read_fixture "embeddings.json")
+    |> expect_ok "embeddings"
+  in
+  Alcotest.(check (option string))
+    "id" (Some "emb-openrouter-fixture") response.embedding_id;
+  Alcotest.(check (option string))
+    "model" (Some "openai/text-embedding-3-small")
+    response.embedding_model;
+  Alcotest.(check int) "embedding count" 2 (List.length response.embeddings);
+  (match response.embeddings with
+  | { A.embedding = A.Embedding_float values; embedding_index = Some 0 } :: _ ->
+      Alcotest.(check int) "float dimensions" 3 (List.length values)
+  | _ -> Alcotest.fail "expected float embedding");
+  (match List.nth response.embeddings 1 with
+  | { A.embedding = A.Embedding_base64 value; embedding_index = Some 1 } ->
+      Alcotest.(check string) "base64" "AAECAwQ=" value
+  | _ -> Alcotest.fail "expected base64 embedding");
+  Alcotest.(check (option int))
+    "input tokens" (Some 7)
+    (Option.bind response.embedding_usage (fun usage ->
+         usage.embedding_input_tokens));
+  Alcotest.(check (option int))
+    "total tokens" (Some 7)
+    (Option.bind response.embedding_usage (fun usage ->
+         usage.embedding_total_tokens))
 
 let stream_text events =
   events
@@ -223,6 +326,11 @@ let stream_errors events =
   |> List.filter_map (function
        | A.Stream_error (A.Provider_error { message; _ }) -> Some message
        | _ -> None)
+
+let span_attr key (span : Eta.Tracer.span) = List.assoc_opt key span.attrs
+
+let require_span_attr span key expected =
+  Alcotest.(check (option string)) key (Some expected) (span_attr key span)
 
 let test_stream_midstream_error_fixture () =
   with_runtime @@ fun rt ->
@@ -298,6 +406,50 @@ let test_provider_error () =
         (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<ai-error>"))
         cause
 
+let test_embeddings_runner () =
+  with_traced_runtime @@ fun rt tracer ->
+  let captured = ref None in
+  let client =
+    test_client ~with_http_span:true (response_of_fixture "embeddings.json")
+      captured
+  in
+  let response =
+    run_ok rt "embeddings runner"
+      (O.embeddings ~routing:(routing ()) ~input_type:"search_query"
+         ~provider:(provider ()) client ~api_key:(A.api_key "or-test")
+         (embedding_request ()))
+  in
+  Alcotest.(check int) "embedding count" 2 (List.length response.embeddings);
+  let request =
+    match !captured with
+    | Some request -> request
+    | None -> Alcotest.fail "expected embeddings request"
+  in
+  Alcotest.(check string)
+    "uri" "https://openrouter.ai/api/v1/embeddings" request.uri;
+  require_contains "request input type" ~needle:"\"input_type\":\"search_query\""
+    (request_body_string request);
+  let spans = Eta.Tracer.dump tracer in
+  Alcotest.(check bool)
+    "transport span suppressed" false
+    (List.exists
+       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       spans);
+  let span =
+    match
+      List.find_opt
+        (fun (span : Eta.Tracer.span) ->
+          String.equal span.name "embeddings openai/text-embedding-3-small")
+        spans
+    with
+    | Some span -> span
+    | None -> Alcotest.fail "expected embeddings span"
+  in
+  require_span_attr span "gen_ai.operation.name" "embeddings";
+  require_span_attr span "gen_ai.request.encoding_formats" "float";
+  require_span_attr span "gen_ai.usage.input_tokens" "7";
+  require_span_attr span "gen_ai.usage.total_tokens" "7"
+
 let test_stream_runner () =
   with_runtime @@ fun rt ->
   let captured = ref None in
@@ -326,6 +478,150 @@ let test_stream_runner () =
   require_contains "routing body" ~needle:"\"provider\":{"
     (request_body_string request)
 
+let transcription_request () : A.transcription_request =
+  {
+    transcription_model = "openai/whisper-large-v3";
+    transcription_file =
+      { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
+    transcription_language = Some "en";
+    transcription_prompt = None;
+    transcription_response_format = None;
+    transcription_temperature = Some 0.0;
+    transcription_extra_fields = [];
+  }
+
+let test_encode_and_decode_task_apis () =
+  let speech =
+    O.encode_speech
+      {
+        A.speech_model = "elevenlabs/eleven-turbo-v2";
+        speech_input = "hello";
+        speech_voice = "alloy";
+        speech_response_format = Some "pcm";
+        speech_speed = Some 1.0;
+        speech_instructions = None;
+        speech_extra = [];
+      }
+    |> expect_ok "speech encode"
+  in
+  require_contains "speech model" ~needle:"\"model\":\"elevenlabs/eleven-turbo-v2\"" speech;
+  let transcription =
+    O.encode_transcription (transcription_request ())
+    |> expect_ok "transcription encode"
+  in
+  require_contains "stt input" ~needle:"\"input_audio\":{" transcription;
+  let transcription_response =
+    O.decode_transcription (read_fixture "transcription.json")
+    |> expect_ok "transcription fixture"
+  in
+  Alcotest.(check (option string))
+    "transcription text" (Some "openrouter speech")
+    transcription_response.transcription_text;
+  let image_raw =
+    O.encode_image_generation
+      {
+        A.image_model = Some "google/gemini-3.1-flash-image-preview";
+        image_prompt = "draw eta";
+        image_n = None;
+        image_size = Some "1K";
+        image_quality = None;
+        image_response_format = None;
+        image_user = None;
+        image_extra = [];
+      }
+    |> expect_ok "image generation encode"
+  in
+  require_contains "image modality" ~needle:"\"modalities\":[\"image\",\"text\"]" image_raw;
+  let image_response =
+    O.decode_image_generation (read_fixture "image_generation.json")
+    |> expect_ok "image generation fixture"
+  in
+  Alcotest.(check int) "image count" 1 (List.length image_response.images);
+  let rerank =
+    O.decode_rerank (read_fixture "rerank.json") |> expect_ok "rerank fixture"
+  in
+  Alcotest.(check int) "rerank count" 1 (List.length rerank.rerank_results);
+  let video =
+    O.decode_video (read_fixture "video.json") |> expect_ok "video fixture"
+  in
+  Alcotest.(check string) "video id" "video_job" video.video_id
+
+let test_task_request_endpoints_and_binary_runners () =
+  let provider = provider () in
+  let rerank_request =
+    O.rerank_request ~provider ~api_key:(A.api_key "or-test")
+      {
+        A.rerank_model = "cohere/rerank-v3.5";
+        rerank_query = "effects";
+        rerank_documents = [ "Eta"; "Other" ];
+        rerank_top_n = Some 1;
+      }
+    |> expect_ok "rerank request"
+  in
+  Alcotest.(check string)
+    "rerank uri" "https://openrouter.ai/api/v1/rerank" rerank_request.uri;
+  let video_request =
+    O.video_request ~provider ~api_key:(A.api_key "or-test")
+      {
+        A.video_model = "google/veo-3.1";
+        video_prompt = "mountains";
+        video_aspect_ratio = Some "16:9";
+        video_duration = Some 8;
+        video_resolution = Some "720p";
+        video_extra = [];
+      }
+    |> expect_ok "video request"
+  in
+  Alcotest.(check string)
+    "video uri" "https://openrouter.ai/api/v1/videos" video_request.uri;
+  let image_request =
+    O.image_generation_request ~provider ~api_key:(A.api_key "or-test")
+      {
+        A.image_model = Some "google/gemini-3.1-flash-image-preview";
+        image_prompt = "draw eta";
+        image_n = None;
+        image_size = None;
+        image_quality = None;
+        image_response_format = None;
+        image_user = None;
+        image_extra = [];
+      }
+    |> expect_ok "image request"
+  in
+  Alcotest.(check string)
+    "image uri" "https://openrouter.ai/api/v1/chat/completions"
+    image_request.uri;
+  let content_request =
+    O.video_content_request ~provider ~api_key:(A.api_key "or-test")
+      { A.video_job_id = "video_job"; video_index = Some 1 }
+    |> expect_ok "video content request"
+  in
+  Alcotest.(check string)
+    "video content uri"
+    "https://openrouter.ai/api/v1/videos/video_job/content?index=1"
+    content_request.uri;
+  with_runtime @@ fun rt ->
+  let captured = ref None in
+  let client =
+    test_client
+      (response_of_bytes ~headers:[ ("Content-Type", "audio/pcm") ] "PCM")
+      captured
+  in
+  let speech =
+    run_ok rt "speech"
+      (O.speech ~provider client ~api_key:(A.api_key "or-test")
+         {
+           A.speech_model = "elevenlabs/eleven-turbo-v2";
+           speech_input = "hello";
+           speech_voice = "alloy";
+           speech_response_format = Some "pcm";
+           speech_speed = None;
+           speech_instructions = None;
+           speech_extra = [];
+         })
+  in
+  Alcotest.(check string) "speech bytes" "PCM" (Bytes.to_string speech.speech_audio)
+
 let () =
   Alcotest.run "eta-ai-openrouter"
     [
@@ -336,11 +632,19 @@ let () =
             test_encode_routing_and_rejects_empty_provider;
           Alcotest.test_case "request endpoint" `Quick
             test_request_uses_openrouter_endpoint;
+          Alcotest.test_case "unified provider modules" `Quick
+            test_unified_provider_modules;
+          Alcotest.test_case "embeddings request endpoint" `Quick
+            test_encode_embeddings_and_request_endpoint;
         ] );
       ( "fixtures",
         [
           Alcotest.test_case "decode responses fixtures" `Quick
             test_decode_responses_fixtures;
+          Alcotest.test_case "decode embeddings fixture" `Quick
+            test_decode_embeddings_fixture;
+          Alcotest.test_case "task API codecs" `Quick
+            test_encode_and_decode_task_apis;
           Alcotest.test_case "midstream error" `Quick
             test_stream_midstream_error_fixture;
         ] );
@@ -349,6 +653,9 @@ let () =
           Alcotest.test_case "runner suppression" `Quick
             test_runner_suppresses_transport_span;
           Alcotest.test_case "provider error" `Quick test_provider_error;
+          Alcotest.test_case "embeddings runner" `Quick test_embeddings_runner;
+          Alcotest.test_case "task request endpoints and binary runners" `Quick
+            test_task_request_endpoints_and_binary_runners;
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
         ] );
     ]

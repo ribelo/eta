@@ -52,7 +52,7 @@ let assistant_text = function
       content
       |> List.filter_map (function
            | A.Text text -> Some text
-           | A.Json _ | A.Audio _ -> None)
+           | A.Json _ | A.Audio _ | A.Image _ | A.Video _ -> None)
       |> String.concat ""
   | _ -> Alcotest.fail "expected assistant message"
 

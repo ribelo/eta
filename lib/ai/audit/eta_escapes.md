@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/ai/audit/run.sh
-Last updated: 2026-05-24T08:46:44Z
-Current sites: 3
+Last updated: 2026-05-28T19:07:34Z
+Current sites: 0
 
 Sites where eta-ai reaches into raw Eio fiber/switch/promise/mutex/condition
 primitives or raw Atomic.t are listed here.
@@ -28,7 +28,4 @@ No debt escapes yet.
 ## Current Matches
 
 <!-- BEGIN ESCAPE_MATCHES -->
-- test/ai/core/test_eta_ai.ml:319:  Eio.Switch.run @@ fun sw ->
-- test/ai/core/test_eta_ai.ml:325:  Eio.Switch.run @@ fun sw ->
-- test/ai/core/test_eta_ai.ml:335:  Eio.Switch.run @@ fun sw ->
 <!-- END ESCAPE_MATCHES -->

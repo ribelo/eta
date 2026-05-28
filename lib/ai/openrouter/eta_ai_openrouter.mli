@@ -59,6 +59,75 @@ val structured_output :
   unit ->
   (structured_output, Eta_ai.ai_error) result
 
+module Chat : sig
+  include Eta_ai.Provider.Chat
+
+  val encode_responses :
+    ?structured_output:structured_output ->
+    ?routing:routing ->
+    Eta_ai.chat_request ->
+    (Eta_ai.raw_json, Eta_ai.ai_error) result
+
+  val responses_request :
+    ?structured_output:structured_output ->
+    ?routing:routing ->
+    ?provider:Eta_ai.provider ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val responses :
+    ?structured_output:structured_output ->
+    ?routing:routing ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+  val stream_responses :
+    ?structured_output:structured_output ->
+    ?routing:routing ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+end
+
+module Embeddings : sig
+  include Eta_ai.Provider.Embeddings
+
+  val encode_with_routing :
+    ?routing:routing ->
+    ?input_type:string ->
+    Eta_ai.embedding_request ->
+    (Eta_ai.raw_json, Eta_ai.ai_error) result
+
+  val request_with_routing :
+    ?routing:routing ->
+    ?input_type:string ->
+    ?provider:Eta_ai.provider ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.embedding_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val run_with_routing :
+    ?routing:routing ->
+    ?input_type:string ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.embedding_request ->
+      (Eta_ai.embedding_response, Eta_ai.ai_error) Eta.Effect.t
+end
+
+module Speech : Eta_ai.Provider.Speech
+module Images : Eta_ai.Provider.Images
+module Transcriptions : Eta_ai.Provider.Transcriptions
+module Rerank : Eta_ai.Provider.Rerank
+module Video : Eta_ai.Provider.Video
+
 val encode_chat :
   ?structured_output:structured_output ->
   ?routing:routing ->
@@ -75,6 +144,33 @@ val encode_responses :
 val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
 val decode_responses :
   Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+val encode_embeddings :
+  ?routing:routing ->
+  ?input_type:string ->
+  Eta_ai.embedding_request ->
+  (Eta_ai.raw_json, Eta_ai.ai_error) result
+(** Encode eta-ai embeddings requests as OpenRouter Embeddings API requests. *)
+
+val decode_embeddings :
+  Eta_ai.raw_json -> (Eta_ai.embedding_response, Eta_ai.ai_error) result
+val encode_speech :
+  Eta_ai.speech_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val encode_image_generation :
+  Eta_ai.image_generation_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_image_generation :
+  Eta_ai.raw_json -> (Eta_ai.image_response, Eta_ai.ai_error) result
+val encode_transcription :
+  Eta_ai.transcription_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_transcription :
+  Eta_ai.raw_json -> (Eta_ai.transcription_response, Eta_ai.ai_error) result
+val encode_rerank :
+  Eta_ai.rerank_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_rerank :
+  Eta_ai.raw_json -> (Eta_ai.rerank_response, Eta_ai.ai_error) result
+val encode_video :
+  Eta_ai.video_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+val decode_video :
+  Eta_ai.raw_json -> (Eta_ai.video_response, Eta_ai.ai_error) result
 val decode_stream_event :
   Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
 val decode_error :
@@ -97,6 +193,57 @@ val chat_completions_request :
   (Eta_http.Request.t, Eta_ai.ai_error) result
 [@@deprecated "Use responses_request; this sends the OpenRouter Responses API envelope."]
 
+val embeddings_request :
+  ?routing:routing ->
+  ?input_type:string ->
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.embedding_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val speech_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.speech_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val image_generation_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.image_generation_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val transcription_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.transcription_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val rerank_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.rerank_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val video_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.video_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val video_get_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  job_id:string ->
+  unit ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val video_content_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.video_content_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
 val responses :
   ?structured_output:structured_output ->
   ?routing:routing ->
@@ -115,6 +262,64 @@ val chat_completions :
   Eta_ai.chat_request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 [@@deprecated "Use responses; this sends the OpenRouter Responses API envelope."]
+
+val embeddings :
+  ?routing:routing ->
+  ?input_type:string ->
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.embedding_request ->
+  (Eta_ai.embedding_response, Eta_ai.ai_error) Eta.Effect.t
+
+val speech :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.speech_request ->
+  (Eta_ai.speech_response, Eta_ai.ai_error) Eta.Effect.t
+
+val image_generation :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.image_generation_request ->
+  (Eta_ai.image_response, Eta_ai.ai_error) Eta.Effect.t
+
+val transcription :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.transcription_request ->
+  (Eta_ai.transcription_response, Eta_ai.ai_error) Eta.Effect.t
+
+val rerank :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.rerank_request ->
+  (Eta_ai.rerank_response, Eta_ai.ai_error) Eta.Effect.t
+
+val video :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.video_request ->
+  (Eta_ai.video_response, Eta_ai.ai_error) Eta.Effect.t
+
+val video_get :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  job_id:string ->
+  (Eta_ai.video_response, Eta_ai.ai_error) Eta.Effect.t
+
+val video_content :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  Eta_ai.video_content_request ->
+  (Eta_ai.video_content, Eta_ai.ai_error) Eta.Effect.t
 
 val stream_responses :
   ?structured_output:structured_output ->

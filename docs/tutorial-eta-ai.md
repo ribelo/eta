@@ -10,6 +10,8 @@ provider values. Applications pass dependencies and state in ordinary OCaml.
 ## What Core Provides
 
 - messages, prompts, responses, usage, tools, and typed AI errors;
+- text, image, audio, video, embedding, speech, transcription, rerank, and
+  video-generation vocabulary;
 - provider records with endpoint data and provider-local codecs;
 - raw JSON tool schemas until eta-schema can export JSON Schema;
 - SSE pull parsing over eta-http response bodies;
@@ -35,6 +37,7 @@ provider-local functions.
         name = "fixture";
         base_url = "https://api.fixture.test";
         chat_path = "/v1/responses";
+        embeddings_path = None;
         auth_headers =
           (fun key ->
             Eta_http.Core.Header.of_list
@@ -48,8 +51,18 @@ provider-local functions.
             tools = true;
             tool_choice = true;
             structured_outputs = false;
+            text = true;
+            image_input = false;
+            audio_input = false;
+            video_input = false;
+            embeddings = false;
+            image_generation = false;
+            speech = false;
+            transcription = false;
+            rerank = false;
+            video_generation = false;
           };
-        encode_chat = (fun _request -> Ok "{"fixture":true}");
+        encode_chat = (fun _request -> Ok "{\"fixture\":true}");
         decode_chat =
           (fun raw ->
             Ok
@@ -69,6 +82,12 @@ provider-local functions.
                     };
                 raw = Some raw;
               });
+        encode_embeddings =
+          (fun _request ->
+            Error (Unsupported { provider = "fixture"; feature = "embeddings" }));
+        decode_embeddings =
+          (fun _raw ->
+            Error (Unsupported { provider = "fixture"; feature = "embeddings" }));
         decode_stream_event =
           (fun event ->
             match event.data with

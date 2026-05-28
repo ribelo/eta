@@ -1,0 +1,22 @@
+{
+  "id": "emb-openrouter-fixture",
+  "object": "list",
+  "model": "openai/text-embedding-3-small",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.125, -0.25, 1.5]
+    },
+    {
+      "object": "embedding",
+      "index": 1,
+      "embedding": "AAECAwQ="
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 7,
+    "total_tokens": 7,
+    "cost": 0.000001
+  }
+}

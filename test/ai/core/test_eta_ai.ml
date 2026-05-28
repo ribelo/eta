@@ -77,6 +77,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
       name = "openai";
       base_url = "https://api.openai.test";
       chat_path = "/v1/chat/completions";
+      embeddings_path = Some "/v1/embeddings";
       auth_headers =
         (fun api_key ->
           Eta_http.Core.Header.unsafe_of_list
@@ -90,6 +91,16 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
           tools = true;
           tool_choice = true;
           structured_outputs = false;
+          text = true;
+          image_input = false;
+          audio_input = false;
+          video_input = false;
+          embeddings = true;
+          image_generation = false;
+          speech = false;
+          transcription = false;
+          rerank = false;
+          video_generation = false;
         };
       encode_chat =
         (fun request ->
@@ -107,6 +118,33 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
               finish_reasons = [ Stop ];
               usage = Some base_usage;
               raw = Some raw;
+            });
+      encode_embeddings =
+        (fun request ->
+          Ok
+            (Printf.sprintf "{\"model\":%S,\"input\":\"fixture\"}"
+               request.embedding_model));
+      decode_embeddings =
+        (fun raw ->
+          Ok
+            {
+              embedding_id = Some "emb_fixture";
+              embedding_model = Some "gpt-fixture";
+              embeddings =
+                [
+                  {
+                    embedding = Embedding_float [ 0.1; 0.2 ];
+                    embedding_index = Some 0;
+                  };
+                ];
+              embedding_usage =
+                Some
+                  {
+                    embedding_input_tokens = Some 2;
+                    embedding_total_tokens = Some 2;
+                    embedding_raw = [ ("provider", "fixture") ];
+                  };
+              embedding_raw = Some raw;
             });
       decode_stream_event =
         (fun event ->
@@ -168,6 +206,7 @@ let test_provider_encoder_can_reject_unsupported_features () =
       name = "minimal";
       base_url = "https://minimal.example";
       chat_path = "/chat";
+      embeddings_path = None;
       auth_headers = (fun _ -> []);
       capabilities =
         {
@@ -175,6 +214,16 @@ let test_provider_encoder_can_reject_unsupported_features () =
           tools = false;
           tool_choice = false;
           structured_outputs = false;
+          text = true;
+          image_input = false;
+          audio_input = false;
+          video_input = false;
+          embeddings = false;
+          image_generation = false;
+          speech = false;
+          transcription = false;
+          rerank = false;
+          video_generation = false;
         };
       encode_chat =
         (fun request ->
@@ -192,6 +241,12 @@ let test_provider_encoder_can_reject_unsupported_features () =
               usage = None;
               raw = None;
             });
+      encode_embeddings =
+        (fun _ ->
+          Error (Unsupported { provider = "minimal"; feature = "embeddings" }));
+      decode_embeddings =
+        (fun _ ->
+          Error (Unsupported { provider = "minimal"; feature = "embeddings" }));
       decode_stream_event = (fun _ -> Ok []);
       decode_error =
         (fun ~status ~headers:_ raw ->
@@ -416,6 +471,7 @@ let stream_provider =
     name = "stream-fixture";
     base_url = "https://stream.example";
     chat_path = "/chat";
+    embeddings_path = None;
     auth_headers = (fun _ -> []);
     capabilities =
       {
@@ -423,6 +479,16 @@ let stream_provider =
         tools = true;
         tool_choice = false;
         structured_outputs = false;
+        text = true;
+        image_input = false;
+        audio_input = false;
+        video_input = false;
+        embeddings = false;
+        image_generation = false;
+        speech = false;
+        transcription = false;
+        rerank = false;
+        video_generation = false;
       };
     encode_chat = (fun _ -> Ok "{}");
     decode_chat =
@@ -436,6 +502,14 @@ let stream_provider =
             usage = None;
             raw = None;
           });
+    encode_embeddings =
+      (fun _ ->
+        Error
+          (Unsupported { provider = "stream-fixture"; feature = "embeddings" }));
+    decode_embeddings =
+      (fun _ ->
+        Error
+          (Unsupported { provider = "stream-fixture"; feature = "embeddings" }));
     decode_stream_event =
       (fun event ->
         match (event.event, event.data) with
@@ -725,17 +799,42 @@ let test_telemetry_streaming_and_embeddings_spans () =
   let embeddings =
     {
       embedding_model = "text-embedding-3-small";
+      embedding_input = Embedding_text "hello";
       encoding_format = Some "float";
+      dimensions = None;
+      user = None;
     }
   in
-  let usage = { embedding_input_tokens = Some 9; embedding_raw = [] } in
+  let embedding_response =
+    {
+      embedding_id = Some "emb_fixture";
+      embedding_model = Some "text-embedding-3-small";
+      embeddings =
+        [
+          {
+            embedding = Embedding_float [ 0.1; 0.2 ];
+            embedding_index = Some 0;
+          };
+        ];
+      embedding_usage =
+        Some
+          {
+            embedding_input_tokens = Some 9;
+            embedding_total_tokens = Some 9;
+            embedding_raw = [];
+          };
+      embedding_raw = None;
+    }
+  in
   run_ok rt "stream and embeddings telemetry"
     (Eta.Effect.concat
        [
          with_stream_span ~time_to_first_chunk_s:0.037 stream_provider
            (telemetry_request ~stream:true ())
            Eta.Effect.unit;
-         with_embeddings_span ~usage stream_provider embeddings Eta.Effect.unit;
+         with_embeddings_span stream_provider embeddings
+           (Eta.Effect.pure embedding_response)
+         |> Eta.Effect.map ignore;
        ]);
   let spans = Eta.Tracer.dump tracer in
   let streaming =
@@ -748,7 +847,8 @@ let test_telemetry_streaming_and_embeddings_spans () =
   in
   require_span_attr embeddings "gen_ai.operation.name" "embeddings";
   require_span_attr embeddings "gen_ai.request.encoding_formats" "float";
-  require_span_attr embeddings "gen_ai.usage.input_tokens" "9"
+  require_span_attr embeddings "gen_ai.usage.input_tokens" "9";
+  require_span_attr embeddings "gen_ai.usage.total_tokens" "9"
 
 let test_telemetry_tool_span_parent_and_transport_suppression () =
   with_traced_runtime @@ fun rt tracer ->

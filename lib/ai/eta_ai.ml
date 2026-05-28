@@ -73,12 +73,21 @@ type audio = {
   transcript : string option;
 }
 
+type media = {
+  url : string;
+  detail : string option;
+}
+
 type content =
   | Text of string
   | Json of raw_json
+  | Image of media
   | Audio of audio
+  | Video of media
 
 let audio_pcm16_base64 ?transcript data = Audio { data = Base64 data; format = Pcm16; transcript }
+let image_url ?detail url = Image { url; detail }
+let video_url ?detail url = Video { url; detail }
 
 type tool_call = {
   id : string;
@@ -140,14 +149,155 @@ type chat_request = {
   stream : bool;
 }
 
+type embedding_input =
+  | Embedding_text of string
+  | Embedding_texts of string list
+  | Embedding_tokens of int list
+  | Embedding_token_batches of int list list
+  | Embedding_raw_json of raw_json
+
 type embedding_request = {
   embedding_model : model;
+  embedding_input : embedding_input;
   encoding_format : string option;
+  dimensions : int option;
+  user : string option;
+}
+
+type embedding_vector =
+  | Embedding_float of float list
+  | Embedding_base64 of string
+
+type embedding = {
+  embedding : embedding_vector;
+  embedding_index : int option;
 }
 
 type embedding_usage = {
   embedding_input_tokens : int option;
+  embedding_total_tokens : int option;
   embedding_raw : (string * string) list;
+}
+
+type embedding_response = {
+  embedding_id : string option;
+  embedding_model : model option;
+  embeddings : embedding list;
+  embedding_usage : embedding_usage option;
+  embedding_raw : raw_json option;
+}
+
+type generated_image = {
+  image_url : string option;
+  image_base64 : string option;
+  image_revised_prompt : string option;
+}
+
+type image_generation_request = {
+  image_model : model option;
+  image_prompt : string;
+  image_n : int option;
+  image_size : string option;
+  image_quality : string option;
+  image_response_format : string option;
+  image_user : string option;
+  image_extra : (string * Json.t) list;
+}
+
+type image_response = {
+  image_created : int option;
+  images : generated_image list;
+  image_usage : usage option;
+  image_raw : raw_json option;
+}
+
+type binary_file = {
+  filename : string;
+  content_type : string;
+  data : bytes;
+}
+
+type speech_request = {
+  speech_model : model;
+  speech_input : string;
+  speech_voice : string;
+  speech_response_format : string option;
+  speech_speed : float option;
+  speech_instructions : string option;
+  speech_extra : (string * Json.t) list;
+}
+
+type speech_response = {
+  speech_content_type : string option;
+  speech_audio : bytes;
+}
+
+type transcription_request = {
+  transcription_model : model;
+  transcription_file : binary_file;
+  transcription_language : string option;
+  transcription_prompt : string option;
+  transcription_response_format : string option;
+  transcription_temperature : float option;
+  transcription_extra_fields : (string * string) list;
+}
+
+type transcription_response = {
+  transcription_text : string option;
+  transcription_usage : usage option;
+  transcription_raw : raw_json option;
+}
+
+type rerank_request = {
+  rerank_model : model;
+  rerank_query : string;
+  rerank_documents : string list;
+  rerank_top_n : int option;
+}
+
+type rerank_result = {
+  rerank_index : int;
+  rerank_score : float option;
+  rerank_document : string option;
+}
+
+type rerank_response = {
+  rerank_id : string option;
+  rerank_model : model option;
+  rerank_provider : string option;
+  rerank_results : rerank_result list;
+  rerank_usage : usage option;
+  rerank_raw : raw_json option;
+}
+
+type video_request = {
+  video_model : model;
+  video_prompt : string;
+  video_aspect_ratio : string option;
+  video_duration : int option;
+  video_resolution : string option;
+  video_extra : (string * Json.t) list;
+}
+
+type video_response = {
+  video_id : string;
+  video_generation_id : string option;
+  video_status : string option;
+  video_polling_url : string option;
+  video_urls : string list;
+  video_error : string option;
+  video_usage : usage option;
+  video_raw : raw_json option;
+}
+
+type video_content_request = {
+  video_job_id : string;
+  video_index : int option;
+}
+
+type video_content = {
+  video_content_type : string option;
+  video_bytes : bytes;
 }
 
 type ai_error =
@@ -250,19 +400,38 @@ type capabilities = {
   tools : bool;
   tool_choice : bool;
   structured_outputs : bool;
+  text : bool;
+  image_input : bool;
+  audio_input : bool;
+  video_input : bool;
+  embeddings : bool;
+  image_generation : bool;
+  speech : bool;
+  transcription : bool;
+  rerank : bool;
+  video_generation : bool;
 }
 
 type provider = {
   name : provider_name;
   base_url : string;
   chat_path : string;
+  embeddings_path : string option;
   auth_headers : api_key -> headers;
   capabilities : capabilities;
   encode_chat : chat_request -> (raw_json, ai_error) result;
   decode_chat : raw_json -> (response, ai_error) result;
+  encode_embeddings : embedding_request -> (raw_json, ai_error) result;
+  decode_embeddings : raw_json -> (embedding_response, ai_error) result;
   decode_stream_event : sse_event -> (stream_event list, ai_error) result;
   decode_error : status:int -> headers:headers -> raw_json -> ai_error;
 }
+
+let unsupported_result provider feature =
+  Stdlib.Error (Unsupported { provider; feature })
+
+let unsupported_embeddings provider =
+  unsupported_result provider "embeddings"
 
 let join_url base path =
   let base =
@@ -273,16 +442,35 @@ let join_url base path =
   let path = if String.starts_with ~prefix:"/" path then path else "/" ^ path in
   base ^ path
 
-let provider_request provider api_key raw =
+let provider_post_request provider ~path api_key raw =
   let headers = provider.auth_headers api_key in
   Eta_http.Request.make ~headers
     ~body:(Eta_http.Request.Fixed [ Bytes.of_string raw ])
-    "POST" (join_url provider.base_url provider.chat_path)
+    "POST" (join_url provider.base_url path)
 
-let read_response_body body =
-  Eta_http.Body.Stream.read_all body
+let provider_get_request provider ~path api_key =
+  let headers = provider.auth_headers api_key in
+  Eta_http.Request.make ~headers "GET" (join_url provider.base_url path)
+
+let provider_request provider api_key raw =
+  provider_post_request provider ~path:provider.chat_path api_key raw
+
+let provider_embeddings_request provider api_key raw =
+  match provider.embeddings_path with
+  | Some path -> Stdlib.Ok (provider_post_request provider ~path api_key raw)
+  | None -> unsupported_embeddings provider.name
+
+let embeddings_request provider ~api_key request =
+  match provider.encode_embeddings request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> provider_embeddings_request provider api_key raw
+
+let read_response_body ?max_bytes body =
+  Eta_http.Body.Stream.read_all ?max_bytes body
   |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
-  |> Eta.Effect.map Bytes.to_string
+
+let read_response_text ?max_bytes body =
+  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.to_string
 
 let result_effect = function
   | Stdlib.Ok value -> Eta.Effect.pure value
@@ -293,6 +481,36 @@ let submit_request client request =
   |> Eta.Effect.suppress_observability
   |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
 
+let perform_raw ?max_bytes provider client request =
+  submit_request client request
+  |> Eta.Effect.bind (fun response ->
+         if
+           response.Eta_http.Response.status >= 200
+           && response.status < 300
+         then read_response_text ?max_bytes response.body
+         else
+           read_response_text response.body
+           |> Eta.Effect.bind (fun raw ->
+                  Eta.Effect.fail
+                    (provider.decode_error ~status:response.status
+                       ~headers:response.headers raw)))
+
+let perform_binary ?max_bytes provider client request =
+  submit_request client request
+  |> Eta.Effect.bind (fun response ->
+         if
+           response.Eta_http.Response.status >= 200
+           && response.status < 300
+         then
+           read_response_body ?max_bytes response.body
+           |> Eta.Effect.map (fun body -> (body, response.headers))
+         else
+           read_response_text response.body
+           |> Eta.Effect.bind (fun raw ->
+                  Eta.Effect.fail
+                    (provider.decode_error ~status:response.status
+                       ~headers:response.headers raw)))
+
 let perform_chat provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
@@ -300,11 +518,28 @@ let perform_chat provider client request =
            response.Eta_http.Response.status >= 200
            && response.status < 300
          then
-           read_response_body response.body
+           read_response_text response.body
            |> Eta.Effect.bind (fun raw ->
                   result_effect (provider.decode_chat raw))
          else
-           read_response_body response.body
+           read_response_text response.body
+           |> Eta.Effect.bind (fun raw ->
+                  Eta.Effect.fail
+                    (provider.decode_error ~status:response.status
+                       ~headers:response.headers raw)))
+
+let perform_embeddings provider client request =
+  submit_request client request
+  |> Eta.Effect.bind (fun response ->
+         if
+           response.Eta_http.Response.status >= 200
+           && response.status < 300
+         then
+           read_response_text response.body
+           |> Eta.Effect.bind (fun raw ->
+                  result_effect (provider.decode_embeddings raw))
+         else
+           read_response_text response.body
            |> Eta.Effect.bind (fun raw ->
                   Eta.Effect.fail
                     (provider.decode_error ~status:response.status
@@ -343,7 +578,7 @@ let perform_stream provider client request =
            && response.status < 300
          then Eta.Effect.pure (stream_of_body provider response.body)
          else
-           read_response_body response.body
+           read_response_text response.body
            |> Eta.Effect.bind (fun raw ->
                   Eta.Effect.fail
                     (provider.decode_error ~status:response.status
@@ -632,16 +867,26 @@ let with_stream_span ?time_to_first_chunk_s provider (request : chat_request)
 
 let embedding_usage_attrs (usage : embedding_usage) =
   option_int_attr "gen_ai.usage.input_tokens" usage.embedding_input_tokens
+  @ option_int_attr "gen_ai.usage.total_tokens" usage.embedding_total_tokens
 
-let with_embeddings_span ?usage provider request effect =
+let embedding_response_attrs (response : embedding_response) =
+  option_attr "gen_ai.response.id" response.embedding_id
+  @ option_attr "gen_ai.response.model" response.embedding_model
+  @
+  match response.embedding_usage with
+  | Some usage -> embedding_usage_attrs usage
+  | None -> []
+
+let with_embeddings_span provider (request : embedding_request) effect =
+  let effect =
+    effect
+    |> Eta.Effect.bind (fun response ->
+           Eta.Effect.pure response |> annotate (embedding_response_attrs response))
+  in
   let attrs =
     common_attrs ~operation:"embeddings" provider
       ~model:request.embedding_model
     @ option_attr "gen_ai.request.encoding_formats" request.encoding_format
-    @
-    match usage with
-    | Some usage -> embedding_usage_attrs usage
-    | None -> []
   in
   with_span ~kind:Eta.Capabilities.Client
     ~name:("embeddings " ^ request.embedding_model)
@@ -662,3 +907,149 @@ let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name effect =
 
 let suppress_provider_transport_observability =
   Eta.Effect.suppress_observability
+
+module Provider = struct
+  module type Chat = sig
+    val encode : provider:provider -> chat_request -> (raw_json, ai_error) result
+    val decode : provider:provider -> raw_json -> (response, ai_error) result
+
+    val request :
+      provider:provider ->
+      api_key:api_key ->
+      chat_request ->
+      (Eta_http.Request.t, ai_error) result
+
+    val run :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      chat_request ->
+      (response, ai_error) Eta.Effect.t
+
+    val stream :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      chat_request ->
+      (stream, ai_error) Eta.Effect.t
+  end
+
+  module type Embeddings = sig
+    val encode :
+      provider:provider -> embedding_request -> (raw_json, ai_error) result
+    val decode :
+      provider:provider -> raw_json -> (embedding_response, ai_error) result
+
+    val request :
+      provider:provider ->
+      api_key:api_key ->
+      embedding_request ->
+      (Eta_http.Request.t, ai_error) result
+
+    val run :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      embedding_request ->
+      (embedding_response, ai_error) Eta.Effect.t
+  end
+
+  module type Images = sig
+    val generate :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      image_generation_request ->
+      (image_response, ai_error) Eta.Effect.t
+  end
+
+  module type Speech = sig
+    val create :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      speech_request ->
+      (speech_response, ai_error) Eta.Effect.t
+  end
+
+  module type Transcriptions = sig
+    val create :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      transcription_request ->
+      (transcription_response, ai_error) Eta.Effect.t
+  end
+
+  module type Rerank = sig
+    val run :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      rerank_request ->
+      (rerank_response, ai_error) Eta.Effect.t
+  end
+
+  module type Video = sig
+    val create :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      video_request ->
+      (video_response, ai_error) Eta.Effect.t
+
+    val get :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      job_id:string ->
+      (video_response, ai_error) Eta.Effect.t
+
+    val content :
+      provider:provider ->
+      Eta_http.Client.t ->
+      api_key:api_key ->
+      video_content_request ->
+      (video_content, ai_error) Eta.Effect.t
+  end
+
+  module Chat = struct
+    let encode ~provider request = provider.encode_chat request
+    let decode ~provider raw = provider.decode_chat raw
+
+    let request ~provider ~api_key chat_request =
+      match provider.encode_chat chat_request with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok raw -> Stdlib.Ok (provider_request provider api_key raw)
+
+    let run ~provider client ~api_key chat_request =
+      match request ~provider ~api_key chat_request with
+      | Stdlib.Error error -> Eta.Effect.fail error
+      | Stdlib.Ok http_request ->
+          with_chat_span provider chat_request
+            (perform_chat provider client http_request)
+
+    let stream ~provider client ~api_key chat_request =
+      let chat_request = { chat_request with stream = true } in
+      match request ~provider ~api_key chat_request with
+      | Stdlib.Error error -> Eta.Effect.fail error
+      | Stdlib.Ok http_request ->
+          with_stream_span provider chat_request
+            (perform_stream provider client http_request)
+  end
+
+  module Embeddings = struct
+    let encode ~provider request = provider.encode_embeddings request
+    let decode ~provider raw = provider.decode_embeddings raw
+
+    let request ~provider ~api_key embedding_request =
+      embeddings_request provider ~api_key embedding_request
+
+    let run ~provider client ~api_key embedding_request =
+      match request ~provider ~api_key embedding_request with
+      | Stdlib.Error error -> Eta.Effect.fail error
+      | Stdlib.Ok http_request ->
+          with_embeddings_span provider embedding_request
+            (perform_embeddings provider client http_request)
+  end
+end

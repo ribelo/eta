@@ -35,7 +35,9 @@ let contents_text contents =
   |> List.map (function
        | A.Text text -> text
        | A.Json raw -> raw
-       | A.Audio _ -> invalid_arg "audio content cannot be encoded as text")
+       | A.Audio _ -> invalid_arg "audio content cannot be encoded as text"
+       | A.Image _ -> invalid_arg "image content cannot be encoded as text"
+       | A.Video _ -> invalid_arg "video content cannot be encoded as text")
   |> String.concat ""
 
 let cache_control_json =
@@ -56,6 +58,14 @@ let content_block = function
       Stdlib.Error
         (A.Unsupported
            { provider = "anthropic"; feature = "audio content requires realtime" })
+  | A.Image _ ->
+      Stdlib.Error
+        (A.Unsupported
+           { provider = "anthropic"; feature = "image content" })
+  | A.Video _ ->
+      Stdlib.Error
+        (A.Unsupported
+           { provider = "anthropic"; feature = "video content" })
 
 let content_blocks contents = result_all (List.map content_block contents)
 
@@ -416,7 +426,25 @@ let capabilities =
     tools = true;
     tool_choice = false;
     structured_outputs = false;
+    text = true;
+    image_input = false;
+    audio_input = false;
+    video_input = false;
+    embeddings = false;
+    image_generation = false;
+    speech = false;
+    transcription = false;
+    rerank = false;
+    video_generation = false;
   }
+
+let unsupported_embeddings _request =
+  Stdlib.Error
+    (A.Unsupported { provider = "anthropic"; feature = "embeddings" })
+
+let decode_embeddings _raw =
+  Stdlib.Error
+    (A.Unsupported { provider = "anthropic"; feature = "embeddings" })
 
 let provider ?(base_url = "https://api.anthropic.com")
     ?(version = "2023-06-01") ?(beta_headers = []) () =
@@ -424,10 +452,13 @@ let provider ?(base_url = "https://api.anthropic.com")
     A.name = "anthropic";
     base_url;
     chat_path = "/v1/messages";
+    embeddings_path = None;
     auth_headers = auth_headers ~version ~beta_headers;
     capabilities;
     encode_chat = encode_messages;
     decode_chat = decode_message;
+    encode_embeddings = unsupported_embeddings;
+    decode_embeddings;
     decode_stream_event;
     decode_error;
   }
@@ -479,3 +510,13 @@ let stream_messages ?prompt_cache ?provider:custom_provider client ~api_key
   | Stdlib.Ok http_request ->
       A.with_stream_span provider request
         (perform_stream provider client http_request)
+
+module Chat = struct
+  include A.Provider.Chat
+
+  let messages_request = messages_request
+  let messages = messages
+  let stream_messages = stream_messages
+end
+
+module Embeddings = A.Provider.Embeddings

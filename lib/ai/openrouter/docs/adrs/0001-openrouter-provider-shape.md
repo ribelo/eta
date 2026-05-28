@@ -22,11 +22,14 @@ only on eta, eta-ai, eta-redacted, and eta-http.
 eta-ai-openrouter exports:
 
 - a default OpenRouter provider value for https://openrouter.ai and
-  /api/v1/responses;
+  /api/v1/responses plus /api/v1/embeddings;
 - optional HTTP-Referer and X-Title attribution headers;
 - request-local routing controls encoded under the provider JSON object;
 - local Responses-style input, tool, structured-output, response, SSE, and
   error codecs;
+- local Embeddings-style input, usage, float-vector, and base64-vector codecs;
+- unified Chat and Embeddings modules that include Eta_ai.Provider interfaces
+  and extend them with OpenRouter routing helpers;
 - eta-http request runners that suppress nested transport spans under eta-ai
   GenAI spans.
 
@@ -41,6 +44,7 @@ Offline fixture tests cover:
 - routing JSON and invalid empty provider names;
 - structured-output text.format construction;
 - OpenRouter endpoint construction through eta-http requests;
+- OpenRouter embeddings endpoint construction and fixture decoding;
 - text and tool-call response fixtures;
 - top-level/mid-stream OpenRouter error chunks;
 - suppression of nested eta-http transport spans under the GenAI chat span.

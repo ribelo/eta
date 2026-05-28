@@ -24,10 +24,13 @@ eta-ai exposes a provider as a record value:
       name : provider_name;
       base_url : string;
       chat_path : string;
+      embeddings_path : string option;
       auth_headers : api_key -> headers;
       capabilities : capabilities;
       encode_chat : chat_request -> (raw_json, ai_error) result;
       decode_chat : raw_json -> (response, ai_error) result;
+      encode_embeddings : embedding_request -> (raw_json, ai_error) result;
+      decode_embeddings : raw_json -> (embedding_response, ai_error) result;
       decode_stream_event : sse_event -> (stream_event list, ai_error) result;
       decode_error : status:int -> headers:headers -> raw_json -> ai_error;
     }
@@ -38,12 +41,17 @@ plain strings and changing later.
 
 encode_chat returns a result because provider encoders are the first place that
 can reject an unsupported common feature, such as tools on a minimal provider.
+Embedding support follows the same rule: providers expose the common
+Eta_ai.Provider.Embeddings module shape, and unsupported providers return
+Unsupported instead of silently dropping the operation.
 
 ## Rejected
 
 - Data-only providers. Anthropic and OpenRouter require provider-local codecs.
-- Provider modules or functors as the first public shape. A1 did not find
-  provider-specific runtime ownership or control flow that needs modules.
+- Provider modules as the only public shape. Eta still uses provider values as
+  the data boundary, while Eta_ai.Provider.Chat and Eta_ai.Provider.Embeddings
+  provide common OCaml module signatures for provider packages to include and
+  extend.
 - Public Eta_stream.Stream streaming in AC2. A2 showed eta-http can provide
   body chunks, but eta-stream still needs an owned effect-reader source before
   eta-ai exposes stream ownership publicly.

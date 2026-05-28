@@ -26,6 +26,35 @@ val provider :
 (** Messages API provider value. The default base URL is
     [https://api.anthropic.com] and the default API version is [2023-06-01]. *)
 
+module Chat : sig
+  include Eta_ai.Provider.Chat
+
+  val messages_request :
+    ?prompt_cache:prompt_cache ->
+    ?provider:Eta_ai.provider ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val messages :
+    ?prompt_cache:prompt_cache ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+  val stream_messages :
+    ?prompt_cache:prompt_cache ->
+    ?provider:Eta_ai.provider ->
+    Eta_http.Client.t ->
+    api_key:Eta_ai.api_key ->
+    Eta_ai.chat_request ->
+    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+end
+
+module Embeddings : Eta_ai.Provider.Embeddings
+
 val encode_messages :
   ?prompt_cache:prompt_cache ->
   Eta_ai.chat_request ->

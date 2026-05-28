@@ -53,6 +53,12 @@ let decode_error ~status ~headers raw =
 let decode_stream_event event =
   Codec.decode_stream_event ~provider:"openai-compatible" event
 
+let unsupported_embeddings ~provider _request =
+  Stdlib.Error (A.Unsupported { provider; feature = "embeddings" })
+
+let decode_embeddings ~provider _raw =
+  Stdlib.Error (A.Unsupported { provider; feature = "embeddings" })
+
 let provider ?(name = "openai-compatible")
     ?(chat_path = "/v1/chat/completions") ?(auth = bearer_auth ())
     ?(extra_headers = []) ~base_url () =
@@ -69,6 +75,7 @@ let provider ?(name = "openai-compatible")
     A.name;
     base_url;
     chat_path;
+    embeddings_path = None;
     auth_headers;
     capabilities =
       {
@@ -76,9 +83,21 @@ let provider ?(name = "openai-compatible")
         tools = true;
         tool_choice = true;
         structured_outputs = true;
+        text = true;
+        image_input = false;
+        audio_input = false;
+        video_input = false;
+        embeddings = false;
+        image_generation = false;
+        speech = false;
+        transcription = false;
+        rerank = false;
+        video_generation = false;
       };
     encode_chat = encode_chat;
     decode_chat;
+    encode_embeddings = unsupported_embeddings ~provider:name;
+    decode_embeddings = decode_embeddings ~provider:name;
     decode_stream_event;
     decode_error =
       (fun ~status ~headers raw ->
@@ -110,3 +129,15 @@ let stream_chat_completions ?structured_output ~provider client ~api_key request
   | Stdlib.Ok http_request ->
       A.with_stream_span provider request
         (perform_stream provider client http_request)
+
+module Chat = struct
+  include A.Provider.Chat
+
+  let chat_completions_request = chat_completions_request
+  let chat_completions = chat_completions
+  let stream_chat_completions = stream_chat_completions
+end
+
+module Embeddings = struct
+  include A.Provider.Embeddings
+end
