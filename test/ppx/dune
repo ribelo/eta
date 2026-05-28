@@ -11,6 +11,6 @@
 (test
  (name test_ppx_sql_table)
  (modules test_ppx_sql_table)
- (libraries eta.sql alcotest)
+ (libraries eta_sql alcotest)
  (preprocess
   (pps ppx_eta)))

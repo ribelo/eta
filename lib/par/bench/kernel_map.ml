@@ -36,5 +36,5 @@ let run_serial ~quick () =
 let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
   let input = make_input n in
-  let output = Eta_par.Pool.run pool (fun () -> Eta_par.par_map input work) in
+  let output = Eta.Par.Pool.run pool (fun () -> Eta.Par.par_map input work) in
   checksum output

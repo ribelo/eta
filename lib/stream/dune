@@ -1,6 +1,6 @@
 (library
  (name eta_stream)
- (public_name eta.stream)
+ (public_name eta_stream)
  (synopsis "Streams, channels, mailboxes, and bounded queues for Eta")
  (private_modules mailbox_internal drain_counter_internal)
  (libraries eta eio cstruct))

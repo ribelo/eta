@@ -2,11 +2,13 @@
 
 ## Project Structure & Module Organization
 
-Eta is a small OCaml 5 library built with Dune. Public code lives in `lib/eta/`;
-each exported module has a paired implementation and interface, for example
-`effect.ml` and `effect.mli`. The core modules are `Effect`, `Runtime`,
-`Cause`, `Exit`, `Duration`, `Schedule`, `Resource`, `Capabilities`, and
-`Tracer`.
+Eta is a small OCaml 5 library built with Dune. Core public code lives in
+`lib/eta/`; each exported module has a paired implementation and interface,
+for example `effect.ml` and `effect.mli`. The core modules are `Effect`,
+`Runtime`, `Cause`, `Exit`, `Duration`, `Schedule`, `Resource`,
+`Capabilities`, and `Tracer`. Optional public surfaces live in sibling
+`lib/<feature>/` directories and publish underscore-named packages/libraries
+such as `eta_http`, `eta_sql`, `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
 experiments live under `scratch/`; keep them out of the published library unless
@@ -15,6 +17,37 @@ they are deliberately promoted into `lib/eta/`. Generated artifacts belong in
 
 Optional external-engine integrations live under `drivers/`. Driver packages may
 depend on Eta, but Eta core libraries under `lib/` must not depend on drivers.
+
+## Package Boundary Policy
+
+Eta follows an **install only what you use** principle. The root `eta` package
+must contain only the core runtime and dependencies needed by ordinary Eta
+programs. Optional capabilities must publish their own obvious
+`eta_<feature>` package and public library, and must carry their own external
+dependencies there.
+
+Examples:
+
+- SQLite code belongs in `eta_sql`, along with `conf-sqlite3`.
+- HTTP code belongs in `eta_http`, along with `h2`, `hpack`, `faraday`,
+  `angstrom`, `decompress`, and related network dependencies.
+- AI providers belong in `eta_ai` or `eta_ai_<provider>`, along with provider
+  codecs and JSON dependencies.
+- Test helpers belong in `eta_test` or `eta_schema_test`, along with
+  `alcotest` and `eio_main`.
+- PPX code belongs in `ppx_eta`, along with `ppxlib`.
+
+Do not add optional, provider-specific, C-stub, system-library, codec, protocol,
+or testing dependencies to `eta`. If a feature cannot be separated because the
+core runtime genuinely uses it, keep that dependency small, explicit, and
+documented instead of pretending it is optional. `Eta.Par` is the current
+runtime substrate for core island execution; it lives in the `eta` package
+while that relationship remains true.
+
+Least astonishment rule: the opam package name, Dune public library name, and
+OCaml top-level module should line up. Prefer `eta_sql` -> `Eta_sql`,
+`eta_http` -> `Eta_http`, and so on. Do not introduce dotted public library
+names such as `eta.sql` for new Eta packages.
 
 ## Reference Code
 
@@ -34,7 +67,11 @@ applications own state; Eta owns effect description and interpretation.
 - `dune build` / `dune runtest --force`: local equivalents when the OCaml
   environment is already configured.
 
-The package requires OCaml `>= 5.1`, Dune, Eio, Eio_main, and Alcotest.
+The core `eta` package requires OCaml `5.2.0+ox`, Dune, Eio, `portable`, and
+`cstruct`. It also ships `Eta.Par` because the core runtime uses that scheduler
+for island execution. Optional packages declare their own dependencies; for
+example `eta_sql` declares SQLite and `eta_http` declares HTTP protocol
+libraries.
 
 ## Coding Style & Naming Conventions
 

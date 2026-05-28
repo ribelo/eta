@@ -9,7 +9,7 @@ work-stealing scheduler.
 ## Quick start
 
 ```ocaml
-open Eta_par
+open Eta.Par
 
 (* Top-level convenience: spin up a pool, run, tear down. *)
 let () =
@@ -61,9 +61,9 @@ without an enclosing `run` raises `Invalid_argument`.
 
 ## Where par fits
 
-`par` is the structured CPU-parallelism layer.  If you need manual
+`Eta.Par` is the structured CPU-parallelism layer.  If you need manual
 fork-join, parallel-map, parallel-sort, or lazy iterator chains over arrays,
-this is the package.
+this is the core module.
 
 It shares the heartbeat scheduler implementation with `Effect.island`
 (the typed-offload layer).  The public pool types remain separate.  The split
@@ -71,7 +71,7 @@ is:
 
 | API | Lives in | Pool | Closures | Payloads |
 |---|---|---|---|---|
-| `Eta_par.join`, `par_*`, `Iter` | `par` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
+| `Eta.Par.join`, `par_*`, `Iter` | `eta` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
 | `Effect.island`, `Island.map` | `eta` | Heartbeat domain pool | typed (`@ portable`); compiler-forbids shared mutable state | `: immutable_data` |
 
 See [Concurrency Guide](../../docs/concurrency-guide.md) for the full

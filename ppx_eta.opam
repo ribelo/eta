@@ -9,6 +9,7 @@ depends: [
   "dune" {>= "3.21" & >= "3.0"}
   "ppxlib"
   "eta" {with-test}
+  "eta_sql" {with-test}
   "eio_main" {with-test}
   "alcotest" {with-test}
   "odoc" {with-doc}

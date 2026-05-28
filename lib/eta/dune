@@ -5,12 +5,14 @@
  (private_modules
   blocking_runtime
   island_runtime
+  par_scheduler
   runtime_core
   runtime_instrument
   runtime_observability
   runtime_supervisor
   runtime_supervisor_types)
- (libraries eio eio.unix cstruct portable eta_par threads))
+ (libraries eio eio.unix cstruct portable unix threads)
+ (flags (:standard -alert -unsafe_multidomain -alert -do_not_spawn_domains)))
 
 (env
  (release

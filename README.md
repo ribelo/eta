@@ -92,8 +92,8 @@ callback-based only: no timeout, cancellation, preemption, online queue, public
 implied.
 
 For structured CPU parallelism over arrays or recursive fork/join algorithms,
-use the `eta.par` sublibrary (`Par.run`, `Par.join`, `Par.par_map`,
-`Par.Iter`). See [Concurrency primitives in Eta](docs/concurrency-guide.md) for
+use `Eta.Par` from the core `eta` package (`Eta.Par.run`, `Eta.Par.join`,
+`Eta.Par.par_map`, `Eta.Par.Iter`). See [Concurrency primitives in Eta](docs/concurrency-guide.md) for
 the decision flow between `Effect.sync`, Islands, `Par`, and Blocking.
 
 ## PPX Helpers
@@ -134,7 +134,7 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
  (pps ppx_eta))
 ```
 
-For Eta SQL (`eta.sql`), the same PPX also provides optional table declaration sugar:
+For Eta SQL (`eta_sql`), the same PPX also provides optional table declaration sugar:
 
 ```ocaml
 [%%eta.sql.table

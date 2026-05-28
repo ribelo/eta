@@ -1,6 +1,6 @@
-(** Eta_par — a parallel runtime for OxCaml.
+(** Eta.Par — a parallel runtime for OxCaml.
 
-    Eta_par offers fork-join data parallelism on multiple cores.
+    Eta.Par offers fork-join data parallelism on multiple cores.
     Internally it implements the heartbeat scheduling algorithm of
     Acar et al.: parallel work runs sequentially on the calling
     worker's cactus stack, and the OLDEST queued frame is promoted
@@ -13,8 +13,8 @@
     {1 Quick start}
 
     {[
-      let _ = Eta_par.run (fun () ->
-        let a, b = Eta_par.join
+      let _ = Eta.Par.run (fun () ->
+        let a, b = Eta.Par.join
             (fun () -> compute_left ())
             (fun () -> compute_right ()) in
         a + b)
@@ -161,12 +161,12 @@ val par_threshold : int ref
     {!Iter.collect_array}.
 
     {[
-      Eta_par.run @@ fun () ->
+      Eta.Par.run @@ fun () ->
         arr
-        |> Eta_par.Iter.of_array
-        |> Eta_par.Iter.map (fun x -> x * x)
-        |> Eta_par.Iter.filter (fun x -> x mod 3 = 0)
-        |> Eta_par.Iter.reduce ~init:0 ~combine:(+)
+        |> Eta.Par.Iter.of_array
+        |> Eta.Par.Iter.map (fun x -> x * x)
+        |> Eta.Par.Iter.filter (fun x -> x mod 3 = 0)
+        |> Eta.Par.Iter.reduce ~init:0 ~combine:(+)
     ]}
 *)
 module Iter : sig

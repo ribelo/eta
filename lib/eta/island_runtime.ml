@@ -10,7 +10,7 @@ type ('a : immutable_data, 'e : immutable_data) settled : immutable_data =
   | Worker_died of worker_die
 
 type pool = {
-  pool : Eta_par.Pool.t;
+  pool : Par.Pool.t;
   mutable stopped : bool;
 }
 
@@ -45,14 +45,14 @@ module Pool = struct
     if domains <= 0 then
       invalid_arg "Effect.Island.Pool.create: domains must be > 0";
     {
-      pool = Eta_par.Pool.create ~n_workers:(domains + 1) ();
+      pool = Par.Pool.create ~n_workers:(domains + 1) ();
       stopped = false;
     }
 
   let shutdown pool =
     if not pool.stopped then (
       pool.stopped <- true;
-      Eta_par.Pool.shutdown pool.pool)
+      Par.Pool.shutdown pool.pool)
 end
 
 let ensure_running pool =
@@ -72,13 +72,13 @@ let map_outcomes pool (f @ portable) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_map f input)
-  |> Eta_par.Pool.run_many_on_workers pool.pool
+  |> Par.Pool.run_many_on_workers pool.pool
 
 let result_outcomes pool (f @ portable) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_result f input)
-  |> Eta_par.Pool.run_many_on_workers pool.pool
+  |> Par.Pool.run_many_on_workers pool.pool
 
 let submit name pool (f @ portable) input =
   match map_outcomes pool f [ input ] with

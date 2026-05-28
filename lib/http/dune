@@ -1,10 +1,10 @@
 (library
  (name eta_http)
- (public_name eta.http)
+ (public_name eta_http)
  (synopsis "HTTP/1.1, HTTP/2, WebSockets and TLS client and server for Eta")
  (libraries
   eta
-  eta.stream
+  eta_stream
   eio
   eio.unix
   bigstringaf

@@ -5,7 +5,7 @@
    For each layer count we time:
 
    - [baseline] : pure recursion, no scheduler.
-   - [par]  : same recursion using [Eta_par.join].
+   - [par]  : same recursion using [Eta.Par.join].
 
    Tree representation: [Leaf | Node of int * tree * tree], the
    most direct OCaml equivalent of chili's
@@ -33,7 +33,7 @@ let rec sum_par t =
   | Leaf -> 0
   | Node (v, l, r) ->
     let sl, sr =
-      Eta_par.join (fun () -> sum_par l) (fun () -> sum_par r)
+      Eta.Par.join (fun () -> sum_par l) (fun () -> sum_par r)
     in
     v + sl + sr
 
@@ -67,15 +67,15 @@ let bench_one ~layers ~iters ~n_workers =
       dt)
   in
   let t_serial = median serial_times in
-  (* Eta_par. *)
+  (* Eta.Par. *)
   let t_par =
-    Eta_par.Pool.with_pool ~n_workers (fun pool ->
-      let warm = Eta_par.Pool.run pool (fun () -> sum_par t) in
+    Eta.Par.Pool.with_pool ~n_workers (fun pool ->
+      let warm = Eta.Par.Pool.run pool (fun () -> sum_par t) in
       assert (warm = expected);
       let times =
         List.init iters (fun _ ->
           let r, dt =
-            time_ns (fun () -> Eta_par.Pool.run pool (fun () -> sum_par t))
+            time_ns (fun () -> Eta.Par.Pool.run pool (fun () -> sum_par t))
           in
           assert (r = expected);
           dt)

@@ -13,7 +13,7 @@ let rec fib_par n =
   if n <= cutoff then fib_serial n
   else
     let a, b =
-      Eta_par.join (fun () -> fib_par (n - 1)) (fun () -> fib_par (n - 2))
+      Eta.Par.join (fun () -> fib_par (n - 1)) (fun () -> fib_par (n - 2))
     in
     a + b
 
@@ -29,4 +29,4 @@ let run_serial ~quick () =
 
 let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
-  string_of_int (Eta_par.Pool.run pool (fun () -> fib_par n))
+  string_of_int (Eta.Par.Pool.run pool (fun () -> fib_par n))

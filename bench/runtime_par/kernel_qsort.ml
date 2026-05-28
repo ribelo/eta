@@ -5,7 +5,7 @@
    level have unequal sizes (skewed by pivot choice), so this
    exercises the stealing path more than fib.
 
-   Apples-to-apples note: an earlier draft compared [Eta_par.par_sort]
+   Apples-to-apples note: an earlier draft compared [Eta.Par.par_sort]
    against [Array.sort], but [Array.sort] is the stdlib's
    merge/heapsort hybrid — a different algorithm.  The reported
    "speedup" then mixed algorithmic difference with parallelism.
@@ -99,7 +99,7 @@ let serial_sort arr =
 
 let name = "qsort"
 let description =
-  "Same 3-way quicksort, serial vs Eta_par.par_sort over a random int array"
+  "Same 3-way quicksort, serial vs Eta.Par.par_sort over a random int array"
 
 let run_serial ~quick () =
   let n = if quick then n_quick else n_default in
@@ -111,6 +111,6 @@ let run_serial ~quick () =
 let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
   let arr = make_array n 0xC0FFEE in
-  Eta_par.Pool.run pool (fun () -> Eta_par.par_sort arr compare);
+  Eta.Par.Pool.run pool (fun () -> Eta.Par.par_sort arr compare);
   assert (is_sorted arr);
   checksum arr

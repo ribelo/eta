@@ -30,7 +30,7 @@ let rec parallel_tree depth seed =
   if depth = 0 then leaf_work seed
   else
     let a, b =
-      Eta_par.join
+      Eta.Par.join
         (fun () -> parallel_tree (depth - 1) (seed * 3 + 1))
         (fun () -> parallel_tree (depth - 1) (seed * 3 + 2))
     in
@@ -45,4 +45,4 @@ let run_serial ~quick () =
 
 let run_parallel ~quick pool =
   let d = if quick then depth_quick else depth_default in
-  string_of_int (Eta_par.Pool.run pool (fun () -> parallel_tree d 1))
+  string_of_int (Eta.Par.Pool.run pool (fun () -> parallel_tree d 1))

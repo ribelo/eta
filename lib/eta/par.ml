@@ -1,11 +1,11 @@
-(* Eta_par — public API on top of the heartbeat scheduler.
+(* Eta.Par — public API on top of the heartbeat scheduler.
 
    The public surface is unchanged from the previous Rayon-style
    implementation; only the internals now use heartbeat scheduling
    per the algorithm in the heartbeat paper, mirrored on Spice (Zig)
    and chili (Rust). *)
 
-module S = Scheduler
+module S = Par_scheduler
 
 (* --------------------------------------------------------------------------- *)
 (* Per-domain "current worker" via DLS.
@@ -20,7 +20,7 @@ let current_dls = Domain.DLS.new_key (fun () -> no_worker)
 let current_worker () : S.worker =
   let w = Domain.DLS.get current_dls in
   if w == no_worker then
-    invalid_arg "Eta_par: not running inside a pool worker (call Pool.run)";
+    invalid_arg "Eta.Par: not running inside a pool worker (call Pool.run)";
   w
 
 (* --------------------------------------------------------------------------- *)
@@ -45,9 +45,9 @@ module Pool = struct
              ?(heartbeat_interval_ns = default_heartbeat_interval_ns)
              () =
     if n_workers < 1 then
-      invalid_arg "Eta_par.Pool.create: n_workers < 1";
+      invalid_arg "Eta.Par.Pool.create: n_workers < 1";
     if heartbeat_interval_ns < 1 then
-      invalid_arg "Eta_par.Pool.create: heartbeat_interval_ns < 1";
+      invalid_arg "Eta.Par.Pool.create: heartbeat_interval_ns < 1";
     let pool = S.make_pool ~heartbeat_interval_ns in
     (* Spawn n_workers - 1 background workers. Worker 0 is the caller
        of [run] and is registered transiently in [run]. *)
@@ -551,14 +551,14 @@ module Iter = struct
     { drive = (fun c -> bridge p c ~chunk ~start:0 ~stop:p.len) }
 
   let of_range ?(chunk = default_chunk) ~start ~stop () : int t =
-    if stop < start then invalid_arg "Eta_par.Iter.of_range: stop < start";
+    if stop < start then invalid_arg "Eta.Par.Iter.of_range: stop < start";
     let len = stop - start in
     let p = { len; at = (fun i -> start + i) } in
     { drive = (fun c -> bridge p c ~chunk ~start:0 ~stop:p.len) }
 
   let of_array_sub ?(chunk = default_chunk) (arr : 'a array) ~start ~stop : 'a t =
     if start < 0 || stop > Array.length arr || stop < start then
-      invalid_arg "Eta_par.Iter.of_array_sub: bad indices";
+      invalid_arg "Eta.Par.Iter.of_array_sub: bad indices";
     let len = stop - start in
     let p = { len; at = (fun i -> Array.unsafe_get arr (start + i)) } in
     { drive = (fun c -> bridge p c ~chunk ~start:0 ~stop:p.len) }
