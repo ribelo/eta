@@ -31,6 +31,38 @@ module Value = struct
     | Path of path
 end
 
+module Row = struct
+  type t = (string * Value.t) list
+
+  let get field row = List.assoc_opt field row
+  let fields row = List.map fst row
+
+  let string field row =
+    match get field row with
+    | Some (Value.String value) -> Some value
+    | _ -> None
+
+  let int field row =
+    match get field row with
+    | Some (Value.Int value) -> Some value
+    | _ -> None
+
+  let bool field row =
+    match get field row with
+    | Some (Value.Bool value) -> Some value
+    | _ -> None
+
+  let float field row =
+    match get field row with
+    | Some (Value.Float value) -> Some value
+    | _ -> None
+
+  let node field row =
+    match get field row with
+    | Some (Value.Node value) -> Some value
+    | _ -> None
+end
+
 module Param = struct
   type t = string * Value.t
 
@@ -39,6 +71,220 @@ module Param = struct
   let int name value = (name, Value.Int value)
   let float name value = (name, Value.Float value)
   let string name value = (name, Value.String value)
+  let list name values = (name, Value.List values)
+  let map name fields = (name, Value.Map fields)
+end
+
+module Decode = struct
+  type 'a t = Row.t -> ('a, string) result
+
+  let run decode row = decode row
+
+  let value field row =
+    match Row.get field row with
+    | Some value -> Ok value
+    | None -> Result.Error ("missing field " ^ field)
+
+  let expect field kind decode row =
+    match decode field row with
+    | Some value -> Ok value
+    | None -> Result.Error ("expected " ^ kind ^ " field " ^ field)
+
+  let string field = expect field "string" Row.string
+  let int field = expect field "int" Row.int
+  let bool field = expect field "bool" Row.bool
+  let float field = expect field "float" Row.float
+  let node field = expect field "node" Row.node
+
+  let map f decode row = Result.map f (decode row)
+
+  let tuple2 left right row =
+    match left row with
+    | Result.Error _ as err -> err
+    | Ok left -> (
+        match right row with
+        | Result.Error _ as err -> err
+        | Ok right -> Ok (left, right))
+
+  let tuple3 first second third row =
+    match first row with
+    | Result.Error _ as err -> err
+    | Ok first -> (
+        match second row with
+        | Result.Error _ as err -> err
+        | Ok second -> (
+            match third row with
+            | Result.Error _ as err -> err
+            | Ok third -> Ok (first, second, third)))
+end
+
+module Expr = struct
+  type operand =
+    | Raw_operand of string
+    | Property of string * string
+    | Param of string
+
+  type t = string
+
+  let raw value = value
+  let raw_operand value = Raw_operand value
+  let property alias property = Property (alias, property)
+  let param name = Param name
+
+  let operand = function
+    | Raw_operand value -> value
+    | Property (alias, property) -> alias ^ "." ^ property
+    | Param name -> "$" ^ name
+
+  let binary op left right = operand left ^ " " ^ op ^ " " ^ operand right
+  let eq left right = binary "=" left right
+  let ne left right = binary "<>" left right
+  let gt left right = binary ">" left right
+  let ge left right = binary ">=" left right
+  let lt left right = binary "<" left right
+  let le left right = binary "<=" left right
+
+  let join op left right = "(" ^ left ^ " " ^ op ^ " " ^ right ^ ")"
+  let and_ left right = join "AND" left right
+  let or_ left right = join "OR" left right
+  let not_ expr = "NOT (" ^ expr ^ ")"
+end
+
+module Pattern = struct
+  type direction =
+    | Out
+    | In
+    | Undirected
+
+  type hops =
+    | One
+    | Range of int option * int option
+
+  type t =
+    | Node of {
+        alias : string option;
+        labels : string list;
+        props : (string * string) list;
+      }
+    | Rel of {
+        alias : string option;
+        label : string option;
+        direction : direction;
+        hops : hops;
+        props : (string * string) list;
+      }
+    | Path of {
+        alias : string option;
+        parts : t list;
+      }
+    | Raw of string
+
+  let node ?as_ ?(labels = []) ?(props = []) () =
+    Node { alias = as_; labels; props }
+
+  let anon_node ?labels ?props () = node ?labels ?props ()
+
+  let rel ?as_ ?label ?(direction = Out) ?(hops = One) ?(props = []) () =
+    Rel { alias = as_; label; direction; hops; props }
+
+  let path ?as_ parts = Path { alias = as_; parts }
+  let raw value = Raw value
+
+  let param_props props =
+    match props with
+    | [] -> ""
+    | props ->
+        props
+        |> List.map (fun (name, param) -> name ^ ": $" ^ param)
+        |> String.concat ", "
+        |> fun body -> " {" ^ body ^ "}"
+
+  let labels = function
+    | [] -> ""
+    | labels -> ":" ^ String.concat ":" labels
+
+  let hops = function
+    | One -> ""
+    | Range (None, None) -> "*"
+    | Range (Some min, None) -> "*" ^ string_of_int min ^ ".."
+    | Range (None, Some max) -> "*.." ^ string_of_int max
+    | Range (Some min, Some max) -> "*" ^ string_of_int min ^ ".." ^ string_of_int max
+
+  let rec to_cypher = function
+    | Raw value -> value
+    | Node { alias; labels = node_labels; props } ->
+        let name = Option.value alias ~default:"" in
+        "(" ^ name ^ labels node_labels ^ param_props props ^ ")"
+    | Rel { alias; label; direction; hops = rel_hops; props } ->
+        let name = Option.value alias ~default:"" in
+        let label =
+          match label with
+          | None -> ""
+          | Some label -> ":" ^ label
+        in
+        let body = "[" ^ name ^ label ^ hops rel_hops ^ param_props props ^ "]" in
+        begin match direction with
+        | Out -> "-" ^ body ^ "->"
+        | In -> "<-" ^ body ^ "-"
+        | Undirected -> "-" ^ body ^ "-"
+        end
+    | Path { alias; parts } ->
+        let body = parts |> List.map to_cypher |> String.concat "" in
+        begin match alias with
+        | None -> body
+        | Some alias -> alias ^ " = " ^ body
+        end
+end
+
+module Query = struct
+  type 'a t = {
+    cypher : string;
+    params : Param.t list;
+    decode : 'a Decode.t;
+  }
+
+  type builder = {
+    clauses : string list;
+    params : Param.t list;
+    order_by : string list;
+    limit : int option;
+  }
+
+  let empty = { clauses = []; params = []; order_by = []; limit = None }
+  let add clause query = { query with clauses = query.clauses @ [ clause ] }
+  let with_params params query = { query with params = query.params @ params }
+  let match_ pattern = empty |> add ("MATCH " ^ Pattern.to_cypher pattern)
+  let optional pattern query = add ("OPTIONAL MATCH " ^ Pattern.to_cypher pattern) query
+  let where expr query = add ("WHERE " ^ expr) query
+  let with_ items query = add ("WITH " ^ String.concat ", " items) query
+  let raw_clause clause query = add clause query
+
+  let order_by ?(desc = false) expr query =
+    let item = expr ^ if desc then " DESC" else " ASC" in
+    { query with order_by = query.order_by @ [ item ] }
+
+  let limit count query =
+    if count < 0 then invalid_arg "Eta_ladybug.Query.limit: count must be non-negative";
+    { query with limit = Some count }
+
+  let returning items ~decode query =
+    let clauses = query.clauses @ [ "RETURN " ^ String.concat ", " items ] in
+    let clauses =
+      match query.order_by with
+      | [] -> clauses
+      | order_by -> clauses @ [ "ORDER BY " ^ String.concat ", " order_by ]
+    in
+    let clauses =
+      match query.limit with
+      | None -> clauses
+      | Some count -> clauses @ [ "LIMIT " ^ string_of_int count ]
+    in
+    { cypher = String.concat " " clauses; params = query.params; decode }
+
+  let raw ?(params = []) ~cypher ~decode () = { cypher; params; decode }
+  let cypher (query : _ t) = query.cypher
+  let params (query : _ t) = query.params
+  let decode (query : _ t) = query.decode
 end
 
 type raw_database
@@ -70,6 +316,10 @@ type error =
       category : error_category;
       message : string;
     }
+  | Decode_error of {
+      operation : string;
+      message : string;
+    }
   | Invalid_value of string
   | Closed
 
@@ -83,6 +333,7 @@ external raw_connect : raw_database -> raw_connection = "eta_ladybug_connect"
 external raw_close_connection : raw_connection -> unit = "eta_ladybug_close_connection"
 external raw_interrupt : raw_connection -> unit = "eta_ladybug_interrupt"
 external raw_query_string : raw_connection -> string -> Param.t list -> string = "eta_ladybug_query_string"
+external raw_query_values : raw_connection -> string -> Param.t list -> Row.t list = "eta_ladybug_query_values"
 
 let lower_ascii value = String.lowercase_ascii value
 
@@ -124,6 +375,7 @@ let pp_error ppf = function
   | Library_unavailable message -> Format.fprintf ppf "ladybug library unavailable: %s" message
   | Driver_error { operation; category; message } ->
       Format.fprintf ppf "%s: %a: %s" operation pp_category category message
+  | Decode_error { operation; message } -> Format.fprintf ppf "%s: %s" operation message
   | Invalid_value message -> Format.fprintf ppf "invalid LadybugDB value: %s" message
   | Closed -> Format.pp_print_string ppf "LadybugDB handle is closed"
 
@@ -147,8 +399,10 @@ let wrap operation f =
                { operation; category = classify_error message; message }))
 
 let version () = wrap "version" raw_version
-let if_database_open db f = if db.closed then Result.Error Closed else f ()
-let if_connection_open conn f = if conn.closed || conn.database.closed then Result.Error Closed else f ()
+let if_database_open (db : database) f = if db.closed then Result.Error Closed else f ()
+
+let if_connection_open (conn : connection) f =
+  if conn.closed || conn.database.closed then Result.Error Closed else f ()
 
 module Database = struct
   type t = database
@@ -158,7 +412,7 @@ module Database = struct
 
   let open_memory () = open_ ~path:":memory:"
 
-  let close db =
+  let close (db : database) =
     if_database_open db @@ fun () ->
     db.closed <- true;
     wrap "database close" (fun () -> raw_close_database db.raw)
@@ -172,16 +426,34 @@ module Connection = struct
     wrap "connection open" (fun () ->
         { database; raw = raw_connect database.raw; closed = false })
 
-  let close conn =
+  let close (conn : connection) =
     if_connection_open conn @@ fun () ->
     conn.closed <- true;
     wrap "connection close" (fun () -> raw_close_connection conn.raw)
 
-  let interrupt conn = if not conn.closed then raw_interrupt conn.raw
+  let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
 
-  let query_string ?(params = []) conn cypher =
+  let query_string ?(params = []) (conn : connection) cypher =
     if_connection_open conn @@ fun () ->
     wrap "query" (fun () -> raw_query_string conn.raw cypher params)
+
+  let query conn query =
+    if_connection_open conn @@ fun () ->
+    match
+      wrap "query" (fun () ->
+          raw_query_values conn.raw (Query.cypher query) (Query.params query))
+    with
+    | Result.Error _ as err -> err
+    | Ok rows ->
+        let rec loop acc = function
+          | [] -> Ok (List.rev acc)
+          | row :: rest -> (
+              match Query.decode query row with
+              | Ok value -> loop (value :: acc) rest
+              | Result.Error message ->
+                  Result.Error (Decode_error { operation = "query decode"; message }))
+        in
+        loop [] rows
 
   let exec ?params conn cypher = query_string ?params conn cypher |> Result.map (fun _ -> ())
 end
@@ -229,7 +501,7 @@ module Pool = struct
             ignore (Connection.close conn)))
       ~health_check:(fun conn ->
         blocking_result ?blocking_pool ~name:"ladybug.ping" (fun () ->
-            Connection.query_string conn "RETURN 1" [] |> Result.map (fun _ -> ())))
+            Connection.query_string conn "RETURN 1" |> Result.map (fun _ -> ())))
       ()
     |> public
 
@@ -262,6 +534,12 @@ module Pool = struct
     with_connection t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.query"
           (fun () -> Connection.query_string ?params conn cypher)
+        |> public)
+
+  let query ?blocking_pool ~timeout t query =
+    with_connection t (fun conn ->
+        timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.typed_query"
+          (fun () -> Connection.query conn query)
         |> public)
 
   let shutdown ?deadline t = Eta.Pool.shutdown ?deadline t |> public
