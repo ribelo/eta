@@ -456,14 +456,35 @@ module Connection = struct
         loop [] rows
 
   let exec ?params conn cypher = query_string ?params conn cypher |> Result.map (fun _ -> ())
+
+  let begin_transaction conn = exec conn "BEGIN TRANSACTION"
+  let commit conn = exec conn "COMMIT"
+  let rollback conn = exec conn "ROLLBACK"
+
+  let transaction conn f =
+    match begin_transaction conn with
+    | Result.Error _ as err -> err
+    | Ok () -> (
+        match f conn with
+        | Ok value -> (
+            match commit conn with
+            | Ok () -> Ok value
+            | Result.Error _ as err -> err)
+        | Result.Error _ as err ->
+            ignore (rollback conn);
+            err
+        | exception exn ->
+            ignore (rollback conn);
+            raise exn)
 end
 
 module Pool = struct
-  type raw_error = [ `Ladybug of error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
+  type driver_error = error
+  type raw_error = [ `Ladybug of driver_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
   type t = (connection, raw_error) Eta.Pool.t
 
   type nonrec error =
-    | Ladybug of error
+    | Ladybug of driver_error
     | Pool_shutdown
     | Pool_shutdown_timeout
     | Timeout
@@ -540,6 +561,12 @@ module Pool = struct
     with_connection t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.typed_query"
           (fun () -> Connection.query conn query)
+        |> public)
+
+  let transaction ?blocking_pool ~timeout t f =
+    with_connection t (fun conn ->
+        timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.transaction"
+          (fun () -> Connection.transaction conn f)
         |> public)
 
   let shutdown ?deadline t = Eta.Pool.shutdown ?deadline t |> public

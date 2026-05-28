@@ -40,9 +40,22 @@ typedef enum { LbugSuccess = 0, LbugError = 1 } lbug_state;
 typedef struct { void *ptr; } lbug_database;
 typedef struct { void *ptr; } lbug_connection;
 typedef struct { void *ptr; bool owned; } lbug_query_result;
-typedef struct { void *ptr; bool owned; } lbug_prepared_statement;
+typedef struct { void *ptr; void *bound_values; } lbug_prepared_statement;
 typedef struct { void *ptr; bool owned; } lbug_value;
-typedef struct { void *ptr; } lbug_system_config;
+typedef struct {
+  uint64_t buffer_pool_size;
+  uint64_t max_num_threads;
+  bool enable_compression;
+  bool read_only;
+  uint64_t max_db_size;
+  bool auto_checkpoint;
+  uint64_t checkpoint_threshold;
+  bool throw_on_wal_replay_failure;
+  bool enable_checksums;
+#if defined(__APPLE__)
+  uint32_t thread_qos;
+#endif
+} lbug_system_config;
 
 typedef struct { lbug_database db; } eta_ladybug_db;
 typedef struct { lbug_connection conn; } eta_ladybug_conn;
@@ -507,14 +520,6 @@ static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *ar
   CAMLreturn(props);
 }
 
-static value string_list1(const char *value_s)
-{
-  CAMLparam0();
-  CAMLlocal1(v);
-  v = caml_copy_string(value_s == NULL ? "" : value_s);
-  CAMLreturn(cons(v, Val_emptylist));
-}
-
 static int find_child(struct ArrowSchema *schema, const char *name)
 {
   for (int64_t i = 0; i < schema->n_children; i++) {
@@ -532,18 +537,17 @@ static value arrow_node(struct ArrowSchema *schema, struct ArrowArray *array, in
   CAMLlocal1(id_opt);
   int label_idx = find_child(schema, "_LABEL");
   int id_idx = find_child(schema, "_ID");
-  const char *label_c = "";
-  if (label_idx >= 0) {
+  id_opt = Val_none;
+  if (label_idx >= 0 && array->children != NULL && array->children[label_idx] != NULL) {
     label_v = arrow_string(array->children[label_idx], row);
-    label_c = String_val(label_v);
-    labels = string_list1(label_c);
+    labels = cons(label_v, Val_emptylist);
   } else {
     labels = Val_emptylist;
   }
-  if (id_idx >= 0 && array->children[id_idx]->n_children > 0) {
+  if (id_idx >= 0 && array->children != NULL && array->children[id_idx] != NULL &&
+      array->children[id_idx]->children != NULL && array->children[id_idx]->n_children > 0 &&
+      array->children[id_idx]->children[0] != NULL) {
     id_opt = some_int64(arrow_i64(array->children[id_idx]->children[0], row));
-  } else {
-    id_opt = Val_none;
   }
   props = struct_properties(schema, array, row, 1);
   record = caml_alloc(3, 0);
@@ -668,7 +672,7 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
   lbug_prepared_statement stmt;
   lbug_query_result result;
   stmt.ptr = NULL;
-  stmt.owned = false;
+  stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
   if (api.connection_prepare(conn, cypher, &stmt) != LbugSuccess) fail_last("prepare");
@@ -748,7 +752,7 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
   lbug_prepared_statement stmt;
   lbug_query_result result;
   stmt.ptr = NULL;
-  stmt.owned = false;
+  stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
   if (api.connection_prepare(conn, cypher, &stmt) != LbugSuccess) fail_last("prepare");

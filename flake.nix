@@ -30,6 +30,44 @@
               pkgs.zlib
             ]
           );
+          # nixpkgs' turso package installs only the CLI in this lock; build the
+          # SQLite-compatible C ABI that eta_turso loads at runtime.
+          tursoSqlite3 = pkgs.rustPlatform.buildRustPackage {
+            pname = "turso-sqlite3";
+            version = "0.6.0";
+            src = pkgs.fetchFromGitHub {
+              owner = "tursodatabase";
+              repo = "turso";
+              tag = "v0.6.0";
+              hash = "sha256-uOrvQZ16TlgRFt7kiKIPMT84S07PArVdw6OWzDt7rD8=";
+            };
+            cargoHash = "sha256-Go+KAU4xz4DO585afx7tKpyWY/Glz6ZAETd0p3uOGiE=";
+            cargoBuildFlags = [
+              "-p"
+              "turso_sqlite3"
+            ];
+            doCheck = false;
+            installPhase = ''
+              runHook preInstall
+              libname="libturso_sqlite3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"
+              found="$(find target -path "*/release/$libname" -type f | head -n1)"
+              if [ -z "$found" ]; then
+                echo "could not find $libname" >&2
+                find target -maxdepth 5 -type f -name "libturso_sqlite3*"
+                exit 1
+              fi
+              install -Dm755 "$found" "$out/lib/$libname"
+              install -Dm644 sqlite3/include/sqlite3.h "$out/include/sqlite3.h"
+              runHook postInstall
+            '';
+          };
+          tursoLibraryPath =
+            "${tursoSqlite3}/lib/libturso_sqlite3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+          ladybugLibraryPath =
+            if pkgs.stdenv.isDarwin then
+              "${pkgs.ladybugdb.lib}/lib/liblbug.dylib"
+            else
+              "${pkgs.ladybugdb.lib}/lib/liblbug.so.0.15.3";
           oxCamlSetup = pkgs.writeShellApplication {
             name = "eta-oxcaml-init";
             runtimeInputs = [
@@ -143,6 +181,8 @@
               export OPAMSWITCH="$switch_name"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
+              export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
+              export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               dune build \
@@ -200,6 +240,7 @@
               pkgs.duckdb
               pkgs.git
               pkgs.gnumake
+              pkgs.ladybugdb.lib
               pkgs.m4
               pkgs.nghttp2
               pkgs.opam
@@ -208,6 +249,7 @@
               pkgs.sqlite
               pkgs.unzip
               pkgs.which
+              tursoSqlite3
               oxCamlSetup
               oxCamlShippedTests
               oxCamlToolchainCheck
@@ -234,6 +276,8 @@
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
+              export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
+              export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"
@@ -253,6 +297,8 @@
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
+              export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
+              export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
               if [ -d "$OPAMROOT/${oxCamlSwitch}" ]; then
                 export OPAMSWITCH="${oxCamlSwitch}"
                 eval "$(opam env --switch "${oxCamlSwitch}" --set-switch)"

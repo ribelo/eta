@@ -31,6 +31,33 @@ let turso_ok = function
   | Ok value -> value
   | Error err -> Alcotest.failf "%a" Eta_turso.pp_error err
 
+let ladybug_ok = function
+  | Ok value -> value
+  | Error err -> Alcotest.failf "%a" Eta_ladybug.pp_error err
+
+let env_configured name =
+  match Sys.getenv_opt name with
+  | Some value -> not (String.equal value "")
+  | None -> false
+
+let require_turso_available () =
+  match Eta_turso.available () with
+  | Ok () -> true
+  | Error (Eta_turso.Library_unavailable message) ->
+      if env_configured "ETA_TURSO_LIBRARY" then
+        Alcotest.failf "ETA_TURSO_LIBRARY is configured but unavailable: %s" message;
+      false
+  | Error err -> Alcotest.failf "%a" Eta_turso.pp_error err
+
+let require_ladybug_available () =
+  match Eta_ladybug.available () with
+  | Ok () -> true
+  | Error (Eta_ladybug.Library_unavailable message) ->
+      if env_configured "ETA_LADYBUG_LIBRARY" then
+        Alcotest.failf "ETA_LADYBUG_LIBRARY is configured but unavailable: %s" message;
+      false
+  | Error err -> Alcotest.failf "%a" Eta_ladybug.pp_error err
+
 let test_duckdb_values () =
   let row =
     [
@@ -206,12 +233,9 @@ let test_turso_typed_queries () =
     (List.length (Eta_turso.Compiled.change_params insert));
   Alcotest.(check int) "select params" 1
     (List.length (Eta_turso.Compiled.select_params select));
-  match Eta_turso.available () with
-  | Error (Eta_turso.Library_unavailable _) -> ()
-  | Error err -> Alcotest.failf "%a" Eta_turso.pp_error err
-  | Ok () ->
+  if require_turso_available () then
       let db =
-        Eta_turso.default_config "file:eta_turso_test?mode=memory&cache=shared"
+        Eta_turso.default_config ":memory:"
         |> Eta_turso.open_
         |> turso_ok
       in
@@ -222,7 +246,47 @@ let test_turso_typed_queries () =
           ignore (Eta_turso.execute_compiled db insert |> turso_ok);
           let rows = Eta_turso.select db select |> turso_ok in
           Alcotest.(check (list (pair int64 string)))
-            "typed rows" [ (1L, "Ada") ] rows)
+            "typed rows" [ (1L, "Ada") ] rows;
+          let updated =
+            Eta_turso.Update.(
+              table Turso_items.table
+              |> set Turso_items.active false
+              |> where Eta_turso.Expr.(eq Turso_items.name "Ada")
+              |> compile)
+            |> Eta_turso.execute_compiled db
+            |> turso_ok
+          in
+          Alcotest.(check int) "updated rows" 1 updated;
+          let inactive =
+            Eta_turso.Select.(
+              from Turso_items.table Eta_turso.Projection.(one Turso_items.name)
+              |> where Eta_turso.Expr.(eq Turso_items.active false)
+              |> compile)
+            |> Eta_turso.select db
+            |> turso_ok
+          in
+          Alcotest.(check (list string)) "inactive rows" [ "Ada" ] inactive;
+          let deleted =
+            Eta_turso.Delete.(
+              from Turso_items.table
+              |> where Eta_turso.Expr.(eq Turso_items.id 1L)
+              |> compile)
+            |> Eta_turso.execute_compiled db
+            |> turso_ok
+          in
+          Alcotest.(check int) "deleted rows" 1 deleted;
+          let inserted =
+            Eta_turso.transaction db (fun db ->
+                Eta_turso.Insert.(
+                  into Turso_items.table
+                  |> value Turso_items.id 2L
+                  |> value Turso_items.name "Grace"
+                  |> value Turso_items.active true
+                  |> compile)
+                |> Eta_turso.execute_compiled db)
+            |> turso_ok
+          in
+          Alcotest.(check int) "transaction insert" 1 inserted)
 
 let test_ladybug_error_classification () =
   let open Eta_ladybug in
@@ -278,6 +342,82 @@ let test_ladybug_typed_query_builder () =
          ("friend.name", Value.String "Grace");
        ])
 
+let test_ladybug_typed_query_runtime () =
+  let open Eta_ladybug in
+  if require_ladybug_available () then
+    let db = Database.open_memory () |> ladybug_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Database.close db))
+      (fun () ->
+        let conn = Connection.connect db |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Connection.close conn))
+          (fun () ->
+            Connection.exec conn
+              "CREATE NODE TABLE Person(id INT64, name STRING, age INT64, active BOOL, PRIMARY KEY(id))"
+            |> ladybug_ok;
+            Connection.exec conn
+              "CREATE (:Person {id: 7, name: 'Ada', age: 42, active: true})"
+            |> ladybug_ok;
+            let query_by_name name =
+              Query.(
+                match_
+                  (Pattern.node ~as_:"p" ~labels:[ "Person" ]
+                     ~props:[ ("name", "name") ] ())
+                |> with_params [ Param.string "name" name ]
+                |> returning [ "p" ] ~decode:Decode.(node "p"))
+            in
+            let query = query_by_name "Ada" in
+            let nodes = Connection.query conn query |> ladybug_ok in
+            begin match nodes with
+            | [ node ] ->
+                Alcotest.(check (list string)) "node labels" [ "Person" ] node.labels;
+                let prop name = List.assoc_opt name node.properties in
+                Alcotest.(check (option int64)) "id"
+                  (Some 7L)
+                  (match prop "id" with Some (Value.Int value) -> Some value | _ -> None);
+                Alcotest.(check (option string)) "name"
+                  (Some "Ada")
+                  (match prop "name" with
+                   | Some (Value.String value) -> Some value
+                   | _ -> None);
+                Alcotest.(check (option int64)) "age"
+                  (Some 42L)
+                  (match prop "age" with Some (Value.Int value) -> Some value | _ -> None);
+                Alcotest.(check (option bool)) "active"
+                  (Some true)
+                  (match prop "active" with
+                   | Some (Value.Bool value) -> Some value
+                   | _ -> None)
+            | _ -> Alcotest.failf "expected one typed node, got %d" (List.length nodes);
+            end;
+            Connection.transaction conn (fun conn ->
+                Connection.exec conn
+                  "CREATE (:Person {id: 8, name: 'Grace', age: 37, active: true})")
+            |> ladybug_ok;
+            let grace_nodes = Connection.query conn (query_by_name "Grace") |> ladybug_ok in
+            Alcotest.(check int) "committed transaction node" 1
+              (List.length grace_nodes);
+            let rollback_result =
+              Connection.transaction conn (fun conn ->
+                  match
+                    Connection.exec conn
+                      "CREATE (:Person {id: 9, name: 'Rollback', age: 1, active: false})"
+                  with
+                  | Result.Error _ as err -> err
+                  | Ok () -> Result.Error (Invalid_value "rollback"))
+            in
+            begin match rollback_result with
+            | Result.Error (Invalid_value "rollback") -> ()
+            | Ok () -> Alcotest.fail "rollback transaction unexpectedly committed"
+            | Result.Error err -> Alcotest.failf "%a" pp_error err
+            end;
+            let rolled_back =
+              Connection.query conn (query_by_name "Rollback") |> ladybug_ok
+            in
+            Alcotest.(check int) "rolled back transaction node" 0
+              (List.length rolled_back)))
+
 let () =
   Alcotest.run "Eta database connectors"
     [
@@ -300,5 +440,7 @@ let () =
             test_ladybug_available_is_result;
           Alcotest.test_case "typed query builder" `Quick
             test_ladybug_typed_query_builder;
+          Alcotest.test_case "typed query runtime" `Quick
+            test_ladybug_typed_query_runtime;
         ] );
     ]

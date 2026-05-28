@@ -120,9 +120,14 @@ static int eta_turso_load(void)
   const char *env = getenv("ETA_TURSO_LIBRARY");
   const char *candidates[] = { env, "libturso_sqlite3.so", "libturso_sqlite3.so.0", "libturso_sqlite3.dylib", NULL };
 
+  int dlopen_flags = RTLD_NOW | RTLD_LOCAL;
+#ifdef RTLD_DEEPBIND
+  dlopen_flags |= RTLD_DEEPBIND;
+#endif
+
   for (int i = 0; candidates[i] != NULL; i++) {
     if (candidates[i][0] == '\0') continue;
-    api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
+    api.handle = dlopen(candidates[i], dlopen_flags);
     if (api.handle != NULL) break;
   }
 
@@ -179,9 +184,12 @@ CAMLprim value eta_turso_open(value v_path, intnat mode)
   ensure_loaded();
   sqlite3 *db = NULL;
   int rc;
+  char *path = strdup(String_val(v_path));
+  if (path == NULL) caml_failwith("allocating Turso database path failed");
   caml_enter_blocking_section();
-  rc = api.open_v2(String_val(v_path), &db, flags_of_mode(mode), NULL);
+  rc = api.open_v2(path, &db, flags_of_mode(mode), NULL);
   caml_leave_blocking_section();
+  free(path);
   if (rc != SQLITE_OK) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "sqlite3_open_v2 rc=%d: %s", rc, db == NULL ? "no handle" : api.errmsg(db));

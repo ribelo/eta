@@ -188,13 +188,18 @@ module Connection : sig
   val query_string : ?params:Param.t list -> t -> string -> (string, error) result
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
+  val begin_transaction : t -> (unit, error) result
+  val commit : t -> (unit, error) result
+  val rollback : t -> (unit, error) result
+  val transaction : t -> (t -> ('a, error) result) -> ('a, error) result
 end
 
 module Pool : sig
   type t
+  type driver_error = error
 
   type nonrec error =
-    | Ladybug of error
+    | Ladybug of driver_error
     | Pool_shutdown
     | Pool_shutdown_timeout
     | Timeout
@@ -223,6 +228,13 @@ module Pool : sig
     t ->
     'a Query.t ->
     ('a list, error) Eta.Effect.t
+
+  val transaction :
+    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    t ->
+    (Connection.t -> ('a, driver_error) result) ->
+    ('a, error) Eta.Effect.t
 
   val shutdown : ?deadline:Eta.Duration.t -> t -> (unit, error) Eta.Effect.t
   val stats : t -> Eta.Pool.stats
