@@ -677,6 +677,39 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
    Bug: Eio.Cancel.Cancelled caught as generic exn in run_owner_loop sets
    failure to Connection_protocol_violation, which is Not_retryable and
    misleading. *)
+(* RED TEST: failure handler exception skips remaining handlers.
+   set_failure uses List.iter without catching individual handler
+   exceptions. If one handler raises, the rest never fire. This breaks
+   cleanup guarantees for components that rely on failure notifications. *)
+let test_h2_connection_failure_handler_exception_skips_others () =
+  Eio_main.run @@ fun _env ->
+  Eio.Switch.run @@ fun sw ->
+  let (flow_r, _flow_w) = Eio_unix.Net.socketpair_stream ~sw () in
+  let handler1_called = ref false in
+  let handler2_called = ref false in
+  let connection =
+    Eta_http.H2.Connection.create ~sw
+      ~flow:(flow_r :> Eta_http.H2.Connection.flow)
+      ()
+  in
+  (* Register the well-behaved handler FIRST, then the raising handler.
+     Failure handlers are prepended to the list, so the raising handler
+     (registered second) fires first and stops iteration. *)
+  let _unregister2 =
+    Eta_http.H2.Connection.register_failure_handler connection (fun _kind ->
+        handler2_called := true)
+  in
+  let _unregister1 =
+    Eta_http.H2.Connection.register_failure_handler connection (fun _kind ->
+        handler1_called := true;
+        raise (Failure "handler1 boom"))
+  in
+  (try Eta_http.H2.Connection.shutdown connection
+   with Failure _ -> ());
+  Alcotest.(check bool) "handler1 called" true !handler1_called;
+  Alcotest.(check bool) "handler2 still called despite handler1 raising" true
+    !handler2_called
+
 let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->

@@ -289,6 +289,8 @@ let () =
             test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation;
           Alcotest.test_case "body error on switch close is connection closed" `Quick
             test_h2_connection_body_error_on_switch_close_is_connection_closed;
+          Alcotest.test_case "failure handler exception skips others" `Quick
+            test_h2_connection_failure_handler_exception_skips_others;
         ] );
       ( "h2-security",
         [
