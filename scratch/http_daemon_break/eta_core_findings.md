@@ -2,15 +2,14 @@
 
 ## Summary
 
-3 bugs found, 6 red tests (5 deterministic + 1 flaky), 16+ green tests added.
+4 bugs found, 7 deterministic red tests + 1 flaky red test, 16+ green tests added.
 
 | # | Module | Bug | Red Tests |
 |---|--------|-----|-----------|
-| 1 | `lib/http/h2/connection.ml` | Daemon cancellation misclassified as protocol violation | 2 deterministic |
+| 1 | `lib/http/h2/connection.ml` | Daemon cancellation misclassified as protocol violation | 2 deterministic + 1 flaky |
 | 2 | `lib/eta/effect.ml` | `retry` doesn't scope finalizers per attempt | 2 |
 | 3 | `lib/http/h2/connection.ml` | `set_failure` skips handlers on exception | 1 |
-
-Plus 1 flaky green test (test 11) that demonstrates a latent daemon scheduling bug.
+| 4 | `lib/http/body/stream.ml` + `lib/http/h1/h1_client.ml` | Body stream release never called when read_next raises raw exception | 1 |
 
 ## Bug 1: H2 daemon cancellation error misclassification (HTTP)
 
@@ -22,8 +21,8 @@ Plus 1 flaky green test (test 11) that demonstrates a latent daemon scheduling b
 - `test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation`
 - `test_h2_connection_body_error_on_switch_close_is_connection_closed`
 
-Plus 1 flaky green test:
-- `test_h2_connection_switch_close_does_not_fire_security_error` (passes when writer closes flow first, fails when reader catches Cancelled first)
+Plus 1 flaky test:
+- `test_h2_connection_switch_close_does_not_fire_security_error` (fails when reader catches Cancelled first, passes when writer closes flow first)
 
 ## Bug 2: Effect.retry per-attempt resource leak (Eta core)
 
@@ -49,6 +48,18 @@ Components relying on failure notifications for cleanup are broken.
 **Red tests (1):**
 - `test_h2_connection_failure_handler_exception_skips_others`
 
+## Bug 4: Body stream release leak on raw exception (HTTP)
+
+**Location:** `lib/http/body/stream.ml` — `read`; `lib/http/h1/h1_client.ml` — `source_read_some`
+**Root cause:** `Body.Stream.read` uses `Effect.catch` which only catches `Error` results,
+not raw OCaml exceptions. The H1 client's `source_read_some` only catches `End_of_file`;
+other flow exceptions propagate as raw exns. When they reach `Body.Stream.read`, the
+`Effect.catch` doesn't catch them, so `release_once` is never called.
+**Impact:** Connection leak when body read fails with any exception other than EOF
+(e.g. Eio.Io, Unix.Unix_error, mock flow failures).
+**Red tests (1):**
+- `test_body_stream_read_exception_leaks_release`
+
 ## Green tests added (16+)
 
 - GOAWAY mid-body completes existing stream
@@ -72,10 +83,11 @@ Components relying on failure notifications for cleanup are broken.
 ## Reproduction
 
 ```sh
-nix develop -c dune runtest test/http test/eta --force
-# HTTP: 4 failures in 133 tests (1 flaky)
-# Eta:  2 failures in 265 tests
-# Total: 6 red tests across 3 bugs (5 deterministic + 1 flaky)
+# HTTP tests (7 failures: 6 deterministic + 1 flaky)
+EIO_BACKEND=posix nix develop -c dune exec test/http/run.exe
+
+# Eta core tests (2 failures, both deterministic)
+nix develop -c dune exec test/eta/run.exe
 ```
 
 ## Areas explored (no bugs found)
@@ -85,23 +97,20 @@ Island, Resource, Schedule, Timeout, Race, Par, All, All_settled,
 For_each_par, Acquire_release, Scoped, Catch, Finally, Repeat,
 With_background, Effect.with_resource, Randomized compositions,
 H2 Security, H2 Informational_filter, H2 Writer, ALPN dispatch,
-H1 client (request/response, chunked, pool, cancellation, connection close),
-H1 transport (TCP/TLS connect, ALPN dispatch), Retry policy.
+H1 client request/response path, H1 chunked encoding, H1 pool cancellation,
+H1 pool connection close, Retry policy, Transport TCP/TLS connect.
 
 ## Additional observations (not classified as bugs)
 
-1. **H1 pool connection close is handled by health check:** When a server
-   sends `Connection: close`, the connection is marked `reusable=false`.
-   The health check rejects it on next checkout. The connection is returned
-   to idle but rejected before reuse. Not a correctness bug, just an
-   inefficiency (connection sits in idle pool until checked out).
+1. **H1 pool connection close inefficiency:** When server sends `Connection: close`,
+   the connection is marked `reusable=false` and returned to idle. The health check
+   rejects it on next checkout. Not a leak, just an extra health check cycle.
 
 2. **Security module stream tracking grows without bound:**
    `response_headers_seen_by_stream` in `security.ml` is never cleaned up.
-   For long-lived H2 connections with many streams, this hashtable grows.
-   Very slow leak (one int per stream ID).
+   Very slow leak (one int per stream ID) for long-lived H2 connections.
 
 3. **H2 connection failure_waiters list grows without bound:**
-   `register_failure_handler` adds waiters to a list. Unregistration only
-   sets `active=false`. The list is only cleared when `set_failure` fires.
+   `register_failure_handler` adds waiters to a list. Unregistration only sets
+   `active=false`. The list is only cleared when `set_failure` fires.
    For connections that never fail, inactive waiters accumulate.
