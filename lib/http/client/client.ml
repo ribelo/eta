@@ -273,6 +273,7 @@ let request_h2_on_connection connection request url =
   let result, resolver = Eio.Promise.create () in
   let body_error = ref None in
   let response_started = ref false in
+  let response_returned = ref false in
   let body_wake = ref (fun () -> ()) in
   let unregister_failure = ref (fun () -> ()) in
   let trailers, resolve_trailers, resolve_empty_trailers, resolve_trailer_error =
@@ -312,10 +313,13 @@ let request_h2_on_connection connection request url =
         ~on_eof:(fun () ->
           unregister ();
           resolve_empty_trailers ())
-        ~on_release:(fun _ ->
+        ~on_release:(fun decision ->
           unregister ();
           resolve_trailer_error (h2_closed request Http_response);
-          Eta.Effect.unit)
+          Eta.Effect.sync (fun () ->
+              match decision with
+              | Stream_state.Queue_rst -> Connection.shutdown connection
+              | Stream_state.No_rst -> ()))
         mux stream body
     in
     body_wake := wake;
@@ -359,7 +363,9 @@ let request_h2_on_connection connection request url =
   let wait_for_response () =
     Eta.Effect.sync (fun () -> Eio.Promise.await result)
     |> Eta.Effect.bind (function
-         | Ok response -> Eta.Effect.pure response
+         | Ok response ->
+             response_returned := true;
+             Eta.Effect.pure response
          | Error error -> Eta.Effect.fail error)
   in
   match h2_request_of_request request url with
@@ -379,6 +385,16 @@ let request_h2_on_connection connection request url =
       resolve_error error;
       Eta.Effect.fail error
   | Ok opened ->
+      let release_unreturned_request () =
+        if !response_returned then Eta.Effect.unit
+        else
+          Eta.Effect.sync (fun () ->
+              unregister ();
+              (try H2.Body.Writer.close opened.request_body with _ -> ());
+              match Multiplexer.release mux opened.stream with
+              | Stream_state.Queue_rst -> Connection.shutdown connection
+              | Stream_state.No_rst -> ())
+      in
       Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
           let write_request =
             h2_write_body opened.request_body request.body upload
@@ -419,7 +435,12 @@ let request_h2_on_connection connection request url =
               Eta.Effect.scoped
                 (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
                    ~release:(fun () -> h2_close_request_body opened.request_body)
-                |> Eta.Effect.bind (fun () -> response_or_writer))))
+                |> Eta.Effect.bind (fun () -> response_or_writer)))
+      |> fun request_effect ->
+      Eta.Effect.scoped
+        (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+           ~release:release_unreturned_request
+        |> Eta.Effect.bind (fun () -> request_effect)))
 
 let make_h1 ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =

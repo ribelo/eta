@@ -273,6 +273,66 @@ let test_h2_connection_cancelled_upload_releases_body () =
       | Eta.Exit.Error _ -> ());
       Alcotest.(check int) "cancelled upload body released" 1 !released)
 
+let test_h2_connection_cancelled_fixed_request_releases_stream () =
+  with_h2_server
+    (fun _reqd -> ())
+    (fun _clock rt connection ->
+      let uri = "https://api.example.test/cancel-fixed" in
+      let request =
+        Eta_http.Request.make "POST" uri
+          ~body:(Eta_http.Request.Fixed [ Bytes.of_string "{}" ])
+      in
+      let effect =
+        Eta_http.Client.For_test.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
+             ~on_timeout:(timeout_error uri)
+      in
+      (match Eta.Runtime.run rt effect with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            { Eta_http.Error.kind = Connection_protocol_violation _; _ }) ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "expected typed timeout, got %a"
+            (Eta.Cause.pp pp_http_error_detail)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail "expected fixed request cancellation");
+      let stats = Eta_http.H2.Connection.stats connection in
+      Alcotest.(check int) "active streams" 0 stats.active;
+      Alcotest.(check int) "live streams" 0 stats.live;
+      Alcotest.(check int) "local resets" 1 stats.local_resets;
+      Alcotest.(check bool) "connection closed" true
+        (Eta_http.H2.Connection.is_closed connection))
+
+let test_h2_connection_cancelled_body_read_closes_connection () =
+  with_h2_server
+    (fun reqd ->
+      let body = H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK) in
+      H2.Body.Writer.write_string body "partial")
+    (fun _clock rt connection ->
+      let uri = "https://api.example.test/body-stall" in
+      let effect =
+        request_effect connection "/body-stall"
+        |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
+             ~on_timeout:(timeout_error uri)
+      in
+      (match Eta.Runtime.run rt effect with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            { Eta_http.Error.kind = Connection_protocol_violation _; _ }) ->
+          ()
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "expected body-read timeout, got %a"
+            (Eta.Cause.pp pp_http_error_detail)
+            cause
+      | Eta.Exit.Ok _ -> Alcotest.fail "expected body-read timeout");
+      let stats = Eta_http.H2.Connection.stats connection in
+      Alcotest.(check int) "active streams" 0 stats.active;
+      Alcotest.(check int) "live streams" 0 stats.live;
+      Alcotest.(check bool) "connection closed" true
+        (Eta_http.H2.Connection.is_closed connection))
+
 let hpack_header name value = { Hpack.name; value; sensitive = false }
 
 let hpack_block encoder headers =

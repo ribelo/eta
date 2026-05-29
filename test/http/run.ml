@@ -269,6 +269,10 @@ let () =
             test_h2_connection_returns_early_response;
           Alcotest.test_case "cancelled upload releases body" `Quick
             test_h2_connection_cancelled_upload_releases_body;
+          Alcotest.test_case "cancelled fixed request releases stream" `Quick
+            test_h2_connection_cancelled_fixed_request_releases_stream;
+          Alcotest.test_case "cancelled body read closes connection" `Quick
+            test_h2_connection_cancelled_body_read_closes_connection;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
           Alcotest.test_case "classifies informational response" `Quick

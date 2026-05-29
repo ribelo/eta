@@ -1784,32 +1784,20 @@ module Pool = struct
   let acquire t =
     let rec loop () =
       let decision =
-        Eio.Mutex.lock t.mutex;
+        with_lock t @@ fun () ->
         match reserve_locked t with
-        | Use conn ->
-            Eio.Mutex.unlock t.mutex;
-            `Use conn
-        | Open lease_id ->
-            Eio.Mutex.unlock t.mutex;
-            `Open lease_id
-        | Shutdown ->
-            Eio.Mutex.unlock t.mutex;
-            `Error (Pool_error "pool is shut down")
+        | Use conn -> `Use conn
+        | Open lease_id -> `Open lease_id
+        | Shutdown -> `Error (Pool_error "pool is shut down")
         | Wait -> (
             match await_capacity_locked t with
-            | `Woke ->
-                Eio.Mutex.unlock t.mutex;
-                `Retry
-            | `Timeout ->
-                let message = exhausted_message t in
-                Eio.Mutex.unlock t.mutex;
-                `Error (Pool_error message)
+            | `Woke -> `Retry
+            | `Timeout -> `Error (Pool_error (exhausted_message t))
             | `No_clock ->
-                let message =
-                  exhausted_message t ^ "; pass ~clock to Pool.create for timed waits"
-                in
-                Eio.Mutex.unlock t.mutex;
-                `Error (Pool_error message))
+                `Error
+                  (Pool_error
+                     (exhausted_message t
+                     ^ "; pass ~clock to Pool.create for timed waits")))
       in
       match decision with
       | `Use conn -> Ok conn

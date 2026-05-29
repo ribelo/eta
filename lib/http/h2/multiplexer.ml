@@ -58,12 +58,13 @@ let mark_remote_reset t stream_id = Stream_state.mark_remote_reset t.streams str
 
 let release t stream =
   let stream_id = Stream_state.id stream in
+  let decision = Stream_state.release t.streams stream in
   (match Hashtbl.find_opt t.response_bodies stream_id with
   | Some body ->
       if not (H2.Body.Reader.is_closed body) then H2.Body.Reader.close body;
       Hashtbl.remove t.response_bodies stream_id
   | None -> ());
-  Stream_state.release t.streams stream
+  decision
 
 let shutdown t =
   if not t.closed then (
@@ -395,46 +396,28 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     | Body_chunk chunk -> Eta.Effect.pure (Stream.Chunk chunk)
     | Body_eof -> Eta.Effect.pure Stream.End
   in
-  let await_event () =
-    Eio.Mutex.lock mutex;
+  let next_locked () =
     match poll_error () with
-    | Some error ->
-        Eio.Mutex.unlock mutex;
-        `Error error
-    | None when not (Queue.is_empty events) ->
-        let event = Queue.take events in
-        Eio.Mutex.unlock mutex;
-        `Event event
-    | None when state.eof ->
-        Eio.Mutex.unlock mutex;
-        `Event Body_eof
-    | None when H2.Body.Reader.is_closed body ->
-        Eio.Mutex.unlock mutex;
-        `Closed
+    | Some error -> Some (`Error error)
+    | None when not (Queue.is_empty events) -> Some (`Event (Queue.take events))
+    | None when state.eof -> Some (`Event Body_eof)
+    | None when H2.Body.Reader.is_closed body -> Some `Closed
+    | None -> None
+  in
+  let await_event () =
+    match with_lock next_locked with
     | None ->
-        Eio.Mutex.unlock mutex;
         schedule_read ();
-        Eio.Mutex.lock mutex;
-        let rec loop () =
-          match poll_error () with
-          | Some error ->
-              Eio.Mutex.unlock mutex;
-              `Error error
-          | None when not (Queue.is_empty events) ->
-              let event = Queue.take events in
-              Eio.Mutex.unlock mutex;
-              `Event event
-          | None when state.eof ->
-              Eio.Mutex.unlock mutex;
-              `Event Body_eof
-          | None when H2.Body.Reader.is_closed body ->
-              Eio.Mutex.unlock mutex;
-              `Closed
-          | None ->
-              Eio.Condition.await condition mutex;
-              loop ()
-        in
-        loop ()
+        with_lock (fun () ->
+            let rec loop () =
+              match next_locked () with
+              | None ->
+                  Eio.Condition.await condition mutex;
+                  loop ()
+              | Some result -> result
+            in
+            loop ())
+    | Some result -> result
   in
   let read_next () =
     Eta.Effect.sync await_event
