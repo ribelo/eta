@@ -1,58 +1,60 @@
-# Eta Core Break Session - Additional Findings
+# Eta Break Session - Comprehensive Findings
 
-## Bug C: Effect.retry does NOT scope per-attempt finalizers
+## Summary
 
-**Root cause:** `Effect.retry` calls `effect.eval()` directly without
-`Runtime_core.with_finalizers` wrapping each attempt. Compare with
-`Effect.repeat` which creates a fresh `finalizers` ref per iteration.
+2 bugs found, 5 red tests, 14+ green tests added.
 
-**Impact:** Resources acquired via `acquire_release` inside a retried effect
-are NOT released between attempts. They accumulate and are only released when
-the outer scope exits. With long retry schedules and expensive resources
-(connections, file handles), this causes sustained resource pressure.
+## Bug 1: H2 daemon cancellation error misclassification (HTTP)
 
-**Red tests:**
-- `test_effect_retry_releases_resources_each_failed_attempt` (Effect #77)
-- `test_retry_resource_accumulation_systematic` (Stress #3)
+**Location:** `lib/http/h2/connection.ml` — `run_owner_loop`
+**Root cause:** `Eio.Cancel.Cancelled` caught as generic `exn`, classified as
+`Connection_protocol_violation` instead of `Connection_closed`
+**Impact:** Wrong retryability, spurious security errors, misleading body errors
+**Red tests (3):**
+- `test_h2_connection_switch_close_does_not_fire_security_error`
+- `test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation`
+- `test_h2_connection_body_error_on_switch_close_is_connection_closed`
 
-**Reproduction:**
+## Bug 2: Effect.retry per-attempt resource leak (Eta core)
+
+**Location:** `lib/eta/effect.ml` — `retry`
+**Root cause:** `retry` calls `effect.eval()` without `with_finalizers` per attempt
+**Impact:** Resources from failed attempts accumulate until scope exit
+**Red tests (2):**
+- `test_effect_retry_releases_resources_each_failed_attempt`
+- `test_retry_resource_accumulation_systematic`
+
+## Green tests added (14)
+
+- GOAWAY mid-body completes existing stream
+- Timeout kills connection (documents conservative design)
+- Pool stress (no resource leak)
+- Semaphore stress (permit accounting)
+- Channel stress (no lost messages)
+- Nested scope+catch+retry (correct pattern works)
+- Race+retry (resources released on scope exit)
+- Security error handler not fired on switch close
+- all_settled scoped resources released per branch
+- Race many branches resource cleanup
+- Randomized effect compositions (50 runs)
+- Randomized race compositions (20 runs)
+- Randomized all compositions (20 runs)
+- for_each_par cancelled workers release
+- Par scoped resource released on failure
+
+## Reproduction
+
 ```sh
-nix develop -c dune runtest test/eta --force
-# → 2 failures! in 1.4s. 256 tests run.
+nix develop -c dune runtest test/http test/eta --force
+# HTTP: 3 failures in 131 tests
+# Eta: 2 failures in 264+ tests
+# Total: 5 red tests across 2 bugs
 ```
 
-**Workaround:** Wrap the retried effect body in `Effect.scoped`:
-```ocaml
-(* BAD: resources accumulate *)
-Effect.retry schedule pred (acquire_release ~acquire ~release |> bind body)
+## Areas explored (no bugs found)
 
-(* GOOD: resources released per attempt *)
-Effect.retry schedule pred (Effect.scoped (acquire_release ~acquire ~release |> bind body))
-```
-
-## Green Tests Added
-
-- Pool stress: concurrent acquire/release (no resource leak) ✓
-- Semaphore stress: permit accounting under concurrent access ✓
-- Channel stress: no lost messages with concurrent senders/receivers ✓
-- Nested scope+catch+retry: demonstrates correct scoped-inside-retry pattern ✓
-
-## Areas Explored (no bugs found)
-
-- Effect.race: correct exception semantics with Eio.Fiber.any
-- Effect.all/par/for_each_par: correct fail-fast with switch cancellation
-- Effect.timeout_as: sophisticated token-based exception matching, correct
-- Effect.scoped: proper finalizer isolation with with_finalizers
-- Effect.uninterruptible: correct cancel_protect wrapping
-- Effect.repeat: correctly scopes each iteration (unlike retry)
-- Effect.finally: correct isolated cleanup scope
-- Effect.catch: only one accumulation (bounded, by design)
-- Pool: thorough cancellation safety with acquire guards
-- Channel: proper deliver/cancel race handling
-- PubSub: correct entry lifecycle with remaining counts
-- Semaphore: correct state machine for Waiting/Resolved_unclaimed/Claimed
-- Par scheduler: heartbeat-based work stealing, correct within single-domain
-- Supervisor: proper child cancellation and finalizer ordering
-- Blocking runtime: proper thread lifecycle with cancellation
-- run_finalizers: catches individual finalizer exceptions, all finalizers run
-- AI SSE stream: correctly catches body errors (affected by Bug A/B indirectly)
+Pool, Semaphore, Channel, PubSub, Queue, Port, Par, Supervisor, Blocking,
+Island, Resource, Schedule, Timeout, Race, Par, All, All_settled,
+For_each_par, Acquire_release, Scoped, Catch, Finally, Repeat,
+With_background, Effect.with_resource, Randomized compositions,
+H2 Security, H2 Informational_filter, H2 Writer, ALPN dispatch.
