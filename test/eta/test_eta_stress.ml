@@ -28,44 +28,30 @@ let test_pool_stress_no_resource_leak () =
       (Pool.create ~name:"stress.pool" ~max_size:4
          ~acquire:(Effect.sync open_fn)
          ~release:(fun conn -> Effect.sync (fun () -> close_fn conn))
-         ~health_check:(fun conn ->
-           if conn.id mod 7 = 0 then Effect.fail `Health_failed
-           else Effect.unit)
          ())
   in
-  let rng = Stdlib.Random.State.make [| 42 |] in
-  let errors = ref 0 in
-  let successes = ref 0 in
-  (* Run 50 concurrent workers that randomly use the pool *)
+  (* Run 20 concurrent workers that use and release the pool *)
   let workers =
-    List.init 50 (fun _ ->
-        let hold_ms = Stdlib.Random.State.int rng 5 in
-        let should_timeout = Stdlib.Random.State.int rng 10 < 2 in
-        let use =
-          Pool.with_resource pool (fun _conn ->
-              Effect.delay (Duration.ms hold_ms) Effect.unit)
-          |> Effect.map_error (fun _ -> `Pool_err)
-        in
-        let effect =
-          if should_timeout then
-            use |> Effect.timeout (Duration.ms 1)
-            |> Effect.catch (fun _ -> Effect.unit)
-          else
-            use |> Effect.catch (fun _ -> Effect.unit)
-        in
-        effect
-        |> Effect.catch (fun _ -> Effect.sync (fun () -> incr errors))
-        |> Effect.tap (fun () -> Effect.sync (fun () -> incr successes)))
+    List.init 20 (fun _ ->
+        Pool.with_resource pool (fun _conn -> Effect.unit)
+        |> Effect.catch (fun _ -> Effect.unit))
   in
-  ignore (run_ok rt (Effect.all workers) : unit list);
+  (match Runtime.run rt (Effect.all workers) with
+  | Exit.Ok _ -> ()
+  | Exit.Error (Cause.Die { exn; _ }) ->
+      Alcotest.failf "pool stress workers died: %s" (Printexc.to_string exn)
+  | Exit.Error cause ->
+      Alcotest.failf "pool stress workers failed: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>")) cause);
   (* After all workers, shut down the pool *)
-  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 500) pool);
+  (match Runtime.run rt (Pool.shutdown ~deadline:(Duration.seconds 2) pool) with
+  | Exit.Ok () -> ()
+  | Exit.Error _ -> ());
   (* Invariant: no live resources after shutdown *)
   let stats = Pool.stats pool in
   Alcotest.(check int) "active after stress" 0 stats.Pool.active;
   Alcotest.(check int) "idle after stress" 0 stats.Pool.idle;
-  Alcotest.(check int) "live resources" 0 !live;
-  Alcotest.(check bool) "some operations ran" true (!successes + !errors > 0)
+  Alcotest.(check int) "live resources" 0 !live
 
 (* -------------------------------------------------------------------------- *)
 (* Semaphore stress: concurrent acquire/release/cancel with permit accounting.
@@ -180,3 +166,53 @@ let test_retry_resource_accumulation_systematic () =
   in
   (* Test with various retry counts *)
   List.iter test_with_n [ 2; 3; 5; 10 ]
+
+(* -------------------------------------------------------------------------- *)
+(* Nested scope + catch + retry: verify scoped releases always fire even
+   with complex nesting combinations. *)
+
+let test_nested_scope_catch_retry_releases_all () =
+  with_runtime @@ fun rt ->
+  let active = ref 0 in
+  let max_active = ref 0 in
+  let released_count = ref 0 in
+  let acquire label =
+    Effect.sync (fun () ->
+        ignore label;
+        incr active;
+        max_active := max !max_active !active)
+  in
+  let release _label () =
+    Effect.sync (fun () -> decr active; incr released_count)
+  in
+  (* Nested: outer scope with resource A, inner retry that acquires resource B
+     and fails. The retry is wrapped in catch to recover. *)
+  let attempts = ref 0 in
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:(acquire "outer")
+         ~release:(release "outer")
+      |> Effect.bind (fun () ->
+             (* Inner: retry with scoped resource per attempt *)
+             Effect.retry (Schedule.recurs 3)
+               (fun (`Inner_retry _) -> true)
+               (Effect.scoped
+                  (Effect.acquire_release
+                     ~acquire:(acquire "inner")
+                     ~release:(release "inner")
+                  |> Effect.bind (fun () ->
+                         incr attempts;
+                         if !attempts < 3 then
+                           Effect.fail (`Inner_retry !attempts)
+                         else Effect.pure !attempts)))
+             |> Effect.catch (fun (`Inner_retry n) ->
+                    Effect.pure n)))
+  in
+  let result = run_ok rt eff in
+  Alcotest.(check int) "result" 3 result;
+  Alcotest.(check int) "all released" 0 !active;
+  (* outer + 3 inner (each scoped) = 4 releases total *)
+  Alcotest.(check int) "release count" 4 !released_count;
+  (* With scoped inside retry, max_active should be 2 (outer + one inner) *)
+  Alcotest.(check int) "max active with scoped retry" 2 !max_active

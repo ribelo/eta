@@ -556,5 +556,7 @@ let () =
             test_channel_stress_no_lost_messages;
           Alcotest.test_case "retry resource accumulation systematic" `Quick
             test_retry_resource_accumulation_systematic;
+          Alcotest.test_case "nested scope catch retry releases all" `Quick
+            test_nested_scope_catch_retry_releases_all;
         ] );
     ]
