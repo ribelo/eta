@@ -259,3 +259,75 @@ let test_race_retry_accumulated_resources_released_on_scope_exit () =
     (Eio.Promise.await promise);
   (* After the scoped effect returns, all resources should be released *)
   Alcotest.(check int) "all released after scope" 0 !active
+
+(* -------------------------------------------------------------------------- *)
+(* all_settled with scoped resources: verify that each branch's scoped
+   resources are properly released when the settled result is collected. *)
+
+let test_all_settled_scoped_resources_released_per_branch () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = Atomic.make 0 in
+  let make_scoped_branch fail =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))
+      |> Effect.bind (fun () ->
+             if fail then Effect.fail `Branch_error
+             else Effect.delay (Duration.ms 10) (Effect.pure "ok")))
+  in
+  let eff =
+    Effect.all_settled
+      [ make_scoped_branch false; make_scoped_branch true; make_scoped_branch false ]
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 10);
+  match Eio.Promise.await promise with
+  | Exit.Ok [ Ok "ok"; Error (Cause.Fail `Branch_error); Ok "ok" ] ->
+      (* All 3 scoped resources should be released *)
+      Alcotest.(check int) "all settled branches released" 3
+        (Atomic.get released)
+  | result ->
+      Alcotest.failf "unexpected all_settled result: %a"
+        (Exit.pp (fun fmt _ -> Format.pp_print_string fmt "<list>")
+           (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        result
+
+(* -------------------------------------------------------------------------- *)
+(* Stress: race with many branches, some failing, some succeeding. Verify
+   that exactly one winner is returned and all losers' resources are released. *)
+
+let test_race_many_branches_resource_cleanup () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = Atomic.make 0 in
+  let make_branch i =
+    let delay_ms = (i + 1) * 5 in
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))
+      |> Effect.bind (fun () ->
+             Effect.delay (Duration.ms delay_ms) (Effect.pure i)))
+  in
+  let eff = Effect.race (List.init 10 make_branch) in
+  let promise = fork_run sw rt eff in
+  (* Advance past all branches (50ms max) + cleanup time *)
+  for _ = 1 to 15 do
+    wait_for_sleepers clock 1;
+    Test_clock.adjust clock (Duration.ms 10)
+  done;
+  (match Eio.Promise.await promise with
+  | Exit.Ok 0 -> ()
+  | Exit.Ok other ->
+      Alcotest.failf "expected winner 0, got %d" other
+  | Exit.Error cause ->
+      Alcotest.failf "expected winner, got error: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause);
+  (* Give losers extra time to clean up *)
+  for _ = 1 to 10 do
+    wait_for_sleepers clock 1;
+    Test_clock.adjust clock (Duration.ms 10)
+  done;
+  (* All 10 branches should have released their scoped resources *)
+  Alcotest.(check int) "all race branches released" 10
+    (Atomic.get released)
