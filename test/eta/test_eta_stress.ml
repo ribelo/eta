@@ -424,3 +424,45 @@ let test_randomized_all_compositions_release_resources () =
     if !active <> 0 then
       Alcotest.failf "random all leaked %d resources" !active
   done
+
+(* -------------------------------------------------------------------------- *)
+(* for_each_par cancellation: when a task fails, remaining workers should
+   be cancelled and their resources released. *)
+
+let test_for_each_par_cancelled_workers_release_resources () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = Atomic.make 0 in
+  let started = Atomic.make 0 in
+  let worker i =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:(Effect.sync (fun () -> Atomic.incr started))
+         ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))
+      |> Effect.bind (fun () ->
+             if i = 2 then Effect.fail (`Worker_fail i)
+             else Effect.delay (Duration.ms 100) (Effect.pure i)))
+  in
+  let eff = Effect.for_each_par_bounded ~max:4 [ 0; 1; 2; 3; 4 ] worker in
+  let promise = fork_run sw rt eff in
+  (* Let the failing task execute and cancel others *)
+  (try wait_for_sleepers clock 1 with _ -> ());
+  Test_clock.adjust clock (Duration.ms 5);
+  yield ();
+  (match Eio.Promise.await promise with
+  | Exit.Error (Cause.Concurrent causes) ->
+      let has_fail = List.exists (function Cause.Fail (`Worker_fail 2) -> true | _ -> false) causes in
+      if not has_fail then
+        Alcotest.failf "expected Worker_fail 2 in concurrent causes"
+  | Exit.Error cause ->
+      Alcotest.failf "expected Concurrent cause, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected failure");
+  (* Wait for all workers to complete and release resources *)
+  for _ = 1 to 20 do
+    (try wait_for_sleepers clock 1 with _ -> ());
+    Test_clock.adjust clock (Duration.ms 10)
+  done;
+  let started_count = Atomic.get started in
+  let released_count = Atomic.get released in
+  Alcotest.(check int) "all started workers released" started_count released_count

@@ -570,5 +570,7 @@ let () =
             test_randomized_race_compositions_release_resources;
           Alcotest.test_case "randomized all compositions release" `Quick
             test_randomized_all_compositions_release_resources;
+          Alcotest.test_case "for_each_par cancelled workers release" `Quick
+            test_for_each_par_cancelled_workers_release_resources;
         ] );
     ]
