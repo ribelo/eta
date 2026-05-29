@@ -574,5 +574,7 @@ let () =
             test_for_each_par_cancelled_workers_release_resources;
           Alcotest.test_case "par scoped resource released on failure" `Quick
             test_par_scoped_resource_released_on_failure;
+          Alcotest.test_case "all without scoped releases at scope exit" `Quick
+            test_all_without_scoped_releases_at_scope_exit;
         ] );
     ]

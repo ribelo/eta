@@ -425,6 +425,38 @@ let test_randomized_all_compositions_release_resources () =
       Alcotest.failf "random all leaked %d resources" !active
   done
 
+(* GREEN TEST: Effect.all without scoped wrapper releases resources at scope
+   exit (not per-branch). When acquire_release is used inside all, the
+   finalizer is added to the outer frame and released when the outer scope
+   exits. Unlike retry, all does not accumulate resources across branches
+   because branches are concurrent and all finalizers run together at the
+   end. *)
+let test_all_without_scoped_releases_at_scope_exit () =
+  with_test_clock @@ fun sw clock rt ->
+  let active = Atomic.make 0 in
+  let worker i =
+    Effect.acquire_release
+      ~acquire:(Effect.sync (fun () -> Atomic.incr active))
+      ~release:(fun () ->
+        Effect.sync (fun () -> Atomic.decr active))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) (Effect.pure i))
+  in
+  let promise = fork_run sw rt (Effect.all [ worker 0; worker 1 ]) in
+  for _ = 1 to 5 do
+    (try wait_for_sleepers clock 1 with _ -> ());
+    Test_clock.adjust clock (Duration.ms 5)
+  done;
+  let result = Eio.Promise.await promise in
+  (match result with
+  | Exit.Ok [ 0; 1 ] -> ()
+  | Exit.Ok other -> Alcotest.failf "unexpected result: %a" Fmt.(Dump.list int) other
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected error: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause);
+  Alcotest.(check int) "resources released after branch completion" 0
+    (Atomic.get active)
+
 (* -------------------------------------------------------------------------- *)
 (* Par with scoped resource: when one branch fails while another holds a
    scoped resource, verify the resource is released. *)
