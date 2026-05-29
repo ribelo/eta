@@ -18,6 +18,7 @@ open Test_eta_semaphore
 open Test_eta_properties
 open Test_eta_observability
 open Test_eta_redacted
+open Test_eta_stress
 
 let () =
   Alcotest.run "eta"
@@ -544,5 +545,16 @@ let () =
           Alcotest.test_case "hash" `Quick test_redacted_hash;
           Alcotest.test_case "wipe_unsafe" `Quick test_redacted_wipe_unsafe;
           Alcotest.test_case "label" `Quick test_redacted_label;
+        ] );
+      ( "Stress",
+        [
+          Alcotest.test_case "pool no resource leak" `Quick
+            test_pool_stress_no_resource_leak;
+          Alcotest.test_case "semaphore permit accounting" `Quick
+            test_semaphore_stress_permit_accounting;
+          Alcotest.test_case "channel no lost messages" `Quick
+            test_channel_stress_no_lost_messages;
+          Alcotest.test_case "retry resource accumulation systematic" `Quick
+            test_retry_resource_accumulation_systematic;
         ] );
     ]

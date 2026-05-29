@@ -13,6 +13,7 @@
   test_eta_supervisor
   test_eta_clock_resource_scope
   test_eta_properties
+  test_eta_stress
   test_eta_portable_queue
   test_eta_queue
   test_eta_island
