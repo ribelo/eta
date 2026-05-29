@@ -331,3 +331,96 @@ let test_race_many_branches_resource_cleanup () =
   (* All 10 branches should have released their scoped resources *)
   Alcotest.(check int) "all race branches released" 10
     (Atomic.get released)
+
+(* -------------------------------------------------------------------------- *)
+(* Randomized effect composition: generate random nested effect trees and
+   verify that all scoped resources are properly released. *)
+
+let generate_random_effect max_depth rng ~active =
+  let rec gen depth =
+    if depth >= max_depth then
+      if Stdlib.Random.State.bool rng then Effect.pure (Stdlib.Random.State.int rng 100)
+      else Effect.sync (fun () -> Stdlib.Random.State.int rng 100)
+    else
+      let choice = Stdlib.Random.State.int rng 6 in
+      match choice with
+      | 0 ->
+          Effect.acquire_release
+            ~acquire:(Effect.sync (fun () -> incr active))
+            ~release:(fun () -> Effect.sync (fun () -> decr active))
+          |> Effect.bind (fun () -> gen (depth + 1))
+      | 1 -> gen (depth + 1) |> Effect.map (fun n -> n + 1)
+      | 2 ->
+          gen (depth + 1) |> Effect.bind (fun n ->
+            if n mod 5 = 0 then Effect.fail (`Fail n)
+            else Effect.pure n)
+      | 3 ->
+          Effect.scoped (
+            Effect.acquire_release
+              ~acquire:(Effect.sync (fun () -> incr active))
+              ~release:(fun () -> Effect.sync (fun () -> decr active))
+            |> Effect.bind (fun () -> gen (depth + 1)))
+      | 4 -> gen (depth + 1) |> Effect.catch (fun (`Fail n) -> Effect.pure (-n))
+      | 5 -> gen (depth + 1) |> Effect.finally (Effect.sync (fun () -> ()))
+      | _ -> Effect.pure 0
+  in
+  gen 0
+
+let test_randomized_effect_compositions_release_resources () =
+  with_runtime @@ fun rt ->
+  let rng = Stdlib.Random.State.make [| 42; 137; 256 |] in
+  for _ = 1 to 50 do
+    let active = ref 0 in
+    let eff = generate_random_effect 5 rng ~active in
+    (match Runtime.run rt eff with
+    | Exit.Ok _ -> ()
+    | Exit.Error _ -> ());
+    if !active <> 0 then
+      Alcotest.failf "random effect leaked %d resources" !active
+  done
+
+let test_randomized_race_compositions_release_resources () =
+  with_test_clock @@ fun sw clock rt ->
+  let rng = Stdlib.Random.State.make [| 17; 31; 73 |] in
+  for _ = 1 to 20 do
+    let active = ref 0 in
+    let n_branches = 2 + Stdlib.Random.State.int rng 4 in
+    let branches = List.init n_branches (fun i ->
+      generate_random_effect 3 rng ~active
+      |> Effect.delay (Duration.ms ((i + 1) * 2)))
+    in
+    let eff = Effect.race branches in
+    let promise = fork_run sw rt eff in
+    for _ = 1 to 10 do
+      (try wait_for_sleepers clock 1 with _ -> ());
+      Test_clock.adjust clock (Duration.ms 5)
+    done;
+    (match Eio.Promise.await promise with
+    | Exit.Ok _ -> ()
+    | Exit.Error _ -> ());
+    if !active <> 0 then
+      Alcotest.failf "random race leaked %d resources" !active
+  done
+
+let test_randomized_all_compositions_release_resources () =
+  with_test_clock @@ fun sw clock rt ->
+  let rng = Stdlib.Random.State.make [| 7; 13; 19 |] in
+  for _ = 1 to 20 do
+    let active = ref 0 in
+    let n_effects = 2 + Stdlib.Random.State.int rng 4 in
+    let effects = List.init n_effects (fun i ->
+      generate_random_effect 3 rng ~active
+      |> Effect.delay (Duration.ms ((i + 1) * 2)))
+    in
+    let eff = Effect.all effects in
+    let promise = fork_run sw rt eff in
+    for _ = 1 to 10 do
+      (try wait_for_sleepers clock 1 with _ -> ());
+      Test_clock.adjust clock (Duration.ms 5)
+    done;
+    (match Eio.Promise.await promise with
+    | Exit.Ok _ -> ()
+    | Exit.Error _ -> ());
+    if !active <> 0 then
+      Alcotest.failf "random all leaked %d resources" !active
+  done

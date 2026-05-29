@@ -564,5 +564,11 @@ let () =
             test_all_settled_scoped_resources_released_per_branch;
           Alcotest.test_case "race many branches resource cleanup" `Quick
             test_race_many_branches_resource_cleanup;
+          Alcotest.test_case "randomized effect compositions release" `Quick
+            test_randomized_effect_compositions_release_resources;
+          Alcotest.test_case "randomized race compositions release" `Quick
+            test_randomized_race_compositions_release_resources;
+          Alcotest.test_case "randomized all compositions release" `Quick
+            test_randomized_all_compositions_release_resources;
         ] );
     ]
