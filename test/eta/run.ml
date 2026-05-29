@@ -572,5 +572,7 @@ let () =
             test_randomized_all_compositions_release_resources;
           Alcotest.test_case "for_each_par cancelled workers release" `Quick
             test_for_each_par_cancelled_workers_release_resources;
+          Alcotest.test_case "par scoped resource released on failure" `Quick
+            test_par_scoped_resource_released_on_failure;
         ] );
     ]

@@ -426,6 +426,36 @@ let test_randomized_all_compositions_release_resources () =
   done
 
 (* -------------------------------------------------------------------------- *)
+(* Par with scoped resource: when one branch fails while another holds a
+   scoped resource, verify the resource is released. *)
+
+let test_par_scoped_resource_released_on_failure () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = Atomic.make false in
+  let slow =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:Effect.unit
+         ~release:(fun () ->
+           Effect.sync (fun () -> Atomic.set released true))
+      |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) Effect.unit))
+  in
+  let fast =
+    Effect.named "fast" (Effect.sync (fun () -> Eio.Fiber.yield ()))
+    |> Effect.bind (fun () -> Effect.fail `Boom)
+  in
+  let eff = Effect.par fast slow in
+  let promise = fork_run sw rt eff in
+  for _ = 1 to 5 do
+    (try wait_for_sleepers clock 1 with _ -> ());
+    Test_clock.adjust clock (Duration.ms 5)
+  done;
+  (match Eio.Promise.await promise with
+  | Exit.Error _ -> () (* expected: fast branch failed *)
+  | Exit.Ok _ -> Alcotest.fail "expected failure");
+  Alcotest.(check bool) "scoped resource released" true (Atomic.get released)
+
+(* -------------------------------------------------------------------------- *)
 (* for_each_par cancellation: when a task fails, remaining workers should
    be cancelled and their resources released. *)
 
