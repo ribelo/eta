@@ -281,6 +281,8 @@ let () =
             test_h2_client_classifies_informational_response;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
+          Alcotest.test_case "timeout one request kills connection" `Quick
+            test_h2_connection_timeout_kills_connection;
           Alcotest.test_case "switch close does not fire security error" `Quick
             test_h2_connection_switch_close_does_not_fire_security_error;
           Alcotest.test_case "failure kind on switch close is not protocol violation" `Quick

@@ -515,6 +515,56 @@ let test_h2_connection_goaway_mid_body_completes_existing_stream () =
             (Eta.Cause.pp pp_http_error_detail)
             cause)
 
+(* Test documenting that a timed-out request (local RST_STREAM) shuts down
+   the entire H2 connection. This is the current conservative design:
+   release_unreturned_request -> Queue_rst -> Connection.shutdown.
+   After a timeout, the connection is dead for subsequent requests. *)
+let test_h2_connection_timeout_kills_connection () =
+  with_h2_server
+    (fun reqd ->
+      match (H2.Reqd.request reqd).target with
+      | "/fast" ->
+          H2.Reqd.respond_with_string reqd (H2.Response.create `OK) "fast"
+      | _ -> () (* /slow: never respond *))
+    (fun _clock rt connection ->
+      (* Request that never gets a response -> times out *)
+      let uri = "https://api.example.test/slow" in
+      let timeout_result =
+        request_effect connection "/slow"
+        |> Eta.Effect.timeout_as (Eta.Duration.ms 10)
+             ~on_timeout:(timeout_error uri)
+        |> Eta.Runtime.run rt
+      in
+      (match timeout_result with
+      | Eta.Exit.Error _ -> ()
+      | Eta.Exit.Ok _ -> Alcotest.fail "expected timeout");
+      (* Connection should be closed after local reset *)
+      Alcotest.(check bool) "connection closed after timeout" true
+        (Eta_http.H2.Connection.is_closed connection);
+      (* Subsequent request fails with Connection_closed *)
+      let retry_result =
+        request_effect connection "/fast" |> Eta.Runtime.run rt
+      in
+      match retry_result with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail { Eta_http.Error.kind = Connection_closed _; _ }) ->
+          ()
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind =
+                Stream_admission_rejected _ | Connection_protocol_violation _;
+              _;
+            }) ->
+          () (* Also acceptable: connection refuses new streams *)
+      | Eta.Exit.Ok _ ->
+          Alcotest.fail
+            "request succeeded on dead connection after timeout"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected error on dead connection: %a"
+            (Eta.Cause.pp pp_http_error_detail)
+            cause)
+
 (* GREEN TEST: security_error_handler should not fire on clean switch close.
    Currently passes because writer daemon runs first, closes the flow,
    and the reader exits via End_of_file (not the exn path). The bug is
