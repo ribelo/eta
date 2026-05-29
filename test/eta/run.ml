@@ -558,5 +558,7 @@ let () =
             test_retry_resource_accumulation_systematic;
           Alcotest.test_case "nested scope catch retry releases all" `Quick
             test_nested_scope_catch_retry_releases_all;
+          Alcotest.test_case "race+retry resources released on scope exit" `Quick
+            test_race_retry_accumulated_resources_released_on_scope_exit;
         ] );
     ]

@@ -216,3 +216,46 @@ let test_nested_scope_catch_retry_releases_all () =
   Alcotest.(check int) "release count" 4 !released_count;
   (* With scoped inside retry, max_active should be 2 (outer + one inner) *)
   Alcotest.(check int) "max active with scoped retry" 2 !max_active
+
+(* -------------------------------------------------------------------------- *)
+(* Race + retry interaction: when a race is won by a fast branch while a retry
+   branch has accumulated resources (the retry bug), verify the resources ARE
+   eventually released when the enclosing scope exits. *)
+
+let test_race_retry_accumulated_resources_released_on_scope_exit () =
+  with_test_clock @@ fun sw clock rt ->
+  let active = ref 0 in
+  let max_active = ref 0 in
+  let acquire =
+    Effect.sync (fun () ->
+        incr active;
+        max_active := max !max_active !active)
+  in
+  let release () = Effect.sync (fun () -> decr active) in
+  let retry_branch =
+    Effect.retry
+      (Schedule.both (Schedule.recurs 10) (Schedule.spaced (Duration.ms 5)))
+      (fun (`Again _) -> true)
+      (Effect.acquire_release ~acquire ~release
+      |> Effect.bind (fun () -> Effect.fail (`Again 0)))
+  in
+  let fast_branch =
+    Effect.delay (Duration.ms 20) (Effect.pure "fast")
+  in
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () -> Effect.unit)
+      |> Effect.bind (fun () ->
+             Effect.race [ retry_branch; fast_branch ]))
+  in
+  let promise = fork_run sw rt eff in
+  (* Advance clock to let retry fail a few times, then fast branch wins *)
+  for _ = 1 to 5 do
+    wait_for_sleepers clock 1;
+    Test_clock.adjust clock (Duration.ms 5)
+  done;
+  check_exit_ok Alcotest.string "fast wins" "fast"
+    (Eio.Promise.await promise);
+  (* After the scoped effect returns, all resources should be released *)
+  Alcotest.(check int) "all released after scope" 0 !active
