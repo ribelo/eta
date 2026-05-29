@@ -74,3 +74,17 @@ EIO_BACKEND=posix nix develop -c dune exec test/http/run.exe -- test "h2-connect
 - `test_h2_connection_goaway_mid_body_completes_existing_stream`
   — verifies server GOAWAY doesn't kill in-flight streams that fall within
   last_stream_id.
+- `test_h2_connection_timeout_kills_connection`
+  — documents that a local reset (timeout before headers) shuts down the
+  entire H2 connection. Intentional conservative design.
+
+## Areas Investigated (no bugs found)
+
+- Sequential H2 request reuse: daemons stay alive between requests (switch alive)
+- H2 connection hashtable reuse in `make` client: `on_close` correctly removes
+- ALPN dispatch between H1 and H2: no daemon involvement in H1 path
+- H1 pool connections: unaffected by daemon change
+- Double-shutdown race between daemons: guarded by `notify_close_once` mutex
+- `body_stream_async` condition variable wake: works cross-switch correctly
+- `h2_write_fixed_body_sync` daemon: cleaned up by connection shutdown
+- `on_close` callback timing: runs before any yield points in shutdown sequence
