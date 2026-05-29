@@ -333,6 +333,57 @@ let test_h2_connection_cancelled_body_read_closes_connection () =
       Alcotest.(check bool) "connection closed" true
         (Eta_http.H2.Connection.is_closed connection))
 
+let test_h2_connection_completed_error_response_does_not_hold_switch () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      run_h2_server flow (fun reqd ->
+          H2.Reqd.respond_with_string reqd (H2.Response.create (`Code 401))
+            "{\"error\":{\"message\":\"bad key\",\"code\":401}}"));
+  let completed, completed_resolver = Eio.Promise.create () in
+  let returned, returned_resolver = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run (fun client_sw ->
+          let flow =
+            Eio.Net.connect ~sw:client_sw net
+              (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+          in
+          let connection =
+            Eta_http.H2.Connection.create ~sw:client_sw
+              ~flow:(flow :> Eta_http.H2.Connection.flow)
+              ()
+          in
+          let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+          let status, body =
+            request_effect connection "/unauthorized"
+            |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+          in
+          Alcotest.(check int) "status" 401 status;
+          Alcotest.(check string)
+            "body"
+            "{\"error\":{\"message\":\"bad key\",\"code\":401}}"
+            body;
+          Eio.Promise.resolve completed_resolver ());
+      Eio.Promise.resolve returned_resolver ());
+  Eio.Promise.await completed;
+  match
+    Eio.Time.with_timeout clock 0.05 (fun () ->
+        Eio.Promise.await returned;
+        Ok ())
+  with
+  | Ok () -> ()
+  | Error `Timeout ->
+      Alcotest.fail "completed H2 response kept the client switch open"
+
 let hpack_header name value = { Hpack.name; value; sensitive = false }
 
 let hpack_block encoder headers =

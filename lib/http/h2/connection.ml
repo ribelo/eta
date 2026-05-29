@@ -158,11 +158,14 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
     }
   in
   holder := Some t;
-  Eio.Fiber.fork ~sw (fun () -> run_owner_loop writer_loop t);
-  Eio.Fiber.fork ~sw (fun () ->
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+      run_owner_loop writer_loop t;
+      `Stop_daemon);
+  Eio.Fiber.fork_daemon ~sw (fun () ->
       run_owner_loop ~on_error:security_error_handler
         (reader_loop ~security_error_handler)
-        t);
+        t;
+      `Stop_daemon);
   t
 
 let request t ~tag ?trailers_handler request ~error_handler ~response_handler =
