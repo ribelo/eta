@@ -138,4 +138,40 @@ let test_effect_retry_jittered_schedule_uses_runtime_random () =
   Test_clock.adjust clock (Duration.ms 1);
   check_exit_ok Alcotest.int "retry result" 2 (Eio.Promise.await promise)
 
+(* RED TEST: retry should release resources from failed attempts immediately,
+   not hold them until the outer scope exits. Currently, acquire_release adds
+   a finalizer to the frame's finalizers ref, and retry doesn't create a fresh
+   finalizer scope per attempt (unlike repeat which does). This means resources
+   from failed attempts accumulate and are only released on scope exit. *)
+let test_effect_retry_releases_resources_each_failed_attempt () =
+  with_runtime @@ fun rt ->
+  let active = ref 0 in
+  let max_active = ref 0 in
+  let acquire =
+    Effect.sync (fun () ->
+        incr active;
+        max_active := max !max_active !active)
+  in
+  let release () = Effect.sync (fun () -> decr active) in
+  let attempts = ref 0 in
+  let attempt =
+    Effect.acquire_release ~acquire ~release
+    |> Effect.bind (fun () ->
+           incr attempts;
+           if !attempts < 3 then Effect.fail (`Retry !attempts)
+           else Effect.pure !attempts)
+  in
+  let eff =
+    Effect.scoped
+      (Effect.retry (Schedule.recurs 5) (fun (`Retry _) -> true) attempt)
+  in
+  ignore (run_ok rt eff : int);
+  Alcotest.(check int) "all released at end" 0 !active;
+  (* The key assertion: resources from failed attempts should be released
+     immediately, not held until the scope exits. If retry properly scopes
+     each attempt (like repeat does), max_active should be 1. *)
+  Alcotest.(check int)
+    "only one resource live at a time (retry should scope per-attempt)" 1
+    !max_active
+
 

@@ -185,6 +185,9 @@ let () =
             test_effect_retry_schedule_uses_virtual_delays;
           Alcotest.test_case "retry jittered schedule uses runtime random" `Quick
             test_effect_retry_jittered_schedule_uses_runtime_random;
+          Alcotest.test_case "retry releases resources each failed attempt"
+            `Quick
+            test_effect_retry_releases_resources_each_failed_attempt;
           Alcotest.test_case "retry does not retry interrupt" `Quick
             test_effect_retry_does_not_retry_interrupt;
           Alcotest.test_case "retry preserves structured exception causes"
