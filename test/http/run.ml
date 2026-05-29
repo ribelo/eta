@@ -180,6 +180,8 @@ let () =
             test_h1_pool_discard_releases_checkout;
           Alcotest.test_case "pool cancellation releases checkout" `Quick
             test_h1_pool_request_cancellation_releases_checkout;
+          Alcotest.test_case "pool connection close opens new connection" `Quick
+            test_h1_pool_connection_close_opens_new_connection;
         ] );
       ( "ws",
         [
