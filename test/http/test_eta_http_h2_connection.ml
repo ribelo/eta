@@ -431,6 +431,42 @@ let raw_informational_response_server flow =
   in
   drain ()
 
+(* Server that sends partial body then GOAWAY, used by the GOAWAY-during-body test *)
+let raw_goaway_mid_body_server flow =
+  let encoder = Hpack.Encoder.create 4096 in
+  (* Send server preface (SETTINGS) *)
+  let settings_frame = Eta_http.H2.Frame.settings in
+  (* Response headers for stream 1 (no content-length, streaming) *)
+  let response_headers =
+    raw_headers encoder ~stream_id:1
+      [ hpack_header ":status" "200" ]
+  in
+  (* First data chunk (NOT end_stream) *)
+  let data1 = raw_data ~stream_id:1 "chunk1" in
+  (* Send settings + response headers + first data *)
+  Eio.Flow.write flow
+    [ Cstruct.of_string (String.concat "" [ settings_frame; response_headers; data1 ]) ];
+  (* Read client preface and request *)
+  let chunk = Cstruct.create 0x4000 in
+  (try ignore (Eio.Flow.single_read flow chunk) with _ -> ());
+  (* Small delay to ensure client processes first chunk *)
+  Eio.Fiber.yield ();
+  (* Send GOAWAY with last_stream_id=1 (allows stream 1 to complete) *)
+  let goaway = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:1 in
+  (* Then send more data and close stream *)
+  let data2 = raw_data ~end_stream:true ~stream_id:1 "chunk2" in
+  (try
+     Eio.Flow.write flow
+       [ Cstruct.of_string (String.concat "" [ goaway; data2 ]) ]
+   with _ -> ());
+  (* Drain remaining client frames *)
+  let rec drain () =
+    match Eio.Flow.single_read flow chunk with
+    | _ -> drain ()
+    | exception End_of_file -> ()
+  in
+  drain ()
+
 let test_h2_connection_continues_after_informational_headers () =
   with_raw_h2_server raw_informational_response_server
     (fun _clock rt connection ->
@@ -457,3 +493,211 @@ let test_h2_client_classifies_informational_response () =
     (Eta_http.Client.For_test.h2_informational_status 101);
   Alcotest.(check bool) "200 final" false
     (Eta_http.Client.For_test.h2_informational_status 200)
+
+(* Test GOAWAY mid-body: server sends response headers + partial body,
+   then GOAWAY with last_stream_id covering our stream, then finishes
+   the body. The client should read the complete body despite GOAWAY. *)
+let test_h2_connection_goaway_mid_body_completes_existing_stream () =
+  with_raw_h2_server raw_goaway_mid_body_server
+    (fun _clock rt connection ->
+      let effect =
+        request_effect connection "/goaway-mid"
+        |> Eta.Effect.timeout_as (Eta.Duration.seconds 2)
+             ~on_timeout:(timeout_error "https://api.example.test/goaway-mid")
+      in
+      match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok (status, body) ->
+          Alcotest.(check int) "status" 200 status;
+          Alcotest.(check string) "complete body" "chunk1chunk2" body
+      | Eta.Exit.Error cause ->
+          Alcotest.failf
+            "GOAWAY mid-body killed existing stream: %a"
+            (Eta.Cause.pp pp_http_error_detail)
+            cause)
+
+(* GREEN TEST: security_error_handler should not fire on clean switch close.
+   Currently passes because writer daemon runs first, closes the flow,
+   and the reader exits via End_of_file (not the exn path). The bug is
+   latent: if Eio scheduling changes and reader catches Cancelled first,
+   security_error_handler would fire spuriously. *)
+let test_h2_connection_switch_close_does_not_fire_security_error () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let security_errors = ref [] in
+  (* Server responds normally then keeps connection open *)
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      run_h2_server flow (fun reqd ->
+          H2.Reqd.respond_with_string reqd (H2.Response.create `OK) "ok"));
+  (* Client: connect, complete one request, let switch close (daemons cancelled) *)
+  Eio.Switch.run (fun client_sw ->
+      let flow =
+        Eio.Net.connect ~sw:client_sw net
+          (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+      in
+      let connection =
+        Eta_http.H2.Connection.create ~sw:client_sw
+          ~flow:(flow :> Eta_http.H2.Connection.flow)
+          ~security_error_handler:(fun kind ->
+            security_errors := kind :: !security_errors)
+          ()
+      in
+      let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+      let status, body =
+        request_effect connection "/test"
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int) "status" 200 status;
+      Alcotest.(check string) "body" "ok" body
+      (* client_sw closes here, daemon reader cancelled, on_error fires *));
+  Alcotest.(check int)
+    "security_error_handler must not fire on clean switch close" 0
+    (List.length !security_errors)
+
+(* RED TEST: daemon cancellation should report Connection_closed, not
+   Connection_protocol_violation. When the switch closes, the daemon
+   catches Eio.Cancel.Cancelled and calls fail_connection with a protocol
+   violation error kind. Any registered failure handler observes the
+   wrong classification, which also breaks retryability (protocol
+   violations are Not_retryable, connection closed is retryable). *)
+let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  (* Server: respond to one request then keep connection open *)
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      run_h2_server flow (fun reqd ->
+          H2.Reqd.respond_with_string reqd (H2.Response.create `OK) "ok"));
+  let failure_kind = ref None in
+  (* Client: connect, register failure handler, make request, let switch close *)
+  Eio.Switch.run (fun client_sw ->
+      let flow =
+        Eio.Net.connect ~sw:client_sw net
+          (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+      in
+      let connection =
+        Eta_http.H2.Connection.create ~sw:client_sw
+          ~flow:(flow :> Eta_http.H2.Connection.flow)
+          ()
+      in
+      (* Register a persistent failure handler that outlives the request *)
+      let _unregister =
+        Eta_http.H2.Connection.register_failure_handler connection (fun kind ->
+            if Option.is_none !failure_kind then failure_kind := Some kind)
+      in
+      let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+      let status, body =
+        request_effect connection "/test"
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int) "status" 200 status;
+      Alcotest.(check string) "body" "ok" body
+      (* client_sw closes here, daemons cancelled, fail_connection fires *));
+  match !failure_kind with
+  | None ->
+      Alcotest.fail "no failure notification on switch close"
+  | Some (Eta_http.Error.Connection_closed _) -> ()
+  | Some (Eta_http.Error.Connection_protocol_violation { message; _ })
+    when contains message "Cancel" ->
+      Alcotest.fail
+        "daemon cancellation classified as Connection_protocol_violation; \
+         expected Connection_closed"
+  | Some kind ->
+      Alcotest.failf "unexpected failure kind: %s"
+        (Eta_http.Error.kind_name kind)
+
+(* RED TEST: body stream error on daemon cancellation should be Connection_closed,
+   not Connection_protocol_violation with "Cancelled".
+   Bug: Eio.Cancel.Cancelled caught as generic exn in run_owner_loop sets
+   failure to Connection_protocol_violation, which is Not_retryable and
+   misleading. *)
+let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  (* Server: send response headers + partial body, never close stream *)
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      run_h2_server flow (fun reqd ->
+          let body =
+            H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK)
+          in
+          H2.Body.Writer.write_string body "partial"));
+  (* Client: connect, read first body chunk, return body stream, close switch *)
+  let body_promise, body_resolver = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run (fun client_sw ->
+          let flow =
+            Eio.Net.connect ~sw:client_sw net
+              (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+          in
+          let connection =
+            Eta_http.H2.Connection.create ~sw:client_sw
+              ~flow:(flow :> Eta_http.H2.Connection.flow)
+              ()
+          in
+          let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+          let uri = "https://api.example.test/stream" in
+          let request = Eta_http.Request.make "GET" uri in
+          let response =
+            Eta_http.Client.For_test.request_h2_on_connection connection request
+              (Eta_http.Request.url request)
+            |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+          in
+          (* Read first chunk to confirm body is live *)
+          let chunk =
+            Eta_http.Body.Stream.read response.body
+            |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+          in
+          Alcotest.(check (option string)) "first chunk" (Some "partial")
+            (Option.map Bytes.to_string chunk);
+          Eio.Promise.resolve body_resolver response.body)
+      (* client_sw closed here: daemons cancelled, failure set *));
+  (* Read body from outer scope after daemon cancellation *)
+  let body = Eio.Promise.await body_promise in
+  let rt = Eta.Runtime.create ~sw ~clock () in
+  match Eta_http.Body.Stream.read body |> Eta.Runtime.run rt with
+  | Eta.Exit.Ok None -> () (* acceptable: stream already released *)
+  | Eta.Exit.Ok (Some _) ->
+      Alcotest.fail "unexpected body data after connection switch closed"
+  | Eta.Exit.Error
+      (Eta.Cause.Fail { Eta_http.Error.kind = Connection_closed _; _ }) ->
+      () (* correct error kind for lifecycle closure *)
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Connection_protocol_violation { message; _ };
+          _;
+        })
+    when contains message "Cancel" ->
+      Alcotest.fail
+        "body stream reported Cancelled as protocol violation; expected \
+         Connection_closed"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected error kind: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause

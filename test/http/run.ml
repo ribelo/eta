@@ -279,6 +279,14 @@ let () =
             test_h2_connection_continues_after_informational_headers;
           Alcotest.test_case "classifies informational response" `Quick
             test_h2_client_classifies_informational_response;
+          Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
+            test_h2_connection_goaway_mid_body_completes_existing_stream;
+          Alcotest.test_case "switch close does not fire security error" `Quick
+            test_h2_connection_switch_close_does_not_fire_security_error;
+          Alcotest.test_case "failure kind on switch close is not protocol violation" `Quick
+            test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation;
+          Alcotest.test_case "body error on switch close is connection closed" `Quick
+            test_h2_connection_body_error_on_switch_close_is_connection_closed;
         ] );
       ( "h2-security",
         [
