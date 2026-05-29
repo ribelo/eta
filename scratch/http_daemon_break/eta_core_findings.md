@@ -2,7 +2,15 @@
 
 ## Summary
 
-2 bugs found, 5 red tests, 14+ green tests added.
+3 bugs found, 6 red tests (5 deterministic + 1 flaky), 15 green tests added.
+
+| # | Module | Bug | Red Tests |
+|---|--------|-----|-----------|
+| 1 | `lib/http/h2/connection.ml` | Daemon cancellation misclassified as protocol violation | 2 (deterministic) |
+| 2 | `lib/eta/effect.ml` | `retry` doesn't scope finalizers per attempt | 2 |
+| 3 | `lib/http/h2/connection.ml` | `set_failure` skips handlers on exception | 1 |
+
+Plus 1 flaky green test (test 11) that demonstrates the latent daemon scheduling bug.
 
 ## Bug 1: H2 daemon cancellation error misclassification (HTTP)
 
@@ -23,6 +31,33 @@
 **Red tests (2):**
 - `test_effect_retry_releases_resources_each_failed_attempt`
 - `test_retry_resource_accumulation_systematic`
+
+## Bug 3: H2 set_failure exception skips remaining handlers (HTTP)
+
+**Location:** `lib/http/h2/connection.ml` — `set_failure`
+**Root cause:** `List.iter` without catching individual handler exceptions
+**Impact:** If one failure handler raises, subsequent handlers never fire.
+Components relying on failure notifications for cleanup are broken.
+**Red tests (1):**
+- `test_h2_connection_failure_handler_exception_skips_others`
+
+## Green tests added (15)
+
+- GOAWAY mid-body completes existing stream
+- Timeout kills connection (documents conservative design)
+- Pool stress (no resource leak)
+- Semaphore stress (permit accounting)
+- Channel stress (no lost messages)
+- Nested scope+catch+retry (correct pattern works)
+- Race+retry (resources released on scope exit)
+- Security error handler not fired on switch close (flaky: latent bug)
+- all_settled scoped resources released per branch
+- Race many branches resource cleanup
+- Randomized effect compositions (50 runs)
+- Randomized race compositions (20 runs)
+- Randomized all compositions (20 runs)
+- for_each_par cancelled workers release
+- Par scoped resource released on failure
 
 ## Green tests added (14)
 
