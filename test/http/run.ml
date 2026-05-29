@@ -182,6 +182,8 @@ let () =
             test_h1_pool_request_cancellation_releases_checkout;
           Alcotest.test_case "pool connection close opens new connection" `Quick
             test_h1_pool_connection_close_opens_new_connection;
+          Alcotest.test_case "read exception leaks release" `Quick
+            test_body_stream_read_exception_leaks_release;
         ] );
       ( "ws",
         [

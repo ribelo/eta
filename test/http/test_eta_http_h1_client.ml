@@ -578,6 +578,46 @@ let test_h1_pool_connection_close_opens_new_connection () =
   Alcotest.(check int) "one health rejected" 1 stats.health_rejected;
   Alcotest.(check int) "one closed" 1 stats.closed
 
+(* RED TEST: Body.Stream.read does not call release when read_next raises a
+   raw exception. source_read_some only catches End_of_file; other exceptions
+   from Eio.Flow.single_read propagate as raw exns through Effect.sync.
+   Body.Stream.read's Effect.catch only catches Error results, not raw exns,
+   so the release function is never called. This leaks the connection. *)
+let test_body_stream_read_exception_leaks_release () =
+  let released = ref 0 in
+  let url = Eta_http.Core.Url.of_string "http://example.test/leak" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  let flow = Eio_mock.Flow.make "eta-http-h1-leak-flow" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel";
+      `Raise (Failure "read truncated") ];
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let response =
+    Eta_http.H1.Client.request_on_flow
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      ~flow request
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  (* First read succeeds, second read raises raw exception. *)
+  (match Eta_http.Body.Stream.read response.body |> Eta.Runtime.run rt with
+  | Eta.Exit.Ok (Some chunk) ->
+      Alcotest.(check string) "first chunk" "hel" (Bytes.to_string chunk)
+  | other -> Alcotest.failf "unexpected first read: %a" Fmt.(Dump.option string)
+                 (match other with Eta.Exit.Ok x -> Option.map Bytes.to_string x | _ -> None));
+  (* Second read raises Failure("read truncated") which Body.Stream.read
+     does NOT catch as an Error result — it leaks as a raw exception. *)
+  (match Eta_http.Body.Stream.read response.body |> Eta.Runtime.run rt with
+  | Eta.Exit.Error (Eta.Cause.Die { exn = Failure _; _ }) -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected error shape: %a"
+        (Eta.Cause.pp Eta_http.Error.pp) cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected die from raw exception");
+  Alcotest.(check int) "release called despite read exception" 1 !released
+
 let test_client_make_h1_request_path () =
   let net = Eio_mock.Net.make "eta-http-client-net" in
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
