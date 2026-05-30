@@ -103,6 +103,7 @@ module Expr : sig
   val false_ : ('scope, bool) t
   val lit : 'a typ -> 'a -> ('scope, 'a) t
   val int_lit : int -> ('scope, int) t
+  val int64_lit : int64 -> ('scope, int64) t
   val float_lit : float -> ('scope, float) t
   val text_lit : string -> ('scope, string) t
   val bool_lit : bool -> ('scope, bool) t

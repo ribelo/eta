@@ -12,6 +12,7 @@ module type BACKEND = sig
   }
 
   val int : int typ
+  val int64 : int64 typ
   val bool : bool typ
   val float : float typ
   val text : string typ
@@ -28,6 +29,7 @@ module Make (Backend : BACKEND) = struct
   }
 
   let int = Backend.int
+  let int64 = Backend.int64
   let bool = Backend.bool
   let float = Backend.float
   let text = Backend.text
@@ -189,6 +191,7 @@ module Make (Backend : BACKEND) = struct
     let false_ = { sql = "0"; params = []; typ = bool }
     let lit typ value = { sql = "?"; params = [ Param (typ, value) ]; typ }
     let int_lit value = lit int value
+    let int64_lit value = lit int64 value
     let float_lit value = lit float value
     let text_lit value = lit text value
     let bool_lit value = lit bool value

@@ -453,6 +453,7 @@ module Dsl = Eta_sql_dsl.Make (struct
   }
 
   let int = int
+  let int64 = int64
   let bool = bool
   let float = float
   let text = text

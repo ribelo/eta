@@ -12,6 +12,7 @@ module Backend = struct
   }
 
   let int = Types.int
+  let int64 = Types.int64
   let bool = Types.bool
   let float = Types.float
   let text = Types.text
