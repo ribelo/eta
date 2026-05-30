@@ -46,6 +46,10 @@ let run runtime effect =
   let finalizers = ref [] in
   let frame =
     {
+      (* [Effect_core.frame] stores the runtime with an erased failure type
+         because a single run can cross effects with different typed-failure
+         parameters. Runtime_core keeps failures keyed separately, so this cast
+         only erases the phantom carrier on the runtime value. *)
       runtime = (Obj.magic runtime : Obj.t Runtime_core.t);
       error_renderer = default_renderer;
       fail_key = runtime.Runtime_core.default_fail_key;
