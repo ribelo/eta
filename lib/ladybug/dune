@@ -2,6 +2,7 @@
  (name eta_ladybug)
  (public_name eta_ladybug)
  (synopsis "LadybugDB graph connector for Eta")
+ (private_modules eta_ladybug_data)
  (foreign_stubs
   (language c)
   (names ladybug_stubs)
