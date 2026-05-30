@@ -319,6 +319,38 @@ let test_runtime_run_exn_uses_captured_backtrace () =
       let backtrace = Printexc.raw_backtrace_to_string (Printexc.get_raw_backtrace ()) in
       Alcotest.(check bool) "backtrace not empty" true (String.length backtrace > 0)
 
+let test_runtime_run_exn_preserves_typed_failure_diagnostics () =
+  (* P2: run_exn discards typed failure diagnostics.
+     When a typed Fail cause occurs, run_exn should include the error
+     information in the exception message. Currently it just says
+     "Eta.Runtime.run_exn" with no context about what failed. *)
+  with_runtime @@ fun rt ->
+  let eff = Effect.fail "detailed error: connection refused on port 8080" in
+  match Runtime.run_exn rt eff with
+  | _ -> Alcotest.fail "expected exception from typed failure"
+  | exception (Failure msg) ->
+      (* The exception message should contain the typed error information,
+         not just a generic "Eta.Runtime.run_exn" string. *)
+      let has_detail =
+        String.length msg > 20 (* more than just "Eta.Runtime.run_exn" *)
+        && (let needle = "connection refused" in
+            let nlen = String.length needle in
+            let slen = String.length msg in
+            let rec loop i =
+              if i + nlen > slen then false
+              else if String.sub msg i nlen = needle then true
+              else loop (i + 1)
+            in
+            loop 0)
+      in
+      Alcotest.(check bool)
+        (Printf.sprintf
+           "run_exn should preserve typed failure info in message \
+            (got: %S)" msg)
+        true has_detail
+  | exception _ ->
+      Alcotest.fail "expected Failure exception from run_exn"
+
 let test_runtime_concurrent_child_die_captures_diagnostics () =
   with_runtime @@ fun rt ->
   let left_ready, left_resolver = Eio.Promise.create () in

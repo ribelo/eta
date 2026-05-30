@@ -110,6 +110,8 @@ let () =
             test_runtime_die_capture_backtrace_can_be_disabled;
           Alcotest.test_case "run_exn preserves backtrace" `Quick
             test_runtime_run_exn_uses_captured_backtrace;
+          Alcotest.test_case "run_exn preserves typed failure diagnostics" `Quick
+            test_runtime_run_exn_preserves_typed_failure_diagnostics;
           Alcotest.test_case "concurrent child die captures diagnostics" `Quick
             test_runtime_concurrent_child_die_captures_diagnostics;
           Alcotest.test_case "finalizer die captures diagnostics" `Quick
