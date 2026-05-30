@@ -429,37 +429,12 @@ module Make (Backend : BACKEND) = struct
 
   type param = Param : 'a typ * 'a -> param
 
-  module Compiled = struct
-    type 'a select = {
-      sql : string;
-      params : param list;
-      decode : Backend.row -> 'a;
-    }
-
-    type 'a returning = {
-      sql : string;
-      params : param list;
-      decode : Backend.row -> 'a;
-    }
-
-    type change = {
-      sql : string;
-      params : param list;
-    }
-
-    type schema = { sql : string }
-
+  module Compiled = Eta_sql_dsl_compiled.Make (Backend) (struct
+    type t = param
     let value_of_param (Param (typ, value)) = typ.value value
-    let select_sql (query : _ select) = query.sql
-    let select_params (query : _ select) = List.map value_of_param query.params
-    let select_decode (query : _ select) = query.decode
-    let returning_sql (query : _ returning) = query.sql
-    let returning_params (query : _ returning) = List.map value_of_param query.params
-    let returning_decode (query : _ returning) = query.decode
-    let change_sql (query : change) = query.sql
-    let change_params (query : change) = List.map value_of_param query.params
-    let schema_sql (schema : schema) = schema.sql
-  end
+
+    let value = value_of_param
+  end)
 
   let params_to_values params = List.map Compiled.value_of_param params
 
