@@ -606,49 +606,46 @@ module Pool = struct
       ~health_check:(health_check ?blocking_pool) ()
     |> public
 
+  let with_db_raw t f =
+    Eta.Pool.with_resource t f |> public
+
   let with_db t f =
-    Eta.Pool.with_resource t (fun db -> f db |> Eta.Effect.map_error (function
-        | Turso err -> `Turso err
-        | Pool_shutdown -> `Pool_shutdown
-        | Pool_shutdown_timeout -> `Pool_shutdown_timeout
-        | Timeout -> `Timeout))
-    |> public
+    with_db_raw t (fun db ->
+        f db |> Eta.Effect.map_error (function
+          | Turso err -> `Turso err
+          | Pool_shutdown -> `Pool_shutdown
+          | Pool_shutdown_timeout -> `Pool_shutdown_timeout
+          | Timeout -> `Timeout))
 
   let query ?blocking_pool t sql params =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.query" (fun () ->
-            query db sql params)
-        |> public)
+            query db sql params))
 
   let select ?blocking_pool t query =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.select" (fun () ->
-            select db query)
-        |> public)
+            select db query))
 
   let returning ?blocking_pool t query =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.returning" (fun () ->
-            returning db query)
-        |> public)
+            returning db query))
 
   let execute ?blocking_pool t sql params =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.execute" (fun () ->
-            execute db sql params)
-        |> public)
+            execute db sql params))
 
   let execute_compiled ?blocking_pool t query =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.execute_compiled" (fun () ->
-            execute_compiled db query)
-        |> public)
+            execute_compiled db query))
 
   let run_schema ?blocking_pool t schema =
-    with_db t (fun db ->
+    with_db_raw t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.schema" (fun () ->
-            run_schema db schema)
-        |> public)
+            run_schema db schema))
 
   let shutdown ?deadline t = Eta.Pool.shutdown ?deadline t |> public
   let stats = Eta.Pool.stats
