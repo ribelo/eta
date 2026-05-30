@@ -241,6 +241,8 @@ let () =
         [
           Alcotest.test_case "chokepoint policy" `Quick
             test_tls_chokepoint_policy;
+          Alcotest.test_case "OpenSSL SSL finalizer ownership" `Quick
+            test_openssl_ssl_finalizer_keeps_ctx_ownership_separate;
         ] );
       ( "h2-admission",
         [

@@ -93,9 +93,8 @@ static struct custom_operations eta_ssl_ops = {
   custom_fixed_length_default
 };
 
-static value eta_alloc_ssl(SSL *ssl, SSL_CTX *ctx)
+static value eta_alloc_ssl(SSL *ssl)
 {
-  (void)ctx; /* ctx lifetime managed by its own custom block */
   value v = caml_alloc_custom(&eta_ssl_ops, sizeof(void *), 0, 1);
   void **data = (void **)Data_custom_val(v);
   data[0] = ssl;
@@ -262,7 +261,7 @@ CAMLprim value eta_openssl_ssl_create(value v_ctx, value v_hostname,
     }
   }
 
-  CAMLreturn(eta_alloc_ssl(ssl, ctx));
+  CAMLreturn(eta_alloc_ssl(ssl));
 }
 
 CAMLprim value eta_openssl_ssl_handshake(value v_ssl)
