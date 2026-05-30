@@ -4,18 +4,9 @@ let default_file_chunk_size = 64 * 1024
 let file_queue_capacity = 16
 
 module Stream = struct
-  type file_operation = [ `Close | `Open | `Read ]
-
-  type file_error_kind =
-    [ `Already_exists
-    | `File_too_large
-    | `Io
-    | `Not_found
-    | `Not_native
-    | `Permission_denied
-    | `Unexpected ]
-
-  type file_error = {
+  type file_operation = Eta_stream_file.operation
+  type file_error_kind = Eta_stream_file.error_kind
+  type file_error = Eta_stream_file.error = {
     operation : file_operation;
     path : string;
     kind : file_error_kind;
@@ -23,23 +14,7 @@ module Stream = struct
     cause : exn;
   }
 
-  let pp_file_operation ppf = function
-    | `Open -> Format.pp_print_string ppf "open"
-    | `Read -> Format.pp_print_string ppf "read"
-    | `Close -> Format.pp_print_string ppf "close"
-
-  let pp_file_error_kind ppf = function
-    | `Already_exists -> Format.pp_print_string ppf "already_exists"
-    | `File_too_large -> Format.pp_print_string ppf "file_too_large"
-    | `Io -> Format.pp_print_string ppf "io"
-    | `Not_found -> Format.pp_print_string ppf "not_found"
-    | `Not_native -> Format.pp_print_string ppf "not_native"
-    | `Permission_denied -> Format.pp_print_string ppf "permission_denied"
-    | `Unexpected -> Format.pp_print_string ppf "unexpected"
-
-  let pp_file_error ppf error =
-    Format.fprintf ppf "%a %s failed (%a): %s" pp_file_operation
-      error.operation error.path pp_file_error_kind error.kind error.message
+  let pp_file_error = Eta_stream_file.pp_error
 
   type ('a, 'err) t =
     | Empty : ('a, 'err) t
@@ -199,23 +174,8 @@ type 'a queue_event = Item of 'a | Done
 type 'a outer_event = Outer_item of 'a | Outer_done
 
 
-let file_error_kind_of_exn = function
-  | Eio.Io (Eio.Fs.E (Eio.Fs.Already_exists _), _) -> `Already_exists
-  | Eio.Io (Eio.Fs.E Eio.Fs.File_too_large, _) -> `File_too_large
-  | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> `Not_found
-  | Eio.Io (Eio.Fs.E (Eio.Fs.Not_native _), _) -> `Not_native
-  | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) -> `Permission_denied
-  | Eio.Io _ -> `Io
-  | _ -> `Unexpected
-
 let make_file_error ~operation ~path cause =
-  {
-    Stream.operation;
-    path;
-    kind = file_error_kind_of_exn cause;
-    message = Format.asprintf "%a" Eio.Exn.pp cause;
-    cause;
-  }
+  Eta_stream_file.make_error ~operation ~path cause
 
 let rec fold_values :
     type err acc a.
