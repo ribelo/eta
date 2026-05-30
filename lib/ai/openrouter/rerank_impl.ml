@@ -84,6 +84,3 @@ let run ?provider:custom_provider client ~api_key rerank_request =
              match decode raw with
              | Stdlib.Ok response -> E.pure response
              | Stdlib.Error error -> E.fail error)
-
-let run_with_provider ~provider client ~api_key request =
-  run ~provider client ~api_key request

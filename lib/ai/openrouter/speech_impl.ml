@@ -50,6 +50,3 @@ let run ?provider:custom_provider client ~api_key speech_request =
   | Stdlib.Ok http_request ->
       A.perform_binary ~max_bytes:(64 * 1024 * 1024) provider client http_request
       |> E.map decode_response
-
-let create ~provider client ~api_key request =
-  run ~provider client ~api_key request

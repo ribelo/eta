@@ -66,25 +66,32 @@ module Embeddings = struct
 end
 
 module Speech = struct
-  let create = Speech_impl.create
+  let create ~provider client ~api_key request =
+    Speech_impl.run ~provider client ~api_key request
 end
 
 module Images = struct
-  let generate = Images_impl.generate
+  let generate ~provider client ~api_key request =
+    Images_impl.run ~provider client ~api_key request
 end
 
 module Transcriptions = struct
-  let create = Transcription_impl.create
+  let create ~provider client ~api_key request =
+    Transcription_impl.run ~provider client ~api_key request
 end
 
 module Rerank = struct
-  let run = Rerank_impl.run_with_provider
+  let run ~provider client ~api_key request =
+    Rerank_impl.run ~provider client ~api_key request
 end
 
 module Video = struct
-  let create = Video_impl.create
+  let create ~provider client ~api_key request =
+    Video_impl.run ~provider client ~api_key request
 
-  let get = Video_impl.get_with_provider
+  let get ~provider client ~api_key ~job_id =
+    Video_impl.get ~provider client ~api_key ~job_id
 
-  let content = Video_impl.content_with_provider
+  let content ~provider client ~api_key request =
+    Video_impl.content ~provider client ~api_key request
 end
