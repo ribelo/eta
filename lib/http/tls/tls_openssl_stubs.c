@@ -22,8 +22,7 @@
   "ECDHE-ECDSA-CHACHA20-POLY1305"
 
 /* ------------------------------------------------------------------ */
-/* SSL_CTX — custom block; finalizer is a no-op because the SSL object
-   owns the ctx and frees it.                                         */
+/* SSL_CTX — custom block; finalizer frees the context.                */
 
 static int eta_ssl_ctx_cmp(value v1, value v2)
 {
@@ -37,7 +36,10 @@ static intnat eta_ssl_ctx_hash(value v)
 
 static void eta_ssl_ctx_finalize(value v)
 {
-  (void)v;
+  SSL_CTX *ctx = *((SSL_CTX **)Data_custom_val(v));
+  if (ctx != NULL) {
+    SSL_CTX_free(ctx);
+  }
 }
 
 static struct custom_operations eta_ssl_ctx_ops = {
@@ -57,18 +59,16 @@ static SSL_CTX *eta_ssl_ctx_val(value v)
 }
 
 /* ------------------------------------------------------------------ */
-/* SSL — custom block holds both SSL* and its owning SSL_CTX*.        */
+/* SSL — custom block holds SSL*.  The SSL object holds an internal
+   reference to its SSL_CTX (via SSL_new -> SSL_CTX_up_ref), so
+   SSL_free decrements the ctx refcount automatically.                */
 
 static void eta_ssl_finalize(value v)
 {
   void **data = (void **)Data_custom_val(v);
   SSL *ssl = (SSL *)data[0];
-  SSL_CTX *ctx = (SSL_CTX *)data[1];
   if (ssl != NULL) {
     SSL_free(ssl);
-  }
-  if (ctx != NULL) {
-    SSL_CTX_free(ctx);
   }
 }
 
@@ -95,10 +95,10 @@ static struct custom_operations eta_ssl_ops = {
 
 static value eta_alloc_ssl(SSL *ssl, SSL_CTX *ctx)
 {
-  value v = caml_alloc_custom(&eta_ssl_ops, 2 * sizeof(void *), 0, 1);
+  (void)ctx; /* ctx lifetime managed by its own custom block */
+  value v = caml_alloc_custom(&eta_ssl_ops, sizeof(void *), 0, 1);
   void **data = (void **)Data_custom_val(v);
   data[0] = ssl;
-  data[1] = ctx;
   return v;
 }
 
