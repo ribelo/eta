@@ -55,6 +55,16 @@
   conf-openssl))
 
 (package
+ (name eta_sql_dsl)
+ (synopsis "Shared SQL DSL for Eta connectors")
+ (description
+  "eta_sql_dsl provides the backend-agnostic typed SQL builder shared by Eta SQL connector packages.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))))
+
+(package
  (name eta_sql)
  (synopsis "SQLite client for Eta")
  (description
@@ -77,7 +87,8 @@
   (ocaml (= 5.2.0))
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
-  eta))
+  eta
+  eta_sql_dsl))
 
 (package
  (name eta_turso)
@@ -89,7 +100,8 @@
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   eta
-  eta_sql))
+  eta_sql
+  eta_sql_dsl))
 
 (package
  (name eta_ladybug)

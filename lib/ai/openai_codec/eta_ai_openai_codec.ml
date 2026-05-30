@@ -81,8 +81,8 @@ let chat_content_part = function
   | A.Image media ->
       Json.object_
         [
-          ("type", Some (Json.string "image_url"));
-          ("image_url", Some (media_object media));
+          ("type", Some (Json.string "url"));
+          ("url", Some (media_object media));
         ]
   | A.Audio audio ->
       Json.object_
@@ -115,7 +115,7 @@ let responses_content_part = function
       Json.object_
         [
           ("type", Some (Json.string "input_image"));
-          ("image_url", Some (Json.string media.A.url));
+          ("url", Some (Json.string media.A.url));
           ("detail", Option.map Json.string media.detail);
         ]
   | A.Audio audio ->
@@ -161,20 +161,9 @@ let reject_audio_prompt ~provider prompt =
          { provider; feature = "audio content requires OpenAI Realtime" })
   else Stdlib.Ok ()
 
-let decode_error_result ?raw ~provider message =
-  Stdlib.Error (A.Decode_error { provider; message; raw })
-
-let parse_json ~provider raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message -> decode_error_result ~provider ~raw message
-
-let schema_value ~provider label raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message ->
-      decode_error_result ~provider ~raw
-        (Printf.sprintf "%s must be valid JSON: %s" label message)
+let decode_error_result = A.Json_helpers.decode_error_result
+let parse_json = A.Json_helpers.parse_json
+let schema_value = A.Json_helpers.schema_value
 
 let message_item role contents =
   Json.object_
@@ -327,13 +316,162 @@ let structured_output_json ~shape output =
           ("strict", Option.map Json.bool output.strict);
         ]
 
-let result_all values =
-  let rec loop acc = function
-    | [] -> Stdlib.Ok (List.rev acc)
-    | Stdlib.Ok value :: rest -> loop (value :: acc) rest
-    | Stdlib.Error _ as error :: _ -> error
+let result_all = A.Json_helpers.result_all
+
+let unsupported ~provider feature =
+  Stdlib.Error (A.Unsupported { provider; feature })
+
+let non_empty_list ~provider label = function
+  | [] -> unsupported ~provider (label ^ " must not be empty")
+  | values -> Stdlib.Ok values
+
+let int_array values = Json.array (List.map Json.int values)
+
+let embedding_input_json ~provider (input : A.Embedding.input) =
+  match input with
+  | A.Embedding.Text text -> Stdlib.Ok (Json.string text)
+  | A.Embedding.Texts texts -> (
+      match non_empty_list ~provider "embedding input" texts with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok texts -> Stdlib.Ok (Json.array (List.map Json.string texts)))
+  | A.Embedding.Tokens tokens -> (
+      match non_empty_list ~provider "embedding token input" tokens with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok tokens -> Stdlib.Ok (int_array tokens))
+  | A.Embedding.Token_batches batches -> (
+      match non_empty_list ~provider "embedding token batch input" batches with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok batches -> (
+          match
+            result_all
+              (List.map (non_empty_list ~provider "embedding token input") batches)
+          with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok batches ->
+              Stdlib.Ok (Json.array (List.map int_array batches))))
+  | A.Embedding.Raw_json raw -> parse_json ~provider raw
+
+let positive_int_json ~provider label = function
+  | None -> Stdlib.Ok None
+  | Some value when value > 0 -> Stdlib.Ok (Some (Json.int value))
+  | Some _ -> unsupported ~provider (label ^ " must be positive")
+
+let optional_non_empty ~provider label = function
+  | None -> Stdlib.Ok None
+  | Some value when String.equal (String.trim value) "" ->
+      unsupported ~provider (label ^ " must not be empty")
+  | Some value -> Stdlib.Ok (Some value)
+
+let embedding_encoding_format_json ~provider = function
+  | None -> Stdlib.Ok None
+  | Some ("float" | "base64" as value) -> Stdlib.Ok (Some (Json.string value))
+  | Some _ ->
+      unsupported ~provider "embedding encoding_format must be float or base64"
+
+let encode_embeddings_json ~provider (request : A.Embedding.request) =
+  match embedding_input_json ~provider request.input with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok input -> (
+      match positive_int_json ~provider "embedding dimensions" request.dimensions with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok dimensions -> (
+      match embedding_encoding_format_json ~provider request.encoding_format with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok encoding_format -> (
+      match optional_non_empty ~provider "embedding user" request.user with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok user ->
+          Stdlib.Ok
+            (Json.object_
+               [
+                 ("model", Some (Json.string request.model));
+                 ("input", Some input);
+                 ("encoding_format", encoding_format);
+                 ("dimensions", dimensions);
+                 ("user", Option.map Json.string user);
+               ]))))
+
+let encode_embeddings ~provider request =
+  match encode_embeddings_json ~provider request with
+  | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
+  | Stdlib.Error _ as error -> error
+
+let decode_float ~provider ~raw json =
+  match json with
+  | `Float value -> Stdlib.Ok value
+  | `Int value -> Stdlib.Ok (float_of_int value)
+  | `Intlit value -> (
+      match float_of_string_opt value with
+      | Some value -> Stdlib.Ok value
+      | None ->
+          decode_error_result ~provider ~raw
+            "embedding vector contains invalid number")
+  | _ ->
+      decode_error_result ~provider ~raw
+        "embedding vector contains non-number value"
+
+let decode_embedding_vector ~provider ~raw json =
+  match json with
+  | `List values -> (
+      match result_all (List.map (decode_float ~provider ~raw) values) with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok values -> Stdlib.Ok (A.Embedding.Float values))
+  | `String value -> Stdlib.Ok (A.Embedding.Base64 value)
+  | _ ->
+      decode_error_result ~provider ~raw
+        "embedding must be a float array or base64 string"
+
+let decode_embedding_item ~provider ~raw json =
+  match Json.member "embedding" json with
+  | None -> decode_error_result ~provider ~raw "embedding item missing embedding"
+  | Some embedding_json -> (
+      match decode_embedding_vector ~provider ~raw embedding_json with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok embedding ->
+          Stdlib.Ok { A.Embedding.embedding; index = Json.int_member "index" json })
+
+let embedding_usage ?(extra_raw_names = []) json =
+  let input_tokens =
+    match Json.int_member "prompt_tokens" json with
+    | Some _ as value -> value
+    | None -> Json.int_member "input_tokens" json
   in
-  loop [] values
+  let total_tokens = Json.int_member "total_tokens" json in
+  let raw_value name =
+    Json.scalar_string_member name json |> Option.value ~default:""
+  in
+  {
+    A.Embedding.input_tokens;
+    total_tokens;
+    raw =
+      List.map
+        (fun name -> (name, raw_value name))
+        ([ "prompt_tokens"; "input_tokens"; "total_tokens" ] @ extra_raw_names);
+  }
+
+let decode_embeddings ?(usage_extra_raw_names = []) ~provider raw =
+  match parse_json ~provider raw with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok json -> (
+      match Json.array_member "data" json with
+      | None -> decode_error_result ~provider ~raw "embeddings response missing data"
+      | Some data -> (
+          match
+            result_all (List.map (decode_embedding_item ~provider ~raw) data)
+          with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok embeddings ->
+              Stdlib.Ok
+                {
+                  A.Embedding.id = Json.string_member "id" json;
+                  model = Json.string_member "model" json;
+                  embeddings;
+                  usage =
+                    Option.map
+                      (embedding_usage ~extra_raw_names:usage_extra_raw_names)
+                      (Json.object_member "usage" json);
+                  raw = Some raw;
+                }))
 
 let temperature_json ~provider = function
   | None -> Stdlib.Ok None

@@ -143,8 +143,9 @@ and pool = {
 
    [null_job] is a single self-referential dummy used wherever code
    would otherwise want a [job option]. The end-of-list and "no
-   shared job" tests use physical equality with this value. We never
-   read its [prev]/[next]/[exec] fields in valid code. *)
+   shared job" tests use physical equality with this value. Valid
+   code checks [is_null_job] before following [prev]/[next]/[exec];
+   live jobs overwrite those fields before linking. *)
 
 let dummy_handler : worker -> job -> unit = fun _ _ -> ()
 
@@ -243,7 +244,10 @@ let make_worker ~pool ~id : worker =
   }
 
 (* A placeholder used to clear vacated array slots so that the GC
-   can collect the worker promptly.  Never read from a live slot. *)
+   can collect the worker promptly. Pool scans are bounded by
+   [n_active], and [register_worker] overwrites the next active slot
+   before incrementing [n_active], so this value is never read as a
+   worker. *)
 let null_worker : worker = Obj.magic 0
 
 (* --------------------------------------------------------------------------- *)

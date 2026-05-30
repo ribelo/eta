@@ -193,8 +193,6 @@ end
 
 type ('acc, 'a, 'err) folder = {
   emit : 'acc -> 'a -> ('acc * bool, 'err) Eta.Effect.t;
-  pure_cont : ('acc -> 'a -> 'acc) option;
-  pure_stop : ('acc -> 'a -> 'acc * bool) option;
 }
 
 type 'a queue_event = Item of 'a | Done
@@ -228,37 +226,18 @@ let rec fold_values :
  fun values acc folder ->
   match values with
   | [] -> Eta.Effect.pure (acc, true)
-  | _ -> begin match folder.pure_cont with
-    | Some pure ->
-        (* Fast path: List.fold_left, no per-element tuple allocation *)
-        Eta.Effect.pure (List.fold_left pure acc values, true)
-    | None -> begin match folder.pure_stop with
-      | Some pure ->
-          (* Semi-fast path: manual loop with early termination *)
-          let rec loop values acc =
-            match values with
-            | [] -> Eta.Effect.pure (acc, true)
-            | value :: rest ->
-                let (acc', keep_going) = pure acc value in
-                if keep_going then loop rest acc'
-                else Eta.Effect.pure (acc', false)
-          in
-          loop values acc
-      | None ->
-          (* Effect path *)
-          let rec loop values acc =
-            match values with
-            | [] -> Eta.Effect.pure (acc, true)
-            | value :: rest ->
-                Eta.Effect.bind
-                  (fun (acc, keep_going) ->
-                    if keep_going then loop rest acc
-                    else Eta.Effect.pure (acc, false))
-                  (folder.emit acc value)
-          in
-          loop values acc
-    end
-  end
+  | _ ->
+      let rec loop values acc =
+        match values with
+        | [] -> Eta.Effect.pure (acc, true)
+        | value :: rest ->
+            Eta.Effect.bind
+              (fun (acc, keep_going) ->
+                if keep_going then loop rest acc
+                else Eta.Effect.pure (acc, false))
+              (folder.emit acc value)
+      in
+      loop values acc
 
 and try_fold_pure :
     type err acc a.
@@ -368,8 +347,6 @@ and fold_stream :
   | Map (inner, f) ->
       fold_stream inner acc {
         emit = (fun acc value -> folder.emit acc (f value));
-        pure_cont = Option.map (fun pure acc value -> pure acc (f value)) folder.pure_cont;
-        pure_stop = Option.map (fun pure acc value -> pure acc (f value)) folder.pure_stop;
       }
   | Map_effect (inner, f) ->
       fold_stream inner acc
@@ -377,8 +354,6 @@ and fold_stream :
           emit =
             (fun acc value ->
               Eta.Effect.bind (fun mapped -> folder.emit acc mapped) (f value));
-          pure_cont = None;
-          pure_stop = None;
         }
   | Filter (inner, f) ->
       fold_stream inner acc
@@ -387,21 +362,11 @@ and fold_stream :
             (fun acc value ->
               if f value then folder.emit acc value
               else Eta.Effect.pure (acc, true));
-          pure_cont = Option.map (fun pure acc value ->
-            if f value then pure acc value else acc) folder.pure_cont;
-          pure_stop = Option.map (fun pure acc value ->
-            if f value then pure acc value else (acc, true)) folder.pure_stop;
         }
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)
       else
         let remaining = ref n in
-        let stop_from_cont = Option.map (fun pure acc value ->
-          if !remaining <= 0 then (acc, false)
-          else (decr remaining; (pure acc value, true))) folder.pure_cont in
-        let stop_from_stop = Option.map (fun pure acc value ->
-          if !remaining <= 0 then (acc, false)
-          else (decr remaining; pure acc value)) folder.pure_stop in
         fold_stream inner acc
           {
             emit =
@@ -413,8 +378,6 @@ and fold_stream :
                     (fun (acc, keep_going) ->
                       (acc, keep_going && !remaining > 0))
                     (folder.emit acc value)));
-            pure_cont = None;
-            pure_stop = (match stop_from_cont with Some _ -> stop_from_cont | None -> stop_from_stop);
           }
   | Take_until_effect (inner, predicate) ->
       fold_stream inner acc
@@ -429,8 +392,6 @@ and fold_stream :
                       (fun stop -> (acc, not stop))
                       (predicate value))
                 (folder.emit acc value));
-          pure_cont = None;
-          pure_stop = None;
         }
   | Drop (n, inner) ->
       let remaining = ref (max 0 n) in
@@ -442,12 +403,6 @@ and fold_stream :
                 decr remaining;
                 Eta.Effect.pure (acc, true))
               else folder.emit acc value);
-          pure_cont = Option.map (fun pure acc value ->
-            if !remaining > 0 then (decr remaining; acc)
-            else pure acc value) folder.pure_cont;
-          pure_stop = Option.map (fun pure acc value ->
-            if !remaining > 0 then (decr remaining; (acc, true))
-            else pure acc value) folder.pure_stop;
         }
   | Scan (f, init, inner) ->
       let state = ref init in
@@ -458,14 +413,6 @@ and fold_stream :
               let next = f !state value in
               state := next;
               folder.emit acc next);
-          pure_cont = Option.map (fun pure acc value ->
-            let next = f !state value in
-            state := next;
-            pure acc next) folder.pure_cont;
-          pure_stop = Option.map (fun pure acc value ->
-            let next = f !state value in
-            state := next;
-            pure acc next) folder.pure_stop;
         }
   | Grouped (n, inner) ->
       let batch = ref [] in
@@ -489,8 +436,6 @@ and fold_stream :
                  incr batch_len;
                  if !batch_len >= n then flush acc
                  else Eta.Effect.pure (acc, true));
-             pure_cont = None;
-             pure_stop = None;
            })
   | Concat (left, right) ->
       Eta.Effect.bind
@@ -502,8 +447,6 @@ and fold_stream :
       fold_stream inner acc
         {
           emit = (fun acc value -> fold_stream (f value) acc folder);
-          pure_cont = None;
-          pure_stop = None;
         }
   | Merge (left, right) -> fold_merge left right acc folder
   | Flat_map_par (max_concurrency, inner, f) ->
@@ -650,25 +593,17 @@ and fold_stream :
               in
               consume acc);
         }
-  | Range { start; stop } -> begin match folder.pure_cont with
-    | Some pure ->
-        let mutable acc = acc in
-        for i = start to stop do
-          acc <- pure acc i
-        done;
-        Eta.Effect.pure (acc, true)
-    | None ->
-        let rec loop i acc =
-          if i > stop then Eta.Effect.pure (acc, true)
-          else
-            Eta.Effect.bind
-              (fun (acc, keep_going) ->
-                if keep_going then loop (i + 1) acc
-                else Eta.Effect.pure (acc, false))
-              (folder.emit acc i)
-        in
-        loop start acc
-  end
+  | Range { start; stop } ->
+      let rec loop i acc =
+        if i > stop then Eta.Effect.pure (acc, true)
+        else
+          Eta.Effect.bind
+            (fun (acc, keep_going) ->
+              if keep_going then loop (i + 1) acc
+              else Eta.Effect.pure (acc, false))
+            (folder.emit acc i)
+      in
+      loop start acc
   | Named (name, inner) -> Eta.Effect.named name (fold_stream inner acc folder)
   | Fn (file, line, col_start, col_end, name, inner) ->
       Eta.Effect.fn (file, line, col_start, col_end) name
@@ -701,8 +636,6 @@ and fold_merge :
                           (fun () -> ((), true))
                           (Eta.Effect.named "Eta_stream.merge.emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add queue (Item value)))));
-                  pure_cont = None;
-                  pure_stop = None;
                 }))
   in
   Eta.Supervisor.scoped
@@ -777,8 +710,6 @@ and fold_flat_map_par :
                           (fun () -> ((), true))
                           (Eta.Effect.named "Eta_stream.flat_map_par.outer_emit" (Eta.Effect.sync (fun () ->
                                Eio.Stream.add outer_queue (Outer_item value)))));
-                  pure_cont = None;
-                  pure_stop = None;
                 }))
   in
   let worker =
@@ -808,8 +739,6 @@ and fold_flat_map_par :
                                       (Eta.Effect.named "Eta_stream.flat_map_par.inner_emit" (Eta.Effect.sync (fun () ->
                                            Eio.Stream.add output_queue
                                              (Item item)))));
-                               pure_cont = None;
-                               pure_stop = None;
                              })))
                (Eta.Effect.named "Eta_stream.flat_map_par.outer_take" (Eta.Effect.sync (fun () ->
                     Eio.Stream.take outer_queue)))
@@ -895,9 +824,7 @@ and effect_list :
   Eta.Effect.map
     (fun (values, _) -> List.rev values)
     (fold_stream stream []
-       { emit = (fun acc value -> Eta.Effect.pure (value :: acc, true));
-         pure_cont = None;
-         pure_stop = None })
+       { emit = (fun acc value -> Eta.Effect.pure (value :: acc, true)) })
 
 let run stream sink =
   let init = sink.Sink.init () in
@@ -914,8 +841,6 @@ let run stream sink =
                     (fun acc value ->
                       Eta.Effect.map (fun acc -> (acc, true))
                         (sink.Sink.step acc value));
-                  pure_cont = Some step;
-                  pure_stop = None;
                 }))
   | None ->
       Eta.Effect.bind
@@ -926,8 +851,6 @@ let run stream sink =
                (fun acc value ->
                  Eta.Effect.map (fun acc -> (acc, true))
                    (sink.Sink.step acc value));
-             pure_cont = None;
-             pure_stop = None;
            })
 
 let run_collect stream = run stream Sink.collect_to_list

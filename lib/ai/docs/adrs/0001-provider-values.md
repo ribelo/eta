@@ -29,8 +29,8 @@ eta-ai exposes a provider as a record value:
       capabilities : capabilities;
       encode_chat : chat_request -> (raw_json, ai_error) result;
       decode_chat : raw_json -> (response, ai_error) result;
-      encode_embeddings : embedding_request -> (raw_json, ai_error) result;
-      decode_embeddings : raw_json -> (embedding_response, ai_error) result;
+      encode_embeddings : Embedding.request -> (raw_json, ai_error) result;
+      decode_embeddings : raw_json -> (Embedding.response, ai_error) result;
       decode_stream_event : sse_event -> (stream_event list, ai_error) result;
       decode_error : status:int -> headers:headers -> raw_json -> ai_error;
     }

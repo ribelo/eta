@@ -46,10 +46,10 @@ let chat_request ?(stream = false) () : A.chat_request =
     stream;
   }
 
-let embedding_request () : A.embedding_request =
+let embedding_request () : A.Embedding.request =
   {
-    embedding_model = "openai/text-embedding-3-small";
-    embedding_input = A.Embedding_text "The quick brown fox";
+    model = "openai/text-embedding-3-small";
+    input = A.Embedding.Text "The quick brown fox";
     encoding_format = Some "float";
     dimensions = Some 1536;
     user = Some "eta-test-user";
@@ -292,27 +292,27 @@ let test_decode_embeddings_fixture () =
     |> expect_ok "embeddings"
   in
   Alcotest.(check (option string))
-    "id" (Some "emb-openrouter-fixture") response.embedding_id;
+    "id" (Some "emb-openrouter-fixture") response.id;
   Alcotest.(check (option string))
     "model" (Some "openai/text-embedding-3-small")
-    response.embedding_model;
+    response.model;
   Alcotest.(check int) "embedding count" 2 (List.length response.embeddings);
   (match response.embeddings with
-  | { A.embedding = A.Embedding_float values; embedding_index = Some 0 } :: _ ->
+  | { A.Embedding.embedding = A.Embedding.Float values; index = Some 0 } :: _ ->
       Alcotest.(check int) "float dimensions" 3 (List.length values)
   | _ -> Alcotest.fail "expected float embedding");
   (match List.nth response.embeddings 1 with
-  | { A.embedding = A.Embedding_base64 value; embedding_index = Some 1 } ->
+  | { A.Embedding.embedding = A.Embedding.Base64 value; index = Some 1 } ->
       Alcotest.(check string) "base64" "AAECAwQ=" value
   | _ -> Alcotest.fail "expected base64 embedding");
   Alcotest.(check (option int))
     "input tokens" (Some 7)
-    (Option.bind response.embedding_usage (fun usage ->
-         usage.embedding_input_tokens));
+    (Option.bind response.usage (fun usage ->
+         usage.input_tokens));
   Alcotest.(check (option int))
     "total tokens" (Some 7)
-    (Option.bind response.embedding_usage (fun usage ->
-         usage.embedding_total_tokens))
+    (Option.bind response.usage (fun usage ->
+         usage.total_tokens))
 
 let stream_text events =
   events
@@ -478,29 +478,29 @@ let test_stream_runner () =
   require_contains "routing body" ~needle:"\"provider\":{"
     (request_body_string request)
 
-let transcription_request () : A.transcription_request =
+let transcription_request () : A.Transcription.request =
   {
-    transcription_model = "openai/whisper-large-v3";
-    transcription_file =
+    model = "openai/whisper-large-v3";
+    file =
       { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
-    transcription_language = Some "en";
-    transcription_prompt = None;
-    transcription_response_format = None;
-    transcription_temperature = Some 0.0;
-    transcription_extra_fields = [];
+    language = Some "en";
+    prompt = None;
+    response_format = None;
+    temperature = Some 0.0;
+    extra_fields = [];
   }
 
 let test_encode_and_decode_task_apis () =
   let speech =
     O.encode_speech
       {
-        A.speech_model = "elevenlabs/eleven-turbo-v2";
-        speech_input = "hello";
-        speech_voice = "alloy";
-        speech_response_format = Some "pcm";
-        speech_speed = Some 1.0;
-        speech_instructions = None;
-        speech_extra = [];
+        A.Speech.model = "elevenlabs/eleven-turbo-v2";
+        input = "hello";
+        voice = "alloy";
+        response_format = Some "pcm";
+        speed = Some 1.0;
+        instructions = None;
+        extra = [];
       }
     |> expect_ok "speech encode"
   in
@@ -516,22 +516,22 @@ let test_encode_and_decode_task_apis () =
   in
   Alcotest.(check (option string))
     "transcription text" (Some "openrouter speech")
-    transcription_response.transcription_text;
-  let image_raw =
+    transcription_response.text;
+  let raw =
     O.encode_image_generation
       {
-        A.image_model = Some "google/gemini-3.1-flash-image-preview";
-        image_prompt = "draw eta";
-        image_n = None;
-        image_size = Some "1K";
-        image_quality = None;
-        image_response_format = None;
-        image_user = None;
-        image_extra = [];
+        A.Image.model = Some "google/gemini-3.1-flash-image-preview";
+        prompt = "draw eta";
+        n = None;
+        size = Some "1K";
+        quality = None;
+        response_format = None;
+        user = None;
+        extra = [];
       }
     |> expect_ok "image generation encode"
   in
-  require_contains "image modality" ~needle:"\"modalities\":[\"image\",\"text\"]" image_raw;
+  require_contains "image modality" ~needle:"\"modalities\":[\"image\",\"text\"]" raw;
   let image_response =
     O.decode_image_generation (read_fixture "image_generation.json")
     |> expect_ok "image generation fixture"
@@ -540,21 +540,21 @@ let test_encode_and_decode_task_apis () =
   let rerank =
     O.decode_rerank (read_fixture "rerank.json") |> expect_ok "rerank fixture"
   in
-  Alcotest.(check int) "rerank count" 1 (List.length rerank.rerank_results);
+  Alcotest.(check int) "rerank count" 1 (List.length rerank.results);
   let video =
     O.decode_video (read_fixture "video.json") |> expect_ok "video fixture"
   in
-  Alcotest.(check string) "video id" "video_job" video.video_id
+  Alcotest.(check string) "video id" "video_job" video.id
 
 let test_task_request_endpoints_and_binary_runners () =
   let provider = provider () in
   let rerank_request =
     O.rerank_request ~provider ~api_key:(A.api_key "or-test")
       {
-        A.rerank_model = "cohere/rerank-v3.5";
-        rerank_query = "effects";
-        rerank_documents = [ "Eta"; "Other" ];
-        rerank_top_n = Some 1;
+        A.Rerank.model = "cohere/rerank-v3.5";
+        query = "effects";
+        documents = [ "Eta"; "Other" ];
+        top_n = Some 1;
       }
     |> expect_ok "rerank request"
   in
@@ -563,12 +563,12 @@ let test_task_request_endpoints_and_binary_runners () =
   let video_request =
     O.video_request ~provider ~api_key:(A.api_key "or-test")
       {
-        A.video_model = "google/veo-3.1";
-        video_prompt = "mountains";
-        video_aspect_ratio = Some "16:9";
-        video_duration = Some 8;
-        video_resolution = Some "720p";
-        video_extra = [];
+        A.Video.model = "google/veo-3.1";
+        prompt = "mountains";
+        aspect_ratio = Some "16:9";
+        duration = Some 8;
+        resolution = Some "720p";
+        extra = [];
       }
     |> expect_ok "video request"
   in
@@ -577,14 +577,14 @@ let test_task_request_endpoints_and_binary_runners () =
   let image_request =
     O.image_generation_request ~provider ~api_key:(A.api_key "or-test")
       {
-        A.image_model = Some "google/gemini-3.1-flash-image-preview";
-        image_prompt = "draw eta";
-        image_n = None;
-        image_size = None;
-        image_quality = None;
-        image_response_format = None;
-        image_user = None;
-        image_extra = [];
+        A.Image.model = Some "google/gemini-3.1-flash-image-preview";
+        prompt = "draw eta";
+        n = None;
+        size = None;
+        quality = None;
+        response_format = None;
+        user = None;
+        extra = [];
       }
     |> expect_ok "image request"
   in
@@ -593,7 +593,7 @@ let test_task_request_endpoints_and_binary_runners () =
     image_request.uri;
   let content_request =
     O.video_content_request ~provider ~api_key:(A.api_key "or-test")
-      { A.video_job_id = "video_job"; video_index = Some 1 }
+      { A.Video.job_id = "video_job"; index = Some 1 }
     |> expect_ok "video content request"
   in
   Alcotest.(check string)
@@ -611,16 +611,16 @@ let test_task_request_endpoints_and_binary_runners () =
     run_ok rt "speech"
       (O.speech ~provider client ~api_key:(A.api_key "or-test")
          {
-           A.speech_model = "elevenlabs/eleven-turbo-v2";
-           speech_input = "hello";
-           speech_voice = "alloy";
-           speech_response_format = Some "pcm";
-           speech_speed = None;
-           speech_instructions = None;
-           speech_extra = [];
+           A.Speech.model = "elevenlabs/eleven-turbo-v2";
+           input = "hello";
+           voice = "alloy";
+           response_format = Some "pcm";
+           speed = None;
+           instructions = None;
+           extra = [];
          })
   in
-  Alcotest.(check string) "speech bytes" "PCM" (Bytes.to_string speech.speech_audio)
+  Alcotest.(check string) "speech bytes" "PCM" (Bytes.to_string speech.audio)
 
 let () =
   Alcotest.run "eta-ai-openrouter"

@@ -330,7 +330,7 @@ let par_collect frame tasks =
   | [] -> ok (Array.to_list results |> List.map Option.get)
   | causes -> error (Cause.concurrent causes)
 
-let race effects () =
+let race_eval effects () =
   let frame = current_frame () in
   match effects with
   | [] -> invalid_arg "Effect.race: empty list"
@@ -351,45 +351,73 @@ let race effects () =
            else
              match Eio.Stream.take results with
              | Exit.Ok value ->
-                 winner := Some (Obj.repr value);
+                 winner := Some value;
                  switch_fail frame race_sw Race_won;
                  fiber_await_cancel frame
              | Exit.Error cause -> collect (cause :: failed) (remaining - 1)
          in
          collect [] (List.length effects)
-       with Race_won -> ());
+      with Race_won -> ());
       (match !winner with
-      | Some value -> ok (Obj.obj value)
+      | Some value -> ok value
       | None -> error (Cause.concurrent !causes))
 
 let race effects =
-  make ~names:(concat_names effects) (race effects)
+  make ~names:(concat_names effects) (race_eval effects)
 
-let missing_result name = Cause.die (Failure (name ^ ": missing result"))
+type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
-let par left right () =
+let par_pair frame left right =
+  let left_result, left_resolver = Eio.Promise.create () in
+  let right_result, right_resolver = Eio.Promise.create () in
+  let causes = ref [] in
+  let exception Stop in
+  (try
+     switch_run frame @@ fun par_sw ->
+     fiber_fork frame ~sw:par_sw (fun () ->
+         frame.runtime.tracer#with_fiber_context @@ fun () ->
+         try Eio.Promise.resolve left_resolver (run_to_value frame left)
+         with exn ->
+           let cause =
+             Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+           in
+           causes := cause :: !causes;
+           (try switch_fail frame par_sw Stop with _ -> ()));
+     fiber_fork frame ~sw:par_sw (fun () ->
+         frame.runtime.tracer#with_fiber_context @@ fun () ->
+         try Eio.Promise.resolve right_resolver (run_to_value frame right)
+         with exn ->
+           let cause =
+             Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+           in
+           causes := cause :: !causes;
+           (try switch_fail frame par_sw Stop with _ -> ()))
+   with Stop -> ());
+  match List.rev !causes with
+  | [] ->
+      ok
+        {
+          left = Eio.Promise.await left_result;
+          right = Eio.Promise.await right_result;
+        }
+  | causes -> error (Cause.concurrent causes)
+
+let par_eval left right () =
   let frame = current_frame () in
-  match
-    par_collect frame
-      [
-        (fun () -> Obj.repr (run_to_value frame left));
-        (fun () -> Obj.repr (run_to_value frame right));
-      ]
-  with
-  | Exit.Ok [ left; right ] -> ok (Obj.obj left, Obj.obj right)
-  | Exit.Ok _ -> assert false
+  match par_pair frame left right with
+  | Exit.Ok { left; right } -> ok (left, right)
   | Exit.Error cause -> error cause
 
 let par left right =
-  make ~names:(left.names @ right.names) (par left right)
+  make ~names:(left.names @ right.names) (par_eval left right)
 
-let all effects () =
+let all_eval effects () =
   let frame = current_frame () in
   par_collect frame (List.map (fun effect () -> run_to_value frame effect) effects)
 
-let all effects = make ~names:(concat_names effects) (all effects)
+let all effects = make ~names:(concat_names effects) (all_eval effects)
 
-let all_settled effects () =
+let all_settled_eval effects () =
   let frame = current_frame () in
   let results = Array.make (List.length effects) None in
   switch_run frame (fun sw ->
@@ -405,7 +433,7 @@ let all_settled effects () =
   ok (Array.to_list results |> List.map Option.get)
 
 let all_settled effects =
-  make ~names:(concat_names effects) (all_settled effects)
+  make ~names:(concat_names effects) (all_settled_eval effects)
 
 let for_each_par xs f =
   let n = List.length xs in
@@ -523,8 +551,18 @@ let retry schedule predicate effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
+  let run_attempt () =
+    let finalizers = ref [] in
+    let attempt_frame = { frame with finalizers } in
+    try
+      ok
+        (Runtime_core.with_finalizers ~runtime:frame.runtime
+           ~fail_key:frame.fail_key finalizers (fun () ->
+             run_to_value attempt_frame effect))
+    with exn -> exit_of_exn attempt_frame exn
+  in
   let rec loop () =
-    match effect.eval () with
+    match run_attempt () with
     | Exit.Ok _ as ok -> ok
     | Exit.Error (Cause.Fail err) when predicate err -> (
         match Sch.next !driver with

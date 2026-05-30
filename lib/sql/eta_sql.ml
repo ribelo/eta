@@ -1,4 +1,3 @@
-module Eta_runtime = Eta
 module Sqlite = Sqlite
 
 type error =
@@ -21,7 +20,9 @@ let show_error err = Format.asprintf "%a" pp_error err
 
 type sql_error = error
 
-let raise_error err = raise (Failure (show_error err))
+exception Error of error
+
+let raise_error err = raise (Error err)
 
 module Value = struct
   type t =
@@ -1574,324 +1575,21 @@ module Transaction = struct
   let with_transaction = Connection.with_transaction
 end
 
-module Pool = struct
-  type clock = Clock : _ Eio.Time.clock -> clock
-
-  type config = {
-    sqlite : Sqlite.config;
-    min_connections : int;
-    max_connections : int;
-    acquire_timeout_ms : int option;
-    idle_timeout_ms : int option;
-    max_lifetime_ms : int option;
-  }
-
-  type idle_entry = {
-    conn : Connection.t;
-    mutable idle_since_ms : int;
-  }
-
-  type lease = {
-    leased_conn : Connection.t;
-    lease_id : int;
-  }
-
-  type t = {
-    config : config;
-    clock : clock option;
-    mutex : Eio.Mutex.t;
-    condition : Eio.Condition.t;
-    mutable idle : idle_entry list;
-    mutable in_use : lease list;
-    mutable total : int;
-    mutable waiting : int;
-    mutable next_lease : int;
-    mutable shutdown : bool;
-  }
-
-  type stat =
-    | Total_connections of int
-    | Available_connections of int
-    | In_use_connections of int
-    | Waiting_requests of int
-
-  let config ?(min_connections = 0) ?(max_connections = 10) ?acquire_timeout_ms
-      ?idle_timeout_ms ?max_lifetime_ms sqlite =
-    { sqlite; min_connections; max_connections; acquire_timeout_ms; idle_timeout_ms; max_lifetime_ms }
-
-  let now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
-
-  let with_lock t f =
-    Eio.Mutex.lock t.mutex;
-    Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
-
-  let validate_config config =
-    if config.min_connections < 0 then
-      Result.Error (Invalid_query "pool min_connections must be non-negative")
-    else if config.max_connections <= 0 then
-      Result.Error (Invalid_query "pool max_connections must be positive")
-    else if config.min_connections > config.max_connections then
-      Result.Error (Invalid_query "pool min_connections exceeds max_connections")
-    else if
-      (match config.acquire_timeout_ms with Some value -> value < 0 | None -> false)
-      || (match config.idle_timeout_ms with Some value -> value < 0 | None -> false)
-      || (match config.max_lifetime_ms with Some value -> value < 0 | None -> false)
-    then
-      Result.Error (Invalid_query "pool timeout values must be non-negative")
-    else
-      Ok ()
-
-  let elapsed_ms now started = max 0 (now - started)
-
-  let connection_expired config ~now entry =
-    (match config.idle_timeout_ms with
-     | Some timeout -> elapsed_ms now entry.idle_since_ms > timeout
-     | None -> false)
-    ||
-    match config.max_lifetime_ms with
-    | Some lifetime ->
-        elapsed_ms now
-          (int_of_float (Connection.created_at entry.conn *. 1000.0))
-        > lifetime
-    | None -> false
-
-  let close_entry t entry =
-    t.total <- max 0 (t.total - 1);
-    Connection.close entry.conn
-
-  let rec take_valid_idle_locked t now kept =
-    match t.idle with
-    | [] ->
-        t.idle <- List.rev kept;
-        None
-    | entry :: rest ->
-        t.idle <- rest;
-        if connection_expired t.config ~now entry || not (Connection.ping entry.conn)
-        then (
-          close_entry t entry;
-          take_valid_idle_locked t now kept)
-        else (
-          t.idle <- List.rev_append kept rest;
-          Some entry.conn)
-
-  let next_lease_locked t =
-    t.next_lease <- t.next_lease + 1;
-    t.next_lease
-
-  let mark_in_use_locked t conn =
-    let lease_id = next_lease_locked t in
-    Connection.set_pool_lease conn lease_id;
-    t.in_use <- { leased_conn = conn; lease_id } :: t.in_use
-
-  type reservation =
-    | Use of Connection.t
-    | Open of int
-    | Wait
-    | Shutdown
-
-  let reserve_locked t =
-    if t.shutdown then
-      Shutdown
-    else
-      let now = now_ms () in
-      match take_valid_idle_locked t now [] with
-      | Some conn ->
-          mark_in_use_locked t conn;
-          Use conn
-      | None when t.total < t.config.max_connections ->
-          t.total <- t.total + 1;
-          let lease_id = next_lease_locked t in
-          Open lease_id
-      | None -> Wait
-
-  let seconds_of_ms ms = float_of_int ms /. 1000.0
-
-  let await_capacity_locked t =
-    t.waiting <- t.waiting + 1;
-    Fun.protect
-      ~finally:(fun () -> t.waiting <- max 0 (t.waiting - 1))
-      (fun () ->
-        match (t.clock, t.config.acquire_timeout_ms) with
-        | _, Some 0 -> `Timeout
-        | Some (Clock clock), Some timeout_ms -> (
-            match
-              Eio.Time.with_timeout clock (seconds_of_ms timeout_ms) (fun () ->
-                  Eio.Condition.await t.condition t.mutex;
-                  Ok ())
-            with
-            | Ok () -> `Woke
-            | Error `Timeout -> `Timeout)
-        | None, Some _ -> `No_clock
-        | _, None ->
-            Eio.Condition.await t.condition t.mutex;
-            `Woke)
-
-  let create ?clock config =
-    match validate_config config with
-    | Result.Error _ as err -> err
-    | Ok () ->
-        let rec open_min remaining acc =
-          if remaining = 0 then
-            Ok acc
-          else
-            match Connection.create config.sqlite with
-            | Ok conn ->
-                open_min (remaining - 1) ({ conn; idle_since_ms = now_ms () } :: acc)
-            | Result.Error err ->
-                List.iter (fun entry -> Connection.close entry.conn) acc;
-                Result.Error err
-        in
-        (match open_min config.min_connections [] with
-         | Result.Error _ as err -> err
-         | Ok idle ->
-             Ok
-               {
-                 config;
-                 clock = Option.map (fun clock -> Clock clock) clock;
-                 mutex = Eio.Mutex.create ();
-                 condition = Eio.Condition.create ();
-                 idle;
-                 in_use = [];
-                 total = List.length idle;
-                 waiting = 0;
-                 next_lease = 0;
-                 shutdown = false;
-               })
-
-  let open_reserved t lease_id =
-    match Connection.create t.config.sqlite with
-    | Ok conn ->
-        with_lock t @@ fun () ->
-        if t.shutdown then (
-          t.total <- max 0 (t.total - 1);
-          Connection.close conn;
-          Eio.Condition.broadcast t.condition;
-          Result.Error (Pool_error "pool is shut down"))
-        else (
-          Connection.set_pool_lease conn lease_id;
-          t.in_use <- { leased_conn = conn; lease_id } :: t.in_use;
-          Ok conn)
-    | Result.Error err ->
-        with_lock t @@ fun () ->
-        t.total <- max 0 (t.total - 1);
-        Eio.Condition.broadcast t.condition;
-        Result.Error err
-
-  let exhausted_message t =
-    "pool exhausted: max_connections=" ^ string_of_int t.config.max_connections
-    ^ ", waiting=" ^ string_of_int t.waiting
-
-  let acquire t =
-    let rec loop () =
-      let decision =
-        with_lock t @@ fun () ->
-        match reserve_locked t with
-        | Use conn -> `Use conn
-        | Open lease_id -> `Open lease_id
-        | Shutdown -> `Error (Pool_error "pool is shut down")
-        | Wait -> (
-            match await_capacity_locked t with
-            | `Woke -> `Retry
-            | `Timeout -> `Error (Pool_error (exhausted_message t))
-            | `No_clock ->
-                `Error
-                  (Pool_error
-                     (exhausted_message t
-                     ^ "; pass ~clock to Pool.create for timed waits")))
-      in
-      match decision with
-      | `Use conn -> Ok conn
-      | `Open lease_id -> open_reserved t lease_id
-      | `Retry -> loop ()
-      | `Error err -> Result.Error err
-    in
-    loop ()
-
-  let same_connection left right =
-    String.equal (Connection.id left) (Connection.id right)
-
-  let release t conn =
-    let close_now =
-      with_lock t @@ fun () ->
-      let expected_lease = Connection.pool_lease conn in
-      let rec remove found acc = function
-        | [] -> (found, List.rev acc)
-        | lease :: rest ->
-            if same_connection lease.leased_conn conn then
-              if lease.lease_id = expected_lease then
-                (true, List.rev_append acc rest)
-              else
-                (false, List.rev_append acc (lease :: rest))
-            else
-              remove found (lease :: acc) rest
-      in
-      let found, in_use = remove false [] t.in_use in
-      t.in_use <- in_use;
-      if not found then
-        false
-      else if t.shutdown then (
-        t.total <- max 0 (t.total - 1);
-        Eio.Condition.broadcast t.condition;
-        true)
-      else if
-        not (Connection.ping conn)
-        || connection_expired t.config ~now:(now_ms ())
-             { conn; idle_since_ms = now_ms () }
-      then (
-        t.total <- max 0 (t.total - 1);
-        Eio.Condition.broadcast t.condition;
-        true)
-      else (
-        t.idle <- { conn; idle_since_ms = now_ms () } :: t.idle;
-        Eio.Condition.broadcast t.condition;
-        false)
-    in
-    if close_now then
-      Connection.close conn
-
-  let with_connection t f =
-    match acquire t with
-    | Result.Error _ as err -> err
-    | Ok conn ->
-        Fun.protect ~finally:(fun () -> release t conn) (fun () -> f conn)
-
-  let shutdown t =
-    let idle =
-      with_lock t @@ fun () ->
-      t.shutdown <- true;
-      let idle = t.idle in
-      t.idle <- [];
-      t.total <- t.total - List.length idle;
-      Eio.Condition.broadcast t.condition;
-      idle
-    in
-    List.iter (fun entry -> Connection.close entry.conn) idle
-
-  let stats t =
-    with_lock t @@ fun () ->
-    [
-      Total_connections t.total;
-      Available_connections (List.length t.idle);
-      In_use_connections (List.length t.in_use);
-      Waiting_requests t.waiting;
-    ]
-end
-
 module Eta_pool = struct
   type error = [ `Eta_sql of sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
   type pool
   type tx
 
   type pool_state = {
-    pool : (Connection.t, error) Eta_runtime.Pool.t;
-    blocking_pool : Eta_runtime.Effect.Blocking.Pool.t option;
-    default_timeout : Eta_runtime.Duration.t option;
+    pool : (Connection.t, error) Eta.Pool.t;
+    blocking_pool : Eta.Effect.Blocking.Pool.t option;
+    default_timeout : Eta.Duration.t option;
   }
 
   type tx_state = {
     conn : Connection.t;
-    blocking_pool : Eta_runtime.Effect.Blocking.Pool.t option;
-    default_timeout : Eta_runtime.Duration.t option;
+    blocking_pool : Eta.Effect.Blocking.Pool.t option;
+    default_timeout : Eta.Duration.t option;
   }
 
   (* A GADT keeps pool and transaction runners distinct while allowing the
@@ -1905,72 +1603,72 @@ module Eta_pool = struct
   type t = pool runner
 
   let lift_sql_result = function
-    | Ok value -> Eta_runtime.Effect.pure value
-    | Result.Error err -> Eta_runtime.Effect.fail (`Eta_sql err)
+    | Ok value -> Eta.Effect.pure value
+    | Result.Error err -> Eta.Effect.fail (`Eta_sql err)
 
   let blocking_result ?blocking_pool ?name f =
-    Eta_runtime.Effect.blocking ?pool:blocking_pool ?name f
-    |> Eta_runtime.Effect.bind lift_sql_result
+    Eta.Effect.blocking ?pool:blocking_pool ?name f
+    |> Eta.Effect.bind lift_sql_result
 
   let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
     let interrupt () = Sqlite.interrupt (Connection.sqlite conn) in
     let check_not_cancelled =
-      Eta_runtime.Effect.sync Eio.Fiber.check
+      Eta.Effect.sync Eio.Fiber.check
     in
     let query =
-      Eta_runtime.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:interrupt f
-      |> Eta_runtime.Effect.map (function
+      Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:interrupt f
+      |> Eta.Effect.map (function
            | Ok value -> `Query_ok value
            | Result.Error err -> `Query_error err)
     in
     let interrupt =
-      Eta_runtime.Effect.delay timeout
-        (Eta_runtime.Effect.sync interrupt
-        |> Eta_runtime.Effect.map (fun () -> `Timed_out))
+      Eta.Effect.delay timeout
+        (Eta.Effect.sync interrupt
+        |> Eta.Effect.map (fun () -> `Timed_out))
     in
-    Eta_runtime.Effect.race [ query; interrupt ]
-    |> Eta_runtime.Effect.bind (function
+    Eta.Effect.race [ query; interrupt ]
+    |> Eta.Effect.bind (function
          | `Query_ok value ->
              check_not_cancelled
-             |> Eta_runtime.Effect.map (fun () -> value)
+             |> Eta.Effect.map (fun () -> value)
          | `Query_error err ->
              check_not_cancelled
-             |> Eta_runtime.Effect.bind (fun () ->
-                    Eta_runtime.Effect.fail (`Eta_sql err))
-         | `Timed_out -> Eta_runtime.Effect.fail `Timeout)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.fail (`Eta_sql err))
+         | `Timed_out -> Eta.Effect.fail `Timeout)
 
   let acquire_connection ?blocking_pool sqlite =
     blocking_result ?blocking_pool ~name:"sqlite.open" (fun () ->
         Connection.create sqlite)
 
   let release_connection ?blocking_pool conn =
-    Eta_runtime.Effect.blocking ?pool:blocking_pool ~name:"sqlite.close" (fun () ->
+    Eta.Effect.blocking ?pool:blocking_pool ~name:"sqlite.close" (fun () ->
         Connection.close conn)
 
   let health_check ?blocking_pool conn =
-    Eta_runtime.Effect.blocking ?pool:blocking_pool ~name:"sqlite.ping" (fun () ->
+    Eta.Effect.blocking ?pool:blocking_pool ~name:"sqlite.ping" (fun () ->
         Connection.ping conn)
-    |> Eta_runtime.Effect.bind (fun healthy ->
+    |> Eta.Effect.bind (fun healthy ->
            if healthy then
-             Eta_runtime.Effect.unit
+             Eta.Effect.unit
            else
-             Eta_runtime.Effect.fail (`Eta_sql (Pool_error "connection health check failed")))
+             Eta.Effect.fail (`Eta_sql (Pool_error "connection health check failed")))
 
   let create ?blocking_pool ?default_timeout ?name ?(max_size = 10) ?max_idle
       ?idle_lifetime ?max_lifetime sqlite =
-    Eta_runtime.Pool.create ?name ~kind:"sql" ~max_size ?max_idle ?idle_lifetime
+    Eta.Pool.create ?name ~kind:"sql" ~max_size ?max_idle ?idle_lifetime
       ?max_lifetime ~acquire:(acquire_connection ?blocking_pool sqlite)
       ~release:(release_connection ?blocking_pool)
       ~health_check:(health_check ?blocking_pool) ()
-    |> Eta_runtime.Effect.map (fun pool ->
+    |> Eta.Effect.map (fun pool ->
            Pool_runner { pool; blocking_pool; default_timeout })
 
   let with_connection : type kind a.
-      kind runner -> (Connection.t -> (a, error) Eta_runtime.Effect.t) ->
-      (a, error) Eta_runtime.Effect.t =
+      kind runner -> (Connection.t -> (a, error) Eta.Effect.t) ->
+      (a, error) Eta.Effect.t =
    fun runner body ->
     match runner with
-    | Pool_runner state -> Eta_runtime.Pool.with_resource state.pool body
+    | Pool_runner state -> Eta.Pool.with_resource state.pool body
     | Tx_runner state -> body state.conn
 
   let blocking_pool : type kind. kind runner -> _ = function
@@ -2080,8 +1778,8 @@ module Eta_pool = struct
     let timeout = resolve_timeout runner timeout in
     let blocking_pool = blocking_pool runner in
     with_connection runner (fun conn ->
-        Eta_runtime.Effect.scoped
-          (Eta_runtime.Effect.acquire_release
+        Eta.Effect.scoped
+          (Eta.Effect.acquire_release
              ~acquire:
                (timed_blocking_result ?blocking_pool ~timeout ~conn
                   ~name:"sqlite.fold.prepare" (fun () ->
@@ -2090,14 +1788,14 @@ module Eta_pool = struct
                timed_blocking_result ?blocking_pool ~timeout ~conn
                  ~name:"sqlite.fold.finalize" (fun () ->
                    finalize_dynamic_statement conn stmt))
-          |> Eta_runtime.Effect.bind (fun stmt ->
+          |> Eta.Effect.bind (fun stmt ->
                  let rec loop acc =
                    timed_blocking_result ?blocking_pool ~timeout ~conn
                      ~name:"sqlite.fold.batch" (fun () ->
                        fetch_batch conn stmt batch_size)
-                   |> Eta_runtime.Effect.bind (fun (rows, done_) ->
+                   |> Eta.Effect.bind (fun (rows, done_) ->
                           let acc = List.fold_left f acc rows in
-                          if done_ then Eta_runtime.Effect.pure acc else loop acc)
+                          if done_ then Eta.Effect.pure acc else loop acc)
                  in
                  loop init)))
 
@@ -2108,8 +1806,8 @@ module Eta_pool = struct
     let timeout = resolve_timeout runner timeout in
     let blocking_pool = blocking_pool runner in
     with_connection runner (fun conn ->
-        Eta_runtime.Effect.scoped
-          (Eta_runtime.Effect.acquire_release
+        Eta.Effect.scoped
+          (Eta.Effect.acquire_release
              ~acquire:
                (timed_blocking_result ?blocking_pool ~timeout ~conn
                   ~name:"sqlite.select_fold.prepare" (fun () ->
@@ -2118,14 +1816,14 @@ module Eta_pool = struct
                timed_blocking_result ?blocking_pool ~timeout ~conn
                  ~name:"sqlite.select_fold.finalize" (fun () ->
                    finalize_dynamic_statement conn stmt))
-          |> Eta_runtime.Effect.bind (fun stmt ->
+          |> Eta.Effect.bind (fun stmt ->
                  let rec loop acc =
                    timed_blocking_result ?blocking_pool ~timeout ~conn
                      ~name:"sqlite.select_fold.batch" (fun () ->
                        fetch_typed_batch conn stmt batch_size query.decode)
-                   |> Eta_runtime.Effect.bind (fun (rows, done_) ->
+                   |> Eta.Effect.bind (fun (rows, done_) ->
                           let acc = List.fold_left f acc rows in
-                          if done_ then Eta_runtime.Effect.pure acc else loop acc)
+                          if done_ then Eta.Effect.pure acc else loop acc)
                  in
                  loop init)))
 
@@ -2161,21 +1859,21 @@ module Eta_pool = struct
   let with_transaction ?timeout (Pool_runner state as runner) body =
     let timeout = resolve_timeout runner timeout in
     let blocking_pool = state.blocking_pool in
-    Eta_runtime.Pool.with_resource state.pool (fun conn ->
+    Eta.Pool.with_resource state.pool (fun conn ->
         let committed = ref false in
-        Eta_runtime.Effect.scoped
-          (Eta_runtime.Effect.acquire_release
+        Eta.Effect.scoped
+          (Eta.Effect.acquire_release
              ~acquire:
                (timed_blocking_result ?blocking_pool ~timeout ~conn
                   ~name:"sqlite.begin_transaction" (fun () ->
                     Connection.begin_transaction conn))
              ~release:(fun () ->
                if !committed then
-                 Eta_runtime.Effect.unit
+                 Eta.Effect.unit
                else
                  timed_blocking_result ?blocking_pool ~timeout ~conn
                    ~name:"sqlite.rollback" (fun () -> Connection.rollback conn))
-          |> Eta_runtime.Effect.bind (fun () ->
+          |> Eta.Effect.bind (fun () ->
                  body
                    (Tx_runner
                       {
@@ -2183,17 +1881,17 @@ module Eta_pool = struct
                         blocking_pool;
                         default_timeout = Some timeout;
                       })
-                 |> Eta_runtime.Effect.bind (fun value ->
+                 |> Eta.Effect.bind (fun value ->
                         timed_blocking_result ?blocking_pool ~timeout ~conn
                           ~name:"sqlite.commit" (fun () -> Connection.commit conn)
-                        |> Eta_runtime.Effect.map (fun () ->
+                        |> Eta.Effect.map (fun () ->
                                committed := true;
                                value)))))
 
   let shutdown ?deadline (Pool_runner state) =
-    Eta_runtime.Pool.shutdown ?deadline state.pool
+    Eta.Pool.shutdown ?deadline state.pool
 
-  let stats (Pool_runner state) = Eta_runtime.Pool.stats state.pool
+  let stats (Pool_runner state) = Eta.Pool.stats state.pool
 end
 
 module Migrate = struct
@@ -2689,16 +2387,16 @@ module Migrate = struct
     | `Timeout -> Pool_error "operation timed out"
 
   let effect_of_result = function
-    | Ok value -> Eta_runtime.Effect.pure value
-    | Result.Error err -> Eta_runtime.Effect.fail err
+    | Ok value -> Eta.Effect.pure value
+    | Result.Error err -> Eta.Effect.fail err
 
   let with_pool_connection pool run =
     Eta_pool.with_connection pool (fun conn ->
-        Eta_runtime.Effect.sync (fun () -> run conn))
-    |> Eta_runtime.Effect.catch (fun err ->
-           Eta_runtime.Effect.pure
+        Eta.Effect.sync (fun () -> run conn))
+    |> Eta.Effect.catch (fun err ->
+           Eta.Effect.pure
              (Result.Error (Sql_error (sql_error_of_eta_pool_error err))))
-    |> Eta_runtime.Effect.bind effect_of_result
+    |> Eta.Effect.bind effect_of_result
 
   type applied_state = {
     applied_version : Version.t;
@@ -2881,16 +2579,16 @@ module Migrate = struct
 
   let run ?(config = Config.default) pool source =
     match Source.resolve source with
-    | Result.Error err -> Eta_runtime.Effect.fail err
+    | Result.Error err -> Eta.Effect.fail err
     | Ok migrations -> run_migrations config pool migrations
 
   let run_to ?(config = Config.default) pool source ~target =
     match Source.resolve source with
-    | Result.Error err -> Eta_runtime.Effect.fail err
+    | Result.Error err -> Eta.Effect.fail err
     | Ok migrations ->
         let up = up_migrations migrations in
         if not (List.exists (fun migration -> Version.equal migration.Migration.version target) up) then
-          Eta_runtime.Effect.fail (Version_not_present target)
+          Eta.Effect.fail (Version_not_present target)
         else
           let migrations =
             List.filter
@@ -2911,7 +2609,7 @@ module Migrate = struct
 
   let undo ?(config = Config.default) pool source ~target =
     match Source.resolve source with
-    | Result.Error err -> Eta_runtime.Effect.fail err
+    | Result.Error err -> Eta.Effect.fail err
     | Ok migrations ->
         with_pool_connection pool @@ fun conn ->
             match load_applied_states conn config with

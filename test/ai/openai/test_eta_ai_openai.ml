@@ -384,10 +384,10 @@ let test_responses_request_uses_responses_endpoint () =
   require_contains "responses body" ~needle:"\"input\":["
     (request_body_string request)
 
-let embedding_request () : A.embedding_request =
+let embedding_request () : A.Embedding.request =
   {
-    embedding_model = "text-embedding-3-small";
-    embedding_input = A.Embedding_text "hello eta";
+    model = "text-embedding-3-small";
+    input = A.Embedding.Text "hello eta";
     encoding_format = Some "float";
     dimensions = Some 3;
     user = Some "eta-test";
@@ -413,14 +413,14 @@ let test_image_generation_request_and_decode () =
   let request =
     O.image_generation_request ~api_key:(A.api_key "sk-test")
       {
-        A.image_model = Some "gpt-image-1";
-        image_prompt = "draw eta";
-        image_n = Some 1;
-        image_size = Some "1024x1024";
-        image_quality = None;
-        image_response_format = Some "url";
-        image_user = None;
-        image_extra = [];
+        A.Image.model = Some "gpt-image-1";
+        prompt = "draw eta";
+        n = Some 1;
+        size = Some "1024x1024";
+        quality = None;
+        response_format = Some "url";
+        user = None;
+        extra = [];
       }
     |> expect_ok "image request"
   in
@@ -434,7 +434,7 @@ let test_image_generation_request_and_decode () =
   | image :: _ ->
       Alcotest.(check (option string))
         "image url" (Some "https://example.test/image.png")
-        image.A.image_url
+        image.url
   | [] -> Alcotest.fail "expected generated image"
 
 let test_speech_runner () =
@@ -449,16 +449,16 @@ let test_speech_runner () =
     run_ok rt "speech runner"
       (O.speech client ~api_key:(A.api_key "sk-test")
          {
-           A.speech_model = "gpt-4o-mini-tts";
-           speech_input = "hello";
-           speech_voice = "alloy";
-           speech_response_format = Some "mp3";
-           speech_speed = Some 1.0;
-           speech_instructions = None;
-           speech_extra = [];
+           A.Speech.model = "gpt-4o-mini-tts";
+           input = "hello";
+           voice = "alloy";
+           response_format = Some "mp3";
+           speed = Some 1.0;
+           instructions = None;
+           extra = [];
          })
   in
-  Alcotest.(check string) "speech body" "MP3" (Bytes.to_string response.speech_audio);
+  Alcotest.(check string) "speech body" "MP3" (Bytes.to_string response.audio);
   match !captured with
   | Some request ->
       Alcotest.(check string)
@@ -469,14 +469,14 @@ let test_transcription_request_and_decode () =
   let request =
     O.transcription_request ~api_key:(A.api_key "sk-test")
       {
-        A.transcription_model = "gpt-4o-transcribe";
-        transcription_file =
+        A.Transcription.model = "gpt-4o-transcribe";
+        file =
           { filename = "sample.wav"; content_type = "audio/wav"; data = Bytes.of_string "RIFF" };
-        transcription_language = Some "en";
-        transcription_prompt = None;
-        transcription_response_format = Some "json";
-        transcription_temperature = Some 0.0;
-        transcription_extra_fields = [];
+        language = Some "en";
+        prompt = None;
+        response_format = Some "json";
+        temperature = Some 0.0;
+        extra_fields = [];
       }
     |> expect_ok "transcription request"
   in
@@ -489,7 +489,7 @@ let test_transcription_request_and_decode () =
     O.decode_transcription_response (read_fixture "transcription.json")
     |> expect_ok "transcription fixture"
   in
-  Alcotest.(check (option string)) "text" (Some "hello eta") response.transcription_text
+  Alcotest.(check (option string)) "text" (Some "hello eta") response.text
 
 let test_chat_and_responses_encode_audio_content () =
   let request =

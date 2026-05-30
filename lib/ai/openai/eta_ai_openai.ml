@@ -1,185 +1,48 @@
 module A = Eta_ai
 module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
-module Common = Common
 module H = Eta_http
 module Json = A.Json
 
-type structured_output = Common.structured_output = {
+type structured_output = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;
 }
 
-let structured_output = Common.structured_output
-let encode_chat = Chat.encode
-let encode_responses = Responses.encode
-let decode_chat = Chat.decode
-let decode_responses = Responses.decode
-let decode_stream_event = Stream_codec.decode_event
-let decode_error = Common.decode_error
+let schema_value = Codec.schema_value ~provider:"openai"
+
+let structured_output ?strict ~name ~schema_json () =
+  Codec.structured_output ~schema_value ?strict ~name ~schema_json ()
+
+let encode_chat ?structured_output request =
+  Codec.encode_chat ~provider:"openai" ~schema_value ?structured_output request
+
+let encode_responses ?structured_output request =
+  Codec.encode_responses ~provider:"openai" ~schema_value ?structured_output
+    request
+
+let decode_chat raw = Codec.decode_chat ~provider:"openai" raw
+let decode_responses raw = Codec.decode_responses ~provider:"openai" raw
+
+let decode_stream_event event =
+  Codec.decode_stream_event ~provider:"openai" event
+
+let decode_error ~status ~headers raw =
+  Codec.decode_error ~provider:"openai" ~status ~headers raw
+
 module Realtime = Realtime
 
 let decode_error_result ?raw message =
-  Stdlib.Error (A.Decode_error { provider = "openai"; message; raw })
+  Codec.decode_error_result ?raw ~provider:"openai" message
 
-let parse_json raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message -> decode_error_result ~raw message
+let parse_json raw = Codec.parse_json ~provider:"openai" raw
 
 let unsupported feature =
   Stdlib.Error (A.Unsupported { provider = "openai"; feature })
 
-let result_all values =
-  let rec loop acc = function
-    | [] -> Stdlib.Ok (List.rev acc)
-    | Stdlib.Ok value :: rest -> loop (value :: acc) rest
-    | Stdlib.Error _ as error :: _ -> error
-  in
-  loop [] values
-
-let non_empty_list label = function
-  | [] -> unsupported (label ^ " must not be empty")
-  | values -> Stdlib.Ok values
-
-let int_array values = Json.array (List.map Json.int values)
-
-let embedding_input_json (input : A.embedding_input) =
-  match input with
-  | A.Embedding_text text -> Stdlib.Ok (Json.string text)
-  | A.Embedding_texts texts -> (
-      match non_empty_list "embedding input" texts with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok texts -> Stdlib.Ok (Json.array (List.map Json.string texts)))
-  | A.Embedding_tokens tokens -> (
-      match non_empty_list "embedding token input" tokens with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tokens -> Stdlib.Ok (int_array tokens))
-  | A.Embedding_token_batches batches -> (
-      match non_empty_list "embedding token batch input" batches with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok batches -> (
-          match
-            result_all (List.map (non_empty_list "embedding token input") batches)
-          with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok batches ->
-              Stdlib.Ok (Json.array (List.map int_array batches))))
-  | A.Embedding_raw_json raw -> parse_json raw
-
-let positive_int label = function
-  | None -> Stdlib.Ok None
-  | Some value when value > 0 -> Stdlib.Ok (Some (Json.int value))
-  | Some _ -> unsupported (label ^ " must be positive")
-
-let optional_non_empty label = function
-  | None -> Stdlib.Ok None
-  | Some value when String.equal (String.trim value) "" ->
-      unsupported (label ^ " must not be empty")
-  | Some value -> Stdlib.Ok (Some value)
-
-let embedding_encoding_format = function
-  | None -> Stdlib.Ok None
-  | Some ("float" | "base64" as value) -> Stdlib.Ok (Some (Json.string value))
-  | Some _ -> unsupported "embedding encoding_format must be float or base64"
-
-let encode_embeddings_json (request : A.embedding_request) =
-  match embedding_input_json request.embedding_input with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok input -> (
-      match positive_int "embedding dimensions" request.dimensions with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok dimensions -> (
-      match embedding_encoding_format request.encoding_format with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok encoding_format -> (
-      match optional_non_empty "embedding user" request.user with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok user ->
-          Stdlib.Ok
-            (Json.object_
-               [
-                 ("model", Some (Json.string request.embedding_model));
-                 ("input", Some input);
-                 ("encoding_format", encoding_format);
-                 ("dimensions", dimensions);
-                 ("user", Option.map Json.string user);
-               ]))))
-
-let encode_embeddings request =
-  match encode_embeddings_json request with
-  | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
-  | Stdlib.Error _ as error -> error
-
-let decode_float ~raw json =
-  match json with
-  | `Float value -> Stdlib.Ok value
-  | `Int value -> Stdlib.Ok (float_of_int value)
-  | `Intlit value -> (
-      match float_of_string_opt value with
-      | Some value -> Stdlib.Ok value
-      | None -> decode_error_result ~raw "embedding vector contains invalid number")
-  | _ -> decode_error_result ~raw "embedding vector contains non-number value"
-
-let decode_embedding_vector ~raw json =
-  match json with
-  | `List values -> (
-      match result_all (List.map (decode_float ~raw) values) with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok values -> Stdlib.Ok (A.Embedding_float values))
-  | `String value -> Stdlib.Ok (A.Embedding_base64 value)
-  | _ -> decode_error_result ~raw "embedding must be a float array or base64 string"
-
-let decode_embedding_item ~raw json =
-  match Json.member "embedding" json with
-  | None -> decode_error_result ~raw "embedding item missing embedding"
-  | Some embedding_json -> (
-      match decode_embedding_vector ~raw embedding_json with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok embedding ->
-          Stdlib.Ok { A.embedding; embedding_index = Json.int_member "index" json })
-
-let embedding_usage json =
-  let input_tokens =
-    match Json.int_member "prompt_tokens" json with
-    | Some _ as value -> value
-    | None -> Json.int_member "input_tokens" json
-  in
-  let total_tokens = Json.int_member "total_tokens" json in
-  let raw_value name =
-    Json.scalar_string_member name json |> Option.value ~default:""
-  in
-  {
-    A.embedding_input_tokens = input_tokens;
-    embedding_total_tokens = total_tokens;
-    embedding_raw =
-      [
-        ("prompt_tokens", raw_value "prompt_tokens");
-        ("input_tokens", raw_value "input_tokens");
-        ("total_tokens", raw_value "total_tokens");
-      ];
-  }
-
-let decode_embeddings raw =
-  match parse_json raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json -> (
-      match Json.array_member "data" json with
-      | None -> decode_error_result ~raw "embeddings response missing data"
-      | Some data -> (
-          match result_all (List.map (decode_embedding_item ~raw) data) with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok embeddings ->
-              Stdlib.Ok
-                {
-                  A.embedding_id = Json.string_member "id" json;
-                  embedding_model = Json.string_member "model" json;
-                  embeddings;
-                  embedding_usage =
-                    Option.map embedding_usage (Json.object_member "usage" json);
-                  embedding_raw = Some raw;
-                }))
+let encode_embeddings = Codec.encode_embeddings ~provider:"openai"
+let decode_embeddings raw = Codec.decode_embeddings ~provider:"openai" raw
 
 let auth_headers api_key =
   Eta_http.Core.Header.unsafe_of_list
@@ -285,28 +148,28 @@ let join_url base path =
 let with_json_fields extra fields =
   Json.object_ (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
-let encode_image_generation (request : A.image_generation_request) =
-  if String.equal (String.trim request.image_prompt) "" then
+let encode_image_generation (request : A.Image.request) =
+  if String.equal (String.trim request.prompt) "" then
     unsupported "image prompt must not be empty"
   else
     Stdlib.Ok
-      (with_json_fields request.image_extra
+      (with_json_fields request.extra
          [
-           ("model", Option.map Json.string request.image_model);
-           ("prompt", Some (Json.string request.image_prompt));
-           ("n", Option.map Json.int request.image_n);
-           ("size", Option.map Json.string request.image_size);
-           ("quality", Option.map Json.string request.image_quality);
-           ("response_format", Option.map Json.string request.image_response_format);
-           ("user", Option.map Json.string request.image_user);
+           ("model", Option.map Json.string request.model);
+           ("prompt", Some (Json.string request.prompt));
+           ("n", Option.map Json.int request.n);
+           ("size", Option.map Json.string request.size);
+           ("quality", Option.map Json.string request.quality);
+           ("response_format", Option.map Json.string request.response_format);
+           ("user", Option.map Json.string request.user);
          ]
       |> Json.to_string)
 
 let generated_image json =
   {
-    A.image_url = Json.string_member "url" json;
-    image_base64 = Json.string_member "b64_json" json;
-    image_revised_prompt = Json.string_member "revised_prompt" json;
+    A.Image.url = Json.string_member "url" json;
+    base64 = Json.string_member "b64_json" json;
+    revised_prompt = Json.string_member "revised_prompt" json;
   }
 
 let decode_image_response raw =
@@ -318,20 +181,20 @@ let decode_image_response raw =
       | Some data ->
           Stdlib.Ok
             {
-              A.image_created = Json.int_member "created" json;
+              A.Image.created = Json.int_member "created" json;
               images = List.map generated_image data;
-              image_usage = Option.map Codec.usage (Json.object_member "usage" json);
-              image_raw = Some raw;
+              usage = Option.map Codec.usage (Json.object_member "usage" json);
+              raw = Some raw;
             })
 
-let encode_speech (request : A.speech_request) =
-  if String.equal (String.trim request.speech_input) "" then
+let encode_speech (request : A.Speech.request) =
+  if String.equal (String.trim request.input) "" then
     unsupported "speech input must not be empty"
-  else if String.equal (String.trim request.speech_voice) "" then
+  else if String.equal (String.trim request.voice) "" then
     unsupported "speech voice must not be empty"
   else
     let speed =
-      match request.speech_speed with
+      match request.speed with
       | None -> Stdlib.Ok None
       | Some value -> (
           match Json.float value with
@@ -342,21 +205,21 @@ let encode_speech (request : A.speech_request) =
     | Stdlib.Error _ as error -> error
     | Stdlib.Ok speed ->
         Stdlib.Ok
-          (with_json_fields request.speech_extra
+          (with_json_fields request.extra
              [
-               ("model", Some (Json.string request.speech_model));
-               ("input", Some (Json.string request.speech_input));
-               ("voice", Some (Json.string request.speech_voice));
-               ("response_format", Option.map Json.string request.speech_response_format);
+               ("model", Some (Json.string request.model));
+               ("input", Some (Json.string request.input));
+               ("voice", Some (Json.string request.voice));
+               ("response_format", Option.map Json.string request.response_format);
                ("speed", speed);
-               ("instructions", Option.map Json.string request.speech_instructions);
+               ("instructions", Option.map Json.string request.instructions);
              ]
           |> Json.to_string)
 
 let decode_speech_response (body, headers) =
   {
-    A.speech_content_type = H.Core.Header.get "content-type" headers;
-    speech_audio = body;
+    A.Speech.content_type = H.Core.Header.get "content-type" headers;
+    audio = body;
   }
 
 let decode_transcription_response raw =
@@ -365,9 +228,9 @@ let decode_transcription_response raw =
   | Stdlib.Ok json ->
       Stdlib.Ok
         {
-          A.transcription_text = Json.string_member "text" json;
-          transcription_usage = Option.map Codec.usage (Json.object_member "usage" json);
-          transcription_raw = Some raw;
+          A.Transcription.text = Json.string_member "text" json;
+          usage = Option.map Codec.usage (Json.object_member "usage" json);
+          raw = Some raw;
         }
 
 let safe_disposition_value label value =
@@ -387,31 +250,31 @@ let add_field buffer boundary name value =
   Buffer.add_string buffer value;
   Buffer.add_string buffer "\r\n"
 
-let multipart_transcription_body (request : A.transcription_request) =
-  match safe_disposition_value "transcription filename" request.transcription_file.filename with
+let multipart_transcription_body (request : A.Transcription.request) =
+  match safe_disposition_value "transcription filename" request.file.filename with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok filename ->
-      let boundary = multipart_boundary request.transcription_file in
-      let buffer = Buffer.create (Bytes.length request.transcription_file.data + 512) in
-      add_field buffer boundary "model" request.transcription_model;
-      Option.iter (add_field buffer boundary "language") request.transcription_language;
-      Option.iter (add_field buffer boundary "prompt") request.transcription_prompt;
+      let boundary = multipart_boundary request.file in
+      let buffer = Buffer.create (Bytes.length request.file.data + 512) in
+      add_field buffer boundary "model" request.model;
+      Option.iter (add_field buffer boundary "language") request.language;
+      Option.iter (add_field buffer boundary "prompt") request.prompt;
       Option.iter
         (add_field buffer boundary "response_format")
-        request.transcription_response_format;
+        request.response_format;
       Option.iter
         (fun value -> add_field buffer boundary "temperature" (Printf.sprintf "%.17g" value))
-        request.transcription_temperature;
+        request.temperature;
       List.iter
         (fun (name, value) -> add_field buffer boundary name value)
-        request.transcription_extra_fields;
+        request.extra_fields;
       Buffer.add_string buffer ("--" ^ boundary ^ "\r\n");
       Buffer.add_string buffer
         ("Content-Disposition: form-data; name=\"file\"; filename=\""
         ^ filename ^ "\"\r\n");
       Buffer.add_string buffer
-        ("Content-Type: " ^ request.transcription_file.content_type ^ "\r\n\r\n");
-      Buffer.add_bytes buffer request.transcription_file.data;
+        ("Content-Type: " ^ request.file.content_type ^ "\r\n\r\n");
+      Buffer.add_bytes buffer request.file.data;
       Buffer.add_string buffer ("\r\n--" ^ boundary ^ "--\r\n");
       Stdlib.Ok (boundary, Bytes.of_string (Buffer.contents buffer))
 

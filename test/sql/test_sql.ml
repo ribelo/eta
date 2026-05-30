@@ -350,9 +350,9 @@ let test_sql_select_subquery_cte_window () =
 let test_sql_invalid_query_errors () =
   match Q.Insert.(into Users.table |> compile) with
   | _ -> Alcotest.fail "empty insert unexpectedly compiled"
-  | exception Failure message ->
+  | exception Q.Error error ->
       Alcotest.(check string) "message"
-        "invalid query: INSERT requires at least one value" message
+        "invalid query: INSERT requires at least one value" (Q.show_error error)
 
 let test_sql_find_opt_rejects_many_rows () =
   let result =

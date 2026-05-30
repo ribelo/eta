@@ -1,4 +1,5 @@
 module A = Eta_ai
+module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module Json = A.Json
 
@@ -149,7 +150,8 @@ let create_client_secret ?base_url client ~api_key session =
                   | Stdlib.Error error -> E.fail error
                 else
                   E.fail
-                    (Common.decode_error ~status:response.status
+                    (Codec.decode_error ~provider:"openai"
+                       ~status:response.status
                        ~headers:response.headers raw)))
 
 type client_event =

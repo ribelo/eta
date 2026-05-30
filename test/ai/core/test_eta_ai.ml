@@ -123,28 +123,28 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
         (fun request ->
           Ok
             (Printf.sprintf "{\"model\":%S,\"input\":\"fixture\"}"
-               request.embedding_model));
+               request.model));
       decode_embeddings =
         (fun raw ->
           Ok
             {
-              embedding_id = Some "emb_fixture";
-              embedding_model = Some "gpt-fixture";
+              id = Some "emb_fixture";
+              model = Some "gpt-fixture";
               embeddings =
                 [
                   {
-                    embedding = Embedding_float [ 0.1; 0.2 ];
-                    embedding_index = Some 0;
+                    embedding = Embedding.Float [ 0.1; 0.2 ];
+                    index = Some 0;
                   };
                 ];
-              embedding_usage =
+              usage =
                 Some
                   {
-                    embedding_input_tokens = Some 2;
-                    embedding_total_tokens = Some 2;
-                    embedding_raw = [ ("provider", "fixture") ];
+                    input_tokens = Some 2;
+                    total_tokens = Some 2;
+                    raw = [ ("provider", "fixture") ];
                   };
-              embedding_raw = Some raw;
+              raw = Some raw;
             });
       decode_stream_event =
         (fun event ->
@@ -796,34 +796,34 @@ let test_telemetry_chat_span_records_genai_attrs_only () =
 
 let test_telemetry_streaming_and_embeddings_spans () =
   with_traced_runtime @@ fun rt tracer ->
-  let embeddings =
+  let embeddings : Embedding.request =
     {
-      embedding_model = "text-embedding-3-small";
-      embedding_input = Embedding_text "hello";
+      model = "text-embedding-3-small";
+      input = Embedding.Text "hello";
       encoding_format = Some "float";
       dimensions = None;
       user = None;
     }
   in
-  let embedding_response =
+  let embedding_response : Embedding.response =
     {
-      embedding_id = Some "emb_fixture";
-      embedding_model = Some "text-embedding-3-small";
+      id = Some "emb_fixture";
+      model = Some "text-embedding-3-small";
       embeddings =
         [
           {
-            embedding = Embedding_float [ 0.1; 0.2 ];
-            embedding_index = Some 0;
+            embedding = Embedding.Float [ 0.1; 0.2 ];
+            index = Some 0;
           };
         ];
-      embedding_usage =
+      usage =
         Some
           {
-            embedding_input_tokens = Some 9;
-            embedding_total_tokens = Some 9;
-            embedding_raw = [];
+            input_tokens = Some 9;
+            total_tokens = Some 9;
+            raw = [];
           };
-      embedding_raw = None;
+      raw = None;
     }
   in
   run_ok rt "stream and embeddings telemetry"

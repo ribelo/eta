@@ -61,7 +61,7 @@ type content =
 val audio_pcm16_base64 : ?transcript:string -> string -> content
 (** Build PCM16 audio content from provider-ready base64 data. *)
 
-val image_url : ?detail:string -> string -> content
+val url : ?detail:string -> string -> content
 (** Build image content from a provider-ready URL or data URL. *)
 
 val video_url : ?detail:string -> string -> content
@@ -127,156 +127,168 @@ type chat_request = {
   stream : bool;
 }
 
-type embedding_input =
-  | Embedding_text of string
-  | Embedding_texts of string list
-  | Embedding_tokens of int list
-  | Embedding_token_batches of int list list
-  | Embedding_raw_json of raw_json
-
-type embedding_request = {
-  embedding_model : model;
-  embedding_input : embedding_input;
-  encoding_format : string option;
-  dimensions : int option;
-  user : string option;
-}
-
-type embedding_vector =
-  | Embedding_float of float list
-  | Embedding_base64 of string
-
-type embedding = {
-  embedding : embedding_vector;
-  embedding_index : int option;
-}
-
-type embedding_usage = {
-  embedding_input_tokens : int option;
-  embedding_total_tokens : int option;
-  embedding_raw : (string * string) list;
-}
-
-type embedding_response = {
-  embedding_id : string option;
-  embedding_model : model option;
-  embeddings : embedding list;
-  embedding_usage : embedding_usage option;
-  embedding_raw : raw_json option;
-}
-
-type generated_image = {
-  image_url : string option;
-  image_base64 : string option;
-  image_revised_prompt : string option;
-}
-
-type image_generation_request = {
-  image_model : model option;
-  image_prompt : string;
-  image_n : int option;
-  image_size : string option;
-  image_quality : string option;
-  image_response_format : string option;
-  image_user : string option;
-  image_extra : (string * Json.t) list;
-}
-
-type image_response = {
-  image_created : int option;
-  images : generated_image list;
-  image_usage : usage option;
-  image_raw : raw_json option;
-}
-
 type binary_file = {
   filename : string;
   content_type : string;
   data : bytes;
 }
 
-type speech_request = {
-  speech_model : model;
-  speech_input : string;
-  speech_voice : string;
-  speech_response_format : string option;
-  speech_speed : float option;
-  speech_instructions : string option;
-  speech_extra : (string * Json.t) list;
-}
+module Embedding : sig
+  type input =
+    | Text of string
+    | Texts of string list
+    | Tokens of int list
+    | Token_batches of int list list
+    | Raw_json of raw_json
 
-type speech_response = {
-  speech_content_type : string option;
-  speech_audio : bytes;
-}
+  type request = {
+    model : model;
+    input : input;
+    encoding_format : string option;
+    dimensions : int option;
+    user : string option;
+  }
 
-type transcription_request = {
-  transcription_model : model;
-  transcription_file : binary_file;
-  transcription_language : string option;
-  transcription_prompt : string option;
-  transcription_response_format : string option;
-  transcription_temperature : float option;
-  transcription_extra_fields : (string * string) list;
-}
+  type vector =
+    | Float of float list
+    | Base64 of string
 
-type transcription_response = {
-  transcription_text : string option;
-  transcription_usage : usage option;
-  transcription_raw : raw_json option;
-}
+  type item = {
+    embedding : vector;
+    index : int option;
+  }
 
-type rerank_request = {
-  rerank_model : model;
-  rerank_query : string;
-  rerank_documents : string list;
-  rerank_top_n : int option;
-}
+  type usage = {
+    input_tokens : int option;
+    total_tokens : int option;
+    raw : (string * string) list;
+  }
 
-type rerank_result = {
-  rerank_index : int;
-  rerank_score : float option;
-  rerank_document : string option;
-}
+  type response = {
+    id : string option;
+    model : model option;
+    embeddings : item list;
+    usage : usage option;
+    raw : raw_json option;
+  }
+end
 
-type rerank_response = {
-  rerank_id : string option;
-  rerank_model : model option;
-  rerank_provider : string option;
-  rerank_results : rerank_result list;
-  rerank_usage : usage option;
-  rerank_raw : raw_json option;
-}
+module Image : sig
+  type generated = {
+    url : string option;
+    base64 : string option;
+    revised_prompt : string option;
+  }
 
-type video_request = {
-  video_model : model;
-  video_prompt : string;
-  video_aspect_ratio : string option;
-  video_duration : int option;
-  video_resolution : string option;
-  video_extra : (string * Json.t) list;
-}
+  type request = {
+    model : model option;
+    prompt : string;
+    n : int option;
+    size : string option;
+    quality : string option;
+    response_format : string option;
+    user : string option;
+    extra : (string * Json.t) list;
+  }
 
-type video_response = {
-  video_id : string;
-  video_generation_id : string option;
-  video_status : string option;
-  video_polling_url : string option;
-  video_urls : string list;
-  video_error : string option;
-  video_usage : usage option;
-  video_raw : raw_json option;
-}
+  type response = {
+    created : int option;
+    images : generated list;
+    usage : usage option;
+    raw : raw_json option;
+  }
+end
 
-type video_content_request = {
-  video_job_id : string;
-  video_index : int option;
-}
+module Speech : sig
+  type request = {
+    model : model;
+    input : string;
+    voice : string;
+    response_format : string option;
+    speed : float option;
+    instructions : string option;
+    extra : (string * Json.t) list;
+  }
 
-type video_content = {
-  video_content_type : string option;
-  video_bytes : bytes;
-}
+  type response = {
+    content_type : string option;
+    audio : bytes;
+  }
+end
+
+module Transcription : sig
+  type request = {
+    model : model;
+    file : binary_file;
+    language : string option;
+    prompt : string option;
+    response_format : string option;
+    temperature : float option;
+    extra_fields : (string * string) list;
+  }
+
+  type response = {
+    text : string option;
+    usage : usage option;
+    raw : raw_json option;
+  }
+end
+
+module Rerank : sig
+  type request = {
+    model : model;
+    query : string;
+    documents : string list;
+    top_n : int option;
+  }
+
+  type result = {
+    index : int;
+    score : float option;
+    document : string option;
+  }
+
+  type response = {
+    id : string option;
+    model : model option;
+    provider : string option;
+    results : result list;
+    usage : usage option;
+    raw : raw_json option;
+  }
+end
+
+module Video : sig
+  type request = {
+    model : model;
+    prompt : string;
+    aspect_ratio : string option;
+    duration : int option;
+    resolution : string option;
+    extra : (string * Json.t) list;
+  }
+
+  type response = {
+    id : string;
+    generation_id : string option;
+    status : string option;
+    polling_url : string option;
+    urls : string list;
+    error : string option;
+    usage : usage option;
+    raw : raw_json option;
+  }
+
+  type content_request = {
+    job_id : string;
+    index : int option;
+  }
+
+  type content = {
+    content_type : string option;
+    bytes : bytes;
+  }
+end
 
 type ai_error =
   | Eta_http_error of Eta_http.Error.t
@@ -300,6 +312,18 @@ type ai_error =
       provider : provider_name;
       feature : string;
     }
+
+module Json_helpers : sig
+  val decode_error_result :
+    ?raw:raw_json -> provider:provider_name -> string -> ('a, ai_error) result
+
+  val parse_json : provider:provider_name -> raw_json -> (Json.t, ai_error) result
+
+  val schema_value :
+    provider:provider_name -> string -> raw_json -> (Json.t, ai_error) result
+
+  val result_all : ('a, 'err) result list -> ('a list, 'err) result
+end
 
 type toolkit
 (** Ordered registry of provider tools. v1 stores caller-supplied raw JSON
@@ -373,8 +397,8 @@ type provider = {
   capabilities : capabilities;
   encode_chat : chat_request -> (raw_json, ai_error) result;
   decode_chat : raw_json -> (response, ai_error) result;
-  encode_embeddings : embedding_request -> (raw_json, ai_error) result;
-  decode_embeddings : raw_json -> (embedding_response, ai_error) result;
+  encode_embeddings : Embedding.request -> (raw_json, ai_error) result;
+  decode_embeddings : raw_json -> (Embedding.response, ai_error) result;
   decode_stream_event : sse_event -> (stream_event list, ai_error) result;
   decode_error : status:int -> headers:headers -> raw_json -> ai_error;
 }
@@ -398,7 +422,7 @@ val provider_embeddings_request :
 val embeddings_request :
   provider ->
   api_key:api_key ->
-  embedding_request ->
+  Embedding.request ->
   (Eta_http.Request.t, ai_error) result
 (** Encode and build a provider embeddings request. *)
 
@@ -413,7 +437,7 @@ val perform_embeddings :
   provider ->
   Eta_http.Client.t ->
   Eta_http.Request.t ->
-  (embedding_response, ai_error) Eta.Effect.t
+  (Embedding.response, ai_error) Eta.Effect.t
 (** Submit a provider request and decode an embeddings response. *)
 
 val perform_raw :
@@ -482,9 +506,9 @@ val with_stream_span :
 
 val with_embeddings_span :
   provider ->
-  embedding_request ->
-  (embedding_response, ai_error) Eta.Effect.t ->
-  (embedding_response, ai_error) Eta.Effect.t
+  Embedding.request ->
+  (Embedding.response, ai_error) Eta.Effect.t ->
+  (Embedding.response, ai_error) Eta.Effect.t
 (** Wrap an embeddings effect in an OTel GenAI client span. *)
 
 val with_tool_span :
@@ -530,22 +554,22 @@ module Provider : sig
 
   module type Embeddings = sig
     val encode :
-      provider:provider -> embedding_request -> (raw_json, ai_error) result
+      provider:provider -> Embedding.request -> (raw_json, ai_error) result
     val decode :
-      provider:provider -> raw_json -> (embedding_response, ai_error) result
+      provider:provider -> raw_json -> (Embedding.response, ai_error) result
 
     val request :
       provider:provider ->
       api_key:api_key ->
-      embedding_request ->
+      Embedding.request ->
       (Eta_http.Request.t, ai_error) result
 
     val run :
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      embedding_request ->
-      (embedding_response, ai_error) Eta.Effect.t
+      Embedding.request ->
+      (Embedding.response, ai_error) Eta.Effect.t
   end
 
   module type Images = sig
@@ -553,8 +577,8 @@ module Provider : sig
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      image_generation_request ->
-      (image_response, ai_error) Eta.Effect.t
+      Image.request ->
+      (Image.response, ai_error) Eta.Effect.t
   end
 
   module type Speech = sig
@@ -562,8 +586,8 @@ module Provider : sig
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      speech_request ->
-      (speech_response, ai_error) Eta.Effect.t
+      Speech.request ->
+      (Speech.response, ai_error) Eta.Effect.t
   end
 
   module type Transcriptions = sig
@@ -571,8 +595,8 @@ module Provider : sig
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      transcription_request ->
-      (transcription_response, ai_error) Eta.Effect.t
+      Transcription.request ->
+      (Transcription.response, ai_error) Eta.Effect.t
   end
 
   module type Rerank = sig
@@ -580,8 +604,8 @@ module Provider : sig
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      rerank_request ->
-      (rerank_response, ai_error) Eta.Effect.t
+      Rerank.request ->
+      (Rerank.response, ai_error) Eta.Effect.t
   end
 
   module type Video = sig
@@ -589,22 +613,22 @@ module Provider : sig
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      video_request ->
-      (video_response, ai_error) Eta.Effect.t
+      Video.request ->
+      (Video.response, ai_error) Eta.Effect.t
 
     val get :
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
       job_id:string ->
-      (video_response, ai_error) Eta.Effect.t
+      (Video.response, ai_error) Eta.Effect.t
 
     val content :
       provider:provider ->
       Eta_http.Client.t ->
       api_key:api_key ->
-      video_content_request ->
-      (video_content, ai_error) Eta.Effect.t
+      Video.content_request ->
+      (Video.content, ai_error) Eta.Effect.t
   end
 
   module Chat : Chat

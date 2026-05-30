@@ -31,9 +31,9 @@ eta-ai exposes effect wrappers:
       ('a, ai_error) Eta.Effect.t
 
     val with_embeddings_span :
-      provider -> embedding_request ->
-      (embedding_response, ai_error) Eta.Effect.t ->
-      (embedding_response, ai_error) Eta.Effect.t
+      provider -> Embedding.request ->
+      (Embedding.response, ai_error) Eta.Effect.t ->
+      (Embedding.response, ai_error) Eta.Effect.t
 
     val with_tool_span :
       ?tool_call_id:string ->

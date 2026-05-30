@@ -13,6 +13,9 @@ module S = Par_scheduler
    Set when a worker thread enters its drive loop, or when the caller
    of [Pool.run] registers itself as a transient worker. *)
 
+(* DLS sentinel only. [current_worker] compares it by physical identity before
+   returning; worker entry points overwrite [current_dls] with a real worker
+   before any scheduler field is read. *)
 let no_worker : S.worker = Obj.magic 0
 
 let current_dls = Domain.DLS.new_key (fun () -> no_worker)

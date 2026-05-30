@@ -116,12 +116,12 @@ Search:
 - lib/ai/openai/eta_ai_openai.mli:74:  (Eta_ai.raw_json, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:76:val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:77:val decode_responses : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:79:  Eta_ai.embedding_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:81:  Eta_ai.raw_json -> (Eta_ai.embedding_response, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:83:  Eta_ai.image_generation_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:85:  Eta_ai.raw_json -> (Eta_ai.image_response, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:87:  Eta_ai.speech_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:89:  Eta_ai.raw_json -> (Eta_ai.transcription_response, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:79:  Eta_ai.Embedding.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:81:  Eta_ai.raw_json -> (Eta_ai.Embedding.response, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:83:  Eta_ai.Image.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:85:  Eta_ai.raw_json -> (Eta_ai.Image.response, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:87:  Eta_ai.Speech.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:89:  Eta_ai.raw_json -> (Eta_ai.Transcription.response, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:91:  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:93:  status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
 - lib/ai/openai/eta_ai_openai.mli:99:  ?provider:Eta_ai.provider ->
@@ -134,19 +134,19 @@ Search:
 - lib/ai/openai/eta_ai_openai.mli:109:  (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:112:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:113:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:114:  Eta_ai.embedding_request ->
+- lib/ai/openai/eta_ai_openai.mli:114:  Eta_ai.Embedding.request ->
 - lib/ai/openai/eta_ai_openai.mli:115:  (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:118:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:119:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:120:  Eta_ai.image_generation_request ->
+- lib/ai/openai/eta_ai_openai.mli:120:  Eta_ai.Image.request ->
 - lib/ai/openai/eta_ai_openai.mli:121:  (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:124:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:125:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:126:  Eta_ai.speech_request ->
+- lib/ai/openai/eta_ai_openai.mli:126:  Eta_ai.Speech.request ->
 - lib/ai/openai/eta_ai_openai.mli:127:  (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:130:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:131:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:132:  Eta_ai.transcription_request ->
+- lib/ai/openai/eta_ai_openai.mli:132:  Eta_ai.Transcription.request ->
 - lib/ai/openai/eta_ai_openai.mli:133:  (Eta_http.Request.t, Eta_ai.ai_error) result
 - lib/ai/openai/eta_ai_openai.mli:137:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:138:  Eta_http.Client.t ->
@@ -161,23 +161,23 @@ Search:
 - lib/ai/openai/eta_ai_openai.mli:152:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:153:  Eta_http.Client.t ->
 - lib/ai/openai/eta_ai_openai.mli:154:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:155:  Eta_ai.embedding_request ->
-- lib/ai/openai/eta_ai_openai.mli:156:  (Eta_ai.embedding_response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:155:  Eta_ai.Embedding.request ->
+- lib/ai/openai/eta_ai_openai.mli:156:  (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:159:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:160:  Eta_http.Client.t ->
 - lib/ai/openai/eta_ai_openai.mli:161:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:162:  Eta_ai.image_generation_request ->
-- lib/ai/openai/eta_ai_openai.mli:163:  (Eta_ai.image_response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:162:  Eta_ai.Image.request ->
+- lib/ai/openai/eta_ai_openai.mli:163:  (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:166:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:167:  Eta_http.Client.t ->
 - lib/ai/openai/eta_ai_openai.mli:168:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:169:  Eta_ai.speech_request ->
-- lib/ai/openai/eta_ai_openai.mli:170:  (Eta_ai.speech_response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:169:  Eta_ai.Speech.request ->
+- lib/ai/openai/eta_ai_openai.mli:170:  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:173:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:174:  Eta_http.Client.t ->
 - lib/ai/openai/eta_ai_openai.mli:175:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/eta_ai_openai.mli:176:  Eta_ai.transcription_request ->
-- lib/ai/openai/eta_ai_openai.mli:177:  (Eta_ai.transcription_response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:176:  Eta_ai.Transcription.request ->
+- lib/ai/openai/eta_ai_openai.mli:177:  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:181:  ?provider:Eta_ai.provider ->
 - lib/ai/openai/eta_ai_openai.mli:182:  Eta_http.Client.t ->
 - lib/ai/openai/eta_ai_openai.mli:183:  api_key:Eta_ai.api_key ->

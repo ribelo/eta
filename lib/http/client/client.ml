@@ -7,6 +7,7 @@ module Dispatch = Dispatch
 module Error = Error
 module Header = Header
 module Url = Url
+module H2_proto = H2
 
 type protocol = H1 | H2 | Auto
 
@@ -37,33 +38,35 @@ let request t req = t.request_impl req
 let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
 
 
-let h1_body = function
-  | Request.Empty -> H1_client.Empty
-  | Fixed chunks -> H1_client.Fixed chunks
-  | Stream body -> H1_client.Stream body
-  | Rewindable_stream { length; make } ->
-      H1_client.Rewindable_stream { length; make }
+module H1 = struct
+  let body = function
+    | Request.Empty -> H1_client.Empty
+    | Fixed chunks -> H1_client.Fixed chunks
+    | Stream body -> H1_client.Stream body
+    | Rewindable_stream { length; make } ->
+        H1_client.Rewindable_stream { length; make }
 
-let h1_request_of_request request =
-  match
-    try Ok (Request.url request) with Invalid_argument message -> Error message
-  with
-  | Ok url ->
-      Ok
-        {
-          H1_client.method_ = request.Request.method_;
-          url;
-          headers = request.headers;
-          body = h1_body request.body;
-        }
-  | Error message ->
-      Error
-        (Error.make ~method_:request.method_ ~uri:request.uri
-           (Connection_protocol_violation { kind = "url"; message }))
+  let request_of_request request =
+    match
+      try Ok (Request.url request) with Invalid_argument message -> Error message
+    with
+    | Ok url ->
+        Ok
+          {
+            H1_client.method_ = request.Request.method_;
+            url;
+            headers = request.headers;
+            body = body request.body;
+          }
+    | Error message ->
+        Error
+          (Error.make ~method_:request.method_ ~uri:request.uri
+             (Connection_protocol_violation { kind = "url"; message }))
 
-let response_of_h1 (response : H1_client.response) =
-  Response.make ~status:response.H1_client.status
-    ~headers:response.headers ~trailers:response.trailers ~body:response.body ()
+  let response (response : H1_client.response) =
+    Response.make ~status:response.H1_client.status
+      ~headers:response.headers ~trailers:response.trailers ~body:response.body ()
+end
 
 let request_url request =
   match
@@ -93,354 +96,356 @@ let dispatch_alpn ~close ~use_h1 ~use_h2 request alpn =
   | Ok Dispatch.Use_h1 -> use_h1 ()
   | Ok Dispatch.Use_h2 -> use_h2 ()
 
-let h2_error request kind =
-  Error.make ~protocol:Error.H2 ~method_:request.Request.method_ ~uri:request.uri
-    kind
+module H2 = struct
+  let error request kind =
+    Error.make ~protocol:Error.H2 ~method_:request.Request.method_ ~uri:request.uri
+      kind
 
-let h2_protocol_violation request kind message =
-  h2_error request (Connection_protocol_violation { kind; message })
+  let protocol_violation request kind message =
+    error request (Connection_protocol_violation { kind; message })
 
-let h2_closed request during = h2_error request (Connection_closed { during })
+  let closed request during = error request (Connection_closed { during })
 
-let h2_pp_client_error = function
-  | `Malformed_response message -> "malformed_response:" ^ message
-  | `Invalid_response_body_length _ -> "invalid_response_body_length"
-  | `Protocol_error (code, message) ->
-      Format.asprintf "protocol_error:%a:%s" H2.Error_code.pp_hum code message
-  | `Exn exn -> "exn:" ^ Printexc.to_string exn
+  let pp_client_error = function
+    | `Malformed_response message -> "malformed_response:" ^ message
+    | `Invalid_response_body_length _ -> "invalid_response_body_length"
+    | `Protocol_error (code, message) ->
+        Format.asprintf "protocol_error:%a:%s" H2_proto.Error_code.pp_hum code message
+    | `Exn exn -> "exn:" ^ Printexc.to_string exn
 
-let h2_skip_header name =
-  match Header.normalize_name name with
-  | "connection" | "host" | "keep-alive" | "proxy-connection"
-  | "transfer-encoding" | "upgrade" ->
-      true
-  | normalized -> String.length normalized > 0 && Char.equal normalized.[0] ':'
+  let skip_header name =
+    match Header.normalize_name name with
+    | "connection" | "host" | "keep-alive" | "proxy-connection"
+    | "transfer-encoding" | "upgrade" ->
+        true
+    | normalized -> String.length normalized > 0 && Char.equal normalized.[0] ':'
 
-let h2_headers request url =
-  match Header.validate request.Request.headers with
-  | Some kind -> Error (h2_error request kind)
-  | None ->
-      let user_headers =
-        request.Request.headers
-        |> List.filter_map (fun (name, value) ->
-               if h2_skip_header name then None
-               else Some (Header.normalize_name name, value))
-      in
-      let has_content_length =
-        List.exists
-          (fun (name, _) -> String.equal (Header.normalize_name name) "content-length")
-          user_headers
-      in
-      let content_length =
-        if has_content_length then None
-        else
-          match request.body with
-          | Empty | Stream _ -> None
-          | Fixed chunks ->
-              Some
-                (chunks
-                |> List.fold_left
-                     (fun total chunk -> total + Bytes.length chunk)
-                     0)
-          | Rewindable_stream { length; _ } -> length
-      in
-      let user_headers =
-        match content_length with
-        | None -> user_headers
-        | Some length -> ("content-length", string_of_int length) :: user_headers
-      in
-      Ok (H2.Headers.of_list ((":authority", Url.authority url) :: user_headers))
+  let headers request url =
+    match Header.validate request.Request.headers with
+    | Some kind -> Error (error request kind)
+    | None ->
+        let user_headers =
+          request.Request.headers
+          |> List.filter_map (fun (name, value) ->
+                 if skip_header name then None
+                 else Some (Header.normalize_name name, value))
+        in
+        let has_content_length =
+          List.exists
+            (fun (name, _) -> String.equal (Header.normalize_name name) "content-length")
+            user_headers
+        in
+        let content_length =
+          if has_content_length then None
+          else
+            match request.body with
+            | Empty | Stream _ -> None
+            | Fixed chunks ->
+                Some
+                  (chunks
+                  |> List.fold_left
+                       (fun total chunk -> total + Bytes.length chunk)
+                       0)
+            | Rewindable_stream { length; _ } -> length
+        in
+        let user_headers =
+          match content_length with
+          | None -> user_headers
+          | Some length -> ("content-length", string_of_int length) :: user_headers
+        in
+        Ok (H2_proto.Headers.of_list ((":authority", Url.authority url) :: user_headers))
 
-let h2_method = function
-  | `GET -> `GET
-  | `HEAD -> `HEAD
-  | `POST -> `POST
-  | `PUT -> `PUT
-  | `DELETE -> `DELETE
-  | `CONNECT -> `CONNECT
-  | `OPTIONS -> `OPTIONS
-  | `TRACE -> `TRACE
-  | `PATCH -> `Other "PATCH"
-  | `Other method_ -> `Other method_
+  let method_ = function
+    | `GET -> `GET
+    | `HEAD -> `HEAD
+    | `POST -> `POST
+    | `PUT -> `PUT
+    | `DELETE -> `DELETE
+    | `CONNECT -> `CONNECT
+    | `OPTIONS -> `OPTIONS
+    | `TRACE -> `TRACE
+    | `PATCH -> `Other "PATCH"
+    | `Other method_ -> `Other method_
 
-let h2_request_of_request request url =
-  match h2_headers request url with
-  | Error _ as error -> error
-  | Ok headers ->
-      Ok
-        (H2.Request.create
-           ~scheme:(Url.scheme_to_string (Url.scheme url))
-           ~headers
-           (h2_method (Request.method_value request))
-           (Url.origin_form url))
+  let request_of_request request url =
+    match headers request url with
+    | Error _ as error -> error
+    | Ok headers ->
+        Ok
+          (H2_proto.Request.create
+             ~scheme:(Url.scheme_to_string (Url.scheme url))
+             ~headers
+             (method_ (Request.method_value request))
+             (Url.origin_form url))
 
-let h2_write_chunk writer chunk =
-  let chunk = Bytes.to_string chunk in
-  let rec loop off =
-    if off >= String.length chunk then Eta.Effect.unit
-    else
-      let len = min 16_384 (String.length chunk - off) in
-      Eta.Effect.sync (fun () ->
-          H2.Body.Writer.write_string writer (String.sub chunk off len))
-      |> Eta.Effect.bind (fun () -> loop (off + len))
-  in
-  loop 0
-
-let h2_flush_body_writer writer =
-  let promise, resolver = Eio.Promise.create () in
-  H2.Body.Writer.flush writer (fun result ->
-      ignore (Eio.Promise.try_resolve resolver result));
-  Eio.Promise.await promise
-
-let h2_write_fixed_body_sync writer chunks =
-  let write_chunk chunk =
-    let s = Bytes.unsafe_to_string chunk in
-    let len = Bytes.length chunk in
+  let write_chunk writer chunk =
+    let chunk = Bytes.to_string chunk in
     let rec loop off =
-      if off < len then (
-        let write_len = min 65_536 (len - off) in
-        H2.Body.Writer.write_string writer s ~off ~len:write_len;
-        match h2_flush_body_writer writer with
-        | `Written -> loop (off + write_len)
-        | `Closed -> ())
+      if off >= String.length chunk then Eta.Effect.unit
+      else
+        let len = min 16_384 (String.length chunk - off) in
+        Eta.Effect.sync (fun () ->
+            H2_proto.Body.Writer.write_string writer (String.sub chunk off len))
+        |> Eta.Effect.bind (fun () -> loop (off + len))
     in
     loop 0
-  in
-  List.iter write_chunk chunks;
-  H2.Body.Writer.close writer
 
-let rec h2_write_stream writer body =
-  Body.read body
-  |> Eta.Effect.bind (function
-       | None -> Eta.Effect.unit
-       | Some chunk ->
-           h2_write_chunk writer chunk
-           |> Eta.Effect.bind (fun () -> h2_write_stream writer body))
+  let flush_body_writer writer =
+    let promise, resolver = Eio.Promise.create () in
+    H2_proto.Body.Writer.flush writer (fun result ->
+        ignore (Eio.Promise.try_resolve resolver result));
+    Eio.Promise.await promise
 
-let h2_write_body writer request_body upload =
-  match upload with
-  | Some { Body_source.stream; _ } -> h2_write_stream writer stream
-  | None -> (
-      match request_body with
-      | Request.Empty -> Eta.Effect.unit
-      | Fixed chunks ->
-          chunks |> List.map (h2_write_chunk writer) |> Eta.Effect.concat
-      | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
-
-let h2_close_request_body writer =
-  Eta.Effect.sync (fun () -> try H2.Body.Writer.close writer with _ -> ())
-
-let h2_response_headers response =
-  H2.Headers.to_list response.H2.Response.headers
-  |> List.filter (fun (name, _) ->
-         String.length name = 0 || not (Char.equal name.[0] ':'))
-
-let h2_response_has_body request status =
-  (not (String.equal (String.uppercase_ascii request.Request.method_) "HEAD"))
-  && (status < 100 || status >= 200)
-  && status <> 204 && status <> 304
-
-let h2_trailer_result request =
-  let promise, resolver = Eio.Promise.create () in
-  let resolver_ref = ref (Some resolver) in
-  let resolve value =
-    match !resolver_ref with
-    | None -> ()
-    | Some resolver ->
-        resolver_ref := None;
-        Eio.Promise.resolve resolver value
-  in
-  let resolve_headers headers =
-    match Security.validate_headers headers with
-    | Some kind -> resolve (Error (h2_error request kind))
-    | None -> resolve (Ok headers)
-  in
-  let resolve_empty () = resolve (Ok Header.empty) in
-  let resolve_error error = resolve (Error error) in
-  let trailers () =
-    Eta.Effect.sync (fun () -> Eio.Promise.await promise)
-    |> Eta.Effect.bind (function
-         | Ok headers -> Eta.Effect.pure headers
-         | Error error -> Eta.Effect.fail error)
-  in
-  (trailers, resolve_headers, resolve_empty, resolve_error)
-
-let h2_informational_status status =
-  status >= 100 && status < 200 && status <> 101
-
-let request_h2_on_connection connection request url =
-  let mux = Connection.mux connection in
-  let result, resolver = Eio.Promise.create () in
-  let body_error = ref None in
-  let response_started = ref false in
-  let response_returned = ref false in
-  let body_wake = ref (fun () -> ()) in
-  let unregister_failure = ref (fun () -> ()) in
-  let trailers, resolve_trailers, resolve_empty_trailers, resolve_trailer_error =
-    h2_trailer_result request
-  in
-  let unregister () =
-    let f = !unregister_failure in
-    unregister_failure := (fun () -> ());
-    f ()
-  in
-  let resolve_result value = ignore (Eio.Promise.try_resolve resolver value) in
-  let resolve_error error =
-    unregister ();
-    resolve_result (Error error)
-  in
-  let set_body_error error =
-    body_error := Some error;
-    resolve_trailer_error error;
-    !body_wake ()
-  in
-  unregister_failure :=
-    Connection.register_failure_handler connection (fun kind ->
-        let error = h2_error request kind in
-        if !response_started then set_body_error error else resolve_error error);
-  let close_no_body stream body =
-    resolve_empty_trailers ();
-    H2.Body.Reader.close body;
-    Multiplexer.mark_complete mux stream;
-    ignore (Multiplexer.release mux stream);
-    unregister ()
-  in
-  let response_body stream body =
-    let body, wake =
-      Multiplexer.body_stream_async
-        ~closed_error:(h2_closed request Http_response)
-        ~poll_error:(fun () -> !body_error)
-        ~on_eof:(fun () ->
-          unregister ();
-          resolve_empty_trailers ())
-        ~on_release:(fun decision ->
-          unregister ();
-          resolve_trailer_error (h2_closed request Http_response);
-          Eta.Effect.sync (fun () ->
-              match decision with
-              | Stream_state.Queue_rst -> Connection.shutdown connection
-              | Stream_state.No_rst -> ()))
-        mux stream body
-    in
-    body_wake := wake;
-    body
-  in
-  let note_upload_error error =
-    if !response_started then set_body_error error else resolve_error error
-  in
-  let open_request h2_request =
-    Connection.request connection ~tag:0 h2_request
-      ~trailers_handler:(fun headers -> resolve_trailers (H2.Headers.to_list headers))
-      ~error_handler:(fun stream error ->
-        Multiplexer.mark_remote_reset mux
-          (Stream_state.id stream);
-        let error =
-          h2_protocol_violation request "stream" (h2_pp_client_error error)
-        in
-        if !response_started then set_body_error error else resolve_error error)
-      ~response_handler:(fun stream response body ->
-        let status = H2.Status.to_code response.H2.Response.status in
-        let headers = h2_response_headers response in
-        match Security.validate_headers headers with
-        | Some kind ->
-            H2.Body.Reader.close body;
-            ignore (Multiplexer.release mux stream);
-            resolve_error (h2_error request kind)
-        | None when h2_informational_status status -> ()
-        | None when h2_response_has_body request status ->
-            response_started := true;
-            let body = response_body stream body in
-            let response = Response.make ~status ~headers ~trailers ~body () in
-            resolve_result (Ok response)
-        | None ->
-            response_started := true;
-            let response =
-              Response.make ~status ~headers ~trailers ~body:(Body.empty ()) ()
-            in
-            resolve_result (Ok response);
-            close_no_body stream body)
-  in
-  let wait_for_response () =
-    Eta.Effect.sync (fun () -> Eio.Promise.await result)
-    |> Eta.Effect.bind (function
-         | Ok response ->
-             response_returned := true;
-             Eta.Effect.pure response
-         | Error error -> Eta.Effect.fail error)
-  in
-  match h2_request_of_request request url with
-  | Error error -> resolve_error error; Eta.Effect.fail error
-  | Ok h2_request -> (
-  match open_request h2_request with
-  | Error (Admission_rejected { limit }) ->
-      let error = h2_error request (Stream_admission_rejected { limit }) in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Error Connection_closed ->
-      let error = h2_closed request Http_request in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Error (Request_failed message) ->
-      let error = h2_protocol_violation request "request" message in
-      resolve_error error;
-      Eta.Effect.fail error
-  | Ok opened ->
-      let release_unreturned_request () =
-        if !response_returned then Eta.Effect.unit
-        else
-          Eta.Effect.sync (fun () ->
-              unregister ();
-              (try H2.Body.Writer.close opened.request_body with _ -> ());
-              match Multiplexer.release mux opened.stream with
-              | Stream_state.Queue_rst -> Connection.shutdown connection
-              | Stream_state.No_rst -> ())
+  let write_fixed_body_sync writer chunks =
+    let write_chunk chunk =
+      let s = Bytes.unsafe_to_string chunk in
+      let len = Bytes.length chunk in
+      let rec loop off =
+        if off < len then (
+          let write_len = min 65_536 (len - off) in
+          H2_proto.Body.Writer.write_string writer s ~off ~len:write_len;
+          match flush_body_writer writer with
+          | `Written -> loop (off + write_len)
+          | `Closed -> ())
       in
-      Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
-          let write_request =
-            h2_write_body opened.request_body request.body upload
-            |> Eta.Effect.bind (fun () -> h2_close_request_body opened.request_body)
-            |> Eta.Effect.catch (fun error ->
-                   if not !response_started then resolve_error error;
-                   Eta.Effect.fail error)
+      loop 0
+    in
+    List.iter write_chunk chunks;
+    H2_proto.Body.Writer.close writer
+
+  let rec write_stream writer body =
+    Body.read body
+    |> Eta.Effect.bind (function
+         | None -> Eta.Effect.unit
+         | Some chunk ->
+             write_chunk writer chunk
+             |> Eta.Effect.bind (fun () -> write_stream writer body))
+
+  let write_body writer request_body upload =
+    match upload with
+    | Some { Body_source.stream; _ } -> write_stream writer stream
+    | None -> (
+        match request_body with
+        | Request.Empty -> Eta.Effect.unit
+        | Fixed chunks ->
+            chunks |> List.map (write_chunk writer) |> Eta.Effect.concat
+        | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
+
+  let close_request_body writer =
+    Eta.Effect.sync (fun () -> try H2_proto.Body.Writer.close writer with _ -> ())
+
+  let response_headers response =
+    H2_proto.Headers.to_list response.H2_proto.Response.headers
+    |> List.filter (fun (name, _) ->
+           String.length name = 0 || not (Char.equal name.[0] ':'))
+
+  let response_has_body request status =
+    (not (String.equal (String.uppercase_ascii request.Request.method_) "HEAD"))
+    && (status < 100 || status >= 200)
+    && status <> 204 && status <> 304
+
+  let trailer_result request =
+    let promise, resolver = Eio.Promise.create () in
+    let resolver_ref = ref (Some resolver) in
+    let resolve value =
+      match !resolver_ref with
+      | None -> ()
+      | Some resolver ->
+          resolver_ref := None;
+          Eio.Promise.resolve resolver value
+    in
+    let resolve_headers headers =
+      match Security.validate_headers headers with
+      | Some kind -> resolve (Error (error request kind))
+      | None -> resolve (Ok headers)
+    in
+    let resolve_empty () = resolve (Ok Header.empty) in
+    let resolve_error error = resolve (Error error) in
+    let trailers () =
+      Eta.Effect.sync (fun () -> Eio.Promise.await promise)
+      |> Eta.Effect.bind (function
+           | Ok headers -> Eta.Effect.pure headers
+           | Error error -> Eta.Effect.fail error)
+    in
+    (trailers, resolve_headers, resolve_empty, resolve_error)
+
+  let informational_status status =
+    status >= 100 && status < 200 && status <> 101
+
+  let request_on_connection connection request url =
+    let mux = Connection.mux connection in
+    let result, resolver = Eio.Promise.create () in
+    let body_error = ref None in
+    let response_started = ref false in
+    let response_returned = ref false in
+    let body_wake = ref (fun () -> ()) in
+    let unregister_failure = ref (fun () -> ()) in
+    let trailers, resolve_trailers, resolve_empty_trailers, resolve_trailer_error =
+      trailer_result request
+    in
+    let unregister () =
+      let f = !unregister_failure in
+      unregister_failure := (fun () -> ());
+      f ()
+    in
+    let resolve_result value = ignore (Eio.Promise.try_resolve resolver value) in
+    let resolve_error error =
+      unregister ();
+      resolve_result (Error error)
+    in
+    let set_body_error error =
+      body_error := Some error;
+      resolve_trailer_error error;
+      !body_wake ()
+    in
+    unregister_failure :=
+      Connection.register_failure_handler connection (fun kind ->
+          let error = error request kind in
+          if !response_started then set_body_error error else resolve_error error);
+    let close_no_body stream body =
+      resolve_empty_trailers ();
+      H2_proto.Body.Reader.close body;
+      Multiplexer.mark_complete mux stream;
+      ignore (Multiplexer.release mux stream);
+      unregister ()
+    in
+    let response_body stream body =
+      let body, wake =
+        Multiplexer.body_stream_async
+          ~closed_error:(closed request Http_response)
+          ~poll_error:(fun () -> !body_error)
+          ~on_eof:(fun () ->
+            unregister ();
+            resolve_empty_trailers ())
+          ~on_release:(fun decision ->
+            unregister ();
+            resolve_trailer_error (closed request Http_response);
+            Eta.Effect.sync (fun () ->
+                match decision with
+                | Stream_state.Queue_rst -> Connection.shutdown connection
+                | Stream_state.No_rst -> ()))
+          mux stream body
+      in
+      body_wake := wake;
+      body
+    in
+    let note_upload_error error =
+      if !response_started then set_body_error error else resolve_error error
+    in
+    let open_request h2_request =
+      Connection.request connection ~tag:0 h2_request
+        ~trailers_handler:(fun headers -> resolve_trailers (H2_proto.Headers.to_list headers))
+        ~error_handler:(fun stream error ->
+          Multiplexer.mark_remote_reset mux
+            (Stream_state.id stream);
+          let error =
+            protocol_violation request "stream" (pp_client_error error)
           in
-          let response_or_writer =
+          if !response_started then set_body_error error else resolve_error error)
+        ~response_handler:(fun stream response body ->
+          let status = H2_proto.Status.to_code response.H2_proto.Response.status in
+          let headers = response_headers response in
+          match Security.validate_headers headers with
+          | Some kind ->
+              H2_proto.Body.Reader.close body;
+              ignore (Multiplexer.release mux stream);
+              resolve_error (error request kind)
+          | None when informational_status status -> ()
+          | None when response_has_body request status ->
+              response_started := true;
+              let body = response_body stream body in
+              let response = Response.make ~status ~headers ~trailers ~body () in
+              resolve_result (Ok response)
+          | None ->
+              response_started := true;
+              let response =
+                Response.make ~status ~headers ~trailers ~body:(Body.empty ()) ()
+              in
+              resolve_result (Ok response);
+              close_no_body stream body)
+    in
+    let wait_for_response () =
+      Eta.Effect.sync (fun () -> Eio.Promise.await result)
+      |> Eta.Effect.bind (function
+           | Ok response ->
+               response_returned := true;
+               Eta.Effect.pure response
+           | Error error -> Eta.Effect.fail error)
+    in
+    match request_of_request request url with
+    | Error error -> resolve_error error; Eta.Effect.fail error
+    | Ok h2_request -> (
+    match open_request h2_request with
+    | Error (Admission_rejected { limit }) ->
+        let error = error request (Stream_admission_rejected { limit }) in
+        resolve_error error;
+        Eta.Effect.fail error
+    | Error Connection_closed ->
+        let error = closed request Http_request in
+        resolve_error error;
+        Eta.Effect.fail error
+    | Error (Request_failed message) ->
+        let error = protocol_violation request "request" message in
+        resolve_error error;
+        Eta.Effect.fail error
+    | Ok opened ->
+        let release_unreturned_request () =
+          if !response_returned then Eta.Effect.unit
+          else
+            Eta.Effect.sync (fun () ->
+                unregister ();
+                (try H2_proto.Body.Writer.close opened.request_body with _ -> ());
+                match Multiplexer.release mux opened.stream with
+                | Stream_state.Queue_rst -> Connection.shutdown connection
+                | Stream_state.No_rst -> ())
+        in
+        Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
+            let write_request =
+              write_body opened.request_body request.body upload
+              |> Eta.Effect.bind (fun () -> close_request_body opened.request_body)
+              |> Eta.Effect.catch (fun error ->
+                     if not !response_started then resolve_error error;
+                     Eta.Effect.fail error)
+            in
+            let response_or_writer =
+              match request.body with
+              | Empty ->
+                  close_request_body opened.request_body
+                  |> Eta.Effect.bind (fun () -> wait_for_response ())
+              | Fixed [] ->
+                  close_request_body opened.request_body
+                  |> Eta.Effect.bind (fun () -> wait_for_response ())
+              | Fixed chunks ->
+                  Eta.Effect.sync (fun () ->
+                      Connection.fork_daemon connection (fun () ->
+                          try write_fixed_body_sync opened.request_body chunks
+                          with exn ->
+                            let error =
+                              protocol_violation request "request_body"
+                                (Printexc.to_string exn)
+                            in
+                            note_upload_error error))
+                  |> Eta.Effect.bind (fun () -> wait_for_response ())
+              | Stream _ | Rewindable_stream _ ->
+                  Eta.Effect.race
+                    [
+                      wait_for_response ();
+                      write_request |> Eta.Effect.bind (fun () -> wait_for_response ());
+                    ]
+            in
             match request.body with
-            | Empty ->
-                h2_close_request_body opened.request_body
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Fixed [] ->
-                h2_close_request_body opened.request_body
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Fixed chunks ->
-                Eta.Effect.sync (fun () ->
-                    Connection.fork_daemon connection (fun () ->
-                        try h2_write_fixed_body_sync opened.request_body chunks
-                        with exn ->
-                          let error =
-                            h2_protocol_violation request "request_body"
-                              (Printexc.to_string exn)
-                          in
-                          note_upload_error error))
-                |> Eta.Effect.bind (fun () -> wait_for_response ())
-            | Stream _ | Rewindable_stream _ ->
-                Eta.Effect.race
-                  [
-                    wait_for_response ();
-                    write_request |> Eta.Effect.bind (fun () -> wait_for_response ());
-                  ]
-          in
-          match request.body with
-          | Fixed _ -> response_or_writer
-          | Empty | Stream _ | Rewindable_stream _ ->
-              Eta.Effect.scoped
-                (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-                   ~release:(fun () -> h2_close_request_body opened.request_body)
-                |> Eta.Effect.bind (fun () -> response_or_writer)))
-      |> fun request_effect ->
-      Eta.Effect.scoped
-        (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-           ~release:release_unreturned_request
-        |> Eta.Effect.bind (fun () -> request_effect)))
+            | Fixed _ -> response_or_writer
+            | Empty | Stream _ | Rewindable_stream _ ->
+                Eta.Effect.scoped
+                  (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+                     ~release:(fun () -> close_request_body opened.request_body)
+                  |> Eta.Effect.bind (fun () -> response_or_writer)))
+        |> fun request_effect ->
+        Eta.Effect.scoped
+          (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+             ~release:release_unreturned_request
+          |> Eta.Effect.bind (fun () -> request_effect)))
+end
 
 let make_h1 ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
@@ -460,13 +465,13 @@ let make_h1 ~sw ~net
                pool)
   in
   let request_impl request =
-    match h1_request_of_request request with
+    match H1.request_of_request request with
     | Error error -> Eta.Effect.fail error
     | Ok request ->
         pool_for request
         |> Eta.Effect.bind (fun pool ->
                H1_client.request_with_pool pool request)
-        |> Eta.Effect.map response_of_h1
+        |> Eta.Effect.map H1.response
   in
   let stats_impl () =
     Eta.Effect.sync (fun () ->
@@ -502,12 +507,12 @@ let make_h1_direct ~sw ~net ?host_eio
     invalid_arg
       "Eta_http.Client.make_h1_direct: max_response_body_bytes must be >= 0";
   let request_impl request =
-    match h1_request_of_request request with
+    match H1.request_of_request request with
     | Error error -> Eta.Effect.fail error
     | Ok request ->
         H1_client.request ~max_response_body_bytes ?host_eio ?ca_file ~sw ~net
           request
-        |> Eta.Effect.map response_of_h1
+        |> Eta.Effect.map H1.response
   in
   let stats_impl () =
     Eta.Effect.pure
@@ -565,19 +570,19 @@ let make ~sw ~net
         try Eio.Flow.close flow with _ -> ())
   in
   let h1_on_flow flow request =
-    match h1_request_of_request request with
+    match H1.request_of_request request with
     | Error error -> close_counted flow |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
     | Ok h1_request ->
         H1_client.request_on_flow ~release:(fun () -> close_counted flow)
           ~max_response_body_bytes ~flow h1_request
-        |> Eta.Effect.map response_of_h1
+        |> Eta.Effect.map H1.response
   in
   let h2_on_connection connection request url =
     last_protocol := H2;
-    request_h2_on_connection connection request url
+    H2.request_on_connection connection request url
   in
   let h2_config =
-    { H2.Config.default with
+    { H2_proto.Config.default with
       read_buffer_size = 131072;
       response_body_buffer_size = 131072;
       request_body_buffer_size = 131072;
@@ -675,6 +680,6 @@ let make_for_test ~protocol ~request ~stats ~shutdown =
 
 module For_test = struct
   let dispatch_alpn = dispatch_alpn
-  let h2_informational_status = h2_informational_status
-  let request_h2_on_connection = request_h2_on_connection
+  let h2_informational_status = H2.informational_status
+  let request_h2_on_connection = H2.request_on_connection
 end

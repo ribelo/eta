@@ -118,55 +118,6 @@ let encode_chat = encode_responses
 let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 let decode_chat = decode_responses
 
-let invalid_embeddings message =
-  Stdlib.Error (A.Unsupported { provider = "openrouter"; feature = message })
-
-let non_empty_list label = function
-  | [] -> invalid_embeddings (label ^ " must not be empty")
-  | values -> Stdlib.Ok values
-
-let int_array values = Json.array (List.map Json.int values)
-
-let embedding_input_json (input : A.embedding_input) =
-  match input with
-  | A.Embedding_text text -> Stdlib.Ok (Json.string text)
-  | A.Embedding_texts texts -> (
-      match non_empty_list "embedding input" texts with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok texts -> Stdlib.Ok (Json.array (List.map Json.string texts)))
-  | A.Embedding_tokens tokens -> (
-      match non_empty_list "embedding token input" tokens with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tokens -> Stdlib.Ok (int_array tokens))
-  | A.Embedding_token_batches batches -> (
-      match non_empty_list "embedding token batch input" batches with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok batches -> (
-          match
-            Codec.result_all
-              (List.map (non_empty_list "embedding token input") batches)
-          with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok batches ->
-              Stdlib.Ok (Json.array (List.map int_array batches))))
-  | A.Embedding_raw_json raw -> parse_json raw
-
-let dimensions_json = function
-  | None -> Stdlib.Ok None
-  | Some dimensions when dimensions > 0 -> Stdlib.Ok (Some (Json.int dimensions))
-  | Some _ -> invalid_embeddings "embedding dimensions must be positive"
-
-let optional_non_empty label = function
-  | None -> Stdlib.Ok None
-  | Some value when String.equal (String.trim value) "" ->
-      invalid_embeddings (label ^ " must not be empty")
-  | Some value -> Stdlib.Ok (Some value)
-
-let encoding_format_json = function
-  | None -> Stdlib.Ok None
-  | Some ("float" | "base64" as value) -> Stdlib.Ok (Some (Json.string value))
-  | Some _ -> invalid_embeddings "embedding encoding_format must be float or base64"
-
 let add_input_type input_type json =
   match input_type with
   | None -> Stdlib.Ok json
@@ -183,113 +134,25 @@ let add_input_type input_type json =
                  raw = Some (Json.to_string json);
                }))
 
-let encode_embeddings_json ?routing ?input_type (request : A.embedding_request)
-    =
-  match embedding_input_json request.embedding_input with
+let encode_embeddings_json ?routing ?input_type request =
+  match Codec.encode_embeddings_json ~provider:"openrouter" request with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok input -> (
-      match dimensions_json request.dimensions with
+  | Stdlib.Ok json -> (
+      match Codec.optional_non_empty ~provider:"openrouter" "embedding input_type" input_type with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok dimensions -> (
-      match encoding_format_json request.encoding_format with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok encoding_format -> (
-      match optional_non_empty "embedding user" request.user with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok user -> (
-      match optional_non_empty "embedding input_type" input_type with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok input_type ->
-          let json =
-            Json.object_
-              [
-                ("model", Some (Json.string request.embedding_model));
-                ("input", Some input);
-                ("encoding_format", encoding_format);
-                ("dimensions", dimensions);
-                ("user", Option.map Json.string user);
-              ]
-          in
+      | Stdlib.Ok input_type -> (
           match add_routing routing json with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok json -> add_input_type input_type json))))
+          | Stdlib.Ok json -> add_input_type input_type json))
 
 let encode_embeddings ?routing ?input_type request =
   match encode_embeddings_json ?routing ?input_type request with
   | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
   | Stdlib.Error _ as error -> error
 
-let decode_float ~raw json =
-  match json with
-  | `Float value -> Stdlib.Ok value
-  | `Int value -> Stdlib.Ok (float_of_int value)
-  | `Intlit value -> (
-      match float_of_string_opt value with
-      | Some value -> Stdlib.Ok value
-      | None ->
-          decode_error_result ~raw "embedding vector contains invalid number")
-  | _ -> decode_error_result ~raw "embedding vector contains non-number value"
-
-let decode_embedding_vector ~raw json =
-  match json with
-  | `List values -> (
-      match Codec.result_all (List.map (decode_float ~raw) values) with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok values -> Stdlib.Ok (A.Embedding_float values))
-  | `String value -> Stdlib.Ok (A.Embedding_base64 value)
-  | _ -> decode_error_result ~raw "embedding must be a float array or base64 string"
-
-let decode_embedding_item ~raw json =
-  match Json.member "embedding" json with
-  | None -> decode_error_result ~raw "embedding item missing embedding"
-  | Some embedding_json -> (
-      match decode_embedding_vector ~raw embedding_json with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok embedding ->
-          Stdlib.Ok
-            { A.embedding; embedding_index = Json.int_member "index" json })
-
-let embedding_usage json =
-  let input_tokens =
-    match Json.int_member "prompt_tokens" json with
-    | Some _ as value -> value
-    | None -> Json.int_member "input_tokens" json
-  in
-  let total_tokens = Json.int_member "total_tokens" json in
-  let raw_value name =
-    Json.scalar_string_member name json |> Option.value ~default:""
-  in
-  {
-    A.embedding_input_tokens = input_tokens;
-    embedding_total_tokens = total_tokens;
-    embedding_raw =
-      [
-        ("prompt_tokens", raw_value "prompt_tokens");
-        ("input_tokens", raw_value "input_tokens");
-        ("total_tokens", raw_value "total_tokens");
-        ("cost", raw_value "cost");
-      ];
-  }
-
 let decode_embeddings raw =
-  match parse_json raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json -> (
-      match Json.array_member "data" json with
-      | None -> decode_error_result ~raw "embeddings response missing data"
-      | Some data -> (
-          match Codec.result_all (List.map (decode_embedding_item ~raw) data) with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok embeddings ->
-              Stdlib.Ok
-                {
-                  A.embedding_id = Json.string_member "id" json;
-                  embedding_model = Json.string_member "model" json;
-                  embeddings;
-                  embedding_usage =
-                    Option.map embedding_usage (Json.object_member "usage" json);
-                  embedding_raw = Some raw;
-                }))
+  Codec.decode_embeddings ~usage_extra_raw_names:[ "cost" ] ~provider:"openrouter"
+    raw
 
 let openrouter_error_json ?status ?raw json =
   Codec.provider_error_json ?status ?raw ~nested_response_error:true
@@ -414,31 +277,31 @@ let base64_encode input =
   loop 0;
   Buffer.contents out
 
-let encode_speech (request : A.speech_request) =
-  if String.equal (String.trim request.speech_input) "" then
+let encode_speech (request : A.Speech.request) =
+  if String.equal (String.trim request.input) "" then
     invalid_routing "speech input must not be empty"
-  else if String.equal (String.trim request.speech_voice) "" then
+  else if String.equal (String.trim request.voice) "" then
     invalid_routing "speech voice must not be empty"
-  else if Option.is_some request.speech_instructions then
+  else if Option.is_some request.instructions then
     invalid_routing "speech instructions"
   else
-    let speed = Option.bind request.speech_speed Json.float in
-    if Option.is_some request.speech_speed && Option.is_none speed then
+    let speed = Option.bind request.speed Json.float in
+    if Option.is_some request.speed && Option.is_none speed then
       invalid_routing "speech speed must be finite"
     else
       Stdlib.Ok
-        (with_json_fields request.speech_extra
+        (with_json_fields request.extra
            [
-             ("model", Some (Json.string request.speech_model));
-             ("input", Some (Json.string request.speech_input));
-             ("voice", Some (Json.string request.speech_voice));
-             ("response_format", Option.map Json.string request.speech_response_format);
+             ("model", Some (Json.string request.model));
+             ("input", Some (Json.string request.input));
+             ("voice", Some (Json.string request.voice));
+             ("response_format", Option.map Json.string request.response_format);
              ("speed", speed);
            ]
         |> Json.to_string)
 
 let decode_speech_response (body, headers) =
-  { A.speech_content_type = H.Core.Header.get "content-type" headers; speech_audio = body }
+  { A.Speech.content_type = H.Core.Header.get "content-type" headers; audio = body }
 
 let transcription_format (file : A.binary_file) =
   let content_type = String.lowercase_ascii file.content_type in
@@ -457,26 +320,26 @@ let transcription_format (file : A.binary_file) =
   else if has "aac" then Stdlib.Ok "aac"
   else invalid_routing "transcription file content_type must identify a supported audio format"
 
-let encode_transcription (request : A.transcription_request) =
-  if Option.is_some request.transcription_prompt then
+let encode_transcription (request : A.Transcription.request) =
+  if Option.is_some request.prompt then
     invalid_routing "transcription prompt"
-  else if Option.is_some request.transcription_response_format then
+  else if Option.is_some request.response_format then
     invalid_routing "transcription response_format"
-  else if request.transcription_extra_fields <> [] then
+  else if request.extra_fields <> [] then
     invalid_routing "transcription extra fields"
   else
-  match transcription_format request.transcription_file with
+  match transcription_format request.file with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok format ->
-      let data = base64_encode (Bytes.to_string request.transcription_file.data) in
-      let temperature = Option.bind request.transcription_temperature Json.float in
-      if Option.is_some request.transcription_temperature && Option.is_none temperature then
+      let data = base64_encode (Bytes.to_string request.file.data) in
+      let temperature = Option.bind request.temperature Json.float in
+      if Option.is_some request.temperature && Option.is_none temperature then
         invalid_routing "transcription temperature must be finite"
       else
         Stdlib.Ok
           (Json.object_
              [
-               ("model", Some (Json.string request.transcription_model));
+               ("model", Some (Json.string request.model));
                (
                  "input_audio",
                  Some
@@ -485,7 +348,7 @@ let encode_transcription (request : A.transcription_request) =
                         ("data", Some (Json.string data));
                         ("format", Some (Json.string format));
                       ]) );
-               ("language", Option.map Json.string request.transcription_language);
+               ("language", Option.map Json.string request.language);
                ("temperature", temperature);
              ]
           |> Json.to_string)
@@ -496,22 +359,22 @@ let decode_transcription raw =
   | Stdlib.Ok json ->
       Stdlib.Ok
         {
-          A.transcription_text = Json.string_member "text" json;
-          transcription_usage = Option.map Codec.usage (Json.object_member "usage" json);
-          transcription_raw = Some raw;
+          A.Transcription.text = Json.string_member "text" json;
+          usage = Option.map Codec.usage (Json.object_member "usage" json);
+          raw = Some raw;
         }
 
-let encode_rerank (request : A.rerank_request) =
-  match non_empty_list "rerank documents" request.rerank_documents with
+let encode_rerank (request : A.Rerank.request) =
+  match Codec.non_empty_list ~provider:"openrouter" "rerank documents" request.documents with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok documents ->
       Stdlib.Ok
         (Json.object_
            [
-             ("model", Some (Json.string request.rerank_model));
-             ("query", Some (Json.string request.rerank_query));
+             ("model", Some (Json.string request.model));
+             ("query", Some (Json.string request.query));
              ("documents", Some (Json.array (List.map Json.string documents)));
-             ("top_n", Option.map Json.int request.rerank_top_n);
+             ("top_n", Option.map Json.int request.top_n);
            ]
         |> Json.to_string)
 
@@ -528,9 +391,9 @@ let rerank_result json =
       (Json.string_member "text")
   in
   match Json.int_member "index" json with
-  | Some rerank_index ->
+  | Some index ->
       Stdlib.Ok
-        { A.rerank_index; rerank_score = float_member "relevance_score" json; rerank_document = document }
+        { A.Rerank.index; score = float_member "relevance_score" json; document = document }
   | None -> decode_error_result "rerank result missing index"
 
 let decode_rerank raw =
@@ -542,33 +405,33 @@ let decode_rerank raw =
       | Some results -> (
           match Codec.result_all (List.map rerank_result results) with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok rerank_results ->
+          | Stdlib.Ok results ->
               Stdlib.Ok
                 {
-                  A.rerank_id = Json.string_member "id" json;
-                  rerank_model = Json.string_member "model" json;
-                  rerank_provider = Json.string_member "provider" json;
-                  rerank_results;
-                  rerank_usage = Option.map Codec.usage (Json.object_member "usage" json);
-                  rerank_raw = Some raw;
+                  A.Rerank.id = Json.string_member "id" json;
+                  model = Json.string_member "model" json;
+                  provider = Json.string_member "provider" json;
+                  results;
+                  usage = Option.map Codec.usage (Json.object_member "usage" json);
+                  raw = Some raw;
                 }))
 
-let encode_video (request : A.video_request) =
-  if String.equal (String.trim request.video_prompt) "" then
+let encode_video (request : A.Video.request) =
+  if String.equal (String.trim request.prompt) "" then
     invalid_routing "video prompt must not be empty"
   else
     Stdlib.Ok
-      (with_json_fields request.video_extra
+      (with_json_fields request.extra
          [
-           ("model", Some (Json.string request.video_model));
-           ("prompt", Some (Json.string request.video_prompt));
-           ("aspect_ratio", Option.map Json.string request.video_aspect_ratio);
-           ("duration", Option.map Json.int request.video_duration);
-           ("resolution", Option.map Json.string request.video_resolution);
+           ("model", Some (Json.string request.model));
+           ("prompt", Some (Json.string request.prompt));
+           ("aspect_ratio", Option.map Json.string request.aspect_ratio);
+           ("duration", Option.map Json.int request.duration);
+           ("resolution", Option.map Json.string request.resolution);
          ]
       |> Json.to_string)
 
-let video_usage json =
+let usage json =
   let raw_value name = Json.scalar_string_member name json |> Option.value ~default:"" in
   { A.input_tokens = None; output_tokens = None; total_tokens = None; raw = [ ("cost", raw_value "cost"); ("is_byok", raw_value "is_byok") ] }
 
@@ -578,19 +441,19 @@ let decode_video raw =
   | Stdlib.Ok json -> (
       match Json.string_member "id" json with
       | None -> decode_error_result ~raw "video response missing id"
-      | Some video_id ->
+      | Some id ->
           Stdlib.Ok
             {
-              A.video_id;
-              video_generation_id = Json.string_member "generation_id" json;
-              video_status = Json.string_member "status" json;
-              video_polling_url = Json.string_member "polling_url" json;
-              video_urls =
+              A.Video.id;
+              generation_id = Json.string_member "generation_id" json;
+              status = Json.string_member "status" json;
+              polling_url = Json.string_member "polling_url" json;
+              urls =
                 Json.array_member "unsigned_urls" json |> Option.value ~default:[]
                 |> List.filter_map (function `String value -> Some value | _ -> None);
-              video_error = Json.string_member "error" json;
-              video_usage = Option.map video_usage (Json.object_member "usage" json);
-              video_raw = Some raw;
+              error = Json.string_member "error" json;
+              usage = Option.map usage (Json.object_member "usage" json);
+              raw = Some raw;
             })
 
 let validate_job_id job_id =
@@ -600,30 +463,30 @@ let validate_job_id job_id =
   else Stdlib.Ok job_id
 
 let decode_video_content (body, headers) =
-  { A.video_content_type = H.Core.Header.get "content-type" headers; video_bytes = body }
+  { A.Video.content_type = H.Core.Header.get "content-type" headers; bytes = body }
 
-let encode_image_generation (request : A.image_generation_request) =
-  match request.image_model with
+let encode_image_generation (request : A.Image.request) =
+  match request.model with
   | None -> invalid_routing "image generation model is required"
   | Some model ->
-      if String.equal (String.trim request.image_prompt) "" then
+      if String.equal (String.trim request.prompt) "" then
         invalid_routing "image generation prompt must not be empty"
-      else if Option.is_some request.image_n then invalid_routing "image generation n"
-      else if Option.is_some request.image_quality then
+      else if Option.is_some request.n then invalid_routing "image generation n"
+      else if Option.is_some request.quality then
         invalid_routing "image generation quality"
-      else if Option.is_some request.image_response_format then
+      else if Option.is_some request.response_format then
         invalid_routing "image generation response_format"
-      else if Option.is_some request.image_user then
+      else if Option.is_some request.user then
         invalid_routing "image generation user"
       else
         let image_config =
-          match request.image_size with
+          match request.size with
           | None -> None
-          | Some image_size ->
-              Some (Json.object_ [ ("image_size", Some (Json.string image_size)) ])
+          | Some size ->
+              Some (Json.object_ [ ("image_size", Some (Json.string size)) ])
         in
         Stdlib.Ok
-          (with_json_fields request.image_extra
+          (with_json_fields request.extra
              [
                ("model", Some (Json.string model));
                (
@@ -634,7 +497,7 @@ let encode_image_generation (request : A.image_generation_request) =
                         Json.object_
                           [
                             ("role", Some (Json.string "user"));
-                            ("content", Some (Json.string request.image_prompt));
+                            ("content", Some (Json.string request.prompt));
                           ];
                       ]) );
                (
@@ -659,20 +522,20 @@ let decode_image_generation raw =
                        let image_json = Json.object_member "image_url" item in
                        let url = Option.bind image_json (Json.string_member "url") in
                        Option.map
-                         (fun image_url ->
+                         (fun url ->
                            {
-                             A.image_url = Some image_url;
-                             image_base64 = None;
-                             image_revised_prompt = None;
+                             A.Image.url = Some url;
+                             base64 = None;
+                             revised_prompt = None;
                            })
                          url)
               in
               Stdlib.Ok
                 {
-                  A.image_created = Json.int_member "created" json;
+                  A.Image.created = Json.int_member "created" json;
                   images;
-                  image_usage = Option.map Codec.usage (Json.object_member "usage" json);
-                  image_raw = Some raw;
+                  usage = Option.map Codec.usage (Json.object_member "usage" json);
+                  raw = Some raw;
                 })
       | _ -> decode_error_result ~raw "image generation response missing choices")
 
@@ -786,12 +649,13 @@ let video_get ?provider:custom_provider client ~api_key ~job_id =
              | Stdlib.Ok response -> E.pure response
              | Stdlib.Error error -> E.fail error)
 
-let video_content_request ?provider:custom_provider ~api_key request =
+let video_content_request ?provider:custom_provider ~api_key
+    (request : A.Video.content_request) =
   let provider = Option.value ~default:(provider ()) custom_provider in
-  match validate_job_id request.A.video_job_id with
+  match validate_job_id request.job_id with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok job_id ->
-      let index = Option.value ~default:0 request.video_index in
+      let index = Option.value ~default:0 request.index in
       if index < 0 then invalid_routing "video content index must be non-negative"
       else
         Stdlib.Ok

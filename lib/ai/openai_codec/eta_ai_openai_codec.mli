@@ -32,6 +32,31 @@ val schema_value :
   Eta_ai.raw_json ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
+val non_empty_list :
+  provider:string -> string -> 'a list -> ('a list, Eta_ai.ai_error) result
+
+val optional_non_empty :
+  provider:string ->
+  string ->
+  string option ->
+  (string option, Eta_ai.ai_error) result
+
+val encode_embeddings_json :
+  provider:string ->
+  Eta_ai.Embedding.request ->
+  (Eta_ai.Json.t, Eta_ai.ai_error) result
+
+val encode_embeddings :
+  provider:string ->
+  Eta_ai.Embedding.request ->
+  (Eta_ai.raw_json, Eta_ai.ai_error) result
+
+val decode_embeddings :
+  ?usage_extra_raw_names:string list ->
+  provider:string ->
+  Eta_ai.raw_json ->
+  (Eta_ai.Embedding.response, Eta_ai.ai_error) result
+
 val content_text : Eta_ai.content -> string
 val contents_text : Eta_ai.content list -> string
 val message_item : string -> Eta_ai.content list -> Eta_ai.Json.t

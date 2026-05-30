@@ -7,7 +7,7 @@
   (names turso_stubs)
   (flags :standard))
  (c_library_flags :standard -ldl)
- (libraries eta eta_sql unix threads))
+ (libraries eta eta_sql eta_sql_dsl unix threads))
 
 (env
  (release

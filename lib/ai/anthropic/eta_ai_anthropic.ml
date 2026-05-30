@@ -13,22 +13,10 @@ let prompt_cache ?(beta_header = "prompt-caching-2024-07-31")
   { beta_header; cache_system }
 
 let decode_error_result ?raw message =
-  Stdlib.Error (A.Decode_error { provider = "anthropic"; message; raw })
+  A.Json_helpers.decode_error_result ?raw ~provider:"anthropic" message
 
 let parse_raw_json label raw =
-  match Json.parse raw with
-  | Stdlib.Ok json -> Stdlib.Ok json
-  | Stdlib.Error message ->
-      decode_error_result ~raw
-        (Printf.sprintf "%s must be valid JSON: %s" label message)
-
-let result_all values =
-  let rec loop acc = function
-    | [] -> Stdlib.Ok (List.rev acc)
-    | Stdlib.Ok value :: rest -> loop (value :: acc) rest
-    | Stdlib.Error _ as error :: _ -> error
-  in
-  loop [] values
+  A.Json_helpers.schema_value ~provider:"anthropic" label raw
 
 let contents_text contents =
   contents
@@ -67,7 +55,8 @@ let content_block = function
         (A.Unsupported
            { provider = "anthropic"; feature = "video content" })
 
-let content_blocks contents = result_all (List.map content_block contents)
+let content_blocks contents =
+  A.Json_helpers.result_all (List.map content_block contents)
 
 let tool_use_block (call : A.tool_call) =
   match
@@ -110,7 +99,7 @@ let message_json (message : A.message) =
       match content_blocks content with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok content_blocks -> (
-          match result_all (List.map tool_use_block tool_calls) with
+          match A.Json_helpers.result_all (List.map tool_use_block tool_calls) with
           | Stdlib.Error _ as error -> error
           | Stdlib.Ok tool_blocks ->
               Stdlib.Ok
@@ -186,10 +175,10 @@ let encode_messages ?prompt_cache (request : A.chat_request) =
       match temperature with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok temperature -> (
-          match result_all (List.map message_json request.prompt) with
+          match A.Json_helpers.result_all (List.map message_json request.prompt) with
           | Stdlib.Error _ as error -> error
           | Stdlib.Ok messages -> (
-              match result_all (List.map tool_json request.tools) with
+              match A.Json_helpers.result_all (List.map tool_json request.tools) with
               | Stdlib.Error _ as error -> error
               | Stdlib.Ok tools ->
                   Stdlib.Ok

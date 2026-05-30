@@ -56,8 +56,8 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
 
     let embeddings =
       {
-        Eta_ai.embedding_model = "openai/text-embedding-3-small";
-        embedding_input = Eta_ai.Embedding_text "weather in Warsaw";
+        Eta_ai.Embedding.model = "openai/text-embedding-3-small";
+        input = Eta_ai.Embedding.Text "weather in Warsaw";
         encoding_format = Some "float";
         dimensions = Some 1536;
         user = None;
