@@ -8,6 +8,7 @@ depends: [
   "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta_ai"
+  "base64"
   "odoc" {with-doc}
 ]
 build: [

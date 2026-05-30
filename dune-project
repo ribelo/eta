@@ -202,7 +202,8 @@
   (ocaml (= 5.2.0))
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
-  eta_ai))
+  eta_ai
+  base64))
 
 (package
  (name eta_ai_openai)
