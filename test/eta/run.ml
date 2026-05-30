@@ -264,6 +264,12 @@ let () =
             test_blocking_cpu_antipattern_has_no_speedup;
           Alcotest.test_case "observability labels timings" `Quick
             test_blocking_observability_labels_and_timings;
+          Alcotest.test_case "user Exit not swallowed as interrupt" `Quick
+            test_blocking_user_exit_not_swallowed_as_interrupt;
+          Alcotest.test_case "eio cancellation preserves Cancelled identity" `Quick
+            test_blocking_eio_cancellation_preserves_cancelled_identity;
+          Alcotest.test_case "cause_of_exn distinguishes Exit from Cancelled" `Quick
+            test_cause_of_exn_distinguishes_exit_from_cancelled;
         ] );
       ( "Supervisor",
         [

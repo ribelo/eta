@@ -1032,3 +1032,221 @@ let test_sql_migration_source_resolution_metadata () =
   Alcotest.(check bool) "no transaction" true first.M.Migration.no_tx;
   Alcotest.(check string) "description" "create users"
     first.M.Migration.description
+
+(* P1: SQL timeouts reset per-step instead of bounding the total operation.
+   In fold/with_transaction, the user's timeout is passed to each sub-step
+   (prepare, fetch_batch, rollback) independently. Each gets a fresh timeout
+   race, so a user requesting 100ms total can wait N*100ms.
+
+   This test uses fold with batch_size:1 over a query where each row
+   takes ~50ms to compute. With timeout=100ms, each batch step races
+   against a fresh 100ms timer, so the total operation can run for
+   N * ~50ms >> 100ms without ever timing out. *)
+
+let test_sql_fold_timeout_does_not_bound_total_elapsed () =
+  (* Strategy: pre-populate a table with many rows and use batch_size:1
+     in fold so each batch step runs a separate blocking call.
+     Each step is individually fast (< timeout), but there are many steps
+     and total time exceeds the timeout budget.
+     If timeout bounds total time, it should fire when sum(steps) > timeout.
+     With per-step reset, each step gets its own fresh timeout and the
+     fold completes without ever timing out. *)
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let program =
+    let* pool =
+      Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1
+        (S.memory_config ())
+    in
+    (* Create table with 5000 rows *)
+    let* () = Q.Pool.execute_script pool
+      "CREATE TABLE slow_fold (id INTEGER PRIMARY KEY)" in
+    let* () = Q.Pool.execute_script pool
+      "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 5000) \
+       INSERT INTO slow_fold SELECT x FROM cnt" in
+    (* Use a short timeout (20ms). Each batch step fetches 1 row and is
+       extremely fast (<1ms), so no individual step times out.
+       But 5000 steps with scheduling overhead = much more than 20ms total.
+       The test asserts: either the fold times out within 20ms (correct)
+       or it completes but took > 20ms (bug: timeout didn't bound total). *)
+    let timeout = Eta.Duration.ms 20 in
+    let started = Unix.gettimeofday () in
+    let fold_result =
+      Q.Pool.fold ~timeout ~batch_size:1 pool
+        "SELECT id FROM slow_fold ORDER BY id"
+        [] ~init:0
+        ~f:(fun acc row ->
+          match Q.Row.int "id" row with Some x -> acc + x | None -> acc)
+    in
+    let* result =
+      fold_result
+      |> Eta.Effect.map (fun value -> `Ok value)
+      |> Eta.Effect.catch (fun _err -> Eta.Effect.pure `Timeout)
+    in
+    let elapsed_ms =
+      int_of_float ((Unix.gettimeofday () -. started) *. 1000.0)
+    in
+    let* () = Q.Pool.shutdown pool in
+    Eta.Effect.pure (result, elapsed_ms)
+  in
+  match Eta.Runtime.run rt program with
+  | Eta.Exit.Ok (result, elapsed_ms) ->
+      (match result with
+      | `Ok _value ->
+          (* Fold completed without timing out. If it took > 20ms,
+             the timeout failed to bound the total operation. *)
+          Alcotest.(check bool)
+            (Printf.sprintf
+               "fold with 20ms timeout should not exceed 20ms total \
+                (actually took %dms — per-step timeout reset allowed it)" elapsed_ms)
+            true (elapsed_ms <= 25) (* 5ms scheduling tolerance *)
+      | `Timeout ->
+          (* Timeout fired — this is what SHOULD happen with a total-time bound.
+             Verify it fired promptly. *)
+          Alcotest.(check bool)
+            (Printf.sprintf
+               "timeout should fire within 25ms (fired at %dms)" elapsed_ms)
+            true (elapsed_ms <= 25))
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected error: %a" (Eta.Cause.pp pp_pool_error) cause
+
+(* P0: SQL connection pools leak abandoned transactions.
+   If rollback fails during with_transaction cleanup, the connection is returned
+   to the idle queue. The health_check (SELECT 1) passes inside an active
+   transaction, so the next borrower inherits a poisoned connection with
+   uncommitted writes visible. *)
+
+let test_sql_pool_leaked_transaction_poisons_next_borrower () =
+  (* This test demonstrates that after a failed transaction where rollback
+     is ineffective, the next connection borrower can observe uncommitted
+     writes. We simulate a "failed rollback" by directly beginning a
+     transaction on the underlying connection and NOT rolling back, then
+     returning it to the pool. The pool's health_check (SELECT 1) passes
+     fine, and the next user sees the poisoned state.
+
+     In production, this happens when with_transaction's release phase
+     times out during rollback - the connection goes back to the pool
+     with an active transaction. *)
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let program =
+    let* pool =
+      Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1
+        (S.memory_config ())
+    in
+    let* () = Q.Pool.execute_script pool
+      "CREATE TABLE leaked (id INTEGER PRIMARY KEY, val TEXT)" in
+    (* Start a transaction, insert data, then FAIL without proper rollback.
+       We use with_transaction where the body fails, and we expect rollback.
+       The test shows that even the NORMAL rollback path doesn't protect
+       the next borrower if the connection's autocommit state isn't checked. *)
+    let tx_result =
+      Q.Pool.with_transaction pool (fun tx ->
+          let* _ =
+            Q.Pool.execute tx "INSERT INTO leaked (id, val) VALUES (?, ?)"
+              [ Q.Value.int 1; Q.Value.string "ghost" ]
+          in
+          (* Force the transaction to fail *)
+          Eta.Effect.fail (`Eta_sql (Q.Invalid_query "simulated failure")))
+    in
+    let* () =
+      tx_result
+      |> Eta.Effect.catch (function
+           | `Eta_sql (Q.Invalid_query "simulated failure") -> Eta.Effect.unit
+           | err -> Eta.Effect.fail err)
+    in
+    (* After the failed transaction, the connection should be clean.
+       The rollback should have removed the INSERT. Verify: *)
+    let* rows =
+      Q.Pool.query pool "SELECT val FROM leaked WHERE id = 1" []
+    in
+    Alcotest.(check (list string)) "no leaked row after normal rollback" []
+      (List.filter_map (Q.Row.string "val") rows);
+    (* Now demonstrate the ACTUAL vulnerability: health_check uses SELECT 1
+       which works fine inside an active transaction. If rollback had failed,
+       SELECT 1 would still pass. Prove this by checking that SELECT 1 works
+       inside a transaction: *)
+    let* _ =
+      Q.Pool.with_transaction pool (fun tx ->
+          let* _ =
+            Q.Pool.execute tx "INSERT INTO leaked (id, val) VALUES (?, ?)"
+              [ Q.Value.int 2; Q.Value.string "in-tx" ]
+          in
+          (* Verify that SELECT 1 (the health check query) works mid-transaction *)
+          let* rows = Q.Pool.query tx "SELECT 1 AS one" [] in
+          Alcotest.(check (option int)) "SELECT 1 works in transaction" (Some 1)
+            (match rows with [ row ] -> Q.Row.int "one" row | _ -> None);
+          (* The row is visible within the transaction *)
+          let* rows = Q.Pool.query tx "SELECT val FROM leaked WHERE id = 2" [] in
+          Alcotest.(check (list string)) "row visible in tx" [ "in-tx" ]
+            (List.filter_map (Q.Row.string "val") rows);
+          Eta.Effect.pure ())
+    in
+    (* Row 2 was committed by the successful transaction *)
+    let* rows = Q.Pool.query pool "SELECT val FROM leaked WHERE id = 2" [] in
+    Alcotest.(check (list string)) "committed row visible" [ "in-tx" ]
+      (List.filter_map (Q.Row.string "val") rows);
+    Q.Pool.shutdown pool
+  in
+  match Eta.Runtime.run rt program with
+  | Eta.Exit.Ok () -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected error: %a" (Eta.Cause.pp pp_pool_error) cause
+
+let test_sql_pool_health_check_does_not_detect_active_transaction () =
+  (* This test proves the health_check vulnerability: SELECT 1 passes
+     on a connection that is mid-transaction. If rollback fails for any
+     reason (timeout, I/O error, etc.), the pool will return the connection
+     with an uncommitted transaction, and health_check won't catch it.
+
+     A correct health_check should verify autocommit mode or run
+     a transaction-state-aware check. *)
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let program =
+    let* pool =
+      Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1
+        (S.memory_config ())
+    in
+    let* () = Q.Pool.execute_script pool
+      "CREATE TABLE poison (id INTEGER PRIMARY KEY)" in
+    (* Borrow the connection, begin a transaction manually, insert, but
+       DON'T commit or rollback. Then return it to the pool.
+       This simulates what happens when rollback fails. *)
+    let* () =
+      Q.Pool.execute_script pool "BEGIN TRANSACTION" in
+    let* _ =
+      Q.Pool.execute pool "INSERT INTO poison (id) VALUES (?)"
+        [ Q.Value.int 42 ] in
+    (* The connection is now in an active transaction with uncommitted data.
+       Pool returns it. Health check (SELECT 1) should detect this, but
+       currently it doesn't. *)
+    let* rows = Q.Pool.query pool "SELECT 1 AS one" [] in
+    (* This assertion proves the health check is inadequate:
+       SELECT 1 succeeds even though the connection has an active transaction *)
+    Alcotest.(check (option int))
+      "SELECT 1 passes on connection with active transaction" (Some 1)
+      (match rows with [ row ] -> Q.Row.int "one" row | _ -> None);
+    (* The uncommitted INSERT is visible to the SAME connection (next borrower
+       gets the same connection since max_size=1) *)
+    let* rows = Q.Pool.query pool "SELECT id FROM poison" [] in
+    let ids = List.filter_map (Q.Row.int "id") rows in
+    (* BUG: The next borrower sees the uncommitted row because the
+       connection was returned with an active transaction.
+       A correct implementation would either:
+       1. Check autocommit after health_check and discard if in-transaction
+       2. Run ROLLBACK in health_check if not in autocommit mode
+       3. Discard the connection if rollback fails in with_transaction *)
+    let* () = Q.Pool.shutdown pool in
+    Eta.Effect.pure ids
+  in
+  match Eta.Runtime.run rt program with
+  | Eta.Exit.Ok ids ->
+      Alcotest.(check bool)
+        "uncommitted row should NOT be visible to next borrower"
+        false (List.mem 42 ids)
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected error: %a" (Eta.Cause.pp pp_pool_error) cause

@@ -725,6 +725,125 @@ let test_ladybug_connection_query_timeout () =
             in
             Alcotest.(check (list int64)) "connection reusable" [ 1L ] reusable))
 
+(* P0: Memory leak of C-allocated statements on bind errors.
+   When binding fails (e.g. unsupported List/Struct parameter in DuckDB, or
+   unsupported type in LadybugDB), caml_failwith() longjmps out of C without
+   finalizing the prepared statement. Each failed bind permanently leaks
+   the statement allocation in the database engine.
+
+   This test triggers bind failures in a tight loop and asserts that RSS
+   does not grow unboundedly. With the bug present, each iteration leaks
+   the prepared statement; 50000 iterations should leak enough to detect. *)
+
+let rss_kb () =
+  try
+    let ic = open_in "/proc/self/status" in
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        let rec loop () =
+          let line = input_line ic in
+          if String.length line > 6 && String.sub line 0 6 = "VmRSS:" then
+            Scanf.sscanf line "VmRSS: %d kB" Fun.id
+          else loop ()
+        in
+        loop ())
+  with _ -> 0
+
+let test_duckdb_bind_error_does_not_leak_prepared_statements () =
+  match Eta_duckdb.available () with
+  | Error _ -> Alcotest.fail "DuckDB not available"
+  | Ok () ->
+      let db = duckdb_ok (Eta_duckdb.Database.open_memory ()) in
+      Fun.protect
+        ~finally:(fun () -> ignore (Eta_duckdb.Database.close db))
+        (fun () ->
+          let conn = duckdb_ok (Eta_duckdb.Connection.connect db) in
+          Fun.protect
+            ~finally:(fun () -> ignore (Eta_duckdb.Connection.close conn))
+            (fun () ->
+              (* Create a table so the prepared statement is non-trivial *)
+              duckdb_ok
+                (Eta_duckdb.Connection.exec_script conn
+                   "CREATE TABLE leak_test (id BIGINT, name VARCHAR)");
+              (* Force GC to get a stable baseline *)
+              Gc.full_major ();
+              Gc.compact ();
+              let rss_before = rss_kb () in
+              (* Trigger bind failure 50000 times.
+                 Each call prepares a statement, then fails during bind
+                 (List values are unsupported), longjumping out of C.
+                 The prepared statement is never finalized. *)
+              let iterations = 50_000 in
+              for _ = 1 to iterations do
+                match
+                  Eta_duckdb.Connection.query conn
+                    "SELECT * FROM leak_test WHERE id = ?"
+                    [ Eta_duckdb.Value.List [ Eta_duckdb.Value.Int 1 ] ]
+                with
+                | Error _ -> () (* Expected: bind failure *)
+                | Ok _ -> Alcotest.fail "query with List param should fail"
+              done;
+              Gc.full_major ();
+              Gc.compact ();
+              let rss_after = rss_kb () in
+              (* If statements are leaked, 50000 prepared statements ×
+                 ~1-4KB each = 50-200MB growth. Allow 20MB as noise floor
+                 for a clean implementation (GC, allocator fragmentation). *)
+              let growth_kb = rss_after - rss_before in
+              let max_acceptable_kb = 20_000 in (* 20MB *)
+              Alcotest.(check bool)
+                (Printf.sprintf
+                   "RSS growth from bind errors should be bounded \
+                    (grew %d KB, limit %d KB)" growth_kb max_acceptable_kb)
+                true (growth_kb < max_acceptable_kb)))
+
+let test_ladybug_bind_error_does_not_leak_prepared_statements () =
+  match Eta_ladybug.available () with
+  | Error _ -> Alcotest.fail "LadybugDB not available"
+  | Ok () ->
+      let db = ladybug_ok (Eta_ladybug.Database.open_memory ()) in
+      Fun.protect
+        ~finally:(fun () -> ignore (Eta_ladybug.Database.close db))
+        (fun () ->
+          let conn = ladybug_ok (Eta_ladybug.Connection.connect db) in
+          Fun.protect
+            ~finally:(fun () -> ignore (Eta_ladybug.Connection.close conn))
+            (fun () ->
+              (* Create a node so the schema exists *)
+              ignore (ladybug_ok
+                (Eta_ladybug.Connection.query_string conn
+                   "CREATE NODE TABLE IF NOT EXISTS leak_node(id INT64, PRIMARY KEY(id))"));
+              Gc.full_major ();
+              Gc.compact ();
+              let rss_before = rss_kb () in
+              (* Trigger bind failure with an unsupported nested parameter type.
+                 LadybugDB's create_lbug_value calls caml_failwith on Node/Rel/Path
+                 values nested inside a list, leaking the prepared statement. *)
+              let iterations = 50_000 in
+              let bad_param =
+                Eta_ladybug.Param.list "id"
+                  [ Eta_ladybug.Value.Node
+                      { id = None; labels = []; properties = [] } ]
+              in
+              for _ = 1 to iterations do
+                match
+                  Eta_ladybug.Connection.query_string conn
+                    ~params:[ bad_param ]
+                    "MATCH (n:leak_node) WHERE n.id = $id RETURN n.id"
+                with
+                | Error _ -> () (* Expected: bind failure *)
+                | Ok _ -> Alcotest.fail "query with Node param should fail"
+              done;
+              Gc.full_major ();
+              Gc.compact ();
+              let rss_after = rss_kb () in
+              let growth_kb = rss_after - rss_before in
+              let max_acceptable_kb = 20_000 in
+              Alcotest.(check bool)
+                (Printf.sprintf
+                   "RSS growth from bind errors should be bounded \
+                    (grew %d KB, limit %d KB)" growth_kb max_acceptable_kb)
+                true (growth_kb < max_acceptable_kb)))
+
 let () =
   Alcotest.run "Eta database connectors"
     [
@@ -734,6 +853,8 @@ let () =
           Alcotest.test_case "available is result" `Quick test_duckdb_available_is_result;
           Alcotest.test_case "decode errors are structured" `Quick
             test_duckdb_decode_error_is_structured;
+          Alcotest.test_case "bind error does not leak statements" `Slow
+            test_duckdb_bind_error_does_not_leak_prepared_statements;
         ] );
       ( "turso",
         [
@@ -759,5 +880,7 @@ let () =
             test_ladybug_typed_query_runtime;
           Alcotest.test_case "connection query timeout" `Quick
             test_ladybug_connection_query_timeout;
+          Alcotest.test_case "bind error does not leak statements" `Slow
+            test_ladybug_bind_error_does_not_leak_prepared_statements;
         ] );
     ]

@@ -465,3 +465,118 @@ let test_blocking_observability_labels_and_timings () =
             && List.mem ("eta.blocking.name", "test.label") point.attrs
             &&
             match point.value with Meter.Int ms -> ms >= 15 | Meter.Float _ -> false))
+
+(* P0: Blocking_runtime swallows Eio cancellation and overloads OCaml's Exit.
+   These tests verify that:
+   1. User code raising OCaml's Exit is distinguishable from Eio cancellation.
+   2. Eio cancellation preserves the Cancelled exception identity, not Exit.
+   3. cause_of_exn does not conflate user Exit with fiber interruption. *)
+
+let test_blocking_user_exit_not_swallowed_as_interrupt () =
+  (* If user callback raises OCaml's Exit, it should surface as a Die
+     (unexpected exception), NOT as Cause.interrupt. The current code maps
+     Exit -> Cause.interrupt in cause_of_exn, which is the bug. *)
+  with_runtime @@ fun rt ->
+  let pool = BP.create ~name:"user-exit" (blocking_config ~max_threads:1 ()) in
+  let result =
+    Runtime.run rt
+      (Effect.blocking ~pool ~name:"user-exit.raise" (fun () ->
+           raise Stdlib.Exit))
+  in
+  match result with
+  | Exit.Ok _ -> Alcotest.fail "expected error from raise Exit"
+  | Exit.Error cause ->
+      (* The correct behavior: user's Exit should be a Die, not interrupt *)
+      let is_die =
+        match cause with Cause.Die _ -> true | _ -> false
+      in
+      let is_interrupt = Cause.is_interrupt_only cause in
+      Alcotest.(check bool)
+        "user Exit should NOT be mapped to interrupt" false is_interrupt;
+      Alcotest.(check bool)
+        "user Exit should be Die (unexpected exception)" true is_die
+
+let test_blocking_eio_cancellation_preserves_cancelled_identity () =
+  (* When a fiber is cancelled while queued in a blocking pool, the resulting
+     cause should clearly indicate Eio cancellation (Cause.interrupt), and
+     the mechanism should be via Eio.Cancel.Cancelled, not via re-raising
+     OCaml's Exit. This test checks that the cancellation pathway works but
+     also that the exception type seen by any intermediate handler is
+     Cancelled, not Exit. *)
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let pool =
+    BP.create ~name:"cancel-identity"
+      (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait ())
+  in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  (* Fill the pool so the next job queues *)
+  let _blocker =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.blocking ~pool ~name:"cancel-identity.blocker" (fun () ->
+               Unix.sleepf 0.100)))
+  in
+  wait_until (fun () -> (BP.stats pool).active = 1);
+  (* Submit a queued job then cancel it; capture what exception propagates *)
+  let observed_exn = ref None in
+  let cancel_ctx = ref None in
+  let queued =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        (try
+           Runtime.run rt
+             (Effect.blocking ~pool ~name:"cancel-identity.victim" (fun () ->
+                  ()))
+         with exn ->
+           observed_exn := Some exn;
+           raise exn))
+  in
+  wait_until (fun () -> (BP.stats pool).queued = 1);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx (Failure "test-cancel")) !cancel_ctx;
+  (match Eio.Promise.await queued with _ -> () | exception _ -> ());
+  (* The exception that propagates should be Eio.Cancel.Cancelled, NOT Exit *)
+  (match !observed_exn with
+  | None -> () (* Runtime caught it internally - that's fine *)
+  | Some (Eio.Cancel.Cancelled _) -> () (* Correct: native cancellation *)
+  | Some Stdlib.Exit ->
+      Alcotest.fail
+        "Eio cancellation was converted to OCaml Exit - cancellation identity lost"
+  | Some exn ->
+      Alcotest.failf "unexpected exception type: %s" (Printexc.to_string exn))
+
+let test_cause_of_exn_distinguishes_exit_from_cancelled () =
+  (* Direct unit test of the cause_of_exn mapping: OCaml's Exit should NOT
+     produce the same Cause as Eio.Cancel.Cancelled. Currently both map to
+     Cause.interrupt which is the conflation bug. *)
+  with_runtime @@ fun rt ->
+  let pool = BP.create ~name:"distinguish" (blocking_config ~max_threads:1 ()) in
+  (* Run a job that raises Exit *)
+  let exit_result =
+    Runtime.run rt
+      (Effect.blocking ~pool ~name:"distinguish.exit" (fun () ->
+           raise Stdlib.Exit))
+  in
+  (* Use a pure Eta effect with timeout to get a clean Eio cancellation *)
+  let cancel_result =
+    Runtime.run rt
+      (Effect.timeout (Duration.ms 10)
+         (Effect.delay (Duration.ms 5000) (Effect.pure ())))
+  in
+  let exit_cause = match exit_result with
+    | Exit.Error c -> c
+    | Exit.Ok _ -> Alcotest.fail "expected error from Exit"
+  in
+  let cancel_cause = match cancel_result with
+    | Exit.Error c -> c
+    | Exit.Ok _ -> Alcotest.fail "expected error from timeout"
+  in
+  (* These should be DIFFERENT causes - Exit is a user bug, Cancelled is
+     a control flow mechanism *)
+  let exit_is_interrupt = Cause.is_interrupt_only exit_cause in
+  let cancel_is_interrupt = Cause.is_interrupt_only cancel_cause in
+  Alcotest.(check bool)
+    "cancelled job should be interrupt" true cancel_is_interrupt;
+  Alcotest.(check bool)
+    "user Exit should NOT be interrupt (it's a user exception)" false exit_is_interrupt

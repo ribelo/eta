@@ -48,6 +48,12 @@ let () =
             test_sql_migrations_reject_dirty_checksum_and_missing;
           Alcotest.test_case "migration source resolution metadata" `Quick
             test_sql_migration_source_resolution_metadata;
+          Alcotest.test_case "pool leaked transaction poisons next borrower" `Quick
+            test_sql_pool_leaked_transaction_poisons_next_borrower;
+          Alcotest.test_case "health check does not detect active transaction" `Quick
+            test_sql_pool_health_check_does_not_detect_active_transaction;
+          Alcotest.test_case "fold timeout does not bound total elapsed" `Slow
+            test_sql_fold_timeout_does_not_bound_total_elapsed;
         ] );
       ( "Sqlite",
         [

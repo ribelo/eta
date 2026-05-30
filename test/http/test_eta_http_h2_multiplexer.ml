@@ -644,3 +644,96 @@ let test_h2_multiplexer_rejects_after_goaway () =
   let stats = Eta_http.H2.Multiplexer.stats mux in
   Alcotest.(check int) "opened before only" 1 stats.opened;
   Alcotest.(check int) "no admission pressure" 0 stats.admission_rejected
+
+(* P0: body_stream_async unbounded recursion when h2 fires on_read synchronously.
+   When many DATA frames are pre-buffered into the h2 client connection before
+   the response body consumer reads, schedule_read's on_read callback calls
+   schedule_read() again. If h2 delivers data synchronously (already buffered),
+   this creates recursion proportional to the number of buffered chunks.
+   With a large response this causes stack overflow or unbounded queue growth. *)
+let test_h2_body_stream_async_bounded_recursion () =
+  (* Generate a response large enough that many on_read callbacks would fire
+     if schedule_read recursed unboundedly. With OCaml's default 8MB stack,
+     ~8000 recursive frames would overflow. We use 2000 chunks of 1KB
+     to be in the danger zone. *)
+  let num_chunks = 2000 in
+  let chunk_data = String.make 1024 'x' in
+  let held_writer = ref None in
+  let server =
+    H2.Server_connection.create (fun reqd ->
+        held_writer :=
+          Some (H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK)))
+  in
+  let mux = h2_mux_create (h2_mux_result ()) () in
+  let client = Eta_http.H2.Multiplexer.client_connection mux in
+  let body_stream_ref = ref None in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/large-buffered"
+  in
+  let opened =
+    Eta_http.H2.Multiplexer.request mux ~tag:1 request
+      ~error_handler:(fun _stream _error -> ())
+      ~response_handler:(fun stream _response body ->
+        let stream_and_notify =
+          Eta_http.H2.Multiplexer.body_stream_async
+            ~closed_error:h2_body_closed_error mux stream body
+        in
+        body_stream_ref := Some stream_and_notify)
+  in
+  let opened =
+    match opened with
+    | Ok opened -> opened
+    | Error _ -> Alcotest.fail "request setup failed"
+  in
+  H2.Body.Writer.close opened.request_body;
+  (* Pump the request to the server and get response headers *)
+  h2_pump_pair client server;
+  (* Write all chunks to the server writer and close *)
+  let writer = match !held_writer with
+    | Some w -> w
+    | None -> Alcotest.fail "server did not install streaming writer"
+  in
+  for _ = 1 to num_chunks do
+    H2.Body.Writer.write_string writer chunk_data
+  done;
+  H2.Body.Writer.close writer;
+  (* Pump ALL server output to client BEFORE consuming the body stream.
+     This pre-buffers all DATA frames in the h2 client connection.
+     When schedule_read is called, h2 will fire on_read synchronously
+     since data is already buffered, triggering the recursive loop. *)
+  h2_pump_pair client server;
+  (* At this point, response_handler has already been called (headers arrived
+     in an earlier pump), and body_stream_async was created. The initial
+     schedule_read() at creation time will have triggered recursive on_read
+     calls for all buffered data. If the recursion is unbounded, we either:
+     1. Already crashed with stack overflow (test never reaches here)
+     2. Buffered all 2000 chunks into the events queue in one burst *)
+  match !body_stream_ref with
+  | None ->
+      (* Response headers didn't arrive - pump again for test robustness *)
+      Alcotest.fail "body_stream_async was never created (response headers missing)"
+  | Some (body_stream, notify) ->
+      (* Wake the stream reader to process events *)
+      notify ();
+      with_test_clock @@ fun _sw _clock rt ->
+      let total_bytes = ref 0 in
+      let read_all =
+        Eta_http.Body.Stream.read_all body_stream
+        |> Eta.Effect.map (fun bytes -> total_bytes := Bytes.length bytes)
+      in
+      (match Eta.Runtime.run rt read_all with
+      | Eta.Exit.Ok () ->
+          (* If we got here, the recursion didn't cause a stack overflow.
+             But the data was still buffered unboundedly in one burst,
+             violating flow control. Verify we got all the data. *)
+          Alcotest.(check int) "total bytes" (num_chunks * 1024) !total_bytes
+      | Eta.Exit.Error _ ->
+          (* The stream returned an error - this demonstrates that pre-buffered
+             data combined with body_stream_async's recursive schedule_read
+             causes incorrect behavior (either the reader gets confused,
+             or data is lost, or the queue overflows). *)
+          Alcotest.fail
+            "body_stream_async failed to deliver pre-buffered response body \
+             (recursive schedule_read likely corrupted internal state)")
