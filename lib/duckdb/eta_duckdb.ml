@@ -453,7 +453,6 @@ module Projection = Dsl.Projection
 module Scope = Dsl.Scope
 module Source = Dsl.Source
 module Select = Dsl.Select
-module Assignment = Dsl.Assignment
 module Insert = Dsl.Insert
 module Update = Dsl.Update
 module Delete = Dsl.Delete
