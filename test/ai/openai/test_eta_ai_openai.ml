@@ -499,6 +499,34 @@ let test_chat_and_responses_encode_audio_content () =
   require_contains "audio part" ~needle:"\"type\":\"input_audio\"" raw;
   require_contains "audio data" ~needle:"\"data\":\"AAE=\"" raw
 
+let test_openai_image_content_wire_shape () =
+  (* OpenAI Chat Completions image content parts must use:
+     { "type": "image_url", "image_url": { "url": "...", "detail": ... } }
+     The current codec emits:
+     { "type": "url", "url": { "url": "...", "detail": ... } }
+     which is the wrong wire shape and will be rejected by the API. *)
+  let request : A.chat_request =
+    {
+      model = "gpt-4o";
+      prompt =
+        [
+          A.User
+            [
+              A.Text "What is in this image?";
+              A.Image { url = "https://example.com/cat.png"; detail = Some "low" };
+            ];
+        ];
+      tools = [];
+      temperature = None;
+      max_output_tokens = Some 100;
+      stream = false;
+    }
+  in
+  let raw = O.encode_chat request |> expect_ok "image chat" in
+  (* The wire format MUST contain "image_url" as the type *)
+  require_contains "image type" ~needle:"\"type\":\"image_url\"" raw;
+  require_contains "image_url field" ~needle:"\"image_url\":{" raw
+
 let test_realtime_session_json () =
   let session =
     O.Realtime.session ~model:"gpt-realtime-2" ~instructions:"stay brief"
@@ -613,6 +641,8 @@ let () =
             test_chat_and_responses_encode_audio_content;
           Alcotest.test_case "tool result with image does not crash" `Quick
             test_openai_tool_result_with_image_does_not_crash;
+          Alcotest.test_case "image content wire shape" `Quick
+            test_openai_image_content_wire_shape;
         ] );
       ( "decode",
         [
