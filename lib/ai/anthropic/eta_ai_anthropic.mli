@@ -1,8 +1,9 @@
-(** Anthropic provider package for eta-ai.
+(** Anthropic Messages provider.
 
-    This package owns Anthropic-specific request encoding, response decoding,
-    and eta-http runners. eta-ai owns the provider vocabulary; applications own
-    state, retry policy, and key management. *)
+    Requests use [/v1/messages] with the [anthropic-version] header. System
+    text is encoded through Anthropic's top-level [system] field, tool results
+    use [tool_result] blocks, and optional prompt-cache support only covers
+    system text. *)
 
 type prompt_cache = {
   beta_header : string;

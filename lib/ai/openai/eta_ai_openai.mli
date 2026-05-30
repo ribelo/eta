@@ -1,8 +1,11 @@
-(** OpenAI provider package for eta-ai.
+(** OpenAI provider.
 
-    This package owns OpenAI-specific request encoding, response decoding, and
-    eta-http runners. eta-ai owns the provider vocabulary; applications own
-    state, retry policy, and key management. *)
+    [provider] defaults to the Responses API; use
+    {!chat_completions_provider} for the legacy Chat Completions envelope.
+    Chat prompt capability flags are conservative: image parts are encoded, but
+    audio prompt input belongs to Realtime and video prompt input is not
+    advertised. Speech, transcription, image generation, and Realtime are
+    exposed as separate endpoint modules. *)
 
 type structured_output = Eta_ai_openai_codec.structured_output = {
   name : string;

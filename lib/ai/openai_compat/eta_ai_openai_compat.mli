@@ -1,8 +1,9 @@
-(** OpenAI-compatible provider package for eta-ai.
+(** Configurable OpenAI-compatible Chat Completions provider.
 
-    This package owns the configurable OpenAI-compatible Chat Completions
-    profile: provider base URL, path, auth policy, extra headers, and local
-    OpenAI-style codecs. *)
+    This module is for providers that accept OpenAI-style [/chat/completions]
+    JSON. Callers must supply the base URL and may override the path, auth
+    header, and extra headers. It does not claim OpenAI-only task endpoints such
+    as image generation, speech, or transcription. *)
 
 type auth = {
   header : string;
