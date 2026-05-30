@@ -116,6 +116,10 @@ let () =
             test_runtime_finalizer_die_captures_diagnostics;
           Alcotest.test_case "catch does not catch interrupt" `Quick
             test_effect_catch_does_not_catch_interrupt;
+          Alcotest.test_case "catch unsound suppressed typed failure" `Quick
+            test_effect_catch_unsound_suppressed_typed_failure;
+          Alcotest.test_case "catch unsound concurrent typed failure" `Quick
+            test_effect_catch_unsound_concurrent_typed_failure;
           Alcotest.test_case "acquire release" `Quick test_acquire_release;
           Alcotest.test_case "acquire release root finalizer" `Quick
             test_acquire_release_root_scope_runs_finalizer;

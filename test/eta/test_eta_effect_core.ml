@@ -409,3 +409,94 @@ let test_effect_catch_does_not_catch_interrupt () =
   match Runtime.run rt eff with
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
+
+(* P0: Effect.catch is unsound for typed failures nested inside cause trees.
+   When catch changes the error type from 'err1 to 'err2, any Suppressed or
+   Concurrent cause that contains nested Fail old_err values passes through
+   via Obj.magic. The nested Fail payloads are cast to the new error type
+   without being transformed. This is a type-safety violation.
+
+   map_error correctly recurses into cause trees; catch does not.
+   This test demonstrates the unsoundness by checking that nested Fail
+   values inside Suppressed causes have the correct type after catch. *)
+
+let test_effect_catch_unsound_suppressed_typed_failure () =
+  with_runtime @@ fun rt ->
+  (* Create an effect that:
+     1. Has error type [`Old_err]
+     2. Body fails with `Old_err
+     3. Finalizer also fails with `Old_err
+     4. This produces Suppressed { primary = Fail `Old_err; finalizer = Fail `Old_err }
+     5. catch handles `Old_err but the Suppressed cause bypasses the handler
+     6. After catch, the error type is [`New_err] but the cause still
+        contains `Old_err payloads — a type-level unsoundness *)
+  let eff =
+    Effect.fail `Old_err
+    |> Effect.finally (Effect.fail `Old_cleanup)
+    |> Effect.catch (function
+         | `Old_err -> Effect.pure "handled"
+         | `Old_cleanup -> Effect.pure "handled cleanup")
+  in
+  match Runtime.run rt eff with
+  | Exit.Ok "handled" ->
+      (* If catch somehow caught it, fine *)
+      ()
+  | Exit.Ok _ -> Alcotest.fail "unexpected Ok value"
+  | Exit.Error cause ->
+      (* The cause passed through catch. It's now typed as the NEW error type
+         (whatever catch's return error type is), but still contains the OLD
+         typed failure payloads. Verify the Fail values are what they should be
+         if the types were respected.
+
+         With Obj.magic unsoundness, the values are physically `Old_err and
+         `Old_cleanup but the type says they should be the new error type.
+         We can detect this by checking the cause structure: if we see
+         Fail values that are physically polymorphic variants from the OLD
+         type, that proves the unsoundness.
+
+         The correct behavior (like map_error) would either:
+         - Recursively transform nested Fails through the handler
+         - Or return the cause as-is but with the ORIGINAL type preserved *)
+      let has_old_err_in_cause =
+        match cause with
+        | Cause.Suppressed { primary = Cause.Fail _; finalizer = Cause.Fail _ } ->
+            (* These Fail values are typed as the NEW error type but physically
+               contain OLD error values. The mere fact that we got here with
+               Suppressed { Fail; Fail } after catch changed the type proves
+               the unsoundness — these payloads were never transformed. *)
+            true
+        | _ -> false
+      in
+      Alcotest.(check bool)
+        "catch should not pass through Suppressed with un-transformed Fail \
+         payloads (type-level unsoundness via Obj.magic)"
+        false has_old_err_in_cause
+
+let test_effect_catch_unsound_concurrent_typed_failure () =
+  with_runtime @@ fun rt ->
+  (* Same unsoundness but with Concurrent causes from par/all.
+     If two fibers fail with typed errors and catch handles that error type,
+     Concurrent [Fail old_err; Fail old_err] passes through catch via
+     Obj.magic without transforming the nested Fail payloads. *)
+  let eff =
+    Effect.all
+      [ Effect.fail `Fiber_a_err;
+        Effect.fail `Fiber_b_err ]
+    |> Effect.catch (function
+         | `Fiber_a_err -> Effect.pure [ () ]
+         | `Fiber_b_err -> Effect.pure [ () ])
+  in
+  match Runtime.run rt eff with
+  | Exit.Ok _ -> () (* If catch somehow caught it, fine *)
+  | Exit.Error cause ->
+      let has_nested_fail =
+        match cause with
+        | Cause.Concurrent causes ->
+            List.exists (function Cause.Fail _ -> true | _ -> false) causes
+        | Cause.Fail _ -> true (* Single fail that was magic'd *)
+        | _ -> false
+      in
+      Alcotest.(check bool)
+        "catch should not pass through Concurrent with un-transformed Fail \
+         payloads (type-level unsoundness via Obj.magic)"
+        false has_nested_fail
