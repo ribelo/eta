@@ -265,7 +265,7 @@ let test_ws_connect_reads_inbound_text () =
   in
   let state, flow = scripted_flow [ Return (switching_response key ^ frame) ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime?model=x" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -287,7 +287,7 @@ let test_ws_send_text_masks_client_frame () =
   let never, _resolver = Eio.Promise.create () in
   let state, flow = scripted_flow [ Return (switching_response key); Await never ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -310,7 +310,7 @@ let test_ws_ping_is_internal_and_pong_is_sent () =
   in
   let state, flow = scripted_flow [ Return (switching_response key ^ ping ^ text) ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -335,7 +335,7 @@ let test_ws_close_1011_fails_inbound_stream () =
   in
   let _state, flow = scripted_flow [ Return (switching_response key ^ close) ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -359,7 +359,7 @@ let test_ws_selected_subprotocol () =
     scripted_flow [ Return (switching_response ~protocol:"realtime" key) ]
   in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~protocols:[ "realtime"; "json" ]
       ~sw ~flow url
@@ -384,7 +384,7 @@ let test_ws_fragmented_text_reassembles () =
     scripted_flow [ Return (switching_response key ^ first ^ second) ]
   in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -407,7 +407,7 @@ let test_ws_clean_close_ends_inbound_stream () =
   in
   let _state, flow = scripted_flow [ Return (switching_response key ^ close) ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -425,7 +425,7 @@ let test_ws_server_masked_frame_is_protocol_error () =
   in
   let _state, flow = scripted_flow [ Return (switching_response key ^ masked) ] in
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let conn =
     Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -436,7 +436,7 @@ let test_ws_server_masked_frame_is_protocol_error () =
   | Eta.Exit.Error _ -> Alcotest.fail "unexpected masked server frame failure"
 
 let test_ws_connect_real_tcp_echo () =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let socket =

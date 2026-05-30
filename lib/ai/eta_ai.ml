@@ -36,44 +36,15 @@ let add_tool = Toolkit.add_tool
 let find_tool = Toolkit.find_tool
 let toolkit_tools = Toolkit.toolkit_tools
 
-let provider_request = Transport.provider_request
-let provider_post_request = Transport.provider_post_request
-let provider_get_request = Transport.provider_get_request
-let provider_embeddings_request = Transport.provider_embeddings_request
-let embeddings_request = Transport.embeddings_request
-let perform_chat = Transport.perform_chat
-let perform_embeddings = Transport.perform_embeddings
-
-let perform_raw ?max_bytes provider client request =
-  Transport.perform_raw ?max_bytes provider client request
-
-let perform_binary ?max_bytes provider client request =
-  Transport.perform_binary ?max_bytes provider client request
-
 type stream = Sse.t
 
-let stream_of_body ?max_buffer_bytes provider body =
-  Sse.stream_of_body ?max_buffer_bytes provider body
-
-let perform_stream = Transport.perform_stream
+let stream_of_body = Sse.stream_of_body
 let read_stream_event = Sse.read_stream_event
-
-let read_stream_events ?max_events stream =
-  Sse.read_stream_events ?max_events stream
-
+let read_stream_events = Sse.read_stream_events
 let close_stream = Sse.close_stream
-let with_chat_span = Observability.with_chat_span
 
-let with_stream_span ?time_to_first_chunk_s provider request effect =
-  Observability.with_stream_span ?time_to_first_chunk_s provider request effect
-
-let with_embeddings_span = Observability.with_embeddings_span
-
-let with_tool_span ?tool_call_id ?tool_type ~tool_name effect =
-  Observability.with_tool_span ?tool_call_id ?tool_type ~tool_name effect
-
-let suppress_provider_transport_observability =
-  Observability.suppress_provider_transport_observability
+include Transport
+include Observability
 
 module Provider = struct
   module type Chat = sig

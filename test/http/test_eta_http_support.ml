@@ -1,5 +1,45 @@
 module Loaded = Eta_http
 
+let reclaim_eio_backend () =
+  Gc.full_major ();
+  Gc.compact ()
+
+let run_linux_eio ?fallback f =
+  reclaim_eio_backend ();
+  Fun.protect ~finally:reclaim_eio_backend (fun () ->
+      (* Keep normal queue capacity, but avoid per-runtime fixed-buffer
+         memlock pressure in this many-short-schedulers test binary. *)
+      Eio_linux.run ?fallback ~queue_depth:64 ~n_blocks:1 f)
+
+let run_eio f =
+  match Sys.getenv_opt "EIO_BACKEND" with
+  | Some ("linux" | "io-uring") -> run_linux_eio f
+  | None | Some "" ->
+      run_linux_eio ~fallback:(fun _ -> Eio_main.run f) f
+  | _ -> Eio_main.run f
+
+let with_test_clock f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let rt =
+    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ()
+  in
+  f sw clock rt
+
+let with_traced_test_clock f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let tracer = Eta.Tracer.in_memory () in
+  let rt =
+    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~tracer:(Eta.Tracer.as_capability tracer) ()
+  in
+  f sw clock rt tracer
+
 let contains haystack needle =
   let h_len = String.length haystack in
   let n_len = String.length needle in

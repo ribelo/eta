@@ -183,7 +183,7 @@ let test_encode_routing_and_rejects_empty_provider () =
     |> expect_ok "structured output"
   in
   let raw =
-    O.encode_chat ~structured_output:output ~routing:(routing ())
+    O.encode_responses ~structured_output:output ~routing:(routing ())
       (chat_request ())
     |> expect_ok "openrouter encode"
   in

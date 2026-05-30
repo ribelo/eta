@@ -106,7 +106,7 @@ let test_effect_retry_schedule_uses_virtual_delays () =
     (Eio.Promise.await promise)
 
 let test_effect_retry_jittered_schedule_uses_runtime_random () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
   let rt =

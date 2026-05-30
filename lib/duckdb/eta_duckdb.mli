@@ -85,6 +85,8 @@ module Table : sig
   end
 
   val name : 'table t -> string
+  val alias : 'table t -> string -> 'table t
+  val column : 'table t -> string -> 'a typ -> ('table, 'a) column
 end
 
 module Column : sig
@@ -95,82 +97,113 @@ module Column : sig
 end
 
 module Expr : sig
-  type 'scope t
+  type ('scope, 'a) t
 
-  val true_ : 'scope t
-  val false_ : 'scope t
-  val eq : ('scope, 'a) column -> 'a -> 'scope t
-  val ne : ('scope, 'a) column -> 'a -> 'scope t
-  val gt : ('scope, 'a) column -> 'a -> 'scope t
-  val ge : ('scope, 'a) column -> 'a -> 'scope t
-  val lt : ('scope, 'a) column -> 'a -> 'scope t
-  val le : ('scope, 'a) column -> 'a -> 'scope t
-  val like : ('scope, string) column -> string -> 'scope t
-  val eq_col : ('scope, 'a) column -> ('scope, 'a) column -> 'scope t
-  val is_null : ('scope, 'a option) column -> 'scope t
-  val is_not_null : ('scope, 'a option) column -> 'scope t
-  val in_select : ('scope, 'a) column -> 'a Compiled.select -> 'scope t
-  val exists : _ Compiled.select -> 'scope t
-  val count_eq : int -> 'scope t
-  val count_gt : int -> 'scope t
-  val count_ge : int -> 'scope t
-  val and_ : 'scope t -> 'scope t -> 'scope t
-  val or_ : 'scope t -> 'scope t -> 'scope t
-  val not_ : 'scope t -> 'scope t
+  val true_ : ('scope, bool) t
+  val false_ : ('scope, bool) t
+  val lit : 'a typ -> 'a -> ('scope, 'a) t
+  val int_lit : int -> ('scope, int) t
+  val float_lit : float -> ('scope, float) t
+  val text_lit : string -> ('scope, string) t
+  val bool_lit : bool -> ('scope, bool) t
+  val col : ('scope, 'a) column -> ('scope, 'a) t
+  val eq : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val ne : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val gt : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val ge : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val lt : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val le : ('scope, 'a) column -> 'a -> ('scope, bool) t
+  val like : ('scope, string) column -> string -> ('scope, bool) t
+  val eq_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val ne_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val gt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val ge_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val lt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val le_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
+  val eq_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  val gt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  val ge_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  val lt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  val le_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
+  val add : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  val sub : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  val mul : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  val div : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+  val is_null : ('scope, 'a option) column -> ('scope, bool) t
+  val is_not_null : ('scope, 'a option) column -> ('scope, bool) t
+  val between : ('scope, 'a) column -> 'a -> 'a -> ('scope, bool) t
+  val in_values : ('scope, 'a) column -> 'a list -> ('scope, bool) t
+  val in_select : ('scope, 'a) column -> 'a Compiled.select -> ('scope, bool) t
+  val exists : _ Compiled.select -> ('scope, bool) t
+  val count : unit -> ('scope, int) t
+  val sum_int : ('scope, int) column -> ('scope, int) t
+  val sum_float : ('scope, float) column -> ('scope, float) t
+  val avg : ('scope, 'a) column -> ('scope, float) t
+  val min : ('scope, 'a) column -> ('scope, 'a) t
+  val max : ('scope, 'a) column -> ('scope, 'a) t
+  val case : (('scope, bool) t * ('scope, 'a) t) list -> default:('scope, 'a) t -> ('scope, 'a) t
+  val and_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
+  val or_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
+  val not_ : ('scope, bool) t -> ('scope, bool) t
 end
 
 module Projection : sig
   type ('scope, 'a) t
 
   val one : ('scope, 'a) column -> ('scope, 'a) t
-  val t2 : ('scope, 'a) column -> ('scope, 'b) column -> ('scope, 'a * 'b) t
+  val expr : ?as_:string -> ('scope, 'a) Expr.t -> ('scope, 'a) t
+  val t2 : ('scope, 'a) t -> ('scope, 'b) t -> ('scope, 'a * 'b) t
   val t3 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
     ('scope, 'a * 'b * 'c) t
   val t4 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
     ('scope, 'a * 'b * 'c * 'd) t
   val t5 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e) t
   val t6 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f) t
   val t7 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
-    ('scope, 'g) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
+    ('scope, 'g) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g) t
   val t8 :
-    ('scope, 'a) column ->
-    ('scope, 'b) column ->
-    ('scope, 'c) column ->
-    ('scope, 'd) column ->
-    ('scope, 'e) column ->
-    ('scope, 'f) column ->
-    ('scope, 'g) column ->
-    ('scope, 'h) column ->
+    ('scope, 'a) t ->
+    ('scope, 'b) t ->
+    ('scope, 'c) t ->
+    ('scope, 'd) t ->
+    ('scope, 'e) t ->
+    ('scope, 'f) t ->
+    ('scope, 'g) t ->
+    ('scope, 'h) t ->
     ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h) t
   val count : ?as_:string -> unit -> ('scope, int) t
   val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int) t
+  val sum_float : ?as_:string -> ('scope, float) column -> ('scope, float) t
+  val avg : ?as_:string -> ('scope, 'a) column -> ('scope, float) t
+  val min : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
+  val max : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
   val row_number :
     ?as_:string ->
     ?partition_by:('scope, 'a) column list ->
@@ -180,20 +213,25 @@ module Projection : sig
   val map : ('a -> 'b) -> ('scope, 'a) t -> ('scope, 'b) t
 end
 
-module Join : sig
-  val left : ('left, 'a) column -> ('left * 'right, 'a) column
-  val right : ('right, 'a) column -> ('left * 'right, 'a) column
-  val on_eq : ('left, 'a) column -> ('right, 'a) column -> ('left * 'right) Expr.t
+module Scope : sig
+  type ('sub, 'super) contains
+
+  val self : ('scope, 'scope) contains
+  val left : ('sub, 'super) contains -> ('sub, 'super * 'added) contains
+  val right : ('added, 'existing * 'added) contains
+  val column : ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a) column
 end
 
 module Source : sig
   type 'scope t
 
-  val table : 'table table -> 'table t
-  val inner_join :
-    'left table -> 'right table -> on:('left * 'right) Expr.t -> ('left * 'right) t
-  val left_join :
-    'left table -> 'right table -> on:('left * 'right) Expr.t -> ('left * 'right) t
+  val from : 'table table -> 'table t
+  val join :
+    ?op:[ `Inner | `Left ] ->
+    on:('existing * 'added, bool) Expr.t ->
+    'added table ->
+    'existing t ->
+    ('existing * 'added) t
 end
 
 module Select : sig
@@ -203,10 +241,10 @@ module Select : sig
   val from_source : 'scope Source.t -> ('scope, 'a) Projection.t -> ('scope, 'a) t
   val with_cte : name:string -> _ Compiled.select -> ('scope, 'a) t -> ('scope, 'a) t
   val distinct : ('scope, 'a) t -> ('scope, 'a) t
-  val where : 'scope Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
+  val where : ('scope, bool) Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
   val group_by : ('scope, 'b) column -> ('scope, 'a) t -> ('scope, 'a) t
   val group_by_many : ('scope, 'b) column list -> ('scope, 'a) t -> ('scope, 'a) t
-  val having : 'scope Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
+  val having : ('scope, bool) Expr.t -> ('scope, 'a) t -> ('scope, 'a) t
   val order_by : ?desc:bool -> ('scope, 'b) column -> ('scope, 'a) t -> ('scope, 'a) t
   val limit : int -> ('scope, 'a) t -> ('scope, 'a) t
   val to_sql : (_, _) t -> string
@@ -231,7 +269,7 @@ module Update : sig
 
   val table : 'table table -> 'table t
   val set : ('table, 'a) column -> 'a -> 'table t -> 'table t
-  val where : 'table Expr.t -> 'table t -> 'table t
+  val where : ('table, bool) Expr.t -> 'table t -> 'table t
   val to_sql : _ t -> string
   val compile : _ t -> Compiled.change
   val returning : ('table, 'a) Projection.t -> 'table t -> 'a Compiled.returning
@@ -241,7 +279,7 @@ module Delete : sig
   type 'table t
 
   val from : 'table table -> 'table t
-  val where : 'table Expr.t -> 'table t -> 'table t
+  val where : ('table, bool) Expr.t -> 'table t -> 'table t
   val to_sql : _ t -> string
   val compile : _ t -> Compiled.change
   val returning : ('table, 'a) Projection.t -> 'table t -> 'a Compiled.returning

@@ -141,7 +141,7 @@ let test_duckdb_available_is_result () =
               let active_rows =
                 Eta_duckdb.Select.(
                   from Duckdb_items.table
-                    Eta_duckdb.Projection.(t3 Duckdb_items.id Duckdb_items.name Duckdb_items.score)
+                    Eta_duckdb.Projection.(t3 (one Duckdb_items.id) (one Duckdb_items.name) (one Duckdb_items.score))
                   |> where Eta_duckdb.Expr.(eq Duckdb_items.active true)
                   |> order_by Duckdb_items.id
                   |> compile)
@@ -174,7 +174,7 @@ let test_duckdb_available_is_result () =
               let rows =
                 Eta_duckdb.Select.(
                   from Duckdb_items.table
-                    Eta_duckdb.Projection.(t2 Duckdb_items.id Duckdb_items.name)
+                    Eta_duckdb.Projection.(t2 (one Duckdb_items.id) (one Duckdb_items.name))
                   |> where Eta_duckdb.Expr.(eq Duckdb_items.active true)
                   |> order_by Duckdb_items.id
                   |> compile)
@@ -232,7 +232,7 @@ let test_turso_typed_queries () =
   in
   let select =
     Eta_turso.Select.(
-      from Turso_items.table Eta_turso.Projection.(t2 Turso_items.id Turso_items.name)
+      from Turso_items.table Eta_turso.Projection.(t2 (one Turso_items.id) (one Turso_items.name))
       |> where Eta_turso.Expr.(eq Turso_items.active true)
       |> order_by Turso_items.id
       |> compile)

@@ -8,7 +8,7 @@ let test_transport_resolve_stream_success () =
   let target = Eta_http.Transport.Connect.target_of_url url in
   Alcotest.(check string) "host" "example.test" target.host;
   Alcotest.(check int) "port" 443 target.port;
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.Transport.Connect.resolve_stream ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
@@ -21,7 +21,7 @@ let test_transport_resolve_stream_empty_is_typed () =
   Eio_mock.Net.on_getaddrinfo net [ `Return [] ];
   let url = Eta_http.Core.Url.of_string "https://missing.example.test/" in
   let target = Eta_http.Transport.Connect.target_of_url url in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   match
     Eta_http.Transport.Connect.resolve_stream ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
@@ -45,7 +45,7 @@ let test_transport_connect_tcp_success () =
   Eio_mock.Net.on_connect net [ `Return (Eio_mock.Flow.make "eta-http-tcp") ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
   let target = Eta_http.Transport.Connect.target_of_url url in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
   |> Eta.Runtime.run rt
   |> Eta_test.Expect.expect_ok
@@ -58,7 +58,7 @@ let test_transport_connect_tcp_failure_is_typed () =
   Eio_mock.Net.on_connect net [ `Raise (Failure "connect boom") ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
   let target = Eta_http.Transport.Connect.target_of_url url in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   match
     Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
@@ -101,7 +101,7 @@ let test_transport_connect_tls_closes_flow_on_failure () =
   in
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   match
     Eta_http.Transport.Connect.connect_tls ~method_:"GET" target
       flow
@@ -123,7 +123,7 @@ let test_transport_dispatch_unsupported_alpn_closes_flow () =
   let request = Eta_http.Request.make "GET" "https://example.test/path" in
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   match
     Eta_http.Client.For_test.dispatch_alpn
       ~close:(fun () -> close_effect flow)
@@ -152,7 +152,7 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   let request = Eta_http.Request.make "GET" "https://example.test/path" in
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.Client.For_test.dispatch_alpn
       ~close:(fun () -> close_effect flow)

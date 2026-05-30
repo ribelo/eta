@@ -1,6 +1,24 @@
 open Eta
 open Eta_test
 
+let reclaim_eio_backend () =
+  Gc.full_major ();
+  Gc.compact ()
+
+let run_linux_eio ?fallback f =
+  reclaim_eio_backend ();
+  Fun.protect ~finally:reclaim_eio_backend (fun () ->
+      (* Keep normal queue capacity, but avoid per-runtime fixed-buffer
+         memlock pressure in this many-short-schedulers test binary. *)
+      Eio_linux.run ?fallback ~queue_depth:64 ~n_blocks:1 f)
+
+let run_eio f =
+  match Sys.getenv_opt "EIO_BACKEND" with
+  | Some ("linux" | "io-uring") -> run_linux_eio f
+  | None | Some "" ->
+      run_linux_eio ~fallback:(fun _ -> Eio_main.run f) f
+  | _ -> Eio_main.run f
+
 let run_ok rt eff =
   match Runtime.run rt eff with
   | Exit.Ok value -> value
@@ -15,7 +33,7 @@ let check_exit_error test name expected = function
   | Exit.Error cause -> Alcotest.check test name expected cause
 
 let with_runtime f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
@@ -23,7 +41,7 @@ let with_runtime f =
   f rt
 
 let with_traced_runtime f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
@@ -33,7 +51,7 @@ let with_traced_runtime f =
   f rt tracer
 
 let with_sampled_traced_runtime sampler f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
@@ -43,7 +61,7 @@ let with_sampled_traced_runtime sampler f =
   f rt tracer
 
 let with_auto_traced_runtime auto_instrument f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
@@ -53,12 +71,66 @@ let with_auto_traced_runtime auto_instrument f =
   f rt tracer
 
 let with_runtime_capture_backtrace capture_backtrace f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~capture_backtrace ()
   in
   f rt
+
+let with_logger f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let logger = Logger.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~logger:(Logger.as_capability logger) ()
+  in
+  f sw rt logger
+
+let with_tracer f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~tracer:(Tracer.as_capability tracer) ()
+  in
+  f sw rt tracer
+
+let with_logger_and_tracer f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let logger = Logger.in_memory () in
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~logger:(Logger.as_capability logger)
+      ~tracer:(Tracer.as_capability tracer) ()
+  in
+  f sw rt logger tracer
+
+let with_test_clock f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock) ()
+  in
+  f sw clock rt
+
+let with_traced_test_clock f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
+  let tracer = Tracer.in_memory () in
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~tracer:(Tracer.as_capability tracer) ()
+  in
+  f sw clock rt tracer
 
 let yield () = Eio.Fiber.yield ()
 
@@ -185,4 +257,3 @@ let rec cause_has_die_message expected = function
 
 let check_die_message label expected cause =
   Alcotest.(check bool) label true (cause_has_die_message expected cause)
-

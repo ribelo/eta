@@ -148,7 +148,7 @@ let otlp_retry_status = function
   | _ -> false
 
 let test_retry_policy_custom_status_classifier () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let request = Eta_http.Request.make "GET" "https://api.example.test/retry" in
   Alcotest.(check bool) "default retries 408" true
     (Eta_http.Retry_policy.default_retry_status 408);
@@ -206,7 +206,7 @@ let test_retry_policy_custom_status_classifier () =
   Alcotest.(check int) "429 attempts" 2 !attempts
 
 let test_retry_succeeds_on_third_attempt () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let released = ref 0 in
   let attempts, client =
     retry_client
@@ -236,7 +236,7 @@ let test_retry_succeeds_on_third_attempt () =
   Alcotest.(check int) "discard failed bodies" 2 !released
 
 let test_retry_non_idempotent_requires_opt_in () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let post =
     Eta_http.Request.make ~body:(Fixed [ Bytes.of_string "payload" ]) "POST"
       "https://api.example.test/retry"
@@ -271,7 +271,7 @@ let test_retry_non_idempotent_requires_opt_in () =
   Alcotest.(check int) "key attempts" 2 !attempts
 
 let test_retry_always_still_requires_replayable_body () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let attempts, client =
     retry_client
       [|

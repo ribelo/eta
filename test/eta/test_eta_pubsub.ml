@@ -268,7 +268,7 @@ let test_pubsub_subscription_cleanup_on_body_cancellation () =
   | Some sub -> expect_closed rt (Pubsub.recv sub)
 
 let test_pubsub_cancel_blocked_recv_cleans_waiter () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in

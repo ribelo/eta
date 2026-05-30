@@ -46,13 +46,21 @@ let default_max_bytes = 1_048_576
 let read t =
   if t.released then Effect.pure None
   else
-    t.read_next ()
-    |> Effect.catch (fun error ->
-           release_once t |> Effect.bind (fun () -> Effect.fail error))
-    |> Effect.bind (function
-         | End -> release_once t |> Effect.map (fun () -> None)
-         | Chunk chunk -> Effect.pure (Some chunk)
-         | Last chunk -> release_once t |> Effect.map (fun () -> Some chunk))
+    Effect.sync (fun () -> ref true)
+    |> Effect.bind (fun release_needed ->
+           let release_if_needed =
+             Effect.sync (fun () -> !release_needed)
+             |> Effect.bind (fun needed ->
+                    if needed then release_once t else Effect.unit)
+           in
+           t.read_next ()
+           |> Effect.bind (function
+                | End -> Effect.pure None
+                | Chunk chunk ->
+                    release_needed := false;
+                    Effect.pure (Some chunk)
+                | Last chunk -> Effect.pure (Some chunk))
+           |> Effect.finally release_if_needed)
 
 let body_too_large ~limit ~length =
   Error.make ~method_:"*" ~uri:"*" (Body_too_large { limit; length })

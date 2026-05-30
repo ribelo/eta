@@ -20,7 +20,7 @@ let pp_law_err fmt = function
 let equal_law_err (a : law_err) (b : law_err) = a = b
 
 let with_law_runtime f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let deps = { add = (fun n -> n + 1); mul = (fun n -> n * 2) } in
   let rt =

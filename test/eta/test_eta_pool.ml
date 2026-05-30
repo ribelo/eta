@@ -217,7 +217,7 @@ let test_pool_idle_eviction () =
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
 let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
@@ -247,7 +247,7 @@ let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
 let test_pool_shutdown_wakes_waiters_and_drains () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
@@ -273,7 +273,7 @@ let test_pool_shutdown_wakes_waiters_and_drains () =
   Alcotest.(check int) "closed" 1 stats.Pool.closed
 
 let test_pool_shutdown_deadline_timeout () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
@@ -316,7 +316,7 @@ let test_pool_release_detects_active_underflow () =
   set_pool_active_for_invariant_test pool 0
 
 let test_pool_observability_signals () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let meter = Meter.in_memory () in

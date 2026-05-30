@@ -70,6 +70,14 @@ module Row = struct
   let bytes field row = match get field row with Some (Value.Bytes value) -> Some value | _ -> None
 end
 
+let row_nth_value index row =
+  let rec loop current = function
+    | [] -> failwith "Eta_duckdb: column index out of bounds"
+    | (_, value) :: _ when current = index -> value
+    | _ :: rest -> loop (current + 1) rest
+  in
+  loop 0 row
+
 type raw_database
 type raw_connection
 type raw_appender
@@ -164,123 +172,170 @@ let if_appender_open (appender : appender) f =
 
 type 'a typ = {
   value : 'a -> Value.t;
-  decode : Value.t -> 'a option;
+  decode : Row.t -> int -> 'a;
   sql_type : string;
 }
 
 let int =
+  let decode_value = function
+    | Value.Int value -> value
+    | Int64 value ->
+        let min = Int64.of_int min_int in
+        let max = Int64.of_int max_int in
+        if Int64.compare value min >= 0 && Int64.compare value max <= 0 then
+          Int64.to_int value
+        else
+          failwith "Eta_duckdb: int overflow"
+    | _ -> failwith "Eta_duckdb: could not decode int"
+  in
   {
     value = (fun value -> Value.Int value);
-    decode =
-      (function
-      | Value.Int value -> Some value
-      | Int64 value ->
-          let min = Int64.of_int min_int in
-          let max = Int64.of_int max_int in
-          if Int64.compare value min >= 0 && Int64.compare value max <= 0 then
-            Some (Int64.to_int value)
-          else
-            None
-      | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "INTEGER";
   }
 
 let int64 =
+  let decode_value = function
+    | Value.Int value -> Int64.of_int value
+    | Int64 value -> value
+    | _ -> failwith "Eta_duckdb: could not decode int64"
+  in
   {
     value = (fun value -> Value.Int64 value);
-    decode =
-      (function
-      | Value.Int value -> Some (Int64.of_int value)
-      | Int64 value -> Some value
-      | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "BIGINT";
   }
 
 let bool =
+  let decode_value = function
+    | Value.Bool value -> value
+    | Int 0 -> false
+    | Int 1 -> true
+    | Int64 0L -> false
+    | Int64 1L -> true
+    | _ -> failwith "Eta_duckdb: could not decode bool"
+  in
   {
     value = (fun value -> Value.Bool value);
-    decode =
-      (function
-      | Value.Bool value -> Some value
-      | Int 0 -> Some false
-      | Int 1 -> Some true
-      | Int64 0L -> Some false
-      | Int64 1L -> Some true
-      | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "BOOLEAN";
   }
 
 let float =
+  let decode_value = function
+    | Value.Float value -> value
+    | _ -> failwith "Eta_duckdb: could not decode float"
+  in
   {
     value = (fun value -> Value.Float value);
-    decode = (function Value.Float value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "DOUBLE";
   }
 
 let text =
+  let decode_value = function
+    | Value.String value
+    | Decimal value
+    | Date value
+    | Time value
+    | Timestamp value
+    | Uuid value
+    | Json value
+    | Enum value ->
+        value
+    | _ -> failwith "Eta_duckdb: could not decode text"
+  in
   {
     value = (fun value -> Value.String value);
-    decode =
-      (function
-      | Value.String value | Decimal value | Date value | Time value | Timestamp value
-      | Uuid value | Json value | Enum value -> Some value
-      | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "VARCHAR";
   }
 
 let blob =
+  let decode_value = function
+    | Value.Bytes value -> value
+    | _ -> failwith "Eta_duckdb: could not decode blob"
+  in
   {
     value = (fun value -> Value.Bytes value);
-    decode = (function Value.Bytes value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "BLOB";
   }
 
 let decimal =
+  let decode_value = function
+    | Value.Decimal value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode decimal"
+  in
   {
     value = (fun value -> Value.Decimal value);
-    decode = (function Value.Decimal value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "DECIMAL";
   }
 
 let date =
+  let decode_value = function
+    | Value.Date value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode date"
+  in
   {
     value = (fun value -> Value.Date value);
-    decode = (function Value.Date value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "DATE";
   }
 
 let time =
+  let decode_value = function
+    | Value.Time value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode time"
+  in
   {
     value = (fun value -> Value.Time value);
-    decode = (function Value.Time value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "TIME";
   }
 
 let timestamp =
+  let decode_value = function
+    | Value.Timestamp value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode timestamp"
+  in
   {
     value = (fun value -> Value.Timestamp value);
-    decode = (function Value.Timestamp value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "TIMESTAMP";
   }
 
 let uuid =
+  let decode_value = function
+    | Value.Uuid value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode uuid"
+  in
   {
     value = (fun value -> Value.Uuid value);
-    decode = (function Value.Uuid value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "UUID";
   }
 
 let json =
+  let decode_value = function
+    | Value.Json value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode json"
+  in
   {
     value = (fun value -> Value.Json value);
-    decode = (function Value.Json value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type = "JSON";
   }
 
 let enum ?(sql_type = "VARCHAR") () =
+  let decode_value = function
+    | Value.Enum value | String value -> value
+    | _ -> failwith "Eta_duckdb: could not decode enum"
+  in
   {
     value = (fun value -> Value.Enum value);
-    decode = (function Value.Enum value | String value -> Some value | _ -> None);
+    decode = (fun row index -> decode_value (row_nth_value index row));
     sql_type;
   }
 
@@ -288,37 +343,29 @@ let list typ =
   {
     value = (fun values -> Value.List (List.map typ.value values));
     decode =
-      (function
-      | Value.List values ->
-          let rec loop acc = function
-            | [] -> Some (List.rev acc)
-            | value :: rest -> (
-                match typ.decode value with
-                | Some decoded -> loop (decoded :: acc) rest
-                | None -> None)
-          in
-          loop [] values
-      | _ -> None);
+      (fun row index ->
+        match row_nth_value index row with
+        | Value.List values ->
+            List.map (fun value -> typ.decode [("", value)] 0) values
+        | _ -> failwith "Eta_duckdb: could not decode list");
     sql_type = typ.sql_type ^ "[]";
   }
 
 let value =
   {
     value = Fun.id;
-    decode = (fun value -> Some value);
+    decode = (fun row index -> row_nth_value index row);
     sql_type = "ANY";
   }
 
 let nullable typ =
   {
-    value =
-      (function
-      | None -> Value.Null
-      | Some value -> typ.value value);
+    value = (function None -> Value.Null | Some value -> typ.value value);
     decode =
-      (function
-      | Value.Null -> Some None
-      | value -> Option.map (fun value -> Some value) (typ.decode value));
+      (fun row index ->
+        match row_nth_value index row with
+        | Value.Null -> None
+        | _ -> Some (typ.decode row index));
     sql_type = typ.sql_type;
   }
 
@@ -331,22 +378,17 @@ module Dsl = Eta_sql_dsl.Make (struct
 
   type nonrec 'a typ = 'a typ = {
     value : 'a -> value;
-    decode : value -> 'a option;
+    decode : row -> int -> 'a;
     sql_type : string;
   }
 
   let int = int
+  let bool = bool
+  let float = float
+  let text = text
   let invalid_query message = Invalid_value message
   let module_name = "Eta_duckdb"
   let value_to_string = Value.to_string
-
-  let row_value index row =
-    let rec loop current = function
-      | [] -> None
-      | (_, value) :: _ when current = index -> Some value
-      | _ :: rest -> loop (current + 1) rest
-    in
-    loop 0 row
 end)
 
 type 'table table = 'table Dsl.table
@@ -358,7 +400,7 @@ module Table = Dsl.Table
 module Column = Dsl.Column
 module Expr = Dsl.Expr
 module Projection = Dsl.Projection
-module Join = Dsl.Join
+module Scope = Dsl.Scope
 module Source = Dsl.Source
 module Select = Dsl.Select
 module Assignment = Dsl.Assignment

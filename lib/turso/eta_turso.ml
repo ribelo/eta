@@ -1,6 +1,14 @@
 module Value = Eta_sql.Value
 module Row = Eta_sql.Row
 
+let row_nth_value index row =
+  let rec loop current = function
+    | [] -> failwith "Eta_turso: column index out of bounds"
+    | (_, value) :: _ when current = index -> value
+    | _ :: rest -> loop (current + 1) rest
+  in
+  loop 0 row
+
 type raw_db
 type raw_stmt
 
@@ -356,62 +364,78 @@ let retry_on_conflict ~max_attempts ~backoff f =
 
 type 'a typ = {
   value : 'a -> Value.t;
-  decode : Value.t -> 'a option;
+  decode : Row.t -> int -> 'a;
   sql_type : string;
 }
 
 let int =
   {
     value = (fun value -> Value.Int value);
-    decode = Value.to_int;
+    decode = (fun row index ->
+      match Value.to_int (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode int");
     sql_type = "INTEGER";
   }
 
 let int64 =
   {
     value = (fun value -> Value.Int64 value);
-    decode = Value.to_int64;
+    decode = (fun row index ->
+      match Value.to_int64 (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode int64");
     sql_type = "INTEGER";
   }
 
 let text =
   {
     value = (fun value -> Value.String value);
-    decode = Value.to_string_value;
+    decode = (fun row index ->
+      match Value.to_string_value (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode text");
     sql_type = "TEXT";
   }
 
 let bool =
   {
     value = (fun value -> Value.Bool value);
-    decode = Value.to_bool;
+    decode = (fun row index ->
+      match Value.to_bool (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode bool");
     sql_type = "INTEGER";
   }
 
 let float =
   {
     value = (fun value -> Value.Float value);
-    decode = Value.to_float;
+    decode = (fun row index ->
+      match Value.to_float (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode float");
     sql_type = "REAL";
   }
 
 let blob =
   {
     value = (fun value -> Value.Bytes value);
-    decode = Value.to_bytes;
+    decode = (fun row index ->
+      match Value.to_bytes (row_nth_value index row) with
+      | Some value -> value
+      | None -> failwith "Eta_turso: could not decode blob");
     sql_type = "BLOB";
   }
 
 let nullable typ =
   {
-    value =
-      (function
-      | None -> Value.Null
-      | Some value -> typ.value value);
+    value = (function None -> Value.Null | Some value -> typ.value value);
     decode =
-      (function
-      | Value.Null -> Some None
-      | value -> Option.map (fun value -> Some value) (typ.decode value));
+      (fun row index ->
+        match row_nth_value index row with
+        | Value.Null -> None
+        | _ -> Some (typ.decode row index));
     sql_type = typ.sql_type;
   }
 
@@ -424,22 +448,17 @@ module Dsl = Eta_sql_dsl.Make (struct
 
   type nonrec 'a typ = 'a typ = {
     value : 'a -> value;
-    decode : value -> 'a option;
+    decode : row -> int -> 'a;
     sql_type : string;
   }
 
   let int = int
+  let bool = bool
+  let float = float
+  let text = text
   let invalid_query message = Invalid_query message
   let module_name = "Eta_turso"
   let value_to_string = Value.to_string
-
-  let row_value index row =
-    let rec loop current = function
-      | [] -> None
-      | (_, value) :: _ when current = index -> Some value
-      | _ :: rest -> loop (current + 1) rest
-    in
-    loop 0 row
 end)
 
 type 'table table = 'table Dsl.table
@@ -451,7 +470,7 @@ module Table = Dsl.Table
 module Column = Dsl.Column
 module Expr = Dsl.Expr
 module Projection = Dsl.Projection
-module Join = Dsl.Join
+module Scope = Dsl.Scope
 module Source = Dsl.Source
 module Select = Dsl.Select
 module Assignment = Dsl.Assignment

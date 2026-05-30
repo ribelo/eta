@@ -3,7 +3,7 @@ open Eta_test
 open Test_eta_support
 
 let test_tracer_manual_spans () =
-  Eio_main.run @@ fun _stdenv ->
+  run_eio @@ fun _stdenv ->
   Tracer.with_fiber_context @@ fun () ->
   let tracer = Tracer.in_memory () in
   let t = Tracer.as_capability tracer in
@@ -307,7 +307,7 @@ let test_observability_sampler_ratio () =
   Alcotest.(check bool) "roughly half sampled" true (count > 350 && count < 650)
 
 let test_observability_sampler_ratio_same_name_uses_trace_id () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
@@ -374,7 +374,7 @@ let counting_noop_tracer count : Capabilities.tracer =
   end
 
 let test_observability_custom_noop_tracer_is_explicitly_enabled () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let spans_started = ref 0 in
   let rt =
@@ -386,7 +386,7 @@ let test_observability_custom_noop_tracer_is_explicitly_enabled () =
   Alcotest.(check int) "custom tracer enabled" 1 !spans_started
 
 let test_observability_suppress_observability () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let logger = Logger.in_memory () in

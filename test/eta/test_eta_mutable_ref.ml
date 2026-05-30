@@ -39,7 +39,7 @@ let test_mutable_ref_compare_and_set () =
   Alcotest.(check string) "cas leaves value on failure" "b" (Mutable_ref.get r)
 
 let test_mutable_ref_concurrent_update () =
-  Eio_main.run @@ fun _stdenv ->
+  run_eio @@ fun _stdenv ->
   Eio.Switch.run @@ fun sw ->
   let r = Mutable_ref.make 0 in
   let updates = 10_000 in

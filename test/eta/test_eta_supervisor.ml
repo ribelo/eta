@@ -156,7 +156,7 @@ let test_effect_with_background_cancels_child () =
         cause
 
 let test_supervisor_scope_cancels_unawaited_children_on_return () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let child_started, child_started_resolver = Eio.Promise.create () in

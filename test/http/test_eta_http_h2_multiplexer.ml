@@ -227,7 +227,7 @@ let test_h2_body_stream_releases_on_eof () =
   let writer = h2_open_streaming_body mux client server held_writer body_ref in
   H2.Body.Writer.write_string writer "hello";
   H2.Body.Writer.close writer;
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let body =
     Eta_http.Body.Stream.read_all (h2_response_body "eof" !body_ref)
     |> Eta.Runtime.run rt
@@ -280,7 +280,7 @@ let test_h2_body_stream_reads_inline_data_after_header_pump () =
   in
   H2.Body.Writer.close opened.request_body;
   h2_pump_pair client server;
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let body =
     Eta_http.Body.Stream.read_all (h2_response_body "inline" !body_ref)
     |> Eta.Runtime.run rt
@@ -348,7 +348,7 @@ let test_h2_multiplexer_delivers_response_trailers () =
     | Some trailers -> trailers
     | None -> Alcotest.fail "trailers were not delivered by END_STREAM"
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let body =
     Eta_http.Body.Stream.read_all (h2_response_body "trailers" !body_ref)
     |> Eta.Runtime.run rt
@@ -373,7 +373,7 @@ let test_h2_body_stream_discard_releases_active_stream () =
   let body_ref = ref None in
   let writer = h2_open_streaming_body mux client server held_writer body_ref in
   H2.Body.Writer.write_string writer "prefix";
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let body = h2_response_body "discard" !body_ref in
   let chunk =
     Eta_http.Body.Stream.read body |> Eta.Runtime.run rt

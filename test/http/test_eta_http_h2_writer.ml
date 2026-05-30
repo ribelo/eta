@@ -42,7 +42,7 @@ let test_h2_writer_drains_client_preface_and_request () =
   | Close { code; _ } -> Alcotest.failf "unexpected second close code=%d" code
 
 let test_h2_writer_blocked_write_teardown () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let client =
     H2.Client_connection.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected client h2 error")

@@ -62,7 +62,7 @@ let run_h2_server flow handler =
     (fun () -> try run_server_reader flow server with End_of_file -> ())
 
 let with_h2_server ?max_concurrent handler client_action =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -88,7 +88,7 @@ let with_h2_server ?max_concurrent handler client_action =
     (fun () -> client_action clock rt connection)
 
 let with_raw_h2_server server client_action =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -334,7 +334,7 @@ let test_h2_connection_cancelled_body_read_closes_connection () =
         (Eta_http.H2.Connection.is_closed connection))
 
 let test_h2_connection_completed_error_response_does_not_hold_switch () =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -571,7 +571,7 @@ let test_h2_connection_timeout_kills_connection () =
    latent: if Eio scheduling changes and reader catches Cancelled first,
    security_error_handler would fire spuriously. *)
 let test_h2_connection_switch_close_does_not_fire_security_error () =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -619,7 +619,7 @@ let test_h2_connection_switch_close_does_not_fire_security_error () =
    wrong classification, which also breaks retryability (protocol
    violations are Not_retryable, connection closed is retryable). *)
 let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation () =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -682,7 +682,7 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
    exceptions. If one handler raises, the rest never fire. This breaks
    cleanup guarantees for components that rely on failure notifications. *)
 let test_h2_connection_failure_handler_exception_skips_others () =
-  Eio_main.run @@ fun _env ->
+  run_eio @@ fun _env ->
   Eio.Switch.run @@ fun sw ->
   let (flow_r, _flow_w) = Eio_unix.Net.socketpair_stream ~sw () in
   let handler1_called = ref false in
@@ -711,7 +711,7 @@ let test_h2_connection_failure_handler_exception_skips_others () =
     !handler2_called
 
 let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
-  Eio_main.run @@ fun env ->
+  run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in

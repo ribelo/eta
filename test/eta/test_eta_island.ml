@@ -3,7 +3,7 @@ open Eta_test
 open Test_eta_support
 
 let with_island_runtime ?domains f =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool = Effect.Island.Pool.create ?domains () in
   Fun.protect

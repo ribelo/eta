@@ -57,7 +57,10 @@ let set_failure t kind =
         t.failure_waiters <- [];
         if first then waiters else [])
   in
-  List.iter (fun waiter -> if waiter.active then waiter.notify kind) waiters
+  List.iter
+    (fun waiter ->
+      if waiter.active then try waiter.notify kind with _ -> ())
+    waiters
 
 let shutdown t =
   notify_close_once t;
@@ -114,6 +117,7 @@ let run_owner_loop ?(on_error = fun _ -> ()) loop t =
   try loop t
   with
   | End_of_file -> shutdown t
+  | Eio.Cancel.Cancelled _ -> shutdown t
   | exn ->
       let kind =
         Error.Connection_protocol_violation

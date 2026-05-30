@@ -4,6 +4,13 @@
  (synopsis "Typed functional effects for OCaml: typed failures, exits, schedules, retry, race, timeout, and detached fibers; backed by Eio")
  (private_modules
   blocking_runtime
+  effect_blocking
+  effect_concurrent
+  effect_core
+  effect_island
+  effect_observability
+  effect_resource
+  effect_supervisor_scope
   island_runtime
   par_scheduler
   runtime_core

@@ -88,7 +88,7 @@ let test_uninterruptible_timeout_inside_protected_still_fires () =
   | Exit.Ok () -> Alcotest.fail "expected Timeout"
 
 let test_uninterruptible_race_loser_without_checkpoints_returns () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
     Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()

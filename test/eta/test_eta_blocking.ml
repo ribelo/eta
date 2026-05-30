@@ -97,7 +97,7 @@ let test_blocking_result_lifts_result () =
         cause
 
 let test_blocking_pool_custom_runner () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   let calls = Atomic.make 0 in
   let module Host = struct
     let run_in_systhread ?label f =
@@ -117,7 +117,7 @@ let test_blocking_pool_custom_runner () =
   Alcotest.(check int) "runner calls" 1 (Atomic.get calls)
 
 let test_blocking_direct_control_and_blocking_heartbeat () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let direct_p99, () = heartbeat_p99_us (fun () -> Unix.sleepf 0.030) in
@@ -130,7 +130,7 @@ let test_blocking_direct_control_and_blocking_heartbeat () =
   Alcotest.(check bool) "blocking preserves heartbeat" true (blocking_p99 < 10_000)
 
 let test_blocking_wait_policy_caps_active_and_queue () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"wait-cap"
@@ -167,7 +167,7 @@ let test_blocking_wait_policy_caps_active_and_queue () =
   Alcotest.(check int) "detached" 0 stats.detached
 
 let test_blocking_reject_policy_deterministic () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"reject"
@@ -196,7 +196,7 @@ let test_blocking_reject_policy_deterministic () =
   ignore (Eio.Promise.await_exn first : (unit, _) Exit.t)
 
 let test_blocking_pending_cancellation_removes_queued_job () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"cancel-pending"
@@ -253,7 +253,7 @@ let test_blocking_shutdown_rejects_new_jobs () =
   | Exit.Error cause -> check_pool_shutdown "shutdown" cause
 
 let test_blocking_shutdown_drain_waits_for_started () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"drain" (blocking_config ~max_threads:1 ~shutdown_policy:BP.Drain ())
@@ -270,7 +270,7 @@ let test_blocking_shutdown_drain_waits_for_started () =
   ignore (Eio.Promise.await_exn worker : (unit, _) Exit.t)
 
 let test_blocking_shutdown_detach_started_returns_promptly () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let meter = Meter.in_memory () in
   let pool =
@@ -306,7 +306,7 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
                  point.attrs))
 
 let test_blocking_detach_started_counts_each_job_once () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let pool =
     BP.create ~name:"detach-once"
@@ -341,7 +341,7 @@ let test_blocking_detach_started_counts_each_job_once () =
   ignore (Eio.Promise.await_exn shutdown_detached : (unit, _) Exit.t)
 
 let test_blocking_named_pools_prevent_starvation () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let fs_pool = BP.create ~name:"fs" (blocking_config ~max_threads:4 ~max_queued:64 ()) in
   let db_pool = BP.create ~name:"db" (blocking_config ~max_threads:2 ~max_queued:8 ()) in
@@ -363,7 +363,7 @@ let test_blocking_named_pools_prevent_starvation () =
   ignore (Eio.Promise.await_exn fs : (unit list, _) Exit.t)
 
 let test_blocking_domain_isolated_preserves_hold_lock_heartbeat () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let normal_pool =
@@ -430,7 +430,7 @@ let test_blocking_cpu_antipattern_has_no_speedup () =
     (blocking_elapsed >= same_elapsed / 2)
 
 let test_blocking_observability_labels_and_timings () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let meter = Meter.in_memory () in

@@ -8,7 +8,7 @@ type dependency_deps = {
 }
 
 let test_explicit_dependency_passing () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let log_calls = ref [] in
   let deps =

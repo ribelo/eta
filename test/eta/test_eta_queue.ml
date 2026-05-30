@@ -40,7 +40,7 @@ let test_queue_close_with_error_drains () =
   | _ -> Alcotest.fail "expected close_with_error")
 
 let test_queue_cancel_blocked_recv_cleans_waiter () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let q = Queue.create () in

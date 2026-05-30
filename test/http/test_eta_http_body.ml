@@ -1,7 +1,7 @@
 open Test_eta_http_support
 
 let test_body_stream_release_once () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let released = ref 0 in
   let stream =
     Eta_http.Body.Stream.of_bytes
@@ -21,7 +21,7 @@ let test_body_stream_release_once () =
   Alcotest.(check int) "release once" 1 !released
 
 let test_body_stream_reader_release_once () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let released = ref 0 in
   let values =
     ref
@@ -53,7 +53,7 @@ let test_body_stream_reader_release_once () =
   Alcotest.(check int) "release once" 1 !released
 
 let test_body_source_owned_stream_releases_on_scope_exit () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let released = ref 0 in
   let stream =
     Eta_http.Body.Stream.of_bytes
@@ -75,7 +75,7 @@ let test_body_source_owned_stream_releases_on_scope_exit () =
   Alcotest.(check int) "released" 1 !released
 
 let test_body_source_rewindable_stream_is_owned_per_call () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let made = ref 0 in
   let released = ref 0 in
   let source =
@@ -102,7 +102,7 @@ let test_body_source_rewindable_stream_is_owned_per_call () =
   Alcotest.(check int) "released" 2 !released
 
 let test_body_stream_read_all_caps_default () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let stream =
     Eta_http.Body.Stream.of_bytes
       [ Bytes.make body_size_cap 'a'; Bytes.of_string "b" ]
@@ -143,7 +143,7 @@ let chunked_reader_of_string context raw =
   { Eta_http.Body.Chunked.read_exact; read_line }
 
 let test_chunked_decodes_trailers () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let context =
     {
       Eta_http.Body.Chunked.protocol = Eta_http.Error.H1;
@@ -172,7 +172,7 @@ let test_chunked_decodes_trailers () =
        (Eta_http.Body.Chunked.trailers decoder))
 
 let test_gzip_transducer_roundtrip () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let input =
     Eta_http.Body.Stream.of_bytes
       [ Bytes.of_string "alpha"; Bytes.of_string "-beta"; Bytes.of_string "-gamma" ]
@@ -194,7 +194,7 @@ let test_gzip_transducer_roundtrip () =
   Alcotest.(check string) "roundtrip" "alpha-beta-gamma" (Bytes.to_string body)
 
 let test_gzip_transducer_expansion_cap () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let input = Eta_http.Body.Stream.of_bytes [ Bytes.make 128 'x' ] in
   let encoded = Eta_http.Body.Transducer.gzip_encode input in
   let compressed =
@@ -240,13 +240,13 @@ let expect_gzip_decode_error rt label bytes =
         cause
 
 let test_gzip_transducer_rejects_truncated_stream () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let compressed = gzip_compress rt "truncated-body" in
   let truncated = Bytes.sub compressed 0 (Bytes.length compressed - 4) in
   expect_gzip_decode_error rt "truncated" truncated
 
 let test_gzip_transducer_rejects_crc_mismatch () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let compressed = gzip_compress rt "crc-body" in
   let corrupt = Bytes.copy compressed in
   let crc_offset = Bytes.length corrupt - 8 in
@@ -255,7 +255,7 @@ let test_gzip_transducer_rejects_crc_mismatch () =
   expect_gzip_decode_error rt "crc" corrupt
 
 let test_gzip_transducer_decodes_concatenated_members () =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let first = gzip_compress rt "hello " in
   let second = gzip_compress rt "world" in
   let concatenated = Bytes.cat first second in

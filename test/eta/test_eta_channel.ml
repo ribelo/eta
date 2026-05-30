@@ -22,7 +22,7 @@ let test_channel_try_send_try_recv () =
   Alcotest.(check int) "received" 1 stats.Channel.received
 
 let test_channel_blocking_send_backpressure () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -35,7 +35,7 @@ let test_channel_blocking_send_backpressure () =
   Alcotest.(check int) "second recv" 2 (run_ok rt (Channel.recv ch))
 
 let test_channel_blocked_sender_is_not_passed_by_later_sender () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -53,7 +53,7 @@ let test_channel_blocked_sender_is_not_passed_by_later_sender () =
   Alcotest.(check int) "later value" 3 (run_ok rt (Channel.recv ch))
 
 let test_channel_blocking_recv () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -63,7 +63,7 @@ let test_channel_blocking_recv () =
   check_exit_ok Alcotest.int "received" 7 (Eio.Promise.await receiver)
 
 let test_channel_close_wakes_blocked_senders_and_receivers () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sender_ch = Channel.create ~capacity:1 () in
@@ -102,7 +102,7 @@ let test_channel_close_with_error_drains_buffer () =
   | _ -> Alcotest.fail "expected try_send to see close_with_error"
 
 let test_channel_cancel_blocked_send_cleans_waiter () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -129,7 +129,7 @@ let test_channel_cancel_blocked_send_cleans_waiter () =
   | _ -> Alcotest.fail "cancelled sender enqueued a value"
 
 let test_channel_cancel_blocked_recv_cleans_waiter () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -149,7 +149,7 @@ let test_channel_cancel_blocked_recv_cleans_waiter () =
     "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers
 
 let test_channel_cancel_receiver_after_delivery_requeues_message () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
@@ -172,7 +172,7 @@ let test_channel_cancel_receiver_after_delivery_requeues_message () =
   Alcotest.(check int) "next receiver gets value" 42 (run_ok rt (Channel.recv ch))
 
 let test_channel_parent_switch_teardown_does_not_hang () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in

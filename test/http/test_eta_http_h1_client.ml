@@ -8,7 +8,7 @@ let test_h1_client_request_on_flow_fixed_response () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -37,7 +37,7 @@ let test_h1_client_reads_split_response () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -71,7 +71,7 @@ let test_h1_client_decodes_chunked_response () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -101,7 +101,7 @@ let test_h1_client_caps_close_delimited_body () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -126,7 +126,7 @@ let test_h1_client_streaming_request_body_releases () =
   let request : Eta_http.H1.Client.request =
     { method_ = "POST"; url; headers = []; body = Eta_http.H1.Client.Stream body }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -173,7 +173,7 @@ let test_h1_client_cancelled_streaming_request_body_releases () =
       body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
     }
   in
-  Eta_test.with_test_clock @@ fun sw clock rt ->
+  with_test_clock @@ fun sw clock rt ->
   let timed =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
@@ -210,7 +210,7 @@ let test_h1_client_streaming_request_body_releases_on_write_failure () =
       body = Eta_http.H1.Client.Stream (h1_blocking_body ~released ());
     }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
   in
@@ -229,7 +229,7 @@ let test_h1_client_custom_release_on_write_failure () =
   let request : Eta_http.H1.Client.request =
     { method_ = "POST"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.H1.Client.request_on_flow
       ~release:(fun () ->
@@ -251,7 +251,7 @@ let test_h1_client_custom_release_on_response_header_failure () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.H1.Client.request_on_flow
       ~release:(fun () ->
@@ -274,7 +274,7 @@ let test_h1_client_head_ignores_chunked_body_headers () =
   let request : Eta_http.H1.Client.request =
     { method_ = "HEAD"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -307,7 +307,7 @@ let test_h1_client_skips_100_continue () =
       body = Eta_http.H1.Client.Fixed [ Bytes.of_string "abc" ];
     }
   in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow ~flow request
     |> Eta.Runtime.run rt
@@ -341,7 +341,7 @@ let test_h1_pool_reuses_healthy_idle_connection () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net
       url
@@ -388,7 +388,7 @@ let test_h1_pool_rejects_unhealthy_idle_connection () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net
       url
@@ -426,7 +426,7 @@ let test_h1_pool_holds_checkout_until_body_eof () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
@@ -462,7 +462,7 @@ let test_h1_pool_discard_releases_checkout () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
@@ -505,7 +505,7 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw clock rt ->
+  with_test_clock @@ fun sw clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
@@ -557,7 +557,7 @@ let test_h1_pool_connection_close_opens_new_connection () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -593,7 +593,7 @@ let test_body_stream_read_exception_leaks_release () =
   Eio_mock.Flow.on_read flow
     [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel";
       `Raise (Failure "read truncated") ];
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  with_test_clock @@ fun _sw _clock rt ->
   let response =
     Eta_http.H1.Client.request_on_flow
       ~release:(fun () ->
@@ -626,7 +626,7 @@ let test_client_make_h1_request_path () =
     [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Return flow ];
-  Eta_test.with_test_clock @@ fun sw _clock rt ->
+  with_test_clock @@ fun sw _clock rt ->
   let client = Eta_http.Client.make_h1 ~sw ~net () in
   let request = Eta_http.Request.make "GET" "http://example.test/models" in
   let response =

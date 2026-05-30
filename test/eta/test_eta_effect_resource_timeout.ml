@@ -56,7 +56,7 @@ let test_daemon_drains_acquire_release_finalizer () =
   Alcotest.(check bool) "released" true (Atomic.get released)
 
 let test_daemon_failure_logs_diagnostic () =
-  Eta_test.with_logger @@ fun _sw rt logger ->
+  with_logger @@ fun _sw rt logger ->
   let daemon_body = Effect.sync (fun () -> failwith "daemon crash") in
   run_ok rt (Effect.Private.daemon daemon_body);
   Runtime.drain rt;
@@ -72,7 +72,7 @@ let test_daemon_failure_logs_diagnostic () =
         (List.length records)
 
 let test_daemon_interrupt_does_not_log_diagnostic () =
-  Eta_test.with_logger @@ fun _sw rt logger ->
+  with_logger @@ fun _sw rt logger ->
   let daemon_body =
     Effect.sync (fun () ->
         raise (Eio.Cancel.Cancelled (Failure "daemon shutdown")))

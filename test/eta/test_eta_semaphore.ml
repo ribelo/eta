@@ -122,7 +122,7 @@ let test_semaphore_cancellation_stress () =
   Alcotest.(check int) "final available" 8 (Semaphore.available sem)
 
 let test_semaphore_cancel_after_wakeup_returns_permit () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in

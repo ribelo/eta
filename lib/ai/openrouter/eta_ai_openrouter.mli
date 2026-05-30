@@ -128,20 +128,13 @@ module Transcriptions : Eta_ai.Provider.Transcriptions
 module Rerank : Eta_ai.Provider.Rerank
 module Video : Eta_ai.Provider.Video
 
-val encode_chat :
+val encode_responses :
   ?structured_output:structured_output ->
   ?routing:routing ->
   Eta_ai.chat_request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 (** Encode eta-ai chat requests as OpenRouter Responses API requests. *)
 
-val encode_responses :
-  ?structured_output:structured_output ->
-  ?routing:routing ->
-  Eta_ai.chat_request ->
-  (Eta_ai.raw_json, Eta_ai.ai_error) result
-
-val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
 val decode_responses :
   Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
 val encode_embeddings :
@@ -183,15 +176,6 @@ val responses_request :
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
-
-val chat_completions_request :
-  ?structured_output:structured_output ->
-  ?routing:routing ->
-  ?provider:Eta_ai.provider ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
-  (Eta_http.Request.t, Eta_ai.ai_error) result
-[@@deprecated "Use responses_request; this sends the OpenRouter Responses API envelope."]
 
 val embeddings_request :
   ?routing:routing ->
@@ -252,16 +236,6 @@ val responses :
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-
-val chat_completions :
-  ?structured_output:structured_output ->
-  ?routing:routing ->
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
-  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-[@@deprecated "Use responses; this sends the OpenRouter Responses API envelope."]
 
 val embeddings :
   ?routing:routing ->
@@ -329,13 +303,3 @@ val stream_responses :
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-
-val stream_chat_completions :
-  ?structured_output:structured_output ->
-  ?routing:routing ->
-  ?provider:Eta_ai.provider ->
-  Eta_http.Client.t ->
-  api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
-  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-[@@deprecated "Use stream_responses; this sends the OpenRouter Responses API envelope."]

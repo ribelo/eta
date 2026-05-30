@@ -22,7 +22,7 @@ let observability_client ?(protocol = Eta_http.Client.H1) request =
     ~shutdown:(fun () -> Eta.Effect.unit)
 
 let test_observability_success_get_semconv () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
   in
@@ -48,7 +48,7 @@ let test_observability_success_get_semconv () =
     (span_attr "http.response.status_code" span)
 
 let test_observability_redacts_url_query_by_default () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
   in
@@ -65,7 +65,7 @@ let test_observability_redacts_url_query_by_default () =
     (span_attr "url.full" span)
 
 let test_observability_can_emit_raw_url_full () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
   in
@@ -80,7 +80,7 @@ let test_observability_can_emit_raw_url_full () =
     (span_attr "url.full" span)
 
 let test_observability_dns_error_semconv () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let error =
     Eta_http.Error.make ~method_:"GET" ~uri:"https://missing.example.test/"
       (Dns_error { host = "missing.example.test"; message = "no such host" })
@@ -96,7 +96,7 @@ let test_observability_dns_error_semconv () =
     (span_attr "error.type" span)
 
 let test_observability_tls_error_semconv () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let error =
     Eta_http.Error.make ~method_:"GET" ~uri:"https://expired.example.test/"
       (Tls_handshake_error
@@ -115,7 +115,7 @@ let test_observability_tls_error_semconv () =
     (span_attr "error.type" span)
 
 let test_observability_retry_success_spans () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let attempts, client =
     retry_client
       [|
@@ -162,7 +162,7 @@ let test_observability_redirect_semconv_can_emit_raw () =
     (List.assoc_opt "http.response.header.location" attrs)
 
 let test_observability_h2_protocol_attrs () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client ~protocol:Eta_http.Client.H2 (fun _ ->
         Eta.Effect.pure (retry_response 200))
@@ -178,7 +178,7 @@ let test_observability_h2_protocol_attrs () =
     (span_attr "network.protocol.version" span)
 
 let test_observability_recursion_disabled () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
   in
@@ -190,7 +190,7 @@ let test_observability_recursion_disabled () =
   Alcotest.(check int) "spans" 0 (List.length (Eta.Tracer.dump tracer))
 
 let test_observability_recursion_disabled_suppresses_inner_spans () =
-  Eta_test.with_traced_test_clock @@ fun _sw _clock rt tracer ->
+  with_traced_test_clock @@ fun _sw _clock rt tracer ->
   let client =
     observability_client (fun _ ->
         Eta.Effect.named "eta-http.internal"
@@ -204,7 +204,7 @@ let test_observability_recursion_disabled_suppresses_inner_spans () =
   Alcotest.(check int) "spans" 0 (List.length (Eta.Tracer.dump tracer))
 
 let test_observability_pool_stats_meter () =
-  Eio_main.run @@ fun stdenv ->
+  run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let meter = Eta.Meter.in_memory () in
   let rt =
