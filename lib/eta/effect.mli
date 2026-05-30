@@ -633,7 +633,10 @@ val run : 'err Runtime_core.t -> ('a, 'err) t -> ('a, 'err) Exit.t
 module Private : sig
   (** Unstable extension hooks for Eta's runtime and sibling packages.
 
-      This module intentionally does not expose the interpreter AST. External
+      This module intentionally exposes only effect-description hooks needed by
+      Eta packages that layer behavior over the public [Effect] algebra.
+      Runtime substrates such as island execution, blocking workers, and
+      supervisor interpretation are not part of this public surface. External
       applications should prefer the public [Effect], [Runtime], [Pool], and
       [Resource] APIs unless a hook here is explicitly documented for their
       integration point. *)
@@ -668,100 +671,4 @@ module Private : sig
     (unit, 'err) t
   (** Lazily compute metric updates only when interpreted by a runtime with
       metrics enabled. *)
-
-  val island_submit :
-    ('input : immutable_data) ('output : immutable_data).
-    string ->
-    Island.pool ->
-    ('input -> 'output) @ portable ->
-    'input ->
-    'output
-  (** Runtime hook for executing a single island callback. *)
-
-  val island_submit_map :
-    ('input : immutable_data) ('output : immutable_data).
-    string ->
-    Island.pool ->
-    ('input -> 'output) @ portable ->
-    'input list ->
-    'output list
-  (** Runtime hook for executing a batch of island callbacks. *)
-
-  val island_submit_map_result :
-    ('input : immutable_data)
-    ('output : immutable_data)
-    ('error : immutable_data).
-    string ->
-    Island.pool ->
-    ('input -> ('output, 'error) result) @ portable ->
-    'input list ->
-    ('output, 'error) result list
-  (** Runtime hook for island callbacks that return typed per-item results. *)
-
-  val island_submit_all_settled :
-    ('input : immutable_data)
-    ('output : immutable_data)
-    ('error : immutable_data).
-    Island.pool ->
-    ('input -> ('output, 'error) result) @ portable ->
-    'input list ->
-    ('output, 'error) Island.settled list
-  (** Runtime hook for island callbacks that keep worker crashes as per-item
-      [Worker_died] results. *)
-
-  type blocking_outcome =
-    | Blocking_ok
-    | Blocking_error of string
-    | Blocking_cancelled
-    | Blocking_rejected
-    | Blocking_shutdown_rejected
-    | Blocking_detached
-  (** Blocking worker outcome used for runtime metrics. *)
-
-  type blocking_event = {
-    pool : string;
-    name : string;
-    queue_wait_ms : int;
-    run_ms : int;
-    outcome : blocking_outcome;
-  }
-  (** Blocking worker event emitted after queue/run completion. *)
-
-  val blocking_default_config : Blocking.Pool.config
-  (** Runtime default configuration for the implicit blocking pool. *)
-
-  val blocking_submit :
-    sw:Eio.Switch.t ->
-    emit:(blocking_event -> unit) ->
-    Blocking.Pool.t ->
-    string ->
-    ?on_cancel:(unit -> unit) ->
-    (unit -> 'a) ->
-    'a
-  (** Runtime hook for submitting one blocking callback. *)
-
-  val blocking_pool_name : Blocking.Pool.t -> string
-  (** Runtime hook for diagnostic pool names. *)
-
-  val in_blocking_worker : unit -> bool
-  (** [true] while running inside an [Effect.Blocking] worker callback. *)
-
-  val make_supervisor :
-    sw:Eio.Switch.t -> max_failures:int option -> ('s, 'err) supervisor
-  val supervisor_fork : ('s, 'err) supervisor -> (unit -> unit) -> unit
-  val supervisor_max_failures : ('s, 'err) supervisor -> int option
-  val supervisor_record_failure : ('s, 'err) supervisor -> 'err Cause.t -> unit
-  val supervisor_failures : ('s, 'err) supervisor -> 'err Cause.t list
-  val supervisor_failure_count : ('s, 'err) supervisor -> int
-  val supervisor_register_child :
-    ('s, 'err) supervisor -> (unit -> unit) -> unit
-  val supervisor_cancel_children : ('s, 'err) supervisor -> unit
-  val make_supervisor_child :
-    promise:('a, 'err Cause.t) result Eio.Promise.t ->
-    cancel:(unit -> unit) ->
-    ('s, 'err, 'a) supervisor_child
-  val supervisor_child_promise :
-    ('s, 'err, 'a) supervisor_child -> ('a, 'err Cause.t) result Eio.Promise.t
-  val supervisor_child_cancel : ('s, 'err, 'a) supervisor_child -> unit -> unit
-  (** Runtime hooks for interpreting [supervisor_scoped]. *)
 end

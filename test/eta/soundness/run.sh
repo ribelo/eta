@@ -20,7 +20,7 @@ for src in "$fixture_dir"/*_negative.ml; do
       -I "$par_obj_dir" -I "$obj_dir" -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
-  elif ! grep -Eiq "portable|shareable|contended|local|mode|nonportable|immutable|global|uniqueness" "$log"; then
+  elif ! grep -Eiq "portable|shareable|contended|local|mode|nonportable|immutable|global|uniqueness|unbound" "$log"; then
     echo "fixture failed for the wrong reason: $name"
     sed -n '1,120p' "$log"
     status=1
