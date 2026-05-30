@@ -2,7 +2,6 @@
     [GET /api/v1/videos/:id/content]). *)
 
 module A = Common.A
-module E = Common.E
 module H = Common.H
 module Json = Common.Json
 
@@ -74,47 +73,31 @@ let decode_content (body, headers) =
   }
 
 let request ?provider:custom_provider ~api_key request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match encode request with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok raw ->
-      Stdlib.Ok
-        (A.provider_post_request provider ~path:"/api/v1/videos" api_key raw)
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.post_request provider ~path:"/api/v1/videos" ~api_key encode request
 
 let run ?provider:custom_provider client ~api_key video_request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match request ~provider ~api_key video_request with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok http_request ->
-      A.perform_raw provider client http_request
-      |> E.bind (fun raw ->
-             match decode raw with
-             | Stdlib.Ok response -> E.pure response
-             | Stdlib.Error error -> E.fail error)
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.run_raw_decoded provider client
+    (request ~provider ~api_key video_request)
+    decode
 
 let get_request ?provider:custom_provider ~api_key ~job_id () =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
+  let provider = Common.default_provider Common.provider custom_provider in
   match validate_job_id job_id with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok job_id ->
-      Stdlib.Ok
-        (A.provider_get_request provider
-           ~path:("/api/v1/videos/" ^ job_id) api_key)
+      Common.get_request provider ~path:("/api/v1/videos/" ^ job_id) ~api_key
 
 let get ?provider:custom_provider client ~api_key ~job_id =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match get_request ~provider ~api_key ~job_id () with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok http_request ->
-      A.perform_raw provider client http_request
-      |> E.bind (fun raw ->
-             match decode raw with
-             | Stdlib.Ok response -> E.pure response
-             | Stdlib.Error error -> E.fail error)
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.run_raw_decoded provider client
+    (get_request ~provider ~api_key ~job_id ())
+    decode
 
 let content_request ?provider:custom_provider ~api_key
     (request : A.Video.content_request) =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
+  let provider = Common.default_provider Common.provider custom_provider in
   match validate_job_id request.job_id with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok job_id ->
@@ -122,18 +105,14 @@ let content_request ?provider:custom_provider ~api_key
       if index < 0 then
         Common.invalid_routing "video content index must be non-negative"
       else
-        Stdlib.Ok
-          (A.provider_get_request provider
-             ~path:
-               ("/api/v1/videos/" ^ job_id ^ "/content?index="
-              ^ string_of_int index)
-             api_key)
+        Common.get_request provider
+          ~path:
+            ("/api/v1/videos/" ^ job_id ^ "/content?index="
+           ^ string_of_int index)
+          ~api_key
 
 let content ?provider:custom_provider client ~api_key request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match content_request ~provider ~api_key request with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok http_request ->
-      A.perform_binary ~max_bytes:(256 * 1024 * 1024) provider client
-        http_request
-      |> E.map decode_content
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.run_binary ~max_bytes:(256 * 1024 * 1024) provider client
+    (content_request ~provider ~api_key request)
+    decode_content

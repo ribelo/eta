@@ -239,6 +239,62 @@ let perform_chat = A.perform_chat
 let perform_stream = A.perform_stream
 let perform_embeddings = A.perform_embeddings
 
+let default_provider default custom_provider =
+  Option.value ~default:(default ()) custom_provider
+
+let post_request provider ~path ~api_key encode request =
+  match encode request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw ->
+      Stdlib.Ok (A.provider_post_request provider ~path api_key raw)
+
+let get_request provider ~path ~api_key =
+  Stdlib.Ok (A.provider_get_request provider ~path api_key)
+
+let chat_request provider ~api_key encode request =
+  match encode request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> Stdlib.Ok (make_request provider api_key raw)
+
+let embeddings_request provider ~api_key encode request =
+  match encode request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> A.provider_embeddings_request provider api_key raw
+
+let run_request request perform =
+  match request with
+  | Stdlib.Error error -> E.fail error
+  | Stdlib.Ok http_request -> perform http_request
+
+let run_chat provider client chat_request request =
+  run_request request (fun http_request ->
+      A.with_chat_span provider chat_request
+        (perform_chat provider client http_request))
+
+let run_stream provider client chat_request request =
+  run_request request (fun http_request ->
+      A.with_stream_span provider chat_request
+        (perform_stream provider client http_request))
+
+let run_embeddings provider client embedding_request request =
+  run_request request (fun http_request ->
+      A.with_embeddings_span provider embedding_request
+        (perform_embeddings provider client http_request))
+
+let decode_effect decode raw =
+  match decode raw with
+  | Stdlib.Ok response -> E.pure response
+  | Stdlib.Error error -> E.fail error
+
+let run_raw_decoded provider client request decode =
+  run_request request (fun http_request ->
+      A.perform_raw provider client http_request
+      |> E.bind (decode_effect decode))
+
+let run_binary ?max_bytes provider client request decode =
+  run_request request (fun http_request ->
+      A.perform_binary ?max_bytes provider client http_request |> E.map decode)
+
 let with_json_fields extra fields =
   Json.object_ (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 

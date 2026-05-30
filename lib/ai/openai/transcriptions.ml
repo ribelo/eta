@@ -2,7 +2,6 @@
     Includes the multipart/form-data body builder. *)
 
 module A = Common.A
-module E = Common.E
 module H = Common.H
 module Json = Common.Json
 
@@ -76,7 +75,7 @@ let multipart_request provider ~path api_key boundary body =
     (Common.join_url provider.base_url path)
 
 let request ?provider:custom_provider ~api_key request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
+  let provider = Common.default_provider Common.provider custom_provider in
   match multipart_body request with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok (boundary, body) ->
@@ -85,12 +84,7 @@ let request ?provider:custom_provider ~api_key request =
            boundary body)
 
 let run ?provider:custom_provider client ~api_key transcription_request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match request ~provider ~api_key transcription_request with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok http_request ->
-      A.perform_raw provider client http_request
-      |> E.bind (fun raw ->
-             match decode_response raw with
-             | Stdlib.Ok response -> E.pure response
-             | Stdlib.Error error -> E.fail error)
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.run_raw_decoded provider client
+    (request ~provider ~api_key transcription_request)
+    decode_response

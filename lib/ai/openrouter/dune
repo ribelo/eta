@@ -2,4 +2,13 @@
  (name eta_ai_openrouter)
  (public_name eta_ai_openrouter)
  (synopsis "OpenRouter provider for eta_ai")
+ (private_modules
+  common
+  embeddings_impl
+  images_impl
+  rerank_impl
+  responses_impl
+  speech_impl
+  transcription_impl
+  video_impl)
  (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http yojson base64))

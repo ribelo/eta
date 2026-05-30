@@ -1,7 +1,6 @@
 (** OpenAI Speech API ([POST /v1/audio/speech]). *)
 
 module A = Common.A
-module E = Common.E
 module H = Common.H
 module Json = Common.Json
 
@@ -42,17 +41,11 @@ let decode_response (body, headers) =
   }
 
 let request ?provider:custom_provider ~api_key request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match encode request with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok raw ->
-      Stdlib.Ok
-        (A.provider_post_request provider ~path:"/v1/audio/speech" api_key raw)
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.post_request provider ~path:"/v1/audio/speech" ~api_key encode request
 
 let run ?provider:custom_provider client ~api_key speech_request =
-  let provider = Option.value ~default:(Common.provider ()) custom_provider in
-  match request ~provider ~api_key speech_request with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok http_request ->
-      A.perform_binary ~max_bytes:(64 * 1024 * 1024) provider client http_request
-      |> E.map decode_response
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.run_binary ~max_bytes:(64 * 1024 * 1024) provider client
+    (request ~provider ~api_key speech_request)
+    decode_response
