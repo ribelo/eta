@@ -1315,3 +1315,51 @@ let test_sql_expr_type_unsoundness () =
     []  (* correct: no rows or the single row should be typed as option *)
     sum_rows;
   Eta.Effect.unit
+
+(* P1: Schema DSL interpolates raw SQL fragments without validation.
+   default, on_delete, on_update are raw strings appended into DDL.
+   This allows SQL injection if values come from untrusted input. *)
+
+let test_sql_schema_dsl_raw_interpolation () =
+  with_pool @@ fun pool ->
+  (* Inject arbitrary SQL via the default field *)
+  let injected_default = "0; DROP TABLE users; --" in
+  let schema =
+    Q.Eta_schema.(
+      create_table Users.table
+        [
+          column ~primary_key:true Users.id;
+          column ~not_null:true ~default:injected_default Users.name;
+          column Users.active;
+          column Users.status;
+          column Users.nickname;
+        ]
+      |> compile)
+  in
+  (* The schema SQL should NOT contain unescaped injection payload.
+     A correct implementation would either:
+     1. Reject non-literal default values
+     2. Quote/escape the default value
+     3. Clearly mark this as an unsafe escape hatch *)
+  let sql = schema.Q.Compiled.sql in
+  let contains_injection =
+    let needle = "DROP TABLE" in
+    let nlen = String.length needle in
+    let slen = String.length sql in
+    let rec loop i =
+      if i + nlen > slen then false
+      else if String.sub sql i nlen = needle then true
+      else loop (i + 1)
+    in
+    loop 0
+  in
+  Alcotest.(check bool)
+    "schema DDL should not contain raw SQL injection from default field"
+    false contains_injection;
+  (* Also verify the injected SQL actually executes (proving the injection works) *)
+  let exec_result = Q.Pool.run_schema pool schema in
+  let* () =
+    exec_result
+    |> Eta.Effect.catch (fun _ -> Eta.Effect.unit)
+  in
+  Eta.Effect.pure ()

@@ -58,6 +58,8 @@ let () =
             test_sql_compiled_type_bypass;
           Alcotest.test_case "expr type unsoundness" `Quick
             test_sql_expr_type_unsoundness;
+          Alcotest.test_case "schema DSL raw interpolation" `Quick
+            test_sql_schema_dsl_raw_interpolation;
         ] );
       ( "Sqlite",
         [
