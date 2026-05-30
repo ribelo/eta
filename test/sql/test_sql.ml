@@ -1250,3 +1250,41 @@ let test_sql_pool_health_check_does_not_detect_active_transaction () =
         false (List.mem 42 ids)
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected error: %a" (Eta.Cause.pp pp_pool_error) cause
+
+(* P1: The typed SQL DSL can be bypassed by constructing Compiled records directly.
+   Compiled types expose record fields, so callers can construct arbitrary
+   compiled selects/changes/schemas without the DSL builders. This bypasses
+   table/scope/column typing, parameter provenance, and decoder alignment.
+
+   This test demonstrates that a hand-constructed Compiled.select with
+   a mismatched decoder executes successfully, proving the type boundary
+   is not enforced at runtime. A sealed Compiled module would make this
+   a compile-time error. *)
+
+let test_sql_compiled_type_bypass () =
+  with_pool @@ fun pool ->
+  let* () = Q.Pool.execute_script pool
+    "CREATE TABLE bypass_test (id INTEGER PRIMARY KEY, name TEXT);\
+     INSERT INTO bypass_test VALUES (1, 'alice'), (2, 'bob')" in
+  (* Construct a Compiled.select DIRECTLY without using the DSL.
+     This bypasses all type safety — the decoder reads column 0 as int,
+     but the query returns a TEXT column. The DSL's type system would
+     prevent this mismatch if Compiled.select were abstract. *)
+  let bogus_select : int Q.Compiled.select = {
+    sql = "SELECT name FROM bypass_test WHERE id = 1";
+    params = [];
+    decode = (fun stmt -> S.column_int stmt 0);  (* reading TEXT as int *)
+  } in
+  (* This should ideally not compile if Compiled.select were abstract.
+     Instead it compiles fine and executes, proving the type boundary
+     is bypassable. The result is undefined/wrong: reading a text column
+     as int returns 0 in SQLite (silent type coercion). *)
+  let* rows = Q.Pool.select pool bogus_select in
+  (* SQLite coerces 'alice' to 0 when read as integer — silent data corruption.
+     The DSL type system is supposed to prevent this, but since Compiled
+     records are not sealed, the safety is bypassed. *)
+  Alcotest.(check (list int))
+    "bypassed DSL: should not be constructible (reading TEXT as int gives 0)"
+    [ 1 ]  (* what a correct query would return; we get 0 from coercion *)
+    rows;
+  Eta.Effect.unit

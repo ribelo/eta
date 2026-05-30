@@ -54,6 +54,8 @@ let () =
             test_sql_pool_health_check_does_not_detect_active_transaction;
           Alcotest.test_case "fold timeout does not bound total elapsed" `Slow
             test_sql_fold_timeout_does_not_bound_total_elapsed;
+          Alcotest.test_case "compiled type bypass" `Quick
+            test_sql_compiled_type_bypass;
         ] );
       ( "Sqlite",
         [
