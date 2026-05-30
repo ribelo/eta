@@ -116,6 +116,7 @@
                 'ocamlformat=0.26.2+ox1' \
                 'merlin=5.2.1-502+ox1' \
                 'ocaml-lsp-server=1.19.0+ox1' \
+                'utop=2.16.0+ox1' \
                 --assume-depexts \
                 --yes
               opam install \
@@ -156,6 +157,7 @@
               opam list --installed --short ocamlformat | grep -Fxq ocamlformat
               opam list --installed --short merlin | grep -Fxq merlin
               opam list --installed --short ocaml-lsp-server | grep -Fxq ocaml-lsp-server
+              opam list --installed --short utop | grep -Fxq utop
 
               mode_probe="scratch/oxcaml_research/toolchain_probe/mode_syntax.ml"
               dune build ./scratch/oxcaml_research/toolchain_probe/mode_syntax.exe
@@ -322,6 +324,7 @@
               ocamlPackages.eio_main
               ocamlPackages.alcotest
               ocamlPackages.cstruct
+              ocamlPackages.utop
               ocamlPackages.yojson
               ocamlPackages.ppxlib
             ];

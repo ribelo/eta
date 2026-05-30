@@ -18,6 +18,19 @@
   (cstruct (>= 6.0.0))))
 
 (package
+ (name eta_utop)
+ (synopsis "UTop convenience helpers for Eta effects")
+ (description
+  "eta_utop provides small Eio_main-backed helpers for running Eta effects from dune utop sessions.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta
+  (eio (>= 1.0))
+  eio_main))
+
+(package
  (name eta_stream)
  (synopsis "Streams, channels, mailboxes, and bounded queues for Eta")
  (description
