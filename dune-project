@@ -220,6 +220,7 @@
   eta_redacted
   eta_http
   eta_stream
+  base64
   (yojson (>= 2.0))))
 
 (package
@@ -267,6 +268,7 @@
   eta_ai_openai_codec
   eta_redacted
   eta_http
+  base64
   (yojson (>= 2.0))))
 
 (package

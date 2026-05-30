@@ -182,33 +182,9 @@ type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
 let widen_ws_error (error : Eta_http.Ws.Client.ws_error) : realtime_error =
   (error :> realtime_error)
 
-let base64_table =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-let base64_encode input =
-  let len = String.length input in
-  let out = Buffer.create (((len + 2) / 3) * 4) in
-  let byte index = if index < len then Char.code input.[index] else 0 in
-  let rec loop index =
-    if index < len then (
-      let b0 = byte index in
-      let b1 = byte (index + 1) in
-      let b2 = byte (index + 2) in
-      Buffer.add_char out base64_table.[b0 lsr 2];
-      Buffer.add_char out base64_table.[((b0 land 0x03) lsl 4) lor (b1 lsr 4)];
-      if index + 1 < len then
-        Buffer.add_char out base64_table.[((b1 land 0x0f) lsl 2) lor (b2 lsr 6)]
-      else Buffer.add_char out '=';
-      if index + 2 < len then Buffer.add_char out base64_table.[b2 land 0x3f]
-      else Buffer.add_char out '=';
-      loop (index + 3))
-  in
-  loop 0;
-  Buffer.contents out
-
 let audio_data_base64 = function
   | A.Base64 value -> value
-  | A.Bytes bytes -> base64_encode (Bytes.to_string bytes)
+  | A.Bytes bytes -> Base64.encode_string (Bytes.to_string bytes)
 
 let client_event_json = function
   | Raw_client_event json -> Stdlib.Ok json

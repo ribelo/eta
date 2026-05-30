@@ -13,6 +13,7 @@ depends: [
   "eta_redacted"
   "eta_http"
   "eta_stream"
+  "base64"
   "yojson" {>= "2.0"}
   "odoc" {with-doc}
 ]

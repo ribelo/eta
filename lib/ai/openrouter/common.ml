@@ -242,25 +242,4 @@ let perform_embeddings = A.perform_embeddings
 let with_json_fields extra fields =
   Json.object_ (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
-let base64_table =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-let base64_encode input =
-  let len = String.length input in
-  let out = Buffer.create (((len + 2) / 3) * 4) in
-  let rec loop index =
-    if index < len then (
-      let b0 = Char.code input.[index] in
-      let b1 = if index + 1 < len then Char.code input.[index + 1] else 0 in
-      let b2 = if index + 2 < len then Char.code input.[index + 2] else 0 in
-      Buffer.add_char out base64_table.[b0 lsr 2];
-      Buffer.add_char out base64_table.[((b0 land 0x03) lsl 4) lor (b1 lsr 4)];
-      if index + 1 < len then
-        Buffer.add_char out base64_table.[((b1 land 0x0f) lsl 2) lor (b2 lsr 6)]
-      else Buffer.add_char out '=';
-      if index + 2 < len then Buffer.add_char out base64_table.[b2 land 0x3f]
-      else Buffer.add_char out '=';
-      loop (index + 3))
-  in
-  loop 0;
-  Buffer.contents out
+let base64_encode = Base64.encode_string
