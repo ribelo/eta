@@ -688,10 +688,12 @@ static value execute_direct(lbug_connection *conn, const char *cypher)
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
+  char *cypher_copy = caml_stat_strdup(cypher);
   lbug_state state;
   caml_enter_blocking_section();
-  state = api.connection_query(conn, cypher, &result);
+  state = api.connection_query(conn, cypher_copy, &result);
   caml_leave_blocking_section();
+  caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
   if (!api.query_result_is_success(&result)) {
     char *err = api.query_result_get_error_message(&result);
@@ -768,10 +770,12 @@ static value execute_direct_values(lbug_connection *conn, const char *cypher)
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
+  char *cypher_copy = caml_stat_strdup(cypher);
   lbug_state state;
   caml_enter_blocking_section();
-  state = api.connection_query(conn, cypher, &result);
+  state = api.connection_query(conn, cypher_copy, &result);
   caml_leave_blocking_section();
+  caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
   if (!api.query_result_is_success(&result)) {
     char *err = api.query_result_get_error_message(&result);

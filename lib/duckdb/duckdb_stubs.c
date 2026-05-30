@@ -220,12 +220,14 @@ CAMLprim value eta_duckdb_open(value v_path)
   CAMLparam1(v_path);
   CAMLlocal1(v_block);
   ensure_loaded();
-  const char *path = String_val(v_path);
+  const char *ocaml_path = String_val(v_path);
+  char *path = caml_stat_strdup(ocaml_path);
   duckdb_database db = NULL;
   int rc;
   caml_enter_blocking_section();
   rc = api.open(path[0] == '\0' ? NULL : path, &db);
   caml_leave_blocking_section();
+  caml_stat_free(path);
   if (rc != 0) caml_failwith("duckdb_open failed");
   v_block = caml_alloc_custom(&db_ops, sizeof(eta_duckdb_db), 0, 1);
   ((eta_duckdb_db *)Data_custom_val(v_block))->db = db;
@@ -480,10 +482,12 @@ CAMLprim value eta_duckdb_exec_script(value v_conn, value v_sql)
   ensure_loaded();
   duckdb_result result;
   memset(&result, 0, sizeof(result));
+  char *sql = caml_stat_strdup(String_val(v_sql));
   int rc;
   caml_enter_blocking_section();
-  rc = api.query(conn_val(v_conn), String_val(v_sql), &result);
+  rc = api.query(conn_val(v_conn), sql, &result);
   caml_leave_blocking_section();
+  caml_stat_free(sql);
   if (rc != 0) {
     const char *err = api.result_error(&result);
     char buffer[1024];
