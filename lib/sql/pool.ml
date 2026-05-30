@@ -22,34 +22,18 @@ type _ runner =
 
 type t = pool runner
 
-let lift_sql_result = function
-  | Ok value -> Eta.Effect.pure value
-  | Result.Error err -> Eta.Effect.fail (`Eta_sql err)
+let map_sql_result f () =
+  match f () with
+  | Ok value -> Ok value
+  | Result.Error err -> Result.Error (`Eta_sql err)
 
 let blocking_result ?blocking_pool ?name f =
-  Eta.Effect.blocking ?pool:blocking_pool ?name f
-  |> Eta.Effect.bind lift_sql_result
+  Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_sql_result f)
 
 let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
   let interrupt () = Sqlite.interrupt (Connection.sqlite conn) in
-  let check_not_cancelled = Eta.Effect.sync Eio.Fiber.check in
-  let query =
-    Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:interrupt f
-    |> Eta.Effect.map (function
-         | Ok value -> `Query_ok value
-         | Result.Error err -> `Query_error err)
-  in
-  let interrupt =
-    Eta.Effect.delay timeout
-      (Eta.Effect.sync interrupt |> Eta.Effect.map (fun () -> `Timed_out))
-  in
-  Eta.Effect.race [ query; interrupt ]
-  |> Eta.Effect.bind (function
-       | `Query_ok value -> check_not_cancelled |> Eta.Effect.map (fun () -> value)
-       | `Query_error err ->
-           check_not_cancelled
-           |> Eta.Effect.bind (fun () -> Eta.Effect.fail (`Eta_sql err))
-       | `Timed_out -> Eta.Effect.fail `Timeout)
+  Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
+    ~on_cancel:interrupt ~timeout ~on_timeout:`Timeout (map_sql_result f)
 
 let deadline_of_timeout timeout =
   Unix.gettimeofday () +. Eta.Duration.to_seconds_float timeout

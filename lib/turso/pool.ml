@@ -28,12 +28,13 @@ open Compiled_ops
 
   let public effect = Eta.Effect.map_error to_public_error effect
 
-  let lift_result = function
-    | Ok value -> Eta.Effect.pure value
-    | Result.Error err -> Eta.Effect.fail (`Turso err)
+  let map_turso_result f () =
+    match f () with
+    | Ok value -> Ok value
+    | Result.Error err -> Result.Error (`Turso err)
 
   let blocking_result ?blocking_pool ?name f =
-    Eta.Effect.blocking ?pool:blocking_pool ?name f |> Eta.Effect.bind lift_result
+    Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_turso_result f)
 
   let acquire ?blocking_pool config =
     blocking_result ?blocking_pool ~name:"turso.open" (fun () -> open_ config)

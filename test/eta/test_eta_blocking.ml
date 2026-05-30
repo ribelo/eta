@@ -96,6 +96,26 @@ let test_blocking_result_lifts_result () =
         (Cause.pp (fun fmt (`Bad : [ `Bad ]) -> Format.pp_print_string fmt "bad"))
         cause
 
+let test_blocking_result_timeout_interrupts_and_fails_typed () =
+  with_runtime @@ fun rt ->
+  let interrupted = Atomic.make false in
+  let effect =
+    Effect.blocking_result_timeout ~name:"blocking.result.timeout"
+      ~on_cancel:(fun () -> Atomic.set interrupted true)
+      ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
+        Unix.sleepf 0.030;
+        Ok 7)
+  in
+  match Runtime.run rt effect with
+  | Exit.Ok _ -> Alcotest.fail "expected timeout"
+  | Exit.Error (Cause.Fail `Timeout) ->
+      Alcotest.(check bool) "on_cancel called" true (Atomic.get interrupted)
+  | Exit.Error cause ->
+      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
+        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
+             Format.pp_print_string fmt "timeout"))
+        cause
+
 let test_blocking_pool_custom_runner () =
   run_eio @@ fun stdenv ->
   let calls = Atomic.make 0 in

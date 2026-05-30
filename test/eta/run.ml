@@ -240,6 +240,8 @@ let () =
             test_blocking_submit_alias_and_stats;
           Alcotest.test_case "blocking_result lifts result" `Quick
             test_blocking_result_lifts_result;
+          Alcotest.test_case "blocking_result_timeout interrupts" `Quick
+            test_blocking_result_timeout_interrupts_and_fails_typed;
           Alcotest.test_case "custom runner" `Quick
             test_blocking_pool_custom_runner;
           Alcotest.test_case "direct control and heartbeat" `Quick

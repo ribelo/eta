@@ -329,6 +329,20 @@ val blocking_result :
     [result] into Eta's typed failure channel. Exceptions raised by [f] remain
     unchecked defects, exactly as with {!blocking}. *)
 
+val blocking_result_timeout :
+  ?pool:Blocking.Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  timeout:Duration.t ->
+  on_timeout:'err ->
+  (unit -> ('a, 'err) result) ->
+  ('a, 'err) t
+(** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
+    {!blocking_result} and races it against [timeout]. If the timeout wins,
+    [?on_cancel] is called before failing with [on_timeout]. If the blocking
+    operation wins after parent cancellation reached the fiber, Eta checks the
+    cancellation state before publishing the success or typed failure. *)
+
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t

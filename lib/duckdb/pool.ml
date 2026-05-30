@@ -30,32 +30,18 @@ open Dsl_backend
 
   let public effect = Eta.Effect.map_error to_public_error effect
 
-  let lift_result = function
-    | Ok value -> Eta.Effect.pure value
-    | Result.Error err -> Eta.Effect.fail (`Duckdb err)
+  let map_duckdb_result f () =
+    match f () with
+    | Ok value -> Ok value
+    | Result.Error err -> Result.Error (`Duckdb err)
 
   let blocking_result ?blocking_pool ?name f =
-    Eta.Effect.blocking ?pool:blocking_pool ?name f |> Eta.Effect.bind lift_result
+    Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_duckdb_result f)
 
   let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-    let query =
-      Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:(fun () ->
-          Connection.interrupt conn)
-        f
-      |> Eta.Effect.map (function
-           | Ok value -> `Query_ok value
-           | Result.Error err -> `Query_error err)
-    in
-    let timeout =
-      Eta.Effect.delay timeout
-        (Eta.Effect.sync (fun () -> Connection.interrupt conn)
-         |> Eta.Effect.map (fun () -> `Timed_out))
-    in
-    Eta.Effect.race [ query; timeout ]
-    |> Eta.Effect.bind (function
-         | `Query_ok value -> Eta.Effect.pure value
-         | `Query_error err -> Eta.Effect.fail (`Duckdb err)
-         | `Timed_out -> Eta.Effect.fail `Timeout)
+    Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
+      ~on_cancel:(fun () -> Connection.interrupt conn)
+      ~timeout ~on_timeout:`Timeout (map_duckdb_result f)
 
   let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
       ?max_lifetime config =
