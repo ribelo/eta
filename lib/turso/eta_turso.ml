@@ -1,14 +1,6 @@
 module Value = Eta_sql.Value
 module Row = Eta_sql.Row
 
-let row_nth_value index row =
-  let rec loop current = function
-    | [] -> failwith "Eta_turso: column index out of bounds"
-    | (_, value) :: _ when current = index -> value
-    | _ :: rest -> loop (current + 1) rest
-  in
-  loop 0 row
-
 type raw_db
 type raw_stmt
 
@@ -53,6 +45,54 @@ type error =
   | Closed
 
 exception Error of error
+
+type decode_failure = {
+  column : int;
+  expected : string;
+  actual : string;
+  value : string;
+}
+
+exception Decode_failure of decode_failure
+
+let value_kind = function
+  | Value.Null -> "null"
+  | Int _ -> "int"
+  | Int64 _ -> "int64"
+  | Float _ -> "float"
+  | String _ -> "string"
+  | Bool _ -> "bool"
+  | Bytes _ -> "bytes"
+
+let decode_failure_message failure =
+  Printf.sprintf "column %d: expected %s, got %s (%s)" failure.column
+    failure.expected failure.actual failure.value
+
+let decode_fail index expected value =
+  raise
+    (Decode_failure
+       {
+         column = index;
+         expected;
+         actual = value_kind value;
+         value = Value.to_string value;
+       })
+
+let row_nth_value index row =
+  let rec loop current = function
+    | [] ->
+        raise
+          (Decode_failure
+             {
+               column = index;
+               expected = "column";
+               actual = "missing";
+               value = "<missing>";
+             })
+    | (_, value) :: _ when current = index -> value
+    | _ :: rest -> loop (current + 1) rest
+  in
+  loop 0 row
 
 type db = {
   raw : raw_db;
@@ -224,16 +264,8 @@ let with_statement db sql params f =
           ignore (finalize stmt);
           Result.Error err
       | Ok () ->
-          let result =
-            match f stmt with
-            | value -> value
-            | exception exn ->
-                Result.Error
-                  (Decode_error
-                     { operation = "execute"; message = Printexc.to_string exn })
-          in
-          ignore (finalize stmt);
-          result)
+          Fun.protect ~finally:(fun () -> ignore (finalize stmt)) (fun () ->
+              f stmt))
 
 let step stmt = if stmt.finalized then 21 else raw_step stmt.raw
 
@@ -372,9 +404,10 @@ let int =
   {
     value = (fun value -> Value.Int value);
     decode = (fun row index ->
-      match Value.to_int (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_int value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode int");
+      | None -> decode_fail index "int" value);
     sql_type = "INTEGER";
   }
 
@@ -382,9 +415,10 @@ let int64 =
   {
     value = (fun value -> Value.Int64 value);
     decode = (fun row index ->
-      match Value.to_int64 (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_int64 value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode int64");
+      | None -> decode_fail index "int64" value);
     sql_type = "INTEGER";
   }
 
@@ -392,9 +426,10 @@ let text =
   {
     value = (fun value -> Value.String value);
     decode = (fun row index ->
-      match Value.to_string_value (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_string_value value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode text");
+      | None -> decode_fail index "text" value);
     sql_type = "TEXT";
   }
 
@@ -402,9 +437,10 @@ let bool =
   {
     value = (fun value -> Value.Bool value);
     decode = (fun row index ->
-      match Value.to_bool (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_bool value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode bool");
+      | None -> decode_fail index "bool" value);
     sql_type = "INTEGER";
   }
 
@@ -412,9 +448,10 @@ let float =
   {
     value = (fun value -> Value.Float value);
     decode = (fun row index ->
-      match Value.to_float (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_float value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode float");
+      | None -> decode_fail index "float" value);
     sql_type = "REAL";
   }
 
@@ -422,9 +459,10 @@ let blob =
   {
     value = (fun value -> Value.Bytes value);
     decode = (fun row index ->
-      match Value.to_bytes (row_nth_value index row) with
+      let value = row_nth_value index row in
+      match Value.to_bytes value with
       | Some value -> value
-      | None -> failwith "Eta_turso: could not decode blob");
+      | None -> decode_fail index "blob" value);
     sql_type = "BLOB";
   }
 
@@ -489,7 +527,13 @@ let select db (compiled : _ Compiled.select) =
   | Ok rows -> (
       match List.map compiled.decode rows with
       | values -> Ok values
-      | exception exn -> Result.Error (Decode_error { operation = compiled.sql; message = Printexc.to_string exn }))
+      | exception Decode_failure failure ->
+          Result.Error
+            (Decode_error
+               {
+                 operation = compiled.sql;
+                 message = decode_failure_message failure;
+               }))
 
 let returning db (compiled : _ Compiled.returning) =
   match query db compiled.sql (params_to_values compiled.params) with
@@ -497,7 +541,13 @@ let returning db (compiled : _ Compiled.returning) =
   | Ok rows -> (
       match List.map compiled.decode rows with
       | values -> Ok values
-      | exception exn -> Result.Error (Decode_error { operation = compiled.sql; message = Printexc.to_string exn }))
+      | exception Decode_failure failure ->
+          Result.Error
+            (Decode_error
+               {
+                 operation = compiled.sql;
+                 message = decode_failure_message failure;
+               }))
 
 let execute_compiled db (compiled : Compiled.change) =
   execute db compiled.sql (params_to_values compiled.params)

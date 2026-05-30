@@ -23,6 +23,26 @@ module Turso_items = struct
   let active = column "active" Eta_turso.bool
 end
 
+module Duckdb_decode_mismatch = struct
+  module T = Eta_duckdb.Table.Make (struct
+    let name = "decode_mismatch"
+  end)
+
+  include T
+
+  let id = column "id" Eta_duckdb.int64
+end
+
+module Turso_decode_mismatch = struct
+  module T = Eta_turso.Table.Make (struct
+    let name = "decode_mismatch"
+  end)
+
+  include T
+
+  let id = column "id" Eta_turso.int64
+end
+
 let duckdb_ok = function
   | Ok value -> value
   | Error err -> Alcotest.failf "%a" Eta_duckdb.pp_error err
@@ -39,6 +59,35 @@ let env_configured name =
   match Sys.getenv_opt name with
   | Some value -> not (String.equal value "")
   | None -> false
+
+let contains_substring haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec loop index =
+    index + needle_len <= haystack_len
+    &&
+    (String.equal (String.sub haystack index needle_len) needle
+     || loop (index + 1))
+  in
+  needle_len = 0 || loop 0
+
+let check_decode_message ?(actual = "got string") label message =
+  Alcotest.(check bool)
+    (label ^ " has column")
+    true
+    (contains_substring message "column 0");
+  Alcotest.(check bool)
+    (label ^ " has expected")
+    true
+    (contains_substring message "expected int64");
+  Alcotest.(check bool)
+    (label ^ " has actual")
+    true
+    (contains_substring message actual);
+  Alcotest.(check bool)
+    (label ^ " has value")
+    true
+    (contains_substring message "not-int")
 
 let rec remove_tree path =
   if Sys.file_exists path then
@@ -191,6 +240,34 @@ let test_duckdb_available_is_result () =
       Alcotest.(check bool) "message is present" true (String.length message > 0)
   | Error err -> Alcotest.failf "%a" Eta_duckdb.pp_error err
 
+let test_duckdb_decode_error_is_structured () =
+  match Eta_duckdb.available () with
+  | Error (Eta_duckdb.Library_unavailable _) -> ()
+  | Error err -> Alcotest.failf "%a" Eta_duckdb.pp_error err
+  | Ok () ->
+      let db = Eta_duckdb.Database.open_memory () |> duckdb_ok in
+      Fun.protect
+        ~finally:(fun () -> ignore (Eta_duckdb.Database.close db))
+        (fun () ->
+          let conn = Eta_duckdb.Connection.connect db |> duckdb_ok in
+          Fun.protect
+            ~finally:(fun () -> ignore (Eta_duckdb.Connection.close conn))
+            (fun () ->
+              Eta_duckdb.Connection.exec_script conn
+                "CREATE TABLE decode_mismatch (id VARCHAR); INSERT INTO decode_mismatch VALUES ('not-int')"
+              |> duckdb_ok;
+              let query =
+                Eta_duckdb.Select.(
+                  from Duckdb_decode_mismatch.table
+                    Eta_duckdb.Projection.(one Duckdb_decode_mismatch.id)
+                  |> compile)
+              in
+              match Eta_duckdb.Connection.select conn query with
+              | Error (Eta_duckdb.Decode_error { message; _ }) ->
+                  check_decode_message "duckdb decode" message
+              | Error err -> Alcotest.failf "%a" Eta_duckdb.pp_error err
+              | Ok _ -> Alcotest.fail "decode mismatch unexpectedly succeeded"))
+
 let test_turso_config_and_retry () =
   let config = Eta_turso.default_config "app.db" in
   Alcotest.(check string) "path" "app.db" config.path;
@@ -295,6 +372,31 @@ let test_turso_typed_queries () =
             |> turso_ok
           in
           Alcotest.(check int) "transaction insert" 1 inserted)
+
+let test_turso_decode_error_is_structured () =
+  if require_turso_available () then
+    let db = Eta_turso.default_config ":memory:" |> Eta_turso.open_ |> turso_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Eta_turso.close db))
+      (fun () ->
+        Eta_turso.exec_script db "CREATE TABLE decode_mismatch (id BLOB)"
+        |> turso_ok;
+        ignore
+          (Eta_turso.execute db
+             "INSERT INTO decode_mismatch VALUES (X'6e6f742d696e74')"
+             []
+           |> turso_ok);
+        let query =
+          Eta_turso.Select.(
+            from Turso_decode_mismatch.table
+              Eta_turso.Projection.(one Turso_decode_mismatch.id)
+            |> compile)
+        in
+        match Eta_turso.select db query with
+        | Error (Eta_turso.Decode_error { message; _ }) ->
+            check_decode_message ~actual:"got bytes" "turso decode" message
+        | Error err -> Alcotest.failf "%a" Eta_turso.pp_error err
+        | Ok _ -> Alcotest.fail "decode mismatch unexpectedly succeeded")
 
 let test_ladybug_error_classification () =
   let open Eta_ladybug in
@@ -630,12 +732,16 @@ let () =
         [
           Alcotest.test_case "values and rows" `Quick test_duckdb_values;
           Alcotest.test_case "available is result" `Quick test_duckdb_available_is_result;
+          Alcotest.test_case "decode errors are structured" `Quick
+            test_duckdb_decode_error_is_structured;
         ] );
       ( "turso",
         [
           Alcotest.test_case "config and retry" `Quick test_turso_config_and_retry;
           Alcotest.test_case "available is result" `Quick test_turso_available_is_result;
           Alcotest.test_case "typed queries" `Quick test_turso_typed_queries;
+          Alcotest.test_case "decode errors are structured" `Quick
+            test_turso_decode_error_is_structured;
         ] );
       ( "ladybug",
         [

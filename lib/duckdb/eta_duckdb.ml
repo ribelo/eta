@@ -70,9 +70,58 @@ module Row = struct
   let bytes field row = match get field row with Some (Value.Bytes value) -> Some value | _ -> None
 end
 
+type decode_failure = {
+  column : int;
+  expected : string;
+  actual : string;
+  value : string;
+}
+
+exception Decode_failure of decode_failure
+
+let value_kind = function
+  | Value.Null -> "null"
+  | Bool _ -> "bool"
+  | Int _ -> "int"
+  | Int64 _ -> "int64"
+  | Float _ -> "float"
+  | String _ -> "string"
+  | Bytes _ -> "bytes"
+  | Decimal _ -> "decimal"
+  | Date _ -> "date"
+  | Time _ -> "time"
+  | Timestamp _ -> "timestamp"
+  | Uuid _ -> "uuid"
+  | Json _ -> "json"
+  | Enum _ -> "enum"
+  | List _ -> "list"
+  | Struct _ -> "struct"
+
+let decode_failure_message failure =
+  Printf.sprintf "column %d: expected %s, got %s (%s)" failure.column
+    failure.expected failure.actual failure.value
+
+let decode_fail index expected value =
+  raise
+    (Decode_failure
+       {
+         column = index;
+         expected;
+         actual = value_kind value;
+         value = Value.to_string value;
+       })
+
 let row_nth_value index row =
   let rec loop current = function
-    | [] -> failwith "Eta_duckdb: column index out of bounds"
+    | [] ->
+        raise
+          (Decode_failure
+             {
+               column = index;
+               expected = "column";
+               actual = "missing";
+               value = "<missing>";
+             })
     | (_, value) :: _ when current = index -> value
     | _ :: rest -> loop (current + 1) rest
   in
@@ -177,7 +226,7 @@ type 'a typ = {
 }
 
 let int =
-  let decode_value = function
+  let decode_value index = function
     | Value.Int value -> value
     | Int64 value ->
         let min = Int64.of_int min_int in
@@ -185,55 +234,55 @@ let int =
         if Int64.compare value min >= 0 && Int64.compare value max <= 0 then
           Int64.to_int value
         else
-          failwith "Eta_duckdb: int overflow"
-    | _ -> failwith "Eta_duckdb: could not decode int"
+          decode_fail index "int within OCaml int range" (Int64 value)
+    | value -> decode_fail index "int" value
   in
   {
     value = (fun value -> Value.Int value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "INTEGER";
   }
 
 let int64 =
-  let decode_value = function
+  let decode_value index = function
     | Value.Int value -> Int64.of_int value
     | Int64 value -> value
-    | _ -> failwith "Eta_duckdb: could not decode int64"
+    | value -> decode_fail index "int64" value
   in
   {
     value = (fun value -> Value.Int64 value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "BIGINT";
   }
 
 let bool =
-  let decode_value = function
+  let decode_value index = function
     | Value.Bool value -> value
     | Int 0 -> false
     | Int 1 -> true
     | Int64 0L -> false
     | Int64 1L -> true
-    | _ -> failwith "Eta_duckdb: could not decode bool"
+    | value -> decode_fail index "bool" value
   in
   {
     value = (fun value -> Value.Bool value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "BOOLEAN";
   }
 
 let float =
-  let decode_value = function
+  let decode_value index = function
     | Value.Float value -> value
-    | _ -> failwith "Eta_duckdb: could not decode float"
+    | value -> decode_fail index "float" value
   in
   {
     value = (fun value -> Value.Float value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "DOUBLE";
   }
 
 let text =
-  let decode_value = function
+  let decode_value index = function
     | Value.String value
     | Decimal value
     | Date value
@@ -243,99 +292,99 @@ let text =
     | Json value
     | Enum value ->
         value
-    | _ -> failwith "Eta_duckdb: could not decode text"
+    | value -> decode_fail index "text" value
   in
   {
     value = (fun value -> Value.String value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "VARCHAR";
   }
 
 let blob =
-  let decode_value = function
+  let decode_value index = function
     | Value.Bytes value -> value
-    | _ -> failwith "Eta_duckdb: could not decode blob"
+    | value -> decode_fail index "blob" value
   in
   {
     value = (fun value -> Value.Bytes value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "BLOB";
   }
 
 let decimal =
-  let decode_value = function
+  let decode_value index = function
     | Value.Decimal value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode decimal"
+    | value -> decode_fail index "decimal" value
   in
   {
     value = (fun value -> Value.Decimal value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "DECIMAL";
   }
 
 let date =
-  let decode_value = function
+  let decode_value index = function
     | Value.Date value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode date"
+    | value -> decode_fail index "date" value
   in
   {
     value = (fun value -> Value.Date value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "DATE";
   }
 
 let time =
-  let decode_value = function
+  let decode_value index = function
     | Value.Time value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode time"
+    | value -> decode_fail index "time" value
   in
   {
     value = (fun value -> Value.Time value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "TIME";
   }
 
 let timestamp =
-  let decode_value = function
+  let decode_value index = function
     | Value.Timestamp value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode timestamp"
+    | value -> decode_fail index "timestamp" value
   in
   {
     value = (fun value -> Value.Timestamp value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "TIMESTAMP";
   }
 
 let uuid =
-  let decode_value = function
+  let decode_value index = function
     | Value.Uuid value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode uuid"
+    | value -> decode_fail index "uuid" value
   in
   {
     value = (fun value -> Value.Uuid value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "UUID";
   }
 
 let json =
-  let decode_value = function
+  let decode_value index = function
     | Value.Json value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode json"
+    | value -> decode_fail index "json" value
   in
   {
     value = (fun value -> Value.Json value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type = "JSON";
   }
 
 let enum ?(sql_type = "VARCHAR") () =
-  let decode_value = function
+  let decode_value index = function
     | Value.Enum value | String value -> value
-    | _ -> failwith "Eta_duckdb: could not decode enum"
+    | value -> decode_fail index "enum" value
   in
   {
     value = (fun value -> Value.Enum value);
-    decode = (fun row index -> decode_value (row_nth_value index row));
+    decode = (fun row index -> decode_value index (row_nth_value index row));
     sql_type;
   }
 
@@ -347,7 +396,7 @@ let list typ =
         match row_nth_value index row with
         | Value.List values ->
             List.map (fun value -> typ.decode [("", value)] 0) values
-        | _ -> failwith "Eta_duckdb: could not decode list");
+        | value -> decode_fail index "list" value);
     sql_type = typ.sql_type ^ "[]";
   }
 
@@ -467,8 +516,10 @@ module Connection = struct
     | Ok rows -> (
         match List.map compiled.decode rows with
         | values -> Ok values
-        | exception Failure message ->
-            Result.Error (Decode_error { operation = "select"; message }))
+        | exception Decode_failure failure ->
+            Result.Error
+              (Decode_error
+                 { operation = "select"; message = decode_failure_message failure }))
 
   let returning conn (compiled : _ Compiled.returning) =
     match query conn compiled.sql (params_to_values compiled.params) with
@@ -476,8 +527,13 @@ module Connection = struct
     | Ok rows -> (
         match List.map compiled.decode rows with
         | values -> Ok values
-        | exception Failure message ->
-            Result.Error (Decode_error { operation = "returning"; message }))
+        | exception Decode_failure failure ->
+            Result.Error
+              (Decode_error
+                 {
+                   operation = "returning";
+                   message = decode_failure_message failure;
+                 }))
 
   let execute (conn : connection) sql params =
     if_connection_open conn @@ fun () ->
