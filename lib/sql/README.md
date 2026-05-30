@@ -232,7 +232,7 @@ matters; otherwise scan batches and ad-hoc queries will queue behind each other.
 
 `Eta_sql.Migrate` resolves SQL files named like `1_create_users.sql`,
 `2_add_orders.up.sql`, and `2_add_orders.down.sql`. Non-file directory
-entries are ignored. Applied migrations store SHA-256 checksums, detect dirty
+entries are ignored. Applied migrations store content checksums, detect dirty
 rows and checksum drift, and support `run`, `run_to`, and `undo`.
 
 The migration engine is a synchronous prior-art surface, ported by analogy from

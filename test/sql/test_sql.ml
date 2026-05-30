@@ -1011,11 +1011,11 @@ let test_sql_migration_source_resolution_metadata () =
   let module M = Q.Migrate in
   let v1 = M.Version.from_int 1 |> Result.get_ok in
   let checksum_vector =
-    M.Migration.make ~version:v1 ~description:"sha256 vector"
+    M.Migration.make ~version:v1 ~description:"checksum vector"
       ~migration_type:M.Simple ~sql:"abc" ()
   in
-  Alcotest.(check string) "sha256 abc"
-    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  Alcotest.(check string) "checksum abc"
+    "900150983cd24fb0d6963f7d28e17f72"
     checksum_vector.M.Migration.checksum;
   with_temp_dir @@ fun dir ->
   write_file (Filename.concat dir "2_add_orders.up.sql")
