@@ -192,6 +192,87 @@ let test_encode_requires_max_tokens () =
       ()
   | _ -> Alcotest.fail "expected max_output_tokens rejection"
 
+(* P1: Anthropic provider crashes on image inputs.
+   Claude 3+ supports vision. The provider should encode images,
+   not crash or return Unsupported. *)
+
+let test_encode_user_image_does_not_reject () =
+  (* Claude 3+ supports image inputs in user messages.
+     The provider should encode them as image content blocks, not
+     return Unsupported. This test will be red if the provider
+     rejects images. *)
+  let request : A.chat_request =
+    {
+      model = "claude-3-5-sonnet-latest";
+      prompt =
+        [
+          A.User
+            [
+              A.Text "What is in this image?";
+              A.Image { url = "data:image/png;base64,iVBORw0KGgo="; detail = None };
+            ];
+        ];
+      tools = [];
+      temperature = None;
+      max_output_tokens = Some 100;
+      stream = false;
+    }
+  in
+  match O.encode_messages request with
+  | Stdlib.Ok raw ->
+      (* Should contain the image content block *)
+      require_contains "image block" ~needle:"image" raw
+  | Stdlib.Error (A.Unsupported { feature; _ }) ->
+      Alcotest.failf
+        "user image should be supported by Claude 3+ but got Unsupported: %s"
+        feature
+  | Stdlib.Error err ->
+      Alcotest.failf "unexpected error encoding image: %s"
+        (match err with
+         | A.Unsupported { feature; _ } -> "Unsupported: " ^ feature
+         | _ -> "other error")
+
+let test_encode_tool_result_with_image_does_not_crash () =
+  (* When a tool result contains an image, contents_text throws
+     Invalid_argument which crashes the runtime. This should either:
+     - Encode the image properly (Anthropic supports image tool results)
+     - Return a typed error (Error _)
+     It must NOT throw an uncatchable exception. *)
+  let request : A.chat_request =
+    {
+      model = "claude-3-5-sonnet-latest";
+      prompt =
+        [
+          A.User [ A.Text "take screenshot" ];
+          A.Tool
+            {
+              tool_call_id = "toolu_screenshot";
+              content =
+                [
+                  A.Text "Screenshot taken:";
+                  A.Image { url = "data:image/png;base64,iVBORw0KGgo="; detail = None };
+                ];
+            };
+        ];
+      tools = [];
+      temperature = None;
+      max_output_tokens = Some 100;
+      stream = false;
+    }
+  in
+  (* This must not raise Invalid_argument. A typed Error result is acceptable;
+     an uncatchable exception is not. *)
+  let crashed =
+    try
+      ignore (O.encode_messages request);
+      false
+    with Invalid_argument _ -> true
+  in
+  Alcotest.(check bool)
+    "encode_messages should NOT throw Invalid_argument on image in tool result \
+     (should return typed Error instead)"
+    false crashed
+
 let test_decode_message_fixture () =
   let response =
     O.decode_message (read_fixture "message.json") |> expect_ok "message"
@@ -405,6 +486,10 @@ let () =
             test_encode_messages_tools_and_cache;
           Alcotest.test_case "requires max tokens" `Quick
             test_encode_requires_max_tokens;
+          Alcotest.test_case "user image does not reject" `Quick
+            test_encode_user_image_does_not_reject;
+          Alcotest.test_case "tool result with image does not crash" `Quick
+            test_encode_tool_result_with_image_does_not_crash;
         ] );
       ( "decode",
         [
