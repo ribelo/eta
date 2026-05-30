@@ -2,6 +2,7 @@
  (name eta_duckdb)
  (public_name eta_duckdb)
  (synopsis "DuckDB connector for Eta")
+ (private_modules appender bulk bulk_row connection database dsl_backend pool row types value)
  (foreign_stubs
   (language c)
   (names duckdb_stubs)

@@ -2,4 +2,5 @@
  (name eta_ai_openai)
  (public_name eta_ai_openai)
  (synopsis "OpenAI provider for eta_ai (chat, streaming, realtime)")
+ (private_modules chat_completions common embeddings images responses speech transcriptions)
  (libraries eta eta_ai eta_ai_openai_codec eta_redacted eta_http eta_stream yojson base64))

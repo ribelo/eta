@@ -2,6 +2,7 @@
  (name eta_turso)
  (public_name eta_turso)
  (synopsis "Turso connector for Eta")
+ (private_modules compiled_ops connection dsl_backend pool row types value)
  (foreign_stubs
   (language c)
   (names turso_stubs)
