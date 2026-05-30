@@ -52,6 +52,5 @@ module Eta_schema = Eta_schema
 
 (* Execution surfaces. *)
 module Connection = Connection
-module Transaction = Transaction
 module Eta_pool = Eta_pool
 module Migrate = Migrate
