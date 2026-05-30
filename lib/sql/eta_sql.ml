@@ -50,6 +50,5 @@ module Delete = Dsl.Delete
 module Eta_schema = Dsl.Eta_schema
 
 (* Execution surfaces. *)
-module Connection = Connection
 module Pool = Pool
 module Migrate = Migrate
