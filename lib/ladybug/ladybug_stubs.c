@@ -237,15 +237,20 @@ static lbug_value *create_lbug_list(value values)
   uint64_t count = 0;
   for (value cur = values; cur != Val_emptylist; cur = Field(cur, 1)) count++;
   lbug_value **items = calloc((size_t)count, sizeof(lbug_value *));
-  if (items == NULL) caml_failwith("allocating LadybugDB list parameter failed");
+  if (items == NULL) return NULL;
   uint64_t i = 0;
   for (value cur = values; cur != Val_emptylist; cur = Field(cur, 1)) {
-    items[i++] = create_lbug_value(Field(cur, 0));
+    items[i] = create_lbug_value(Field(cur, 0));
+    if (items[i] == NULL) {
+      destroy_lbug_values(items, i);
+      return NULL;
+    }
+    i++;
   }
   lbug_value *list = NULL;
   if (api.value_create_list(count, items, &list) != LbugSuccess) {
     destroy_lbug_values(items, count);
-    fail_last("create list");
+    return NULL;
   }
   destroy_lbug_values(items, count);
   return list;
@@ -260,20 +265,27 @@ static lbug_value *create_lbug_map(value fields)
   if (keys == NULL || vals == NULL) {
     free(keys);
     free(vals);
-    caml_failwith("allocating LadybugDB map parameter failed");
+    return NULL;
   }
   uint64_t i = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) {
     value pair = Field(cur, 0);
     keys[i] = api.value_create_string(String_val(Field(pair, 0)));
     vals[i] = create_lbug_value(Field(pair, 1));
+    if (keys[i] == NULL || vals[i] == NULL) {
+      /* destroy_lbug_values frees the array too */
+      if (vals[i] == NULL && keys[i] != NULL) api.value_destroy(keys[i]);
+      destroy_lbug_values(keys, i);
+      destroy_lbug_values(vals, i);
+      return NULL;
+    }
     i++;
   }
   lbug_value *map = NULL;
   if (api.value_create_map(count, keys, vals, &map) != LbugSuccess) {
     destroy_lbug_values(keys, count);
     destroy_lbug_values(vals, count);
-    fail_last("create map");
+    return NULL;
   }
   destroy_lbug_values(keys, count);
   destroy_lbug_values(vals, count);
@@ -289,20 +301,25 @@ static lbug_value *create_lbug_struct(value fields)
   if (names == NULL || vals == NULL) {
     free(names);
     free(vals);
-    caml_failwith("allocating LadybugDB struct parameter failed");
+    return NULL;
   }
   uint64_t i = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) {
     value pair = Field(cur, 0);
     names[i] = String_val(Field(pair, 0));
     vals[i] = create_lbug_value(Field(pair, 1));
+    if (vals[i] == NULL) {
+      destroy_lbug_values(vals, i);
+      free(names);
+      return NULL;
+    }
     i++;
   }
   lbug_value *struct_ = NULL;
   if (api.value_create_struct(count, names, vals, &struct_) != LbugSuccess) {
     free(names);
     destroy_lbug_values(vals, count);
-    caml_failwith("create struct");
+    return NULL;
   }
   free(names);
   destroy_lbug_values(vals, count);
@@ -328,7 +345,7 @@ static lbug_value *create_lbug_value(value v)
   case 6:
     return create_lbug_struct(Field(v, 0));
   default:
-    caml_failwith("LadybugDB nested parameter value supports null, bool, int, float, string, list, map, and struct");
+    return NULL; /* unsupported type; caller handles the error */
   }
 }
 
@@ -406,7 +423,7 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
   CAMLreturn(Val_unit);
 }
 
-static void bind_param(lbug_prepared_statement *stmt, value pair)
+static int bind_param(lbug_prepared_statement *stmt, value pair)
 {
   const char *name = String_val(Field(pair, 0));
   value v = Field(pair, 1);
@@ -425,14 +442,16 @@ static void bind_param(lbug_prepared_statement *stmt, value pair)
     case 5:
     case 6: {
       lbug_value *nested = create_lbug_value(v);
+      if (nested == NULL) return -2; /* create_lbug_value failed */
       state = api.prepared_statement_bind_value(stmt, name, nested);
-      if (nested != NULL) api.value_destroy(nested);
+      api.value_destroy(nested);
       break;
     }
-    default: caml_failwith("LadybugDB parameter type is not supported by this binding");
+    default: return -1; /* unsupported type */
     }
   }
-  if (state != LbugSuccess) fail_last("bind");
+  if (state != LbugSuccess) return -1;
+  return 0;
 }
 
 static value result_to_string(lbug_query_result *result)
@@ -728,7 +747,10 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    bind_param(&stmt, Field(params, 0));
+    if (bind_param(&stmt, Field(params, 0)) != 0) {
+      api.prepared_statement_destroy(&stmt);
+      caml_failwith("LadybugDB bind failed");
+    }
     params = Field(params, 1);
   }
   lbug_state state;
@@ -810,7 +832,10 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    bind_param(&stmt, Field(params, 0));
+    if (bind_param(&stmt, Field(params, 0)) != 0) {
+      api.prepared_statement_destroy(&stmt);
+      caml_failwith("LadybugDB bind failed");
+    }
     params = Field(params, 1);
   }
   lbug_state state;

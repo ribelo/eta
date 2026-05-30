@@ -400,19 +400,20 @@ static int bind_value(duckdb_prepared_statement stmt, idx_t index, value v)
   case 12:
     return api.bind_varchar(stmt, index, String_val(Field(v, 0)));
   default:
-    caml_failwith("cannot bind DuckDB list or struct values");
+    return -1; /* unsupported type; caller reports the error after cleanup */
   }
 }
 
-static void bind_params(duckdb_prepared_statement stmt, value params)
+static int bind_params(duckdb_prepared_statement stmt, value params)
 {
   idx_t index = 1;
   while (params != Val_emptylist) {
     int rc = bind_value(stmt, index, Field(params, 0));
-    if (rc != 0) caml_failwith("duckdb bind failed");
+    if (rc != 0) return -1;
     params = Field(params, 1);
     index++;
   }
+  return 0;
 }
 
 CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
@@ -428,7 +429,10 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
     if (stmt != NULL) api.destroy_prepare(&stmt);
     caml_failwith(err == NULL ? "prepare failed" : err);
   }
-  bind_params(stmt, v_params);
+  if (bind_params(stmt, v_params) != 0) {
+    api.destroy_prepare(&stmt);
+    caml_failwith("duckdb bind failed");
+  }
   int rc;
   caml_enter_blocking_section();
   rc = api.execute_prepared(stmt, &result);
@@ -458,7 +462,10 @@ CAMLprim value eta_duckdb_execute(value v_conn, value v_sql, value v_params)
     if (stmt != NULL) api.destroy_prepare(&stmt);
     caml_failwith(err == NULL ? "prepare failed" : err);
   }
-  bind_params(stmt, v_params);
+  if (bind_params(stmt, v_params) != 0) {
+    api.destroy_prepare(&stmt);
+    caml_failwith("duckdb bind failed");
+  }
   int rc;
   caml_enter_blocking_section();
   rc = api.execute_prepared(stmt, &result);
