@@ -1,3 +1,5 @@
+module Compiled = Dsl.Compiled
+
 type t = {
   db : Sqlite.db;
   id : string;

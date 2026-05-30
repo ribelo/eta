@@ -1,3 +1,5 @@
+module Compiled = Dsl.Compiled
+
 type error = [ `Eta_sql of Types.sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
 type pool
 type tx

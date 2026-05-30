@@ -36,19 +36,19 @@ module Value = Value
 module Row = Row
 
 (* DSL modules. *)
-module Compiled = Compiled
-module Table = Table
-module Column = Column
+module Compiled = Dsl.Compiled
+module Table = Dsl.Table
+module Column = Dsl.Column
 module Expr = Expr
-module Projection = Projection
-module Scope = Scope
-module Source = Source
-module Select = Select
-module Assignment = Assignment
-module Insert = Insert
-module Update = Update
-module Delete = Delete
-module Eta_schema = Eta_schema
+module Projection = Dsl.Projection
+module Scope = Dsl.Scope
+module Source = Dsl.Source
+module Select = Dsl.Select
+module Assignment = Dsl.Assignment
+module Insert = Dsl.Insert
+module Update = Dsl.Update
+module Delete = Dsl.Delete
+module Eta_schema = Dsl.Eta_schema
 
 (* Execution surfaces. *)
 module Connection = Connection
