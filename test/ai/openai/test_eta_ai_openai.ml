@@ -147,6 +147,12 @@ let test_provider_value () =
     "legacy path" "/v1/chat/completions" chat_provider.chat_path;
   Alcotest.(check bool) "streaming" true provider.capabilities.streaming;
   Alcotest.(check bool) "tools" true provider.capabilities.tools;
+  Alcotest.(check bool) "image input" true provider.capabilities.image_input;
+  Alcotest.(check bool) "audio prompt input" false provider.capabilities.audio_input;
+  Alcotest.(check bool) "video prompt input" false provider.capabilities.video_input;
+  Alcotest.(check bool) "image generation" true provider.capabilities.image_generation;
+  Alcotest.(check bool) "speech" true provider.capabilities.speech;
+  Alcotest.(check bool) "transcription" true provider.capabilities.transcription;
   let headers = provider.auth_headers (A.api_key "sk-test") in
   Alcotest.(check (option string))
     "authorization" (Some "Bearer sk-test")

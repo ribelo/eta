@@ -164,6 +164,14 @@ let test_provider_headers () =
   Alcotest.(check string)
     "path" "/api/v1/responses" provider.chat_path;
   Alcotest.(check bool) "embeddings" true provider.capabilities.embeddings;
+  Alcotest.(check bool) "image input" true provider.capabilities.image_input;
+  Alcotest.(check bool) "audio prompt input" false provider.capabilities.audio_input;
+  Alcotest.(check bool) "video prompt input" false provider.capabilities.video_input;
+  Alcotest.(check bool) "image generation" true provider.capabilities.image_generation;
+  Alcotest.(check bool) "speech" true provider.capabilities.speech;
+  Alcotest.(check bool) "transcription" true provider.capabilities.transcription;
+  Alcotest.(check bool) "rerank" true provider.capabilities.rerank;
+  Alcotest.(check bool) "video generation" true provider.capabilities.video_generation;
   let headers = provider.auth_headers (A.api_key "or-test") in
   Alcotest.(check (option string))
     "auth" (Some "Bearer or-test")
