@@ -605,11 +605,11 @@ module Pool = struct
       ~health_check:(health_check ?blocking_pool) ()
     |> public
 
-  let with_db_raw t f =
+  let with_db_internal t f =
     Eta.Pool.with_resource t f |> public
 
   let with_db t f =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         f db |> Eta.Effect.map_error (function
           | Turso err -> `Turso err
           | Pool_shutdown -> `Pool_shutdown
@@ -617,32 +617,32 @@ module Pool = struct
           | Timeout -> `Timeout))
 
   let query ?blocking_pool t sql params =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.query" (fun () ->
             query db sql params))
 
   let select ?blocking_pool t query =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.select" (fun () ->
             select db query))
 
   let returning ?blocking_pool t query =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.returning" (fun () ->
             returning db query))
 
   let execute ?blocking_pool t sql params =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.execute" (fun () ->
             execute db sql params))
 
   let execute_compiled ?blocking_pool t query =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.execute_compiled" (fun () ->
             execute_compiled db query))
 
   let run_schema ?blocking_pool t schema =
-    with_db_raw t (fun db ->
+    with_db_internal t (fun db ->
         blocking_result ?blocking_pool ~name:"turso.schema" (fun () ->
             run_schema db schema))
 
