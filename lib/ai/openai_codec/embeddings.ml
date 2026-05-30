@@ -29,23 +29,6 @@ let embedding_input_json ~provider (input : A.Embedding.input) =
               Stdlib.Ok (Json.array (List.map int_array batches))))
   | A.Embedding.Raw_json raw -> parse_json ~provider raw
 
-let positive_int_json ~provider label = function
-  | None -> Stdlib.Ok None
-  | Some value when value > 0 -> Stdlib.Ok (Some (Json.int value))
-  | Some _ -> unsupported ~provider (label ^ " must be positive")
-
-let optional_non_empty ~provider label = function
-  | None -> Stdlib.Ok None
-  | Some value when String.equal (String.trim value) "" ->
-      unsupported ~provider (label ^ " must not be empty")
-  | Some value -> Stdlib.Ok (Some value)
-
-let embedding_encoding_format_json ~provider = function
-  | None -> Stdlib.Ok None
-  | Some ("float" | "base64" as value) -> Stdlib.Ok (Some (Json.string value))
-  | Some _ ->
-      unsupported ~provider "embedding encoding_format must be float or base64"
-
 let encode_embeddings_json ~provider (request : A.Embedding.request) =
   match embedding_input_json ~provider request.input with
   | Stdlib.Error _ as error -> error
@@ -150,5 +133,4 @@ let decode_embeddings ?(usage_extra_raw_names = []) ~provider raw =
                       (Json.object_member "usage" json);
                   raw = Some raw;
                 }))
-
 
