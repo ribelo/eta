@@ -194,60 +194,26 @@ module Blocking : sig
     val create : ?name:string -> ?runner:runner -> config -> t
     (** Create a bounded blocking pool.
 
-        Use a separate pool per resource class when one class can saturate
-        another: database calls, filesystem operations, and third-party SDK
-        calls should usually have independent pools.
+        Use separate pools for independent blocking resource classes, such as
+        database calls, filesystem work, and third-party synchronous SDKs. One
+        full pool does not back-pressure another.
 
-        Example:
-
-        {[
-          let db_pool =
-            Effect.Blocking.Pool.create ~name:"db"
-              {
-                max_threads = 32;
-                max_queued = 64;
-                queue_policy = Wait;
-                shutdown_policy = Drain;
-              }
-
-          let fs_pool =
-            Effect.Blocking.Pool.create ~name:"fs"
-              {
-                max_threads = 128;
-                max_queued = 64;
-                queue_policy = Wait;
-                shutdown_policy = Drain;
-              }
-        ]}
-
-        Pools are independent: one full pool does not back-pressure another.
         The runtime-owned default pool uses [max_threads = 128],
         [max_queued = 64], [queue_policy = Wait], and
-        [shutdown_policy = Drain]. That thread count comes from the
-        Eta-OxCaml-q73 measurement matrix: num_cpu/2, num_cpu, num_cpu*2,
-        and fixed 32 failed the mixed workload heartbeat budget on this host;
-        fixed 128 met the budget and fixed 512 did not improve the measured
-        workload. Tune explicitly for applications with known higher blocking
-        I/O concurrency. *)
+        [shutdown_policy = Drain]. Tune explicitly for applications with known
+        blocking I/O concurrency. *)
 
     val create_domain_isolated : ?name:string -> config -> t
-    (** Warning: create a domain-isolated blocking pool. Use this ONLY for
-        legacy C bindings that hold the OCaml runtime lock during blocking
-        work (compression, crypto, sync DB clients without nonblocking polling,
-        etc.).
+    (** Create a domain-isolated blocking pool for legacy C bindings that hold
+        the OCaml runtime lock during blocking work.
 
-        Cost: started callbacks run in separate OCaml domains. Do not create
-        many of these pools and do not use this as a general-purpose parallel
-        execution API.
-
-        Safety: callbacks must not capture Eio handles, Eta runtime state, or
-        any value that is not safe to use across domains. Doing so is undefined
-        behavior.
+        Started callbacks run in separate OCaml domains. Callbacks must not
+        capture Eio handles, Eta runtime state, or values that are unsafe to use
+        across domains.
 
         [Pool.create] is sufficient for blocking calls that release the runtime
-        lock, including well-behaved C bindings and Unix syscalls through Eio's
-        systhread substrate. Choose this constructor only when you have
-        measured the lock-hold case. *)
+        lock. Choose this constructor only for confirmed lock-holding
+        callbacks. *)
 
     val stats : t -> stats
     (** Snapshot pool counters. [active] is started work still running;
@@ -279,45 +245,19 @@ val blocking :
   ?on_cancel:(unit -> unit) ->
   (unit -> 'a) ->
   ('a, 'err) t
-(** [Effect.blocking f] runs [f ()] on a bounded blocking pool. Use this for
-    legacy synchronous I/O that cannot or should not be rewritten to Eio:
-    old DB clients, blocking filesystem libraries, sync SDKs, and blocking C
-    bindings.
+(** Run [f ()] on a bounded blocking pool.
 
-    Anti-pattern: do not call [f ()] directly inside an Eio fiber for legacy
-    blocking work. The V-Blocking-A research measured about 49ms heartbeat
-    freeze for a 50ms direct blocking call. Always go through
-    [Effect.blocking].
+    Use this for legacy synchronous I/O such as blocking DB clients, filesystem
+    libraries, synchronous SDKs, and blocking C bindings. Do not use it for
+    CPU-bound work; use {!Effect.island} or {!Effect.Island.map} instead.
 
-    Anti-pattern: do not use [Effect.blocking] for CPU-bound work. Blocking
-    workers are an I/O escape hatch, not a CPU scheduler. Use {!Effect.island}
-    for one portable CPU callback or {!Effect.Island.map} for a finite batch.
+    Running callbacks are not preempted. Parent cancellation interrupts queued
+    work, but started work must finish unless the pool uses
+    [Detach_started] or [?on_cancel] cooperatively unblocks it.
 
-    Effect.blocking does NOT preempt running callbacks. Parent cancellation
-    while a job is started is honored only when the pool is configured with
-    [shutdown_policy = Detach_started] or when [?on_cancel] cooperatively
-    unblocks the underlying operation.
-
-    Blocking worker callbacks are ordinary synchronous OCaml functions. They may
-    call legacy blocking libraries. They must not call Eio operations, run Eta
-    runtimes, submit nested blocking jobs, or resolve parent-domain promises as
-    supported API. Doing any of those is undefined behavior; Eta does not
-    guarantee deadlock, panic, or correctness for it.
-
-    The pool defaults to the runtime-owned pool. For resource isolation
-    (database connections, filesystem operations, third-party SDK calls), pass
-    an explicit [?pool] created by {!Blocking.Pool.create}.
-
-    For lock-holding C bindings, see {!Blocking.Pool.create_domain_isolated}.
-    The [?name] label propagates to tracing and metrics as the blocking
-    operation name.
-
-    [?on_cancel] runs in the calling domain when parent cancellation reaches a
-    started blocking job. Use it only for thread-safe cancellation hooks such as
-    [sqlite3_interrupt]. The hook must be thread-safe with respect to the
-    worker callback it is trying to interrupt. It must not call Eio operations,
-    Eta runtimes, or submit nested blocking jobs. If it raises, the blocking
-    effect raises that exception after the worker callback returns. *)
+    Worker callbacks must not call Eio operations, run Eta runtimes, submit
+    nested blocking jobs, or resolve parent-domain promises. [?name] labels
+    tracing and metrics. [?on_cancel] must be thread-safe with respect to [f]. *)
 
 val blocking_result :
   ?pool:Blocking.Pool.t ->
@@ -438,21 +378,13 @@ val acquire_use_release :
   release:('a -> (unit, 'err) t) ->
   ('a -> ('b, 'err) t) ->
   ('b, 'err) t
-(** CPS companion to {!acquire_release}.
+(** Acquire a resource, run [body], and register [release] with the current
+    runtime boundary or scope.
 
-    [acquire_use_release ~acquire ~release body] is equivalent to
-    [acquire_release ~acquire ~release |> bind body]. Release semantics are
-    identical to {!acquire_release}: release is registered with the current
-    runtime boundary, scope, supervisor scope, or daemon body; cancellation
-    safety, release-on-cancel, and suppressed finalizer failures are inherited
-    from {!acquire_release}. Only the binding shape differs.
-
-    Use this for body-shaped acquire/use/release code and existing CPS layouts.
-    Keep {!acquire_release} when the acquired value intentionally participates
-    in a longer monadic chain or when release must be tied to a larger
-    surrounding scope. If {!scoped} wraps an [acquire_use_release] block, the
-    [scoped] call intentionally interrupts a [let@] ladder to mark that scope
-    boundary. *)
+    This is the CPS form of {!acquire_release}; release ordering, cancellation
+    protection, and suppressed finalizer failure reporting are identical. Use
+    {!acquire_release} directly when the resource should participate in a
+    longer effect chain or surrounding scope. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 

@@ -1,26 +1,8 @@
-(** Heartbeat-style scheduler primitives.
+(** Heartbeat-style fork/join scheduler primitives.
 
-    Port of the Spice (Zig) / chili (Rust) heartbeat scheduling
-    algorithm originally described in Acar et al.'s heartbeat paper,
-    adapted to OCaml 5 / OxCaml.
-
-    The scheduler runs parallel work [join a b] *sequentially* on the
-    calling worker's "cactus stack" — a doubly-linked list of
-    {!type:job} records, one per [join] frame. Every join site checks
-    a per-worker {!field:worker.heartbeat} flag, set periodically by
-    a background heartbeat thread. On a heartbeat tick the worker
-    "promotes" the OLDEST queued job (the one closest to the bottom
-    of the cactus stack) into {!field:worker.shared_job}, where idle
-    workers can pick it up. Otherwise the job is consumed inline by
-    the worker when it pops back up the cactus stack — paying no
-    synchronisation or stealing cost at all.
-
-    Compared to a Rayon-style eager work-stealing scheduler the cost
-    of a [join] is two pointer-pushes, an atomic-load of the
-    heartbeat flag, the inline call to [b], and two pointer-pops. No
-    deque, no CAS. Promotion is the cold path, taken at heartbeat
-    rate (~10 kHz). See the original heartbeat paper and the
-    Spice/chili implementations for the prior art this module follows. *)
+    A worker keeps join frames in a doubly-linked job list. Most joins run
+    inline on the owning worker; heartbeat ticks promote the oldest queued job
+    so idle workers can steal it. Promotion is the cold path. *)
 
 (* --------------------------------------------------------------------------- *)
 (* Result channel for promoted jobs.
@@ -98,21 +80,15 @@ and worker = {
   mutable job_time : int;
   (* Set by the heartbeat thread; cleared after a promotion attempt. *)
   heartbeat : bool Atomic.t;
-  (* Per-worker counter incremented on every [join] call.  When it
-     wraps a power-of-two boundary, [join] takes the heartbeat-aware
-     path; otherwise it goes through a much cheaper inline path with
-     no allocation.  Mirrors chili's [join_with_heartbeat_every]
-     optimisation — it amortises the per-join cost (atomic-load,
-     job alloc, list push/pop) over many calls and is essential for
-     workloads where the per-leaf computation is cheap (binary-tree
-     sum, micro_join). *)
+  (* Per-worker counter incremented on every [join] call. When it wraps
+     a power-of-two boundary, [join] takes the heartbeat-aware path;
+     otherwise it uses the cheaper inline path with no allocation. *)
   mutable join_count : int;
   (* Number of jobs currently queued on this worker's cactus stack.
      Updated by [list_push_back] and [list_pop_back].  Used by
      [join] to force the slow path when fewer than three jobs are
      queued, so the heartbeat thread always has something to
-     promote during shallow recursion (mirrors chili's [self
-     .job_queue.len() < 3] escape).  *)
+     promote during shallow recursion. *)
   mutable queue_len : int;
 }
 
