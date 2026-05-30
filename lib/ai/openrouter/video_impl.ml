@@ -92,6 +92,9 @@ let run ?provider:custom_provider client ~api_key video_request =
              | Stdlib.Ok response -> E.pure response
              | Stdlib.Error error -> E.fail error)
 
+let create ~provider client ~api_key request =
+  run ~provider client ~api_key request
+
 let get_request ?provider:custom_provider ~api_key ~job_id () =
   let provider = Option.value ~default:(Common.provider ()) custom_provider in
   match validate_job_id job_id with
@@ -111,6 +114,9 @@ let get ?provider:custom_provider client ~api_key ~job_id =
              match decode raw with
              | Stdlib.Ok response -> E.pure response
              | Stdlib.Error error -> E.fail error)
+
+let get_with_provider ~provider client ~api_key ~job_id =
+  get ~provider client ~api_key ~job_id
 
 let content_request ?provider:custom_provider ~api_key
     (request : A.Video.content_request) =
@@ -137,3 +143,6 @@ let content ?provider:custom_provider client ~api_key request =
       A.perform_binary ~max_bytes:(256 * 1024 * 1024) provider client
         http_request
       |> E.map decode_content
+
+let content_with_provider ~provider client ~api_key request =
+  content ~provider client ~api_key request

@@ -90,3 +90,6 @@ let run ?provider:custom_provider client ~api_key transcription_request =
              match decode raw with
              | Stdlib.Ok response -> E.pure response
              | Stdlib.Error error -> E.fail error)
+
+let create ~provider client ~api_key request =
+  run ~provider client ~api_key request

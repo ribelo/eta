@@ -6,105 +6,85 @@
    routing, and the provider builder. *)
 include Common
 
-(* ------------------------------------------------------------------ *)
-(* Phase 1: top-level [let] re-exports.                                *)
-(* These reference the file-level modules ([Responses], [Video], …)    *)
-(* and must precede the [module …] re-bindings below, because those    *)
-(* re-bindings shadow the file-level names.                            *)
-(* ------------------------------------------------------------------ *)
-
 (* Responses surface (OpenRouter's only chat-style API). *)
-let responses_request = Responses.request
-let responses = Responses.run
-let stream_responses = Responses.stream
+let responses_request = Responses_impl.request
+let responses = Responses_impl.run
+let stream_responses = Responses_impl.stream
 
 (* Embeddings surface. *)
-let embeddings_request = Embeddings.request
-let embeddings = Embeddings.run
+let embeddings_request = Embeddings_impl.request
+let embeddings = Embeddings_impl.run
 
 (* Speech surface. *)
-let encode_speech = Speech.encode
-let speech_request = Speech.request
-let speech = Speech.run
+let encode_speech = Speech_impl.encode
+let speech_request = Speech_impl.request
+let speech = Speech_impl.run
 
 (* Transcription surface. *)
-let encode_transcription = Transcription.encode
-let decode_transcription = Transcription.decode
-let transcription_request = Transcription.request
-let transcription = Transcription.run
+let encode_transcription = Transcription_impl.encode
+let decode_transcription = Transcription_impl.decode
+let transcription_request = Transcription_impl.request
+let transcription = Transcription_impl.run
 
 (* Rerank surface. *)
-let encode_rerank = Rerank.encode
-let decode_rerank = Rerank.decode
-let rerank_request = Rerank.request
-let rerank = Rerank.run
+let encode_rerank = Rerank_impl.encode
+let decode_rerank = Rerank_impl.decode
+let rerank_request = Rerank_impl.request
+let rerank = Rerank_impl.run
 
 (* Video surface. *)
-let encode_video = Video.encode
-let decode_video = Video.decode
-let video_request = Video.request
-let video = Video.run
-let video_get_request = Video.get_request
-let video_get = Video.get
-let video_content_request = Video.content_request
-let video_content = Video.content
+let encode_video = Video_impl.encode
+let decode_video = Video_impl.decode
+let video_request = Video_impl.request
+let video = Video_impl.run
+let video_get_request = Video_impl.get_request
+let video_get = Video_impl.get
+let video_content_request = Video_impl.content_request
+let video_content = Video_impl.content
 
 (* Images surface. *)
-let encode_image_generation = Images.encode
-let decode_image_generation = Images.decode
-let image_generation_request = Images.request
-let image_generation = Images.run
-
-(* ------------------------------------------------------------------ *)
-(* Phase 2: nested submodule re-bindings.                              *)
-(* The [.mli] restricts each one to its [Eta_ai.Provider.*] interface, *)
-(* with extras for [Chat] and [Embeddings].                            *)
-(* ------------------------------------------------------------------ *)
+let encode_image_generation = Images_impl.encode
+let decode_image_generation = Images_impl.decode
+let image_generation_request = Images_impl.request
+let image_generation = Images_impl.run
 
 module Chat = struct
   include Common.A.Provider.Chat
 
   let encode_responses = Common.encode_responses
-  let responses_request = Responses.request
-  let responses = Responses.run
-  let stream_responses = Responses.stream
+  let responses_request = Responses_impl.request
+  let responses = Responses_impl.run
+  let stream_responses = Responses_impl.stream
 end
 
 module Embeddings = struct
   include Common.A.Provider.Embeddings
 
   let encode_with_routing = Common.encode_embeddings
-  let request_with_routing = Embeddings.request
-  let run_with_routing = Embeddings.run
+  let request_with_routing = Embeddings_impl.request
+  let run_with_routing = Embeddings_impl.run
 end
 
 module Speech = struct
-  let create ~provider client ~api_key request =
-    Speech.run ~provider client ~api_key request
+  let create = Speech_impl.create
 end
 
 module Images = struct
-  let generate ~provider client ~api_key request =
-    Images.run ~provider client ~api_key request
+  let generate = Images_impl.generate
 end
 
 module Transcriptions = struct
-  let create ~provider client ~api_key request =
-    Transcription.run ~provider client ~api_key request
+  let create = Transcription_impl.create
 end
 
 module Rerank = struct
-  let run ~provider client ~api_key request =
-    Rerank.run ~provider client ~api_key request
+  let run = Rerank_impl.run_with_provider
 end
 
 module Video = struct
-  let create ~provider client ~api_key request =
-    Video.run ~provider client ~api_key request
+  let create = Video_impl.create
 
-  let get ~provider client ~api_key ~job_id =
-    Video.get ~provider client ~api_key ~job_id
+  let get = Video_impl.get_with_provider
 
-  let content ~provider client ~api_key request =
-    Video.content ~provider client ~api_key request
+  let content = Video_impl.content_with_provider
 end
