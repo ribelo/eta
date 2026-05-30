@@ -119,9 +119,9 @@ module Flow_impl = struct
     let { Cstruct.off; Cstruct.len } = buf in
     let storage = Cstruct.to_bigarray buf in
     let rec loop () =
-      let rc = with_ssl t (fun () -> Openssl.read t.ssl storage 0 len) in
+      let rc = with_ssl t (fun () -> Openssl.read t.ssl storage off len) in
       if rc > 0 then (
-        debug_io "read" storage ~storage_off:0 ~display_off:off ~len:rc;
+        debug_io "read" storage ~storage_off:off ~display_off:off ~len:rc;
         rc)
       else if rc = 0 then raise End_of_file
       else (
@@ -158,7 +158,7 @@ module Flow_impl = struct
               in
               if rc > 0 then (
                 debug_io "write" storage ~storage_off:offset
-                  ~display_off:(off + offset) ~len:rc;
+                  ~display_off:offset ~len:rc;
                 total := !total + rc;
                 drain_bio t;
                 if rc < length then write_buf (offset + rc) (length - rc))
@@ -181,7 +181,7 @@ module Flow_impl = struct
                       failwith
                         ("TLS write failed (code " ^ string_of_int code ^ ")"))))
           in
-          write_buf 0 len)
+          write_buf off len)
         bufs;
       !total)
 
