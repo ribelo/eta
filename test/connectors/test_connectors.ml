@@ -844,6 +844,90 @@ let test_ladybug_bind_error_does_not_leak_prepared_statements () =
                     (grew %d KB, limit %d KB)" growth_kb max_acceptable_kb)
                 true (growth_kb < max_acceptable_kb)))
 
+(* P1: Close/finalize ordering marks handles closed before native close succeeds.
+   DuckDB appender sets closed <- true before raw_appender_close. If the native
+   close fails (e.g. constraint violation in pending data), the appender is
+   permanently poisoned: OCaml side thinks it's closed (can't retry), but the
+   native resource was never destroyed.
+
+   This test creates an appender, appends data that will cause close to fail,
+   then verifies that after the failed close, the appender is incorrectly
+   marked as closed — making it impossible to retry or properly clean up. *)
+
+let test_duckdb_appender_failed_close_poisons_handle () =
+  match Eta_duckdb.available () with
+  | Error _ -> Alcotest.fail "DuckDB not available"
+  | Ok () ->
+      let db = duckdb_ok (Eta_duckdb.Database.open_memory ()) in
+      Fun.protect
+        ~finally:(fun () -> ignore (Eta_duckdb.Database.close db))
+        (fun () ->
+          let conn = duckdb_ok (Eta_duckdb.Connection.connect db) in
+          Fun.protect
+            ~finally:(fun () -> ignore (Eta_duckdb.Connection.close conn))
+            (fun () ->
+              (* Create a table with NOT NULL constraints using the typed API *)
+              duckdb_ok
+                (Eta_duckdb.Eta_schema.(
+                   create_table Duckdb_items.table
+                     [
+                       column ~primary_key:true Duckdb_items.id;
+                       column ~not_null:true Duckdb_items.name;
+                       column ~not_null:true Duckdb_items.active;
+                       column ~not_null:true Duckdb_items.score;
+                     ]
+                   |> compile)
+                 |> Eta_duckdb.Connection.run_schema conn);
+              (* Create appender *)
+              let appender =
+                duckdb_ok (Eta_duckdb.Bulk.create conn Duckdb_items.table)
+              in
+              (* Append a valid row first *)
+              duckdb_ok
+                (Eta_duckdb.Bulk.append_row appender
+                   Eta_duckdb.Bulk_row.(
+                     empty
+                     |> value Duckdb_items.id 1L
+                     |> value Duckdb_items.name "ok"
+                     |> value Duckdb_items.active true
+                     |> value Duckdb_items.score 1.0));
+              (* Flush to commit the first row, then create a fresh appender
+                 to attempt triggering a close failure *)
+              duckdb_ok (Eta_duckdb.Bulk.close appender);
+              (* Insert a duplicate primary key via SQL to set up a conflict *)
+              duckdb_ok
+                (Eta_duckdb.Connection.exec_script conn
+                   "INSERT INTO items (id, name, active, score) VALUES (2, 'x', true, 0.0)");
+              (* Create new appender and try to insert duplicate PK *)
+              let appender2 =
+                duckdb_ok (Eta_duckdb.Bulk.create conn Duckdb_items.table)
+              in
+              duckdb_ok
+                (Eta_duckdb.Bulk.append_row appender2
+                   Eta_duckdb.Bulk_row.(
+                     empty
+                     |> value Duckdb_items.id 2L  (* duplicate PK *)
+                     |> value Duckdb_items.name "dup"
+                     |> value Duckdb_items.active true
+                     |> value Duckdb_items.score 2.0));
+              (* Close should fail due to PK constraint violation *)
+              match Eta_duckdb.Bulk.close appender2 with
+              | Ok () ->
+                  (* DuckDB appender might not enforce PK on close.
+                     In that case the ordering bug isn't observable here. *)
+                  ()
+              | Error _ ->
+                  (* Close failed. The bug: closed flag was set BEFORE the
+                     native close, so a retry returns Closed immediately. *)
+                  (match Eta_duckdb.Bulk.close appender2 with
+                  | Error Eta_duckdb.Closed ->
+                      Alcotest.(check bool)
+                        "failed close should NOT mark handle as closed \
+                         (should allow retry)"
+                        false true
+                  | Error _ -> () (* retry attempted native op - correct *)
+                  | Ok () -> () (* retry succeeded - correct *))))
+
 let () =
   Alcotest.run "Eta database connectors"
     [
@@ -855,6 +939,8 @@ let () =
             test_duckdb_decode_error_is_structured;
           Alcotest.test_case "bind error does not leak statements" `Slow
             test_duckdb_bind_error_does_not_leak_prepared_statements;
+          Alcotest.test_case "appender failed close poisons handle" `Quick
+            test_duckdb_appender_failed_close_poisons_handle;
         ] );
       ( "turso",
         [
