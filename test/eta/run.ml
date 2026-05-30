@@ -350,6 +350,8 @@ let () =
         [
           Alcotest.test_case "backpressure and close" `Quick
             test_portable_queue_backpressure_and_close;
+          Alcotest.test_case "no false empty under contention" `Quick
+            test_portable_queue_no_false_empty_under_contention;
         ] );
       ( "Queue",
         [
