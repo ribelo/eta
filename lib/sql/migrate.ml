@@ -344,7 +344,7 @@ let error_to_string = function
   | Migration_execution_error { version; error } ->
       "migration " ^ Version.to_string version ^ " failed: " ^ Types.show_error error
 
-let sql_error_of_eta_pool_error = function
+let sql_error_of_pool_error = function
   | `Eta_sql err -> err
   | `Pool_shutdown -> Types.Pool_error "pool is shut down"
   | `Pool_shutdown_timeout -> Types.Pool_error "pool shutdown timed out"
@@ -355,11 +355,11 @@ let effect_of_result = function
   | Result.Error err -> Eta.Effect.fail err
 
 let with_pool_connection pool run =
-  Eta_pool.with_connection pool (fun conn ->
+  Pool.with_connection pool (fun conn ->
       Eta.Effect.sync (fun () -> run conn))
   |> Eta.Effect.catch (fun err ->
          Eta.Effect.pure
-           (Result.Error (Sql_error (sql_error_of_eta_pool_error err))))
+           (Result.Error (Sql_error (sql_error_of_pool_error err))))
   |> Eta.Effect.bind effect_of_result
 
 type applied_state = {

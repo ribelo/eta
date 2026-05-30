@@ -99,7 +99,7 @@ let resolve_timeout runner override =
   | None, Some timeout -> timeout
   | None, None ->
       invalid_arg
-        "Eta_sql.Eta_pool: operation requires ?timeout or pool ?default_timeout"
+        "Eta_sql.Pool: operation requires ?timeout or pool ?default_timeout"
 
 let query ?timeout runner sql params =
   let timeout = resolve_timeout runner timeout in
@@ -187,7 +187,7 @@ let fetch_typed_batch conn stmt batch_size decode =
   loop batch_size []
 
 let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
-  if batch_size <= 0 then invalid_arg "Eta_sql.Eta_pool.fold: batch_size must be > 0";
+  if batch_size <= 0 then invalid_arg "Eta_sql.Pool.fold: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection runner (fun conn ->
@@ -215,7 +215,7 @@ let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
 let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
     ~init ~f =
   if batch_size <= 0 then
-    invalid_arg "Eta_sql.Eta_pool.fold_select: batch_size must be > 0";
+    invalid_arg "Eta_sql.Pool.fold_select: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection runner (fun conn ->

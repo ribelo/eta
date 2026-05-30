@@ -27,17 +27,17 @@ let () =
             test_sql_pool_waits_times_out_and_ignores_stale_release;
           Alcotest.test_case "connection rejects closed and invalid tx state"
             `Quick test_sql_connection_rejects_closed_and_invalid_transaction_state;
-          Alcotest.test_case "eta pool adapter uses eta pool" `Quick
-            test_sql_eta_pool_adapter_uses_eta_pool;
-          Alcotest.test_case "eta pool fold scans in batches" `Quick
-            test_sql_eta_pool_fold_scans_in_batches;
-          Alcotest.test_case "eta pool executes typed compiled queries" `Quick
-            test_sql_eta_pool_typed_compiled_queries;
-          Alcotest.test_case "eta pool timeout interrupts and reuses connection"
-            `Quick test_sql_eta_pool_timeout_interrupts_and_reuses_connection;
+          Alcotest.test_case "pool adapter uses pool" `Quick
+            test_sql_pool_adapter_uses_pool;
+          Alcotest.test_case "pool fold scans in batches" `Quick
+            test_sql_pool_fold_scans_in_batches;
+          Alcotest.test_case "pool executes typed compiled queries" `Quick
+            test_sql_pool_typed_compiled_queries;
+          Alcotest.test_case "pool timeout interrupts and reuses connection"
+            `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
           Alcotest.test_case
-            "eta pool parent cancel interrupts and reuses connection" `Quick
-            test_sql_eta_pool_parent_cancel_interrupts_and_reuses_connection;
+            "pool parent cancel interrupts and reuses connection" `Quick
+            test_sql_pool_parent_cancel_interrupts_and_reuses_connection;
           Alcotest.test_case "new expr operator workload" `Quick
             test_sql_new_expr_operator_workload;
           Alcotest.test_case "between in case aggregates having" `Quick

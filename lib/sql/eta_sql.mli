@@ -425,7 +425,7 @@ module Eta_schema : sig
   val compile : t -> Compiled.schema
 end
 
-module Eta_pool : sig
+module Pool : sig
   type error = [ `Eta_sql of sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
   type pool
   type tx
@@ -666,22 +666,22 @@ module Migrate : sig
   val error_to_string : error -> string
   val list_applied :
     ?config:Config.t ->
-    Eta_pool.t ->
+    Pool.t ->
     (Applied_migration.t list, error) Eta.Effect.t
   val run :
     ?config:Config.t ->
-    Eta_pool.t ->
+    Pool.t ->
     Source.t ->
     (run_report, error) Eta.Effect.t
   val run_to :
     ?config:Config.t ->
-    Eta_pool.t ->
+    Pool.t ->
     Source.t ->
     target:Version.t ->
     (run_report, error) Eta.Effect.t
   val undo :
     ?config:Config.t ->
-    Eta_pool.t ->
+    Pool.t ->
     Source.t ->
     target:Version.t ->
     (run_report, error) Eta.Effect.t

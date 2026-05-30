@@ -52,5 +52,5 @@ module Eta_schema = Dsl.Eta_schema
 
 (* Execution surfaces. *)
 module Connection = Connection
-module Eta_pool = Eta_pool
+module Pool = Pool
 module Migrate = Migrate

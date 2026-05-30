@@ -89,19 +89,19 @@ let sqlite_roundtrip rows =
     if i > rows then
       Eta.Effect.unit
     else
-      Q.Eta_pool.execute_compiled pool (insert i)
+      Q.Pool.execute_compiled pool (insert i)
       |> Eta.Effect.bind (fun _ -> insert_loop pool (i + 1))
   in
   let program =
-    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
+    Q.Pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
       (S.memory_config ())
     |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.run_schema pool create
+           Q.Pool.run_schema pool create
            |> Eta.Effect.bind (fun () -> insert_loop pool 1)
            |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.select pool (Q.Select.compile (select_query ())))
+                  Q.Pool.select pool (Q.Select.compile (select_query ())))
            |> Eta.Effect.bind (fun selected ->
-                  Q.Eta_pool.shutdown pool
+                  Q.Pool.shutdown pool
                   |> Eta.Effect.map (fun () -> selected)))
   in
   ignore (run_effect program)
@@ -251,20 +251,20 @@ let sqlite_connection_select rows =
     if i > rows then
       Eta.Effect.unit
     else
-      Q.Eta_pool.execute_compiled tx (insert i)
+      Q.Pool.execute_compiled tx (insert i)
       |> Eta.Effect.bind (fun _ -> insert_loop tx (i + 1))
   in
   let program =
-    Q.Eta_pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
+    Q.Pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
       (S.memory_config ())
     |> Eta.Effect.bind (fun pool ->
-           Q.Eta_pool.run_schema pool create
+           Q.Pool.run_schema pool create
            |> Eta.Effect.bind (fun () ->
-                  Q.Eta_pool.with_transaction pool (fun tx ->
+                  Q.Pool.with_transaction pool (fun tx ->
                       insert_loop tx 1))
-           |> Eta.Effect.bind (fun () -> Q.Eta_pool.select pool select)
+           |> Eta.Effect.bind (fun () -> Q.Pool.select pool select)
            |> Eta.Effect.bind (fun selected ->
-                  Q.Eta_pool.shutdown pool
+                  Q.Pool.shutdown pool
                   |> Eta.Effect.map (fun () -> selected)))
   in
   assert (List.length (run_effect program) > 0)
