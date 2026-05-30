@@ -124,7 +124,7 @@ let test_client ?(with_http_span = false) response captured =
       E.named_kind ~kind:Eta.Capabilities.Client "HTTP POST" effect
     else effect
   in
-  H.Client.make_for_test ~protocol:H.Client.H1 ~request
+  H.Client.make_custom ~protocol:H.Client.H1 ~request
     ~stats:(fun () -> E.pure zero_stats)
     ~shutdown:(fun () -> E.unit)
 

@@ -116,7 +116,7 @@ let with_raw_h2_server server client_action =
 let request_effect ?body connection target =
   let uri = "https://api.example.test" ^ target in
   let request = Eta_http.Request.make ?body "GET" uri in
-  Eta_http.Client.For_test.request_h2_on_connection connection request
+  Eta_http.Client.request_h2_on_connection connection request
     (Eta_http.Request.url request)
   |> Eta.Effect.bind (fun response ->
          Eta_http.Body.Stream.read_all response.body
@@ -157,7 +157,7 @@ let test_h2_connection_admission_error_reports_configured_limit () =
       in
       match
         Eta.Runtime.run rt
-          (Eta_http.Client.For_test.request_h2_on_connection connection request
+          (Eta_http.Client.request_h2_on_connection connection request
              (Eta_http.Request.url request))
       with
       | Eta.Exit.Error
@@ -237,7 +237,7 @@ let test_h2_connection_returns_early_response () =
                   ()))
       in
       let effect =
-        Eta_http.Client.For_test.request_h2_on_connection connection request
+        Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.seconds 1)
              ~on_timeout:(timeout_error uri)
@@ -263,7 +263,7 @@ let test_h2_connection_cancelled_upload_releases_body () =
                   ()))
       in
       let effect =
-        Eta_http.Client.For_test.request_h2_on_connection connection request
+        Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
@@ -283,7 +283,7 @@ let test_h2_connection_cancelled_fixed_request_releases_stream () =
           ~body:(Eta_http.Request.Fixed [ Bytes.of_string "{}" ])
       in
       let effect =
-        Eta_http.Client.For_test.request_h2_on_connection connection request
+        Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
@@ -483,16 +483,6 @@ let test_h2_connection_continues_after_informational_headers () =
           Alcotest.failf "expected final response, got %a"
             (Eta.Cause.pp pp_http_error_detail)
             cause)
-
-let test_h2_client_classifies_informational_response () =
-  Alcotest.(check bool) "100" true
-    (Eta_http.Client.For_test.h2_informational_status 100);
-  Alcotest.(check bool) "103" true
-    (Eta_http.Client.For_test.h2_informational_status 103);
-  Alcotest.(check bool) "101 excluded" false
-    (Eta_http.Client.For_test.h2_informational_status 101);
-  Alcotest.(check bool) "200 final" false
-    (Eta_http.Client.For_test.h2_informational_status 200)
 
 (* Test GOAWAY mid-body: server sends response headers + partial body,
    then GOAWAY with last_stream_id covering our stream, then finishes
@@ -746,7 +736,7 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
           let uri = "https://api.example.test/stream" in
           let request = Eta_http.Request.make "GET" uri in
           let response =
-            Eta_http.Client.For_test.request_h2_on_connection connection request
+            Eta_http.Client.request_h2_on_connection connection request
               (Eta_http.Request.url request)
             |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
           in

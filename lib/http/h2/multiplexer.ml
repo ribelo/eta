@@ -105,10 +105,6 @@ let request =
       H2.Client_connection.request client request ?trailers_handler ~error_handler
         ~response_handler)
 
-module For_test = struct
-  let request_with_h2_request = request_with_h2_request
-end
-
 type client_reader = {
   client : H2.Client_connection.t;
   security : Security.t;

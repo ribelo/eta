@@ -8,7 +8,7 @@ let find_span name tracer =
   | [] -> Alcotest.failf "missing span %s" name
 
 let observability_client ?(protocol = Eta_http.Client.H1) request =
-  Eta_http.Client.make_for_test ~protocol ~request
+  Eta_http.Client.make_custom ~protocol ~request
     ~stats:(fun () ->
       Eta.Effect.pure
         {

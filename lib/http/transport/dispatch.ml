@@ -13,3 +13,21 @@ let decide_alpn alpn =
   | Ok Alpn.H1 -> Ok Use_h1
   | Ok Alpn.H2 -> Ok Use_h2
   | Error protocol -> Error protocol
+
+let unsupported_alpn request protocol =
+  Error.make ~protocol:Error.Unknown ~method_:request.Request.method_
+    ~uri:request.uri
+    (Tls_handshake_error
+       {
+         stage = Alpn_negotiation;
+         message = "unsupported ALPN protocol " ^ protocol;
+       })
+
+let dispatch_alpn ~close ~use_h1 ~use_h2 request alpn =
+  match decide_alpn alpn with
+  | Error protocol ->
+      close ()
+      |> Eta.Effect.bind (fun () ->
+             Eta.Effect.fail (unsupported_alpn request protocol))
+  | Ok Use_h1 -> use_h1 ()
+  | Ok Use_h2 -> use_h2 ()

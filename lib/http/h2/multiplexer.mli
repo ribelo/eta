@@ -13,18 +13,6 @@ type opened_request = {
   request_body : H2.Body.Writer.t;
 }
 
-(**/**)
-
-type h2_request =
-  H2.Client_connection.t ->
-  ?trailers_handler:(H2.Headers.t -> unit) ->
-  H2.Request.t ->
-  error_handler:(H2.Client_connection.error -> unit) ->
-  response_handler:(H2.Response.t -> H2.Body.Reader.t -> unit) ->
-  H2.Body.Writer.t
-
-(**/**)
-
 type client_reader
 
 type read_result =
@@ -57,22 +45,6 @@ val request :
   error_handler:(stream -> H2.Client_connection.error -> unit) ->
   response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
   (opened_request, request_error) result
-
-(**/**)
-
-module For_test : sig
-  val request_with_h2_request :
-    h2_request ->
-    t ->
-    tag:int ->
-    ?trailers_handler:(H2.Headers.t -> unit) ->
-    H2.Request.t ->
-    error_handler:(stream -> H2.Client_connection.error -> unit) ->
-    response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
-    (opened_request, request_error) result
-end
-
-(**/**)
 
 val create_client_reader :
   ?buffer_size:int ->

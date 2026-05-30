@@ -78,7 +78,7 @@ let retry_client responses =
     Eta.Effect.pure (responses.(index) ())
   in
   ( attempts,
-    Eta_http.Client.make_for_test ~protocol:Eta_http.Client.H1 ~request
+    Eta_http.Client.make_custom ~protocol:Eta_http.Client.H1 ~request
       ~stats:(fun () ->
         Eta.Effect.pure
           {

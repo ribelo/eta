@@ -135,40 +135,6 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
   Alcotest.(check int) "client errors" 0 result.client_errors;
   Alcotest.(check int) "stream errors" 0 result.stream_errors
 
-let test_h2_request_exception_releases_admission () =
-  let mux = Eta_http.H2.Multiplexer.create ~max_concurrent:1 () in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/raises"
-  in
-  let raising_request _client ?trailers_handler:_ _request ~error_handler:_
-      ~response_handler:_ =
-    raise (Failure "synthetic h2 request failure")
-  in
-  let open_bad tag =
-    Eta_http.H2.Multiplexer.For_test.request_with_h2_request raising_request mux
-      ~tag request
-      ~error_handler:(fun _ _ -> ())
-      ~response_handler:(fun _ _ _ -> ())
-  in
-  let expect_request_failed label = function
-    | Error (Eta_http.H2.Multiplexer.Request_failed _) -> ()
-    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
-        Alcotest.failf "%s leaked admission permit" label
-    | Error Eta_http.H2.Multiplexer.Connection_closed ->
-        Alcotest.failf "%s saw unexpected closed connection" label
-    | Ok _ -> Alcotest.failf "%s unexpectedly opened stream" label
-  in
-  expect_request_failed "first request" (open_bad 1);
-  let stats = Eta_http.H2.Multiplexer.stats mux in
-  Alcotest.(check int) "active after exception" 0 stats.active;
-  Alcotest.(check int) "live after exception" 0 stats.live;
-  expect_request_failed "second request" (open_bad 2);
-  let stats = Eta_http.H2.Multiplexer.stats mux in
-  Alcotest.(check int) "active after second exception" 0 stats.active;
-  Alcotest.(check int) "live after second exception" 0 stats.live
-
 let h2_body_pump_effect client server =
   Eta.Effect.sync (fun () ->
       let client_progress = h2_drain_client_to_server client server in

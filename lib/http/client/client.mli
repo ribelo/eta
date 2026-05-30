@@ -96,27 +96,21 @@ val make :
     the h1 request loop. [max_response_body_bytes] caps HTTP/1.1 response body
     decoding. [ca_file] adds a PEM CA bundle to the trust store. *)
 
-val make_for_test :
+val make_custom :
   protocol:protocol ->
   request:(Request.t -> (Response.t, Error.t) Eta.Effect.t) ->
   stats:(unit -> (stats, Error.t) Eta.Effect.t) ->
   shutdown:(unit -> (unit, Error.t) Eta.Effect.t) ->
   t
+(** Build a client from custom request, stats, and shutdown handlers. This is
+    the extension point for adapters that already own transport execution and
+    want to satisfy the eta-http client interface. *)
 
-module For_test : sig
-  val dispatch_alpn :
-    close:(unit -> (unit, Error.t) Eta.Effect.t) ->
-    use_h1:(unit -> ('a, Error.t) Eta.Effect.t) ->
-    use_h2:(unit -> ('a, Error.t) Eta.Effect.t) ->
-    Request.t ->
-    string option ->
-    ('a, Error.t) Eta.Effect.t
-
-  val h2_informational_status : int -> bool
-
-  val request_h2_on_connection :
-    Connection.t ->
-    Request.t ->
-    Url.t ->
-    (Response.t, Error.t) Eta.Effect.t
-end
+val request_h2_on_connection :
+  Connection.t ->
+  Request.t ->
+  Url.t ->
+  (Response.t, Error.t) Eta.Effect.t
+(** Submit one eta-http request on an already-owned HTTP/2 connection. Advanced
+    callers that manage HTTP/2 connection ownership directly can use this
+    instead of the pooled ALPN client. *)

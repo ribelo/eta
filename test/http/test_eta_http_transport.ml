@@ -125,7 +125,7 @@ let test_transport_dispatch_unsupported_alpn_closes_flow () =
   let flow = counted_tls_flow closed in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Client.For_test.dispatch_alpn
+    Eta_http.Transport.Dispatch.dispatch_alpn
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -154,7 +154,7 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   let flow = counted_tls_flow closed in
   with_test_clock @@ fun _sw _clock rt ->
   let result =
-    Eta_http.Client.For_test.dispatch_alpn
+    Eta_http.Transport.Dispatch.dispatch_alpn
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -164,4 +164,3 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   Alcotest.(check bool) "h2 selected" true
     (match result with `H2 -> true | `H1 -> false);
   Alcotest.(check int) "flow still owned" 0 !closed
-

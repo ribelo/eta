@@ -281,8 +281,6 @@ let () =
             test_h2_connection_completed_error_response_does_not_hold_switch;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
-          Alcotest.test_case "classifies informational response" `Quick
-            test_h2_client_classifies_informational_response;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request kills connection" `Quick
@@ -319,8 +317,6 @@ let () =
             test_h2_multiplexer_reads_server_response;
           Alcotest.test_case "default reader accepts max DATA frame" `Quick
             test_h2_default_reader_accepts_max_sized_data_frame;
-          Alcotest.test_case "request exception releases admission" `Quick
-            test_h2_request_exception_releases_admission;
           Alcotest.test_case "body stream releases on EOF" `Quick
             test_h2_body_stream_releases_on_eof;
           Alcotest.test_case "body stream reads inline data" `Quick

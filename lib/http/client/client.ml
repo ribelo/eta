@@ -76,25 +76,9 @@ let request_url request =
         (Error.make ~method_:request.Request.method_ ~uri:request.uri
            (Connection_protocol_violation { kind = "url"; message }))
 
-let unsupported_alpn request protocol =
-  Error.make ~protocol:Error.Unknown ~method_:request.Request.method_
-    ~uri:request.uri
-    (Tls_handshake_error
-       {
-         stage = Alpn_negotiation;
-         message = "unsupported ALPN protocol " ^ protocol;
-       })
-
-let dispatch_alpn ~close ~use_h1 ~use_h2 request alpn =
-  match Dispatch.decide_alpn alpn with
-  | Error protocol ->
-      close ()
-      |> Eta.Effect.bind (fun () ->
-             Eta.Effect.fail (unsupported_alpn request protocol))
-  | Ok Dispatch.Use_h1 -> use_h1 ()
-  | Ok Dispatch.Use_h2 -> use_h2 ()
-
 module H2 = H2_client_request_runner
+
+let request_h2_on_connection = H2.request_on_connection
 
 let make_h1 ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
@@ -268,7 +252,7 @@ let h2_on_tls state target tls request url =
   h2_on_connection state connection request url
 
 let dispatch_tls state target (tls, alpn) request url =
-  dispatch_alpn
+  Dispatch.dispatch_alpn
     ~close:(fun () -> close_counted state (tls :> Connect.tcp_flow))
     ~use_h1:(fun () ->
       state.last_protocol := H1;
@@ -359,16 +343,10 @@ let make ~sw ~net
     shutdown_impl = auto_shutdown_impl state;
   }
 
-let make_for_test ~protocol ~request ~stats ~shutdown =
+let make_custom ~protocol ~request ~stats ~shutdown =
   {
     protocol;
     request_impl = request;
     stats_impl = stats;
     shutdown_impl = shutdown;
   }
-
-module For_test = struct
-  let dispatch_alpn = dispatch_alpn
-  let h2_informational_status = H2.informational_status
-  let request_h2_on_connection = H2.request_on_connection
-end
