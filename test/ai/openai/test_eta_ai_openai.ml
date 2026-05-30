@@ -552,6 +552,55 @@ let test_realtime_decode_server_events () =
   | O.Realtime.Server_error { code = Some "bad_request"; message = "nope"; _ } -> ()
   | _ -> Alcotest.fail "expected realtime error event"
 
+(* P1: OpenAI codec raises Invalid_argument instead of returning typed error
+   when tool result content contains image/video. *)
+
+let test_openai_tool_result_with_image_does_not_crash () =
+  let request : A.chat_request =
+    {
+      model = "gpt-4o-mini";
+      prompt =
+        [
+          A.User [ A.Text "take screenshot" ];
+          A.Tool
+            {
+              tool_call_id = "call_screenshot";
+              content =
+                [
+                  A.Text "Screenshot:";
+                  A.Image { url = "data:image/png;base64,iVBORw0KGgo="; detail = None };
+                ];
+            };
+        ];
+      tools = [];
+      temperature = None;
+      max_output_tokens = Some 100;
+      stream = false;
+    }
+  in
+  (* encode_chat uses chat_message_json which calls chat_content_json for Tool.
+     encode_responses uses input_items which calls contents_text for Tool.
+     contents_text raises Invalid_argument on Image content. *)
+  let crashed_responses =
+    try
+      ignore (O.encode_responses request);
+      false
+    with Invalid_argument _ -> true
+  in
+  let crashed_chat =
+    try
+      ignore (O.encode_chat request);
+      false
+    with Invalid_argument _ -> true
+  in
+  (* At least one encoder should NOT crash. Both crashing proves the bug. *)
+  Alcotest.(check bool)
+    "encode_responses should NOT throw Invalid_argument on image in tool result"
+    false crashed_responses;
+  Alcotest.(check bool)
+    "encode_chat should NOT throw Invalid_argument on image in tool result"
+    false crashed_chat
+
 let () =
   Alcotest.run "eta-ai-openai"
     [
@@ -562,6 +611,8 @@ let () =
             test_encode_chat_and_responses;
           Alcotest.test_case "encodes audio content" `Quick
             test_chat_and_responses_encode_audio_content;
+          Alcotest.test_case "tool result with image does not crash" `Quick
+            test_openai_tool_result_with_image_does_not_crash;
         ] );
       ( "decode",
         [
