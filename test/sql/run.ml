@@ -56,6 +56,8 @@ let () =
             test_sql_fold_timeout_does_not_bound_total_elapsed;
           Alcotest.test_case "compiled type bypass" `Quick
             test_sql_compiled_type_bypass;
+          Alcotest.test_case "expr type unsoundness" `Quick
+            test_sql_expr_type_unsoundness;
         ] );
       ( "Sqlite",
         [

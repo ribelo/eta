@@ -1288,3 +1288,30 @@ let test_sql_compiled_type_bypass () =
     [ 1 ]  (* what a correct query would return; we get 0 from coercion *)
     rows;
   Eta.Effect.unit
+
+(* P1: SQL expression types allow invalid SQL to typecheck.
+   sum_int returns non-optional int but NULL for empty groups.
+   avg accepts any column type including text.
+   These are type-level unsoundness in the DSL. *)
+
+let test_sql_expr_type_unsoundness () =
+  with_pool @@ fun pool ->
+  let* () = create_users pool in
+  (* No data inserted — table is empty *)
+  (* BUG: sum_int on an empty table returns NULL, but the DSL types it as `int`
+     (non-optional). The decoder will read NULL as 0 silently, violating
+     the type promise that the result is a valid int. *)
+  let sum_query =
+    Q.Select.(
+      from Users.table
+        Q.Projection.(expr (Q.Expr.sum_int Users.id))
+      |> compile)
+  in
+  let* sum_rows = Q.Pool.select pool sum_query in
+  (* The DSL says this is `int list`, but SQLite returns NULL for SUM of empty set.
+     A correct type would be `int option`. The decoder silently coerces NULL to 0. *)
+  Alcotest.(check (list int))
+    "sum_int on empty table should be NULL/None, not 0 (type unsoundness)"
+    []  (* correct: no rows or the single row should be typed as option *)
+    sum_rows;
+  Eta.Effect.unit
