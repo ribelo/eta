@@ -18,23 +18,25 @@ let encode_chat_json ~provider ~schema_value ?structured_output
       with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok tools ->
-          let response_format =
-            structured_output
-            |> Option.map
-                 (structured_output_json ~shape:Chat_response_format)
-          in
-          Stdlib.Ok
-            (Json.object_
-               [
-                 ("model", Some (Json.string request.model));
-                 ( "messages",
-                   Some (request.prompt |> List.map chat_message_json |> Json.array) );
-                 ("stream", Some (Json.bool request.stream));
-                 ("temperature", temperature);
-                 ("max_tokens", Option.map Json.int request.max_output_tokens);
-                 ("tools", if tools = [] then None else Some (Json.array tools));
-                 ("response_format", response_format);
-               ]))
+          match result_all (List.map (chat_message_json ~provider) request.prompt) with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok messages ->
+              let response_format =
+                structured_output
+                |> Option.map
+                     (structured_output_json ~shape:Chat_response_format)
+              in
+              Stdlib.Ok
+                (Json.object_
+                   [
+                     ("model", Some (Json.string request.model));
+                     ("messages", Some (Json.array messages));
+                     ("stream", Some (Json.bool request.stream));
+                     ("temperature", temperature);
+                     ("max_tokens", Option.map Json.int request.max_output_tokens);
+                     ("tools", if tools = [] then None else Some (Json.array tools));
+                     ("response_format", response_format);
+                   ]))
 
 let encode_chat ~provider ~schema_value ?structured_output request =
   match encode_chat_json ~provider ~schema_value ?structured_output request with
@@ -105,5 +107,4 @@ let decode_chat ?(usage_raw_prompt_names = false) ~provider raw =
                 "chat completion choice missing message")
       | _ ->
           decode_error_result ~provider ~raw "chat completion missing choices")
-
 

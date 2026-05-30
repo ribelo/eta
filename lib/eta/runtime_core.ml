@@ -42,6 +42,8 @@ let rec cause_of_exn ?backtrace ~capture_backtrace key exn =
   match exn with
   | Raised_cause (k, cause) when k = Typed_fail.int key -> Obj.obj cause
   | Eio.Cancel.Cancelled _ -> Cause.interrupt
+  | Blocking_runtime.Callback_raised (exn, bt) ->
+      RObs.die_of_exn ~backtrace:bt ~capture_backtrace exn
   | Exit -> Cause.interrupt
   | Fun.Finally_raised exn -> cause_of_exn ~capture_backtrace key exn
   | Eio.Exn.Multiple causes ->
@@ -77,6 +79,8 @@ type 'err t = {
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
   active : int P_atomic.t;
+  active_mutex : Eio.Mutex.t;
+  active_condition : Eio.Condition.t;
   default_fail_key : Typed_fail.key;
 }
 
@@ -139,8 +143,27 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;
+    active_mutex = Eio.Mutex.create ();
+    active_condition = Eio.Condition.create ();
     default_fail_key = Typed_fail.fresh ();
   }
+
+let incr_active runtime =
+  Eio.Mutex.use_rw ~protect:(has_eio_fiber_context ()) runtime.active_mutex
+  @@ fun () -> P_atomic.incr runtime.active
+
+let decr_active runtime =
+  Eio.Mutex.use_rw ~protect:(has_eio_fiber_context ()) runtime.active_mutex
+  @@ fun () ->
+  P_atomic.decr runtime.active;
+  Eio.Condition.broadcast runtime.active_condition
+
+let wait_active_zero runtime =
+  Eio.Mutex.use_rw ~protect:(has_eio_fiber_context ()) runtime.active_mutex
+  @@ fun () ->
+  while P_atomic.get runtime.active > 0 do
+    Eio.Condition.await runtime.active_condition runtime.active_mutex
+  done
 
 let emit_daemon_failure runtime cause =
   RObs.emit_daemon_failure ~now_ms:runtime.now_ms

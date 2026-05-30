@@ -188,7 +188,7 @@ let test_effect_finally_runs_on_cancellation () =
   check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
   Alcotest.(check bool) "cleanup ran" true !finalized
 
-let test_effect_finally_cleanup_failure_not_caught_as_body_failure () =
+let test_effect_catch_recovers_first_typed_failure_in_suppressed_cause () =
   with_runtime @@ fun rt ->
   let eff =
     Effect.fail `Body
@@ -198,18 +198,16 @@ let test_effect_finally_cleanup_failure_not_caught_as_body_failure () =
          | `Cleanup -> Effect.pure `Caught_cleanup)
   in
   match Runtime.run rt eff with
-  | Exit.Error
-      (Cause.Suppressed
-        { primary = Cause.Fail `Body; finalizer = Cause.Fail `Cleanup }) ->
+  | Exit.Ok `Caught ->
       ()
+  | Exit.Ok `Caught_cleanup ->
+      Alcotest.fail "catch should recover the primary typed failure first"
   | Exit.Error cause ->
-      Alcotest.failf "expected uncaught suppressed cleanup failure, got %a"
+      Alcotest.failf "expected catch to recover suppressed typed failure, got %a"
         (Cause.pp (fun fmt -> function
           | `Body -> Format.pp_print_string fmt "body"
           | `Cleanup -> Format.pp_print_string fmt "cleanup"))
         cause
-  | Exit.Ok (`Caught | `Caught_cleanup) ->
-      Alcotest.fail "catch should not catch suppressed failure"
 
 let test_cause_empty_aggregations_reject () =
   Alcotest.check_raises "empty sequential"

@@ -14,6 +14,7 @@ val execute_script : t -> string -> (unit, Types.sql_error) result
 val run_schema : t -> Dsl.Compiled.schema -> (unit, Types.sql_error) result
 val prepare_migration : t -> string -> (string list, Types.sql_error) result
 val ping : t -> bool
+val ensure_autocommit : t -> (unit, Types.sql_error) result
 val close : t -> unit
 
 val begin_transaction : t -> (unit, Types.sql_error) result
@@ -26,4 +27,3 @@ val created_at : t -> float
 val last_used : t -> float
 val pool_lease : t -> int
 val set_pool_lease : t -> int -> unit
-

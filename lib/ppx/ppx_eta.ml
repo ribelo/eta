@@ -173,7 +173,7 @@ type sql_column_attrs = {
   primary_key : bool;
   not_null : bool;
   unique : bool;
-  default : string option;
+  default : expression option;
   references : expression option;
   on_delete : string option;
   on_update : string option;
@@ -207,7 +207,7 @@ let parse_sql_column_attrs attrs =
           if not (payload_empty attr) then
             fail loc "attribute unique does not take a payload";
           { acc with unique = true }
-      | "default" -> { acc with default = Some (payload_string loc attr) }
+      | "default" -> { acc with default = Some (payload_expr loc attr) }
       | "references" -> { acc with references = Some (payload_expr loc attr) }
       | "on_delete" -> { acc with on_delete = Some (payload_string loc attr) }
       | "on_update" -> { acc with on_update = Some (payload_string loc attr) }
@@ -293,9 +293,7 @@ let schema_column_expr field =
       (if attrs.not_null then Some (Labelled "not_null", ebool ~loc true)
        else None);
       (if attrs.unique then Some (Labelled "unique", ebool ~loc true) else None);
-      Option.map
-        (fun value -> (Labelled "default", estring ~loc value))
-        attrs.default;
+      Option.map (fun value -> (Labelled "default", value)) attrs.default;
       Option.map
         (fun value -> (Labelled "references", value))
         (schema_reference_expr ~loc attrs);

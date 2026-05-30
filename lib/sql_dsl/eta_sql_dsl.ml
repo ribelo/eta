@@ -16,9 +16,11 @@ module type BACKEND = sig
   val bool : bool typ
   val float : float typ
   val text : string typ
+  val nullable : 'a typ -> 'a option typ
   val invalid_query : string -> error
   val module_name : string
   val value_to_string : value -> string
+  val value_to_sql_literal : value -> string
 end
 
 module type S = sig
@@ -33,33 +35,22 @@ module type S = sig
   val bool : bool typ
   val float : float typ
   val text : string typ
+  val nullable : 'a typ -> 'a option typ
   type param = Param : 'a typ * 'a -> param
 
   module Compiled : sig
-    type 'a select = {
-      sql : string;
-      params : param list;
-      decode : row -> 'a;
-    }
-
-    type 'a returning = {
-      sql : string;
-      params : param list;
-      decode : row -> 'a;
-    }
-
-    type change = {
-      sql : string;
-      params : param list;
-    }
-
-    type schema = { sql : string }
+    type 'a select
+    type 'a returning
+    type change
+    type schema
 
     val value_of_param : param -> value
     val select_sql : 'a select -> string
     val select_params : 'a select -> value list
+    val select_decode : 'a select -> row -> 'a
     val returning_sql : 'a returning -> string
     val returning_params : 'a returning -> value list
+    val returning_decode : 'a returning -> row -> 'a
     val change_sql : change -> string
     val change_params : change -> value list
     val schema_sql : schema -> string
@@ -176,16 +167,16 @@ module type S = sig
     (** SQL EXISTS predicate for a compiled subquery. *)
     val count : unit -> ('scope, int) t
     (** COUNT-star aggregate expression. *)
-    val sum_int : ('scope, int) column -> ('scope, int) t
-    (** SUM aggregate over an integer column. *)
-    val sum_float : ('scope, float) column -> ('scope, float) t
-    (** SUM aggregate over a float column. *)
-    val avg : ('scope, 'a) column -> ('scope, float) t
-    (** AVG aggregate over a numeric SQLite column. *)
-    val min : ('scope, 'a) column -> ('scope, 'a) t
-    (** MIN aggregate preserving the column type. *)
-    val max : ('scope, 'a) column -> ('scope, 'a) t
-    (** MAX aggregate preserving the column type. *)
+    val sum_int : ('scope, int) column -> ('scope, int option) t
+    (** SUM aggregate over an integer column. SQLite returns NULL for an empty input. *)
+    val sum_float : ('scope, float) column -> ('scope, float option) t
+    (** SUM aggregate over a float column. SQLite returns NULL for an empty input. *)
+    val avg : ('scope, 'a) column -> ('scope, float option) t
+    (** AVG aggregate over a numeric SQLite column. SQLite returns NULL for an empty input. *)
+    val min : ('scope, 'a) column -> ('scope, 'a option) t
+    (** MIN aggregate preserving the column type. SQLite returns NULL for an empty input. *)
+    val max : ('scope, 'a) column -> ('scope, 'a option) t
+    (** MAX aggregate preserving the column type. SQLite returns NULL for an empty input. *)
     val case :
       (('scope, bool) t * ('scope, 'a) t) list ->
       default:('scope, 'a) t ->
@@ -217,15 +208,15 @@ module type S = sig
     (** Combine three projections into a tuple. *)
     val count : ?as_:string -> unit -> ('scope, int) t
     (** Project COUNT-star. *)
-    val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int) t
+    val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int option) t
     (** Project SUM over an integer column. *)
-    val sum_float : ?as_:string -> ('scope, float) column -> ('scope, float) t
+    val sum_float : ?as_:string -> ('scope, float) column -> ('scope, float option) t
     (** Project SUM over a float column. *)
-    val avg : ?as_:string -> ('scope, 'a) column -> ('scope, float) t
+    val avg : ?as_:string -> ('scope, 'a) column -> ('scope, float option) t
     (** Project AVG over a numeric SQLite column. *)
-    val min : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
+    val min : ?as_:string -> ('scope, 'a) column -> ('scope, 'a option) t
     (** Project MIN preserving the column type. *)
-    val max : ?as_:string -> ('scope, 'a) column -> ('scope, 'a) t
+    val max : ?as_:string -> ('scope, 'a) column -> ('scope, 'a option) t
     (** Project MAX preserving the column type. *)
     val row_number :
       ?as_:string ->
@@ -382,9 +373,9 @@ module type S = sig
       ?primary_key:bool ->
       ?not_null:bool ->
       ?unique:bool ->
-      ?default:string ->
+      ?default:'a ->
       ?references:reference ->
-      (_, _) column ->
+      (_, 'a) column ->
       column_def
     val create_table : ?if_not_exists:bool -> 'table table -> column_def list -> t
     val drop_table : ?if_exists:bool -> 'table table -> t
@@ -419,6 +410,7 @@ module Make (Backend : BACKEND) = struct
   let bool = Backend.bool
   let float = Backend.float
   let text = Backend.text
+  let nullable = Backend.nullable
 
   type 'table table = {
     table_name : string;
@@ -460,8 +452,10 @@ module Make (Backend : BACKEND) = struct
     let value_of_param (Param (typ, value)) = typ.value value
     let select_sql (query : _ select) = query.sql
     let select_params (query : _ select) = List.map value_of_param query.params
+    let select_decode (query : _ select) = query.decode
     let returning_sql (query : _ returning) = query.sql
     let returning_params (query : _ returning) = List.map value_of_param query.params
+    let returning_decode (query : _ returning) = query.decode
     let change_sql (query : change) = query.sql
     let change_params (query : change) = List.map value_of_param query.params
     let schema_sql (schema : schema) = schema.sql
@@ -664,11 +658,11 @@ module Make (Backend : BACKEND) = struct
     let aggregate name typ (column : (_, _) column) =
       { sql = name ^ "(" ^ column_sql column ^ ")"; params = []; typ }
 
-    let sum_int column = aggregate "SUM" int column
-    let sum_float column = aggregate "SUM" float column
-    let avg column = aggregate "AVG" float column
-    let min (column : (_, _) column) = aggregate "MIN" column.typ column
-    let max (column : (_, _) column) = aggregate "MAX" column.typ column
+    let sum_int column = aggregate "SUM" (nullable int) column
+    let sum_float column = aggregate "SUM" (nullable float) column
+    let avg column = aggregate "AVG" (nullable float) column
+    let min (column : (_, _) column) = aggregate "MIN" (nullable column.typ) column
+    let max (column : (_, _) column) = aggregate "MAX" (nullable column.typ) column
 
     let case branches ~default =
       match branches with
@@ -1317,12 +1311,21 @@ module Make (Backend : BACKEND) = struct
           columns : string list;
         }
 
+    let reference_action label action =
+      let normalized = String.uppercase_ascii (String.trim action) in
+      match normalized with
+      | "CASCADE" | "RESTRICT" | "SET NULL" | "SET DEFAULT" | "NO ACTION" ->
+          normalized
+      | _ ->
+          invalid_arg
+            (Backend.module_name ^ ".Eta_schema.references: invalid " ^ label)
+
     let references ?on_delete ?on_update (column : (_, _) column) =
       {
         table_name = column.table_name;
         column_name = Some column.column_name;
-        on_delete;
-        on_update;
+        on_delete = Option.map (reference_action "on_delete") on_delete;
+        on_update = Option.map (reference_action "on_update") on_update;
       }
 
     let column ?(primary_key = false) ?(not_null = false) ?(unique = false)
@@ -1333,7 +1336,10 @@ module Make (Backend : BACKEND) = struct
         primary_key;
         not_null;
         unique;
-        default;
+        default =
+          Option.map
+            (fun value -> Backend.value_to_sql_literal (column.typ.value value))
+            default;
         references;
       }
 

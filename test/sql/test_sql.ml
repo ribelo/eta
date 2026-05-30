@@ -287,7 +287,7 @@ let test_sql_select_aggregates_distinct_group () =
       |> where Q.Expr.(eq Users.active true)
       |> select_all pool)
   in
-  Alcotest.(check (list int)) "active id sum" [ 3 ] active_id_sum;
+  Alcotest.(check (list (option int))) "active id sum" [ Some 3 ] active_id_sum;
   let* distinct_active =
     Q.Select.(
       from Users.table Q.Projection.(one Users.active)
@@ -1214,32 +1214,14 @@ let test_sql_pool_health_check_does_not_detect_active_transaction () =
     let* () = Q.Pool.execute_script pool
       "CREATE TABLE poison (id INTEGER PRIMARY KEY)" in
     (* Borrow the connection, begin a transaction manually, insert, but
-       DON'T commit or rollback. Then return it to the pool.
-       This simulates what happens when rollback fails. *)
+       DON'T commit or rollback. Returning the connection to the pool must
+       clean the transaction before the next borrower can see it. *)
     let* () =
-      Q.Pool.execute_script pool "BEGIN TRANSACTION" in
-    let* _ =
-      Q.Pool.execute pool "INSERT INTO poison (id) VALUES (?)"
-        [ Q.Value.int 42 ] in
-    (* The connection is now in an active transaction with uncommitted data.
-       Pool returns it. Health check (SELECT 1) should detect this, but
-       currently it doesn't. *)
-    let* rows = Q.Pool.query pool "SELECT 1 AS one" [] in
-    (* This assertion proves the health check is inadequate:
-       SELECT 1 succeeds even though the connection has an active transaction *)
-    Alcotest.(check (option int))
-      "SELECT 1 passes on connection with active transaction" (Some 1)
-      (match rows with [ row ] -> Q.Row.int "one" row | _ -> None);
-    (* The uncommitted INSERT is visible to the SAME connection (next borrower
-       gets the same connection since max_size=1) *)
+      Q.Pool.execute_script pool
+        "BEGIN TRANSACTION; INSERT INTO poison (id) VALUES (42)"
+    in
     let* rows = Q.Pool.query pool "SELECT id FROM poison" [] in
     let ids = List.filter_map (Q.Row.int "id") rows in
-    (* BUG: The next borrower sees the uncommitted row because the
-       connection was returned with an active transaction.
-       A correct implementation would either:
-       1. Check autocommit after health_check and discard if in-transaction
-       2. Run ROLLBACK in health_check if not in autocommit mode
-       3. Discard the connection if rollback fails in with_transaction *)
     let* () = Q.Pool.shutdown pool in
     Eta.Effect.pure ids
   in
@@ -1262,32 +1244,15 @@ let test_sql_pool_health_check_does_not_detect_active_transaction () =
    a compile-time error. *)
 
 let test_sql_compiled_type_bypass () =
-  with_pool @@ fun pool ->
-  let* () = Q.Pool.execute_script pool
-    "CREATE TABLE bypass_test (id INTEGER PRIMARY KEY, name TEXT);\
-     INSERT INTO bypass_test VALUES (1, 'alice'), (2, 'bob')" in
-  (* Construct a Compiled.select DIRECTLY without using the DSL.
-     This bypasses all type safety — the decoder reads column 0 as int,
-     but the query returns a TEXT column. The DSL's type system would
-     prevent this mismatch if Compiled.select were abstract. *)
-  let bogus_select : int Q.Compiled.select = {
-    sql = "SELECT name FROM bypass_test WHERE id = 1";
-    params = [];
-    decode = (fun stmt -> S.column_int stmt 0);  (* reading TEXT as int *)
-  } in
-  (* This should ideally not compile if Compiled.select were abstract.
-     Instead it compiles fine and executes, proving the type boundary
-     is bypassable. The result is undefined/wrong: reading a text column
-     as int returns 0 in SQLite (silent type coercion). *)
-  let* rows = Q.Pool.select pool bogus_select in
-  (* SQLite coerces 'alice' to 0 when read as integer — silent data corruption.
-     The DSL type system is supposed to prevent this, but since Compiled
-     records are not sealed, the safety is bypassed. *)
-  Alcotest.(check (list int))
-    "bypassed DSL: should not be constructible (reading TEXT as int gives 0)"
-    [ 1 ]  (* what a correct query would return; we get 0 from coercion *)
-    rows;
-  Eta.Effect.unit
+  let query =
+    Q.Select.(
+      from Users.table Q.Projection.(one Users.id)
+      |> where Q.Expr.(eq Users.id 1)
+      |> compile)
+  in
+  Alcotest.(check string) "compiled SQL accessor"
+    "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" = ?)"
+    (Q.Compiled.select_sql query)
 
 (* P1: SQL expression types allow invalid SQL to typecheck.
    sum_int returns non-optional int but NULL for empty groups.
@@ -1298,9 +1263,8 @@ let test_sql_expr_type_unsoundness () =
   with_pool @@ fun pool ->
   let* () = create_users pool in
   (* No data inserted — table is empty *)
-  (* BUG: sum_int on an empty table returns NULL, but the DSL types it as `int`
-     (non-optional). The decoder will read NULL as 0 silently, violating
-     the type promise that the result is a valid int. *)
+  (* SUM on an empty table returns one SQL row containing NULL. The DSL
+     must expose that as an option instead of decoding it as 0. *)
   let sum_query =
     Q.Select.(
       from Users.table
@@ -1308,11 +1272,8 @@ let test_sql_expr_type_unsoundness () =
       |> compile)
   in
   let* sum_rows = Q.Pool.select pool sum_query in
-  (* The DSL says this is `int list`, but SQLite returns NULL for SUM of empty set.
-     A correct type would be `int option`. The decoder silently coerces NULL to 0. *)
-  Alcotest.(check (list int))
-    "sum_int on empty table should be NULL/None, not 0 (type unsoundness)"
-    []  (* correct: no rows or the single row should be typed as option *)
+  Alcotest.(check (list (option int)))
+    "sum_int on empty table should be None" [ None ]
     sum_rows;
   Eta.Effect.unit
 
@@ -1336,30 +1297,16 @@ let test_sql_schema_dsl_raw_interpolation () =
         ]
       |> compile)
   in
-  (* The schema SQL should NOT contain unescaped injection payload.
-     A correct implementation would either:
-     1. Reject non-literal default values
-     2. Quote/escape the default value
-     3. Clearly mark this as an unsafe escape hatch *)
-  let sql = schema.Q.Compiled.sql in
-  let contains_injection =
-    let needle = "DROP TABLE" in
-    let nlen = String.length needle in
-    let slen = String.length sql in
-    let rec loop i =
-      if i + nlen > slen then false
-      else if String.sub sql i nlen = needle then true
-      else loop (i + 1)
-    in
-    loop 0
+  let sql = Q.Compiled.schema_sql schema in
+  Alcotest.(check string) "schema DDL quotes default literal"
+    "CREATE TABLE \"users\" (\"id\" INTEGER PRIMARY KEY, \"name\" TEXT NOT NULL DEFAULT '0; DROP TABLE users; --', \"active\" INTEGER, \"status\" TEXT, \"nickname\" TEXT)"
+    sql;
+  let* () = Q.Pool.run_schema pool schema in
+  let* rows =
+    Q.Pool.query pool
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+      []
   in
-  Alcotest.(check bool)
-    "schema DDL should not contain raw SQL injection from default field"
-    false contains_injection;
-  (* Also verify the injected SQL actually executes (proving the injection works) *)
-  let exec_result = Q.Pool.run_schema pool schema in
-  let* () =
-    exec_result
-    |> Eta.Effect.catch (fun _ -> Eta.Effect.unit)
-  in
+  Alcotest.(check (list string)) "users table still exists" [ "users" ]
+    (List.filter_map (Q.Row.string "name") rows);
   Eta.Effect.pure ()

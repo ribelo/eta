@@ -47,7 +47,9 @@ let workloads =
                  chat_request)));
     item "message_item.100k" (fun () ->
         repeat 100_000 (fun () ->
-            ignore (Eta_ai_openai_codec.chat_message_json (User [ Text "hello" ]))));
+            ignore
+              (Eta_ai_openai_codec.chat_message_json ~provider:"bench"
+                 (User [ Text "hello" ]))));
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads

@@ -2,13 +2,22 @@ module A = Eta_ai
 module Json = A.Json
 
 let content_text = function
-  | A.Text text -> text
-  | A.Json raw -> raw
-  | A.Audio _ -> invalid_arg "audio content cannot be encoded as text"
-  | A.Image _ -> invalid_arg "image content cannot be encoded as text"
-  | A.Video _ -> invalid_arg "video content cannot be encoded as text"
+  | A.Text text -> Some text
+  | A.Json raw -> Some raw
+  | A.Audio _ | A.Image _ | A.Video _ -> None
 
-let contents_text contents = contents |> List.map content_text |> String.concat ""
+let unsupported ~provider feature =
+  Stdlib.Error (A.Unsupported { provider; feature })
+
+let contents_text ~provider contents =
+  let rec loop acc = function
+    | [] -> Stdlib.Ok (String.concat "" (List.rev acc))
+    | content :: rest -> (
+        match content_text content with
+        | Some text -> loop (text :: acc) rest
+        | None -> unsupported ~provider "content cannot be encoded as text")
+  in
+  loop [] contents
 
 let content_has_audio = function
   | A.Audio _ -> true
@@ -42,8 +51,8 @@ let chat_content_part = function
   | A.Image media ->
       Json.object_
         [
-          ("type", Some (Json.string "url"));
-          ("url", Some (media_object media));
+          ("type", Some (Json.string "image_url"));
+          ("image_url", Some (media_object media));
         ]
   | A.Audio audio ->
       Json.object_
@@ -65,9 +74,10 @@ let chat_content_part = function
           ("video_url", Some (media_object media));
         ]
 
-let chat_content_json contents =
-  if contents_are_text contents then Json.string (contents_text contents)
-  else Json.array (List.map chat_content_part contents)
+let chat_content_json ~provider contents =
+  if contents_are_text contents then
+    contents_text ~provider contents |> Result.map Json.string
+  else Stdlib.Ok (Json.array (List.map chat_content_part contents))
 
 let responses_content_part = function
   | A.Text text -> Json.object_ [ ("type", Some (Json.string "input_text")); ("text", Some (Json.string text)) ]
@@ -99,14 +109,18 @@ let responses_content_part = function
           ("video_url", Some (Json.string media.A.url));
         ]
 
-let responses_content_json contents =
-  if contents_are_text contents then Json.string (contents_text contents)
-  else Json.array (List.map responses_content_part contents)
+let responses_content_json ~provider contents =
+  if contents_are_text contents then
+    contents_text ~provider contents |> Result.map Json.string
+  else Stdlib.Ok (Json.array (List.map responses_content_part contents))
 
 let contents_empty contents =
   match contents with
   | [] -> true
-  | _ when contents_are_text contents -> String.equal (contents_text contents) ""
+  | _ when contents_are_text contents ->
+      (match contents_text ~provider:"openai" contents with
+      | Stdlib.Ok text -> String.equal text ""
+      | Stdlib.Error _ -> false)
   | _ -> false
 
 let message_has_audio = function
@@ -122,12 +136,14 @@ let reject_audio_prompt ~provider prompt =
          { provider; feature = "audio content requires OpenAI Realtime" })
   else Stdlib.Ok ()
 
-let message_item role contents =
-  Json.object_
-    [
-      ("role", Some (Json.string role));
-      ("content", Some (responses_content_json contents));
-    ]
+let message_item ~provider role contents =
+  responses_content_json ~provider contents
+  |> Result.map (fun content ->
+         Json.object_
+           [
+             ("role", Some (Json.string role));
+             ("content", Some content);
+           ])
 
 let function_call_item (call : A.tool_call) =
   Json.object_
@@ -138,39 +154,51 @@ let function_call_item (call : A.tool_call) =
       ("arguments", Some (Json.string call.arguments_json));
     ]
 
-let input_items = function
-  | A.System text -> [ message_item "system" [ A.Text text ] ]
-  | A.User contents -> [ message_item "user" contents ]
+let input_items ~provider = function
+  | A.System text -> message_item ~provider "system" [ A.Text text ] |> Result.map (fun item -> [ item ])
+  | A.User contents -> message_item ~provider "user" contents |> Result.map (fun item -> [ item ])
   | A.Assistant { content; tool_calls } ->
       let content_item =
-        if contents_empty content then []
-        else [ message_item "assistant" content ]
+        if contents_empty content then Stdlib.Ok []
+        else message_item ~provider "assistant" content |> Result.map (fun item -> [ item ])
       in
-      content_item @ List.map function_call_item tool_calls
+      Result.map
+        (fun content_item -> content_item @ List.map function_call_item tool_calls)
+        content_item
   | A.Tool { tool_call_id; content } ->
-      [
-        Json.object_
-          [
-            ("type", Some (Json.string "function_call_output"));
-            ("call_id", Some (Json.string tool_call_id));
-            ("output", Some (Json.string (contents_text content)));
-          ];
-      ]
+      contents_text ~provider content
+      |> Result.map (fun text ->
+             [
+               Json.object_
+                 [
+                   ("type", Some (Json.string "function_call_output"));
+                   ("call_id", Some (Json.string tool_call_id));
+                   ("output", Some (Json.string text));
+                 ];
+             ])
 
-let chat_message_json = function
+let chat_tool_content_json ~provider contents =
+  if contents_are_text contents then
+    contents_text ~provider contents |> Result.map Json.string
+  else unsupported ~provider "tool result media content"
+
+let chat_message_json ~provider = function
   | A.System content ->
-      Json.object_
-        [
-          ("role", Some (Json.string "system"));
-          ("content", Some (Json.string content));
-        ]
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("role", Some (Json.string "system"));
+             ("content", Some (Json.string content));
+           ])
   | A.User contents ->
-      Json.object_
-        [
-          ("role", Some (Json.string "user"));
-          ("content", Some (chat_content_json contents));
-        ]
-  | A.Assistant { content; tool_calls } ->
+      chat_content_json ~provider contents
+      |> Result.map (fun content ->
+             Json.object_
+               [
+                 ("role", Some (Json.string "user"));
+                 ("content", Some content);
+               ])
+  | A.Assistant { content; tool_calls } -> (
       let tool_calls =
         match tool_calls with
         | [] -> None
@@ -188,21 +216,25 @@ let chat_message_json = function
                                 ("name", Some (Json.string call.name));
                                 ("arguments", Some (Json.string call.arguments_json));
                               ]) );
-                     ])
-            |> Json.array |> Option.some
+	                     ])
+	            |> Json.array |> Option.some
       in
-      Json.object_
-        [
-          ("role", Some (Json.string "assistant"));
-          ("content", Some (chat_content_json content));
-          ("tool_calls", tool_calls);
-        ]
+      match chat_content_json ~provider content with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok content ->
+          Stdlib.Ok
+            (Json.object_
+               [
+                 ("role", Some (Json.string "assistant"));
+                 ("content", Some content);
+                 ("tool_calls", tool_calls);
+               ]))
   | A.Tool { tool_call_id; content } ->
-      Json.object_
-        [
-          ("role", Some (Json.string "tool"));
-          ("tool_call_id", Some (Json.string tool_call_id));
-          ("content", Some (chat_content_json content));
-        ]
-
-
+      chat_tool_content_json ~provider content
+      |> Result.map (fun content ->
+             Json.object_
+               [
+                 ("role", Some (Json.string "tool"));
+                 ("tool_call_id", Some (Json.string tool_call_id));
+                 ("content", Some content);
+               ])

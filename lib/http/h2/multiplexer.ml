@@ -373,19 +373,27 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     notify ()
   in
   let rec schedule_read () =
-    let should_schedule =
-      with_lock (fun () ->
-          (not state.scheduled) && (not state.eof) && not (H2.Body.Reader.is_closed body))
-    in
-    if should_schedule then (
-      with_lock (fun () -> state.scheduled <- true);
-      H2.Body.Reader.schedule_read body
-        ~on_eof:(fun () ->
-          with_lock (fun () -> state.scheduled <- false);
-          finish_eof ())
-        ~on_read:(fun bs ~off ~len ->
-          push_chunk bs ~off ~len;
-          schedule_read ()))
+    let keep_scheduling = ref true in
+    while !keep_scheduling do
+      keep_scheduling := false;
+      let should_schedule =
+        with_lock (fun () ->
+            (not state.scheduled)
+            && (not state.eof)
+            && not (H2.Body.Reader.is_closed body))
+      in
+      if should_schedule then (
+        let delivered_sync = ref false in
+        with_lock (fun () -> state.scheduled <- true);
+        H2.Body.Reader.schedule_read body
+          ~on_eof:(fun () ->
+            with_lock (fun () -> state.scheduled <- false);
+            finish_eof ())
+          ~on_read:(fun bs ~off ~len ->
+            delivered_sync := true;
+            push_chunk bs ~off ~len);
+        if !delivered_sync then keep_scheduling := true)
+    done
   in
   let release_body () =
     let decision = release t stream in

@@ -51,6 +51,20 @@ let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
            |> Eta.Effect.bind (fun () -> Eta.Effect.fail (`Eta_sql err))
        | `Timed_out -> Eta.Effect.fail `Timeout)
 
+let deadline_of_timeout timeout =
+  Unix.gettimeofday () +. Eta.Duration.to_seconds_float timeout
+
+let remaining_timeout deadline =
+  let remaining_ms =
+    int_of_float (ceil ((deadline -. Unix.gettimeofday ()) *. 1000.0))
+  in
+  if remaining_ms <= 0 then None else Some (Eta.Duration.ms remaining_ms)
+
+let timed_blocking_result_until ?blocking_pool ~deadline ~conn ~name f =
+  match remaining_timeout deadline with
+  | None -> Eta.Effect.fail `Timeout
+  | Some timeout -> timed_blocking_result ?blocking_pool ~timeout ~conn ~name f
+
 let acquire_connection ?blocking_pool sqlite =
   blocking_result ?blocking_pool ~name:"sqlite.open" (fun () ->
       Connection.create sqlite)
@@ -78,11 +92,27 @@ let create ?blocking_pool ?default_timeout ?name ?(max_size = 10) ?max_idle
   |> Eta.Effect.map (fun pool ->
          Pool_runner { pool; blocking_pool; default_timeout })
 
-let with_connection : type kind a.
-    kind runner -> (Connection.t -> (a, error) Eta.Effect.t) -> (a, error) Eta.Effect.t =
- fun runner body ->
+let with_connection_timeout : type kind a.
+    kind runner ->
+    timeout:Eta.Duration.t ->
+    (Connection.t -> (a, error) Eta.Effect.t) ->
+    (a, error) Eta.Effect.t =
+ fun runner ~timeout body ->
   match runner with
-  | Pool_runner state -> Eta.Pool.with_resource state.pool body
+  | Pool_runner state ->
+      Eta.Pool.with_resource state.pool (fun conn ->
+          Eta.Effect.scoped
+            (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+               ~release:(fun () ->
+                 timed_blocking_result ?blocking_pool:state.blocking_pool ~timeout
+                   ~conn ~name:"sqlite.ensure_autocommit" (fun () ->
+                     Connection.ensure_autocommit conn)
+                 |> Eta.Effect.catch (fun err ->
+                        Eta.Effect.blocking ?pool:state.blocking_pool
+                          ~name:"sqlite.close_dirty" (fun () ->
+                            Connection.close conn)
+                        |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
+            |> Eta.Effect.bind (fun () -> body conn)))
   | Tx_runner state -> body state.conn
 
 let blocking_pool : type kind. kind runner -> _ = function
@@ -101,24 +131,28 @@ let resolve_timeout runner override =
       invalid_arg
         "Eta_sql.Pool: operation requires ?timeout or pool ?default_timeout"
 
+let with_connection runner body =
+  let timeout = resolve_timeout runner None in
+  with_connection_timeout runner ~timeout body
+
 let query ?timeout runner sql params =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.query"
         (fun () -> Connection.query conn sql params))
 
 let select ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.select"
         (fun () -> Connection.select conn query))
 
 let returning ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.returning"
         (fun () -> Connection.returning conn query))
 
@@ -139,12 +173,12 @@ let prepare_typed_statement conn (query : _ Compiled.select) =
   Connection.if_open conn @@ fun () ->
   Connection.touch conn;
   let db = Connection.sqlite conn in
-  match Types.sqlite_result (Sqlite.prepare_result db query.sql) with
+  match Types.sqlite_result (Sqlite.prepare_result db (Compiled.select_sql query)) with
   | Result.Error _ as err -> err
   | Ok stmt -> (
       match
         Types.bind_dynamic_values db stmt
-          (List.map Compiled.value_of_param query.params)
+          (Compiled.select_params query)
       with
       | Ok () -> Ok stmt
       | Result.Error err ->
@@ -189,12 +223,13 @@ let fetch_typed_batch conn stmt batch_size decode =
 let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
   if batch_size <= 0 then invalid_arg "Eta_sql.Pool.fold: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
+  let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       Eta.Effect.scoped
         (Eta.Effect.acquire_release
            ~acquire:
-             (timed_blocking_result ?blocking_pool ~timeout ~conn
+             (timed_blocking_result_until ?blocking_pool ~deadline ~conn
                 ~name:"sqlite.fold.prepare" (fun () ->
                   prepare_dynamic_statement conn sql params))
            ~release:(fun stmt ->
@@ -203,7 +238,7 @@ let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
                  finalize_dynamic_statement conn stmt))
         |> Eta.Effect.bind (fun stmt ->
                let rec loop acc =
-                 timed_blocking_result ?blocking_pool ~timeout ~conn
+                 timed_blocking_result_until ?blocking_pool ~deadline ~conn
                    ~name:"sqlite.fold.batch" (fun () ->
                      fetch_batch conn stmt batch_size)
                  |> Eta.Effect.bind (fun (rows, done_) ->
@@ -217,12 +252,13 @@ let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
   if batch_size <= 0 then
     invalid_arg "Eta_sql.Pool.fold_select: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
+  let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       Eta.Effect.scoped
         (Eta.Effect.acquire_release
            ~acquire:
-             (timed_blocking_result ?blocking_pool ~timeout ~conn
+             (timed_blocking_result_until ?blocking_pool ~deadline ~conn
                 ~name:"sqlite.select_fold.prepare" (fun () ->
                   prepare_typed_statement conn query))
            ~release:(fun stmt ->
@@ -231,9 +267,10 @@ let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
                  finalize_dynamic_statement conn stmt))
         |> Eta.Effect.bind (fun stmt ->
                let rec loop acc =
-                 timed_blocking_result ?blocking_pool ~timeout ~conn
+                 timed_blocking_result_until ?blocking_pool ~deadline ~conn
                    ~name:"sqlite.select_fold.batch" (fun () ->
-                     fetch_typed_batch conn stmt batch_size query.decode)
+                     fetch_typed_batch conn stmt batch_size
+                       (Compiled.select_decode query))
                  |> Eta.Effect.bind (fun (rows, done_) ->
                         let acc = List.fold_left f acc rows in
                         if done_ then Eta.Effect.pure acc else loop acc)
@@ -243,14 +280,14 @@ let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
 let execute ?timeout runner sql params =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.execute"
         (fun () -> Connection.execute conn sql params))
 
 let execute_compiled ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn
         ~name:"sqlite.execute_compiled" (fun () ->
           Connection.execute_compiled conn query))
@@ -258,7 +295,7 @@ let execute_compiled ?timeout runner query =
 let execute_script ?timeout runner sql =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn
         ~name:"sqlite.execute_script" (fun () ->
           Connection.execute_script conn sql))
@@ -266,7 +303,7 @@ let execute_script ?timeout runner sql =
 let run_schema ?timeout runner schema =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
-  with_connection runner (fun conn ->
+  with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.schema"
         (fun () -> Connection.run_schema conn schema))
 
@@ -285,7 +322,12 @@ let with_transaction ?timeout (Pool_runner state as runner) body =
              if !committed then Eta.Effect.unit
              else
                timed_blocking_result ?blocking_pool ~timeout ~conn
-                 ~name:"sqlite.rollback" (fun () -> Connection.rollback conn))
+                 ~name:"sqlite.rollback" (fun () -> Connection.rollback conn)
+               |> Eta.Effect.catch (fun err ->
+                      Eta.Effect.blocking ?pool:blocking_pool
+                        ~name:"sqlite.close_dirty" (fun () ->
+                          Connection.close conn)
+                      |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
         |> Eta.Effect.bind (fun () ->
                body
                  (Tx_runner { conn; blocking_pool; default_timeout = Some timeout })

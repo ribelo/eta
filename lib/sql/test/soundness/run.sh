@@ -22,7 +22,7 @@ for src in "$fixture_dir"/*_negative.ml; do
       -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
-  elif ! grep -Eiq "type|expected|but|unify|compatible|constructor" "$log"; then
+  elif ! grep -Eiq "type|expected|but|unify|compatible|constructor|record field" "$log"; then
     echo "fixture failed for the wrong reason: $name"
     sed -n '1,120p' "$log"
     status=1

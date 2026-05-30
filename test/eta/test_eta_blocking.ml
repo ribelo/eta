@@ -558,11 +558,11 @@ let test_cause_of_exn_distinguishes_exit_from_cancelled () =
       (Effect.blocking ~pool ~name:"distinguish.exit" (fun () ->
            raise Stdlib.Exit))
   in
-  (* Use a pure Eta effect with timeout to get a clean Eio cancellation *)
+  (* Raise Eio's cancellation exception directly so this checks cancellation
+     classification, not Effect.timeout's typed failure contract. *)
   let cancel_result =
     Runtime.run rt
-      (Effect.timeout (Duration.ms 10)
-         (Effect.delay (Duration.ms 5000) (Effect.pure ())))
+      (Effect.sync (fun () -> raise (Eio.Cancel.Cancelled (Failure "cancel"))))
   in
   let exit_cause = match exit_result with
     | Exit.Error c -> c

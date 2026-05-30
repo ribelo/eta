@@ -19,8 +19,11 @@ type t = appender
 
   let close appender =
     if_appender_open appender @@ fun () ->
-    appender.closed <- true;
-    wrap "appender close" (fun () -> raw_appender_close appender.raw)
+    match wrap "appender close" (fun () -> raw_appender_close appender.raw) with
+    | Ok () ->
+        appender.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
 
   let with_appender ?schema connection ~table f =
     match create ?schema connection ~table with

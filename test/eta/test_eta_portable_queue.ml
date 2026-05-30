@@ -66,41 +66,43 @@ let test_portable_queue_no_false_empty_under_contention () =
         done;
         Atomic.set done_producing true)
   in
-  (* Consumer: take items. Track false empties:
-     An Empty result when we KNOW items should still be available
-     (produced > consumed and not done) indicates the bug. *)
-  let rec consume () =
+  (* Consumer: take items. Track false empties only when a completed push was
+     already visible before the take attempt. Reading [produced] after Empty
+     would race with a push that legitimately completes just after the queue
+     was observed empty. *)
+  let rec consume consumed_count =
+    let produced_before = Atomic.get produced in
     match Portable_queue.try_take queue with
     | Portable_queue.Value _ ->
         Atomic.incr consumed;
-        consume ()
+        consume (consumed_count + 1)
     | Portable_queue.Empty ->
-        if Atomic.get done_producing && Atomic.get produced = Atomic.get consumed
-        then () (* Truly empty after all production is done *)
-        else if Atomic.get produced > Atomic.get consumed then (
+        if Atomic.get done_producing && Atomic.get produced = consumed_count
+        then consumed_count (* Truly empty after all production is done *)
+        else if produced_before > consumed_count then (
           (* Producer has pushed more than we consumed, but we got Empty.
              This is the bug: tail was incremented but slot not yet written. *)
           Atomic.incr false_empties;
           Domain.cpu_relax ();
-          consume ())
+          consume consumed_count)
         else (
           Domain.cpu_relax ();
-          consume ())
-    | Portable_queue.Closed_empty -> ()
+          consume consumed_count)
+    | Portable_queue.Closed_empty -> consumed_count
   in
-  consume ();
+  let consumed_count = consume 0 in
   Domain.join producer;
   (* Drain any remaining items after producer is done *)
-  let rec drain () =
+  let rec drain consumed_count =
     match Portable_queue.try_take queue with
     | Portable_queue.Value _ ->
         Atomic.incr consumed;
-        drain ()
-    | _ -> ()
+        drain (consumed_count + 1)
+    | _ -> consumed_count
   in
-  drain ();
+  let consumed_count = drain consumed_count in
   (* All items must be consumed *)
-  Alcotest.(check int) "all items consumed" total_items (Atomic.get consumed);
+  Alcotest.(check int) "all items consumed" total_items consumed_count;
   (* The key assertion: a correct MPSC queue should NEVER return Empty
      when items are in-flight (produced > consumed). False empties indicate
      the consumer saw a partially-committed push (tail incremented, slot
@@ -110,5 +112,3 @@ let test_portable_queue_no_false_empty_under_contention () =
        "try_take should never return false Empty (got %d false empties)"
        (Atomic.get false_empties))
     true (Atomic.get false_empties = 0)
-
-

@@ -12,8 +12,11 @@ type t = connection
 
   let close (conn : connection) =
     if_connection_open conn @@ fun () ->
-    conn.closed <- true;
-    wrap "disconnect" (fun () -> raw_disconnect conn.raw)
+    match wrap "disconnect" (fun () -> raw_disconnect conn.raw) with
+    | Ok () ->
+        conn.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
 
   let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
 
@@ -22,10 +25,13 @@ type t = connection
     wrap "query" (fun () -> raw_query conn.raw sql params)
 
   let select conn (compiled : _ Compiled.select) =
-    match query conn compiled.sql (params_to_values compiled.params) with
+    match
+      query conn (Compiled.select_sql compiled)
+        (Compiled.select_params compiled)
+    with
     | Result.Error _ as err -> err
     | Ok rows -> (
-        match List.map compiled.decode rows with
+        match List.map (Compiled.select_decode compiled) rows with
         | values -> Ok values
         | exception Decode_failure failure ->
             Result.Error
@@ -33,10 +39,13 @@ type t = connection
                  { operation = "select"; message = decode_failure_message failure }))
 
   let returning conn (compiled : _ Compiled.returning) =
-    match query conn compiled.sql (params_to_values compiled.params) with
+    match
+      query conn (Compiled.returning_sql compiled)
+        (Compiled.returning_params compiled)
+    with
     | Result.Error _ as err -> err
     | Ok rows -> (
-        match List.map compiled.decode rows with
+        match List.map (Compiled.returning_decode compiled) rows with
         | values -> Ok values
         | exception Decode_failure failure ->
             Result.Error
@@ -51,13 +60,14 @@ type t = connection
     wrap "execute" (fun () -> raw_execute conn.raw sql params)
 
   let execute_compiled (conn : connection) (query : Compiled.change) =
-    execute conn query.sql (params_to_values query.params)
+    execute conn (Compiled.change_sql query) (Compiled.change_params query)
 
   let exec_script (conn : connection) sql =
     if_connection_open conn @@ fun () ->
     wrap "exec script" (fun () -> raw_exec_script conn.raw sql)
 
-  let run_schema conn (schema : Compiled.schema) = exec_script conn schema.sql
+  let run_schema conn (schema : Compiled.schema) =
+    exec_script conn (Compiled.schema_sql schema)
 
   let begin_transaction ?(mode = Deferred) conn =
     let sql =

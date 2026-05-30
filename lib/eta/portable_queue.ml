@@ -4,6 +4,7 @@ module P_atomic_array = Portable.Atomic_array
 type state : immutable_data = {
   head : int;
   tail : int;
+  published : int;
   closed : bool;
 }
 
@@ -27,7 +28,7 @@ let create ~capacity =
   if capacity <= 0 then invalid_arg "Portable_queue.create: capacity must be > 0";
   {
     capacity;
-    state = P_atomic.make { head = 0; tail = 0; closed = false };
+    state = P_atomic.make { head = 0; tail = 0; published = 0; closed = false };
     slots = P_atomic_array.create ~len:capacity None;
   }
 
@@ -50,22 +51,39 @@ let rec try_push queue value =
   if state.closed then Closed
   else if state.tail - state.head >= queue.capacity then Full
   else
+    let ticket = state.tail in
     let next = { state with tail = state.tail + 1 } in
     if cas_state queue state next then (
-      let index = state.tail mod queue.capacity in
+      let index = ticket mod queue.capacity in
       wait_empty queue.slots index;
       P_atomic_array.set queue.slots index (Some value);
+      let rec publish () =
+        let state = P_atomic.get queue.state in
+        if state.published = ticket then
+          let next = { state with published = ticket + 1 } in
+          if not (cas_state queue state next) then publish ()
+        else (
+          Domain.cpu_relax ();
+          publish ())
+      in
+      publish ();
       Pushed)
     else try_push queue value
 
 let rec try_take queue =
   let state = P_atomic.get queue.state in
-  if state.head = state.tail then
-    if state.closed then Closed_empty else Empty
+  if state.head = state.published then
+    if state.closed && state.head = state.tail then Closed_empty
+    else if state.head = state.tail then Empty
+    else (
+      Domain.cpu_relax ();
+      try_take queue)
   else
     let index = state.head mod queue.capacity in
     match P_atomic_array.get queue.slots index with
-    | None -> Empty
+    | None ->
+        Domain.cpu_relax ();
+        try_take queue
     | Some value ->
         let next = { state with head = state.head + 1 } in
         if cas_state queue state next then (

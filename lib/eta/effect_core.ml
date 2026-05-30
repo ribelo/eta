@@ -192,12 +192,24 @@ let concat effects =
   with_names (concat_names effects)
     (List.fold_left (fun acc effect -> seq effect acc) unit effects)
 
+let rec find_fail = function
+  | Cause.Fail err -> Some err
+  | Cause.Die _ | Cause.Interrupt _ -> None
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.find_map find_fail causes
+  | Cause.Suppressed { primary; finalizer } -> (
+      match find_fail primary with
+      | Some _ as found -> found
+      | None -> find_fail finalizer)
+
 let catch handler effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok _ as ok -> ok
-  | Exit.Error (Cause.Fail err) -> (handler err).eval ()
-  | Exit.Error cause -> error (Obj.magic cause)
+  | Exit.Error cause -> (
+      match find_fail cause with
+      | Some err -> (handler err).eval ()
+      | None -> error (Obj.magic cause))
 
 let rec map_cause_error f = function
   | Cause.Fail err -> Cause.Fail (f err)

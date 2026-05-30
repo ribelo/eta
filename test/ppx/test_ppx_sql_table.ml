@@ -4,7 +4,7 @@ module Q = Eta_sql
 type users = {
   id : int [@primary_key];
   name : string [@not_null];
-  active : bool [@not_null] [@default "1"];
+  active : bool [@not_null] [@default true];
 }]
 
 [%%eta.sql.table
@@ -17,7 +17,7 @@ type teams = {
 type memberships = {
   membership_pk : int [@primary_key];
   membership_team : int [@references Teams.team_pk] [@on_delete "CASCADE"];
-  membership_role : string [@not_null] [@default "\'member\'"];
+  membership_role : string [@not_null] [@default "member"];
 }]
 
 let contains haystack needle =

@@ -18,28 +18,29 @@ let encode_responses_json ~provider ~schema_value ?structured_output
       with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok tools ->
-          let text_format =
-            structured_output
-            |> Option.map (fun output ->
-                   let format =
-                     structured_output_json ~shape:Responses_format output
-                   in
-                   Json.object_ [ ("format", Some format) ])
-          in
-          Stdlib.Ok
-            (Json.object_
-               [
-                 ("model", Some (Json.string request.model));
-                 ( "input",
-                   Some
-                     (request.prompt |> List.concat_map input_items |> Json.array) );
-                 ("stream", Some (Json.bool request.stream));
-                 ("temperature", temperature);
-                 ( "max_output_tokens",
-                   Option.map Json.int request.max_output_tokens );
-                 ("tools", if tools = [] then None else Some (Json.array tools));
-                 ("text", text_format);
-               ]))
+          match result_all (List.map (input_items ~provider) request.prompt) with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok input ->
+              let text_format =
+                structured_output
+                |> Option.map (fun output ->
+                       let format =
+                         structured_output_json ~shape:Responses_format output
+                       in
+                       Json.object_ [ ("format", Some format) ])
+              in
+              Stdlib.Ok
+                (Json.object_
+                   [
+                     ("model", Some (Json.string request.model));
+                     ("input", Some (Json.array (List.concat input)));
+                     ("stream", Some (Json.bool request.stream));
+                     ("temperature", temperature);
+                     ( "max_output_tokens",
+                       Option.map Json.int request.max_output_tokens );
+                     ("tools", if tools = [] then None else Some (Json.array tools));
+                     ("text", text_format);
+                   ]))
 
 let encode_responses ~provider ~schema_value ?structured_output request =
   match
@@ -111,5 +112,4 @@ let decode_responses ~provider raw =
           usage = Option.map usage (Json.object_member "usage" json);
           raw = Some raw;
         }
-
 

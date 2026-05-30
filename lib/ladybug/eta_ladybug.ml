@@ -577,6 +577,40 @@ let if_database_open (db : database) f = if db.closed then Result.Error Closed e
 let if_connection_open (conn : connection) f =
   if conn.closed || conn.database.closed then Result.Error Closed else f ()
 
+let validate_params params =
+  let unsupported kind =
+    Result.Error (Invalid_value ("LadybugDB parameters do not support " ^ kind))
+  in
+  let rec value = function
+    | Value.Null | Value.Bool _ | Value.Int _ | Value.Float _ | Value.String _ ->
+        Ok ()
+    | Value.List values -> list values
+    | Value.Map fields | Value.Struct fields -> fields_list fields
+    | Value.Node _ -> unsupported "node values"
+    | Value.Rel _ -> unsupported "relationship values"
+    | Value.Path _ -> unsupported "path values"
+  and list = function
+    | [] -> Ok ()
+    | value_ :: rest -> (
+        match value value_ with
+        | Ok () -> list rest
+        | Result.Error _ as err -> err)
+  and fields_list = function
+    | [] -> Ok ()
+    | (_, value_) :: rest -> (
+        match value value_ with
+        | Ok () -> fields_list rest
+        | Result.Error _ as err -> err)
+  in
+  let rec loop = function
+    | [] -> Ok ()
+    | (_, value_) :: rest -> (
+        match value value_ with
+        | Ok () -> loop rest
+        | Result.Error _ as err -> err)
+  in
+  loop params
+
 module Database = struct
   type t = database
 
@@ -587,8 +621,11 @@ module Database = struct
 
   let close (db : database) =
     if_database_open db @@ fun () ->
-    db.closed <- true;
-    wrap "database close" (fun () -> raw_close_database db.raw)
+    match wrap "database close" (fun () -> raw_close_database db.raw) with
+    | Ok () ->
+        db.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
 end
 
 module Connection = struct
@@ -611,21 +648,29 @@ module Connection = struct
 
   let close (conn : connection) =
     if_connection_open conn @@ fun () ->
-    conn.closed <- true;
-    wrap "connection close" (fun () -> raw_close_connection conn.raw)
+    match wrap "connection close" (fun () -> raw_close_connection conn.raw) with
+    | Ok () ->
+        conn.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
 
   let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
 
   let query_string_with_operation operation ?(params = []) (conn : connection)
       cypher =
     if_connection_open conn @@ fun () ->
-    wrap operation (fun () -> raw_query_string conn.raw cypher params)
+    match validate_params params with
+    | Result.Error _ as err -> err
+    | Ok () -> wrap operation (fun () -> raw_query_string conn.raw cypher params)
 
   let query_string ?params conn cypher =
     query_string_with_operation "query" ?params conn cypher
 
   let query_with_operation operation conn query =
     if_connection_open conn @@ fun () ->
+    match validate_params (Query.params query) with
+    | Result.Error _ as err -> err
+    | Ok () -> (
     match
       wrap operation (fun () ->
           raw_query_values conn.raw (Query.cypher query) (Query.params query))
@@ -640,7 +685,7 @@ module Connection = struct
               | Result.Error message ->
                   Result.Error (Decode_error { operation = "query decode"; message }))
         in
-        loop [] rows
+        loop [] rows)
 
   let query conn query = query_with_operation "query" conn query
 

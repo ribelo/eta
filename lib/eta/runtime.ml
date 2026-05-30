@@ -1,5 +1,3 @@
-module P_atomic = Portable.Atomic
-
 external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
   = "%identity"
 
@@ -81,21 +79,26 @@ let run ?island_pool ?blocking_pool runtime eff =
   Effect.run runtime eff
 
 let run_exn t eff =
+  let pp_typed_failure fmt err =
+    let raw = Obj.repr err in
+    if Obj.is_int raw then Format.pp_print_int fmt (Obj.obj raw : int)
+    else
+      match Obj.tag raw with
+      | tag when tag = Obj.string_tag ->
+          Format.fprintf fmt "%S" (Obj.obj raw : string)
+      | tag when tag = Obj.double_tag ->
+          Format.pp_print_float fmt (Obj.obj raw : float)
+      | _ -> Format.pp_print_string fmt "<typed failure>"
+  in
   match run t eff with
   | Exit.Ok value -> value
   | Exit.Error (Cause.Die { exn; backtrace = Some backtrace; _ }) ->
       Printexc.raise_with_backtrace exn backtrace
   | Exit.Error (Cause.Die { exn; backtrace = None; _ }) -> raise exn
-  | Exit.Error _ -> failwith "Eta.Runtime.run_exn"
+  | Exit.Error cause ->
+      failwith
+        (Format.asprintf "Eta.Runtime.run_exn: %a"
+           (Cause.pp pp_typed_failure)
+           cause)
 
-let drain t =
-  let yield =
-    match t.Runtime_core.host_eio with
-    | None -> Eio.Fiber.yield
-    | Some host ->
-        let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-        Fiber.yield
-  in
-  while P_atomic.get t.Runtime_core.active > 0 do
-    yield ()
-  done
+let drain t = Runtime_core.wait_active_zero t

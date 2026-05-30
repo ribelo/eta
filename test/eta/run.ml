@@ -94,8 +94,8 @@ let () =
             test_effect_finally_suppresses_cleanup_failure;
           Alcotest.test_case "finally runs on cancellation" `Quick
             test_effect_finally_runs_on_cancellation;
-          Alcotest.test_case "finally cleanup failure not caught" `Quick
-            test_effect_finally_cleanup_failure_not_caught_as_body_failure;
+          Alcotest.test_case "catch recovers suppressed typed failure" `Quick
+            test_effect_catch_recovers_first_typed_failure_in_suppressed_cause;
           Alcotest.test_case "empty cause aggregations reject" `Quick
             test_cause_empty_aggregations_reject;
           Alcotest.test_case "diagnostic cause equality" `Quick

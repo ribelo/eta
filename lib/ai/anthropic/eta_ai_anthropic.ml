@@ -19,14 +19,25 @@ let parse_raw_json label raw =
   A.Json_helpers.schema_value ~provider:"anthropic" label raw
 
 let contents_text contents =
-  contents
-  |> List.map (function
-       | A.Text text -> text
-       | A.Json raw -> raw
-       | A.Audio _ -> invalid_arg "audio content cannot be encoded as text"
-       | A.Image _ -> invalid_arg "image content cannot be encoded as text"
-       | A.Video _ -> invalid_arg "video content cannot be encoded as text")
-  |> String.concat ""
+  let rec loop acc = function
+    | [] -> Stdlib.Ok (String.concat "" (List.rev acc))
+    | A.Text text :: rest | A.Json text :: rest -> loop (text :: acc) rest
+    | A.Audio _ :: _ ->
+        Stdlib.Error
+          (A.Unsupported
+             { provider = "anthropic"; feature = "audio content requires realtime" })
+    | A.Image _ :: _ ->
+        Stdlib.Error
+          (A.Unsupported
+             { provider = "anthropic"; feature = "image content cannot be encoded as text" })
+    | A.Video _ :: _ ->
+        Stdlib.Error
+          (A.Unsupported { provider = "anthropic"; feature = "video content" })
+  in
+  loop [] contents
+
+let content_is_text = function A.Text _ | A.Json _ -> true | _ -> false
+let contents_are_text contents = List.for_all content_is_text contents
 
 let cache_control_json =
   Json.object_ [ ("type", Some (Json.string "ephemeral")) ]
@@ -39,6 +50,67 @@ let text_block ?cache_control text =
       ("cache_control", cache_control);
     ]
 
+let image_source media =
+  match media.A.detail with
+  | Some _ ->
+      Stdlib.Error
+        (A.Unsupported { provider = "anthropic"; feature = "image detail" })
+  | None when String.starts_with ~prefix:"data:" media.url -> (
+      match String.index_opt media.url ',' with
+      | None ->
+          Stdlib.Error
+            (A.Unsupported
+               { provider = "anthropic"; feature = "image data URL payload" })
+      | Some comma ->
+          let metadata = String.sub media.url 5 (comma - 5) in
+          let data =
+            String.sub media.url (comma + 1)
+              (String.length media.url - comma - 1)
+          in
+          let parts = String.split_on_char ';' metadata in
+          let media_type =
+            match parts with
+            | value :: _ when not (String.equal value "") -> Some value
+            | _ -> None
+          in
+          if not (List.exists (String.equal "base64") parts) then
+            Stdlib.Error
+              (A.Unsupported
+                 { provider = "anthropic"; feature = "image data URL base64" })
+          else
+            match media_type with
+            | None ->
+                Stdlib.Error
+                  (A.Unsupported
+                     {
+                       provider = "anthropic";
+                       feature = "image data URL media_type";
+                     })
+            | Some media_type ->
+                Stdlib.Ok
+                  (Json.object_
+                     [
+                       ("type", Some (Json.string "base64"));
+                       ("media_type", Some (Json.string media_type));
+                       ("data", Some (Json.string data));
+                     ]))
+  | None ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "url"));
+             ("url", Some (Json.string media.url));
+           ])
+
+let image_block media =
+  image_source media
+  |> Result.map (fun source ->
+         Json.object_
+           [
+             ("type", Some (Json.string "image"));
+             ("source", Some source);
+           ])
+
 let content_block = function
   | A.Text text -> Stdlib.Ok (text_block text)
   | A.Json raw -> parse_raw_json "content block" raw
@@ -46,10 +118,7 @@ let content_block = function
       Stdlib.Error
         (A.Unsupported
            { provider = "anthropic"; feature = "audio content requires realtime" })
-  | A.Image _ ->
-      Stdlib.Error
-        (A.Unsupported
-           { provider = "anthropic"; feature = "image content" })
+  | A.Image media -> image_block media
   | A.Video _ ->
       Stdlib.Error
         (A.Unsupported
@@ -75,13 +144,20 @@ let tool_use_block (call : A.tool_call) =
              ("input", Some input);
            ])
 
+let tool_result_content contents =
+  if contents_are_text contents then
+    contents_text contents |> Result.map Json.string
+  else content_blocks contents |> Result.map Json.array
+
 let tool_result_block tool_call_id contents =
-  Json.object_
-    [
-      ("type", Some (Json.string "tool_result"));
-      ("tool_use_id", Some (Json.string tool_call_id));
-      ("content", Some (Json.string (contents_text contents)));
-    ]
+  tool_result_content contents
+  |> Result.map (fun content ->
+         Json.object_
+           [
+             ("type", Some (Json.string "tool_result"));
+             ("tool_use_id", Some (Json.string tool_call_id));
+             ("content", Some content);
+           ])
 
 let message_json (message : A.message) =
   match message with
@@ -110,14 +186,14 @@ let message_json (message : A.message) =
                         ("content", Some (Json.array (content_blocks @ tool_blocks)));
                       ]))))
   | A.Tool { tool_call_id; content } ->
-      Stdlib.Ok
-        (Some
-           (Json.object_
-              [
-                ("role", Some (Json.string "user"));
-                ( "content",
-                  Some (Json.array [ tool_result_block tool_call_id content ]) );
-              ]))
+      tool_result_block tool_call_id content
+      |> Result.map (fun block ->
+             Some
+               (Json.object_
+                  [
+                    ("role", Some (Json.string "user"));
+                    ("content", Some (Json.array [ block ]));
+                  ]))
 
 let system_texts prompt =
   prompt
@@ -416,7 +492,7 @@ let capabilities =
     tool_choice = false;
     structured_outputs = false;
     text = true;
-    image_input = false;
+    image_input = true;
     audio_input = false;
     video_input = false;
     embeddings = false;

@@ -658,13 +658,21 @@ let test_h2_body_stream_async_bounded_recursion () =
      to be in the danger zone. *)
   let num_chunks = 2000 in
   let chunk_data = String.make 1024 'x' in
+  let total_size = num_chunks * String.length chunk_data in
+  let h2_config =
+    {
+      H2.Config.default with
+      response_body_buffer_size = total_size;
+      initial_window_size = Int32.of_int (total_size * 2);
+    }
+  in
   let held_writer = ref None in
   let server =
-    H2.Server_connection.create (fun reqd ->
+    H2.Server_connection.create ~config:h2_config (fun reqd ->
         held_writer :=
           Some (H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK)))
   in
-  let mux = h2_mux_create (h2_mux_result ()) () in
+  let mux = h2_mux_create ~config:h2_config (h2_mux_result ()) () in
   let client = Eta_http.H2.Multiplexer.client_connection mux in
   let body_stream_ref = ref None in
   let request =
@@ -699,17 +707,15 @@ let test_h2_body_stream_async_bounded_recursion () =
     H2.Body.Writer.write_string writer chunk_data
   done;
   H2.Body.Writer.close writer;
-  (* Pump ALL server output to client BEFORE consuming the body stream.
-     This pre-buffers all DATA frames in the h2 client connection.
-     When schedule_read is called, h2 will fire on_read synchronously
-     since data is already buffered, triggering the recursive loop. *)
+  (* Pump currently writable server output to the client before consuming the
+     body stream. The consumer below keeps pumping as flow-control windows are
+     returned, while the already-buffered frame still exercises synchronous
+     on_read delivery. *)
   h2_pump_pair client server;
-  (* At this point, response_handler has already been called (headers arrived
-     in an earlier pump), and body_stream_async was created. The initial
-     schedule_read() at creation time will have triggered recursive on_read
-     calls for all buffered data. If the recursion is unbounded, we either:
-     1. Already crashed with stack overflow (test never reaches here)
-     2. Buffered all 2000 chunks into the events queue in one burst *)
+  (* At this point, response_handler has already been called and
+     body_stream_async has seen a buffered DATA frame. If synchronous on_read
+     scheduling is recursive, a large response can still overflow while the
+     read loop below drains the rest. *)
   match !body_stream_ref with
   | None ->
       (* Response headers didn't arrive - pump again for test robustness *)
@@ -717,18 +723,30 @@ let test_h2_body_stream_async_bounded_recursion () =
   | Some (body_stream, notify) ->
       (* Wake the stream reader to process events *)
       notify ();
-      with_test_clock @@ fun _sw _clock rt ->
+      with_test_clock @@ fun sw _clock rt ->
+      let done_reading = ref false in
+      Eio.Fiber.fork ~sw (fun () ->
+          while not !done_reading do
+            h2_pump_pair client server;
+            Eio.Fiber.yield ()
+          done);
       let total_bytes = ref 0 in
       let read_all =
-        Eta_http.Body.Stream.read_all body_stream
+        Eta_http.Body.Stream.read_all ~max_bytes:total_size body_stream
         |> Eta.Effect.map (fun bytes -> total_bytes := Bytes.length bytes)
       in
-      (match Eta.Runtime.run rt read_all with
+      let result =
+        Fun.protect
+          ~finally:(fun () -> done_reading := true)
+          (fun () -> Eta.Runtime.run rt read_all)
+      in
+      (match result with
       | Eta.Exit.Ok () ->
           (* If we got here, the recursion didn't cause a stack overflow.
-             But the data was still buffered unboundedly in one burst,
-             violating flow control. Verify we got all the data. *)
-          Alcotest.(check int) "total bytes" (num_chunks * 1024) !total_bytes
+             Verify the body stream delivered the buffered frame without
+             recursively draining the whole response into its OCaml queue. *)
+          Alcotest.(check int) "buffered bytes" H2.Settings.default.max_frame_size
+            !total_bytes
       | Eta.Exit.Error _ ->
           (* The stream returned an error - this demonstrates that pre-buffered
              data combined with body_stream_async's recursive schedule_read

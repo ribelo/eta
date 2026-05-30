@@ -16,11 +16,11 @@ include Effect_blocking
 let daemon_internal effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
-  P_atomic.incr frame.runtime.active;
+  Runtime_core.incr_active frame.runtime;
   fiber_fork_daemon frame ~sw:frame.runtime.outer_sw (fun () ->
       frame.runtime.tracer#with_fiber_context @@ fun () ->
       Fun.protect
-        ~finally:(fun () -> P_atomic.decr frame.runtime.active)
+        ~finally:(fun () -> Runtime_core.decr_active frame.runtime)
         (fun () ->
           (try
              switch_run frame @@ fun sw ->

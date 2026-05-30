@@ -34,7 +34,7 @@ let raw_header_auth ~header () = { header; prefix = None }
 let auth_value auth api_key =
   Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
 
-let message_json = Codec.chat_message_json
+let message_json = Codec.chat_message_json ~provider:"openai-compatible"
 
 let encode_chat ?structured_output request =
   Codec.encode_chat ~provider:"openai-compatible" ~schema_value:require_json

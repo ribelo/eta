@@ -57,12 +57,19 @@ val decode_embeddings :
   Eta_ai.raw_json ->
   (Eta_ai.Embedding.response, Eta_ai.ai_error) result
 
-val content_text : Eta_ai.content -> string
-val contents_text : Eta_ai.content list -> string
-val message_item : string -> Eta_ai.content list -> Eta_ai.Json.t
+val content_text : Eta_ai.content -> string option
+val contents_text :
+  provider:string -> Eta_ai.content list -> (string, Eta_ai.ai_error) result
+val message_item :
+  provider:string ->
+  string ->
+  Eta_ai.content list ->
+  (Eta_ai.Json.t, Eta_ai.ai_error) result
 val function_call_item : Eta_ai.tool_call -> Eta_ai.Json.t
-val input_items : Eta_ai.message -> Eta_ai.Json.t list
-val chat_message_json : Eta_ai.message -> Eta_ai.Json.t
+val input_items :
+  provider:string -> Eta_ai.message -> (Eta_ai.Json.t list, Eta_ai.ai_error) result
+val chat_message_json :
+  provider:string -> Eta_ai.message -> (Eta_ai.Json.t, Eta_ai.ai_error) result
 
 type tool_shape =
   | Chat_tool

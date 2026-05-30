@@ -63,6 +63,7 @@ type t = {
 
 type packed_result = Packed_ok of Obj.t | Packed_error of exn * Printexc.raw_backtrace
 
+exception Callback_raised of exn * Printexc.raw_backtrace
 exception Pool_full of string
 exception Pool_shutting_down of string
 exception Blocking_worker_invariant_violation of string
@@ -271,14 +272,14 @@ let wait_queued_slot t name emit submitted_at =
     match state with
     | `Started job_id -> job_id
     | `Shutdown -> raise_pool_shutting_down t name emit submitted_at
-  with (Eio.Cancel.Cancelled _ | Exit) ->
+  with Eio.Cancel.Cancelled _ as exn ->
     let ts = now_ms () in
     mutex_use_rw t.mutex (fun () ->
         decr_queued_locked t;
         t.cancelled_before_start <- t.cancelled_before_start + 1;
         Eio.Condition.broadcast t.condition);
     emit_event emit t name submitted_at ts ts Blocking_cancelled;
-    raise Exit
+    raise exn
 
 let release_started t job_id =
   mutex_use_rw t.mutex @@ fun () ->
@@ -348,7 +349,7 @@ let finish_result t job_id name emit submitted_at started_at outcome =
   | Packed_error (exn, bt) ->
       emit_event emit t name submitted_at started_at ended_at
         (Blocking_error (Printexc.to_string exn));
-      Printexc.raise_with_backtrace exn bt
+      raise (Callback_raised (exn, bt))
 
 let run_cancel_hook = function
   | None -> None
@@ -379,7 +380,7 @@ let run_worker_with_cancel_hook t name f on_cancel =
         Eio.Switch.run @@ fun sw ->
         Eio.Fiber.fork_daemon ~sw (fun () ->
             (try Eio.Fiber.await_cancel () with
-            | Eio.Cancel.Cancelled _ | Exit ->
+            | Eio.Cancel.Cancelled _ ->
                 if Atomic.get running then
                   set_hook_error (run_cancel_hook on_cancel)
             | exn -> set_hook_error (Some (exn, Printexc.get_raw_backtrace ())));

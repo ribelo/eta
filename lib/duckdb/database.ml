@@ -25,5 +25,8 @@ type t = database
 
   let close db =
     if_database_open db @@ fun () ->
-    db.closed <- true;
-    wrap "close database" (fun () -> raw_close_database db.raw)
+    match wrap "close database" (fun () -> raw_close_database db.raw) with
+    | Ok () ->
+        db.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
