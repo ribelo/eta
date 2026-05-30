@@ -28,8 +28,13 @@ let responses = Responses.run
 let stream_chat_completions = Chat_completions.stream
 let stream_responses = Responses.stream
 
-let embeddings_request = Embeddings.request
-let embeddings = Embeddings.run
+let embeddings_request ?provider:custom_provider ~api_key embedding_request =
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.A.Provider.Embeddings.request ~provider ~api_key embedding_request
+
+let embeddings ?provider:custom_provider client ~api_key embedding_request =
+  let provider = Common.default_provider Common.provider custom_provider in
+  Common.A.Provider.Embeddings.run ~provider client ~api_key embedding_request
 
 let encode_image_generation = Images.encode
 let decode_image_response = Images.decode
