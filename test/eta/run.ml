@@ -386,6 +386,8 @@ let () =
             test_channel_cancel_blocked_recv_cleans_waiter;
           Alcotest.test_case "cancel delivered recv requeues" `Quick
             test_channel_cancel_receiver_after_delivery_requeues_message;
+          Alcotest.test_case "cancel receiver overflow does not corrupt" `Quick
+            test_channel_cancel_receiver_overflow_does_not_corrupt;
           Alcotest.test_case "parent switch teardown" `Quick
             test_channel_parent_switch_teardown_does_not_hang;
         ] );
