@@ -50,6 +50,7 @@
   domain-name
   ipaddr
   bigstringaf
+  base64
   (decompress (= 1.5.3))
   conf-pkg-config
   conf-openssl))

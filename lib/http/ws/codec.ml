@@ -176,30 +176,6 @@ let decode ?(masked = false) bytes =
                     in
                     Ok ({ fin; opcode; payload }, consumed)
 
-let base64_table =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-let base64_encode input =
-  let len = String.length input in
-  let out = Buffer.create (((len + 2) / 3) * 4) in
-  let byte index = if index < len then Char.code input.[index] else 0 in
-  let rec loop index =
-    if index < len then (
-      let b0 = byte index in
-      let b1 = byte (index + 1) in
-      let b2 = byte (index + 2) in
-      Buffer.add_char out base64_table.[b0 lsr 2];
-      Buffer.add_char out base64_table.[((b0 land 0x03) lsl 4) lor (b1 lsr 4)];
-      if index + 1 < len then
-        Buffer.add_char out base64_table.[((b1 land 0x0f) lsl 2) lor (b2 lsr 6)]
-      else Buffer.add_char out '=';
-      if index + 2 < len then Buffer.add_char out base64_table.[b2 land 0x3f]
-      else Buffer.add_char out '=';
-      loop (index + 3))
-  in
-  loop 0;
-  Buffer.contents out
-
 let sha1 input =
   let open Int32 in
   let rotl value bits =
@@ -298,9 +274,9 @@ let accept_key key =
   let guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" in
   key ^ guid
   |> sha1
-  |> base64_encode
+  |> Base64.encode_string
 
 let random_key () =
   Stdlib.Random.self_init ();
   Bytes.init 16 (fun _ -> Char.chr (Stdlib.Random.int 256))
-  |> Bytes.to_string |> base64_encode
+  |> Bytes.to_string |> Base64.encode_string

@@ -11,6 +11,7 @@
   cstruct
   domain-name
   ipaddr
+  base64
   decompress.gz
   angstrom
   faraday
