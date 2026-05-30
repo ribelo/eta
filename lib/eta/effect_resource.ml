@@ -41,7 +41,7 @@ let acquire_release ~acquire ~release =
         :: !(frame.finalizers);
       ok value
 
-let with_resource ~acquire ~release body =
+let acquire_use_release ~acquire ~release body =
   acquire_release ~acquire ~release |> bind body
 
 let scoped effect =

@@ -2,6 +2,7 @@
     for the public surface. *)
 
 open Effect_core
+open Effect_concurrent
 
 module Blocking = struct
   type ('a, 'err) effect = ('a, 'err) t

@@ -128,13 +128,13 @@ let test_acquire_release_release_failure_after_success () =
   check_exit_error string_cause "release failure" (Cause.Fail "release")
     (Runtime.run rt eff)
 
-let test_with_resource_success () =
+let test_acquire_use_release_success () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
   let mark name = Effect.named name (Effect.sync (fun () -> trail := name :: !trail)) in
   let eff =
     Effect.scoped
-      (Effect.with_resource
+      (Effect.acquire_use_release
          ~acquire:(mark "acquired" |> Effect.map (fun () -> 1))
          ~release:(fun resource ->
            mark ("released:" ^ string_of_int resource))
@@ -150,12 +150,12 @@ let test_with_resource_success () =
     [ "acquired"; "body:1"; "released:1" ]
     (List.rev !trail)
 
-let test_with_resource_typed_failure_releases () =
+let test_acquire_use_release_typed_failure_releases () =
   with_runtime @@ fun rt ->
   let released = ref false in
   let eff =
     Effect.scoped
-      (Effect.with_resource ~acquire:(Effect.pure "resource")
+      (Effect.acquire_use_release ~acquire:(Effect.pure "resource")
          ~release:(fun _ ->
            Effect.sync (fun () -> released := true))
          (fun _ -> Effect.fail `Boom))
@@ -169,24 +169,24 @@ let test_with_resource_typed_failure_releases () =
   | Exit.Ok _ -> Alcotest.fail "expected typed failure");
   Alcotest.(check bool) "released" true !released
 
-let test_with_resource_releases_on_cancel () =
+let test_acquire_use_release_releases_on_cancel () =
   with_test_clock @@ fun sw clock rt ->
   let released = ref 0 in
   let acquired, acquired_u = Eio.Promise.create () in
   let slow =
     Effect.scoped
-      (Effect.with_resource
+      (Effect.acquire_use_release
          ~acquire:
-           (Effect.named "with_resource.acquire.cancelled" (Effect.sync (fun () ->
+           (Effect.named "acquire_use_release.acquire.cancelled" (Effect.sync (fun () ->
                 Eio.Promise.resolve acquired_u ())))
          ~release:(fun () ->
-           Effect.named "with_resource.release.cancelled"
+           Effect.named "acquire_use_release.release.cancelled"
              (Effect.sync (fun () -> incr released)))
          (fun () ->
            Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))
   in
   let fast =
-    Effect.named "wait-with-resource-acquired"
+    Effect.named "wait-acquire-use-release-acquired"
       (Effect.sync (fun () -> Eio.Promise.await acquired))
     |> Effect.map (fun () -> "fast")
   in
@@ -195,11 +195,11 @@ let test_with_resource_releases_on_cancel () =
   check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
   Alcotest.(check int) "cancelled release once" 1 !released
 
-let test_with_resource_release_failure_after_success () =
+let test_acquire_use_release_release_failure_after_success () =
   with_runtime @@ fun rt ->
   let eff =
     Effect.scoped
-      (Effect.with_resource ~acquire:(Effect.pure ())
+      (Effect.acquire_use_release ~acquire:(Effect.pure ())
          ~release:(fun () -> Effect.fail "release")
          (fun () -> Effect.pure "body"))
   in
