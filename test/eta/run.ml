@@ -123,6 +123,8 @@ let () =
             test_acquire_release_root_scope_runs_finalizer_on_failure;
           Alcotest.test_case "daemon drains acquire release finalizer" `Quick
             test_daemon_drains_acquire_release_finalizer;
+          Alcotest.test_case "drain does not busy wait" `Quick
+            test_drain_does_not_busy_wait;
           Alcotest.test_case "daemon failure logs diagnostic" `Quick
             test_daemon_failure_logs_diagnostic;
           Alcotest.test_case "daemon interrupt stays quiet" `Quick

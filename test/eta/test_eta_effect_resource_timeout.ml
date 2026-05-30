@@ -419,3 +419,41 @@ let test_effect_timeout_as_nested_cancel_maps_to_outer_timeout () =
         (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
         cause
   | Exit.Ok _ -> Alcotest.fail "expected outer typed timeout"
+
+(* P1: Runtime.drain causes 100% CPU busy-wait.
+   drain() uses a tight yield() loop while waiting for daemon fibers.
+   This burns a full CPU core instead of efficiently sleeping.
+   The test measures CPU time consumed during drain vs wall time.
+   A correct implementation should use near-zero CPU while waiting;
+   the busy-wait consumes ~100% of one core. *)
+
+let test_drain_does_not_busy_wait () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+  in
+  (* Launch a daemon that sleeps for 100ms *)
+  let daemon_body =
+    Effect.sync (fun () -> Eio_unix.sleep 0.1)
+  in
+  (match Runtime.run rt (Effect.Private.daemon daemon_body) with
+  | Exit.Ok () -> ()
+  | _ -> Alcotest.fail "daemon launch failed");
+  (* Measure CPU time consumed during drain *)
+  let cpu_before = Sys.time () in
+  let wall_before = Unix.gettimeofday () in
+  Runtime.drain rt;
+  let cpu_after = Sys.time () in
+  let wall_after = Unix.gettimeofday () in
+  let cpu_ms = (cpu_after -. cpu_before) *. 1000.0 in
+  let wall_ms = (wall_after -. wall_before) *. 1000.0 in
+  (* Wall time should be ~100ms (waiting for daemon to finish).
+     CPU time should be near 0 if drain sleeps properly.
+     With busy-wait, CPU time ≈ wall time (100ms of spinning).
+     Allow 10ms as threshold — anything above means busy-waiting. *)
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "drain should not busy-wait (CPU: %.1fms during %.1fms wall)"
+       cpu_ms wall_ms)
+    true (cpu_ms < 10.0)
