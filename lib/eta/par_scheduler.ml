@@ -1,23 +1,13 @@
-(** Heartbeat-style fork/join scheduler primitives.
-
-    A worker keeps join frames in a doubly-linked job list. Most joins run
-    inline on the owning worker; heartbeat ticks promote the oldest queued job
-    so idle workers can steal it. Promotion is the cold path. *)
+(** Heartbeat-style fork/join scheduler primitives. *)
 
 (* --------------------------------------------------------------------------- *)
-(* Result channel for promoted jobs.
-
-   Allocated only when a job is actually promoted (cold path). The
-   stealing worker writes [result]/[exn] then sets [done_]; the
-   joining worker waits on [cond]. *)
+(* Result channel allocated only for promoted jobs. *)
 
 type exec_state = {
   mutex  : Mutex.t;
   cond   : Condition.t;
   mutable done_  : bool;
-  (* Result is type-erased: the job's harness boxes the typed result
-     into an [Obj.t]; the joiner unboxes it. Exception, if any, is
-     reported separately. *)
+  (* Result is type-erased by the job harness and unboxed by the joiner. *)
   mutable result : Obj.t;
   mutable exn    : exn option;
 }
@@ -31,9 +21,6 @@ let make_exec_state () =
     exn = None;
   }
 
-(* Called by the executing worker once it has filled in [result] or
-   [exn]. The waiter blocks on [cond] under [mutex]; we mirror that
-   protocol. *)
 let signal_done (e : exec_state) : unit =
   Mutex.lock e.mutex;
   e.done_ <- true;
@@ -41,26 +28,14 @@ let signal_done (e : exec_state) : unit =
   Mutex.unlock e.mutex
 
 (* --------------------------------------------------------------------------- *)
-(* Job node — embedded once per join frame.
-
-   States:
-   - [Queued]    : linked into the owning worker's list, can be
-                   promoted on the next heartbeat tick.
-   - [Executing] : promoted; either still in [shared_job] waiting to
-                   be picked up, or running on another worker. The
-                   joiner must wait on [exec.done_].
-   - [Reclaimed] : promotion was attempted then taken back by the
-                   owner before any thief picked it up; the joiner
-                   runs the work inline. *)
+(* Job state for a join frame. [Reclaimed] means the owner took back a promoted
+   job before another worker started it. *)
 
 type job_state =
   | Queued
   | Executing
   | Reclaimed
 
-(* The job record holds the closure plus prev/next pointers. The
-   common case keeps it allocation-cheap: one record per join, no
-   [option] boxing. *)
 type job = {
   mutable state   : job_state;
   mutable handler : worker -> job -> unit;
@@ -72,41 +47,24 @@ type job = {
 and worker = {
   id : int;
   pool : pool;
-  job_head : job;                 (* Sentinel; [job_head.next] is the oldest queued job. *)
-  mutable job_tail : job;         (* Newest queued job, or [job_head] when empty. *)
+  job_head : job;                 (* Sentinel. *)
+  mutable job_tail : job;         (* Newest queued job. *)
   mutable shared_job : job option;
-  (* Time at which [shared_job] was promoted; used to pick the oldest
-     across all workers. *)
+  (* Promotion timestamp used to pick the oldest shared job. *)
   mutable job_time : int;
-  (* Set by the heartbeat thread; cleared after a promotion attempt. *)
   heartbeat : bool Atomic.t;
-  (* Per-worker counter incremented on every [join] call. When it wraps
-     a power-of-two boundary, [join] takes the heartbeat-aware path;
-     otherwise it uses the cheaper inline path with no allocation. *)
+  (* Slow-path sampler for heartbeat-aware joins. *)
   mutable join_count : int;
-  (* Number of jobs currently queued on this worker's cactus stack.
-     Updated by [list_push_back] and [list_pop_back].  Used by
-     [join] to force the slow path when fewer than three jobs are
-     queued, so the heartbeat thread always has something to
-     promote during shallow recursion. *)
+  (* Queued jobs on this worker's stack. Shallow stacks force slow-path joins so
+     heartbeat ticks have a promotable job. *)
   mutable queue_len : int;
 }
 
 and pool = {
-  (* Single coarse-grained lock guarding the worker registry,
-     [time], [is_stopping], and the [shared_job]/[job_time] fields of
-     every registered worker.  Contention is dominated by the
-     heartbeat thread (one tick per [interval_ns / n] sleep) and by
-     idle workers waking from [job_ready], not by [join] itself. *)
+  (* Guards worker registry, scheduler time, stop state, and shared jobs. *)
   mutex : Mutex.t;
   job_ready : Condition.t;
-  (* Workers are stored in a dense array with [n_active] live slots
-     ([workers.(0 .. n_active - 1)]).  Backing storage doubles on
-     overflow.  Using an array (instead of a list) keeps the
-     heartbeat-thread tick O(1) and the idle-worker scan O(n_active)
-     with linear-cache-friendly access — a previous list-based
-     version made every heartbeat tick O(n) under the mutex, which
-     became the bottleneck above ~8 workers. *)
+  (* Dense live prefix [workers.(0 .. n_active - 1)]. *)
   mutable workers : worker array;
   mutable n_active : int;
   mutable time : int;

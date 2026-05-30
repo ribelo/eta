@@ -8,20 +8,7 @@ let run_child frame sw effect =
   let child_frame = { frame with sw } in
   frame.runtime.tracer#with_fiber_context @@ fun () -> run_to_exit child_frame effect
 
-(** Run a list of side-effecting forks in parallel under a fresh switch.
-
-    Each fork is a [unit -> unit] thunk responsible for its own slot-write or
-    promise-resolution. The helper owns:
-
-    - cancellation: a [Stop] exception fails the switch as soon as any fork
-      raises, interrupting the rest;
-    - cause aggregation: every fork that raises gets its exception captured as a
-      [Cause.t];
-    - assembly: when no fork raised, [assemble ()] is called to build the
-      success value.
-
-    This is the shared backbone of [par_pair], [par_collect], [for_each_par],
-    and [for_each_par_bounded]. *)
+(** Run side-effecting forks under one switch and aggregate child causes. *)
 let par_run_forks frame ~forks ~assemble =
   let causes = ref [] in
   let exception Stop in
