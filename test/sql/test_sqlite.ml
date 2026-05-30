@@ -237,3 +237,14 @@ let test_sqlite_config_error_and_testing_helpers () =
     (contains message "probe");
   Alcotest.(check string) "busy rc name" "BUSY" (S.rc_name S.busy);
   Alcotest.(check string) "interrupt rc name" "INTERRUPT" (S.rc_name S.interrupt_)
+
+let test_sqlite_unexpected_step_success_is_typed_error () =
+  match Eta_sql__Types.unexpected_sqlite_step ~operation:"query" S.ok with
+  | Error (Eta_sql.Sqlite err) ->
+      Alcotest.(check string) "operation" "query" err.operation;
+      check_ok "code" err.code;
+      Alcotest.(check bool) "message names unexpected" true
+        (contains err.message "unexpected SQLite step result OK")
+  | Error err ->
+      Alcotest.failf "expected SQLite error, got %s" (Eta_sql.show_error err)
+  | Ok () -> Alcotest.fail "unexpected step success returned Ok"

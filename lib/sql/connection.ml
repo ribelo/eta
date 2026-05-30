@@ -64,7 +64,7 @@ let query t sql params =
       Ok (List.rev acc)
     else
       match Types.check_sqlite t.db ~operation:"query" rc with
-      | Ok () -> assert false
+      | Ok () -> Types.unexpected_sqlite_step ~operation:"query" rc
       | Result.Error err -> Result.Error err
   in
   loop []
@@ -82,7 +82,7 @@ let select t (query : _ Compiled.select) =
       Ok (List.rev acc)
     else
       match Types.check_sqlite t.db ~operation:"select" rc with
-      | Ok () -> assert false
+      | Ok () -> Types.unexpected_sqlite_step ~operation:"select" rc
       | Result.Error err -> Result.Error err
   in
   loop []
@@ -100,7 +100,7 @@ let returning t (query : _ Compiled.returning) =
       Ok (List.rev acc)
     else
       match Types.check_sqlite t.db ~operation:"returning" rc with
-      | Ok () -> assert false
+      | Ok () -> Types.unexpected_sqlite_step ~operation:"returning" rc
       | Result.Error err -> Result.Error err
   in
   loop []
@@ -115,7 +115,7 @@ let execute t sql params =
     Ok (Sqlite.changes t.db)
   ) else
     match Types.check_sqlite t.db ~operation:"execute" rc with
-    | Ok () -> assert false
+    | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
     | Result.Error err -> Result.Error err
 
 let execute_compiled t (query : Compiled.change) =
@@ -129,7 +129,7 @@ let execute_compiled t (query : Compiled.change) =
     Ok (Sqlite.changes t.db)
   ) else
     match Types.check_sqlite t.db ~operation:"execute" rc with
-    | Ok () -> assert false
+    | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
     | Result.Error err -> Result.Error err
 
 let execute_script t sql =

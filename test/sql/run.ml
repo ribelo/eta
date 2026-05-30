@@ -85,5 +85,7 @@ let () =
             test_sqlite_load_extension_toggle;
           Alcotest.test_case "config error and testing helpers" `Quick
             test_sqlite_config_error_and_testing_helpers;
+          Alcotest.test_case "unexpected step success is typed error" `Quick
+            test_sqlite_unexpected_step_success_is_typed_error;
         ] );
     ]

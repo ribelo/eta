@@ -183,7 +183,7 @@ let fetch_batch conn stmt batch_size =
       else if Sqlite.rc_equal rc Sqlite.done_ then Ok (List.rev acc, true)
       else
         match Types.check_sqlite db ~operation:"query" rc with
-        | Ok () -> assert false
+        | Ok () -> Types.unexpected_sqlite_step ~operation:"query" rc
         | Result.Error err -> Result.Error err
   in
   loop batch_size []
@@ -199,7 +199,7 @@ let fetch_typed_batch conn stmt batch_size decode =
       else if Sqlite.rc_equal rc Sqlite.done_ then Ok (List.rev acc, true)
       else
         match Types.check_sqlite db ~operation:"select" rc with
-        | Ok () -> assert false
+        | Ok () -> Types.unexpected_sqlite_step ~operation:"select" rc
         | Result.Error err -> Result.Error err
   in
   loop batch_size []

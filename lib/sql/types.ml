@@ -88,6 +88,17 @@ let check_sqlite db ~operation rc =
   | Ok () -> Ok ()
   | Result.Error err -> Result.Error (Sqlite err)
 
+let unexpected_sqlite_step ~operation rc =
+  Result.Error
+    (Sqlite
+       {
+         Sqlite.operation;
+         code = rc;
+         message =
+           "unexpected SQLite step result " ^ Sqlite.rc_name rc
+           ^ " in " ^ operation;
+       })
+
 let finalize_result db stmt result =
   let finalize_rc = Sqlite.finalize stmt in
   match result with
