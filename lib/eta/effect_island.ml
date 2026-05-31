@@ -40,7 +40,6 @@ module Island = struct
   let all_settled ?(name = "island.all_settled") ?pool ~f inputs =
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
-    let _ = name in
     try ok (Island_runtime.submit_all_settled (Runtime_core.island_pool frame.runtime pool) f inputs)
     with exn -> exit_of_exn frame exn
 end

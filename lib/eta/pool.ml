@@ -250,7 +250,10 @@ let close_entry ?(release_permit = true) t entry =
          | `Close_failed err -> Effect.fail err)
 
 let close_entries ?(release_permit = true) t entries =
-  entries |> List.map (close_entry ~release_permit t) |> Effect.concat
+  entries
+  |> List.map (close_entry ~release_permit t)
+  |> Effect.all_settled
+  |> Effect.map (fun _ -> ())
 
 let mark_released_to_close t =
   Effect.sync @@ fun () ->

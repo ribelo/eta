@@ -170,6 +170,35 @@ let test_pool_release_defect_releases_capacity () =
     (run_ok rt replacement);
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_shutdown_closes_all_idle_after_close_failure () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let factory = make_pool_factory () in
+  let release_attempts = ref 0 in
+  let release conn =
+    Effect.sync (fun () -> incr release_attempts)
+    |> Effect.bind (fun () ->
+           if !release_attempts = 1 then Effect.fail `Close_failed
+           else pool_close factory conn)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:2 ~max_idle:2
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  let hold =
+    Pool.with_resource pool (fun _ -> Effect.delay (Duration.ms 5) Effect.unit)
+  in
+  let first = fork_run sw rt hold in
+  let second = fork_run sw rt hold in
+  check_exit_ok Alcotest.unit "first" () (Eio.Promise.await first);
+  check_exit_ok Alcotest.unit "second" () (Eio.Promise.await second);
+  wait_until (fun () -> (Pool.stats pool).Pool.idle = 2);
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool);
+  Alcotest.(check int) "all idle closes attempted" 2 !release_attempts;
+  Alcotest.(check int) "pool accounting closed both" 2 (Pool.stats pool).Pool.closed
+
 let test_pool_max_size_respected_under_concurrent_checkout () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
