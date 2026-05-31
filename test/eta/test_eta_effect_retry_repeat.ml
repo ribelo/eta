@@ -2,6 +2,55 @@ open Eta
 open Eta_test
 open Test_eta_support
 
+let test_effect_retry_does_nothing_on_initial_success () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let attempt =
+    Effect.sync (fun () ->
+        incr attempts;
+        "ok")
+  in
+  Alcotest.(check string) "result" "ok"
+    (run_ok rt (Effect.retry (Schedule.recurs 3) (fun (_ : string) -> true) attempt));
+  Alcotest.(check int) "one attempt" 1 !attempts
+
+let test_effect_retry_stops_when_predicate_rejects_typed_error () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let attempt =
+    Effect.sync (fun () -> incr attempts)
+    |> Effect.bind (fun () -> Effect.fail (`Reject !attempts))
+  in
+  let eff =
+    Effect.retry (Schedule.recurs 5)
+      (fun (`Reject n) -> n < 2)
+      attempt
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail (`Reject 2)) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected rejected typed failure, got %a"
+        (Cause.pp (fun fmt (`Reject n) -> Format.fprintf fmt "Reject %d" n))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected rejected typed failure");
+  Alcotest.(check int) "initial plus one retry" 2 !attempts
+
+let test_effect_retry_recurs_attempts_initial_plus_retries () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let attempt =
+    Effect.sync (fun () -> incr attempts)
+    |> Effect.bind (fun () -> Effect.fail `Again)
+  in
+  (match Runtime.run rt (Effect.retry (Schedule.recurs 3) (fun `Again -> true) attempt) with
+  | Exit.Error (Cause.Fail `Again) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected final typed failure, got %a"
+        (Cause.pp (fun fmt `Again -> Format.pp_print_string fmt "Again"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected final typed failure");
+  Alcotest.(check int) "initial plus three retries" 4 !attempts
+
 let test_effect_retry_does_not_retry_interrupt () =
   with_runtime @@ fun rt ->
   let attempts = ref 0 in
@@ -38,6 +87,22 @@ let test_effect_retry_preserves_structured_exception_causes () =
         cause
   | Exit.Ok _ -> Alcotest.fail "expected retry failure"
 
+let test_effect_retry_does_not_catch_defects () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let attempt =
+    Effect.sync (fun () ->
+        incr attempts;
+        failwith "retry defect")
+  in
+  (match Runtime.run rt (Effect.retry (Schedule.recurs 3) (fun (_ : string) -> true) attempt) with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected defect");
+  Alcotest.(check int) "not retried" 1 !attempts
+
 
 let test_effect_repeat_schedule () =
   with_runtime @@ fun rt ->
@@ -45,6 +110,12 @@ let test_effect_repeat_schedule () =
   let tick = Effect.named "tick" (Effect.sync (fun () -> incr ticks)) in
   run_ok rt (Effect.repeat (Schedule.recurs 3) tick);
   Alcotest.(check int) "initial run plus three repeats" 4 !ticks
+
+let test_effect_repeat_recurs_zero_runs_body_once () =
+  with_runtime @@ fun rt ->
+  let ticks = ref 0 in
+  run_ok rt (Effect.repeat (Schedule.recurs 0) (Effect.sync (fun () -> incr ticks)));
+  Alcotest.(check int) "initial run only" 1 !ticks
 
 let test_effect_repeat_schedule_uses_virtual_delays () =
   with_test_clock @@ fun sw clock rt ->
@@ -66,6 +137,35 @@ let test_effect_repeat_schedule_uses_virtual_delays () =
   Test_clock.adjust clock (Duration.ms 5);
   check_exit_ok Alcotest.unit "repeat done" () (Eio.Promise.await promise);
   Alcotest.(check int) "three delayed repeats" 4 !ticks
+
+let test_effect_repeat_timeout_interrupts_loop () =
+  with_test_clock @@ fun sw clock rt ->
+  let ticks = ref 0 in
+  let eff =
+    Effect.repeat (Schedule.spaced (Duration.ms 10))
+      (Effect.sync (fun () -> incr ticks))
+    |> Effect.timeout_as (Duration.ms 25) ~on_timeout:`Timed_out
+  in
+  let promise = fork_run sw rt eff in
+  yield ();
+  Alcotest.(check int) "initial run" 1 !ticks;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  yield ();
+  Alcotest.(check int) "first repeat" 2 !ticks;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  yield ();
+  Alcotest.(check int) "second repeat" 3 !ticks;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 5);
+  (match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Timed_out) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected timeout, got %a"
+        (Cause.pp (fun fmt `Timed_out -> Format.pp_print_string fmt "Timed_out"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected timeout")
 
 let test_effect_retry_schedule_until_success () =
   with_runtime @@ fun rt ->
@@ -104,6 +204,42 @@ let test_effect_retry_schedule_uses_virtual_delays () =
   Test_clock.adjust clock (Duration.ms 5);
   check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
     (Eio.Promise.await promise)
+
+let test_effect_retry_timeout_interrupts_loop () =
+  with_test_clock @@ fun sw clock rt ->
+  let attempts = ref 0 in
+  let attempt : (unit, [ `Again | `Timed_out ]) Effect.t =
+    Effect.sync (fun () -> incr attempts)
+    |> Effect.bind (fun () -> Effect.fail `Again)
+  in
+  let eff =
+    Effect.retry (Schedule.spaced (Duration.ms 10))
+      (function `Again -> true | `Timed_out -> false)
+      attempt
+    |> Effect.timeout_as (Duration.ms 25) ~on_timeout:`Timed_out
+  in
+  let promise = fork_run sw rt eff in
+  yield ();
+  Alcotest.(check int) "initial attempt" 1 !attempts;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  yield ();
+  Alcotest.(check int) "first retry" 2 !attempts;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  yield ();
+  Alcotest.(check int) "second retry" 3 !attempts;
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 5);
+  (match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Timed_out) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected timeout, got %a"
+        (Cause.pp (fun fmt -> function
+          | `Again -> Format.pp_print_string fmt "Again"
+          | `Timed_out -> Format.pp_print_string fmt "Timed_out"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected timeout")
 
 let test_effect_retry_jittered_schedule_uses_runtime_random () =
   run_eio @@ fun stdenv ->
@@ -173,5 +309,3 @@ let test_effect_retry_releases_resources_each_failed_attempt () =
   Alcotest.(check int)
     "only one resource live at a time (retry should scope per-attempt)" 1
     !max_active
-
-

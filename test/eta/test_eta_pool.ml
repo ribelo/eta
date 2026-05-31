@@ -90,6 +90,76 @@ let test_pool_reuses_idle_lifo () =
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool);
   Alcotest.(check int) "closed on shutdown" 1 !(factory.closed)
 
+let test_pool_with_resource_body_success_releases_resource () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+  Alcotest.(check int) "result" 1
+    (run_ok rt (Pool.with_resource pool pool_use));
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "active" 0 stats.Pool.active;
+  Alcotest.(check int) "idle" 1 stats.Pool.idle;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
+let test_pool_with_resource_body_typed_failure_releases_resource () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+  (match Runtime.run rt (Pool.with_resource pool (fun _ -> Effect.fail `Open_failed)) with
+  | Exit.Error (Cause.Fail `Open_failed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body typed failure, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>")) cause
+  | Exit.Ok _ -> Alcotest.fail "expected body typed failure");
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "active" 0 stats.Pool.active;
+  Alcotest.(check int) "idle" 1 stats.Pool.idle;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
+let test_pool_with_resource_body_defect_releases_resource () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+  (match
+     Runtime.run rt
+       (Pool.with_resource pool (fun _ ->
+            Effect.sync (fun () -> failwith "body defect")))
+   with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>")) cause
+  | Exit.Ok _ -> Alcotest.fail "expected body defect");
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "active" 0 stats.Pool.active;
+  Alcotest.(check int) "idle" 1 stats.Pool.idle;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
+let test_pool_max_size_respected_under_concurrent_checkout () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:2 factory) in
+  let use_for ms =
+    Pool.with_resource pool (fun _ -> Effect.delay (Duration.ms ms) Effect.unit)
+  in
+  let first = fork_run sw rt (use_for 30) in
+  let second = fork_run sw rt (use_for 30) in
+  wait_until (fun () ->
+      let stats = Pool.stats pool in
+      stats.Pool.active = 2 && stats.Pool.opened = 2);
+  let third = fork_run sw rt (use_for 1) in
+  wait_until (fun () -> (Pool.stats pool).Pool.waiting = 1);
+  Alcotest.(check int) "max live bounded" 2 !(factory.max_live);
+  Alcotest.(check int) "opened bounded" 2 (Pool.stats pool).Pool.opened;
+  check_exit_ok Alcotest.unit "first" () (Eio.Promise.await first);
+  check_exit_ok Alcotest.unit "second" () (Eio.Promise.await second);
+  check_exit_ok Alcotest.unit "third" () (Eio.Promise.await third);
+  Alcotest.(check int) "still only opened max_size" 2
+    (Pool.stats pool).Pool.opened;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_timeout_cleans_waiter_and_preserves_timeout_cause () =
   with_runtime @@ fun rt ->
   let factory = make_pool_factory () in
@@ -126,6 +196,35 @@ let test_pool_health_rejection_reopens () =
   Alcotest.(check int) "rejected" 1 stats.Pool.health_rejected;
   Alcotest.(check int) "closed rejected" 1 stats.Pool.closed;
   Alcotest.(check int) "max live bounded" 1 !(factory.max_live);
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
+let test_pool_acquire_failure_does_not_count_as_active_resource () =
+  with_runtime @@ fun rt ->
+  let attempts = ref 0 in
+  let factory = make_pool_factory () in
+  let acquire =
+    Effect.sync (fun () -> incr attempts)
+    |> Effect.bind (fun () ->
+           if !attempts = 1 then Effect.fail `Open_failed else pool_open factory)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1 ~acquire
+         ~release:(pool_close factory) ~health_check:pool_health ())
+  in
+  (match Runtime.run rt (Pool.with_resource pool pool_use) with
+  | Exit.Error (Cause.Fail `Open_failed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected acquire failure, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>")) cause
+  | Exit.Ok _ -> Alcotest.fail "expected acquire failure");
+  let after_failure = Pool.stats pool in
+  Alcotest.(check int) "active after acquire failure" 0 after_failure.Pool.active;
+  Alcotest.(check int) "idle after acquire failure" 0 after_failure.Pool.idle;
+  ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
+  let after_success = Pool.stats pool in
+  Alcotest.(check int) "capacity reusable after acquire failure" 1
+    after_success.Pool.idle;
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
 let test_pool_idle_health_failure_rejects_entry () =
@@ -271,6 +370,38 @@ let test_pool_shutdown_wakes_waiters_and_drains () =
   Alcotest.(check int) "idle" 0 stats.Pool.idle;
   Alcotest.(check bool) "shutting down" true stats.Pool.shutting_down;
   Alcotest.(check int) "closed" 1 stats.Pool.closed
+
+let test_pool_shutdown_waits_for_active_close () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let factory = make_pool_factory () in
+  let close_started = ref false in
+  let release conn =
+    Effect.sync (fun () -> close_started := true)
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 30) Effect.unit)
+    |> Effect.bind (fun () -> pool_close factory conn)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  let holder =
+    fork_run sw rt
+      (Pool.with_resource pool (fun _ ->
+           Effect.delay (Duration.ms 1) Effect.unit))
+  in
+  wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+  let shutdown = fork_run sw rt (Pool.shutdown ~deadline:(Duration.ms 200) pool) in
+  wait_until (fun () -> !close_started);
+  Eio_unix.sleep 0.005;
+  Alcotest.(check bool)
+    "shutdown waits for close" false
+    (Eio.Promise.is_resolved shutdown);
+  check_exit_ok Alcotest.unit "holder done" () (Eio.Promise.await holder);
+  check_exit_ok Alcotest.unit "shutdown done" () (Eio.Promise.await shutdown);
+  Alcotest.(check int) "closed" 1 !(factory.closed)
 
 let test_pool_shutdown_deadline_timeout () =
   run_eio @@ fun stdenv ->

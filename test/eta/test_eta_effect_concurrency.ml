@@ -79,6 +79,26 @@ let test_all_collects_in_input_order () =
   in
   Alcotest.(check (list int)) "all order" [ 1; 2; 3 ] result
 
+let test_all_preserves_input_order_with_out_of_order_completion () =
+  with_test_clock @@ fun sw clock rt ->
+  let eff =
+    Effect.all
+      [
+        Effect.pure 1 |> Effect.delay (Duration.ms 30);
+        Effect.pure 2 |> Effect.delay (Duration.ms 10);
+        Effect.pure 3 |> Effect.delay (Duration.ms 20);
+      ]
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 3;
+  Test_clock.adjust clock (Duration.ms 30);
+  check_exit_ok (Alcotest.list Alcotest.int) "input order" [ 1; 2; 3 ]
+    (Eio.Promise.await promise)
+
+let test_all_empty_returns_empty_list () =
+  with_runtime @@ fun rt ->
+  Alcotest.(check (list int)) "empty" [] (run_ok rt (Effect.all []))
+
 let test_all_fail_fast () =
   with_runtime @@ fun rt ->
   let cause =
@@ -101,6 +121,27 @@ let test_all_settled_collects_successes_and_failures () =
   match result with
   | [ Ok 1; Error (Cause.Fail `Boom); Ok 3 ] -> ()
   | _ -> Alcotest.fail "unexpected all_settled result"
+
+let test_all_settled_preserves_input_order_with_out_of_order_completion () =
+  with_test_clock @@ fun sw clock rt ->
+  let eff =
+    Effect.all_settled
+      [
+        Effect.pure 1 |> Effect.delay (Duration.ms 30);
+        Effect.fail `Boom |> Effect.delay (Duration.ms 10);
+        Effect.pure 3 |> Effect.delay (Duration.ms 20);
+      ]
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 3;
+  Test_clock.adjust clock (Duration.ms 30);
+  match Eio.Promise.await promise with
+  | Exit.Ok [ Ok 1; Error (Cause.Fail `Boom); Ok 3 ] -> ()
+  | Exit.Ok _ -> Alcotest.fail "unexpected all_settled result order"
+  | Exit.Error cause ->
+      Alcotest.failf "expected settled results, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
 
 let test_all_settled_runs_all_children () =
   with_test_clock @@ fun sw clock rt ->
@@ -159,6 +200,20 @@ let test_for_each_par_success () =
   in
   Alcotest.(check (list int)) "for_each_par results" [ 11; 21; 31 ] result
 
+let test_for_each_par_preserves_input_order_with_out_of_order_completion () =
+  with_test_clock @@ fun sw clock rt ->
+  let worker x =
+    let delay =
+      match x with 1 -> 30 | 2 -> 10 | 3 -> 20 | _ -> 0
+    in
+    Effect.pure (x * 10) |> Effect.delay (Duration.ms delay)
+  in
+  let promise = fork_run sw rt (Effect.for_each_par [ 1; 2; 3 ] worker) in
+  wait_for_sleepers clock 3;
+  Test_clock.adjust clock (Duration.ms 30);
+  check_exit_ok (Alcotest.list Alcotest.int) "input order" [ 10; 20; 30 ]
+    (Eio.Promise.await promise)
+
 let test_for_each_par_one_fails () =
   with_runtime @@ fun rt ->
   let cause =
@@ -213,6 +268,21 @@ let test_for_each_par_bounded_max_one_is_sequential () =
     (run_ok rt (Effect.for_each_par_bounded ~max:1 [ 1; 2; 3 ] worker));
   Alcotest.(check int) "max concurrency" 1 !max_seen
 
+let test_for_each_par_bounded_rejects_nonpositive_max () =
+  Alcotest.check_raises "zero max"
+    (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
+    (fun () ->
+      ignore
+        (Effect.for_each_par_bounded ~max:0 [ 1 ] (fun x -> Effect.pure x)
+          : (int list, _) Effect.t));
+  Alcotest.check_raises "negative max"
+    (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
+    (fun () ->
+      ignore
+        (Effect.for_each_par_bounded ~max:(-1) [ 1 ] (fun x ->
+             Effect.pure x)
+          : (int list, _) Effect.t))
+
 let test_for_each_par_bounded_fail_fast () =
   with_test_clock @@ fun sw clock rt ->
   let slow_done = ref false in
@@ -253,6 +323,23 @@ let test_effect_race_ignores_early_failure_until_success () =
   Alcotest.(check int)
     "first success wins" 100
     (Expect.expect_ok (Eio.Promise.await promise))
+
+let test_effect_race_cancels_losers_after_first_success () =
+  with_test_clock @@ fun sw clock rt ->
+  let loser_completed = ref false in
+  let winner = Effect.pure "winner" |> Effect.delay (Duration.ms 10) in
+  let loser =
+    Effect.sync (fun () -> loser_completed := true)
+    |> Effect.delay (Duration.ms 100)
+    |> Effect.map (fun () -> "loser")
+  in
+  let promise = fork_run sw rt (Effect.race [ winner; loser ]) in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 10);
+  check_exit_ok Alcotest.string "winner" "winner" (Eio.Promise.await promise);
+  Test_clock.adjust clock (Duration.ms 100);
+  yield ();
+  Alcotest.(check bool) "loser cancelled" false !loser_completed
 
 let test_effect_race_all_failures_returns_concurrent_causes () =
   with_test_clock @@ fun sw clock rt ->
@@ -415,6 +502,114 @@ let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
         "cancelled sibling finalizer ran before for_each_par returned" true
         !release_started
 
+let check_child_finalizer_before_catch_handler label caught released
+    released_before_catch = function
+  | Exit.Error (Cause.Interrupt _) ->
+      Alcotest.(check bool) (label ^ " caught") true (Atomic.get caught);
+      Alcotest.(check bool) (label ^ " released") true (Atomic.get released);
+      Alcotest.(check bool)
+        (label ^ " released before catch") true
+        (Atomic.get released_before_catch)
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected uncaught interrupt, got %a" label
+        (Cause.pp Format.pp_print_string)
+        cause
+  | Exit.Ok _ -> Alcotest.failf "%s: expected uncaught interrupt" label
+
+let test_par_child_finalizer_runs_before_catch_handler () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let caught = Atomic.make false in
+  let released = Atomic.make false in
+  let released_before_catch = Atomic.make false in
+  let slow =
+    Effect.acquire_release
+      ~acquire:
+        (Effect.sync (fun () ->
+             Eio.Promise.resolve acquired_u ();
+             ()))
+      ~release:(fun () -> Effect.sync (fun () -> Atomic.set released true))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let fail_after_acquire =
+    Effect.sync (fun () -> Eio.Promise.await acquired)
+    |> Effect.bind (fun () -> Effect.fail "body")
+  in
+  let eff =
+    Effect.par fail_after_acquire slow
+    |> Effect.catch (fun _ ->
+           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set caught true;
+           Effect.pure ((), ()))
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 1;
+  check_child_finalizer_before_catch_handler "par" caught released
+    released_before_catch (Eio.Promise.await promise)
+
+let test_all_child_finalizer_runs_before_catch_handler () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let caught = Atomic.make false in
+  let released = Atomic.make false in
+  let released_before_catch = Atomic.make false in
+  let slow =
+    Effect.acquire_release
+      ~acquire:
+        (Effect.sync (fun () ->
+             Eio.Promise.resolve acquired_u ();
+             ()))
+      ~release:(fun () -> Effect.sync (fun () -> Atomic.set released true))
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let fail_after_acquire =
+    Effect.sync (fun () -> Eio.Promise.await acquired)
+    |> Effect.bind (fun () -> Effect.fail "body")
+  in
+  let eff =
+    Effect.all [ fail_after_acquire; slow ]
+    |> Effect.catch (fun _ ->
+           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set caught true;
+           Effect.pure [])
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 1;
+  check_child_finalizer_before_catch_handler "all" caught released
+    released_before_catch (Eio.Promise.await promise)
+
+let test_for_each_par_child_finalizer_runs_before_catch_handler () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let caught = Atomic.make false in
+  let released = Atomic.make false in
+  let released_before_catch = Atomic.make false in
+  let worker = function
+    | "slow" ->
+        Effect.acquire_release
+          ~acquire:
+            (Effect.sync (fun () ->
+                 Eio.Promise.resolve acquired_u ();
+                 ()))
+          ~release:(fun () -> Effect.sync (fun () -> Atomic.set released true))
+        |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+    | "body" ->
+        Effect.sync (fun () -> Eio.Promise.await acquired)
+        |> Effect.bind (fun () -> Effect.fail "body")
+    | _ -> Effect.unit
+  in
+  let eff =
+    Effect.for_each_par [ "body"; "slow" ] worker
+    |> Effect.catch (fun _ ->
+           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set caught true;
+           Effect.pure [])
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 1;
+  check_child_finalizer_before_catch_handler "for_each_par" caught released
+    released_before_catch (Eio.Promise.await promise)
+
 let test_par_nested_race_all_failures_baseline () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_failure ms error =
@@ -436,5 +631,3 @@ let test_par_nested_race_all_failures_baseline () =
       check_concurrent_cause "par nested race baseline" cause;
       check_string_cause_contains "nested first failure observed" "race-left" cause;
       check_string_cause_contains "nested second failure observed" "race-right" cause
-
-

@@ -70,6 +70,110 @@ let test_pubsub_unbounded_broadcasts_to_current_subscribers () =
   Alcotest.(check (list int)) "subscriber a" [ 10; 20 ] a_values;
   Alcotest.(check (list int)) "subscriber b" [ 10; 20 ] b_values
 
+let test_pubsub_one_publisher_one_subscriber_preserves_order () =
+  with_runtime @@ fun rt ->
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  let program =
+    let open Eta.Syntax in
+    Pubsub.subscribe hub @@ fun sub ->
+    let* r1 = Pubsub.publish hub 1 in
+    let* r2 = Pubsub.publish hub 2 in
+    let* r3 = Pubsub.publish hub 3 in
+    let* first = Pubsub.recv sub in
+    let* second = Pubsub.recv sub in
+    let* third = Pubsub.recv sub in
+    Effect.pure ([ r1; r2; r3 ], [ first; second; third ])
+  in
+  let publish_results, received = run_ok rt program in
+  List.iteri
+    (fun i result ->
+      Alcotest.check publish_result
+        ("publish " ^ string_of_int (i + 1))
+        { Pubsub.subscriber_count = 1; dropped = 0 }
+        result)
+    publish_results;
+  Alcotest.(check (list int)) "received order" [ 1; 2; 3 ] received
+
+let test_pubsub_publish_without_subscribers_does_not_retain_messages () =
+  with_runtime @@ fun rt ->
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  let program =
+    let open Eta.Syntax in
+    let* r1 = Pubsub.publish hub 10 in
+    let* r2 = Pubsub.publish hub 20 in
+    Pubsub.subscribe hub @@ fun sub ->
+    let* after_subscribe = Pubsub.try_recv sub in
+    Effect.pure (r1, r2, after_subscribe)
+  in
+  let r1, r2, after_subscribe = run_ok rt program in
+  Alcotest.check publish_result "first no subscribers"
+    { Pubsub.subscriber_count = 0; dropped = 0 }
+    r1;
+  Alcotest.check publish_result "second no subscribers"
+    { Pubsub.subscriber_count = 0; dropped = 0 }
+    r2;
+  Alcotest.check recv_result "late subscriber has no backlog" `Empty
+    after_subscribe
+
+let test_pubsub_late_subscriber_only_receives_later_messages () =
+  with_runtime @@ fun rt ->
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  let program =
+    let open Eta.Syntax in
+    Pubsub.subscribe hub @@ fun early ->
+    let* _ = Pubsub.publish hub 1 in
+    Pubsub.subscribe hub @@ fun late ->
+    let* _ = Pubsub.publish hub 2 in
+    let* early_first = Pubsub.recv early in
+    let* early_second = Pubsub.recv early in
+    let* late_first = Pubsub.recv late in
+    let* late_after = Pubsub.try_recv late in
+    Effect.pure (early_first, early_second, late_first, late_after)
+  in
+  let early_first, early_second, late_first, late_after = run_ok rt program in
+  Alcotest.(check int) "early first" 1 early_first;
+  Alcotest.(check int) "early second" 2 early_second;
+  Alcotest.(check int) "late first" 2 late_first;
+  Alcotest.check recv_result "late did not receive old message" `Empty
+    late_after
+
+let test_pubsub_many_publishers_many_subscribers_preserve_message_sets () =
+  with_runtime @@ fun rt ->
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  let program =
+    let open Eta.Syntax in
+    Pubsub.subscribe hub @@ fun a ->
+    Pubsub.subscribe hub @@ fun b ->
+    let publish_many publisher =
+      Effect.for_each_par [ 1; 2; 3 ] (fun n ->
+          Pubsub.publish hub (publisher, n) |> Effect.map (fun _ -> ()))
+      |> Effect.map (fun _ -> ())
+    in
+    let* (), () = Effect.par (publish_many "left") (publish_many "right") in
+    let* a_values =
+      Effect.all
+        (List.init 6 (fun _ -> Pubsub.recv a))
+    in
+    let* b_values =
+      Effect.all
+        (List.init 6 (fun _ -> Pubsub.recv b))
+    in
+    Effect.pure (a_values, b_values)
+  in
+  let sort_values =
+    List.sort (fun (p1, n1) (p2, n2) ->
+        match String.compare p1 p2 with 0 -> Int.compare n1 n2 | c -> c)
+  in
+  let expected =
+    sort_values
+      [ ("left", 1); ("left", 2); ("left", 3); ("right", 1); ("right", 2); ("right", 3) ]
+  in
+  let a_values, b_values = run_ok rt program in
+  Alcotest.(check (list (pair string int))) "subscriber a message set" expected
+    (sort_values a_values);
+  Alcotest.(check (list (pair string int))) "subscriber b message set" expected
+    (sort_values b_values)
+
 let test_pubsub_drop_new_uses_global_capacity () =
   with_runtime @@ fun rt ->
   let hub = Pubsub.create ~overflow:(Pubsub.Drop_new { capacity = 1 }) () in
@@ -216,6 +320,43 @@ let test_pubsub_close_wakes_blocked_backpressure_publisher () =
   | `Published -> Alcotest.fail "blocked publisher unexpectedly published"
   | `Closed_with_error err ->
       Alcotest.failf "unexpected close error %s" err)
+
+let test_pubsub_close_wakes_blocked_subscriber () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+  let holder = ref None in
+  let ready = Queue.create () in
+  let never = Queue.create () in
+  let body =
+    let open Eta.Syntax in
+    Pubsub.subscribe hub @@ fun sub ->
+    let* () = Effect.sync (fun () -> holder := Some sub) in
+    let* () = Queue.send ready () in
+    Queue.recv never
+  in
+  let body_fiber = fork_run sw rt body in
+  run_ok rt (Queue.recv ready);
+  let sub =
+    match !holder with
+    | Some sub -> sub
+    | None -> Alcotest.fail "subscription was not captured"
+  in
+  let receiver = fork_run sw rt (Pubsub.recv sub) in
+  wait_until (fun () -> (Pubsub.stats hub).Pubsub.waiting_receivers = 1);
+  Pubsub.close hub;
+  (match Eio.Promise.await receiver with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected Closed, got %a"
+        (Cause.pp (fun fmt -> function
+          | `Closed -> Format.pp_print_string fmt "closed"
+          | `Closed_with_error _ -> Format.pp_print_string fmt "closed_with_error"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected Closed");
+  Queue.close never;
+  ignore (Eio.Promise.await body_fiber : (unit, [> `Closed ]) Exit.t)
 
 let test_pubsub_close_with_error_drains_buffer () =
   with_runtime @@ fun rt ->

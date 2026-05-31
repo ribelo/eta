@@ -18,7 +18,13 @@ let test_duration_ordering () =
     (Duration.compare (Duration.ms 2) (Duration.ms 1));
   Alcotest.(check bool) "between" true
     (Duration.between ~min:(Duration.minutes 59) ~max:(Duration.minutes 61)
-       (Duration.hours 1))
+       (Duration.hours 1));
+  Alcotest.(check bool) "below range" false
+    (Duration.between ~min:(Duration.minutes 59) ~max:(Duration.minutes 61)
+       (Duration.minutes 58));
+  Alcotest.(check bool) "above range" false
+    (Duration.between ~min:(Duration.minutes 59) ~max:(Duration.minutes 61)
+       (Duration.minutes 62))
 
 let test_duration_algebra () =
   Alcotest.(check dur) "sum" (Duration.minutes 1)
@@ -49,9 +55,21 @@ let test_duration_min_max_clamp () =
   Alcotest.(check dur) "clamp lower" (Duration.ms 2)
     (Duration.clamp ~min:(Duration.ms 2) ~max:(Duration.ms 3)
        (Duration.ms 1));
+  Alcotest.(check dur) "clamp upper" (Duration.ms 3)
+    (Duration.clamp ~min:(Duration.ms 2) ~max:(Duration.ms 3)
+       (Duration.ms 4));
   Alcotest.(check dur) "clamp inside" (Duration.minutes 90)
     (Duration.clamp ~min:(Duration.minutes 60) ~max:(Duration.minutes 120)
        (Duration.minutes 90))
+
+let test_duration_zero_detection_and_conversion () =
+  Alcotest.(check bool) "zero is zero" true (Duration.is_zero Duration.zero);
+  Alcotest.(check bool) "positive is not zero" false
+    (Duration.is_zero (Duration.ms 1));
+  Alcotest.(check int) "seconds to ms" 2_000
+    (Duration.to_ms (Duration.seconds 2));
+  Alcotest.(check (float 0.0)) "ms to seconds float" 1.5
+    (Duration.to_seconds_float (Duration.ms 1_500))
 
 let test_recurs () =
   let s = Schedule.recurs 3 in
@@ -59,6 +77,17 @@ let test_recurs () =
     (Schedule.next_delay s ~step:0);
   Alcotest.(check some_dur) "exhausted" None
     (Schedule.next_delay s ~step:3)
+
+let test_recurs_driver_yields_exactly_n_delays () =
+  let rec collect driver acc =
+    match Schedule.next driver with
+    | None -> List.rev acc
+    | Some (delay, next) -> collect next (delay :: acc)
+  in
+  Alcotest.(check (list dur))
+    "three recurrences"
+    [ Duration.zero; Duration.zero; Duration.zero ]
+    (collect (Schedule.start (Schedule.recurs 3)) [])
 
 let test_exponential () =
   let s = Schedule.exponential ~factor:2.0 (dur_ms 10) in
@@ -94,6 +123,33 @@ let test_schedule_composition () =
        (Schedule.and_then (Schedule.recurs 1)
           (Schedule.spaced (Duration.seconds 1)))
        ~step:1)
+
+let test_schedule_composition_termination_with_driver () =
+  let collect schedule =
+    let rec loop driver acc =
+      match Schedule.next driver with
+      | None -> List.rev acc
+      | Some (delay, next) -> loop next (delay :: acc)
+    in
+    loop (Schedule.start schedule) []
+  in
+  Alcotest.(check (list dur)) "both terminates with shorter side"
+    [ Duration.seconds 2; Duration.seconds 2 ]
+    (collect
+       (Schedule.both
+          (Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.seconds 1)))
+          (Schedule.spaced (Duration.seconds 2))));
+  Alcotest.(check (list dur)) "either terminates with longer side"
+    [ Duration.seconds 1; Duration.seconds 1; Duration.seconds 2 ]
+    (collect
+       (Schedule.either
+          (Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.seconds 1)))
+          (Schedule.both (Schedule.recurs 3) (Schedule.spaced (Duration.seconds 2)))));
+  Alcotest.(check (list dur)) "and_then runs second phase after first"
+    [ Duration.zero; Duration.seconds 1; Duration.seconds 1 ]
+    (collect
+       (Schedule.and_then (Schedule.recurs 1)
+          (Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.seconds 1)))))
 
 let test_schedule_and_then_offsets_second_phase () =
   let exponential =
@@ -162,6 +218,27 @@ let test_schedule_jittered_uses_random_capability () =
   Alcotest.(check (option int)) "sample" (Some 40)
     (Random.sample random [ 10; 20; 30; 40 ]);
   Alcotest.(check (option int)) "empty" None (Random.sample random [])
+
+let test_schedule_jittered_stays_inside_multiplier_bounds () =
+  let schedule =
+    Schedule.spaced (Duration.ms 100)
+    |> Schedule.jittered ~min:0.5 ~max:1.5
+  in
+  let driver = ref (Schedule.start ~random:(Capabilities.random_of_seed 23) schedule) in
+  for step = 0 to 99 do
+    match Schedule.next !driver with
+    | None -> Alcotest.fail "jittered spaced schedule terminated"
+    | Some (delay, next) ->
+        driver := next;
+        Alcotest.(check bool)
+          ("step " ^ string_of_int step ^ " inside lower bound")
+          true
+          (Duration.compare delay (Duration.ms 50) >= 0);
+        Alcotest.(check bool)
+          ("step " ^ string_of_int step ^ " inside upper bound")
+          true
+          (Duration.compare delay (Duration.ms 150) <= 0)
+  done
 
 let test_random_float_distribution_and_determinism () =
   let first = Capabilities.random_of_seed 12345 in

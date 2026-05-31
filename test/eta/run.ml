@@ -51,9 +51,15 @@ let () =
             test_par_fail_fast_cancels_sibling;
           Alcotest.test_case "all collects in input order" `Quick
             test_all_collects_in_input_order;
+          Alcotest.test_case "all preserves delayed input order" `Quick
+            test_all_preserves_input_order_with_out_of_order_completion;
+          Alcotest.test_case "all empty returns empty list" `Quick
+            test_all_empty_returns_empty_list;
           Alcotest.test_case "all fail-fast" `Quick test_all_fail_fast;
           Alcotest.test_case "all_settled collects outcomes" `Quick
             test_all_settled_collects_successes_and_failures;
+          Alcotest.test_case "all_settled preserves delayed input order" `Quick
+            test_all_settled_preserves_input_order_with_out_of_order_completion;
           Alcotest.test_case "all_settled runs all children" `Quick
             test_all_settled_runs_all_children;
           Alcotest.test_case "all_settled timeout scoped resource typed" `Quick
@@ -61,12 +67,16 @@ let () =
           Alcotest.test_case "all_settled empty" `Quick test_all_settled_empty;
           Alcotest.test_case "for_each_par success" `Quick
             test_for_each_par_success;
+          Alcotest.test_case "for_each_par preserves delayed input order" `Quick
+            test_for_each_par_preserves_input_order_with_out_of_order_completion;
           Alcotest.test_case "for_each_par one fails" `Quick
             test_for_each_par_one_fails;
           Alcotest.test_case "for_each_par_bounded caps concurrency" `Quick
             test_for_each_par_bounded_caps_concurrency;
           Alcotest.test_case "for_each_par_bounded max one is sequential" `Quick
             test_for_each_par_bounded_max_one_is_sequential;
+          Alcotest.test_case "for_each_par_bounded rejects nonpositive max"
+            `Quick test_for_each_par_bounded_rejects_nonpositive_max;
           Alcotest.test_case "for_each_par_bounded fail-fast" `Quick
             test_for_each_par_bounded_fail_fast;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
@@ -77,8 +87,17 @@ let () =
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
+          Alcotest.test_case "exit to_result faithful subset" `Quick
+            test_exit_to_result_only_converts_success_and_single_typed_failure;
           Alcotest.test_case "map_error maps full cause" `Quick
             test_effect_map_error_maps_full_cause;
+          Alcotest.test_case "map_error preserves defects" `Quick
+            test_effect_map_error_preserves_defects_in_cause_tree;
+          Alcotest.test_case "map_error preserves interrupts" `Quick
+            test_effect_map_error_preserves_interrupts_in_cause_tree;
+          Alcotest.test_case "scoped creates switch in fiberless host run"
+            `Quick
+            test_effect_scoped_creates_switch_in_fiberless_host_run;
           Alcotest.test_case "syntax operators" `Quick
             test_effect_syntax_operators;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
@@ -86,12 +105,19 @@ let () =
           Alcotest.test_case "tap_error observer failure preserves typed failure"
             `Quick
             test_effect_tap_error_observer_failure_preserves_typed_failure;
+          Alcotest.test_case "tap_error does not observe defects" `Quick
+            test_effect_tap_error_does_not_observe_defects;
           Alcotest.test_case "finally success and failure" `Quick
             test_effect_finally_success_and_failure;
           Alcotest.test_case "finally cleanup failure after success" `Quick
             test_effect_finally_cleanup_failure_after_success;
           Alcotest.test_case "finally suppresses cleanup failure" `Quick
             test_effect_finally_suppresses_cleanup_failure;
+          Alcotest.test_case "finally runs after defect" `Quick
+            test_effect_finally_runs_after_defect;
+          Alcotest.test_case
+            "finally suppresses cleanup failure after defect" `Quick
+            test_effect_finally_suppresses_cleanup_failure_after_defect;
           Alcotest.test_case "finally runs on cancellation" `Quick
             test_effect_finally_runs_on_cancellation;
           Alcotest.test_case "catch recovers suppressed typed failure" `Quick
@@ -118,6 +144,12 @@ let () =
             test_runtime_finalizer_die_captures_diagnostics;
           Alcotest.test_case "catch does not catch interrupt" `Quick
             test_effect_catch_does_not_catch_interrupt;
+          Alcotest.test_case "catch preserves finalizer defect" `Quick
+            test_effect_catch_preserves_suppressed_finalizer_defect;
+          Alcotest.test_case "catch preserves concurrent defect" `Quick
+            test_effect_catch_preserves_concurrent_defect;
+          Alcotest.test_case "catch preserves concurrent interrupt" `Quick
+            test_effect_catch_preserves_concurrent_interrupt;
           Alcotest.test_case "catch unsound suppressed typed failure" `Quick
             test_effect_catch_unsound_suppressed_typed_failure;
           Alcotest.test_case "catch unsound concurrent typed failure" `Quick
@@ -141,10 +173,20 @@ let () =
             test_acquire_release_suppresses_release_failure;
           Alcotest.test_case "acquire release release failure after success"
             `Quick test_acquire_release_release_failure_after_success;
+          Alcotest.test_case "acquire release releases on defect" `Quick
+            test_acquire_release_releases_on_defect;
+          Alcotest.test_case
+            "acquire release suppresses release failure after defect" `Quick
+            test_acquire_release_suppresses_release_failure_after_defect;
           Alcotest.test_case "acquire_use_release success" `Quick
             test_acquire_use_release_success;
           Alcotest.test_case "acquire_use_release typed failure releases"
             `Quick test_acquire_use_release_typed_failure_releases;
+          Alcotest.test_case "acquire_use_release defect releases" `Quick
+            test_acquire_use_release_defect_releases;
+          Alcotest.test_case
+            "acquire_use_release suppresses release failure after defect" `Quick
+            test_acquire_use_release_suppresses_release_failure_after_defect;
           Alcotest.test_case "acquire_use_release releases on cancel" `Quick
             test_acquire_use_release_releases_on_cancel;
           Alcotest.test_case
@@ -168,10 +210,14 @@ let () =
             test_effect_timeout_as_keeps_exact_error_row;
           Alcotest.test_case "timeout_as maps delayed effect" `Quick
             test_effect_timeout_as_maps_delayed_effect;
+          Alcotest.test_case "timeout_as preserves simultaneous failure" `Quick
+            test_effect_timeout_as_preserves_simultaneous_body_failure;
           Alcotest.test_case "timeout_as nested maps outer timeout" `Quick
             test_effect_timeout_as_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
+          Alcotest.test_case "race cancels losers after first success" `Quick
+            test_effect_race_cancels_losers_after_first_success;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick
             test_effect_race_all_failures_returns_concurrent_causes;
           Alcotest.test_case "par simultaneous failures baseline" `Quick
@@ -184,15 +230,36 @@ let () =
             test_for_each_par_simultaneous_failures_baseline;
           Alcotest.test_case "for_each_par finalizer cancellation baseline"
             `Quick test_for_each_par_finalizer_failure_during_sibling_cancellation;
+          Alcotest.test_case "par child finalizer before catch handler" `Quick
+            test_par_child_finalizer_runs_before_catch_handler;
+          Alcotest.test_case "all child finalizer before catch handler" `Quick
+            test_all_child_finalizer_runs_before_catch_handler;
+          Alcotest.test_case
+            "for_each_par child finalizer before catch handler" `Quick
+            test_for_each_par_child_finalizer_runs_before_catch_handler;
           Alcotest.test_case "par nested race failures baseline" `Quick
             test_par_nested_race_all_failures_baseline;
+          Alcotest.test_case "retry does nothing on initial success" `Quick
+            test_effect_retry_does_nothing_on_initial_success;
+          Alcotest.test_case "retry stops when predicate rejects" `Quick
+            test_effect_retry_stops_when_predicate_rejects_typed_error;
+          Alcotest.test_case "retry recurs attempts initial plus retries" `Quick
+            test_effect_retry_recurs_attempts_initial_plus_retries;
+          Alcotest.test_case "retry does not catch defects" `Quick
+            test_effect_retry_does_not_catch_defects;
           Alcotest.test_case "repeat schedule" `Quick test_effect_repeat_schedule;
+          Alcotest.test_case "repeat recurs zero runs body once" `Quick
+            test_effect_repeat_recurs_zero_runs_body_once;
           Alcotest.test_case "repeat schedule uses virtual delays" `Quick
             test_effect_repeat_schedule_uses_virtual_delays;
+          Alcotest.test_case "repeat timeout interrupts loop" `Quick
+            test_effect_repeat_timeout_interrupts_loop;
           Alcotest.test_case "retry schedule until success" `Quick
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick
             test_effect_retry_schedule_uses_virtual_delays;
+          Alcotest.test_case "retry timeout interrupts loop" `Quick
+            test_effect_retry_timeout_interrupts_loop;
           Alcotest.test_case "retry jittered schedule uses runtime random" `Quick
             test_effect_retry_jittered_schedule_uses_runtime_random;
           Alcotest.test_case "retry releases resources each failed attempt"
@@ -243,8 +310,12 @@ let () =
             test_blocking_result_lifts_result;
           Alcotest.test_case "blocking_result_timeout interrupts" `Quick
             test_blocking_result_timeout_interrupts_and_fails_typed;
+          Alcotest.test_case "blocking_result_timeout cancels once" `Quick
+            test_blocking_result_timeout_calls_on_cancel_once;
           Alcotest.test_case "custom runner" `Quick
             test_blocking_pool_custom_runner;
+          Alcotest.test_case "runner cancellation releases started slot" `Quick
+            test_blocking_runner_cancellation_releases_started_slot;
           Alcotest.test_case "direct control and heartbeat" `Quick
             test_blocking_direct_control_and_blocking_heartbeat;
           Alcotest.test_case "wait caps active and queue" `Quick
@@ -323,18 +394,26 @@ let () =
           Alcotest.test_case "algebra" `Quick test_duration_algebra;
           Alcotest.test_case "overflow" `Quick test_duration_overflow;
           Alcotest.test_case "min max clamp" `Quick test_duration_min_max_clamp;
+          Alcotest.test_case "zero detection and conversion" `Quick
+            test_duration_zero_detection_and_conversion;
         ] );
       ( "Schedule",
         [
           Alcotest.test_case "recurs" `Quick test_recurs;
+          Alcotest.test_case "recurs driver yields exactly n delays" `Quick
+            test_recurs_driver_yields_exactly_n_delays;
           Alcotest.test_case "exponential" `Quick test_exponential;
           Alcotest.test_case "spaced fixed linear" `Quick
             test_spaced_fixed_linear;
           Alcotest.test_case "composition" `Quick test_schedule_composition;
+          Alcotest.test_case "composition termination with driver" `Quick
+            test_schedule_composition_termination_with_driver;
           Alcotest.test_case "and_then offsets second phase" `Quick
             test_schedule_and_then_offsets_second_phase;
           Alcotest.test_case "jittered uses random capability" `Quick
             test_schedule_jittered_uses_random_capability;
+          Alcotest.test_case "jittered stays inside multiplier bounds" `Quick
+            test_schedule_jittered_stays_inside_multiplier_bounds;
           Alcotest.test_case "random float distribution and determinism" `Quick
             test_random_float_distribution_and_determinism;
         ] );
@@ -376,6 +455,8 @@ let () =
       ( "Channel",
         [
           Alcotest.test_case "try send recv" `Quick test_channel_try_send_try_recv;
+          Alcotest.test_case "fifo send recv" `Quick
+            test_channel_fifo_send_recv;
           Alcotest.test_case "blocking send backpressure" `Quick
             test_channel_blocking_send_backpressure;
           Alcotest.test_case "blocked sender not passed" `Quick
@@ -385,6 +466,8 @@ let () =
             test_channel_close_wakes_blocked_senders_and_receivers;
           Alcotest.test_case "close with error drains" `Quick
             test_channel_close_with_error_drains_buffer;
+          Alcotest.test_case "close drains buffer then reports closed" `Quick
+            test_channel_close_drains_buffer_then_reports_closed;
           Alcotest.test_case "cancel blocked send" `Quick
             test_channel_cancel_blocked_send_cleans_waiter;
           Alcotest.test_case "cancel blocked recv" `Quick
@@ -400,6 +483,14 @@ let () =
         [
           Alcotest.test_case "unbounded broadcasts" `Quick
             test_pubsub_unbounded_broadcasts_to_current_subscribers;
+          Alcotest.test_case "one publisher one subscriber order" `Quick
+            test_pubsub_one_publisher_one_subscriber_preserves_order;
+          Alcotest.test_case "publish without subscribers does not retain"
+            `Quick test_pubsub_publish_without_subscribers_does_not_retain_messages;
+          Alcotest.test_case "late subscriber only receives later messages"
+            `Quick test_pubsub_late_subscriber_only_receives_later_messages;
+          Alcotest.test_case "many publishers many subscribers" `Quick
+            test_pubsub_many_publishers_many_subscribers_preserve_message_sets;
           Alcotest.test_case "drop_new global capacity" `Quick
             test_pubsub_drop_new_uses_global_capacity;
           Alcotest.test_case "backpressure canceled publish atomic" `Quick
@@ -409,6 +500,8 @@ let () =
             test_pubsub_backpressure_waits_for_lagging_subscriber;
           Alcotest.test_case "backpressure close wakes publisher" `Quick
             test_pubsub_close_wakes_blocked_backpressure_publisher;
+          Alcotest.test_case "close wakes blocked subscriber" `Quick
+            test_pubsub_close_wakes_blocked_subscriber;
           Alcotest.test_case "close with error drains" `Quick
             test_pubsub_close_with_error_drains_buffer;
           Alcotest.test_case "subscription cancellation cleanup" `Quick
@@ -422,10 +515,20 @@ let () =
         [
           Alcotest.test_case "reuses idle LIFO" `Quick
             test_pool_reuses_idle_lifo;
+          Alcotest.test_case "body success releases resource" `Quick
+            test_pool_with_resource_body_success_releases_resource;
+          Alcotest.test_case "body typed failure releases resource" `Quick
+            test_pool_with_resource_body_typed_failure_releases_resource;
+          Alcotest.test_case "body defect releases resource" `Quick
+            test_pool_with_resource_body_defect_releases_resource;
+          Alcotest.test_case "max size under concurrent checkout" `Quick
+            test_pool_max_size_respected_under_concurrent_checkout;
           Alcotest.test_case "timeout cleans waiter" `Quick
             test_pool_timeout_cleans_waiter_and_preserves_timeout_cause;
           Alcotest.test_case "health rejection reopens" `Quick
             test_pool_health_rejection_reopens;
+          Alcotest.test_case "acquire failure does not consume capacity" `Quick
+            test_pool_acquire_failure_does_not_count_as_active_resource;
           Alcotest.test_case "idle health failure rejects entry" `Quick
             test_pool_idle_health_failure_rejects_entry;
           Alcotest.test_case "idle health defect closes entry" `Quick
@@ -437,6 +540,8 @@ let () =
             test_pool_expired_idle_cleanup_preserves_capacity_waiters;
           Alcotest.test_case "shutdown wakes and drains" `Quick
             test_pool_shutdown_wakes_waiters_and_drains;
+          Alcotest.test_case "shutdown waits for active close" `Quick
+            test_pool_shutdown_waits_for_active_close;
           Alcotest.test_case "shutdown deadline" `Quick
             test_pool_shutdown_deadline_timeout;
           Alcotest.test_case "release detects active underflow" `Quick
@@ -448,6 +553,8 @@ let () =
         [
           Alcotest.test_case "make and available" `Quick
             test_semaphore_make_available;
+          Alcotest.test_case "make rejects zero permits" `Quick
+            test_semaphore_make_rejects_zero_permits;
           Alcotest.test_case "acquire reduces available" `Quick
             test_semaphore_acquire_reduces_available;
           Alcotest.test_case "release increases available" `Quick
@@ -464,16 +571,22 @@ let () =
             test_semaphore_rejects_over_capacity_try_acquire;
           Alcotest.test_case "acquire at capacity succeeds" `Quick
             test_semaphore_acquire_at_capacity_succeeds;
+          Alcotest.test_case "try_acquire is atomic" `Quick
+            test_semaphore_try_acquire_is_atomic;
           Alcotest.test_case "with_permits releases on success" `Quick
             test_semaphore_with_permits_releases_on_success;
           Alcotest.test_case "with_permits releases on failure" `Quick
             test_semaphore_with_permits_releases_on_failure;
+          Alcotest.test_case "with_permits releases on defect" `Quick
+            test_semaphore_with_permits_releases_on_defect;
           Alcotest.test_case "with_permits releases on timeout" `Quick
             test_semaphore_with_permits_releases_on_timeout;
           Alcotest.test_case "cancellation stress" `Quick
             test_semaphore_cancellation_stress;
           Alcotest.test_case "cancel after wakeup returns permit" `Quick
             test_semaphore_cancel_after_wakeup_returns_permit;
+          Alcotest.test_case "fifo wakes waiters in order" `Quick
+            test_semaphore_fifo_wakes_waiters_in_order;
           Alcotest.test_case "multi-permit contention" `Quick
             test_semaphore_multi_permit_contention;
         ] );

@@ -6,6 +6,11 @@ let test_semaphore_make_available () =
   let sem = Semaphore.make ~permits:8 in
   Alcotest.(check int) "available 8" 8 (Semaphore.available sem)
 
+let test_semaphore_make_rejects_zero_permits () =
+  Alcotest.check_raises "zero permits"
+    (Invalid_argument "Eta.Semaphore.make: permits must be > 0")
+    (fun () -> ignore (Semaphore.make ~permits:0))
+
 let test_semaphore_acquire_reduces_available () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:8 in
@@ -55,6 +60,19 @@ let test_semaphore_acquire_at_capacity_succeeds () =
   run_ok rt (Semaphore.acquire sem 2);
   Alcotest.(check int) "available 0" 0 (Semaphore.available sem)
 
+let test_semaphore_try_acquire_is_atomic () =
+  let sem = Semaphore.make ~permits:3 in
+  Alcotest.(check bool) "first acquire succeeds" true
+    (Semaphore.try_acquire sem 2);
+  Alcotest.(check int) "one permit remains" 1 (Semaphore.available sem);
+  Alcotest.(check bool) "oversized acquire fails" false
+    (Semaphore.try_acquire sem 2);
+  Alcotest.(check int) "failed acquire did not decrement" 1
+    (Semaphore.available sem);
+  Alcotest.(check bool) "remaining permit succeeds" true
+    (Semaphore.try_acquire sem 1);
+  Alcotest.(check int) "empty" 0 (Semaphore.available sem)
+
 let test_semaphore_with_permits_releases_on_success () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:5 in
@@ -74,6 +92,21 @@ let test_semaphore_with_permits_releases_on_failure () =
   in
   let result = run_ok rt eff in
   Alcotest.(check string) "caught" "caught" result;
+  Alcotest.(check int) "available 5" 5 (Semaphore.available sem)
+
+let test_semaphore_with_permits_releases_on_defect () =
+  with_runtime @@ fun rt ->
+  let sem = Semaphore.make ~permits:5 in
+  (match
+     Runtime.run rt
+       (Semaphore.with_permits sem 3 (fun () ->
+            Effect.sync (fun () -> failwith "permit body defect")))
+   with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<sem>")) cause
+  | Exit.Ok _ -> Alcotest.fail "expected body defect");
   Alcotest.(check int) "available 5" 5 (Semaphore.available sem)
 
 let test_semaphore_with_permits_releases_on_timeout () =
@@ -120,6 +153,29 @@ let test_semaphore_cancellation_stress () =
   Test_clock.adjust clock (Duration.ms 10_000);
   List.iter (fun p -> ignore (Eio.Promise.await p : (unit, _) Exit.t)) holders;
   Alcotest.(check int) "final available" 8 (Semaphore.available sem)
+
+let test_semaphore_fifo_wakes_waiters_in_order () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sem = Semaphore.make ~permits:1 in
+  run_ok rt (Semaphore.acquire sem 1);
+  let completed = ref [] in
+  let waiter name =
+    Semaphore.acquire sem 1
+    |> Effect.bind (fun () ->
+           Effect.sync (fun () -> completed := name :: !completed))
+  in
+  let first = fork_run sw rt (waiter "first") in
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  let second = fork_run sw rt (waiter "second") in
+  wait_until (fun () -> Semaphore.waiting sem = 2);
+  Semaphore.release sem 1;
+  check_exit_ok Alcotest.unit "first woke" () (Eio.Promise.await first);
+  Alcotest.(check (list string)) "first only" [ "first" ] !completed;
+  Semaphore.release sem 1;
+  check_exit_ok Alcotest.unit "second woke" () (Eio.Promise.await second);
+  Alcotest.(check (list string)) "fifo order" [ "second"; "first" ] !completed
 
 let test_semaphore_cancel_after_wakeup_returns_permit () =
   run_eio @@ fun stdenv ->

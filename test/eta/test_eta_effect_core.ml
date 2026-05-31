@@ -2,6 +2,79 @@ open Eta
 open Eta_test
 open Test_eta_support
 
+module Counting_host_eio = struct
+  let switch_runs = Atomic.make 0
+  let active_switch = Atomic.make None
+
+  module Eio_ops = struct
+    module Time = struct
+      let now = Eio.Time.now
+      let sleep = Eio.Time.sleep
+    end
+
+    module Net = struct
+      let getaddrinfo_stream = Eio.Net.getaddrinfo_stream
+      let connect = Eio.Net.connect
+    end
+
+    module Flow = struct
+      let single_read = Eio.Flow.single_read
+      let write = Eio.Flow.write
+    end
+
+    module Switch = struct
+      let run ?name f =
+        ignore name;
+        Atomic.incr switch_runs;
+        match Atomic.get active_switch with
+        | Some sw -> f sw
+        | None -> invalid_arg "Counting_host_eio.Switch.run: no active switch"
+
+      let fail ?bt sw exn = Eio.Switch.fail ?bt sw exn
+    end
+
+    module Fiber = struct
+      let get _ = None
+      let with_binding _ _ f = f ()
+      let first ?combine left right = Eio.Fiber.first ?combine left right
+      let await_cancel = Eio.Fiber.await_cancel
+      let fork ~sw f = Eio.Fiber.fork ~sw f
+      let fork_daemon ~sw f = Eio.Fiber.fork_daemon ~sw f
+      let yield = Eio.Fiber.yield
+    end
+
+    module Cancel = struct
+      let sub = Eio.Cancel.sub
+      let cancel = Eio.Cancel.cancel
+    end
+  end
+
+  let with_host sw f =
+    Atomic.set switch_runs 0;
+    Atomic.set active_switch (Some sw);
+    Fun.protect
+      ~finally:(fun () -> Atomic.set active_switch None)
+      (fun () -> f (Host_eio.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()))
+end
+
+let run_in_system_thread f =
+  let result = ref None in
+  let thread =
+    Thread.create
+      (fun () ->
+        result :=
+          Some
+            (try Ok (f ())
+             with exn -> Error (exn, Printexc.get_raw_backtrace ())))
+      ()
+  in
+  Thread.join thread;
+  match !result with
+  | Some (Ok value) -> value
+  | Some (Error (exn, backtrace)) ->
+      Printexc.raise_with_backtrace exn backtrace
+  | None -> Alcotest.fail "system thread did not return a result"
+
 let test_pure () =
   with_runtime @@ fun rt ->
   Alcotest.(check int) "pure" 42 (run_ok rt (Effect.pure 42))
@@ -77,6 +150,34 @@ let test_effect_from_result () =
     (Runtime.run rt (Effect.from_result (Error "bad")))
     "bad"
 
+let test_exit_to_result_only_converts_success_and_single_typed_failure () =
+  Alcotest.(check (option (result int string)))
+    "success" (Some (Ok 1)) (Exit.to_result (Exit.Ok 1));
+  Alcotest.(check (option (result int string)))
+    "typed failure"
+    (Some (Error "bad"))
+    (Exit.to_result (Exit.Error (Cause.Fail "bad")));
+  Alcotest.(check (option (result int string)))
+    "defect" None
+    (Exit.to_result (Exit.Error (Cause.die (Failure "boom"))));
+  Alcotest.(check (option (result int string)))
+    "interrupt" None
+    (Exit.to_result (Exit.Error Cause.interrupt));
+  Alcotest.(check (option (result int string)))
+    "sequential" None
+    (Exit.to_result
+       (Exit.Error (Cause.sequential [ Cause.Fail "left"; Cause.Fail "right" ])));
+  Alcotest.(check (option (result int string)))
+    "concurrent" None
+    (Exit.to_result
+       (Exit.Error (Cause.concurrent [ Cause.Fail "left"; Cause.Fail "right" ])));
+  Alcotest.(check (option (result int string)))
+    "suppressed" None
+    (Exit.to_result
+       (Exit.Error
+          (Cause.suppressed ~primary:(Cause.Fail "body")
+             ~finalizer:(Cause.Fail "release"))))
+
 let test_effect_map_error_maps_full_cause () =
   with_runtime @@ fun rt ->
   let eff =
@@ -97,6 +198,64 @@ let test_effect_map_error_maps_full_cause () =
       Alcotest.failf "expected mapped suppressed cause, got %a"
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok () -> Alcotest.fail "expected mapped failure"
+
+let test_effect_map_error_preserves_defects_in_cause_tree () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () ->
+           Effect.sync (fun () -> failwith "release defect"))
+      |> Effect.bind (fun () -> Effect.fail `Body))
+    |> Effect.map_error (function `Body -> "body")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail "body"; finalizer = Cause.Die _ }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected mapped typed failure with preserved defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected suppressed defect"
+
+let test_effect_map_error_preserves_interrupts_in_cause_tree () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () ->
+           Effect.sync (fun () ->
+               raise (Eio.Cancel.Cancelled (Failure "release interrupt"))))
+      |> Effect.bind (fun () -> Effect.fail `Body))
+    |> Effect.map_error (function `Body -> "body")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail "body"; finalizer = Cause.Interrupt _ }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf
+        "expected mapped typed failure with preserved interrupt, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected suppressed interrupt"
+
+let test_effect_scoped_creates_switch_in_fiberless_host_run () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  Counting_host_eio.with_host sw @@ fun host ->
+  Runtime.with_host_eio host ~sw ~clock:(Eio.Stdenv.clock stdenv)
+  @@ fun rt ->
+  let before = Atomic.get Counting_host_eio.switch_runs in
+  let exit =
+    run_in_system_thread (fun () ->
+        Runtime.run rt (Effect.scoped Effect.unit))
+  in
+  check_exit_ok Alcotest.unit "scoped result" () exit;
+  Alcotest.(check int)
+    "fiberless scoped host switch runs" 1
+    (Atomic.get Counting_host_eio.switch_runs - before)
 
 let test_effect_syntax_operators () =
   with_runtime @@ fun rt ->
@@ -145,6 +304,21 @@ let test_effect_tap_error_observer_failure_preserves_typed_failure () =
         cause
   | Exit.Ok () -> Alcotest.fail "expected tap_error failure"
 
+let test_effect_tap_error_does_not_observe_defects () =
+  with_runtime @@ fun rt ->
+  let observed = ref false in
+  let eff =
+    Effect.sync (fun () -> failwith "body defect")
+    |> Effect.tap_error (fun (_ : string) -> observed := true)
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected defect");
+  Alcotest.(check bool) "observer not called" false !observed
+
 let test_effect_finally_success_and_failure () =
   with_runtime @@ fun rt ->
   let finalized = ref 0 in
@@ -172,6 +346,37 @@ let test_effect_finally_suppresses_cleanup_failure () =
       Alcotest.failf "expected suppressed cleanup failure, got %a"
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok () -> Alcotest.fail "expected suppressed failure"
+
+let test_effect_finally_runs_after_defect () =
+  with_runtime @@ fun rt ->
+  let cleaned = ref false in
+  let eff =
+    Effect.sync (fun () -> failwith "body defect")
+    |> Effect.finally (Effect.sync (fun () -> cleaned := true))
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected body defect");
+  Alcotest.(check bool) "cleaned" true !cleaned
+
+let test_effect_finally_suppresses_cleanup_failure_after_defect () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.sync (fun () -> failwith "body defect")
+    |> Effect.finally (Effect.fail "cleanup")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Die _; finalizer = Cause.Fail "cleanup" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed cleanup failure after defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected suppressed cleanup failure after defect"
 
 let test_effect_finally_runs_on_cancellation () =
   with_test_clock @@ fun sw clock rt ->
@@ -439,6 +644,82 @@ let test_effect_catch_does_not_catch_interrupt () =
   match Runtime.run rt eff with
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
+
+let test_effect_catch_preserves_suppressed_finalizer_defect () =
+  with_runtime @@ fun rt ->
+  let defect = Failure "cleanup defect" in
+  let eff =
+    Effect.fail "body"
+    |> Effect.finally (Effect.sync (fun () -> raise defect))
+    |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected finalizer defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok value -> Alcotest.failf "catch swallowed defect as %S" value
+
+let test_effect_catch_preserves_concurrent_defect () =
+  with_test_clock @@ fun sw _clock rt ->
+  let defect = Failure "concurrent defect" in
+  let go, release = Eio.Promise.create () in
+  let ready = Eio.Stream.create 2 in
+  let wait name =
+    Effect.sync (fun () ->
+        Eio.Stream.add ready name;
+        Eio.Promise.await go)
+  in
+  let typed = wait "typed" |> Effect.bind (fun () -> Effect.fail "typed") in
+  let die =
+    wait "die" |> Effect.bind (fun () ->
+      Effect.sync (fun () -> raise defect))
+  in
+  let eff =
+    Effect.all [ typed; die ]
+    |> Effect.catch (fun (_ : string) -> Effect.pure [ () ])
+  in
+  let promise = fork_run sw rt eff in
+  ignore (Eio.Stream.take ready : string);
+  ignore (Eio.Stream.take ready : string);
+  Eio.Promise.resolve release ();
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected concurrent defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent defect"
+
+let test_effect_catch_preserves_concurrent_interrupt () =
+  with_test_clock @@ fun sw _clock rt ->
+  let go, release = Eio.Promise.create () in
+  let ready = Eio.Stream.create 2 in
+  let wait name =
+    Effect.sync (fun () ->
+        Eio.Stream.add ready name;
+        Eio.Promise.await go)
+  in
+  let typed = wait "typed" |> Effect.bind (fun () -> Effect.fail "typed") in
+  let interrupt =
+    wait "interrupt"
+    |> Effect.bind (fun () ->
+           Effect.sync (fun () ->
+               raise (Eio.Cancel.Cancelled (Failure "cancel"))))
+  in
+  let eff =
+    Effect.all [ typed; interrupt ]
+    |> Effect.catch (fun (_ : string) -> Effect.pure [ () ])
+  in
+  let promise = fork_run sw rt eff in
+  ignore (Eio.Stream.take ready : string);
+  ignore (Eio.Stream.take ready : string);
+  Eio.Promise.resolve release ();
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Interrupt None) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected concurrent interrupt, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent interrupt"
 
 (* P0: Effect.catch is unsound for typed failures nested inside cause trees.
    When catch changes the error type from 'err1 to 'err2, any Suppressed or

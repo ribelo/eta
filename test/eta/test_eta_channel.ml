@@ -21,6 +21,16 @@ let test_channel_try_send_try_recv () =
   Alcotest.(check int) "sent" 1 stats.Channel.sent;
   Alcotest.(check int) "received" 1 stats.Channel.received
 
+let test_channel_fifo_send_recv () =
+  with_runtime @@ fun rt ->
+  let ch = Channel.create ~capacity:3 () in
+  run_ok rt (Channel.send ch 1);
+  run_ok rt (Channel.send ch 2);
+  run_ok rt (Channel.send ch 3);
+  Alcotest.(check int) "first" 1 (run_ok rt (Channel.recv ch));
+  Alcotest.(check int) "second" 2 (run_ok rt (Channel.recv ch));
+  Alcotest.(check int) "third" 3 (run_ok rt (Channel.recv ch))
+
 let test_channel_blocking_send_backpressure () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -100,6 +110,28 @@ let test_channel_close_with_error_drains_buffer () =
   match run_ok rt (Channel.try_send ch 2) with
   | `Closed_with_error `Boom -> ()
   | _ -> Alcotest.fail "expected try_send to see close_with_error"
+
+let test_channel_close_drains_buffer_then_reports_closed () =
+  with_runtime @@ fun rt ->
+  let ch = Channel.create ~capacity:2 () in
+  run_ok rt (Channel.send ch 1);
+  run_ok rt (Channel.send ch 2);
+  Channel.close ch;
+  Alcotest.(check int) "first buffered" 1 (run_ok rt (Channel.recv ch));
+  Alcotest.(check int) "second buffered" 2 (run_ok rt (Channel.recv ch));
+  (match Runtime.run rt (Channel.recv ch) with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected closed after buffered values drain"
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected close cause: %a"
+        (Cause.pp (fun fmt -> function
+          | `Closed -> Format.pp_print_string fmt "closed"
+          | `Closed_with_error _ ->
+              Format.pp_print_string fmt "closed_with_error"))
+        cause);
+  match run_ok rt (Channel.try_recv ch) with
+  | `Closed -> ()
+  | _ -> Alcotest.fail "expected try_recv to report closed after drain"
 
 let test_channel_cancel_blocked_send_cleans_waiter () =
   run_eio @@ fun stdenv ->

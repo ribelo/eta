@@ -128,6 +128,42 @@ let test_acquire_release_release_failure_after_success () =
   check_exit_error string_cause "release failure" (Cause.Fail "release")
     (Runtime.run rt eff)
 
+let test_acquire_release_releases_on_defect () =
+  with_runtime @@ fun rt ->
+  let released = ref false in
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.sync (fun () -> released := true))
+      |> Effect.bind (fun () -> Effect.sync (fun () -> failwith "body defect")))
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected body defect");
+  Alcotest.(check bool) "released" true !released
+
+let test_acquire_release_suppresses_release_failure_after_defect () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.fail "release")
+      |> Effect.bind (fun () -> Effect.sync (fun () -> failwith "body defect")))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Die _; finalizer = Cause.Fail "release" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed release failure after defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected suppressed release failure after defect"
+
 let test_acquire_use_release_success () =
   with_runtime @@ fun rt ->
   let trail = ref [] in
@@ -168,6 +204,42 @@ let test_acquire_use_release_typed_failure_releases () =
         cause
   | Exit.Ok _ -> Alcotest.fail "expected typed failure");
   Alcotest.(check bool) "released" true !released
+
+let test_acquire_use_release_defect_releases () =
+  with_runtime @@ fun rt ->
+  let released = ref false in
+  let eff =
+    Effect.scoped
+      (Effect.acquire_use_release ~acquire:(Effect.pure "resource")
+         ~release:(fun _ -> Effect.sync (fun () -> released := true))
+         (fun _ -> Effect.sync (fun () -> failwith "body defect")))
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected body defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok _ -> Alcotest.fail "expected body defect");
+  Alcotest.(check bool) "released" true !released
+
+let test_acquire_use_release_suppresses_release_failure_after_defect () =
+  with_runtime @@ fun rt ->
+  let eff =
+    Effect.scoped
+      (Effect.acquire_use_release ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.fail "release")
+         (fun () -> Effect.sync (fun () -> failwith "body defect")))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Die _; finalizer = Cause.Fail "release" }) ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed release failure after defect, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "expected suppressed release failure after defect"
 
 let test_acquire_use_release_releases_on_cancel () =
   with_test_clock @@ fun sw clock rt ->
@@ -398,6 +470,35 @@ let test_effect_timeout_as_maps_delayed_effect () =
         (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
         cause
   | Exit.Ok _ -> Alcotest.fail "expected typed timeout"
+
+let rec typed_timeout_cause_contains_body_failure = function
+  | Cause.Fail `Body -> true
+  | Cause.Fail (`Slow | `Inner | `Outer) | Cause.Die _ | Cause.Interrupt _ ->
+      false
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists typed_timeout_cause_contains_body_failure causes
+  | Cause.Suppressed { primary; finalizer } ->
+      typed_timeout_cause_contains_body_failure primary
+      || typed_timeout_cause_contains_body_failure finalizer
+
+let test_effect_timeout_as_preserves_simultaneous_body_failure () =
+  with_test_clock @@ fun sw clock rt ->
+  let eff : (unit, [ `Slow | `Body ]) Effect.t =
+    Effect.fail `Body
+    |> Effect.delay (Duration.seconds 5)
+    |> Effect.uninterruptible
+    |> Effect.timeout_as (Duration.seconds 5) ~on_timeout:`Slow
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Error cause ->
+      if not (typed_timeout_cause_contains_body_failure cause) then
+        Alcotest.failf "expected body failure in cause, got %a"
+          (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+          cause
+  | Exit.Ok _ -> Alcotest.fail "expected simultaneous timeout/body failure"
 
 let test_effect_timeout_as_nested_cancel_maps_to_outer_timeout () =
   with_test_clock @@ fun sw clock rt ->
