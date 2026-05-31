@@ -109,39 +109,8 @@ module Dsl = Eta_sql_dsl.Make (struct
   let module_name = "Eta_turso"
   let value_to_string = Value.to_string
 
-  let quote_text value =
-    let len = String.length value in
-    let extra_quotes = ref 0 in
-    for i = 0 to len - 1 do
-      if Char.equal (String.unsafe_get value i) '\'' then incr extra_quotes
-    done;
-    let out = Bytes.create (len + !extra_quotes + 2) in
-    Bytes.unsafe_set out 0 '\'';
-    let j = ref 1 in
-    for i = 0 to len - 1 do
-      let ch = String.unsafe_get value i in
-      Bytes.unsafe_set out !j ch;
-      incr j;
-      if Char.equal ch '\'' then (
-        Bytes.unsafe_set out !j '\'';
-        incr j)
-    done;
-    Bytes.unsafe_set out !j '\'';
-    Bytes.unsafe_to_string out
-
-  let quote_blob value =
-    let hex = "0123456789ABCDEF" in
-    let len = Bytes.length value in
-    let out = Bytes.create ((len * 2) + 3) in
-    Bytes.unsafe_set out 0 'X';
-    Bytes.unsafe_set out 1 '\'';
-    for i = 0 to len - 1 do
-      let byte = Char.code (Bytes.unsafe_get value i) in
-      Bytes.unsafe_set out ((i * 2) + 2) (String.unsafe_get hex (byte lsr 4));
-      Bytes.unsafe_set out ((i * 2) + 3) (String.unsafe_get hex (byte land 0xF))
-    done;
-    Bytes.unsafe_set out ((len * 2) + 2) '\'';
-    Bytes.unsafe_to_string out
+  let quote_text = Eta_sql_dsl.quote_text
+  let quote_blob = Eta_sql_dsl.quote_blob
 
   let value_to_sql_literal = function
     | Value.Null -> "NULL"
@@ -159,6 +128,7 @@ type ('table, 'a) column = ('table, 'a) Dsl.column
 type param = Dsl.param = Param : 'a typ * 'a -> param
 
 module Compiled = Dsl.Compiled
+module Numeric = Dsl.Numeric
 module Table = Dsl.Table
 module Column = Dsl.Column
 module Expr = Dsl.Expr

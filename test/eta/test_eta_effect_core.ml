@@ -176,14 +176,15 @@ let test_exit_to_result_only_converts_success_and_single_typed_failure () =
     (Exit.to_result
        (Exit.Error
           (Cause.suppressed ~primary:(Cause.Fail "body")
-             ~finalizer:(Cause.Fail "release"))))
+             ~finalizer:(Cause.Finalizer.Fail "release"))))
 
 let test_effect_map_error_maps_full_cause () =
   with_runtime @@ fun rt ->
   let eff =
     Effect.scoped
       (Effect.acquire_release ~acquire:Effect.unit
-         ~release:(fun () -> Effect.fail `Release)
+         ~release:(fun () ->
+           Effect.fail `Release)
       |> Effect.bind (fun () -> Effect.fail `Body))
     |> Effect.map_error (function
          | `Body -> "body"
@@ -192,7 +193,10 @@ let test_effect_map_error_maps_full_cause () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Fail "body"; finalizer = Cause.Fail "release" }) ->
+        {
+          primary = Cause.Fail "body";
+          finalizer = Cause.Finalizer.Fail "<typed failure>";
+        }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected mapped suppressed cause, got %a"
@@ -212,7 +216,7 @@ let test_effect_map_error_preserves_defects_in_cause_tree () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Fail "body"; finalizer = Cause.Die _ }) ->
+        { primary = Cause.Fail "body"; finalizer = Cause.Finalizer.Die _ }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected mapped typed failure with preserved defect, got %a"
@@ -233,7 +237,7 @@ let test_effect_map_error_preserves_interrupts_in_cause_tree () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Fail "body"; finalizer = Cause.Interrupt _ }) ->
+        { primary = Cause.Fail "body"; finalizer = Cause.Finalizer.Interrupt _ }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf
@@ -292,7 +296,7 @@ let test_effect_tap_error_observer_failure_preserves_typed_failure () =
       (Cause.Suppressed
         {
           primary = Cause.Fail `My_error;
-          finalizer = Cause.Die { exn; _ };
+          finalizer = Cause.Finalizer.Die { exn; _ };
         }) ->
       Alcotest.(check string)
         "observer defect" "Failure(\"observer crash\")"
@@ -331,16 +335,31 @@ let test_effect_finally_success_and_failure () =
 
 let test_effect_finally_cleanup_failure_after_success () =
   with_runtime @@ fun rt ->
-  let eff = Effect.pure 42 |> Effect.finally (Effect.fail "cleanup") in
-  Expect.expect_typed_failure_eq Alcotest.string (Runtime.run rt eff) "cleanup"
+  let eff =
+    Effect.pure 42
+    |> Effect.finally (Effect.fail "cleanup")
+    |> Effect.catch (fun (_ : string) -> Effect.pure 0)
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected finalizer cleanup failure, got %a"
+        (Cause.pp Format.pp_print_string) cause
+  | Exit.Ok _ -> Alcotest.fail "catch erased cleanup failure after success"
 
 let test_effect_finally_suppresses_cleanup_failure () =
   with_runtime @@ fun rt ->
-  let eff = Effect.fail "body" |> Effect.finally (Effect.fail "cleanup") in
+  let eff =
+    Effect.fail "body"
+    |> Effect.finally (Effect.fail "cleanup")
+  in
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Fail "body"; finalizer = Cause.Fail "cleanup" }) ->
+        {
+          primary = Cause.Fail "body";
+          finalizer = Cause.Finalizer.Fail "<typed failure>";
+        }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected suppressed cleanup failure, got %a"
@@ -371,7 +390,7 @@ let test_effect_finally_suppresses_cleanup_failure_after_defect () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Die _; finalizer = Cause.Fail "cleanup" }) ->
+        { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail "<typed failure>" }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected suppressed cleanup failure after defect, got %a"
@@ -393,22 +412,21 @@ let test_effect_finally_runs_on_cancellation () =
   check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
   Alcotest.(check bool) "cleanup ran" true !finalized
 
-let test_effect_catch_recovers_first_typed_failure_in_suppressed_cause () =
+let test_effect_catch_preserves_suppressed_finalizer_failure () =
   with_runtime @@ fun rt ->
   let eff =
     Effect.fail `Body
-    |> Effect.finally (Effect.fail `Cleanup)
-    |> Effect.catch (function
-         | `Body -> Effect.pure `Caught
-         | `Cleanup -> Effect.pure `Caught_cleanup)
+    |> Effect.finally
+         (Effect.fail `Cleanup)
+    |> Effect.catch (function `Body -> Effect.pure `Caught)
   in
   match Runtime.run rt eff with
-  | Exit.Ok `Caught ->
+  | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
       ()
-  | Exit.Ok `Caught_cleanup ->
-      Alcotest.fail "catch should recover the primary typed failure first"
+  | Exit.Ok `Caught ->
+      Alcotest.fail "catch erased the finalizer typed failure"
   | Exit.Error cause ->
-      Alcotest.failf "expected catch to recover suppressed typed failure, got %a"
+      Alcotest.failf "expected finalizer typed failure to remain, got %a"
         (Cause.pp (fun fmt -> function
           | `Body -> Format.pp_print_string fmt "body"
           | `Cleanup -> Format.pp_print_string fmt "cleanup"))
@@ -479,15 +497,16 @@ let test_cause_to_portable_materializes_diagnostics () =
   let raw =
     Cause.suppressed ~primary:(Cause.fail "typed")
       ~finalizer:
-        (Cause.die_with_diagnostics ~backtrace ~span_name:"release"
-           ~annotations:[ ("phase", "release") ] (Failure "boom"))
+        (Cause.finalizer_of_cause Fun.id
+           (Cause.die_with_diagnostics ~backtrace ~span_name:"release"
+              ~annotations:[ ("phase", "release") ] (Failure "boom")))
   in
   match Cause.to_portable Fun.id raw with
   | Cause.Portable.Suppressed
       {
         primary = Cause.Portable.Fail "typed";
         finalizer =
-          Cause.Portable.Die
+          Cause.Portable.Finalizer.Die
             {
               message = "Failure(\"boom\")";
               backtrace = Some stack;
@@ -620,7 +639,10 @@ let test_runtime_finalizer_die_captures_diagnostics () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Die primary; finalizer = Cause.Die finalizer }) ->
+        {
+          primary = Cause.Die primary;
+          finalizer = Cause.Finalizer.Die finalizer;
+        }) ->
       Alcotest.(check bool) "primary exn" true (primary.exn == body_exn);
       Alcotest.(check (option string)) "primary span" (Some "body.leaf")
         primary.span_name;
@@ -654,7 +676,9 @@ let test_effect_catch_preserves_suppressed_finalizer_defect () =
     |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
   in
   match Runtime.run rt eff with
-  | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+  | Exit.Error (Cause.Finalizer (Cause.Finalizer.Die { exn; _ }))
+    when exn == defect ->
+      ()
   | Exit.Error cause ->
       Alcotest.failf "expected finalizer defect, got %a"
         (Cause.pp Format.pp_print_string) cause
@@ -770,7 +794,8 @@ let test_effect_catch_unsound_suppressed_typed_failure () =
          - Or return the cause as-is but with the ORIGINAL type preserved *)
       let has_old_err_in_cause =
         match cause with
-        | Cause.Suppressed { primary = Cause.Fail _; finalizer = Cause.Fail _ } ->
+        | Cause.Suppressed
+            { primary = Cause.Fail _; finalizer = Cause.Finalizer.Fail _ } ->
             (* These Fail values are typed as the NEW error type but physically
                contain OLD error values. The mere fact that we got here with
                Suppressed { Fail; Fail } after catch changed the type proves

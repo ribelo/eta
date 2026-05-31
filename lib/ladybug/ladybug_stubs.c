@@ -157,8 +157,9 @@ static int load_api(void)
 
   const char *env = getenv("ETA_LADYBUG_LIBRARY");
   const char *candidates[] = { env, "liblbug.so", "libladybug.so", "liblbug.dylib", NULL };
-  for (int i = 0; candidates[i] != NULL; i++) {
-    if (candidates[i][0] == '\0') continue;
+  size_t candidate_count = sizeof(candidates) / sizeof(candidates[0]);
+  for (size_t i = 0; i < candidate_count; i++) {
+    if (candidates[i] == NULL || candidates[i][0] == '\0') continue;
     api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_GLOBAL);
     if (api.handle != NULL) break;
   }
@@ -221,7 +222,55 @@ static void fail_last(const char *operation)
   caml_failwith(buffer);
 }
 
-static lbug_value *create_lbug_value(value v);
+typedef struct string_copy {
+  char *value;
+  struct string_copy *next;
+} string_copy;
+
+typedef struct {
+  string_copy *head;
+} string_copies;
+
+static void string_copies_free(string_copies *copies)
+{
+  string_copy *cur = copies->head;
+  while (cur != NULL) {
+    string_copy *next = cur->next;
+    caml_stat_free(cur->value);
+    free(cur);
+    cur = next;
+  }
+  copies->head = NULL;
+}
+
+static int string_copies_add(string_copies *copies, const char *source, const char **out)
+{
+  char *copy = caml_stat_strdup(source == NULL ? "" : source);
+  string_copy *node;
+  if (copy == NULL) return 0;
+  node = malloc(sizeof(*node));
+  if (node == NULL) {
+    caml_stat_free(copy);
+    return 0;
+  }
+  node->value = copy;
+  node->next = copies->head;
+  copies->head = node;
+  *out = copy;
+  return 1;
+}
+
+static void fail_last_with_copies(const char *operation, string_copies *copies)
+{
+  char *err = api.get_last_error();
+  char buffer[1024];
+  snprintf(buffer, sizeof(buffer), "%s: %s", operation, err == NULL ? "unknown" : err);
+  if (err != NULL) api.destroy_string(err);
+  string_copies_free(copies);
+  caml_failwith(buffer);
+}
+
+static lbug_value *create_lbug_value(value v, string_copies *copies);
 
 static void destroy_lbug_values(lbug_value **values, uint64_t count)
 {
@@ -232,7 +281,7 @@ static void destroy_lbug_values(lbug_value **values, uint64_t count)
   free(values);
 }
 
-static lbug_value *create_lbug_list(value values)
+static lbug_value *create_lbug_list(value values, string_copies *copies)
 {
   uint64_t count = 0;
   for (value cur = values; cur != Val_emptylist; cur = Field(cur, 1)) count++;
@@ -240,7 +289,7 @@ static lbug_value *create_lbug_list(value values)
   if (items == NULL) return NULL;
   uint64_t i = 0;
   for (value cur = values; cur != Val_emptylist; cur = Field(cur, 1)) {
-    items[i] = create_lbug_value(Field(cur, 0));
+    items[i] = create_lbug_value(Field(cur, 0), copies);
     if (items[i] == NULL) {
       destroy_lbug_values(items, i);
       return NULL;
@@ -256,7 +305,7 @@ static lbug_value *create_lbug_list(value values)
   return list;
 }
 
-static lbug_value *create_lbug_map(value fields)
+static lbug_value *create_lbug_map(value fields, string_copies *copies)
 {
   uint64_t count = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) count++;
@@ -270,8 +319,14 @@ static lbug_value *create_lbug_map(value fields)
   uint64_t i = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) {
     value pair = Field(cur, 0);
-    keys[i] = api.value_create_string(String_val(Field(pair, 0)));
-    vals[i] = create_lbug_value(Field(pair, 1));
+    const char *key;
+    if (!string_copies_add(copies, String_val(Field(pair, 0)), &key)) {
+      destroy_lbug_values(keys, i);
+      destroy_lbug_values(vals, i);
+      return NULL;
+    }
+    keys[i] = api.value_create_string(key);
+    vals[i] = create_lbug_value(Field(pair, 1), copies);
     if (keys[i] == NULL || vals[i] == NULL) {
       /* destroy_lbug_values frees the array too */
       if (vals[i] == NULL && keys[i] != NULL) api.value_destroy(keys[i]);
@@ -292,7 +347,7 @@ static lbug_value *create_lbug_map(value fields)
   return map;
 }
 
-static lbug_value *create_lbug_struct(value fields)
+static lbug_value *create_lbug_struct(value fields, string_copies *copies)
 {
   uint64_t count = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) count++;
@@ -306,8 +361,12 @@ static lbug_value *create_lbug_struct(value fields)
   uint64_t i = 0;
   for (value cur = fields; cur != Val_emptylist; cur = Field(cur, 1)) {
     value pair = Field(cur, 0);
-    names[i] = String_val(Field(pair, 0));
-    vals[i] = create_lbug_value(Field(pair, 1));
+    if (!string_copies_add(copies, String_val(Field(pair, 0)), &names[i])) {
+      destroy_lbug_values(vals, i);
+      free(names);
+      return NULL;
+    }
+    vals[i] = create_lbug_value(Field(pair, 1), copies);
     if (vals[i] == NULL) {
       destroy_lbug_values(vals, i);
       free(names);
@@ -326,7 +385,7 @@ static lbug_value *create_lbug_struct(value fields)
   return struct_;
 }
 
-static lbug_value *create_lbug_value(value v)
+static lbug_value *create_lbug_value(value v, string_copies *copies)
 {
   if (Is_long(v)) return api.value_create_null();
   switch (Tag_val(v)) {
@@ -336,14 +395,17 @@ static lbug_value *create_lbug_value(value v)
     return api.value_create_int64(Int64_val(Field(v, 0)));
   case 2:
     return api.value_create_double(Double_val(Field(v, 0)));
-  case 3:
-    return api.value_create_string(String_val(Field(v, 0)));
+  case 3: {
+    const char *text;
+    if (!string_copies_add(copies, String_val(Field(v, 0)), &text)) return NULL;
+    return api.value_create_string(text);
+  }
   case 4:
-    return create_lbug_list(Field(v, 0));
+    return create_lbug_list(Field(v, 0), copies);
   case 5:
-    return create_lbug_map(Field(v, 0));
+    return create_lbug_map(Field(v, 0), copies);
   case 6:
-    return create_lbug_struct(Field(v, 0));
+    return create_lbug_struct(Field(v, 0), copies);
   default:
     return NULL; /* unsupported type; caller handles the error */
   }
@@ -423,11 +485,12 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
   CAMLreturn(Val_unit);
 }
 
-static int bind_param(lbug_prepared_statement *stmt, value pair)
+static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *copies)
 {
-  const char *name = String_val(Field(pair, 0));
+  const char *name;
   value v = Field(pair, 1);
   lbug_state state = LbugError;
+  if (!string_copies_add(copies, String_val(Field(pair, 0)), &name)) return -2;
   if (Is_long(v)) {
     lbug_value *null_value = api.value_create_null();
     state = api.prepared_statement_bind_value(stmt, name, null_value);
@@ -437,11 +500,16 @@ static int bind_param(lbug_prepared_statement *stmt, value pair)
     case 0: state = api.prepared_statement_bind_bool(stmt, name, Bool_val(Field(v, 0))); break;
     case 1: state = api.prepared_statement_bind_int64(stmt, name, Int64_val(Field(v, 0))); break;
     case 2: state = api.prepared_statement_bind_double(stmt, name, Double_val(Field(v, 0))); break;
-    case 3: state = api.prepared_statement_bind_string(stmt, name, String_val(Field(v, 0))); break;
+    case 3: {
+      const char *text;
+      if (!string_copies_add(copies, String_val(Field(v, 0)), &text)) return -2;
+      state = api.prepared_statement_bind_string(stmt, name, text);
+      break;
+    }
     case 4:
     case 5:
     case 6: {
-      lbug_value *nested = create_lbug_value(v);
+      lbug_value *nested = create_lbug_value(v, copies);
       if (nested == NULL) return -2; /* create_lbug_value failed */
       state = api.prepared_statement_bind_value(stmt, name, nested);
       api.value_destroy(nested);
@@ -733,33 +801,39 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
   CAMLlocal1(out);
   lbug_prepared_statement stmt;
   lbug_query_result result;
+  string_copies copies = { NULL };
+  const char *cypher_copy;
+  lbug_state state;
   stmt.ptr = NULL;
   stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
-  if (api.connection_prepare(conn, cypher, &stmt) != LbugSuccess) fail_last("prepare");
+  if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
+  if (api.connection_prepare(conn, cypher_copy, &stmt) != LbugSuccess)
+    fail_last_with_copies("prepare", &copies);
   if (!api.prepared_statement_is_success(&stmt)) {
     char *err = api.prepared_statement_get_error_message(&stmt);
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "prepare failed" : err);
     if (err != NULL) api.destroy_string(err);
     api.prepared_statement_destroy(&stmt);
+    string_copies_free(&copies);
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    if (bind_param(&stmt, Field(params, 0)) != 0) {
+    if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
       api.prepared_statement_destroy(&stmt);
+      string_copies_free(&copies);
       caml_failwith("LadybugDB bind failed");
     }
     params = Field(params, 1);
   }
-  lbug_state state;
   caml_enter_blocking_section();
   state = api.connection_execute(conn, &stmt, &result);
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
-    fail_last("execute");
+    fail_last_with_copies("execute", &copies);
   }
   if (!api.query_result_is_success(&result)) {
     char *err = api.query_result_get_error_message(&result);
@@ -768,11 +842,13 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
     if (err != NULL) api.destroy_string(err);
     api.query_result_destroy(&result);
     api.prepared_statement_destroy(&stmt);
+    string_copies_free(&copies);
     caml_failwith(buffer);
   }
   out = result_to_string(&result);
   api.query_result_destroy(&result);
   api.prepared_statement_destroy(&stmt);
+  string_copies_free(&copies);
   CAMLreturn(out);
 }
 
@@ -818,33 +894,39 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
   CAMLlocal1(out);
   lbug_prepared_statement stmt;
   lbug_query_result result;
+  string_copies copies = { NULL };
+  const char *cypher_copy;
+  lbug_state state;
   stmt.ptr = NULL;
   stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
-  if (api.connection_prepare(conn, cypher, &stmt) != LbugSuccess) fail_last("prepare");
+  if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
+  if (api.connection_prepare(conn, cypher_copy, &stmt) != LbugSuccess)
+    fail_last_with_copies("prepare", &copies);
   if (!api.prepared_statement_is_success(&stmt)) {
     char *err = api.prepared_statement_get_error_message(&stmt);
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "prepare failed" : err);
     if (err != NULL) api.destroy_string(err);
     api.prepared_statement_destroy(&stmt);
+    string_copies_free(&copies);
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    if (bind_param(&stmt, Field(params, 0)) != 0) {
+    if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
       api.prepared_statement_destroy(&stmt);
+      string_copies_free(&copies);
       caml_failwith("LadybugDB bind failed");
     }
     params = Field(params, 1);
   }
-  lbug_state state;
   caml_enter_blocking_section();
   state = api.connection_execute(conn, &stmt, &result);
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
-    fail_last("execute");
+    fail_last_with_copies("execute", &copies);
   }
   if (!api.query_result_is_success(&result)) {
     char *err = api.query_result_get_error_message(&result);
@@ -853,11 +935,13 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
     if (err != NULL) api.destroy_string(err);
     api.query_result_destroy(&result);
     api.prepared_statement_destroy(&stmt);
+    string_copies_free(&copies);
     caml_failwith(buffer);
   }
   out = materialize_arrow_rows(&result);
   api.query_result_destroy(&result);
   api.prepared_statement_destroy(&stmt);
+  string_copies_free(&copies);
   CAMLreturn(out);
 }
 

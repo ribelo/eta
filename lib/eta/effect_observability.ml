@@ -82,9 +82,10 @@ let rec iter_cause_fail f = function
   | Cause.Die _ | Cause.Interrupt _ -> ()
   | Cause.Sequential causes | Cause.Concurrent causes ->
       List.iter (iter_cause_fail f) causes
+  | Cause.Finalizer _ -> ()
   | Cause.Suppressed { primary; finalizer } ->
       iter_cause_fail f primary;
-      iter_cause_fail f finalizer
+      ignore finalizer
 
 let with_result_attrs ~ok_attrs ~err_attrs effect =
   preserve effect @@ fun () ->
@@ -105,7 +106,9 @@ let with_result_attrs ~ok_attrs ~err_attrs effect =
         let finalizer =
           Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
         in
-        error (Cause.suppressed ~primary:cause ~finalizer))
+        error
+          (Cause.suppressed ~primary:cause
+             ~finalizer:(render_cause_error frame finalizer)))
 
 let link_span ?(attrs = []) ~trace_id ~span_id effect =
   preserve effect @@ fun () ->

@@ -5,40 +5,65 @@
 open Effect_core
 
 let run_child frame sw effect =
-  let child_frame = { frame with sw } in
-  frame.runtime.tracer#with_fiber_context @@ fun () -> run_to_exit child_frame effect
+  let finalizers = ref [] in
+  let child_frame = { frame with sw; finalizers } in
+  frame.runtime.tracer#with_fiber_context @@ fun () ->
+  try
+    ok
+      (Runtime_core.with_finalizers ~runtime:frame.runtime
+         ~fail_key:frame.fail_key ~error_renderer:child_frame.error_renderer
+         finalizers (fun () ->
+           run_to_value child_frame effect))
+  with exn -> exit_of_exn child_frame exn
+
+let atomic_push cell value =
+  let rec loop () =
+    let values = Atomic.get cell in
+    if not (Atomic.compare_and_set cell values (value :: values)) then loop ()
+  in
+  loop ()
+
+let missing_result name index =
+  failwith (Printf.sprintf "%s: child %d did not publish a result" name index)
+
+let collect_results name results =
+  Array.to_list
+    (Array.mapi
+       (fun index -> function
+         | Some value -> value
+         | None -> missing_result name index)
+       results)
 
 (** Run side-effecting forks under one switch and aggregate child causes. *)
 let par_run_forks frame ~forks ~assemble =
-  let causes = ref [] in
+  let causes = Atomic.make [] in
   let exception Stop in
   (try
      switch_run frame @@ fun par_sw ->
      List.iter
-       (fun fork ->
+      (fun fork ->
          fiber_fork frame ~sw:par_sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
-             try fork ()
+             try fork par_sw
              with exn ->
                let cause =
                  Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
                in
-               causes := cause :: !causes;
+               atomic_push causes cause;
                (try switch_fail frame par_sw Stop with _ -> ())))
        forks
    with Stop -> ());
-  match List.rev !causes with
+  match List.rev (Atomic.get causes) with
   | [] -> ok (assemble ())
   | causes -> error (Cause.concurrent causes)
 
-let par_collect frame tasks =
+let par_collect frame ~name tasks =
   let n = List.length tasks in
   let results = Array.make n None in
   let forks =
-    List.mapi (fun index task () -> results.(index) <- Some (task ())) tasks
+    List.mapi (fun index task sw -> results.(index) <- Some (task sw)) tasks
   in
-  par_run_forks frame ~forks
-    ~assemble:(fun () -> Array.to_list results |> List.map Option.get)
+  par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
 let race_eval effects () =
   let frame = current_frame () in
@@ -82,8 +107,12 @@ let par_pair frame left right =
   par_run_forks frame
     ~forks:
       [
-        (fun () -> Eio.Promise.resolve left_resolver (run_to_value frame left));
-        (fun () -> Eio.Promise.resolve right_resolver (run_to_value frame right));
+        (fun sw ->
+          Eio.Promise.resolve left_resolver
+            (exit_to_value frame (run_child frame sw left)));
+        (fun sw ->
+          Eio.Promise.resolve right_resolver
+            (exit_to_value frame (run_child frame sw right)));
       ]
     ~assemble:(fun () ->
       {
@@ -101,7 +130,10 @@ let par left right = make ~names:(left.names @ right.names) (par_eval left right
 
 let all_eval effects () =
   let frame = current_frame () in
-  par_collect frame (List.map (fun effect () -> run_to_value frame effect) effects)
+  par_collect frame ~name:"Effect.all"
+    (List.map
+       (fun effect sw -> exit_to_value frame (run_child frame sw effect))
+       effects)
 
 let all effects = make ~names:(concat_names effects) (all_eval effects)
 
@@ -118,7 +150,7 @@ let all_settled_eval effects () =
                   | Exit.Ok value -> Ok value
                   | Exit.Error cause -> Error cause)))
         effects);
-  ok (Array.to_list results |> List.map Option.get)
+  ok (collect_results "Effect.all_settled" results)
 
 let all_settled effects =
   make ~names:(concat_names effects) (all_settled_eval effects)
@@ -127,27 +159,22 @@ let all_settled effects =
     the next task off [tasks] until the index reaches [n]. Wrapping the worker
     body in [with_frame] is required because each [task.eval ()] call uses
     [current_frame ()] internally. *)
-let for_each_par_workers frame ~workers ~tasks ~n =
+let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
-  let run_task effect =
-    exit_to_value frame
-      (try effect.eval () with exn -> exit_of_exn frame exn)
-  in
-  let worker () =
-    with_frame frame @@ fun () ->
+  let run_task sw effect = exit_to_value frame (run_child frame sw effect) in
+  let worker sw =
     let rec loop () =
       let i = P_atomic.fetch_and_add next 1 in
       if i < n then begin
-        results.(i) <- Some (run_task (Array.unsafe_get tasks i));
+        results.(i) <- Some (run_task sw (Array.unsafe_get tasks i));
         loop ()
       end
     in
     loop ()
   in
   let forks = List.init workers (fun _ -> worker) in
-  par_run_forks frame ~forks
-    ~assemble:(fun () -> Array.to_list results |> List.map Option.get)
+  par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
 let for_each_par xs f =
   let n = List.length xs in
@@ -156,7 +183,7 @@ let for_each_par xs f =
   make @@ fun () ->
   let frame = current_frame () in
   let workers = min n 8 in
-  for_each_par_workers frame ~workers ~tasks ~n
+  for_each_par_workers frame ~name:"Effect.for_each_par" ~workers ~tasks ~n
 
 let for_each_par_bounded ~max xs f =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
@@ -166,4 +193,5 @@ let for_each_par_bounded ~max xs f =
   make @@ fun () ->
   let frame = current_frame () in
   let workers = min max n in
-  for_each_par_workers frame ~workers ~tasks ~n
+  for_each_par_workers frame ~name:"Effect.for_each_par_bounded" ~workers
+    ~tasks ~n

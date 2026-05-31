@@ -1,5 +1,47 @@
 open Test_eta_http_support
 
+let read_file path =
+  let input = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input)
+    (fun () -> really_input_string input (in_channel_length input))
+
+let rec find_sub_from haystack ~needle index =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  if index + needle_len > haystack_len then None
+  else if String.sub haystack index needle_len = needle then Some index
+  else find_sub_from haystack ~needle (index + 1)
+
+let find_sub haystack ~needle = find_sub_from haystack ~needle 0
+
+let find_tls_eio_source () =
+  let candidates =
+    [
+      "lib/http/tls/tls_eio.ml";
+      "../lib/http/tls/tls_eio.ml";
+      "../../lib/http/tls/tls_eio.ml";
+      "../../../lib/http/tls/tls_eio.ml";
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate tls_eio.ml from %s" (Sys.getcwd ())
+
+let do_handshake_source source =
+  let start_markers = [ "let do_handshake t ="; "let rec do_handshake t =" ] in
+  let end_marker = "let close t =" in
+  match
+    List.find_map
+      (fun marker -> find_sub source ~needle:marker)
+      start_markers
+  with
+  | None -> Alcotest.fail "missing do_handshake definition"
+  | Some start -> (
+      match find_sub_from source ~needle:end_marker start with
+      | None -> Alcotest.fail "missing do_handshake end marker"
+      | Some finish -> String.sub source start (finish - start))
+
 let test_tls_chokepoint_policy () =
   let client = Eta_http.Tls.Config.default_client () in
   Alcotest.(check bool)
@@ -28,3 +70,15 @@ let test_openssl_ssl_finalizer_keeps_ctx_ownership_separate () =
   exercise_shared_ctx ();
   Gc.full_major ();
   Gc.full_major ()
+
+let test_tls_handshake_enters_ssl_mutex_before_openssl () =
+  let source = read_file (find_tls_eio_source ()) in
+  let body = do_handshake_source source in
+  let guard = "with_ssl t (fun () ->" in
+  let handshake = "Openssl.handshake t.ssl" in
+  match (find_sub body ~needle:guard, find_sub body ~needle:handshake) with
+  | Some guard_pos, Some handshake_pos ->
+      Alcotest.(check bool)
+        "mutex guard precedes handshake" true (guard_pos < handshake_pos)
+  | None, _ -> Alcotest.fail "do_handshake does not enter ssl_mutex"
+  | _, None -> Alcotest.fail "do_handshake does not call OpenSSL handshake"

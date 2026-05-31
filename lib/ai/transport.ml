@@ -38,6 +38,29 @@ let embeddings_request provider ~api_key request =
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok raw -> provider_embeddings_request provider api_key raw
 
+let request_from_raw raw build =
+  match raw with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> Stdlib.Ok (build raw)
+
+let post_request provider ~path ~api_key encode request =
+  request_from_raw (encode request)
+    (provider_post_request provider ~path api_key)
+
+let get_request provider ~path ~api_key =
+  Stdlib.Ok (provider_get_request provider ~path api_key)
+
+let chat_request_from_raw provider ~api_key raw =
+  request_from_raw raw (provider_request provider api_key)
+
+let chat_request provider ~api_key encode request =
+  chat_request_from_raw provider ~api_key (encode request)
+
+let embeddings_request_with provider ~api_key encode request =
+  match encode request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> provider_embeddings_request provider api_key raw
+
 let read_response_body ?max_bytes body =
   Eta_http.Body.Stream.read_all ?max_bytes body
   |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
@@ -48,6 +71,11 @@ let read_response_text ?max_bytes body =
 let result_effect = function
   | Stdlib.Ok value -> Eta.Effect.pure value
   | Stdlib.Error error -> Eta.Effect.fail error
+
+let run_request request perform =
+  match request with
+  | Stdlib.Error error -> Eta.Effect.fail error
+  | Stdlib.Ok http_request -> perform http_request
 
 let submit_request client request =
   Eta_http.request client request
@@ -133,3 +161,32 @@ let perform_stream provider client request =
                     (provider.decode_error ~status:response.status
                        ~headers:response.headers raw)))
 
+let run_chat_request provider client chat_request request =
+  run_request request (fun http_request ->
+      Observability.with_chat_span provider chat_request
+        (perform_chat provider client http_request))
+
+let run_stream_request provider client chat_request request =
+  run_request request (fun http_request ->
+      Observability.with_stream_span provider chat_request
+        (perform_stream provider client http_request))
+
+let run_embeddings_request provider client embedding_request request =
+  run_request request (fun http_request ->
+      Observability.with_embeddings_span provider embedding_request
+        (perform_embeddings provider client http_request))
+
+let decode_effect decode raw =
+  match decode raw with
+  | Stdlib.Ok response -> Eta.Effect.pure response
+  | Stdlib.Error error -> Eta.Effect.fail error
+
+let run_raw_decoded provider client request decode =
+  run_request request (fun http_request ->
+      perform_raw provider client http_request
+      |> Eta.Effect.bind (decode_effect decode))
+
+let run_binary_decoded ?max_bytes provider client request decode =
+  run_request request (fun http_request ->
+      perform_binary ?max_bytes provider client http_request
+      |> Eta.Effect.map decode)

@@ -37,6 +37,7 @@ module Row = Row
 
 (* DSL modules. *)
 module Compiled = Dsl.Compiled
+module Numeric = Dsl.Numeric
 module Table = Dsl.Table
 module Column = Dsl.Column
 module Expr = Dsl.Expr

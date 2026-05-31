@@ -404,7 +404,7 @@ let test_par_finalizer_failure_during_sibling_cancellation () =
       check_string_cause_contains "body failure observed" "body" cause;
       check_suppressed_finalizer
         "cancelled sibling release failure is suppressed under interrupt"
-        "release" cause;
+        "<typed failure>" cause;
       Alcotest.(check bool)
         "cancelled sibling finalizer ran before par returned" true !release_started
 
@@ -436,7 +436,7 @@ let test_all_finalizer_failure_during_sibling_cancellation_baseline () =
       check_string_cause_contains "body failure observed" "body" cause;
       check_suppressed_finalizer
         "cancelled sibling release failure is suppressed under interrupt"
-        "release" cause;
+        "<typed failure>" cause;
       Alcotest.(check bool)
         "cancelled sibling finalizer ran before all returned" true !release_started
 
@@ -497,7 +497,7 @@ let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
       check_string_cause_contains "body failure observed" "body" cause;
       check_suppressed_finalizer
         "cancelled sibling release failure is suppressed under interrupt"
-        "release" cause;
+        "<typed failure>" cause;
       Alcotest.(check bool)
         "cancelled sibling finalizer ran before for_each_par returned" true
         !release_started

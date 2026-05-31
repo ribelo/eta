@@ -43,6 +43,8 @@ open Dsl_backend
       ~on_cancel:(fun () -> Connection.interrupt conn)
       ~timeout ~on_timeout:`Timeout (map_duckdb_result f)
 
+  let with_connection_internal t f = Eta.Pool.with_resource t.pool f |> public
+
   let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
       ?max_lifetime config =
     blocking_result ?blocking_pool ~name:"duckdb.open" (fun () ->
@@ -66,52 +68,47 @@ open Dsl_backend
     |> public
 
   let with_connection t f =
-    Eta.Pool.with_resource t.pool (fun conn ->
+    with_connection_internal t (fun conn ->
         f conn |> Eta.Effect.map_error to_raw_error)
-    |> public
 
   let query ?blocking_pool ~timeout t sql params =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"duckdb.query"
-          (fun () -> Connection.query conn sql params)
-        |> public)
+          (fun () -> Connection.query conn sql params))
 
   let select ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"duckdb.select"
-          (fun () -> Connection.select conn query)
-        |> public)
+          (fun () -> Connection.select conn query))
 
   let returning ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"duckdb.returning"
-          (fun () -> Connection.returning conn query)
-        |> public)
+          (fun () -> Connection.returning conn query))
 
   let execute ?blocking_pool ~timeout t sql params =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"duckdb.execute"
-          (fun () -> Connection.execute conn sql params)
-        |> public)
+          (fun () -> Connection.execute conn sql params))
 
   let execute_compiled ?blocking_pool ~timeout t query =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn
           ~name:"duckdb.execute_compiled" (fun () ->
-            Connection.execute_compiled conn query)
-        |> public)
+            Connection.execute_compiled conn query))
 
   let run_schema ?blocking_pool ~timeout t schema =
-    with_connection t (fun conn ->
+    with_connection_internal t (fun conn ->
         timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"duckdb.schema"
-          (fun () -> Connection.run_schema conn schema)
-        |> public)
+          (fun () -> Connection.run_schema conn schema))
 
   let shutdown ?deadline t =
+    let close_database =
+      Eta.Effect.blocking ~name:"duckdb.close_database" (fun () ->
+          ignore (Database.close t.database))
+    in
     Eta.Pool.shutdown ?deadline t.pool
-    |> Eta.Effect.bind (fun () ->
-           Eta.Effect.blocking ~name:"duckdb.close_database" (fun () ->
-               ignore (Database.close t.database)))
+    |> Eta.Effect.finally close_database
     |> public
 
   let stats t = Eta.Pool.stats t.pool

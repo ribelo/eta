@@ -426,6 +426,53 @@ val embeddings_request :
   (Eta_http.Request.t, ai_error) result
 (** Encode and build a provider embeddings request. *)
 
+val post_request :
+  provider ->
+  path:string ->
+  api_key:api_key ->
+  ('a -> (raw_json, ai_error) result) ->
+  'a ->
+  (Eta_http.Request.t, ai_error) result
+(** Encode and build a JSON POST request for a provider endpoint path. *)
+
+val get_request :
+  provider ->
+  path:string ->
+  api_key:api_key ->
+  (Eta_http.Request.t, ai_error) result
+(** Build a GET request for a provider endpoint path. *)
+
+val chat_request_from_raw :
+  provider ->
+  api_key:api_key ->
+  (raw_json, ai_error) result ->
+  (Eta_http.Request.t, ai_error) result
+(** Build a provider chat request from an already encoded JSON result. *)
+
+val chat_request :
+  provider ->
+  api_key:api_key ->
+  ('a -> (raw_json, ai_error) result) ->
+  'a ->
+  (Eta_http.Request.t, ai_error) result
+(** Encode and build a provider chat request. *)
+
+val embeddings_request_with :
+  provider ->
+  api_key:api_key ->
+  ('a -> (raw_json, ai_error) result) ->
+  'a ->
+  (Eta_http.Request.t, ai_error) result
+(** Encode and build a provider embeddings request with endpoint-specific
+    encoding options. *)
+
+val run_request :
+  (Eta_http.Request.t, ai_error) result ->
+  (Eta_http.Request.t -> ('a, ai_error) Eta.Effect.t) ->
+  ('a, ai_error) Eta.Effect.t
+(** Lift request-construction failures into an effect, otherwise perform the
+    request. *)
+
 val perform_chat :
   provider ->
   Eta_http.Client.t ->
@@ -462,7 +509,10 @@ type stream
 
     This is intentionally not an eta-stream value. A2 found that eta-stream
     still needs an owned effect-reader source before eta-ai can expose public
-    stream ownership through eta-stream. *)
+    stream ownership through eta-stream.
+
+    A stream permits one active read or close operation at a time. Concurrent
+    calls fail with [Decode_error] instead of racing the parser state. *)
 
 val stream_of_body :
   ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
@@ -476,6 +526,47 @@ val perform_stream :
   (stream, ai_error) Eta.Effect.t
 (** Submit a provider request and return a provider SSE stream for 2xx
     responses. *)
+
+val run_chat_request :
+  provider ->
+  Eta_http.Client.t ->
+  chat_request ->
+  (Eta_http.Request.t, ai_error) result ->
+  (response, ai_error) Eta.Effect.t
+(** Run a built chat request under the standard provider chat span. *)
+
+val run_stream_request :
+  provider ->
+  Eta_http.Client.t ->
+  chat_request ->
+  (Eta_http.Request.t, ai_error) result ->
+  (stream, ai_error) Eta.Effect.t
+(** Run a built streaming chat request under the standard provider stream span. *)
+
+val run_embeddings_request :
+  provider ->
+  Eta_http.Client.t ->
+  Embedding.request ->
+  (Eta_http.Request.t, ai_error) result ->
+  (Embedding.response, ai_error) Eta.Effect.t
+(** Run a built embeddings request under the standard provider embeddings span. *)
+
+val run_raw_decoded :
+  provider ->
+  Eta_http.Client.t ->
+  (Eta_http.Request.t, ai_error) result ->
+  (raw_json -> ('a, ai_error) result) ->
+  ('a, ai_error) Eta.Effect.t
+(** Run a built request, read a successful text body, and decode it. *)
+
+val run_binary_decoded :
+  ?max_bytes:int ->
+  provider ->
+  Eta_http.Client.t ->
+  (Eta_http.Request.t, ai_error) result ->
+  (bytes * headers -> 'a) ->
+  ('a, ai_error) Eta.Effect.t
+(** Run a built request, read a successful binary body, and decode it. *)
 
 val read_stream_event : stream -> (stream_event option, ai_error) Eta.Effect.t
 (** Read the next decoded provider stream event, or [None] after EOF. *)

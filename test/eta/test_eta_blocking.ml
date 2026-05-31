@@ -116,6 +116,34 @@ let test_blocking_result_timeout_interrupts_and_fails_typed () =
              Format.pp_print_string fmt "timeout"))
         cause
 
+let test_blocking_result_timeout_calls_on_cancel_once () =
+  with_runtime @@ fun rt ->
+  let pool =
+    BP.create ~name:"blocking-result-timeout-once"
+      (blocking_config ~max_threads:1 ())
+  in
+  let hook_calls = Atomic.make 0 in
+  let finished = Atomic.make false in
+  let effect =
+    Effect.blocking_result_timeout ~pool
+      ~name:"blocking.result.timeout-once"
+      ~on_cancel:(fun () -> Atomic.incr hook_calls)
+      ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
+        Unix.sleepf 0.030;
+        Atomic.set finished true;
+        Ok 7)
+  in
+  (match Runtime.run rt effect with
+  | Exit.Ok _ -> Alcotest.fail "expected timeout"
+  | Exit.Error (Cause.Fail `Timeout) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
+        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
+             Format.pp_print_string fmt "timeout"))
+        cause);
+  wait_until (fun () -> Atomic.get finished);
+  Alcotest.(check int) "on_cancel calls" 1 (Atomic.get hook_calls)
+
 let test_blocking_pool_custom_runner () =
   run_eio @@ fun stdenv ->
   let calls = Atomic.make 0 in
@@ -135,6 +163,29 @@ let test_blocking_pool_custom_runner () =
   Alcotest.(check int) "blocking" 45
     (run_ok rt (Effect.blocking ~name:"custom.runner" (fun () -> 45)));
   Alcotest.(check int) "runner calls" 1 (Atomic.get calls)
+
+let test_blocking_runner_cancellation_releases_started_slot () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let runner : BP.runner =
+    {
+      run_in_systhread =
+        (fun ~label:_ _ ->
+          raise (Eio.Cancel.Cancelled (Failure "runner cancelled")));
+    }
+  in
+  let pool =
+    BP.create ~name:"runner-cancel" ~runner
+      (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
+  in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  (match
+     Runtime.run rt
+       (Effect.blocking ~pool ~name:"runner-cancel.interrupted" (fun () -> ()))
+   with
+  | Exit.Ok _ -> Alcotest.fail "expected runner cancellation"
+  | Exit.Error _ -> ());
+  Alcotest.(check int) "active slot released" 0 (BP.stats pool).active
 
 let test_blocking_direct_control_and_blocking_heartbeat () =
   run_eio @@ fun stdenv ->

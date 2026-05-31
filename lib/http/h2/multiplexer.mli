@@ -26,6 +26,7 @@ val create :
   ?config:H2.Config.t ->
   ?push_handler:
     (H2.Request.t -> (H2.Client_connection.response_handler, unit) result) ->
+  ?security:Security.t ->
   ?error_handler:(H2.Client_connection.error -> unit) ->
   unit ->
   t
@@ -48,6 +49,7 @@ val request :
 
 val create_client_reader :
   ?buffer_size:int ->
+  ?security:Security.t ->
   ?security_config:Security.config ->
   H2.Client_connection.t ->
   client_reader

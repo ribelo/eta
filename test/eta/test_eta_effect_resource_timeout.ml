@@ -110,7 +110,10 @@ let test_acquire_release_suppresses_release_failure () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Fail "body"; finalizer = Cause.Fail "release" }) ->
+        {
+          primary = Cause.Fail "body";
+          finalizer = Cause.Finalizer.Fail "<typed failure>";
+        }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected suppressed release failure, got %a"
@@ -125,7 +128,8 @@ let test_acquire_release_release_failure_after_success () =
          ~release:(fun () -> Effect.fail "release")
       |> Effect.bind (fun () -> Effect.pure "body"))
   in
-  check_exit_error string_cause "release failure" (Cause.Fail "release")
+  check_exit_error string_cause "release failure"
+    (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>"))
     (Runtime.run rt eff)
 
 let test_acquire_release_releases_on_defect () =
@@ -157,7 +161,7 @@ let test_acquire_release_suppresses_release_failure_after_defect () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Die _; finalizer = Cause.Fail "release" }) ->
+        { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail "<typed failure>" }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected suppressed release failure after defect, got %a"
@@ -234,7 +238,7 @@ let test_acquire_use_release_suppresses_release_failure_after_defect () =
   match Runtime.run rt eff with
   | Exit.Error
       (Cause.Suppressed
-        { primary = Cause.Die _; finalizer = Cause.Fail "release" }) ->
+        { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail "<typed failure>" }) ->
       ()
   | Exit.Error cause ->
       Alcotest.failf "expected suppressed release failure after defect, got %a"
@@ -275,7 +279,8 @@ let test_acquire_use_release_release_failure_after_success () =
          ~release:(fun () -> Effect.fail "release")
          (fun () -> Effect.pure "body"))
   in
-  check_exit_error string_cause "release failure" (Cause.Fail "release")
+  check_exit_error string_cause "release failure"
+    (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>"))
     (Runtime.run rt eff)
 
 let test_acquire_release_finalizers_run_lifo_sequentially () =
@@ -334,7 +339,11 @@ let test_acquire_release_finalizer_failure_keeps_running_lifo () =
          ])
   in
   (match Runtime.run rt eff with
-  | Exit.Error (Cause.Sequential [ Cause.Die _; Cause.Die _ ]) -> ()
+  | Exit.Error
+      (Cause.Finalizer
+        (Cause.Finalizer.Sequential
+          [ Cause.Finalizer.Die _; Cause.Finalizer.Die _ ])) ->
+      ()
   | Exit.Error cause ->
       Alcotest.failf "expected sequential finalizer failures, got %a"
         (Cause.pp Format.pp_print_string) cause
@@ -477,9 +486,10 @@ let rec typed_timeout_cause_contains_body_failure = function
       false
   | Cause.Sequential causes | Cause.Concurrent causes ->
       List.exists typed_timeout_cause_contains_body_failure causes
+  | Cause.Finalizer _ -> false
   | Cause.Suppressed { primary; finalizer } ->
+      ignore finalizer;
       typed_timeout_cause_contains_body_failure primary
-      || typed_timeout_cause_contains_body_failure finalizer
 
 let test_effect_timeout_as_preserves_simultaneous_body_failure () =
   with_test_clock @@ fun sw clock rt ->

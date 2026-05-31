@@ -8,6 +8,7 @@ type t = {
   mutable pending : stream_event list;
   mutable eof : bool;
   mutable released : bool;
+  active : bool Atomic.t;
 }
 
 let default_max_buffer_bytes = 1024 * 1024
@@ -23,8 +24,24 @@ let stream_of_body ?(max_buffer_bytes = default_max_buffer_bytes) provider body
     pending = [];
     eof = false;
     released = false;
+    active = Atomic.make false;
   }
 
+let concurrent_use stream =
+  Decode_error
+    {
+      provider = stream.provider.name;
+      message = "concurrent SSE stream operation";
+      raw = None;
+    }
+
+let with_operation stream effect =
+  if not (Atomic.compare_and_set stream.active false true) then
+    Eta.Effect.fail (concurrent_use stream)
+  else (
+    effect
+    |> Eta.Effect.finally
+         (Eta.Effect.sync (fun () -> Atomic.set stream.active false)))
 
 let strip_trailing_cr line =
   let len = String.length line in
@@ -74,7 +91,7 @@ let release_stream stream =
     Eta_http.Body.Stream.discard stream.body
     |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
 
-let close_stream stream =
+let close_stream_unlocked stream =
   stream.pending <- [];
   stream.buffer <- "";
   stream.eof <- true;
@@ -83,8 +100,11 @@ let close_stream stream =
 let fail_and_close stream error =
   Eta.Effect.scoped
     (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-       ~release:(fun () -> close_stream stream)
+       ~release:(fun () -> close_stream_unlocked stream)
     |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
+
+let close_stream stream =
+  with_operation stream (close_stream_unlocked stream)
 
 let buffer_too_large stream =
   Decode_error
@@ -143,7 +163,7 @@ let decode_sse_records stream records =
   in
   loop [] records
 
-let rec read_stream_event stream =
+let rec read_stream_event_unlocked stream =
   match stream.pending with
   | event :: rest ->
       stream.pending <- rest;
@@ -153,25 +173,28 @@ let rec read_stream_event stream =
       Eta_http.Body.Stream.read stream.body
       |> Eta.Effect.catch (fun error ->
              fail_and_close stream (Eta_http_error error))
-	      |> Eta.Effect.bind (function
-	           | None ->
-	               stream.eof <- true;
-	               (match flush_sse stream with
-	               | Stdlib.Error error -> fail_and_close stream error
-	               | Stdlib.Ok records ->
-	                   decode_sse_records stream records
-	                   |> Eta.Effect.bind (fun events ->
-	                          stream.pending <- events;
-	                          release_stream stream
-	                          |> Eta.Effect.bind (fun () -> read_stream_event stream)))
-	           | Some chunk ->
-	               (match feed_sse stream (Bytes.to_string chunk) with
-	               | Stdlib.Error error -> fail_and_close stream error
-	               | Stdlib.Ok records ->
-	                   decode_sse_records stream records
-	                   |> Eta.Effect.bind (fun events ->
-	                          stream.pending <- events;
-	                          read_stream_event stream)))
+      |> Eta.Effect.bind (function
+           | None ->
+               stream.eof <- true;
+               (match flush_sse stream with
+               | Stdlib.Error error -> fail_and_close stream error
+               | Stdlib.Ok records ->
+                   decode_sse_records stream records
+                   |> Eta.Effect.bind (fun events ->
+                          stream.pending <- events;
+                          release_stream stream
+                          |> Eta.Effect.bind (fun () -> read_stream_event_unlocked stream)))
+           | Some chunk ->
+               (match feed_sse stream (Bytes.to_string chunk) with
+               | Stdlib.Error error -> fail_and_close stream error
+               | Stdlib.Ok records ->
+                   decode_sse_records stream records
+                   |> Eta.Effect.bind (fun events ->
+                          stream.pending <- events;
+                          read_stream_event_unlocked stream)))
+
+let read_stream_event stream =
+  with_operation stream (read_stream_event_unlocked stream)
 
 let read_stream_events ?max_events stream =
   Option.iter
@@ -181,10 +204,10 @@ let read_stream_events ?max_events stream =
   let rec loop remaining acc =
     match remaining with
     | Some 0 ->
-        close_stream stream |> Eta.Effect.bind (fun () ->
+        close_stream_unlocked stream |> Eta.Effect.bind (fun () ->
             Eta.Effect.pure (List.rev acc))
     | _ -> (
-        read_stream_event stream |> Eta.Effect.bind (function
+        read_stream_event_unlocked stream |> Eta.Effect.bind (function
           | None -> Eta.Effect.pure (List.rev acc)
           | Some event ->
               let remaining =
@@ -192,5 +215,4 @@ let read_stream_events ?max_events stream =
               in
               loop remaining (event :: acc)))
   in
-  loop max_events []
-
+  with_operation stream (loop max_events [])

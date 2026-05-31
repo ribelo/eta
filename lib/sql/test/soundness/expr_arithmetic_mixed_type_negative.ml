@@ -11,5 +11,4 @@ module Rects = struct
 end
 
 let _bad_arithmetic =
-  Q.Expr.add (Q.Expr.col Rects.width) (Q.Expr.col Rects.ratio)
-
+  Q.Expr.add Q.Numeric.int (Q.Expr.col Rects.width) (Q.Expr.col Rects.ratio)

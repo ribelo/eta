@@ -139,7 +139,9 @@ let cause_concurrent () =
   ignore (Cause.concurrent [ Cause.fail "a"; Cause.fail "b" ])
 
 let cause_suppressed () =
-  ignore (Cause.suppressed ~primary:(Cause.fail "a") ~finalizer:(Cause.fail "b"))
+  ignore
+    (Cause.suppressed ~primary:(Cause.fail "a")
+       ~finalizer:(Cause.Finalizer.Fail "b"))
 
 let trace_context_roundtrip () =
   let headers =

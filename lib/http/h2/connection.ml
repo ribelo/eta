@@ -130,9 +130,10 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
     ?(error_handler = fun _ -> ()) ?(security_error_handler = fun _ -> ())
     ?(on_close = fun () -> ()) ?(reader_buffer_size = 64 * 1024) () =
   let holder = ref None in
+  let security = Security.create () in
   let mux =
     Multiplexer.create ?max_concurrent ?config ?push_handler
-      ~error_handler:(fun error ->
+      ~security ~error_handler:(fun error ->
         error_handler error;
         match !holder with
         | None -> ()
@@ -151,7 +152,9 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
       sw;
       mux;
       client;
-      reader = Multiplexer.create_client_reader ~buffer_size:reader_buffer_size client;
+      reader =
+        Multiplexer.create_client_reader ~buffer_size:reader_buffer_size
+          ~security client;
       flow;
       mutex = Eio.Mutex.create ();
       closed = false;

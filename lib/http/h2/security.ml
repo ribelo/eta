@@ -131,6 +131,9 @@ let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
       else None
   | _ -> None
 
+let complete_stream t stream_id =
+  Hashtbl.remove t.response_headers_seen_by_stream stream_id
+
 let start_frame t =
   let length = frame_length t in
   let frame_type = frame_type t in

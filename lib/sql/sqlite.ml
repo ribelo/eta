@@ -1,5 +1,10 @@
-type db
+type raw_db
 type raw_stmt
+
+type db = {
+  raw : raw_db;
+  mutex : Mutex.t;
+}
 
 type stmt = {
   db : db;
@@ -125,11 +130,17 @@ let open_mode_code = function
   | Read_write -> 1
   | Read_write_create -> 2
 
-external open_raw : string -> (int[@untagged]) -> db
+let with_db_lock db f =
+  Mutex.lock db.mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock db.mutex) f
+
+let wrap_db raw = { raw; mutex = Mutex.create () }
+
+external open_raw : string -> (int[@untagged]) -> raw_db
   = "eta_sqlite_open_bc" "eta_sqlite_open"
 
 let open_ ?(mode = Read_write_create) path =
-  open_raw path (open_mode_code mode)
+  wrap_db (open_raw path (open_mode_code mode))
 
 let open_memory () = open_ ":memory:"
 
@@ -146,191 +157,241 @@ let default_config path =
 
 let memory_config () = { (default_config ":memory:") with journal_mode = Some `Memory }
 
-external close : db -> (int[@untagged])
+external close_raw : raw_db -> (int[@untagged])
   = "eta_sqlite_close_bc" "eta_sqlite_close"
 
-external busy_timeout : db -> (int[@untagged]) -> (int[@untagged])
+let close db =
+  with_db_lock db @@ fun () ->
+  close_raw db.raw
+
+external busy_timeout_raw : raw_db -> (int[@untagged]) -> (int[@untagged])
   = "eta_sqlite_busy_timeout_bc" "eta_sqlite_busy_timeout"
 
-external exec_script_raw : db -> string -> (int[@untagged])
+let busy_timeout db ms = with_db_lock db (fun () -> busy_timeout_raw db.raw ms)
+
+external exec_script_raw : raw_db -> string -> (int[@untagged])
   = "eta_sqlite_exec_script_bc" "eta_sqlite_exec_script"
 
-external prepare_raw : db -> string -> raw_stmt = "eta_sqlite_prepare"
+let exec_script_raw db sql =
+  with_db_lock db (fun () -> exec_script_raw db.raw sql)
+
+external prepare_raw : raw_db -> string -> raw_stmt = "eta_sqlite_prepare"
 
 external finalize_raw : raw_stmt -> (int[@untagged])
   = "eta_sqlite_finalize_bc" "eta_sqlite_finalize"
 
-let finalize stmt = finalize_raw stmt.raw
+let prepare_raw db sql = with_db_lock db (fun () -> prepare_raw db.raw sql)
+let with_stmt_lock stmt f = with_db_lock stmt.db f
+let finalize stmt = with_stmt_lock stmt (fun () -> finalize_raw stmt.raw)
 
 external reset_raw : raw_stmt -> (int[@untagged])
   = "eta_sqlite_reset_bc" "eta_sqlite_reset"
 
-let reset stmt = reset_raw stmt.raw
+let reset stmt = with_stmt_lock stmt (fun () -> reset_raw stmt.raw)
 
 external clear_bindings_raw : raw_stmt -> (int[@untagged]) =
   "eta_sqlite_clear_bindings_bc" "eta_sqlite_clear_bindings"
 
-let clear_bindings stmt = clear_bindings_raw stmt.raw
+let clear_bindings stmt = with_stmt_lock stmt (fun () -> clear_bindings_raw stmt.raw)
 
 external bind_parameter_count_raw : raw_stmt -> (int[@untagged]) =
   "eta_sqlite_bind_parameter_count_bc" "eta_sqlite_bind_parameter_count"
 [@@noalloc]
 
-let bind_parameter_count stmt = bind_parameter_count_raw stmt.raw
+let bind_parameter_count stmt =
+  with_stmt_lock stmt (fun () -> bind_parameter_count_raw stmt.raw)
 
 external bind_null_raw : raw_stmt -> (int[@untagged]) -> (int[@untagged]) =
   "eta_sqlite_bind_null_bc" "eta_sqlite_bind_null"
 
-let bind_null stmt index = bind_null_raw stmt.raw index
+let bind_null stmt index = with_stmt_lock stmt (fun () -> bind_null_raw stmt.raw index)
 
 external bind_int64_raw :
   raw_stmt -> (int[@untagged]) -> (int64[@unboxed]) -> (int[@untagged])
   = "eta_sqlite_bind_int64_bc" "eta_sqlite_bind_int64"
 
-let bind_int64 stmt index value = bind_int64_raw stmt.raw index value
+let bind_int64 stmt index value =
+  with_stmt_lock stmt (fun () -> bind_int64_raw stmt.raw index value)
 
 external bind_int_raw :
   raw_stmt -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "eta_sqlite_bind_int_bc" "eta_sqlite_bind_int"
 [@@noalloc]
 
-let bind_int stmt index value = bind_int_raw stmt.raw index value
+let bind_int stmt index value =
+  with_stmt_lock stmt (fun () -> bind_int_raw stmt.raw index value)
 
 external bind_text_raw : raw_stmt -> (int[@untagged]) -> string -> (int[@untagged])
   = "eta_sqlite_bind_text_bc" "eta_sqlite_bind_text"
 
-let bind_text stmt index value = bind_text_raw stmt.raw index value
+let bind_text stmt index value =
+  with_stmt_lock stmt (fun () -> bind_text_raw stmt.raw index value)
 
 external bind_float_raw :
   raw_stmt -> (int[@untagged]) -> (float[@unboxed]) -> (int[@untagged])
   = "eta_sqlite_bind_float_bc" "eta_sqlite_bind_float"
 
-let bind_float stmt index value = bind_float_raw stmt.raw index value
+let bind_float stmt index value =
+  with_stmt_lock stmt (fun () -> bind_float_raw stmt.raw index value)
 
 external bind_blob_raw : raw_stmt -> (int[@untagged]) -> bytes -> (int[@untagged])
   = "eta_sqlite_bind_blob_bc" "eta_sqlite_bind_blob"
 
-let bind_blob stmt index value = bind_blob_raw stmt.raw index value
+let bind_blob stmt index value =
+  with_stmt_lock stmt (fun () -> bind_blob_raw stmt.raw index value)
 
 external bind_zeroblob_raw :
   raw_stmt -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "eta_sqlite_bind_zeroblob_bc" "eta_sqlite_bind_zeroblob"
 
-let bind_zeroblob stmt index size = bind_zeroblob_raw stmt.raw index size
+let bind_zeroblob stmt index size =
+  with_stmt_lock stmt (fun () -> bind_zeroblob_raw stmt.raw index size)
 
 external step_raw : raw_stmt -> (int[@untagged])
   = "eta_sqlite_step_bc" "eta_sqlite_step"
 
-let step stmt = step_raw stmt.raw
+let step stmt = with_stmt_lock stmt (fun () -> step_raw stmt.raw)
 
 external column_int64_raw : raw_stmt -> (int[@untagged]) -> (int64[@unboxed])
   = "eta_sqlite_column_int64_bc" "eta_sqlite_column_int64"
 [@@noalloc]
 
-let column_int64 stmt index = column_int64_raw stmt.raw index
+let column_int64 stmt index =
+  with_stmt_lock stmt (fun () -> column_int64_raw stmt.raw index)
 
 external column_int_raw : raw_stmt -> (int[@untagged]) -> (int[@untagged])
   = "eta_sqlite_column_int_bc" "eta_sqlite_column_int"
 [@@noalloc]
 
-let column_int stmt index = column_int_raw stmt.raw index
+let column_int stmt index =
+  with_stmt_lock stmt (fun () -> column_int_raw stmt.raw index)
 
 external column_text_raw : raw_stmt -> (int[@untagged]) -> string =
   "eta_sqlite_column_text_bc" "eta_sqlite_column_text"
 
-let column_text stmt index = column_text_raw stmt.raw index
+let column_text stmt index =
+  with_stmt_lock stmt (fun () -> column_text_raw stmt.raw index)
 
 external column_float_raw : raw_stmt -> (int[@untagged]) -> (float[@unboxed])
   = "eta_sqlite_column_float_bc" "eta_sqlite_column_float"
 [@@noalloc]
 
-let column_float stmt index = column_float_raw stmt.raw index
+let column_float stmt index =
+  with_stmt_lock stmt (fun () -> column_float_raw stmt.raw index)
 
 external column_blob_raw : raw_stmt -> (int[@untagged]) -> bytes =
   "eta_sqlite_column_blob_bc" "eta_sqlite_column_blob"
 
-let column_blob stmt index = column_blob_raw stmt.raw index
+let column_blob stmt index =
+  with_stmt_lock stmt (fun () -> column_blob_raw stmt.raw index)
 
 external column_is_null_raw : raw_stmt -> (int[@untagged]) -> bool
   = "eta_sqlite_column_is_null_bc" "eta_sqlite_column_is_null"
 [@@noalloc]
 
-let column_is_null stmt index = column_is_null_raw stmt.raw index
+let column_is_null stmt index =
+  with_stmt_lock stmt (fun () -> column_is_null_raw stmt.raw index)
 
 external column_count_raw : raw_stmt -> (int[@untagged])
   = "eta_sqlite_column_count_bc" "eta_sqlite_column_count"
 [@@noalloc]
 
-let column_count stmt = column_count_raw stmt.raw
+let column_count stmt = with_stmt_lock stmt (fun () -> column_count_raw stmt.raw)
 
 external column_name_raw : raw_stmt -> (int[@untagged]) -> string =
   "eta_sqlite_column_name_bc" "eta_sqlite_column_name"
 
-let column_name stmt index = column_name_raw stmt.raw index
+let column_name stmt index =
+  with_stmt_lock stmt (fun () -> column_name_raw stmt.raw index)
 
 external column_type_code_raw : raw_stmt -> (int[@untagged]) -> (int[@untagged])
   = "eta_sqlite_column_type_code_bc" "eta_sqlite_column_type_code"
 [@@noalloc]
 
-let column_type_code stmt index = column_type_code_raw stmt.raw index
+let column_type_code stmt index =
+  with_stmt_lock stmt (fun () -> column_type_code_raw stmt.raw index)
 
 external data_count_raw : raw_stmt -> (int[@untagged])
   = "eta_sqlite_data_count_bc" "eta_sqlite_data_count"
 [@@noalloc]
 
-let data_count stmt = data_count_raw stmt.raw
+let data_count stmt = with_stmt_lock stmt (fun () -> data_count_raw stmt.raw)
 
 external statement_sql_raw : raw_stmt -> string = "eta_sqlite_statement_sql"
-let statement_sql stmt = statement_sql_raw stmt.raw
+let statement_sql stmt = with_stmt_lock stmt (fun () -> statement_sql_raw stmt.raw)
 
 external expanded_sql_raw : raw_stmt -> string = "eta_sqlite_expanded_sql"
-let expanded_sql stmt = expanded_sql_raw stmt.raw
+let expanded_sql stmt = with_stmt_lock stmt (fun () -> expanded_sql_raw stmt.raw)
 
 external statement_readonly_raw : raw_stmt -> bool
   = "eta_sqlite_statement_readonly_bc" "eta_sqlite_statement_readonly"
 [@@noalloc]
 
-let statement_readonly stmt = statement_readonly_raw stmt.raw
+let statement_readonly stmt =
+  with_stmt_lock stmt (fun () -> statement_readonly_raw stmt.raw)
 
 external statement_busy_raw : raw_stmt -> bool
   = "eta_sqlite_statement_busy_bc" "eta_sqlite_statement_busy"
 [@@noalloc]
 
-let statement_busy stmt = statement_busy_raw stmt.raw
+let statement_busy stmt = with_stmt_lock stmt (fun () -> statement_busy_raw stmt.raw)
 
-external changes : db -> (int[@untagged])
+external changes_raw : raw_db -> (int[@untagged])
   = "eta_sqlite_changes_bc" "eta_sqlite_changes"
 [@@noalloc]
 
-external total_changes : db -> (int[@untagged])
+let changes db = with_db_lock db (fun () -> changes_raw db.raw)
+
+external total_changes_raw : raw_db -> (int[@untagged])
   = "eta_sqlite_total_changes_bc" "eta_sqlite_total_changes"
 [@@noalloc]
 
-external last_insert_rowid : db -> (int64[@unboxed])
+let total_changes db = with_db_lock db (fun () -> total_changes_raw db.raw)
+
+external last_insert_rowid_raw : raw_db -> (int64[@unboxed])
   = "eta_sqlite_last_insert_rowid_bc" "eta_sqlite_last_insert_rowid"
 [@@noalloc]
 
-external error_code : db -> (int[@untagged])
+let last_insert_rowid db =
+  with_db_lock db (fun () -> last_insert_rowid_raw db.raw)
+
+external error_code_raw : raw_db -> (int[@untagged])
   = "eta_sqlite_error_code_bc" "eta_sqlite_error_code"
 [@@noalloc]
 
-external extended_error_code : db -> (int[@untagged])
+let error_code db = with_db_lock db (fun () -> error_code_raw db.raw)
+
+external extended_error_code_raw : raw_db -> (int[@untagged])
   = "eta_sqlite_extended_error_code_bc" "eta_sqlite_extended_error_code"
 [@@noalloc]
 
-external error_message : db -> string = "eta_sqlite_error_message"
+let extended_error_code db =
+  with_db_lock db (fun () -> extended_error_code_raw db.raw)
 
-external autocommit : db -> bool = "eta_sqlite_autocommit_bc" "eta_sqlite_autocommit"
+external error_message_raw : raw_db -> string = "eta_sqlite_error_message"
+let error_message db = with_db_lock db (fun () -> error_message_raw db.raw)
+
+external autocommit_raw : raw_db -> bool
+  = "eta_sqlite_autocommit_bc" "eta_sqlite_autocommit"
 [@@noalloc]
 
-external database_readonly : db -> string -> bool
+let autocommit db = with_db_lock db (fun () -> autocommit_raw db.raw)
+
+external database_readonly_raw : raw_db -> string -> bool
   = "eta_sqlite_database_readonly_bc" "eta_sqlite_database_readonly"
 
-external interrupt : db -> unit = "eta_sqlite_interrupt"
+let database_readonly db name =
+  with_db_lock db (fun () -> database_readonly_raw db.raw name)
 
-external is_interrupted : db -> bool
+external interrupt_raw : raw_db -> unit = "eta_sqlite_interrupt"
+
+let interrupt (db : db) = interrupt_raw db.raw
+
+external is_interrupted_raw : raw_db -> bool
   = "eta_sqlite_is_interrupted_bc" "eta_sqlite_is_interrupted"
 [@@noalloc]
+
+let is_interrupted (db : db) = is_interrupted_raw db.raw
 
 external complete : string -> bool = "eta_sqlite_complete_bc" "eta_sqlite_complete"
 
@@ -514,11 +575,17 @@ let rollback_to db name =
   | Ok () -> ()
   | Result.Error err -> raise_error err
 
-external enable_load_extension : db -> bool -> (int[@untagged])
+external enable_load_extension_raw : raw_db -> bool -> (int[@untagged])
   = "eta_sqlite_enable_load_extension_bc" "eta_sqlite_enable_load_extension"
 
-external load_extension_raw : db -> string -> (int[@untagged])
+let enable_load_extension db enabled =
+  with_db_lock db (fun () -> enable_load_extension_raw db.raw enabled)
+
+external load_extension_raw : raw_db -> string -> (int[@untagged])
   = "eta_sqlite_load_extension_bc" "eta_sqlite_load_extension"
+
+let load_extension_raw db path =
+  with_db_lock db (fun () -> load_extension_raw db.raw path)
 
 let load_extension_result db path =
   check db ~operation:"load extension" (load_extension_raw db path)
@@ -528,11 +595,17 @@ let load_extension db path =
   | Ok () -> ()
   | Result.Error err -> raise_error err
 
-external backup_to_path_raw : db -> string -> (int[@untagged])
+external backup_to_path_raw : raw_db -> string -> (int[@untagged])
   = "eta_sqlite_backup_to_path_bc" "eta_sqlite_backup_to_path"
 
-external restore_from_path_raw : db -> string -> (int[@untagged])
+let backup_to_path_raw db path =
+  with_db_lock db (fun () -> backup_to_path_raw db.raw path)
+
+external restore_from_path_raw : raw_db -> string -> (int[@untagged])
   = "eta_sqlite_restore_from_path_bc" "eta_sqlite_restore_from_path"
+
+let restore_from_path_raw db path =
+  with_db_lock db (fun () -> restore_from_path_raw db.raw path)
 
 let backup_to_path_result db path =
   check db ~operation:"backup to path" (backup_to_path_raw db path)

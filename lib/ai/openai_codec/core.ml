@@ -1,6 +1,8 @@
 module A = Eta_ai
 module Json = A.Json
 
+let ( let* ) = Result.bind
+
 type structured_output = {
   name : string;
   schema : A.Json.t;
@@ -13,9 +15,8 @@ let structured_output ~schema_value ?strict ~name ~schema_json () =
     Stdlib.Error
       (A.Invalid_tool { name; message = "structured output name is required" })
   else
-    match schema_value "structured output schema_json" schema_json with
-    | Stdlib.Error _ as error -> error
-    | Stdlib.Ok schema -> Stdlib.Ok { name = trimmed; schema; strict }
+    let* schema = schema_value "structured output schema_json" schema_json in
+    Stdlib.Ok { name = trimmed; schema; strict }
 
 let decode_error_result = A.Json_helpers.decode_error_result
 let parse_json = A.Json_helpers.parse_json
@@ -94,4 +95,38 @@ let raw_json = function
   | `String value -> value
   | json -> Json.compact json
 
+let with_json_fields extra fields =
+  Json.object_
+    (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
+let encode_speech ?(instructions = true) ~provider
+    (request : A.Speech.request) =
+  if String.equal (String.trim request.input) "" then
+    unsupported ~provider "speech input must not be empty"
+  else if String.equal (String.trim request.voice) "" then
+    unsupported ~provider "speech voice must not be empty"
+  else if (not instructions) && Option.is_some request.instructions then
+    unsupported ~provider "speech instructions"
+  else
+    let speed =
+      match request.speed with
+      | None -> Stdlib.Ok None
+      | Some value -> (
+          match Json.float value with
+          | Some json -> Stdlib.Ok (Some json)
+          | None -> unsupported ~provider "speech speed must be finite")
+    in
+    let* speed = speed in
+    Stdlib.Ok
+      (with_json_fields request.extra
+         [
+           ("model", Some (Json.string request.model));
+           ("input", Some (Json.string request.input));
+           ("voice", Some (Json.string request.voice));
+           ("response_format", Option.map Json.string request.response_format);
+           ("speed", speed);
+           ( "instructions",
+             if instructions then Option.map Json.string request.instructions
+             else None );
+         ]
+      |> Json.to_string)

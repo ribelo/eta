@@ -32,6 +32,7 @@ type ('a, 'err) t = {
   mutable head : int;
   mutable tail : int;
   mutable depth : int;
+  mutable pending_receivers : int;
   mutable sent : int;
   mutable received : int;
   mutable closed : 'err close_reason option;
@@ -61,6 +62,7 @@ let create ~capacity () =
     head = 0;
     tail = 0;
     depth = 0;
+    pending_receivers = 0;
     sent = 0;
     received = 0;
     closed = None;
@@ -73,7 +75,14 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
+let capacity_used (t : ('a, 'err) t) = t.depth + t.pending_receivers
+
+let ensure_capacity (t : ('a, 'err) t) operation =
+  if capacity_used t >= t.capacity then
+    invalid_arg ("Eta.Channel." ^ operation ^ ": capacity exceeded")
+
 let push (t : ('a, 'err) t) value =
+  ensure_capacity t "push";
   t.buffer.(t.tail) <- Some value;
   t.tail <- (t.tail + 1) mod t.capacity;
   t.depth <- t.depth + 1
@@ -83,6 +92,7 @@ let push_counted (t : ('a, 'err) t) value =
   t.sent <- t.sent + 1
 
 let push_front (t : ('a, 'err) t) value =
+  ensure_capacity t "push_front";
   t.head <- (t.head + t.capacity - 1) mod t.capacity;
   t.buffer.(t.head) <- Some value;
   t.depth <- t.depth + 1
@@ -134,7 +144,17 @@ let take_receiver (t : ('a, 'err) t) =
       t.waiting_receivers <- t.waiting_receivers - 1;
       Some receiver
 
-let deliver_receiver (receiver : ('a, 'err) receiver) value =
+let reserve_receiver_delivery (t : ('a, 'err) t) =
+  ensure_capacity t "deliver_receiver";
+  t.pending_receivers <- t.pending_receivers + 1
+
+let release_receiver_delivery (t : ('a, 'err) t) =
+  if t.pending_receivers <= 0 then
+    invalid_arg "Eta.Channel.deliver_receiver: pending receiver underflow";
+  t.pending_receivers <- t.pending_receivers - 1
+
+let deliver_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) value =
+  reserve_receiver_delivery t;
   receiver.state <- Delivered value;
   Eio.Promise.resolve receiver.resolver (`Item value)
 
@@ -142,12 +162,13 @@ let claim_receiver (t : ('a, 'err) t) receiver =
   match receiver.state with
   | Delivered _ ->
       receiver.state <- Claimed;
+      release_receiver_delivery t;
       t.received <- t.received + 1
   | Waiting | Claimed | Cancelled -> ()
 
 let return_unclaimed_value (t : ('a, 'err) t) value =
   match take_receiver t with
-  | Some receiver -> deliver_receiver receiver value
+  | Some receiver -> deliver_receiver t receiver value
   | None -> push_front t value
 
 let rec drain_buffer_to_receivers (t : ('a, 'err) t) =
@@ -156,11 +177,11 @@ let rec drain_buffer_to_receivers (t : ('a, 'err) t) =
     | None -> ()
     | Some receiver ->
         let value = pop_raw t in
-        deliver_receiver receiver value;
+        deliver_receiver t receiver value;
         drain_buffer_to_receivers t
 
 let rec admit_waiting_senders (t : ('a, 'err) t) =
-  if Option.is_none t.closed && t.depth < t.capacity then
+  if Option.is_none t.closed && capacity_used t < t.capacity then
     match take_sender t with
     | None -> ()
     | Some sender -> (
@@ -168,7 +189,7 @@ let rec admit_waiting_senders (t : ('a, 'err) t) =
           match take_receiver t with
           | Some receiver ->
               t.sent <- t.sent + 1;
-              deliver_receiver receiver sender.value;
+              deliver_receiver t receiver sender.value;
               Eio.Promise.resolve sender.resolver `Sent;
               admit_waiting_senders t
           | None ->
@@ -217,6 +238,7 @@ let cancel_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) =
       pump t
   | Delivered value ->
       receiver.state <- Cancelled;
+      release_receiver_delivery t;
       return_unclaimed_value t value;
       pump t
   | Claimed | Cancelled -> ()
@@ -247,16 +269,16 @@ let send_sync (t : ('a, 'err) t) value =
     with_lock t @@ fun () ->
     match t.closed with
     | Some reason -> `Ready (close_result reason)
-    | None when t.depth = 0 -> (
+    | None when capacity_used t < t.capacity && t.depth = 0 -> (
         match take_receiver t with
         | Some receiver ->
             t.sent <- t.sent + 1;
-            deliver_receiver receiver value;
+            deliver_receiver t receiver value;
             `Ready `Sent
         | None ->
             push_counted t value;
             `Ready `Sent)
-    | None when t.depth < t.capacity ->
+    | None when capacity_used t < t.capacity ->
         push_counted t value;
         `Ready `Sent
     | None ->
@@ -296,7 +318,9 @@ let recv_sync (t : ('a, 'err) t) =
       try
         match Eio.Promise.await promise with
         | `Item _ as result ->
-            with_lock t (fun () -> claim_receiver t receiver);
+            with_lock t (fun () ->
+                claim_receiver t receiver;
+                pump t);
             result
         | (`Empty | `Closed | `Closed_with_error _) as result -> result
       with Eio.Cancel.Cancelled _ as exn ->
@@ -324,16 +348,16 @@ let try_send (t : ('a, 'err) t) value =
   with_lock t @@ fun () ->
   match t.closed with
   | Some reason -> close_result reason
-  | None when t.depth = 0 -> (
+  | None when capacity_used t < t.capacity && t.depth = 0 -> (
       match take_receiver t with
       | Some receiver ->
           t.sent <- t.sent + 1;
-          deliver_receiver receiver value;
+          deliver_receiver t receiver value;
           `Sent
       | None ->
           push_counted t value;
           `Sent)
-  | None when t.depth = t.capacity -> `Full
+  | None when capacity_used t = t.capacity -> `Full
   | None ->
       push_counted t value;
       `Sent

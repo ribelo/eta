@@ -573,6 +573,39 @@ let test_h2_multiplexer_client_cancel_releases_stream () =
   Alcotest.(check int) "connection errors" 0
     (List.length connection_result.mux_client_errors)
 
+let test_h2_multiplexer_release_closes_open_request_body () =
+  let result = h2_mux_result () in
+  let mux = h2_mux_create result () in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `POST "/release-open-request-body"
+  in
+  let opened =
+    match
+      Eta_http.H2.Multiplexer.request mux ~tag:7 request
+        ~error_handler:(fun stream error ->
+          result.mux_stream <- Some stream;
+          result.mux_stream_errors <-
+            h2_pp_client_error error :: result.mux_stream_errors)
+        ~response_handler:(fun stream response _body ->
+          result.mux_stream <- Some stream;
+          result.mux_status <- Some (H2.Status.to_code response.status))
+    with
+    | Ok opened -> opened
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
+        Alcotest.fail "request rejected"
+    | Error Eta_http.H2.Multiplexer.Connection_closed ->
+        Alcotest.fail "connection closed"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "request failed: %s" message
+  in
+  Alcotest.(check bool) "request body starts open" false
+    (H2.Body.Writer.is_closed opened.request_body);
+  ignore (Eta_http.H2.Multiplexer.release mux opened.stream);
+  Alcotest.(check bool) "release closes request body" true
+    (H2.Body.Writer.is_closed opened.request_body)
+
 
 let rec h2_drain_client_writes client =
   match H2.Client_connection.next_write_operation client with

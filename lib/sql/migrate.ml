@@ -355,7 +355,7 @@ let effect_of_result = function
   | Result.Error err -> Eta.Effect.fail err
 
 let with_pool_connection pool run =
-  Pool.with_connection pool (fun conn ->
+  Pool.Raw.with_connection pool (fun conn ->
       Eta.Effect.sync (fun () -> run conn))
   |> Eta.Effect.catch (fun err ->
          Eta.Effect.pure
@@ -372,7 +372,7 @@ let table_name config = Dsl.quote_ident (Table_name.to_string config.Config.tabl
 
 let ensure_table conn config =
   let table = table_name config in
-  Connection.execute_script conn
+  Connection.Raw.execute_script conn
     ("CREATE TABLE IF NOT EXISTS " ^ table
    ^ " (version INTEGER PRIMARY KEY, description TEXT NOT NULL, checksum TEXT NOT NULL, success INTEGER NOT NULL, installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, execution_time_ms INTEGER NOT NULL DEFAULT 0)")
 
@@ -394,7 +394,7 @@ let load_applied_states conn config =
   | Result.Error err -> Result.Error (Sql_error err)
   | Ok () -> (
       match
-        Connection.query conn
+        Connection.Raw.query conn
           ("SELECT version, checksum, success FROM " ^ table_name config ^ " ORDER BY version")
           []
       with
@@ -469,13 +469,13 @@ let elapsed_ms start =
 
 let execute_body conn migration =
   if migration.Migration.no_tx then
-    Connection.execute_script conn migration.Migration.sql
+    Connection.Raw.execute_script conn migration.Migration.sql
   else
     Connection.with_transaction conn (fun conn ->
-        Connection.execute_script conn migration.Migration.sql)
+        Connection.Raw.execute_script conn migration.Migration.sql)
 
 let mark_dirty conn table migration =
-  Connection.execute conn
+  Connection.Raw.execute conn
     ("INSERT OR REPLACE INTO " ^ table
    ^ " (version, description, checksum, success, installed_at, execution_time_ms) VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP, 0)")
     [
@@ -485,7 +485,7 @@ let mark_dirty conn table migration =
     ]
 
 let mark_success conn table migration elapsed =
-  Connection.execute conn
+  Connection.Raw.execute conn
     ("UPDATE " ^ table
    ^ " SET checksum = ?, success = 1, execution_time_ms = ? WHERE version = ?")
     [ Value.String migration.Migration.checksum; Int elapsed; Int64 migration.Migration.version ]
@@ -620,7 +620,7 @@ let undo ?(config = Config.default) pool source ~target =
                                      { version = migration.Migration.version; error = err })
                             | Ok () -> (
                                 match
-                                  Connection.execute conn
+                                  Connection.Raw.execute conn
                                     ("DELETE FROM " ^ table ^ " WHERE version = ?")
                                     [ Value.Int64 state.applied_version ]
                                 with

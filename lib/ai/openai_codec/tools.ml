@@ -8,40 +8,38 @@ type tool_shape =
   | Responses_tool
 
 let tool_json ~schema_value ~shape (tool : A.tool) =
-  match
+  let* schema =
     schema_value
       ("tool " ^ tool.name ^ " input_schema_json")
       tool.input_schema_json
-  with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok schema ->
-      let function_fields =
-        [
-          ("name", Some (Json.string tool.name));
-          ("description", Option.map Json.string tool.description);
-          ("parameters", Some schema);
-          ("strict", Option.map Json.bool tool.strict);
-        ]
-      in
-      let json =
-        match shape with
-        | Chat_tool ->
-            Json.object_
-              [
-                ("type", Some (Json.string "function"));
-                ("function", Some (Json.object_ function_fields));
-              ]
-        | Responses_tool ->
-            Json.object_
-              [
-                ("type", Some (Json.string "function"));
-                ("name", Some (Json.string tool.name));
-                ("description", Option.map Json.string tool.description);
-                ("parameters", Some schema);
-                ("strict", Option.map Json.bool tool.strict);
-              ]
-      in
-      Stdlib.Ok json
+  in
+  let function_fields =
+    [
+      ("name", Some (Json.string tool.name));
+      ("description", Option.map Json.string tool.description);
+      ("parameters", Some schema);
+      ("strict", Option.map Json.bool tool.strict);
+    ]
+  in
+  let json =
+    match shape with
+    | Chat_tool ->
+        Json.object_
+          [
+            ("type", Some (Json.string "function"));
+            ("function", Some (Json.object_ function_fields));
+          ]
+    | Responses_tool ->
+        Json.object_
+          [
+            ("type", Some (Json.string "function"));
+            ("name", Some (Json.string tool.name));
+            ("description", Option.map Json.string tool.description);
+            ("parameters", Some schema);
+            ("strict", Option.map Json.bool tool.strict);
+          ]
+  in
+  Stdlib.Ok json
 
 type structured_output_shape =
   | Chat_response_format
@@ -70,5 +68,4 @@ let structured_output_json ~shape output =
           ("schema", Some output.schema);
           ("strict", Option.map Json.bool output.strict);
         ]
-
 

@@ -2,37 +2,8 @@
 
 module A = Common.A
 module H = Common.H
-module Json = Common.Json
 
-let encode (request : A.Speech.request) =
-  if String.equal (String.trim request.input) "" then
-    Common.unsupported "speech input must not be empty"
-  else if String.equal (String.trim request.voice) "" then
-    Common.unsupported "speech voice must not be empty"
-  else
-    let speed =
-      match request.speed with
-      | None -> Stdlib.Ok None
-      | Some value -> (
-          match Json.float value with
-          | Some json -> Stdlib.Ok (Some json)
-          | None -> Common.unsupported "speech speed must be finite")
-    in
-    match speed with
-    | Stdlib.Error _ as error -> error
-    | Stdlib.Ok speed ->
-        Stdlib.Ok
-          (Common.with_json_fields request.extra
-             [
-               ("model", Some (Json.string request.model));
-               ("input", Some (Json.string request.input));
-               ("voice", Some (Json.string request.voice));
-               ( "response_format",
-                 Option.map Json.string request.response_format );
-               ("speed", speed);
-               ("instructions", Option.map Json.string request.instructions);
-             ]
-          |> Json.to_string)
+let encode request = Common.Codec.encode_speech ~provider:"openai" request
 
 let decode_response (body, headers) =
   {

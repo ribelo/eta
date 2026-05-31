@@ -1,39 +1,7 @@
 (** Public OpenRouter provider surface. The public type and value signatures live
     in [eta_ai_openrouter.mli]. *)
 
-type attribution = Common.attribution = {
-  referer : string option;
-  title : string option;
-}
-
-let attribution = Common.attribution
-
-type routing = Common.routing = {
-  order : string list;
-  only_providers : string list;
-  ignored_providers : string list;
-  allow_fallbacks : bool option;
-  require_parameters : bool option;
-  sort : string option;
-}
-
-let routing = Common.routing
-
-type structured_output = Common.structured_output = {
-  name : string;
-  schema : Common.A.Json.t;
-  strict : bool option;
-}
-
-let structured_output = Common.structured_output
-let provider = Common.provider
-
-let encode_responses = Common.encode_responses
-let decode_responses = Common.decode_responses
-let encode_embeddings = Common.encode_embeddings
-let decode_embeddings = Common.decode_embeddings
-let decode_stream_event = Common.decode_stream_event
-let decode_error = Common.decode_error
+include Common
 
 let responses_request = Responses_impl.request
 let responses = Responses_impl.run
@@ -71,18 +39,18 @@ let image_generation_request = Images_impl.request
 let image_generation = Images_impl.run
 
 module Chat = struct
-  include Common.A.Provider.Chat
+  include A.Provider.Chat
 
-  let encode_responses = Common.encode_responses
+  let encode_responses = encode_responses
   let responses_request = Responses_impl.request
   let responses = Responses_impl.run
   let stream_responses = Responses_impl.stream
 end
 
 module Embeddings = struct
-  include Common.A.Provider.Embeddings
+  include A.Provider.Embeddings
 
-  let encode_with_routing = Common.encode_embeddings
+  let encode_with_routing = encode_embeddings
   let request_with_routing = Embeddings_impl.request
   let run_with_routing = Embeddings_impl.run
 end

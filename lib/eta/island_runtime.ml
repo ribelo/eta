@@ -38,6 +38,10 @@ let raise_worker_die name die =
   failwith
     (Printf.sprintf "%s: worker died (%s): %s" name die.kind die.message)
 
+let unexpected_outcome_count name actual =
+  failwith
+    (Printf.sprintf "%s: expected one island result, got %d" name actual)
+
 module Pool = struct
   type t = pool
 
@@ -84,7 +88,7 @@ let submit name pool (f @ portable) input =
   match map_outcomes pool f [ input ] with
   | [ Map_ok value ] -> value
   | [ Map_worker_died die ] -> raise_worker_die name die
-  | _ -> assert false
+  | outcomes -> unexpected_outcome_count name (List.length outcomes)
 
 let submit_map name pool (f @ portable) inputs =
   map_outcomes pool f inputs

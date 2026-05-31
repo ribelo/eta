@@ -135,6 +135,41 @@ let test_pool_with_resource_body_defect_releases_resource () =
   Alcotest.(check int) "idle" 1 stats.Pool.idle;
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_release_defect_releases_capacity () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let release_attempts = ref 0 in
+  let release conn =
+    Effect.sync (fun () -> incr release_attempts)
+    |> Effect.bind (fun () -> pool_close factory conn)
+    |> Effect.bind (fun () ->
+           if !release_attempts = 1 then
+             Effect.sync (fun () -> failwith "release defect")
+           else Effect.unit)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1 ~max_idle:0
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  (match Runtime.run rt (Pool.with_resource pool (fun _ -> Effect.unit)) with
+  | Exit.Error (Cause.Finalizer (Cause.Finalizer.Die _)) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected release defect, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected release defect");
+  let after_defect = Pool.stats pool in
+  Alcotest.(check int) "active after release defect" 0 after_defect.Pool.active;
+  Alcotest.(check int) "closed after release defect" 1 after_defect.Pool.closed;
+  let replacement =
+    Pool.with_resource pool pool_use
+    |> Effect.timeout_as (Duration.ms 20) ~on_timeout:`Timeout
+  in
+  Alcotest.(check int) "capacity reusable after release defect" 2
+    (run_ok rt replacement);
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_max_size_respected_under_concurrent_checkout () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -434,7 +469,9 @@ let test_pool_release_detects_active_underflow () =
            Effect.sync (fun () -> set_pool_active_for_invariant_test pool 0)))
   in
   (match result with
-  | Exit.Error (Cause.Die { exn = Invalid_argument message; _ }) ->
+  | Exit.Error
+      (Cause.Finalizer
+        (Cause.Finalizer.Die { exn = Invalid_argument message; _ })) ->
       Alcotest.(check string)
         "invariant message"
         "Eta.Pool invariant violated: active underflow"

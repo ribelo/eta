@@ -595,6 +595,29 @@ let stream_has_done events =
           false)
     events
 
+let contains_substring ~needle value =
+  let needle_len = String.length needle in
+  let value_len = String.length value in
+  let rec loop index =
+    needle_len = 0
+    || (index + needle_len <= value_len
+       && (String.equal needle (String.sub value index needle_len)
+          || loop (index + 1)))
+  in
+  loop 0
+
+let rec sse_concurrent_use = function
+  | Eta.Cause.Fail (Decode_error { provider = "stream-fixture"; message; _ })
+    ->
+      contains_substring ~needle:"concurrent" message
+  | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _ -> false
+  | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+      List.exists sse_concurrent_use causes
+  | Eta.Cause.Finalizer _ -> false
+  | Eta.Cause.Suppressed { primary; finalizer } ->
+      ignore finalizer;
+      sse_concurrent_use primary
+
 let test_stream_reads_partial_chunks_and_done () =
   with_runtime @@ fun rt ->
   let body =
@@ -692,11 +715,10 @@ let test_stream_decode_error_suppresses_close_failure () =
           primary =
             Eta.Cause.Fail
               (Decode_error { provider = "stream-fixture"; message; _ });
-          finalizer = Eta.Cause.Fail (Eta_http_error close);
+          finalizer = Eta.Cause.Finalizer.Fail "<typed failure>";
         }) ->
       Alcotest.(check string) "message" "bad stream event" message;
-      Alcotest.(check bool) "same close error" true
-        (close_error = close)
+      ignore close_error
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected cause: %a"
         (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
@@ -729,6 +751,41 @@ let test_stream_early_stop_releases_body_once () =
   Alcotest.(check int) "released once" 1 !released;
   ignore (run_ok rt "close again" (close_stream stream));
   Alcotest.(check int) "still released once" 1 !released
+
+let test_stream_rejects_concurrent_close () =
+  with_runtime @@ fun rt ->
+  let read_calls = ref 0 in
+  let read_started, read_started_resolver = Eio.Promise.create () in
+  let read_unblocked = ref false in
+  let read_unblock, read_unblock_resolver = Eio.Promise.create () in
+  let unblock_read () =
+    if not !read_unblocked then (
+      read_unblocked := true;
+      Eio.Promise.resolve read_unblock_resolver ())
+  in
+  let body =
+    Eta_http.Body.Stream.of_reader (fun () ->
+        Eta.Effect.sync (fun () ->
+            incr read_calls;
+            Eio.Promise.resolve read_started_resolver ();
+            Eio.Promise.await read_unblock;
+            Eta_http.Body.Stream.Chunk
+              (Bytes.of_string "data: text:first\n\n")))
+  in
+  let stream = stream_of_body stream_provider body in
+  let read = read_stream_event stream in
+  let close =
+    Eta.Effect.sync (fun () -> Eio.Promise.await read_started)
+    |> Eta.Effect.bind (fun () -> close_stream stream)
+    |> Eta.Effect.finally (Eta.Effect.sync unblock_read)
+  in
+  match Eta.Runtime.run rt (Eta.Effect.par read close) with
+  | Eta.Exit.Error cause when sse_concurrent_use cause -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected concurrent SSE failure: %a"
+        (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
+        cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "concurrent SSE close succeeded"
 
 let telemetry_request ?(stream = false) () =
   {
@@ -904,17 +961,6 @@ let test_telemetry_error_type_attr () =
   | Eta.Tracer.Error _ -> ()
   | _ -> Alcotest.fail "expected error span status"
 
-let contains_substring ~needle value =
-  let needle_len = String.length needle in
-  let value_len = String.length value in
-  let rec loop index =
-    if needle_len = 0 then true
-    else if index + needle_len > value_len then false
-    else if String.sub value index needle_len = needle then true
-    else loop (index + 1)
-  in
-  loop 0
-
 let span_contains_secret secret (span : Eta.Tracer.span) =
   contains_substring ~needle:secret span.name
   || List.exists
@@ -1004,6 +1050,8 @@ let () =
           Alcotest.test_case "error events" `Quick test_stream_errors_are_events;
           Alcotest.test_case "early stop releases body" `Quick
             test_stream_early_stop_releases_body_once;
+          Alcotest.test_case "rejects concurrent close" `Quick
+            test_stream_rejects_concurrent_close;
         ] );
       ( "telemetry",
         [

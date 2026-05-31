@@ -2,7 +2,12 @@
 
     This is not an ORM. Applications define tables, columns, queries, and
     migrations explicitly; Eta owns rendering, binding, execution, and result
-    decoding. *)
+    decoding.
+
+    The typed DSL prevents typed builders from constructing invalid table,
+    column, and projection combinations. It is not a closed enforcement
+    boundary for the whole package: [Pool.Raw] exposes raw SQL escape hatches
+    for migrations, pragmas, diagnostics, and backend-specific SQL. *)
 
 module Sqlite = Sqlite
 
@@ -39,6 +44,7 @@ type 'table table = 'table Dsl.table
 type ('table, 'a) column = ('table, 'a) Dsl.column
 
 module Compiled = Dsl.Compiled
+module Numeric = Dsl.Numeric
 module Table = Dsl.Table
 module Column = Dsl.Column
 module Expr = Dsl.Expr

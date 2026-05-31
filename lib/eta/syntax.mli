@@ -2,10 +2,8 @@
 
 val ( let* ) :
   ('a, 'err) Effect.t -> ('a -> ('b, 'err) Effect.t) -> ('b, 'err) Effect.t
-(** Monadic bind. *)
 
 val ( let+ ) : ('a, 'err) Effect.t -> ('a -> 'b) -> ('b, 'err) Effect.t
-(** Map over a successful value. *)
 
 val ( let@ ) : (('a -> 'b) -> 'c) -> ('a -> 'b) -> 'c
 (** Callback inversion for CPS [with_*] functions.

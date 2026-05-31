@@ -1,15 +1,9 @@
 module type BACKEND = sig
-  type value
-  type row
-
-  type 'a typ = {
-    value : 'a -> value;
-    decode : row -> int -> 'a;
-    sql_type : string;
-  }
+  type 'a typ
 
   val module_name : string
-  val value_to_sql_literal : value -> string
+  val sql_type : 'a typ -> string
+  val literal : 'a typ -> 'a -> string
 end
 
 module Make
@@ -92,14 +86,11 @@ struct
       ?default ?references (column : (_, _) Model.column) =
     {
       name = column.column_name;
-      sql_type = column.typ.sql_type;
+      sql_type = Backend.sql_type column.typ;
       primary_key;
       not_null;
       unique;
-      default =
-        Option.map
-          (fun value -> Backend.value_to_sql_literal (column.typ.value value))
-          default;
+      default = Option.map (Backend.literal column.typ) default;
       references;
     }
 

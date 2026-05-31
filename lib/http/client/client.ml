@@ -35,6 +35,14 @@ let shutdown t = t.shutdown_impl ()
 let request t req = t.request_impl req
 let request_with_retry ?policy t req = Retry.run ?policy t.request_impl req
 
+let request_url request =
+  match Url.parse request.Request.uri with
+  | Ok url -> Ok url
+  | Error error ->
+      Error
+        (Error.make ~method_:request.Request.method_ ~uri:request.uri
+           (Connection_protocol_violation
+              { kind = "url"; message = Url.parse_error_to_string error }))
 
 module H1 = struct
   let body = function
@@ -45,9 +53,7 @@ module H1 = struct
         H1_client.Rewindable_stream { length; make }
 
   let request_of_request request =
-    match
-      try Ok (Request.url request) with Invalid_argument message -> Error message
-    with
+    match request_url request with
     | Ok url ->
         Ok
           {
@@ -56,25 +62,12 @@ module H1 = struct
             headers = request.headers;
             body = body request.body;
           }
-    | Error message ->
-        Error
-          (Error.make ~method_:request.method_ ~uri:request.uri
-             (Connection_protocol_violation { kind = "url"; message }))
+    | Error _ as error -> error
 
   let response (response : H1_client.response) =
     Response.make ~status:response.H1_client.status
       ~headers:response.headers ~trailers:response.trailers ~body:response.body ()
 end
-
-let request_url request =
-  match
-    try Ok (Request.url request) with Invalid_argument message -> Error message
-  with
-  | Ok url -> Ok url
-  | Error message ->
-      Error
-        (Error.make ~method_:request.Request.method_ ~uri:request.uri
-           (Connection_protocol_violation { kind = "url"; message }))
 
 module H2 = H2_client_request_runner
 

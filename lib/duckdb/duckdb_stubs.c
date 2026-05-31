@@ -154,8 +154,9 @@ static int load_api(void)
 
   const char *env = getenv("ETA_DUCKDB_LIBRARY");
   const char *candidates[] = { env, "libduckdb.so", "libduckdb.so.1", "libduckdb.dylib", NULL };
-  for (int i = 0; candidates[i] != NULL; i++) {
-    if (candidates[i][0] == '\0') continue;
+  size_t candidate_count = sizeof(candidates) / sizeof(candidates[0]);
+  for (size_t i = 0; i < candidate_count; i++) {
+    if (candidates[i] == NULL || candidates[i][0] == '\0') continue;
     api.handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
     if (api.handle != NULL) break;
   }
@@ -309,7 +310,7 @@ static value cons(value head, value tail)
 static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
 {
   CAMLparam0();
-  CAMLlocal1(out);
+  CAMLlocal2(out, bytes);
   if (api.value_is_null(result, col, row)) CAMLreturn(Val_int(0));
   int typ = api.column_type(result, col);
   switch (typ) {
@@ -321,7 +322,7 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
   case 4:
   case 5: {
     int64_t v = api.value_int64(result, col, row);
-    if (v >= (int64_t)Long_val(Val_long(INT32_MIN)) && v <= (int64_t)Long_val(Val_long(INT32_MAX))) {
+    if (v >= (int64_t)INT32_MIN && v <= (int64_t)INT32_MAX) {
       out = make_block(1, Val_long((intnat)v));
     } else {
       out = make_block(2, caml_copy_int64(v));
@@ -334,7 +335,7 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
     CAMLreturn(out);
   case 18: {
     duckdb_blob blob = api.value_blob(result, col, row);
-    value bytes = caml_alloc_string((mlsize_t)blob.size);
+    bytes = caml_alloc_string((mlsize_t)blob.size);
     if (blob.size > 0 && blob.data != NULL) memcpy(Bytes_val(bytes), blob.data, (size_t)blob.size);
     if (blob.data != NULL) api.free_ptr(blob.data);
     out = make_block(5, bytes);
@@ -380,40 +381,150 @@ static value materialize_rows(duckdb_result *result)
   CAMLreturn(rows);
 }
 
-static int bind_value(duckdb_prepared_statement stmt, idx_t index, value v)
+typedef struct duckdb_input_copy {
+  void *data;
+  struct duckdb_input_copy *next;
+} duckdb_input_copy;
+
+typedef struct {
+  duckdb_input_copy *head;
+} duckdb_input_copies;
+
+static void duckdb_input_copies_free(duckdb_input_copies *copies)
 {
-  if (Is_long(v)) return api.bind_null(stmt, index);
+  duckdb_input_copy *cur = copies->head;
+  while (cur != NULL) {
+    duckdb_input_copy *next = cur->next;
+    caml_stat_free(cur->data);
+    caml_stat_free(cur);
+    cur = next;
+  }
+  copies->head = NULL;
+}
+
+static int duckdb_input_copies_track(duckdb_input_copies *copies, void *data)
+{
+  duckdb_input_copy *copy = caml_stat_alloc(sizeof(*copy));
+  if (copy == NULL) {
+    caml_stat_free(data);
+    return 0;
+  }
+  copy->data = data;
+  copy->next = copies->head;
+  copies->head = copy;
+  return 1;
+}
+
+static int duckdb_input_copy_string(duckdb_input_copies *copies, const char *source,
+                                    const char **out)
+{
+  char *copy = caml_stat_strdup(source == NULL ? "" : source);
+  if (copy == NULL) return 0;
+  if (!duckdb_input_copies_track(copies, copy)) return 0;
+  *out = copy;
+  return 1;
+}
+
+static int duckdb_input_copy_bytes(duckdb_input_copies *copies, const void *source,
+                                   size_t len, const void **out)
+{
+  void *copy = caml_stat_alloc(len == 0 ? 1 : len);
+  if (copy == NULL) return 0;
+  if (len > 0) memcpy(copy, source, len);
+  if (!duckdb_input_copies_track(copies, copy)) return 0;
+  *out = copy;
+  return 1;
+}
+
+static int bind_value(duckdb_prepared_statement stmt, idx_t index, value v,
+                      duckdb_input_copies *copies)
+{
+  int rc;
+  if (Is_long(v)) {
+    caml_enter_blocking_section();
+    rc = api.bind_null(stmt, index);
+    caml_leave_blocking_section();
+    return rc;
+  }
   int tag = Tag_val(v);
   switch (tag) {
-  case 0: return api.bind_boolean(stmt, index, Bool_val(Field(v, 0)));
-  case 1: return api.bind_int64(stmt, index, Long_val(Field(v, 0)));
-  case 2: return api.bind_int64(stmt, index, Int64_val(Field(v, 0)));
-  case 3: return api.bind_double(stmt, index, Double_val(Field(v, 0)));
-  case 4: return api.bind_varchar(stmt, index, String_val(Field(v, 0)));
-  case 5: return api.bind_blob(stmt, index, Bytes_val(Field(v, 0)), caml_string_length(Field(v, 0)));
+  case 0: {
+    int bool_value = Bool_val(Field(v, 0));
+    caml_enter_blocking_section();
+    rc = api.bind_boolean(stmt, index, bool_value);
+    caml_leave_blocking_section();
+    return rc;
+  }
+  case 1: {
+    int64_t int_value = Long_val(Field(v, 0));
+    caml_enter_blocking_section();
+    rc = api.bind_int64(stmt, index, int_value);
+    caml_leave_blocking_section();
+    return rc;
+  }
+  case 2: {
+    int64_t int_value = Int64_val(Field(v, 0));
+    caml_enter_blocking_section();
+    rc = api.bind_int64(stmt, index, int_value);
+    caml_leave_blocking_section();
+    return rc;
+  }
+  case 3: {
+    double float_value = Double_val(Field(v, 0));
+    caml_enter_blocking_section();
+    rc = api.bind_double(stmt, index, float_value);
+    caml_leave_blocking_section();
+    return rc;
+  }
+  case 4: {
+    const char *text;
+    if (!duckdb_input_copy_string(copies, String_val(Field(v, 0)), &text)) return -2;
+    caml_enter_blocking_section();
+    rc = api.bind_varchar(stmt, index, text);
+    caml_leave_blocking_section();
+    return rc;
+  }
+  case 5: {
+    const void *data;
+    value bytes = Field(v, 0);
+    size_t len = (size_t)caml_string_length(bytes);
+    if (!duckdb_input_copy_bytes(copies, Bytes_val(bytes), len, &data)) return -2;
+    caml_enter_blocking_section();
+    rc = api.bind_blob(stmt, index, data, (idx_t)len);
+    caml_leave_blocking_section();
+    return rc;
+  }
   case 6:
   case 7:
   case 8:
   case 9:
   case 10:
   case 11:
-  case 12:
-    return api.bind_varchar(stmt, index, String_val(Field(v, 0)));
+  case 12: {
+    const char *text;
+    if (!duckdb_input_copy_string(copies, String_val(Field(v, 0)), &text)) return -2;
+    caml_enter_blocking_section();
+    rc = api.bind_varchar(stmt, index, text);
+    caml_leave_blocking_section();
+    return rc;
+  }
   default:
     return -1; /* unsupported type; caller reports the error after cleanup */
   }
 }
 
-static int bind_params(duckdb_prepared_statement stmt, value params)
+static int bind_params(duckdb_prepared_statement stmt, value params,
+                       duckdb_input_copies *copies)
 {
+  CAMLparam1(params);
   idx_t index = 1;
   while (params != Val_emptylist) {
-    int rc = bind_value(stmt, index, Field(params, 0));
-    if (rc != 0) return -1;
+    int rc = bind_value(stmt, index, Field(params, 0), copies);
+    if (rc != 0) CAMLreturnT(int, rc);
     params = Field(params, 1);
     index++;
   }
-  return 0;
+  CAMLreturnT(int, 0);
 }
 
 CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
@@ -423,21 +534,35 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
   ensure_loaded();
   duckdb_prepared_statement stmt = NULL;
   duckdb_result result;
-  memset(&result, 0, sizeof(result));
-  if (api.prepare(conn_val(v_conn), String_val(v_sql), &stmt) != 0) {
-    const char *err = stmt == NULL ? "prepare failed" : api.prepare_error(stmt);
-    if (stmt != NULL) api.destroy_prepare(&stmt);
-    caml_failwith(err == NULL ? "prepare failed" : err);
-  }
-  if (bind_params(stmt, v_params) != 0) {
-    api.destroy_prepare(&stmt);
-    caml_failwith("duckdb bind failed");
-  }
+  duckdb_input_copies copies = { NULL };
+  duckdb_connection conn = conn_val(v_conn);
+  const char *sql;
   int rc;
+  memset(&result, 0, sizeof(result));
+  if (!duckdb_input_copy_string(&copies, String_val(v_sql), &sql))
+    caml_failwith("duckdb allocation failed");
+  caml_enter_blocking_section();
+  rc = api.prepare(conn, sql, &stmt);
+  caml_leave_blocking_section();
+  if (rc != 0) {
+    const char *err = stmt == NULL ? "prepare failed" : api.prepare_error(stmt);
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "prepare failed" : err);
+    if (stmt != NULL) api.destroy_prepare(&stmt);
+    duckdb_input_copies_free(&copies);
+    caml_failwith(buffer);
+  }
+  rc = bind_params(stmt, v_params, &copies);
+  if (rc != 0) {
+    api.destroy_prepare(&stmt);
+    duckdb_input_copies_free(&copies);
+    caml_failwith(rc == -2 ? "duckdb allocation failed" : "duckdb bind failed");
+  }
   caml_enter_blocking_section();
   rc = api.execute_prepared(stmt, &result);
   caml_leave_blocking_section();
   api.destroy_prepare(&stmt);
+  duckdb_input_copies_free(&copies);
   if (rc != 0) {
     const char *err = api.result_error(&result);
     char buffer[1024];
@@ -456,21 +581,35 @@ CAMLprim value eta_duckdb_execute(value v_conn, value v_sql, value v_params)
   ensure_loaded();
   duckdb_prepared_statement stmt = NULL;
   duckdb_result result;
-  memset(&result, 0, sizeof(result));
-  if (api.prepare(conn_val(v_conn), String_val(v_sql), &stmt) != 0) {
-    const char *err = stmt == NULL ? "prepare failed" : api.prepare_error(stmt);
-    if (stmt != NULL) api.destroy_prepare(&stmt);
-    caml_failwith(err == NULL ? "prepare failed" : err);
-  }
-  if (bind_params(stmt, v_params) != 0) {
-    api.destroy_prepare(&stmt);
-    caml_failwith("duckdb bind failed");
-  }
+  duckdb_input_copies copies = { NULL };
+  duckdb_connection conn = conn_val(v_conn);
+  const char *sql;
   int rc;
+  memset(&result, 0, sizeof(result));
+  if (!duckdb_input_copy_string(&copies, String_val(v_sql), &sql))
+    caml_failwith("duckdb allocation failed");
+  caml_enter_blocking_section();
+  rc = api.prepare(conn, sql, &stmt);
+  caml_leave_blocking_section();
+  if (rc != 0) {
+    const char *err = stmt == NULL ? "prepare failed" : api.prepare_error(stmt);
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "prepare failed" : err);
+    if (stmt != NULL) api.destroy_prepare(&stmt);
+    duckdb_input_copies_free(&copies);
+    caml_failwith(buffer);
+  }
+  rc = bind_params(stmt, v_params, &copies);
+  if (rc != 0) {
+    api.destroy_prepare(&stmt);
+    duckdb_input_copies_free(&copies);
+    caml_failwith(rc == -2 ? "duckdb allocation failed" : "duckdb bind failed");
+  }
   caml_enter_blocking_section();
   rc = api.execute_prepared(stmt, &result);
   caml_leave_blocking_section();
   api.destroy_prepare(&stmt);
+  duckdb_input_copies_free(&copies);
   if (rc != 0) {
     const char *err = api.result_error(&result);
     char buffer[1024];
@@ -512,8 +651,24 @@ CAMLprim value eta_duckdb_appender_create(value v_conn, value v_schema, value v_
   CAMLlocal1(v_block);
   ensure_loaded();
   duckdb_appender appender = NULL;
-  const char *schema = Is_block(v_schema) ? String_val(Field(v_schema, 0)) : NULL;
-  if (api.appender_create(conn_val(v_conn), schema, String_val(v_table), &appender) != 0) {
+  duckdb_connection conn = conn_val(v_conn);
+  char *schema = NULL;
+  char *table = caml_stat_strdup(String_val(v_table));
+  int rc;
+  if (table == NULL) caml_failwith("duckdb allocation failed");
+  if (Is_block(v_schema)) {
+    schema = caml_stat_strdup(String_val(Field(v_schema, 0)));
+    if (schema == NULL) {
+      caml_stat_free(table);
+      caml_failwith("duckdb allocation failed");
+    }
+  }
+  caml_enter_blocking_section();
+  rc = api.appender_create(conn, schema, table, &appender);
+  caml_leave_blocking_section();
+  if (schema != NULL) caml_stat_free(schema);
+  caml_stat_free(table);
+  if (rc != 0) {
     caml_failwith("duckdb_appender_create failed");
   }
   v_block = caml_alloc_custom(&appender_ops, sizeof(eta_duckdb_appender), 0, 1);
@@ -521,32 +676,82 @@ CAMLprim value eta_duckdb_appender_create(value v_conn, value v_schema, value v_
   CAMLreturn(v_block);
 }
 
-static void append_value(duckdb_appender appender, value v)
+static int append_value(duckdb_appender appender, value v, duckdb_input_copies *copies)
 {
   int rc = 0;
-  if (Is_long(v)) rc = api.append_null(appender);
+  if (Is_long(v)) {
+    caml_enter_blocking_section();
+    rc = api.append_null(appender);
+    caml_leave_blocking_section();
+    return rc;
+  }
   else {
     switch (Tag_val(v)) {
-    case 0: rc = api.append_bool(appender, Bool_val(Field(v, 0))); break;
-    case 1: rc = api.append_int64(appender, Long_val(Field(v, 0))); break;
-    case 2: rc = api.append_int64(appender, Int64_val(Field(v, 0))); break;
-    case 3: rc = api.append_double(appender, Double_val(Field(v, 0))); break;
-    case 4: rc = api.append_varchar(appender, String_val(Field(v, 0))); break;
-    case 5: rc = api.append_blob(appender, Bytes_val(Field(v, 0)), caml_string_length(Field(v, 0))); break;
+    case 0: {
+      int bool_value = Bool_val(Field(v, 0));
+      caml_enter_blocking_section();
+      rc = api.append_bool(appender, bool_value);
+      caml_leave_blocking_section();
+      break;
+    }
+    case 1: {
+      int64_t int_value = Long_val(Field(v, 0));
+      caml_enter_blocking_section();
+      rc = api.append_int64(appender, int_value);
+      caml_leave_blocking_section();
+      break;
+    }
+    case 2: {
+      int64_t int_value = Int64_val(Field(v, 0));
+      caml_enter_blocking_section();
+      rc = api.append_int64(appender, int_value);
+      caml_leave_blocking_section();
+      break;
+    }
+    case 3: {
+      double float_value = Double_val(Field(v, 0));
+      caml_enter_blocking_section();
+      rc = api.append_double(appender, float_value);
+      caml_leave_blocking_section();
+      break;
+    }
+    case 4: {
+      const char *text;
+      if (!duckdb_input_copy_string(copies, String_val(Field(v, 0)), &text)) return -2;
+      caml_enter_blocking_section();
+      rc = api.append_varchar(appender, text);
+      caml_leave_blocking_section();
+      break;
+    }
+    case 5: {
+      const void *data;
+      value bytes = Field(v, 0);
+      size_t len = (size_t)caml_string_length(bytes);
+      if (!duckdb_input_copy_bytes(copies, Bytes_val(bytes), len, &data)) return -2;
+      caml_enter_blocking_section();
+      rc = api.append_blob(appender, data, (idx_t)len);
+      caml_leave_blocking_section();
+      break;
+    }
     case 6:
     case 7:
     case 8:
     case 9:
     case 10:
     case 11:
-    case 12:
-      rc = api.append_varchar(appender, String_val(Field(v, 0)));
+    case 12: {
+      const char *text;
+      if (!duckdb_input_copy_string(copies, String_val(Field(v, 0)), &text)) return -2;
+      caml_enter_blocking_section();
+      rc = api.append_varchar(appender, text);
+      caml_leave_blocking_section();
       break;
+    }
     default:
-      caml_failwith("cannot append DuckDB list or struct values");
+      return -3;
     }
   }
-  if (rc != 0) caml_failwith("duckdb append value failed");
+  return rc;
 }
 
 CAMLprim value eta_duckdb_appender_append_row(value v_appender, value values)
@@ -554,11 +759,23 @@ CAMLprim value eta_duckdb_appender_append_row(value v_appender, value values)
   CAMLparam2(v_appender, values);
   ensure_loaded();
   duckdb_appender appender = appender_val(v_appender);
+  duckdb_input_copies copies = { NULL };
+  int rc;
   while (values != Val_emptylist) {
-    append_value(appender, Field(values, 0));
+    rc = append_value(appender, Field(values, 0), &copies);
+    if (rc != 0) {
+      duckdb_input_copies_free(&copies);
+      if (rc == -2) caml_failwith("duckdb allocation failed");
+      if (rc == -3) caml_failwith("cannot append DuckDB list or struct values");
+      caml_failwith("duckdb append value failed");
+    }
     values = Field(values, 1);
   }
-  if (api.appender_end_row(appender) != 0) caml_failwith("duckdb_appender_end_row failed");
+  caml_enter_blocking_section();
+  rc = api.appender_end_row(appender);
+  caml_leave_blocking_section();
+  duckdb_input_copies_free(&copies);
+  if (rc != 0) caml_failwith("duckdb_appender_end_row failed");
   CAMLreturn(Val_unit);
 }
 

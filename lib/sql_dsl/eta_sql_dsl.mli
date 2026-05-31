@@ -1,3 +1,41 @@
+(** SQL literal quoting helpers used by backend renderers for DDL/default
+    values. Query values should stay parameterized through compiled statements;
+    these helpers are not an escape hatch for hand-built predicates. *)
+val quote_text : string -> string
+
+val quote_blob : bytes -> string
+
+module Row : sig
+  module type VALUE = sig
+    type t
+
+    val to_int : t -> int option
+    val to_int64 : t -> int64 option
+    val to_string_value : t -> string option
+    val to_bool : t -> bool option
+    val to_float : t -> float option
+    val to_bytes : t -> bytes option
+    val to_string : t -> string
+    val equal : t -> t -> bool
+  end
+
+  module Make (Value : VALUE) : sig
+    type value = Value.t
+    type t = (string * value) list
+
+    val get : string -> t -> value option
+    val fields : t -> string list
+    val int : string -> t -> int option
+    val int64 : string -> t -> int64 option
+    val string : string -> t -> string option
+    val bool : string -> t -> bool option
+    val float : string -> t -> float option
+    val bytes : string -> t -> bytes option
+    val to_string : t -> string
+    val equal : t -> t -> bool
+  end
+end
+
 module type BACKEND = sig
   type value
   type row
@@ -38,6 +76,14 @@ module type S = sig
   val nullable : 'a typ -> 'a option typ
   type param = Param : 'a typ * 'a -> param
 
+  module Numeric : sig
+    type 'a t
+
+    val int : int t
+    val int64 : int64 t
+    val float : float t
+  end
+
   module Compiled : sig
     type 'a select
     type 'a returning
@@ -73,11 +119,10 @@ module type S = sig
 
     val name : 'table t -> string
     val alias : 'table t -> string -> 'table t
-    (** [alias table name] renders [table AS name] in sources and qualifies
-        columns created from the alias with [name]. *)
+    (** Aliases change SQL qualification only; the phantom table identity is
+        unchanged, so aliases do not create a second independent scope. *)
 
     val column : 'table t -> string -> 'a typ -> ('table, 'a) column
-    (** Create a column value bound to a table value, including aliases. *)
   end
 
   module Column : sig
@@ -89,149 +134,128 @@ module type S = sig
 
   module Expr : sig
     type ('scope, 'a) t
-    (** A typed SQL expression visible in ['scope] and decoding/rendering as ['a]. *)
+    (** A SQL expression that may reference only columns visible in ['scope] and
+        produces values decoded as ['a].
+
+        Scope evidence is intentionally narrow: it tracks table visibility across
+        [Source] joins, not every SQL validity rule. It does not prove GROUP BY
+        correctness, cardinality, correlation legality, uniqueness of aliases, or
+        backend-specific coercion behavior. Typed DSL values also do not make raw
+        execution impossible; callers can still bypass this layer through the
+        execution package's raw SQL APIs.
+
+        Arithmetic and [avg] require an explicit [Numeric.t] witness. That keeps
+        text/blob/bool expressions out of numeric operators, but operands must
+        still have the same OCaml type and backend overflow, precision, and
+        division semantics remain backend-defined. *)
 
     val true_ : ('scope, bool) t
-    (** SQL true predicate. *)
     val false_ : ('scope, bool) t
-    (** SQL false predicate. *)
     val lit : 'a typ -> 'a -> ('scope, 'a) t
-    (** Parameterized literal with an explicit SQL type. *)
+    (** Parameterized literal with an explicit backend type. *)
     val int_lit : int -> ('scope, int) t
-    (** Parameterized integer literal. *)
     val int64_lit : int64 -> ('scope, int64) t
-    (** Parameterized 64-bit integer literal. *)
     val float_lit : float -> ('scope, float) t
-    (** Parameterized float literal. *)
     val text_lit : string -> ('scope, string) t
-    (** Parameterized text literal. *)
     val bool_lit : bool -> ('scope, bool) t
-    (** Parameterized boolean literal. *)
     val col : ('scope, 'a) column -> ('scope, 'a) t
-    (** Treat a visible column as a typed expression. *)
+
     val eq : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column equals literal. *)
     val ne : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column does not equal literal. *)
     val gt : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column is greater than literal. *)
     val ge : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column is greater than or equal to literal. *)
     val lt : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column is less than literal. *)
     val le : ('scope, 'a) column -> 'a -> ('scope, bool) t
-    (** Column is less than or equal to literal. *)
     val like : ('scope, string) column -> string -> ('scope, bool) t
-    (** Text column matches a SQL LIKE pattern. *)
+    (** [like column pattern] binds [pattern] as a parameter; wildcard escaping is
+        the caller's responsibility. *)
+
     val eq_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression equals expression. *)
     val ne_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression does not equal expression. *)
     val gt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression is greater than expression. *)
     val ge_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression is greater than or equal to expression. *)
     val lt_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression is less than expression. *)
     val le_expr : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, bool) t
-    (** Expression is less than or equal to expression. *)
+
     val eq_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
-    (** Column equals column. *)
     val gt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
-    (** Column is greater than column. *)
     val ge_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
-    (** Column is greater than or equal to column. *)
     val lt_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
-    (** Column is less than column. *)
     val le_col : ('scope, 'a) column -> ('scope, 'a) column -> ('scope, bool) t
-    (** Column is less than or equal to column. *)
-    val add : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
-    (** SQL addition over same-typed expressions. *)
-    val sub : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
-    (** SQL subtraction over same-typed expressions. *)
-    val mul : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
-    (** SQL multiplication over same-typed expressions. *)
-    val div : ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
-    (** SQL division over same-typed expressions. *)
+
+    val add : 'a Numeric.t -> ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+    val sub : 'a Numeric.t -> ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+    val mul : 'a Numeric.t -> ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+    val div : 'a Numeric.t -> ('scope, 'a) t -> ('scope, 'a) t -> ('scope, 'a) t
+
     val is_null : ('scope, 'a option) column -> ('scope, bool) t
-    (** Nullable column is NULL. *)
     val is_not_null : ('scope, 'a option) column -> ('scope, bool) t
-    (** Nullable column is not NULL. *)
     val between : ('scope, 'a) column -> 'a -> 'a -> ('scope, bool) t
-    (** Column lies between two literal bounds. *)
     val in_values : ('scope, 'a) column -> 'a list -> ('scope, bool) t
-    (** Column is in a non-empty literal list. *)
+    (** Empty lists are rendered as a false predicate instead of invalid SQL. *)
     val in_select : ('scope, 'a) column -> 'a Compiled.select -> ('scope, bool) t
-    (** Column is in a typed subquery result. *)
     val exists : _ Compiled.select -> ('scope, bool) t
-    (** SQL EXISTS predicate for a compiled subquery. *)
+
+    (** Aggregate expressions other than [count] are nullable because SQL
+        backends return NULL for empty aggregate inputs. *)
     val count : unit -> ('scope, int) t
-    (** COUNT-star aggregate expression. *)
     val sum_int : ('scope, int) column -> ('scope, int option) t
-    (** SUM aggregate over an integer column. SQLite returns NULL for an empty input. *)
     val sum_float : ('scope, float) column -> ('scope, float option) t
-    (** SUM aggregate over a float column. SQLite returns NULL for an empty input. *)
-    val avg : ('scope, 'a) column -> ('scope, float option) t
-    (** AVG aggregate over a numeric SQLite column. SQLite returns NULL for an empty input. *)
+    val avg : 'a Numeric.t -> ('scope, 'a) column -> ('scope, float option) t
     val min : ('scope, 'a) column -> ('scope, 'a option) t
-    (** MIN aggregate preserving the column type. SQLite returns NULL for an empty input. *)
     val max : ('scope, 'a) column -> ('scope, 'a option) t
-    (** MAX aggregate preserving the column type. SQLite returns NULL for an empty input. *)
+
     val case :
       (('scope, bool) t * ('scope, 'a) t) list ->
       default:('scope, 'a) t ->
       ('scope, 'a) t
-    (** CASE WHEN expression with same-typed result branches. *)
     val and_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
-    (** Boolean AND. *)
     val or_ : ('scope, bool) t -> ('scope, bool) t -> ('scope, bool) t
-    (** Boolean OR. *)
     val not_ : ('scope, bool) t -> ('scope, bool) t
-    (** Boolean NOT. *)
   end
 
   module Projection : sig
     type ('scope, 'a) t
-    (** A SELECT projection visible in ['scope] and decoding one output value ['a]. *)
+    (** A SELECT projection visible in ['scope] with a decoder for the projected
+        row shape ['a].
+
+        Projections pair SQL fragments with decoders. Tuple combinators preserve
+        SQL column order and decoded tuple order; [map] changes only the decoded
+        value, not the SQL. [expr ?as_] aliases affect rendered SQL names but do
+        not create extra type evidence or prevent backend-specific name clashes. *)
 
     val one : ('scope, 'a) column -> ('scope, 'a) t
-    (** Project one visible column. *)
     val expr : ?as_:string -> ('scope, 'a) Expr.t -> ('scope, 'a) t
-    (** Project any typed expression, optionally assigning a SQL alias. *)
     val t2 : ('scope, 'a) t -> ('scope, 'b) t -> ('scope, 'a * 'b) t
-    (** Combine two projections into a pair. *)
     val t3 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
       ('scope, 'c) t ->
       ('scope, 'a * 'b * 'c) t
-    (** Combine three projections into a tuple. *)
     val count : ?as_:string -> unit -> ('scope, int) t
-    (** Project COUNT-star. *)
     val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int option) t
-    (** Project SUM over an integer column. *)
     val sum_float : ?as_:string -> ('scope, float) column -> ('scope, float option) t
-    (** Project SUM over a float column. *)
-    val avg : ?as_:string -> ('scope, 'a) column -> ('scope, float option) t
-    (** Project AVG over a numeric SQLite column. *)
+    val avg :
+      ?as_:string ->
+      'a Numeric.t ->
+      ('scope, 'a) column ->
+      ('scope, float option) t
     val min : ?as_:string -> ('scope, 'a) column -> ('scope, 'a option) t
-    (** Project MIN preserving the column type. *)
     val max : ?as_:string -> ('scope, 'a) column -> ('scope, 'a option) t
-    (** Project MAX preserving the column type. *)
     val row_number :
       ?as_:string ->
       ?partition_by:('scope, 'a) column list ->
       ?order_by:('scope, 'b) column ->
       unit ->
       ('scope, int) t
-    (** Project ROW_NUMBER() with optional partition and order clauses. *)
+    (** [ROW_NUMBER()] supports at most one [order_by] expression here; use raw SQL
+        when backend-specific window syntax is required. *)
     val t4 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
       ('scope, 'c) t ->
       ('scope, 'd) t ->
       ('scope, 'a * 'b * 'c * 'd) t
-    (** Combine four projections into a tuple. *)
     val t5 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -239,7 +263,6 @@ module type S = sig
       ('scope, 'd) t ->
       ('scope, 'e) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e) t
-    (** Combine five projections into a tuple. *)
     val t6 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -248,7 +271,6 @@ module type S = sig
       ('scope, 'e) t ->
       ('scope, 'f) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f) t
-    (** Combine six projections into a tuple. *)
     val t7 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -258,7 +280,6 @@ module type S = sig
       ('scope, 'f) t ->
       ('scope, 'g) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g) t
-    (** Combine seven projections into a tuple. *)
     val t8 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -269,32 +290,31 @@ module type S = sig
       ('scope, 'g) t ->
       ('scope, 'h) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h) t
-    (** Combine eight projections into a tuple. *)
     val map : ('a -> 'b) -> ('scope, 'a) t -> ('scope, 'b) t
-    (** Map the decoded value while preserving the SQL projection. *)
   end
 
   module Scope : sig
     type ('sub, 'super) contains
-    (** Evidence that ['super] contains every table visible in ['sub]. *)
+    (** Explicit scope-widening evidence for joins.
+
+        This is intentionally not inferred automatically: callers must state
+        which side of a joined source makes a column visible. The evidence only
+        tracks table visibility, not SQL name ambiguity or backend join rules. *)
 
     val self : ('scope, 'scope) contains
-    (** A scope contains itself. *)
     val left : ('sub, 'super) contains -> ('sub, 'super * 'added) contains
-    (** If a scope is contained in the existing side, it is contained after a join. *)
     val right : ('added, 'existing * 'added) contains
-    (** The newly joined table is contained on the right side of a join. *)
     val column :
       ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a) column
-    (** Promote a column only when containment evidence proves it is visible. *)
   end
 
   module Source : sig
     type 'scope t
-    (** A FROM source with the phantom scope of all visible tables. *)
+    (** A FROM source carries the phantom scope used by expressions and
+        projections. Left joins widen the scope but do not make right-side column
+        types nullable; nullability is still modeled by the column's [typ]. *)
 
     val from : 'table table -> 'table t
-    (** Start a source from one table. *)
     val join :
       ?op:[ `Inner | `Left ] ->
       on:('existing * 'added, bool) Expr.t ->

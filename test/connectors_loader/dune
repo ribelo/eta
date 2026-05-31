@@ -1,0 +1,28 @@
+(test
+ (name test_loader_fallback)
+ (foreign_stubs
+  (language c)
+  (names loader_env_stubs)
+  (flags :standard))
+ (libraries eta_duckdb eta_turso eta_ladybug alcotest unix)
+ (deps libduckdb.so liblbug.so libturso_sqlite3.so)
+ (action
+  (setenv LD_LIBRARY_PATH . (run %{test}))))
+
+(rule
+ (target libduckdb.so)
+ (deps fake_driver.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps} -ldl)))
+
+(rule
+ (target liblbug.so)
+ (deps fake_driver.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps} -ldl)))
+
+(rule
+ (target libturso_sqlite3.so)
+ (deps fake_driver.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps} -ldl)))

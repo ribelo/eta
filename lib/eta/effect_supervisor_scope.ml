@@ -71,7 +71,8 @@ let rec interpret_supervisor_scope :
               in
               Ok
                 (Runtime_core.with_finalizers ~runtime:frame.runtime
-                   ~fail_key:frame.fail_key finalizers (fun () ->
+                   ~fail_key:frame.fail_key
+                   ~error_renderer:child_frame.error_renderer finalizers (fun () ->
                      interpret_supervisor_scope child_frame child_scope))
             with exn -> Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
           in
@@ -122,7 +123,7 @@ let supervisor_scoped ?max_failures body =
        let finalizers = ref [] in
        let child_frame = { frame with sw; finalizers } in
        Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-         finalizers (fun () ->
+         ~error_renderer:child_frame.error_renderer finalizers (fun () ->
            Fun.protect
              ~finally:(fun () -> Runtime_supervisor.cancel_children supervisor)
              (fun () -> interpret_supervisor_scope child_frame (body.run supervisor))))

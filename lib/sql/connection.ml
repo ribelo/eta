@@ -52,99 +52,103 @@ let if_open t f =
   else
     f ()
 
-let query t sql params =
-  if_open t @@ fun () ->
-  touch t;
-  Types.with_dynamic_statement t.db sql params @@ fun stmt ->
-  let rec loop acc =
+module Raw = struct
+  let query t sql params =
+    if_open t @@ fun () ->
+    touch t;
+    Types.with_dynamic_statement t.db sql params @@ fun stmt ->
+    let rec loop acc =
+      let rc = Sqlite.step stmt in
+      if Sqlite.rc_equal rc Sqlite.row then
+        loop (Types.materialize_row stmt :: acc)
+      else if Sqlite.rc_equal rc Sqlite.done_ then
+        Ok (List.rev acc)
+      else
+        match Types.check_sqlite t.db ~operation:"query" rc with
+        | Ok () -> Types.unexpected_sqlite_step ~operation:"query" rc
+        | Result.Error err -> Result.Error err
+    in
+    loop []
+
+  let execute t sql params =
+    if_open t @@ fun () ->
+    touch t;
+    Types.with_dynamic_statement t.db sql params @@ fun stmt ->
     let rc = Sqlite.step stmt in
-    if Sqlite.rc_equal rc Sqlite.row then
-      loop (Types.materialize_row stmt :: acc)
-    else if Sqlite.rc_equal rc Sqlite.done_ then
-      Ok (List.rev acc)
-    else
-      match Types.check_sqlite t.db ~operation:"query" rc with
-      | Ok () -> Types.unexpected_sqlite_step ~operation:"query" rc
-      | Result.Error err -> Result.Error err
-  in
-  loop []
-
-let select t (query : _ Compiled.select) =
-  if_open t @@ fun () ->
-  touch t;
-  Types.with_dynamic_statement t.db (Compiled.select_sql query)
-    (Compiled.select_params query) @@ fun stmt ->
-  let rec loop acc =
-    let rc = Sqlite.step stmt in
-    if Sqlite.rc_equal rc Sqlite.row then
-      loop (Compiled.select_decode query stmt :: acc)
-    else if Sqlite.rc_equal rc Sqlite.done_ then
-      Ok (List.rev acc)
-    else
-      match Types.check_sqlite t.db ~operation:"select" rc with
-      | Ok () -> Types.unexpected_sqlite_step ~operation:"select" rc
-      | Result.Error err -> Result.Error err
-  in
-  loop []
-
-let returning t (query : _ Compiled.returning) =
-  if_open t @@ fun () ->
-  touch t;
-  Types.with_dynamic_statement t.db (Compiled.returning_sql query)
-    (Compiled.returning_params query) @@ fun stmt ->
-  let rec loop acc =
-    let rc = Sqlite.step stmt in
-    if Sqlite.rc_equal rc Sqlite.row then
-      loop (Compiled.returning_decode query stmt :: acc)
-    else if Sqlite.rc_equal rc Sqlite.done_ then
-      Ok (List.rev acc)
-    else
-      match Types.check_sqlite t.db ~operation:"returning" rc with
-      | Ok () -> Types.unexpected_sqlite_step ~operation:"returning" rc
-      | Result.Error err -> Result.Error err
-  in
-  loop []
-
-let execute t sql params =
-  if_open t @@ fun () ->
-  touch t;
-  Types.with_dynamic_statement t.db sql params @@ fun stmt ->
-  let rc = Sqlite.step stmt in
-  if Sqlite.rc_equal rc Sqlite.done_ then (
-    sync_transaction_state t;
-    Ok (Sqlite.changes t.db)
-  ) else
-    match Types.check_sqlite t.db ~operation:"execute" rc with
-    | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
-    | Result.Error err -> Result.Error err
-
-let execute_compiled t (query : Compiled.change) =
-  if_open t @@ fun () ->
-  touch t;
-  Types.with_dynamic_statement t.db (Compiled.change_sql query)
-    (Compiled.change_params query) @@ fun stmt ->
-  let rc = Sqlite.step stmt in
-  if Sqlite.rc_equal rc Sqlite.done_ then (
-    sync_transaction_state t;
-    Ok (Sqlite.changes t.db)
-  ) else
-    match Types.check_sqlite t.db ~operation:"execute" rc with
-    | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
-    | Result.Error err -> Result.Error err
-
-let execute_script t sql =
-  if_open t @@ fun () ->
-  touch t;
-  match Sqlite.exec_script_result t.db sql with
-  | Ok () ->
+    if Sqlite.rc_equal rc Sqlite.done_ then (
       sync_transaction_state t;
-      Ok ()
-  | Result.Error err -> Result.Error (Types.Sqlite err)
+      Ok (Sqlite.changes t.db)
+    ) else
+      match Types.check_sqlite t.db ~operation:"execute" rc with
+      | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
+      | Result.Error err -> Result.Error err
 
-let run_schema t (schema : Compiled.schema) =
-  execute_script t (Compiled.schema_sql schema)
+  let execute_script t sql =
+    if_open t @@ fun () ->
+    touch t;
+    match Sqlite.exec_script_result t.db sql with
+    | Ok () ->
+        sync_transaction_state t;
+        Ok ()
+    | Result.Error err -> Result.Error (Types.Sqlite err)
 
-let prepare_migration t sql = if_open t @@ fun () -> Ok [ sql ]
+  let prepare_migration t sql = if_open t @@ fun () -> Ok [ sql ]
+end
+
+module Typed = struct
+  let select t (query : _ Compiled.select) =
+    if_open t @@ fun () ->
+    touch t;
+    Types.with_dynamic_statement t.db (Compiled.select_sql query)
+      (Compiled.select_params query) @@ fun stmt ->
+    let rec loop acc =
+      let rc = Sqlite.step stmt in
+      if Sqlite.rc_equal rc Sqlite.row then
+        loop (Compiled.select_decode query stmt :: acc)
+      else if Sqlite.rc_equal rc Sqlite.done_ then
+        Ok (List.rev acc)
+      else
+        match Types.check_sqlite t.db ~operation:"select" rc with
+        | Ok () -> Types.unexpected_sqlite_step ~operation:"select" rc
+        | Result.Error err -> Result.Error err
+    in
+    loop []
+
+  let returning t (query : _ Compiled.returning) =
+    if_open t @@ fun () ->
+    touch t;
+    Types.with_dynamic_statement t.db (Compiled.returning_sql query)
+      (Compiled.returning_params query) @@ fun stmt ->
+    let rec loop acc =
+      let rc = Sqlite.step stmt in
+      if Sqlite.rc_equal rc Sqlite.row then
+        loop (Compiled.returning_decode query stmt :: acc)
+      else if Sqlite.rc_equal rc Sqlite.done_ then
+        Ok (List.rev acc)
+      else
+        match Types.check_sqlite t.db ~operation:"returning" rc with
+        | Ok () -> Types.unexpected_sqlite_step ~operation:"returning" rc
+        | Result.Error err -> Result.Error err
+    in
+    loop []
+
+  let execute_compiled t (query : Compiled.change) =
+    if_open t @@ fun () ->
+    touch t;
+    Types.with_dynamic_statement t.db (Compiled.change_sql query)
+      (Compiled.change_params query) @@ fun stmt ->
+    let rc = Sqlite.step stmt in
+    if Sqlite.rc_equal rc Sqlite.done_ then (
+      sync_transaction_state t;
+      Ok (Sqlite.changes t.db)
+    ) else
+      match Types.check_sqlite t.db ~operation:"execute" rc with
+      | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
+      | Result.Error err -> Result.Error err
+
+  let run_schema t (schema : Compiled.schema) =
+    Raw.execute_script t (Compiled.schema_sql schema)
+end
 
 let ensure_autocommit t =
   if_open t @@ fun () ->
@@ -169,7 +173,7 @@ let ping t =
   match ensure_autocommit t with
   | Result.Error _ -> false
   | Ok () -> (
-      match query t "SELECT 1" [] with
+      match Raw.query t "SELECT 1" [] with
       | Ok [ row ] -> Row.int "1" row = Some 1
       | _ -> false)
 

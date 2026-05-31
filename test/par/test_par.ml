@@ -159,7 +159,7 @@ let test_par_sort_reverse () =
 (* --- Sequential threshold -------------------------------------------------- *)
 
 let test_below_threshold_runs_serial () =
-  (* When the chunk is below par_threshold, it should still produce
+  (* When the range is below the default chunk size, it should still produce
      correct results.  This also catches off-by-one bugs in slicing. *)
   let arr = Array.init 100 (fun i -> i) in
   let doubled =

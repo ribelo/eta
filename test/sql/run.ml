@@ -13,6 +13,8 @@ let () =
             test_sql_select_aggregates_distinct_group;
           Alcotest.test_case "subquery cte and window select" `Quick
             test_sql_select_subquery_cte_window;
+          Alcotest.test_case "empty in values is false predicate" `Quick
+            test_sql_in_values_empty_list_is_false_predicate;
           Alcotest.test_case "invalid query errors" `Quick
             test_sql_invalid_query_errors;
           Alcotest.test_case "find opt rejects many rows" `Quick
@@ -35,6 +37,8 @@ let () =
             test_sql_pool_typed_compiled_queries;
           Alcotest.test_case "pool timeout interrupts and reuses connection"
             `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
+          Alcotest.test_case "database pool shutdown cleanup survives timeout"
+            `Quick test_database_pool_shutdown_cleanup_survives_timeout;
           Alcotest.test_case
             "pool parent cancel interrupts and reuses connection" `Quick
             test_sql_pool_parent_cancel_interrupts_and_reuses_connection;

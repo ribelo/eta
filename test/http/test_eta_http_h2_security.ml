@@ -125,6 +125,81 @@ let test_h2_security_allows_many_normal_response_headers () =
       Alcotest.failf "normal response headers tripped security: %s"
         (Eta_http.Error.kind_name kind)
 
+let test_h2_security_forgets_completed_stream_headers () =
+  let config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_response_headers_per_connection = 1;
+    }
+  in
+  let security = Eta_http.H2.Security.create ~config () in
+  let frame =
+    h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
+  in
+  let observe () =
+    let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
+    Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+  in
+  (match observe () with
+  | None -> ()
+  | Some kind ->
+      Alcotest.failf "first headers tripped security: %s"
+        (Eta_http.Error.kind_name kind));
+  Eta_http.H2.Security.complete_stream security 1;
+  match observe () with
+  | None -> ()
+  | Some kind ->
+      Alcotest.failf "completed stream header state was retained: %s"
+        (Eta_http.Error.kind_name kind)
+
+let test_h2_security_multiplexer_release_forgets_stream_headers () =
+  let config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_response_headers_per_connection = 1;
+    }
+  in
+  let security = Eta_http.H2.Security.create ~config () in
+  let mux = Eta_http.H2.Multiplexer.create ~security () in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/release"
+  in
+  let opened =
+    match
+      Eta_http.H2.Multiplexer.request mux ~tag:1 request
+        ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream error")
+        ~response_handler:(fun _ _ _ -> Alcotest.fail "unexpected response")
+    with
+    | Ok opened -> opened
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected { limit }) ->
+        Alcotest.failf "request rejected by admission limit %d" limit
+    | Error Eta_http.H2.Multiplexer.Connection_closed ->
+        Alcotest.fail "request rejected by closed connection"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "request failed: %s" message
+  in
+  H2.Body.Writer.close opened.request_body;
+  let frame =
+    h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
+  in
+  let observe () =
+    let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
+    Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+  in
+  (match observe () with
+  | None -> ()
+  | Some kind ->
+      Alcotest.failf "first headers tripped security: %s"
+        (Eta_http.Error.kind_name kind));
+  ignore (Eta_http.H2.Multiplexer.release mux opened.stream);
+  match observe () with
+  | None -> ()
+  | Some kind ->
+      Alcotest.failf "released stream header state was retained: %s"
+        (Eta_http.Error.kind_name kind)
+
 let expect_header_invalid label headers =
   match Eta_http.H2.Security.validate_headers headers with
   | Some (Header_invalid _) -> ()
@@ -149,4 +224,3 @@ let test_h2_security_header_normalization_edges () =
   Alcotest.(check bool) "valid" true
     (Option.is_none
        (Eta_http.H2.Security.validate_headers [ "x-good", "value" ]))
-

@@ -52,6 +52,59 @@ let test_body_stream_reader_release_once () =
     |> Eta_test.Expect.expect_ok);
   Alcotest.(check int) "release once" 1 !released
 
+let rec body_stream_concurrent_use = function
+  | Eta.Cause.Fail
+      {
+        Eta_http.Error.kind =
+          Decode_error { codec = "body-stream"; message };
+        _;
+      } ->
+      contains message "concurrent"
+  | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _ -> false
+  | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+      List.exists body_stream_concurrent_use causes
+  | Eta.Cause.Finalizer _ -> false
+  | Eta.Cause.Suppressed { primary; finalizer } ->
+      ignore finalizer;
+      body_stream_concurrent_use primary
+
+let test_body_stream_rejects_concurrent_reads () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let read_calls = ref 0 in
+  let first_started, first_started_resolver = Eio.Promise.create () in
+  let first_unblocked = ref false in
+  let first_unblock, first_unblock_resolver = Eio.Promise.create () in
+  let unblock_first () =
+    if not !first_unblocked then (
+      first_unblocked := true;
+      Eio.Promise.resolve first_unblock_resolver ())
+  in
+  let stream =
+    Eta_http.Body.Stream.of_reader (fun () ->
+        Eta.Effect.sync (fun () ->
+            incr read_calls;
+            match !read_calls with
+            | 1 ->
+                Eio.Promise.resolve first_started_resolver ();
+                Eio.Promise.await first_unblock;
+                Eta_http.Body.Stream.Chunk (Bytes.of_string "first")
+            | _ -> Eta_http.Body.Stream.Last (Bytes.of_string "second")))
+  in
+  let first = Eta_http.Body.Stream.read stream in
+  let second =
+    Eta.Effect.sync (fun () -> Eio.Promise.await first_started)
+    |> Eta.Effect.bind (fun () -> Eta_http.Body.Stream.read stream)
+    |> Eta.Effect.finally (Eta.Effect.sync unblock_first)
+  in
+  (match Eta.Runtime.run rt (Eta.Effect.par first second) with
+  | Eta.Exit.Error cause when body_stream_concurrent_use cause -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected concurrent read failure: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "concurrent reads both succeeded");
+  Alcotest.(check int) "second read did not enter reader" 1 !read_calls
+
 let test_body_source_owned_stream_releases_on_scope_exit () =
   with_test_clock @@ fun _sw _clock rt ->
   let released = ref 0 in

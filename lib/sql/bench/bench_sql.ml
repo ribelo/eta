@@ -89,17 +89,17 @@ let sqlite_roundtrip rows =
     if i > rows then
       Eta.Effect.unit
     else
-      Q.Pool.execute_compiled pool (insert i)
+      Q.Pool.Typed.execute_compiled pool (insert i)
       |> Eta.Effect.bind (fun _ -> insert_loop pool (i + 1))
   in
   let program =
     Q.Pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
       (S.memory_config ())
     |> Eta.Effect.bind (fun pool ->
-           Q.Pool.run_schema pool create
+           Q.Pool.Typed.run_schema pool create
            |> Eta.Effect.bind (fun () -> insert_loop pool 1)
            |> Eta.Effect.bind (fun () ->
-                  Q.Pool.select pool (Q.Select.compile (select_query ())))
+                  Q.Pool.Typed.select pool (Q.Select.compile (select_query ())))
            |> Eta.Effect.bind (fun selected ->
                   Q.Pool.shutdown pool
                   |> Eta.Effect.map (fun () -> selected)))
@@ -251,18 +251,18 @@ let sqlite_connection_select rows =
     if i > rows then
       Eta.Effect.unit
     else
-      Q.Pool.execute_compiled tx (insert i)
+      Q.Pool.Typed.execute_compiled tx (insert i)
       |> Eta.Effect.bind (fun _ -> insert_loop tx (i + 1))
   in
   let program =
     Q.Pool.create ~default_timeout:(Eta.Duration.ms 1_000) ~max_size:1
       (S.memory_config ())
     |> Eta.Effect.bind (fun pool ->
-           Q.Pool.run_schema pool create
+           Q.Pool.Typed.run_schema pool create
            |> Eta.Effect.bind (fun () ->
                   Q.Pool.with_transaction pool (fun tx ->
                       insert_loop tx 1))
-           |> Eta.Effect.bind (fun () -> Q.Pool.select pool select)
+           |> Eta.Effect.bind (fun () -> Q.Pool.Typed.select pool select)
            |> Eta.Effect.bind (fun selected ->
                   Q.Pool.shutdown pool
                   |> Eta.Effect.map (fun () -> selected)))

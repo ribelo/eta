@@ -398,6 +398,25 @@ let test_turso_decode_error_is_structured () =
         | Error err -> Alcotest.failf "%a" Eta_turso.pp_error err
         | Ok _ -> Alcotest.fail "decode mismatch unexpectedly succeeded")
 
+let test_turso_text_preserves_embedded_nul () =
+  if require_turso_available () then
+    let db = Eta_turso.default_config ":memory:" |> Eta_turso.open_ |> turso_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Eta_turso.close db))
+      (fun () ->
+        let expected = "left\000right" in
+        let rows =
+          Eta_turso.query db "SELECT ? AS txt" [ Eta_turso.Value.String expected ]
+          |> turso_ok
+        in
+        match rows with
+        | [ [ ("txt", Eta_turso.Value.String actual) ] ] ->
+            Alcotest.(check int) "text length" (String.length expected)
+              (String.length actual);
+            Alcotest.(check bool) "text bytes" true
+              (String.equal expected actual)
+        | _ -> Alcotest.fail "expected one text column")
+
 let test_ladybug_error_classification () =
   let open Eta_ladybug in
   Alcotest.(check bool) "parser"
@@ -949,6 +968,8 @@ let () =
           Alcotest.test_case "typed queries" `Quick test_turso_typed_queries;
           Alcotest.test_case "decode errors are structured" `Quick
             test_turso_decode_error_is_structured;
+          Alcotest.test_case "text preserves embedded nul" `Quick
+            test_turso_text_preserves_embedded_nul;
         ] );
       ( "ladybug",
         [

@@ -115,30 +115,30 @@ let resolve_timeout runner override =
       invalid_arg
         "Eta_sql.Pool: operation requires ?timeout or pool ?default_timeout"
 
-let with_connection runner body =
+let raw_with_connection runner body =
   let timeout = resolve_timeout runner None in
   with_connection_timeout runner ~timeout body
 
-let query ?timeout runner sql params =
+let raw_query ?timeout runner sql params =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.query"
-        (fun () -> Connection.query conn sql params))
+        (fun () -> Connection.Raw.query conn sql params))
 
-let select ?timeout runner query =
+let typed_select ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.select"
-        (fun () -> Connection.select conn query))
+        (fun () -> Connection.Typed.select conn query))
 
-let returning ?timeout runner query =
+let typed_returning ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.returning"
-        (fun () -> Connection.returning conn query))
+        (fun () -> Connection.Typed.returning conn query))
 
 let prepare_dynamic_statement conn sql params =
   Connection.if_open conn @@ fun () ->
@@ -204,8 +204,9 @@ let fetch_typed_batch conn stmt batch_size decode =
   in
   loop batch_size []
 
-let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
-  if batch_size <= 0 then invalid_arg "Eta_sql.Pool.fold: batch_size must be > 0";
+let raw_fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
+  if batch_size <= 0 then
+    invalid_arg "Eta_sql.Pool.Raw.fold: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
   let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
@@ -231,10 +232,10 @@ let fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
                in
                loop init)))
 
-let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
+let typed_fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
     ~init ~f =
   if batch_size <= 0 then
-    invalid_arg "Eta_sql.Pool.fold_select: batch_size must be > 0";
+    invalid_arg "Eta_sql.Pool.Typed.fold_select: batch_size must be > 0";
   let timeout = resolve_timeout runner timeout in
   let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
@@ -261,35 +262,51 @@ let fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.select)
                in
                loop init)))
 
-let execute ?timeout runner sql params =
+let raw_execute ?timeout runner sql params =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.execute"
-        (fun () -> Connection.execute conn sql params))
+        (fun () -> Connection.Raw.execute conn sql params))
 
-let execute_compiled ?timeout runner query =
+let typed_execute_compiled ?timeout runner query =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn
         ~name:"sqlite.execute_compiled" (fun () ->
-          Connection.execute_compiled conn query))
+          Connection.Typed.execute_compiled conn query))
 
-let execute_script ?timeout runner sql =
+let raw_execute_script ?timeout runner sql =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn
         ~name:"sqlite.execute_script" (fun () ->
-          Connection.execute_script conn sql))
+          Connection.Raw.execute_script conn sql))
 
-let run_schema ?timeout runner schema =
+let typed_run_schema ?timeout runner schema =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
       timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"sqlite.schema"
-        (fun () -> Connection.run_schema conn schema))
+        (fun () -> Connection.Typed.run_schema conn schema))
+
+module Typed = struct
+  let select = typed_select
+  let returning = typed_returning
+  let fold_select = typed_fold_select
+  let execute_compiled = typed_execute_compiled
+  let run_schema = typed_run_schema
+end
+
+module Raw = struct
+  let query = raw_query
+  let fold = raw_fold
+  let execute = raw_execute
+  let execute_script = raw_execute_script
+  let with_connection = raw_with_connection
+end
 
 let with_transaction ?timeout (Pool_runner state as runner) body =
   let timeout = resolve_timeout runner timeout in

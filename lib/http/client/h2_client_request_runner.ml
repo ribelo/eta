@@ -66,9 +66,9 @@ let request_on_connection connection request url =
         | None when Response_reader.response_has_body request status ->
             response_started := true;
             let body =
-              Response_reader.response_body ~request ~connection ~mux
-                ~body_error ~body_wake ~unregister ~resolve_empty_trailers
-                ~resolve_trailer_error stream body
+              Response_reader.response_body ~request ~mux ~body_error ~body_wake
+                ~unregister ~resolve_empty_trailers ~resolve_trailer_error
+                stream body
             in
             let response = Response.make ~status ~headers ~trailers ~body () in
             resolve_result (Ok response)
@@ -112,9 +112,7 @@ let request_on_connection connection request url =
           Eta.Effect.sync (fun () ->
               unregister ();
               (try H2_proto.Body.Writer.close opened.request_body with _ -> ());
-              match Multiplexer.release mux opened.stream with
-              | Stream_state.Queue_rst -> Connection.shutdown connection
-              | Stream_state.No_rst -> ())
+              ignore (Multiplexer.release mux opened.stream))
       in
       Body_source.with_owned_stream (Request.body_source request.body) (fun upload ->
           let write_request =

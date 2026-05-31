@@ -339,9 +339,9 @@ let run_worker t name f =
   | Systhread -> run_systhread t name f
   | Domain_isolated -> run_domain f
 
-let finish_result t job_id name emit submitted_at started_at outcome =
+let finish_result t release name emit submitted_at started_at outcome =
   let ended_at = now_ms () in
-  release_started t job_id;
+  release ();
   match outcome with
   | Packed_ok value ->
       emit_event emit t name submitted_at started_at ended_at Blocking_ok;
@@ -403,16 +403,31 @@ let submit ~sw ~emit t name ?on_cancel f =
       | `Queued -> wait_queued_slot t name emit submitted_at
     with Exit -> raise Exit
   in
+  let released = ref false in
+  let release_once () =
+    if not !released then (
+      released := true;
+      release_started t job_id)
+  in
+  let protect_started f =
+    try f () with exn ->
+      let bt = Printexc.get_raw_backtrace () in
+      release_once ();
+      Printexc.raise_with_backtrace exn bt
+  in
   let started_at = now_ms () in
   match t.config.shutdown_policy with
   | Drain ->
+      protect_started @@ fun () ->
       let outcome = run_worker_with_cancel_hook t name f on_cancel in
-      finish_result t job_id name emit submitted_at started_at outcome
+      finish_result t release_once name emit submitted_at started_at outcome
   | Detach_started ->
       let promise =
+        protect_started @@ fun () ->
         Eio.Fiber.fork_promise ~sw (fun () ->
+            protect_started @@ fun () ->
             let outcome = run_worker t name f in
-            finish_result t job_id name emit submitted_at started_at outcome)
+            finish_result t release_once name emit submitted_at started_at outcome)
       in
       (try Eio.Promise.await_exn promise with
       | Eio.Cancel.Cancelled _ as exn ->
@@ -421,7 +436,11 @@ let submit ~sw ~emit t name ?on_cancel f =
           let ts = now_ms () in
           emit_event emit t name submitted_at started_at ts Blocking_detached;
           maybe_raise_cancel_hook_error hook_error;
-          raise exn)
+          raise exn
+      | exn ->
+          let bt = Printexc.get_raw_backtrace () in
+          release_once ();
+          Printexc.raise_with_backtrace exn bt)
 
 let shutdown ~emit t =
   let detached =

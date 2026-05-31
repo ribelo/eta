@@ -50,8 +50,6 @@ val pure : 'a -> ('a, 'err) t
 val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
 val from_result : ('a, 'err) result -> ('a, 'err) t
-(** Convert an OCaml [result] into an effect. [Ok value] succeeds with
-    [value]; [Error err] fails in Eta's typed failure channel. *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an effect. Use {!Effect.named} to
@@ -104,7 +102,12 @@ module Island : sig
     'input list ->
     ('output list, 'err) t
   (** Run a finite batch of portable callbacks and return results in input
-      order. Worker crashes fail the outer effect as defects. *)
+      order. Worker crashes fail the outer effect as defects.
+
+      Running callbacks are not preempted. Parent cancellation or an Eta
+      timeout can stop waiting for the batch, but cannot safely reclaim worker
+      domains already executing user code. Use only bounded callbacks that
+      return on their own. *)
 
   val map_result :
     ('input : immutable_data)
@@ -117,7 +120,8 @@ module Island : sig
     (('output, 'error) result list, 'err) t
   (** Like {!map}, but the portable callback returns a typed per-item [result].
       Callback [Error _] values are returned in place; worker crashes still fail
-      the outer effect as defects. *)
+      the outer effect as defects. The same non-preemptive callback contract as
+      {!map} applies. *)
 
   val all_settled :
     ('input : immutable_data)
@@ -130,7 +134,8 @@ module Island : sig
     (('output, 'error) settled list, 'err) t
   (** Run a finite batch and return one settled outcome per input, preserving
       input order. Worker crashes are represented as [Worker_died] values
-      instead of aborting siblings. *)
+      instead of aborting siblings. The same non-preemptive callback contract as
+      {!map} applies. *)
 
   module Pool : sig
     type t = pool
@@ -278,8 +283,10 @@ val blocking_result_timeout :
   (unit -> ('a, 'err) result) ->
   ('a, 'err) t
 (** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
-    {!blocking_result} and races it against [timeout]. If the timeout wins,
-    [?on_cancel] is called before failing with [on_timeout]. If the blocking
+    {!blocking_result} and races it against [timeout]. If the timeout wins, the
+    effect fails with [on_timeout]. Started blocking callbacks are not
+    preempted; [?on_cancel] is delivered through the blocking runtime's normal
+    cancellation path so [f] can cooperatively unblock. If the blocking
     operation wins after parent cancellation reached the fiber, Eta checks the
     cancellation state before publishing the success or typed failure. *)
 
@@ -298,7 +305,12 @@ val race : ('a, 'err) t list -> ('a, 'err) t
 val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
 (** Run two effects concurrently; collect both successes as a pair.
     Fail-fast: the first child failure cancels the sibling and the
-    cause propagates upward. *)
+    cause propagates upward.
+
+    This is effect concurrency on the current Eio runtime, not CPU
+    parallelism. Use {!Effect.island} / {!Effect.Island.map} for
+    portable worker-domain offload, or {!Par} for explicit fork-join
+    parallel algorithms. *)
 
 val all : ('a, 'err) t list -> ('a list, 'err) t
 (** Run effects concurrently, collecting results in input order.
@@ -313,12 +325,17 @@ val all_settled :
 
 val for_each_par : 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
 (** Map over [xs] concurrently with [f]; collect results in input order.
-    Fail-fast like {!all}. *)
+    Fail-fast like {!all}.
+
+    This runs child effects as concurrent fibers on the current runtime
+    substrate. It does not move arbitrary effects to worker domains; use
+    {!Effect.Island.map} for portable CPU-bound batch work. *)
 
 val for_each_par_bounded :
   max:int -> 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
 (** Map over [xs] with at most [max] child effects running at once. Results
     are returned in input order and failures are fail-fast like {!for_each_par}.
+    The bound limits concurrent fibers, not domain workers.
     @raise Invalid_argument if [max <= 0]. *)
 
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
@@ -329,12 +346,19 @@ val uninterruptible : ('a, 'err) t -> ('a, 'err) t
 
 val catch :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
+(** Handle typed failures in an effect's cause tree.
+
+    [catch handler effect] does not catch unchecked defects, interruption, or
+    cleanup/finalizer failures. It may recover typed failures in primary
+    sequential and concurrent cause branches, but it leaves [Cause.Finalizer]
+    nodes and [Cause.Suppressed.finalizer] branches intact. Recover or ignore a
+    cleanup failure inside the cleanup effect itself. *)
 
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
     and the surrounding cause structure. Every [Cause.Fail] in the cause tree is
-    mapped, including failures nested under [Sequential], [Concurrent], or
-    [Suppressed]. *)
+    mapped, including failures nested under [Sequential], [Concurrent],
+    [Finalizer], or [Suppressed]. *)
 
 val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
 (** Run an observer when the effect fails with a typed error, then rethrow the
@@ -352,30 +376,32 @@ val timeout_as :
     row with raw Timeout. *)
 val repeat : Schedule.t -> (unit, 'err) t -> (unit, 'err) t
 
-val finally : (unit, 'err) t -> ('a, 'err) t -> ('a, 'err) t
+val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
 (** [finally cleanup effect] runs [cleanup] after [effect] settles, on success,
     typed failure, unchecked defect, or cancellation.
 
     [cleanup] runs in a cancellation-protected cleanup frame. If [effect]
-    succeeds but [cleanup] fails, the cleanup failure becomes the result. If
-    both fail, the cleanup failure is reported as a suppressed finalizer failure
-    under the primary cause, matching {!acquire_release} finalizer reporting.
+    succeeds but [cleanup] fails, the cleanup failure is reported as
+    [Cause.Finalizer]. If both fail, the cleanup failure is reported as a
+    suppressed finalizer failure under the primary cause, matching
+    {!acquire_release} finalizer reporting.
 
     This is for one-shot cleanup around an effect. Use {!acquire_release} and
     {!scoped} for resource lifetimes. *)
 
 val acquire_release :
   acquire:('a, 'err) t ->
-  release:('a -> (unit, 'err) t) ->
+  release:('a -> (unit, 'release_err) t) ->
   ('a, 'err) t
 (** Acquire a resource and register [release] to run when the current runtime
     boundary, scope, supervisor scope, or daemon body exits. The release effect
-    runs on success and on typed failure; release failures are reported as the
-    run failure or suppressed onto the primary failure. *)
+    runs on success and on typed failure; release failures are reported as
+    [Cause.Finalizer] after a successful body or suppressed onto the primary
+    failure after a failed body. *)
 
 val acquire_use_release :
   acquire:('a, 'err) t ->
-  release:('a -> (unit, 'err) t) ->
+  release:('a -> (unit, 'release_err) t) ->
   ('a -> ('b, 'err) t) ->
   ('b, 'err) t
 (** Acquire a resource, run [body], and register [release] with the current
@@ -541,10 +567,12 @@ val metric_update :
   kind:Capabilities.metric_kind ->
   Capabilities.metric_value ->
   (unit, 'err) t
-(** Update a metric on the runtime's meter. *)
+(** Records a runtime observation, not part of the effect's success value or
+    typed error channel. Runtimes without a meter may ignore it. *)
 
 val here_attr : string * int * int * int -> ('a, 'err) t -> ('a, 'err) t
-(** Attach a [loc] attribute using OCaml's native [__POS__] shape. *)
+(** Intended for wrappers that pass [__POS__] through unchanged; synthesized
+    locations make traces harder to correlate with source. *)
 
 val fn :
   ?kind:Capabilities.span_kind ->
@@ -569,8 +597,8 @@ val collect_names : ('a, 'err) t -> string list
     so names created by those continuations are intentionally absent. *)
 
 val run : 'err Runtime_core.t -> ('a, 'err) t -> ('a, 'err) Exit.t
-(** Run an effect to completion against a runtime. The wrapper-level pool
-    overrides live on {!Runtime.run}. *)
+(** Low-level interpreter entry point. Most callers should use {!Runtime.run},
+    which applies runtime wrapper configuration before entering this function. *)
 
 module Private : sig
   (** Unstable extension hooks for Eta's runtime and sibling packages.
@@ -584,8 +612,9 @@ module Private : sig
       integration point. *)
 
   val daemon : (unit, 'err) t -> (unit, 'err) t
-  (** Start an effect as a runtime-owned daemon. The daemon is joined/drained by
-      [Runtime.run] finalizer handling; unchecked failures are runtime defects. *)
+  (** Runs on the runtime's outer switch rather than the caller's local scope.
+      Failures bypass the typed result and are reported as runtime daemon
+      failures. *)
 
   val named_attrs :
     kind:Capabilities.span_kind ->
@@ -593,8 +622,8 @@ module Private : sig
     attrs:(string * string) list ->
     ('a, 'err) t ->
     ('a, 'err) t
-  (** Attach a span name plus precomputed attributes. Used by internal resource
-      helpers that already own their attribute set. *)
+  (** Internal path for wrappers that compute attributes before constructing
+      the effect node. Prefer {!named} or {!named_kind} in public code. *)
 
   val metric_updates :
     (string * string * string * Capabilities.metric_kind
@@ -602,7 +631,8 @@ module Private : sig
     * Capabilities.metric_value)
     list ->
     (unit, 'err) t
-  (** Emit a prebatched set of metric updates. *)
+  (** Batching hook for Eta packages that already have a complete metric
+      snapshot. Public code should prefer {!metric_update}. *)
 
   val metric_updates_lazy :
     (unit ->
@@ -611,6 +641,6 @@ module Private : sig
     * Capabilities.metric_value)
     list) ->
     (unit, 'err) t
-  (** Lazily compute metric updates only when interpreted by a runtime with
-      metrics enabled. *)
+  (** Use when producing the metric snapshot is more expensive than recording
+      it; interpretation decides whether the thunk is forced. *)
 end

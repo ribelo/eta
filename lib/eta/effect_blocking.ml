@@ -43,10 +43,6 @@ let blocking ?pool ?(name = "blocking") ?on_cancel f =
 let blocking_result ?pool ?name ?on_cancel f =
   blocking ?pool ?name ?on_cancel f |> bind from_result
 
-let run_on_cancel = function
-  | None -> ()
-  | Some on_cancel -> on_cancel ()
-
 let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
   let check_not_cancelled = sync Eio.Fiber.check in
   let work =
@@ -55,10 +51,7 @@ let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
          | Ok value -> `Ok value
          | Error error -> `Error error)
   in
-  let timer =
-    delay timeout
-      (sync (fun () -> run_on_cancel on_cancel) |> map (fun () -> `Timed_out))
-  in
+  let timer = delay timeout (pure `Timed_out) in
   race [ work; timer ]
   |> bind (function
        | `Ok value -> check_not_cancelled |> map (fun () -> value)

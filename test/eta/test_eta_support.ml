@@ -152,24 +152,36 @@ let some_dur = Alcotest.option (Alcotest.testable Duration.pp Duration.equal)
 let dur = Alcotest.testable Duration.pp Duration.equal
 let string_cause =
   Alcotest.testable (Cause.pp Format.pp_print_string) (Cause.equal String.equal)
+
+let rec finalizer_contains expected = function
+  | Cause.Finalizer.Fail actual -> String.equal expected actual
+  | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      List.exists (finalizer_contains expected) causes
+  | Cause.Finalizer.Finalizer cause -> finalizer_contains expected cause
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_contains expected primary || finalizer_contains expected finalizer
+
 let rec string_cause_contains expected = function
   | Cause.Fail actual -> String.equal expected actual
   | Cause.Die _ | Cause.Interrupt _ -> false
   | Cause.Sequential causes | Cause.Concurrent causes ->
       List.exists (string_cause_contains expected) causes
+  | Cause.Finalizer cause -> finalizer_contains expected cause
   | Cause.Suppressed { primary; finalizer } ->
       string_cause_contains expected primary
-      || string_cause_contains expected finalizer
+      || finalizer_contains expected finalizer
 
 let check_string_cause_contains label expected cause =
   Alcotest.(check bool) label true (string_cause_contains expected cause)
 
 let rec string_cause_has_suppressed_finalizer expected = function
   | Cause.Suppressed { primary = Cause.Interrupt _; finalizer } ->
-      string_cause_contains expected finalizer
+      finalizer_contains expected finalizer
   | Cause.Suppressed { primary; finalizer } ->
       string_cause_has_suppressed_finalizer expected primary
-      || string_cause_has_suppressed_finalizer expected finalizer
+      || finalizer_contains expected finalizer
+  | Cause.Finalizer cause -> finalizer_contains expected cause
   | Cause.Sequential causes | Cause.Concurrent causes ->
       List.exists (string_cause_has_suppressed_finalizer expected) causes
   | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
@@ -251,9 +263,20 @@ let rec cause_has_die_message expected = function
   | Cause.Fail _ | Cause.Interrupt _ -> false
   | Cause.Sequential causes | Cause.Concurrent causes ->
       List.exists (cause_has_die_message expected) causes
+  | Cause.Finalizer cause -> finalizer_has_die_message expected cause
   | Cause.Suppressed { primary; finalizer } ->
       cause_has_die_message expected primary
-      || cause_has_die_message expected finalizer
+      || finalizer_has_die_message expected finalizer
+
+and finalizer_has_die_message expected = function
+  | Cause.Finalizer.Die die -> contains_substring (Printexc.to_string die.exn) expected
+  | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> false
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      List.exists (finalizer_has_die_message expected) causes
+  | Cause.Finalizer.Finalizer cause -> finalizer_has_die_message expected cause
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_has_die_message expected primary
+      || finalizer_has_die_message expected finalizer
 
 let check_die_message label expected cause =
   Alcotest.(check bool) label true (cause_has_die_message expected cause)

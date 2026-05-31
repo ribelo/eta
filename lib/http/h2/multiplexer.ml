@@ -26,12 +26,14 @@ type h2_request =
 type t = {
   client : H2.Client_connection.t;
   streams : Stream_state.t;
+  request_bodies : (int, H2.Body.Writer.t) Hashtbl.t;
   response_bodies : (int, H2.Body.Reader.t) Hashtbl.t;
+  security : Security.t option;
   mutable closed : bool;
 }
 
 let create ?(max_concurrent = 128) ?config ?push_handler
-    ?(error_handler = fun _ -> ()) () =
+    ?security ?(error_handler = fun _ -> ()) () =
   let holder = ref None in
   let client =
     H2.Client_connection.create ?config ?push_handler
@@ -44,7 +46,9 @@ let create ?(max_concurrent = 128) ?config ?push_handler
     {
       client;
       streams = Stream_state.create ~max_concurrent;
+      request_bodies = Hashtbl.create max_concurrent;
       response_bodies = Hashtbl.create max_concurrent;
+      security;
       closed = false;
     }
   in
@@ -53,17 +57,36 @@ let create ?(max_concurrent = 128) ?config ?push_handler
 
 let client_connection t = t.client
 let stats t = Stream_state.stats t.streams
-let mark_complete t stream = Stream_state.mark_complete t.streams stream
-let mark_remote_reset t stream_id = Stream_state.mark_remote_reset t.streams stream_id
+let complete_security_stream t stream_id =
+  Option.iter (fun security -> Security.complete_stream security stream_id) t.security
+
+let mark_complete t stream =
+  Stream_state.mark_complete t.streams stream;
+  complete_security_stream t (Stream_state.id stream)
+
+let mark_remote_reset t stream_id =
+  Stream_state.mark_remote_reset t.streams stream_id;
+  complete_security_stream t stream_id
+
+let close_request_body body =
+  try
+    if not (H2.Body.Writer.is_closed body) then H2.Body.Writer.close body
+  with _ -> ()
 
 let release t stream =
   let stream_id = Stream_state.id stream in
   let decision = Stream_state.release t.streams stream in
+  (match Hashtbl.find_opt t.request_bodies stream_id with
+  | Some body ->
+      close_request_body body;
+      Hashtbl.remove t.request_bodies stream_id
+  | None -> ());
   (match Hashtbl.find_opt t.response_bodies stream_id with
   | Some body ->
       if not (H2.Body.Reader.is_closed body) then H2.Body.Reader.close body;
       Hashtbl.remove t.response_bodies stream_id
   | None -> ());
+  complete_security_stream t stream_id;
   decision
 
 let shutdown t =
@@ -71,6 +94,8 @@ let shutdown t =
     t.closed <- true;
     H2.Client_connection.shutdown t.client;
     Stream_state.close t.streams;
+    Hashtbl.iter (fun _ body -> close_request_body body) t.request_bodies;
+    Hashtbl.clear t.request_bodies;
     Hashtbl.clear t.response_bodies)
 
 let request_with_h2_request h2_request t ~tag ?trailers_handler request
@@ -94,6 +119,7 @@ let request_with_h2_request h2_request t ~tag ?trailers_handler request
                 Hashtbl.replace t.response_bodies stream_id body;
                 response_handler stream response body)
           in
+          Hashtbl.replace t.request_bodies stream_id request_body;
           Ok { stream; request_body }
         with exn ->
           ignore (release t stream);
@@ -127,13 +153,22 @@ type body_event =
   | Body_chunk of bytes
   | Body_eof
 
-let create_client_reader ?(buffer_size = 64 * 1024) ?security_config client =
+let create_client_reader ?(buffer_size = 64 * 1024) ?security ?security_config
+    client =
   if buffer_size <= 0 then
     invalid_arg "Eta_http.H2.Multiplexer.create_client_reader: buffer_size must be > 0";
+  let security =
+    match (security, security_config) with
+    | Some _, Some _ ->
+        invalid_arg
+          "Eta_http.H2.Multiplexer.create_client_reader: pass either security or security_config, not both"
+    | Some security, None -> security
+    | None, _ -> Security.create ?config:security_config ()
+  in
   let buffer = Bigstringaf.create buffer_size in
   {
     client;
-    security = Security.create ?config:security_config ();
+    security;
     filter = Informational_filter.create ();
     buffer;
     filtered = "";

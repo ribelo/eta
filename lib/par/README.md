@@ -25,7 +25,12 @@ let () =
 ## Public API
 
 ```ocaml
-val run    : ?n_workers:int -> ?heartbeat_interval_ns:int -> (unit -> 'a) -> 'a
+val run :
+  ?n_workers:int ->
+  ?heartbeat_interval_ns:int ->
+  ?par_threshold:int ->
+  (unit -> 'a) ->
+  'a
 val join   : (unit -> 'a) -> (unit -> 'b) -> 'a * 'b
 val join3  : (unit -> 'a) -> (unit -> 'b) -> (unit -> 'c) -> 'a * 'b * 'c
 
@@ -44,16 +49,23 @@ val par_sort   : 'a array -> ('a -> 'a -> int) -> unit
 
 module Pool : sig
   type t
-  val create    : ?n_workers:int -> ?heartbeat_interval_ns:int -> unit -> t
+  val create :
+    ?n_workers:int -> ?heartbeat_interval_ns:int -> ?par_threshold:int -> unit -> t
   val run       : t -> (unit -> 'a) -> 'a
   val run_on_worker : t -> (unit -> 'a) -> 'a
   val run_many_on_workers : t -> (unit -> 'a) list -> 'a list
   val shutdown  : t -> unit
-  val with_pool : ?n_workers:int -> ?heartbeat_interval_ns:int -> (t -> 'a) -> 'a
+  val with_pool :
+    ?n_workers:int ->
+    ?heartbeat_interval_ns:int ->
+    ?par_threshold:int ->
+    (t -> 'a) ->
+    'a
 end
-
-val par_threshold : int ref  (* default 1024 *)
 ```
+
+`?par_threshold` sets the default recursive leaf size for `par_*` and `Iter`
+combinators running on that pool. Per-call `?chunk` still overrides it.
 
 `join`, `par_*` must be called from inside a task running on a pool worker
 (transitively from `run` or `Pool.run`); calling them from the main thread

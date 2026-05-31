@@ -7,47 +7,36 @@ open Tools
 
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
-  match temperature_json ~provider request.temperature with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok temperature -> (
-      match
-        result_all
-          (List.map
-             (tool_json ~schema_value ~shape:Responses_tool)
-             request.tools)
-      with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok tools ->
-          match result_all (List.map (input_items ~provider) request.prompt) with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok input ->
-              let text_format =
-                structured_output
-                |> Option.map (fun output ->
-                       let format =
-                         structured_output_json ~shape:Responses_format output
-                       in
-                       Json.object_ [ ("format", Some format) ])
-              in
-              Stdlib.Ok
-                (Json.object_
-                   [
-                     ("model", Some (Json.string request.model));
-                     ("input", Some (Json.array (List.concat input)));
-                     ("stream", Some (Json.bool request.stream));
-                     ("temperature", temperature);
-                     ( "max_output_tokens",
-                       Option.map Json.int request.max_output_tokens );
-                     ("tools", if tools = [] then None else Some (Json.array tools));
-                     ("text", text_format);
-                   ]))
+  let* temperature = temperature_json ~provider request.temperature in
+  let* tools =
+    request.tools
+    |> List.map (tool_json ~schema_value ~shape:Responses_tool)
+    |> result_all
+  in
+  let* input =
+    request.prompt |> List.map (input_items ~provider) |> result_all
+  in
+  let text_format =
+    structured_output
+    |> Option.map (fun output ->
+           let format = structured_output_json ~shape:Responses_format output in
+           Json.object_ [ ("format", Some format) ])
+  in
+  Stdlib.Ok
+    (Json.object_
+       [
+         ("model", Some (Json.string request.model));
+         ("input", Some (Json.array (List.concat input)));
+         ("stream", Some (Json.bool request.stream));
+         ("temperature", temperature);
+         ("max_output_tokens", Option.map Json.int request.max_output_tokens);
+         ("tools", if tools = [] then None else Some (Json.array tools));
+         ("text", text_format);
+       ])
 
 let encode_responses ~provider ~schema_value ?structured_output request =
-  match
-    encode_responses_json ~provider ~schema_value ?structured_output request
-  with
-  | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
-  | Stdlib.Error _ as error -> error
+  encode_responses_json ~provider ~schema_value ?structured_output request
+  |> Result.map Json.to_string
 
 let output_text item =
   match Json.string_member "type" item with
@@ -92,24 +81,21 @@ let status_finish json =
   | None -> []
 
 let decode_responses ~provider raw =
-  match parse_json ~provider raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json ->
-      let output = Json.array_member "output" json |> Option.value ~default:[] in
-      let text = output |> List.concat_map output_text |> String.concat "" in
-      let tool_calls = output |> List.filter_map responses_tool_call in
-      Stdlib.Ok
-        {
-          A.id = Json.string_member "id" json;
-          model = Json.string_member "model" json;
-          message =
-            A.Assistant
-              {
-                content = (if String.equal text "" then [] else [ A.Text text ]);
-                tool_calls;
-              };
-          finish_reasons = status_finish json;
-          usage = Option.map usage (Json.object_member "usage" json);
-          raw = Some raw;
-        }
-
+  let* json = parse_json ~provider raw in
+  let output = Json.array_member "output" json |> Option.value ~default:[] in
+  let text = output |> List.concat_map output_text |> String.concat "" in
+  let tool_calls = output |> List.filter_map responses_tool_call in
+  Stdlib.Ok
+    {
+      A.id = Json.string_member "id" json;
+      model = Json.string_member "model" json;
+      message =
+        A.Assistant
+          {
+            content = (if String.equal text "" then [] else [ A.Text text ]);
+            tool_calls;
+          };
+      finish_reasons = status_finish json;
+      usage = Option.map usage (Json.object_member "usage" json);
+      raw = Some raw;
+    }

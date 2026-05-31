@@ -118,7 +118,7 @@ type t = {
   http_client : Eta_http.Client.t;
   clock : float Eio.Time.clock_ty Eio.Std.r;
   eta_clock : Eta.Capabilities.clock;
-  config : (export_config, [ `Config ]) Eta.Resource.t;
+  config : export_config;
   queue : span Mailbox.t;
   log_queue : Eta.Capabilities.log_record Mailbox.t;
   metric_queue : Eta.Meter.point Mailbox.t;
@@ -382,12 +382,11 @@ let export_signal t config signal =
                        ("eta_otel.export." ^ signal_name signal_kind))))
 
 let export_program t =
-  Eta.Resource.get t.config
-  |> Eta.Effect.bind (fun config ->
-         signal_batches t
-         |> Eta_stream.flat_map_par ~max_concurrency:3 (fun signal ->
-                Eta_stream.from_effect (export_signal t config signal))
-         |> S.run_drain)
+  let config = t.config in
+  signal_batches t
+  |> Eta_stream.flat_map_par ~max_concurrency:3 (fun signal ->
+         Eta_stream.from_effect (export_signal t config signal))
+  |> S.run_drain
   |> Eta.Effect.named "eta_otel.exporter"
 
 let start_daemon rt effect =
@@ -443,16 +442,6 @@ let shutdown ?timeout_s t =
 
 let start_exporters t ~rt =
   start_daemon rt (export_program t)
-
-let make_config_resource rt config :
-    (export_config, [ `Config ]) Eta.Resource.t =
-  let load =
-    Eta.Effect.named "eta_otel.config.load" (Eta.Effect.sync (fun () -> config))
-    |> Eta.Effect.named "eta_otel.config"
-  in
-  match Eta.Runtime.run rt (Eta.Resource.manual load) with
-  | Eta.Exit.Ok resource -> resource
-  | Eta.Exit.Error _ -> failwith "eta-otel: config resource failed"
 
 (* ------------------------------------------------------------------ *)
 (* Tracer methods                                                     *)
@@ -661,13 +650,12 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     }
   in
   let http_client = Eta_http.Client.make_h1 ~sw ~net () in
-  let config_resource = make_config_resource rt config in
   let t =
     {
       http_client;
       clock;
       eta_clock = Eta.Capabilities.clock_of_eio clock;
-      config = config_resource;
+      config;
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();
       metric_queue = Mailbox.create ~capacity:queue_capacity ();

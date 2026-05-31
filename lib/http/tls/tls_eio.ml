@@ -16,6 +16,7 @@ type 'a t_rec = {
   flow : 'a;
   eio_flow : (module EIO_FLOW);
   ssl_mutex : Eio.Mutex.t;
+  handshake_mutex : Eio.Mutex.t;
   read_mutex : Eio.Mutex.t;
   write_mutex : Eio.Mutex.t;
   mutable handshake_done : bool;
@@ -80,26 +81,34 @@ let drain_bio t =
       loop ())
 
 (* Drive the TLS handshake to completion. *)
-let rec do_handshake t =
-  let rc = Openssl.handshake t.ssl in
-  match rc with
-  | Openssl.Handshake_ok ->
-      drain_bio t;
-      t.handshake_done <- true
-  | Openssl.Handshake_error code -> (
-      drain_bio t;
-      if code = 2 (* SSL_ERROR_WANT_READ *) then (
-        feed_bio t;
-        do_handshake t
-      ) else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-        drain_bio t;
-        do_handshake t
-      ) else (
-        match Openssl.err_peek_error () with
-        | Some msg -> Openssl.err_clear_error (); failwith ("TLS handshake: " ^ msg)
-        | None -> failwith ("TLS handshake failed (code " ^ string_of_int code ^ ")")
-      )
-    )
+let do_handshake t =
+  Eio.Mutex.use_rw ~protect:false t.handshake_mutex (fun () ->
+      if not t.handshake_done then
+        let rec loop () =
+          let rc = with_ssl t (fun () -> Openssl.handshake t.ssl) in
+          match rc with
+          | Openssl.Handshake_ok ->
+              drain_bio t;
+              t.handshake_done <- true
+          | Openssl.Handshake_error code -> (
+              drain_bio t;
+              if code = 2 (* SSL_ERROR_WANT_READ *) then (
+                feed_bio t;
+                loop ())
+              else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
+                drain_bio t;
+                loop ())
+              else (
+                match Openssl.err_peek_error () with
+                | Some msg ->
+                    Openssl.err_clear_error ();
+                    failwith ("TLS handshake: " ^ msg)
+                | None ->
+                    failwith
+                      ("TLS handshake failed (code " ^ string_of_int code ^ ")")
+                ))
+        in
+        loop ())
 
 let close t =
   if not t.closed then (
@@ -225,6 +234,7 @@ let client_of_flow ?host_eio (config : config) ?host
       flow;
       eio_flow = flow_module host_eio;
       ssl_mutex = Eio.Mutex.create ();
+      handshake_mutex = Eio.Mutex.create ();
       read_mutex = Eio.Mutex.create ();
       write_mutex = Eio.Mutex.create ();
       handshake_done = false;

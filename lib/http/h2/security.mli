@@ -28,6 +28,10 @@ type t
 
 val create : ?config:config -> unit -> t
 
+val complete_stream : t -> int -> unit
+(** Forget per-stream response-header accounting for a stream that has
+    completed, reset, or otherwise been released. *)
+
 val observe :
   t ->
   Bigstringaf.t ->

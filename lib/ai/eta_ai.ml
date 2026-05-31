@@ -156,24 +156,16 @@ module Provider = struct
     let decode ~provider raw = provider.decode_chat raw
 
     let request ~provider ~api_key chat_request =
-      match provider.encode_chat chat_request with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok raw -> Stdlib.Ok (provider_request provider api_key raw)
+      Transport.chat_request provider ~api_key provider.encode_chat chat_request
 
     let run ~provider client ~api_key chat_request =
-      match request ~provider ~api_key chat_request with
-      | Stdlib.Error error -> Eta.Effect.fail error
-      | Stdlib.Ok http_request ->
-          with_chat_span provider chat_request
-            (perform_chat provider client http_request)
+      request ~provider ~api_key chat_request
+      |> run_chat_request provider client chat_request
 
     let stream ~provider client ~api_key chat_request =
       let chat_request = { chat_request with stream = true } in
-      match request ~provider ~api_key chat_request with
-      | Stdlib.Error error -> Eta.Effect.fail error
-      | Stdlib.Ok http_request ->
-          with_stream_span provider chat_request
-            (perform_stream provider client http_request)
+      request ~provider ~api_key chat_request
+      |> run_stream_request provider client chat_request
   end
 
   module Embeddings = struct
@@ -184,10 +176,7 @@ module Provider = struct
       embeddings_request provider ~api_key embedding_request
 
     let run ~provider client ~api_key embedding_request =
-      match request ~provider ~api_key embedding_request with
-      | Stdlib.Error error -> Eta.Effect.fail error
-      | Stdlib.Ok http_request ->
-          with_embeddings_span provider embedding_request
-            (perform_embeddings provider client http_request)
+      request ~provider ~api_key embedding_request
+      |> run_embeddings_request provider client embedding_request
   end
 end

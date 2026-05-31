@@ -1,14 +1,8 @@
-(** Eta.Par — a parallel runtime for OxCaml.
+(** Eta.Par: fork-join data parallelism for OxCaml.
 
     Eta.Par offers fork-join data parallelism on multiple cores.
-    Internally it implements the heartbeat scheduling algorithm of
-    Acar et al.: parallel work runs sequentially on the calling
-    worker's cactus stack, and the OLDEST queued frame is promoted
-    into a stealable slot only at periodic heartbeat ticks.  See
-    the original heartbeat paper and the Spice (Zig) and chili (Rust)
-    implementations for the prior art.  The public surface is
-    deliberately small: pools, [run], [join], and a handful of
-    Rayon-shaped combinators.
+    The public surface is deliberately small: pools, [run], [join], and a
+    handful of array and iterator combinators.
 
     {1 Quick start}
 
@@ -31,14 +25,20 @@ module Pool : sig
   type t
 
   val create :
-    ?n_workers:int -> ?heartbeat_interval_ns:int -> unit -> t
+    ?n_workers:int ->
+    ?heartbeat_interval_ns:int ->
+    ?par_threshold:int ->
+    unit ->
+    t
   (** Create a pool with [n_workers] workers (default:
       [Domain.recommended_domain_count ()]).  Worker 0 is reserved
       for the caller of {!run}; workers 1..n-1 each spawn a domain
       that idles on a condvar waiting for work.  A separate domain
       ticks every worker's heartbeat flag round-robin every
-      [heartbeat_interval_ns] nanoseconds (default 100 µs).  The pool
-      stays alive until {!shutdown} is called. *)
+      [heartbeat_interval_ns] nanoseconds (default 100 µs).
+      [par_threshold] sets the default leaf size for recursive parallel
+      combinators run on this pool when they do not receive [?chunk]
+      directly.  The pool stays alive until {!shutdown} is called. *)
 
   val run : t -> (unit -> 'a) -> 'a
   (** [run pool f] runs [f] as the root task on the calling thread.  The
@@ -51,6 +51,10 @@ module Pool : sig
       blocks the caller until it returns.  If the pool has no background
       workers, [f] runs inline.
 
+      Jobs are ordinary CPU callbacks: the pool does not inject cancellation
+      checks, timeouts, or preemption.  A job that never returns keeps its worker
+      occupied and keeps the caller blocked.
+
       This is the entry point for typed offload wrappers such as
       [Effect.island].  Use {!run} for explicit fork-join roots where the
       caller should participate as worker 0. *)
@@ -59,21 +63,32 @@ module Pool : sig
   (** [run_many_on_workers pool jobs] schedules all [jobs] on long-lived
       worker domains and returns results in input order after every job
       finishes.  If any job raises, all jobs still finish and the first
-      exception in input order is re-raised. *)
+      exception in input order is re-raised.
+
+      The same non-preemptive job contract as {!run_on_worker} applies to every
+      item in the batch. *)
 
   val shutdown : t -> unit
   (** Signal all worker domains to exit and join them.  Calling [run]
       after shutdown is undefined. *)
 
   val with_pool :
-    ?n_workers:int -> ?heartbeat_interval_ns:int -> (t -> 'a) -> 'a
+    ?n_workers:int ->
+    ?heartbeat_interval_ns:int ->
+    ?par_threshold:int ->
+    (t -> 'a) ->
+    'a
   (** [with_pool ?n_workers f] = [create ?n_workers (), f, shutdown]. *)
 end
 
 (** {1 Top-level runner} *)
 
 val run :
-  ?n_workers:int -> ?heartbeat_interval_ns:int -> (unit -> 'a) -> 'a
+  ?n_workers:int ->
+  ?heartbeat_interval_ns:int ->
+  ?par_threshold:int ->
+  (unit -> 'a) ->
+  'a
 (** Convenience: create a pool, run [f], shut down.  Use {!Pool.run} if
     you want to reuse the pool across multiple top-level calls. *)
 
@@ -86,15 +101,9 @@ val join : (unit -> 'a) -> (unit -> 'b) -> 'a * 'b
     Must be called from inside a task running on a pool worker (i.e.,
     transitively from {!run} or {!Pool.run}).
 
-    Under the heartbeat algorithm, [f] is pushed onto the worker's
-    cactus stack and [g] runs inline.  At periodic heartbeat ticks the
-    OLDEST frame on the stack — possibly [f], possibly some
-    grandparent of [f] — is promoted into a stealable slot.  If [f]
-    actually got promoted and picked up by another worker the joiner
-    waits for its result; otherwise [f] runs inline after [g] with no
-    extra overhead.  Exceptions raised by either side propagate to the
-    caller, with the other side's work always run to completion first
-    (so children cannot leak the parent's frame). *)
+    The runtime may run either branch inline or on another worker. Exceptions
+    raised by either branch propagate to the caller, with the other branch's
+    work run to completion before [join] returns or raises. *)
 
 val join3 :
   (unit -> 'a) -> (unit -> 'b) -> (unit -> 'c) -> 'a * 'b * 'c
@@ -107,9 +116,10 @@ val par_for :
 (** [par_for ?chunk ~start ~stop f] applies [f] to every integer in
     [[start, stop)] in parallel.  The range is recursively halved until
     each leaf is at most [chunk] integers wide; below that it runs
-    serially.  [chunk] defaults to {!par_threshold}.  Pass a smaller
-    [chunk] for kernels with heavy per-iteration work and few
-    iterations (e.g., [par_for ~chunk:1] over rows of a matmul). *)
+    serially.  Without [?chunk], the default comes from the current pool's
+    [par_threshold].  Pass a smaller [chunk] for kernels with heavy
+    per-iteration work and few iterations (e.g., [par_for ~chunk:1] over
+    rows of a matmul). *)
 
 val par_iter : ?chunk:int -> 'a array -> ('a -> unit) -> unit
 (** [par_iter arr f] applies [f] to every element of [arr] in parallel. *)
@@ -146,16 +156,9 @@ val par_sort : 'a array -> ('a -> 'a -> int) -> unit
     with many duplicate keys (in particular all-equal arrays) collapse
     cleanly without the O(N) recursion of plain Lomuto. *)
 
-(** {1 Tuning} *)
-
-val par_threshold : int ref
-(** Default minimum chunk size for combinators that don't get a
-    [?chunk] argument.  Lower values create more tasks and finer load
-    balancing at the cost of scheduling overhead.  Default: 1024. *)
-
 (** {1 Lazy parallel iterators}
 
-    Rayon-style iterator chains, layered on top of {!join}.  Construct
+    Lazy iterator chains layered on top of {!join}.  Construct
     with {!Iter.of_array} / {!Iter.of_range}, chain adapters lazily,
     then end with a consumer like {!Iter.reduce} or
     {!Iter.collect_array}.

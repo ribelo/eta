@@ -625,8 +625,6 @@ let test_self_spans_do_not_reenter_export () =
   let self_names =
     Eta_otel.Internal.self_spans exporter |> List.map (fun s -> s.Tracer.name)
   in
-  Alcotest.(check bool) "config resource span recorded" true
-    (List.exists (( = ) "eta_otel.config") self_names);
   Alcotest.(check bool) "self export span recorded" true
     (List.exists (( = ) "eta_otel.export.traces") self_names);
   let exported = String.concat "\n" (List.rev !bodies) in

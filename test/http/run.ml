@@ -37,6 +37,8 @@ let () =
           Alcotest.test_case "release once" `Quick test_body_stream_release_once;
           Alcotest.test_case "reader release once" `Quick
             test_body_stream_reader_release_once;
+          Alcotest.test_case "rejects concurrent reads" `Quick
+            test_body_stream_rejects_concurrent_reads;
           Alcotest.test_case "source owned stream release" `Quick
             test_body_source_owned_stream_releases_on_scope_exit;
           Alcotest.test_case "source rewindable stream ownership" `Quick
@@ -180,6 +182,8 @@ let () =
             test_h1_pool_discard_releases_checkout;
           Alcotest.test_case "pool cancellation releases checkout" `Quick
             test_h1_pool_request_cancellation_releases_checkout;
+          Alcotest.test_case "pool marks undelivered response unreusable" `Quick
+            test_h1_pool_marks_undelivered_response_unreusable;
           Alcotest.test_case "pool connection close opens new connection" `Quick
             test_h1_pool_connection_close_opens_new_connection;
           Alcotest.test_case "read exception leaks release" `Quick
@@ -243,6 +247,8 @@ let () =
             test_tls_chokepoint_policy;
           Alcotest.test_case "OpenSSL SSL finalizer ownership" `Quick
             test_openssl_ssl_finalizer_keeps_ctx_ownership_separate;
+          Alcotest.test_case "handshake enters SSL mutex" `Quick
+            test_tls_handshake_enters_ssl_mutex_before_openssl;
         ] );
       ( "h2-admission",
         [
@@ -277,16 +283,16 @@ let () =
             test_h2_connection_cancelled_upload_releases_body;
           Alcotest.test_case "cancelled fixed request releases stream" `Quick
             test_h2_connection_cancelled_fixed_request_releases_stream;
-          Alcotest.test_case "cancelled body read closes connection" `Quick
-            test_h2_connection_cancelled_body_read_closes_connection;
+          Alcotest.test_case "cancelled body read preserves connection" `Quick
+            test_h2_connection_cancelled_body_read_preserves_connection;
           Alcotest.test_case "completed error response releases switch" `Quick
             test_h2_connection_completed_error_response_does_not_hold_switch;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
-          Alcotest.test_case "timeout one request kills connection" `Quick
-            test_h2_connection_timeout_kills_connection;
+          Alcotest.test_case "timeout one request preserves connection" `Quick
+            test_h2_connection_timeout_preserves_connection;
           Alcotest.test_case "switch close does not fire security error" `Quick
             test_h2_connection_switch_close_does_not_fire_security_error;
           Alcotest.test_case "failure kind on switch close is not protocol violation" `Quick
@@ -306,11 +312,15 @@ let () =
             test_h2_security_continuation_cap;
           Alcotest.test_case "GOAWAY churn" `Quick
             test_h2_security_goaway_churn;
-	          Alcotest.test_case "header churn" `Quick
-	            test_h2_security_header_churn;
-	          Alcotest.test_case "many normal response headers" `Quick
-	            test_h2_security_allows_many_normal_response_headers;
-	          Alcotest.test_case "header normalization edges" `Quick
+          Alcotest.test_case "header churn" `Quick
+            test_h2_security_header_churn;
+          Alcotest.test_case "many normal response headers" `Quick
+            test_h2_security_allows_many_normal_response_headers;
+          Alcotest.test_case "forgets completed stream headers" `Quick
+            test_h2_security_forgets_completed_stream_headers;
+          Alcotest.test_case "multiplexer release forgets stream headers" `Quick
+            test_h2_security_multiplexer_release_forgets_stream_headers;
+          Alcotest.test_case "header normalization edges" `Quick
             test_h2_security_header_normalization_edges;
         ] );
       ( "h2-multiplexer",
@@ -335,6 +345,8 @@ let () =
             test_h2_multiplexer_server_reset_admission_release;
           Alcotest.test_case "client cancel releases stream" `Quick
             test_h2_multiplexer_client_cancel_releases_stream;
+          Alcotest.test_case "release closes open request body" `Quick
+            test_h2_multiplexer_release_closes_open_request_body;
           Alcotest.test_case "buffer-full returns security error" `Quick
             test_h2_multiplexer_buffer_full_is_security_error;
           Alcotest.test_case "GOAWAY rejects new streams" `Quick

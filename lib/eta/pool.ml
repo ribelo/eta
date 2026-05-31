@@ -237,15 +237,17 @@ let close_entry ?(release_permit = true) t entry =
              log t ~level:Capabilities.Warn "eta.pool.close_failed"
              |> Effect.map (fun () -> `Close_failed err)))
   in
+  let mark_close_finished =
+    mark_closed ~release_permit t
+    |> Effect.bind (fun () -> emit_closed t)
+    |> Effect.bind (fun () -> emit_gauges t)
+  in
   close_once
+  |> Effect.finally mark_close_finished
   |> Effect.bind (fun result ->
-         mark_closed ~release_permit t
-         |> Effect.bind (fun () -> emit_closed t)
-         |> Effect.bind (fun () -> emit_gauges t)
-         |> Effect.bind (fun () ->
-                match result with
-                | `Closed -> Effect.unit
-                | `Close_failed err -> Effect.fail err))
+         match result with
+         | `Closed -> Effect.unit
+         | `Close_failed err -> Effect.fail err)
 
 let close_entries ?(release_permit = true) t entries =
   entries |> List.map (close_entry ~release_permit t) |> Effect.concat
@@ -253,6 +255,9 @@ let close_entries ?(release_permit = true) t entries =
 let mark_released_to_close t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () -> decr_active_locked t
+
+let mark_active_close_finished t =
+  mark_released_to_close t |> Effect.bind (fun () -> emit_gauges t)
 
 let release_entry t entry =
   let decide =
@@ -269,9 +274,7 @@ let release_entry t entry =
                duration_expired ~now max_lifetime entry.created_ms
            | None -> false)
     in
-    if close || t.idle_count >= t.max_idle then (
-      decr_active_locked t;
-      `Close)
+    if close || t.idle_count >= t.max_idle then `Close
     else (
       entry.last_used_ms <- now;
       decr_active_locked t;
@@ -286,15 +289,16 @@ let release_entry t entry =
            emit_gauges t
        | `Close ->
            emit_gauges t
-           |> Effect.bind (fun () -> close_entry t entry))
+           |> Effect.bind (fun () ->
+                  close_entry t entry |> Effect.finally (mark_active_close_finished t)))
 
 let reject_entry t entry =
   mark_health_rejected t
   |> Effect.bind (fun () -> log t "eta.pool.health_rejected")
   |> Effect.bind (fun () -> emit_health_rejected t)
   |> Effect.bind (fun () -> emit_gauges t)
-  |> Effect.bind (fun () -> mark_released_to_close t)
-  |> Effect.bind (fun () -> close_entry t entry)
+  |> Effect.bind (fun () ->
+         close_entry t entry |> Effect.finally (mark_active_close_finished t))
 
 let check_health t entry =
   span t "eta.pool.health_check" (t.health_check entry.conn)
@@ -333,7 +337,7 @@ let with_fixed_acquire_guard release f =
     |> Effect.bind (fun () -> f ~disarm))
 
 let close_acquired_entry t entry =
-  mark_released_to_close t |> Effect.bind (fun () -> close_entry t entry)
+  close_entry t entry |> Effect.finally (mark_active_close_finished t)
 
 let state_of_reservation = function
   | `Shutdown -> Effect.fail `Pool_shutdown

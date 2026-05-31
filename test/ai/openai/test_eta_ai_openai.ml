@@ -14,6 +14,11 @@ let expect_ok label = function
   | Stdlib.Ok value -> value
   | Stdlib.Error _ -> Alcotest.fail ("expected Ok: " ^ label)
 
+let expect_unsupported label = function
+  | Stdlib.Error (A.Unsupported { feature; _ }) -> feature
+  | Stdlib.Error _ -> Alcotest.fail ("expected Unsupported: " ^ label)
+  | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
+
 let contains ~needle value =
   let needle_len = String.length needle in
   let value_len = String.length value in
@@ -497,6 +502,37 @@ let test_transcription_request_and_decode () =
   in
   Alcotest.(check (option string)) "text" (Some "hello eta") response.text
 
+let test_transcription_request_rejects_multipart_header_injection () =
+  let make_request ?(content_type = "audio/wav") ?(extra_fields = []) () =
+    {
+      A.Transcription.model = "gpt-4o-transcribe";
+      file =
+        {
+          filename = "sample.wav";
+          content_type;
+          data = Bytes.of_string "RIFF";
+        };
+      language = None;
+      prompt = None;
+      response_format = None;
+      temperature = None;
+      extra_fields;
+    }
+  in
+  let field_error =
+    O.transcription_request ~api_key:(A.api_key "sk-test")
+      (make_request ~extra_fields:[ ("bad\r\nname", "value") ] ())
+    |> expect_unsupported "transcription extra field name"
+  in
+  require_contains "field name error" ~needle:"field name" field_error;
+  let content_type_error =
+    O.transcription_request ~api_key:(A.api_key "sk-test")
+      (make_request ~content_type:"audio/wav\r\nX-Injected: yes" ())
+    |> expect_unsupported "transcription content type"
+  in
+  require_contains "content type error" ~needle:"content type"
+    content_type_error
+
 let test_chat_and_responses_encode_audio_content () =
   let request =
     { (chat_request ()) with prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ] }
@@ -677,6 +713,8 @@ let () =
           Alcotest.test_case "speech runner" `Quick test_speech_runner;
           Alcotest.test_case "transcription request and decode" `Quick
             test_transcription_request_and_decode;
+          Alcotest.test_case "transcription multipart validation" `Quick
+            test_transcription_request_rejects_multipart_header_injection;
         ] );
       ( "realtime",
         [

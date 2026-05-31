@@ -183,23 +183,15 @@ let rec has_timeout_as token = function
       List.exists (fun (exn, _) -> has_timeout_as token exn) causes
   | _ -> false
 
-let rec only_timeout_as_or_interrupt token = function
+let rec only_timeout_as_or_interrupt key token = function
   | Timeout_as_fired observed -> observed = token
   | Eio.Cancel.Cancelled _ | Exit -> true
-  | Raised_cause (_, cause) -> (
-      let rec only_fail_or_interrupt : _ Cause.t -> bool = function
-        | Cause.Fail _ | Cause.Interrupt _ -> true
-        | Cause.Sequential causes | Cause.Concurrent causes ->
-            List.for_all only_fail_or_interrupt causes
-        | Cause.Suppressed _ | Cause.Die _ -> false
-      in
-      match Obj.obj cause with
-      | cause when only_fail_or_interrupt cause -> true
-      | cause -> Cause.is_interrupt_only cause)
-  | Fun.Finally_raised exn -> only_timeout_as_or_interrupt token exn
+  | Raised_cause (observed, cause) ->
+      observed = Typed_fail.int key && Cause.is_interrupt_only (Obj.obj cause)
+  | Fun.Finally_raised exn -> only_timeout_as_or_interrupt key token exn
   | Eio.Exn.Multiple causes ->
       List.for_all
-        (fun (exn, _) -> only_timeout_as_or_interrupt token exn)
+        (fun (exn, _) -> only_timeout_as_or_interrupt key token exn)
         causes
   | _ -> false
 
@@ -258,17 +250,24 @@ let run_finalizers ~runtime ~fail_key finalizers =
            | [ cause ] -> Some cause
            | causes -> Some (Cause.sequential causes))
 
-let with_finalizers ~runtime ~fail_key finalizers body =
+let render_finalizer_cause ~error_renderer cause =
+  Cause.finalizer_of_cause (fun err -> error_renderer (Obj.repr err)) cause
+
+let with_finalizers ~runtime ~fail_key ~error_renderer finalizers body =
   match body () with
   | value -> (
       match run_finalizers ~runtime ~fail_key finalizers with
       | None -> value
-      | Some finalizer -> raise_cause fail_key finalizer)
+      | Some finalizer ->
+          raise_cause fail_key
+            (Cause.finalizer (render_finalizer_cause ~error_renderer finalizer)))
   | exception exn ->
       let primary = cause_of_exn_runtime runtime fail_key exn in
       let cause =
         match run_finalizers ~runtime ~fail_key finalizers with
         | None -> primary
-        | Some finalizer -> Cause.suppressed ~primary ~finalizer
+        | Some finalizer ->
+            Cause.suppressed ~primary
+              ~finalizer:(render_finalizer_cause ~error_renderer finalizer)
       in
       raise_cause fail_key cause

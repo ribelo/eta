@@ -40,10 +40,7 @@ let rec pp ppf = function
   | Jittered (s, lo, hi) -> Format.fprintf ppf "Jittered(%a,%g,%g)" pp s lo hi
   | Named (s, n) -> Format.fprintf ppf "Named(%a, %S)" pp s n
 
-let pow_factor f step =
-  let v = ref 1.0 in
-  for _ = 0 to step - 1 do v := !v *. f done;
-  !v
+let pow_factor f step = f ** float_of_int step
 
 let default_random = lazy (Capabilities.random_default ())
 

@@ -7,6 +7,11 @@
 
     [Sequential] preserves ordered failures from sequential composition.
     [Concurrent] preserves failures observed from parallel composition.
+    [Finalizer] marks diagnostic failures produced while cleaning up after a
+    successful primary effect; ordinary [Effect.catch] leaves failures under
+    this node untouched. Finalizer failures are rendered to strings when they
+    leave the cleanup effect, so they are no longer part of the typed error
+    channel.
     [Suppressed] preserves a primary failure together with a finalizer failure
     that occurred while cleaning up the primary failure. *)
 
@@ -24,13 +29,30 @@ type die = {
   annotations : (string * string) list;
 }
 
+module Finalizer : sig
+  type t =
+    | Fail of string
+    | Die of die
+    | Interrupt of interrupt_id option
+    | Sequential of t list
+    | Concurrent of t list
+    | Finalizer of t
+    | Suppressed of { primary : t; finalizer : t }
+
+  val equal : t -> t -> bool
+  val diagnostic_equal : t -> t -> bool
+  val pp : Format.formatter -> t -> unit
+  val is_interrupt_only : t -> bool
+end
+
 type 'err t =
   | Fail of 'err
   | Die of die
   | Interrupt of interrupt_id option
   | Sequential of 'err t list
   | Concurrent of 'err t list
-  | Suppressed of { primary : 'err t; finalizer : 'err t }
+  | Finalizer of Finalizer.t
+  | Suppressed of { primary : 'err t; finalizer : Finalizer.t }
 
 type 'err same_domain_t = 'err t
 
@@ -48,13 +70,28 @@ module Portable : sig
     annotations : (string * string) list;
   }
 
+  module Finalizer : sig
+    type t : value mod portable =
+      | Fail of string
+      | Die of die
+      | Interrupt of interrupt_id option
+      | Sequential of t list
+      | Concurrent of t list
+      | Finalizer of t
+      | Suppressed of { primary : t; finalizer : t }
+
+    val equal : t -> t -> bool
+    val pp : Format.formatter -> t -> unit
+  end
+
   type ('err : value mod portable) t : value mod portable =
     | Fail of 'err
     | Die of die
     | Interrupt of interrupt_id option
     | Sequential of 'err t list
     | Concurrent of 'err t list
-    | Suppressed of { primary : 'err t; finalizer : 'err t }
+    | Finalizer of Finalizer.t
+    | Suppressed of { primary : 'err t; finalizer : Finalizer.t }
 
   val of_cause : ('err -> 'portable_err) -> 'err same_domain_t -> 'portable_err t
   val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
@@ -80,9 +117,12 @@ val sequential : 'err t list -> 'err t
 (** @raise Invalid_argument if the list is empty. *)
 val concurrent : 'err t list -> 'err t
 (** @raise Invalid_argument if the list is empty. *)
-val suppressed : primary:'err t -> finalizer:'err t -> 'err t
+val finalizer : Finalizer.t -> 'err t
+val suppressed : primary:'err t -> finalizer:Finalizer.t -> 'err t
 
 val is_interrupt_only : 'err t -> bool
+val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
+val finalizer_of_cause : ('err -> string) -> 'err t -> Finalizer.t
 
 val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Structural equality for causes. [Die] causes compare by physical exception

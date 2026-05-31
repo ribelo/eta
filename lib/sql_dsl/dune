@@ -2,4 +2,4 @@
  (name eta_sql_dsl)
  (public_name eta_sql_dsl)
  (synopsis "Backend-agnostic SQL DSL shared by Eta SQL connectors")
- (private_modules eta_sql_dsl_compiled eta_sql_dsl_schema))
+ (private_modules eta_sql_dsl_compiled eta_sql_dsl_query eta_sql_dsl_schema))

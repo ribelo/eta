@@ -302,10 +302,10 @@ let test_h2_connection_cancelled_fixed_request_releases_stream () =
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "live streams" 0 stats.live;
       Alcotest.(check int) "local resets" 1 stats.local_resets;
-      Alcotest.(check bool) "connection closed" true
+      Alcotest.(check bool) "connection remains open" false
         (Eta_http.H2.Connection.is_closed connection))
 
-let test_h2_connection_cancelled_body_read_closes_connection () =
+let test_h2_connection_cancelled_body_read_preserves_connection () =
   with_h2_server
     (fun reqd ->
       let body = H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK) in
@@ -330,7 +330,7 @@ let test_h2_connection_cancelled_body_read_closes_connection () =
       let stats = Eta_http.H2.Connection.stats connection in
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "live streams" 0 stats.live;
-      Alcotest.(check bool) "connection closed" true
+      Alcotest.(check bool) "connection remains open" false
         (Eta_http.H2.Connection.is_closed connection))
 
 let test_h2_connection_completed_error_response_does_not_hold_switch () =
@@ -505,11 +505,7 @@ let test_h2_connection_goaway_mid_body_completes_existing_stream () =
             (Eta.Cause.pp pp_http_error_detail)
             cause)
 
-(* Test documenting that a timed-out request (local RST_STREAM) shuts down
-   the entire H2 connection. This is the current conservative design:
-   release_unreturned_request -> Queue_rst -> Connection.shutdown.
-   After a timeout, the connection is dead for subsequent requests. *)
-let test_h2_connection_timeout_kills_connection () =
+let test_h2_connection_timeout_preserves_connection () =
   with_h2_server
     (fun reqd ->
       match (H2.Reqd.request reqd).target with
@@ -528,30 +524,17 @@ let test_h2_connection_timeout_kills_connection () =
       (match timeout_result with
       | Eta.Exit.Error _ -> ()
       | Eta.Exit.Ok _ -> Alcotest.fail "expected timeout");
-      (* Connection should be closed after local reset *)
-      Alcotest.(check bool) "connection closed after timeout" true
+      Alcotest.(check bool) "connection remains open after timeout" false
         (Eta_http.H2.Connection.is_closed connection);
-      (* Subsequent request fails with Connection_closed *)
       let retry_result =
         request_effect connection "/fast" |> Eta.Runtime.run rt
       in
       match retry_result with
-      | Eta.Exit.Error
-          (Eta.Cause.Fail { Eta_http.Error.kind = Connection_closed _; _ }) ->
-          ()
-      | Eta.Exit.Error
-          (Eta.Cause.Fail
-            {
-              Eta_http.Error.kind =
-                Stream_admission_rejected _ | Connection_protocol_violation _;
-              _;
-            }) ->
-          () (* Also acceptable: connection refuses new streams *)
-      | Eta.Exit.Ok _ ->
-          Alcotest.fail
-            "request succeeded on dead connection after timeout"
+      | Eta.Exit.Ok (status, body) ->
+          Alcotest.(check int) "retry status" 200 status;
+          Alcotest.(check string) "retry body" "fast" body
       | Eta.Exit.Error cause ->
-          Alcotest.failf "unexpected error on dead connection: %a"
+          Alcotest.failf "connection unusable after one stream timeout: %a"
             (Eta.Cause.pp pp_http_error_detail)
             cause)
 

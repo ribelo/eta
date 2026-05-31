@@ -10,7 +10,8 @@ let run_cleanup_to_exit frame cleanup =
   try
     ok
       (Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-         cleanup_finalizers (fun () -> run_to_value cleanup_frame cleanup))
+         ~error_renderer:cleanup_frame.error_renderer cleanup_finalizers (fun () ->
+           run_to_value cleanup_frame cleanup))
   with exn -> exit_of_exn cleanup_frame exn
 
 let finally cleanup effect =
@@ -20,11 +21,14 @@ let finally cleanup effect =
   | Exit.Ok value -> (
       match run_cleanup_to_exit frame cleanup with
       | Exit.Ok () -> ok value
-      | Exit.Error cause -> error cause)
+      | Exit.Error cause -> error (finalizer_cause frame cause))
   | Exit.Error primary -> (
       match run_cleanup_to_exit frame cleanup with
       | Exit.Ok () -> error primary
-      | Exit.Error finalizer -> error (Cause.suppressed ~primary ~finalizer))
+      | Exit.Error finalizer ->
+          error
+            (Cause.suppressed ~primary
+               ~finalizer:(render_cause_error frame finalizer)))
 
 let acquire_release ~acquire ~release =
   preserve acquire @@ fun () ->
@@ -37,7 +41,8 @@ let acquire_release ~acquire ~release =
           let release_finalizers = ref [] in
           let release_frame = { frame with finalizers = release_finalizers } in
           Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-            release_finalizers (fun () -> run_to_value release_frame (release value)))
+            ~error_renderer:release_frame.error_renderer release_finalizers (fun () ->
+              run_to_value release_frame (release value)))
         :: !(frame.finalizers);
       ok value
 
@@ -53,8 +58,8 @@ let scoped effect =
          let finalizers = ref [] in
          let child_frame = { frame with sw; finalizers } in
          Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-           finalizers (fun () -> run_to_value child_frame effect)
+           ~error_renderer:child_frame.error_renderer finalizers (fun () ->
+             run_to_value child_frame effect)
        in
-       if Runtime_core.has_eio_fiber_context () then switch_run frame run_scoped
-       else run_scoped frame.sw)
+       switch_run frame run_scoped)
   with exn -> exit_of_exn frame exn

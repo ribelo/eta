@@ -47,7 +47,7 @@ let close_no_body ~mux ~unregister ~resolve_empty_trailers stream body =
   ignore (Multiplexer.release mux stream);
   unregister ()
 
-let response_body ~request ~connection ~mux ~body_error ~body_wake ~unregister
+let response_body ~request ~mux ~body_error ~body_wake ~unregister
     ~resolve_empty_trailers ~resolve_trailer_error stream body =
   let body, wake =
     Multiplexer.body_stream_async
@@ -56,13 +56,10 @@ let response_body ~request ~connection ~mux ~body_error ~body_wake ~unregister
       ~on_eof:(fun () ->
         unregister ();
         resolve_empty_trailers ())
-      ~on_release:(fun decision ->
+      ~on_release:(fun _decision ->
         unregister ();
         resolve_trailer_error (H2_client_errors.closed request Http_response);
-        Eta.Effect.sync (fun () ->
-            match decision with
-            | Stream_state.Queue_rst -> Connection.shutdown connection
-            | Stream_state.No_rst -> ()))
+        Eta.Effect.unit)
       mux stream body
   in
   body_wake := wake;

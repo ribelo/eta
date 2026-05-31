@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=1200">
+<meta name="viewport" content="width=1300">
 <title>Eta lib/ — Pure library LOC (no tests, benches, docs)</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#0d1117;color:#c9d1d9;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;padding:32px 40px}
   h1{font-size:18px;font-weight:600;margin-bottom:4px;color:#e6edf3}
-  .sub {color:#8b949e;margin-bottom:24px;font-size:12px;max-width:800px;line-height:1.7}
+  .sub{color:#8b949e;margin-bottom:24px;font-size:12px;max-width:900px;line-height:1.7}
   .sub code{background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 5px;font-size:11px}
   .chart-wrap{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px 16px 12px;margin-bottom:28px}
   .chart-title{font-size:14px;font-weight:600;color:#e6edf3;margin-bottom:4px}
@@ -23,9 +23,8 @@
   svg text{fill:#8b949e;font-size:10px;font-family:inherit}
   svg .grid line{stroke:#21262d;stroke-width:0.5}
   svg .axis line{stroke:#30363d;stroke-width:1}
-  .footnote{color:#484f58;font-size:11px;margin-top:8px;max-width:800px;line-height:1.7}
+  .footnote{color:#484f58;font-size:11px;margin-top:8px;max-width:900px;line-height:1.7}
   .footnote em{color:#8b949e}
-  .files-note{color:#484f58;font-size:10px;margin-top:4px}
 </style>
 </head>
 <body>
@@ -35,7 +34,7 @@
   <code>.ml</code> + <code>.mli</code> files under <code>lib/</code>.
   <strong>Excludes</strong>: <code>*/bench/*</code>, <code>*/test/*</code>, <code>*/audit/*</code>, <code>*/docs/*</code>, <code>*/probes/*</code>,
   and the dedicated <code>lib/schema_test/</code>, <code>lib/http_bench/</code>, <code>lib/http_repl/</code> packages.
-  Counted via <code>git cat-file --batch</code> at each commit.
+  77 commits across 12 days. Counted via <code>git cat-file --batch</code> at each commit.
 </p>
 
 <div class="chart-wrap">
@@ -43,113 +42,63 @@
   <div class="chart-sub">
     <span>Peak <span class="stat stat-up">37,382</span> on May 29</span>
     <span>→</span>
-    <span>Now <span class="stat stat-down">36,081</span> on May 30</span>
+    <span>Now <span class="stat stat-down">36,430</span> on May 31</span>
     <span>·</span>
-    <span class="stat stat-down">−1,301 lines from peak</span>
+    <span class="stat stat-down">−952 lines from peak</span>
     <span>·</span>
-    <span class="stat stat-down">−3.5%</span>
+    <span class="stat stat-down">−2.5%</span>
+    <span>·</span>
+    <span class="stat-neutral">net +34,872 from first commit</span>
   </div>
-  <svg id="locChart" viewBox="0 0 1100 260" width="1100" height="260"></svg>
+  <svg id="locChart" viewBox="0 0 1260 280" width="1260" height="280"></svg>
 </div>
 
 <div class="chart-wrap">
-  <div class="chart-title">Lines added / removed per commit (pure library)</div>
+  <div class="chart-title">Lines added / removed per commit (pure library .ml + .mli)</div>
   <div class="chart-sub">
     <span>Green = insertions. Red = deletions. Bar height capped at 6,000; overflow values labeled.</span>
-    <span>Filtered to same paths as the LOC chart above.</span>
+    <span>Zero-height bars = C-only correctness fixes (no OCaml surface change).</span>
   </div>
   <div class="legend">
     <span><span class="dot" style="background:#3fb950"></span> insertions (+)</span>
     <span><span class="dot" style="background:#f85149"></span> deletions (−)</span>
   </div>
-  <svg id="diffChart" viewBox="0 0 1100 340" width="1100" height="340"></svg>
+  <svg id="diffChart" viewBox="0 0 1260 360" width="1260" height="360"></svg>
 </div>
 
 <div class="footnote">
-  <strong>Trend:</strong> After the May 28 feature rush (connectors, AI APIs, pubsub — ~2.7k net/day), May 29–30 flipped to aggressive refactoring.
-  Two large restructures ("tighten lib module boundaries" −1,091 net, "promote SQLite DSL to functor" −325 net) cut 1,416 lines.
-  The last ~20 commits continue the pattern: small, deletion-dominant cleanups (remove trampolines, consolidate helpers, strip dead wrappers).<br>
-  <em>"The best code is no code."</em>
+  <strong>Trend:</strong> May 28 was the feature rush (connectors, AI APIs, pubsub). May 29: peak. May 30–31: aggressive refactoring.
+  Two large restructures ("tighten boundaries" −1,091 net, "SQLite DSL functor" −325 net). Recent work (May 31) continues
+  the deletion pattern: trim comments (−69), remove barrel aliases (−15 net), collapse wrappers (−7 net),
+  narrow private surfaces (−93). The last 7 commits are all net-negative.<br>
+  <em>"The best code is no code." — Refactoring heading the right direction, now −952 LOC from peak (−2.5%).</em>
 </div>
 
 <script>
-// Pure library data — excludes bench/test/audit/docs/probes + schema_test/http_bench/http_repl
-const data = [
-  {h:"8fc2e89",d:"05-19",loc:756,ins:756,del:0,msg:"Initial Effet"},
-  {h:"b17ef60",d:"05-19",loc:886,ins:178,del:56,msg:"Add Cause Exit, cancel regions"},
-  {h:"f19e4b2",d:"05-19",loc:999,ins:123,del:10,msg:"par / all / for_each_par"},
-  {h:"87f5ad4",d:"05-19",loc:0,ins:0,del:967,msg:"chore: remove old lib/ (monorepo)"},
-  {h:"a3d2e27",d:"05-27",loc:28335,ins:27983,del:0,msg:"migrate repository layout → lib"},
-  {h:"fd91b63",d:"05-27",loc:28335,ins:65,del:65,msg:"repair lib layout migration"},
-  {h:"68e7674",d:"05-27",loc:28607,ins:332,del:337,msg:"make Eta ocamlfind-friendly"},
-  {h:"6a2661a",d:"05-27",loc:28664,ins:67,del:10,msg:"support runtime in dune utop"},
-  {h:"2e36925",d:"05-27",loc:28729,ins:90,del:25,msg:"scoped + blocking in utop"},
-  {h:"eed5bd0",d:"05-28",loc:28782,ins:61,del:8,msg:"host Eio helper for utop"},
-  {h:"6ac7d89",d:"05-28",loc:28819,ins:37,del:0,msg:"structured background effects"},
-  {h:"f8d6bb0",d:"05-28",loc:28807,ins:6,del:18,msg:"supervisor cancel wait cleanup"},
-  {h:"b5834de",d:"05-28",loc:29274,ins:568,del:105,msg:"support host eio in dune utop"},
-  {h:"80568a5",d:"05-28",loc:29362,ins:84,del:0,msg:"effect dx helpers"},
-  {h:"d2d2843",d:"05-28",loc:29836,ins:470,del:0,msg:"eta pubsub hub"},
-  {h:"332600f",d:"05-28",loc:29873,ins:37,del:0,msg:"let@ syntax + with_resource"},
-  {h:"6f648e8",d:"05-28",loc:29873,ins:5,del:5,msg:"split optional eta packages"},
-  {h:"53f0ae9",d:"05-28",loc:31357,ins:1472,del:0,msg:"duckdb/turso/ladybug connectors"},
-  {h:"42cffcb",d:"05-28",loc:34291,ins:2961,del:27,msg:"typed database connector surfaces"},
-  {h:"d23b222",d:"05-28",loc:34330,ins:42,del:3,msg:"harden connector runtimes"},
-  {h:"db01f81",d:"05-28",loc:34674,ins:349,del:5,msg:"ladybug extension helpers"},
-  {h:"029f46a",d:"05-28",loc:37026,ins:2385,del:33,msg:"unified multimodal AI APIs"},
-  {h:"f14fba7",d:"05-28",loc:37084,ins:76,del:18,msg:"ladybug batch rows + timeouts"},
-  {h:"aebc834",d:"05-29",loc:37179,ins:608,del:513,msg:"sql: rebuild typed builder/runner"},
-  {h:"930b828",d:"05-29",loc:37382,ins:258,del:59,msg:"fill observability api gaps ◀ peak"},
-  {h:"949667d",d:"05-29",loc:37374,ins:56,del:64,msg:"h2 timeout cancel release streams"},
-  {h:"7ba5889",d:"05-29",loc:37377,ins:6,del:3,msg:"release h2 owner fibers"},
-  {h:"d84a745",d:"05-30",loc:36300,ins:3501,del:4592,msg:"🔻 tighten lib module boundaries"},
-  {h:"e2eafb3",d:"05-30",loc:36056,ins:5558,del:5883,msg:"🔻 SQLite DSL → functor"},
-  {h:"8e91b83",d:"05-30",loc:35917,ins:1,del:140,msg:"stdlib digest for checksums"},
-  {h:"2220775",d:"05-30",loc:35893,ins:2,del:26,msg:"base64 for websocket keys"},
-  {h:"cecc49c",d:"05-30",loc:35880,ins:0,del:11,msg:"remove dead sql tx wrapper"},
-  {h:"457c3fa",d:"05-30",loc:35848,ins:16,del:24,msg:"remove sql dsl trampolines"},
-  {h:"4d7384d",d:"05-30",loc:35854,ins:12,del:7,msg:"add int64 literal"},
-  {h:"df6d1ec",d:"05-30",loc:35889,ins:249,del:220,msg:"split h2 client helpers"},
-  {h:"122920a",d:"05-30",loc:35995,ins:184,del:78,msg:"structure connector decode"},
-  {h:"c81e48c",d:"05-30",loc:35996,ins:40,del:60,msg:"remove openrouter shadowing"},
-  {h:"fafbc7c",d:"05-30",loc:35996,ins:9,del:9,msg:"rename sql eta pool module"},
-  {h:"06957c6",d:"05-30",loc:35993,ins:21,del:24,msg:"simplify turso pool errors"},
-  {h:"1cc0336",d:"05-30",loc:36102,ins:962,del:869,msg:"split openai codec modules"},
-  {h:"938f08f",d:"05-30",loc:36182,ins:725,del:657,msg:"split sql public interfaces"},
-  {h:"0622efc",d:"05-30",loc:36186,ins:4,del:0,msg:"docs: explain runtime cast"},
-  {h:"038cdd0",d:"05-30",loc:36096,ins:823,del:915,msg:"🔻 share sql dsl interface"},
-  {h:"6bf8545",d:"05-30",loc:36049,ins:8,del:55,msg:"simplify openai codec barrel"},
-  {h:"d9a61f0",d:"05-30",loc:36035,ins:14,del:28,msg:"remove openrouter trampolines"},
-  {h:"970b838",d:"05-30",loc:36034,ins:0,del:1,msg:"remove hidden sql conn alias"},
-  {h:"4bbbe5a",d:"05-30",loc:35989,ins:2,del:47,msg:"base64 in ai providers"},
-  {h:"2e6d9b0",d:"05-30",loc:35989,ins:8,del:8,msg:"clarify turso pool checkout"},
-  {h:"66fb367",d:"05-30",loc:35994,ins:169,del:166,msg:"extract h2 request runner"},
-  {h:"a8853af",d:"05-30",loc:36081,ins:1478,del:1425,msg:"split duckdb and turso backends"},
-];
+const data = [{"h":"8fc2e89","d":"05-19","loc":756,"ins":0,"del":0,"msg":"Initial Effet"},{"h":"b17ef60","d":"05-19","loc":886,"ins":178,"del":56,"msg":"Add Cause Exit"},{"h":"f19e4b2","d":"05-19","loc":999,"ins":123,"del":10,"msg":"par / all / for_each_par"},{"h":"87f5ad4","d":"05-19","loc":0,"ins":0,"del":967,"msg":"remove old lib/ (monorepo)"},{"h":"a3d2e27","d":"05-27","loc":28335,"ins":27983,"del":0,"msg":"migrate repository layout → lib"},{"h":"fd91b63","d":"05-27","loc":28335,"ins":65,"del":65,"msg":"repair lib layout migration"},{"h":"68e7674","d":"05-27","loc":28607,"ins":332,"del":337,"msg":"make Eta ocamlfind-friendly"},{"h":"6a2661a","d":"05-27","loc":28664,"ins":67,"del":10,"msg":"support runtime in dune utop"},{"h":"2e36925","d":"05-27","loc":28729,"ins":90,"del":25,"msg":"scoped + blocking in utop"},{"h":"eed5bd0","d":"05-28","loc":28782,"ins":61,"del":8,"msg":"host Eio helper for utop"},{"h":"6ac7d89","d":"05-28","loc":28819,"ins":37,"del":0,"msg":"structured background effects"},{"h":"f8d6bb0","d":"05-28","loc":28807,"ins":6,"del":18,"msg":"supervisor cancel wait cleanup"},{"h":"b5834de","d":"05-28","loc":29274,"ins":568,"del":105,"msg":"support host eio in utop"},{"h":"80568a5","d":"05-28","loc":29362,"ins":84,"del":0,"msg":"effect dx helpers"},{"h":"d2d2843","d":"05-28","loc":29836,"ins":470,"del":0,"msg":"eta pubsub hub"},{"h":"332600f","d":"05-28","loc":29873,"ins":37,"del":0,"msg":"let@ syntax + with_resource"},{"h":"6f648e8","d":"05-28","loc":29873,"ins":5,"del":5,"msg":"split optional eta packages"},{"h":"53f0ae9","d":"05-28","loc":31357,"ins":1472,"del":0,"msg":"duckdb/turso/ladybug connectors"},{"h":"42cffcb","d":"05-28","loc":34291,"ins":2961,"del":27,"msg":"typed database connector surfaces"},{"h":"d23b222","d":"05-28","loc":34330,"ins":42,"del":3,"msg":"harden connector runtimes"},{"h":"db01f81","d":"05-28","loc":34674,"ins":349,"del":5,"msg":"ladybug extension helpers"},{"h":"029f46a","d":"05-28","loc":37026,"ins":2385,"del":33,"msg":"unified multimodal AI APIs"},{"h":"f14fba7","d":"05-28","loc":37084,"ins":76,"del":18,"msg":"ladybug batch rows + timeouts"},{"h":"aebc834","d":"05-29","loc":37179,"ins":608,"del":513,"msg":"sql: rebuild typed builder/runner"},{"h":"930b828","d":"05-29","loc":37382,"ins":258,"del":59,"msg":"fill observability api gaps ◀ peak"},{"h":"949667d","d":"05-29","loc":37374,"ins":56,"del":64,"msg":"h2 timeout cancel release streams"},{"h":"7ba5889","d":"05-29","loc":37377,"ins":6,"del":3,"msg":"release h2 owner fibers"},{"h":"d84a745","d":"05-30","loc":36300,"ins":3501,"del":4592,"msg":"🔻 tighten lib module boundaries"},{"h":"e2eafb3","d":"05-30","loc":36056,"ins":5558,"del":5883,"msg":"🔻 SQLite DSL → functor"},{"h":"8e91b83","d":"05-30","loc":35917,"ins":1,"del":140,"msg":"stdlib digest for checksums"},{"h":"2220775","d":"05-30","loc":35893,"ins":2,"del":26,"msg":"base64 for websocket keys"},{"h":"cecc49c","d":"05-30","loc":35880,"ins":0,"del":11,"msg":"remove dead sql tx wrapper"},{"h":"457c3fa","d":"05-30","loc":35848,"ins":16,"del":24,"msg":"remove sql dsl trampolines"},{"h":"4d7384d","d":"05-30","loc":35854,"ins":12,"del":7,"msg":"add int64 literal"},{"h":"df6d1ec","d":"05-30","loc":35889,"ins":249,"del":220,"msg":"split h2 client helpers"},{"h":"122920a","d":"05-30","loc":35995,"ins":184,"del":78,"msg":"structure connector decode"},{"h":"c81e48c","d":"05-30","loc":35996,"ins":40,"del":60,"msg":"remove openrouter shadowing"},{"h":"fafbc7c","d":"05-30","loc":35996,"ins":9,"del":9,"msg":"rename sql eta pool module"},{"h":"06957c6","d":"05-30","loc":35993,"ins":21,"del":24,"msg":"simplify turso pool errors"},{"h":"1cc0336","d":"05-30","loc":36102,"ins":962,"del":869,"msg":"split openai codec modules"},{"h":"938f08f","d":"05-30","loc":36182,"ins":725,"del":657,"msg":"split sql public interfaces"},{"h":"0622efc","d":"05-30","loc":36186,"ins":4,"del":0,"msg":"docs: explain runtime cast"},{"h":"038cdd0","d":"05-30","loc":36096,"ins":823,"del":915,"msg":"🔻 share sql dsl interface"},{"h":"6bf8545","d":"05-30","loc":36049,"ins":8,"del":55,"msg":"simplify openai codec barrel"},{"h":"d9a61f0","d":"05-30","loc":36035,"ins":14,"del":28,"msg":"remove openrouter trampolines"},{"h":"970b838","d":"05-30","loc":36034,"ins":0,"del":1,"msg":"remove hidden sql conn alias"},{"h":"4bbbe5a","d":"05-30","loc":35989,"ins":2,"del":47,"msg":"base64 in ai providers"},{"h":"2e6d9b0","d":"05-30","loc":35989,"ins":8,"del":8,"msg":"clarify turso pool checkout"},{"h":"66fb367","d":"05-30","loc":35994,"ins":169,"del":166,"msg":"extract h2 request runner"},{"h":"a8853af","d":"05-30","loc":36081,"ins":1478,"del":1425,"msg":"split duckdb and turso backends"},{"h":"bb70387","d":"05-30","loc":36081,"ins":0,"del":0,"msg":"🔧 copy strings to C heap (DuckDB)"},{"h":"baaebd4","d":"05-30","loc":36081,"ins":0,"del":0,"msg":"🔧 OpenSSL context ownership (double-free)"},{"h":"ce78276","d":"05-30","loc":36081,"ins":4,"del":4,"msg":"respect Cstruct.off in TLS read/write"},{"h":"a5db718","d":"05-30","loc":36081,"ins":0,"del":0,"msg":"🔧 prevent native leaks on bind errors"},{"h":"dfa9197","d":"05-30","loc":36537,"ins":785,"del":329,"msg":"fix: make red tests pass"},{"h":"8cc96e9","d":"05-30","loc":36598,"ins":218,"del":159,"msg":"extract SQL DSL schema rendering"},{"h":"fe373e2","d":"05-30","loc":36618,"ins":48,"del":30,"msg":"extract SQL DSL compiled queries"},{"h":"bccf95a","d":"05-30","loc":36634,"ins":59,"del":45,"msg":"extract stream file errors"},{"h":"cf518ae","d":"05-30","loc":36640,"ins":126,"del":122,"msg":"extract Ladybug data helpers"},{"h":"17d43ba","d":"05-30","loc":36640,"ins":0,"del":0,"msg":"🔧 hide connector provider internals"},{"h":"b5ed55f","d":"05-30","loc":36547,"ins":4,"del":97,"msg":"narrow Effect.Private surface"},{"h":"bc9f8cb","d":"05-30","loc":36547,"ins":0,"del":0,"msg":"🔧 keep SQL DSL internals private"},{"h":"afce27d","d":"05-30","loc":36537,"ins":211,"del":221,"msg":"centralize AI provider runners"},{"h":"76c45a5","d":"05-30","loc":36519,"ins":0,"del":18,"msg":"deduplicate OpenAI codec validation"},{"h":"f9e4076","d":"05-31","loc":36526,"ins":56,"del":49,"msg":"centralize DB blocking timeouts"},{"h":"3b5adf5","d":"05-31","loc":36617,"ins":203,"del":112,"msg":"make provider barrels explicit"},{"h":"048281d","d":"05-31","loc":36614,"ins":9,"del":12,"msg":"clarify effect resource API"},{"h":"251360e","d":"05-31","loc":36583,"ins":45,"del":76,"msg":"remove HTTP test hooks from public API"},{"h":"18d8435","d":"05-31","loc":36583,"ins":210,"del":210,"msg":"style: normalize DB adapter indentation"},{"h":"5bff954","d":"05-31","loc":36491,"ins":42,"del":134,"msg":"🔻 docs: trim oversized runtime API notes"},{"h":"452d046","d":"05-31","loc":36491,"ins":0,"del":0,"msg":"🔧 clarify OpenSSL SSL context ownership"},{"h":"5e511fd","d":"05-31","loc":36491,"ins":3,"del":3,"msg":"make AI prompt capabilities conservative"},{"h":"dca2739","d":"05-31","loc":36498,"ins":24,"del":17,"msg":"make AI provider interfaces specific"},{"h":"e7eb41f","d":"05-31","loc":36483,"ins":70,"del":85,"msg":"remove AI barrel endpoint aliases"},{"h":"ab3cf61","d":"05-31","loc":36494,"ins":18,"del":7,"msg":"typed errors for SQLite step results"},{"h":"9e05ca5","d":"05-31","loc":36439,"ins":14,"del":69,"msg":"🔻 docs: trim runtime source comments"},{"h":"3f83876","d":"05-31","loc":36430,"ins":7,"del":14,"msg":"collapse OpenAI embeddings wrapper"}];
 const N = data.length;
 
-// ────────────── TOP CHART: LOC area ──────────────
+// ── TOP CHART: LOC area ──
 (function(){
   const svg = document.getElementById('locChart');
-  const W=1100, H=260, L=55, R=25, T=12, B=32;
+  const W=1260, H=280, L=55, R=25, T=14, B=34;
   const gw=W-L-R, gh=H-T-B;
 
   const pts = data.map((d,i)=>({x:i, y:d.loc})).filter(p=>p.y>0);
-  const yMax = Math.ceil(Math.max(...pts.map(p=>p.y)) / 5000) * 5000;
+  const yMax = 40000;
   const Y = v => T + gh - (v/yMax)*gh;
   const X = i => L + (i/(N-1))*gw;
 
   let html = '';
-  // Grid + Y labels
+  // Y grid
   for (let v=0; v<=yMax; v+=10000) {
     const yp = Y(v);
     html += `<line x1="${L}" x2="${W-R}" y1="${yp.toFixed(1)}" y2="${yp.toFixed(1)}" class="grid"/>`;
     html += `<text x="${L-6}" y="${(yp+3.5).toFixed(1)}" text-anchor="end">${(v/1000).toFixed(0)}k</text>`;
   }
-  // Zero line
   html += `<line x1="${L}" x2="${W-R}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="#30363d" stroke-width="1"/>`;
 
-  // X labels
+  // X labels (every unique date)
   let seenD = new Set();
   for (let i=0; i<N; i++) {
     if (!seenD.has(data[i].d) && data[i].loc > 0) {
@@ -176,33 +125,39 @@ const N = data.length;
   html += `<path d="${areaD}" fill="url(#lg)" stroke="none"/>`;
   html += `<path d="${lineD}" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
 
-  // Peak
+  // Peak marker
   const peak = pts.reduce((a,b)=>b.y>a.y?b:a);
   html += `<circle cx="${X(peak.x).toFixed(1)}" cy="${Y(peak.y).toFixed(1)}" r="5" fill="#f0883e" stroke="#161b22" stroke-width="2"/>`;
-  html += `<text x="${(X(peak.x)+8).toFixed(1)}" y="${(Y(peak.y)-10).toFixed(1)}" fill="#f0883e" font-size="12" font-weight="700">${peak.y.toLocaleString()} LOC (peak)</text>`;
+  html += `<text x="${(X(peak.x)+8).toFixed(1)}" y="${(Y(peak.y)-11).toFixed(1)}" fill="#f0883e" font-size="12" font-weight="700">${peak.y.toLocaleString()} LOC (peak May 29)</text>`;
 
-  // Current
+  // Current marker
   const last = pts[pts.length-1];
   html += `<circle cx="${X(last.x).toFixed(1)}" cy="${Y(last.y).toFixed(1)}" r="5" fill="#3fb950" stroke="#161b22" stroke-width="2"/>`;
-  html += `<text x="${(X(last.x)+8).toFixed(1)}" y="${(Y(last.y)-10).toFixed(1)}" fill="#3fb950" font-size="12" font-weight="700">${last.y.toLocaleString()} LOC (now)</text>`;
+  html += `<text x="${(X(last.x)+8).toFixed(1)}" y="${(Y(last.y)-11).toFixed(1)}" fill="#3fb950" font-size="12" font-weight="700">${last.y.toLocaleString()} LOC (now)</text>`;
 
-  // Dashed trendline peak→now
-  html += `<line x1="${X(peak.x).toFixed(1)}" y1="${(Y(peak.y)+6).toFixed(1)}"
-    x2="${(X(last.x)-8).toFixed(1)}" y2="${(Y(last.y)+6).toFixed(1)}"
+  // Dashed trend line peak→now
+  html += `<line x1="${X(peak.x).toFixed(1)}" y1="${(Y(peak.y)+7).toFixed(1)}"
+    x2="${(X(last.x)-10).toFixed(1)}" y2="${(Y(last.y)+7).toFixed(1)}"
     stroke="#8b949e" stroke-width="1" stroke-dasharray="5,4"/>`;
+
+  // Secondary peak (May 30 bump)
+  const secPeak = pts.filter(p=>p.y>36500 && p.x>48).reduce((a,b)=>b.y>a.y?b:a,null);
+  if (secPeak && secPeak.x !== peak.x && secPeak.x !== last.x) {
+    html += `<text x="${(X(secPeak.x)+8).toFixed(1)}" y="${(Y(secPeak.y)-11).toFixed(1)}" fill="#d2a8ff" font-size="10">${secPeak.y.toLocaleString()} (May 30 refactor bump)</text>`;
+  }
 
   svg.innerHTML = html;
 })();
 
-// ────────────── BOTTOM CHART: diff bars ──────────────
+// ── BOTTOM CHART: diff bars ──
 (function(){
   const svg = document.getElementById('diffChart');
-  const W=1100, H=340, L=55, R=25, T=12, B=48;
+  const W=1260, H=360, L=55, R=25, T=14, B=50;
   const gw=W-L-R, gh=H-T-B;
   const cap = 6000;
 
   const X = i => L + (i/(N-1))*gw;
-  const barW = Math.max(3, gw/N * 0.55);
+  const barW = Math.max(2, gw/N * 0.55);
   const halfW = barW/2;
   const scale = v => Math.min(1, v/cap) * gh;
   const baseline = T+gh;
@@ -234,14 +189,12 @@ const N = data.length;
     const insH = scale(d.ins);
     const delH = scale(d.del);
 
-    // Green (insertions)
     if (d.ins > 0) {
       html += `<rect x="${(bx-halfW).toFixed(1)}" y="${(baseline-insH).toFixed(1)}"
         width="${Math.max(1,halfW-1).toFixed(1)}" height="${Math.max(1,insH).toFixed(1)}"
         fill="#3fb950" opacity="0.82" rx="1">
         <title>+${d.ins.toLocaleString()} insertions — ${d.msg}</title></rect>`;
     }
-    // Red (deletions)
     if (d.del > 0) {
       html += `<rect x="${bx.toFixed(1)}" y="${(baseline-delH).toFixed(1)}"
         width="${Math.max(1,halfW-1).toFixed(1)}" height="${Math.max(1,delH).toFixed(1)}"
@@ -257,6 +210,12 @@ const N = data.length;
     if (d.del > cap) {
       html += `<text x="${(bx+halfW/2).toFixed(1)}" y="${(baseline-scale(cap)-5).toFixed(1)}"
         text-anchor="middle" fill="#f85149" font-size="8" font-weight="600">−${(d.del/1000).toFixed(1)}k</text>`;
+    }
+
+    // C-only marker (zero-height bar is useful info)
+    if (d.ins === 0 && d.del === 0 && d.loc > 0) {
+      html += `<circle cx="${bx.toFixed(1)}" cy="${(baseline+3).toFixed(1)}" r="2" fill="#d2a8ff" opacity="0.7">
+        <title>C-stub fix — ${d.msg}</title></circle>`;
     }
   }
 

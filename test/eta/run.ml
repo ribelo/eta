@@ -120,8 +120,8 @@ let () =
             test_effect_finally_suppresses_cleanup_failure_after_defect;
           Alcotest.test_case "finally runs on cancellation" `Quick
             test_effect_finally_runs_on_cancellation;
-          Alcotest.test_case "catch recovers suppressed typed failure" `Quick
-            test_effect_catch_recovers_first_typed_failure_in_suppressed_cause;
+          Alcotest.test_case "catch preserves suppressed finalizer failure" `Quick
+            test_effect_catch_preserves_suppressed_finalizer_failure;
           Alcotest.test_case "empty cause aggregations reject" `Quick
             test_cause_empty_aggregations_reject;
           Alcotest.test_case "diagnostic cause equality" `Quick
@@ -521,6 +521,8 @@ let () =
             test_pool_with_resource_body_typed_failure_releases_resource;
           Alcotest.test_case "body defect releases resource" `Quick
             test_pool_with_resource_body_defect_releases_resource;
+          Alcotest.test_case "release defect releases capacity" `Quick
+            test_pool_release_defect_releases_capacity;
           Alcotest.test_case "max size under concurrent checkout" `Quick
             test_pool_max_size_respected_under_concurrent_checkout;
           Alcotest.test_case "timeout cleans waiter" `Quick

@@ -12,6 +12,9 @@
   effect_resource
   effect_supervisor_scope
   island_runtime
+  par_array
+  par_iter
+  par_runtime
   par_scheduler
   runtime_core
   runtime_instrument

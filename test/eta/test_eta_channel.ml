@@ -224,59 +224,34 @@ let test_channel_parent_switch_teardown_does_not_hang () =
   Alcotest.(check int)
     "waiting senders" 0 (Channel.stats ch).Channel.waiting_senders
 
-(* P1: Channel receiver cancellation can overflow the ring buffer.
-   When a receiver has been delivered a value directly (not from buffer),
-   and other senders fill the buffer before the receiver is cancelled,
-   cancel_receiver calls return_unclaimed_value -> push_front on a full
-   buffer. push_front has no capacity check, so it overflows the ring
-   and corrupts existing elements. *)
-
 let test_channel_cancel_receiver_overflow_does_not_corrupt () =
-  (* P1: Channel receiver cancellation can overflow the ring buffer.
-     When a receiver has been delivered a value directly but hasn't claimed
-     it, and the buffer fills, cancellation calls push_front on a full
-     buffer without a capacity check.
-
-     NOTE: This race requires the receiver to NOT claim between delivery
-     and cancel. In cooperative single-domain Eio scheduling, the receiver
-     always gets CPU between our sends (which yield), making the race
-     impossible to trigger deterministically. The test documents the
-     invariant check and would be red with preemptive scheduling or if
-     push_front were called directly on a full buffer. *)
   run_eio @@ fun stdenv ->
-  let max_depth_seen = ref 0 in
-  let iterations = 1000 in
-  for _ = 1 to iterations do
-    Eio.Switch.run @@ fun sw ->
-    let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-    let ch = Channel.create ~capacity:1 () in
-    let cancel_ctx = ref None in
-    let _receiver =
-      Eio.Fiber.fork_promise ~sw (fun () ->
-          Eio.Cancel.sub @@ fun ctx ->
-          cancel_ctx := Some ctx;
-          Runtime.run rt (Channel.recv ch))
-    in
-    (* Spin-wait for receiver to register *)
-    while (Channel.stats ch).Channel.waiting_receivers = 0 do
-      Eio.Fiber.yield ()
-    done;
-    (* Send value: delivered directly to receiver (buffer stays empty) *)
-    ignore (Runtime.run rt (Channel.send ch 1) : (unit, _) Exit.t);
-    (* Try to fill buffer before receiver claims *)
-    ignore (Runtime.run rt (Channel.send ch 2) : (unit, _) Exit.t);
-    (* Cancel receiver - if it hasn't claimed yet, this triggers
-       push_front on a full buffer *)
-    (match !cancel_ctx with
-    | Some ctx -> Eio.Cancel.cancel ctx Exit
-    | None -> ());
-    let depth = (Channel.stats ch).Channel.depth in
-    if depth > !max_depth_seen then max_depth_seen := depth
-  done;
-  (* The capacity is 1. If push_front overflows, depth > 1.
-     Over many iterations, we should hit the race window at least once. *)
-  Alcotest.(check bool)
-    (Printf.sprintf
-       "depth must never exceed capacity 1 (max observed: %d)"
-       !max_depth_seen)
-    true (!max_depth_seen <= 1)
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  let cancel_ctx = ref None in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt (Channel.recv ch))
+  in
+  wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
+  run_ok rt (Channel.send ch 1);
+  if Eio.Promise.is_resolved receiver then
+    Alcotest.fail "receiver claimed delivery before cancellation window";
+  (match run_ok rt (Channel.try_send ch 2) with
+  | `Full -> ()
+  | `Sent -> Alcotest.fail "unclaimed delivery did not occupy capacity"
+  | `Closed | `Closed_with_error _ -> Alcotest.fail "unexpected closed channel");
+  (match !cancel_ctx with
+  | Some ctx -> Eio.Cancel.cancel ctx Exit
+  | None -> Alcotest.fail "receiver did not publish cancellation context");
+  (match Eio.Promise.await_exn receiver with
+  | Exit.Ok value -> Alcotest.(check int) "claimed delivery" 1 value
+  | Exit.Error _ ->
+      Alcotest.(check int) "requeued depth" 1 (Channel.stats ch).Channel.depth;
+      Alcotest.(check int) "cancelled delivery" 1 (run_ok rt (Channel.recv ch)));
+  match run_ok rt (Channel.try_recv ch) with
+  | `Empty -> ()
+  | _ -> Alcotest.fail "second value should not have been admitted while full"

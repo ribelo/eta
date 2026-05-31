@@ -48,8 +48,9 @@ Every box in the diagram:
 | Primitive | What it does | Pool | Best for | Key constraint |
 |---|---|---|---|---|
 | `Effect.sync` | Runs on the current domain, same fiber | None | Anything not too heavy or blocking | Blocks the domain if the work is CPU-heavy |
-| `Effect.island` | Runs a single portable callback on a worker domain | Domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback must be `@ portable`, payloads `: immutable_data` |
-| `Effect.Island.map` | Runs N portable callbacks in parallel batch | Domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; schedules batch jobs on worker domains |
+| `Effect.par` / `Effect.for_each_par` | Runs child effects as Eio fibers on the current runtime | None | Concurrent effect workflows: overlapping sleeps, async I/O, queues, resources | Not CPU parallelism; heavy sync work still blocks the domain |
+| `Effect.island` | Runs a single portable callback on a worker domain | Domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback must be `@ portable`, payloads `: immutable_data`, and return on its own |
+| `Effect.Island.map` | Runs N portable callbacks in parallel batch | Domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; started callbacks are not preempted by Eta cancellation |
 | `Effect.Blocking.submit` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |
 | `Par.join` | Forks two tasks; heartbeat scheduler distributes at runtime | Domain pool (heartbeat) | Recursive parallel algorithms, tree walks | Must be called from inside `Par.run` or `Par.Pool.run` |
 | `Par.par_for` / `.par_map` | Data-parallel combinators over arrays | Domain pool (heartbeat) | Structured CPU parallelism: parallel sort, parallel reduce, parallel map | Shapes are fixed; no per-element async decisions |
@@ -214,6 +215,9 @@ intentional sharing API.
 - **Don't put blocking I/O on the island pool.**  Island workers are domains;
   a blocked syscall blocks the entire domain until it returns.  Use
   `Effect.Blocking`.
+- **Don't use islands for unbounded or non-cooperative loops.**  Eta
+  cancellation and timeouts can stop waiting for an island result, but they do
+  not safely stop worker-domain code that is already running.
 - **Don't call `Par.join` / `par_*` / `Iter` outside
   `Par.run` / `Par.Pool.run`.**  These require a running heartbeat
   pool.  Calling them from a raw fiber raises `Invalid_argument`.

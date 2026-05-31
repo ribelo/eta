@@ -216,8 +216,8 @@ let chat_message_json ~provider = function
                                 ("name", Some (Json.string call.name));
                                 ("arguments", Some (Json.string call.arguments_json));
                               ]) );
-	                     ])
-	            |> Json.array |> Option.some
+                     ])
+            |> Json.array |> Option.some
       in
       match chat_content_json ~provider content with
       | Stdlib.Error _ as error -> error

@@ -28,7 +28,8 @@ The substrate decision is recorded in
   `Effect.blocking ?on_cancel`;
 - row scans must use bounded blocking batches, not one blocking handoff per row;
 - transactions are expressed by holding one internal pool connection for the
-  whole transaction body while exposing the same runner verbs;
+  whole transaction body while exposing the same `Pool.Raw` and `Pool.Typed`
+  namespaces;
 - `SQLITE_BUSY` stays visible as a SQLite result code so callers can use
   `Eta.Effect.retry` and `Eta.Schedule`.
 
@@ -37,8 +38,8 @@ optimum in the 200k-row fixture (about 28.5 ms and 3.2 MB allocated), but it
 held the calling Eio domain for the whole scan. Batched `Effect.blocking` at
 1024 rows paid about 12% wall time and 23% allocation in that run (about
 32.0 ms and 3.9 MB allocated) while keeping heartbeat p99/max near 39 us. This
-package optimizes for co-fiber fairness, so `Eta_sql.Pool.fold` uses bounded
-blocking batches.
+package optimizes for co-fiber fairness, so `Eta_sql.Pool.Raw.fold` uses
+bounded blocking batches.
 
 ## Eta Usage
 
@@ -81,31 +82,39 @@ let program =
   Q.Pool.create ~blocking_pool ~default_timeout:(Eta.Duration.ms 250)
     ~max_size:4 (S.default_config "app.db")
   |> Eta.Effect.bind (fun pool ->
-         Q.Pool.run_schema pool create_items
+         Q.Pool.Typed.run_schema pool create_items
          |> Eta.Effect.bind (fun () ->
-                Q.Pool.execute_compiled pool insert_item)
+                Q.Pool.Typed.execute_compiled pool insert_item)
          |> Eta.Effect.bind (fun _ ->
-                Q.Pool.select pool select_items))
+                Q.Pool.Typed.select pool select_items))
 ```
 
-`Eta_sql.Pool` is the only public execution surface. `Connection` and the
-old synchronous pool are internal implementation details; callers run raw SQL,
-compiled typed statements, schema statements, scans, and transactions through
-the same runner verbs.
+`Eta_sql.Pool` is the public execution surface. `Connection` and the old
+synchronous pool are internal implementation details; callers run typed SQL
+through `Pool.Typed` and raw escape hatches through `Pool.Raw`.
+
+`Pool.Raw.query`, `Pool.Raw.fold`, `Pool.Raw.execute`,
+`Pool.Raw.execute_script`, and `Pool.Raw.with_connection` are deliberate escape
+hatches. They bypass the typed
+DSL's table, column, scope, and projection guarantees; callers using them own
+SQL validity, parameter ordering, and row decoding. The guarantee is that typed
+builder APIs do not construct invalid typed SQL shapes, not that the
+`Eta_sql` package forbids all raw SQL.
 
 Typed builder values compile before execution. Use `Select.compile`,
 `Insert.compile`, `Update.compile`, `Delete.compile`, and
-`Eta_schema.compile`, then route those values through `Eta_sql.Pool.select`,
-`Eta_sql.Pool.fold_select`, `Eta_sql.Pool.execute_compiled`, or
-`Eta_sql.Pool.run_schema`. That keeps table/column type safety on the same
-path as the blocking-pool timeout and cancellation protocol.
+`Eta_schema.compile`, then route those values through
+`Eta_sql.Pool.Typed.select`, `Eta_sql.Pool.Typed.fold_select`,
+`Eta_sql.Pool.Typed.execute_compiled`, or `Eta_sql.Pool.Typed.run_schema`. That
+keeps table/column type safety on the same path as the blocking-pool timeout
+and cancellation protocol.
 
 The typed SELECT builder supports ordinary predicates, chainable N-table joins,
 DISTINCT, COUNT, SUM, AVG, MIN, MAX, GROUP BY, aggregate HAVING predicates,
 subquery predicates, CTEs, and ROW_NUMBER window projections. INSERT supports
 ON CONFLICT DO NOTHING, ON
 CONFLICT DO UPDATE from excluded values, and RETURNING through
-`Eta_sql.Pool.returning`. UPDATE and DELETE also expose typed RETURNING.
+`Eta_sql.Pool.Typed.returning`. UPDATE and DELETE also expose typed RETURNING.
 
 `Eta_sql.Pool.create` accepts `?blocking_pool` and `?default_timeout`.
 Individual operations accept `?timeout` to override the pool default. If neither
@@ -118,8 +127,8 @@ Transactions use the same verbs as pool execution:
 
 ```ocaml
 Q.Pool.with_transaction pool (fun tx ->
-  Q.Pool.execute_compiled tx insert_item
-  |> Eta.Effect.bind (fun _ -> Q.Pool.select tx select_items))
+  Q.Pool.Typed.execute_compiled tx insert_item
+  |> Eta.Effect.bind (fun _ -> Q.Pool.Typed.select tx select_items))
 ```
 
 The transaction callback receives a `Pool.tx Pool.runner`; the pool
@@ -148,13 +157,13 @@ boolean `and_`/`or_`/`not_`, and aggregate expressions `count`, `sum_int`,
 typed expression, and `Projection.t2` through `Projection.t8` combine projection
 values. That makes mixed column/expression/aggregate selects expressible.
 
-For large reads, use `Eta_sql.Pool.fold_select ?batch_size` instead of
+For large reads, use `Eta_sql.Pool.Typed.fold_select ?batch_size` instead of
 fetching one row per effect. The fold path steps SQLite in bounded blocking
 batches and folds typed rows on the caller fiber.
 
 The old public `query_cursor` surface was removed because it looked like
-streaming while buffering rows up front. Use `select` for materialized
-typed reads and `fold_select` for scans.
+streaming while buffering rows up front. Use `Pool.Typed.select` for
+materialized typed reads and `Pool.Typed.fold_select` for scans.
 
 ## Optional Eta_schema PPX
 

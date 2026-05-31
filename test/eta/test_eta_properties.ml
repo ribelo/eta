@@ -247,4 +247,3 @@ let test_properties_scope_finalizers_once () =
 
 (* Dependencies are ordinary OCaml values. A composes B and C by closing over
    the explicit dependency record, without an ambient Eta env channel. *)
-

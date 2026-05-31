@@ -9,7 +9,8 @@ let to_result = function
   | Ok value -> Some (Stdlib.Ok value)
   | Error (Cause.Fail err) -> Some (Stdlib.Error err)
   | Error
-      ( Cause.Die _ | Interrupt _ | Sequential _ | Concurrent _ | Suppressed _ )
+      ( Cause.Die _ | Interrupt _ | Sequential _ | Concurrent _ | Finalizer _
+      | Suppressed _ )
     ->
       None
 

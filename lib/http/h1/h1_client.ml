@@ -222,6 +222,10 @@ let request_owner pool request response_ch release_ch cancel_ch =
                  if H1_client_response_reader.connection_close_requested
                       response.headers
                  then conn.reusable <- false;
+                 let abandon_response () =
+                   conn.reusable <- false;
+                   Effect.unit
+                 in
                  Channel.try_send response_ch (Ok response)
                  |> Effect.bind (function
                       | `Sent ->
@@ -229,8 +233,10 @@ let request_owner pool request response_ch release_ch cancel_ch =
                           |> Effect.map (fun release_ack ->
                                ack := Some release_ack)
                           |> Effect.catch (function
-                               | `Closed | `Closed_with_error _ -> Effect.unit)
-                      | `Full | `Closed | `Closed_with_error _ -> Effect.unit)))
+                               | `Closed | `Closed_with_error _ ->
+                                   abandon_response ())
+                      | `Full | `Closed | `Closed_with_error _ ->
+                          abandon_response ())))
   in
   hold_resource
   |> Effect.bind (fun () ->

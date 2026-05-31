@@ -1,15 +1,12 @@
 (** Heartbeat-style fork/join scheduler primitives. *)
 
 (* --------------------------------------------------------------------------- *)
-(* Result channel allocated only for promoted jobs. *)
+(* Completion channel allocated only for promoted jobs. *)
 
 type exec_state = {
   mutex  : Mutex.t;
   cond   : Condition.t;
   mutable done_  : bool;
-  (* Result is type-erased by the job harness and unboxed by the joiner. *)
-  mutable result : Obj.t;
-  mutable exn    : exn option;
 }
 
 let make_exec_state () =
@@ -17,8 +14,6 @@ let make_exec_state () =
     mutex = Mutex.create ();
     cond = Condition.create ();
     done_ = false;
-    result = Obj.repr 0;
-    exn = None;
   }
 
 let signal_done (e : exec_state) : unit =
@@ -26,6 +21,11 @@ let signal_done (e : exec_state) : unit =
   e.done_ <- true;
   Condition.broadcast e.cond;
   Mutex.unlock e.mutex
+
+let invariant_failed context message =
+  failwith
+    (Printf.sprintf "Eta.Par.Scheduler.%s: invariant violated: %s" context
+       message)
 
 (* --------------------------------------------------------------------------- *)
 (* Job state for a join frame. [Reclaimed] means the owner took back a promoted
@@ -39,16 +39,16 @@ type job_state =
 type job = {
   mutable state   : job_state;
   mutable handler : worker -> job -> unit;
-  mutable prev    : job;
-  mutable next    : job;
-  mutable exec    : exec_state;
+  mutable prev    : job option;
+  mutable next    : job option;
+  mutable exec    : exec_state option;
 }
 
 and worker = {
   id : int;
   pool : pool;
-  job_head : job;                 (* Sentinel. *)
-  mutable job_tail : job;         (* Newest queued job. *)
+  mutable job_head : job option;  (* Oldest queued job. *)
+  mutable job_tail : job option;  (* Newest queued job. *)
   mutable shared_job : job option;
   (* Promotion timestamp used to pick the oldest shared job. *)
   mutable job_time : int;
@@ -65,124 +65,77 @@ and pool = {
   mutex : Mutex.t;
   job_ready : Condition.t;
   (* Dense live prefix [workers.(0 .. n_active - 1)]. *)
-  mutable workers : worker array;
+  mutable workers : worker option array;
   mutable n_active : int;
   mutable time : int;
   mutable is_stopping : bool;
   heartbeat_interval_ns : int;
 }
 
-(* --------------------------------------------------------------------------- *)
-(* Sentinels.
-
-   [null_job] is a single self-referential dummy used wherever code
-   would otherwise want a [job option]. The end-of-list and "no
-   shared job" tests use physical equality with this value. Valid
-   code checks [is_null_job] before following [prev]/[next]/[exec];
-   live jobs overwrite those fields before linking. *)
-
-let dummy_handler : worker -> job -> unit = fun _ _ -> ()
-
-let null_exec : exec_state =
-  { mutex = Mutex.create ();
-    cond = Condition.create ();
-    done_ = true;
-    result = Obj.repr 0;
-    exn = None }
-
-let null_job : job =
-  let rec j = {
-    state = Reclaimed;
-    handler = dummy_handler;
-    prev = j;
-    next = j;
-    exec = null_exec;
-  } in
-  j
-
-let is_null_job (j : job) = j == null_job
+let active_worker pool context index =
+  match pool.workers.(index) with
+  | Some worker -> worker
+  | None ->
+    invariant_failed context
+      (Printf.sprintf "missing active worker at index %d" index)
 
 (* --------------------------------------------------------------------------- *)
 (* Job-list operations.
 
-   Layout: [job_head] is a per-worker sentinel. The list is
-   [job_head] → j1 → ... → jn = [job_tail], where → is [next]. The
-   list is empty iff [job_tail == job_head]. *)
+   Layout: [job_head] is the oldest queued job and [job_tail] is the newest.
+   Both are [None] when the list is empty. *)
 
 let list_push_back (w : worker) (j : job) : unit =
-  let tail = w.job_tail in
-  tail.next <- j;
-  j.prev <- tail;
-  j.next <- null_job;
-  w.job_tail <- j;
+  j.prev <- w.job_tail;
+  j.next <- None;
+  (match w.job_tail with
+   | None -> w.job_head <- Some j
+   | Some tail -> tail.next <- Some j);
+  w.job_tail <- Some j;
   w.queue_len <- w.queue_len + 1
 
 let list_pop_back (w : worker) (j : job) : unit =
-  (* Caller asserts [j == w.job_tail] and [j.state = Queued]. *)
-  let prev = j.prev in
-  prev.next <- null_job;
-  w.job_tail <- prev;
-  j.prev <- null_job;
-  j.next <- null_job;
+  (match j.prev with
+   | None ->
+     w.job_head <- None;
+     w.job_tail <- None
+   | Some prev ->
+     prev.next <- None;
+     w.job_tail <- Some prev);
+  j.prev <- None;
+  j.next <- None;
   w.queue_len <- w.queue_len - 1
 
-(* Pop the OLDEST queued job (head.next). The job transitions to
-   [Executing] with a freshly allocated [exec_state]. Returns
-   [None] when the list is empty. *)
 let list_pop_front_for_promotion (w : worker) : job option =
-  let first = w.job_head.next in
-  if is_null_job first then None
-  else begin
-    let next = first.next in
-    if is_null_job next then begin
-      (* Singleton list: becomes empty. *)
-      w.job_head.next <- null_job;
-      w.job_tail <- w.job_head
-    end else begin
-      w.job_head.next <- next;
-      next.prev <- w.job_head
-    end;
+  match w.job_head with
+  | None -> None
+  | Some first ->
+    w.job_head <- first.next;
+    (match first.next with
+     | None -> w.job_tail <- None
+     | Some next -> next.prev <- None);
     first.state <- Executing;
-    first.exec <- make_exec_state ();
-    first.prev <- null_job;
-    first.next <- null_job;
+    first.exec <- Some (make_exec_state ());
+    first.prev <- None;
+    first.next <- None;
     w.queue_len <- w.queue_len - 1;
     Some first
-  end
 
 (* --------------------------------------------------------------------------- *)
 (* Worker construction. *)
 
-let make_worker_head () : job =
-  let rec h = {
-    state = Reclaimed;
-    handler = dummy_handler;
-    prev = h;
-    next = null_job;
-    exec = null_exec;
-  } in
-  h
-
 let make_worker ~pool ~id : worker =
-  let head = make_worker_head () in
   {
     id;
     pool;
-    job_head = head;
-    job_tail = head;
+    job_head = None;
+    job_tail = None;
     shared_job = None;
     job_time = 0;
     heartbeat = Atomic.make false;
     join_count = 0;
     queue_len = 0;
   }
-
-(* A placeholder used to clear vacated array slots so that the GC
-   can collect the worker promptly. Pool scans are bounded by
-   [n_active], and [register_worker] overwrites the next active slot
-   before incrementing [n_active], so this value is never read as a
-   worker. *)
-let null_worker : worker = Obj.magic 0
 
 (* --------------------------------------------------------------------------- *)
 (* Pool registration. *)
@@ -192,11 +145,11 @@ let register_worker (pool : pool) (w : worker) : unit =
   let cap = Array.length pool.workers in
   if pool.n_active = cap then begin
     let new_cap = max 4 (cap * 2) in
-    let new_arr = Array.make new_cap null_worker in
+    let new_arr = Array.make new_cap None in
     Array.blit pool.workers 0 new_arr 0 pool.n_active;
     pool.workers <- new_arr
   end;
-  pool.workers.(pool.n_active) <- w;
+  pool.workers.(pool.n_active) <- Some w;
   pool.n_active <- pool.n_active + 1;
   Mutex.unlock pool.mutex
 
@@ -206,12 +159,14 @@ let unregister_worker (pool : pool) (w : worker) : unit =
   let n = pool.n_active in
   let found = ref (-1) in
   for i = 0 to n - 1 do
-    if !found < 0 && arr.(i) == w then found := i
+    match arr.(i) with
+    | Some w' when !found < 0 && w' == w -> found := i
+    | _ -> ()
   done;
   if !found >= 0 then begin
     let last = n - 1 in
     if !found <> last then arr.(!found) <- arr.(last);
-    arr.(last) <- null_worker;
+    arr.(last) <- None;
     pool.n_active <- last
   end;
   w.shared_job <- None;
@@ -244,12 +199,11 @@ let[@cold] heartbeat (w : worker) : unit =
    shared_job with the smallest [job_time]. *)
 
 let pop_oldest_shared_job (pool : pool) : job option =
-  let arr = pool.workers in
   let n = pool.n_active in
   let best = ref (-1) in
   let best_time = ref max_int in
   for i = 0 to n - 1 do
-    let w = arr.(i) in
+    let w = active_worker pool "pop_oldest_shared_job" i in
     match w.shared_job with
     | None -> ()
     | Some _ ->
@@ -260,31 +214,31 @@ let pop_oldest_shared_job (pool : pool) : job option =
   done;
   if !best < 0 then None
   else begin
-    let w = arr.(!best) in
+    let w = active_worker pool "pop_oldest_shared_job" !best in
     let j = w.shared_job in
     w.shared_job <- None;
     j
   end
 
 (* --------------------------------------------------------------------------- *)
-(* Run a stolen job. The handler is responsible for writing the
-   result into [j.exec] and calling {!signal_done}. *)
+(* Run a stolen job. The handler signals completion when it finishes. *)
 
 let run_promoted_job (w : worker) (j : job) : unit =
   j.handler w j
 
+let signal_job_done (j : job) : unit =
+  match j.exec with
+  | Some exec -> signal_done exec
+  | None -> invariant_failed "signal_job_done" "job has no exec state"
+
 (* --------------------------------------------------------------------------- *)
 (* Joiner-side wait for a promoted job.
 
-   Returns [true] when the job ran on some other worker (caller
-   reads [j.exec]); [false] when the joiner reclaimed it before
-   anyone picked it up (caller runs the body inline).
+   Returns [true] when the job ran on some other worker; [false] when the
+   joiner reclaimed it before anyone picked it up.
 
-   While we wait, we help by running other workers' shared jobs.
-   This is required to avoid deadlock: there is no separate "idle
-   worker" pool that could rescue us; if we go to sleep without
-   helping, and other workers are also waiting for their joins, no
-   progress is made. *)
+   While waiting, the joiner also runs other shared jobs. This avoids a cycle
+   where all workers are blocked waiting for promoted joins. *)
 
 let wait_for_job (w : worker) (j : job) : bool =
   let pool = w.pool in
@@ -299,7 +253,11 @@ let wait_for_job (w : worker) (j : job) : bool =
     j.state <- Reclaimed;
     false
   end else begin
-    let exec = j.exec in
+    let exec =
+      match j.exec with
+      | Some exec -> exec
+      | None -> invariant_failed "wait_for_job" "executing job has no exec state"
+    in
     let helping = ref true in
     while !helping do
       (* Opportunistic done-check: if the executor finished in the
@@ -361,7 +319,7 @@ let drive_heartbeat (pool : pool) : unit =
       let n = pool.n_active in
       if n > 0 then begin
         let idx = !i mod n in
-        let w = pool.workers.(idx) in
+        let w = active_worker pool "drive_heartbeat" idx in
         Atomic.set w.heartbeat true;
         i := !i + 1;
         to_sleep_ns :=

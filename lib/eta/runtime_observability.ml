@@ -82,6 +82,37 @@ let die_of_exn ?backtrace ~capture_backtrace exn =
   Cause.die_with_diagnostics ?backtrace ?span_name:context.span_name
     ~annotations:context.annotations exn
 
+let rec status_of_finalizer_cause : Cause.Finalizer.t -> Capabilities.span_status =
+ function
+  | Cause.Finalizer.Fail msg -> Error msg
+  | Cause.Finalizer.Die die -> Error (Printexc.to_string die.exn)
+  | Cause.Finalizer.Interrupt _ -> Cancelled
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      if List.for_all Cause.Finalizer.is_interrupt_only causes then Cancelled
+      else
+        let render c =
+          match status_of_finalizer_cause c with
+          | Capabilities.Error msg -> msg
+          | Capabilities.Cancelled -> "cancelled"
+          | Capabilities.Ok -> "ok"
+        in
+        Error (String.concat " | " (List.map render causes))
+  | Cause.Finalizer.Finalizer cause -> (
+      match status_of_finalizer_cause cause with
+      | Capabilities.Error msg -> Error ("finalizer: " ^ msg)
+      | Capabilities.Cancelled -> Cancelled
+      | Capabilities.Ok -> Ok)
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      let render c =
+        match status_of_finalizer_cause c with
+        | Capabilities.Error msg -> msg
+        | Capabilities.Cancelled -> "cancelled"
+        | Capabilities.Ok -> "ok"
+      in
+      Error
+        ("primary: " ^ render primary ^ " | suppressed finalizer: "
+       ^ render finalizer)
+
 let rec status_of_cause :
     type err.
     error_renderer:(err -> string) ->
@@ -101,19 +132,36 @@ let rec status_of_cause :
           | Capabilities.Ok -> "ok"
         in
         Error (String.concat " | " (List.map render causes))
+  | Cause.Finalizer cause -> (
+      match status_of_finalizer_cause cause with
+      | Capabilities.Error msg -> Error ("finalizer: " ^ msg)
+      | Capabilities.Cancelled -> Cancelled
+      | Capabilities.Ok -> Ok)
   | Cause.Suppressed { primary; finalizer } ->
-      let render c =
+      let render_primary c =
         match status_of_cause ~error_renderer c with
         | Capabilities.Error msg -> msg
         | Capabilities.Cancelled -> "cancelled"
         | Capabilities.Ok -> "ok"
       in
+      let render_finalizer c =
+        match status_of_finalizer_cause c with
+          | Capabilities.Error msg -> msg
+          | Capabilities.Cancelled -> "cancelled"
+          | Capabilities.Ok -> "ok"
+      in
       Error
-        ("primary: " ^ render primary ^ " | suppressed finalizer: "
-       ^ render finalizer)
+        ("primary: " ^ render_primary primary ^ " | suppressed finalizer: "
+       ^ render_finalizer finalizer)
 
 let render_cause ~error_renderer cause =
   match status_of_cause ~error_renderer cause with
+  | Capabilities.Error msg -> msg
+  | Capabilities.Cancelled -> "cancelled"
+  | Capabilities.Ok -> "ok"
+
+let render_finalizer_cause cause =
+  match status_of_finalizer_cause cause with
   | Capabilities.Error msg -> msg
   | Capabilities.Cancelled -> "cancelled"
   | Capabilities.Ok -> "ok"
@@ -145,7 +193,40 @@ let exception_event_attrs ~error_renderer path cause =
         die.annotations
       @ with_span
   | Cause.Fail _ | Cause.Interrupt _ -> base
-  | Cause.Sequential _ | Cause.Concurrent _ | Cause.Suppressed _ -> assert false
+  | Cause.Sequential _ | Cause.Concurrent _ | Cause.Finalizer _
+  | Cause.Suppressed _ ->
+      assert false
+
+let exception_event_attrs_finalizer path cause =
+  let base =
+    [
+      ("exception.message", render_finalizer_cause cause);
+      ("eta.cause.path", path);
+    ]
+  in
+  match cause with
+  | Cause.Finalizer.Die die ->
+      let with_type = ("exception.type", Printexc.to_string die.exn) :: base in
+      let with_stack =
+        match die.backtrace with
+        | None -> with_type
+        | Some bt ->
+            ("exception.stacktrace", Printexc.raw_backtrace_to_string bt)
+            :: with_type
+      in
+      let with_span =
+        match die.span_name with
+        | None -> with_stack
+        | Some name -> ("eta.die.span_name", name) :: with_stack
+      in
+      List.map
+        (fun (key, value) -> ("eta.annotation." ^ key, value))
+        die.annotations
+      @ with_span
+  | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> base
+  | Cause.Finalizer.Sequential _ | Cause.Finalizer.Concurrent _
+  | Cause.Finalizer.Finalizer _ | Cause.Finalizer.Suppressed _ ->
+      assert false
 
 let exception_event_attrs_tree ~error_renderer cause =
   let rec collect path acc = function
@@ -165,9 +246,33 @@ let exception_event_attrs_tree ~error_renderer cause =
              (fun acc (i, c) ->
                collect (path ^ ".concurrent." ^ string_of_int i) acc c)
              acc
+    | Cause.Finalizer cause -> collect_finalizer (path ^ ".finalizer") acc cause
     | Cause.Suppressed { primary; finalizer } ->
         let acc = collect (path ^ ".primary") acc primary in
-        collect (path ^ ".suppressed_finalizer") acc finalizer
+        collect_finalizer (path ^ ".suppressed_finalizer") acc finalizer
+  and collect_finalizer path acc = function
+    | Cause.Finalizer.Fail _ | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _
+      as c ->
+        exception_event_attrs_finalizer path c :: acc
+    | Cause.Finalizer.Sequential causes ->
+        causes
+        |> List.mapi (fun i c -> (i, c))
+        |> List.fold_left
+             (fun acc (i, c) ->
+               collect_finalizer (path ^ ".seq." ^ string_of_int i) acc c)
+             acc
+    | Cause.Finalizer.Concurrent causes ->
+        causes
+        |> List.mapi (fun i c -> (i, c))
+        |> List.fold_left
+             (fun acc (i, c) ->
+               collect_finalizer (path ^ ".concurrent." ^ string_of_int i) acc c)
+             acc
+    | Cause.Finalizer.Finalizer cause ->
+        collect_finalizer (path ^ ".finalizer") acc cause
+    | Cause.Finalizer.Suppressed { primary; finalizer } ->
+        let acc = collect_finalizer (path ^ ".primary") acc primary in
+        collect_finalizer (path ^ ".suppressed_finalizer") acc finalizer
   in
   List.rev (collect "cause" [] cause)
 

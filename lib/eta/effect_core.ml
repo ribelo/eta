@@ -192,37 +192,59 @@ let concat effects =
   with_names (concat_names effects)
     (List.fold_left (fun acc effect -> seq effect acc) unit effects)
 
-let rec find_fail = function
-  | Cause.Fail err -> Some err
-  | Cause.Die _ | Cause.Interrupt _ -> None
-  | Cause.Sequential causes | Cause.Concurrent causes ->
-      List.find_map find_fail causes
+type ('a, 'err) catch_result =
+  | Caught of 'a
+  | Uncaught of 'err Cause.t
+
+let rec catch_cause handler = function
+  | Cause.Fail err -> (
+      match (handler err).eval () with
+      | Exit.Ok value -> Caught value
+      | Exit.Error cause -> Uncaught cause)
+  | Cause.Die die -> Uncaught (Cause.Die die)
+  | Cause.Interrupt id -> Uncaught (Cause.Interrupt id)
+  | Cause.Finalizer cause -> Uncaught (Cause.Finalizer cause)
+  | Cause.Sequential causes -> catch_causes Cause.sequential handler causes
+  | Cause.Concurrent causes -> catch_causes Cause.concurrent handler causes
   | Cause.Suppressed { primary; finalizer } -> (
-      match find_fail primary with
-      | Some _ as found -> found
-      | None -> find_fail finalizer)
+      match catch_cause handler primary with
+      | Caught _ -> Uncaught (Cause.finalizer finalizer)
+      | Uncaught primary ->
+          Uncaught (Cause.suppressed ~primary ~finalizer))
+
+and catch_causes combine handler causes =
+  let value, uncaught =
+    List.fold_left
+      (fun (value, uncaught) cause ->
+        match catch_cause handler cause with
+        | Caught caught ->
+            let value =
+              match value with Some _ -> value | None -> Some caught
+            in
+            (value, uncaught)
+        | Uncaught cause -> (value, cause :: uncaught))
+      (None, []) causes
+  in
+  match (value, List.rev uncaught) with
+  | Some value, [] -> Caught value
+  | _, cause :: causes -> Uncaught (combine (cause :: causes))
+  | None, [] -> invalid_arg "Effect.catch: empty composite cause"
 
 let catch handler effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> (
-      match find_fail cause with
-      | Some err -> (handler err).eval ()
-      | None -> error (Obj.magic cause))
+      match catch_cause handler cause with
+      | Caught value -> ok value
+      | Uncaught cause -> error cause)
 
-let rec map_cause_error f = function
-  | Cause.Fail err -> Cause.Fail (f err)
-  | Cause.Die die -> Cause.Die die
-  | Cause.Interrupt id -> Cause.Interrupt id
-  | Cause.Sequential causes -> Cause.Sequential (List.map (map_cause_error f) causes)
-  | Cause.Concurrent causes -> Cause.Concurrent (List.map (map_cause_error f) causes)
-  | Cause.Suppressed { primary; finalizer } ->
-      Cause.Suppressed
-        {
-          primary = map_cause_error f primary;
-          finalizer = map_cause_error f finalizer;
-        }
+let map_cause_error = Cause.map
+
+let render_cause_error frame cause =
+  Cause.finalizer_of_cause (render_error frame) cause
+
+let finalizer_cause frame cause = Cause.finalizer (render_cause_error frame cause)
 
 let map_error f effect =
   preserve effect @@ fun () ->
@@ -243,7 +265,9 @@ let tap_error observe effect =
         let finalizer =
           Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
         in
-        error (Cause.suppressed ~primary:(Cause.Fail err) ~finalizer))
+        error
+          (Cause.suppressed ~primary:(Cause.Fail err)
+             ~finalizer:(render_cause_error frame finalizer)))
   | Exit.Error _ as err -> err
 
 let delay duration effect =
@@ -266,7 +290,7 @@ let timeout_as duration ~on_timeout effect =
   with exn ->
     if
       Runtime_core.has_timeout_as token exn
-      && Runtime_core.only_timeout_as_or_interrupt token exn
+      && Runtime_core.only_timeout_as_or_interrupt frame.fail_key token exn
     then error (Cause.Fail on_timeout)
     else
       error
@@ -285,7 +309,8 @@ let repeat schedule effect =
     let finalizers = ref [] in
     let iteration_frame = { frame with finalizers } in
     Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-      finalizers (fun () -> run_to_value iteration_frame effect)
+      ~error_renderer:iteration_frame.error_renderer finalizers (fun () ->
+        run_to_value iteration_frame effect)
   in
   try
     run_iteration ();
@@ -312,7 +337,8 @@ let retry schedule predicate effect =
     try
       ok
         (Runtime_core.with_finalizers ~runtime:frame.runtime
-           ~fail_key:frame.fail_key finalizers (fun () ->
+           ~fail_key:frame.fail_key ~error_renderer:attempt_frame.error_renderer
+           finalizers (fun () ->
              run_to_value attempt_frame effect))
     with exn -> exit_of_exn attempt_frame exn
   in

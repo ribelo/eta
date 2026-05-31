@@ -41,6 +41,17 @@ val optional_non_empty :
   string option ->
   (string option, Eta_ai.ai_error) result
 
+val with_json_fields :
+  (string * Eta_ai.Json.t) list ->
+  (string * Eta_ai.Json.t option) list ->
+  Eta_ai.Json.t
+
+val encode_speech :
+  ?instructions:bool ->
+  provider:string ->
+  Eta_ai.Speech.request ->
+  (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val encode_embeddings_json :
   provider:string ->
   Eta_ai.Embedding.request ->

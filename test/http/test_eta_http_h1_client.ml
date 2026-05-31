@@ -1,5 +1,82 @@
 open Test_eta_http_support
 
+let read_file path =
+  let input = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input)
+    (fun () -> really_input_string input (in_channel_length input))
+
+let rec find_sub_from haystack ~needle index =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  if index + needle_len > haystack_len then None
+  else if String.sub haystack index needle_len = needle then Some index
+  else find_sub_from haystack ~needle (index + 1)
+
+let find_sub haystack ~needle = find_sub_from haystack ~needle 0
+
+let require_sub haystack ~needle =
+  match find_sub haystack ~needle with
+  | Some index -> index
+  | None -> Alcotest.failf "missing source marker: %s" needle
+
+let find_h1_client_source () =
+  let candidates =
+    [
+      "lib/http/h1/h1_client.ml";
+      "../lib/http/h1/h1_client.ml";
+      "../../lib/http/h1/h1_client.ml";
+      "../../../lib/http/h1/h1_client.ml";
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate h1_client.ml from %s" (Sys.getcwd ())
+
+let request_owner_source source =
+  let start =
+    require_sub source
+      ~needle:"let request_owner pool request response_ch release_ch cancel_ch ="
+  in
+  let finish =
+    match find_sub_from source ~needle:"let request_with_pool pool request =" start with
+    | Some finish -> finish
+    | None -> Alcotest.fail "missing request_owner end marker"
+  in
+  String.sub source start (finish - start)
+
+let test_h1_pool_marks_undelivered_response_unreusable () =
+  let source = read_file (find_h1_client_source ()) in
+  let body = request_owner_source source in
+  let send =
+    require_sub body ~needle:"Channel.try_send response_ch (Ok response)"
+  in
+  let failed_delivery =
+    match
+      find_sub_from body
+        ~needle:"| `Full | `Closed | `Closed_with_error _ ->" send
+    with
+    | Some index -> index
+    | None -> Alcotest.fail "missing failed response delivery branch"
+  in
+  let tail = String.sub body failed_delivery (String.length body - failed_delivery) in
+  let direct_mark =
+    match find_sub tail ~needle:"conn.reusable <- false" with
+    | Some _ -> true
+    | None -> false
+  in
+  let helper_mark =
+    match find_sub body ~needle:"let abandon_response () =" with
+    | None -> false
+    | Some helper ->
+        Option.is_some
+          (find_sub_from body ~needle:"conn.reusable <- false" helper)
+        && Option.is_some (find_sub tail ~needle:"abandon_response ()")
+  in
+  Alcotest.(check bool)
+    "failed delivery marks connection unreusable" true
+    (direct_mark || helper_mark)
+
 let test_h1_client_request_on_flow_fixed_response () =
   let flow = Eio_mock.Flow.make "eta-http-h1-flow" in
   Eio_mock.Flow.on_read flow

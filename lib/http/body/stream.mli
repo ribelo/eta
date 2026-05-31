@@ -1,6 +1,11 @@
 (** Pull-based byte body stream for eta-http responses. *)
 
 type t
+(** One-shot body stream.
+
+    A stream permits one active operation at a time. Concurrent [read],
+    [read_all], or [discard] calls fail with a typed [Decode_error] instead of
+    racing the mutable stream state. *)
 
 type read_result = Chunk of bytes | Last of bytes | End
 

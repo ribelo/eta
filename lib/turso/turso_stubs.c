@@ -125,8 +125,9 @@ static int eta_turso_load(void)
   dlopen_flags |= RTLD_DEEPBIND;
 #endif
 
-  for (int i = 0; candidates[i] != NULL; i++) {
-    if (candidates[i][0] == '\0') continue;
+  size_t candidate_count = sizeof(candidates) / sizeof(candidates[0]);
+  for (size_t i = 0; i < candidate_count; i++) {
+    if (candidates[i] == NULL || candidates[i][0] == '\0') continue;
     api.handle = dlopen(candidates[i], dlopen_flags);
     if (api.handle != NULL) break;
   }
@@ -299,8 +300,10 @@ CAMLprim value eta_turso_column_text(value v_stmt, intnat index)
 {
   CAMLparam1(v_stmt);
   ensure_loaded();
-  const unsigned char *text = api.column_text(stmt_val(v_stmt), (int)index);
-  CAMLreturn(caml_copy_string(text == NULL ? "" : (const char *)text));
+  sqlite3_stmt *stmt = stmt_val(v_stmt);
+  const unsigned char *text = api.column_text(stmt, (int)index);
+  int len = api.column_bytes(stmt, (int)index);
+  CAMLreturn(caml_alloc_initialized_string(len, text == NULL ? "" : (const char *)text));
 }
 
 CAMLprim value eta_turso_column_text_bc(value v_stmt, value v_index) { return eta_turso_column_text(v_stmt, Int_val(v_index)); }

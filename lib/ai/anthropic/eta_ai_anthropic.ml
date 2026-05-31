@@ -18,6 +18,9 @@ let decode_error_result ?raw message =
 let parse_raw_json label raw =
   A.Json_helpers.schema_value ~provider:"anthropic" label raw
 
+let result_all = A.Json_helpers.result_all
+let ( let* ) = Result.bind
+
 let contents_text contents =
   let rec loop acc = function
     | [] -> Stdlib.Ok (String.concat "" (List.rev acc))
@@ -125,24 +128,22 @@ let content_block = function
            { provider = "anthropic"; feature = "video content" })
 
 let content_blocks contents =
-  A.Json_helpers.result_all (List.map content_block contents)
+  result_all (List.map content_block contents)
 
 let tool_use_block (call : A.tool_call) =
-  match
+  let* input =
     parse_raw_json
       ("tool call " ^ call.name ^ " arguments_json")
       call.arguments_json
-  with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok input ->
-      Stdlib.Ok
-        (Json.object_
-           [
-             ("type", Some (Json.string "tool_use"));
-             ("id", Some (Json.string call.id));
-             ("name", Some (Json.string call.name));
-             ("input", Some input);
-           ])
+  in
+  Stdlib.Ok
+    (Json.object_
+       [
+         ("type", Some (Json.string "tool_use"));
+         ("id", Some (Json.string call.id));
+         ("name", Some (Json.string call.name));
+         ("input", Some input);
+       ])
 
 let tool_result_content contents =
   if contents_are_text contents then
@@ -171,20 +172,16 @@ let message_json (message : A.message) =
                     ("role", Some (Json.string "user"));
                     ("content", Some (Json.array blocks));
                   ]))
-  | A.Assistant { content; tool_calls } -> (
-      match content_blocks content with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok content_blocks -> (
-          match A.Json_helpers.result_all (List.map tool_use_block tool_calls) with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok tool_blocks ->
-              Stdlib.Ok
-                (Some
-                   (Json.object_
-                      [
-                        ("role", Some (Json.string "assistant"));
-                        ("content", Some (Json.array (content_blocks @ tool_blocks)));
-                      ]))))
+  | A.Assistant { content; tool_calls } ->
+      let* blocks = content_blocks content in
+      let* tool_blocks = result_all (List.map tool_use_block tool_calls) in
+      Stdlib.Ok
+        (Some
+           (Json.object_
+              [
+                ("role", Some (Json.string "assistant"));
+                ("content", Some (Json.array (blocks @ tool_blocks)));
+              ]))
   | A.Tool { tool_call_id; content } ->
       tool_result_block tool_call_id content
       |> Result.map (fun block ->
@@ -210,20 +207,18 @@ let system_json ?prompt_cache prompt =
       | _ -> Some (Json.string text))
 
 let tool_json (tool : A.tool) =
-  match
+  let* schema =
     parse_raw_json
       ("tool " ^ tool.name ^ " input_schema_json")
       tool.input_schema_json
-  with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok schema ->
-      Stdlib.Ok
-        (Json.object_
-           [
-             ("name", Some (Json.string tool.name));
-             ("description", Option.map Json.string tool.description);
-             ("input_schema", Some schema);
-           ])
+  in
+  Stdlib.Ok
+    (Json.object_
+       [
+         ("name", Some (Json.string tool.name));
+         ("description", Option.map Json.string tool.description);
+         ("input_schema", Some schema);
+       ])
 
 let encode_messages ?prompt_cache (request : A.chat_request) =
   let max_tokens =
@@ -245,35 +240,22 @@ let encode_messages ?prompt_cache (request : A.chat_request) =
               (A.Unsupported
                  { provider = "anthropic"; feature = "non-finite temperature" }))
   in
-  match max_tokens with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok max_tokens -> (
-      match temperature with
-      | Stdlib.Error _ as error -> error
-      | Stdlib.Ok temperature -> (
-          match A.Json_helpers.result_all (List.map message_json request.prompt) with
-          | Stdlib.Error _ as error -> error
-          | Stdlib.Ok messages -> (
-              match A.Json_helpers.result_all (List.map tool_json request.tools) with
-              | Stdlib.Error _ as error -> error
-              | Stdlib.Ok tools ->
-                  Stdlib.Ok
-                    (Json.to_string
-                       (Json.object_
-                          [
-                            ("model", Some (Json.string request.model));
-                            ("system", system_json ?prompt_cache request.prompt);
-                            ( "messages",
-                              Some
-                                (messages |> List.filter_map Fun.id
-                               |> Json.array) );
-                            ("max_tokens", Some (Json.int max_tokens));
-                            ("stream", Some (Json.bool request.stream));
-                            ("temperature", temperature);
-                            ( "tools",
-                              if tools = [] then None
-                              else Some (Json.array tools) );
-                          ])))))
+  let* max_tokens = max_tokens in
+  let* temperature = temperature in
+  let* messages = result_all (List.map message_json request.prompt) in
+  let* tools = result_all (List.map tool_json request.tools) in
+  Stdlib.Ok
+    (Json.to_string
+       (Json.object_
+          [
+            ("model", Some (Json.string request.model));
+            ("system", system_json ?prompt_cache request.prompt);
+            ("messages", Some (messages |> List.filter_map Fun.id |> Json.array));
+            ("max_tokens", Some (Json.int max_tokens));
+            ("stream", Some (Json.bool request.stream));
+            ("temperature", temperature);
+            ("tools", if tools = [] then None else Some (Json.array tools));
+          ]))
 
 let parse_json raw =
   match Json.parse raw with
@@ -345,24 +327,22 @@ let assistant_message content =
     }
 
 let decode_message raw =
-  match parse_json raw with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json ->
-      let content = Json.array_member "content" json |> Option.value ~default:[] in
-      let finish_reasons =
-        match Json.string_member "stop_reason" json with
-        | Some reason -> [ finish_reason reason ]
-        | None -> []
-      in
-      Stdlib.Ok
-        {
-          A.id = Json.string_member "id" json;
-          model = Json.string_member "model" json;
-          message = assistant_message content;
-          finish_reasons;
-          usage = Option.map usage (Json.object_member "usage" json);
-          raw = Some raw;
-        }
+  let* json = parse_json raw in
+  let content = Json.array_member "content" json |> Option.value ~default:[] in
+  let finish_reasons =
+    match Json.string_member "stop_reason" json with
+    | Some reason -> [ finish_reason reason ]
+    | None -> []
+  in
+  Stdlib.Ok
+    {
+      A.id = Json.string_member "id" json;
+      model = Json.string_member "model" json;
+      message = assistant_message content;
+      finish_reasons;
+      usage = Option.map usage (Json.object_member "usage" json);
+      raw = Some raw;
+    }
 
 let provider_error ?status ?code ?raw message =
   A.Provider_error
@@ -551,9 +531,7 @@ let messages_request ?prompt_cache ?provider:custom_provider ~api_key request =
     | None -> provider.A.encode_chat request
     | Some _ -> encode_messages ?prompt_cache request
   in
-  match encoded with
-  | Stdlib.Ok raw -> Stdlib.Ok (make_request ?prompt_cache provider api_key raw)
-  | Stdlib.Error _ as error -> error
+  encoded |> Result.map (make_request ?prompt_cache provider api_key)
 
 let perform_message = A.perform_chat
 let perform_stream = A.perform_stream
