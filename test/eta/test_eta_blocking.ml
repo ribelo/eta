@@ -649,25 +649,23 @@ let test_cause_of_exn_distinguishes_exit_from_cancelled () =
       (Effect.blocking ~pool ~name:"distinguish.exit" (fun () ->
            raise Stdlib.Exit))
   in
-  (* Raise Eio's cancellation exception directly so this checks cancellation
-     classification, not Effect.timeout's typed failure contract. *)
-  let cancel_result =
-    Runtime.run rt
-      (Effect.sync (fun () -> raise (Eio.Cancel.Cancelled (Failure "cancel"))))
+  (* Raw Eio cancellation must propagate to the enclosing Eio fiber. *)
+  let cancel_propagated =
+    try
+      ignore
+        (Runtime.run rt
+           (Effect.sync (fun () ->
+                raise (Eio.Cancel.Cancelled (Failure "cancel")))));
+      false
+    with Eio.Cancel.Cancelled _ -> true
   in
   let exit_cause = match exit_result with
     | Exit.Error c -> c
     | Exit.Ok _ -> Alcotest.fail "expected error from Exit"
   in
-  let cancel_cause = match cancel_result with
-    | Exit.Error c -> c
-    | Exit.Ok _ -> Alcotest.fail "expected error from timeout"
-  in
-  (* These should be DIFFERENT causes - Exit is a user bug, Cancelled is
-     a control flow mechanism *)
+  (* Exit is a user bug; Cancelled is a control flow mechanism that leaves Eta. *)
   let exit_is_interrupt = Cause.is_interrupt_only exit_cause in
-  let cancel_is_interrupt = Cause.is_interrupt_only cancel_cause in
   Alcotest.(check bool)
-    "cancelled job should be interrupt" true cancel_is_interrupt;
+    "cancelled job should propagate" true cancel_propagated;
   Alcotest.(check bool)
     "user Exit should NOT be interrupt (it's a user exception)" false exit_is_interrupt

@@ -53,9 +53,7 @@ let test_queue_cancel_blocked_recv_cleans_waiter () =
   in
   wait_until (fun () -> (Queue.stats q).Queue.waiting_receivers = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
-  (match Eio.Promise.await_exn receiver with
-  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
-  | Exit.Error _ -> ());
+  await_cancelled receiver;
   let stats = Queue.stats q in
   Alcotest.(check int) "waiting receivers" 0 stats.Queue.waiting_receivers;
   Alcotest.(check int) "cancelled receivers" 1 stats.Queue.cancelled_receivers

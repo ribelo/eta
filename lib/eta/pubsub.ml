@@ -104,6 +104,9 @@ let with_lock t f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let with_lock_during_cancel t f =
+  Eio.Cancel.protect (fun () -> with_lock t f)
+
 let close_result = function
   | Clean -> `Closed
   | Failed err -> `Closed_with_error err
@@ -235,7 +238,7 @@ let publish_sync t value =
   | `Wait (promise, publisher) -> (
       try Eio.Promise.await promise
       with Eio.Cancel.Cancelled _ as exn ->
-        with_lock t (fun () -> cancel_publisher t publisher);
+        with_lock_during_cancel t (fun () -> cancel_publisher t publisher);
         raise exn)
 
 let publish t value =
@@ -332,7 +335,7 @@ let recv_sync sub =
           Eio.Promise.await promise;
           loop ()
         with Eio.Cancel.Cancelled _ as exn ->
-          with_lock sub.hub (fun () -> cancel_receiver sub receiver);
+          with_lock_during_cancel sub.hub (fun () -> cancel_receiver sub receiver);
           raise exn)
   in
   loop ()

@@ -122,6 +122,8 @@ let () =
             test_effect_finally_suppresses_cleanup_failure_after_defect;
           Alcotest.test_case "finally runs on cancellation" `Quick
             test_effect_finally_runs_on_cancellation;
+          Alcotest.test_case "finally runs on eio cancellation" `Quick
+            test_effect_finally_runs_on_eio_cancellation;
           Alcotest.test_case "catch preserves suppressed finalizer failure" `Quick
             test_effect_catch_preserves_suppressed_finalizer_failure;
           Alcotest.test_case "empty cause aggregations reject" `Quick
@@ -130,6 +132,8 @@ let () =
             test_cause_diagnostic_equal_compares_die_payloads;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
             test_runtime_exit_fail_die_interrupt;
+          Alcotest.test_case "runtime run propagates eio cancellation" `Quick
+            test_runtime_run_propagates_eio_cancellation;
           Alcotest.test_case "die captures diagnostics" `Quick
             test_runtime_die_captures_diagnostics;
           Alcotest.test_case "portable cause materializes diagnostics" `Quick
@@ -182,6 +186,8 @@ let () =
             test_acquire_release_suppresses_release_failure_after_defect;
           Alcotest.test_case "acquire_use_release success" `Quick
             test_acquire_use_release_success;
+          Alcotest.test_case "acquire_use_release lexical bracket" `Quick
+            test_acquire_use_release_is_lexical_bracket;
           Alcotest.test_case "acquire_use_release typed failure releases"
             `Quick test_acquire_use_release_typed_failure_releases;
           Alcotest.test_case "acquire_use_release defect releases" `Quick

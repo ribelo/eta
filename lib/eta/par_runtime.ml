@@ -6,11 +6,6 @@ let invariant_failed context message =
   failwith
     (Printf.sprintf "Eta.Par.%s: invariant violated: %s" context message)
 
-let require_tail context worker job =
-  match worker.S.job_tail with
-  | Some tail when tail == job -> ()
-  | _ -> invariant_failed context "queued job is not the worker tail"
-
 (* --------------------------------------------------------------------------- *)
 (* Per-domain "current worker" via DLS.
 
@@ -141,22 +136,36 @@ module Pool = struct
         let cond = Condition.create () in
         let remaining = ref n in
         let results : ('a, exn) result option array = Array.make n None in
+        let next = Atomic.make 0 in
+        let owner_count = min n (Array.length t.domains) in
         let owners =
-          Array.init n (fun i -> S.make_worker ~pool:t.pool ~id:(-(i + 1)))
+          Array.init owner_count (fun i -> S.make_worker ~pool:t.pool ~id:(-(i + 1)))
         in
-        let make_job i f =
+        let jobs_array = Array.of_list jobs in
+        let publish_result i result =
+          Mutex.lock mutex;
+          results.(i) <- Some result;
+          remaining := !remaining - 1;
+          if !remaining = 0 then Condition.broadcast cond;
+          Mutex.unlock mutex
+        in
+        let make_job () =
           let handler : S.worker -> S.job -> unit =
             fun w _job ->
               let prev_dls = Domain.DLS.get current_dls in
               Domain.DLS.set current_dls
                 (Some (worker_context ~par_threshold:t.par_threshold w));
-              let result = try Ok (f ()) with exn -> Error exn in
-              Domain.DLS.set current_dls prev_dls;
-              Mutex.lock mutex;
-              results.(i) <- Some result;
-              remaining := !remaining - 1;
-              if !remaining = 0 then Condition.broadcast cond;
-              Mutex.unlock mutex
+              Fun.protect
+                ~finally:(fun () -> Domain.DLS.set current_dls prev_dls)
+                (fun () ->
+                  let rec loop () =
+                    let i = Atomic.fetch_and_add next 1 in
+                    if i < n then (
+                      let f = Array.unsafe_get jobs_array i in
+                      publish_result i (try Ok (f ()) with exn -> Error exn);
+                      loop ())
+                  in
+                  loop ())
           in
           {
             S.state = S.Executing;
@@ -166,7 +175,7 @@ module Pool = struct
             exec = None;
           }
         in
-        let job_array = Array.of_list (List.mapi make_job jobs) in
+        let job_array = Array.init owner_count (fun _ -> make_job ()) in
         Array.iter (S.register_worker t.pool) owners;
         Fun.protect
           ~finally:(fun () -> Array.iter (S.unregister_worker t.pool) owners)
@@ -242,16 +251,12 @@ let[@inline never] join_slow
     with e -> Either.Left e
   in
   let ra_or_exn : ('a, exn) result =
-    match job.state with
-    | S.Queued ->
-      require_tail "join_slow" w job;
-      S.list_pop_back w job;
+    match S.reclaim_or_wait_for_job "join_slow" w job with
+    | S.Run_inline ->
       (try Ok (a ()) with e -> Error e)
-    | S.Executing ->
+    | S.Wait_promoted ->
       if S.wait_for_job w job then !r_a
       else (try Ok (a ()) with e -> Error e)
-    | S.Reclaimed ->
-      invariant_failed "join_slow" "owner observed a reclaimed job"
   in
   match ra_or_exn, rb_or_exn with
   | Ok ra, Either.Right rb -> (ra, rb)
@@ -280,16 +285,12 @@ let[@inline never] join_unit_slow
   S.list_push_back w job;
   if Atomic.get w.heartbeat then S.heartbeat w;
   let exn_b = try b (); None with e -> Some e in
-  (match job.state with
-   | S.Queued ->
-     require_tail "join_unit_slow" w job;
-     S.list_pop_back w job;
+  (match S.reclaim_or_wait_for_job "join_unit_slow" w job with
+   | S.Run_inline ->
      (try a () with e -> exn_a := Some e)
-   | S.Executing ->
+   | S.Wait_promoted ->
      if S.wait_for_job w job then ()
-     else (try a () with e -> exn_a := Some e)
-   | S.Reclaimed ->
-     invariant_failed "join_unit_slow" "owner observed a reclaimed job");
+     else (try a () with e -> exn_a := Some e));
   (match !exn_a, exn_b with
    | None, None -> ()
    | Some e, _ | _, Some e -> raise e)

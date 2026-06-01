@@ -36,6 +36,10 @@ type job_state =
   | Executing
   | Reclaimed
 
+type owner_join_decision =
+  | Run_inline
+  | Wait_promoted
+
 type job = {
   mutable state   : job_state;
   mutable handler : worker -> job -> unit;
@@ -105,6 +109,23 @@ let list_pop_back (w : worker) (j : job) : unit =
   j.prev <- None;
   j.next <- None;
   w.queue_len <- w.queue_len - 1
+
+let reclaim_or_wait_for_job context (w : worker) (j : job) : owner_join_decision =
+  let pool = w.pool in
+  Mutex.lock pool.mutex;
+  let decision =
+    match j.state with
+    | Queued ->
+        (match w.job_tail with
+        | Some tail when tail == j -> ()
+        | _ -> invariant_failed context "queued job is not the worker tail");
+        list_pop_back w j;
+        Run_inline
+    | Executing -> Wait_promoted
+    | Reclaimed -> invariant_failed context "owner observed a reclaimed job"
+  in
+  Mutex.unlock pool.mutex;
+  decision
 
 let list_pop_front_for_promotion (w : worker) : job option =
   match w.job_head with
@@ -249,8 +270,8 @@ let wait_for_job (w : worker) (j : job) : bool =
     | _ -> false
   in
   if reclaimed then begin
-    Mutex.unlock pool.mutex;
     j.state <- Reclaimed;
+    Mutex.unlock pool.mutex;
     false
   end else begin
     let exec =

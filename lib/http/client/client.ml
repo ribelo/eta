@@ -100,27 +100,27 @@ let make_h1 ~sw ~net
         |> Eta.Effect.map H1.response
   in
   let stats_impl () =
-    Eta.Effect.sync (fun () ->
-        pool_values ()
-        |> List.fold_left
-             (fun acc pool ->
-               let stats = H1_client.pool_stats pool in
-               {
-                 protocol = H1;
-                 active = acc.active + stats.Eta.Pool.active;
-                 idle = acc.idle + stats.idle;
-                 capacity = acc.capacity + stats.max_size;
-                 opened = acc.opened + stats.opened;
-                 released = acc.released + stats.closed;
-               })
-             {
-               protocol = H1;
-               active = 0;
-               idle = 0;
-               capacity = 0;
-               opened = 0;
-               released = 0;
-             })
+    Eta.Effect.pure
+      (pool_values ()
+       |> List.fold_left
+            (fun acc pool ->
+              let stats = H1_client.pool_stats pool in
+              {
+                protocol = H1;
+                active = acc.active + stats.Eta.Pool.active;
+                idle = acc.idle + stats.idle;
+                capacity = acc.capacity + stats.max_size;
+                opened = acc.opened + stats.opened;
+                released = acc.released + stats.closed;
+              })
+            {
+              protocol = H1;
+              active = 0;
+              idle = 0;
+              capacity = 0;
+              opened = 0;
+              released = 0;
+            })
   in
   let shutdown_impl () =
     pool_values () |> List.map H1_client.shutdown_pool |> Eta.Effect.concat

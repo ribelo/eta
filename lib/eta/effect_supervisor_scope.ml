@@ -1,5 +1,12 @@
 (** Supervisor scope GADT, interpreter, and constructor wrappers. Internal: see
-    Effect for the public surface. *)
+    Effect for the public surface.
+
+    The AST is deliberate: it is the rank-2 boundary that prevents
+    supervisor-child handles from escaping their supervisor scope. A direct
+    callback-only API would be cheaper per bind, but it would either expose the
+    private child constructors or move the same lifetime check into every
+    public combinator. Keep allocation-sensitive supervisor workloads small and
+    use regular Effect combinators outside the scoped child-lifetime region. *)
 
 open Effect_core
 

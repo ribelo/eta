@@ -306,13 +306,19 @@ module type S = sig
     val right : ('added, 'existing * 'added) contains
     val column :
       ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a) column
+    val nullable_column :
+      ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a option) column
+    (** Promote a column through scope evidence and decode SQL NULL as [None].
+        Use this for columns from the nullable side of an outer join. *)
   end
 
   module Source : sig
     type 'scope t
     (** A FROM source carries the phantom scope used by expressions and
-        projections. Left joins widen the scope but do not make right-side column
-        types nullable; nullability is still modeled by the column's [typ]. *)
+        projections. Left joins widen the scope, but callers must project or
+        filter nullable-side columns with {!Scope.nullable_column}; plain
+        {!Scope.column} preserves the table declaration's type and will fail
+        loudly if the database returns SQL NULL for a non-nullable decoder. *)
 
     val from : 'table table -> 'table t
     val join :

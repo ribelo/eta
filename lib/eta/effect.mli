@@ -214,7 +214,9 @@ module Blocking : sig
 
         Started callbacks run in separate OCaml domains. Callbacks must not
         capture Eio handles, Eta runtime state, or values that are unsafe to use
-        across domains.
+        across domains. The current public type cannot express OxCaml
+        portability, so this constructor is an explicit escape hatch rather than
+        a statically checked safe-spawn wrapper.
 
         [Pool.create] is sufficient for blocking calls that release the runtime
         lock. Choose this constructor only for confirmed lock-holding
@@ -406,13 +408,13 @@ val acquire_use_release :
   release:('a -> (unit, 'release_err) t) ->
   ('a -> ('b, 'err) t) ->
   ('b, 'err) t
-(** Acquire a resource, run [body], and register [release] with the current
-    runtime boundary or scope.
+(** Acquire a resource, run [body], and release it when [body] finishes.
 
-    This is the CPS form of {!acquire_release}; release ordering, cancellation
-    protection, and suppressed finalizer failure reporting are identical. Use
-    {!acquire_release} directly when the resource should participate in a
-    longer effect chain or surrounding scope. *)
+    This is a lexical bracket. Unlike {!acquire_release}, it opens a local scope
+    around [body], so repeated [acquire_use_release] calls do not retain
+    resources until the surrounding runtime boundary exits. Release ordering,
+    cancellation protection, and suppressed finalizer failure reporting match
+    scoped {!acquire_release}. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 

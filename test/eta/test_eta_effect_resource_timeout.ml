@@ -190,6 +190,26 @@ let test_acquire_use_release_success () =
     [ "acquired"; "body:1"; "released:1" ]
     (List.rev !trail)
 
+let test_acquire_use_release_is_lexical_bracket () =
+  with_runtime @@ fun rt ->
+  let active = ref 0 in
+  let max_active = ref 0 in
+  let acquire =
+    Effect.sync (fun () ->
+        incr active;
+        max_active := max !max_active !active;
+        ())
+  in
+  let release () = Effect.sync (fun () -> decr active) in
+  let one =
+    Effect.acquire_use_release ~acquire ~release (fun () ->
+        Effect.sync (fun () ->
+            Alcotest.(check int) "active inside body" 1 !active))
+  in
+  run_ok rt (Effect.concat [ one; one; one ]);
+  Alcotest.(check int) "released after each body" 0 !active;
+  Alcotest.(check int) "no accumulated resources" 1 !max_active
+
 let test_acquire_use_release_typed_failure_releases () =
   with_runtime @@ fun rt ->
   let released = ref false in

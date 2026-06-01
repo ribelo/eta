@@ -43,7 +43,10 @@ let int_member name json =
   match member name json with
   | Some (`Int value) -> Some value
   | Some (`Intlit value) -> int_of_string_opt value
-  | Some (`Float value) -> Some (int_of_float value)
+  | Some (`Float value) when Float.is_integer value ->
+      let int_value = int_of_float value in
+      if Float.equal (float_of_int int_value) value then Some int_value else None
+  | Some (`Float _) -> None
   | _ -> None
 
 let array_member name json =
@@ -51,4 +54,3 @@ let array_member name json =
 
 let object_member name json =
   match member name json with Some (`Assoc _ as value) -> Some value | _ -> None
-

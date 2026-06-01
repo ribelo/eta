@@ -8,13 +8,17 @@ type t = connection
 let connect database =
   if_database_open database @@ fun () ->
   wrap "connect" (fun () ->
-      { database; raw = raw_connect database.raw; closed = false })
+      let conn = { database; raw = raw_connect database.raw; closed = false } in
+      database.connections <- conn :: database.connections;
+      conn)
 
 let close (conn : connection) =
   if_connection_open conn @@ fun () ->
   match wrap "disconnect" (fun () -> raw_disconnect conn.raw) with
   | Ok () ->
       conn.closed <- true;
+      conn.database.connections <-
+        List.filter (fun live -> live != conn) conn.database.connections;
       Ok ()
   | Result.Error _ as err -> err
 

@@ -1,5 +1,14 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
+(* ocaml-h2 currently delivers 1xx informational responses through the same
+   final-response path Eta exposes to callers. This ingress filter is the
+   smallest local boundary that preserves Eta's public client contract without
+   forking H2: it removes interim HEADERS frames before H2 updates stream
+   state, and forwards DATA/RST/final HEADERS unchanged except when HPACK has
+   to be re-emitted after decoding. If H2 grows native interim-response
+   handling, this module should disappear rather than become another protocol
+   layer. *)
+
 type pending_headers = {
   stream_id : int;
   end_stream : bool;

@@ -1,7 +1,4 @@
-(** Public Effect surface — a barrel that re-exports the decomposed
-    implementation modules ([effect_core], [effect_resource], etc.) and adds
-    the runtime entry point [run] plus internal access via [Private]. The
-    public type and value signatures live in [effect.mli]. *)
+(** Public Effect implementation. *)
 
 open Effect_core
 
@@ -72,7 +69,9 @@ let run runtime effect =
           (Runtime_core.emit_blocking_event runtime)
           body
       else body ())
-  with exn ->
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn ->
     error (Runtime_core.cause_of_exn_runtime runtime runtime.default_fail_key exn)
 
 module Private = struct

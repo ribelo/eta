@@ -22,6 +22,10 @@ static void eta_sqlite_finalize_db(value v_db)
 {
   eta_sqlite_db *db = (eta_sqlite_db *)Data_custom_val(v_db);
   if (db->db != NULL) {
+    /* Custom finalizers run from the OCaml runtime's finalization path; entering
+       a blocking section here aborts under OCaml 5. Explicit close functions
+       below release the runtime lock, so finalization is only a last-resort
+       cleanup path for leaked handles. */
     (void)sqlite3_close_v2(db->db);
     db->db = NULL;
   }
@@ -31,6 +35,9 @@ static void eta_sqlite_finalize_stmt(value v_stmt)
 {
   eta_sqlite_stmt *stmt = (eta_sqlite_stmt *)Data_custom_val(v_stmt);
   if (stmt->stmt != NULL) {
+    /* See eta_sqlite_finalize_db: explicit statement finalization releases the
+       runtime lock; the custom finalizer must stay within runtime finalizer
+       constraints. */
     (void)sqlite3_finalize(stmt->stmt);
     stmt->stmt = NULL;
   }

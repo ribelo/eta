@@ -148,9 +148,7 @@ let test_channel_cancel_blocked_send_cleans_waiter () =
   in
   wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
-  (match Eio.Promise.await_exn sender with
-  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
-  | Exit.Error _ -> ());
+  await_cancelled sender;
   let stats = Channel.stats ch in
   Alcotest.(check int) "waiting senders" 0 stats.Channel.waiting_senders;
   Alcotest.(check int) "cancelled senders" 1 stats.Channel.cancelled_senders;
@@ -174,9 +172,7 @@ let test_channel_cancel_blocked_recv_cleans_waiter () =
   in
   wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
-  (match Eio.Promise.await_exn receiver with
-  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
-  | Exit.Error _ -> ());
+  await_cancelled receiver;
   Alcotest.(check int)
     "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers
 
@@ -195,9 +191,7 @@ let test_channel_cancel_receiver_after_delivery_requeues_message () =
   wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
   run_ok rt (Channel.send ch 42);
-  (match Eio.Promise.await_exn receiver with
-  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
-  | Exit.Error _ -> ());
+  await_cancelled receiver;
   Alcotest.(check int)
     "waiting receivers" 0 (Channel.stats ch).Channel.waiting_receivers;
   Alcotest.(check int) "requeued depth" 1 (Channel.stats ch).Channel.depth;
@@ -247,11 +241,14 @@ let test_channel_cancel_receiver_overflow_does_not_corrupt () =
   (match !cancel_ctx with
   | Some ctx -> Eio.Cancel.cancel ctx Exit
   | None -> Alcotest.fail "receiver did not publish cancellation context");
-  (match Eio.Promise.await_exn receiver with
+  (try match Eio.Promise.await_exn receiver with
   | Exit.Ok value -> Alcotest.(check int) "claimed delivery" 1 value
   | Exit.Error _ ->
       Alcotest.(check int) "requeued depth" 1 (Channel.stats ch).Channel.depth;
-      Alcotest.(check int) "cancelled delivery" 1 (run_ok rt (Channel.recv ch)));
+      Alcotest.(check int) "cancelled delivery" 1 (run_ok rt (Channel.recv ch))
+   with Eio.Cancel.Cancelled _ ->
+     Alcotest.(check int) "requeued depth" 1 (Channel.stats ch).Channel.depth;
+     Alcotest.(check int) "cancelled delivery" 1 (run_ok rt (Channel.recv ch)));
   match run_ok rt (Channel.try_recv ch) with
   | `Empty -> ()
   | _ -> Alcotest.fail "second value should not have been admitted while full"

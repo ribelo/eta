@@ -296,7 +296,6 @@ module type S = sig
       ('scope, 'b) t ->
       ('scope, 'c) t ->
       ('scope, 'a * 'b * 'c) t
-    (** Combine three projections into a tuple. *)
     val count : ?as_:string -> unit -> ('scope, int) t
     (** Project COUNT-star. *)
     val sum_int : ?as_:string -> ('scope, int) column -> ('scope, int option) t
@@ -326,7 +325,6 @@ module type S = sig
       ('scope, 'c) t ->
       ('scope, 'd) t ->
       ('scope, 'a * 'b * 'c * 'd) t
-    (** Combine four projections into a tuple. *)
     val t5 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -334,7 +332,6 @@ module type S = sig
       ('scope, 'd) t ->
       ('scope, 'e) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e) t
-    (** Combine five projections into a tuple. *)
     val t6 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -343,7 +340,6 @@ module type S = sig
       ('scope, 'e) t ->
       ('scope, 'f) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f) t
-    (** Combine six projections into a tuple. *)
     val t7 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -353,7 +349,6 @@ module type S = sig
       ('scope, 'f) t ->
       ('scope, 'g) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g) t
-    (** Combine seven projections into a tuple. *)
     val t8 :
       ('scope, 'a) t ->
       ('scope, 'b) t ->
@@ -364,7 +359,6 @@ module type S = sig
       ('scope, 'g) t ->
       ('scope, 'h) t ->
       ('scope, 'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h) t
-    (** Combine eight projections into a tuple. *)
     val map : ('a -> 'b) -> ('scope, 'a) t -> ('scope, 'b) t
     (** Map the decoded value while preserving the SQL projection. *)
   end
@@ -382,6 +376,10 @@ module type S = sig
     val column :
       ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a) column
     (** Promote a column only when containment evidence proves it is visible. *)
+    val nullable_column :
+      ('sub, 'super) contains -> ('sub, 'a) column -> ('super, 'a option) column
+    (** Promote a column through scope evidence and decode SQL NULL as [None].
+        Use this for columns from the nullable side of an outer join. *)
   end
 
   module Source : sig

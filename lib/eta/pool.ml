@@ -1,3 +1,9 @@
+(* Pool keeps the resource lifecycle state machine, admission semaphore, and
+   observability counters in one module because close/release/eviction ordering
+   is the invariant: a connection must move through exactly one of idle, active,
+   closed, or shutdown paths while metrics/logs reflect that transition. Split
+   helper modules only if they preserve that single transition authority. *)
+
 type stats = {
   active : int;
   idle : int;

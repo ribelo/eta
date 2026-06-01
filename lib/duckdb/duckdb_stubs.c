@@ -94,6 +94,9 @@ static void db_finalize(value v_db)
 {
   eta_duckdb_db *db = (eta_duckdb_db *)Data_custom_val(v_db);
   if (db->db != NULL && api.loaded) {
+    /* OCaml custom finalizers cannot safely enter blocking sections; leaked
+       handles reach this path only as best-effort cleanup. Normal close paths
+       are explicit OCaml calls and may release the runtime lock. */
     api.close(&db->db);
     db->db = NULL;
   }
@@ -103,6 +106,7 @@ static void conn_finalize(value v_conn)
 {
   eta_duckdb_conn *conn = (eta_duckdb_conn *)Data_custom_val(v_conn);
   if (conn->conn != NULL && api.loaded) {
+    /* See db_finalize for why custom finalizers stay inside the runtime lock. */
     api.disconnect(&conn->conn);
     conn->conn = NULL;
   }
@@ -112,6 +116,7 @@ static void appender_finalize(value v_appender)
 {
   eta_duckdb_appender *appender = (eta_duckdb_appender *)Data_custom_val(v_appender);
   if (appender->appender != NULL && api.loaded) {
+    /* See db_finalize for why custom finalizers stay inside the runtime lock. */
     (void)api.appender_destroy(&appender->appender);
     appender->appender = NULL;
   }
@@ -122,6 +127,7 @@ static void result_owner_finalize(value v_owner)
   eta_duckdb_result_owner *owner =
     (eta_duckdb_result_owner *)Data_custom_val(v_owner);
   if (owner->active && api.loaded) {
+    /* See db_finalize for why custom finalizers stay inside the runtime lock. */
     api.destroy_result(&owner->result);
     owner->active = 0;
   }
@@ -600,10 +606,12 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
   CAMLlocal2(rows, result_owner);
   ensure_loaded();
   duckdb_prepared_statement stmt = NULL;
+  duckdb_result result;
   duckdb_input_copies copies = { NULL };
   duckdb_connection conn = conn_val(v_conn);
   const char *sql;
   int rc;
+  memset(&result, 0, sizeof(result));
   if (!duckdb_input_copy_string(&copies, String_val(v_sql), &sql))
     caml_failwith("duckdb allocation failed");
   caml_enter_blocking_section();
@@ -623,20 +631,21 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
     duckdb_input_copies_free(&copies);
     caml_failwith(rc == -2 ? "duckdb allocation failed" : "duckdb bind failed");
   }
-  result_owner = result_owner_alloc();
   caml_enter_blocking_section();
-  rc = api.execute_prepared(stmt, result_owner_val(result_owner));
+  rc = api.execute_prepared(stmt, &result);
   caml_leave_blocking_section();
-  result_owner_activate(result_owner);
   api.destroy_prepare(&stmt);
   duckdb_input_copies_free(&copies);
   if (rc != 0) {
-    const char *err = api.result_error(result_owner_val(result_owner));
+    const char *err = api.result_error(&result);
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
-    result_owner_destroy(result_owner);
+    api.destroy_result(&result);
     caml_failwith(buffer);
   }
+  result_owner = result_owner_alloc();
+  *result_owner_val(result_owner) = result;
+  result_owner_activate(result_owner);
   rows = materialize_rows(result_owner_val(result_owner));
   result_owner_destroy(result_owner);
   CAMLreturn(rows);

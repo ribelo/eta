@@ -209,6 +209,9 @@ let with_lock (t : ('a, 'err) t) f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let with_lock_during_cancel t f =
+  Eio.Cancel.protect (fun () -> with_lock t f)
+
 let enqueue_sender (t : ('a, 'err) t) value =
   let promise, resolver = Eio.Promise.create () in
   let sender = { value; resolver; active = true } in
@@ -289,7 +292,7 @@ let send_sync (t : ('a, 'err) t) value =
   | `Wait (promise, sender) -> (
       try Eio.Promise.await promise
       with Eio.Cancel.Cancelled _ as exn ->
-        with_lock t (fun () -> cancel_sender t sender);
+        with_lock_during_cancel t (fun () -> cancel_sender t sender);
         raise exn)
 
 let recv_sync (t : ('a, 'err) t) =
@@ -324,7 +327,7 @@ let recv_sync (t : ('a, 'err) t) =
             result
         | (`Empty | `Closed | `Closed_with_error _) as result -> result
       with Eio.Cancel.Cancelled _ as exn ->
-        with_lock t (fun () -> cancel_receiver t receiver);
+        with_lock_during_cancel t (fun () -> cancel_receiver t receiver);
         raise exn)
 
 let send t value =

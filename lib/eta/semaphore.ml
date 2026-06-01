@@ -34,6 +34,9 @@ let with_lock t f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let with_lock_during_cancel t f =
+  Eio.Cancel.protect (fun () -> with_lock t f)
+
 let validate_request name t n =
   if n <= 0 || n > t.max_permits then
     invalid_arg
@@ -106,7 +109,7 @@ let acquire t n =
        else
          let cleanup () =
            Effect.sync (fun () ->
-             with_lock t @@ fun () ->
+             with_lock_during_cancel t @@ fun () ->
              match waiter.state with
              | Waiting ->
                  waiter.state <- Cancelled;

@@ -17,13 +17,33 @@ let run_cleanup_to_exit frame cleanup =
 let finally cleanup effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
-  match run_to_exit frame effect with
-  | Exit.Ok value -> (
-      match run_cleanup_to_exit frame cleanup with
-      | Exit.Ok () -> ok value
-      | Exit.Error cause -> error (finalizer_cause frame cause))
-  | Exit.Error primary -> (
-      match run_cleanup_to_exit frame cleanup with
+  let run_cleanup () = run_cleanup_to_exit frame cleanup in
+  try
+    match with_frame frame effect.eval with
+    | Exit.Ok value -> (
+        match run_cleanup () with
+        | Exit.Ok () -> ok value
+        | Exit.Error cause -> error (finalizer_cause frame cause))
+    | Exit.Error primary -> (
+        match run_cleanup () with
+        | Exit.Ok () -> error primary
+        | Exit.Error finalizer ->
+            error
+              (Cause.suppressed ~primary
+                 ~finalizer:(render_cause_error frame finalizer)))
+  with
+  | Eio.Cancel.Cancelled _ as exn -> (
+      match run_cleanup () with
+      | Exit.Ok () -> raise exn
+      | Exit.Error finalizer ->
+          error
+            (Cause.suppressed ~primary:Cause.interrupt
+               ~finalizer:(render_cause_error frame finalizer)))
+  | exn -> (
+      let primary =
+        Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+      in
+      match run_cleanup () with
       | Exit.Ok () -> error primary
       | Exit.Error finalizer ->
           error
@@ -46,9 +66,6 @@ let acquire_release ~acquire ~release =
         :: !(frame.finalizers);
       ok value
 
-let acquire_use_release ~acquire ~release body =
-  acquire_release ~acquire ~release |> bind body
-
 let scoped effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
@@ -61,5 +78,8 @@ let scoped effect =
            ~error_renderer:child_frame.error_renderer finalizers (fun () ->
              run_to_value child_frame effect)
        in
-       switch_run frame run_scoped)
+    switch_run frame run_scoped)
   with exn -> exit_of_exn frame exn
+
+let acquire_use_release ~acquire ~release body =
+  scoped (acquire_release ~acquire ~release |> bind body)

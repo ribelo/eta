@@ -74,6 +74,8 @@ static void eta_turso_db_finalize(value v_db)
 {
   eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
   if (db->db != NULL && api.loaded) {
+    /* OCaml custom finalizers cannot safely enter blocking sections; explicit
+       close/finalize functions below release the runtime lock. */
     (void)api.close_v2(db->db);
     db->db = NULL;
   }
@@ -83,6 +85,7 @@ static void eta_turso_stmt_finalize(value v_stmt)
 {
   eta_turso_stmt *stmt = (eta_turso_stmt *)Data_custom_val(v_stmt);
   if (stmt->stmt != NULL && api.loaded) {
+    /* See eta_turso_db_finalize for finalizer constraints. */
     (void)api.finalize(stmt->stmt);
     stmt->stmt = NULL;
   }
@@ -268,7 +271,9 @@ CAMLprim intnat eta_turso_finalize(value v_stmt)
   eta_turso_stmt *stmt = (eta_turso_stmt *)Data_custom_val(v_stmt);
   int rc;
   if (stmt->stmt == NULL) CAMLreturnT(intnat, SQLITE_OK);
+  caml_enter_blocking_section();
   rc = api.finalize(stmt->stmt);
+  caml_leave_blocking_section();
   if (rc == SQLITE_OK) stmt->stmt = NULL;
   CAMLreturnT(intnat, rc);
 }

@@ -161,7 +161,9 @@ let[@cold] [@zero_alloc assume error] exit_of_exn frame exn =
   Exit.Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
 
 let run_to_exit frame effect =
-  try with_frame frame effect.eval with exn -> exit_of_exn frame exn
+  try with_frame frame effect.eval with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> exit_of_exn frame exn
 
 let run_to_value frame effect = exit_to_value frame (run_to_exit frame effect)
 
@@ -169,7 +171,11 @@ let pure value = make (fun () -> ok value)
 let fail err = make (fun () -> error (Cause.Fail err))
 let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
-let sync f = make (fun () -> try ok (f ()) with exn -> exit_of_exn (current_frame ()) exn)
+let sync f =
+  make (fun () ->
+      try ok (f ()) with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | exn -> exit_of_exn (current_frame ()) exn)
 
 (* ---------------------------------------------------------------- *)
 (* Combinators                                                       *)

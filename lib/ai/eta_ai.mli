@@ -507,9 +507,10 @@ val perform_binary :
 type stream
 (** Pull parser for provider SSE events over an eta-http response body.
 
-    This is intentionally not an eta-stream value. A2 found that eta-stream
-    still needs an owned effect-reader source before eta-ai can expose public
-    stream ownership through eta-stream.
+    This is intentionally not an eta-stream value: provider streams own HTTP
+    body release ordering and decode-error cleanup directly. Eta-stream should
+    only become the public carrier once it has an owned effect-reader source
+    with the same lifecycle guarantees.
 
     A stream permits one active read or close operation at a time. Concurrent
     calls fail with [Decode_error] instead of racing the parser state. *)

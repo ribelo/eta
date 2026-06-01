@@ -2,4 +2,5 @@
  (name eta_ai_openai_codec)
  (public_name eta_ai_openai_codec)
  (synopsis "Shared OpenAI wire-format codec used by openai, openai_compat, and openrouter")
+ (private_modules chat content core embeddings error_codec responses stream tools)
  (libraries eta_ai base64))

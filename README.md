@@ -115,17 +115,15 @@ Effect.fn __POS__ __FUNCTION__
   (Effect.named "db.query" (Effect.sync (fun () -> Db.user id)))
 ```
 
-Leaf effects can bind an explicit capture list so the body cannot read an
-ambient `env`:
+Leaf effects use ordinary OCaml captures:
 
 ```ocaml
 let current_user auth =
-  [%eta.sync "auth.current_user" (auth : Auth.t)
-    (Auth.current_user auth)]
+  [%eta.sync "auth.current_user" (Auth.current_user auth)]
 ```
 
 This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named ... (Effect.sync ...))`, with a
-zero-argument callback and a local typed `auth` binding.
+zero-argument callback.
 
 Use it by adding `ppx_eta` to your test or executable preprocessors:
 

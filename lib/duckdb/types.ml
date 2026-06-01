@@ -64,9 +64,10 @@ type raw_appender
 type database = {
   raw : raw_database;
   mutable closed : bool;
+  mutable connections : connection list;
 }
 
-type connection = {
+and connection = {
   database : database;
   raw : raw_connection;
   mutable closed : bool;

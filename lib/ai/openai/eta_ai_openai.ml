@@ -1,5 +1,5 @@
-(** Public OpenAI provider surface. The public type and value signatures live in
-    [eta_ai_openai.mli]. *)
+(** OpenAI facade preserving endpoint-oriented public names over shared provider
+    implementations. *)
 
 include Common
 

@@ -1,5 +1,5 @@
-(** Public OpenRouter provider surface. The public type and value signatures live
-    in [eta_ai_openrouter.mli]. *)
+(** OpenRouter facade preserving endpoint-oriented public names over shared
+    provider implementations. *)
 
 include Common
 

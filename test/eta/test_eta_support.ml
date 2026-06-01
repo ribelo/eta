@@ -24,6 +24,14 @@ let run_ok rt eff =
   | Exit.Ok value -> value
   | Exit.Error _ -> Alcotest.fail "expected Ok"
 
+let await_cancelled promise =
+  try
+    match Eio.Promise.await_exn promise with
+    | Exit.Ok _ -> Alcotest.fail "expected Eio cancellation"
+    | Exit.Error _ ->
+        Alcotest.fail "expected Eio cancellation, not an Eta error exit"
+  with Eio.Cancel.Cancelled _ -> ()
+
 let check_exit_ok test name expected = function
   | Exit.Ok actual -> Alcotest.check test name expected actual
   | Exit.Error _ -> Alcotest.fail "expected Ok"

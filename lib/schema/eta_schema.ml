@@ -527,6 +527,10 @@ module Eta_schema = struct
 
   let ( <*> ) = decode_apply
 
+  (* The public v0 product API is arity-specific because OCaml has no variadic
+     record builders. Shared encode/decode helpers above hold the object
+     invariants; the record1..record6 functions below only sequence fields into
+     ordinary curried constructors. *)
   let record ~name ~fields ~decode ~equal =
     {
       decode =

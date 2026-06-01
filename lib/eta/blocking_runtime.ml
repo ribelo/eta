@@ -316,7 +316,10 @@ let run_systhread t name f =
    this primitive is the lower-level escape hatch users opted into via the
    kind=Domain_isolated pool config, so the alerts are suppressed locally.
    [Domain.Safe.spawn] is not used because it would require the callback
-   to be portable, which the public Blocking API does not enforce. *)
+   to be portable, which the public Blocking API does not enforce. The
+   invariant is therefore operational rather than type-level: use this mode only
+   for callbacks whose captured values are valid in a fresh domain, typically a
+   legacy C call that would otherwise hold the runtime lock in a systhread. *)
 let run_domain t name f =
   let result = Atomic.make None in
   let domain =

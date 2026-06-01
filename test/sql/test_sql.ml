@@ -559,6 +559,24 @@ let seed_join_tables pool =
   in
   let* _ =
     Q.Insert.(
+      into Posts.table
+      |> value Posts.id 11
+      |> value Posts.author_id 1
+      |> value Posts.title "No tag"
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* _ =
+    Q.Insert.(
+      into Comments.table
+      |> value Comments.id 21
+      |> value Comments.post_id 11
+      |> value Comments.body "Sparse"
+      |> compile)
+    |> execute_compiled pool
+  in
+  let* _ =
+    Q.Insert.(
       into Tags.table
       |> value Tags.id 30
       |> value Tags.post_id 10
@@ -600,15 +618,16 @@ let test_sql_schema_and_join_helpers () =
             (one (C.column (C.left (C.left (C.left C.self))) Users.name))
             (one (C.column (C.left (C.left C.right)) Posts.title))
             (one (C.column (C.left C.right) Comments.body))
-            (one (C.column C.right Tags.tag)))
+            (one (C.nullable_column C.right Tags.tag)))
       |> where Q.Expr.(eq (C.column (C.left (C.left (C.left C.self))) Users.active) true)
+      |> order_by (C.column (C.left (C.left C.right)) Posts.id)
       |> select_all pool)
   in
   Alcotest.(check (list string))
-    "4-table join" [ "Ada|Notes|Good|ocaml" ]
+    "4-table join" [ "Ada|Notes|Good|ocaml"; "Ada|No tag|Sparse|<none>" ]
     (List.map
        (fun (user, post, comment, tag) ->
-         String.concat "|" [ user; post; comment; tag ])
+         String.concat "|" [ user; post; comment; Option.value tag ~default:"<none>" ])
        rows);
   Eta.Effect.unit
 

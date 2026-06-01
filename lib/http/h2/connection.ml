@@ -4,6 +4,12 @@ module Error = Error
 module Multiplexer = Multiplexer
 module Writer = Writer
 
+(* Connection owns socket lifetime, writes, and failure fan-out. Multiplexer
+   owns H2 stream admission and body-reader bookkeeping. The read loop crosses
+   that boundary because ocaml-h2 exposes a single mutable Client_connection
+   state machine; keep all direct flow I/O in this module and all per-stream
+   table updates in Multiplexer. *)
+
 type flow = Connect.tcp_flow
 
 type failure_waiter = {

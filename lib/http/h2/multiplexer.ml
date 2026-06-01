@@ -3,6 +3,11 @@
 module Stream_state = Stream_state
 module Security = Security
 
+(* Multiplexer is intentionally socket-free. It adapts ocaml-h2's mutable
+   Client_connection callbacks into Eta stream state, while Connection owns the
+   actual flow reads/writes and shutdown. Do not add Eio.Flow operations here;
+   that keeps connection lifetime and per-stream lifetime auditable separately. *)
+
 type stream = Stream_state.stream
 
 type request_error =

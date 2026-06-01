@@ -115,6 +115,15 @@ module Make (Backend : BACKEND) = struct
       qualified_column_name = column.qualified_column_name;
     }
 
+  let coerce_nullable_column column =
+    {
+      table_name = column.table_name;
+      column_name = column.column_name;
+      typ = nullable column.typ;
+      quoted_column_name = column.quoted_column_name;
+      qualified_column_name = column.qualified_column_name;
+    }
+
   module Table = struct
     type 'table t = 'table table
 
@@ -439,6 +448,8 @@ module Make (Backend : BACKEND) = struct
     let left evidence = Left evidence
     let right = Right
     let column (_ : ('sub, 'super) contains) column = coerce_column column
+    let nullable_column (_ : ('sub, 'super) contains) column =
+      coerce_nullable_column column
   end
 
   module Join = struct

@@ -16,13 +16,33 @@ let close_after_open_failure (db : database) =
     db.closed <- true;
     try raw_close_database db.raw with _ -> ())
 
+let unlink_connection (db : database) (conn : connection) =
+  db.connections <- List.filter (fun live -> live != conn) db.connections
+
+let close_connection (conn : connection) =
+  if conn.closed then Ok ()
+  else
+    match wrap "disconnect" (fun () -> raw_disconnect conn.raw) with
+    | Ok () ->
+        conn.closed <- true;
+        unlink_connection conn.database conn;
+        Ok ()
+    | Result.Error _ as err -> err
+
+let rec close_connections = function
+  | [] -> Ok ()
+  | conn :: rest -> (
+      match close_connection conn with
+      | Ok () -> close_connections rest
+      | Result.Error _ as err -> err)
+
 let open_ config =
   match validate_config config with
   | Result.Error _ as err -> err
   | Ok () ->
       wrap "open" @@ fun () ->
       let path = Option.value config.path ~default:"" in
-      let db = { raw = raw_open path; closed = false } in
+      let db = { raw = raw_open path; closed = false; connections = [] } in
       (try
          (match config.threads with
          | None -> ()
@@ -47,8 +67,11 @@ let open_memory () = open_ { path = None; threads = None }
 
 let close db =
   if_database_open db @@ fun () ->
-  match wrap "close database" (fun () -> raw_close_database db.raw) with
-  | Ok () ->
-      db.closed <- true;
-      Ok ()
+  match close_connections db.connections with
   | Result.Error _ as err -> err
+  | Ok () -> (
+      match wrap "close database" (fun () -> raw_close_database db.raw) with
+      | Ok () ->
+          db.closed <- true;
+          Ok ()
+      | Result.Error _ as err -> err)

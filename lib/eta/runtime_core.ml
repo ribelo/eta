@@ -15,9 +15,11 @@ let has_eio_fiber_context () =
 let cancel_protect f =
   if has_eio_fiber_context () then Eio.Cancel.protect f else f ()
 
-(* Typed failures cross Eio fibers through OCaml exceptions. The [Obj.t] payload
-   is private to this module and is unpacked only after the fresh [Typed_fail]
-   key matches the interpreter frame that packed it. *)
+(* Typed failures cross Eio fibers through OCaml exceptions. This is the only
+   place that may pack/unpack a typed Cause through [Obj.t]. The fresh
+   [Typed_fail] key is the dynamic proof that the unpacking interpreter is the
+   one that packed the value; mismatched keys are treated as ordinary defects by
+   [cause_of_exn]. Do not copy this erasure pattern into feature modules. *)
 exception Raised_cause of int * Obj.t
 exception Timeout_as_fired of int
 
@@ -275,6 +277,13 @@ let with_finalizers ~runtime ~fail_key ~error_renderer finalizers body =
       | Some finalizer ->
           raise_cause fail_key
             (Cause.finalizer (render_finalizer_cause ~error_renderer finalizer)))
+  | exception (Eio.Cancel.Cancelled _ as exn) -> (
+      match run_finalizers ~runtime ~fail_key finalizers with
+      | None -> raise exn
+      | Some finalizer ->
+          raise_cause fail_key
+            (Cause.suppressed ~primary:Cause.interrupt
+               ~finalizer:(render_finalizer_cause ~error_renderer finalizer)))
   | exception exn ->
       let primary = cause_of_exn_runtime runtime fail_key exn in
       let cause =

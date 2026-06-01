@@ -221,6 +221,16 @@ let test_decode_chat_fixture () =
     "input tokens" (Some 11)
     (Option.bind response.usage (fun usage -> usage.A.input_tokens))
 
+let test_decode_chat_rejects_fractional_usage_integer () =
+  let raw =
+    {|{"id":"chatcmpl_fractional","model":"gpt-fixture","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1.5,"completion_tokens":2,"total_tokens":3}}|}
+  in
+  let response = O.decode_chat raw |> expect_ok "fractional usage" in
+  Alcotest.(check (option int)) "fractional prompt tokens rejected" None
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens));
+  Alcotest.(check (option int)) "integral completion tokens kept" (Some 2)
+    (Option.bind response.usage (fun usage -> usage.A.output_tokens))
+
 let test_decode_tool_fixture () =
   let response =
     O.decode_chat (read_fixture "chat_tool_completion.json")
@@ -689,6 +699,8 @@ let () =
       ( "decode",
         [
           Alcotest.test_case "chat fixture" `Quick test_decode_chat_fixture;
+          Alcotest.test_case "fractional usage integer rejected" `Quick
+            test_decode_chat_rejects_fractional_usage_integer;
           Alcotest.test_case "tool fixture" `Quick test_decode_tool_fixture;
           Alcotest.test_case "responses fixture" `Quick
             test_decode_responses_fixture;

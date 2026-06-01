@@ -36,7 +36,7 @@ module Auth = struct
 end
 
 let current_user auth =
-  [%eta.sync "auth.current_user" (auth : Auth.t) (Auth.current_user auth)]
+  [%eta.sync "auth.current_user" (Auth.current_user auth)]
 
 let test_ppx_thunk_leaf () =
   Eio_main.run @@ fun stdenv ->

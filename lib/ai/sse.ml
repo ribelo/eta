@@ -4,7 +4,8 @@ type t = {
   provider : provider;
   body : Eta_http.Body.Stream.t;
   max_buffer_bytes : int;
-  mutable buffer : string;
+  buffer : Buffer.t;
+  mutable scan_pos : int;
   mutable pending : stream_event list;
   mutable eof : bool;
   mutable released : bool;
@@ -20,7 +21,8 @@ let stream_of_body ?(max_buffer_bytes = default_max_buffer_bytes) provider body
     provider;
     body;
     max_buffer_bytes;
-    buffer = "";
+    buffer = Buffer.create 4096;
+    scan_pos = 0;
     pending = [];
     eof = false;
     released = false;
@@ -70,19 +72,25 @@ let parse_sse_record record =
                else if String.equal field "data" then data := value :: !data);
   { event = !event; data = String.concat "\n" (List.rev !data) }
 
-let find_sse_separator s =
-  let len = String.length s in
+let find_sse_separator stream =
+  let s = stream.buffer in
+  let len = Buffer.length s in
   let rec loop index =
     if index >= len then None
-    else if index + 1 < len && s.[index] = '\n' && s.[index + 1] = '\n' then
+    else if
+      index + 1 < len && Buffer.nth s index = '\n'
+      && Buffer.nth s (index + 1) = '\n'
+    then
       Some (index, 2)
     else if
-      index + 3 < len && s.[index] = '\r' && s.[index + 1] = '\n'
-      && s.[index + 2] = '\r' && s.[index + 3] = '\n'
+      index + 3 < len && Buffer.nth s index = '\r'
+      && Buffer.nth s (index + 1) = '\n'
+      && Buffer.nth s (index + 2) = '\r'
+      && Buffer.nth s (index + 3) = '\n'
     then Some (index, 4)
     else loop (index + 1)
   in
-  loop 0
+  loop stream.scan_pos
 
 let release_stream stream =
   if stream.released then Eta.Effect.unit
@@ -93,7 +101,8 @@ let release_stream stream =
 
 let close_stream_unlocked stream =
   stream.pending <- [];
-  stream.buffer <- "";
+  Buffer.clear stream.buffer;
+  stream.scan_pos <- 0;
   stream.eof <- true;
   release_stream stream
 
@@ -117,7 +126,7 @@ let buffer_too_large stream =
     }
 
 let would_exceed_buffer stream chunk =
-  String.length stream.buffer + String.length chunk > stream.max_buffer_bytes
+  Buffer.length stream.buffer + String.length chunk > stream.max_buffer_bytes
 
 let record_too_large stream record =
   String.length record > stream.max_buffer_bytes
@@ -129,16 +138,20 @@ let parse_sse_record_capped stream record =
 let feed_sse stream chunk =
   if would_exceed_buffer stream chunk then Stdlib.Error (buffer_too_large stream)
   else (
-    stream.buffer <- stream.buffer ^ chunk;
+    Buffer.add_string stream.buffer chunk;
     let rec drain acc =
-      match find_sse_separator stream.buffer with
-      | None -> Stdlib.Ok (List.rev acc)
+      match find_sse_separator stream with
+      | None ->
+          stream.scan_pos <- max 0 (Buffer.length stream.buffer - 3);
+          Stdlib.Ok (List.rev acc)
       | Some (index, sep_len) ->
-          let record = String.sub stream.buffer 0 index in
+          let contents = Buffer.contents stream.buffer in
+          let record = String.sub contents 0 index in
           let rest_start = index + sep_len in
-          stream.buffer <-
-            String.sub stream.buffer rest_start
-              (String.length stream.buffer - rest_start);
+          Buffer.clear stream.buffer;
+          Buffer.add_substring stream.buffer contents rest_start
+            (String.length contents - rest_start);
+          stream.scan_pos <- 0;
           if String.trim record = "" then drain acc
           else
             match parse_sse_record_capped stream record with
@@ -148,8 +161,9 @@ let feed_sse stream chunk =
     drain [])
 
 let flush_sse stream =
-  let record = String.trim stream.buffer in
-  stream.buffer <- "";
+  let record = String.trim (Buffer.contents stream.buffer) in
+  Buffer.clear stream.buffer;
+  stream.scan_pos <- 0;
   if record = "" then Stdlib.Ok []
   else Result.map (fun event -> [ event ]) (parse_sse_record_capped stream record)
 

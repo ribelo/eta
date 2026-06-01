@@ -439,9 +439,7 @@ let test_pubsub_cancel_blocked_recv_cleans_waiter () =
   in
   wait_until (fun () -> (Pubsub.stats hub).waiting_receivers = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
-  (match Eio.Promise.await_exn receiver with
-  | Exit.Ok _ -> Alcotest.fail "expected cancellation"
-  | Exit.Error _ -> ());
+  await_cancelled receiver;
   Alcotest.(check int)
     "waiting receivers" 0 (Pubsub.stats hub).waiting_receivers;
   Alcotest.(check int)

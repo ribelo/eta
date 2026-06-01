@@ -459,6 +459,26 @@ let test_effect_finally_runs_on_cancellation () =
   check_exit_ok Alcotest.string "fast wins" "fast" (Eio.Promise.await promise);
   Alcotest.(check bool) "cleanup ran" true !finalized
 
+let test_effect_finally_runs_on_eio_cancellation () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let finalized = ref false in
+  let cancel_ctx = ref None in
+  let never, _resolver = Eio.Promise.create () in
+  let promise =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.await never)
+          |> Effect.finally (Effect.sync (fun () -> finalized := true))))
+  in
+  wait_until (fun () -> Option.is_some !cancel_ctx);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled promise;
+  Alcotest.(check bool) "cleanup ran" true !finalized
+
 let test_effect_catch_preserves_suppressed_finalizer_failure () =
   with_runtime @@ fun rt ->
   let eff =
@@ -517,6 +537,24 @@ let test_runtime_exit_fail_die_interrupt () =
   Expect.expect_typed_failure_eq Alcotest.string fail_exit "bad";
   Expect.expect_die die_exit (fun actual -> actual.exn == die);
   Expect.expect_interrupt interrupt_exit
+
+let test_runtime_run_propagates_eio_cancellation () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let cancelled = Failure "runtime cancelled" in
+  let raised_cancelled = ref false in
+  Eio.Cancel.sub @@ fun ctx ->
+  Eio.Cancel.cancel ctx cancelled;
+  (match Runtime.run rt (Effect.delay (Duration.ms 1) Effect.unit) with
+  | Exit.Ok () -> Alcotest.fail "cancelled run returned Ok"
+  | Exit.Error cause ->
+      Alcotest.failf "cancelled run returned %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | exception Eio.Cancel.Cancelled actual when actual == cancelled ->
+      raised_cancelled := true);
+  Alcotest.(check bool) "raised Cancelled" true !raised_cancelled
 
 let test_runtime_die_captures_diagnostics () =
   with_sampled_traced_runtime Sampler.always_off @@ fun rt _tracer ->
