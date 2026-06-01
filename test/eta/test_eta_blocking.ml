@@ -2,8 +2,6 @@ open Eta
 open Eta_test
 open Test_eta_support
 
-external hold_lock_sleep : float -> unit = "eta_test_hold_lock_sleep"
-
 module BP = Effect.Blocking.Pool
 
 let blocking_config ?(max_threads = 4) ?(max_queued = 64)
@@ -432,57 +430,6 @@ let test_blocking_named_pools_prevent_starvation () =
   check_exit_ok Alcotest.int "db result" 1 result;
   Alcotest.(check bool) "db not starved" true (elapsed < 10_000);
   ignore (Eio.Promise.await_exn fs : (unit list, _) Exit.t)
-
-let test_blocking_domain_isolated_preserves_hold_lock_heartbeat () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  let normal_pool =
-    BP.create ~name:"hold-lock-normal" (blocking_config ~max_threads:1 ())
-  in
-  let domain_pool =
-    BP.create_domain_isolated ~name:"hold-lock-domain"
-      (blocking_config ~max_threads:1 ())
-  in
-  let normal_p99, () =
-    heartbeat_p99_us (fun () ->
-        ignore
-          (Runtime.run rt
-             (Effect.blocking ~pool:normal_pool ~name:"hold-lock.normal"
-                (fun () -> hold_lock_sleep 0.030))))
-  in
-  let domain_p99, () =
-    heartbeat_p99_us (fun () ->
-        ignore
-          (Runtime.run rt
-             (Effect.blocking ~pool:domain_pool ~name:"hold-lock.domain"
-                (fun () -> hold_lock_sleep 0.030))))
-  in
-  Alcotest.(check bool) "normal hold-lock degrades" true (normal_p99 > 20_000);
-  (* The absolute p99 is scheduler-noise sensitive in the full suite; the
-     regression is domain isolation becoming materially worse than systhread. *)
-  if domain_p99 > normal_p99 + 5_000 then
-    Alcotest.failf "domain p99=%dus normal p99=%dus" domain_p99 normal_p99
-
-let test_blocking_domain_isolated_many_waiters_preserve_heartbeat () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let pool =
-    BP.create_domain_isolated ~name:"domain-many-waiters"
-      (blocking_config ~max_threads:96 ~max_queued:96 ())
-  in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  let p99, values =
-    heartbeat_p99_us (fun () ->
-        run_ok rt
-          (Effect.for_each_par (List.init 96 Fun.id) (fun _ ->
-               Effect.blocking ~pool ~name:"domain-many-waiters.sleep"
-                 (fun () ->
-                   Unix.sleepf 0.030;
-                   1))))
-  in
-  Alcotest.(check int) "completed jobs" 96 (List.length values);
-  Alcotest.(check bool) "heartbeat" true (p99 < 10_000)
 
 let test_blocking_worker_rejects_nested_submit () =
   with_runtime @@ fun rt ->

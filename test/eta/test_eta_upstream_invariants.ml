@@ -14,8 +14,16 @@ let check_timeout label = function
         cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected Timeout" label
 
+let rec cause_has_boom = function
+  | Cause.Fail `Boom -> true
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists cause_has_boom causes
+  | Cause.Finalizer _ -> false
+  | Cause.Suppressed { primary; finalizer = _ } -> cause_has_boom primary
+
 let check_boom label = function
-  | Exit.Error (Cause.Fail `Boom) -> ()
+  | Exit.Error cause when cause_has_boom cause -> ()
   | Exit.Error cause ->
       Alcotest.failf "%s: expected Boom, got %a" label
         (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
@@ -105,6 +113,9 @@ let test_zio_timeout_waits_for_resource_release () =
   Alcotest.(check bool)
     "timeout waits while release is still sleeping" false
     (Eio.Promise.is_resolved promise);
+  Test_clock.adjust clock (Duration.ms 100);
+  wait_for_sleepers clock 1;
   Test_clock.adjust clock (Duration.ms 50);
+  wait_until (fun () -> Eio.Promise.is_resolved promise);
   check_timeout "timeout release" (Eio.Promise.await promise);
   Alcotest.(check bool) "release completed" true !released

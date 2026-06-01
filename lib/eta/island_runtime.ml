@@ -11,7 +11,7 @@ type ('a : immutable_data, 'e : immutable_data) settled : immutable_data =
 
 type pool = {
   pool : Par.Pool.t;
-  mutable stopped : bool;
+  stopped : bool Atomic.t;
 }
 
 type ('a : immutable_data) map_outcome : immutable_data =
@@ -50,17 +50,17 @@ module Pool = struct
       invalid_arg "Effect.Island.Pool.create: domains must be > 0";
     {
       pool = Par.Pool.create ~n_workers:(domains + 1) ();
-      stopped = false;
+      stopped = Atomic.make false;
     }
 
   let shutdown pool =
-    if not pool.stopped then (
-      pool.stopped <- true;
-      Par.Pool.shutdown pool.pool)
+    if Atomic.compare_and_set pool.stopped false true then
+      Par.Pool.shutdown pool.pool
 end
 
 let ensure_running pool =
-  if pool.stopped then invalid_arg "Effect.Island: pool already shut down"
+  if Atomic.get pool.stopped then
+    invalid_arg "Effect.Island: pool already shut down"
 
 let (capture_map @ portable) (f @ portable) input =
   try Map_ok (f input) with exn -> Map_worker_died (worker_die_of_exn exn)

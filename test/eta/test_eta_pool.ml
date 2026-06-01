@@ -441,6 +441,31 @@ let test_pool_shutdown_wakes_waiters_and_drains () =
   Alcotest.(check bool) "shutting down" true stats.Pool.shutting_down;
   Alcotest.(check int) "closed" 1 stats.Pool.closed
 
+let test_pool_shutdown_rejects_waiter_before_permit_release () =
+  with_test_clock @@ fun sw clock rt ->
+  let factory = make_pool_factory () in
+  let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+  let holder =
+    fork_run sw rt
+      (Pool.with_resource pool (fun _ ->
+           Effect.delay (Duration.ms 100) Effect.unit))
+  in
+  wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+  let waiter = fork_run sw rt (Pool.with_resource pool (fun _ -> Effect.unit)) in
+  wait_until (fun () -> (Pool.stats pool).Pool.waiting = 1);
+  let shutdown = fork_run sw rt (Pool.shutdown ~deadline:(Duration.ms 500) pool) in
+  wait_until (fun () -> (Pool.stats pool).Pool.shutting_down);
+  wait_until (fun () -> Eio.Promise.is_resolved waiter);
+  Alcotest.(check bool)
+    "waiter rejected before active resource releases" true
+    (Eio.Promise.is_resolved waiter);
+  (match Eio.Promise.await waiter with
+  | Exit.Error (Cause.Fail `Pool_shutdown) -> ()
+  | _ -> Alcotest.fail "expected waiter Pool_shutdown");
+  Test_clock.adjust clock (Duration.ms 100);
+  check_exit_ok Alcotest.unit "holder done" () (Eio.Promise.await holder);
+  check_exit_ok Alcotest.unit "shutdown done" () (Eio.Promise.await shutdown)
+
 let test_pool_shutdown_waits_for_active_close () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

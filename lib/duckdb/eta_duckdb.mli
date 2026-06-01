@@ -167,6 +167,11 @@ module Pool : sig
     ?max_lifetime:Eta.Duration.t ->
     config ->
     (t, error) Eta.Effect.t
+  (** Create a DuckDB pool. Per-operation [timeout] values bound the Eta
+      caller's wait through {!Eta.Effect.blocking_result_timeout}; they do not
+      forcibly preempt a started DuckDB C call in a [Drain] blocking pool. Use a
+      [Detach_started] blocking pool or a DuckDB-level cancellation mechanism
+      when the underlying call must stop independently. *)
 
   val with_connection :
     t -> (connection -> ('a, error) Eta.Effect.t) -> ('a, error) Eta.Effect.t

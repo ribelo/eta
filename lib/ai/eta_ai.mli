@@ -4,8 +4,9 @@
     own provider-specific encoding and decoding. Applications own state. *)
 
 type raw_json = string
-(** Provider JSON carried as UTF-8 text. eta-ai v1 keeps tool schemas raw until
-    eta-schema gains JSON Eta_schema export. *)
+(** Provider JSON carried as UTF-8 text. Eta treats provider-specific schemas
+    as opaque wire payloads at this layer; provider codecs validate the fields
+    they own before sending requests. *)
 
 module Json : sig
   type t = Yojson.Safe.t
@@ -326,8 +327,9 @@ module Json_helpers : sig
 end
 
 type toolkit
-(** Ordered registry of provider tools. v1 stores caller-supplied raw JSON
-    schemas; eta-schema integration waits for JSON Eta_schema export. *)
+(** Ordered registry of provider tools. Tool input schemas are provider JSON
+    payloads validated as JSON at the Eta_ai boundary and otherwise preserved
+    unchanged for provider codecs. *)
 
 val make_tool :
   ?description:string ->

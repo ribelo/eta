@@ -1,15 +1,3 @@
-external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
-  = "%identity"
-
-external blocking_pool_of_public : Effect.Blocking.Pool.t -> Blocking_runtime.t
-  = "%identity"
-
-(* [Effect.t] is abstract to users. Runtime is the package-local interpreter,
-   so it may re-enter the internal representation without exporting that
-   representation through [Effect.mli]. *)
-external effect_of_public : ('a, 'err) Effect.t -> ('a, 'err) Effect_core.t =
-  "%identity"
-
 let blocking_runner_of_public runner =
   {
     Blocking_runtime.run_in_systhread =
@@ -20,8 +8,12 @@ type 'err t = 'err Runtime_core.t
 
 let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
     ?random ?island_pool ?blocking_pool ?blocking_runner ?capture_backtrace () =
-  let island_pool = Option.map island_pool_of_public island_pool in
-  let blocking_pool = Option.map blocking_pool_of_public blocking_pool in
+  let island_pool =
+    Option.map Runtime_erasure.island_pool_of_public island_pool
+  in
+  let blocking_pool =
+    Option.map Runtime_erasure.blocking_pool_of_public blocking_pool
+  in
   let blocking_runner = Option.map blocking_runner_of_public blocking_runner in
   Runtime_core.create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument
     ?logger ?meter ?random ?island_pool ?blocking_pool ?blocking_runner
@@ -68,11 +60,7 @@ let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
   let finalizers = ref [] in
   let frame =
     {
-      (* [Effect_core.frame] stores the runtime with an erased failure carrier
-         because one run can cross effects with different typed-failure
-         parameters. Runtime_core keeps failures keyed separately, so this cast
-         only erases the phantom carrier on the runtime value. *)
-      Effect_core.runtime = (Obj.magic runtime : Obj.t Runtime_core.t);
+      Effect_core.runtime = Runtime_erasure.erase_runtime_error runtime;
       error_renderer = Effect_core.default_renderer;
       fail_key = runtime.Runtime_core.default_fail_key;
       sw = runtime.Runtime_core.outer_sw;
@@ -84,7 +72,8 @@ let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
       Runtime_core.with_finalizers ~runtime
         ~fail_key:runtime.Runtime_core.default_fail_key
         ~error_renderer:frame.error_renderer finalizers (fun () ->
-          Effect_core.run_to_value frame (effect_of_public effect))
+          Effect_core.run_to_value frame
+            (Runtime_erasure.effect_of_public effect))
     in
     Exit.Ok
       (if runtime.Runtime_core.tracing_enabled
@@ -116,11 +105,11 @@ let run ?island_pool ?blocking_pool runtime eff =
           runtime with
           Runtime_core.island_pool =
             (match island_pool with
-             | Some pool -> Some (island_pool_of_public pool)
+             | Some pool -> Some (Runtime_erasure.island_pool_of_public pool)
              | None -> runtime.Runtime_core.island_pool);
           Runtime_core.blocking_pool =
             (match blocking_pool with
-             | Some pool -> Some (blocking_pool_of_public pool)
+             | Some pool -> Some (Runtime_erasure.blocking_pool_of_public pool)
              | None -> runtime.Runtime_core.blocking_pool);
         }
   in

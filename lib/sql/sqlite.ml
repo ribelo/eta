@@ -259,12 +259,12 @@ external column_int64_raw : raw_stmt -> (int[@untagged]) -> (int64[@unboxed])
 let column_int64 stmt index =
   with_stmt_lock stmt (fun () -> column_int64_raw stmt.raw index)
 
-external column_int_raw : raw_stmt -> (int[@untagged]) -> (int[@untagged])
-  = "eta_sqlite_column_int_bc" "eta_sqlite_column_int"
-[@@noalloc]
-
 let column_int stmt index =
-  with_stmt_lock stmt (fun () -> column_int_raw stmt.raw index)
+  let value = column_int64 stmt index in
+  if Int64.compare value (Int64.of_int min_int) < 0
+     || Int64.compare value (Int64.of_int max_int) > 0 then
+    invalid_arg "Eta_sql.Sqlite.column_int: SQLite integer outside OCaml int range";
+  Int64.to_int value
 
 external column_text_raw : raw_stmt -> (int[@untagged]) -> string =
   "eta_sqlite_column_text_bc" "eta_sqlite_column_text"

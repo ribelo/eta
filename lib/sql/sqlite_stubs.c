@@ -92,6 +92,16 @@ static char *eta_sqlite_copy_ocaml_string(value v_string, size_t *len_out)
   return copy;
 }
 
+static int eta_sqlite_ocaml_string_len_as_int(value v_string, int *len_out)
+{
+  mlsize_t len = caml_string_length(v_string);
+  if (len > (mlsize_t)INT_MAX) {
+    return SQLITE_TOOBIG;
+  }
+  *len_out = (int)len;
+  return SQLITE_OK;
+}
+
 CAMLprim intnat eta_sqlite_rc_ok(value v_unit)
 {
   (void)v_unit;
@@ -422,14 +432,20 @@ CAMLprim value eta_sqlite_bind_int_bc(value v_stmt, value v_index, value v_value
 CAMLprim intnat eta_sqlite_bind_text(value v_stmt, intnat index, value v_text)
 {
   sqlite3_stmt *stmt = eta_sqlite_stmt_val(v_stmt);
+  int len;
+  int rc;
   if (stmt == NULL) {
     return SQLITE_MISUSE;
+  }
+  rc = eta_sqlite_ocaml_string_len_as_int(v_text, &len);
+  if (rc != SQLITE_OK) {
+    return rc;
   }
   return sqlite3_bind_text(
     stmt,
     (int)index,
     String_val(v_text),
-    (int)caml_string_length(v_text),
+    len,
     SQLITE_TRANSIENT);
 }
 
@@ -455,14 +471,20 @@ CAMLprim value eta_sqlite_bind_float_bc(value v_stmt, value v_index, value v_val
 CAMLprim intnat eta_sqlite_bind_blob(value v_stmt, intnat index, value v_blob)
 {
   sqlite3_stmt *stmt = eta_sqlite_stmt_val(v_stmt);
+  int len;
+  int rc;
   if (stmt == NULL) {
     return SQLITE_MISUSE;
+  }
+  rc = eta_sqlite_ocaml_string_len_as_int(v_blob, &len);
+  if (rc != SQLITE_OK) {
+    return rc;
   }
   return sqlite3_bind_blob(
     stmt,
     (int)index,
     Bytes_val(v_blob),
-    (int)caml_string_length(v_blob),
+    len,
     SQLITE_TRANSIENT);
 }
 

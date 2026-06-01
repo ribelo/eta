@@ -347,10 +347,6 @@ let () =
             test_blocking_detach_started_counts_each_job_once;
           Alcotest.test_case "named pools isolate" `Quick
             test_blocking_named_pools_prevent_starvation;
-          Alcotest.test_case "domain isolated hold-lock" `Quick
-            test_blocking_domain_isolated_preserves_hold_lock_heartbeat;
-          Alcotest.test_case "domain isolated many waiters heartbeat" `Quick
-            test_blocking_domain_isolated_many_waiters_preserve_heartbeat;
           Alcotest.test_case "worker rejects nested submit" `Quick
             test_blocking_worker_rejects_nested_submit;
           Alcotest.test_case "worker rejects runtime run" `Quick
@@ -557,6 +553,8 @@ let () =
             test_pool_expired_idle_cleanup_preserves_capacity_waiters;
           Alcotest.test_case "shutdown wakes and drains" `Quick
             test_pool_shutdown_wakes_waiters_and_drains;
+          Alcotest.test_case "shutdown rejects waiter before permit release"
+            `Quick test_pool_shutdown_rejects_waiter_before_permit_release;
           Alcotest.test_case "shutdown waits for active close" `Quick
             test_pool_shutdown_waits_for_active_close;
           Alcotest.test_case "shutdown deadline" `Quick

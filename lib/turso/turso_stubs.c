@@ -5,6 +5,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <dlfcn.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,6 +14,7 @@
 
 #define SQLITE_OK 0
 #define SQLITE_MISUSE 21
+#define SQLITE_TOOBIG 18
 #define SQLITE_OPEN_READONLY 0x00000001
 #define SQLITE_OPEN_READWRITE 0x00000002
 #define SQLITE_OPEN_CREATE 0x00000004
@@ -135,6 +137,16 @@ static sqlite3_stmt *require_stmt(value v_stmt, const char *operation)
   sqlite3_stmt *stmt = stmt_val(v_stmt);
   if (stmt == NULL) fail_closed_handle(operation);
   return stmt;
+}
+
+static int ocaml_string_len_as_sqlite_int(value v_string, int *len_out)
+{
+  mlsize_t len = caml_string_length(v_string);
+  if (len > (mlsize_t)INT_MAX) {
+    return SQLITE_TOOBIG;
+  }
+  *len_out = (int)len;
+  return SQLITE_OK;
 }
 
 static int load_symbol(void **slot, const char *name)
@@ -348,9 +360,13 @@ CAMLprim intnat eta_turso_bind_text(value v_stmt, intnat index, value v_value)
 {
   ensure_loaded();
   sqlite3_stmt *stmt = stmt_val(v_stmt);
-  return stmt == NULL ? SQLITE_MISUSE :
-      api.bind_text(stmt, (int)index, String_val(v_value),
-          (int)caml_string_length(v_value), SQLITE_TRANSIENT);
+  int len;
+  int rc;
+  if (stmt == NULL) return SQLITE_MISUSE;
+  rc = ocaml_string_len_as_sqlite_int(v_value, &len);
+  if (rc != SQLITE_OK) return rc;
+  return api.bind_text(stmt, (int)index, String_val(v_value), len,
+      SQLITE_TRANSIENT);
 }
 
 CAMLprim value eta_turso_bind_text_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_text(v_stmt, Int_val(v_index), v_value)); }
@@ -359,9 +375,13 @@ CAMLprim intnat eta_turso_bind_blob(value v_stmt, intnat index, value v_value)
 {
   ensure_loaded();
   sqlite3_stmt *stmt = stmt_val(v_stmt);
-  return stmt == NULL ? SQLITE_MISUSE :
-      api.bind_blob(stmt, (int)index, Bytes_val(v_value),
-          (int)caml_string_length(v_value), SQLITE_TRANSIENT);
+  int len;
+  int rc;
+  if (stmt == NULL) return SQLITE_MISUSE;
+  rc = ocaml_string_len_as_sqlite_int(v_value, &len);
+  if (rc != SQLITE_OK) return rc;
+  return api.bind_blob(stmt, (int)index, Bytes_val(v_value), len,
+      SQLITE_TRANSIENT);
 }
 
 CAMLprim value eta_turso_bind_blob_bc(value v_stmt, value v_index, value v_value) { return Val_int(eta_turso_bind_blob(v_stmt, Int_val(v_index), v_value)); }

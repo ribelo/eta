@@ -12,8 +12,8 @@ type structured_output = Eta_ai_openai_codec.structured_output = {
   schema : Eta_ai.Json.t;
   strict : bool option;
 }
-(** JSON Eta_schema configuration for OpenAI structured outputs. The constructor
-    accepts raw JSON until eta-schema exposes JSON Eta_schema export. *)
+(** OpenAI structured-output configuration. [schema] is provider JSON carried
+    unchanged after normal JSON validation at the Eta_ai boundary. *)
 
 val structured_output :
   ?strict:bool ->

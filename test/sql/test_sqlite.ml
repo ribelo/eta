@@ -89,6 +89,17 @@ let test_sqlite_range_and_constraint_errors () =
   check_ok "finalize insert" (S.finalize insert);
   Alcotest.(check int) "row count" 2 (S.query_one_int db "SELECT COUNT(*) FROM uniq")
 
+let test_sqlite_column_int_rejects_out_of_ocaml_range () =
+  with_db @@ fun db ->
+  let stmt = S.prepare db "SELECT 4611686018427387904" in
+  Fun.protect
+    ~finally:(fun () -> check_ok "finalize range query" (S.finalize stmt))
+    (fun () ->
+      check_row "select oversized int" (S.step stmt);
+      Alcotest.check_raises "column_int range"
+        (Invalid_argument "Eta_sql.Sqlite.column_int: SQLite integer outside OCaml int range")
+        (fun () -> ignore (S.column_int stmt 0)))
+
 let test_sqlite_close_with_live_statement () =
   let db = S.open_memory () in
   let stmt = S.prepare db "SELECT 1" in

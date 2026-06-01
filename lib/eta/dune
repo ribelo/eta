@@ -17,6 +17,7 @@
   par_runtime
   par_scheduler
   runtime_core
+  runtime_erasure
   runtime_instrument
   runtime_observability
   runtime_supervisor

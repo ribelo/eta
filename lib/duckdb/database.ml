@@ -29,12 +29,16 @@ let close_connection (conn : connection) =
         Ok ()
     | Result.Error _ as err -> err
 
-let rec close_connections = function
-  | [] -> Ok ()
-  | conn :: rest -> (
+let close_connections connections =
+  let first_error = ref None in
+  List.iter
+    (fun conn ->
       match close_connection conn with
-      | Ok () -> close_connections rest
-      | Result.Error _ as err -> err)
+      | Ok () -> ()
+      | Result.Error err ->
+          if Option.is_none !first_error then first_error := Some err)
+    connections;
+  match !first_error with None -> Ok () | Some err -> Result.Error err
 
 let open_ config =
   match validate_config config with
@@ -67,11 +71,12 @@ let open_memory () = open_ { path = None; threads = None }
 
 let close db =
   if_database_open db @@ fun () ->
-  match close_connections db.connections with
-  | Result.Error _ as err -> err
-  | Ok () -> (
-      match wrap "close database" (fun () -> raw_close_database db.raw) with
-      | Ok () ->
-          db.closed <- true;
-          Ok ()
-      | Result.Error _ as err -> err)
+  let child_result = close_connections db.connections in
+  match wrap "close database" (fun () -> raw_close_database db.raw) with
+  | Ok () ->
+      db.closed <- true;
+      child_result
+  | Result.Error _ as close_error -> (
+      match child_result with
+      | Ok () -> close_error
+      | Result.Error _ as child_error -> child_error)

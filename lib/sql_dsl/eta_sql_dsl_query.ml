@@ -25,6 +25,11 @@ end
 
 
 module Make (Backend : BACKEND) = struct
+  (* This functor intentionally keeps expression construction, SQL rendering,
+     and row decoding behind one backend contract. Splitting those layers would
+     require exposing the SQL AST as a second public contract; for now the
+     durable boundary is the compiled query value exported by Eta_sql.Dsl. Raw
+     SQL escape hatches live outside this functor in Pool.Raw. *)
   type value = Backend.value
   type row = Backend.row
   type error = Backend.error

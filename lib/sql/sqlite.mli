@@ -113,6 +113,9 @@ val step : stmt -> rc
 
 val column_int64 : stmt -> int -> int64
 val column_int : stmt -> int -> int
+(** Read an INTEGER column as an OCaml [int]. Raises [Invalid_argument] if the
+    SQLite 64-bit integer is outside the OCaml [int] range; use
+    {!column_int64} for full-width SQLite integers. *)
 val column_text : stmt -> int -> string
 val column_float : stmt -> int -> float
 val column_blob : stmt -> int -> bytes

@@ -408,6 +408,8 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
     CAMLreturn(out);
   case 18: {
     duckdb_blob blob = api.value_blob(result, col, row);
+    if (blob.size > (idx_t)Max_wosize) caml_failwith("duckdb blob too large for OCaml string");
+    if (blob.size > 0 && blob.data == NULL) caml_failwith("duckdb blob has null data");
     bytes = caml_alloc_string((mlsize_t)blob.size);
     if (blob.size > 0 && blob.data != NULL) memcpy(Bytes_val(bytes), blob.data, (size_t)blob.size);
     if (blob.data != NULL) api.free_ptr(blob.data);
@@ -442,7 +444,8 @@ static value materialize_rows(duckdb_result *result)
     row_list = Val_emptylist;
     for (idx_t c = cols; c > 0; c--) {
       idx_t col_idx = c - 1;
-      field_name = caml_copy_string(api.column_name(result, col_idx));
+      const char *name = api.column_name(result, col_idx);
+      field_name = caml_copy_string(name == NULL ? "" : name);
       value_v = value_from_result(result, col_idx, row_idx);
       pair = caml_alloc_tuple(2);
       Store_field(pair, 0, field_name);

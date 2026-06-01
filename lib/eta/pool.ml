@@ -45,6 +45,8 @@ type ('conn, 'err) t = {
   mutable closed : int;
   mutable health_rejected : int;
   mutable shutting_down : bool;
+  shutdown_requested : unit Eio.Promise.t;
+  shutdown_resolver : unit Eio.Promise.u;
 }
 
 let now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
@@ -211,6 +213,24 @@ let reserve t =
         | [] ->
             Semaphore.release t.sem 1;
             `Wait)
+
+let wait_for_shutdown t =
+  Effect.sync (fun () -> Eio.Promise.await t.shutdown_requested)
+  |> Effect.map (fun () -> `Shutdown)
+
+let acquire_permit t =
+  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down))
+  |> Effect.bind (function
+       | true -> Effect.fail `Pool_shutdown
+       | false ->
+           Effect.race
+             [
+               Semaphore.acquire t.sem 1 |> Effect.map (fun () -> `Permit);
+               wait_for_shutdown t;
+             ]
+           |> Effect.bind (function
+                | `Permit -> Effect.unit
+                | `Shutdown -> Effect.fail `Pool_shutdown))
 
 let mark_open_failed t =
   Effect.sync @@ fun () ->
@@ -415,12 +435,10 @@ let open_entry t =
       t.acquire_conn |> Effect.bind (after_open ~disarm ~set_release))
 
 let next_state t = function
-  | Acquire_permit ->
-      Semaphore.acquire t.sem 1 |> Effect.map (fun () -> Reserve_slot)
+  | Acquire_permit -> acquire_permit t |> Effect.map (fun () -> Reserve_slot)
   | Reserve_slot ->
       Effect.sync (fun () -> reserve t) |> Effect.bind state_of_reservation
-  | Wait_for_permit ->
-      Semaphore.acquire t.sem 1 |> Effect.map (fun () -> Reserve_slot)
+  | Wait_for_permit -> acquire_permit t |> Effect.map (fun () -> Reserve_slot)
   | Close_expired_entries entries ->
       close_entries ~release_permit:false t entries
       |> Effect.map (fun () -> Reserve_slot)
@@ -474,6 +492,7 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
   let health_check =
     Option.value health_check ~default:(fun _ -> Effect.unit)
   in
+  let shutdown_requested, shutdown_resolver = Eio.Promise.create () in
   let t =
     {
       name;
@@ -498,6 +517,8 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
       closed = 0;
       health_rejected = 0;
       shutting_down = false;
+      shutdown_requested;
+      shutdown_resolver;
     }
   in
   let start_daemon =
@@ -520,7 +541,10 @@ let begin_shutdown t =
   let take_idle =
     Effect.sync @@ fun () ->
     with_lock t @@ fun () ->
-    if not t.shutting_down then t.shutting_down <- true;
+    if not t.shutting_down then (
+      t.shutting_down <- true;
+      if not (Eio.Promise.is_resolved t.shutdown_requested) then
+        Eio.Promise.resolve t.shutdown_resolver ());
     let idle = t.idle in
     t.idle <- [];
     t.idle_count <- 0;

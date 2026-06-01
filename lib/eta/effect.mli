@@ -12,7 +12,13 @@
 
     Dependencies are ordinary OCaml values: pass records, modules, closures, or
     concrete handles into functions that construct effects. Eta does not own a
-    ZIO-style environment or layer graph. *)
+    ZIO-style environment or layer graph.
+
+    This signature is intentionally a facade over Eta's effect algebra,
+    structured concurrency, observability hooks, blocking bridge, and island
+    bridge. Keep implementation-only representation details out of this file:
+    if a helper is needed only by Runtime or private modules, put it behind a
+    private module such as Runtime_erasure instead of widening Effect. *)
 
 type ('a, 'err) t
 
@@ -78,8 +84,8 @@ module Island : sig
     backtrace : string option;
   }
   (** Diagnostic returned when a worker-domain callback raises before producing
-      its declared result. v1 keeps this portable and intentionally smaller than
-      {!Cause.t}; raw causes do not cross the island boundary. *)
+      its declared result. This stays portable and smaller than {!Cause.t}
+      because raw OCaml causes do not cross the island boundary. *)
 
   type ('a : immutable_data, 'e : immutable_data) settled =
     | Ok of 'a
@@ -208,20 +214,6 @@ module Blocking : sig
         [shutdown_policy = Drain]. Tune explicitly for applications with known
         blocking I/O concurrency. *)
 
-    val create_domain_isolated : ?name:string -> config -> t
-    (** Create a domain-isolated blocking pool for legacy C bindings that hold
-        the OCaml runtime lock during blocking work.
-
-        Started callbacks run in separate OCaml domains. Callbacks must not
-        capture Eio handles, Eta runtime state, or values that are unsafe to use
-        across domains. The current public type cannot express OxCaml
-        portability, so this constructor is an explicit escape hatch rather than
-        a statically checked safe-spawn wrapper.
-
-        [Pool.create] is sufficient for blocking calls that release the runtime
-        lock. Choose this constructor only for confirmed lock-holding
-        callbacks. *)
-
     val stats : t -> stats
     (** Snapshot pool counters. [active] is started work still running;
         [queued] is admitted work waiting for an active slot; [completed] is
@@ -285,12 +277,17 @@ val blocking_result_timeout :
   (unit -> ('a, 'err) result) ->
   ('a, 'err) t
 (** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
-    {!blocking_result} and races it against [timeout]. If the timeout wins, the
-    effect fails with [on_timeout]. Started blocking callbacks are not
-    preempted; [?on_cancel] is delivered through the blocking runtime's normal
-    cancellation path so [f] can cooperatively unblock. If the blocking
-    operation wins after parent cancellation reached the fiber, Eta checks the
-    cancellation state before publishing the success or typed failure. *)
+    {!blocking_result} and races the caller's wait against [timeout]. This is
+    not CPU/thread preemption: if [f] has already started in a [Drain] blocking
+    pool, Eta cannot forcibly stop it. The timeout is a hard deadline only for
+    queued work, [Detach_started] pools, or callbacks that cooperate via
+    [?on_cancel].
+
+    If the timeout wins, the effect fails with [on_timeout]. [?on_cancel] is
+    delivered through the blocking runtime's normal cancellation path so [f]
+    can cooperatively unblock. If the blocking operation wins after parent
+    cancellation reached the fiber, Eta checks the cancellation state before
+    publishing the success or typed failure. *)
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
@@ -354,7 +351,13 @@ val catch :
     cleanup/finalizer failures. It may recover typed failures in primary
     sequential and concurrent cause branches, but it leaves [Cause.Finalizer]
     nodes and [Cause.Suppressed.finalizer] branches intact. Recover or ignore a
-    cleanup failure inside the cleanup effect itself. *)
+    cleanup failure inside the cleanup effect itself.
+
+    If a sequential or concurrent cause contains several typed failures and the
+    handler recovers all of them, [catch] returns the first recovered value in
+    cause order. This is the only value-preserving contract possible for
+    [catch]'s single-result type; use [all_settled] or explicit result values
+    when every branch's recovery value matters. *)
 
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,

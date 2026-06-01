@@ -21,7 +21,6 @@ let cancel_protect f =
    one that packed the value; mismatched keys are treated as ordinary defects by
    [cause_of_exn]. Do not copy this erasure pattern into feature modules. *)
 exception Raised_cause of int * Obj.t
-exception Timeout_as_fired of int
 
 module Typed_fail : sig
   type key
@@ -191,42 +190,6 @@ let cause_of_exn_runtime runtime key exn =
 
 let die_of_exn_runtime runtime exn =
   RObs.die_of_exn ~capture_backtrace:runtime.capture_backtrace exn
-
-let rec has_timeout_as token = function
-  | Timeout_as_fired observed -> observed = token
-  | Fun.Finally_raised exn -> has_timeout_as token exn
-  | Eio.Exn.Multiple causes ->
-      List.exists (fun (exn, _) -> has_timeout_as token exn) causes
-  | _ -> false
-
-let rec only_timeout_as_or_interrupt key token = function
-  | Timeout_as_fired observed -> observed = token
-  | Eio.Cancel.Cancelled _ | Exit -> true
-  | Raised_cause (observed, cause) ->
-      observed = Typed_fail.int key && Cause.is_interrupt_only (Obj.obj cause)
-  | Fun.Finally_raised exn -> only_timeout_as_or_interrupt key token exn
-  | Eio.Exn.Multiple causes ->
-      List.for_all
-        (fun (exn, _) -> only_timeout_as_or_interrupt key token exn)
-        causes
-  | _ -> false
-
-let cause_of_timeout_as_exn runtime fail_key token on_timeout exn =
-  let rec convert ?backtrace = function
-    | Timeout_as_fired observed when observed = token -> Cause.Fail on_timeout
-    | Fun.Finally_raised exn -> convert ?backtrace exn
-    | Eio.Exn.Multiple causes ->
-        causes
-        |> List.map (fun (exn, bt) -> convert ~backtrace:bt exn)
-        |> (function
-             | [] -> failwith "Eio.Exn.Multiple: empty"
-             | [ cause ] -> cause
-             | causes -> Cause.concurrent causes)
-    | exn ->
-        cause_of_exn ?backtrace ~capture_backtrace:runtime.capture_backtrace
-          fail_key exn
-  in
-  convert exn
 
 let island_pool runtime override =
   match override with

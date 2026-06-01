@@ -25,7 +25,9 @@ val create :
   (t, error) Eta.Effect.t
 (** Create a SQLite runner pool. [blocking_pool] and [default_timeout] are
     pool defaults used by every operation unless that operation overrides the
-    timeout. *)
+    timeout. Operation timeouts bound the Eta caller's wait and call
+    [sqlite3_interrupt] on cancellation; they are not OS-level preemption of a
+    C call that ignores SQLite interruption. *)
 
 module Typed : sig
   val select :

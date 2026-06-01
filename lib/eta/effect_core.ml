@@ -83,13 +83,6 @@ let switch_fail frame sw exn =
       let module Switch = (val Host_eio.switch host : Host_eio.SWITCH) in
       Switch.fail sw exn
 
-let fiber_first frame left right =
-  match frame.runtime.host_eio with
-  | None -> Eio.Fiber.first left right
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      Fiber.first left right
-
 let fiber_fork frame ~sw f =
   match frame.runtime.host_eio with
   | None -> Eio.Fiber.fork ~sw f
@@ -222,6 +215,10 @@ let rec catch_cause handler = function
           Uncaught (Cause.suppressed ~primary ~finalizer))
 
 and catch_causes combine handler causes =
+  (* [catch] returns one value, while a composite cause may contain several
+     typed failures. Eta therefore uses the first handled branch as the
+     recovery value only when every branch was handled; any uncaught branch
+     keeps the operation failed and is recombined with the original shape. *)
   let value, uncaught =
     List.fold_left
       (fun (value, uncaught) cause ->
@@ -288,23 +285,51 @@ let delay duration effect =
 let timeout_as duration ~on_timeout effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
-  let token = Runtime_core.Typed_fail.int (Runtime_core.Typed_fail.fresh ()) in
-  try
-    ok
-      (fiber_first frame
-         (fun () ->
-           frame.runtime.sleep duration;
-           raise (Runtime_core.Timeout_as_fired token))
-         (fun () -> run_to_value frame effect))
-  with exn ->
-    if
-      Runtime_core.has_timeout_as token exn
-      && Runtime_core.only_timeout_as_or_interrupt frame.fail_key token exn
-    then error (Cause.Fail on_timeout)
-    else
-      error
-        (Runtime_core.cause_of_timeout_as_exn frame.runtime frame.fail_key token
-           on_timeout exn)
+  let body_result = ref None in
+  let timeout_fired = ref false in
+  let winner = ref None in
+  let exception Timeout_selected in
+  let select sw selected =
+    match !winner with
+    | Some _ -> ()
+    | None ->
+        winner := Some selected;
+        switch_fail frame sw Timeout_selected;
+        fiber_await_cancel frame
+  in
+  (try
+     switch_run frame @@ fun timeout_sw ->
+     fiber_fork frame ~sw:timeout_sw (fun () ->
+         frame.runtime.sleep duration;
+         timeout_fired := true;
+         select timeout_sw `Timeout);
+     fiber_fork frame ~sw:timeout_sw (fun () ->
+         let finalizers = ref [] in
+         let child_frame = { frame with sw = timeout_sw; finalizers } in
+         let result =
+           frame.runtime.tracer#with_fiber_context @@ fun () ->
+           try
+             ok
+               (Runtime_core.with_finalizers ~runtime:frame.runtime
+                  ~fail_key:frame.fail_key
+                  ~error_renderer:child_frame.error_renderer finalizers
+                  (fun () -> run_to_value child_frame effect))
+           with exn -> exit_of_exn child_frame exn
+         in
+         body_result := Some result;
+         select timeout_sw `Body);
+     fiber_await_cancel frame
+   with Timeout_selected -> ());
+  match (!winner, !timeout_fired, !body_result) with
+  | Some `Body, _, Some result -> result
+  | Some `Timeout, true, Some (Exit.Error cause)
+    when not (Cause.is_interrupt_only cause) ->
+      error (Cause.concurrent [ Cause.Fail on_timeout; cause ])
+  | Some `Timeout, _, _ -> error (Cause.Fail on_timeout)
+  | None, true, _ -> error (Cause.Fail on_timeout)
+  | None, false, Some result -> result
+  | None, false, None -> error Cause.interrupt
+  | Some `Body, _, None -> error Cause.interrupt
 
 let timeout duration effect = timeout_as duration ~on_timeout:`Timeout effect
 

@@ -33,8 +33,6 @@ type event = {
   outcome : outcome;
 }
 
-type kind = Systhread | Domain_isolated
-
 type runner = {
   run_in_systhread : 'a. label:string -> (unit -> 'a) -> 'a;
 }
@@ -45,7 +43,6 @@ let default_runner =
 type t = {
   name : string;
   config : config;
-  kind : kind;
   runner : runner;
   mutex : Eio.Mutex.t;
   condition : Eio.Condition.t;
@@ -97,12 +94,11 @@ let validate_config config =
   if config.max_queued < 0 then
     invalid_arg "Effect.Blocking.Pool.create: max_queued must be >= 0"
 
-let create_with_kind kind ?(runner = default_runner) ?(name = "blocking") config =
+let create ?(runner = default_runner) ?(name = "blocking") config =
   validate_config config;
   {
     name;
     config;
-    kind;
     runner;
     mutex = Eio.Mutex.create ();
     condition = Eio.Condition.create ();
@@ -306,37 +302,8 @@ let run_callback f =
   try Packed_ok (Obj.repr (f ())) with exn ->
     Packed_error (exn, Printexc.get_raw_backtrace ())
 
-let run_systhread t name f =
-  t.runner.run_in_systhread ~label:name (fun () -> run_callback f)
-
-(* [Domain_isolated] is an opt-in blocking-runtime mode that deliberately
-   pays the cost of a fresh domain per job to fully isolate the callback
-   from the calling fiber's domain. The OxCaml [do_not_spawn_domains] /
-   [unsafe_multidomain] alerts are the right default for application code;
-   this primitive is the lower-level escape hatch users opted into via the
-   kind=Domain_isolated pool config, so the alerts are suppressed locally.
-   [Domain.Safe.spawn] is not used because it would require the callback
-   to be portable, which the public Blocking API does not enforce. The
-   invariant is therefore operational rather than type-level: use this mode only
-   for callbacks whose captured values are valid in a fresh domain, typically a
-   legacy C call that would otherwise hold the runtime lock in a systhread. *)
-let run_domain t name f =
-  let result = Atomic.make None in
-  let domain =
-    (Domain.spawn
-       [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
-      (fun () ->
-        let r = run_callback f in
-        Atomic.set result (Some r))
-  in
-  t.runner.run_in_systhread ~label:(name ^ ".domain.join") (fun () ->
-      Domain.join domain);
-  match Atomic.get result with Some r -> r | None -> assert false
-
 let run_worker t name f =
-  match t.kind with
-  | Systhread -> run_systhread t name f
-  | Domain_isolated -> run_domain t name f
+  t.runner.run_in_systhread ~label:name (fun () -> run_callback f)
 
 let finish_result t release name emit submitted_at started_at outcome =
   let ended_at = now_ms () in
@@ -512,9 +479,7 @@ module Pool = struct
   let runner_of_eio_unix (module Host : EIO_UNIX) =
     { run_in_systhread = (fun ~label f -> Host.run_in_systhread ~label f) }
 
-  let create ?name ?runner config = create_with_kind Systhread ?name ?runner config
-  let create_domain_isolated ?name config =
-    create_with_kind Domain_isolated ?name config
+  let create ?name ?runner config = create ?name ?runner config
 
   let stats = stats
 end

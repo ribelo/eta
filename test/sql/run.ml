@@ -73,6 +73,8 @@ let () =
             test_sqlite_structured_prepare_error;
           Alcotest.test_case "range and constraint errors" `Quick
             test_sqlite_range_and_constraint_errors;
+          Alcotest.test_case "column int rejects out of OCaml range" `Quick
+            test_sqlite_column_int_rejects_out_of_ocaml_range;
           Alcotest.test_case "close with live statement" `Quick
             test_sqlite_close_with_live_statement;
           Alcotest.test_case "path and read only mode" `Quick

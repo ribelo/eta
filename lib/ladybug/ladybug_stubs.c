@@ -586,26 +586,40 @@ static value some_int64(int64_t int_value)
 
 static int arrow_valid(struct ArrowArray *array, int64_t row)
 {
+  if (array == NULL || row < 0 || row >= array->length) caml_failwith("ladybug: malformed Arrow array");
   if (array->null_count == 0 || array->buffers == NULL || array->buffers[0] == NULL) return 1;
   const uint8_t *bits = (const uint8_t *)array->buffers[0];
   int64_t bit = array->offset + row;
   return (bits[bit / 8] >> (bit % 8)) & 1;
 }
 
+static void require_arrow_buffers(struct ArrowArray *array, int64_t count)
+{
+  if (array == NULL || array->n_buffers < count || array->buffers == NULL) {
+    caml_failwith("ladybug: malformed Arrow buffers");
+  }
+  for (int64_t i = 1; i < count; i++) {
+    if (array->buffers[i] == NULL) caml_failwith("ladybug: malformed Arrow buffers");
+  }
+}
+
 static int64_t arrow_i64(struct ArrowArray *array, int64_t row)
 {
+  require_arrow_buffers(array, 2);
   const int64_t *values = (const int64_t *)array->buffers[1];
   return values[array->offset + row];
 }
 
 static double arrow_f64(struct ArrowArray *array, int64_t row)
 {
+  require_arrow_buffers(array, 2);
   const double *values = (const double *)array->buffers[1];
   return values[array->offset + row];
 }
 
 static int arrow_bool(struct ArrowArray *array, int64_t row)
 {
+  require_arrow_buffers(array, 2);
   const uint8_t *bits = (const uint8_t *)array->buffers[1];
   int64_t bit = array->offset + row;
   return (bits[bit / 8] >> (bit % 8)) & 1;
@@ -615,12 +629,14 @@ static value arrow_string(struct ArrowArray *array, int64_t row)
 {
   CAMLparam0();
   CAMLlocal1(out);
+  require_arrow_buffers(array, 3);
   int64_t logical = array->offset + row;
   const int32_t *offsets = (const int32_t *)array->buffers[1];
   const char *bytes = (const char *)array->buffers[2];
   int32_t start = offsets[logical];
   int32_t end = offsets[logical + 1];
   int32_t len = end - start;
+  if (end < start || len < 0) caml_failwith("ladybug: malformed Arrow string offsets");
   out = caml_alloc_string(len);
   if (len > 0) memcpy(Bytes_val(out), bytes + start, (size_t)len);
   CAMLreturn(out);
@@ -644,9 +660,17 @@ static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *ar
 {
   CAMLparam0();
   CAMLlocal3(props, v, pair);
+  if (schema == NULL || array == NULL || schema->n_children < 0 ||
+      array->n_children < schema->n_children || schema->children == NULL ||
+      array->children == NULL) {
+    caml_failwith("ladybug: malformed Arrow struct");
+  }
   props = Val_emptylist;
   for (int64_t i = schema->n_children; i > 0; i--) {
     int64_t idx = i - 1;
+    if (schema->children[idx] == NULL || array->children[idx] == NULL) {
+      caml_failwith("ladybug: malformed Arrow struct child");
+    }
     const char *name = schema->children[idx]->name;
     if (skip_graph_fields && name != NULL &&
         (strcmp(name, "_ID") == 0 || strcmp(name, "_LABEL") == 0)) {
@@ -661,8 +685,9 @@ static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *ar
 
 static int find_child(struct ArrowSchema *schema, const char *name)
 {
+  if (schema == NULL || schema->n_children < 0 || schema->children == NULL) return -1;
   for (int64_t i = 0; i < schema->n_children; i++) {
-    if (schema->children[i]->name != NULL && strcmp(schema->children[i]->name, name) == 0) {
+    if (schema->children[i] != NULL && schema->children[i]->name != NULL && strcmp(schema->children[i]->name, name) == 0) {
       return (int)i;
     }
   }
@@ -712,6 +737,7 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
 {
   CAMLparam0();
   CAMLlocal2(v, out);
+  if (schema == NULL || array == NULL) caml_failwith("ladybug: malformed Arrow value");
   if (!arrow_valid(array, row)) CAMLreturn(Val_int(0));
   const char *format = schema->format == NULL ? "" : schema->format;
   if (strcmp(format, "b") == 0) {
