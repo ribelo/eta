@@ -5,6 +5,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,10 @@ typedef struct {
 typedef struct { duckdb_database db; } eta_duckdb_db;
 typedef struct { duckdb_connection conn; } eta_duckdb_conn;
 typedef struct { duckdb_appender appender; } eta_duckdb_appender;
+typedef struct {
+  duckdb_result result;
+  int active;
+} eta_duckdb_result_owner;
 
 typedef struct {
   void *handle;
@@ -83,6 +88,7 @@ typedef struct {
 } eta_duckdb_api;
 
 static eta_duckdb_api api;
+static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void db_finalize(value v_db)
 {
@@ -111,6 +117,16 @@ static void appender_finalize(value v_appender)
   }
 }
 
+static void result_owner_finalize(value v_owner)
+{
+  eta_duckdb_result_owner *owner =
+    (eta_duckdb_result_owner *)Data_custom_val(v_owner);
+  if (owner->active && api.loaded) {
+    api.destroy_result(&owner->result);
+    owner->active = 0;
+  }
+}
+
 static struct custom_operations db_ops = {
   "eta.duckdb.database", db_finalize, custom_compare_default, custom_hash_default,
   custom_serialize_default, custom_deserialize_default, custom_compare_ext_default,
@@ -129,9 +145,47 @@ static struct custom_operations appender_ops = {
   custom_fixed_length_default
 };
 
+static struct custom_operations result_owner_ops = {
+  "eta.duckdb.result_owner", result_owner_finalize, custom_compare_default, custom_hash_default,
+  custom_serialize_default, custom_deserialize_default, custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
 static duckdb_database db_val(value v) { return ((eta_duckdb_db *)Data_custom_val(v))->db; }
 static duckdb_connection conn_val(value v) { return ((eta_duckdb_conn *)Data_custom_val(v))->conn; }
 static duckdb_appender appender_val(value v) { return ((eta_duckdb_appender *)Data_custom_val(v))->appender; }
+
+static value result_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  eta_duckdb_result_owner *owner;
+  v_owner = caml_alloc_custom(&result_owner_ops, sizeof(eta_duckdb_result_owner), 0, 1);
+  owner = (eta_duckdb_result_owner *)Data_custom_val(v_owner);
+  memset(&owner->result, 0, sizeof(owner->result));
+  owner->active = 0;
+  CAMLreturn(v_owner);
+}
+
+static duckdb_result *result_owner_val(value v_owner)
+{
+  return &((eta_duckdb_result_owner *)Data_custom_val(v_owner))->result;
+}
+
+static void result_owner_activate(value v_owner)
+{
+  ((eta_duckdb_result_owner *)Data_custom_val(v_owner))->active = 1;
+}
+
+static void result_owner_destroy(value v_owner)
+{
+  eta_duckdb_result_owner *owner =
+    (eta_duckdb_result_owner *)Data_custom_val(v_owner);
+  if (owner->active) {
+    api.destroy_result(&owner->result);
+    owner->active = 0;
+  }
+}
 
 static int load_symbol(void **slot, const char *name)
 {
@@ -146,7 +200,7 @@ static int load_symbol(void **slot, const char *name)
 #define LOAD(name) load_symbol((void **)&api.name, "duckdb_" #name)
 #define LOAD_AS(field, symbol) load_symbol((void **)&api.field, symbol)
 
-static int load_api(void)
+static int load_api_unlocked(void)
 {
   if (api.loaded) return 1;
   if (api.attempted) return 0;
@@ -185,6 +239,15 @@ static int load_api(void)
 
   api.loaded = 1;
   return 1;
+}
+
+static int load_api(void)
+{
+  int loaded;
+  pthread_mutex_lock(&api_mutex);
+  loaded = load_api_unlocked();
+  pthread_mutex_unlock(&api_mutex);
+  return loaded;
 }
 
 static void ensure_loaded(void)
@@ -241,7 +304,9 @@ CAMLprim value eta_duckdb_close_database(value v_db)
   ensure_loaded();
   eta_duckdb_db *db = (eta_duckdb_db *)Data_custom_val(v_db);
   if (db->db != NULL) {
+    caml_enter_blocking_section();
     api.close(&db->db);
+    caml_leave_blocking_section();
     db->db = NULL;
   }
   CAMLreturn(Val_unit);
@@ -265,7 +330,9 @@ CAMLprim value eta_duckdb_disconnect(value v_conn)
   ensure_loaded();
   eta_duckdb_conn *conn = (eta_duckdb_conn *)Data_custom_val(v_conn);
   if (conn->conn != NULL) {
+    caml_enter_blocking_section();
     api.disconnect(&conn->conn);
+    caml_leave_blocking_section();
     conn->conn = NULL;
   }
   CAMLreturn(Val_unit);
@@ -530,15 +597,13 @@ static int bind_params(duckdb_prepared_statement stmt, value params,
 CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
 {
   CAMLparam3(v_conn, v_sql, v_params);
-  CAMLlocal1(rows);
+  CAMLlocal2(rows, result_owner);
   ensure_loaded();
   duckdb_prepared_statement stmt = NULL;
-  duckdb_result result;
   duckdb_input_copies copies = { NULL };
   duckdb_connection conn = conn_val(v_conn);
   const char *sql;
   int rc;
-  memset(&result, 0, sizeof(result));
   if (!duckdb_input_copy_string(&copies, String_val(v_sql), &sql))
     caml_failwith("duckdb allocation failed");
   caml_enter_blocking_section();
@@ -558,20 +623,22 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
     duckdb_input_copies_free(&copies);
     caml_failwith(rc == -2 ? "duckdb allocation failed" : "duckdb bind failed");
   }
+  result_owner = result_owner_alloc();
   caml_enter_blocking_section();
-  rc = api.execute_prepared(stmt, &result);
+  rc = api.execute_prepared(stmt, result_owner_val(result_owner));
   caml_leave_blocking_section();
+  result_owner_activate(result_owner);
   api.destroy_prepare(&stmt);
   duckdb_input_copies_free(&copies);
   if (rc != 0) {
-    const char *err = api.result_error(&result);
+    const char *err = api.result_error(result_owner_val(result_owner));
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
-    api.destroy_result(&result);
+    result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  rows = materialize_rows(&result);
-  api.destroy_result(&result);
+  rows = materialize_rows(result_owner_val(result_owner));
+  result_owner_destroy(result_owner);
   CAMLreturn(rows);
 }
 
@@ -783,7 +850,11 @@ CAMLprim value eta_duckdb_appender_flush(value v_appender)
 {
   CAMLparam1(v_appender);
   ensure_loaded();
-  if (api.appender_flush(appender_val(v_appender)) != 0) caml_failwith("duckdb_appender_flush failed");
+  int rc;
+  caml_enter_blocking_section();
+  rc = api.appender_flush(appender_val(v_appender));
+  caml_leave_blocking_section();
+  if (rc != 0) caml_failwith("duckdb_appender_flush failed");
   CAMLreturn(Val_unit);
 }
 
@@ -793,8 +864,14 @@ CAMLprim value eta_duckdb_appender_close(value v_appender)
   ensure_loaded();
   eta_duckdb_appender *appender = (eta_duckdb_appender *)Data_custom_val(v_appender);
   if (appender->appender != NULL) {
-    if (api.appender_close(appender->appender) != 0) caml_failwith("duckdb_appender_close failed");
+    int rc;
+    caml_enter_blocking_section();
+    rc = api.appender_close(appender->appender);
+    caml_leave_blocking_section();
+    if (rc != 0) caml_failwith("duckdb_appender_close failed");
+    caml_enter_blocking_section();
     (void)api.appender_destroy(&appender->appender);
+    caml_leave_blocking_section();
     appender->appender = NULL;
   }
   CAMLreturn(Val_unit);

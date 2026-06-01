@@ -5,6 +5,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,18 @@
 #define SQLITE_OPEN_CREATE 0x00000004
 #define SQLITE_OPEN_URI 0x00000040
 #define SQLITE_TRANSIENT ((void (*)(void *))-1)
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) ||          \
+    __has_feature(address_sanitizer) || __has_feature(memory_sanitizer) ||    \
+    __has_feature(thread_sanitizer)
+#define ETA_TURSO_SANITIZER_BUILD 1
+#else
+#define ETA_TURSO_SANITIZER_BUILD 0
+#endif
 
 typedef struct sqlite3 sqlite3;
 typedef struct sqlite3_stmt sqlite3_stmt;
@@ -55,6 +68,7 @@ typedef struct {
 } eta_turso_api;
 
 static eta_turso_api api;
+static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void eta_turso_db_finalize(value v_db)
 {
@@ -111,7 +125,7 @@ static int load_symbol(void **slot, const char *name)
 
 #define LOAD(name) load_symbol((void **)&api.name, "sqlite3_" #name)
 
-static int eta_turso_load(void)
+static int eta_turso_load_unlocked(void)
 {
   if (api.loaded) return 1;
   if (api.attempted) return 0;
@@ -121,7 +135,7 @@ static int eta_turso_load(void)
   const char *candidates[] = { env, "libturso_sqlite3.so", "libturso_sqlite3.so.0", "libturso_sqlite3.dylib", NULL };
 
   int dlopen_flags = RTLD_NOW | RTLD_LOCAL;
-#ifdef RTLD_DEEPBIND
+#if defined(RTLD_DEEPBIND) && !ETA_TURSO_SANITIZER_BUILD
   dlopen_flags |= RTLD_DEEPBIND;
 #endif
 
@@ -151,6 +165,15 @@ static int eta_turso_load(void)
 
   api.loaded = 1;
   return 1;
+}
+
+static int eta_turso_load(void)
+{
+  int loaded;
+  pthread_mutex_lock(&api_mutex);
+  loaded = eta_turso_load_unlocked();
+  pthread_mutex_unlock(&api_mutex);
+  return loaded;
 }
 
 static void ensure_loaded(void)

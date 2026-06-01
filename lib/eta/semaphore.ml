@@ -52,6 +52,18 @@ let rec take_ready_waiter t =
         ignore (Stdlib.Queue.take t.waiters : waiter);
         take_ready_waiter t
 
+let compact_cancelled_waiters_locked t =
+  if t.cancelled_waiters > 0 then (
+    let live = Stdlib.Queue.create () in
+    Stdlib.Queue.iter
+      (fun waiter ->
+        match waiter.state with
+        | Cancelled -> ()
+        | Waiting | Resolved_unclaimed | Claimed -> Stdlib.Queue.push waiter live)
+      t.waiters;
+    Stdlib.Queue.clear t.waiters;
+    Stdlib.Queue.iter (fun waiter -> Stdlib.Queue.push waiter t.waiters) live)
+
 let rec wake_waiters_locked t =
   match take_ready_waiter t with
   | None -> ()
@@ -72,7 +84,9 @@ let try_acquire t n =
 let release t n =
   if n <= 0 then invalid_arg "Eta.Semaphore.release: n must be > 0";
   with_lock t @@ fun () ->
-  t.available <- min t.max_permits (t.available + n);
+  if t.available + n > t.max_permits then
+    invalid_arg "Eta.Semaphore.release: release would exceed semaphore capacity";
+  t.available <- t.available + n;
   wake_waiters_locked t
 
 let acquire t n =
@@ -97,11 +111,13 @@ let acquire t n =
              | Waiting ->
                  waiter.state <- Cancelled;
                  t.cancelled_waiters <- t.cancelled_waiters + 1;
+                 compact_cancelled_waiters_locked t;
                  wake_waiters_locked t
              | Resolved_unclaimed ->
                  waiter.state <- Cancelled;
                  t.cancelled_waiters <- t.cancelled_waiters + 1;
                  t.available <- min t.max_permits (t.available + waiter.permits);
+                 compact_cancelled_waiters_locked t;
                  wake_waiters_locked t
              | Claimed | Cancelled -> ())
          in

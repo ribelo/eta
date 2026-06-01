@@ -3,10 +3,18 @@
 
 open Effect_core
 
+let submit_wait frame name f =
+  let pool = Lazy.force frame.runtime.default_island_wait_pool in
+  Blocking_runtime.submit ~sw:frame.runtime.outer_sw
+    ~emit:(Runtime_core.emit_blocking_event frame.runtime)
+    pool ("island.wait." ^ name) f
+
 let island ?(name = "island") f input =
   make ~names:[ name ] @@ fun () ->
   let frame = current_frame () in
-  try ok (Island_runtime.submit name (Runtime_core.island_pool frame.runtime None) f input)
+  try
+    let pool = Runtime_core.island_pool frame.runtime None in
+    ok (submit_wait frame name (fun () -> Island_runtime.submit name pool f input))
   with exn -> exit_of_exn frame exn
 
 module Island = struct
@@ -28,18 +36,30 @@ module Island = struct
   let map ?(name = "island.map") ?pool ~f inputs =
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
-    try ok (Island_runtime.submit_map name (Runtime_core.island_pool frame.runtime pool) f inputs)
+    try
+      let pool = Runtime_core.island_pool frame.runtime pool in
+      ok
+        (submit_wait frame name (fun () ->
+             Island_runtime.submit_map name pool f inputs))
     with exn -> exit_of_exn frame exn
 
   let map_result ?(name = "island.map_result") ?pool ~f inputs =
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
-    try ok (Island_runtime.submit_map_result name (Runtime_core.island_pool frame.runtime pool) f inputs)
+    try
+      let pool = Runtime_core.island_pool frame.runtime pool in
+      ok
+        (submit_wait frame name (fun () ->
+             Island_runtime.submit_map_result name pool f inputs))
     with exn -> exit_of_exn frame exn
 
   let all_settled ?(name = "island.all_settled") ?pool ~f inputs =
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
-    try ok (Island_runtime.submit_all_settled (Runtime_core.island_pool frame.runtime pool) f inputs)
+    try
+      let pool = Runtime_core.island_pool frame.runtime pool in
+      ok
+        (submit_wait frame name (fun () ->
+             Island_runtime.submit_all_settled pool f inputs))
     with exn -> exit_of_exn frame exn
 end

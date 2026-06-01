@@ -2,7 +2,17 @@
 
 (env
  (release
-  (ocamlopt_flags -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2)))
+  (ocamlopt_flags -O3 -unbox-closures -unbox-closures-factor 20 -rounds 2))
+ (asan
+  (c_flags
+   (:standard
+    -O1
+    -g
+    -fno-omit-frame-pointer
+    -fsanitize=address,undefined
+    -fno-sanitize-recover=all))
+  (link_flags
+   (:standard -cclib -fsanitize=address,undefined))))
 
 (rule
  (alias interop)
@@ -17,4 +27,14 @@
 (rule
  (alias http-bench)
  (deps (alias http-testsuite/http-bench))
+ (action (progn)))
+
+(rule
+ (alias fuzz-smoke)
+ (deps (alias test/http_fuzz/fuzz-smoke))
+ (action (progn)))
+
+(rule
+ (alias fuzz)
+ (deps (alias test/http_fuzz/fuzz))
  (action (progn)))

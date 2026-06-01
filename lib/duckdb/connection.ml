@@ -88,7 +88,9 @@ let transaction ?mode conn f =
       | Ok value -> (
           match commit conn with
           | Ok () -> Ok value
-          | Result.Error _ as err -> err)
+          | Result.Error _ as err ->
+              ignore (rollback conn);
+              err)
       | Result.Error _ as err ->
           ignore (rollback conn);
           err

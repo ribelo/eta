@@ -363,6 +363,8 @@ let batch_signal_name = function
   | Metric_batch _ -> "metrics"
   | Self_metric_batch _ -> "self_metrics"
 
+let max_self_spans = 64
+
 let export_signal t config signal =
   let name = batch_signal_name signal in
   let signal_kind, path, n = signal_details config signal in
@@ -380,6 +382,9 @@ let export_signal t config signal =
                        ~value:(string_of_int n)
                   |> Eta.Effect.named
                        ("eta_otel.export." ^ signal_name signal_kind))))
+  |> Eta.Effect.finally
+       (Eta.Effect.sync (fun () ->
+            Eta.Tracer.retain_recent t.self_tracer ~max:max_self_spans))
 
 let export_program t =
   let config = t.config in
@@ -433,7 +438,8 @@ let flush ?(timeout_s = 5.0) t =
     in
     ignore
       (Eta.Runtime.run t.flush_rt (Eta.Effect.race [ wait; timeout ])
-        : (unit, unit) Eta.Exit.t)
+        : (unit, unit) Eta.Exit.t);
+    Eta.Tracer.retain_recent t.self_tracer ~max:max_self_spans
 
 let shutdown ?timeout_s t =
   close_mailboxes t;

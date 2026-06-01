@@ -240,6 +240,17 @@ let test_duckdb_available_is_result () =
       Alcotest.(check bool) "message is present" true (String.length message > 0)
   | Error err -> Alcotest.failf "%a" Eta_duckdb.pp_error err
 
+let test_duckdb_open_rejects_invalid_threads_as_result () =
+  match Eta_duckdb.Database.open_ { path = None; threads = Some 0 } with
+  | Error (Eta_duckdb.Invalid_value message) ->
+      Alcotest.(check bool)
+        "message mentions threads" true
+        (contains_substring message "threads")
+  | Error err -> Alcotest.failf "expected Invalid_value, got %a" Eta_duckdb.pp_error err
+  | Ok db ->
+      ignore (Eta_duckdb.Database.close db);
+      Alcotest.fail "invalid threads unexpectedly opened a database"
+
 let test_duckdb_decode_error_is_structured () =
   match Eta_duckdb.available () with
   | Error (Eta_duckdb.Library_unavailable _) -> ()
@@ -954,6 +965,8 @@ let () =
         [
           Alcotest.test_case "values and rows" `Quick test_duckdb_values;
           Alcotest.test_case "available is result" `Quick test_duckdb_available_is_result;
+          Alcotest.test_case "invalid threads is result" `Quick
+            test_duckdb_open_rejects_invalid_threads_as_result;
           Alcotest.test_case "decode errors are structured" `Quick
             test_duckdb_decode_error_is_structured;
           Alcotest.test_case "bind error does not leak statements" `Slow

@@ -464,6 +464,26 @@ let test_blocking_domain_isolated_preserves_hold_lock_heartbeat () =
   if domain_p99 > normal_p99 + 5_000 then
     Alcotest.failf "domain p99=%dus normal p99=%dus" domain_p99 normal_p99
 
+let test_blocking_domain_isolated_many_waiters_preserve_heartbeat () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let pool =
+    BP.create_domain_isolated ~name:"domain-many-waiters"
+      (blocking_config ~max_threads:96 ~max_queued:96 ())
+  in
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let p99, values =
+    heartbeat_p99_us (fun () ->
+        run_ok rt
+          (Effect.for_each_par (List.init 96 Fun.id) (fun _ ->
+               Effect.blocking ~pool ~name:"domain-many-waiters.sleep"
+                 (fun () ->
+                   Unix.sleepf 0.030;
+                   1))))
+  in
+  Alcotest.(check int) "completed jobs" 96 (List.length values);
+  Alcotest.(check bool) "heartbeat" true (p99 < 10_000)
+
 let test_blocking_worker_rejects_nested_submit () =
   with_runtime @@ fun rt ->
   let pool = BP.create ~name:"worker-nested-submit" (blocking_config ()) in

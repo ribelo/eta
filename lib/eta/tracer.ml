@@ -276,3 +276,12 @@ let noop : Capabilities.tracer =
   end
 
 let dump t = List.rev t.spans
+
+let retain_recent t ~max =
+  if max < 0 then invalid_arg "Eta.Tracer.retain_recent: max must be >= 0";
+  let rec take n acc = function
+    | _ when n = 0 -> List.rev acc
+    | [] -> List.rev acc
+    | span :: rest -> take (n - 1) (span :: acc) rest
+  in
+  t.spans <- take max [] t.spans

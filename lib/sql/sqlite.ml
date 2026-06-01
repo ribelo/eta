@@ -472,19 +472,27 @@ let prepare db sql =
   | Ok stmt -> stmt
   | Result.Error err -> raise_error err
 
+let with_finalized_stmt stmt f =
+  match f () with
+  | value ->
+      let finalize_rc = finalize stmt in
+      (value, finalize_rc)
+  | exception exn ->
+      ignore (finalize stmt);
+      raise exn
+
 let exec_result db sql =
   match prepare_result db sql with
   | Result.Error err -> Result.Error err
   | Ok stmt ->
-      let rc = step stmt in
-      if rc = done_ then (
-        let finalize_rc = finalize stmt in
-        check db ~operation:"finalize" finalize_rc
-      ) else (
-        let err = make_error db ~operation:"exec" rc in
-        ignore (finalize stmt);
-        Result.Error err
-      )
+      let outcome, finalize_rc =
+        with_finalized_stmt stmt @@ fun () ->
+        let rc = step stmt in
+        if rc = done_ then `Done else `Error (make_error db ~operation:"exec" rc)
+      in
+      (match outcome with
+      | `Done -> check db ~operation:"finalize" finalize_rc
+      | `Error err -> Result.Error err)
 
 let exec db sql =
   match exec_result db sql with
@@ -526,7 +534,9 @@ let with_transaction_result ?mode db f =
       | Ok value -> (
           match commit_result db with
           | Ok () -> Ok value
-          | Result.Error _ as err -> err)
+          | Result.Error _ as err ->
+              ignore (rollback_result db);
+              err)
       | Result.Error _ as err ->
           ignore (rollback_result db);
           err
@@ -627,25 +637,22 @@ let query_one_int_result db sql =
   match prepare_result db sql with
   | Result.Error err -> Result.Error err
   | Ok stmt ->
-      let rc = step stmt in
-      if rc = row then (
-        let value = column_int stmt 0 in
-        let drain_rc = step stmt in
-        if drain_rc = done_ then (
-          let finalize_rc = finalize stmt in
+      let outcome, finalize_rc =
+        with_finalized_stmt stmt @@ fun () ->
+        let rc = step stmt in
+        if rc = row then (
+          let value = column_int stmt 0 in
+          let drain_rc = step stmt in
+          if drain_rc = done_ then `Done value
+          else `Error (make_error db ~operation:"query drain" drain_rc))
+        else `Error (make_error db ~operation:"query" rc)
+      in
+      (match outcome with
+      | `Done value -> (
           match check db ~operation:"finalize" finalize_rc with
           | Ok () -> Ok value
-          | Result.Error err -> Result.Error err
-        ) else (
-          let err = make_error db ~operation:"query drain" drain_rc in
-          ignore (finalize stmt);
-          Result.Error err
-        )
-      ) else (
-        let err = make_error db ~operation:"query" rc in
-        ignore (finalize stmt);
-        Result.Error err
-      )
+          | Result.Error err -> Result.Error err)
+      | `Error err -> Result.Error err)
 
 let query_one_int db sql =
   match query_one_int_result db sql with

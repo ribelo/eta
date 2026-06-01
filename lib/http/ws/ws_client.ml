@@ -66,18 +66,18 @@ let header_token_contains token value =
   value |> String.split_on_char ','
   |> List.exists (fun candidate -> String.equal (lower candidate) token)
 
-let find_header_end value =
-  let len = String.length value in
+let find_header_end_buffer buffer start =
+  let len = Buffer.length buffer in
   let rec loop index =
     if index + 3 >= len then None
-    else if Char.equal value.[index] '\r'
-            && Char.equal value.[index + 1] '\n'
-            && Char.equal value.[index + 2] '\r'
-            && Char.equal value.[index + 3] '\n'
+    else if Char.equal (Buffer.nth buffer index) '\r'
+            && Char.equal (Buffer.nth buffer (index + 1)) '\n'
+            && Char.equal (Buffer.nth buffer (index + 2)) '\r'
+            && Char.equal (Buffer.nth buffer (index + 3)) '\n'
     then Some index
     else loop (index + 1)
   in
-  loop 0
+  loop (max 0 start)
 
 type response_head = {
   status : int;
@@ -132,26 +132,32 @@ let parse_response_head raw initial =
 let read_response_head flow =
   let scratch = Cstruct.create read_chunk_size in
   let buffer = Buffer.create 512 in
+  let parse_at header_end =
+    let contents = Buffer.contents buffer in
+    let initial_start = header_end + 4 in
+    let initial_len = String.length contents - initial_start in
+    let initial =
+      Bytes.of_string (String.sub contents initial_start initial_len)
+    in
+    parse_response_head (String.sub contents 0 header_end) initial
+  in
   let rec loop used =
-    if used > max_header_bytes then Error (`Protocol "WebSocket upgrade response headers too large")
+    if used > max_header_bytes then
+      Error (`Protocol "WebSocket upgrade response headers too large")
     else
-      match find_header_end (Buffer.contents buffer) with
-      | Some header_end ->
-          let contents = Buffer.contents buffer in
-          let initial_start = header_end + 4 in
-          let initial_len = String.length contents - initial_start in
-          let initial =
-            Bytes.of_string (String.sub contents initial_start initial_len)
-          in
-          parse_response_head (String.sub contents 0 header_end) initial
-      | None -> (
-          try
-            let read = Eio.Flow.single_read flow scratch in
-            if read = 0 then Error (`Protocol "WebSocket upgrade response ended early")
-            else (
-              Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 read));
-              loop (used + read))
-          with exn -> Error (`Connect (Printexc.to_string exn)))
+      try
+        let read = Eio.Flow.single_read flow scratch in
+        if read = 0 then Error (`Protocol "WebSocket upgrade response ended early")
+        else (
+          Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 read));
+          let total = used + read in
+          if total > max_header_bytes then
+            Error (`Protocol "WebSocket upgrade response headers too large")
+          else
+            match find_header_end_buffer buffer (used - 3) with
+            | Some header_end -> parse_at header_end
+            | None -> loop total)
+      with exn -> Error (`Connect (Printexc.to_string exn))
   in
   loop 0
 

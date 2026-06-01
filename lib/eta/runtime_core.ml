@@ -75,6 +75,7 @@ type 'err t = {
   island_pool : Island_runtime.pool option;
   blocking_pool : Blocking_runtime.t option;
   default_blocking_pool : Blocking_runtime.t Lazy.t;
+  default_island_wait_pool : Blocking_runtime.t Lazy.t;
   host_eio : Host_eio.t option;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
@@ -139,6 +140,19 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
          | Some runner ->
              Blocking_runtime.Pool.create ~name:"runtime.default" ~runner
                Blocking_runtime.default_config);
+    default_island_wait_pool =
+      lazy
+        (let config =
+           {
+             Blocking_runtime.default_config with
+             shutdown_policy = Blocking_runtime.Detach_started;
+           }
+         in
+         match blocking_runner with
+         | None -> Blocking_runtime.Pool.create ~name:"runtime.island_wait" config
+         | Some runner ->
+             Blocking_runtime.Pool.create ~name:"runtime.island_wait" ~runner
+               config);
     host_eio = None;
     capture_backtrace;
     outer_sw = sw;

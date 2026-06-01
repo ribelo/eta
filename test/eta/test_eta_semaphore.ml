@@ -36,10 +36,12 @@ let test_semaphore_release_rejects_zero_count () =
     (Invalid_argument "Eta.Semaphore.release: n must be > 0")
     (fun () -> Semaphore.release sem 0)
 
-let test_semaphore_release_over_capacity_clamps () =
+let test_semaphore_release_rejects_over_capacity () =
   let sem = Semaphore.make ~permits:2 in
-  Semaphore.release sem 3;
-  Alcotest.(check int) "clamped at capacity" 2 (Semaphore.available sem)
+  Alcotest.check_raises "release over capacity"
+    (Invalid_argument
+       "Eta.Semaphore.release: release would exceed semaphore capacity")
+    (fun () -> Semaphore.release sem 3)
 
 let test_semaphore_rejects_over_capacity_acquire () =
   let sem = Semaphore.make ~permits:2 in
@@ -154,6 +156,35 @@ let test_semaphore_cancellation_stress () =
   List.iter (fun p -> ignore (Eio.Promise.await p : (unit, _) Exit.t)) holders;
   Alcotest.(check int) "final available" 8 (Semaphore.available sem)
 
+let test_semaphore_cancellation_removes_waiters_behind_active_waiter () =
+  with_test_clock @@ fun sw clock rt ->
+  let sem = Semaphore.make ~permits:2 in
+  run_ok rt (Semaphore.acquire sem 2);
+  let blocked =
+    fork_run sw rt
+      (Semaphore.acquire sem 2
+       |> Effect.bind (fun () ->
+            Effect.sync (fun () -> Semaphore.release sem 2)))
+  in
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  let cancelled =
+    List.init 10 (fun _ ->
+      fork_run sw rt
+        (Semaphore.acquire sem 1
+         |> Effect.timeout (Duration.ms 5)
+         |> Effect.catch (fun (`Timeout : [ `Timeout ]) -> Effect.pure ())))
+  in
+  wait_for_sleepers clock 10;
+  Test_clock.adjust clock (Duration.ms 5);
+  List.iter
+    (fun p -> check_exit_ok Alcotest.unit "cancelled" () (Eio.Promise.await p))
+    cancelled;
+  Alcotest.(check int) "only active waiter remains" 1 (Semaphore.waiting sem);
+  Semaphore.release sem 2;
+  check_exit_ok Alcotest.unit "blocked waiter completes" ()
+    (Eio.Promise.await blocked);
+  Alcotest.(check int) "permits returned" 2 (Semaphore.available sem)
+
 let test_semaphore_fifo_wakes_waiters_in_order () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -198,6 +229,20 @@ let test_semaphore_cancel_after_wakeup_returns_permit () =
   | Exit.Error _ -> ());
   Alcotest.(check int) "permit returned" 1 (Semaphore.available sem);
   Alcotest.(check int) "cancelled waiter" 1 (Semaphore.cancelled_waiters sem)
+
+let test_semaphore_waiting_ignores_resolved_waiter () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sem = Semaphore.make ~permits:1 in
+  run_ok rt (Semaphore.acquire sem 1);
+  let waiter = fork_run sw rt (Semaphore.acquire sem 1) in
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  Semaphore.release sem 1;
+  Alcotest.(check int) "resolved waiter no longer waiting" 0
+    (Semaphore.waiting sem);
+  check_exit_ok Alcotest.unit "waiter acquired" () (Eio.Promise.await waiter);
+  Semaphore.release sem 1
 
 let test_semaphore_multi_permit_contention () =
   with_test_clock @@ fun sw clock rt ->

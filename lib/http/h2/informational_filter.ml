@@ -11,7 +11,7 @@ type t = {
   encoder : Hpack.Encoder.t;
   output : Buffer.t;
   final_seen : (int, unit) Hashtbl.t;
-  mutable pending : string;
+  pending : Buffer.t;
   mutable pending_off : int;
   mutable headers : pending_headers option;
 }
@@ -34,7 +34,7 @@ let create () =
     encoder = Hpack.Encoder.create 4096;
     output = Buffer.create 4096;
     final_seen = Hashtbl.create 16;
-    pending = "";
+    pending = Buffer.create 4096;
     pending_off = 0;
     headers = None;
   }
@@ -45,31 +45,36 @@ let error message =
        { kind = "h2_informational_filter"; message })
 
 let code s i = Char.code (String.unsafe_get s i)
+let buffer_code b i = Char.code (Buffer.nth b i)
 
-let frame_length s off =
-  (code s (off + 0) lsl 16) lor (code s (off + 1) lsl 8) lor code s (off + 2)
+let frame_length b off =
+  (buffer_code b (off + 0) lsl 16)
+  lor (buffer_code b (off + 1) lsl 8)
+  lor buffer_code b (off + 2)
 
-let frame_type s off = code s (off + 3)
-let frame_flags s off = code s (off + 4)
+let frame_type b off = buffer_code b (off + 3)
+let frame_flags b off = buffer_code b (off + 4)
 
-let frame_stream_id s off =
-  ((code s (off + 5) land 0x7f) lsl 24)
-  lor (code s (off + 6) lsl 16)
-  lor (code s (off + 7) lsl 8)
-  lor code s (off + 8)
+let frame_stream_id b off =
+  ((buffer_code b (off + 5) land 0x7f) lsl 24)
+  lor (buffer_code b (off + 6) lsl 16)
+  lor (buffer_code b (off + 7) lsl 8)
+  lor buffer_code b (off + 8)
 
 let append_pending t data ~off ~len =
-  if len > 0 then (
-    let remaining = String.length t.pending - t.pending_off in
-    if remaining = 0 then (
-      t.pending <- String.sub data off len;
+  if len > 0 then Buffer.add_substring t.pending data off len
+
+let compact_pending t =
+  if t.pending_off > 0 then
+    let total = Buffer.length t.pending in
+    if t.pending_off >= total then (
+      Buffer.clear t.pending;
       t.pending_off <- 0)
     else (
-      let buf = Bytes.create (remaining + len) in
-      Bytes.blit_string t.pending t.pending_off buf 0 remaining;
-      Bytes.blit_string data off buf remaining len;
-      t.pending <- Bytes.unsafe_to_string buf;
-      t.pending_off <- 0))
+      let remaining = Buffer.sub t.pending t.pending_off (total - t.pending_off) in
+      Buffer.clear t.pending;
+      Buffer.add_string t.pending remaining;
+      t.pending_off <- 0)
 
 let emit_frame t ~frame_type ~flags ~stream_id payload =
   Buffer.add_string t.output
@@ -193,7 +198,7 @@ let pass_frame t frame_type flags stream_id ~off ~total =
   if frame_type = frame_rst_stream then Hashtbl.remove t.final_seen stream_id;
   if frame_type = frame_data && flags land flag_end_stream <> 0 then
     Hashtbl.remove t.final_seen stream_id;
-  Buffer.add_substring t.output t.pending off total;
+  Buffer.add_string t.output (Buffer.sub t.pending off total);
   Ok ()
 
 let handle_frame t ~off ~total =
@@ -205,22 +210,26 @@ let handle_frame t ~off ~total =
   | Some _, frame when frame <> frame_continuation ->
       error "non-CONTINUATION frame arrived while a header block is open"
   | _, frame when frame = frame_headers && stream_id > 0 ->
-      let payload = String.sub t.pending (off + 9) length in
+      let payload = Buffer.sub t.pending (off + 9) length in
       handle_headers t ~flags ~stream_id payload
   | _, frame when frame = frame_continuation -> (
-      let payload = String.sub t.pending (off + 9) length in
+      let payload = Buffer.sub t.pending (off + 9) length in
       match handle_continuation t ~flags ~stream_id payload with
       | Error _ as error -> error
       | Ok () -> Ok ())
   | _ -> pass_frame t frame_type flags stream_id ~off ~total
 
 let rec process t =
-  let available = String.length t.pending - t.pending_off in
-  if available < 9 then Ok ()
+  let available = Buffer.length t.pending - t.pending_off in
+  if available < 9 then (
+    compact_pending t;
+    Ok ())
   else
     let length = frame_length t.pending t.pending_off in
     let total = 9 + length in
-    if available < total then Ok ()
+    if available < total then (
+      compact_pending t;
+      Ok ())
     else
       let frame_off = t.pending_off in
       t.pending_off <- t.pending_off + total;
@@ -238,13 +247,13 @@ let take t =
   data
 
 let buffered_bytes t =
-  String.length t.pending - t.pending_off
+  Buffer.length t.pending - t.pending_off
   +
   match t.headers with
   | None -> 0
   | Some headers -> Buffer.length headers.block
 
 let is_passthrough t =
-  String.length t.pending - t.pending_off = 0
+  Buffer.length t.pending - t.pending_off = 0
   && t.headers = None
   && Hashtbl.length t.final_seen > 0

@@ -98,6 +98,8 @@ let () =
           Alcotest.test_case "scoped creates switch in fiberless host run"
             `Quick
             test_effect_scoped_creates_switch_in_fiberless_host_run;
+          Alcotest.test_case "fiberless frame is domain local" `Quick
+            test_effect_fiberless_frame_is_domain_local;
           Alcotest.test_case "syntax operators" `Quick
             test_effect_syntax_operators;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
@@ -292,6 +294,8 @@ let () =
             test_island_map_preserves_order;
           Alcotest.test_case "map uses pool fanout" `Quick
             test_island_map_uses_pool_fanout;
+          Alcotest.test_case "timeout stops waiting for batch" `Quick
+            test_island_timeout_stops_waiting_for_batch;
           Alcotest.test_case "map_result returns item results" `Quick
             test_island_map_result_returns_item_results;
           Alcotest.test_case "all_settled returns worker_died" `Quick
@@ -338,6 +342,8 @@ let () =
             test_blocking_named_pools_prevent_starvation;
           Alcotest.test_case "domain isolated hold-lock" `Quick
             test_blocking_domain_isolated_preserves_hold_lock_heartbeat;
+          Alcotest.test_case "domain isolated many waiters heartbeat" `Quick
+            test_blocking_domain_isolated_many_waiters_preserve_heartbeat;
           Alcotest.test_case "worker rejects nested submit" `Quick
             test_blocking_worker_rejects_nested_submit;
           Alcotest.test_case "worker rejects runtime run" `Quick
@@ -567,8 +573,8 @@ let () =
             test_semaphore_release_rejects_negative_count;
           Alcotest.test_case "release rejects zero count" `Quick
             test_semaphore_release_rejects_zero_count;
-          Alcotest.test_case "release over capacity clamps" `Quick
-            test_semaphore_release_over_capacity_clamps;
+          Alcotest.test_case "release rejects over capacity" `Quick
+            test_semaphore_release_rejects_over_capacity;
           Alcotest.test_case "rejects over-capacity acquire" `Quick
             test_semaphore_rejects_over_capacity_acquire;
           Alcotest.test_case "rejects over-capacity try_acquire" `Quick
@@ -587,8 +593,13 @@ let () =
             test_semaphore_with_permits_releases_on_timeout;
           Alcotest.test_case "cancellation stress" `Quick
             test_semaphore_cancellation_stress;
+          Alcotest.test_case
+            "cancellation removes waiters behind active waiter" `Quick
+            test_semaphore_cancellation_removes_waiters_behind_active_waiter;
           Alcotest.test_case "cancel after wakeup returns permit" `Quick
             test_semaphore_cancel_after_wakeup_returns_permit;
+          Alcotest.test_case "waiting ignores resolved waiter" `Quick
+            test_semaphore_waiting_ignores_resolved_waiter;
           Alcotest.test_case "fifo wakes waiters in order" `Quick
             test_semaphore_fifo_wakes_waiters_in_order;
           Alcotest.test_case "multi-permit contention" `Quick

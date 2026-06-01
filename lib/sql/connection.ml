@@ -224,7 +224,9 @@ let with_transaction t f =
       | Ok value -> (
           match commit t with
           | Ok () -> Ok value
-          | Result.Error _ as err -> err)
+          | Result.Error _ as err ->
+              ignore (rollback t);
+              err)
       | Result.Error _ as err ->
           ignore (rollback t);
           err

@@ -633,6 +633,28 @@ let test_self_spans_do_not_reenter_export () =
   Alcotest.(check bool) "application span is exported" true
     (string_contains exported "application-span")
 
+let test_self_spans_are_bounded_across_flushes () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw ~net
+      ~clock:(Eio.Stdenv.clock stdenv)
+      ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-self-spans-bounded"
+      ~disable_self_metrics:true
+      ~on_error:(fun _ -> ())
+      ()
+  in
+  let tracer = Eta_otel.tracer exporter in
+  for i = 1 to 40 do
+    emit_span tracer ("application-span-" ^ string_of_int i);
+    Eta_otel.flush ~timeout_s:1.0 exporter
+  done;
+  Alcotest.(check bool) "self spans are bounded" true
+    (List.length (Eta_otel.Internal.self_spans exporter) <= 64)
+
 let test_self_metrics_export_without_recursion () =
   let sends = ref [] in
   Eio_main.run @@ fun stdenv ->
@@ -817,6 +839,8 @@ let () =
             test_shutdown_closes_queues;
           Alcotest.test_case "self spans do not re-enter export" `Quick
             test_self_spans_do_not_reenter_export;
+          Alcotest.test_case "self spans are bounded across flushes" `Quick
+            test_self_spans_are_bounded_across_flushes;
           Alcotest.test_case "self metrics export without recursion" `Quick
             test_self_metrics_export_without_recursion;
           Alcotest.test_case "self metrics can be disabled" `Quick

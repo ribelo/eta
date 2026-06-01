@@ -60,6 +60,7 @@
   (hpack (>= 0.12.0))
   (faraday (>= 0.8.0))
   (angstrom (>= 0.16.0))
+  (crowbar :with-test)
   domain-name
   ipaddr
   bigstringaf

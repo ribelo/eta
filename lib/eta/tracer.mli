@@ -38,3 +38,4 @@ val with_fiber_context : (unit -> 'a) -> 'a
 val noop : Capabilities.tracer
 val as_capability : in_memory -> Capabilities.tracer
 val dump : in_memory -> span list
+val retain_recent : in_memory -> max:int -> unit

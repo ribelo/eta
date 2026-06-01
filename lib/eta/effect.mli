@@ -356,9 +356,11 @@ val catch :
 
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
-    and the surrounding cause structure. Every [Cause.Fail] in the cause tree is
-    mapped, including failures nested under [Sequential], [Concurrent],
-    [Finalizer], or [Suppressed]. *)
+    and the surrounding cause structure. [Cause.Fail] values in the primary
+    cause tree are mapped, including failures nested under [Sequential] and
+    [Concurrent]. Cleanup/finalizer failures are already rendered into
+    {!Cause.Finalizer} nodes and are preserved unchanged, including
+    [Cause.Suppressed.finalizer] branches. *)
 
 val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
 (** Run an observer when the effect fails with a typed error, then rethrow the

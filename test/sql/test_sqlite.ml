@@ -168,6 +168,30 @@ let test_sqlite_transactions_and_savepoints () =
     (S.query_one_int db "SELECT COUNT(*) FROM items");
   Alcotest.(check bool) "autocommit restored" true (S.autocommit db)
 
+let test_sqlite_transaction_commit_failure_rolls_back () =
+  S.with_db (S.memory_config ()) @@ fun db ->
+  S.exec_script db
+    "CREATE TABLE parent (id INTEGER PRIMARY KEY);
+     CREATE TABLE child (
+       parent_id INTEGER,
+       FOREIGN KEY(parent_id) REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED
+     );";
+  (match
+     S.with_transaction_result db (fun db ->
+         S.exec db "INSERT INTO child (parent_id) VALUES (42)";
+         Ok ())
+   with
+  | Ok () -> Alcotest.fail "commit unexpectedly accepted deferred FK violation"
+  | Error err ->
+      Alcotest.(check string) "commit operation" "exec" err.operation);
+  Alcotest.(check bool) "autocommit restored" true (S.autocommit db);
+  S.with_transaction db (fun db ->
+      S.exec db "INSERT INTO parent (id) VALUES (1)");
+  Alcotest.(check int) "only committed parent" 1
+    (S.query_one_int db "SELECT COUNT(*) FROM parent");
+  Alcotest.(check int) "failed child rolled back" 0
+    (S.query_one_int db "SELECT COUNT(*) FROM child")
+
 let test_sqlite_float_blob_metadata_and_counters () =
   with_db @@ fun db ->
   S.exec db "CREATE TABLE values_ (id INTEGER PRIMARY KEY, n REAL, b BLOB, z BLOB)";

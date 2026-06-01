@@ -1,0 +1,52 @@
+(library
+ (name eta_http_fuzz_support)
+ (modules eta_http_fuzz_support)
+ (libraries eta_http crowbar bigstringaf))
+
+(executable
+ (name fuzz_h1_parse)
+ (modules fuzz_h1_parse)
+ (libraries eta_http eta_http_fuzz_support crowbar))
+
+(executable
+ (name fuzz_h1_write)
+ (modules fuzz_h1_write)
+ (libraries eta_http eta_http_fuzz_support crowbar eio))
+
+(executable
+ (name fuzz_ws_codec)
+ (modules fuzz_ws_codec)
+ (libraries eta_http eta_http_fuzz_support crowbar))
+
+(executable
+ (name fuzz_h2_security)
+ (modules fuzz_h2_security)
+ (libraries eta_http eta_http_fuzz_support crowbar bigstringaf))
+
+(rule
+ (alias fuzz-smoke)
+ (deps
+  fuzz_h1_parse.exe
+  fuzz_h1_write.exe
+  fuzz_ws_codec.exe
+  fuzz_h2_security.exe)
+ (action
+  (progn
+   (bash "./fuzz_h1_parse.exe -r ${ETA_FUZZ_SMOKE_REPEAT:-500}")
+   (bash "./fuzz_h1_write.exe -r ${ETA_FUZZ_SMOKE_REPEAT:-500}")
+   (bash "./fuzz_ws_codec.exe -r ${ETA_FUZZ_SMOKE_REPEAT:-500}")
+   (bash "./fuzz_h2_security.exe -r ${ETA_FUZZ_SMOKE_REPEAT:-500}"))))
+
+(rule
+ (alias fuzz)
+ (deps
+  fuzz_h1_parse.exe
+  fuzz_h1_write.exe
+  fuzz_ws_codec.exe
+  fuzz_h2_security.exe)
+ (action
+  (progn
+   (bash "./fuzz_h1_parse.exe -r ${ETA_FUZZ_REPEAT:-50000}")
+   (bash "./fuzz_h1_write.exe -r ${ETA_FUZZ_REPEAT:-50000}")
+   (bash "./fuzz_ws_codec.exe -r ${ETA_FUZZ_REPEAT:-50000}")
+   (bash "./fuzz_h2_security.exe -r ${ETA_FUZZ_REPEAT:-50000}"))))

@@ -261,6 +261,53 @@ let test_effect_scoped_creates_switch_in_fiberless_host_run () =
     "fiberless scoped host switch runs" 1
     (Atomic.get Counting_host_eio.switch_runs - before)
 
+let test_effect_fiberless_frame_is_domain_local () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let sleep_a = Atomic.make 0 in
+  let sleep_b = Atomic.make 0 in
+  let rt_a =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(fun _ -> Atomic.incr sleep_a)
+      ()
+  in
+  let rt_b =
+    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(fun _ -> Atomic.incr sleep_b)
+      ()
+  in
+  let ready = Atomic.make 0 in
+  let barrier () =
+    ignore (Atomic.fetch_and_add ready 1 : int);
+    while Atomic.get ready < 2 do
+      Domain.cpu_relax ()
+    done
+  in
+  let effect =
+    Effect.sync barrier
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1) Effect.unit)
+  in
+  let run rt =
+    match Runtime.run rt effect with
+    | Exit.Ok () -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a"
+          (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<fiberless>"))
+          cause
+  in
+  let domain_a =
+    (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      (fun () -> run rt_a)
+  in
+  let domain_b =
+    (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      (fun () -> run rt_b)
+  in
+  Domain.join domain_a;
+  Domain.join domain_b;
+  Alcotest.(check int) "runtime A sleep" 1 (Atomic.get sleep_a);
+  Alcotest.(check int) "runtime B sleep" 1 (Atomic.get sleep_b)
+
 let test_effect_syntax_operators () =
   with_runtime @@ fun rt ->
   let open Eta.Syntax in

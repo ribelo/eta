@@ -5,6 +5,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -103,6 +104,7 @@ typedef struct {
 } eta_ladybug_api;
 
 static eta_ladybug_api api;
+static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void db_finalize(value v_db)
 {
@@ -149,7 +151,7 @@ static int load_symbol(void **slot, const char *name)
 
 #define LOAD(name) load_symbol((void **)&api.name, "lbug_" #name)
 
-static int load_api(void)
+static int load_api_unlocked(void)
 {
   if (api.loaded) return 1;
   if (api.attempted) return 0;
@@ -196,6 +198,15 @@ static int load_api(void)
 
   api.loaded = 1;
   return 1;
+}
+
+static int load_api(void)
+{
+  int loaded;
+  pthread_mutex_lock(&api_mutex);
+  loaded = load_api_unlocked();
+  pthread_mutex_unlock(&api_mutex);
+  return loaded;
 }
 
 static void ensure_loaded(void)

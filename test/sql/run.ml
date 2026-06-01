@@ -81,6 +81,8 @@ let () =
             test_sqlite_config_exec_script_and_pragmas;
           Alcotest.test_case "transactions and savepoints" `Quick
             test_sqlite_transactions_and_savepoints;
+          Alcotest.test_case "transaction commit failure rolls back" `Quick
+            test_sqlite_transaction_commit_failure_rolls_back;
           Alcotest.test_case "float blob metadata and counters" `Quick
             test_sqlite_float_blob_metadata_and_counters;
           Alcotest.test_case "backup and restore" `Quick

@@ -180,7 +180,9 @@ let transaction ?mode db f =
       | Ok value -> (
           match commit db with
           | Ok () -> Ok value
-          | Result.Error _ as err -> err)
+          | Result.Error _ as err ->
+              ignore (rollback db);
+              err)
       | Result.Error _ as err ->
           ignore (rollback db);
           err

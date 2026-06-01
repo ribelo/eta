@@ -317,27 +317,23 @@ let run_systhread t name f =
    kind=Domain_isolated pool config, so the alerts are suppressed locally.
    [Domain.Safe.spawn] is not used because it would require the callback
    to be portable, which the public Blocking API does not enforce. *)
-let run_domain f =
-  let finished = Atomic.make false in
+let run_domain t name f =
   let result = Atomic.make None in
   let domain =
     (Domain.spawn
        [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
       (fun () ->
         let r = run_callback f in
-        Atomic.set result (Some r);
-        Atomic.set finished true)
+        Atomic.set result (Some r))
   in
-  while not (Atomic.get finished) do
-    Eio_unix.sleep 0.001
-  done;
-  Domain.join domain;
+  t.runner.run_in_systhread ~label:(name ^ ".domain.join") (fun () ->
+      Domain.join domain);
   match Atomic.get result with Some r -> r | None -> assert false
 
 let run_worker t name f =
   match t.kind with
   | Systhread -> run_systhread t name f
-  | Domain_isolated -> run_domain f
+  | Domain_isolated -> run_domain t name f
 
 let finish_result t release name emit submitted_at started_at outcome =
   let ended_at = now_ms () in

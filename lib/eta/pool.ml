@@ -494,8 +494,6 @@ let begin_shutdown t =
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
   |> Effect.bind (fun () -> take_idle)
   |> Effect.bind (close_entries ~release_permit:false t)
-  |> Effect.bind (fun () ->
-       Effect.sync (fun () -> Semaphore.release t.sem t.max_size))
   |> Effect.bind (fun () -> emit_gauges t)
 
 let shutdown ?deadline t =

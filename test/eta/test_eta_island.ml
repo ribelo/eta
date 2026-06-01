@@ -94,6 +94,10 @@ let (island_entry_probe @ portable) n =
   Thread.delay 0.05;
   { entry_input = n; entry_ms = started_ms }
 
+let (island_sleep_ms @ portable) ms =
+  Thread.delay (float_of_int ms /. 1000.0);
+  ms
+
 let test_island_single_uses_runtime_pool () =
   with_island_runtime @@ fun rt _pool ->
   Alcotest.(check int)
@@ -142,6 +146,24 @@ let test_island_map_uses_pool_fanout () =
   in
   Alcotest.(check bool) "start spread under 200ms" true
     (max_start - min_start < 200)
+
+let test_island_timeout_stops_waiting_for_batch () =
+  with_island_runtime @@ fun rt _pool ->
+  let started = Unix.gettimeofday () in
+  match
+    Runtime.run rt
+      (Effect.Island.map ~f:island_sleep_ms [ 200 ]
+      |> Effect.timeout (Duration.ms 10))
+  with
+  | Exit.Error (Cause.Fail `Timeout) ->
+      let elapsed_ms = int_of_float ((Unix.gettimeofday () -. started) *. 1000.0) in
+      Alcotest.(check bool) "timeout returned before island work finished" true
+        (elapsed_ms < 150)
+  | Exit.Ok _ -> Alcotest.fail "expected island batch timeout"
+  | Exit.Error cause ->
+      Alcotest.failf "expected timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<island>"))
+        cause
 
 let test_island_map_result_returns_item_results () =
   with_island_runtime @@ fun rt _pool ->
@@ -220,5 +242,4 @@ let test_island_workloads () =
     (List.length
        (run_ok rt
           (Effect.Island.map ~name:"hash" ~f:island_hash_work hash_inputs)))
-
 

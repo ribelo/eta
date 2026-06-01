@@ -12,17 +12,4 @@ let flush = Appender.flush
 let close = Appender.close
 
 let with_appender ?schema connection table f =
-  match create ?schema connection table with
-  | Result.Error _ as err -> err
-  | Ok appender -> (
-      match f appender with
-      | Ok value -> (
-          match close appender with
-          | Ok () -> Ok value
-          | Result.Error _ as err -> err)
-      | Result.Error _ as err ->
-          ignore (close appender);
-          err
-      | exception exn ->
-          ignore (close appender);
-          raise exn)
+  Appender.with_appender ?schema connection ~table:(Table.name table) f

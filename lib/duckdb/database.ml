@@ -4,23 +4,44 @@ open Types
 
 type t = database
 
+let validate_config config =
+  match config.threads with
+  | Some threads when threads <= 0 ->
+      Result.Error
+        (Invalid_value "Eta_duckdb.Database.open_: threads must be positive")
+  | Some _ | None -> Ok ()
+
+let close_after_open_failure (db : database) =
+  if not db.closed then (
+    db.closed <- true;
+    try raw_close_database db.raw with _ -> ())
+
 let open_ config =
-  wrap "open" @@ fun () ->
-  let path = Option.value config.path ~default:"" in
-  let db = { raw = raw_open path; closed = false } in
-  (match config.threads with
-  | None -> ()
-  | Some threads ->
-      if threads <= 0 then
-        invalid_arg "Eta_duckdb.Database.open_: threads must be positive";
-      let conn = { database = db; raw = raw_connect db.raw; closed = false } in
-      Fun.protect
-        ~finally:(fun () ->
-          conn.closed <- true;
-          raw_disconnect conn.raw)
-        (fun () ->
-          raw_exec_script conn.raw ("PRAGMA threads=" ^ string_of_int threads)));
-  db
+  match validate_config config with
+  | Result.Error _ as err -> err
+  | Ok () ->
+      wrap "open" @@ fun () ->
+      let path = Option.value config.path ~default:"" in
+      let db = { raw = raw_open path; closed = false } in
+      (try
+         (match config.threads with
+         | None -> ()
+         | Some threads ->
+             let conn =
+               { database = db; raw = raw_connect db.raw; closed = false }
+             in
+             Fun.protect
+               ~finally:(fun () ->
+                 conn.closed <- true;
+                 raw_disconnect conn.raw)
+               (fun () ->
+                 raw_exec_script conn.raw
+                   ("PRAGMA threads=" ^ string_of_int threads)));
+         db
+       with exn ->
+         let bt = Printexc.get_raw_backtrace () in
+         close_after_open_failure db;
+         Printexc.raise_with_backtrace exn bt)
 
 let open_memory () = open_ { path = None; threads = None }
 

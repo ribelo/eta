@@ -21,7 +21,8 @@ type frame = {
 }
 
 let frame_key : frame Eio.Fiber.key = Eio.Fiber.create_key ()
-let fiberless_frame = ref None
+let fiberless_frame_key : frame option Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> None)
 
 let fiber_get key =
   try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
@@ -43,7 +44,7 @@ let current_frame () =
   match fiber_get frame_key with
   | Some frame -> frame
   | None -> (
-      match !fiberless_frame with
+      match Domain.DLS.get fiberless_frame_key with
       | Some frame -> (
           match host_fiber_get frame frame_key with
           | Some frame -> frame
@@ -51,16 +52,18 @@ let current_frame () =
       | None -> failwith "Eta effect requires Runtime.run")
 
 let with_fiberless_frame frame f =
-  let previous = !fiberless_frame in
-  fiberless_frame := Some frame;
-  Fun.protect ~finally:(fun () -> fiberless_frame := previous) f
+  let previous = Domain.DLS.get fiberless_frame_key in
+  Domain.DLS.set fiberless_frame_key (Some frame);
+  Fun.protect
+    ~finally:(fun () -> Domain.DLS.set fiberless_frame_key previous)
+    f
 
 let with_frame frame f =
   match frame.runtime.host_eio with
   | Some host ->
       let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
       let bind () = Fiber.with_binding frame_key frame f in
-      if Option.is_some !fiberless_frame then bind ()
+      if Option.is_some (Domain.DLS.get fiberless_frame_key) then bind ()
       else with_fiberless_frame frame bind
   | None ->
       if has_fiber_context () then Eio.Fiber.with_binding frame_key frame f
