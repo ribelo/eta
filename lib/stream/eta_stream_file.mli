@@ -14,7 +14,7 @@ type error = {
   path : string;
   kind : error_kind;
   message : string;
-  cause : exn;
+  diagnostic : string;
 }
 
 val pp_operation : Format.formatter -> operation -> unit

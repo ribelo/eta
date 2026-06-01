@@ -173,22 +173,8 @@ let commit db = exec_script db "COMMIT"
 let rollback db = exec_script db "ROLLBACK"
 
 let transaction ?mode db f =
-  match begin_transaction ?mode db with
-  | Result.Error _ as err -> err
-  | Ok () -> (
-      match f db with
-      | Ok value -> (
-          match commit db with
-          | Ok () -> Ok value
-          | Result.Error _ as err ->
-              ignore (rollback db);
-              err)
-      | Result.Error _ as err ->
-          ignore (rollback db);
-          err
-      | exception exn ->
-          ignore (rollback db);
-          raise exn)
+  Eta_sql_dsl.transaction ~begin_:(begin_transaction ?mode) ~commit ~rollback
+    db f
 
 let is_retryable = function
   | Driver_error { code; _ } -> code = busy || code = locked || code = 1

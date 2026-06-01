@@ -96,6 +96,13 @@ let test_exponential () =
   Alcotest.(check some_dur) "step 2 = 40ms" (Some (dur_ms 40))
     (Schedule.next_delay s ~step:2)
 
+let test_exponential_saturates_on_overflow () =
+  let s = Schedule.exponential ~factor:2.0 (Duration.ms max_int) in
+  Alcotest.(check some_dur)
+    "large exponent saturates"
+    (Some (Duration.ms max_int))
+    (Schedule.next_delay s ~step:1024)
+
 let test_spaced_fixed_linear () =
   Alcotest.(check some_dur) "spaced" (Some (Duration.seconds 1))
     (Schedule.next_delay (Schedule.spaced (Duration.seconds 1)) ~step:4);

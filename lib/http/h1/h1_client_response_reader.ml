@@ -186,8 +186,13 @@ let source_read_line source ~limit =
   in
   loop 0 false
 
-let fixed_body ~release source length =
+let release_body ~release ~on_unread_body clean =
+  if !clean then release ()
+  else on_unread_body () |> Effect.bind release
+
+let fixed_body ~release ~on_unread_body source length =
   let remaining = ref length in
+  let clean = ref (length = 0) in
   let read_next () =
     if !remaining = 0 then Effect.pure Body.End
     else
@@ -199,17 +204,22 @@ let fixed_body ~release source length =
            | Some chunk ->
                let len = Bytes.length chunk in
                remaining := !remaining - len;
-               if !remaining = 0 then Effect.pure (Body.Last chunk)
+               if !remaining = 0 then (
+                 clean := true;
+                 Effect.pure (Body.Last chunk))
                else Effect.pure (Body.Chunk chunk))
   in
-  Body.of_reader ~release read_next
+  Body.of_reader ~release:(fun () -> release_body ~release ~on_unread_body clean) read_next
 
-let close_delimited_body ~max_response_body_bytes ~release source =
+let close_delimited_body ~max_response_body_bytes ~release ~on_unread_body source =
   let total = ref 0 in
+  let clean = ref false in
   let read_next () =
     source_read_some source response_chunk_size
     |> Effect.bind (function
-         | None -> Effect.pure Body.End
+         | None ->
+             clean := true;
+             Effect.pure Body.End
          | Some chunk ->
              let length = !total + Bytes.length chunk in
              if length < !total || length > max_response_body_bytes then
@@ -220,9 +230,9 @@ let close_delimited_body ~max_response_body_bytes ~release source =
                total := length;
                Effect.pure (Body.Chunk chunk)))
   in
-  Body.of_reader ~release read_next
+  Body.of_reader ~release:(fun () -> release_body ~release ~on_unread_body clean) read_next
 
-let chunked_body ~max_response_body_bytes ~release request source =
+let chunked_body ~max_response_body_bytes ~release ~on_unread_body request source =
   let context =
     { Chunked.protocol = Error.H1; method_ = request.method_; uri = H1_client_errors.uri request }
   in
@@ -239,15 +249,28 @@ let chunked_body ~max_response_body_bytes ~release request source =
     Chunked.read decoder
     |> Effect.map (function None -> Body.End | Some chunk -> Body.Chunk chunk)
   in
-  (Body.of_reader ~release read_next, fun () -> Effect.pure (Chunked.trailers decoder))
+  let clean = ref false in
+  let read_next () =
+    read_next ()
+    |> Effect.map (function
+         | Body.End ->
+             clean := true;
+             Body.End
+         | chunk -> chunk)
+  in
+  ( Body.of_reader
+      ~release:(fun () -> release_body ~release ~on_unread_body clean)
+      read_next,
+    fun () -> Effect.pure (Chunked.trailers decoder) )
 
-let response_body ?host_eio ~max_response_body_bytes ~release flow request
+let response_body ?host_eio ~max_response_body_bytes ~release
+    ?(on_unread_body = fun () -> Effect.unit) flow request
     (head : response_head) =
   let source = make_body_source ?host_eio flow request head.initial in
   if not (response_has_body request head.status) then
     (Body.of_bytes ~release [], fun () -> Effect.pure Header.empty)
   else if is_chunked head.headers then
-    chunked_body ~max_response_body_bytes ~release request source
+    chunked_body ~max_response_body_bytes ~release ~on_unread_body request source
   else
     match head.content_length with
     | Some length ->
@@ -259,7 +282,10 @@ let response_body ?host_eio ~max_response_body_bytes ~release flow request
                      ~limit:max_response_body_bytes ~length))
           in
           (body, fun () -> Effect.pure Header.empty)
-        else (fixed_body ~release source length, fun () -> Effect.pure Header.empty)
+        else (
+          fixed_body ~release ~on_unread_body source length,
+          fun () -> Effect.pure Header.empty)
     | None ->
-        ( close_delimited_body ~max_response_body_bytes ~release source,
+        ( close_delimited_body ~max_response_body_bytes ~release ~on_unread_body
+            source,
           fun () -> Effect.pure Header.empty )

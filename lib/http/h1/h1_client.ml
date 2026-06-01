@@ -36,7 +36,7 @@ type nonrec pool = pool
 let default_max_response_body_bytes =
   H1_client_response_reader.default_max_response_body_bytes
 
-let request_on_flow ?host_eio
+let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     ?(max_response_body_bytes = default_max_response_body_bytes)
     ?release ~flow request =
   if max_response_body_bytes < 0 then
@@ -67,7 +67,8 @@ let request_on_flow ?host_eio
                 | Ok head ->
                     let body, trailers =
                       H1_client_response_reader.response_body ?host_eio
-                        ~max_response_body_bytes ~release flow request head
+                        ~max_response_body_bytes ~release ~on_unread_body flow
+                        request head
                     in
                     Effect.pure
                       {
@@ -191,7 +192,11 @@ let request_owner pool request response_ch release_ch cancel_ch =
   let hold_resource =
     Eta.Pool.with_resource pool.pool (fun conn ->
         let request_attempt =
-          request_on_flow ~release:(fun () -> release_body release_ch)
+          request_on_flow
+            ~on_unread_body:(fun () ->
+              conn.reusable <- false;
+              Effect.unit)
+            ~release:(fun () -> release_body release_ch)
             ~max_response_body_bytes:pool.max_response_body_bytes
             ~flow:conn.flow request
           |> Effect.map (fun response -> `Response response)

@@ -231,8 +231,14 @@ let render_issues issues = String.concat "; " (List.map render_issue issues)
 
 let issue_to_json_pointer issue =
   let escape s =
-    s |> String.split_on_char '~' |> String.concat "~0"
-    |> String.split_on_char '/' |> String.concat "~1"
+    let buffer = Buffer.create (String.length s) in
+    String.iter
+      (function
+        | '~' -> Buffer.add_string buffer "~0"
+        | '/' -> Buffer.add_string buffer "~1"
+        | c -> Buffer.add_char buffer c)
+      s;
+    Buffer.contents buffer
   in
   match issue.path with
   | [] -> ""

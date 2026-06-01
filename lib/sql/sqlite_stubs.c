@@ -193,6 +193,8 @@ CAMLprim value eta_sqlite_open(value v_path, intnat mode)
   sqlite3 *db = NULL;
   char *path = eta_sqlite_copy_ocaml_string(v_path, NULL);
   int rc;
+  v_block = caml_alloc_custom(&eta_sqlite_db_ops, sizeof(eta_sqlite_db), 0, 1);
+  ((eta_sqlite_db *)Data_custom_val(v_block))->db = NULL;
   if (path == NULL) {
     caml_failwith("sqlite open: out of memory");
   }
@@ -210,7 +212,6 @@ CAMLprim value eta_sqlite_open(value v_path, intnat mode)
     caml_failwith(buffer);
   }
 
-  v_block = caml_alloc_custom(&eta_sqlite_db_ops, sizeof(eta_sqlite_db), 0, 1);
   ((eta_sqlite_db *)Data_custom_val(v_block))->db = db;
   CAMLreturn(v_block);
 }
@@ -297,6 +298,8 @@ CAMLprim value eta_sqlite_prepare(value v_db, value v_sql)
   if (db == NULL) {
     caml_failwith("sqlite prepare: database is closed");
   }
+  v_stmt = caml_alloc_custom(&eta_sqlite_stmt_ops, sizeof(eta_sqlite_stmt), 0, 1);
+  ((eta_sqlite_stmt *)Data_custom_val(v_stmt))->stmt = NULL;
   sql = eta_sqlite_copy_ocaml_string(v_sql, &sql_len);
   if (sql == NULL) {
     caml_failwith("sqlite prepare: out of memory");
@@ -315,7 +318,6 @@ CAMLprim value eta_sqlite_prepare(value v_db, value v_sql)
     caml_failwith(buffer);
   }
 
-  v_stmt = caml_alloc_custom(&eta_sqlite_stmt_ops, sizeof(eta_sqlite_stmt), 0, 1);
   ((eta_sqlite_stmt *)Data_custom_val(v_stmt))->stmt = stmt;
   CAMLreturn(v_stmt);
 }

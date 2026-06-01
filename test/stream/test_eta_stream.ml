@@ -107,8 +107,15 @@ let test_from_file_missing_path_fails_typed () =
   | Exit.Ok () -> Alcotest.fail "missing file unexpectedly succeeded"
   | Exit.Error
       (Cause.Fail
-        (`File_error { Eta_stream.Stream.kind = `Not_found; operation = `Open; _ })) ->
-      ()
+        (`File_error
+          {
+            Eta_stream.Stream.kind = `Not_found;
+            operation = `Open;
+            diagnostic;
+            _;
+          })) ->
+      Alcotest.(check bool) "diagnostic is present" true
+        (String.length diagnostic > 0)
   | Exit.Error cause ->
       Alcotest.failf "missing file produced unexpected cause: %a"
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))

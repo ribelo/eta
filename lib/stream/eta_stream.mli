@@ -18,12 +18,13 @@ module Stream : sig
     path : string;
     kind : file_error_kind;
     message : string;
-    cause : exn;
+    diagnostic : string;
   }
   (** Typed file-system failure reported by {!from_file}. [path] is the
       printable Eio path label, [kind] is a stable coarse classification,
-      [message] is formatted with {!Eio.Exn.pp}, and [cause] preserves the
-      original exception for diagnostics. *)
+      and [message] is an Eta-owned diagnostic string. [diagnostic] currently
+      carries the same formatted text for callers that want a named diagnostic
+      field without depending on Eio exception constructors. *)
 
   val pp_file_error : Format.formatter -> file_error -> unit
 

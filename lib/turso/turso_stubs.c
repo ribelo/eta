@@ -244,6 +244,8 @@ CAMLprim value eta_turso_open(value v_path, intnat mode)
   ensure_loaded();
   sqlite3 *db = NULL;
   int rc;
+  v_block = caml_alloc_custom(&eta_turso_db_ops, sizeof(eta_turso_db), 0, 1);
+  ((eta_turso_db *)Data_custom_val(v_block))->db = NULL;
   char *path = strdup(String_val(v_path));
   if (path == NULL) caml_failwith("allocating Turso database path failed");
   caml_enter_blocking_section();
@@ -256,7 +258,6 @@ CAMLprim value eta_turso_open(value v_path, intnat mode)
     if (db != NULL) (void)api.close_v2(db);
     caml_failwith(buffer);
   }
-  v_block = caml_alloc_custom(&eta_turso_db_ops, sizeof(eta_turso_db), 0, 1);
   ((eta_turso_db *)Data_custom_val(v_block))->db = db;
   CAMLreturn(v_block);
 }
@@ -287,13 +288,14 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   sqlite3 *db = db_val(v_db);
   if (db == NULL) caml_failwith("sqlite3_prepare_v2 rc=21: closed database");
   sqlite3_stmt *stmt = NULL;
+  v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
+  ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = NULL;
   int rc = api.prepare_v2(db, String_val(v_sql), -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "sqlite3_prepare_v2 rc=%d: %s", rc, db == NULL ? "closed" : api.errmsg(db));
     caml_failwith(buffer);
   }
-  v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = stmt;
   CAMLreturn(v_block);
 }

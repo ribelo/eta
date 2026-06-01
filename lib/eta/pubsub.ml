@@ -129,6 +129,30 @@ let rec take_active_publisher
     let publisher = Stdlib.Queue.take q in
     if publisher.active then Some publisher else take_active_publisher q
 
+let compact_cancelled_publishers_locked (t : ('a, 'err) t) =
+  if t.cancelled_publishers > 0 then (
+    let live = Stdlib.Queue.create () in
+    Stdlib.Queue.iter
+      (fun (publisher : ('a, 'err) publisher) ->
+        if publisher.active then Stdlib.Queue.push publisher live)
+      t.publishers;
+    Stdlib.Queue.clear t.publishers;
+    Stdlib.Queue.iter
+      (fun publisher -> Stdlib.Queue.push publisher t.publishers)
+      live)
+
+let compact_cancelled_receivers_locked (sub : ('a, 'err) subscription) =
+  if sub.hub.cancelled_receivers > 0 then (
+    let live = Stdlib.Queue.create () in
+    Stdlib.Queue.iter
+      (fun (receiver : receiver) ->
+        if receiver.active then Stdlib.Queue.push receiver live)
+      sub.receivers;
+    Stdlib.Queue.clear sub.receivers;
+    Stdlib.Queue.iter
+      (fun receiver -> Stdlib.Queue.push receiver sub.receivers)
+      live)
+
 let wake_receiver t (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
@@ -214,6 +238,7 @@ let cancel_publisher t (publisher : ('a, 'err) publisher) =
     publisher.active <- false;
     t.waiting_publishers <- t.waiting_publishers - 1;
     t.cancelled_publishers <- t.cancelled_publishers + 1;
+    compact_cancelled_publishers_locked t;
     admit_waiting_publishers_locked t)
 
 let publish_sync t value =
@@ -317,7 +342,8 @@ let cancel_receiver sub (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
-    t.cancelled_receivers <- t.cancelled_receivers + 1)
+    t.cancelled_receivers <- t.cancelled_receivers + 1;
+    compact_cancelled_receivers_locked sub)
 
 let recv_sync sub =
   let rec loop () =

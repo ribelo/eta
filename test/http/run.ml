@@ -180,6 +180,8 @@ let () =
             test_h1_pool_holds_checkout_until_body_eof;
           Alcotest.test_case "pool discard releases checkout" `Quick
             test_h1_pool_discard_releases_checkout;
+          Alcotest.test_case "pool discard prevents response poisoning" `Quick
+            test_h1_pool_discarded_body_does_not_poison_next_response;
           Alcotest.test_case "pool cancellation releases checkout" `Quick
             test_h1_pool_request_cancellation_releases_checkout;
           Alcotest.test_case "pool marks undelivered response unreusable" `Quick
@@ -196,6 +198,8 @@ let () =
             test_ws_codec_masked_text_roundtrip;
           Alcotest.test_case "upgrade reads inbound text" `Quick
             test_ws_connect_reads_inbound_text;
+          Alcotest.test_case "oversized frame rejected before payload read" `Quick
+            test_ws_rejects_oversized_frame_before_payload_read;
           Alcotest.test_case "send text masks client frame" `Quick
             test_ws_send_text_masks_client_frame;
           Alcotest.test_case "ping is internal and sends pong" `Quick
@@ -343,6 +347,8 @@ let () =
             test_h2_multiplexer_upload_flow_control_resumes;
           Alcotest.test_case "server reset admission release" `Quick
             test_h2_multiplexer_server_reset_admission_release;
+          Alcotest.test_case "release forgets stream headers" `Quick
+            test_h2_multiplexer_release_forgets_informational_filter_stream;
           Alcotest.test_case "client cancel releases stream" `Quick
             test_h2_multiplexer_client_cancel_releases_stream;
           Alcotest.test_case "release closes open request body" `Quick

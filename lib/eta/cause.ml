@@ -14,7 +14,7 @@ let equal_option equal_a left right =
   | _ -> false
 
 let equal_list equal_a left right =
-  List.length left = List.length right && List.for_all2 equal_a left right
+  List.equal equal_a left right
 
 let equal_die left right =
   left.exn == right.exn

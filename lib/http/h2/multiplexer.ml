@@ -33,6 +33,7 @@ type t = {
   streams : Stream_state.t;
   request_bodies : (int, H2.Body.Writer.t) Hashtbl.t;
   response_bodies : (int, H2.Body.Reader.t) Hashtbl.t;
+  filter : Informational_filter.t;
   security : Security.t option;
   mutable closed : bool;
 }
@@ -53,6 +54,7 @@ let create ?(max_concurrent = 128) ?config ?push_handler
       streams = Stream_state.create ~max_concurrent;
       request_bodies = Hashtbl.create max_concurrent;
       response_bodies = Hashtbl.create max_concurrent;
+      filter = Informational_filter.create ();
       security;
       closed = false;
     }
@@ -91,6 +93,7 @@ let release t stream =
       if not (H2.Body.Reader.is_closed body) then H2.Body.Reader.close body;
       Hashtbl.remove t.response_bodies stream_id
   | None -> ());
+  Informational_filter.forget_stream t.filter stream_id;
   complete_security_stream t stream_id;
   decision
 
@@ -158,8 +161,8 @@ type body_event =
   | Body_chunk of bytes
   | Body_eof
 
-let create_client_reader ?(buffer_size = 64 * 1024) ?security ?security_config
-    client =
+let create_client_reader_with_filter ?(buffer_size = 64 * 1024) ?security
+    ?security_config ~filter client =
   if buffer_size <= 0 then
     invalid_arg "Eta_http.H2.Multiplexer.create_client_reader: buffer_size must be > 0";
   let security =
@@ -174,7 +177,7 @@ let create_client_reader ?(buffer_size = 64 * 1024) ?security ?security_config
   {
     client;
     security;
-    filter = Informational_filter.create ();
+    filter;
     buffer;
     filtered = "";
     filtered_off = 0;
@@ -183,7 +186,17 @@ let create_client_reader ?(buffer_size = 64 * 1024) ?security ?security_config
     eof = false;
   }
 
+let create_client_reader ?buffer_size ?security ?security_config client =
+  create_client_reader_with_filter ?buffer_size ?security ?security_config
+    ~filter:(Informational_filter.create ()) client
+
+let create_reader ?buffer_size ?security_config (t : t) =
+  let security = t.security in
+  create_client_reader_with_filter ?buffer_size ?security ?security_config
+    ~filter:t.filter t.client
+
 let client reader = reader.client
+let reader_is_passthrough reader = Informational_filter.is_passthrough reader.filter
 let capacity reader = Bigstringaf.length reader.buffer
 
 let compact reader =

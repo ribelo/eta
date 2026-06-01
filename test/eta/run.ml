@@ -412,6 +412,8 @@ let () =
           Alcotest.test_case "recurs driver yields exactly n delays" `Quick
             test_recurs_driver_yields_exactly_n_delays;
           Alcotest.test_case "exponential" `Quick test_exponential;
+          Alcotest.test_case "exponential saturates on overflow" `Quick
+            test_exponential_saturates_on_overflow;
           Alcotest.test_case "spaced fixed linear" `Quick
             test_spaced_fixed_linear;
           Alcotest.test_case "composition" `Quick test_schedule_composition;
@@ -479,6 +481,8 @@ let () =
             test_channel_close_drains_buffer_then_reports_closed;
           Alcotest.test_case "cancel blocked send" `Quick
             test_channel_cancel_blocked_send_cleans_waiter;
+          Alcotest.test_case "cancel blocked send releases payload" `Quick
+            test_channel_cancelled_blocked_senders_release_payloads;
           Alcotest.test_case "cancel blocked recv" `Quick
             test_channel_cancel_blocked_recv_cleans_waiter;
           Alcotest.test_case "cancel delivered recv requeues" `Quick
@@ -504,6 +508,9 @@ let () =
             test_pubsub_drop_new_uses_global_capacity;
           Alcotest.test_case "backpressure canceled publish atomic" `Quick
             test_pubsub_backpressure_canceled_publish_is_atomic;
+          Alcotest.test_case "backpressure canceled publish releases payload"
+            `Quick
+            test_pubsub_cancelled_blocked_publishers_release_payloads;
           Alcotest.test_case "backpressure waits for lagging subscriber"
             `Quick
             test_pubsub_backpressure_waits_for_lagging_subscriber;

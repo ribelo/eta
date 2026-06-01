@@ -2,6 +2,11 @@ open Eta
 open Eta_test
 open Test_eta_support
 
+let retained_bytes_since base_words =
+  Gc.full_major ();
+  let live_words = (Gc.stat ()).Gc.live_words - base_words in
+  max 0 live_words * (Sys.word_size / 8)
+
 let test_channel_try_send_try_recv () =
   with_runtime @@ fun rt ->
   let ch = Channel.create ~capacity:1 () in
@@ -157,6 +162,32 @@ let test_channel_cancel_blocked_send_cleans_waiter () =
   match run_ok rt (Channel.try_recv ch) with
   | `Empty -> ()
   | _ -> Alcotest.fail "cancelled sender enqueued a value"
+
+let test_channel_cancelled_blocked_senders_release_payloads () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let ch = Channel.create ~capacity:1 () in
+  run_ok rt (Channel.send ch (Bytes.create 1));
+  Gc.full_major ();
+  let base_words = (Gc.stat ()).Gc.live_words in
+  for _ = 1 to 32 do
+    let cancel_ctx = ref None in
+    let sender =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Eio.Cancel.sub @@ fun ctx ->
+          cancel_ctx := Some ctx;
+          Runtime.run rt (Channel.send ch (Bytes.make (1024 * 1024) 'x')))
+    in
+    wait_until (fun () -> (Channel.stats ch).Channel.waiting_senders = 1);
+    Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+    await_cancelled sender
+  done;
+  let retained = retained_bytes_since base_words in
+  Alcotest.(check bool)
+    "cancelled sender payloads released"
+    true
+    (retained < (4 * 1024 * 1024))
 
 let test_channel_cancel_blocked_recv_cleans_waiter () =
   run_eio @@ fun stdenv ->

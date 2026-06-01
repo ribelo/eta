@@ -1,6 +1,11 @@
 open Eta
 open Test_eta_support
 
+let retained_bytes_since base_words =
+  Gc.full_major ();
+  let live_words = (Gc.stat ()).Gc.live_words - base_words in
+  max 0 live_words * (Sys.word_size / 8)
+
 let publish_result =
   Alcotest.testable
     (fun fmt (result : Pubsub.publish_result) ->
@@ -255,6 +260,46 @@ let test_pubsub_backpressure_canceled_publish_is_atomic () =
     r3;
   Alcotest.(check int) "a next skips canceled publish" 3 second_a;
   Alcotest.(check int) "b next skips canceled publish" 3 second_b
+
+let test_pubsub_cancelled_blocked_publishers_release_payloads () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 1 }) () in
+  let ready = Queue.create () in
+  let never = Queue.create () in
+  let holder = ref None in
+  let body =
+    let open Eta.Syntax in
+    Pubsub.subscribe hub @@ fun sub ->
+    let* () = Effect.sync (fun () -> holder := Some sub) in
+    let* () = Queue.send ready () in
+    Queue.recv never
+  in
+  let body_fiber = fork_run sw rt body in
+  run_ok rt (Queue.recv ready);
+  ignore (run_ok rt (Pubsub.publish hub (Bytes.create 1)) : Pubsub.publish_result);
+  Gc.full_major ();
+  let base_words = (Gc.stat ()).Gc.live_words in
+  for _ = 1 to 32 do
+    let cancel_ctx = ref None in
+    let publisher =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Eio.Cancel.sub @@ fun ctx ->
+          cancel_ctx := Some ctx;
+          Runtime.run rt (Pubsub.publish hub (Bytes.make (1024 * 1024) 'x')))
+    in
+    wait_until (fun () -> (Pubsub.stats hub).Pubsub.waiting_publishers = 1);
+    Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+    await_cancelled publisher
+  done;
+  let retained = retained_bytes_since base_words in
+  Alcotest.(check bool)
+    "cancelled publisher payloads released"
+    true
+    (retained < (4 * 1024 * 1024));
+  Queue.close never;
+  ignore (Eio.Promise.await body_fiber : (unit, [> `Closed ]) Exit.t)
 
 let test_pubsub_backpressure_waits_for_lagging_subscriber () =
   with_runtime @@ fun rt ->

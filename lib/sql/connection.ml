@@ -217,22 +217,7 @@ let rollback t =
     | Result.Error err -> Result.Error (Types.Sqlite err)
 
 let with_transaction t f =
-  match begin_transaction t with
-  | Result.Error _ as err -> err
-  | Ok () -> (
-      match f t with
-      | Ok value -> (
-          match commit t with
-          | Ok () -> Ok value
-          | Result.Error _ as err ->
-              ignore (rollback t);
-              err)
-      | Result.Error _ as err ->
-          ignore (rollback t);
-          err
-      | exception exn ->
-          ignore (rollback t);
-          raise exn)
+  Eta_sql_dsl.transaction ~begin_:begin_transaction ~commit ~rollback t f
 
 let id t = t.id
 let created_at t = t.created_at

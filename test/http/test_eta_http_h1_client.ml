@@ -560,6 +560,55 @@ let test_h1_pool_discard_releases_checkout () =
   Alcotest.(check int) "released after discard" 0 closed_stats.active;
   Alcotest.(check int) "idle after discard" 1 closed_stats.idle
 
+let test_h1_pool_discarded_body_does_not_poison_next_response () =
+  let net = Eio_mock.Net.make "eta-http-h1-pool-discard-poison-net" in
+  let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
+  let first_flow = Eio_mock.Flow.make "eta-http-h1-pool-discard-poison-first" in
+  let second_flow = Eio_mock.Flow.make "eta-http-h1-pool-discard-poison-second" in
+  Eio_mock.Flow.on_read first_flow
+    [
+      `Return "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\n";
+      `Return "poison";
+    ];
+  Eio_mock.Flow.on_read second_flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nsafe" ];
+  Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ]; `Return [ addr ] ];
+  Eio_mock.Net.on_connect net [ `Return first_flow; `Return second_flow ];
+  let url = Eta_http.Core.Url.of_string "http://example.test/discard-poison" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  let health_check _flow = Eta.Effect.unit in
+  with_test_clock @@ fun sw _clock rt ->
+  let pool =
+    Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net url
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let first =
+    Eta_http.H1.Client.request_with_pool pool request
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Eta_http.Body.Stream.discard first.body
+  |> Eta.Runtime.run rt
+  |> Eta_test.Expect.expect_ok;
+  let second =
+    Eta_http.H1.Client.request_with_pool pool request
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let body =
+    Eta_http.Body.Stream.read_all second.body
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+    |> Bytes.to_string
+  in
+  Alcotest.(check string) "second response body" "safe" body;
+  let stats = Eta_http.H1.Client.pool_stats pool in
+  Alcotest.(check int) "discarded connection was not reused" 2 stats.opened;
+  Alcotest.(check int) "discarded connection was closed" 1 stats.closed
+
 let wait_until label predicate =
   let rec loop attempts =
     if predicate () then ()

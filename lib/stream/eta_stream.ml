@@ -11,7 +11,7 @@ module Stream = struct
     path : string;
     kind : file_error_kind;
     message : string;
-    cause : exn;
+    diagnostic : string;
   }
 
   let pp_file_error = Eta_stream_file.pp_error

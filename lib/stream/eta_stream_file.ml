@@ -14,7 +14,7 @@ type error = {
   path : string;
   kind : error_kind;
   message : string;
-  cause : exn;
+  diagnostic : string;
 }
 
 let pp_operation ppf = function
@@ -45,10 +45,11 @@ let kind_of_exn = function
   | _ -> `Unexpected
 
 let make_error ~operation ~path cause =
+  let diagnostic = Format.asprintf "%a" Eio.Exn.pp cause in
   {
     operation;
     path;
     kind = kind_of_exn cause;
-    message = Format.asprintf "%a" Eio.Exn.pp cause;
-    cause;
+    message = diagnostic;
+    diagnostic;
   }

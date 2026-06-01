@@ -282,6 +282,44 @@ let test_ws_connect_reads_inbound_text () =
     "messages" [ "ready" ]
     (List.map (function `Text text -> text | `Binary _ -> "<binary>") messages)
 
+let test_ws_rejects_oversized_frame_before_payload_read () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let header = Bytes.create 10 in
+  Bytes.set header 0 (Char.chr 0x82);
+  Bytes.set header 1 (Char.chr 0x7f);
+  Bytes.set header 2 (Char.chr 0x00);
+  Bytes.set header 3 (Char.chr 0x00);
+  Bytes.set header 4 (Char.chr 0x00);
+  Bytes.set header 5 (Char.chr 0x00);
+  Bytes.set header 6 (Char.chr 0x00);
+  Bytes.set header 7 (Char.chr 0x10);
+  Bytes.set header 8 (Char.chr 0x00);
+  Bytes.set header 9 (Char.chr 0x01);
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ Bytes.to_string header) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn)) with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (`Protocol "WebSocket frame payload exceeds max_frame_size")) ->
+      ()
+  | Eta.Exit.Ok () -> Alcotest.fail "oversized WebSocket frame was accepted"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected oversized frame failure: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+
 let test_ws_send_text_masks_client_frame () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let never, _resolver = Eio.Promise.create () in

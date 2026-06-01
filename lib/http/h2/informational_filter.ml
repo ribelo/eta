@@ -255,6 +255,9 @@ let take t =
   Buffer.clear t.output;
   data
 
+let forget_stream t stream_id =
+  Hashtbl.remove t.final_seen stream_id
+
 let buffered_bytes t =
   Buffer.length t.pending - t.pending_off
   +

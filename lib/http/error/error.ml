@@ -26,20 +26,18 @@ type certificate_reason =
   | Revoked
   | Certificate_policy_error of string
 
-type timeout = { timeout_ms : int option }
-
 type kind =
   | Dns_error of { host : string; message : string }
   | Connect_error of { message : string }
-  | Connect_timeout of timeout
+  | Connect_timeout of { timeout_ms : int option }
   | Tls_handshake_error of { stage : tls_stage; message : string }
   | Tls_certificate_error of { reason : certificate_reason; message : string }
   | Connection_closed of { during : layer }
   | Pool_shutdown
-  | Pool_acquire_timeout of timeout
-  | Response_header_timeout of timeout
-  | Response_body_idle_timeout of timeout
-  | Total_request_timeout of timeout
+  | Pool_acquire_timeout of { timeout_ms : int option }
+  | Response_header_timeout of { timeout_ms : int option }
+  | Response_body_idle_timeout of { timeout_ms : int option }
+  | Total_request_timeout of { timeout_ms : int option }
   | HTTP_status of { status : int; headers : (string * string) list }
   | Decode_error of { codec : string; message : string }
   | Body_too_large of { limit : int; length : int }

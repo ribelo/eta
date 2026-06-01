@@ -1,6 +1,20 @@
 open Test_eta_http_support
 open Test_eta_http_h2_support
 
+let hpack_header name value = { Hpack.name; value; sensitive = false }
+
+let hpack_block encoder headers =
+  let faraday = Faraday.create 0x1000 in
+  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
+  Faraday.serialize_to_string faraday
+
+let raw_headers encoder ?(end_stream = false) ~stream_id headers =
+  let block = hpack_block encoder headers in
+  let flags = 0x4 lor (if end_stream then 0x1 else 0) in
+  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+    ~flags ~stream_id
+  ^ block
+
 let test_h2_multiplexer_reads_server_response () =
   let result = h2_read_result () in
   let server =
@@ -498,6 +512,60 @@ let test_h2_multiplexer_server_reset_admission_release () =
   Alcotest.(check int) "max inflight" 32 stats.max_inflight;
   Alcotest.(check int) "connection errors" 0
     (List.length connection_result.mux_client_errors)
+
+let test_h2_multiplexer_release_forgets_informational_filter_stream () =
+  let mux = Eta_http.H2.Multiplexer.create () in
+  let reader = Eta_http.H2.Multiplexer.create_reader mux in
+  let status = ref None in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/filtered-release"
+  in
+  let opened =
+    match
+      Eta_http.H2.Multiplexer.request mux ~tag:1 request
+        ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream error")
+        ~response_handler:(fun _stream response _body ->
+          status := Some (H2.Status.to_code response.status))
+    with
+    | Ok opened -> opened
+    | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
+        Alcotest.fail "unexpected admission rejection"
+    | Error Eta_http.H2.Multiplexer.Connection_closed ->
+        Alcotest.fail "unexpected closed mux"
+    | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "unexpected request failure: %s" message
+  in
+  H2.Body.Writer.close opened.request_body;
+  let stream_id = Eta_http.H2.Stream_state.id opened.stream in
+  let encoder = Hpack.Encoder.create 4096 in
+  let source =
+    Eio.Flow.cstruct_source
+      (h2_cstruct_chunks ~chunk_size:13
+         (h2_settings_frame
+          ^ raw_headers encoder ~stream_id [ hpack_header ":status" "200" ]))
+  in
+  let rec read_until_response attempts =
+    if attempts = 0 then Alcotest.fail "response headers were not delivered"
+    else
+      match Eta_http.H2.Multiplexer.read_client_once ~flow:source reader with
+      | Eta_http.H2.Multiplexer.Read _ ->
+          if Option.is_some !status then ()
+          else read_until_response (attempts - 1)
+      | Eof _ | Close -> Alcotest.fail "reader closed before response"
+      | Security_error kind ->
+          Alcotest.failf "unexpected security error: %s"
+            (Eta_http.Error.kind_name kind)
+  in
+  read_until_response 16;
+  Alcotest.(check bool)
+    "final response marker enables passthrough" true
+    (Eta_http.H2.Multiplexer.reader_is_passthrough reader);
+  ignore (Eta_http.H2.Multiplexer.release mux opened.stream);
+  Alcotest.(check bool)
+    "local release forgets final response marker" false
+    (Eta_http.H2.Multiplexer.reader_is_passthrough reader)
 
 let test_h2_multiplexer_client_cancel_releases_stream () =
   let connection_result = h2_mux_result () in

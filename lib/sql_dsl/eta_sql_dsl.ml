@@ -32,6 +32,24 @@ let quote_blob value =
   Bytes.unsafe_set out ((len * 2) + 2) '\'';
   Bytes.unsafe_to_string out
 
+let transaction ~begin_ ~commit ~rollback resource f =
+  match begin_ resource with
+  | Result.Error _ as err -> err
+  | Ok () -> (
+      match f resource with
+      | Ok value -> (
+          match commit resource with
+          | Ok () -> Ok value
+          | Result.Error _ as err ->
+              ignore (rollback resource);
+              err)
+      | Result.Error _ as err ->
+          ignore (rollback resource);
+          err
+      | exception exn ->
+          ignore (rollback resource);
+          raise exn)
+
 module Row = struct
   module type VALUE = sig
     type t

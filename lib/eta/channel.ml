@@ -129,6 +129,27 @@ let rec take_active_receiver
     | Waiting -> Some waiter
     | Delivered _ | Claimed | Cancelled -> take_active_receiver q
 
+let compact_cancelled_senders_locked (t : ('a, 'err) t) =
+  if t.cancelled_senders > 0 then (
+    let live = Stdlib.Queue.create () in
+    Stdlib.Queue.iter
+      (fun (sender : ('a, 'err) sender) ->
+        if sender.active then Stdlib.Queue.push sender live)
+      t.senders;
+    Stdlib.Queue.clear t.senders;
+    Stdlib.Queue.iter (fun sender -> Stdlib.Queue.push sender t.senders) live)
+
+let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
+  let live = Stdlib.Queue.create () in
+  Stdlib.Queue.iter
+    (fun (receiver : ('a, 'err) receiver) ->
+      match receiver.state with
+      | Waiting -> Stdlib.Queue.push receiver live
+      | Delivered _ | Claimed | Cancelled -> ())
+    t.receivers;
+  Stdlib.Queue.clear t.receivers;
+  Stdlib.Queue.iter (fun receiver -> Stdlib.Queue.push receiver t.receivers) live
+
 let take_sender (t : ('a, 'err) t) =
   match take_active_sender t.senders with
   | None -> None
@@ -231,6 +252,7 @@ let cancel_sender (t : ('a, 'err) t) (sender : ('a, 'err) sender) =
     sender.active <- false;
     t.waiting_senders <- t.waiting_senders - 1;
     t.cancelled_senders <- t.cancelled_senders + 1;
+    compact_cancelled_senders_locked t;
     pump t)
 
 let cancel_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) =
@@ -238,6 +260,7 @@ let cancel_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) =
   | Waiting ->
       receiver.state <- Cancelled;
       t.waiting_receivers <- t.waiting_receivers - 1;
+      compact_cancelled_receivers_locked t;
       pump t
   | Delivered value ->
       receiver.state <- Cancelled;

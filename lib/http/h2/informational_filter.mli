@@ -19,6 +19,12 @@ val feed :
 
 val take : t -> string
 
+val forget_stream : t -> int -> unit
+(** Forget state associated with a stream that was locally released or reset.
+    The filter observes remote END_STREAM/RST frames itself; local teardown must
+    call this explicitly because no inbound frame will arrive to clear the
+    final-response marker. *)
+
 val buffered_bytes : t -> int
 
 (** [is_passthrough t] is true when the filter has no pending data, no open

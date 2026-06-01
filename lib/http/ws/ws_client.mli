@@ -13,8 +13,13 @@ type t
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
+val default_max_frame_size : int
+(** Default maximum WebSocket frame payload bytes accepted by the client before
+    allocation. *)
+
 val connect_on_flow :
   ?key:string ->
+  ?max_frame_size:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
   sw:Eio.Switch.t ->
@@ -26,6 +31,7 @@ val connect_on_flow :
 val connect :
   ?ca_file:string ->
   ?key:string ->
+  ?max_frame_size:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
   sw:Eio.Switch.t ->

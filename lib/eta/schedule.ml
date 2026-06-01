@@ -42,6 +42,16 @@ let rec pp ppf = function
 
 let pow_factor f step = f ** float_of_int step
 
+let scale_capped d factor =
+  let factor = if factor < 0.0 then 0.0 else factor in
+  let scaled = float_of_int (Duration.to_ms d) *. factor in
+  match classify_float scaled with
+  | FP_nan -> invalid_arg "Duration.scale"
+  | FP_infinite -> Duration.ms max_int
+  | FP_normal | FP_subnormal | FP_zero ->
+      if scaled > float_of_int max_int then Duration.ms max_int
+      else Duration.scale d factor
+
 let default_random = lazy (Capabilities.random_default ())
 
 type state =
@@ -92,7 +102,7 @@ let rec next_state random = function
   | Driver_fixed d -> Some (d, Driver_fixed d)
   | Driver_exponential (d, factor, step) ->
       Some
-        ( Duration.scale d (pow_factor factor step),
+        ( scale_capped d (pow_factor factor step),
           Driver_exponential (d, factor, step + 1) )
   | Driver_linear { initial; step; index } ->
       Some

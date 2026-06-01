@@ -159,8 +159,7 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
       mux;
       client;
       reader =
-        Multiplexer.create_client_reader ~buffer_size:reader_buffer_size
-          ~security client;
+        Multiplexer.create_reader ~buffer_size:reader_buffer_size mux;
       flow;
       mutex = Eio.Mutex.create ();
       closed = false;

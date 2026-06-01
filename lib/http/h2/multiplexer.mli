@@ -53,7 +53,20 @@ val create_client_reader :
   ?security_config:Security.config ->
   H2.Client_connection.t ->
   client_reader
+
+val create_reader :
+  ?buffer_size:int ->
+  ?security_config:Security.config ->
+  t ->
+  client_reader
+(** Create a reader bound to [t]'s informational-response filter. Readers built
+    this way are notified when {!release} locally resets a stream, so per-stream
+    filter markers do not outlive cancelled streams. *)
+
 val client : client_reader -> H2.Client_connection.t
+
+val reader_is_passthrough : client_reader -> bool
+(** True when the informational filter has switched to raw passthrough mode. *)
 
 val read_client_once :
   flow:[> Eio.Flow.source_ty] Eio.Resource.t ->

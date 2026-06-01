@@ -216,7 +216,14 @@ type frame_reader = {
   mutable initial : bytes;
   mutable initial_off : int;
   scratch : Cstruct.t;
+  max_frame_size : int;
 }
+
+let default_max_frame_size = 1_048_576
+
+let check_max_frame_size max_frame_size =
+  if max_frame_size < 0 then
+    invalid_arg "Eta_http.Ws.Client: max_frame_size must be >= 0"
 
 let bytes_concat chunks =
   let len = List.fold_left (fun acc chunk -> acc + Bytes.length chunk) 0 chunks in
@@ -256,14 +263,22 @@ let read_exact reader len =
   in
   loop 0
 
-let payload_length header ext =
+let payload_length ~max_frame_size header ext =
   let b1 = Char.code (Bytes.get header 1) in
+  let check len64 =
+    if Int64.compare len64 (Int64.of_int max_frame_size) > 0 then
+      Error (`Protocol "WebSocket frame payload exceeds max_frame_size")
+    else if Int64.compare len64 (Int64.of_int Sys.max_string_length) > 0 then
+      Error (`Protocol "WebSocket payload too large")
+    else Ok (Int64.to_int len64)
+  in
   match b1 land 0x7f with
-  | value when value < 126 -> Ok value
+  | value when value < 126 -> check (Int64.of_int value)
   | 126 ->
-      Ok
-        ((Char.code (Bytes.get ext 0) lsl 8)
-        lor Char.code (Bytes.get ext 1))
+      check
+        (Int64.of_int
+           ((Char.code (Bytes.get ext 0) lsl 8)
+           lor Char.code (Bytes.get ext 1)))
   | _ ->
       let value = ref 0L in
       for index = 0 to 7 do
@@ -272,9 +287,7 @@ let payload_length header ext =
             (Int64.shift_left !value 8)
             (Int64.of_int (Char.code (Bytes.get ext index)))
       done;
-      if Int64.compare !value (Int64.of_int Sys.max_string_length) > 0 then
-        Error (`Protocol "WebSocket payload too large")
-      else Ok (Int64.to_int !value)
+      check !value
 
 let read_frame reader =
   match read_exact reader 2 with
@@ -287,7 +300,7 @@ let read_frame reader =
       (match read_exact reader ext_len with
       | Error _ as error -> error
       | Ok ext -> (
-          match payload_length header ext with
+          match payload_length ~max_frame_size:reader.max_frame_size header ext with
           | Error _ as error -> error
           | Ok payload_len -> (
               match read_exact reader mask_len with
@@ -433,7 +446,7 @@ and handle_continuation t reader fragment frame =
         | Some message -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
       else reader_loop t reader (Some fragment)
 
-let make_connection ~flow ~selected_protocol initial =
+let make_connection ~flow ~selected_protocol ~max_frame_size initial =
   let t =
     {
       flow;
@@ -443,10 +456,21 @@ let make_connection ~flow ~selected_protocol initial =
       selected_protocol;
     }
   in
-  let reader = { flow; initial; initial_off = 0; scratch = Cstruct.create read_chunk_size } in
+  let reader =
+    {
+      flow;
+      initial;
+      initial_off = 0;
+      scratch = Cstruct.create read_chunk_size;
+      max_frame_size;
+    }
+  in
   Effect.Private.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
-let connect_on_flow ?(key = Codec.random_key ()) ?headers ?protocols ~sw:_ ~flow url =
+let connect_on_flow ?(key = Codec.random_key ())
+    ?(max_frame_size = default_max_frame_size) ?headers ?protocols ~sw:_ ~flow
+    url =
+  check_max_frame_size max_frame_size;
   let open Effect in
   let connect =
     sync (fun () -> write_upgrade_request flow ?headers ?protocols url key)
@@ -457,14 +481,15 @@ let connect_on_flow ?(key = Codec.random_key ()) ?headers ?protocols ~sw:_ ~flow
     |> bind (fun head ->
            match validate_handshake ?protocols key head with
            | Ok selected_protocol ->
-               make_connection ~flow ~selected_protocol head.initial
+               make_connection ~flow ~selected_protocol ~max_frame_size
+                 head.initial
            | Error error -> fail error)
   in
   connect
   |> catch (fun error ->
          sync (fun () -> close_flow flow) |> bind (fun () -> fail error))
 
-let connect ?ca_file ?key ?headers ?protocols ~sw ~net raw_url =
+let connect ?ca_file ?key ?max_frame_size ?headers ?protocols ~sw ~net raw_url =
   match parse_url raw_url with
   | Error error -> Effect.fail error
   | Ok url ->
@@ -473,13 +498,16 @@ let connect ?ca_file ?key ?headers ?protocols ~sw ~net raw_url =
       |> map_http_error
       |> Effect.bind (fun tcp ->
              match Url.scheme url with
-             | Http -> connect_on_flow ?key ?headers ?protocols ~sw ~flow:tcp url
+             | Http ->
+                 connect_on_flow ?key ?max_frame_size ?headers ?protocols ~sw
+                   ~flow:tcp url
              | Https ->
                  Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
                    ~method_:"GET" target tcp
                  |> map_http_error
                  |> Effect.bind (fun (tls, _alpn) ->
-                        connect_on_flow ?key ?headers ?protocols ~sw ~flow:tls url))
+                        connect_on_flow ?key ?max_frame_size ?headers
+                          ?protocols ~sw ~flow:tls url))
 
 let incoming t = Eta_stream.Stream.from_queue t.incoming
 let selected_protocol t = t.selected_protocol

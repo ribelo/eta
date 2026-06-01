@@ -1,53 +1,3 @@
-(** SQL literal quoting helpers used by backend renderers for DDL/default
-    values. Query values should stay parameterized through compiled statements;
-    these helpers are not an escape hatch for hand-built predicates. *)
-val quote_text : string -> string
-
-val quote_blob : bytes -> string
-
-val transaction :
-  begin_:('resource -> (unit, 'error) result) ->
-  commit:('resource -> (unit, 'error) result) ->
-  rollback:('resource -> (unit, 'error) result) ->
-  'resource ->
-  ('resource -> ('a, 'error) result) ->
-  ('a, 'error) result
-(** Shared transaction state machine for SQL backends: begin, run the body,
-    commit on success, rollback on body failure, rollback and re-raise on body
-    exception, and rollback after commit failure before returning that commit
-    error. Backend modules still own their begin/commit/rollback semantics. *)
-
-module Row : sig
-  module type VALUE = sig
-    type t
-
-    val to_int : t -> int option
-    val to_int64 : t -> int64 option
-    val to_string_value : t -> string option
-    val to_bool : t -> bool option
-    val to_float : t -> float option
-    val to_bytes : t -> bytes option
-    val to_string : t -> string
-    val equal : t -> t -> bool
-  end
-
-  module Make (Value : VALUE) : sig
-    type value = Value.t
-    type t = (string * value) list
-
-    val get : string -> t -> value option
-    val fields : t -> string list
-    val int : string -> t -> int option
-    val int64 : string -> t -> int64 option
-    val string : string -> t -> string option
-    val bool : string -> t -> bool option
-    val float : string -> t -> float option
-    val bytes : string -> t -> bytes option
-    val to_string : t -> string
-    val equal : t -> t -> bool
-  end
-end
-
 module type BACKEND = sig
   type value
   type row
@@ -73,12 +23,16 @@ module type BACKEND = sig
   val value_to_sql_literal : value -> string
 end
 
-module type S = sig
-  type value
-  type row
-  type error
+module Make (Backend : BACKEND) : sig
+  type value = Backend.value
+  type row = Backend.row
+  type error = Backend.error
 
-  type 'a typ
+  type 'a typ = 'a Backend.typ = {
+    value : 'a -> Backend.value;
+    decode : Backend.row -> int -> 'a;
+    sql_type : string;
+  }
 
   val int : int typ
   val int64 : int64 typ
@@ -430,16 +384,5 @@ module type S = sig
 
   val quote_ident : string -> string
   val params_to_values : param list -> value list
+  val column_value : ('table, 'a) column -> 'a -> value
 end
-
-module Make (Backend : BACKEND) :
-  sig
-    include
-      S
-        with type value = Backend.value
-         and type row = Backend.row
-         and type error = Backend.error
-         and type 'a typ = 'a Backend.typ
-
-    val column_value : ('table, 'a) column -> 'a -> value
-  end

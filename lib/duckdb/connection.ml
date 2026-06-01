@@ -85,19 +85,5 @@ let commit conn = exec_script conn "COMMIT"
 let rollback conn = exec_script conn "ROLLBACK"
 
 let transaction ?mode conn f =
-  match begin_transaction ?mode conn with
-  | Result.Error _ as err -> err
-  | Ok () -> (
-      match f conn with
-      | Ok value -> (
-          match commit conn with
-          | Ok () -> Ok value
-          | Result.Error _ as err ->
-              ignore (rollback conn);
-              err)
-      | Result.Error _ as err ->
-          ignore (rollback conn);
-          err
-      | exception exn ->
-          ignore (rollback conn);
-          raise exn)
+  Eta_sql_dsl.transaction ~begin_:(begin_transaction ?mode) ~commit ~rollback
+    conn f
