@@ -4,6 +4,7 @@ open Test_eta_effect_concurrency
 open Test_eta_effect_retry_repeat
 open Test_eta_effect_resource_timeout
 open Test_eta_effect_uninterruptible
+open Test_eta_upstream_invariants
 open Test_eta_island
 open Test_eta_blocking
 open Test_eta_supervisor
@@ -610,6 +611,20 @@ let () =
             test_semaphore_fifo_wakes_waiters_in_order;
           Alcotest.test_case "multi-permit contention" `Quick
             test_semaphore_multi_permit_contention;
+        ] );
+      ( "Upstream invariants",
+        [
+          Alcotest.test_case
+            "effect-smol acquireUseRelease interrupt releases" `Quick
+            test_effect_smol_acquire_use_release_timeout_releases;
+          Alcotest.test_case "effect-smol ensuring interrupt finalizes" `Quick
+            test_effect_smol_finally_runs_on_timeout_interrupt;
+          Alcotest.test_case "effect-smol race cancels losers before return"
+            `Quick test_effect_smol_race_cancels_losers_before_return;
+          Alcotest.test_case "effect-smol all fail-fast releases siblings"
+            `Quick test_effect_smol_all_fail_fast_releases_losing_scopes;
+          Alcotest.test_case "ZIO timeout waits for resource release" `Quick
+            test_zio_timeout_waits_for_resource_release;
         ] );
       ( "Properties",
         [

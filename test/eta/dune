@@ -8,6 +8,7 @@
   test_eta_effect_retry_repeat
   test_eta_effect_resource_timeout
   test_eta_effect_uninterruptible
+  test_eta_upstream_invariants
   test_eta_observability
   test_eta_duration_schedule
   test_eta_supervisor
