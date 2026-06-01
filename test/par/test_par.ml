@@ -2,6 +2,7 @@
 
 let check_int = Alcotest.(check int)
 let check_int_array = Alcotest.(check (array int))
+let check_float_array = Alcotest.(check (array (float 0.0)))
 
 (* --- Pool lifecycle -------------------------------------------------------- *)
 
@@ -109,6 +110,29 @@ let test_par_mapi () =
   in
   let expected = Array.init n (fun i -> i + i) in
   check_int_array "par_mapi adds index" expected summed
+
+let test_par_map_float_output () =
+  let arr = Array.init 1_000 (fun i -> i) in
+  let mapped =
+    Eta.Par.run ~n_workers:4 (fun () ->
+      Eta.Par.par_map arr (fun i -> Float.of_int i /. 2.0))
+  in
+  let mapied =
+    Eta.Par.run ~n_workers:4 (fun () ->
+      Eta.Par.par_mapi arr (fun i x -> Float.of_int (i + x) /. 4.0))
+  in
+  check_float_array "par_map float output"
+    (Array.init 1_000 (fun i -> Float.of_int i /. 2.0))
+    mapped;
+  check_float_array "par_mapi float output"
+    (Array.init 1_000 (fun i -> Float.of_int (i + i) /. 4.0))
+    mapied;
+  Alcotest.(check int)
+    "par_map returns a float array" Obj.double_array_tag
+    (Obj.tag (Obj.repr mapped));
+  Alcotest.(check int)
+    "par_mapi returns a float array" Obj.double_array_tag
+    (Obj.tag (Obj.repr mapied))
 
 (* --- par_reduce ----------------------------------------------------------- *)
 
@@ -492,6 +516,7 @@ let () =
         [
           ("par_map", `Quick, test_par_map);
           ("par_mapi", `Quick, test_par_mapi);
+          ("float output", `Quick, test_par_map_float_output);
           ("below threshold", `Quick, test_below_threshold_runs_serial);
           ("deep recursion (chunk=1)", `Quick, test_par_map_deep_recursion);
           ("exception propagates", `Quick, test_par_map_exception_propagates);

@@ -52,9 +52,9 @@ let par_map ?chunk (arr : 'a array) (f : 'a -> 'b) : 'b array =
   let n = Array.length arr in
   if n = 0 then [||]
   else begin
-    let out = Array.make n (Obj.magic 0 : 'b) in
+    let out = Array.make n (f arr.(0)) in
     let chunk = chunk_or_default chunk in
-    par_map_rec out arr f ~chunk ~start:0 ~stop:n;
+    par_map_rec out arr f ~chunk ~start:1 ~stop:n;
     out
   end
 
@@ -73,9 +73,9 @@ let par_mapi ?chunk (arr : 'a array) (f : int -> 'a -> 'b) : 'b array =
   let n = Array.length arr in
   if n = 0 then [||]
   else begin
-    let out = Array.make n (Obj.magic 0 : 'b) in
+    let out = Array.make n (f 0 arr.(0)) in
     let chunk = chunk_or_default chunk in
-    par_mapi_rec out arr f ~chunk ~start:0 ~stop:n;
+    par_mapi_rec out arr f ~chunk ~start:1 ~stop:n;
     out
   end
 

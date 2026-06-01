@@ -63,30 +63,6 @@ let rec interpret_supervisor_scope :
       in
       let child_sw = ref None in
       let child_cancel = ref None in
-      Runtime_supervisor.fork supervisor (fun () ->
-          frame.runtime.tracer#with_fiber_context @@ fun () ->
-          let result =
-            try
-              cancel_sub frame @@ fun cancel_context ->
-              child_cancel := Some cancel_context;
-              if Atomic.get cancel_requested then cancel_cancel frame cancel_context Exit;
-              switch_run frame @@ fun sw ->
-              child_sw := Some sw;
-              let finalizers = ref [] in
-              let child_frame =
-                { frame with sw; finalizers; error_renderer = default_renderer }
-              in
-              Ok
-                (Runtime_core.with_finalizers ~runtime:frame.runtime
-                   ~fail_key:frame.fail_key
-                   ~error_renderer:child_frame.error_renderer finalizers (fun () ->
-                     interpret_supervisor_scope child_frame child_scope))
-            with exn -> Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
-          in
-          (match result with
-          | Ok _ -> ()
-          | Error cause -> Runtime_supervisor.record_failure supervisor cause);
-          resolve result);
       let cancel () =
         if not (Atomic.get resolved) then (
           Atomic.set cancel_requested true;
@@ -99,7 +75,45 @@ let rec interpret_supervisor_scope :
               | Some child_switch ->
                   (try switch_fail frame child_switch Exit with _ -> ())))
       in
-      Runtime_supervisor.register_child supervisor cancel;
+      let child_id = Runtime_supervisor.register_child supervisor cancel in
+      Runtime_supervisor.fork supervisor (fun () ->
+          Fun.protect
+            ~finally:(fun () ->
+              Runtime_supervisor.unregister_child supervisor child_id)
+            (fun () ->
+              frame.runtime.tracer#with_fiber_context @@ fun () ->
+              let result =
+                try
+                  cancel_sub frame @@ fun cancel_context ->
+                  child_cancel := Some cancel_context;
+                  if Atomic.get cancel_requested then
+                    cancel_cancel frame cancel_context Exit;
+                  switch_run frame @@ fun sw ->
+                  child_sw := Some sw;
+                  let finalizers = ref [] in
+                  let child_frame =
+                    {
+                      frame with
+                      sw;
+                      finalizers;
+                      error_renderer = default_renderer;
+                    }
+                  in
+                  Ok
+                    (Runtime_core.with_finalizers ~runtime:frame.runtime
+                       ~fail_key:frame.fail_key
+                       ~error_renderer:child_frame.error_renderer finalizers
+                       (fun () ->
+                         interpret_supervisor_scope child_frame child_scope))
+                with exn ->
+                  Error
+                    (Runtime_core.cause_of_exn_runtime frame.runtime
+                       frame.fail_key exn)
+              in
+              (match result with
+              | Ok _ -> ()
+              | Error cause -> Runtime_supervisor.record_failure supervisor cause);
+              resolve result));
       Runtime_supervisor.make_child ~promise ~cancel
   | Supervisor_await child -> (
       match Eio.Promise.await (Runtime_supervisor.child_promise child) with

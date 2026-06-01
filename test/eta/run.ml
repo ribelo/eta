@@ -535,8 +535,8 @@ let () =
             test_pool_with_resource_body_defect_releases_resource;
           Alcotest.test_case "release defect releases capacity" `Quick
             test_pool_release_defect_releases_capacity;
-          Alcotest.test_case "shutdown closes all idle after close failure"
-            `Quick test_pool_shutdown_closes_all_idle_after_close_failure;
+          Alcotest.test_case "shutdown reports close failure after all idle"
+            `Quick test_pool_shutdown_reports_failure_after_closing_all_idle;
           Alcotest.test_case "max size under concurrent checkout" `Quick
             test_pool_max_size_respected_under_concurrent_checkout;
           Alcotest.test_case "timeout cleans waiter" `Quick

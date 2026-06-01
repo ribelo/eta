@@ -909,6 +909,9 @@ static int eta_sqlite_backup_between(sqlite3 *dst, sqlite3 *src)
   }
   do {
     rc = sqlite3_backup_step(backup, 128);
+    if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+      (void)sqlite3_sleep(1);
+    }
   } while (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED);
   if (rc == SQLITE_DONE) {
     rc = SQLITE_OK;

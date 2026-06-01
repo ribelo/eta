@@ -170,7 +170,7 @@ let test_pool_release_defect_releases_capacity () =
     (run_ok rt replacement);
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
-let test_pool_shutdown_closes_all_idle_after_close_failure () =
+let test_pool_shutdown_reports_failure_after_closing_all_idle () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
@@ -195,7 +195,13 @@ let test_pool_shutdown_closes_all_idle_after_close_failure () =
   check_exit_ok Alcotest.unit "first" () (Eio.Promise.await first);
   check_exit_ok Alcotest.unit "second" () (Eio.Promise.await second);
   wait_until (fun () -> (Pool.stats pool).Pool.idle = 2);
-  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool);
+  (match Runtime.run rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) with
+  | Exit.Error (Cause.Fail `Close_failed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected close failure, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected close failure");
   Alcotest.(check int) "all idle closes attempted" 2 !release_attempts;
   Alcotest.(check int) "pool accounting closed both" 2 (Pool.stats pool).Pool.closed
 

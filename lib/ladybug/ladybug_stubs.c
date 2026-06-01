@@ -648,7 +648,7 @@ static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *ar
   for (int64_t i = schema->n_children; i > 0; i--) {
     int64_t idx = i - 1;
     const char *name = schema->children[idx]->name;
-    if (skip_graph_fields &&
+    if (skip_graph_fields && name != NULL &&
         (strcmp(name, "_ID") == 0 || strcmp(name, "_LABEL") == 0)) {
       continue;
     }

@@ -36,44 +36,6 @@ let daemon_internal effect =
           `Stop_daemon));
   ok ()
 
-let run runtime effect =
-  if Blocking_runtime.in_worker () then
-    invalid_arg
-      "Eta.Runtime.run must not be called from inside an Effect.Blocking worker callback";
-  runtime.Runtime_core.tracer#with_fiber_context @@ fun () ->
-  let finalizers = ref [] in
-  let frame =
-    {
-      (* [Effect_core.frame] stores the runtime with an erased failure type
-         because a single run can cross effects with different typed-failure
-         parameters. Runtime_core keeps failures keyed separately, so this cast
-         only erases the phantom carrier on the runtime value. *)
-      runtime = (Obj.magic runtime : Obj.t Runtime_core.t);
-      error_renderer = default_renderer;
-      fail_key = runtime.Runtime_core.default_fail_key;
-      sw = runtime.Runtime_core.outer_sw;
-      finalizers;
-    }
-  in
-  try
-    let body () =
-      Runtime_core.with_finalizers ~runtime ~fail_key:runtime.default_fail_key
-        ~error_renderer:frame.error_renderer finalizers (fun () ->
-          run_to_value frame effect)
-    in
-    ok
-      (if runtime.Runtime_core.tracing_enabled
-       || runtime.Runtime_core.metrics_enabled
-      then
-        RObs.with_blocking_event_emit
-          (Runtime_core.emit_blocking_event runtime)
-          body
-      else body ())
-  with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
-  | exn ->
-    error (Runtime_core.cause_of_exn_runtime runtime runtime.default_fail_key exn)
-
 module Private = struct
   let daemon = daemon_internal
 

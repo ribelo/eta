@@ -241,6 +241,58 @@ let test_sqlite_backup_and_restore () =
       Alcotest.(check int) "restored" 2
         (S.query_one_int db "SELECT COUNT(*) FROM items"))
 
+let process_cpu_seconds () =
+  let t = Unix.times () in
+  t.Unix.tms_utime +. t.tms_stime +. t.tms_cutime +. t.tms_cstime
+
+let test_sqlite_backup_waits_without_busy_spinning () =
+  let source_path = Filename.temp_file "eta-sqlite-source-" ".db" in
+  let backup_path = Filename.temp_file "eta-sqlite-backup-" ".db" in
+  Fun.protect
+    ~finally:(fun () ->
+      if Sys.file_exists source_path then
+        Sys.remove source_path;
+      if Sys.file_exists backup_path then
+        Sys.remove backup_path)
+    (fun () ->
+      let setup = S.open_ source_path in
+      Fun.protect
+        ~finally:(fun () -> ignore (S.close setup))
+        (fun () ->
+          S.exec setup "CREATE TABLE items (id INTEGER PRIMARY KEY)";
+          S.exec setup "INSERT INTO items (id) VALUES (1)");
+      let locker = S.open_ source_path in
+      let source = S.open_ source_path in
+      Fun.protect
+        ~finally:(fun () ->
+          ignore (S.close source);
+          ignore (S.close locker))
+        (fun () ->
+          S.exec locker "BEGIN EXCLUSIVE";
+          S.exec locker "INSERT INTO items (id) VALUES (2)";
+          let releaser =
+            Thread.create
+              (fun () ->
+                Thread.delay 0.15;
+                S.exec locker "COMMIT")
+              ()
+          in
+          let cpu_before = process_cpu_seconds () in
+          let wall_before = Unix.gettimeofday () in
+          let result = S.backup_to_path_result source backup_path in
+          let wall_elapsed = Unix.gettimeofday () -. wall_before in
+          let cpu_elapsed = process_cpu_seconds () -. cpu_before in
+          Thread.join releaser;
+          (match result with
+           | Ok () -> ()
+           | Error err ->
+               Alcotest.failf "backup failed while waiting for lock: %a"
+                 S.pp_error err);
+          Alcotest.(check bool) "backup waited for the lock" true
+            (wall_elapsed >= 0.10);
+          Alcotest.(check bool) "backup did not busy spin" true
+            (cpu_elapsed < 0.06)))
+
 let test_sqlite_load_extension_toggle () =
   with_db @@ fun db ->
   check_ok "enable extension loading" (S.enable_load_extension db true);

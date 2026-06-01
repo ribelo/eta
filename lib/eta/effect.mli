@@ -600,10 +600,6 @@ val collect_names : ('a, 'err) t -> string list
     [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)
 
-val run : 'err Runtime_core.t -> ('a, 'err) t -> ('a, 'err) Exit.t
-(** Low-level interpreter entry point. Most callers should use {!Runtime.run},
-    which applies runtime wrapper configuration before entering this function. *)
-
 module Private : sig
   (** Unstable extension hooks for Eta's runtime and sibling packages.
 

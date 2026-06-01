@@ -87,6 +87,8 @@ let () =
             test_sqlite_float_blob_metadata_and_counters;
           Alcotest.test_case "backup and restore" `Quick
             test_sqlite_backup_and_restore;
+          Alcotest.test_case "backup waits without busy spinning" `Quick
+            test_sqlite_backup_waits_without_busy_spinning;
           Alcotest.test_case "load extension toggle" `Quick
             test_sqlite_load_extension_toggle;
           Alcotest.test_case "config error and testing helpers" `Quick

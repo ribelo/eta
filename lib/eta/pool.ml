@@ -255,11 +255,40 @@ let close_entry ?(release_permit = true) t entry =
          | `Closed -> Effect.unit
          | `Close_failed err -> Effect.fail err)
 
+exception Close_entries_failed of string
+
+type 'err close_entries_failure =
+  | Close_typed of 'err
+  | Close_cause of 'err Cause.t
+
+let first_close_failure results =
+  let rec loop = function
+    | [] -> None
+    | Ok () :: rest -> loop rest
+    | Error (Cause.Fail err) :: _ -> Some (Close_typed err)
+    | Error cause :: _ -> Some (Close_cause cause)
+  in
+  loop results
+
+let fail_close_cause cause =
+  Effect.sync @@ fun () ->
+  let message =
+    Format.asprintf "Eta.Pool.close_entries: %a"
+      (Cause.pp (fun ppf _ ->
+           Format.pp_print_string ppf "<pool release failure>"))
+      cause
+  in
+  raise (Close_entries_failed message)
+
 let close_entries ?(release_permit = true) t entries =
   entries
   |> List.map (close_entry ~release_permit t)
   |> Effect.all_settled
-  |> Effect.map (fun _ -> ())
+  |> Effect.bind (fun results ->
+         match first_close_failure results with
+         | None -> Effect.unit
+         | Some (Close_typed err) -> Effect.fail err
+         | Some (Close_cause cause) -> fail_close_cause cause)
 
 let mark_released_to_close t =
   Effect.sync @@ fun () ->

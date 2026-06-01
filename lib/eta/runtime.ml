@@ -4,6 +4,12 @@ external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
 external blocking_pool_of_public : Effect.Blocking.Pool.t -> Blocking_runtime.t
   = "%identity"
 
+(* [Effect.t] is abstract to users. Runtime is the package-local interpreter,
+   so it may re-enter the internal representation without exporting that
+   representation through [Effect.mli]. *)
+external effect_of_public : ('a, 'err) Effect.t -> ('a, 'err) Effect_core.t =
+  "%identity"
+
 let blocking_runner_of_public runner =
   {
     Blocking_runtime.run_in_systhread =
@@ -53,11 +59,53 @@ let with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
   in
   f runtime
 
+let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
+    ('a, 'err) Exit.t =
+  if Blocking_runtime.in_worker () then
+    invalid_arg
+      "Eta.Runtime.run must not be called from inside an Effect.Blocking worker callback";
+  runtime.Runtime_core.tracer#with_fiber_context @@ fun () ->
+  let finalizers = ref [] in
+  let frame =
+    {
+      (* [Effect_core.frame] stores the runtime with an erased failure carrier
+         because one run can cross effects with different typed-failure
+         parameters. Runtime_core keeps failures keyed separately, so this cast
+         only erases the phantom carrier on the runtime value. *)
+      Effect_core.runtime = (Obj.magic runtime : Obj.t Runtime_core.t);
+      error_renderer = Effect_core.default_renderer;
+      fail_key = runtime.Runtime_core.default_fail_key;
+      sw = runtime.Runtime_core.outer_sw;
+      finalizers;
+    }
+  in
+  try
+    let body () =
+      Runtime_core.with_finalizers ~runtime
+        ~fail_key:runtime.Runtime_core.default_fail_key
+        ~error_renderer:frame.error_renderer finalizers (fun () ->
+          Effect_core.run_to_value frame (effect_of_public effect))
+    in
+    Exit.Ok
+      (if runtime.Runtime_core.tracing_enabled
+       || runtime.Runtime_core.metrics_enabled
+      then
+        Runtime_observability.with_blocking_event_emit
+          (Runtime_core.emit_blocking_event runtime)
+          body
+      else body ())
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn ->
+      Exit.Error
+        (Runtime_core.cause_of_exn_runtime runtime
+           runtime.Runtime_core.default_fail_key exn)
+
 let run_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
     ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace effect =
   with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger ?meter
     ?random ?island_pool ?blocking_pool ?capture_backtrace (fun runtime ->
-      Effect.run runtime effect)
+      run_effect runtime effect)
 
 let run ?island_pool ?blocking_pool runtime eff =
   let runtime =
@@ -76,7 +124,7 @@ let run ?island_pool ?blocking_pool runtime eff =
              | None -> runtime.Runtime_core.blocking_pool);
         }
   in
-  Effect.run runtime eff
+  run_effect runtime eff
 
 let run_exn t eff =
   let pp_typed_failure fmt err =
