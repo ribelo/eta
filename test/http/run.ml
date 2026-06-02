@@ -303,6 +303,8 @@ let () =
             test_h2_connection_returns_early_response;
           Alcotest.test_case "cancelled upload releases body" `Quick
             test_h2_connection_cancelled_upload_releases_body;
+          Alcotest.test_case "stream upload observes flow control" `Quick
+            test_h2_connection_stream_upload_observes_flow_control;
           Alcotest.test_case "cancelled fixed request releases stream" `Quick
             test_h2_connection_cancelled_fixed_request_releases_stream;
           Alcotest.test_case "cancelled body read preserves connection" `Quick

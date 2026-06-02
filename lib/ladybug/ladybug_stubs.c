@@ -279,6 +279,56 @@ static void result_owner_destroy(value v_owner)
   }
 }
 
+typedef struct {
+  char *ptr;
+} eta_ladybug_string_owner;
+
+static eta_ladybug_string_owner *ladybug_string_owner_val(value v_owner)
+{
+  return (eta_ladybug_string_owner *)Data_custom_val(v_owner);
+}
+
+static void ladybug_string_owner_finalize(value v_owner)
+{
+  eta_ladybug_string_owner *owner = ladybug_string_owner_val(v_owner);
+  if (owner->ptr != NULL && api.loaded) {
+    api.destroy_string(owner->ptr);
+    owner->ptr = NULL;
+  }
+}
+
+static struct custom_operations ladybug_string_owner_ops = {
+  "eta.ladybug.string_owner", ladybug_string_owner_finalize, custom_compare_default,
+  custom_hash_default, custom_serialize_default, custom_deserialize_default,
+  custom_compare_ext_default, custom_fixed_length_default
+};
+
+static value ladybug_string_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  eta_ladybug_string_owner *owner;
+  v_owner = caml_alloc_custom(&ladybug_string_owner_ops, sizeof(eta_ladybug_string_owner), 0, 1);
+  owner = ladybug_string_owner_val(v_owner);
+  owner->ptr = NULL;
+  CAMLreturn(v_owner);
+}
+
+static void ladybug_string_owner_set(value v_owner, char *ptr)
+{
+  ladybug_string_owner_val(v_owner)->ptr = ptr;
+}
+
+static void ladybug_string_owner_release(value v_owner)
+{
+  eta_ladybug_string_owner *owner = ladybug_string_owner_val(v_owner);
+  if (owner->ptr != NULL) {
+    char *ptr = owner->ptr;
+    owner->ptr = NULL;
+    api.destroy_string(ptr);
+  }
+}
+
 static lbug_database *db_val(value v) { return &((eta_ladybug_db *)Data_custom_val(v))->db; }
 static lbug_connection *conn_val(value v) { return &((eta_ladybug_conn *)Data_custom_val(v))->conn; }
 
@@ -679,9 +729,13 @@ static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *
 static value result_to_string(lbug_query_result *result)
 {
   CAMLparam0();
-  char *s = api.query_result_to_string(result);
-  value out = caml_copy_string(s == NULL ? "" : s);
-  if (s != NULL) api.destroy_string(s);
+  CAMLlocal2(out, owner);
+  char *s;
+  owner = ladybug_string_owner_alloc();
+  s = api.query_result_to_string(result);
+  ladybug_string_owner_set(owner, s);
+  out = caml_copy_string(s == NULL ? "" : s);
+  ladybug_string_owner_release(owner);
   CAMLreturn(out);
 }
 
@@ -920,6 +974,11 @@ static value arrow_field_names(struct ArrowSchema *schema)
   if (schema->n_children > (int64_t)Max_wosize)
     caml_failwith("ladybug: too many Arrow fields");
   field_names = caml_alloc((mlsize_t)schema->n_children, 0);
+  /* caml_copy_string can allocate and run the GC. Tag-0 blocks are scanned, so
+     every field must hold a valid OCaml value before the first copy. */
+  for (int64_t col_idx = 0; col_idx < schema->n_children; col_idx++) {
+    Store_field(field_names, (mlsize_t)col_idx, Val_int(0));
+  }
   for (int64_t col_idx = 0; col_idx < schema->n_children; col_idx++) {
     if (schema->children[col_idx] == NULL) {
       caml_failwith("ladybug: malformed Arrow schema child");

@@ -733,7 +733,15 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   let request : Eta_http.H1.Client.request =
     { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
   in
-  with_test_clock @@ fun sw clock rt ->
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let logger = Eta.Logger.in_memory () in
+  let rt =
+    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~logger:(Eta.Logger.as_capability logger) ()
+  in
   let pool =
     Eta_http.H1.Client.make_pool ~max_size:1 ~sw ~net url
     |> Eta.Runtime.run rt
@@ -765,7 +773,17 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   wait_until "request checkout released" (fun () ->
       (Eta_http.H1.Client.pool_stats pool).active = 0);
   let stats = Eta_http.H1.Client.pool_stats pool in
-  Alcotest.(check int) "active released" 0 stats.active
+  Alcotest.(check int) "active released" 0 stats.active;
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  let daemon_failures =
+    Eta.Logger.dump logger
+    |> List.filter (fun record ->
+           String.equal record.Eta.Logger.body "eta.daemon.failure")
+  in
+  Alcotest.(check int) "cancellation logged no daemon failure" 0
+    (List.length daemon_failures)
 
 (* GREEN TEST: server sends Connection: close; the connection is marked
    non-reusable and the health check rejects it on next checkout,

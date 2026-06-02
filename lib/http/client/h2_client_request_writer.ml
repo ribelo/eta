@@ -70,23 +70,31 @@ let request_of_request request url =
            (method_ (Request.method_value request))
            (Url.origin_form url))
 
-let write_chunk writer chunk =
-  let chunk = Bytes.to_string chunk in
-  let rec loop off =
-    if off >= String.length chunk then Eta.Effect.unit
-    else
-      let len = min 16_384 (String.length chunk - off) in
-      Eta.Effect.sync (fun () ->
-          H2_proto.Body.Writer.write_string writer (String.sub chunk off len))
-      |> Eta.Effect.bind (fun () -> loop (off + len))
-  in
-  loop 0
-
 let flush_body_writer writer =
   let promise, resolver = Eio.Promise.create () in
   H2_proto.Body.Writer.flush writer (fun result ->
       ignore (Eio.Promise.try_resolve resolver result));
   Eio.Promise.await promise
+
+(* Streaming uploads must await ocaml-h2's flush callback before pulling the next
+   chunk; it is the body writer's only transport-progress/backpressure signal. *)
+let write_chunk_result writer chunk =
+  let chunk = Bytes.to_string chunk in
+  let rec loop off =
+    if off >= String.length chunk then Eta.Effect.pure `Written
+    else
+      let len = min 16_384 (String.length chunk - off) in
+      Eta.Effect.sync (fun () ->
+          H2_proto.Body.Writer.write_string writer (String.sub chunk off len);
+          flush_body_writer writer)
+      |> Eta.Effect.bind (function
+           | `Written -> loop (off + len)
+           | `Closed -> Eta.Effect.pure `Closed)
+  in
+  loop 0
+
+let write_chunk writer chunk =
+  write_chunk_result writer chunk |> Eta.Effect.map (fun _ -> ())
 
 let write_fixed_body_sync writer chunks =
   let write_chunk chunk =
@@ -110,8 +118,10 @@ let rec write_stream writer body =
   |> Eta.Effect.bind (function
        | None -> Eta.Effect.unit
        | Some chunk ->
-           write_chunk writer chunk
-           |> Eta.Effect.bind (fun () -> write_stream writer body))
+           write_chunk_result writer chunk
+           |> Eta.Effect.bind (function
+                | `Written -> write_stream writer body
+                | `Closed -> Eta.Effect.unit))
 
 let write_body writer request_body upload =
   match upload with

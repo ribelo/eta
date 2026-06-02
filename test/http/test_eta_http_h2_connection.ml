@@ -213,6 +213,16 @@ let timeout_error uri =
     (Connection_protocol_violation
        { kind = "test_timeout"; message = "h2 request timed out" })
 
+let wait_until label predicate =
+  let rec loop attempts =
+    if predicate () then ()
+    else if attempts = 0 then Alcotest.failf "%s did not become true" label
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 50
+
 let pp_http_error_detail fmt (error : Eta_http.Error.t) =
   match error.kind with
   | Connection_protocol_violation { kind; message } ->
@@ -272,6 +282,67 @@ let test_h2_connection_cancelled_upload_releases_body () =
       | Eta.Exit.Ok _ -> Alcotest.fail "expected upload cancellation"
       | Eta.Exit.Error _ -> ());
       Alcotest.(check int) "cancelled upload body released" 1 !released)
+
+let test_h2_connection_stream_upload_observes_flow_control () =
+  let chunk_count = 8 in
+  let flow = Eio_mock.Flow.make "eta-http-h2-flow-control-upload-flow" in
+  let write_started, wake_write_started = Eio.Promise.create () in
+  let release_write, wake_release_write = Eio.Promise.create () in
+  let read_never = Eta_test.Async.unresolved () in
+  Eio_mock.Flow.on_copy_bytes flow
+    [
+      `Run
+        (fun () ->
+          ignore (Eio.Promise.try_resolve wake_write_started ());
+          Eio.Promise.await release_write);
+    ];
+  Eio_mock.Flow.on_read flow [ `Await read_never ];
+  with_test_clock @@ fun sw clock rt ->
+  let connection =
+    Eta_http.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http.H2.Connection.flow)
+      ()
+  in
+  let reads = ref 0 in
+  let released = ref 0 in
+  let body =
+    Eta_http.Body.Stream.of_reader
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      (fun () ->
+        if !reads >= chunk_count then Eta.Effect.pure Eta_http.Body.Stream.End
+        else (
+          incr reads;
+          Eta.Effect.pure
+            (Eta_http.Body.Stream.Chunk (Bytes.make 1024 'x'))))
+  in
+  let uri = "https://api.example.test/flow-control-upload" in
+  let request =
+    Eta_http.Request.make "POST" uri ~body:(Eta_http.Request.Stream body)
+  in
+  let result =
+    Eta_test.Async.fork_run sw rt
+      (Eta_http.Client.request_h2_on_connection connection request
+         (Eta_http.Request.url request)
+      |> Eta.Effect.timeout_as (Eta.Duration.ms 1)
+           ~on_timeout:(timeout_error uri))
+  in
+  wait_until "request write blocked" (fun () ->
+      Eio.Promise.is_resolved write_started);
+  for _ = 1 to 10 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "stream source was not drained without transport progress" true
+    (!reads < chunk_count);
+  Eta_test.Test_clock.adjust clock (Eta.Duration.ms 1);
+  (match Eta_test.Async.await result with
+  | Eta.Exit.Ok _ -> Alcotest.fail "closed upload unexpectedly succeeded"
+  | Eta.Exit.Error _ -> ());
+  Eio.Promise.resolve wake_release_write 4096;
+  Eta_http.H2.Connection.shutdown connection;
+  Alcotest.(check int) "stream released" 1 !released
 
 let test_h2_connection_cancelled_fixed_request_releases_stream () =
   with_h2_server

@@ -99,6 +99,10 @@ let release_body release_ch =
                 | `Closed | `Closed_with_error _ -> Effect.unit)
        | `Full | `Closed | `Closed_with_error _ -> Effect.unit)
 
+(* H1 pools are keyed by HTTP origin, not by full URLs or connection targets:
+   scheme, host, and effective port are the only identity fields that may affect
+   reuse. The string form is the canonical diagnostic form checked by
+   request_with_pool as well as the client pool table. *)
 let origin_key url =
   Printf.sprintf "%s://%s:%d"
     (Url.scheme_to_string (Url.scheme url))
@@ -218,6 +222,10 @@ let request_owner pool request response_ch release_ch cancel_ch =
                  H1_client_errors.close_flow request conn.flow
                  |> Effect.catch (fun _ -> Effect.unit)
                  |> Effect.bind (fun () ->
+                        (* Expected caller cancellation is reported through
+                           [response_ch]. The catch below consumes this typed
+                           failure before the Private.daemon boundary, so it
+                           must not emit eta.daemon.failure. *)
                         Effect.fail
                           (`Http
                             (H1_client_errors.io_closed request Cancellation)))

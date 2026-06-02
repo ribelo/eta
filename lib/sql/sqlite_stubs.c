@@ -24,6 +24,10 @@ typedef struct {
   sqlite3_stmt *stmt;
 } eta_sqlite_stmt;
 
+typedef struct {
+  char *ptr;
+} eta_sqlite_string_owner;
+
 static void eta_sqlite_finalize_db(value v_db)
 {
   eta_sqlite_db *db = (eta_sqlite_db *)Data_custom_val(v_db);
@@ -70,6 +74,57 @@ static struct custom_operations eta_sqlite_stmt_ops = {
   custom_compare_ext_default,
   custom_fixed_length_default
 };
+
+static eta_sqlite_string_owner *sqlite_string_owner_val(value v_owner)
+{
+  return (eta_sqlite_string_owner *)Data_custom_val(v_owner);
+}
+
+static void sqlite_string_owner_finalize(value v_owner)
+{
+  eta_sqlite_string_owner *owner = sqlite_string_owner_val(v_owner);
+  if (owner->ptr != NULL) {
+    sqlite3_free(owner->ptr);
+    owner->ptr = NULL;
+  }
+}
+
+static struct custom_operations sqlite_string_owner_ops = {
+  "eta.sqlite.string_owner",
+  sqlite_string_owner_finalize,
+  custom_compare_default,
+  custom_hash_default,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
+static value sqlite_string_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  eta_sqlite_string_owner *owner;
+  v_owner = caml_alloc_custom(&sqlite_string_owner_ops, sizeof(eta_sqlite_string_owner), 0, 1);
+  owner = sqlite_string_owner_val(v_owner);
+  owner->ptr = NULL;
+  CAMLreturn(v_owner);
+}
+
+static void sqlite_string_owner_set(value v_owner, char *ptr)
+{
+  sqlite_string_owner_val(v_owner)->ptr = ptr;
+}
+
+static void sqlite_string_owner_release(value v_owner)
+{
+  eta_sqlite_string_owner *owner = sqlite_string_owner_val(v_owner);
+  if (owner->ptr != NULL) {
+    char *ptr = owner->ptr;
+    owner->ptr = NULL;
+    sqlite3_free(ptr);
+  }
+}
 
 static sqlite3 *eta_sqlite_db_val(value v_db)
 {
@@ -716,17 +771,17 @@ CAMLprim value eta_sqlite_statement_sql(value v_stmt)
 CAMLprim value eta_sqlite_expanded_sql(value v_stmt)
 {
   CAMLparam1(v_stmt);
-  CAMLlocal1(result);
+  CAMLlocal2(result, owner);
   sqlite3_stmt *stmt = eta_sqlite_stmt_val(v_stmt);
   char *sql;
   if (stmt == NULL) {
     caml_failwith("sqlite expanded_sql: statement is finalized");
   }
+  owner = sqlite_string_owner_alloc();
   sql = sqlite3_expanded_sql(stmt);
+  sqlite_string_owner_set(owner, sql);
   result = caml_copy_string(sql == NULL ? "" : sql);
-  if (sql != NULL) {
-    sqlite3_free(sql);
-  }
+  sqlite_string_owner_release(owner);
   CAMLreturn(result);
 }
 

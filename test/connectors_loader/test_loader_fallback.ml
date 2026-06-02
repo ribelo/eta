@@ -127,6 +127,49 @@ let check_ladybug_arrow_materialization_reuses_column_names () =
     (require_sub body ~needle:"field_names = arrow_field_names(&owner->schema)" : int);
   ignore (require_sub body ~needle:"Field(field_names, (mlsize_t)col_idx)" : int)
 
+let check_column_name_arrays_initialize_gc_roots () =
+  let check source ~start_marker ~end_marker ~init_marker =
+    let body = function_source source ~start_marker ~end_marker in
+    let alloc = require_sub body ~needle:"field_names = caml_alloc((mlsize_t)" in
+    let init = require_sub body ~needle:init_marker in
+    let copy = require_sub body ~needle:"field_name = caml_copy_string" in
+    Alcotest.(check bool)
+      "tuple fields are initialized before allocating strings" true
+      (alloc < init && init < copy)
+  in
+  check (read_file (find_duckdb_stubs_source ()))
+    ~start_marker:"static value duckdb_column_names("
+    ~end_marker:"static value materialize_rows("
+    ~init_marker:"Store_field(field_names, (mlsize_t)col_idx, Val_int(0))";
+  check (read_file (find_ladybug_stubs_source ()))
+    ~start_marker:"static value arrow_field_names("
+    ~end_marker:"static value materialize_arrow_rows("
+    ~init_marker:"Store_field(field_names, (mlsize_t)col_idx, Val_int(0))"
+
+let check_foreign_strings_are_owned_before_ocaml_copy () =
+  let check source ~start_marker ~end_marker ~alloc_marker ~set_marker
+      ~copy_marker ~release_marker =
+    let body = function_source source ~start_marker ~end_marker in
+    let alloc = require_sub body ~needle:alloc_marker in
+    let set = require_sub body ~needle:set_marker in
+    let copy = require_sub body ~needle:copy_marker in
+    let release = require_sub body ~needle:release_marker in
+    Alcotest.(check bool) "foreign string owner is installed before copy" true
+      (alloc < set && set < copy && copy < release)
+  in
+  check (read_file (find_sqlite_stubs_source ()))
+    ~start_marker:"CAMLprim value eta_sqlite_expanded_sql("
+    ~end_marker:"CAMLprim value eta_sqlite_statement_readonly("
+    ~alloc_marker:"owner = sqlite_string_owner_alloc()"
+    ~set_marker:"sqlite_string_owner_set(owner, sql)"
+    ~copy_marker:"caml_copy_string" ~release_marker:"sqlite_string_owner_release(owner)";
+  check (read_file (find_ladybug_stubs_source ()))
+    ~start_marker:"static value result_to_string("
+    ~end_marker:"static value execute_direct("
+    ~alloc_marker:"owner = ladybug_string_owner_alloc()"
+    ~set_marker:"ladybug_string_owner_set(owner, s)"
+    ~copy_marker:"caml_copy_string" ~release_marker:"ladybug_string_owner_release(owner)"
+
 let check_ladybug_direct_queries_check_strdup () =
   let source = read_file (find_ladybug_stubs_source ()) in
   let check_function start_marker end_marker =
@@ -332,6 +375,10 @@ let () =
             check_duckdb_materialization_reuses_column_names;
           Alcotest.test_case "Ladybug materialization reuses column names" `Quick
             check_ladybug_arrow_materialization_reuses_column_names;
+          Alcotest.test_case "column name arrays initialize GC roots" `Quick
+            check_column_name_arrays_initialize_gc_roots;
+          Alcotest.test_case "foreign strings owned before copy" `Quick
+            check_foreign_strings_are_owned_before_ocaml_copy;
           Alcotest.test_case "Ladybug direct queries check strdup" `Quick
             check_ladybug_direct_queries_check_strdup;
           Alcotest.test_case "Turso prepare copies SQL and blocks" `Quick

@@ -518,6 +518,11 @@ static value duckdb_column_names(duckdb_result *result, idx_t cols)
   CAMLlocal2(field_names, field_name);
   if (cols > (idx_t)Max_wosize) caml_failwith("duckdb column count too large");
   field_names = caml_alloc((mlsize_t)cols, 0);
+  /* caml_copy_string can allocate and run the GC. Tag-0 blocks are scanned, so
+     every field must hold a valid OCaml value before the first copy. */
+  for (idx_t col_idx = 0; col_idx < cols; col_idx++) {
+    Store_field(field_names, (mlsize_t)col_idx, Val_int(0));
+  }
   for (idx_t col_idx = 0; col_idx < cols; col_idx++) {
     const char *name = api.column_name(result, col_idx);
     field_name = caml_copy_string(name == NULL ? "" : name);

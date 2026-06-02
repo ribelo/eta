@@ -56,15 +56,10 @@ let validate_frame frame =
     invalid_arg "WebSocket control frame payload exceeds 125 bytes"
 
 let write_uint16 bytes off value =
-  Bytes.set bytes off (Char.chr ((value lsr 8) land 0xff));
-  Bytes.set bytes (off + 1) (Char.chr (value land 0xff))
+  Bytes.set_int16_be bytes off value
 
 let write_uint64 bytes off value =
-  for index = 0 to 7 do
-    let shift = (7 - index) * 8 in
-    let byte = Int64.(to_int (logand (shift_right_logical value shift) 0xffL)) in
-    Bytes.set bytes (off + index) (Char.chr byte)
-  done
+  Bytes.set_int64_be bytes off value
 
 let apply_mask mask payload =
   let out = Bytes.copy payload in
@@ -110,17 +105,9 @@ let encode ?mask frame =
   out
 
 let read_uint16 bytes off =
-  (Char.code (Bytes.get bytes off) lsl 8) lor Char.code (Bytes.get bytes (off + 1))
+  Bytes.get_uint16_be bytes off
 
-let read_uint64 bytes off =
-  let acc = ref 0L in
-  for index = 0 to 7 do
-    acc :=
-      Int64.logor
-        (Int64.shift_left !acc 8)
-        (Int64.of_int (Char.code (Bytes.get bytes (off + index))))
-  done;
-  !acc
+let read_uint64 bytes off = Bytes.get_int64_be bytes off
 
 let decode ?(masked = false) bytes =
   let len = Bytes.length bytes in
