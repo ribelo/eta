@@ -136,6 +136,23 @@ let acquire t n =
                       | Resolved_unclaimed -> waiter.state <- Claimed
                       | Waiting | Claimed | Cancelled -> ()))))
 
+let acquire_or_abort t n ~abort =
+  (* [claimed] is set in the same synchronous step that produces the [true]
+     success value, so a granted permit and the [true] outcome are observed
+     together. If [abort] wins the race, the acquisition's success value is
+     dropped by [race]; we reclaim the permit it claimed so a lost race never
+     leaks capacity. Cancellation *before* claiming is already handled by
+     [acquire]'s own waiter cleanup, leaving [claimed] false. *)
+  let claimed = Atomic.make false in
+  Effect.race
+    [ acquire t n |> Effect.map (fun () -> Atomic.set claimed true; true);
+      abort |> Effect.map (fun _ -> false) ]
+  |> Effect.bind (fun acquired ->
+         if acquired then Effect.pure true
+         else if Atomic.get claimed then
+           Effect.sync (fun () -> release t n) |> Effect.map (fun () -> false)
+         else Effect.pure false)
+
 let with_permits t n f =
   Effect.scoped
     (Effect.acquire_release

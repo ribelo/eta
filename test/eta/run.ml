@@ -245,6 +245,8 @@ let () =
             test_effect_race_simultaneous_success_and_failure_returns_winner;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick
             test_effect_race_all_failures_returns_concurrent_causes;
+          Alcotest.test_case "race releases scoped loser resource" `Quick
+            test_effect_race_releases_scoped_loser_resource;
           Alcotest.test_case "par simultaneous failures baseline" `Quick
             test_par_simultaneous_failures_records_concurrent_baseline;
           Alcotest.test_case "par finalizer cancellation baseline" `Quick
@@ -638,6 +640,12 @@ let () =
             test_semaphore_fifo_wakes_waiters_in_order;
           Alcotest.test_case "multi-permit contention" `Quick
             test_semaphore_multi_permit_contention;
+          Alcotest.test_case "acquire_or_abort acquires when available" `Quick
+            test_semaphore_acquire_or_abort_acquires_when_available;
+          Alcotest.test_case "acquire_or_abort aborts without permit" `Quick
+            test_semaphore_acquire_or_abort_aborts_without_permit;
+          Alcotest.test_case "acquire_or_abort reclaims claimed permit" `Quick
+            test_semaphore_acquire_or_abort_reclaims_claimed_permit_on_abort;
         ] );
       ( "Upstream invariants",
         [

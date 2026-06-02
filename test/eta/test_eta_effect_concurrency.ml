@@ -451,6 +451,22 @@ let test_effect_race_all_failures_returns_concurrent_causes () =
     (Cause.Concurrent [ Cause.Fail "first"; Cause.Fail "second" ])
     (Eio.Promise.await promise)
 
+(* The review claimed [race] "leaks" resources held by losing branches. That is
+   only true for *un-scoped* acquisitions: a branch that scopes its resource
+   (acquire_release / with_permits) has it released when the loser is cancelled,
+   even though the loser ran to completion and its value was dropped. This is
+   the intended structured-concurrency contract; race owns cancellation, scopes
+   own resource lifetime. *)
+let test_effect_race_releases_scoped_loser_resource () =
+  with_runtime @@ fun rt ->
+  let sem = Semaphore.make ~permits:1 in
+  let winner = Effect.pure `Winner in
+  let loser = Semaphore.with_permits sem 1 (fun () -> Effect.pure `Loser) in
+  let result = run_ok rt (Effect.race [ winner; loser ]) in
+  Alcotest.(check bool) "winner wins" true (result = `Winner);
+  Alcotest.(check int) "scoped loser permit released, not leaked" 1
+    (Semaphore.available sem)
+
 let test_par_simultaneous_failures_records_concurrent_baseline () =
   with_test_clock @@ fun sw _clock rt ->
   let go, release = Eio.Promise.create () in

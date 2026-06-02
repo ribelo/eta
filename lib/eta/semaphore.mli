@@ -38,6 +38,17 @@ val with_permits : t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effec
 (** [with_permits t n f] acquires [n] permits, runs [f ()], and releases the
     permits on exit (success, typed failure, or cancellation). *)
 
+val acquire_or_abort :
+  t -> int -> abort:('a, 'err) Effect.t -> (bool, 'err) Effect.t
+(** [acquire_or_abort t n ~abort] races acquiring [n] permits against [abort].
+    Returns [true] if the permits were acquired, or [false] if [abort] produced
+    a value first.
+
+    Unlike racing {!acquire} against a signal directly, a lost acquisition never
+    leaks capacity: if the acquisition concurrently claimed its permits but lost
+    the race, those permits are released before returning [false].
+    @raise Invalid_argument if [n <= 0] or [n] exceeds the semaphore capacity. *)
+
 val available : t -> int
 (** Current available permit count. May race with other fibers. *)
 

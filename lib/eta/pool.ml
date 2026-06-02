@@ -216,21 +216,20 @@ let reserve t =
 
 let wait_for_shutdown t =
   Effect.sync (fun () -> Eio.Promise.await t.shutdown_requested)
-  |> Effect.map (fun () -> `Shutdown)
 
 let acquire_permit t =
   Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down))
   |> Effect.bind (function
        | true -> Effect.fail `Pool_shutdown
        | false ->
-           Effect.race
-             [
-               Semaphore.acquire t.sem 1 |> Effect.map (fun () -> `Permit);
-               wait_for_shutdown t;
-             ]
+           (* Race admission against shutdown. [acquire_or_abort] guarantees the
+              permit is reclaimed if shutdown wins the race after the permit was
+              already claimed, so a shutdown that coincides with permit grant
+              never leaks pool capacity. *)
+           Semaphore.acquire_or_abort t.sem 1 ~abort:(wait_for_shutdown t)
            |> Effect.bind (function
-                | `Permit -> Effect.unit
-                | `Shutdown -> Effect.fail `Pool_shutdown))
+                | true -> Effect.unit
+                | false -> Effect.fail `Pool_shutdown))
 
 let mark_open_failed t =
   Effect.sync @@ fun () ->
