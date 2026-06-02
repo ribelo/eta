@@ -123,21 +123,16 @@ let rec interpret_supervisor_scope :
                     cancel_cancel frame cancel_context Supervisor_cancelled;
                   switch_run frame @@ fun sw ->
                   child_sw := Some sw;
-                  let finalizers = ref [] in
-                  let child_frame =
-                    {
-                      frame with
-                      sw;
-                      finalizers;
-                      error_renderer = default_renderer;
-                    }
-                  in
-                  Ok
-                    (Runtime_core.with_finalizers ~runtime:frame.runtime
-                       ~fail_key:frame.fail_key
-                       ~error_renderer:child_frame.error_renderer finalizers
-                       (fun () ->
-                         interpret_supervisor_scope child_frame child_scope))
+                  match
+                    run_scope_body ~sw frame (fun child_frame ->
+                        interpret_supervisor_scope child_frame child_scope)
+                  with
+                  | Exit.Ok value -> Ok value
+                  | Exit.Error cause
+                    when Atomic.get cancel_requested
+                         && is_internal_cancel_cause cause ->
+                      Error Cause.interrupt
+                  | Exit.Error cause -> Error cause
                 with
                 | Supervisor_cancelled when Atomic.get cancel_requested ->
                     Error Cause.interrupt
@@ -183,10 +178,7 @@ let supervisor_scoped ?max_failures body =
     ok
       (switch_run frame @@ fun sw ->
        let supervisor = Runtime_supervisor.make ~sw ~max_failures in
-       let finalizers = ref [] in
-       let child_frame = { frame with sw; finalizers } in
-       Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-         ~error_renderer:child_frame.error_renderer finalizers (fun () ->
+       run_scope_body_value ~sw frame (fun child_frame ->
            Fun.protect
              ~finally:(fun () -> Runtime_supervisor.cancel_children supervisor)
            (fun () -> interpret_supervisor_scope child_frame (body.run supervisor))))

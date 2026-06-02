@@ -8,6 +8,7 @@ depends: [
   "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
+  "eta_sql_driver"
   "eta_sql_dsl"
   "odoc" {with-doc}
 ]

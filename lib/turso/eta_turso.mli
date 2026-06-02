@@ -112,6 +112,11 @@ module Pool : sig
     ?max_lifetime:Eta.Duration.t ->
     config ->
     (t, error) Eta.Effect.t
+  (** Create a Turso pool. Pooled operations call [sqlite3_interrupt] on Eta
+      cancellation through the shared SQL-driver leased-blocking helper.
+      [Detach_started] blocking pools are rejected for pooled operations because a
+      detached worker could keep using a leased connection after the pool returns
+      it to another caller. *)
 
   val with_db :
     t ->

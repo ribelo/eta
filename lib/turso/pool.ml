@@ -38,27 +38,23 @@ let to_public_error = function
 
 let public effect = Eta.Effect.map_error to_public_error effect
 
-let map_turso_result f () =
-  match f () with
-  | Ok value -> Ok value
-  | Result.Error err -> Result.Error (`Turso err)
+module Driver_blocking = Eta_sql_driver.Make (struct
+  type driver_error = Types.error
+  type nonrec error = raw_error
 
-let blocking_result ?blocking_pool ?name f =
-  Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_turso_result f)
+  let map_error (err : driver_error) : error = `Turso err
 
-let detach_started_blocking_pool_error =
-  `Invalid_blocking_pool
-    "Eta_turso.Pool: Detach_started blocking pools cannot be used with leased connections"
+  let detach_started_error =
+    `Invalid_blocking_pool
+      "Eta_turso.Pool: Detach_started blocking pools cannot be used with leased connections"
+end)
 
-let reject_detach_started_blocking_pool = function
-  | Some pool
-    when Eta.Effect.Blocking.Pool.shutdown_policy pool = Detach_started ->
-      Eta.Effect.fail detach_started_blocking_pool_error
-  | Some _ | None -> Eta.Effect.unit
+let blocking_result = Driver_blocking.blocking_result
 
-let leased_blocking_result ?blocking_pool ?name f =
-  reject_detach_started_blocking_pool blocking_pool
-  |> Eta.Effect.bind (fun () -> blocking_result ?blocking_pool ?name f)
+let leased_blocking_result ?blocking_pool ?name db f =
+  Driver_blocking.leased_blocking_result ?blocking_pool ?name
+    ~on_cancel:(fun () -> interrupt db)
+    f
 
 let acquire ?blocking_pool config =
   blocking_result ?blocking_pool ~name:"turso.open" (fun () -> open_ config)
@@ -95,32 +91,32 @@ let with_db t f =
 
 let query ?blocking_pool t sql params =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.query" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.query" db (fun () ->
           query db sql params))
 
 let select ?blocking_pool t query =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.select" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.select" db (fun () ->
           select db query))
 
 let returning ?blocking_pool t query =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.returning" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.returning" db (fun () ->
           returning db query))
 
 let execute ?blocking_pool t sql params =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.execute" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.execute" db (fun () ->
           execute db sql params))
 
 let execute_compiled ?blocking_pool t query =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.execute_compiled" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.execute_compiled" db (fun () ->
           execute_compiled db query))
 
 let run_schema ?blocking_pool t schema =
   with_db_internal t (fun db ->
-      leased_blocking_result ?blocking_pool ~name:"turso.schema" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.schema" db (fun () ->
           run_schema db schema))
 
 let shutdown ?deadline t = Eta.Pool.shutdown ?deadline t |> public

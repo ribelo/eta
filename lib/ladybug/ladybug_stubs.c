@@ -405,10 +405,10 @@ static lbug_value *create_lbug_map(value fields, string_copies *copies)
     keys[i] = api.value_create_string(key);
     vals[i] = create_lbug_value(Field(pair, 1), copies);
     if (keys[i] == NULL || vals[i] == NULL) {
-      /* destroy_lbug_values frees the array too */
-      if (vals[i] == NULL && keys[i] != NULL) api.value_destroy(keys[i]);
-      destroy_lbug_values(keys, i);
-      destroy_lbug_values(vals, i);
+      /* calloc leaves missing slots NULL, so include the partially-filled index
+         to release whichever side succeeded before destroying both arrays. */
+      destroy_lbug_values(keys, i + 1);
+      destroy_lbug_values(vals, i + 1);
       return NULL;
     }
     i++;

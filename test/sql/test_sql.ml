@@ -79,17 +79,25 @@ let test_database_pool_shutdown_keeps_parent_open_on_timeout () =
       ("lib/sql/pool.ml", "let shutdown ?deadline", "let stats");
     ]
 
-let test_turso_pool_rejects_detach_started_blocking_pool_source () =
+let test_turso_pool_uses_shared_interruptible_leased_blocking_source () =
   let source = read_file (find_source_file "lib/turso/pool.ml") in
   ignore
     (require_sub source ~needle:"Invalid_blocking_pool of string" : int);
-  ignore
-    (require_sub source ~needle:"let reject_detach_started_blocking_pool" : int);
   ignore
     (require_sub source
        ~needle:
          "Eta_turso.Pool: Detach_started blocking pools cannot be used with leased connections" :
       int);
+  ignore
+    (require_sub source
+       ~needle:"module Driver_blocking = Eta_sql_driver.Make" :
+      int);
+  ignore
+    (require_sub source
+       ~needle:"let leased_blocking_result ?blocking_pool ?name db f =" :
+      int);
+  ignore
+    (require_sub source ~needle:"~on_cancel:(fun () -> interrupt db)" : int);
   [
     "let query ?blocking_pool t sql params =";
     "let select ?blocking_pool t query =";
@@ -105,7 +113,15 @@ let test_turso_pool_rejects_detach_started_blocking_pool_source () =
          ignore
            (require_sub body
               ~needle:"leased_blocking_result ?blocking_pool" :
-             int))
+             int));
+  let types_source = read_file (find_source_file "lib/turso/types.ml") in
+  ignore (require_sub types_source ~needle:"external raw_interrupt" : int);
+  let connection_source = read_file (find_source_file "lib/turso/connection.ml") in
+  ignore (require_sub connection_source ~needle:"let interrupt db =" : int);
+  let stubs_source = read_file (find_source_file "lib/turso/turso_stubs.c") in
+  ignore (require_sub stubs_source ~needle:"void (*interrupt)(sqlite3 *);" : int);
+  ignore (require_sub stubs_source ~needle:"LOAD(interrupt)" : int);
+  ignore (require_sub stubs_source ~needle:"CAMLprim value eta_turso_interrupt" : int)
 
 module Users = struct
   module T = Q.Table.Make (struct

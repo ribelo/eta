@@ -73,6 +73,7 @@ type stmt = {
 external raw_available : unit -> string option = "eta_turso_available"
 external raw_open : string -> (int[@untagged]) -> raw_db = "eta_turso_open_bc" "eta_turso_open"
 external raw_close : raw_db -> (int[@untagged]) = "eta_turso_close_bc" "eta_turso_close"
+external raw_interrupt : raw_db -> unit = "eta_turso_interrupt"
 external raw_prepare : raw_db -> string -> raw_stmt = "eta_turso_prepare"
 external raw_finalize : raw_stmt -> (int[@untagged]) = "eta_turso_finalize_bc" "eta_turso_finalize"
 external raw_step : raw_stmt -> (int[@untagged]) = "eta_turso_step_bc" "eta_turso_step"

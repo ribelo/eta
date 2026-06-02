@@ -79,6 +79,9 @@ let with_statement db sql params f =
 
 let step stmt = if stmt.finalized then 21 else raw_step stmt.raw
 
+let interrupt db =
+  if not db.closed then raw_interrupt db.raw
+
 let query db sql params =
   if_open db @@ fun () ->
   with_statement db sql params @@ fun stmt ->

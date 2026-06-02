@@ -382,6 +382,8 @@ let () =
         [
           Alcotest.test_case "observes child failure" `Quick
             test_supervisor_observes_child_failure;
+          Alcotest.test_case "child finalizer uses parent renderer" `Quick
+            test_supervisor_child_finalizer_uses_parent_error_renderer;
           Alcotest.test_case "await rethrows child failure" `Quick
             test_supervisor_await_rethrows_child_failure;
           Alcotest.test_case "cancel runs finalizer" `Quick

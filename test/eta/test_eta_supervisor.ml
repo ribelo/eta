@@ -20,6 +20,39 @@ let test_supervisor_observes_child_failure () =
   | Exit.Ok [ Cause.Fail `Boom ] -> ()
   | _ -> Alcotest.fail "expected observed child failure"
 
+let test_supervisor_child_finalizer_uses_parent_error_renderer () =
+  with_runtime @@ fun rt ->
+  let render = function `Cleanup_failed -> "rendered cleanup" in
+  let child =
+    Effect.acquire_release ~acquire:Effect.unit
+      ~release:(fun () -> Effect.fail `Cleanup_failed)
+  in
+  let program =
+    Supervisor.scoped {
+      run =
+        fun (type s) sup ->
+          let open Supervisor.Scope in
+          let* (_child : (s, [> `Cleanup_failed ], unit) Supervisor.child) =
+            start sup (lift child)
+          in
+          let* () = yield in
+          failures sup;
+    }
+    |> Effect.with_error_renderer render
+  in
+  match Runtime.run rt program with
+  | Exit.Ok [ Cause.Finalizer finalizer ] ->
+      Alcotest.(check bool)
+        "custom renderer" true
+        (finalizer_contains "rendered cleanup" finalizer)
+  | Exit.Ok failures ->
+      Alcotest.failf "expected one child finalizer failure, got %d"
+        (List.length failures)
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected supervisor failure: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+
 let test_supervisor_await_rethrows_child_failure () =
   with_runtime @@ fun rt ->
   let program =

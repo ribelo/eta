@@ -46,6 +46,7 @@ typedef struct {
   int loaded;
   int (*open_v2)(const char *, sqlite3 **, int, const char *);
   int (*close_v2)(sqlite3 *);
+  void (*interrupt)(sqlite3 *);
   int (*prepare_v2)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
   int (*finalize)(sqlite3_stmt *);
   int (*step)(sqlite3_stmt *);
@@ -188,8 +189,8 @@ static int eta_turso_load_unlocked(void)
     return 0;
   }
 
-  if (!LOAD(open_v2) || !LOAD(close_v2) || !LOAD(prepare_v2) ||
-      !LOAD(finalize) || !LOAD(step) || !LOAD(bind_null) ||
+  if (!LOAD(open_v2) || !LOAD(close_v2) || !LOAD(interrupt) ||
+      !LOAD(prepare_v2) || !LOAD(finalize) || !LOAD(step) || !LOAD(bind_null) ||
       !LOAD(bind_int64) || !LOAD(bind_double) || !LOAD(bind_text) ||
       !LOAD(bind_blob) || !LOAD(column_count) || !LOAD(column_name) ||
       !LOAD(column_type) || !LOAD(column_int64) || !LOAD(column_double) ||
@@ -279,6 +280,15 @@ CAMLprim intnat eta_turso_close(value v_db)
 }
 
 CAMLprim value eta_turso_close_bc(value v_db) { return Val_int(eta_turso_close(v_db)); }
+
+CAMLprim value eta_turso_interrupt(value v_db)
+{
+  CAMLparam1(v_db);
+  ensure_loaded();
+  sqlite3 *db = db_val(v_db);
+  if (db != NULL) api.interrupt(db);
+  CAMLreturn(Val_unit);
+}
 
 CAMLprim value eta_turso_prepare(value v_db, value v_sql)
 {

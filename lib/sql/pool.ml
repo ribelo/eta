@@ -22,31 +22,24 @@ type _ runner =
 
 type t = pool runner
 
-let map_sql_result f () =
-  match f () with
-  | Ok value -> Ok value
-  | Result.Error err -> Result.Error (`Eta_sql err)
+module Driver_blocking = Eta_sql_driver.Make (struct
+  type driver_error = Types.sql_error
+  type nonrec error = error
 
-let blocking_result ?blocking_pool ?name f =
-  Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_sql_result f)
+  let map_error err = `Eta_sql err
 
-let detach_started_blocking_pool_error =
-  `Eta_sql
-    (Types.Pool_error
-       "Eta_sql.Pool: Detach_started blocking pools cannot be used with leased connections")
+  let detach_started_error =
+    `Eta_sql
+      (Types.Pool_error
+         "Eta_sql.Pool: Detach_started blocking pools cannot be used with leased connections")
+end)
 
-let reject_detach_started_blocking_pool = function
-  | Some pool
-    when Eta.Effect.Blocking.Pool.shutdown_policy pool = Detach_started ->
-      Eta.Effect.fail detach_started_blocking_pool_error
-  | Some _ | None -> Eta.Effect.unit
+let blocking_result = Driver_blocking.blocking_result
 
 let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
   let interrupt () = Sqlite.interrupt (Connection.sqlite conn) in
-  reject_detach_started_blocking_pool blocking_pool
-  |> Eta.Effect.bind (fun () ->
-         Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
-           ~on_cancel:interrupt ~timeout ~on_timeout:`Timeout (map_sql_result f))
+  Driver_blocking.leased_blocking_result_timeout ?blocking_pool ~name
+    ~on_cancel:interrupt ~timeout ~on_timeout:`Timeout f
 
 let deadline_of_timeout timeout =
   Unix.gettimeofday () +. Eta.Duration.to_seconds_float timeout
@@ -92,8 +85,10 @@ let create ?blocking_pool ?default_timeout ?name ?(max_size = 10) ?max_idle
 let reject_runner_detach_started : type kind. kind runner -> (unit, error) Eta.Effect.t =
  fun runner ->
   match runner with
-  | Pool_runner state -> reject_detach_started_blocking_pool state.blocking_pool
-  | Tx_runner state -> reject_detach_started_blocking_pool state.blocking_pool
+  | Pool_runner state ->
+      Driver_blocking.reject_detach_started_blocking_pool state.blocking_pool
+  | Tx_runner state ->
+      Driver_blocking.reject_detach_started_blocking_pool state.blocking_pool
 
 let with_connection_timeout : type kind a.
     kind runner ->
@@ -331,34 +326,38 @@ end
 let with_transaction ?timeout (Pool_runner state as runner) body =
   let timeout = resolve_timeout runner timeout in
   let blocking_pool = state.blocking_pool in
-  reject_detach_started_blocking_pool blocking_pool |> Eta.Effect.bind (fun () ->
-  Eta.Pool.with_resource state.pool (fun conn ->
-      let committed = ref false in
-      Eta.Effect.scoped
-        (Eta.Effect.acquire_release
-           ~acquire:
-             (timed_blocking_result ?blocking_pool ~timeout ~conn
-                ~name:"sqlite.begin_transaction" (fun () ->
-                  Connection.begin_transaction conn))
-           ~release:(fun () ->
-             if !committed then Eta.Effect.unit
-             else
-               timed_blocking_result ?blocking_pool ~timeout ~conn
-                 ~name:"sqlite.rollback" (fun () -> Connection.rollback conn)
-               |> Eta.Effect.catch (fun err ->
-                      Eta.Effect.blocking ?pool:blocking_pool
-                        ~name:"sqlite.close_dirty" (fun () ->
-                          Connection.close conn)
-                      |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
-        |> Eta.Effect.bind (fun () ->
-               body
-                 (Tx_runner { conn; blocking_pool; default_timeout = Some timeout })
-               |> Eta.Effect.bind (fun value ->
+  Driver_blocking.reject_detach_started_blocking_pool blocking_pool
+  |> Eta.Effect.bind (fun () ->
+         Eta.Pool.with_resource state.pool (fun conn ->
+             let committed = ref false in
+             Eta.Effect.scoped
+               (Eta.Effect.acquire_release
+                  ~acquire:
+                    (timed_blocking_result ?blocking_pool ~timeout ~conn
+                       ~name:"sqlite.begin_transaction" (fun () ->
+                         Connection.begin_transaction conn))
+                  ~release:(fun () ->
+                    if !committed then Eta.Effect.unit
+                    else
                       timed_blocking_result ?blocking_pool ~timeout ~conn
-                        ~name:"sqlite.commit" (fun () -> Connection.commit conn)
-                      |> Eta.Effect.map (fun () ->
-                             committed := true;
-                             value))))))
+                        ~name:"sqlite.rollback" (fun () ->
+                          Connection.rollback conn)
+                      |> Eta.Effect.catch (fun err ->
+                             Eta.Effect.blocking ?pool:blocking_pool
+                               ~name:"sqlite.close_dirty" (fun () ->
+                                 Connection.close conn)
+                             |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
+             |> Eta.Effect.bind (fun () ->
+                    body
+                      (Tx_runner
+                         { conn; blocking_pool; default_timeout = Some timeout })
+                    |> Eta.Effect.bind (fun value ->
+                           timed_blocking_result ?blocking_pool ~timeout ~conn
+                             ~name:"sqlite.commit" (fun () ->
+                               Connection.commit conn)
+                           |> Eta.Effect.map (fun () ->
+                                  committed := true;
+                                  value))))))
 
 let shutdown ?deadline (Pool_runner state) = Eta.Pool.shutdown ?deadline state.pool
 let stats (Pool_runner state) = Eta.Pool.stats state.pool

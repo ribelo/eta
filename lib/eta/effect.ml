@@ -22,6 +22,10 @@ let daemon_internal effect =
           (try
              switch_run frame @@ fun sw ->
              let finalizers = ref [] in
+             (* Daemons report failures after their caller has returned, so they
+                use the runtime's daemon fail key and opaque typed-failure
+                renderer instead of inheriting a caller-specific renderer whose
+                typed error scope may no longer be meaningful. *)
              let child_frame =
                { frame with sw; finalizers; error_renderer = default_renderer }
              in

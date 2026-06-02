@@ -39,8 +39,8 @@ let () =
             `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
           Alcotest.test_case "database pool shutdown keeps parent on timeout"
             `Quick test_database_pool_shutdown_keeps_parent_open_on_timeout;
-          Alcotest.test_case "turso pool rejects detach-started blocking pool"
-            `Quick test_turso_pool_rejects_detach_started_blocking_pool_source;
+          Alcotest.test_case "turso pool uses interruptible leased blocking"
+            `Quick test_turso_pool_uses_shared_interruptible_leased_blocking_source;
           Alcotest.test_case
             "pool parent cancel interrupts and reuses connection" `Quick
             test_sql_pool_parent_cancel_interrupts_and_reuses_connection;

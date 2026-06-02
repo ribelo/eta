@@ -169,12 +169,12 @@ module Pool : sig
     config ->
     (t, error) Eta.Effect.t
   (** Create a DuckDB pool. Per-operation [timeout] values bound the Eta
-      caller's wait through {!Eta.Effect.blocking_result_timeout}; they do not
-      forcibly preempt a started DuckDB C call in a [Drain] blocking pool. Use a
-      DuckDB-level cancellation mechanism when the underlying call must stop
-      independently. [Detach_started] blocking pools are rejected for pooled
-      operations because a detached worker could keep using a leased connection
-      after the pool returns it to another caller. *)
+      caller's wait through {!Eta.Effect.blocking_result_timeout} and call
+      DuckDB interrupt on cancellation. This is cooperative database
+      cancellation, not OS-level preemption of arbitrary C work.
+      [Detach_started] blocking pools are rejected for pooled operations because a
+      detached worker could keep using a leased connection after the pool returns
+      it to another caller. *)
 
   val with_connection :
     t -> (connection -> ('a, error) Eta.Effect.t) -> ('a, error) Eta.Effect.t

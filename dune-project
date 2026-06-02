@@ -80,6 +80,17 @@
   (dune (>= 3.0))))
 
 (package
+ (name eta_sql_driver)
+ (synopsis "Shared Eta SQL driver runtime helpers")
+ (description
+  "eta_sql_driver provides shared blocking-pool and cancellation helpers for Eta SQL connector packages.")
+ (depends
+  (ocaml (= 5.2.0))
+  (ocaml-variants (= 5.2.0+ox))
+  (dune (>= 3.0))
+  eta))
+
+(package
  (name eta_sql)
  (synopsis "SQLite client for Eta")
  (description
@@ -89,6 +100,7 @@
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   eta
+  eta_sql_driver
   (eio (>= 1.0))
   conf-pkg-config
   conf-sqlite3))
@@ -103,6 +115,7 @@
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   eta
+  eta_sql_driver
   eta_sql_dsl))
 
 (package
@@ -115,6 +128,7 @@
   (ocaml-variants (= 5.2.0+ox))
   (dune (>= 3.0))
   eta
+  eta_sql_driver
   eta_sql
   eta_sql_dsl))
 

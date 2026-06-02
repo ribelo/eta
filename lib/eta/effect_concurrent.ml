@@ -5,16 +5,8 @@
 open Effect_core
 
 let run_child frame sw effect =
-  let finalizers = ref [] in
-  let child_frame = { frame with sw; finalizers } in
   frame.runtime.tracer#with_fiber_context @@ fun () ->
-  try
-    ok
-      (Runtime_core.with_finalizers ~runtime:frame.runtime
-         ~fail_key:frame.fail_key ~error_renderer:child_frame.error_renderer
-         finalizers (fun () ->
-           run_to_value child_frame effect))
-  with exn -> exit_of_exn child_frame exn
+  run_scope ~sw frame effect
 
 let atomic_push cell value =
   let rec loop () =

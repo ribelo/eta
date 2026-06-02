@@ -1,0 +1,6 @@
+(test
+ (name test_eta_sql_driver)
+ (libraries eta eta_sql_driver alcotest eio_main unix threads)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

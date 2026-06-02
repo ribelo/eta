@@ -161,6 +161,30 @@ let run_to_exit frame effect =
 
 let run_to_value frame effect = exit_to_value frame (run_to_exit frame effect)
 
+let run_scope_body ?sw frame body =
+  let finalizers = ref [] in
+  let sw = Option.value sw ~default:frame.sw in
+  let child_frame = { frame with sw; finalizers } in
+  try
+    ok
+      (Runtime_core.with_finalizers ~runtime:frame.runtime
+         ~fail_key:frame.fail_key
+         ~error_renderer:child_frame.error_renderer finalizers (fun () ->
+           body child_frame))
+  (* Child scopes report cancellation as an Exit so concurrent combinators,
+     retry/repeat, and supervisors can compose interruption with finalizers
+     uniformly. Root Runtime.run remains the boundary that re-raises plain Eio
+     cancellation to callers. *)
+  with exn -> exit_of_exn child_frame exn
+
+let run_scope ?sw frame effect =
+  run_scope_body ?sw frame (fun child_frame -> run_to_value child_frame effect)
+
+let run_scope_value ?sw frame effect = exit_to_value frame (run_scope ?sw frame effect)
+
+let run_scope_body_value ?sw frame body =
+  exit_to_value frame (run_scope_body ?sw frame body)
+
 let pure value = make (fun () -> ok value)
 let fail err = make (fun () -> error (Cause.Fail err))
 let unit = pure ()
@@ -305,17 +329,9 @@ let timeout_as duration ~on_timeout effect =
          timeout_fired := true;
          select timeout_sw `Timeout);
      fiber_fork frame ~sw:timeout_sw (fun () ->
-         let finalizers = ref [] in
-         let child_frame = { frame with sw = timeout_sw; finalizers } in
          let result =
            frame.runtime.tracer#with_fiber_context @@ fun () ->
-           try
-             ok
-               (Runtime_core.with_finalizers ~runtime:frame.runtime
-                  ~fail_key:frame.fail_key
-                  ~error_renderer:child_frame.error_renderer finalizers
-                  (fun () -> run_to_value child_frame effect))
-           with exn -> exit_of_exn child_frame exn
+           run_scope ~sw:timeout_sw frame effect
          in
          body_result := Some result;
          select timeout_sw `Body);
@@ -346,11 +362,7 @@ let repeat schedule effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   let run_iteration () =
-    let finalizers = ref [] in
-    let iteration_frame = { frame with finalizers } in
-    Runtime_core.with_finalizers ~runtime:frame.runtime ~fail_key:frame.fail_key
-      ~error_renderer:iteration_frame.error_renderer finalizers (fun () ->
-        run_to_value iteration_frame effect)
+    run_scope_value frame effect
   in
   try
     run_iteration ();
@@ -371,17 +383,7 @@ let retry schedule predicate effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-  let run_attempt () =
-    let finalizers = ref [] in
-    let attempt_frame = { frame with finalizers } in
-    try
-      ok
-        (Runtime_core.with_finalizers ~runtime:frame.runtime
-           ~fail_key:frame.fail_key ~error_renderer:attempt_frame.error_renderer
-           finalizers (fun () ->
-             run_to_value attempt_frame effect))
-    with exn -> exit_of_exn attempt_frame exn
-  in
+  let run_attempt () = run_scope frame effect in
   let rec loop () =
     match run_attempt () with
     | Exit.Ok _ as ok -> ok

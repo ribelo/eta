@@ -39,30 +39,23 @@ let to_raw_error = function
 
 let public effect = Eta.Effect.map_error to_public_error effect
 
-let map_duckdb_result f () =
-  match f () with
-  | Ok value -> Ok value
-  | Result.Error err -> Result.Error (`Duckdb err)
+module Driver_blocking = Eta_sql_driver.Make (struct
+  type driver_error = Types.error
+  type nonrec error = raw_error
 
-let blocking_result ?blocking_pool ?name f =
-  Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_duckdb_result f)
+  let map_error (err : driver_error) : error = `Duckdb err
 
-let detach_started_blocking_pool_error =
-  `Invalid_blocking_pool
-    "Eta_duckdb.Pool: Detach_started blocking pools cannot be used with leased connections"
+  let detach_started_error =
+    `Invalid_blocking_pool
+      "Eta_duckdb.Pool: Detach_started blocking pools cannot be used with leased connections"
+end)
 
-let reject_detach_started_blocking_pool = function
-  | Some pool
-    when Eta.Effect.Blocking.Pool.shutdown_policy pool = Detach_started ->
-      Eta.Effect.fail detach_started_blocking_pool_error
-  | Some _ | None -> Eta.Effect.unit
+let blocking_result = Driver_blocking.blocking_result
 
 let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-  reject_detach_started_blocking_pool blocking_pool
-  |> Eta.Effect.bind (fun () ->
-         Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
-           ~on_cancel:(fun () -> Connection.interrupt conn)
-           ~timeout ~on_timeout:`Timeout (map_duckdb_result f))
+  Driver_blocking.leased_blocking_result_timeout ?blocking_pool ~name
+    ~on_cancel:(fun () -> Connection.interrupt conn)
+    ~timeout ~on_timeout:`Timeout f
 
 let with_connection_internal t f = Eta.Pool.with_resource t.pool f |> public
 
