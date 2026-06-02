@@ -20,8 +20,8 @@
   runtime_erasure
   runtime_instrument
   runtime_observability
-  runtime_supervisor
-  runtime_supervisor_types)
+  runtime_substrate
+  runtime_supervisor)
  (libraries eio eio.unix cstruct portable unix threads)
  (flags (:standard -alert -unsafe_multidomain -alert -do_not_spawn_domains)))
 

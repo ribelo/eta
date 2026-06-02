@@ -404,6 +404,7 @@ int lbug_connection_execute(lbug_connection *conn, lbug_prepared_statement *stmt
 
 void sqlite3_open_v2(void) {}
 void sqlite3_close_v2(void) {}
+void sqlite3_interrupt(void) {}
 void sqlite3_prepare_v2(void) {}
 void sqlite3_finalize(void) {}
 void sqlite3_step(void) {}

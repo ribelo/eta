@@ -45,7 +45,7 @@ let with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
          ?meter ?random ?island_pool ?blocking_pool ~blocking_runner
          ?capture_backtrace ())
       with
-      Runtime_core.host_eio = Some host;
+      Runtime_core.substrate = Runtime_substrate.of_host host;
       now_ms = host_now_ms host clock;
     }
   in

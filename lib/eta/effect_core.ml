@@ -27,26 +27,13 @@ let fiberless_frame_key : frame option Domain.DLS.key =
 let fiber_get key =
   try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
 
-let host_fiber_get frame key =
-  match frame.runtime.host_eio with
-  | None -> None
-  | Some host -> (
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      try Fiber.get key with Stdlib.Effect.Unhandled _ -> None)
-
-let has_fiber_context () =
-  try
-    ignore (Eio.Fiber.get frame_key);
-    true
-  with Stdlib.Effect.Unhandled _ -> false
-
 let current_frame () =
   match fiber_get frame_key with
   | Some frame -> frame
   | None -> (
       match Domain.DLS.get fiberless_frame_key with
       | Some frame -> (
-          match host_fiber_get frame frame_key with
+          match frame.runtime.substrate.fiber_get frame_key with
           | Some frame -> frame
           | None -> frame)
       | None -> failwith "Eta effect requires Runtime.run")
@@ -59,71 +46,28 @@ let with_fiberless_frame frame f =
     f
 
 let with_frame frame f =
-  match frame.runtime.host_eio with
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      let bind () = Fiber.with_binding frame_key frame f in
-      if Option.is_some (Domain.DLS.get fiberless_frame_key) then bind ()
-      else with_fiberless_frame frame bind
-  | None ->
-      if has_fiber_context () then Eio.Fiber.with_binding frame_key frame f
-      else with_fiberless_frame frame f
+  frame.runtime.substrate.fiber_with_binding
+    ~dls_active:(Option.is_some (Domain.DLS.get fiberless_frame_key))
+    ~enter_fiberless:(with_fiberless_frame frame)
+    frame_key frame f
 
-let switch_run frame f =
-  match frame.runtime.host_eio with
-  | None -> Eio.Switch.run f
-  | Some host ->
-      let module Switch = (val Host_eio.switch host : Host_eio.SWITCH) in
-      Switch.run f
+let switch_run frame f = frame.runtime.substrate.switch_run f
 
-let switch_fail frame sw exn =
-  match frame.runtime.host_eio with
-  | None -> Eio.Switch.fail sw exn
-  | Some host ->
-      let module Switch = (val Host_eio.switch host : Host_eio.SWITCH) in
-      Switch.fail sw exn
+let switch_fail frame sw exn = frame.runtime.substrate.switch_fail sw exn
 
-let fiber_fork frame ~sw f =
-  match frame.runtime.host_eio with
-  | None -> Eio.Fiber.fork ~sw f
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      Fiber.fork ~sw f
+let fiber_fork frame ~sw f = frame.runtime.substrate.fiber_fork ~sw f
 
 let fiber_fork_daemon frame ~sw f =
-  match frame.runtime.host_eio with
-  | None -> Eio.Fiber.fork_daemon ~sw f
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      Fiber.fork_daemon ~sw f
+  frame.runtime.substrate.fiber_fork_daemon ~sw f
 
-let fiber_await_cancel frame =
-  match frame.runtime.host_eio with
-  | None -> Eio.Fiber.await_cancel ()
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      Fiber.await_cancel ()
+let fiber_await_cancel frame = frame.runtime.substrate.fiber_await_cancel ()
 
-let fiber_yield frame =
-  match frame.runtime.host_eio with
-  | None -> Eio.Fiber.yield ()
-  | Some host ->
-      let module Fiber = (val Host_eio.fiber host : Host_eio.FIBER) in
-      Fiber.yield ()
+let fiber_yield frame = frame.runtime.substrate.fiber_yield ()
 
-let cancel_sub frame f =
-  match frame.runtime.host_eio with
-  | None -> Eio.Cancel.sub f
-  | Some host ->
-      let module Cancel = (val Host_eio.cancel host : Host_eio.CANCEL) in
-      Cancel.sub f
+let cancel_sub frame f = frame.runtime.substrate.cancel_sub f
 
 let cancel_cancel frame cancel_context exn =
-  match frame.runtime.host_eio with
-  | None -> Eio.Cancel.cancel cancel_context exn
-  | Some host ->
-      let module Cancel = (val Host_eio.cancel host : Host_eio.CANCEL) in
-      Cancel.cancel cancel_context exn
+  frame.runtime.substrate.cancel_cancel cancel_context exn
 
 let render_error frame err =
   RObs.render_typed_failure ~error_renderer:frame.error_renderer (Obj.repr err)

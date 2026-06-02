@@ -79,7 +79,7 @@ type 'err t = {
   blocking_pool : Blocking_runtime.t option;
   default_blocking_pool : Blocking_runtime.t Lazy.t;
   default_island_wait_pool : Blocking_runtime.t Lazy.t;
-  host_eio : Host_eio.t option;
+  substrate : Runtime_substrate.t;
   capture_backtrace : bool;
   outer_sw : Eio.Switch.t;
   active : int P_atomic.t;
@@ -91,7 +91,8 @@ type 'err t = {
 
 let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
     ?(auto_instrument = false) ?logger ?meter ?random ?island_pool
-    ?blocking_pool ?blocking_runner ?(capture_backtrace = true) () =
+    ?blocking_pool ?blocking_runner ?(substrate = Runtime_substrate.direct)
+    ?(capture_backtrace = true) () =
   let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let tracing_enabled = Option.is_some tracer in
   let logging_enabled = Option.is_some logger in
@@ -156,7 +157,7 @@ let create ~sw ~clock ?sleep ?tracer ?(sampler = Sampler.always_on)
          | Some runner ->
              Blocking_runtime.Pool.create ~name:"runtime.island_wait" ~runner
                config);
-    host_eio = None;
+    substrate;
     capture_backtrace;
     outer_sw = sw;
     active = P_atomic.make 0;

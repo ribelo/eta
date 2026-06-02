@@ -38,10 +38,10 @@ and ('a, 'err) supervisor_body = {
 }
 
 and ('s, !'err) supervisor =
-  ('s, 'err) Runtime_supervisor_types.supervisor
+  ('s, 'err) Runtime_supervisor.supervisor
 
 and ('s, !'err, !'a) supervisor_child =
-  ('s, 'err, 'a) Runtime_supervisor_types.child
+  ('s, 'err, 'a) Runtime_supervisor.child
 
 exception Supervisor_cancelled
 
@@ -115,6 +115,12 @@ let rec interpret_supervisor_scope :
               Runtime_supervisor.unregister_child supervisor child_id)
             (fun () ->
               frame.runtime.tracer#with_fiber_context @@ fun () ->
+              let child_result = ref None in
+              let internal_cancel_result () =
+                match !child_result with
+                | Some result -> result
+                | None -> Error Cause.interrupt
+              in
               let result =
                 try
                   cancel_sub frame @@ fun cancel_context ->
@@ -123,19 +129,28 @@ let rec interpret_supervisor_scope :
                     cancel_cancel frame cancel_context Supervisor_cancelled;
                   switch_run frame @@ fun sw ->
                   child_sw := Some sw;
-                  match
-                    run_scope_body ~sw frame (fun child_frame ->
-                        interpret_supervisor_scope child_frame child_scope)
-                  with
-                  | Exit.Ok value -> Ok value
-                  | Exit.Error cause
-                    when Atomic.get cancel_requested
-                         && is_internal_cancel_cause cause ->
-                      Error Cause.interrupt
-                  | Exit.Error cause -> Error cause
+                  let result =
+                    let exit =
+                      run_scope_body ~sw frame (fun child_frame ->
+                          interpret_supervisor_scope child_frame child_scope)
+                    in
+                    match exit with
+                    | Exit.Ok value -> Ok value
+                    | Exit.Error cause
+                      when Atomic.get cancel_requested
+                           && is_internal_cancel_cause cause ->
+                        Error Cause.interrupt
+                    | Exit.Error cause -> Error cause
+                  in
+                  (* [Switch.run] may raise the internal cancellation reason
+                     after the child body has returned an [Exit] containing
+                     finalizer failures. Keep that child result so cleanup
+                     failures are not collapsed into plain interruption. *)
+                  child_result := Some result;
+                  result
                 with
                 | Supervisor_cancelled when Atomic.get cancel_requested ->
-                    Error Cause.interrupt
+                    internal_cancel_result ()
                 | exn ->
                     let cause =
                       Runtime_core.cause_of_exn_runtime frame.runtime
@@ -144,7 +159,7 @@ let rec interpret_supervisor_scope :
                     if
                       Atomic.get cancel_requested
                       && is_internal_cancel_cause cause
-                    then Error Cause.interrupt
+                    then internal_cancel_result ()
                     else Error cause
               in
               (match result with
