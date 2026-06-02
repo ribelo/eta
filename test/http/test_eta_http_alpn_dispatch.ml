@@ -1,5 +1,51 @@
 open Test_eta_http_support
 
+let read_file path =
+  let input = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input)
+    (fun () -> really_input_string input (in_channel_length input))
+
+let rec find_sub_from haystack ~needle index =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  if index + needle_len > haystack_len then None
+  else if String.sub haystack index needle_len = needle then Some index
+  else find_sub_from haystack ~needle (index + 1)
+
+let find_sub haystack ~needle = find_sub_from haystack ~needle 0
+
+let require_sub haystack ~needle =
+  match find_sub haystack ~needle with
+  | Some index -> index
+  | None -> Alcotest.failf "missing source marker: %s" needle
+
+let find_http_client_source () =
+  let candidates =
+    [
+      "lib/http/client/client.ml";
+      "../lib/http/client/client.ml";
+      "../../lib/http/client/client.ml";
+      "../../../lib/http/client/client.ml";
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate client.ml from %s" (Sys.getcwd ())
+
+let test_auto_client_uses_alpn_dispatch_state () =
+  let source = read_file (find_http_client_source ()) in
+  ignore (require_sub source ~needle:"type alpn_gate = {" : int);
+  ignore
+    (require_sub source
+       ~needle:"alpn_gates : (string, alpn_gate) Hashtbl.t;" : int);
+  ignore (require_sub source ~needle:"let begin_alpn state key =" : int);
+  ignore (require_sub source ~needle:"Alpn.begin_request gate.alpn" : int);
+  ignore (require_sub source ~needle:"Eio.Promise.await pending.promise" : int);
+  ignore (require_sub source ~needle:"Alpn.resolve gate.alpn pending protocol" : int);
+  ignore (require_sub source ~needle:"Alpn.cancel gate.alpn pending" : int);
+  ignore (require_sub source ~needle:"begin_alpn state key" : int)
+
 let test_alpn_state_collapses_pending_first_arrivals () =
   let alpn = Eta_http.Transport.Alpn.create () in
   let leader =
@@ -78,5 +124,4 @@ let test_dispatch_decides_alpn_route () =
          Eta_http.Transport.Dispatch.protocol_to_string
            (Eta_http.Transport.Dispatch.decision_protocol decision))
        (Eta_http.Transport.Dispatch.decide_alpn (Some "spdy/3")))
-
 

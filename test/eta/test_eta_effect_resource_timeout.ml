@@ -530,6 +530,31 @@ let test_effect_timeout_as_preserves_simultaneous_body_failure () =
           cause
   | Exit.Ok _ -> Alcotest.fail "expected simultaneous timeout/body failure"
 
+let test_effect_timeout_as_preserves_cancelled_body_finalizer_failure () =
+  with_test_clock @@ fun sw clock rt ->
+  let released = ref false in
+  let eff : (unit, [ `Slow | `Release ]) Effect.t =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () ->
+           released := true;
+           Effect.fail `Release)
+      |> Effect.bind (fun () ->
+             Effect.delay (Duration.seconds 10) Effect.unit))
+    |> Effect.timeout_as (Duration.seconds 5) ~on_timeout:`Slow
+  in
+  let promise = fork_run sw rt eff in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.seconds 5);
+  match Eio.Promise.await promise with
+  | Exit.Error cause ->
+      check_string_cause_contains "timeout failure observed" "slow"
+        (Cause.map (function `Slow -> "slow" | `Release -> "release") cause);
+      check_suppressed_finalizer
+        "cancelled body finalizer failure is preserved" "<typed failure>" cause;
+      Alcotest.(check bool) "release ran before timeout returned" true !released
+  | Exit.Ok _ -> Alcotest.fail "expected timeout/finalizer failure"
+
 let test_effect_timeout_as_nested_cancel_maps_to_outer_timeout () =
   with_test_clock @@ fun sw clock rt ->
   let inner : (string, typed_timeout_err) Effect.t =

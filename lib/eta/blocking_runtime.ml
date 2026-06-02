@@ -481,5 +481,7 @@ module Pool = struct
 
   let create ?name ?runner config = create ?name ?runner config
 
+  let shutdown_policy t = t.config.shutdown_policy
+
   let stats = stats
 end

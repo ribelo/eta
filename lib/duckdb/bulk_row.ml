@@ -2,7 +2,7 @@
 
 open Dsl_backend
 
-type 'table t = Value.t list
+type t = Value.t list
 
 let empty = []
 let value column value row = row @ [ column_value column value ]

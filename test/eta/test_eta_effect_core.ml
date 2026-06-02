@@ -479,6 +479,40 @@ let test_effect_finally_runs_on_eio_cancellation () =
   await_cancelled promise;
   Alcotest.(check bool) "cleanup ran" true !finalized
 
+let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let finalized = ref false in
+  let cancel_ctx = ref None in
+  let never, _resolver = Eio.Promise.create () in
+  let promise =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.await never)
+          |> Effect.finally
+               (Effect.sync (fun () -> finalized := true)
+               |> Effect.bind (fun () -> Effect.fail `Cleanup))))
+  in
+  wait_until (fun () -> Option.is_some !cancel_ctx);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  (match Eio.Promise.await_exn promise with
+  | Exit.Error
+      (Cause.Suppressed
+        {
+          primary = Cause.Interrupt _;
+          finalizer = Cause.Finalizer.Fail "<typed failure>";
+        }) ->
+      ()
+  | Exit.Ok _ -> Alcotest.fail "expected cancellation diagnostic failure"
+  | Exit.Error cause ->
+      Alcotest.failf "expected suppressed interrupt cleanup failure, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause);
+  Alcotest.(check bool) "cleanup ran" true !finalized
+
 let test_effect_catch_preserves_suppressed_finalizer_failure () =
   with_runtime @@ fun rt ->
   let eff =
@@ -537,6 +571,20 @@ let test_runtime_exit_fail_die_interrupt () =
   Expect.expect_typed_failure_eq Alcotest.string fail_exit "bad";
   Expect.expect_die die_exit (fun actual -> actual.exn == die);
   Expect.expect_interrupt interrupt_exit
+
+let test_runtime_user_exit_is_defect () =
+  with_runtime @@ fun rt ->
+  let result =
+    Runtime.run rt
+      (Effect.named "user.exit" (Effect.sync (fun () -> raise Stdlib.Exit)))
+  in
+  match result with
+  | Exit.Error (Cause.Die { exn = Stdlib.Exit; _ }) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected Stdlib.Exit as Die, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected Stdlib.Exit to fail"
 
 let test_runtime_run_propagates_eio_cancellation () =
   run_eio @@ fun stdenv ->

@@ -34,6 +34,17 @@ let collect_results name results =
          | None -> missing_result name index)
        results)
 
+let rec has_finalizer_diagnostic = function
+  | Cause.Finalizer _ | Cause.Suppressed { finalizer = _; _ } -> true
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists has_finalizer_diagnostic causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+
+let cause_of_list = function
+  | [] -> invalid_arg "Effect.race: empty diagnostic cause list"
+  | [ cause ] -> cause
+  | causes -> Cause.concurrent causes
+
 (** Run side-effecting forks under one switch and aggregate child causes. *)
 let par_run_forks frame ~forks ~assemble =
   let causes = Atomic.make [] in
@@ -72,29 +83,103 @@ let race_eval effects () =
   | _ ->
       let winner = ref None in
       let causes = ref [] in
+      let results = Eio.Stream.create (List.length effects) in
       let exception Race_won in
+      let rec has_race_won = function
+        | Race_won -> true
+        | Eio.Exn.Multiple causes ->
+            List.exists (fun (exn, _bt) -> has_race_won exn) causes
+        | _ -> false
+      in
+      let rec causes_without_race_won = function
+        | Race_won -> []
+        | Eio.Exn.Multiple causes ->
+            List.concat_map
+              (fun (exn, bt) ->
+                match exn with
+                | Race_won -> []
+                | Eio.Exn.Multiple _ -> causes_without_race_won exn
+                | _ ->
+                    [
+                      Runtime_core.cause_of_exn ~backtrace:bt
+                        ~capture_backtrace:frame.runtime.capture_backtrace
+                        frame.fail_key exn;
+                    ])
+              causes
+        | exn ->
+            [ Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn ]
+      in
       (try
          switch_run frame @@ fun race_sw ->
-         let results = Eio.Stream.create (List.length effects) in
          List.iter
            (fun effect ->
              fiber_fork frame ~sw:race_sw (fun () ->
                  Eio.Stream.add results (run_child frame race_sw effect)))
            effects;
+         let rec drain_cancelled_losers acc remaining =
+           if remaining = 0 then List.rev acc
+           else
+             match Eio.Stream.take results with
+             | Exit.Error cause when has_finalizer_diagnostic cause ->
+                 drain_cancelled_losers (cause :: acc) (remaining - 1)
+             | Exit.Error _ | Exit.Ok _ ->
+                 drain_cancelled_losers acc (remaining - 1)
+         in
          let rec collect failed remaining =
            if remaining = 0 then causes := List.rev failed
            else
              match Eio.Stream.take results with
              | Exit.Ok value ->
                  winner := Some value;
+                 (* Once a winner has produced side effects and published its
+                    value, outer cancellation must not discard that value while
+                    loser cleanup runs. The loser switch is still failed
+                    immediately; cancellation is deferred only for the
+                    post-winner cleanup window. *)
                  switch_fail frame race_sw Race_won;
-                 fiber_await_cancel frame
+                 let diagnostics = ref [] in
+                 (try
+                    Runtime_core.cancel_protect (fun () ->
+                        diagnostics :=
+                          drain_cancelled_losers [] (remaining - 1))
+                  with
+                  | Eio.Cancel.Cancelled _ | Race_won -> ());
+                 causes := List.rev_append !diagnostics !causes;
+                 raise Race_won
              | Exit.Error cause -> collect (cause :: failed) (remaining - 1)
          in
          collect [] (List.length effects)
-      with Race_won -> ());
+      with
+      | Race_won -> ()
+      | exn when has_race_won exn ->
+          (* Eio may aggregate the internal Race_won escape with simultaneous
+             switch-level failures. Race_won is only a control signal used to
+             stop losers after a winner has been stored; it must never leak as
+             a public Die cause. Ordinary loser failures remain ignored by race
+             semantics, while finalizer diagnostics below are still surfaced. *)
+          causes := List.rev_append (causes_without_race_won exn) !causes);
       (match !winner with
-      | Some value -> ok value
+      | Some value ->
+          let rec drain_diagnostics acc =
+            match Eio.Stream.take_nonblocking results with
+            | Some (Exit.Error cause) when has_finalizer_diagnostic cause ->
+                drain_diagnostics (cause :: acc)
+            | Some _ -> drain_diagnostics acc
+            | None -> List.rev acc
+          in
+          (match drain_diagnostics [] with
+          | [] ->
+              let switch_diagnostics =
+                List.filter has_finalizer_diagnostic !causes
+              in
+              if switch_diagnostics = [] then ok value
+              else error (cause_of_list switch_diagnostics)
+          | diagnostics ->
+              (* Ordinary loser failures are ignored by race semantics, but
+                 cleanup/finalizer failures produced while cancelling losers
+                 are diagnostics, not alternative race results. Surface them
+                 instead of returning a successful winner with hidden leaks. *)
+              error (cause_of_list diagnostics))
       | None -> error (Cause.concurrent !causes))
 
 let race effects = make ~names:(concat_names effects) (race_eval effects)

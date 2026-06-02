@@ -374,14 +374,23 @@ let export_signal t config signal =
     |> Eta.Effect.bind (fun () ->
            Eta.Effect.named
              ("eta_otel." ^ name ^ ".encode")
-             (Eta.Effect.sync (fun () -> encode_signal_body t config signal))
-           |> Eta.Effect.bind (fun body ->
-                  export_batch t config ~signal:signal_kind ~path ~body ~n
-                  |> Eta.Effect.annotate ~key:"otel.path" ~value:path
-                  |> Eta.Effect.annotate ~key:"otel.batch_size"
-                       ~value:(string_of_int n)
-                  |> Eta.Effect.named
-                       ("eta_otel.export." ^ signal_name signal_kind))))
+             (Eta.Effect.sync (fun () ->
+                  try Ok (encode_signal_body t config signal) with
+                  | exn -> Error (Printexc.to_string exn)))
+           |> Eta.Effect.bind (function
+                | Error msg ->
+                    (* Encoding is per batch. A bad telemetry value should
+                       drop that batch and release its in-flight count, not
+                       terminate the shared exporter daemon for future items. *)
+                    observe_error t
+                      (Printf.sprintf "OTLP %s encode failed: %s" name msg)
+                | Ok body ->
+                    export_batch t config ~signal:signal_kind ~path ~body ~n
+                    |> Eta.Effect.annotate ~key:"otel.path" ~value:path
+                    |> Eta.Effect.annotate ~key:"otel.batch_size"
+                         ~value:(string_of_int n)
+                    |> Eta.Effect.named
+                         ("eta_otel.export." ^ signal_name signal_kind))))
   |> Eta.Effect.finally
        (Eta.Effect.sync (fun () ->
             Eta.Tracer.retain_recent t.self_tracer ~max:max_self_spans))

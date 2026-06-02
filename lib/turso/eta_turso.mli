@@ -96,6 +96,7 @@ module Pool : sig
 
   type nonrec error =
     | Turso of error
+    | Invalid_blocking_pool of string
     | Pool_shutdown
     | Pool_shutdown_timeout
     | Timeout

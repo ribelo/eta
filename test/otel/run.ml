@@ -475,6 +475,38 @@ let test_encode_failure_drains_in_flight () =
   Alcotest.(check int) "in-flight drained after encode failure" 0
     (Eta_otel.in_flight exporter)
 
+let test_encode_failure_keeps_exporter_alive () =
+  let sends = ref [] in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let port = closed_tcp_port net in
+  let exporter =
+    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+      ~service_name:"eta-otel-encode-recovery"
+      ~disable_self_metrics:true
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body -> sends := (path, body) :: !sends)
+      ()
+  in
+  let meter = Eta_otel.meter exporter in
+  meter#record ~name:"bad.float" ~description:"" ~unit_:"1"
+    ~kind:Capabilities.Gauge ~attrs:[]
+    ~value:(Capabilities.Float (0.0 /. 0.0))
+    ~ts_ms:0;
+  Eta_otel.flush ~timeout_s:0.2 exporter;
+  emit_span (Eta_otel.tracer exporter) "after-encode-failure";
+  Eta_otel.flush ~timeout_s:0.5 exporter;
+  Alcotest.(check int) "later span drained" 0 (Eta_otel.in_flight exporter);
+  let exported =
+    !sends
+    |> List.exists (fun (path, body) ->
+           String.equal path "/v1/traces"
+           && string_contains body "after-encode-failure")
+  in
+  Alcotest.(check bool) "later span exported" true exported
+
 let test_otlp_retry_excludes_408 () =
   let errors = ref [] in
   let paths = ref [] in
@@ -827,6 +859,8 @@ let () =
             test_custom_otlp_headers_are_sent;
           Alcotest.test_case "encode failure drains in-flight" `Quick
             test_encode_failure_drains_in_flight;
+          Alcotest.test_case "encode failure keeps exporter alive" `Quick
+            test_encode_failure_keeps_exporter_alive;
           Alcotest.test_case "OTLP does not retry 408" `Quick
             test_otlp_retry_excludes_408;
           Alcotest.test_case "OTLP retries 429" `Quick

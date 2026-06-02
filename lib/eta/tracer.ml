@@ -56,6 +56,7 @@ type fiber_state = {
 
 type in_memory = {
   context_id : int;
+  mutex : Mutex.t;
   mutable next_id : int;
   mutable spans : span list;
   fallback : fiber_state;
@@ -65,10 +66,15 @@ let fiber_context_key : (int, fiber_state) Hashtbl.t Eio.Fiber.key =
   Eio.Fiber.create_key ()
 
 let next_context_id = ref 0
+let context_id_mutex = Mutex.create ()
 
 let fresh_context_id () =
-  incr next_context_id;
-  !next_context_id
+  Mutex.lock context_id_mutex;
+  Fun.protect
+    ~finally:(fun () -> Mutex.unlock context_id_mutex)
+    (fun () ->
+      incr next_context_id;
+      !next_context_id)
 
 let empty_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
@@ -92,10 +98,15 @@ let state t =
 let in_memory () =
   {
     context_id = fresh_context_id ();
+    mutex = Mutex.create ();
     next_id = 0;
     spans = [];
     fallback = empty_state ();
   }
+
+let with_lock t f =
+  Mutex.lock t.mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock t.mutex) f
 
 let hex16 n = Printf.sprintf "%016x" n
 let root_trace_id t span_id = hex16 t.context_id ^ hex16 (span_id + 1)
@@ -104,6 +115,7 @@ let begin_span t ?parent_id
     ?(external_parent : Capabilities.trace_context option) ?trace_id
     ?(trace_flags = 1) ?(trace_state = []) ?(baggage = [])
     ?(kind = Internal) ~name ~started_ms () =
+  with_lock t @@ fun () ->
   let state = state t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
@@ -162,6 +174,7 @@ let find_open t span_id =
   aux state.stack
 
 let end_span t ~span_id ~status ~ended_ms =
+  with_lock t @@ fun () ->
   let state = state t in
   let rec remove acc = function
     | [] -> None
@@ -194,34 +207,40 @@ let end_span t ~span_id ~status ~ended_ms =
         :: t.spans
 
 let add_attr t ~key ~value =
+  with_lock t @@ fun () ->
   let state = state t in
   match state.stack with
   | span :: _ -> span.attrs <- (key, value) :: span.attrs
   | [] -> state.pending_attrs <- (key, value) :: state.pending_attrs
 
 let add_attr_to t ~span_id ~key ~value =
+  with_lock t @@ fun () ->
   match find_open t span_id with
   | Some span -> span.attrs <- (key, value) :: span.attrs
   | None -> ()
 
 let add_event t ~span_id ~name ~ts_ms ~attrs =
+  with_lock t @@ fun () ->
   match find_open t span_id with
   | Some s ->
       s.events <- { ev_name = name; ev_ts_ms = ts_ms; ev_attrs = attrs } :: s.events
   | None -> ()
 
 let add_link t link =
+  with_lock t @@ fun () ->
   let state = state t in
   match state.stack with
   | s :: _ -> s.links <- link :: s.links
   | [] -> state.pending_links <- link :: state.pending_links
 
 let add_link_to t ~span_id link =
+  with_lock t @@ fun () ->
   match find_open t span_id with
   | Some span -> span.links <- link :: span.links
   | None -> ()
 
 let inspect t ~span_id : Capabilities.span_info option =
+  with_lock t @@ fun () ->
   match find_open t span_id with
   | Some s ->
       Some
@@ -275,10 +294,11 @@ let noop : Capabilities.tracer =
     method inspect ~span_id:_ = None
   end
 
-let dump t = List.rev t.spans
+let dump t = with_lock t @@ fun () -> List.rev t.spans
 
 let retain_recent t ~max =
   if max < 0 then invalid_arg "Eta.Tracer.retain_recent: max must be >= 0";
+  with_lock t @@ fun () ->
   let rec take n acc = function
     | _ when n = 0 -> List.rev acc
     | [] -> List.rev acc

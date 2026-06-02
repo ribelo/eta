@@ -125,6 +125,10 @@ let () =
             test_effect_finally_runs_on_cancellation;
           Alcotest.test_case "finally runs on eio cancellation" `Quick
             test_effect_finally_runs_on_eio_cancellation;
+          Alcotest.test_case
+            "finally cleanup failure during eio cancellation is diagnostic"
+            `Quick
+            test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic;
           Alcotest.test_case "catch preserves suppressed finalizer failure" `Quick
             test_effect_catch_preserves_suppressed_finalizer_failure;
           Alcotest.test_case "empty cause aggregations reject" `Quick
@@ -133,6 +137,8 @@ let () =
             test_cause_diagnostic_equal_compares_die_payloads;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
             test_runtime_exit_fail_die_interrupt;
+          Alcotest.test_case "runtime user Exit is defect" `Quick
+            test_runtime_user_exit_is_defect;
           Alcotest.test_case "runtime run propagates eio cancellation" `Quick
             test_runtime_run_propagates_eio_cancellation;
           Alcotest.test_case "die captures diagnostics" `Quick
@@ -221,12 +227,22 @@ let () =
             test_effect_timeout_as_maps_delayed_effect;
           Alcotest.test_case "timeout_as preserves simultaneous failure" `Quick
             test_effect_timeout_as_preserves_simultaneous_body_failure;
+          Alcotest.test_case "timeout_as preserves cancelled finalizer" `Quick
+            test_effect_timeout_as_preserves_cancelled_body_finalizer_failure;
           Alcotest.test_case "timeout_as nested maps outer timeout" `Quick
             test_effect_timeout_as_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race cancels losers after first success" `Quick
             test_effect_race_cancels_losers_after_first_success;
+          Alcotest.test_case
+            "race reports loser finalizer failure after winner" `Quick
+            test_effect_race_reports_loser_finalizer_failure_after_winner;
+          Alcotest.test_case "race timeout during cleanup keeps winner" `Quick
+            test_effect_race_timeout_during_loser_cleanup_keeps_winner;
+          Alcotest.test_case "race simultaneous success/failure returns winner"
+            `Quick
+            test_effect_race_simultaneous_success_and_failure_returns_winner;
           Alcotest.test_case "race all failures returns concurrent causes" `Quick
             test_effect_race_all_failures_returns_concurrent_causes;
           Alcotest.test_case "par simultaneous failures baseline" `Quick
@@ -376,6 +392,8 @@ let () =
             test_supervisor_cancel_waits_for_finalizer;
           Alcotest.test_case "with_background cancels child" `Quick
             test_effect_with_background_cancels_child;
+          Alcotest.test_case "with_background reports cleanup failure" `Quick
+            test_effect_with_background_reports_child_cleanup_failure;
           Alcotest.test_case "scope cancels unawaited children" `Quick
             test_supervisor_scope_cancels_unawaited_children_on_return;
           Alcotest.test_case "threshold failure" `Quick
@@ -566,6 +584,8 @@ let () =
             test_pool_shutdown_waits_for_active_close;
           Alcotest.test_case "shutdown deadline" `Quick
             test_pool_shutdown_deadline_timeout;
+          Alcotest.test_case "shutdown deadline waits for idle close" `Quick
+            test_pool_shutdown_deadline_waits_for_idle_close;
           Alcotest.test_case "release detects active underflow" `Quick
             test_pool_release_detects_active_underflow;
           Alcotest.test_case "observability signals" `Quick
@@ -660,6 +680,8 @@ let () =
             test_observability_annotation_order;
           Alcotest.test_case "nested spans" `Quick test_observability_nested_spans;
           Alcotest.test_case "statuses" `Quick test_observability_statuses;
+          Alcotest.test_case "renderer exception preserves failure" `Quick
+            test_observability_renderer_exception_preserves_failure;
           Alcotest.test_case "concurrent status" `Quick
             test_observability_concurrent_status;
           Alcotest.test_case "cancelled child status" `Quick
@@ -698,6 +720,8 @@ let () =
             test_in_memory_tracer_child_inherits_trace_id;
           Alcotest.test_case "in-memory tracer external trace id wins" `Quick
             test_in_memory_tracer_external_context_trace_id_wins;
+          Alcotest.test_case "in-memory tracer shared state is locked" `Quick
+            test_in_memory_tracer_shared_state_is_locked_source;
           Alcotest.test_case "trace context unsampled parent suppresses child"
             `Quick
             test_trace_context_unsampled_parent_suppresses_child;

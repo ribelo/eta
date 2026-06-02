@@ -71,10 +71,10 @@ type server_event =
   | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
   | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
 
-type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
+type realtime_error = Eta_http.Ws.Client.ws_error
 
-val client_event_json : client_event -> (Eta_ai.Json.t, realtime_error) result
-val client_event_to_string : client_event -> (Eta_ai.raw_json, realtime_error) result
+val client_event_json : client_event -> Eta_ai.Json.t
+val client_event_to_string : client_event -> Eta_ai.raw_json
 val decode_server_event : Eta_ai.raw_json -> server_event
 
 type t

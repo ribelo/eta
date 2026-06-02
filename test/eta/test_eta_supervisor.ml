@@ -155,6 +155,33 @@ let test_effect_with_background_cancels_child () =
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
         cause
 
+let test_effect_with_background_reports_child_cleanup_failure () =
+  with_test_clock @@ fun _sw clock rt ->
+  let child_started = ref false in
+  let background =
+    Effect.acquire_release
+      ~acquire:(Effect.sync (fun () -> child_started := true))
+      ~release:(fun () -> Effect.fail `Cleanup_failed)
+    |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit)
+  in
+  let program =
+    Effect.with_background background (fun () ->
+        Effect.sync (fun () ->
+            wait_for_sleepers clock 1;
+            !child_started))
+  in
+  match Runtime.run rt program with
+  | Exit.Error (Cause.Finalizer finalizer) ->
+      Alcotest.(check bool)
+        "background cleanup failure surfaced" true
+        (finalizer_contains "<typed failure>" finalizer)
+  | Exit.Error cause ->
+      Alcotest.failf "expected background cleanup finalizer failure, got %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "err"))
+        cause
+  | Exit.Ok false -> Alcotest.fail "background did not start"
+  | Exit.Ok true -> Alcotest.fail "background cleanup failure was hidden"
+
 let test_supervisor_scope_cancels_unawaited_children_on_return () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

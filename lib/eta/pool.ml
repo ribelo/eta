@@ -254,26 +254,61 @@ let mark_closed ?(release_permit = true) t =
   t.closed <- t.closed + 1;
   if release_permit then Semaphore.release t.sem 1
 
+let close_entry_once t entry =
+  span t "eta.pool.close"
+    (t.release_conn entry.conn
+    |> Effect.map (fun () -> `Closed)
+    |> Effect.catch (fun err ->
+           log t ~level:Capabilities.Warn "eta.pool.close_failed"
+           |> Effect.map (fun () -> `Close_failed err)))
+
+let finish_close = function
+  | `Closed -> Effect.unit
+  | `Close_failed err -> Effect.fail err
+
 let close_entry ?(release_permit = true) t entry =
-  let close_once =
-    span t "eta.pool.close"
-      (t.release_conn entry.conn
-      |> Effect.map (fun () -> `Closed)
-      |> Effect.catch (fun err ->
-             log t ~level:Capabilities.Warn "eta.pool.close_failed"
-             |> Effect.map (fun () -> `Close_failed err)))
-  in
   let mark_close_finished =
     mark_closed ~release_permit t
     |> Effect.bind (fun () -> emit_closed t)
     |> Effect.bind (fun () -> emit_gauges t)
   in
-  close_once
+  close_entry_once t entry
   |> Effect.finally mark_close_finished
+  |> Effect.bind finish_close
+
+let remove_idle_entry_locked t entry =
+  let rec remove acc = function
+    | [] -> (false, List.rev acc)
+    | candidate :: rest when candidate == entry ->
+        (true, List.rev_append acc rest)
+    | candidate :: rest -> remove (candidate :: acc) rest
+  in
+  let removed, idle = remove [] t.idle in
+  if removed then (
+    if t.idle_count <= 0 then invariant_violation "idle";
+    t.idle <- idle;
+    t.idle_count <- t.idle_count - 1);
+  removed
+
+let mark_idle_closed t entry =
+  Effect.sync @@ fun () ->
+  with_lock t @@ fun () ->
+  let removed = remove_idle_entry_locked t entry in
+  if removed then (
+    decr_total_locked t;
+    t.closed <- t.closed + 1);
+  removed
+
+let close_idle_entry t entry =
+  close_entry_once t entry
   |> Effect.bind (fun result ->
-         match result with
-         | `Closed -> Effect.unit
-         | `Close_failed err -> Effect.fail err)
+         mark_idle_closed t entry
+         |> Effect.bind (function
+              | true ->
+                  emit_closed t
+                  |> Effect.bind (fun () -> emit_gauges t)
+                  |> Effect.bind (fun () -> finish_close result)
+              | false -> emit_gauges t |> Effect.bind (fun () -> finish_close result)))
 
 exception Close_entries_failed of string
 
@@ -300,15 +335,20 @@ let fail_close_cause cause =
   in
   raise (Close_entries_failed message)
 
-let close_entries ?(release_permit = true) t entries =
+let close_entries_with close entries =
   entries
-  |> List.map (close_entry ~release_permit t)
+  |> List.map close
   |> Effect.all_settled
   |> Effect.bind (fun results ->
          match first_close_failure results with
          | None -> Effect.unit
          | Some (Close_typed err) -> Effect.fail err
          | Some (Close_cause cause) -> fail_close_cause cause)
+
+let close_entries ?(release_permit = true) t entries =
+  close_entries_with (close_entry ~release_permit t) entries
+
+let close_idle_entries t entries = close_entries_with (close_idle_entry t) entries
 
 let mark_released_to_close t =
   Effect.sync @@ fun () ->
@@ -538,32 +578,30 @@ let rec wait_until_drained t =
            |> Effect.bind (fun () -> wait_until_drained t))
 
 let begin_shutdown t =
-  let take_idle =
+  let snapshot_idle =
     Effect.sync @@ fun () ->
     with_lock t @@ fun () ->
     if not t.shutting_down then (
       t.shutting_down <- true;
       if not (Eio.Promise.is_resolved t.shutdown_requested) then
         Eio.Promise.resolve t.shutdown_resolver ());
-    let idle = t.idle in
-    t.idle <- [];
-    t.idle_count <- 0;
-    idle
+    t.idle
   in
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
-  |> Effect.bind (fun () -> take_idle)
-  |> Effect.bind (close_entries ~release_permit:false t)
+  |> Effect.bind (fun () -> snapshot_idle)
+  |> Effect.bind (close_idle_entries t)
   |> Effect.bind (fun () -> emit_gauges t)
 
 let shutdown ?deadline t =
-  let drain =
-    begin_shutdown t
-    |> Effect.bind (fun () -> wait_until_drained t)
-  in
+  let drain = wait_until_drained t in
   let with_deadline =
     match deadline with
     | None -> drain
     | Some deadline ->
+        (* The deadline only bounds checked-out resources draining. Idle
+           resources are already under the pool's close fence; canceling that
+           release path would make accounting claim a close that did not
+           finish. *)
         Effect.timeout_as deadline ~on_timeout:`Pool_shutdown_timeout drain
         |> Effect.catch (function
              | `Pool_shutdown_timeout ->
@@ -571,6 +609,6 @@ let shutdown ?deadline t =
                  |> Effect.bind (fun () -> Effect.fail `Pool_shutdown_timeout)
              | err -> Effect.fail err)
   in
-  span t "eta.pool.shutdown" with_deadline
+  span t "eta.pool.shutdown" (begin_shutdown t |> Effect.bind (fun () -> with_deadline))
 
 let stats t = Eio.Mutex.use_ro t.mutex @@ fun () -> stats_locked t

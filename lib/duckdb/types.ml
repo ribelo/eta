@@ -41,42 +41,82 @@ let decode_fail index expected value =
          value = Value.to_string value;
        })
 
+type row_decode_cursor = {
+  mutable cached_row : Row.t option;
+  mutable next_index : int;
+  mutable next_tail : Row.t;
+}
+
+let row_decode_cursor =
+  (* Domain.Safe.DLS rejects this mutable cursor as contended, but the DLS
+     initializer allocates one cursor per domain and row decoding never shares
+     that cursor across domains. *)
+  (Domain.DLS.new_key [@alert "-unsafe_multidomain"]) (fun () ->
+      { cached_row = None; next_index = 0; next_tail = [] })
+
+let missing_column index =
+  raise
+    (Decode_failure
+       {
+         column = index;
+         expected = "column";
+         actual = "missing";
+         value = "<missing>";
+       })
+
+let rec row_nth_from index current = function
+  | [] -> missing_column index
+  | (_, value) :: rest ->
+      if current = index then (value, rest)
+      else row_nth_from index (current + 1) rest
+
 let row_nth_value index row =
-  let rec loop current = function
-    | [] ->
-        raise
-          (Decode_failure
-             {
-               column = index;
-               expected = "column";
-               actual = "missing";
-               value = "<missing>";
-             })
-    | (_, value) :: _ when current = index -> value
-    | _ :: rest -> loop (current + 1) rest
+  let cursor =
+    (Domain.DLS.get [@alert "-unsafe_multidomain"]) row_decode_cursor
   in
-  loop 0 row
+  (* Public Row.t stays an association list for named lookups and ABI
+     stability, but typed projections decode offsets left-to-right. The
+     per-domain cursor advances from the previous tail in that common path,
+     avoiding O(N^2) rescans while still falling back cleanly on rewinds. *)
+  let current, tail =
+    match cursor.cached_row with
+    | Some cached_row when cached_row == row && index >= cursor.next_index ->
+        (cursor.next_index, cursor.next_tail)
+    | Some _ | None -> (0, row)
+  in
+  let value, next_tail = row_nth_from index current tail in
+  cursor.cached_row <- Some row;
+  cursor.next_index <- index + 1;
+  cursor.next_tail <- next_tail;
+  value
 
 type raw_database
 type raw_connection
 type raw_appender
 
 type database = {
+  mutex : Mutex.t;
+  condition : Condition.t;
   raw : raw_database;
   mutable closed : bool;
+  mutable active : int;
   mutable connections : connection list;
 }
 
 and connection = {
   database : database;
+  use_mutex : Mutex.t;
   raw : raw_connection;
   mutable closed : bool;
+  mutable active : int;
 }
 
 type appender = {
   connection : connection;
+  use_mutex : Mutex.t;
   raw : raw_appender;
   mutable closed : bool;
+  mutable active : int;
 }
 
 type config = {
@@ -142,13 +182,79 @@ let wrap operation f =
       | exception Failure message -> Result.Error (Driver_error { operation; message }))
 
 let version () = wrap "version" raw_version
-let if_database_open (db : database) f = if db.closed then Result.Error Closed else f ()
 
-let if_connection_open (conn : connection) f =
-  if conn.closed || conn.database.closed then Result.Error Closed else f ()
+let with_database_lock db f =
+  Mutex.lock db.mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock db.mutex) f
 
-let if_appender_open (appender : appender) f =
-  if appender.closed || appender.connection.closed then Result.Error Closed else f ()
+let finish_database_use db =
+  with_database_lock db @@ fun () ->
+  db.active <- db.active - 1;
+  Condition.broadcast db.condition
+
+let begin_database_use db =
+  with_database_lock db @@ fun () ->
+  if db.closed then Result.Error Closed
+  else (
+    db.active <- db.active + 1;
+    Ok ())
+
+let if_database_open db f =
+  match begin_database_use db with
+  | Result.Error _ as err -> err
+  | Ok () -> Fun.protect ~finally:(fun () -> finish_database_use db) f
+
+let finish_connection_use conn =
+  with_database_lock conn.database @@ fun () ->
+  conn.active <- conn.active - 1;
+  conn.database.active <- conn.database.active - 1;
+  Condition.broadcast conn.database.condition
+
+let begin_connection_use conn =
+  with_database_lock conn.database @@ fun () ->
+  if conn.closed || conn.database.closed then Result.Error Closed
+  else (
+    conn.active <- conn.active + 1;
+    conn.database.active <- conn.database.active + 1;
+    Ok ())
+
+let with_mutex mutex f =
+  Mutex.lock mutex;
+  Fun.protect ~finally:(fun () -> Mutex.unlock mutex) f
+
+let if_connection_open ?(serialize = true) conn f =
+  match begin_connection_use conn with
+  | Result.Error _ as err -> err
+  | Ok () ->
+      Fun.protect
+        ~finally:(fun () -> finish_connection_use conn)
+        (fun () ->
+          if serialize then with_mutex conn.use_mutex f else f ())
+
+let finish_appender_use appender =
+  with_database_lock appender.connection.database @@ fun () ->
+  appender.active <- appender.active - 1;
+  appender.connection.active <- appender.connection.active - 1;
+  appender.connection.database.active <- appender.connection.database.active - 1;
+  Condition.broadcast appender.connection.database.condition
+
+let begin_appender_use appender =
+  let conn = appender.connection in
+  with_database_lock conn.database @@ fun () ->
+  if appender.closed || conn.closed || conn.database.closed then Result.Error Closed
+  else (
+    appender.active <- appender.active + 1;
+    conn.active <- conn.active + 1;
+    conn.database.active <- conn.database.active + 1;
+    Ok ())
+
+let if_appender_open appender f =
+  match begin_appender_use appender with
+  | Result.Error _ as err -> err
+  | Ok () ->
+      Fun.protect
+        ~finally:(fun () -> finish_appender_use appender)
+        (fun () -> with_mutex appender.use_mutex f)
 
 type 'a typ = {
   value : 'a -> Value.t;

@@ -317,18 +317,22 @@ let with_write_lock t f =
   Eio.Mutex.lock t.write_mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.write_mutex) f
 
-let random_mask () = Bytes.init 4 (fun _ -> Char.chr (Stdlib.Random.int 256))
+let random_mask () = Openssl.random_bytes 4
 
 let send_frame_sync ?(allow_after_close = false) t frame =
-  if t.close_sent && not allow_after_close then Error (`Closed (1000, "WebSocket is closing"))
-  else
-    try
-      with_write_lock t @@ fun () ->
+  try
+    with_write_lock t @@ fun () ->
+    (* close_sent is guarded by the write mutex because a sender can queue on
+       the mutex before close starts; it still must not write after close has
+       flipped the state. *)
+    if t.close_sent && not allow_after_close then
+      Error (`Closed (1000, "WebSocket is closing"))
+    else
       let encoded = Codec.encode ~mask:(random_mask ()) frame in
       Eio.Flow.copy_string (Bytes.to_string encoded) t.flow;
       Ok ()
-    with Invalid_argument message -> Error (`Protocol message)
-       | exn -> Error (`Closed (1006, Printexc.to_string exn))
+  with Invalid_argument message -> Error (`Protocol message)
+     | exn -> Error (`Closed (1006, Printexc.to_string exn))
 
 let send_frame ?allow_after_close t frame =
   Effect.sync (fun () -> send_frame_sync ?allow_after_close t frame)

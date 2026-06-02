@@ -204,6 +204,26 @@ let test_observability_statuses () =
   check_status "die" (Tracer.Error "") (find "die").status;
   check_status "interrupt" Tracer.Cancelled (find "interrupt").status
 
+let test_observability_renderer_exception_preserves_failure () =
+  with_traced_runtime @@ fun rt tracer ->
+  let render _ = failwith "renderer exploded" in
+  let eff = Effect.named ~error_renderer:render "renderer-fails" (Effect.fail "original") in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail msg) ->
+      Alcotest.(check string) "original failure" "original" msg
+  | Exit.Error _ -> Alcotest.fail "expected original typed failure"
+  | Exit.Ok _ -> Alcotest.fail "expected failure");
+  let span = only_span tracer in
+  check_error_message "fallback status" "<error renderer raised>" span.status;
+  match span.events with
+  | [ event ] ->
+      Alcotest.(check (option string))
+        "fallback exception message" (Some "<error renderer raised>")
+        (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+  | events ->
+      Alcotest.failf "expected one exception event, got %d"
+        (List.length events)
+
 let test_observability_concurrent_status () =
   with_traced_runtime @@ fun rt tracer ->
   let eff =
@@ -516,6 +536,41 @@ let test_in_memory_tracer_external_context_trace_id_wins () =
     (is_lower_hex ~len:16 info.span_id);
   Alcotest.(check bool) "new span id" true
     (not (String.equal ctx.span_id info.span_id))
+
+let test_in_memory_tracer_shared_state_is_locked_source () =
+  let source_path =
+    let candidates =
+      [
+        "lib/eta/tracer.ml";
+        "../lib/eta/tracer.ml";
+        "../../lib/eta/tracer.ml";
+        "../../../lib/eta/tracer.ml";
+        "../../../../lib/eta/tracer.ml";
+      ]
+    in
+    match List.find_opt Sys.file_exists candidates with
+    | Some path -> path
+    | None -> Alcotest.failf "could not locate tracer.ml from %s" (Sys.getcwd ())
+  in
+  let source =
+    let input = open_in_bin source_path in
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr input)
+      (fun () -> really_input_string input (in_channel_length input))
+  in
+  let require needle =
+    let rec search index =
+      if index + String.length needle > String.length source then false
+      else if String.sub source index (String.length needle) = needle then true
+      else search (index + 1)
+    in
+    if not (search 0) then Alcotest.failf "missing source marker: %s" needle
+  in
+  require "mutex : Mutex.t";
+  require "let with_lock t f =";
+  require "Mutex.lock t.mutex";
+  require "t.next_id <- t.next_id + 1";
+  require "with_lock t @@ fun () ->"
 
 let test_trace_context_unsampled_parent_suppresses_child () =
   with_sampled_traced_runtime (Sampler.parent_based ()) @@ fun rt tracer ->

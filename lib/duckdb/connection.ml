@@ -8,21 +8,39 @@ type t = connection
 let connect database =
   if_database_open database @@ fun () ->
   wrap "connect" (fun () ->
-      let conn = { database; raw = raw_connect database.raw; closed = false } in
-      database.connections <- conn :: database.connections;
+      let conn =
+        {
+          database;
+          use_mutex = Mutex.create ();
+          raw = raw_connect database.raw;
+          closed = false;
+          active = 0;
+        }
+      in
+      with_database_lock database (fun () ->
+          database.connections <- conn :: database.connections);
       conn)
 
 let close (conn : connection) =
-  if_connection_open conn @@ fun () ->
-  match wrap "disconnect" (fun () -> raw_disconnect conn.raw) with
-  | Ok () ->
-      conn.closed <- true;
-      conn.database.connections <-
-        List.filter (fun live -> live != conn) conn.database.connections;
-      Ok ()
-  | Result.Error _ as err -> err
+  with_database_lock conn.database @@ fun () ->
+  if conn.closed || conn.database.closed then Result.Error Closed
+  else (
+    conn.closed <- true;
+    while conn.active > 0 do
+      Condition.wait conn.database.condition conn.database.mutex
+    done;
+    match wrap "disconnect" (fun () -> raw_disconnect conn.raw) with
+    | Ok () ->
+        conn.database.connections <-
+          List.filter (fun live -> live != conn) conn.database.connections;
+        Ok ()
+    | Result.Error _ as err -> err)
 
-let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
+let interrupt (conn : connection) =
+  ignore
+    (if_connection_open ~serialize:false conn @@ fun () ->
+     raw_interrupt conn.raw;
+     Ok ())
 
 let query (conn : connection) sql params =
   if_connection_open conn @@ fun () ->

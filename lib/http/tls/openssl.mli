@@ -69,3 +69,7 @@ val err_peek_error : unit -> string option
 
 val err_clear_error : unit -> unit
 (** Clear the OpenSSL error stack. *)
+
+val random_bytes : int -> bytes
+(** [random_bytes len] returns [len] bytes from OpenSSL [RAND_bytes].
+    Raises [Failure] if OpenSSL cannot provide random bytes. *)

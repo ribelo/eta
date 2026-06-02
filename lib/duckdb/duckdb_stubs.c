@@ -38,6 +38,9 @@ typedef struct {
   duckdb_result result;
   int active;
 } eta_duckdb_result_owner;
+typedef struct {
+  void *ptr;
+} eta_duckdb_ptr_owner;
 
 typedef struct {
   void *handle;
@@ -133,6 +136,17 @@ static void result_owner_finalize(value v_owner)
   }
 }
 
+static void ptr_owner_finalize(value v_owner)
+{
+  eta_duckdb_ptr_owner *owner =
+    (eta_duckdb_ptr_owner *)Data_custom_val(v_owner);
+  if (owner->ptr != NULL && api.loaded) {
+    void *ptr = owner->ptr;
+    owner->ptr = NULL;
+    api.free_ptr(ptr);
+  }
+}
+
 static struct custom_operations db_ops = {
   "eta.duckdb.database", db_finalize, custom_compare_default, custom_hash_default,
   custom_serialize_default, custom_deserialize_default, custom_compare_ext_default,
@@ -157,9 +171,40 @@ static struct custom_operations result_owner_ops = {
   custom_fixed_length_default
 };
 
+static struct custom_operations ptr_owner_ops = {
+  "eta.duckdb.ptr_owner", ptr_owner_finalize, custom_compare_default, custom_hash_default,
+  custom_serialize_default, custom_deserialize_default, custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
 static duckdb_database db_val(value v) { return ((eta_duckdb_db *)Data_custom_val(v))->db; }
 static duckdb_connection conn_val(value v) { return ((eta_duckdb_conn *)Data_custom_val(v))->conn; }
 static duckdb_appender appender_val(value v) { return ((eta_duckdb_appender *)Data_custom_val(v))->appender; }
+
+static void appender_destroy_blocking(eta_duckdb_appender *appender)
+{
+  if (appender->appender != NULL) {
+    duckdb_appender handle = appender->appender;
+    appender->appender = NULL;
+    caml_enter_blocking_section();
+    (void)api.appender_destroy(&handle);
+    caml_leave_blocking_section();
+  }
+}
+
+static int appender_close_destroy_blocking(eta_duckdb_appender *appender)
+{
+  int rc = 0;
+  if (appender->appender != NULL) {
+    duckdb_appender handle = appender->appender;
+    appender->appender = NULL;
+    caml_enter_blocking_section();
+    rc = api.appender_close(handle);
+    (void)api.appender_destroy(&handle);
+    caml_leave_blocking_section();
+  }
+  return rc;
+}
 
 static value result_owner_alloc(void)
 {
@@ -190,6 +235,33 @@ static void result_owner_destroy(value v_owner)
   if (owner->active) {
     api.destroy_result(&owner->result);
     owner->active = 0;
+  }
+}
+
+static value ptr_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  eta_duckdb_ptr_owner *owner;
+  v_owner = caml_alloc_custom(&ptr_owner_ops, sizeof(eta_duckdb_ptr_owner), 0, 1);
+  owner = (eta_duckdb_ptr_owner *)Data_custom_val(v_owner);
+  owner->ptr = NULL;
+  CAMLreturn(v_owner);
+}
+
+static void ptr_owner_set(value v_owner, void *ptr)
+{
+  ((eta_duckdb_ptr_owner *)Data_custom_val(v_owner))->ptr = ptr;
+}
+
+static void ptr_owner_release(value v_owner)
+{
+  eta_duckdb_ptr_owner *owner =
+    (eta_duckdb_ptr_owner *)Data_custom_val(v_owner);
+  if (owner->ptr != NULL) {
+    void *ptr = owner->ptr;
+    owner->ptr = NULL;
+    api.free_ptr(ptr);
   }
 }
 
@@ -292,6 +364,7 @@ CAMLprim value eta_duckdb_open(value v_path)
   ensure_loaded();
   const char *ocaml_path = String_val(v_path);
   char *path = caml_stat_strdup(ocaml_path);
+  if (path == NULL) caml_failwith("duckdb allocation failed");
   duckdb_database db = NULL;
   int rc;
   caml_enter_blocking_section();
@@ -383,7 +456,7 @@ static value cons(value head, value tail)
 static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
 {
   CAMLparam0();
-  CAMLlocal2(out, bytes);
+  CAMLlocal3(out, bytes, owner);
   if (api.value_is_null(result, col, row)) CAMLreturn(Val_int(0));
   int typ = api.column_type(result, col);
   switch (typ) {
@@ -408,11 +481,16 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
     CAMLreturn(out);
   case 18: {
     duckdb_blob blob = api.value_blob(result, col, row);
-    if (blob.size > (idx_t)Max_wosize) caml_failwith("duckdb blob too large for OCaml string");
+    owner = ptr_owner_alloc();
+    if (blob.data != NULL) ptr_owner_set(owner, blob.data);
+    if (blob.size > (idx_t)Max_wosize) {
+      ptr_owner_release(owner);
+      caml_failwith("duckdb blob too large for OCaml string");
+    }
     if (blob.size > 0 && blob.data == NULL) caml_failwith("duckdb blob has null data");
     bytes = caml_alloc_string((mlsize_t)blob.size);
-    if (blob.size > 0 && blob.data != NULL) memcpy(Bytes_val(bytes), blob.data, (size_t)blob.size);
-    if (blob.data != NULL) api.free_ptr(blob.data);
+    if (blob.size > 0) memcpy(Bytes_val(bytes), blob.data, (size_t)blob.size);
+    ptr_owner_release(owner);
     out = make_block(5, bytes);
     CAMLreturn(out);
   }
@@ -425,30 +503,49 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
     else if (typ == 12 || typ == 20 || typ == 21 || typ == 22 || typ == 31) tag = 9;
     else if (typ == 27) tag = 10;
     else if (typ == 23) tag = 12;
-    out = make_string_block(tag, s);
-    if (s != NULL) api.free_ptr(s);
+    owner = ptr_owner_alloc();
+    if (s != NULL) ptr_owner_set(owner, s);
+    out = make_string_block(tag, s == NULL ? "" : s);
+    ptr_owner_release(owner);
     CAMLreturn(out);
   }
   }
 }
 
+static value duckdb_column_names(duckdb_result *result, idx_t cols)
+{
+  CAMLparam0();
+  CAMLlocal2(field_names, field_name);
+  if (cols > (idx_t)Max_wosize) caml_failwith("duckdb column count too large");
+  field_names = caml_alloc((mlsize_t)cols, 0);
+  for (idx_t col_idx = 0; col_idx < cols; col_idx++) {
+    const char *name = api.column_name(result, col_idx);
+    field_name = caml_copy_string(name == NULL ? "" : name);
+    Store_field(field_names, (mlsize_t)col_idx, field_name);
+  }
+  CAMLreturn(field_names);
+}
+
 static value materialize_rows(duckdb_result *result)
 {
   CAMLparam0();
-  CAMLlocal5(rows, row_list, pair, field_name, value_v);
+  CAMLlocal5(rows, row_list, pair, field_names, value_v);
   idx_t cols = api.column_count(result);
   idx_t count = api.row_count(result);
+  /* The public query API returns Row.t list, so this path must materialize the
+     result. Keep schema-level OCaml values outside the row loop; a streaming
+     API should use a separate cursor entrypoint instead of hiding one behind a
+     list-returning contract. */
+  field_names = duckdb_column_names(result, cols);
   rows = Val_emptylist;
   for (idx_t r = count; r > 0; r--) {
     idx_t row_idx = r - 1;
     row_list = Val_emptylist;
     for (idx_t c = cols; c > 0; c--) {
       idx_t col_idx = c - 1;
-      const char *name = api.column_name(result, col_idx);
-      field_name = caml_copy_string(name == NULL ? "" : name);
       value_v = value_from_result(result, col_idx, row_idx);
       pair = caml_alloc_tuple(2);
-      Store_field(pair, 0, field_name);
+      Store_field(pair, 0, Field(field_names, (mlsize_t)col_idx));
       Store_field(pair, 1, value_v);
       row_list = cons(pair, row_list);
     }
@@ -708,6 +805,7 @@ CAMLprim value eta_duckdb_exec_script(value v_conn, value v_sql)
   duckdb_result result;
   memset(&result, 0, sizeof(result));
   char *sql = caml_stat_strdup(String_val(v_sql));
+  if (sql == NULL) caml_failwith("duckdb allocation failed");
   int rc;
   caml_enter_blocking_section();
   rc = api.query(conn_val(v_conn), sql, &result);
@@ -837,13 +935,17 @@ CAMLprim value eta_duckdb_appender_append_row(value v_appender, value values)
 {
   CAMLparam2(v_appender, values);
   ensure_loaded();
-  duckdb_appender appender = appender_val(v_appender);
+  eta_duckdb_appender *appender_block =
+    (eta_duckdb_appender *)Data_custom_val(v_appender);
+  duckdb_appender appender = appender_block->appender;
   duckdb_input_copies copies = { NULL };
   int rc;
+  if (appender == NULL) caml_failwith("duckdb appender is closed");
   while (values != Val_emptylist) {
     rc = append_value(appender, Field(values, 0), &copies);
     if (rc != 0) {
       duckdb_input_copies_free(&copies);
+      appender_destroy_blocking(appender_block);
       if (rc == -2) caml_failwith("duckdb allocation failed");
       if (rc == -3) caml_failwith("cannot append DuckDB list or struct values");
       caml_failwith("duckdb append value failed");
@@ -854,7 +956,10 @@ CAMLprim value eta_duckdb_appender_append_row(value v_appender, value values)
   rc = api.appender_end_row(appender);
   caml_leave_blocking_section();
   duckdb_input_copies_free(&copies);
-  if (rc != 0) caml_failwith("duckdb_appender_end_row failed");
+  if (rc != 0) {
+    appender_destroy_blocking(appender_block);
+    caml_failwith("duckdb_appender_end_row failed");
+  }
   CAMLreturn(Val_unit);
 }
 
@@ -862,11 +967,15 @@ CAMLprim value eta_duckdb_appender_flush(value v_appender)
 {
   CAMLparam1(v_appender);
   ensure_loaded();
+  if (appender_val(v_appender) == NULL) caml_failwith("duckdb appender is closed");
   int rc;
   caml_enter_blocking_section();
   rc = api.appender_flush(appender_val(v_appender));
   caml_leave_blocking_section();
-  if (rc != 0) caml_failwith("duckdb_appender_flush failed");
+  if (rc != 0) {
+    appender_destroy_blocking((eta_duckdb_appender *)Data_custom_val(v_appender));
+    caml_failwith("duckdb_appender_flush failed");
+  }
   CAMLreturn(Val_unit);
 }
 
@@ -877,14 +986,8 @@ CAMLprim value eta_duckdb_appender_close(value v_appender)
   eta_duckdb_appender *appender = (eta_duckdb_appender *)Data_custom_val(v_appender);
   if (appender->appender != NULL) {
     int rc;
-    caml_enter_blocking_section();
-    rc = api.appender_close(appender->appender);
-    caml_leave_blocking_section();
+    rc = appender_close_destroy_blocking(appender);
     if (rc != 0) caml_failwith("duckdb_appender_close failed");
-    caml_enter_blocking_section();
-    (void)api.appender_destroy(&appender->appender);
-    caml_leave_blocking_section();
-    appender->appender = NULL;
   }
   CAMLreturn(Val_unit);
 }

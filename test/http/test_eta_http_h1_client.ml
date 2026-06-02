@@ -33,6 +33,19 @@ let find_h1_client_source () =
   | Some path -> path
   | None -> Alcotest.failf "could not locate h1_client.ml from %s" (Sys.getcwd ())
 
+let find_http_client_source () =
+  let candidates =
+    [
+      "lib/http/client/client.ml";
+      "../lib/http/client/client.ml";
+      "../../lib/http/client/client.ml";
+      "../../../lib/http/client/client.ml";
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate client.ml from %s" (Sys.getcwd ())
+
 let request_owner_source source =
   let start =
     require_sub source
@@ -44,6 +57,43 @@ let request_owner_source source =
     | None -> Alcotest.fail "missing request_owner end marker"
   in
   String.sub source start (finish - start)
+
+let make_h1_source source =
+  let start = require_sub source ~needle:"let make_h1 ~sw ~net" in
+  let finish =
+    match find_sub_from source ~needle:"let make_h1_direct" start with
+    | Some finish -> finish
+    | None -> Alcotest.fail "missing make_h1 end marker"
+  in
+  String.sub source start (finish - start)
+
+let test_h1_client_origin_pool_creation_is_fenced () =
+  let source = read_file (find_http_client_source ()) in
+  let body = make_h1_source source in
+  ignore (require_sub body ~needle:"let pools_mutex = Eio.Mutex.create ()" : int);
+  ignore (require_sub body ~needle:"with_pools_lock" : int);
+  ignore (require_sub body ~needle:"Hashtbl.find_opt pools key" : int);
+  ignore (require_sub body ~needle:"Hashtbl.replace pools key pool" : int);
+  ignore (require_sub body ~needle:"H1_client.shutdown_pool pool" : int)
+
+let test_client_rejects_cross_domain_use () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let client =
+    Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net stdenv) ()
+  in
+  let rejected =
+    ((Domain.spawn
+       [@alert "-do_not_spawn_domains"]
+       [@alert "-unsafe_multidomain"])
+       (fun () ->
+        match Eta_http.Client.stats client with
+        | _ -> false
+        | exception Invalid_argument msg ->
+            Option.is_some (find_sub msg ~needle:"different domain")))
+    |> Domain.join
+  in
+  Alcotest.(check bool) "cross-domain client use rejected" true rejected
 
 let test_h1_pool_marks_undelivered_response_unreusable () =
   let source = read_file (find_h1_client_source ()) in
@@ -442,6 +492,58 @@ let test_h1_pool_reuses_healthy_idle_connection () =
   Alcotest.(check int) "one TCP open" 1 stats.Eta.Pool.opened;
   Alcotest.(check int) "idle" 1 stats.idle;
   Alcotest.(check int) "health check on reuse" 1 !health_checks
+
+let test_h1_pool_rejects_overread_bytes_before_reuse () =
+  let net = Eio_mock.Net.make "eta-http-h1-pool-overread-net" in
+  let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
+  let first_flow = Eio_mock.Flow.make "eta-http-h1-pool-overread-first" in
+  let second_flow = Eio_mock.Flow.make "eta-http-h1-pool-overread-second" in
+  Eio_mock.Flow.on_read first_flow
+    [
+      `Return
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\noneHTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntwo";
+      `Return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbad";
+    ];
+  Eio_mock.Flow.on_read second_flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntwo" ];
+  Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ]; `Return [ addr ] ];
+  Eio_mock.Net.on_connect net [ `Return first_flow; `Return second_flow ];
+  let health_checks = ref 0 in
+  let health_check _flow =
+    incr health_checks;
+    Eta.Effect.unit
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/pool-overread" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  with_test_clock @@ fun sw _clock rt ->
+  let pool =
+    Eta_http.H1.Client.make_pool ~max_size:1 ~health_check ~sw ~net
+      url
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let read_once () =
+    let response =
+      Eta_http.H1.Client.request_with_pool pool request
+      |> Eta.Runtime.run rt
+      |> Eta_test.Expect.expect_ok
+    in
+    Eta_http.Body.Stream.read_all response.body
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+    |> Bytes.to_string
+  in
+  Alcotest.(check string) "first body" "one" (read_once ());
+  Alcotest.(check string) "second body" "two" (read_once ());
+  let stats = Eta_http.H1.Client.pool_stats pool in
+  Alcotest.(check int) "overread connection was not reused" 2 stats.Eta.Pool.opened;
+  Alcotest.(check int) "overread connection was closed" 1 stats.closed;
+  Alcotest.(check int) "overread connection was health rejected" 1 stats.health_rejected;
+  Alcotest.(check int) "idle" 1 stats.idle;
+  Alcotest.(check int) "custom health check skipped for fenced connection" 0
+    !health_checks
 
 let test_h1_pool_rejects_unhealthy_idle_connection () =
   let net = Eio_mock.Net.make "eta-http-h1-pool-unhealthy-net" in

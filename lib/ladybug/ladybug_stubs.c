@@ -62,6 +62,13 @@ typedef struct { lbug_database db; } eta_ladybug_db;
 typedef struct { lbug_connection conn; } eta_ladybug_conn;
 
 typedef struct {
+  struct ArrowSchema schema;
+  struct ArrowArray array;
+  bool schema_active;
+  bool array_active;
+} arrow_release_owner;
+
+typedef struct {
   void *handle;
   char error[512];
   int attempted;
@@ -135,6 +142,65 @@ static struct custom_operations conn_ops = {
   custom_serialize_default, custom_deserialize_default, custom_compare_ext_default,
   custom_fixed_length_default
 };
+
+static arrow_release_owner *arrow_owner_val(value v)
+{
+  return (arrow_release_owner *)Data_custom_val(v);
+}
+
+static void arrow_owner_release_array(arrow_release_owner *owner)
+{
+  if (owner->array_active) {
+    void (*release)(struct ArrowArray *) = owner->array.release;
+    owner->array_active = false;
+    if (release != NULL) release(&owner->array);
+    memset(&owner->array, 0, sizeof(owner->array));
+  }
+}
+
+static void arrow_owner_release_schema(arrow_release_owner *owner)
+{
+  if (owner->schema_active) {
+    void (*release)(struct ArrowSchema *) = owner->schema.release;
+    owner->schema_active = false;
+    if (release != NULL) release(&owner->schema);
+    memset(&owner->schema, 0, sizeof(owner->schema));
+  }
+}
+
+static void arrow_owner_finalize(value v_owner)
+{
+  arrow_release_owner *owner = arrow_owner_val(v_owner);
+  arrow_owner_release_array(owner);
+  arrow_owner_release_schema(owner);
+}
+
+static struct custom_operations arrow_owner_ops = {
+  "eta.ladybug.arrow_release_owner", arrow_owner_finalize, custom_compare_default,
+  custom_hash_default, custom_serialize_default, custom_deserialize_default,
+  custom_compare_ext_default, custom_fixed_length_default
+};
+
+static value arrow_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  arrow_release_owner *owner;
+  v_owner = caml_alloc_custom(&arrow_owner_ops, sizeof(arrow_release_owner), 0, 1);
+  owner = arrow_owner_val(v_owner);
+  memset(owner, 0, sizeof(*owner));
+  CAMLreturn(v_owner);
+}
+
+static void arrow_owner_set_schema(arrow_release_owner *owner)
+{
+  owner->schema_active = owner->schema.release != NULL;
+}
+
+static void arrow_owner_set_array(arrow_release_owner *owner)
+{
+  owner->array_active = owner->array.release != NULL;
+}
 
 static lbug_database *db_val(value v) { return &((eta_ladybug_db *)Data_custom_val(v))->db; }
 static lbug_connection *conn_val(value v) { return &((eta_ladybug_conn *)Data_custom_val(v))->conn; }
@@ -767,41 +833,74 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
   CAMLreturn(make_block(3, v));
 }
 
+static value arrow_field_names(struct ArrowSchema *schema)
+{
+  CAMLparam0();
+  CAMLlocal2(field_names, field_name);
+  if (schema == NULL || schema->n_children < 0 || schema->children == NULL) {
+    caml_failwith("ladybug: malformed Arrow schema");
+  }
+  if (schema->n_children > (int64_t)Max_wosize)
+    caml_failwith("ladybug: too many Arrow fields");
+  field_names = caml_alloc((mlsize_t)schema->n_children, 0);
+  for (int64_t col_idx = 0; col_idx < schema->n_children; col_idx++) {
+    if (schema->children[col_idx] == NULL) {
+      caml_failwith("ladybug: malformed Arrow schema child");
+    }
+    field_name = caml_copy_string(schema->children[col_idx]->name == NULL ? "" : schema->children[col_idx]->name);
+    Store_field(field_names, (mlsize_t)col_idx, field_name);
+  }
+  CAMLreturn(field_names);
+}
+
 static value materialize_arrow_rows(lbug_query_result *result)
 {
   CAMLparam0();
-  CAMLlocal5(rows, row_list, pair, value_v, field_name);
-  struct ArrowSchema schema;
-  memset(&schema, 0, sizeof(schema));
-  if (api.query_result_get_arrow_schema(result, &schema) != LbugSuccess) fail_last("get_arrow_schema");
+  CAMLlocal5(rows, row_list, pair, value_v, field_names);
+  CAMLlocal1(v_owner);
+  arrow_release_owner *owner;
+  v_owner = arrow_owner_alloc();
+  owner = arrow_owner_val(v_owner);
+  /* OCaml allocations below may raise while Arrow resources are live. Keep
+     the current schema/chunk in a custom block so its finalizer releases them
+     if control leaves before the normal release path. */
+  if (api.query_result_get_arrow_schema(result, &owner->schema) != LbugSuccess)
+    fail_last("get_arrow_schema");
+  arrow_owner_set_schema(owner);
+  /* The public query API returns Row.t list, so this path must materialize the
+     result. Keep schema-level OCaml values outside the row loop; a streaming
+     API should use a separate cursor entrypoint instead of hiding one behind a
+     list-returning contract. */
+  field_names = arrow_field_names(&owner->schema);
   rows = Val_emptylist;
   for (;;) {
-    struct ArrowArray array;
-    memset(&array, 0, sizeof(array));
-    if (api.query_result_get_next_arrow_chunk(result, 1024, &array) != LbugSuccess) {
-      if (schema.release) schema.release(&schema);
+    memset(&owner->array, 0, sizeof(owner->array));
+    if (api.query_result_get_next_arrow_chunk(result, 1024, &owner->array) != LbugSuccess) {
+      arrow_owner_set_array(owner);
+      arrow_owner_release_array(owner);
+      arrow_owner_release_schema(owner);
       fail_last("get_next_arrow_chunk");
     }
-    if (array.release == NULL || array.length == 0) {
-      if (array.release) array.release(&array);
+    arrow_owner_set_array(owner);
+    if (owner->array.release == NULL || owner->array.length == 0) {
+      arrow_owner_release_array(owner);
       break;
     }
-    for (int64_t row_idx = 0; row_idx < array.length; row_idx++) {
+    for (int64_t row_idx = 0; row_idx < owner->array.length; row_idx++) {
       row_list = Val_emptylist;
-      for (int64_t c = schema.n_children; c > 0; c--) {
+      for (int64_t c = owner->schema.n_children; c > 0; c--) {
         int64_t col_idx = c - 1;
-        field_name = caml_copy_string(schema.children[col_idx]->name == NULL ? "" : schema.children[col_idx]->name);
-        value_v = arrow_value(schema.children[col_idx], array.children[col_idx], row_idx);
+        value_v = arrow_value(owner->schema.children[col_idx], owner->array.children[col_idx], row_idx);
         pair = caml_alloc_tuple(2);
-        Store_field(pair, 0, field_name);
+        Store_field(pair, 0, Field(field_names, (mlsize_t)col_idx));
         Store_field(pair, 1, value_v);
         row_list = cons(pair, row_list);
       }
       rows = cons(row_list, rows);
     }
-    if (array.release) array.release(&array);
+    arrow_owner_release_array(owner);
   }
-  if (schema.release) schema.release(&schema);
+  arrow_owner_release_schema(owner);
   CAMLreturn(list_rev(rows));
 }
 
@@ -813,6 +912,7 @@ static value execute_direct(lbug_connection *conn, const char *cypher)
   result.ptr = NULL;
   result.owned = false;
   char *cypher_copy = caml_stat_strdup(cypher);
+  if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
   caml_enter_blocking_section();
   state = api.connection_query(conn, cypher_copy, &result);
@@ -906,6 +1006,7 @@ static value execute_direct_values(lbug_connection *conn, const char *cypher)
   result.ptr = NULL;
   result.owned = false;
   char *cypher_copy = caml_stat_strdup(cypher);
+  if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
   caml_enter_blocking_section();
   state = api.connection_query(conn, cypher_copy, &result);

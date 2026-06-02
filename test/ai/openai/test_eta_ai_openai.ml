@@ -613,7 +613,6 @@ let test_realtime_client_event_audio_append () =
   in
   let raw =
     O.Realtime.client_event_to_string (O.Realtime.Input_audio_buffer_append audio)
-    |> expect_ok "audio append event"
   in
   require_contains "append type" ~needle:"\"type\":\"input_audio_buffer.append\"" raw;
   require_contains "audio data" ~needle:"\"audio\":\"AAECAw==\"" raw

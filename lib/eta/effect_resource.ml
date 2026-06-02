@@ -36,6 +36,9 @@ let finally cleanup effect =
       match run_cleanup () with
       | Exit.Ok () -> raise exn
       | Exit.Error finalizer ->
+          (* Plain Eio cancellation stays an Eio cancellation. If cleanup also
+             fails, returning an uncatchable suppressed interrupt cause matches
+             scoped finalizers and keeps the cleanup diagnostic observable. *)
           error
             (Cause.suppressed ~primary:Cause.interrupt
                ~finalizer:(render_cause_error frame finalizer)))

@@ -3,7 +3,13 @@
 open Types
 open Dsl_backend
 
-type raw_error = [ `Duckdb of error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
+type raw_error =
+  [ `Duckdb of error
+  | `Invalid_blocking_pool of string
+  | `Pool_shutdown
+  | `Pool_shutdown_timeout
+  | `Timeout
+  ]
 
 type t = {
   database : database;
@@ -12,18 +18,21 @@ type t = {
 
 type nonrec error =
   | Duckdb of error
+  | Invalid_blocking_pool of string
   | Pool_shutdown
   | Pool_shutdown_timeout
   | Timeout
 
 let to_public_error = function
   | `Duckdb err -> Duckdb err
+  | `Invalid_blocking_pool message -> Invalid_blocking_pool message
   | `Pool_shutdown -> Pool_shutdown
   | `Pool_shutdown_timeout -> Pool_shutdown_timeout
   | `Timeout -> Timeout
 
 let to_raw_error = function
   | Duckdb err -> `Duckdb err
+  | Invalid_blocking_pool message -> `Invalid_blocking_pool message
   | Pool_shutdown -> `Pool_shutdown
   | Pool_shutdown_timeout -> `Pool_shutdown_timeout
   | Timeout -> `Timeout
@@ -38,33 +47,68 @@ let map_duckdb_result f () =
 let blocking_result ?blocking_pool ?name f =
   Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_duckdb_result f)
 
+let detach_started_blocking_pool_error =
+  `Invalid_blocking_pool
+    "Eta_duckdb.Pool: Detach_started blocking pools cannot be used with leased connections"
+
+let reject_detach_started_blocking_pool = function
+  | Some pool
+    when Eta.Effect.Blocking.Pool.shutdown_policy pool = Detach_started ->
+      Eta.Effect.fail detach_started_blocking_pool_error
+  | Some _ | None -> Eta.Effect.unit
+
 let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-  Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
-    ~on_cancel:(fun () -> Connection.interrupt conn)
-    ~timeout ~on_timeout:`Timeout (map_duckdb_result f)
+  reject_detach_started_blocking_pool blocking_pool
+  |> Eta.Effect.bind (fun () ->
+         Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
+           ~on_cancel:(fun () -> Connection.interrupt conn)
+           ~timeout ~on_timeout:`Timeout (map_duckdb_result f))
 
 let with_connection_internal t f = Eta.Pool.with_resource t.pool f |> public
 
+let close_database_on_create_failure ?blocking_pool release_on_create_failure
+    database =
+  if !release_on_create_failure then
+    blocking_result ?blocking_pool ~name:"duckdb.close_database" (fun () ->
+        Database.close database)
+  else Eta.Effect.unit
+
 let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
     ?max_lifetime config =
-  blocking_result ?blocking_pool ~name:"duckdb.open" (fun () ->
-      Database.open_ config)
-  |> Eta.Effect.bind (fun database ->
-         Eta.Pool.create ?name ~kind:"duckdb" ~max_size ?max_idle
-           ?idle_lifetime ?max_lifetime
-           ~acquire:
-             (blocking_result ?blocking_pool ~name:"duckdb.connect" (fun () ->
-                  Connection.connect database))
-           ~release:(fun conn ->
-             Eta.Effect.blocking ?pool:blocking_pool ~name:"duckdb.disconnect"
-               (fun () -> ignore (Connection.close conn)))
-           ~health_check:(fun conn ->
-             blocking_result ?blocking_pool ~name:"duckdb.ping" (fun () ->
-                 match Connection.query conn "SELECT 1" [] with
-                 | Ok _ -> Ok ()
-                 | Result.Error _ as err -> err))
-           ()
-         |> Eta.Effect.map (fun pool -> { database; pool }))
+  Eta.Effect.sync (fun () -> ref true)
+  |> Eta.Effect.bind (fun release_on_create_failure ->
+         Eta.Effect.scoped
+           (Eta.Effect.acquire_release
+              ~acquire:
+                (blocking_result ?blocking_pool ~name:"duckdb.open" (fun () ->
+                     Database.open_ config))
+              ~release:(fun database ->
+                close_database_on_create_failure ?blocking_pool
+                  release_on_create_failure database)
+           |> Eta.Effect.bind (fun database ->
+                  Eta.Pool.create ?name ~kind:"duckdb" ~max_size ?max_idle
+                    ?idle_lifetime ?max_lifetime
+                    ~acquire:
+                      (blocking_result ?blocking_pool ~name:"duckdb.connect"
+                         (fun () -> Connection.connect database))
+                    ~release:(fun conn ->
+                      Eta.Effect.blocking ?pool:blocking_pool
+                        ~name:"duckdb.disconnect" (fun () ->
+                          ignore (Connection.close conn)))
+                    ~health_check:(fun conn ->
+                      blocking_result ?blocking_pool ~name:"duckdb.ping"
+                        (fun () ->
+                          match Connection.query conn "SELECT 1" [] with
+                          | Ok _ -> Ok ()
+                          | Result.Error _ as err -> err))
+                    ()
+                  |> Eta.Effect.map (fun pool ->
+                         (* Pool.shutdown owns the parent database after this
+                            point; before it, the scoped finalizer closes
+                            database handles lost to creation failure or
+                            cancellation. *)
+                         release_on_create_failure := false;
+                         { database; pool }))))
   |> public
 
 let with_connection t f =
@@ -107,8 +151,11 @@ let shutdown ?deadline t =
     Eta.Effect.blocking ~name:"duckdb.close_database" (fun () ->
         ignore (Database.close t.database))
   in
+  (* The database owns every leased DuckDB connection. If Eta.Pool.shutdown
+     times out, active leases may still be running, so closing the parent
+     database here would invalidate those handles under their callers. *)
   Eta.Pool.shutdown ?deadline t.pool
-  |> Eta.Effect.finally close_database
+  |> Eta.Effect.bind (fun () -> close_database)
   |> public
 
 let stats t = Eta.Pool.stats t.pool

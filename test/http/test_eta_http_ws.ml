@@ -1,9 +1,11 @@
 open Test_eta_http_support
 
 type read_action = Return of string | Await : unit Eio.Promise.t -> read_action
+type write_gate = { write_started : unit Eio.Promise.u; write_release : unit Eio.Promise.t }
 
 type scripted_flow = {
   reads : read_action Stdlib.Queue.t;
+  write_gates : write_gate Stdlib.Queue.t;
   mutable pending : string option;
   writes : Buffer.t;
   mutable closed : int;
@@ -34,6 +36,11 @@ module Scripted_flow = struct
     len
 
   let single_write t bufs =
+    (match Stdlib.Queue.take_opt t.write_gates with
+    | None -> ()
+    | Some gate ->
+        Eio.Promise.resolve gate.write_started ();
+        Eio.Promise.await gate.write_release);
     List.iter (fun buf -> Buffer.add_string t.writes (Cstruct.to_string buf)) bufs;
     Cstruct.lenv bufs
 
@@ -45,7 +52,15 @@ end
 let scripted_flow actions =
   let reads = Stdlib.Queue.create () in
   List.iter (fun action -> Stdlib.Queue.push action reads) actions;
-  let state = { reads; pending = None; writes = Buffer.create 512; closed = 0 } in
+  let state =
+    {
+      reads;
+      write_gates = Stdlib.Queue.create ();
+      pending = None;
+      writes = Buffer.create 512;
+      closed = 0;
+    }
+  in
   let flow : Eta_http.Ws.Client.flow =
     Eio.Resource.T
       ( state,
@@ -55,6 +70,10 @@ let scripted_flow actions =
                (Eio.Flow.Pi.two_way (module Scripted_flow))) )
   in
   (state, flow)
+
+let gate_next_write state ~started ~release =
+  Stdlib.Queue.push { write_started = started; write_release = release }
+    state.write_gates
 
 let switching_response ?protocol key =
   "HTTP/1.1 101 Switching Protocols\r\n"
@@ -189,6 +208,26 @@ let read_ws_frame ~masked flow =
 let write_ws_switching_response ?protocol flow key =
   Eio.Flow.copy_string (switching_response ?protocol key) flow
 
+let read_file path =
+  let input = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input)
+    (fun () -> really_input_string input (in_channel_length input))
+
+let find_source label candidates =
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate %s from %s" label (Sys.getcwd ())
+
+let find_ws_source file =
+  find_source file
+    [
+      "lib/http/ws/" ^ file;
+      "../lib/http/ws/" ^ file;
+      "../../lib/http/ws/" ^ file;
+      "../../../lib/http/ws/" ^ file;
+    ]
+
 let run_echo_ws_server ?expect_target ?protocol ~messages flow =
   let head = read_http_head flow in
   (match expect_target with
@@ -225,6 +264,23 @@ let client_frame_after_upgrade state =
   | Some off ->
       Bytes.of_string (String.sub written off (String.length written - off))
 
+let client_frames_after_upgrade state =
+  let bytes = client_frame_after_upgrade state in
+  let rec loop off acc =
+    if off = Bytes.length bytes then List.rev acc
+    else
+      match
+        Eta_http.Ws.Codec.decode ~masked:true
+          (Bytes.sub bytes off (Bytes.length bytes - off))
+      with
+      | Ok (frame, consumed) when consumed > 0 -> loop (off + consumed) (frame :: acc)
+      | Ok _ -> Alcotest.fail "client frame decoder consumed no bytes"
+      | Error error ->
+          Alcotest.failf "client frame did not decode: %s"
+            (Eta_http.Ws.Codec.parse_error_to_string error)
+  in
+  loop 0 []
+
 let expect_client_frame state opcode payload =
   match Eta_http.Ws.Codec.decode ~masked:true (client_frame_after_upgrade state) with
   | Ok ({ Eta_http.Ws.Codec.opcode = actual_opcode; payload = actual_payload; _ }, _) ->
@@ -255,6 +311,14 @@ let test_ws_codec_masked_text_roundtrip () =
   | Error error ->
       Alcotest.failf "masked frame failed: %s"
         (Eta_http.Ws.Codec.parse_error_to_string error)
+
+let test_ws_random_material_does_not_use_stdlib_random () =
+  let codec = read_file (find_ws_source "codec.ml") in
+  let client = read_file (find_ws_source "ws_client.ml") in
+  Alcotest.(check bool) "codec avoids Stdlib.Random" false
+    (contains codec "Stdlib.Random");
+  Alcotest.(check bool) "client avoids Stdlib.Random" false
+    (contains client "Stdlib.Random")
 
 let test_ws_connect_reads_inbound_text () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
@@ -333,6 +397,58 @@ let test_ws_send_text_masks_client_frame () =
   Eta_http.Ws.Client.send_text conn "hello"
   |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
   expect_client_frame state Text "hello"
+
+let test_ws_queued_send_observes_close_sent () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let never, _resolver = Eio.Promise.create () in
+  let state, flow = scripted_flow [ Return (switching_response key); Await never ] in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  let first_started, first_started_u = Eio.Promise.create () in
+  let release_first, release_first_u = Eio.Promise.create () in
+  gate_next_write state ~started:first_started_u ~release:release_first;
+  let first_done, first_done_u = Eio.Promise.create () in
+  let second_done, second_done_u = Eio.Promise.create () in
+  let close_done, close_done_u = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http.Ws.Client.send_text conn "first"
+      |> Eta.Runtime.run rt |> Eio.Promise.resolve first_done_u);
+  Eio.Promise.await first_started;
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http.Ws.Client.send_text conn "second"
+      |> Eta.Runtime.run rt |> Eio.Promise.resolve second_done_u);
+  Eio.Fiber.yield ();
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http.Ws.Client.close conn
+      |> Eta.Runtime.run rt |> Eio.Promise.resolve close_done_u);
+  Eio.Fiber.yield ();
+  Eio.Promise.resolve release_first_u ();
+  Eta_test.Expect.expect_ok (Eio.Promise.await first_done);
+  (match Eio.Promise.await second_done with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Closed (1000, "WebSocket is closing"))) -> ()
+  | Eta.Exit.Ok () -> Alcotest.fail "queued send wrote after close started"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "queued send failed with unexpected cause: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause);
+  Eta_test.Expect.expect_ok (Eio.Promise.await close_done);
+  let opcodes =
+    client_frames_after_upgrade state
+    |> List.map (fun frame -> frame.Eta_http.Ws.Codec.opcode)
+  in
+  Alcotest.(check (list int))
+    "client frames"
+    [ Eta_http.Ws.Codec.opcode_to_int Text; Eta_http.Ws.Codec.opcode_to_int Close ]
+    (List.map Eta_http.Ws.Codec.opcode_to_int opcodes)
 
 let test_ws_ping_is_internal_and_pong_is_sent () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in

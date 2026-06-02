@@ -132,6 +132,13 @@ let source_take_pending source n =
   source.off <- source.off + take;
   chunk
 
+let mark_clean_response_end source clean =
+  (* Eta's HTTP/1.1 pool serializes requests; it does not pipeline. Bytes left
+     after a complete response body are therefore not a valid future response
+     cache for this client. Keep [clean] false so pooled release fences the
+     connection instead of letting unsolicited bytes poison the next request. *)
+  if source_pending source = 0 then clean := true
+
 let source_read_some source max_len =
   Effect.sync (fun () ->
       if max_len <= 0 then None
@@ -192,7 +199,8 @@ let release_body ~release ~on_unread_body clean =
 
 let fixed_body ~release ~on_unread_body source length =
   let remaining = ref length in
-  let clean = ref (length = 0) in
+  let clean = ref false in
+  if length = 0 then mark_clean_response_end source clean;
   let read_next () =
     if !remaining = 0 then Effect.pure Body.End
     else
@@ -205,7 +213,7 @@ let fixed_body ~release ~on_unread_body source length =
                let len = Bytes.length chunk in
                remaining := !remaining - len;
                if !remaining = 0 then (
-                 clean := true;
+                 mark_clean_response_end source clean;
                  Effect.pure (Body.Last chunk))
                else Effect.pure (Body.Chunk chunk))
   in
@@ -254,7 +262,7 @@ let chunked_body ~max_response_body_bytes ~release ~on_unread_body request sourc
     read_next ()
     |> Effect.map (function
          | Body.End ->
-             clean := true;
+             mark_clean_response_end source clean;
              Body.End
          | chunk -> chunk)
   in
@@ -268,7 +276,12 @@ let response_body ?host_eio ~max_response_body_bytes ~release
     (head : response_head) =
   let source = make_body_source ?host_eio flow request head.initial in
   if not (response_has_body request head.status) then
-    (Body.of_bytes ~release [], fun () -> Effect.pure Header.empty)
+    let clean = ref false in
+    mark_clean_response_end source clean;
+    ( Body.of_reader
+        ~release:(fun () -> release_body ~release ~on_unread_body clean)
+        (fun () -> Effect.pure Body.End),
+      fun () -> Effect.pure Header.empty )
   else if is_chunked head.headers then
     chunked_body ~max_response_body_bytes ~release ~on_unread_body request source
   else

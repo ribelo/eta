@@ -127,18 +127,18 @@ module Appender : sig
 end
 
 module Bulk_row : sig
-  type 'table t
+  type t
 
-  val empty : 'table t
-  val value : ('table, 'a) column -> 'a -> 'table t -> 'table t
-  val null : ('table, 'a option) column -> 'table t -> 'table t
+  val empty : t
+  val value : ('table, 'a) column -> 'a -> t -> t
+  val null : ('table, 'a option) column -> t -> t
 end
 
 module Bulk : sig
   type 'table t
 
   val create : ?schema:string -> connection -> 'table table -> ('table t, error) result
-  val append_row : 'table t -> 'table Bulk_row.t -> (unit, error) result
+  val append_row : 'table t -> Bulk_row.t -> (unit, error) result
   val flush : 'table t -> (unit, error) result
   val close : 'table t -> (unit, error) result
   val with_appender :
@@ -154,6 +154,7 @@ module Pool : sig
 
   type nonrec error =
     | Duckdb of error
+    | Invalid_blocking_pool of string
     | Pool_shutdown
     | Pool_shutdown_timeout
     | Timeout
@@ -170,8 +171,10 @@ module Pool : sig
   (** Create a DuckDB pool. Per-operation [timeout] values bound the Eta
       caller's wait through {!Eta.Effect.blocking_result_timeout}; they do not
       forcibly preempt a started DuckDB C call in a [Drain] blocking pool. Use a
-      [Detach_started] blocking pool or a DuckDB-level cancellation mechanism
-      when the underlying call must stop independently. *)
+      DuckDB-level cancellation mechanism when the underlying call must stop
+      independently. [Detach_started] blocking pools are rejected for pooled
+      operations because a detached worker could keep using a leased connection
+      after the pool returns it to another caller. *)
 
   val with_connection :
     t -> (connection -> ('a, error) Eta.Effect.t) -> ('a, error) Eta.Effect.t

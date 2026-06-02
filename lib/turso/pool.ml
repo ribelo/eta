@@ -5,23 +5,33 @@ open Connection
 open Dsl_backend
 open Compiled_ops
 
-type raw_error = [ `Turso of error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
+type raw_error =
+  [ `Turso of error
+  | `Invalid_blocking_pool of string
+  | `Pool_shutdown
+  | `Pool_shutdown_timeout
+  | `Timeout
+  ]
 type t = (db, raw_error) Eta.Pool.t
 
 type nonrec error =
   | Turso of error
+  | Invalid_blocking_pool of string
   | Pool_shutdown
   | Pool_shutdown_timeout
   | Timeout
 
 let pp_error ppf = function
   | Turso err -> pp_turso_error ppf err
+  | Invalid_blocking_pool message ->
+      Format.fprintf ppf "invalid blocking pool: %s" message
   | Pool_shutdown -> Format.pp_print_string ppf "pool shutdown"
   | Pool_shutdown_timeout -> Format.pp_print_string ppf "pool shutdown timeout"
   | Timeout -> Format.pp_print_string ppf "timeout"
 
 let to_public_error = function
   | `Turso err -> Turso err
+  | `Invalid_blocking_pool message -> Invalid_blocking_pool message
   | `Pool_shutdown -> Pool_shutdown
   | `Pool_shutdown_timeout -> Pool_shutdown_timeout
   | `Timeout -> Timeout
@@ -35,6 +45,20 @@ let map_turso_result f () =
 
 let blocking_result ?blocking_pool ?name f =
   Eta.Effect.blocking_result ?pool:blocking_pool ?name (map_turso_result f)
+
+let detach_started_blocking_pool_error =
+  `Invalid_blocking_pool
+    "Eta_turso.Pool: Detach_started blocking pools cannot be used with leased connections"
+
+let reject_detach_started_blocking_pool = function
+  | Some pool
+    when Eta.Effect.Blocking.Pool.shutdown_policy pool = Detach_started ->
+      Eta.Effect.fail detach_started_blocking_pool_error
+  | Some _ | None -> Eta.Effect.unit
+
+let leased_blocking_result ?blocking_pool ?name f =
+  reject_detach_started_blocking_pool blocking_pool
+  |> Eta.Effect.bind (fun () -> blocking_result ?blocking_pool ?name f)
 
 let acquire ?blocking_pool config =
   blocking_result ?blocking_pool ~name:"turso.open" (fun () -> open_ config)
@@ -64,38 +88,39 @@ let with_db t f =
   with_db_internal t (fun db ->
       f db |> Eta.Effect.map_error (function
         | Turso err -> `Turso err
+        | Invalid_blocking_pool message -> `Invalid_blocking_pool message
         | Pool_shutdown -> `Pool_shutdown
         | Pool_shutdown_timeout -> `Pool_shutdown_timeout
         | Timeout -> `Timeout))
 
 let query ?blocking_pool t sql params =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.query" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.query" (fun () ->
           query db sql params))
 
 let select ?blocking_pool t query =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.select" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.select" (fun () ->
           select db query))
 
 let returning ?blocking_pool t query =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.returning" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.returning" (fun () ->
           returning db query))
 
 let execute ?blocking_pool t sql params =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.execute" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.execute" (fun () ->
           execute db sql params))
 
 let execute_compiled ?blocking_pool t query =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.execute_compiled" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.execute_compiled" (fun () ->
           execute_compiled db query))
 
 let run_schema ?blocking_pool t schema =
   with_db_internal t (fun db ->
-      blocking_result ?blocking_pool ~name:"turso.schema" (fun () ->
+      leased_blocking_result ?blocking_pool ~name:"turso.schema" (fun () ->
           run_schema db schema))
 
 let shutdown ?deadline t = Eta.Pool.shutdown ?deadline t |> public

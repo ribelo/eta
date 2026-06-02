@@ -43,6 +43,38 @@ and ('s, !'err) supervisor =
 and ('s, !'err, !'a) supervisor_child =
   ('s, 'err, 'a) Runtime_supervisor_types.child
 
+exception Supervisor_cancelled
+
+(* Private switch-fail reason for supervisor child cancellation. User
+   [Stdlib.Exit] is intentionally not used here: bare user exceptions must stay
+   defects, while this internal reason is mapped locally to interruption. *)
+
+let is_supervisor_cancelled_exn = function
+  | Supervisor_cancelled -> true
+  | _ -> false
+
+let rec is_internal_cancel_finalizer = function
+  | Cause.Finalizer.Interrupt _ -> true
+  | Cause.Finalizer.Die die -> is_supervisor_cancelled_exn die.exn
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      List.for_all is_internal_cancel_finalizer causes
+  | Cause.Finalizer.Finalizer cause -> is_internal_cancel_finalizer cause
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      is_internal_cancel_finalizer primary
+      && is_internal_cancel_finalizer finalizer
+  | Cause.Finalizer.Fail _ -> false
+
+let rec is_internal_cancel_cause = function
+  | Cause.Interrupt _ -> true
+  | Cause.Die die -> is_supervisor_cancelled_exn die.exn
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.for_all is_internal_cancel_cause causes
+  | Cause.Finalizer cause -> is_internal_cancel_finalizer cause
+  | Cause.Suppressed { primary; finalizer } ->
+      is_internal_cancel_cause primary
+      && is_internal_cancel_finalizer finalizer
+  | Cause.Fail _ -> false
+
 let rec interpret_supervisor_scope :
     type s err a. frame -> (s, a, err) supervisor_scope -> a =
  fun frame scope ->
@@ -69,11 +101,12 @@ let rec interpret_supervisor_scope :
           match !child_cancel with
           | None -> ()
           | Some cancel_context ->
-              cancel_cancel frame cancel_context Exit;
+              cancel_cancel frame cancel_context Supervisor_cancelled;
               (match !child_sw with
               | None -> ()
               | Some child_switch ->
-                  (try switch_fail frame child_switch Exit with _ -> ())))
+                  (try switch_fail frame child_switch Supervisor_cancelled with
+                  | _ -> ())))
       in
       let child_id = Runtime_supervisor.register_child supervisor cancel in
       Runtime_supervisor.fork supervisor (fun () ->
@@ -87,7 +120,7 @@ let rec interpret_supervisor_scope :
                   cancel_sub frame @@ fun cancel_context ->
                   child_cancel := Some cancel_context;
                   if Atomic.get cancel_requested then
-                    cancel_cancel frame cancel_context Exit;
+                    cancel_cancel frame cancel_context Supervisor_cancelled;
                   switch_run frame @@ fun sw ->
                   child_sw := Some sw;
                   let finalizers = ref [] in
@@ -105,10 +138,19 @@ let rec interpret_supervisor_scope :
                        ~error_renderer:child_frame.error_renderer finalizers
                        (fun () ->
                          interpret_supervisor_scope child_frame child_scope))
-                with exn ->
-                  Error
-                    (Runtime_core.cause_of_exn_runtime frame.runtime
-                       frame.fail_key exn)
+                with
+                | Supervisor_cancelled when Atomic.get cancel_requested ->
+                    Error Cause.interrupt
+                | exn ->
+                    let cause =
+                      Runtime_core.cause_of_exn_runtime frame.runtime
+                        frame.fail_key exn
+                    in
+                    if
+                      Atomic.get cancel_requested
+                      && is_internal_cancel_cause cause
+                    then Error Cause.interrupt
+                    else Error cause
               in
               (match result with
               | Ok _ -> ()
@@ -147,8 +189,16 @@ let supervisor_scoped ?max_failures body =
          ~error_renderer:child_frame.error_renderer finalizers (fun () ->
            Fun.protect
              ~finally:(fun () -> Runtime_supervisor.cancel_children supervisor)
-             (fun () -> interpret_supervisor_scope child_frame (body.run supervisor))))
+           (fun () -> interpret_supervisor_scope child_frame (body.run supervisor))))
   with exn -> exit_of_exn frame exn
+
+let cancel_child_effect child =
+  make @@ fun () ->
+  Runtime_supervisor.child_cancel child ();
+  match Eio.Promise.await (Runtime_supervisor.child_promise child) with
+  | Ok _ -> ok ()
+  | Error cause when Cause.is_interrupt_only cause -> ok ()
+  | Error cause -> error cause
 
 let with_background ?name background use =
   let background =
@@ -162,7 +212,9 @@ let with_background ?name background use =
         (fun supervisor ->
           Supervisor_bind
             ( Supervisor_start (supervisor, Supervisor_lift background),
-              fun _ -> Supervisor_lift (use ()) ));
+              fun child ->
+                Supervisor_lift
+                  (Effect_resource.finally (cancel_child_effect child) (use ())) ));
     }
 
 let supervisor_pure value = Supervisor_pure value

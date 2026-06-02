@@ -22,30 +22,9 @@
 
 type ('a, 'err) t
 
-type ('s, 'a, 'err) supervisor_scope =
-  | Supervisor_pure : 'a -> (_, 'a, _) supervisor_scope
-  | Supervisor_lift : ('a, 'err) t -> (_, 'a, 'err) supervisor_scope
-  | Supervisor_fail : 'err -> (_, _, 'err) supervisor_scope
-  | Supervisor_bind :
-      ('s, 'b, 'err) supervisor_scope
-      * ('b -> ('s, 'a, 'err) supervisor_scope)
-      -> ('s, 'a, 'err) supervisor_scope
-  | Supervisor_start :
-      ('s, 'err) supervisor
-      * ('s, 'a, 'err) supervisor_scope
-      -> ('s, ('s, 'err, 'a) supervisor_child, _) supervisor_scope
-  | Supervisor_await :
-      ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
-  | Supervisor_cancel :
-      ('s, 'err, _) supervisor_child -> ('s, unit, 'err) supervisor_scope
-  | Supervisor_failures :
-      ('s, 'err) supervisor -> ('s, 'err Cause.t list, _) supervisor_scope
-  | Supervisor_check :
-      ('s, [> `Supervisor_failed of int ] as 'err) supervisor
-      -> ('s, unit, 'err) supervisor_scope
-  | Supervisor_yield : ('s, unit, _) supervisor_scope
+type ('s, 'a, 'err) supervisor_scope
 
-and ('a, 'err) supervisor_body = {
+type ('a, 'err) supervisor_body = {
   run : 's. ('s, 'err) supervisor -> ('s, 'a, 'err) supervisor_scope;
 }
 
@@ -213,6 +192,10 @@ module Blocking : sig
         [max_queued = 64], [queue_policy = Wait], and
         [shutdown_policy = Drain]. Tune explicitly for applications with known
         blocking I/O concurrency. *)
+
+    val shutdown_policy : t -> shutdown_policy
+    (** Return the pool's started-work shutdown policy. Connectors that lease
+        non-thread-safe resources use this to reject detached started work. *)
 
     val stats : t -> stats
     (** Snapshot pool counters. [active] is started work still running;
@@ -429,6 +412,8 @@ val with_background :
 
 val supervisor_scoped :
   ?max_failures:int -> ('a, 'err) supervisor_body -> ('a, 'err) t
+(** Low-level abstract supervisor-scope runner used by {!Supervisor}. Prefer
+    {!Supervisor.scoped} and {!Supervisor.Scope} in user code. *)
 
 val with_error_renderer : ('err -> string) -> ('a, 'err) t -> ('a, 'err) t
 (** Render typed failures in observability span status and exception events for
@@ -444,9 +429,7 @@ val suppress_observability : ('a, 'err) t -> ('a, 'err) t
     defect diagnostics. *)
 
 val supervisor_pure : 'a -> ('s, 'a, 'err) supervisor_scope
-
 val supervisor_lift : ('a, 'err) t -> ('s, 'a, 'err) supervisor_scope
-
 val supervisor_fail : 'err -> ('s, 'a, 'err) supervisor_scope
 
 val supervisor_bind :
@@ -473,6 +456,8 @@ val supervisor_check :
   ('s, unit, 'err) supervisor_scope
 
 val supervisor_yield : ('s, unit, 'err) supervisor_scope
+(** Low-level abstract supervisor-scope builders used by {!Supervisor.Scope}.
+    They intentionally do not expose the interpreter AST constructors. *)
 
 val named :
   ?error_renderer:('err -> string) ->

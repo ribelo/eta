@@ -16,21 +16,28 @@ type raw_connection
 type raw_appender
 
 type database = {
+  mutex : Mutex.t;
+  condition : Condition.t;
   raw : raw_database;
   mutable closed : bool;
+  mutable active : int;
   mutable connections : connection list;
 }
 
 and connection = {
   database : database;
+  use_mutex : Mutex.t;
   raw : raw_connection;
   mutable closed : bool;
+  mutable active : int;
 }
 
 type appender = {
   connection : connection;
+  use_mutex : Mutex.t;
   raw : raw_appender;
   mutable closed : bool;
+  mutable active : int;
 }
 
 type config = {
@@ -78,8 +85,13 @@ val pp_duckdb_error : Format.formatter -> error -> unit
 val available : unit -> (unit, error) result
 val wrap : string -> (unit -> 'a) -> ('a, error) result
 val version : unit -> (string, error) result
+val with_database_lock : database -> (unit -> 'a) -> 'a
 val if_database_open : database -> (unit -> ('a, error) result) -> ('a, error) result
-val if_connection_open : connection -> (unit -> ('a, error) result) -> ('a, error) result
+val if_connection_open :
+  ?serialize:bool ->
+  connection ->
+  (unit -> ('a, error) result) ->
+  ('a, error) result
 val if_appender_open : appender -> (unit -> ('a, error) result) -> ('a, error) result
 
 type 'a typ = {

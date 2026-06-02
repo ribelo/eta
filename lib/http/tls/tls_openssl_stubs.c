@@ -4,6 +4,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
+#include <openssl/rand.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
@@ -56,6 +57,22 @@ static struct custom_operations eta_ssl_ctx_ops = {
 static SSL_CTX *eta_ssl_ctx_val(value v)
 {
   return *((SSL_CTX **)Data_custom_val(v));
+}
+
+CAMLprim value eta_openssl_random_bytes(value v_bytes, value v_off, value v_len)
+{
+  CAMLparam3(v_bytes, v_off, v_len);
+  int off = Int_val(v_off);
+  int len = Int_val(v_len);
+  mlsize_t bytes_len = caml_string_length(v_bytes);
+  if (off < 0 || len < 0 || (mlsize_t)off > bytes_len ||
+      (mlsize_t)len > bytes_len - (mlsize_t)off) {
+    caml_invalid_argument("OpenSSL RAND_bytes bounds");
+  }
+  if (RAND_bytes((unsigned char *)Bytes_val(v_bytes) + off, len) != 1) {
+    caml_failwith("OpenSSL RAND_bytes failed");
+  }
+  CAMLreturn(Val_unit);
 }
 
 /* ------------------------------------------------------------------ */

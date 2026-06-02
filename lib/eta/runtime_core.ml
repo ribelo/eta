@@ -45,7 +45,9 @@ let rec cause_of_exn ?backtrace ~capture_backtrace key exn =
   | Eio.Cancel.Cancelled _ -> Cause.interrupt
   | Blocking_runtime.Callback_raised (exn, bt) ->
       RObs.die_of_exn ~backtrace:bt ~capture_backtrace exn
-  | Exit -> Cause.interrupt
+  (* Bare [Stdlib.Exit] is user code raising a normal OCaml exception. Eta
+     cancellation must arrive as [Eio.Cancel.Cancelled _], including internal
+     cancellations whose reason value happens to be [Exit]. *)
   | Fun.Finally_raised exn -> cause_of_exn ~capture_backtrace key exn
   | Eio.Exn.Multiple causes ->
       let causes =
@@ -230,7 +232,10 @@ let run_finalizers ~runtime ~fail_key finalizers =
            | causes -> Some (Cause.sequential causes))
 
 let render_finalizer_cause ~error_renderer cause =
-  Cause.finalizer_of_cause (fun err -> error_renderer (Obj.repr err)) cause
+  Cause.finalizer_of_cause
+    (fun err ->
+      RObs.render_typed_failure ~error_renderer (Obj.repr err))
+    cause
 
 let with_finalizers ~runtime ~fail_key ~error_renderer finalizers body =
   match body () with

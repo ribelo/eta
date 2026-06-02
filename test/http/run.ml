@@ -62,6 +62,8 @@ let () =
         [
           Alcotest.test_case "make_h1 request path" `Quick
             test_client_make_h1_request_path;
+          Alcotest.test_case "rejects cross-domain use" `Quick
+            test_client_rejects_cross_domain_use;
         ] );
       ( "retry",
         [
@@ -172,8 +174,12 @@ let () =
             test_h1_client_head_ignores_chunked_body_headers;
           Alcotest.test_case "skips 100 Continue" `Quick
             test_h1_client_skips_100_continue;
+          Alcotest.test_case "origin pool creation is fenced" `Quick
+            test_h1_client_origin_pool_creation_is_fenced;
           Alcotest.test_case "pool reuses healthy idle connection" `Quick
             test_h1_pool_reuses_healthy_idle_connection;
+          Alcotest.test_case "pool rejects overread bytes before reuse" `Quick
+            test_h1_pool_rejects_overread_bytes_before_reuse;
           Alcotest.test_case "pool rejects unhealthy idle connection" `Quick
             test_h1_pool_rejects_unhealthy_idle_connection;
           Alcotest.test_case "pool holds checkout until body EOF" `Quick
@@ -196,12 +202,16 @@ let () =
           Alcotest.test_case "accept key vector" `Quick test_ws_accept_key_vector;
           Alcotest.test_case "masked text roundtrip" `Quick
             test_ws_codec_masked_text_roundtrip;
+          Alcotest.test_case "random material avoids Stdlib.Random" `Quick
+            test_ws_random_material_does_not_use_stdlib_random;
           Alcotest.test_case "upgrade reads inbound text" `Quick
             test_ws_connect_reads_inbound_text;
           Alcotest.test_case "oversized frame rejected before payload read" `Quick
             test_ws_rejects_oversized_frame_before_payload_read;
           Alcotest.test_case "send text masks client frame" `Quick
             test_ws_send_text_masks_client_frame;
+          Alcotest.test_case "queued send observes close" `Quick
+            test_ws_queued_send_observes_close_sent;
           Alcotest.test_case "ping is internal and sends pong" `Quick
             test_ws_ping_is_internal_and_pong_is_sent;
           Alcotest.test_case "1011 close fails inbound stream" `Quick
@@ -235,6 +245,8 @@ let () =
         ] );
       ( "alpn",
         [
+          Alcotest.test_case "auto client uses dispatch state" `Quick
+            test_auto_client_uses_alpn_dispatch_state;
           Alcotest.test_case "pending first-arrivals collapse" `Quick
             test_alpn_state_collapses_pending_first_arrivals;
           Alcotest.test_case "stale resolution and decode" `Quick

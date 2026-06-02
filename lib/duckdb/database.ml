@@ -46,13 +46,28 @@ let open_ config =
   | Ok () ->
       wrap "open" @@ fun () ->
       let path = Option.value config.path ~default:"" in
-      let db = { raw = raw_open path; closed = false; connections = [] } in
+      let db =
+        {
+          mutex = Mutex.create ();
+          condition = Condition.create ();
+          raw = raw_open path;
+          closed = false;
+          active = 0;
+          connections = [];
+        }
+      in
       (try
          (match config.threads with
          | None -> ()
          | Some threads ->
              let conn =
-               { database = db; raw = raw_connect db.raw; closed = false }
+               {
+                 database = db;
+                 use_mutex = Mutex.create ();
+                 raw = raw_connect db.raw;
+                 closed = false;
+                 active = 0;
+               }
              in
              Fun.protect
                ~finally:(fun () ->
@@ -70,13 +85,20 @@ let open_ config =
 let open_memory () = open_ { path = None; threads = None }
 
 let close db =
-  if_database_open db @@ fun () ->
-  let child_result = close_connections db.connections in
-  match wrap "close database" (fun () -> raw_close_database db.raw) with
-  | Ok () ->
-      db.closed <- true;
-      child_result
-  | Result.Error _ as close_error -> (
-      match child_result with
-      | Ok () -> close_error
-      | Result.Error _ as child_error -> child_error)
+  with_database_lock db @@ fun () ->
+  if db.closed then Result.Error Closed
+  else (
+    (* Database.close is the parent lifecycle fence: once close starts, new
+       connection work is rejected, then the native database is destroyed only
+       after every already-started child operation has left the FFI. *)
+    db.closed <- true;
+    while db.active > 0 do Condition.wait db.condition db.mutex done;
+    let child_result = close_connections db.connections in
+    let close_result = wrap "close database" (fun () -> raw_close_database db.raw) in
+    db.connections <- [];
+    match close_result with
+    | Ok () -> child_result
+    | Result.Error _ as close_error -> (
+        match child_result with
+        | Ok () -> close_error
+        | Result.Error _ as child_error -> child_error))

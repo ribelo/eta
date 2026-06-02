@@ -874,15 +874,10 @@ let test_ladybug_bind_error_does_not_leak_prepared_statements () =
                     (grew %d KB, limit %d KB)" growth_kb max_acceptable_kb)
                 true (growth_kb < max_acceptable_kb)))
 
-(* P1: Close/finalize ordering marks handles closed before native close succeeds.
-   DuckDB appender sets closed <- true before raw_appender_close. If the native
-   close fails (e.g. constraint violation in pending data), the appender is
-   permanently poisoned: OCaml side thinks it's closed (can't retry), but the
-   native resource was never destroyed.
-
-   This test creates an appender, appends data that will cause close to fail,
-   then verifies that after the failed close, the appender is incorrectly
-   marked as closed — making it impossible to retry or properly clean up. *)
+(* P1: DuckDB appender close failures must not leak native handles.
+   A failed close leaves no supported reset/rollback path. Eta destroys the
+   native appender and poisons the OCaml wrapper instead of leaving cleanup to
+   the finalizer or pretending a retry is safe. *)
 
 let test_duckdb_appender_failed_close_poisons_handle () =
   match Eta_duckdb.available () with
@@ -940,23 +935,24 @@ let test_duckdb_appender_failed_close_poisons_handle () =
                      |> value Duckdb_items.name "dup"
                      |> value Duckdb_items.active true
                      |> value Duckdb_items.score 2.0));
-              (* Close should fail due to PK constraint violation *)
+              (* Close may fail due to PK constraint violation. *)
               match Eta_duckdb.Bulk.close appender2 with
               | Ok () ->
                   (* DuckDB appender might not enforce PK on close.
                      In that case the ordering bug isn't observable here. *)
                   ()
               | Error _ ->
-                  (* Close failed. The bug: closed flag was set BEFORE the
-                     native close, so a retry returns Closed immediately. *)
+                  (* Close failed. The native handle has been destroyed, so the
+                     wrapper must be closed rather than retryable. *)
                   (match Eta_duckdb.Bulk.close appender2 with
-                  | Error Eta_duckdb.Closed ->
-                      Alcotest.(check bool)
-                        "failed close should NOT mark handle as closed \
-                         (should allow retry)"
-                        false true
-                  | Error _ -> () (* retry attempted native op - correct *)
-                  | Ok () -> () (* retry succeeded - correct *))))
+                  | Error Eta_duckdb.Closed -> ()
+                  | Error err ->
+                      Alcotest.failf
+                        "failed close should poison handle, got %a"
+                        Eta_duckdb.pp_error err
+                  | Ok () ->
+                      Alcotest.fail
+                        "failed close should poison handle, got retry success")))
 
 let () =
   Alcotest.run "Eta database connectors"

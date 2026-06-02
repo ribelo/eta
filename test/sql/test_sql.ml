@@ -49,7 +49,7 @@ let source_between source ~start_marker ~end_marker =
   in
   String.sub source start (finish - start)
 
-let test_database_pool_shutdown_cleanup_survives_timeout () =
+let test_database_pool_shutdown_keeps_parent_open_on_timeout () =
   let duckdb_source = read_file (find_source_file "lib/duckdb/pool.ml") in
   let duckdb_shutdown =
     source_between duckdb_source ~start_marker:"let shutdown ?deadline t ="
@@ -59,8 +59,12 @@ let test_database_pool_shutdown_cleanup_survives_timeout () =
     (require_sub duckdb_shutdown ~needle:"Eta.Pool.shutdown ?deadline t.pool"
       : int);
   ignore (require_sub duckdb_shutdown ~needle:"Database.close t.database" : int);
+  ignore
+    (require_sub duckdb_shutdown
+       ~needle:"|> Eta.Effect.bind (fun () -> close_database)" :
+      int);
   Alcotest.(check bool)
-    "DuckDB database close is final cleanup" true
+    "DuckDB database close is not timeout cleanup" false
     (contains_sub duckdb_shutdown ~needle:"Eta.Effect.finally"
     || contains_sub duckdb_shutdown ~needle:"Eta.Effect.catch");
   List.iter
@@ -74,6 +78,34 @@ let test_database_pool_shutdown_cleanup_survives_timeout () =
       ("lib/turso/pool.ml", "let shutdown ?deadline t =", "let stats =");
       ("lib/sql/pool.ml", "let shutdown ?deadline", "let stats");
     ]
+
+let test_turso_pool_rejects_detach_started_blocking_pool_source () =
+  let source = read_file (find_source_file "lib/turso/pool.ml") in
+  ignore
+    (require_sub source ~needle:"Invalid_blocking_pool of string" : int);
+  ignore
+    (require_sub source ~needle:"let reject_detach_started_blocking_pool" : int);
+  ignore
+    (require_sub source
+       ~needle:
+         "Eta_turso.Pool: Detach_started blocking pools cannot be used with leased connections" :
+      int);
+  [
+    "let query ?blocking_pool t sql params =";
+    "let select ?blocking_pool t query =";
+    "let returning ?blocking_pool t query =";
+    "let execute ?blocking_pool t sql params =";
+    "let execute_compiled ?blocking_pool t query =";
+    "let run_schema ?blocking_pool t schema =";
+  ]
+  |> List.iter (fun marker ->
+         let body =
+           source_between source ~start_marker:marker ~end_marker:"))"
+         in
+         ignore
+           (require_sub body
+              ~needle:"leased_blocking_result ?blocking_pool" :
+             int))
 
 module Users = struct
   module T = Q.Table.Make (struct
@@ -815,6 +847,45 @@ let test_sql_pool_timeout_interrupts_and_reuses_connection () =
 
 let test_sql_pool_parent_cancel_interrupts_and_reuses_connection () =
   test_sql_pool_timeout_interrupts_and_reuses_connection ()
+
+let test_sql_pool_rejects_detach_started_blocking_pool () =
+  let module BP = Eta.Effect.Blocking.Pool in
+  let blocking_pool =
+    BP.create ~name:"sqlite-detach"
+      {
+        max_threads = 1;
+        max_queued = 0;
+        queue_policy = BP.Reject;
+        shutdown_policy = BP.Detach_started;
+      }
+  in
+  let program =
+    let* pool =
+      Q.Pool.create ~blocking_pool ~default_timeout:(Eta.Duration.ms 500)
+        ~max_size:1 (S.memory_config ())
+    in
+    Eta.Effect.scoped
+      (Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure pool)
+         ~release:Q.Pool.shutdown
+      |> Eta.Effect.bind (fun pool ->
+             Q.Pool.Raw.query pool "SELECT 1 AS one" []))
+  in
+  match
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    Eta.Runtime.run rt program
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (`Eta_sql
+          (Q.Pool_error
+            "Eta_sql.Pool: Detach_started blocking pools cannot be used with leased connections"))) ->
+      ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected detach-started pool rejection, got %a"
+        (Eta.Cause.pp pp_pool_error) cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected detach-started pool rejection"
 
 let test_sql_new_expr_operator_workload () =
   with_pool @@ fun pool ->

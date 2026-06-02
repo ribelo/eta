@@ -59,6 +59,14 @@ let with_die_annotations attrs f =
   loop attrs f
 
 let default_error_renderer _ = "<typed failure>"
+let error_renderer_raised = "<error renderer raised>"
+
+let render_typed_failure ~error_renderer err =
+  (* Error renderers are user callbacks on the diagnostic path. If one
+     raises, preserve the original cause and close observability spans with a
+     stable fallback instead of reporting the renderer failure as the program
+     failure. *)
+  try error_renderer err with _ -> error_renderer_raised
 
 let with_blocking_event_emit emit f =
   if has_fiber_context blocking_event_emit_key then
@@ -119,7 +127,7 @@ let rec status_of_cause :
     err Cause.t ->
     Capabilities.span_status =
  fun ~error_renderer -> function
-  | Cause.Fail err -> Error (error_renderer err)
+  | Cause.Fail err -> Error (render_typed_failure ~error_renderer err)
   | Cause.Die die -> Error (Printexc.to_string die.exn)
   | Cause.Interrupt _ -> Cancelled
   | Cause.Sequential causes | Cause.Concurrent causes ->

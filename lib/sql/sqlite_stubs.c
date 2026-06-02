@@ -567,7 +567,11 @@ CAMLprim value eta_sqlite_column_text(value v_stmt, intnat index)
   }
   text = sqlite3_column_text(stmt, (int)index);
   len = sqlite3_column_bytes(stmt, (int)index);
-  CAMLreturn(caml_alloc_initialized_string(len, text == NULL ? "" : (const char *)text));
+  if (len < 0) caml_failwith("sqlite column_text: negative length");
+  /* SQLite permits NULL for SQL NULL and zero-length values only. A positive
+     byte count with a NULL pointer is a driver contract violation. */
+  if (len > 0 && text == NULL) caml_failwith("sqlite column_text: null pointer for non-empty value");
+  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)text));
 }
 
 CAMLprim value eta_sqlite_column_text_bc(value v_stmt, value v_index)
@@ -600,7 +604,9 @@ CAMLprim value eta_sqlite_column_blob(value v_stmt, intnat index)
   }
   blob = sqlite3_column_blob(stmt, (int)index);
   len = sqlite3_column_bytes(stmt, (int)index);
-  CAMLreturn(caml_alloc_initialized_string(len, blob == NULL ? "" : (const char *)blob));
+  if (len < 0) caml_failwith("sqlite column_blob: negative length");
+  if (len > 0 && blob == NULL) caml_failwith("sqlite column_blob: null pointer for non-empty value");
+  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)blob));
 }
 
 CAMLprim value eta_sqlite_column_blob_bc(value v_stmt, value v_index)

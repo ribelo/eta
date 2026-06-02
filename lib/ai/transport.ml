@@ -90,7 +90,7 @@ let perform_raw ?max_bytes provider client request =
            && response.status < 300
          then read_response_text ?max_bytes response.body
          else
-           read_response_text response.body
+           read_response_text ?max_bytes response.body
            |> Eta.Effect.bind (fun raw ->
                   Eta.Effect.fail
                     (provider.decode_error ~status:response.status
@@ -106,7 +106,7 @@ let perform_binary ?max_bytes provider client request =
            read_response_body ?max_bytes response.body
            |> Eta.Effect.map (fun body -> (body, response.headers))
          else
-           read_response_text response.body
+           read_response_text ?max_bytes response.body
            |> Eta.Effect.bind (fun raw ->
                   Eta.Effect.fail
                     (provider.decode_error ~status:response.status

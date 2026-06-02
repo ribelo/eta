@@ -277,6 +277,4 @@ let accept_key key =
   |> Base64.encode_string
 
 let random_key () =
-  Stdlib.Random.self_init ();
-  Bytes.init 16 (fun _ -> Char.chr (Stdlib.Random.int 256))
-  |> Bytes.to_string |> Base64.encode_string
+  Openssl.random_bytes 16 |> Bytes.to_string |> Base64.encode_string

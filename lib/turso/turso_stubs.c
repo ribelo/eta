@@ -288,9 +288,19 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   sqlite3 *db = db_val(v_db);
   if (db == NULL) caml_failwith("sqlite3_prepare_v2 rc=21: closed database");
   sqlite3_stmt *stmt = NULL;
+  char *sql;
+  int rc;
   v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = NULL;
-  int rc = api.prepare_v2(db, String_val(v_sql), -1, &stmt, NULL);
+  sql = caml_stat_strdup(String_val(v_sql));
+  if (sql == NULL) caml_failwith("turso allocation failed");
+  /* prepare_v2 may touch disk or extension state. Copy the OCaml string before
+     releasing the runtime lock because String_val is not stable in a blocking
+     section. */
+  caml_enter_blocking_section();
+  rc = api.prepare_v2(db, sql, -1, &stmt, NULL);
+  caml_leave_blocking_section();
+  caml_stat_free(sql);
   if (rc != SQLITE_OK) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "sqlite3_prepare_v2 rc=%d: %s", rc, db == NULL ? "closed" : api.errmsg(db));
@@ -439,7 +449,11 @@ CAMLprim value eta_turso_column_text(value v_stmt, intnat index)
   sqlite3_stmt *stmt = require_stmt(v_stmt, "sqlite3_column_text");
   const unsigned char *text = api.column_text(stmt, (int)index);
   int len = api.column_bytes(stmt, (int)index);
-  CAMLreturn(caml_alloc_initialized_string(len, text == NULL ? "" : (const char *)text));
+  if (len < 0) caml_failwith("turso column_text: negative length");
+  /* SQLite permits NULL for SQL NULL and zero-length values only. A positive
+     byte count with a NULL pointer is a driver contract violation. */
+  if (len > 0 && text == NULL) caml_failwith("turso column_text: null pointer for non-empty value");
+  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)text));
 }
 
 CAMLprim value eta_turso_column_text_bc(value v_stmt, value v_index) { return eta_turso_column_text(v_stmt, Int_val(v_index)); }
@@ -451,9 +465,9 @@ CAMLprim value eta_turso_column_blob(value v_stmt, intnat index)
   sqlite3_stmt *stmt = require_stmt(v_stmt, "sqlite3_column_blob");
   const void *blob = api.column_blob(stmt, (int)index);
   int len = api.column_bytes(stmt, (int)index);
-  value out = caml_alloc_string(len);
-  if (len > 0 && blob != NULL) memcpy(Bytes_val(out), blob, (size_t)len);
-  CAMLreturn(out);
+  if (len < 0) caml_failwith("turso column_blob: negative length");
+  if (len > 0 && blob == NULL) caml_failwith("turso column_blob: null pointer for non-empty value");
+  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)blob));
 }
 
 CAMLprim value eta_turso_column_blob_bc(value v_stmt, value v_index) { return eta_turso_column_blob(v_stmt, Int_val(v_index)); }

@@ -177,41 +177,32 @@ type server_event =
   | Server_decode_error of { message : string; raw : A.raw_json option }
   | Raw_server_event of { type_ : string option; raw : A.raw_json }
 
-type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
-
-let widen_ws_error (error : Eta_http.Ws.Client.ws_error) : realtime_error =
-  (error :> realtime_error)
+type realtime_error = Eta_http.Ws.Client.ws_error
 
 let audio_data_base64 = function
   | A.Base64 value -> value
   | A.Bytes bytes -> Base64.encode_string (Bytes.to_string bytes)
 
 let client_event_json = function
-  | Raw_client_event json -> Stdlib.Ok json
+  | Raw_client_event json -> json
   | Session_update session ->
-      Stdlib.Ok
-        (Json.object_
-           [
-             ("type", Some (Json.string "session.update"));
-             ("session", Some (session_json session));
-           ])
+      Json.object_
+        [
+          ("type", Some (Json.string "session.update"));
+          ("session", Some (session_json session));
+        ]
   | Input_audio_buffer_append audio ->
-      Stdlib.Ok
-        (Json.object_
-           [
-             ("type", Some (Json.string "input_audio_buffer.append"));
-             ("audio", Some (Json.string (audio_data_base64 audio.A.data)));
-           ])
+      Json.object_
+        [
+          ("type", Some (Json.string "input_audio_buffer.append"));
+          ("audio", Some (Json.string (audio_data_base64 audio.A.data)));
+        ]
   | Input_audio_buffer_commit ->
-      Stdlib.Ok
-        (Json.object_ [ ("type", Some (Json.string "input_audio_buffer.commit")) ])
+      Json.object_ [ ("type", Some (Json.string "input_audio_buffer.commit")) ]
   | Response_create ->
-      Stdlib.Ok (Json.object_ [ ("type", Some (Json.string "response.create")) ])
+      Json.object_ [ ("type", Some (Json.string "response.create")) ]
 
-let client_event_to_string event =
-  match client_event_json event with
-  | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
-  | Stdlib.Error _ as error -> error
+let client_event_to_string event = client_event_json event |> Json.to_string
 
 let server_error_json raw json =
   let error = Json.object_member "error" json in
@@ -280,11 +271,7 @@ let connect ?base_url ?safety_identifier ~sw ~net ~api_key ~model () =
   |> E.map (fun ws -> { ws })
 
 let send_event t event : (unit, realtime_error) E.t =
-  match client_event_to_string event with
-  | Stdlib.Error error -> E.fail error
-  | Stdlib.Ok raw ->
-      Eta_http.Ws.Client.send_text t.ws raw
-      |> E.catch (fun error -> E.fail (widen_ws_error error))
+  Eta_http.Ws.Client.send_text t.ws (client_event_to_string event)
 
 let events t =
   Eta_http.Ws.Client.incoming t.ws

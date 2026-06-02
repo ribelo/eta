@@ -516,6 +516,46 @@ let test_pool_shutdown_deadline_timeout () =
   check_exit_ok Alcotest.unit "holder done" () (Eio.Promise.await holder);
   wait_until (fun () -> (Pool.stats pool).Pool.closed = 1)
 
+let test_pool_shutdown_deadline_waits_for_idle_close () =
+  with_test_clock @@ fun sw clock rt ->
+  let factory = make_pool_factory () in
+  let release_started, release_started_resolver = Eio.Promise.create () in
+  let release_continue, release_continue_resolver = Eio.Promise.create () in
+  let release conn =
+    Effect.sync (fun () ->
+        ignore (Eio.Promise.try_resolve release_started_resolver ());
+        Eio.Promise.await release_continue)
+    |> Effect.bind (fun () -> pool_close factory conn)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
+  wait_until (fun () -> (Pool.stats pool).Pool.idle = 1);
+  let shutdown = fork_run sw rt (Pool.shutdown ~deadline:(Duration.ms 5) pool) in
+  Eio.Promise.await release_started;
+  let while_closing = Pool.stats pool in
+  Alcotest.(check int) "idle tracked until release completes" 1
+    while_closing.Pool.idle;
+  Alcotest.(check int) "not counted closed before release completes" 0
+    while_closing.Pool.closed;
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  Eio.Fiber.yield ();
+  Alcotest.(check bool) "shutdown waits for idle close" false
+    (Eio.Promise.is_resolved shutdown);
+  Alcotest.(check int) "factory did not close before release completes" 0
+    !(factory.closed);
+  Eio.Promise.resolve release_continue_resolver ();
+  check_exit_ok Alcotest.unit "shutdown closes idle" ()
+    (Eio.Promise.await shutdown);
+  let after_shutdown = Pool.stats pool in
+  Alcotest.(check int) "idle removed after close" 0 after_shutdown.Pool.idle;
+  Alcotest.(check int) "closed after shutdown" 1 after_shutdown.Pool.closed;
+  Alcotest.(check int) "factory closed after shutdown" 1 !(factory.closed)
+
 let set_pool_active_for_invariant_test pool active =
   Obj.set_field (Obj.repr pool) 17 (Obj.repr active)
 

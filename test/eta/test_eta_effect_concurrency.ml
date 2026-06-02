@@ -341,6 +341,103 @@ let test_effect_race_cancels_losers_after_first_success () =
   yield ();
   Alcotest.(check bool) "loser cancelled" false !loser_completed
 
+let test_effect_race_reports_loser_finalizer_failure_after_winner () =
+  with_test_clock @@ fun sw clock rt ->
+  let acquired, acquired_u = Eio.Promise.create () in
+  let release_started = ref false in
+  let slow =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:(Effect.sync (fun () -> Eio.Promise.resolve acquired_u ()))
+         ~release:(fun () ->
+           release_started := true;
+           Effect.fail "release")
+      |> Effect.bind (fun () ->
+             Effect.delay (Duration.ms 1_000) (Effect.pure "slow")))
+  in
+  let winner =
+    Effect.sync (fun () -> Eio.Promise.await acquired)
+    |> Effect.map (fun () -> "winner")
+  in
+  let promise = fork_run sw rt (Effect.race [ slow; winner ]) in
+  wait_for_sleepers clock 1;
+  match Eio.Promise.await promise with
+  | Exit.Ok value ->
+      Alcotest.failf
+        "expected loser finalizer failure after winner, got Ok %S" value
+  | Exit.Error cause ->
+      check_suppressed_finalizer
+        "loser release failure is reported after winner" "<typed failure>"
+        cause;
+      Alcotest.(check bool)
+        "loser finalizer ran before race returned" true !release_started
+
+let test_effect_race_timeout_during_loser_cleanup_keeps_winner () =
+  with_test_clock @@ fun sw clock rt ->
+  let sem = Semaphore.make ~permits:1 in
+  let release_started, release_started_u = Eio.Promise.create () in
+  let release_continue, release_continue_u = Eio.Promise.create () in
+  let loser =
+    Effect.scoped
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () ->
+           Effect.sync (fun () ->
+               ignore (Eio.Promise.try_resolve release_started_u ());
+               Eio.Promise.await release_continue))
+      |> Effect.bind (fun () ->
+             Effect.delay (Duration.ms 1_000) (Effect.pure `Loser)))
+  in
+  let winner =
+    Semaphore.acquire sem 1 |> Effect.map (fun () -> `Winner)
+  in
+  let promise =
+    fork_run sw rt
+      (Effect.race [ loser; winner ]
+      |> Effect.timeout_as (Duration.ms 5) ~on_timeout:`Timeout)
+  in
+  Eio.Promise.await release_started;
+  wait_for_sleepers clock 1;
+  Test_clock.adjust clock (Duration.ms 5);
+  Eio.Fiber.yield ();
+  Eio.Promise.resolve release_continue_u ();
+  match Eio.Promise.await promise with
+  | Exit.Ok `Winner ->
+      Semaphore.release sem 1;
+      Alcotest.(check int) "permit returned by caller" 1 (Semaphore.available sem)
+  | Exit.Ok `Loser -> Alcotest.fail "loser won unexpectedly"
+  | Exit.Error cause ->
+      Alcotest.failf "timeout discarded race winner: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<race>"))
+        cause
+
+let test_effect_race_simultaneous_success_and_failure_returns_winner () =
+  with_test_clock @@ fun sw _clock rt ->
+  for iteration = 1 to 64 do
+    let go, release = Eio.Promise.create () in
+    let ready = Eio.Stream.create 2 in
+    let child name result =
+      Effect.named ("race." ^ name)
+        (Effect.sync (fun () ->
+             Eio.Stream.add ready name;
+             Eio.Promise.await go))
+      |> Effect.bind (fun () -> result)
+    in
+    let promise =
+      fork_run sw rt
+        (Effect.race
+           [
+             child "winner" (Effect.pure "winner");
+             child "failure" (Effect.fail "failure");
+           ])
+    in
+    ignore (Eio.Stream.take ready : string);
+    ignore (Eio.Stream.take ready : string);
+    Eio.Promise.resolve release ();
+    check_exit_ok Alcotest.string
+      (Printf.sprintf "winner on iteration %d" iteration)
+      "winner" (Eio.Promise.await promise)
+  done
+
 let test_effect_race_all_failures_returns_concurrent_causes () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_failure ms error =

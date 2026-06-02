@@ -37,11 +37,15 @@ let () =
             test_sql_pool_typed_compiled_queries;
           Alcotest.test_case "pool timeout interrupts and reuses connection"
             `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
-          Alcotest.test_case "database pool shutdown cleanup survives timeout"
-            `Quick test_database_pool_shutdown_cleanup_survives_timeout;
+          Alcotest.test_case "database pool shutdown keeps parent on timeout"
+            `Quick test_database_pool_shutdown_keeps_parent_open_on_timeout;
+          Alcotest.test_case "turso pool rejects detach-started blocking pool"
+            `Quick test_turso_pool_rejects_detach_started_blocking_pool_source;
           Alcotest.test_case
             "pool parent cancel interrupts and reuses connection" `Quick
             test_sql_pool_parent_cancel_interrupts_and_reuses_connection;
+          Alcotest.test_case "pool rejects detach-started blocking pool" `Quick
+            test_sql_pool_rejects_detach_started_blocking_pool;
           Alcotest.test_case "new expr operator workload" `Quick
             test_sql_new_expr_operator_workload;
           Alcotest.test_case "between in case aggregates having" `Quick

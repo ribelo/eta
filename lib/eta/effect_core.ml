@@ -125,7 +125,8 @@ let cancel_cancel frame cancel_context exn =
       let module Cancel = (val Host_eio.cancel host : Host_eio.CANCEL) in
       Cancel.cancel cancel_context exn
 
-let render_error frame err = frame.error_renderer (Obj.repr err)
+let render_error frame err =
+  RObs.render_typed_failure ~error_renderer:frame.error_renderer (Obj.repr err)
 
 (* ---------------------------------------------------------------- *)
 (* Effect type and basic constructors                                *)
@@ -322,6 +323,11 @@ let timeout_as duration ~on_timeout effect =
    with Timeout_selected -> ());
   match (!winner, !timeout_fired, !body_result) with
   | Some `Body, _, Some result -> result
+  | Some `Timeout, true, Some (Exit.Ok _ as result) ->
+      (* Timeout cancellation waits for body cleanup. If the body reports a
+         successful result during that required cleanup, it had already
+         committed a value before the timeout could safely discard it. *)
+      result
   | Some `Timeout, true, Some (Exit.Error cause)
     when not (Cause.is_interrupt_only cause) ->
       error (Cause.concurrent [ Cause.Fail on_timeout; cause ])
