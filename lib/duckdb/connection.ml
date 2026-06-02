@@ -91,17 +91,11 @@ let exec_script (conn : connection) sql =
 let run_schema conn (schema : Compiled.schema) =
   exec_script conn (Compiled.schema_sql schema)
 
-let begin_transaction ?(mode = Deferred) conn =
-  let sql =
-    match mode with
-    | Deferred -> "BEGIN TRANSACTION"
-    | Immediate -> "BEGIN IMMEDIATE TRANSACTION"
-  in
-  exec_script conn sql
+let begin_transaction conn =
+  exec_script conn "BEGIN TRANSACTION"
 
 let commit conn = exec_script conn "COMMIT"
 let rollback conn = exec_script conn "ROLLBACK"
 
-let transaction ?mode conn f =
-  Eta_sql_dsl.transaction ~begin_:(begin_transaction ?mode) ~commit ~rollback
-    conn f
+let transaction conn f =
+  Eta_sql_dsl.transaction ~begin_:begin_transaction ~commit ~rollback conn f

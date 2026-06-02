@@ -156,6 +156,18 @@ let test_row_decode_cursor_preserves_indexed_decoding () =
   Alcotest.(check string) "rewind second column" "ada" name;
   Alcotest.(check bool) "rewind third column" true active
 
+let test_transaction_begin_uses_duckdb_syntax_source () =
+  let connection = read_file (find_source_file "lib/duckdb/connection.ml") in
+  let interface = read_file (find_source_file "lib/duckdb/eta_duckdb.mli") in
+  Alcotest.(check bool)
+    "no SQLite BEGIN IMMEDIATE mode" false
+    (Option.is_some (find_sub_from connection ~needle:"BEGIN IMMEDIATE" 0));
+  Alcotest.(check bool)
+    "DuckDB exposes no transaction_mode" false
+    (Option.is_some (find_sub_from interface ~needle:"transaction_mode" 0));
+  ignore
+    (require_sub connection ~needle:"exec_script conn \"BEGIN TRANSACTION\"" : int)
+
 let test_pool_shutdown_timeout_keeps_active_connection_open () =
   match D.available () with
   | Error _ -> ()
@@ -237,5 +249,10 @@ let () =
           Alcotest.test_case
             "pool shutdown timeout keeps active connection open" `Quick
             test_pool_shutdown_timeout_keeps_active_connection_open;
+        ] );
+      ( "transaction",
+        [
+          Alcotest.test_case "begin uses DuckDB syntax" `Quick
+            test_transaction_begin_uses_duckdb_syntax_source;
         ] );
     ]

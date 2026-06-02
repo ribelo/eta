@@ -10,10 +10,6 @@ type config = Types.config = {
   threads : int option;
 }
 
-type transaction_mode = Types.transaction_mode =
-  | Deferred
-  | Immediate
-
 type error = Types.error =
   | Library_unavailable of string
   | Driver_error of {

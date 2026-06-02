@@ -124,10 +124,6 @@ type config = {
   threads : int option;
 }
 
-type transaction_mode =
-  | Deferred
-  | Immediate
-
 type error =
   | Library_unavailable of string
   | Driver_error of {

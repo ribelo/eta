@@ -44,10 +44,6 @@ type config = {
   threads : int option;
 }
 
-type transaction_mode =
-  | Deferred
-  | Immediate
-
 type error =
   | Library_unavailable of string
   | Driver_error of {
@@ -103,11 +99,15 @@ module Connection : sig
   val execute_compiled : t -> Compiled.change -> (int, error) result
   val exec_script : t -> string -> (unit, error) result
   val run_schema : t -> Compiled.schema -> (unit, error) result
-  val begin_transaction : ?mode:transaction_mode -> t -> (unit, error) result
+  val begin_transaction : t -> (unit, error) result
+  (** Start a DuckDB transaction with plain [BEGIN TRANSACTION]. DuckDB does not
+      support SQLite-style [DEFERRED], [IMMEDIATE], or [EXCLUSIVE] transaction
+      modes. *)
+
   val commit : t -> (unit, error) result
   val rollback : t -> (unit, error) result
   val transaction :
-    ?mode:transaction_mode -> t -> (t -> ('a, error) result) -> ('a, error) result
+    t -> (t -> ('a, error) result) -> ('a, error) result
 end
 
 module Appender : sig
