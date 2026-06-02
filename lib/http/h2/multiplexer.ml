@@ -421,28 +421,29 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
         Queue.push (Body_chunk chunk) events);
     notify ()
   in
-  let rec schedule_read () =
-    let keep_scheduling = ref true in
-    while !keep_scheduling do
-      keep_scheduling := false;
-      let should_schedule =
-        with_lock (fun () ->
-            (not state.scheduled)
-            && (not state.eof)
-            && not (H2.Body.Reader.is_closed body))
-      in
-      if should_schedule then (
-        let delivered_sync = ref false in
-        with_lock (fun () -> state.scheduled <- true);
-        H2.Body.Reader.schedule_read body
-          ~on_eof:(fun () ->
-            with_lock (fun () -> state.scheduled <- false);
-            finish_eof ())
-          ~on_read:(fun bs ~off ~len ->
-            delivered_sync := true;
-            push_chunk bs ~off ~len);
-        if !delivered_sync then keep_scheduling := true)
-    done
+  let schedule_read () =
+    (* Arm exactly one upstream read per call. ocaml-h2 may invoke [on_read]
+       synchronously when a frame is already buffered; we must NOT re-arm in a
+       loop on synchronous delivery, or a large pre-buffered body would be
+       drained in full into the unbounded [events] queue, circumventing
+       backpressure. Subsequent reads are driven by the consumer pulling the
+       stream (await_event -> schedule_read), so at most one chunk is buffered
+       ahead of demand.
+
+       We deliberately do NOT gate on [is_closed body]: a closed h2 body can
+       still hold buffered DATA, and [H2.Body.Reader.schedule_read] drains it
+       (delivering [on_read] for buffered bytes, or [on_eof] only once truly
+       empty). Gating on closed here would drop the tail of the body. *)
+    let should_schedule =
+      with_lock (fun () -> (not state.scheduled) && not state.eof)
+    in
+    if should_schedule then (
+      with_lock (fun () -> state.scheduled <- true);
+      H2.Body.Reader.schedule_read body
+        ~on_eof:(fun () ->
+          with_lock (fun () -> state.scheduled <- false);
+          finish_eof ())
+        ~on_read:(fun bs ~off ~len -> push_chunk bs ~off ~len))
   in
   let release_body () =
     let decision = release t stream in
@@ -458,7 +459,6 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     | Some error -> Some (`Error error)
     | None when not (Queue.is_empty events) -> Some (`Event (Queue.take events))
     | None when state.eof -> Some (`Event Body_eof)
-    | None when H2.Body.Reader.is_closed body -> Some `Closed
     | None -> None
   in
   let await_event () =
@@ -480,10 +480,7 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     Eta.Effect.sync await_event
     |> Eta.Effect.bind (function
          | `Event event -> emit_event event
-         | `Error error -> Eta.Effect.fail error
-         | `Closed ->
-             finish_eof ();
-             Eta.Effect.pure Stream.End)
+         | `Error error -> Eta.Effect.fail error)
   in
   schedule_read ();
   (Stream.of_reader ~release:release_body read_next, notify)

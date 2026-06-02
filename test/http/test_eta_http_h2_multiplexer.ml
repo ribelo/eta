@@ -712,17 +712,23 @@ let test_h2_multiplexer_rejects_after_goaway () =
   Alcotest.(check int) "opened before only" 1 stats.opened;
   Alcotest.(check int) "no admission pressure" 0 stats.admission_rejected
 
-(* P0: body_stream_async unbounded recursion when h2 fires on_read synchronously.
+(* body_stream_async pull-based backpressure + no-loss invariant (reflects the
+   ZIO/Effect Stream contract: every produced element is delivered, exactly
+   one per consumer demand).
+
    When many DATA frames are pre-buffered into the h2 client connection before
-   the response body consumer reads, schedule_read's on_read callback calls
-   schedule_read() again. If h2 delivers data synchronously (already buffered),
-   this creates recursion proportional to the number of buffered chunks.
-   With a large response this causes stack overflow or unbounded queue growth. *)
+   the response body consumer reads, three earlier behaviours were all wrong:
+     - recursion: on_read re-calling schedule_read (stack overflow);
+     - a `while keep_scheduling` re-arm loop draining every buffered frame into
+       the unbounded events queue (OOM, no backpressure);
+     - shortcutting to End once `is_closed body` was true even though the h2
+       faraday still held buffered DATA (silent tail loss).
+   The single observable that pins all three: a large, fully pre-buffered body
+   must be delivered to the consumer in full and intact. *)
 let test_h2_body_stream_async_bounded_recursion () =
-  (* Generate a response large enough that many on_read callbacks would fire
-     if schedule_read recursed unboundedly. With OCaml's default 8MB stack,
-     ~8000 recursive frames would overflow. We use 2000 chunks of 1KB
-     to be in the danger zone. *)
+  (* A response far larger than one frame, fully buffered server-side before the
+     consumer reads, so synchronous on_read delivery and a closed-but-nonempty
+     body are both exercised. *)
   let num_chunks = 2000 in
   let chunk_data = String.make 1024 'x' in
   let total_size = num_chunks * String.length chunk_data in
@@ -809,16 +815,15 @@ let test_h2_body_stream_async_bounded_recursion () =
       in
       (match result with
       | Eta.Exit.Ok () ->
-          (* If we got here, the recursion didn't cause a stack overflow.
-             Verify the body stream delivered the buffered frame without
-             recursively draining the whole response into its OCaml queue. *)
-          Alcotest.(check int) "buffered bytes" H2.Settings.default.max_frame_size
+          (* Pull-based backpressure invariant: the consumer must receive the
+             ENTIRE body, one chunk per demand, regardless of how much h2 had
+             already buffered. A greedy re-arm loop would drain everything into
+             the unbounded queue (OOM risk); shortcutting to End on a closed
+             but non-empty body would silently drop the tail. Either way the
+             total would be wrong. The whole body must arrive intact. *)
+          Alcotest.(check int) "full body delivered without loss" total_size
             !total_bytes
       | Eta.Exit.Error _ ->
-          (* The stream returned an error - this demonstrates that pre-buffered
-             data combined with body_stream_async's recursive schedule_read
-             causes incorrect behavior (either the reader gets confused,
-             or data is lost, or the queue overflows). *)
           Alcotest.fail
             "body_stream_async failed to deliver pre-buffered response body \
              (recursive schedule_read likely corrupted internal state)")

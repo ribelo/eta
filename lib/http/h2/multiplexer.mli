@@ -101,4 +101,10 @@ val body_stream_async :
   Stream.t * (unit -> unit)
 (** Like {!body_stream}, but waits for callbacks delivered by a background
     owner reader instead of reading the socket itself. The second result wakes a
-    blocked reader when external state such as [poll_error] changes. *)
+    blocked reader when external state such as [poll_error] changes.
+
+    Pull-based with backpressure: each consumer demand arms at most one upstream
+    [H2.Body.Reader.schedule_read], so the internal buffer never runs more than
+    one chunk ahead of the consumer even when h2 delivers synchronously from a
+    large pre-buffered frame. The full body is delivered without loss, including
+    data still buffered after the h2 body is closed. *)
