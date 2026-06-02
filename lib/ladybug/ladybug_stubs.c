@@ -202,6 +202,71 @@ static void arrow_owner_set_array(arrow_release_owner *owner)
   owner->array_active = owner->array.release != NULL;
 }
 
+/* Owns an [lbug_query_result] in a finalized custom block. Query execution
+   fills a stack result, which is then moved here before any OCaml allocation
+   can raise (Arrow validation in materialize_arrow_rows, result_to_string, or
+   Out_of_memory). If control leaves abnormally via caml_failwith's longjmp,
+   the orphaned block's finalizer destroys the result instead of leaking it.
+   Mirrors the DuckDB connector's result_owner.
+
+   Regression test: test/ladybug_leak (drives a materialize failure through a
+   mock liblbug and asserts every created query result is destroyed). */
+typedef struct {
+  lbug_query_result result;
+  bool active;
+} eta_ladybug_result_owner;
+
+static eta_ladybug_result_owner *result_owner_val(value v_owner)
+{
+  return (eta_ladybug_result_owner *)Data_custom_val(v_owner);
+}
+
+static void result_owner_finalize(value v_owner)
+{
+  eta_ladybug_result_owner *owner = result_owner_val(v_owner);
+  if (owner->active && api.loaded) {
+    api.query_result_destroy(&owner->result);
+    owner->active = false;
+  }
+}
+
+static struct custom_operations result_owner_ops = {
+  "eta.ladybug.result_owner", result_owner_finalize, custom_compare_default,
+  custom_hash_default, custom_serialize_default, custom_deserialize_default,
+  custom_compare_ext_default, custom_fixed_length_default
+};
+
+static value result_owner_alloc(void)
+{
+  CAMLparam0();
+  CAMLlocal1(v_owner);
+  eta_ladybug_result_owner *owner;
+  v_owner = caml_alloc_custom(&result_owner_ops, sizeof(eta_ladybug_result_owner), 0, 1);
+  owner = result_owner_val(v_owner);
+  memset(&owner->result, 0, sizeof(owner->result));
+  owner->active = false;
+  CAMLreturn(v_owner);
+}
+
+static lbug_query_result *result_owner_result(value v_owner)
+{
+  return &result_owner_val(v_owner)->result;
+}
+
+static void result_owner_activate(value v_owner)
+{
+  result_owner_val(v_owner)->active = true;
+}
+
+static void result_owner_destroy(value v_owner)
+{
+  eta_ladybug_result_owner *owner = result_owner_val(v_owner);
+  if (owner->active) {
+    api.query_result_destroy(&owner->result);
+    owner->active = false;
+  }
+}
+
 static lbug_database *db_val(value v) { return &((eta_ladybug_db *)Data_custom_val(v))->db; }
 static lbug_connection *conn_val(value v) { return &((eta_ladybug_conn *)Data_custom_val(v))->conn; }
 
@@ -907,7 +972,7 @@ static value materialize_arrow_rows(lbug_query_result *result)
 static value execute_direct(lbug_connection *conn, const char *cypher)
 {
   CAMLparam0();
-  CAMLlocal1(out);
+  CAMLlocal2(out, result_owner);
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
@@ -919,23 +984,26 @@ static value execute_direct(lbug_connection *conn, const char *cypher)
   caml_leave_blocking_section();
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
-  if (!api.query_result_is_success(&result)) {
-    char *err = api.query_result_get_error_message(&result);
+  result_owner = result_owner_alloc();
+  *result_owner_result(result_owner) = result;
+  result_owner_activate(result_owner);
+  if (!api.query_result_is_success(result_owner_result(result_owner))) {
+    char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
     if (err != NULL) api.destroy_string(err);
-    api.query_result_destroy(&result);
+    result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = result_to_string(&result);
-  api.query_result_destroy(&result);
+  out = result_to_string(result_owner_result(result_owner));
+  result_owner_destroy(result_owner);
   CAMLreturn(out);
 }
 
 static value execute_prepared(lbug_connection *conn, const char *cypher, value params)
 {
   CAMLparam1(params);
-  CAMLlocal1(out);
+  CAMLlocal2(out, result_owner);
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
@@ -972,20 +1040,24 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
     api.prepared_statement_destroy(&stmt);
     fail_last_with_copies("execute", &copies);
   }
-  if (!api.query_result_is_success(&result)) {
-    char *err = api.query_result_get_error_message(&result);
+  /* The query result is self-contained, so release the statement and input
+     copies now — before any OCaml allocation below can raise — leaving the
+     result as the only foreign resource that needs exception-safe cleanup. */
+  api.prepared_statement_destroy(&stmt);
+  string_copies_free(&copies);
+  result_owner = result_owner_alloc();
+  *result_owner_result(result_owner) = result;
+  result_owner_activate(result_owner);
+  if (!api.query_result_is_success(result_owner_result(result_owner))) {
+    char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
     if (err != NULL) api.destroy_string(err);
-    api.query_result_destroy(&result);
-    api.prepared_statement_destroy(&stmt);
-    string_copies_free(&copies);
+    result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = result_to_string(&result);
-  api.query_result_destroy(&result);
-  api.prepared_statement_destroy(&stmt);
-  string_copies_free(&copies);
+  out = result_to_string(result_owner_result(result_owner));
+  result_owner_destroy(result_owner);
   CAMLreturn(out);
 }
 
@@ -1001,7 +1073,7 @@ CAMLprim value eta_ladybug_query_string(value v_conn, value v_cypher, value v_pa
 static value execute_direct_values(lbug_connection *conn, const char *cypher)
 {
   CAMLparam0();
-  CAMLlocal1(out);
+  CAMLlocal2(out, result_owner);
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
@@ -1013,23 +1085,26 @@ static value execute_direct_values(lbug_connection *conn, const char *cypher)
   caml_leave_blocking_section();
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
-  if (!api.query_result_is_success(&result)) {
-    char *err = api.query_result_get_error_message(&result);
+  result_owner = result_owner_alloc();
+  *result_owner_result(result_owner) = result;
+  result_owner_activate(result_owner);
+  if (!api.query_result_is_success(result_owner_result(result_owner))) {
+    char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
     if (err != NULL) api.destroy_string(err);
-    api.query_result_destroy(&result);
+    result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = materialize_arrow_rows(&result);
-  api.query_result_destroy(&result);
+  out = materialize_arrow_rows(result_owner_result(result_owner));
+  result_owner_destroy(result_owner);
   CAMLreturn(out);
 }
 
 static value execute_prepared_values(lbug_connection *conn, const char *cypher, value params)
 {
   CAMLparam1(params);
-  CAMLlocal1(out);
+  CAMLlocal2(out, result_owner);
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
@@ -1066,20 +1141,24 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
     api.prepared_statement_destroy(&stmt);
     fail_last_with_copies("execute", &copies);
   }
-  if (!api.query_result_is_success(&result)) {
-    char *err = api.query_result_get_error_message(&result);
+  /* The query result is self-contained, so release the statement and input
+     copies now — before any OCaml allocation below can raise — leaving the
+     result as the only foreign resource that needs exception-safe cleanup. */
+  api.prepared_statement_destroy(&stmt);
+  string_copies_free(&copies);
+  result_owner = result_owner_alloc();
+  *result_owner_result(result_owner) = result;
+  result_owner_activate(result_owner);
+  if (!api.query_result_is_success(result_owner_result(result_owner))) {
+    char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "query failed" : err);
     if (err != NULL) api.destroy_string(err);
-    api.query_result_destroy(&result);
-    api.prepared_statement_destroy(&stmt);
-    string_copies_free(&copies);
+    result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = materialize_arrow_rows(&result);
-  api.query_result_destroy(&result);
-  api.prepared_statement_destroy(&stmt);
-  string_copies_free(&copies);
+  out = materialize_arrow_rows(result_owner_result(result_owner));
+  result_owner_destroy(result_owner);
   CAMLreturn(out);
 }
 

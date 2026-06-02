@@ -1,0 +1,15 @@
+(rule
+ (target libladybug_mock.so)
+ (deps ladybug_mock_lib.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps})))
+
+(test
+ (name test_ladybug_leak)
+ (libraries eta_ladybug alcotest)
+ (deps
+  (:mock libladybug_mock.so))
+ (action
+  (setenv ETA_LADYBUG_LIBRARY ./%{mock}
+   (setenv ETA_LADYBUG_MOCK_STATE ladybug_mock.state
+    (run %{test})))))
