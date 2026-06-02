@@ -21,6 +21,10 @@ Dependencies are ordinary OCaml values. Pass records, modules, closures, or
 handles to functions that build effects; Eta does not provide a ZIO-style
 environment or layer graph.
 
+Eta is influenced by TypeScript Effect and Scala ZIO, but it is not a
+compatibility layer for their full API surface. Deliberate differences are
+documented in [ZIO / Effect Boundaries](docs/zio-boundaries.md).
+
 ## Example
 
 ```ocaml
@@ -280,10 +284,12 @@ when the hub is full. `Backpressure` waits before admitting a message, and
 publisher cancellation while waiting cannot partially publish to some
 subscribers.
 
-Wrap Eio operations in `Effect.sync` at the leaf when they need typed failure
-conversion or tracing names. If a protocol is reusable
-and owns lifecycle semantics, prefer a focused module such as `Resource` or
-`Pubsub` rather than a generic concurrency-data wrapper.
+Wrap Eio operations in `Effect.sync` at the leaf when they need Eta tracing
+names or defect diagnostics. Expected failures should be returned as ordinary
+OCaml `result` values and lifted with `Effect.from_result`; exceptions remain
+unchecked defects. If a protocol is reusable and owns lifecycle semantics,
+prefer a focused module such as `Resource` or `Pubsub` rather than a generic
+concurrency-data wrapper.
 
 ## Redacted Values
 

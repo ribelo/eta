@@ -160,6 +160,8 @@ let () =
             test_runtime_finalizer_die_captures_diagnostics;
           Alcotest.test_case "catch does not catch interrupt" `Quick
             test_effect_catch_does_not_catch_interrupt;
+          Alcotest.test_case "catch does not catch defect" `Quick
+            test_effect_catch_does_not_catch_defect;
           Alcotest.test_case "catch preserves finalizer defect" `Quick
             test_effect_catch_preserves_suppressed_finalizer_defect;
           Alcotest.test_case "catch preserves concurrent defect" `Quick
@@ -342,6 +344,8 @@ let () =
             test_blocking_submit_alias_and_stats;
           Alcotest.test_case "blocking_result lifts result" `Quick
             test_blocking_result_lifts_result;
+          Alcotest.test_case "blocking_result exception is defect" `Quick
+            test_blocking_result_exception_is_defect;
           Alcotest.test_case "blocking_result_timeout interrupts" `Quick
             test_blocking_result_timeout_interrupts_and_fails_typed;
           Alcotest.test_case "blocking_result_timeout cancels once" `Quick

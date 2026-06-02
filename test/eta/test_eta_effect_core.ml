@@ -836,6 +836,29 @@ let test_effect_catch_does_not_catch_interrupt () =
   | Exit.Error (Cause.Interrupt None) -> ()
   | _ -> Alcotest.fail "expected Interrupt"
 
+let test_effect_catch_does_not_catch_defect () =
+  with_runtime @@ fun rt ->
+  let defect = Failure "body defect" in
+  let handler_ran = ref false in
+  let body : (string, [ `Expected ]) Effect.t =
+    Effect.named "defect" (Effect.sync (fun () -> raise defect))
+  in
+  let eff =
+    body
+    |> Effect.catch (fun (`Expected : [ `Expected ]) ->
+           Effect.sync (fun () -> handler_ran := true)
+           |> Effect.map (fun () -> "caught"))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die die) when die.exn == defect ->
+      Alcotest.(check bool) "handler skipped" false !handler_ran
+  | Exit.Error cause ->
+      Alcotest.failf "expected defect, got %a"
+        (Cause.pp (fun fmt `Expected ->
+             Format.pp_print_string fmt "expected"))
+        cause
+  | Exit.Ok value -> Alcotest.failf "catch swallowed defect as %S" value
+
 let test_effect_catch_preserves_suppressed_finalizer_defect () =
   with_runtime @@ fun rt ->
   let defect = Failure "cleanup defect" in

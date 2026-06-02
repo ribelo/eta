@@ -94,6 +94,24 @@ let test_blocking_result_lifts_result () =
         (Cause.pp (fun fmt (`Bad : [ `Bad ]) -> Format.pp_print_string fmt "bad"))
         cause
 
+let test_blocking_result_exception_is_defect () =
+  with_runtime @@ fun rt ->
+  let pool = BP.create ~name:"blocking-result-defect" (blocking_config ()) in
+  let defect = Failure "blocking result defect" in
+  let eff =
+    Effect.blocking_result ~pool ~name:"blocking.result.defect" (fun () ->
+        (raise defect : (int, [ `Expected ]) result))
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected blocking exception to be a defect, got %a"
+        (Cause.pp (fun fmt `Expected ->
+             Format.pp_print_string fmt "expected"))
+        cause
+  | Exit.Ok value ->
+      Alcotest.failf "expected blocking defect, got Ok %d" value
+
 let test_blocking_result_timeout_interrupts_and_fails_typed () =
   with_runtime @@ fun rt ->
   let interrupted = Atomic.make false in

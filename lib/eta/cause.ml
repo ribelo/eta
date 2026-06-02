@@ -7,19 +7,10 @@ type die = {
   annotations : (string * string) list;
 }
 
-let equal_option equal_a left right =
-  match (left, right) with
-  | None, None -> true
-  | Some a, Some b -> equal_a a b
-  | _ -> false
-
-let equal_list equal_a left right =
-  List.equal equal_a left right
-
 let equal_die left right =
   left.exn == right.exn
-  && equal_option String.equal left.span_name right.span_name
-  && equal_list
+  && Option.equal String.equal left.span_name right.span_name
+  && List.equal
        (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
        left.annotations right.annotations
 
@@ -29,9 +20,9 @@ let diagnostic_equal_die left right =
   String.equal (Printexc.exn_slot_name left.exn)
     (Printexc.exn_slot_name right.exn)
   && String.equal (Printexc.to_string left.exn) (Printexc.to_string right.exn)
-  && equal_option String.equal (backtrace_string left) (backtrace_string right)
-  && equal_option String.equal left.span_name right.span_name
-  && equal_list
+  && Option.equal String.equal (backtrace_string left) (backtrace_string right)
+  && Option.equal String.equal left.span_name right.span_name
+  && List.equal
        (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
        left.annotations right.annotations
 
@@ -73,9 +64,9 @@ module Finalizer = struct
     match (left, right) with
     | Fail a, Fail b -> String.equal a b
     | Die a, Die b -> equal_die a b
-    | Interrupt a, Interrupt b -> equal_option Int.equal a b
+    | Interrupt a, Interrupt b -> Option.equal Int.equal a b
     | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-        equal_list equal a b
+        List.equal equal a b
     | Finalizer a, Finalizer b -> equal a b
     | Suppressed a, Suppressed b ->
         equal a.primary b.primary && equal a.finalizer b.finalizer
@@ -85,9 +76,9 @@ module Finalizer = struct
     match (left, right) with
     | Fail a, Fail b -> String.equal a b
     | Die a, Die b -> diagnostic_equal_die a b
-    | Interrupt a, Interrupt b -> equal_option Int.equal a b
+    | Interrupt a, Interrupt b -> Option.equal Int.equal a b
     | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-        equal_list diagnostic_equal a b
+        List.equal diagnostic_equal a b
     | Finalizer a, Finalizer b -> diagnostic_equal a b
     | Suppressed a, Suppressed b ->
         diagnostic_equal a.primary b.primary
@@ -183,9 +174,9 @@ module Portable = struct
     let equal_die left right =
       String.equal left.kind right.kind
       && String.equal left.message right.message
-      && equal_option String.equal left.backtrace right.backtrace
-      && equal_option String.equal left.span_name right.span_name
-      && equal_list
+      && Option.equal String.equal left.backtrace right.backtrace
+      && Option.equal String.equal left.span_name right.span_name
+      && List.equal
            (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
            left.annotations right.annotations
 
@@ -193,9 +184,9 @@ module Portable = struct
       match (left, right) with
       | Fail a, Fail b -> String.equal a b
       | Die a, Die b -> equal_die a b
-      | Interrupt a, Interrupt b -> equal_option Int.equal a b
+      | Interrupt a, Interrupt b -> Option.equal Int.equal a b
       | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-          equal_list equal a b
+          List.equal equal a b
       | Finalizer a, Finalizer b -> equal a b
       | Suppressed a, Suppressed b ->
           equal a.primary b.primary && equal a.finalizer b.finalizer
@@ -278,9 +269,9 @@ module Portable = struct
   let equal_die left right =
     String.equal left.kind right.kind
     && String.equal left.message right.message
-    && equal_option String.equal left.backtrace right.backtrace
-    && equal_option String.equal left.span_name right.span_name
-    && equal_list
+    && Option.equal String.equal left.backtrace right.backtrace
+    && Option.equal String.equal left.span_name right.span_name
+    && List.equal
          (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
          left.annotations right.annotations
 
@@ -288,9 +279,9 @@ module Portable = struct
     match (left, right) with
     | Fail a, Fail b -> equal_err a b
     | Die a, Die b -> equal_die a b
-    | Interrupt a, Interrupt b -> equal_option Int.equal a b
+    | Interrupt a, Interrupt b -> Option.equal Int.equal a b
     | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-        equal_list (equal equal_err) a b
+        List.equal (equal equal_err) a b
     | Finalizer a, Finalizer b -> Finalizer.equal a b
     | Suppressed a, Suppressed b ->
         equal equal_err a.primary b.primary
@@ -400,9 +391,9 @@ let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> equal_die a b
-  | Interrupt a, Interrupt b -> equal_option Int.equal a b
+  | Interrupt a, Interrupt b -> Option.equal Int.equal a b
   | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-      equal_list (equal equal_err) a b
+      List.equal (equal equal_err) a b
   | Finalizer a, Finalizer b -> Finalizer.equal a b
   | Suppressed a, Suppressed b ->
       equal equal_err a.primary b.primary
@@ -415,9 +406,9 @@ let rec diagnostic_equal :
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> diagnostic_equal_die a b
-  | Interrupt a, Interrupt b -> equal_option Int.equal a b
+  | Interrupt a, Interrupt b -> Option.equal Int.equal a b
   | Sequential a, Sequential b | Concurrent a, Concurrent b ->
-      equal_list (diagnostic_equal equal_err) a b
+      List.equal (diagnostic_equal equal_err) a b
   | Finalizer a, Finalizer b -> Finalizer.diagnostic_equal a b
   | Suppressed a, Suppressed b ->
       diagnostic_equal equal_err a.primary b.primary

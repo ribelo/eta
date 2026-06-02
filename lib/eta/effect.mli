@@ -38,7 +38,13 @@ val from_result : ('a, 'err) result -> ('a, 'err) t
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an effect. Use {!Effect.named} to
-    attach a span name for tracing. *)
+    attach a span name for tracing.
+
+    Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
+    as {!Cause.Die}. They are not converted into the typed error channel and
+    are not caught by {!catch}. Return an explicit [result] and use
+    {!from_result} when a leaf operation has an expected typed failure.
+    [Eio.Cancel.Cancelled _] remains interruption. *)
 
 val island :
   ('input : immutable_data) ('output : immutable_data).
