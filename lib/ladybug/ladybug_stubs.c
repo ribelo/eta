@@ -209,6 +209,18 @@ static void arrow_owner_set_array(arrow_release_owner *owner)
    the orphaned block's finalizer destroys the result instead of leaking it.
    Mirrors the DuckDB connector's result_owner.
 
+   Ownership invariant (validated against the original cleanup paths): a
+   successful connection_query / connection_execute (LbugSuccess) yields a
+   result that owns foreign memory and must be destroyed, *independently* of
+   query_result_is_success — a query that failed semantically still produces an
+   owned result. Hence the owner is activated before the is_success check, and
+   the is_success-false path destroys through the owner.
+
+   Residual window (accepted, matches DuckDB): result_owner_alloc itself can
+   raise Out_of_memory after a successful query but before ownership transfer,
+   leaking that one stack result. This is an OOM-only corner, not the common
+   materialization/validation failure this owner exists to cover.
+
    Regression test: test/ladybug_leak (drives a materialize failure through a
    mock liblbug and asserts every created query result is destroyed). */
 typedef struct {
@@ -928,7 +940,9 @@ static value materialize_arrow_rows(lbug_query_result *result)
   owner = arrow_owner_val(v_owner);
   /* OCaml allocations below may raise while Arrow resources are live. Keep
      the current schema/chunk in a custom block so its finalizer releases them
-     if control leaves before the normal release path. */
+     if control leaves before the normal release path. The [result] itself is
+     owned by the caller's result_owner, so this function only needs to protect
+     the Arrow schema/chunk it borrows. */
   if (api.query_result_get_arrow_schema(result, &owner->schema) != LbugSuccess)
     fail_last("get_arrow_schema");
   arrow_owner_set_schema(owner);
