@@ -23,6 +23,7 @@ nix develop -c bash test/eta/soundness/run.sh _build/default/lib/eta/eta.cmxa
 | logger_portable_closure_negative.ml | compile-fail | pass |
 | channel_domain_safe_spawn_negative.ml | compile-fail | pass |
 | pool_domain_safe_spawn_negative.ml | compile-fail | pass |
+| effect_private_blocking_submit_negative.ml | compile-fail | pass |
 
 No fixture compiled unexpectedly, so no Eta mode-bound follow-up was filed from
 this pass.

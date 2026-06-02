@@ -123,6 +123,88 @@ let test_turso_pool_uses_shared_interruptible_leased_blocking_source () =
   ignore (require_sub stubs_source ~needle:"LOAD(interrupt)" : int);
   ignore (require_sub stubs_source ~needle:"CAMLprim value eta_turso_interrupt" : int)
 
+let test_turso_close_marks_closed_only_after_native_success () =
+  let source = read_file (find_source_file "lib/turso/connection.ml") in
+  let close =
+    source_between source ~start_marker:"let close db ="
+      ~end_marker:"let close_exn db ="
+  in
+  ignore
+    (require_sub close
+       ~needle:"match check db ~operation:\"close\" (raw_close db.raw) with" :
+      int);
+  ignore
+    (require_sub close
+       ~needle:
+         (String.concat "\n"
+            [ "| Ok () ->"; "        db.closed <- true;"; "        Ok ()" ]) :
+      int);
+  Alcotest.(check bool)
+    "closed flag is not assigned before native close result" false
+    (contains_sub close
+       ~needle:"db.closed <- true;\n    check db ~operation:\"close\"")
+
+let test_turso_prepare_rejects_null_statement_success_source () =
+  let source = read_file (find_source_file "lib/turso/turso_stubs.c") in
+  let prepare =
+    source_between source ~start_marker:"CAMLprim value eta_turso_prepare"
+      ~end_marker:"CAMLprim intnat eta_turso_finalize"
+  in
+  ignore
+    (require_sub prepare ~needle:"if (rc != SQLITE_OK || stmt == NULL)" :
+      int)
+
+let test_sqlite_close_propagates_native_result_source () =
+  let connection_source = read_file (find_source_file "lib/sql/connection.ml") in
+  let close =
+    source_between connection_source ~start_marker:"let close t ="
+      ~end_marker:"let begin_transaction t ="
+  in
+  ignore
+    (require_sub close
+       ~needle:"match Sqlite.check t.db ~operation:\"close\" (Sqlite.close t.db) with" :
+      int);
+  ignore
+    (require_sub close
+       ~needle:
+         (String.concat "\n"
+            [ "| Ok () ->"; "        t.closed <- true;"; "        t.in_transaction <- false" ]) :
+      int);
+  Alcotest.(check bool)
+    "closed flag is not assigned before native close result" false
+    (contains_sub close
+       ~needle:"t.closed <- true;\n    t.in_transaction <- false");
+  let pool_source = read_file (find_source_file "lib/sql/pool.ml") in
+  let release =
+    source_between pool_source ~start_marker:"let release_connection"
+      ~end_marker:"let health_check"
+  in
+  ignore
+    (require_sub release
+       ~needle:"blocking_result ?blocking_pool ~name:\"sqlite.close\"" :
+      int)
+
+let test_sqlite_connection_has_no_pool_lease_state_source () =
+  let ml = read_file (find_source_file "lib/sql/connection.ml") in
+  let mli = read_file (find_source_file "lib/sql/connection.mli") in
+  Alcotest.(check bool) "implementation pool_lease removed" false
+    (contains_sub ml ~needle:"pool_lease");
+  Alcotest.(check bool) "interface pool_lease removed" false
+    (contains_sub mli ~needle:"pool_lease")
+
+let test_sql_dsl_builders_do_not_append_single_items_source () =
+  let source = read_file (find_source_file "lib/sql_dsl/eta_sql_dsl_query.ml") in
+  [
+    "query.ctes @ [";
+    "query.group_by @ [";
+    "query.order_by @ [";
+    "query.values @ [";
+    "query.sets @ [";
+    "params := !params @";
+  ]
+  |> List.iter (fun needle ->
+         Alcotest.(check bool) needle false (contains_sub source ~needle))
+
 module Users = struct
   module T = Q.Table.Make (struct
     let name = "users"
@@ -481,6 +563,27 @@ let test_sql_in_values_empty_list_is_false_predicate () =
   let* rows = select_all pool query in
   Alcotest.(check (list string)) "empty IN rows" [] rows;
   Eta.Effect.unit
+
+let test_sql_in_select_rejects_multi_column_projection () =
+  let two_column_int_select =
+    Q.Select.(
+      from Users.table
+        Q.Projection.(
+          t2 (p1 Users.id) (p1 Users.active)
+          |> map (fun (id, _active) -> id))
+      |> compile)
+  in
+  match
+    Q.Select.(
+      from Users.table Q.Projection.(one Users.name)
+      |> where Q.Expr.(in_select Users.id two_column_int_select)
+      |> to_sql)
+  with
+  | _ -> Alcotest.fail "multi-column IN subquery unexpectedly rendered"
+  | exception Q.Error error ->
+      Alcotest.(check string) "message"
+        "invalid query: Expr.in_select requires a one-column subquery"
+        (Q.show_error error)
 
 let test_sql_invalid_query_errors () =
   match Q.Insert.(into Users.table |> compile) with

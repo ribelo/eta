@@ -122,6 +122,38 @@ let test_resource_failed_refresh_keeps_cached_value () =
   in
   Alcotest.(check int) "cached value survived failed refresh" 0 (run_ok rt eff)
 
+let test_resource_newer_refresh_wins () =
+  with_test_clock @@ fun sw _clock rt ->
+  let first_started, first_started_u = Eio.Promise.create () in
+  let second_started, second_started_u = Eio.Promise.create () in
+  let first_release, first_release_u = Eio.Promise.create () in
+  let second_release, second_release_u = Eio.Promise.create () in
+  let calls = ref 0 in
+  let load =
+    Effect.named "resource.load" (Effect.sync (fun () ->
+        incr calls;
+        match !calls with
+        | 1 -> 0
+        | 2 ->
+            Eio.Promise.resolve first_started_u ();
+            Eio.Promise.await first_release
+        | 3 ->
+            Eio.Promise.resolve second_started_u ();
+            Eio.Promise.await second_release
+        | n -> Alcotest.failf "unexpected load call %d" n))
+  in
+  let resource = run_ok rt (Resource.manual load) in
+  let first = fork_run sw rt (Resource.refresh resource) in
+  Eio.Promise.await first_started;
+  let second = fork_run sw rt (Resource.refresh resource) in
+  Eio.Promise.await second_started;
+  Eio.Promise.resolve second_release_u 2;
+  check_exit_ok Alcotest.unit "second refresh" () (Eio.Promise.await second);
+  Eio.Promise.resolve first_release_u 1;
+  check_exit_ok Alcotest.unit "first refresh" () (Eio.Promise.await first);
+  Alcotest.(check int) "newer refresh value" 2
+    (run_ok rt (Resource.get resource))
+
 let test_resource_auto_refreshes_on_schedule () =
   with_test_clock @@ fun _sw clock rt ->
   let source = ref 0 in

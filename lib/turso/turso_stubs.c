@@ -321,7 +321,7 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   rc = api.prepare_v2(db, sql, -1, &stmt, NULL);
   caml_leave_blocking_section();
   caml_stat_free(sql);
-  if (rc != SQLITE_OK) {
+  if (rc != SQLITE_OK || stmt == NULL) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "sqlite3_prepare_v2 rc=%d: %s", rc, db == NULL ? "closed" : api.errmsg(db));
     caml_failwith(buffer);

@@ -93,8 +93,8 @@ let recv_sync t =
              t.waiting_receivers <- t.waiting_receivers - 1;
              t.cancelled_receivers <- t.cancelled_receivers + 1;
              raise exn);
-	          t.waiting_receivers <- t.waiting_receivers - 1;
-	          loop ()
+          t.waiting_receivers <- t.waiting_receivers - 1;
+          loop ()
   in
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) loop
 

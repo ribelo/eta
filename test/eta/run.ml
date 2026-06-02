@@ -454,6 +454,8 @@ let () =
             test_schedule_and_then_offsets_second_phase;
           Alcotest.test_case "jittered uses random capability" `Quick
             test_schedule_jittered_uses_random_capability;
+          Alcotest.test_case "random int wide ranges" `Quick
+            test_random_int_in_range_handles_wide_ranges;
           Alcotest.test_case "jittered stays inside multiplier bounds" `Quick
             test_schedule_jittered_stays_inside_multiplier_bounds;
           Alcotest.test_case "random float distribution and determinism" `Quick
@@ -469,6 +471,8 @@ let () =
           Alcotest.test_case "manual refresh" `Quick test_resource_manual_refresh;
           Alcotest.test_case "failed refresh keeps cached value" `Quick
             test_resource_failed_refresh_keeps_cached_value;
+          Alcotest.test_case "newer refresh wins" `Quick
+            test_resource_newer_refresh_wins;
           Alcotest.test_case "auto refreshes on schedule" `Quick
             test_resource_auto_refreshes_on_schedule;
           Alcotest.test_case "auto failed refresh keeps cached value" `Quick

@@ -7,7 +7,6 @@ type t = {
   mutable last_used : float;
   mutable closed : bool;
   mutable in_transaction : bool;
-  mutable pool_lease : int;
 }
 
 let next_id = Atomic.make 0
@@ -30,7 +29,6 @@ let create config =
           last_used = created_at;
           closed = false;
           in_transaction = false;
-          pool_lease = 0;
         }
   | exception Sqlite.Error err -> Result.Error (Types.Sqlite err)
   | exception exn ->
@@ -178,10 +176,14 @@ let ping t =
       | _ -> false)
 
 let close t =
-  if not t.closed then (
-    t.closed <- true;
-    t.in_transaction <- false;
-    ignore (Sqlite.close t.db))
+  if t.closed then Ok ()
+  else
+    match Sqlite.check t.db ~operation:"close" (Sqlite.close t.db) with
+    | Ok () ->
+        t.closed <- true;
+        t.in_transaction <- false;
+        Ok ()
+    | Result.Error err -> Result.Error (Types.Sqlite err)
 
 let begin_transaction t =
   if_open t @@ fun () ->
@@ -222,5 +224,3 @@ let with_transaction t f =
 let id t = t.id
 let created_at t = t.created_at
 let last_used t = t.last_used
-let pool_lease t = t.pool_lease
-let set_pool_lease t lease = t.pool_lease <- lease

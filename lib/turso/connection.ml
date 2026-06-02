@@ -155,9 +155,12 @@ let open_exn config =
 
 let close db =
   if db.closed then Ok ()
-  else (
-    db.closed <- true;
-    check db ~operation:"close" (raw_close db.raw))
+  else
+    match check db ~operation:"close" (raw_close db.raw) with
+    | Ok () ->
+        db.closed <- true;
+        Ok ()
+    | Result.Error _ as err -> err
 
 let close_exn db = match close db with Ok () -> () | Result.Error err -> raise_error err
 

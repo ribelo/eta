@@ -2,8 +2,9 @@
 
 open Dsl_backend
 
-type t = Value.t list
+type t = { rev_values : Value.t list }
 
-let empty = []
-let value column value row = row @ [ column_value column value ]
-let null _column row = row @ [ Value.Null ]
+let empty = { rev_values = [] }
+let value column value row = { rev_values = column_value column value :: row.rev_values }
+let null _column row = { rev_values = Value.Null :: row.rev_values }
+let to_values row = List.rev row.rev_values

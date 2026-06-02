@@ -25,7 +25,13 @@ let make ~permits =
   }
 
 let available t = Eio.Mutex.use_ro t.mutex @@ fun () -> t.available
-let waiting t = Eio.Mutex.use_ro t.mutex @@ fun () -> Stdlib.Queue.length t.waiters
+let waiting t =
+  Eio.Mutex.use_ro t.mutex @@ fun () ->
+  let count = ref 0 in
+  Stdlib.Queue.iter
+    (fun waiter -> match waiter.state with Waiting -> incr count | _ -> ())
+    t.waiters;
+  !count
 
 let cancelled_waiters t =
   Eio.Mutex.use_ro t.mutex @@ fun () -> t.cancelled_waiters

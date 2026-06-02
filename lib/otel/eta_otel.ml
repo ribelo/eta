@@ -404,7 +404,7 @@ let export_program t =
   |> Eta.Effect.named "eta_otel.exporter"
 
 let start_daemon rt effect =
-  match Eta.Runtime.run rt (Eta.Effect.Private.daemon effect) with
+  match Eta.Runtime.run rt (Eta.Effect.daemon effect) with
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error _ -> ()
 

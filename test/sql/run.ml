@@ -15,6 +15,8 @@ let () =
             test_sql_select_subquery_cte_window;
           Alcotest.test_case "empty in values is false predicate" `Quick
             test_sql_in_values_empty_list_is_false_predicate;
+          Alcotest.test_case "in_select rejects multi-column subquery" `Quick
+            test_sql_in_select_rejects_multi_column_projection;
           Alcotest.test_case "invalid query errors" `Quick
             test_sql_invalid_query_errors;
           Alcotest.test_case "find opt rejects many rows" `Quick
@@ -41,6 +43,16 @@ let () =
             `Quick test_database_pool_shutdown_keeps_parent_open_on_timeout;
           Alcotest.test_case "turso pool uses interruptible leased blocking"
             `Quick test_turso_pool_uses_shared_interruptible_leased_blocking_source;
+          Alcotest.test_case "turso close marks closed after native success"
+            `Quick test_turso_close_marks_closed_only_after_native_success;
+          Alcotest.test_case "turso prepare rejects null statement" `Quick
+            test_turso_prepare_rejects_null_statement_success_source;
+          Alcotest.test_case "sqlite close propagates native result" `Quick
+            test_sqlite_close_propagates_native_result_source;
+          Alcotest.test_case "sqlite connection has no pool lease state" `Quick
+            test_sqlite_connection_has_no_pool_lease_state_source;
+          Alcotest.test_case "sql dsl builders avoid append hotspots" `Quick
+            test_sql_dsl_builders_do_not_append_single_items_source;
           Alcotest.test_case
             "pool parent cancel interrupts and reuses connection" `Quick
             test_sql_pool_parent_cancel_interrupts_and_reuses_connection;

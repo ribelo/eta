@@ -14,6 +14,7 @@ struct
   type 'a select = {
     sql : string;
     params : param list;
+    width : int;
     decode : Backend.row -> 'a;
   }
 
@@ -32,6 +33,7 @@ struct
 
   let value_of_param = Param.value
   let select_sql (query : _ select) = query.sql
+  let select_width (query : _ select) = query.width
   let select_params (query : _ select) = List.map value_of_param query.params
   let select_decode (query : _ select) = query.decode
   let returning_sql (query : _ returning) = query.sql

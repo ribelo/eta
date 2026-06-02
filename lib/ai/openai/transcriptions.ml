@@ -41,8 +41,33 @@ let rec safe_extra_fields = function
           | Stdlib.Error _ as error -> error
           | Stdlib.Ok fields -> Stdlib.Ok ((name, value) :: fields)))
 
-let multipart_boundary (file : A.binary_file) =
-  "eta-ai-" ^ Digest.to_hex (Digest.bytes file.data)
+let contains_substring value ~needle =
+  let needle_len = String.length needle in
+  let value_len = String.length value in
+  let rec loop index =
+    if needle_len = 0 then true
+    else if index + needle_len > value_len then false
+    else if String.sub value index needle_len = needle then true
+    else loop (index + 1)
+  in
+  loop 0
+
+let bytes_contains_substring value ~needle =
+  contains_substring (Bytes.to_string value) ~needle
+
+let multipart_boundary (file : A.binary_file) strings =
+  let base = "eta-ai-" ^ Digest.to_hex (Digest.bytes file.data) in
+  let collides boundary =
+    bytes_contains_substring file.data ~needle:boundary
+    || List.exists (contains_substring ~needle:boundary) strings
+  in
+  let rec loop suffix =
+    let boundary =
+      if suffix = 0 then base else base ^ "-" ^ string_of_int suffix
+    in
+    if collides boundary then loop (suffix + 1) else boundary
+  in
+  loop 0
 
 let add_field buffer boundary name value =
   Buffer.add_string buffer ("--" ^ boundary ^ "\r\n");
@@ -61,7 +86,30 @@ let multipart_body (request : A.Transcription.request) =
           match safe_extra_fields request.extra_fields with
           | Stdlib.Error _ as error -> error
           | Stdlib.Ok extra_fields ->
-              let boundary = multipart_boundary request.file in
+              let temperature =
+                Option.map (Printf.sprintf "%.17g") request.temperature
+              in
+              let optional_fields =
+                [
+                  Option.map (fun value -> [ "language"; value ]) request.language;
+                  Option.map (fun value -> [ "prompt"; value ]) request.prompt;
+                  Option.map
+                    (fun value -> [ "response_format"; value ])
+                    request.response_format;
+                  Option.map (fun value -> [ "temperature"; value ]) temperature;
+                ]
+                |> List.filter_map Fun.id
+                |> List.concat
+              in
+              let extra_field_strings =
+                extra_fields
+                |> List.concat_map (fun (name, value) -> [ name; value ])
+              in
+              let boundary =
+                multipart_boundary request.file
+                  ([ filename; content_type; "model"; request.model; "file" ]
+                  @ optional_fields @ extra_field_strings)
+              in
               let buffer = Buffer.create (Bytes.length request.file.data + 512) in
               add_field buffer boundary "model" request.model;
               Option.iter (add_field buffer boundary "language") request.language;
@@ -69,11 +117,7 @@ let multipart_body (request : A.Transcription.request) =
               Option.iter
                 (add_field buffer boundary "response_format")
                 request.response_format;
-              Option.iter
-                (fun value ->
-                  add_field buffer boundary "temperature"
-                    (Printf.sprintf "%.17g" value))
-                request.temperature;
+              Option.iter (add_field buffer boundary "temperature") temperature;
               List.iter
                 (fun (name, value) -> add_field buffer boundary name value)
                 extra_fields;

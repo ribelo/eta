@@ -224,7 +224,7 @@ let request_owner pool request response_ch release_ch cancel_ch =
                  |> Effect.bind (fun () ->
                         (* Expected caller cancellation is reported through
                            [response_ch]. The catch below consumes this typed
-                           failure before the Private.daemon boundary, so it
+                           failure before the Effect.daemon boundary, so it
                            must not emit eta.daemon.failure. *)
                         Effect.fail
                           (`Http
@@ -281,7 +281,7 @@ let request_with_pool pool request =
     Effect.scoped
       (Effect.acquire_release ~acquire:Effect.unit ~release:close_if_pending
       |> Effect.bind (fun () ->
-             Effect.Private.daemon
+             Effect.daemon
                (request_owner pool request response_ch release_ch cancel_ch)
              |> Effect.bind (fun () ->
                     Channel.recv response_ch

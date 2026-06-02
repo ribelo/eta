@@ -8,11 +8,20 @@ module Make
 
       val value : t -> Backend.value
     end) : sig
+  (** Generated SQL artifacts produced by the typed DSL.
+
+      These values are intentionally inspectable so backend packages can bind
+      parameters and decode rows without depending on the query-builder AST.
+      They are not a sealed relational-algebra boundary: code with access to
+      record constructors or raw execution APIs can bypass DSL construction and
+      then owns SQL validity, parameter ordering, and decoder correctness. *)
+
   type param = Param.t
 
   type 'a select = {
     sql : string;
     params : param list;
+    width : int;
     decode : Backend.row -> 'a;
   }
 
@@ -31,6 +40,9 @@ module Make
 
   val value_of_param : param -> Backend.value
   val select_sql : 'a select -> string
+  val select_width : 'a select -> int
+  (** Number of SQL columns projected by this select. *)
+
   val select_params : 'a select -> Backend.value list
   val select_decode : 'a select -> Backend.row -> 'a
   val returning_sql : 'a returning -> string

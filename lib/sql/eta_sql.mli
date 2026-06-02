@@ -6,8 +6,11 @@
 
     The typed DSL prevents typed builders from constructing invalid table,
     column, and projection combinations. It is not a closed enforcement
-    boundary for the whole package: [Pool.Raw] exposes raw SQL escape hatches
-    for migrations, pragmas, diagnostics, and backend-specific SQL. *)
+    boundary for the whole package. [Compiled] deliberately exposes generated
+    SQL, parameters, projection width, and row decoders for drivers and tests,
+    and [Pool.Raw] exposes raw SQL escape hatches for migrations, pragmas,
+    diagnostics, and backend-specific SQL. Callers using either layer own SQL
+    validity outside the DSL's typed-builder checks. *)
 
 module Sqlite = Sqlite
 

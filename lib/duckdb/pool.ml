@@ -141,8 +141,8 @@ let run_schema ?blocking_pool ~timeout t schema =
 
 let shutdown ?deadline t =
   let close_database =
-    Eta.Effect.blocking ~name:"duckdb.close_database" (fun () ->
-        ignore (Database.close t.database))
+    blocking_result ~name:"duckdb.close_database" (fun () ->
+        Database.close t.database)
   in
   (* The database owns every leased DuckDB connection. If Eta.Pool.shutdown
      times out, active leases may still be running, so closing the parent

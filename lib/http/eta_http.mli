@@ -1,8 +1,9 @@
 (** Clean-room HTTP client for Eta.
 
-    S1 foundations expose typed errors, request/response shapes, body streams,
-    and the ADR 0002 TLS policy chokepoint. The h1 parser/writer, transport,
-    pool integration, and live request path land later in S1. *)
+    The public surface exposes typed errors, request/response models, body
+    streams, retry policy handling, trace-context propagation, TLS policy,
+    transport dispatch, HTTP/1.1 and HTTP/2 implementation modules, and a
+    WebSocket upgrade client. *)
 
 module Core : sig
   module Header = Header

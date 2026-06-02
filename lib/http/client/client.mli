@@ -35,7 +35,7 @@ val make_h1 :
   ?ca_file:string ->
   unit ->
   t
-(** Build the S1 HTTP/1.1 client path.
+(** Build the pooled HTTP/1.1 client path.
 
     Connections are pooled per origin with {!Eta.Pool}.
     [max_response_body_bytes] caps fixed-length, chunked, and

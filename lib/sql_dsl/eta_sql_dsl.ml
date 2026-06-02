@@ -151,6 +151,14 @@ module type S = sig
   end
 
   module Compiled : sig
+    (** Generated SQL artifacts produced by the typed DSL.
+
+        These values are intentionally inspectable for drivers and diagnostics.
+        They preserve generated SQL, parameters, projection width, and decoders;
+        they do not make the DSL a closed safety boundary. Code that constructs
+        compiled records directly or routes through raw execution APIs owns SQL
+        validity and decoder correctness outside the builder's type checks. *)
+
     type 'a select
     type 'a returning
     type change
@@ -158,6 +166,9 @@ module type S = sig
 
     val value_of_param : param -> value
     val select_sql : 'a select -> string
+    val select_width : 'a select -> int
+    (** Number of SQL columns projected by this select. *)
+
     val select_params : 'a select -> value list
     val select_decode : 'a select -> row -> 'a
     val returning_sql : 'a returning -> string

@@ -124,6 +124,55 @@ let test_pool_create_closes_database_on_eta_pool_create_failure_source () =
   ignore
     (require_sub create ~needle:"release_on_create_failure := false" : int)
 
+let test_pool_shutdown_propagates_database_close_error_source () =
+  let source = read_file (find_source_file "lib/duckdb/pool.ml") in
+  let shutdown =
+    source_between source ~start_marker:"let shutdown ?deadline t ="
+      ~end_marker:"let stats t ="
+  in
+  ignore
+    (require_sub shutdown
+       ~needle:"blocking_result ~name:\"duckdb.close_database\"" :
+      int);
+  ignore (require_sub shutdown ~needle:"Database.close t.database" : int);
+  Alcotest.(check bool)
+    "database close result is not discarded" false
+    (Option.is_some
+       (find_sub_from shutdown ~needle:"ignore (Database.close t.database)" 0))
+
+let test_connect_runs_inside_blocking_section_source () =
+  let source = read_file (find_source_file "lib/duckdb/duckdb_stubs.c") in
+  let connect =
+    source_between source ~start_marker:"CAMLprim value eta_duckdb_connect"
+      ~end_marker:"CAMLprim value eta_duckdb_disconnect"
+  in
+  ignore (require_sub connect ~needle:"duckdb_database db = db_val(v_db)" : int);
+  ignore (require_sub connect ~needle:"caml_enter_blocking_section();" : int);
+  ignore (require_sub connect ~needle:"rc = api.connect(db, &conn);" : int);
+  ignore (require_sub connect ~needle:"caml_leave_blocking_section();" : int)
+
+let test_loader_closes_handle_on_symbol_failure_source () =
+  let source = read_file (find_source_file "lib/duckdb/duckdb_stubs.c") in
+  let loader =
+    source_between source ~start_marker:"static int load_api_unlocked(void)"
+      ~end_marker:"static int load_api(void)"
+  in
+  ignore
+    (require_sub source
+       ~needle:"static void reset_failed_api_load_unlocked(void)" :
+      int);
+  ignore
+    (require_sub source ~needle:"dlclose(handle);" :
+      int);
+  ignore
+    (require_sub loader ~needle:"reset_failed_api_load_unlocked();" :
+      int)
+
+let test_bulk_row_avoids_append_source () =
+  let source = read_file (find_source_file "lib/duckdb/bulk_row.ml") in
+  Alcotest.(check bool) "bulk row append removed" false
+    (Option.is_some (find_sub_from source ~needle:"row @ [" 0))
+
 let test_row_nth_value_uses_sequential_cursor_source () =
   let source = read_file (find_source_file "lib/duckdb/types.ml") in
   let body =
@@ -234,6 +283,17 @@ let () =
           Alcotest.test_case
             "create closes database if Eta pool creation fails" `Quick
             test_pool_create_closes_database_on_eta_pool_create_failure_source;
+          Alcotest.test_case "shutdown propagates database close error" `Quick
+            test_pool_shutdown_propagates_database_close_error_source;
+        ] );
+      ( "ffi",
+        [
+          Alcotest.test_case "connect uses blocking section" `Quick
+            test_connect_runs_inside_blocking_section_source;
+          Alcotest.test_case "loader closes handle on symbol failure" `Quick
+            test_loader_closes_handle_on_symbol_failure_source;
+          Alcotest.test_case "bulk row avoids append" `Quick
+            test_bulk_row_avoids_append_source;
         ] );
       ( "row",
         [

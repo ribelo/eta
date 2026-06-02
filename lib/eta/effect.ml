@@ -40,12 +40,4 @@ let daemon_internal effect =
           `Stop_daemon));
   ok ()
 
-module Private = struct
-  let daemon = daemon_internal
-
-  let named_attrs ~kind name ~attrs effect =
-    annotate_all attrs (named_kind ~kind name effect)
-
-  let metric_updates = metric_updates
-  let metric_updates_lazy = metric_updates_lazy
-end
+let daemon = daemon_internal

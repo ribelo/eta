@@ -278,6 +278,17 @@ static int load_symbol(void **slot, const char *name)
 #define LOAD(name) load_symbol((void **)&api.name, "duckdb_" #name)
 #define LOAD_AS(field, symbol) load_symbol((void **)&api.field, symbol)
 
+static void reset_failed_api_load_unlocked(void)
+{
+  void *handle = api.handle;
+  char error[sizeof(api.error)];
+  snprintf(error, sizeof(error), "%s",
+           api.error[0] == '\0' ? "could not load libduckdb" : api.error);
+  if (handle != NULL) dlclose(handle);
+  memset(&api, 0, sizeof(api));
+  snprintf(api.error, sizeof(api.error), "%s", error);
+}
+
 static int load_api_unlocked(void)
 {
   if (api.loaded) return 1;
@@ -312,6 +323,7 @@ static int load_api_unlocked(void)
       !LOAD(append_int64) || !LOAD(append_double) || !LOAD(append_varchar) ||
       !LOAD(append_blob) || !LOAD(append_null) || !LOAD(appender_end_row) ||
       !LOAD(interrupt)) {
+    reset_failed_api_load_unlocked();
     return 0;
   }
 
@@ -397,7 +409,12 @@ CAMLprim value eta_duckdb_connect(value v_db)
   CAMLlocal1(v_block);
   ensure_loaded();
   duckdb_connection conn = NULL;
-  if (api.connect(db_val(v_db), &conn) != 0) caml_failwith("duckdb_connect failed");
+  duckdb_database db = db_val(v_db);
+  int rc;
+  caml_enter_blocking_section();
+  rc = api.connect(db, &conn);
+  caml_leave_blocking_section();
+  if (rc != 0) caml_failwith("duckdb_connect failed");
   v_block = caml_alloc_custom(&conn_ops, sizeof(eta_duckdb_conn), 0, 1);
   ((eta_duckdb_conn *)Data_custom_val(v_block))->conn = conn;
   CAMLreturn(v_block);

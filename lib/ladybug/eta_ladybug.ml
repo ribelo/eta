@@ -129,14 +129,14 @@ module Query = struct
   }
 
   type builder = {
-    clauses : string list;
+    rev_clauses : string list;
     params : Param.t list;
-    order_by : string list;
+    rev_order_by : string list;
     limit : int option;
   }
 
-  let empty = { clauses = []; params = []; order_by = []; limit = None }
-  let add clause query = { query with clauses = query.clauses @ [ clause ] }
+  let empty = { rev_clauses = []; params = []; rev_order_by = []; limit = None }
+  let add clause query = { query with rev_clauses = clause :: query.rev_clauses }
   let with_params params query = { query with params = query.params @ params }
   let match_ pattern = empty |> add ("MATCH " ^ Pattern.to_cypher pattern)
   let optional pattern query = add ("OPTIONAL MATCH " ^ Pattern.to_cypher pattern) query
@@ -146,25 +146,26 @@ module Query = struct
 
   let order_by ?(desc = false) expr query =
     let item = expr ^ if desc then " DESC" else " ASC" in
-    { query with order_by = query.order_by @ [ item ] }
+    { query with rev_order_by = item :: query.rev_order_by }
 
   let limit count query =
     if count < 0 then invalid_arg "Eta_ladybug.Query.limit: count must be non-negative";
     { query with limit = Some count }
 
   let returning items ~decode query =
-    let clauses = query.clauses @ [ "RETURN " ^ String.concat ", " items ] in
+    let clauses = List.rev query.rev_clauses in
+    let clauses = ("RETURN " ^ String.concat ", " items) :: List.rev clauses in
     let clauses =
-      match query.order_by with
+      match List.rev query.rev_order_by with
       | [] -> clauses
-      | order_by -> clauses @ [ "ORDER BY " ^ String.concat ", " order_by ]
+      | order_by -> ("ORDER BY " ^ String.concat ", " order_by) :: clauses
     in
     let clauses =
       match query.limit with
       | None -> clauses
-      | Some count -> clauses @ [ "LIMIT " ^ string_of_int count ]
+      | Some count -> ("LIMIT " ^ string_of_int count) :: clauses
     in
-    { cypher = String.concat " " clauses; params = query.params; decode }
+    { cypher = String.concat " " (List.rev clauses); params = query.params; decode }
 
   let raw ?(params = []) ~cypher ~decode () = { cypher; params; decode }
   let cypher (query : _ t) = query.cypher

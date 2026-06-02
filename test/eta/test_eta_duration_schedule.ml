@@ -226,6 +226,14 @@ let test_schedule_jittered_uses_random_capability () =
     (Random.sample random [ 10; 20; 30; 40 ]);
   Alcotest.(check (option int)) "empty" None (Random.sample random [])
 
+let test_random_int_in_range_handles_wide_ranges () =
+  let random = Capabilities.random_of_seed 7 in
+  let value = Random.int_in_range random ~min:min_int ~max:max_int in
+  Alcotest.(check bool) "full int range lower bound" true (value >= min_int);
+  Alcotest.(check bool) "full int range upper bound" true (value <= max_int);
+  Alcotest.(check bool) "wide range does not collapse to min" true
+    (value <> min_int)
+
 let test_schedule_jittered_stays_inside_multiplier_bounds () =
   let schedule =
     Schedule.spaced (Duration.ms 100)

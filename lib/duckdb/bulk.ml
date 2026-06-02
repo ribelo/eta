@@ -7,7 +7,7 @@ type 'table t = Appender.t
 let create ?schema connection table =
   Appender.create ?schema connection ~table:(Table.name table)
 
-let append_row appender row = Appender.append_row appender row
+let append_row appender row = Appender.append_row appender (Bulk_row.to_values row)
 let flush = Appender.flush
 let close = Appender.close
 

@@ -51,14 +51,14 @@ let test_daemon_drains_acquire_release_finalizer () =
     Effect.acquire_release ~acquire:Effect.unit
       ~release:(fun () -> Effect.sync (fun () -> Atomic.set released true))
   in
-  run_ok rt (Effect.Private.daemon daemon_body);
+  run_ok rt (Effect.daemon daemon_body);
   Runtime.drain rt;
   Alcotest.(check bool) "released" true (Atomic.get released)
 
 let test_daemon_failure_logs_diagnostic () =
   with_logger @@ fun _sw rt logger ->
   let daemon_body = Effect.sync (fun () -> failwith "daemon crash") in
-  run_ok rt (Effect.Private.daemon daemon_body);
+  run_ok rt (Effect.daemon daemon_body);
   Runtime.drain rt;
   match Logger.dump logger with
   | [ record ] ->
@@ -77,7 +77,7 @@ let test_daemon_interrupt_does_not_log_diagnostic () =
     Effect.sync (fun () ->
         raise (Eio.Cancel.Cancelled (Failure "daemon shutdown")))
   in
-  run_ok rt (Effect.Private.daemon daemon_body);
+  run_ok rt (Effect.daemon daemon_body);
   Runtime.drain rt;
   Alcotest.(check int)
     "no daemon diagnostics" 0
@@ -593,7 +593,7 @@ let test_drain_does_not_busy_wait () =
   let daemon_body =
     Effect.sync (fun () -> Eio_unix.sleep 0.1)
   in
-  (match Runtime.run rt (Effect.Private.daemon daemon_body) with
+  (match Runtime.run rt (Effect.daemon daemon_body) with
   | Exit.Ok () -> ()
   | _ -> Alcotest.fail "daemon launch failed");
   (* Measure CPU time consumed during drain *)

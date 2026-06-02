@@ -469,7 +469,7 @@ let make_connection ~flow ~selected_protocol ~max_frame_size initial =
       max_frame_size;
     }
   in
-  Effect.Private.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
+  Effect.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
 let connect_on_flow ?(key = Codec.random_key ())
     ?(max_frame_size = default_max_frame_size) ?headers ?protocols ~sw:_ ~flow

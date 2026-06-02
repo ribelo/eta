@@ -25,11 +25,7 @@ end
 
 
 module Make (Backend : BACKEND) = struct
-  (* This functor intentionally keeps expression construction, SQL rendering,
-     and row decoding behind one backend contract. Splitting those layers would
-     require exposing the SQL AST as a second public contract; for now the
-     durable boundary is the compiled query value exported by Eta_sql.Dsl. Raw
-     SQL escape hatches live outside this functor in Pool.Raw. *)
+  (* The backend contract owns rendering and row decoding for compiled queries. *)
   type value = Backend.value
   type row = Backend.row
   type error = Backend.error
@@ -269,6 +265,11 @@ module Make (Backend : BACKEND) = struct
           }
 
     let in_select column (query : _ Compiled.select) =
+      if query.width <> 1 then
+        raise
+          (Backend.Error
+             (Backend.invalid_query
+                "Expr.in_select requires a one-column subquery"));
       {
         sql = column_sql column ^ " IN (" ^ query.sql ^ ")";
         params = query.params;
@@ -304,14 +305,16 @@ module Make (Backend : BACKEND) = struct
               Buffer.add_string buf condition.sql;
               Buffer.add_string buf " THEN ";
               Buffer.add_string buf value.sql;
-              params := !params @ condition.params @ value.params)
+              params :=
+                List.rev_append value.params
+                  (List.rev_append condition.params !params))
             branches;
           Buffer.add_string buf " ELSE ";
           Buffer.add_string buf default.sql;
           Buffer.add_string buf " END";
           {
             sql = Buffer.contents buf;
-            params = !params @ default.params;
+            params = List.rev_append !params default.params;
             typ = default.typ;
           }
 
@@ -503,54 +506,54 @@ module Make (Backend : BACKEND) = struct
     }
 
     type ('scope, 'a) t = {
-      ctes : (string * param list) list;
+      rev_ctes : (string * param list) list;
       source : 'scope Source.t;
       row : ('scope, 'a) Projection.t;
       distinct : bool;
       where_ : ('scope, bool) Expr.t option;
-      group_by : string list;
+      rev_group_by : string list;
       having : ('scope, bool) Expr.t option;
-      order_by : order list;
+      rev_order_by : order list;
       limit : int option;
     }
 
     let from table row =
       {
-        ctes = [];
+        rev_ctes = [];
         source = Source.from table;
         row;
         distinct = false;
         where_ = None;
-        group_by = [];
+        rev_group_by = [];
         having = None;
-        order_by = [];
+        rev_order_by = [];
         limit = None;
       }
 
     let from_source source row =
       {
-        ctes = [];
+        rev_ctes = [];
         source;
         row;
         distinct = false;
         where_ = None;
-        group_by = [];
+        rev_group_by = [];
         having = None;
-        order_by = [];
+        rev_order_by = [];
         limit = None;
       }
 
     let with_cte ~name (cte : _ Compiled.select) query =
       {
         query with
-        ctes = query.ctes @ [ (quote_ident name ^ " AS (" ^ cte.sql ^ ")", cte.params) ];
+        rev_ctes = (quote_ident name ^ " AS (" ^ cte.sql ^ ")", cte.params) :: query.rev_ctes;
       }
 
     let distinct query = { query with distinct = true }
     let where expr query = { query with where_ = Some expr }
 
     let group_by column query =
-      { query with group_by = query.group_by @ [ column_sql column ] }
+      { query with rev_group_by = column_sql column :: query.rev_group_by }
 
     let group_by_many columns query =
       match columns with
@@ -558,14 +561,20 @@ module Make (Backend : BACKEND) = struct
           invalid_arg
             (Backend.module_name ^ ".Select.group_by_many: columns must not be empty")
       | columns ->
-          { query with group_by = query.group_by @ List.map column_sql columns }
+          {
+            query with
+            rev_group_by =
+              List.fold_left
+                (fun acc column -> column_sql column :: acc)
+                query.rev_group_by columns;
+          }
 
     let having expr query = { query with having = Some expr }
 
     let order_by ?(desc = false) column query =
       {
         query with
-        order_by = query.order_by @ [ { sql = column_sql column; desc } ];
+        rev_order_by = { sql = column_sql column; desc } :: query.rev_order_by;
       }
 
     let limit count query =
@@ -584,13 +593,13 @@ module Make (Backend : BACKEND) = struct
         | None -> []
         | Some expr -> expr.Expr.params
       in
-      let cte_params = List.concat_map snd query.ctes in
+      let cte_params = List.rev query.rev_ctes |> List.concat_map snd in
       cte_params @ query.row.Projection.params @ query.source.Source.params
       @ where_params @ having_params
 
     let to_sql query =
       let buf = Buffer.create 192 in
-      (match query.ctes with
+      (match List.rev query.rev_ctes with
        | [] -> ()
        | ctes ->
            Buffer.add_string buf "WITH ";
@@ -614,7 +623,7 @@ module Make (Backend : BACKEND) = struct
        | Some expr ->
            Buffer.add_string buf " WHERE ";
            Buffer.add_string buf expr.Expr.sql);
-      (match query.group_by with
+      (match List.rev query.rev_group_by with
        | [] -> ()
        | columns ->
            Buffer.add_string buf " GROUP BY ";
@@ -628,7 +637,7 @@ module Make (Backend : BACKEND) = struct
        | Some expr ->
            Buffer.add_string buf " HAVING ";
            Buffer.add_string buf expr.Expr.sql);
-      (match query.order_by with
+      (match List.rev query.rev_order_by with
        | [] -> ()
        | orders ->
            Buffer.add_string buf " ORDER BY ";
@@ -650,6 +659,7 @@ module Make (Backend : BACKEND) = struct
         {
           sql = to_sql query;
           params = params query;
+          width = query.row.Projection.width;
           decode = (fun row -> query.row.decode row 0);
         }
   end
@@ -669,14 +679,14 @@ module Make (Backend : BACKEND) = struct
 
     type 'table t = {
       table : 'table table;
-      values : 'table Assignment.t list;
+      rev_values : 'table Assignment.t list;
       conflict : 'table conflict option;
     }
 
-    let into table = { table; values = []; conflict = None }
+    let into table = { table; rev_values = []; conflict = None }
 
     let value column value query =
-      { query with values = query.values @ [ Assignment.Set (column, value) ] }
+      { query with rev_values = Assignment.Set (column, value) :: query.rev_values }
 
     let render_values values =
       match values with
@@ -755,21 +765,21 @@ module Make (Backend : BACKEND) = struct
       Buffer.contents buf
 
     let to_sql query =
-      match render_values query.values with
+      match render_values (List.rev query.rev_values) with
       | Result.Error err -> raise (Backend.Error err)
       | Ok (columns, placeholders) ->
           to_sql_precomputed (columns, placeholders) query
 
-    let params query = List.map Assignment.value query.values
+    let params query = List.rev_map Assignment.value query.rev_values
 
     let compile query =
-      match render_values query.values with
+      match render_values (List.rev query.rev_values) with
       | Result.Error err -> raise (Backend.Error err)
       | Ok cols ->
           Compiled.{ sql = to_sql_precomputed cols query; params = params query }
 
     let returning projection query =
-      match render_values query.values with
+      match render_values (List.rev query.rev_values) with
       | Result.Error err -> raise (Backend.Error err)
       | Ok cols ->
           let buf = Buffer.create 64 in
@@ -791,19 +801,19 @@ module Make (Backend : BACKEND) = struct
   module Update = struct
     type 'table t = {
       table : 'table table;
-      sets : 'table Assignment.t list;
+      rev_sets : 'table Assignment.t list;
       where_ : ('table, bool) Expr.t option;
     }
 
-    let table table = { table; sets = []; where_ = None }
+    let table table = { table; rev_sets = []; where_ = None }
 
     let set column value query =
-      { query with sets = query.sets @ [ Assignment.Set (column, value) ] }
+      { query with rev_sets = Assignment.Set (column, value) :: query.rev_sets }
 
     let where expr query = { query with where_ = Some expr }
 
     let params query =
-      let set_params = List.map Assignment.value query.sets in
+      let set_params = List.rev_map Assignment.value query.rev_sets in
       match query.where_ with
       | None -> set_params
       | Some expr -> set_params @ expr.Expr.params
@@ -823,7 +833,7 @@ module Make (Backend : BACKEND) = struct
           Buffer.contents buf
 
     let to_sql query =
-      let set_sql = render_sets query.sets in
+      let set_sql = render_sets (List.rev query.rev_sets) in
       let buf = Buffer.create 64 in
       Buffer.add_string buf "UPDATE ";
       Buffer.add_string buf (table_sql query.table);
@@ -837,11 +847,11 @@ module Make (Backend : BACKEND) = struct
       Buffer.contents buf
 
     let compile query =
-      let _ = render_sets query.sets in
+      let _ = render_sets (List.rev query.rev_sets) in
       Compiled.{ sql = to_sql query; params = params query }
 
     let returning projection query =
-      let _ = render_sets query.sets in
+      let _ = render_sets (List.rev query.rev_sets) in
       let buf = Buffer.create 64 in
       Buffer.add_string buf (to_sql query);
       Buffer.add_string buf " RETURNING ";

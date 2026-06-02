@@ -1,1 +1,1 @@
-let _ = Eta.Effect.Private.blocking_submit
+let _ = Eta.Effect.Private.daemon

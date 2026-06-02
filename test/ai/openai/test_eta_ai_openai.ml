@@ -141,6 +141,18 @@ let request_body_string (request : H.Request.t) =
   | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
       Alcotest.fail "expected fixed request body"
 
+let multipart_boundary (request : H.Request.t) =
+  match H.Core.Header.get "content-type" request.headers with
+  | Some header ->
+      let prefix = "multipart/form-data; boundary=" in
+      let prefix_len = String.length prefix in
+      if
+        String.length header >= prefix_len
+        && String.sub header 0 prefix_len = prefix
+      then String.sub header prefix_len (String.length header - prefix_len)
+      else Alcotest.failf "unexpected multipart content-type: %s" header
+  | None -> Alcotest.fail "missing multipart content-type"
+
 let test_provider_value () =
   let provider = O.provider ~base_url:"https://api.openai.test" () in
   Alcotest.(check string) "name" "openai" provider.name;
@@ -543,6 +555,31 @@ let test_transcription_request_rejects_multipart_header_injection () =
   require_contains "content type error" ~needle:"content type"
     content_type_error
 
+let test_transcription_request_avoids_boundary_collision () =
+  let data = Bytes.of_string "RIFF" in
+  let digest_boundary = "eta-ai-" ^ Digest.to_hex (Digest.bytes data) in
+  let request =
+    O.transcription_request ~api_key:(A.api_key "sk-test")
+      {
+        A.Transcription.model = "gpt-4o-transcribe";
+        file = { filename = "sample.wav"; content_type = "audio/wav"; data };
+        language = None;
+        prompt = Some ("please transcribe --" ^ digest_boundary);
+        response_format = None;
+        temperature = None;
+        extra_fields = [];
+      }
+    |> expect_ok "transcription request"
+  in
+  let boundary = multipart_boundary request in
+  Alcotest.(check bool)
+    "boundary changed away from colliding digest" true
+    (not (String.equal digest_boundary boundary));
+  Alcotest.(check bool)
+    "prompt does not contain chosen boundary" false
+    (contains ~needle:boundary ("please transcribe --" ^ digest_boundary));
+  ignore (request_body_string request : string)
+
 let test_chat_and_responses_encode_audio_content () =
   let request =
     { (chat_request ()) with prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ] }
@@ -726,6 +763,8 @@ let () =
             test_transcription_request_and_decode;
           Alcotest.test_case "transcription multipart validation" `Quick
             test_transcription_request_rejects_multipart_header_injection;
+          Alcotest.test_case "transcription multipart boundary collision" `Quick
+            test_transcription_request_avoids_boundary_collision;
         ] );
       ( "realtime",
         [

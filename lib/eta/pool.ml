@@ -1,8 +1,5 @@
-(* Pool keeps the resource lifecycle state machine, admission semaphore, and
-   observability counters in one module because close/release/eviction ordering
-   is the invariant: a connection must move through exactly one of idle, active,
-   closed, or shutdown paths while metrics/logs reflect that transition. Split
-   helper modules only if they preserve that single transition authority. *)
+(* Pool state transitions and counters must move together under the same
+   lifecycle authority. *)
 
 type stats = {
   active : int;
@@ -62,18 +59,23 @@ let make_attrs name kind =
 let attrs t = t.attrs
 
 let span t name e =
-  Effect.Private.named_attrs ~kind:Capabilities.Internal name ~attrs:t.attrs e
+  Effect.named_kind ~kind:Capabilities.Internal name
+    (Effect.annotate_all t.attrs e)
 
 let log t ?(level = Capabilities.Debug) body =
   Effect.log ~level ~attrs:(attrs t) body
 
 let metric_int t ~name ~kind ~unit_ value =
-  Effect.Private.metric_updates_lazy (fun () ->
-      [ (name, "", unit_, kind, t.attrs, Capabilities.Int (value ())) ])
+  Effect.sync value
+  |> Effect.bind (fun value ->
+         Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
+           (Capabilities.Int value))
 
 let metric_float t ~name ~kind ~unit_ value =
-  Effect.Private.metric_updates_lazy (fun () ->
-      [ (name, "", unit_, kind, t.attrs, Capabilities.Float (value ())) ])
+  Effect.sync value
+  |> Effect.bind (fun value ->
+         Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
+           (Capabilities.Float value))
 
 let stats_locked t =
   {
@@ -89,34 +91,24 @@ let stats_locked t =
   }
 
 let emit_gauges t =
-  Effect.Private.metric_updates_lazy (fun () ->
-      let s = Eio.Mutex.use_ro t.mutex @@ fun () -> stats_locked t in
-      [
-        ( "eta.pool.active",
-          "",
-          "{connection}",
-          Capabilities.Gauge,
-          t.attrs,
-          Capabilities.Int s.active );
-        ( "eta.pool.idle",
-          "",
-          "{connection}",
-          Capabilities.Gauge,
-          t.attrs,
-          Capabilities.Int s.idle );
-        ( "eta.pool.waiting",
-          "",
-          "{waiter}",
-          Capabilities.Gauge,
-          t.attrs,
-          Capabilities.Int s.waiting );
-        ( "eta.pool.max_size",
-          "",
-          "{connection}",
-          Capabilities.Gauge,
-          t.attrs,
-          Capabilities.Int s.max_size );
-      ])
+  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex @@ fun () -> stats_locked t)
+  |> Effect.bind (fun (s : stats) ->
+         Effect.all
+           [
+             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.active"
+               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+               (Capabilities.Int s.active);
+             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.idle"
+               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+               (Capabilities.Int s.idle);
+             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.waiting"
+               ~kind:Capabilities.Gauge ~unit_:"{waiter}"
+               (Capabilities.Int s.waiting);
+             Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.max_size"
+               ~kind:Capabilities.Gauge ~unit_:"{connection}"
+               (Capabilities.Int s.max_size);
+           ])
+  |> Effect.map ignore
 
 let emit_opened t =
   metric_int t ~name:"eta.pool.opened"
@@ -563,7 +555,7 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
   let start_daemon =
     match (idle_lifetime, max_lifetime) with
     | None, None -> Effect.unit
-    | Some _, _ | _, Some _ -> Effect.Private.daemon (eviction_loop t)
+    | Some _, _ | _, Some _ -> Effect.daemon (eviction_loop t)
   in
   start_daemon |> Effect.map (fun () -> t)
 

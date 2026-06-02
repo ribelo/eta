@@ -26,7 +26,7 @@ end
 
 val ping : t -> bool
 val ensure_autocommit : t -> (unit, Types.sql_error) result
-val close : t -> unit
+val close : t -> (unit, Types.sql_error) result
 
 val begin_transaction : t -> (unit, Types.sql_error) result
 val commit : t -> (unit, Types.sql_error) result
@@ -36,5 +36,3 @@ val with_transaction : t -> (t -> ('a, Types.sql_error) result) -> ('a, Types.sq
 val id : t -> string
 val created_at : t -> float
 val last_used : t -> float
-val pool_lease : t -> int
-val set_pool_lease : t -> int -> unit

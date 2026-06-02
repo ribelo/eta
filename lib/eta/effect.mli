@@ -430,6 +430,18 @@ val with_background :
     [use] returns or fails. This is the structured replacement for
     daemon-shaped application work that does not need to expose a child handle. *)
 
+val daemon : (unit, 'err) t -> (unit, 'err) t
+(** Start runtime-owned finite background work on the runtime's outer switch.
+
+    Daemons are for Eta modules that own a lifecycle beyond the caller's local
+    scope, such as pool eviction loops and protocol readers. Application code
+    should prefer {!with_background} when the work belongs to one request,
+    server, stream, or resource scope.
+
+    Failures bypass the typed result and are reported as runtime daemon
+    diagnostics. Use {!Runtime.drain} to wait for currently running finite
+    daemon work before process shutdown or tests that assert daemon effects. *)
+
 val supervisor_scoped :
   ?max_failures:int -> ('a, 'err) supervisor_body -> ('a, 'err) t
 (** Low-level abstract supervisor-scope runner used by {!Supervisor}. Prefer
@@ -607,48 +619,3 @@ val collect_names : ('a, 'err) t -> string list
     Continuation-producing nodes such as [bind], [catch], [for_each_par],
     [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)
-
-module Private : sig
-  (** Unstable extension hooks for Eta's runtime and sibling packages.
-
-      This module intentionally exposes only effect-description hooks needed by
-      Eta packages that layer behavior over the public [Effect] algebra.
-      Runtime substrates such as island execution, blocking workers, and
-      supervisor interpretation are not part of this public surface. External
-      applications should prefer the public [Effect], [Runtime], [Pool], and
-      [Resource] APIs unless a hook here is explicitly documented for their
-      integration point. *)
-
-  val daemon : (unit, 'err) t -> (unit, 'err) t
-  (** Runs on the runtime's outer switch rather than the caller's local scope.
-      Failures bypass the typed result and are reported as runtime daemon
-      failures. *)
-
-  val named_attrs :
-    kind:Capabilities.span_kind ->
-    string ->
-    attrs:(string * string) list ->
-    ('a, 'err) t ->
-    ('a, 'err) t
-  (** Internal path for wrappers that compute attributes before constructing
-      the effect node. Prefer {!named} or {!named_kind} in public code. *)
-
-  val metric_updates :
-    (string * string * string * Capabilities.metric_kind
-    * (string * string) list
-    * Capabilities.metric_value)
-    list ->
-    (unit, 'err) t
-  (** Batching hook for Eta packages that already have a complete metric
-      snapshot. Public code should prefer {!metric_update}. *)
-
-  val metric_updates_lazy :
-    (unit ->
-    (string * string * string * Capabilities.metric_kind
-    * (string * string) list
-    * Capabilities.metric_value)
-    list) ->
-    (unit, 'err) t
-  (** Use when producing the metric snapshot is more expensive than recording
-      it; interpretation decides whether the thunk is forced. *)
-end

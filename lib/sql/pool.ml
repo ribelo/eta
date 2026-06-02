@@ -60,7 +60,7 @@ let acquire_connection ?blocking_pool sqlite =
       Connection.create sqlite)
 
 let release_connection ?blocking_pool conn =
-  Eta.Effect.blocking ?pool:blocking_pool ~name:"sqlite.close" (fun () ->
+  blocking_result ?blocking_pool ~name:"sqlite.close" (fun () ->
       Connection.close conn)
 
 let health_check ?blocking_pool conn =
@@ -107,7 +107,7 @@ let with_connection_timeout : type kind a.
                    ~conn ~name:"sqlite.ensure_autocommit" (fun () ->
                      Connection.ensure_autocommit conn)
                  |> Eta.Effect.catch (fun err ->
-                        Eta.Effect.blocking ?pool:state.blocking_pool
+                        blocking_result ?blocking_pool:state.blocking_pool
                           ~name:"sqlite.close_dirty" (fun () ->
                             Connection.close conn)
                         |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
@@ -343,7 +343,7 @@ let with_transaction ?timeout (Pool_runner state as runner) body =
                         ~name:"sqlite.rollback" (fun () ->
                           Connection.rollback conn)
                       |> Eta.Effect.catch (fun err ->
-                             Eta.Effect.blocking ?pool:blocking_pool
+                             blocking_result ?blocking_pool
                                ~name:"sqlite.close_dirty" (fun () ->
                                  Connection.close conn)
                              |> Eta.Effect.bind (fun () -> Eta.Effect.fail err)))
