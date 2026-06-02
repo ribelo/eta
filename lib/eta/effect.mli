@@ -282,7 +282,15 @@ val seq : (unit, 'err) t -> (unit, 'err) t -> (unit, 'err) t
 val concat : (unit, 'err) t list -> (unit, 'err) t
 
 val race : ('a, 'err) t list -> ('a, 'err) t
-(** First child to produce a value wins; the rest are cancelled. *)
+(** First child to produce a value wins; the rest are cancelled.
+
+    Losers' values are discarded by design. Resource lifetime is owned by
+    scopes, not by race: a loser that holds its resource under
+    {!acquire_release} / {!Semaphore.with_permits} has it released when it is
+    cancelled, even if it ran to completion before losing. An un-scoped
+    acquisition whose ownership is carried out through the (discarded) winning
+    value is the caller's responsibility — see {!Semaphore.acquire_or_abort}
+    for the leak-safe abortable-acquire pattern. *)
 
 val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
 (** Run two effects concurrently; collect both successes as a pair.

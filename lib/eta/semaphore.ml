@@ -110,6 +110,15 @@ let acquire t n =
          let cleanup () =
            Effect.sync (fun () ->
              with_lock_during_cancel t @@ fun () ->
+             (* Invariant (validated): on cancellation a permit is returned
+                only while the waiter has not yet taken ownership. [Waiting]
+                was never granted a permit; [Resolved_unclaimed] was granted
+                one that the fiber never claimed, so it is given back. Once
+                [Claimed] (or already [Cancelled]) ownership has transferred to
+                the caller and cleanup must NOT release — the caller (e.g.
+                [with_permits], [acquire_or_abort], or Pool) is responsible.
+                [acquire_or_abort] relies on this split: a lost race that never
+                claimed leaves no leak to reclaim here. *)
              match waiter.state with
              | Waiting ->
                  waiter.state <- Cancelled;
@@ -150,6 +159,9 @@ let acquire_or_abort t n ~abort =
   |> Effect.bind (fun acquired ->
          if acquired then Effect.pure true
          else if Atomic.get claimed then
+           (* [release] cannot exceed capacity here: [claimed] implies the
+              acquisition decremented [n] permits that nothing else has
+              returned, so giving them back stays within [max_permits]. *)
            Effect.sync (fun () -> release t n) |> Effect.map (fun () -> false)
          else Effect.pure false)
 
