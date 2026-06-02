@@ -4,6 +4,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
+#include <openssl/evp.h>
 #include <openssl/rand.h>
 
 #include <caml/mlvalues.h>
@@ -73,6 +74,21 @@ CAMLprim value eta_openssl_random_bytes(value v_bytes, value v_off, value v_len)
     caml_failwith("OpenSSL RAND_bytes failed");
   }
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value eta_openssl_sha1(value v_input)
+{
+  CAMLparam1(v_input);
+  unsigned char digest[20];
+  unsigned int digest_len = 0;
+  const EVP_MD *sha1 = EVP_sha1();
+  if (sha1 == NULL ||
+      EVP_Digest(String_val(v_input), caml_string_length(v_input), digest,
+                 &digest_len, sha1, NULL) != 1 ||
+      digest_len != sizeof(digest)) {
+    caml_failwith("OpenSSL EVP SHA1 failed");
+  }
+  CAMLreturn(caml_alloc_initialized_string(sizeof(digest), (const char *)digest));
 }
 
 /* ------------------------------------------------------------------ */

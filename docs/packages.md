@@ -28,6 +28,7 @@ modules: `(libraries eta_http)` in your `dune` file imports `Eta_http.*`.
 | `eta_redacted`         | `Eta_redacted`         | —                                                                                   |
 | `eta_schema`           | `Eta_schema`           | —                                                                                   |
 | `eta_sql`              | `Eta_sql`              | sqlite3 (C library, via pkg-config)                                                 |
+| `eta_turso`            | `Eta_turso`            | `eta_sql` chain; loads `libturso_sqlite3` at runtime                                |
 | `eta_http`             | `Eta_http`             | h2, hpack, faraday, angstrom, decompress, bigstringaf, domain-name, ipaddr, openssl |
 | `eta_otel`             | `Eta_otel`             | yojson, eta_http chain                                                              |
 | `eta_ai`               | `Eta_ai`               | yojson, eta_http chain                                                              |
@@ -63,6 +64,28 @@ The practical rule:
 Eta is structured so this rule is easy to follow. A small CLI uses
 `(libraries eta)` and pays for the core runtime only. Add `eta_http` only when
 you need the network. Add `eta_sql` only when you need SQLite. And so on.
+
+## SQLite-Compatible Connectors
+
+`eta_sql` and `eta_turso` intentionally keep separate C stubs even where they
+call the same `sqlite3_*` API names.
+
+The invariant is the foreign loading contract, not only the C ABI shape:
+
+- `eta_sql` is the system-SQLite package. It compiles against `<sqlite3.h>`,
+  links via `pkg-config sqlite3`, and exposes native SQLite operations such as
+  backup, restore, extension loading, expanded SQL, and low-level statement
+  inspection.
+- `eta_turso` is a Turso connector. It loads `libturso_sqlite3` at runtime,
+  reports `Library_unavailable` when the engine is absent, and uses
+  `RTLD_DEEPBIND` isolation when supported so Turso's SQLite-compatible symbols
+  do not collide with the process SQLite.
+
+Shared behavior belongs above that foreign seam: SQL values and rows live in
+`Eta_sql`, backend-agnostic query construction lives in `eta_sql_dsl`, and
+blocking-pool/cancellation policy lives in `eta_sql_driver`. Do not collapse the
+C stubs into one generic extension unless the design preserves both foreign
+contracts explicitly.
 
 ## Recipes
 

@@ -456,6 +456,31 @@ let test_trace_context_extract_inject () =
         (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
         (List.assoc_opt "traceparent" (Trace_context.inject ctx))
 
+let test_trace_context_extracts_higher_version_traceparent () =
+  let ctx =
+    Trace_context.extract
+      [
+        ( "traceparent",
+          "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-09-extra" );
+        ("tracestate", "congo=t61rcWkgMzE");
+        ("baggage", "tenant=acme");
+      ]
+  in
+  match ctx with
+  | None -> Alcotest.fail "expected higher-version trace context"
+  | Some ctx ->
+      Alcotest.(check string) "trace_id"
+        "4bf92f3577b34da6a3ce929d0e0e4736" ctx.trace_id;
+      Alcotest.(check string) "span_id" "00f067aa0ba902b7" ctx.span_id;
+      Alcotest.(check int) "trace_flags sampled bit" 1 ctx.trace_flags;
+      Alcotest.(check (option string)) "tracestate" (Some "t61rcWkgMzE")
+        (List.assoc_opt "congo" ctx.trace_state);
+      Alcotest.(check (option string)) "baggage" (Some "acme")
+        (List.assoc_opt "tenant" ctx.baggage);
+      Alcotest.(check (option string)) "traceparent injected"
+        (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+        (List.assoc_opt "traceparent" (Trace_context.inject ctx))
+
 let test_trace_context_rejects_malformed_traceparent () =
   let bad =
     Trace_context.extract
@@ -464,7 +489,25 @@ let test_trace_context_rejects_malformed_traceparent () =
           "00-00000000000000000000000000000000-00f067aa0ba902b7-01" );
       ]
   in
-  Alcotest.(check bool) "all-zero trace rejected" true (Option.is_none bad)
+  let with_extra_field =
+    Trace_context.extract
+      [
+        ( "traceparent",
+          "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra" );
+      ]
+  in
+  let forbidden_version =
+    Trace_context.extract
+      [
+        ( "traceparent",
+          "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" );
+      ]
+  in
+  Alcotest.(check bool) "all-zero trace rejected" true (Option.is_none bad);
+  Alcotest.(check bool) "v00 extra field rejected" true
+    (Option.is_none with_extra_field);
+  Alcotest.(check bool) "ff version rejected" true
+    (Option.is_none forbidden_version)
 
 let test_trace_context_current_and_par_inherit_baggage () =
   with_traced_runtime @@ fun rt _tracer ->

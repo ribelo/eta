@@ -87,6 +87,9 @@ let () =
             test_effect_catch_success_and_failure;
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
+          Alcotest.test_case "catch composite typed failure runs one handler"
+            `Quick
+            test_effect_catch_invokes_one_handler_for_composite_typed_failure;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
           Alcotest.test_case "exit to_result faithful subset" `Quick
             test_exit_to_result_only_converts_success_and_single_typed_failure;
@@ -163,10 +166,12 @@ let () =
             test_effect_catch_preserves_concurrent_defect;
           Alcotest.test_case "catch preserves concurrent interrupt" `Quick
             test_effect_catch_preserves_concurrent_interrupt;
-          Alcotest.test_case "catch unsound suppressed typed failure" `Quick
-            test_effect_catch_unsound_suppressed_typed_failure;
-          Alcotest.test_case "catch unsound concurrent typed failure" `Quick
-            test_effect_catch_unsound_concurrent_typed_failure;
+          Alcotest.test_case "catch strips typed primary before finalizer"
+            `Quick
+            test_effect_catch_strips_typed_primary_before_finalizer;
+          Alcotest.test_case "catch composite typed failure no old payloads"
+            `Quick
+            test_effect_catch_composite_typed_failure_no_old_payloads;
           Alcotest.test_case "acquire release" `Quick test_acquire_release;
           Alcotest.test_case "acquire release root finalizer" `Quick
             test_acquire_release_root_scope_runs_finalizer;
@@ -257,13 +262,13 @@ let () =
             test_for_each_par_simultaneous_failures_baseline;
           Alcotest.test_case "for_each_par finalizer cancellation baseline"
             `Quick test_for_each_par_finalizer_failure_during_sibling_cancellation;
-          Alcotest.test_case "par child finalizer before catch handler" `Quick
-            test_par_child_finalizer_runs_before_catch_handler;
-          Alcotest.test_case "all child finalizer before catch handler" `Quick
-            test_all_child_finalizer_runs_before_catch_handler;
+          Alcotest.test_case "par child finalizer skips catch handler" `Quick
+            test_par_child_finalizer_skips_catch_handler;
+          Alcotest.test_case "all child finalizer skips catch handler" `Quick
+            test_all_child_finalizer_skips_catch_handler;
           Alcotest.test_case
-            "for_each_par child finalizer before catch handler" `Quick
-            test_for_each_par_child_finalizer_runs_before_catch_handler;
+            "for_each_par child finalizer skips catch handler" `Quick
+            test_for_each_par_child_finalizer_skips_catch_handler;
           Alcotest.test_case "par nested race failures baseline" `Quick
             test_par_nested_race_all_failures_baseline;
           Alcotest.test_case "retry does nothing on initial success" `Quick
@@ -720,6 +725,8 @@ let () =
             test_observability_suppress_observability;
           Alcotest.test_case "trace context extract inject" `Quick
             test_trace_context_extract_inject;
+          Alcotest.test_case "trace context higher version traceparent" `Quick
+            test_trace_context_extracts_higher_version_traceparent;
           Alcotest.test_case "trace context rejects malformed traceparent" `Quick
             test_trace_context_rejects_malformed_traceparent;
           Alcotest.test_case "trace context par inherits baggage" `Quick

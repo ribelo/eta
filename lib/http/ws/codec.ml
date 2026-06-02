@@ -176,104 +176,10 @@ let decode ?(masked = false) bytes =
                     in
                     Ok ({ fin; opcode; payload }, consumed)
 
-let sha1 input =
-  let open Int32 in
-  let rotl value bits =
-    logor (shift_left value bits) (shift_right_logical value (32 - bits))
-  in
-  let len = String.length input in
-  let bit_len = Int64.mul (Int64.of_int len) 8L in
-  let pad_len =
-    let rem = (len + 1 + 8) mod 64 in
-    if rem = 0 then 0 else 64 - rem
-  in
-  let total_len = len + 1 + pad_len + 8 in
-  let message = Bytes.make total_len '\000' in
-  Bytes.blit_string input 0 message 0 len;
-  Bytes.set message len '\128';
-  for index = 0 to 7 do
-    let shift = (7 - index) * 8 in
-    let byte = Int64.(to_int (logand (shift_right_logical bit_len shift) 0xffL)) in
-    Bytes.set message (total_len - 8 + index) (Char.chr byte)
-  done;
-  let h0 = ref 0x67452301l in
-  let h1 = ref 0xefcdab89l in
-  let h2 = ref 0x98badcfel in
-  let h3 = ref 0x10325476l in
-  let h4 = ref 0xc3d2e1f0l in
-  let words = Array.make 80 0l in
-  let read_word off =
-    logor
-      (shift_left (of_int (Char.code (Bytes.get message off))) 24)
-      (logor
-         (shift_left (of_int (Char.code (Bytes.get message (off + 1)))) 16)
-         (logor
-            (shift_left (of_int (Char.code (Bytes.get message (off + 2)))) 8)
-            (of_int (Char.code (Bytes.get message (off + 3))))))
-  in
-  for chunk = 0 to (total_len / 64) - 1 do
-    let base = chunk * 64 in
-    for index = 0 to 15 do
-      words.(index) <- read_word (base + (index * 4))
-    done;
-    for index = 16 to 79 do
-      words.(index) <-
-        rotl
-          (logxor words.(index - 3)
-             (logxor words.(index - 8)
-                (logxor words.(index - 14) words.(index - 16))))
-          1
-    done;
-    let a = ref !h0 in
-    let b = ref !h1 in
-    let c = ref !h2 in
-    let d = ref !h3 in
-    let e = ref !h4 in
-    for index = 0 to 79 do
-      let f, k =
-        if index < 20 then
-          (logor (logand !b !c) (logand (lognot !b) !d), 0x5a827999l)
-        else if index < 40 then
-          (logxor !b (logxor !c !d), 0x6ed9eba1l)
-        else if index < 60 then
-          ( logor (logand !b !c) (logor (logand !b !d) (logand !c !d)),
-            0x8f1bbcdcl )
-        else (logxor !b (logxor !c !d), 0xca62c1d6l)
-      in
-      let temp =
-        add (add (add (add (rotl !a 5) f) !e) k) words.(index)
-      in
-      e := !d;
-      d := !c;
-      c := rotl !b 30;
-      b := !a;
-      a := temp
-    done;
-    h0 := add !h0 !a;
-    h1 := add !h1 !b;
-    h2 := add !h2 !c;
-    h3 := add !h3 !d;
-    h4 := add !h4 !e
-  done;
-  let out = Bytes.create 20 in
-  let write_word off word =
-    for index = 0 to 3 do
-      let shift = (3 - index) * 8 in
-      let byte = to_int (logand (shift_right_logical word shift) 0xffl) in
-      Bytes.set out (off + index) (Char.chr byte)
-    done
-  in
-  write_word 0 !h0;
-  write_word 4 !h1;
-  write_word 8 !h2;
-  write_word 12 !h3;
-  write_word 16 !h4;
-  Bytes.to_string out
-
 let accept_key key =
   let guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" in
   key ^ guid
-  |> sha1
+  |> Openssl.sha1
   |> Base64.encode_string
 
 let random_key () =

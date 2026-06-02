@@ -73,3 +73,8 @@ val err_clear_error : unit -> unit
 val random_bytes : int -> bytes
 (** [random_bytes len] returns [len] bytes from OpenSSL [RAND_bytes].
     Raises [Failure] if OpenSSL cannot provide random bytes. *)
+
+val sha1 : string -> string
+(** [sha1 input] returns the 20-byte SHA-1 digest from OpenSSL EVP. Eta uses
+    this for protocol-mandated WebSocket accept keys, not as a security
+    primitive exposed to applications. *)

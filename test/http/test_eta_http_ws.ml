@@ -320,6 +320,13 @@ let test_ws_random_material_does_not_use_stdlib_random () =
   Alcotest.(check bool) "client avoids Stdlib.Random" false
     (contains client "Stdlib.Random")
 
+let test_ws_accept_key_does_not_own_sha1 () =
+  let codec = read_file (find_ws_source "codec.ml") in
+  Alcotest.(check bool) "codec does not define SHA-1" false
+    (contains codec "let sha1");
+  Alcotest.(check bool) "codec does not implement SHA-1 rounds" false
+    (contains codec "let open Int32")
+
 let test_ws_connect_reads_inbound_text () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let frame =

@@ -12,8 +12,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* eta_turso deliberately has its own SQLite-compatible FFI. The invariant is
+   runtime loading of libturso_sqlite3, availability errors when that library is
+   absent, and RTLD_DEEPBIND isolation when supported. Sharing SQL values and
+   query construction belongs in OCaml; collapsing this into eta_sql would make
+   Turso's loader contract implicit. */
+
 #define SQLITE_OK 0
 #define SQLITE_MISUSE 21
+#define SQLITE_NOMEM 7
+#define SQLITE_NULL 5
 #define SQLITE_TOOBIG 18
 #define SQLITE_OPEN_READONLY 0x00000001
 #define SQLITE_OPEN_READWRITE 0x00000002
@@ -37,7 +45,7 @@ typedef struct sqlite3 sqlite3;
 typedef struct sqlite3_stmt sqlite3_stmt;
 
 typedef struct { sqlite3 *db; } eta_turso_db;
-typedef struct { sqlite3_stmt *stmt; } eta_turso_stmt;
+typedef struct { sqlite3_stmt *stmt; sqlite3 *db; } eta_turso_stmt;
 
 typedef struct {
   void *handle;
@@ -91,6 +99,7 @@ static void eta_turso_stmt_finalize(value v_stmt)
     /* See eta_turso_db_finalize for finalizer constraints. */
     (void)api.finalize(stmt->stmt);
     stmt->stmt = NULL;
+    stmt->db = NULL;
   }
 }
 
@@ -302,6 +311,7 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   int rc;
   v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = NULL;
+  ((eta_turso_stmt *)Data_custom_val(v_block))->db = NULL;
   sql = caml_stat_strdup(String_val(v_sql));
   if (sql == NULL) caml_failwith("turso allocation failed");
   /* prepare_v2 may touch disk or extension state. Copy the OCaml string before
@@ -317,6 +327,7 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
     caml_failwith(buffer);
   }
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = stmt;
+  ((eta_turso_stmt *)Data_custom_val(v_block))->db = db;
   CAMLreturn(v_block);
 }
 
@@ -330,7 +341,10 @@ CAMLprim intnat eta_turso_finalize(value v_stmt)
   caml_enter_blocking_section();
   rc = api.finalize(stmt->stmt);
   caml_leave_blocking_section();
-  if (rc == SQLITE_OK) stmt->stmt = NULL;
+  if (rc == SQLITE_OK) {
+    stmt->stmt = NULL;
+    stmt->db = NULL;
+  }
   CAMLreturnT(intnat, rc);
 }
 
@@ -456,14 +470,24 @@ CAMLprim value eta_turso_column_text(value v_stmt, intnat index)
 {
   CAMLparam1(v_stmt);
   ensure_loaded();
-  sqlite3_stmt *stmt = require_stmt(v_stmt, "sqlite3_column_text");
+  eta_turso_stmt *raw = (eta_turso_stmt *)Data_custom_val(v_stmt);
+  sqlite3_stmt *stmt = raw->stmt;
+  sqlite3 *db = raw->db;
+  int kind;
+  if (stmt == NULL) fail_closed_handle("sqlite3_column_text");
+  if (db == NULL) fail_closed_handle("sqlite3_column_text database");
+  kind = api.column_type(stmt, (int)index);
+  if (kind == SQLITE_NULL) CAMLreturn(caml_copy_string(""));
   const unsigned char *text = api.column_text(stmt, (int)index);
+  if (text == NULL && api.errcode(db) == SQLITE_NOMEM)
+    caml_failwith("turso column_text: out of memory");
+  if (text == NULL)
+    caml_failwith("turso column_text: null pointer for non-null value");
   int len = api.column_bytes(stmt, (int)index);
   if (len < 0) caml_failwith("turso column_text: negative length");
-  /* SQLite permits NULL for SQL NULL and zero-length values only. A positive
-     byte count with a NULL pointer is a driver contract violation. */
-  if (len > 0 && text == NULL) caml_failwith("turso column_text: null pointer for non-empty value");
-  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)text));
+  /* SQLite returns NULL for SQL NULL and for OOM during type conversion.
+     SQL NULL is handled above; a NULL pointer here must not become "". */
+  CAMLreturn(caml_alloc_initialized_string(len, (const char *)text));
 }
 
 CAMLprim value eta_turso_column_text_bc(value v_stmt, value v_index) { return eta_turso_column_text(v_stmt, Int_val(v_index)); }

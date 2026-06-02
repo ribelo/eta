@@ -111,6 +111,9 @@ module type BACKEND = sig
     decode : row -> int -> 'a;
     sql_type : string;
   }
+  (* The DSL needs a uniform primitive surface, but codec behavior belongs to
+     the backend: SQL type names, row storage, NULL checks, and coercions differ
+     across SQLite cursors and materialized row backends. *)
 
   val int : int typ
   val int64 : int64 typ

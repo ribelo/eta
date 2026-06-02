@@ -35,7 +35,9 @@ val make :
 val extract : (string * string) list -> t option
 (** Extract [traceparent], [tracestate], and [baggage] from HTTP-style headers.
     Header names are matched case-insensitively. Malformed [traceparent] values
-    are rejected with [None]. *)
+    are rejected with [None]. Higher [traceparent] versions follow W3C Trace
+    Context 3.2.4: parse the v00 prefix fields when valid and ignore unknown
+    trailing fields. *)
 
 val inject : t -> (string * string) list
 (** Produce lowercase W3C [traceparent], [tracestate], and [baggage] headers. *)

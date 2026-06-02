@@ -23,6 +23,7 @@ external get_verify_result_raw : ssl -> int = "eta_openssl_ssl_get_verify_result
 external err_peek_error_raw : unit -> string option = "eta_openssl_err_peek_error"
 external err_clear_error_raw : unit -> unit = "eta_openssl_err_clear_error"
 external random_bytes_into : bytes -> int -> int -> unit = "eta_openssl_random_bytes"
+external sha1 : string -> string = "eta_openssl_sha1"
 
 let random_bytes len =
   if len < 0 then invalid_arg "OpenSSL.random_bytes: negative length";

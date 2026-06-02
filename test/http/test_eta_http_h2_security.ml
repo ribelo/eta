@@ -1,6 +1,27 @@
 open Test_eta_http_support
 open Test_eta_http_h2_support
 
+let test_h2_frame_parse_header () =
+  let base =
+    Eta_http.H2.Frame.header ~length:0x010203 ~frame_type:(Other 0xfe)
+      ~flags:0xa5 ~stream_id:0x01020304
+  in
+  let raw = Bytes.of_string base in
+  Bytes.set raw 5 (Char.chr (Char.code (Bytes.get raw 5) lor 0x80));
+  let data = Bytes.unsafe_to_string raw in
+  let check label envelope =
+    let open Eta_http.H2.Frame in
+    Alcotest.(check int) (label ^ " length") 0x010203 envelope.length;
+    Alcotest.(check int) (label ^ " type") 0xfe envelope.frame_type;
+    Alcotest.(check int) (label ^ " flags") 0xa5 envelope.flags;
+    Alcotest.(check int) (label ^ " stream_id") 0x01020304 envelope.stream_id
+  in
+  check "string" (Eta_http.H2.Frame.parse_header_string data ~off:0);
+  check "bytes" (Eta_http.H2.Frame.parse_header_bytes raw ~off:0);
+  let buffer = Buffer.create 16 in
+  Buffer.add_string buffer data;
+  check "buffer" (Eta_http.H2.Frame.parse_header_buffer buffer ~off:0)
+
 let test_h2_multiplexer_buffer_full_is_security_error () =
   let client =
     H2.Client_connection.create

@@ -163,56 +163,52 @@ let concat effects =
   with_names (concat_names effects)
     (List.fold_left (fun acc effect -> seq effect acc) unit effects)
 
-type ('a, 'err) catch_result =
-  | Caught of 'a
-  | Uncaught of 'err Cause.t
+let combine_stripped combine causes =
+  match List.filter_map Fun.id causes with
+  | [] -> None
+  | causes -> Some (combine causes)
 
-let rec catch_cause handler = function
-  | Cause.Fail err -> (
-      match (handler err).eval () with
-      | Exit.Ok value -> Caught value
-      | Exit.Error cause -> Uncaught cause)
-  | Cause.Die die -> Uncaught (Cause.Die die)
-  | Cause.Interrupt id -> Uncaught (Cause.Interrupt id)
-  | Cause.Finalizer cause -> Uncaught (Cause.Finalizer cause)
-  | Cause.Sequential causes -> catch_causes Cause.sequential handler causes
-  | Cause.Concurrent causes -> catch_causes Cause.concurrent handler causes
+let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t option =
+  (* ZIO [catchAll]/[foldZIO] and effect-ts [catch]/[findError] select one
+     recoverable [Fail]; they do not traverse a composite cause running one
+     recovery effect per leaf. Eta keeps the additional local invariant that
+     defects, interruption, and finalizer diagnostics are not caught. If any of
+     those uncatchable leaves remain, return them without invoking the handler:
+     handler side effects must not run when the operation is still going to
+     fail, and old typed failures cannot be preserved across [catch]'s new
+     error type without running the handler. *)
+  function
+  | Cause.Fail _ -> None
+  | Cause.Die die -> Some (Cause.Die die)
+  | Cause.Interrupt id -> Some (Cause.Interrupt id)
+  | Cause.Finalizer cause -> Some (Cause.Finalizer cause)
+  | Cause.Sequential causes ->
+      combine_stripped Cause.sequential (List.map stripped_uncatchable causes)
+  | Cause.Concurrent causes ->
+      combine_stripped Cause.concurrent (List.map stripped_uncatchable causes)
   | Cause.Suppressed { primary; finalizer } -> (
-      match catch_cause handler primary with
-      | Caught _ -> Uncaught (Cause.finalizer finalizer)
-      | Uncaught primary ->
-          Uncaught (Cause.suppressed ~primary ~finalizer))
+      match stripped_uncatchable primary with
+      | None -> Some (Cause.finalizer finalizer)
+      | Some primary -> Some (Cause.suppressed ~primary ~finalizer))
 
-and catch_causes combine handler causes =
-  (* [catch] returns one value, while a composite cause may contain several
-     typed failures. Eta therefore uses the first handled branch as the
-     recovery value only when every branch was handled; any uncaught branch
-     keeps the operation failed and is recombined with the original shape. *)
-  let value, uncaught =
-    List.fold_left
-      (fun (value, uncaught) cause ->
-        match catch_cause handler cause with
-        | Caught caught ->
-            let value =
-              match value with Some _ -> value | None -> Some caught
-            in
-            (value, uncaught)
-        | Uncaught cause -> (value, cause :: uncaught))
-      (None, []) causes
-  in
-  match (value, List.rev uncaught) with
-  | Some value, [] -> Caught value
-  | _, cause :: causes -> Uncaught (combine (cause :: causes))
-  | None, [] -> invalid_arg "Effect.catch: empty composite cause"
+let rec first_typed_failure : type err. err Cause.t -> err option = function
+  | Cause.Fail err -> Some err
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.find_map first_typed_failure causes
+  | Cause.Suppressed { primary; _ } -> first_typed_failure primary
+  | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
 
 let catch handler effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> (
-      match catch_cause handler cause with
-      | Caught value -> ok value
-      | Uncaught cause -> error cause)
+      match stripped_uncatchable cause with
+      | Some cause -> error cause
+      | None -> (
+          match first_typed_failure cause with
+          | Some err -> (handler err).eval ()
+          | None -> invalid_arg "Effect.catch: empty composite cause"))
 
 let map_cause_error = Cause.map
 

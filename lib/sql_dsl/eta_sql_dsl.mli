@@ -60,6 +60,12 @@ module type BACKEND = sig
     decode : row -> int -> 'a;
     sql_type : string;
   }
+  (** Primitive codecs are a backend-owned invariant, not a shared Eta_sql_dsl
+      implementation detail. The common DSL requires these names so queries can
+      be built uniformly, but each connector owns the SQL type names, row
+      representation, NULL detection, and coercions. SQLite decodes from a live
+      sqlite3_stmt cursor; row-materialized backends decode their own Value.t
+      rows and may expose different SQL affinities. *)
 
   val int : int typ
   val int64 : int64 typ

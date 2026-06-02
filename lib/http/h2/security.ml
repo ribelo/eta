@@ -25,37 +25,27 @@ type t = {
   config : config;
   header : Bytes.t;
   mutable header_len : int;
-	  mutable payload_remaining : int;
-	  mutable settings_seen : int;
-	  mutable goaway_seen : int;
-	  response_headers_seen_by_stream : (int, int) Hashtbl.t;
-	  mutable header_block_bytes : int;
-	  mutable header_block_frames : int;
-	}
+  mutable payload_remaining : int;
+  mutable settings_seen : int;
+  mutable goaway_seen : int;
+  response_headers_seen_by_stream : (int, int) Hashtbl.t;
+  mutable header_block_bytes : int;
+  mutable header_block_frames : int;
+}
 
 let create ?(config = default_config) () =
   {
     config;
-    header = Bytes.create 9;
+    header = Bytes.create Frame.header_size;
     header_len = 0;
-	    payload_remaining = 0;
-	    settings_seen = 0;
-	    goaway_seen = 0;
-	    response_headers_seen_by_stream = Hashtbl.create 32;
-	    header_block_bytes = 0;
-	    header_block_frames = 0;
-	  }
+    payload_remaining = 0;
+    settings_seen = 0;
+    goaway_seen = 0;
+    response_headers_seen_by_stream = Hashtbl.create 32;
+    header_block_bytes = 0;
+    header_block_frames = 0;
+  }
 
-let byte t index = Char.code (Bytes.get t.header index)
-
-let frame_length t =
-  (byte t 0 lsl 16) lor (byte t 1 lsl 8) lor byte t 2
-
-let frame_type t = byte t 3
-let frame_flags t = byte t 4
-let stream_id t =
-  ((byte t 5 land 0x7f) lsl 24)
-  lor (byte t 6 lsl 16) lor (byte t 7 lsl 8) lor byte t 8
 let end_headers flags = flags land 0x4 <> 0
 
 let reset_header_block t =
@@ -135,10 +125,10 @@ let complete_stream t stream_id =
   Hashtbl.remove t.response_headers_seen_by_stream stream_id
 
 let start_frame t =
-  let length = frame_length t in
-  let frame_type = frame_type t in
-  let flags = frame_flags t in
-  let stream_id = stream_id t in
+  let open Frame in
+  let { length; frame_type; flags; stream_id } =
+    parse_header_bytes t.header ~off:0
+  in
   t.header_len <- 0;
   t.payload_remaining <- length;
   match frame_type with
@@ -154,7 +144,7 @@ let observe_byte t byte =
   else (
     Bytes.set t.header t.header_len byte;
     t.header_len <- t.header_len + 1;
-    if t.header_len = 9 then start_frame t else None)
+    if t.header_len = Frame.header_size then start_frame t else None)
 
 let observe t bs ~off ~len =
   let stop = off + len in
@@ -165,13 +155,13 @@ let observe t bs ~off ~len =
       t.payload_remaining <- t.payload_remaining - skipped;
       loop (i + skipped))
     else
-      let needed = 9 - t.header_len in
+      let needed = Frame.header_size - t.header_len in
       let take = min needed (stop - i) in
       for j = 0 to take - 1 do
         Bytes.set t.header (t.header_len + j) (Bigstringaf.get bs (i + j))
       done;
       t.header_len <- t.header_len + take;
-      if t.header_len = 9 then
+      if t.header_len = Frame.header_size then
         match start_frame t with
         | Some error -> Some error
         | None -> loop (i + take)

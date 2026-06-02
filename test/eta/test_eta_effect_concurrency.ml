@@ -615,26 +615,27 @@ let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
         "cancelled sibling finalizer ran before for_each_par returned" true
         !release_started
 
-let check_child_finalizer_before_catch_handler label caught released
-    released_before_catch = function
+let check_child_finalizer_skips_catch_handler label caught released
+    handler_observed_release = function
   | Exit.Error (Cause.Interrupt _) ->
-      Alcotest.(check bool) (label ^ " caught") true (Atomic.get caught);
+      Alcotest.(check bool) (label ^ " catch handler skipped") false
+        (Atomic.get caught);
       Alcotest.(check bool) (label ^ " released") true (Atomic.get released);
       Alcotest.(check bool)
-        (label ^ " released before catch") true
-        (Atomic.get released_before_catch)
+        (label ^ " handler did not observe release") false
+        (Atomic.get handler_observed_release)
   | Exit.Error cause ->
       Alcotest.failf "%s: expected uncaught interrupt, got %a" label
         (Cause.pp Format.pp_print_string)
         cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected uncaught interrupt" label
 
-let test_par_child_finalizer_runs_before_catch_handler () =
+let test_par_child_finalizer_skips_catch_handler () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
   let released = Atomic.make false in
-  let released_before_catch = Atomic.make false in
+  let handler_observed_release = Atomic.make false in
   let slow =
     Effect.acquire_release
       ~acquire:
@@ -651,21 +652,21 @@ let test_par_child_finalizer_runs_before_catch_handler () =
   let eff =
     Effect.par fail_after_acquire slow
     |> Effect.catch (fun _ ->
-           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set handler_observed_release (Atomic.get released);
            Atomic.set caught true;
            Effect.pure ((), ()))
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_before_catch_handler "par" caught released
-    released_before_catch (Eio.Promise.await promise)
+  check_child_finalizer_skips_catch_handler "par" caught released
+    handler_observed_release (Eio.Promise.await promise)
 
-let test_all_child_finalizer_runs_before_catch_handler () =
+let test_all_child_finalizer_skips_catch_handler () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
   let released = Atomic.make false in
-  let released_before_catch = Atomic.make false in
+  let handler_observed_release = Atomic.make false in
   let slow =
     Effect.acquire_release
       ~acquire:
@@ -682,21 +683,21 @@ let test_all_child_finalizer_runs_before_catch_handler () =
   let eff =
     Effect.all [ fail_after_acquire; slow ]
     |> Effect.catch (fun _ ->
-           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set handler_observed_release (Atomic.get released);
            Atomic.set caught true;
            Effect.pure [])
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_before_catch_handler "all" caught released
-    released_before_catch (Eio.Promise.await promise)
+  check_child_finalizer_skips_catch_handler "all" caught released
+    handler_observed_release (Eio.Promise.await promise)
 
-let test_for_each_par_child_finalizer_runs_before_catch_handler () =
+let test_for_each_par_child_finalizer_skips_catch_handler () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
   let released = Atomic.make false in
-  let released_before_catch = Atomic.make false in
+  let handler_observed_release = Atomic.make false in
   let worker = function
     | "slow" ->
         Effect.acquire_release
@@ -714,14 +715,14 @@ let test_for_each_par_child_finalizer_runs_before_catch_handler () =
   let eff =
     Effect.for_each_par [ "body"; "slow" ] worker
     |> Effect.catch (fun _ ->
-           Atomic.set released_before_catch (Atomic.get released);
+           Atomic.set handler_observed_release (Atomic.get released);
            Atomic.set caught true;
            Effect.pure [])
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_before_catch_handler "for_each_par" caught released
-    released_before_catch (Eio.Promise.await promise)
+  check_child_finalizer_skips_catch_handler "for_each_par" caught released
+    handler_observed_release (Eio.Promise.await promise)
 
 let test_par_nested_race_all_failures_baseline () =
   with_test_clock @@ fun sw clock rt ->

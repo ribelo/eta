@@ -162,20 +162,33 @@ let check_turso_prepare_copies_sql_and_blocks () =
 let check_sqlite_and_turso_column_pointers_are_guarded () =
   let sqlite_source = read_file (find_sqlite_stubs_source ()) in
   let turso_source = read_file (find_turso_stubs_source ()) in
-  let check_guard source ~start_marker ~end_marker ~pointer =
+  let check_non_empty_guard source ~start_marker ~end_marker ~pointer =
     let body = function_source source ~start_marker ~end_marker in
     ignore
       (require_sub body
          ~needle:("if (len > 0 && " ^ pointer ^ " == NULL)") :
         int)
   in
-  check_guard sqlite_source ~start_marker:"CAMLprim value eta_sqlite_column_text("
-    ~end_marker:"CAMLprim value eta_sqlite_column_text_bc(" ~pointer:"text";
-  check_guard sqlite_source ~start_marker:"CAMLprim value eta_sqlite_column_blob("
+  let check_text_oom_guard source ~start_marker ~end_marker ~errcode =
+    let body = function_source source ~start_marker ~end_marker in
+    ignore (require_sub body ~needle:"if (kind == SQLITE_NULL)" : int);
+    ignore
+      (require_sub body
+         ~needle:("if (text == NULL && " ^ errcode ^ "(db) == SQLITE_NOMEM)") :
+        int)
+  in
+  check_text_oom_guard sqlite_source
+    ~start_marker:"CAMLprim value eta_sqlite_column_text("
+    ~end_marker:"CAMLprim value eta_sqlite_column_text_bc("
+    ~errcode:"sqlite3_errcode";
+  check_non_empty_guard sqlite_source
+    ~start_marker:"CAMLprim value eta_sqlite_column_blob("
     ~end_marker:"CAMLprim value eta_sqlite_column_blob_bc(" ~pointer:"blob";
-  check_guard turso_source ~start_marker:"CAMLprim value eta_turso_column_text("
-    ~end_marker:"CAMLprim value eta_turso_column_text_bc(" ~pointer:"text";
-  check_guard turso_source ~start_marker:"CAMLprim value eta_turso_column_blob("
+  check_text_oom_guard turso_source
+    ~start_marker:"CAMLprim value eta_turso_column_text("
+    ~end_marker:"CAMLprim value eta_turso_column_text_bc(" ~errcode:"api.errcode";
+  check_non_empty_guard turso_source
+    ~start_marker:"CAMLprim value eta_turso_column_blob("
     ~end_marker:"CAMLprim value eta_turso_column_blob_bc(" ~pointer:"blob"
 
 let check_duckdb_available () =

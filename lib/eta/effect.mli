@@ -339,16 +339,22 @@ val catch :
 (** Handle typed failures in an effect's cause tree.
 
     [catch handler effect] does not catch unchecked defects, interruption, or
-    cleanup/finalizer failures. It may recover typed failures in primary
-    sequential and concurrent cause branches, but it leaves [Cause.Finalizer]
-    nodes and [Cause.Suppressed.finalizer] branches intact. Recover or ignore a
-    cleanup failure inside the cleanup effect itself.
+    cleanup/finalizer failures. This matches the ordinary typed-error recovery
+    shape in ZIO [catchAll]/[foldZIO] and effect-ts [catch]/[findError]: one
+    recovery decision is made from the cause, rather than traversing every
+    [Fail] leaf and running one handler per branch.
 
-    If a sequential or concurrent cause contains several typed failures and the
-    handler recovers all of them, [catch] returns the first recovered value in
-    cause order. This is the only value-preserving contract possible for
-    [catch]'s single-result type; use [all_settled] or explicit result values
-    when every branch's recovery value matters. *)
+    If any uncatchable defect, interruption, or finalizer diagnostic remains in
+    the cause tree, the handler is not invoked and the effect stays failed with
+    those uncatchable diagnostics. This avoids running recovery side effects for
+    an operation that still fails, and avoids preserving old typed [Fail]
+    payloads after [catch] changes the error type.
+
+    If only typed failures remain, [catch] invokes the handler once with the
+    first typed failure in cause order. Other concurrent/sequential typed
+    failures are not recoverable values; use [all_settled] or explicit result
+    values when every branch outcome matters. Recover or ignore cleanup failure
+    inside the cleanup effect itself. *)
 
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,

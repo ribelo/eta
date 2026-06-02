@@ -204,6 +204,8 @@ let () =
             test_ws_codec_masked_text_roundtrip;
           Alcotest.test_case "random material avoids Stdlib.Random" `Quick
             test_ws_random_material_does_not_use_stdlib_random;
+          Alcotest.test_case "accept key does not own SHA-1" `Quick
+            test_ws_accept_key_does_not_own_sha1;
           Alcotest.test_case "upgrade reads inbound text" `Quick
             test_ws_connect_reads_inbound_text;
           Alcotest.test_case "oversized frame rejected before payload read" `Quick
@@ -270,6 +272,10 @@ let () =
         [
           Alcotest.test_case "cancelled counts until release" `Quick
             test_h2_admission_counts_cancelled_until_release;
+        ] );
+      ( "h2-frame",
+        [
+          Alcotest.test_case "parse header" `Quick test_h2_frame_parse_header;
         ] );
       ( "h2-stream-state",
         [

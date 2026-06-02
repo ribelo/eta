@@ -13,7 +13,20 @@ type frame_type =
   | Continuation
   | Other of int
 
+type envelope = {
+  length : int;
+  frame_type : int;
+  flags : int;
+  stream_id : int;
+}
+(** Parsed HTTP/2 frame envelope. [stream_id] masks out the reserved high bit,
+    matching RFC 9113 section 4.1. *)
+
+val header_size : int
 val frame_type_code : frame_type -> int
+val parse_header_string : string -> off:int -> envelope
+val parse_header_bytes : bytes -> off:int -> envelope
+val parse_header_buffer : Buffer.t -> off:int -> envelope
 val header : length:int -> frame_type:frame_type -> flags:int -> stream_id:int -> string
 val uint32 : int -> string
 val settings : string

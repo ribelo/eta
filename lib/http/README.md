@@ -72,7 +72,8 @@ nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_m
   flow reads through `Cstruct.t`; it is already in the Eta dependency closure
   through `eta-stream`/Eio.
 - `digestif`, `tls-eio`, `x509`, `ca-certs`, and Mirage Crypto are not
-  eta-http dependencies. TLS is owned by the local OpenSSL binding.
+  eta-http dependencies. TLS and the protocol-required WebSocket SHA-1 digest
+  are owned by the local OpenSSL binding.
 
 ## Audit Catalogs
 

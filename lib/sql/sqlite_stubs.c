@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* eta_sql owns the system-SQLite FFI: compile against <sqlite3.h>, link via
+   pkg-config, and expose native SQLite operations such as backup and extension
+   loading. Turso uses a SQLite-compatible ABI, but its FFI has a separate
+   runtime-loading contract; keep shared SQL behavior in OCaml modules instead
+   of hiding these different foreign contracts behind one C extension. */
+
 typedef struct {
   sqlite3 *db;
 } eta_sqlite_db;
@@ -560,18 +566,26 @@ CAMLprim value eta_sqlite_column_text(value v_stmt, intnat index)
 {
   CAMLparam1(v_stmt);
   sqlite3_stmt *stmt = eta_sqlite_stmt_val(v_stmt);
+  sqlite3 *db;
   const unsigned char *text;
+  int kind;
   int len;
   if (stmt == NULL) {
     caml_failwith("sqlite column_text: statement is finalized");
   }
+  db = sqlite3_db_handle(stmt);
+  kind = sqlite3_column_type(stmt, (int)index);
+  if (kind == SQLITE_NULL) CAMLreturn(caml_copy_string(""));
   text = sqlite3_column_text(stmt, (int)index);
+  if (text == NULL && sqlite3_errcode(db) == SQLITE_NOMEM)
+    caml_failwith("sqlite column_text: out of memory");
+  if (text == NULL)
+    caml_failwith("sqlite column_text: null pointer for non-null value");
   len = sqlite3_column_bytes(stmt, (int)index);
   if (len < 0) caml_failwith("sqlite column_text: negative length");
-  /* SQLite permits NULL for SQL NULL and zero-length values only. A positive
-     byte count with a NULL pointer is a driver contract violation. */
-  if (len > 0 && text == NULL) caml_failwith("sqlite column_text: null pointer for non-empty value");
-  CAMLreturn(caml_alloc_initialized_string(len, len == 0 ? "" : (const char *)text));
+  /* SQLite returns NULL for SQL NULL and for OOM during type conversion.
+     SQL NULL is handled above; a NULL pointer here must not become "". */
+  CAMLreturn(caml_alloc_initialized_string(len, (const char *)text));
 }
 
 CAMLprim value eta_sqlite_column_text_bc(value v_stmt, value v_index)

@@ -54,21 +54,6 @@ let error message =
        { kind = "h2_informational_filter"; message })
 
 let code s i = Char.code (String.unsafe_get s i)
-let buffer_code b i = Char.code (Buffer.nth b i)
-
-let frame_length b off =
-  (buffer_code b (off + 0) lsl 16)
-  lor (buffer_code b (off + 1) lsl 8)
-  lor buffer_code b (off + 2)
-
-let frame_type b off = buffer_code b (off + 3)
-let frame_flags b off = buffer_code b (off + 4)
-
-let frame_stream_id b off =
-  ((buffer_code b (off + 5) land 0x7f) lsl 24)
-  lor (buffer_code b (off + 6) lsl 16)
-  lor (buffer_code b (off + 7) lsl 8)
-  lor buffer_code b (off + 8)
 
 let append_pending t data ~off ~len =
   if len > 0 then Buffer.add_substring t.pending data off len
@@ -211,18 +196,18 @@ let pass_frame t frame_type flags stream_id ~off ~total =
   Ok ()
 
 let handle_frame t ~off ~total =
-  let length = frame_length t.pending off in
-  let frame_type = frame_type t.pending off in
-  let flags = frame_flags t.pending off in
-  let stream_id = frame_stream_id t.pending off in
+  let open Frame in
+  let { length; frame_type; flags; stream_id } =
+    parse_header_buffer t.pending ~off
+  in
   match (t.headers, frame_type) with
   | Some _, frame when frame <> frame_continuation ->
       error "non-CONTINUATION frame arrived while a header block is open"
   | _, frame when frame = frame_headers && stream_id > 0 ->
-      let payload = Buffer.sub t.pending (off + 9) length in
+      let payload = Buffer.sub t.pending (off + header_size) length in
       handle_headers t ~flags ~stream_id payload
   | _, frame when frame = frame_continuation -> (
-      let payload = Buffer.sub t.pending (off + 9) length in
+      let payload = Buffer.sub t.pending (off + header_size) length in
       match handle_continuation t ~flags ~stream_id payload with
       | Error _ as error -> error
       | Ok () -> Ok ())
@@ -230,12 +215,13 @@ let handle_frame t ~off ~total =
 
 let rec process t =
   let available = Buffer.length t.pending - t.pending_off in
-  if available < 9 then (
+  if available < Frame.header_size then (
     compact_pending t;
     Ok ())
   else
-    let length = frame_length t.pending t.pending_off in
-    let total = 9 + length in
+    let open Frame in
+    let { length; _ } = parse_header_buffer t.pending ~off:t.pending_off in
+    let total = header_size + length in
     if available < total then (
       compact_pending t;
       Ok ())

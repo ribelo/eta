@@ -44,6 +44,8 @@ let find_header name headers =
 let parse_flags s =
   if is_hex 2 s then Some (int_of_string ("0x" ^ s)) else None
 
+let valid_version s = is_hex 2 s && s <> "ff"
+
 let parse_trace_state s =
   if String.trim s = "" then []
   else
@@ -72,6 +74,18 @@ let parse_baggage s =
            | _ -> None)
 
 let extract headers =
+  let make_from_traceparent ~trace_id ~span_id ~trace_flags =
+    let trace_state =
+      Option.value
+        (Option.map parse_trace_state (find_header "tracestate" headers))
+        ~default:[]
+    in
+    let baggage =
+      Option.value (Option.map parse_baggage (find_header "baggage" headers))
+        ~default:[]
+    in
+    make ~trace_id ~span_id ~trace_flags ~trace_state ~baggage ()
+  in
   match find_header "traceparent" headers with
   | None -> None
   | Some traceparent -> (
@@ -80,17 +94,17 @@ let extract headers =
           match parse_flags flags with
           | None -> None
           | Some trace_flags ->
-              make ~trace_id ~span_id ~trace_flags
-                ~trace_state:
-                  (Option.value
-                     (Option.map parse_trace_state
-                        (find_header "tracestate" headers))
-                     ~default:[])
-                ~baggage:
-                  (Option.value
-                     (Option.map parse_baggage (find_header "baggage" headers))
-                     ~default:[])
-                ())
+              make_from_traceparent ~trace_id ~span_id ~trace_flags)
+      | version :: trace_id :: span_id :: flags :: _
+        when valid_version version && version <> "00" -> (
+          match parse_flags flags with
+          | None -> None
+          | Some trace_flags ->
+              (* W3C Trace Context 3.2.4 requires higher versions to parse the
+                 v00 prefix fields when valid, ignore unknown trailing fields,
+                 and carry only the sampled bit this version understands. *)
+              make_from_traceparent ~trace_id ~span_id
+                ~trace_flags:(trace_flags land 1))
       | _ -> None)
 
 let render_pairs xs =

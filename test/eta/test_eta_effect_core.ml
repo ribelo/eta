@@ -143,6 +143,36 @@ let test_effect_catch_handler_failure_uses_outer_key () =
        ( = ))
     (Runtime.run rt eff) `Outer
 
+let test_effect_catch_invokes_one_handler_for_composite_typed_failure () =
+  with_test_clock @@ fun sw _clock rt ->
+  let go, release = Eio.Promise.create () in
+  let ready = Eio.Stream.create 2 in
+  let child name error =
+    Effect.sync (fun () ->
+        Eio.Stream.add ready name;
+        Eio.Promise.await go)
+    |> Effect.bind (fun () -> Effect.fail error)
+  in
+  let handled = ref [] in
+  let eff =
+    Effect.all [ child "left" `Left; child "right" `Right ]
+    |> Effect.catch (fun error ->
+           Effect.sync (fun () -> handled := error :: !handled)
+           |> Effect.bind (fun () -> Effect.fail `Handler_failed))
+  in
+  let promise = fork_run sw rt eff in
+  ignore (Eio.Stream.take ready : string);
+  ignore (Eio.Stream.take ready : string);
+  Eio.Promise.resolve release ();
+  Expect.expect_typed_failure_eq
+    (Alcotest.testable
+       (fun fmt `Handler_failed -> Format.pp_print_string fmt "handler_failed")
+       ( = ))
+    (Eio.Promise.await promise) `Handler_failed;
+  Alcotest.(check int)
+    "catch handler invoked once for composite typed cause" 1
+    (List.length !handled)
+
 let test_effect_from_result () =
   with_runtime @@ fun rt ->
   Alcotest.(check int) "ok" 7 (run_ok rt (Effect.from_result (Ok 7)));
@@ -515,15 +545,21 @@ let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic ()
 
 let test_effect_catch_preserves_suppressed_finalizer_failure () =
   with_runtime @@ fun rt ->
+  let handler_ran = ref false in
   let eff =
     Effect.fail `Body
     |> Effect.finally
          (Effect.fail `Cleanup)
-    |> Effect.catch (function `Body -> Effect.pure `Caught)
+    |> Effect.catch (function
+         | `Body ->
+             Effect.sync (fun () -> handler_ran := true)
+             |> Effect.map (fun () -> `Caught))
   in
   match Runtime.run rt eff with
   | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
-      ()
+      Alcotest.(check bool)
+        "handler skipped because finalizer failure keeps effect failed" false
+        !handler_ran
   | Exit.Ok `Caught ->
       Alcotest.fail "catch erased the finalizer typed failure"
   | Exit.Error cause ->
@@ -820,6 +856,7 @@ let test_effect_catch_preserves_suppressed_finalizer_defect () =
 let test_effect_catch_preserves_concurrent_defect () =
   with_test_clock @@ fun sw _clock rt ->
   let defect = Failure "concurrent defect" in
+  let handler_ran = ref false in
   let go, release = Eio.Promise.create () in
   let ready = Eio.Stream.create 2 in
   let wait name =
@@ -834,14 +871,18 @@ let test_effect_catch_preserves_concurrent_defect () =
   in
   let eff =
     Effect.all [ typed; die ]
-    |> Effect.catch (fun (_ : string) -> Effect.pure [ () ])
+    |> Effect.catch (fun (_ : string) ->
+           Effect.sync (fun () -> handler_ran := true)
+           |> Effect.map (fun () -> [ () ]))
   in
   let promise = fork_run sw rt eff in
   ignore (Eio.Stream.take ready : string);
   ignore (Eio.Stream.take ready : string);
   Eio.Promise.resolve release ();
   match Eio.Promise.await promise with
-  | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+  | Exit.Error (Cause.Die { exn; _ }) when exn == defect ->
+      Alcotest.(check bool)
+        "handler skipped because defect keeps effect failed" false !handler_ran
   | Exit.Error cause ->
       Alcotest.failf "expected concurrent defect, got %a"
         (Cause.pp Format.pp_print_string) cause
@@ -849,6 +890,7 @@ let test_effect_catch_preserves_concurrent_defect () =
 
 let test_effect_catch_preserves_concurrent_interrupt () =
   with_test_clock @@ fun sw _clock rt ->
+  let handler_ran = ref false in
   let go, release = Eio.Promise.create () in
   let ready = Eio.Stream.create 2 in
   let wait name =
@@ -865,107 +907,68 @@ let test_effect_catch_preserves_concurrent_interrupt () =
   in
   let eff =
     Effect.all [ typed; interrupt ]
-    |> Effect.catch (fun (_ : string) -> Effect.pure [ () ])
+    |> Effect.catch (fun (_ : string) ->
+           Effect.sync (fun () -> handler_ran := true)
+           |> Effect.map (fun () -> [ () ]))
   in
   let promise = fork_run sw rt eff in
   ignore (Eio.Stream.take ready : string);
   ignore (Eio.Stream.take ready : string);
   Eio.Promise.resolve release ();
   match Eio.Promise.await promise with
-  | Exit.Error (Cause.Interrupt None) -> ()
+  | Exit.Error (Cause.Interrupt None) ->
+      Alcotest.(check bool)
+        "handler skipped because interrupt keeps effect failed" false
+        !handler_ran
   | Exit.Error cause ->
       Alcotest.failf "expected concurrent interrupt, got %a"
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent interrupt"
 
-(* P0: Effect.catch is unsound for typed failures nested inside cause trees.
-   When catch changes the error type from 'err1 to 'err2, any Suppressed or
-   Concurrent cause that contains nested Fail old_err values passes through
-   via Obj.magic. The nested Fail payloads are cast to the new error type
-   without being transformed. This is a type-safety violation.
-
-   map_error correctly recurses into cause trees; catch does not.
-   This test demonstrates the unsoundness by checking that nested Fail
-   values inside Suppressed causes have the correct type after catch. *)
-
-let test_effect_catch_unsound_suppressed_typed_failure () =
+(* [catch] may change the typed error channel, so old [Fail] payloads must not
+   leak through composite causes when an uncatchable sibling/finalizer keeps the
+   operation failed. The handler is skipped and only the uncatchable diagnostic
+   remains. *)
+let test_effect_catch_strips_typed_primary_before_finalizer () =
   with_runtime @@ fun rt ->
-  (* Create an effect that:
-     1. Has error type [`Old_err]
-     2. Body fails with `Old_err
-     3. Finalizer also fails with `Old_err
-     4. This produces Suppressed { primary = Fail `Old_err; finalizer = Fail `Old_err }
-     5. catch handles `Old_err but the Suppressed cause bypasses the handler
-     6. After catch, the error type is [`New_err] but the cause still
-        contains `Old_err payloads — a type-level unsoundness *)
+  let handler_ran = ref false in
   let eff =
     Effect.fail `Old_err
     |> Effect.finally (Effect.fail `Old_cleanup)
     |> Effect.catch (function
-         | `Old_err -> Effect.pure "handled"
-         | `Old_cleanup -> Effect.pure "handled cleanup")
+         | `Old_err | `Old_cleanup ->
+             Effect.sync (fun () -> handler_ran := true)
+             |> Effect.map (fun () -> "handled"))
   in
   match Runtime.run rt eff with
-  | Exit.Ok "handled" ->
-      (* If catch somehow caught it, fine *)
-      ()
+  | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
+      Alcotest.(check bool)
+        "handler skipped because finalizer failure remains" false !handler_ran
   | Exit.Ok _ -> Alcotest.fail "unexpected Ok value"
   | Exit.Error cause ->
-      (* The cause passed through catch. It's now typed as the NEW error type
-         (whatever catch's return error type is), but still contains the OLD
-         typed failure payloads. Verify the Fail values are what they should be
-         if the types were respected.
+      Alcotest.failf "expected only finalizer failure after catch, got %a"
+        (Cause.pp (fun fmt (_ : string) -> Format.pp_print_string fmt "<new>"))
+        cause
 
-         With Obj.magic unsoundness, the values are physically `Old_err and
-         `Old_cleanup but the type says they should be the new error type.
-         We can detect this by checking the cause structure: if we see
-         Fail values that are physically polymorphic variants from the OLD
-         type, that proves the unsoundness.
-
-         The correct behavior (like map_error) would either:
-         - Recursively transform nested Fails through the handler
-         - Or return the cause as-is but with the ORIGINAL type preserved *)
-      let has_old_err_in_cause =
-        match cause with
-        | Cause.Suppressed
-            { primary = Cause.Fail _; finalizer = Cause.Finalizer.Fail _ } ->
-            (* These Fail values are typed as the NEW error type but physically
-               contain OLD error values. The mere fact that we got here with
-               Suppressed { Fail; Fail } after catch changed the type proves
-               the unsoundness — these payloads were never transformed. *)
-            true
-        | _ -> false
-      in
-      Alcotest.(check bool)
-        "catch should not pass through Suppressed with un-transformed Fail \
-         payloads (type-level unsoundness via Obj.magic)"
-        false has_old_err_in_cause
-
-let test_effect_catch_unsound_concurrent_typed_failure () =
+let test_effect_catch_composite_typed_failure_no_old_payloads () =
   with_runtime @@ fun rt ->
-  (* Same unsoundness but with Concurrent causes from par/all.
-     If two fibers fail with typed errors and catch handles that error type,
-     Concurrent [Fail old_err; Fail old_err] passes through catch via
-     Obj.magic without transforming the nested Fail payloads. *)
+  let handled = ref [] in
   let eff =
     Effect.all
       [ Effect.fail `Fiber_a_err;
         Effect.fail `Fiber_b_err ]
     |> Effect.catch (function
-         | `Fiber_a_err -> Effect.pure [ () ]
-         | `Fiber_b_err -> Effect.pure [ () ])
+         | (`Fiber_a_err as error) | (`Fiber_b_err as error) ->
+             Effect.sync (fun () -> handled := error :: !handled)
+             |> Effect.map (fun () -> [ () ]))
   in
   match Runtime.run rt eff with
-  | Exit.Ok _ -> () (* If catch somehow caught it, fine *)
+  | Exit.Ok [ () ] ->
+      Alcotest.(check int)
+        "one handler invocation for composite typed cause" 1
+        (List.length !handled)
+  | Exit.Ok _ -> Alcotest.fail "unexpected Ok value"
   | Exit.Error cause ->
-      let has_nested_fail =
-        match cause with
-        | Cause.Concurrent causes ->
-            List.exists (function Cause.Fail _ -> true | _ -> false) causes
-        | Cause.Fail _ -> true (* Single fail that was magic'd *)
-        | _ -> false
-      in
-      Alcotest.(check bool)
-        "catch should not pass through Concurrent with un-transformed Fail \
-         payloads (type-level unsoundness via Obj.magic)"
-        false has_nested_fail
+      Alcotest.failf "catch leaked old typed payloads through %a"
+        (Cause.pp (fun fmt (_ : string) -> Format.pp_print_string fmt "<new>"))
+        cause
