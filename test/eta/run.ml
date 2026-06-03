@@ -354,6 +354,10 @@ let () =
             test_blocking_result_timeout_interrupts_and_fails_typed;
           Alcotest.test_case "blocking_result_timeout cancels once" `Quick
             test_blocking_result_timeout_calls_on_cancel_once;
+          Alcotest.test_case "blocking_result_timeout bounds caller wait"
+            `Quick test_blocking_result_timeout_bounds_started_drain_wait;
+          Alcotest.test_case "blocking_result_timeout cancels queued work"
+            `Quick test_blocking_result_timeout_cancels_queued_work;
           Alcotest.test_case "custom runner" `Quick
             test_blocking_pool_custom_runner;
           Alcotest.test_case "runner cancellation releases started slot" `Quick

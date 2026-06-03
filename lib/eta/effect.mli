@@ -266,17 +266,16 @@ val blocking_result_timeout :
   (unit -> ('a, 'err) result) ->
   ('a, 'err) t
 (** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
-    {!blocking_result} and races the caller's wait against [timeout]. This is
-    not CPU/thread preemption: if [f] has already started in a [Drain] blocking
-    pool, Eta cannot forcibly stop it. The timeout is a hard deadline only for
-    queued work, [Detach_started] pools, or callbacks that cooperate via
-    [?on_cancel].
+    {!blocking_result} and races the caller's wait against [timeout]. The
+    timeout bounds the caller's wait; it is not CPU/thread preemption. If [f]
+    has already started in a [Drain] blocking pool, Eta returns [on_timeout] to
+    the caller but keeps the started job under pool accounting until it finishes.
+    If [f] is still queued when the timeout wins, Eta cancels it before start.
 
     If the timeout wins, the effect fails with [on_timeout]. [?on_cancel] is
-    delivered through the blocking runtime's normal cancellation path so [f]
-    can cooperatively unblock. If the blocking operation wins after parent
-    cancellation reached the fiber, Eta checks the cancellation state before
-    publishing the success or typed failure. *)
+    invoked once so [f] can cooperatively unblock. If the blocking operation
+    wins after parent cancellation reached the fiber, Eta checks the
+    cancellation state before publishing the success or typed failure. *)
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t

@@ -160,6 +160,76 @@ let test_blocking_result_timeout_calls_on_cancel_once () =
   wait_until (fun () -> Atomic.get finished);
   Alcotest.(check int) "on_cancel calls" 1 (Atomic.get hook_calls)
 
+let test_blocking_result_timeout_bounds_started_drain_wait () =
+  with_runtime @@ fun rt ->
+  let pool =
+    BP.create ~name:"blocking-result-timeout-started-drain"
+      (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject
+         ~shutdown_policy:BP.Drain ())
+  in
+  let started = Unix.gettimeofday () in
+  let exit =
+    Runtime.run rt
+      (Effect.blocking_result_timeout ~pool
+         ~name:"blocking.result.timeout-started-drain"
+         ~timeout:(Duration.ms 10) ~on_timeout:`Timeout (fun () ->
+           Unix.sleepf 0.25;
+           Ok ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started in
+  Alcotest.(check bool) "caller wait bounded" true (elapsed < 0.05);
+  Alcotest.(check int) "started work remains active" 1 (BP.stats pool).active;
+  (match exit with
+  | Exit.Error (Cause.Fail `Timeout) -> ()
+  | Exit.Ok () -> Alcotest.fail "expected timeout"
+  | Exit.Error cause ->
+      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
+        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
+             Format.pp_print_string fmt "timeout"))
+        cause);
+  wait_until ~attempts:500 (fun () -> (BP.stats pool).completed = 1);
+  Alcotest.(check int) "started work released" 0 (BP.stats pool).active
+
+let test_blocking_result_timeout_cancels_queued_work () =
+  with_runtime @@ fun rt ->
+  let pool =
+    BP.create ~name:"blocking-result-timeout-queued"
+      (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait
+         ~shutdown_policy:BP.Drain ())
+  in
+  let blocker_done = Atomic.make false in
+  let queued_ran = Atomic.make false in
+  Runtime.run rt
+    (Effect.daemon
+       (Effect.blocking ~pool ~name:"blocking.result.timeout-queued.blocker"
+          (fun () ->
+            Unix.sleepf 0.10;
+            Atomic.set blocker_done true)))
+  |> ignore;
+  wait_until (fun () -> (BP.stats pool).active = 1);
+  let exit =
+    Runtime.run rt
+      (Effect.blocking_result_timeout ~pool
+         ~name:"blocking.result.timeout-queued"
+         ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
+           Atomic.set queued_ran true;
+           Ok ()))
+  in
+  (match exit with
+  | Exit.Error (Cause.Fail `Timeout) -> ()
+  | Exit.Ok () -> Alcotest.fail "expected timeout"
+  | Exit.Error cause ->
+      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
+        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
+             Format.pp_print_string fmt "timeout"))
+        cause);
+  wait_until ~attempts:300 (fun () -> Atomic.get blocker_done);
+  Eio_unix.sleep 0.02;
+  Alcotest.(check bool) "queued job did not run" false
+    (Atomic.get queued_ran);
+  Alcotest.(check int) "queued job cancelled" 1
+    (BP.stats pool).cancelled_before_start
+
 let test_blocking_pool_custom_runner () =
   run_eio @@ fun stdenv ->
   let calls = Atomic.make 0 in
