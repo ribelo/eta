@@ -339,6 +339,17 @@ let close_entries_with close entries =
 let close_entries ?(release_permit = true) t entries =
   close_entries_with (close_entry ~release_permit t) entries
 
+let close_entries_for_eviction t entries =
+  entries
+  |> List.map (close_entry ~release_permit:false t)
+  |> Effect.all_settled
+  |> Effect.bind (fun results ->
+         match first_close_failure results with
+         | None -> Effect.unit
+         | Some _ ->
+             log t ~level:Capabilities.Warn
+               "eta.pool.eviction_close_failed")
+
 let close_idle_entries t entries = close_entries_with (close_idle_entry t) entries
 
 let mark_released_to_close t =
@@ -498,7 +509,7 @@ let evict_idle_once t =
     with_lock t @@ fun () ->
     if t.shutting_down then [] else take_expired_idle_locked t
   in
-  expired |> Effect.bind (close_entries ~release_permit:false t)
+  expired |> Effect.bind (close_entries_for_eviction t)
 
 let rec eviction_loop t =
   Effect.delay t.idle_check_interval (evict_idle_once t)

@@ -59,7 +59,11 @@ typedef struct {
 } lbug_system_config;
 
 typedef struct { lbug_database db; } eta_ladybug_db;
-typedef struct { lbug_connection conn; } eta_ladybug_conn;
+typedef struct {
+  lbug_connection conn;
+  pthread_mutex_t mutex;
+  int mutex_initialized;
+} eta_ladybug_conn;
 
 typedef struct {
   struct ArrowSchema schema;
@@ -125,9 +129,15 @@ static void db_finalize(value v_db)
 static void conn_finalize(value v_conn)
 {
   eta_ladybug_conn *conn = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  if (conn->mutex_initialized) pthread_mutex_lock(&conn->mutex);
   if (conn->conn.ptr != NULL && api.loaded) {
     api.connection_destroy(&conn->conn);
     conn->conn.ptr = NULL;
+  }
+  if (conn->mutex_initialized) {
+    pthread_mutex_unlock(&conn->mutex);
+    pthread_mutex_destroy(&conn->mutex);
+    conn->mutex_initialized = 0;
   }
 }
 
@@ -331,6 +341,19 @@ static void ladybug_string_owner_release(value v_owner)
 
 static lbug_database *db_val(value v) { return &((eta_ladybug_db *)Data_custom_val(v))->db; }
 static lbug_connection *conn_val(value v) { return &((eta_ladybug_conn *)Data_custom_val(v))->conn; }
+
+static void conn_init(value v_conn, lbug_connection conn)
+{
+  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  slot->conn = conn;
+  slot->mutex_initialized = 0;
+  if (pthread_mutex_init(&slot->mutex, NULL) != 0) {
+    api.connection_destroy(&slot->conn);
+    slot->conn.ptr = NULL;
+    caml_failwith("ladybug connect: mutex init failed");
+  }
+  slot->mutex_initialized = 1;
+}
 
 static int load_symbol(void **slot, const char *name)
 {
@@ -664,7 +687,7 @@ CAMLprim value eta_ladybug_connect(value v_db)
   conn.ptr = NULL;
   if (api.connection_init(db_val(v_db), &conn) != LbugSuccess) fail_last("connection_init");
   v_block = caml_alloc_custom(&conn_ops, sizeof(eta_ladybug_conn), 0, 1);
-  ((eta_ladybug_conn *)Data_custom_val(v_block))->conn = conn;
+  conn_init(v_block, conn);
   CAMLreturn(v_block);
 }
 
@@ -672,11 +695,14 @@ CAMLprim value eta_ladybug_close_connection(value v_conn)
 {
   CAMLparam1(v_conn);
   ensure_loaded();
-  eta_ladybug_conn *conn = (eta_ladybug_conn *)Data_custom_val(v_conn);
-  if (conn->conn.ptr != NULL) {
-    api.connection_destroy(&conn->conn);
-    conn->conn.ptr = NULL;
+  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  pthread_mutex_lock(&slot->mutex);
+  lbug_connection conn = slot->conn;
+  if (conn.ptr != NULL) {
+    slot->conn.ptr = NULL;
+    api.connection_destroy(&conn);
   }
+  pthread_mutex_unlock(&slot->mutex);
   CAMLreturn(Val_unit);
 }
 
@@ -684,8 +710,11 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
 {
   CAMLparam1(v_conn);
   ensure_loaded();
-  lbug_connection *conn = conn_val(v_conn);
-  if (conn->ptr != NULL) api.connection_interrupt(conn);
+  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  pthread_mutex_lock(&slot->mutex);
+  lbug_connection conn = slot->conn;
+  if (conn.ptr != NULL) api.connection_interrupt(&conn);
+  pthread_mutex_unlock(&slot->mutex);
   CAMLreturn(Val_unit);
 }
 
@@ -984,7 +1013,7 @@ static value arrow_field_names(struct ArrowSchema *schema)
       caml_failwith("ladybug: malformed Arrow schema child");
     }
     field_name = caml_copy_string(schema->children[col_idx]->name == NULL ? "" : schema->children[col_idx]->name);
-    Store_field(field_names, (mlsize_t)col_idx, field_name);
+    caml_modify(&Field(field_names, (mlsize_t)col_idx), field_name);
   }
   CAMLreturn(field_names);
 }

@@ -134,6 +134,8 @@ let () =
             test_h1_writer_flow_matches_string_writer;
           Alcotest.test_case "flow write failure is typed" `Quick
             test_h1_writer_flow_write_failure_is_typed;
+          Alcotest.test_case "flow write cancellation propagates" `Quick
+            test_h1_writer_flow_write_cancellation_propagates;
           Alcotest.test_case "bytes matches string writer" `Quick
             test_h1_writer_bytes_matches_string_writer;
           Alcotest.test_case "bytes rejects small buffer" `Quick
@@ -166,6 +168,8 @@ let () =
             test_h1_client_cancelled_streaming_request_body_releases;
           Alcotest.test_case "stream write failure releases request body" `Quick
             test_h1_client_streaming_request_body_releases_on_write_failure;
+          Alcotest.test_case "stream write cancellation remains cancellation" `Quick
+            test_h1_client_streaming_request_body_write_cancellation_propagates;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick
@@ -234,10 +238,16 @@ let () =
             test_transport_resolve_stream_success;
           Alcotest.test_case "resolve stream empty typed" `Quick
             test_transport_resolve_stream_empty_is_typed;
+          Alcotest.test_case "resolve stream cancellation propagates" `Quick
+            test_transport_resolve_stream_cancellation_propagates;
           Alcotest.test_case "connect tcp success" `Quick
             test_transport_connect_tcp_success;
           Alcotest.test_case "connect tcp failure typed" `Quick
             test_transport_connect_tcp_failure_is_typed;
+          Alcotest.test_case "connect tcp cancellation propagates" `Quick
+            test_transport_connect_tcp_cancellation_propagates;
+          Alcotest.test_case "connect tcp timeout omits connect error" `Quick
+            test_transport_connect_tcp_timeout_cancels_without_connect_error;
           Alcotest.test_case "connect tls closes flow on failure" `Quick
             test_transport_connect_tls_closes_flow_on_failure;
           Alcotest.test_case "unsupported ALPN closes TLS flow" `Quick
@@ -313,6 +323,8 @@ let () =
             test_h2_connection_completed_error_response_does_not_hold_switch;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
+          Alcotest.test_case "filter passes PUSH_PROMISE continuation" `Quick
+            test_h2_informational_filter_passes_push_promise_continuation;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request preserves connection" `Quick

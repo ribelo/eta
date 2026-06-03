@@ -50,6 +50,8 @@ let () =
             test_par_keeps_heterogeneous_successes_private;
           Alcotest.test_case "par fail-fast cancels sibling" `Quick
             test_par_fail_fast_cancels_sibling;
+          Alcotest.test_case "par catch recovers after sibling cancel" `Quick
+            test_par_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all collects in input order" `Quick
             test_all_collects_in_input_order;
           Alcotest.test_case "all preserves delayed input order" `Quick
@@ -57,6 +59,8 @@ let () =
           Alcotest.test_case "all empty returns empty list" `Quick
             test_all_empty_returns_empty_list;
           Alcotest.test_case "all fail-fast" `Quick test_all_fail_fast;
+          Alcotest.test_case "all catch recovers after sibling cancel" `Quick
+            test_all_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all_settled collects outcomes" `Quick
             test_all_settled_collects_successes_and_failures;
           Alcotest.test_case "all_settled preserves delayed input order" `Quick
@@ -264,13 +268,13 @@ let () =
             test_for_each_par_simultaneous_failures_baseline;
           Alcotest.test_case "for_each_par finalizer cancellation baseline"
             `Quick test_for_each_par_finalizer_failure_during_sibling_cancellation;
-          Alcotest.test_case "par child finalizer skips catch handler" `Quick
-            test_par_child_finalizer_skips_catch_handler;
-          Alcotest.test_case "all child finalizer skips catch handler" `Quick
-            test_all_child_finalizer_skips_catch_handler;
+          Alcotest.test_case "par catch waits for child finalizer" `Quick
+            test_par_catch_runs_after_child_finalizer;
+          Alcotest.test_case "all catch waits for child finalizer" `Quick
+            test_all_catch_runs_after_child_finalizer;
           Alcotest.test_case
-            "for_each_par child finalizer skips catch handler" `Quick
-            test_for_each_par_child_finalizer_skips_catch_handler;
+            "for_each_par catch waits for child finalizer" `Quick
+            test_for_each_par_catch_runs_after_child_finalizer;
           Alcotest.test_case "par nested race failures baseline" `Quick
             test_par_nested_race_all_failures_baseline;
           Alcotest.test_case "retry does nothing on initial success" `Quick
@@ -591,6 +595,8 @@ let () =
           Alcotest.test_case "cancel during health check" `Quick
             test_pool_cancel_during_health_check_closes_reserved;
           Alcotest.test_case "idle eviction" `Quick test_pool_idle_eviction;
+          Alcotest.test_case "idle eviction survives close failure" `Quick
+            test_pool_idle_eviction_continues_after_close_failure;
           Alcotest.test_case "expired idle preserves capacity waiters" `Quick
             test_pool_expired_idle_cleanup_preserves_capacity_waiters;
           Alcotest.test_case "shutdown wakes and drains" `Quick

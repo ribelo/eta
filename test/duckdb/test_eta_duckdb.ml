@@ -275,6 +275,25 @@ let test_appender_failed_partial_row_closes_handle () =
   D.Appender.append_row appender [ D.Value.Int 2; D.Value.String "ok" ]
   |> expect_closed "append after failed partial row"
 
+let test_appender_failure_paths_close_raw_source () =
+  let source = read_file (find_source_file "lib/duckdb/appender.ml") in
+  let append_row =
+    source_between source ~start_marker:"let append_row appender values ="
+      ~end_marker:"let flush appender ="
+  in
+  let flush =
+    source_between source ~start_marker:"let flush appender ="
+      ~end_marker:"let close appender ="
+  in
+  let close =
+    source_between source ~start_marker:"let close appender ="
+      ~end_marker:"let with_appender"
+  in
+  ignore (require_sub source ~needle:"let close_raw appender =" : int);
+  ignore (require_sub append_row ~needle:"ignore (close_raw appender)" : int);
+  ignore (require_sub flush ~needle:"ignore (close_raw appender)" : int);
+  ignore (require_sub close ~needle:"close_raw appender" : int)
+
 let () =
   Alcotest.run "eta-duckdb"
     [
@@ -306,6 +325,8 @@ let () =
         [
           Alcotest.test_case "failed partial row closes handle" `Quick
             test_appender_failed_partial_row_closes_handle;
+          Alcotest.test_case "failure paths close raw appender" `Quick
+            test_appender_failure_paths_close_raw_source;
           Alcotest.test_case
             "pool shutdown timeout keeps active connection open" `Quick
             test_pool_shutdown_timeout_keeps_active_connection_open;

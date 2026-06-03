@@ -23,8 +23,8 @@ val resolve_stream :
   (Eio.Net.Sockaddr.stream list, Error.t) Eta.Effect.t
 (** Resolve stream socket addresses for [target] using [Eio.Net.getaddrinfo_stream].
 
-    Empty results and resolver exceptions are reported as typed
-    {!Error.Dns_error} failures. *)
+    Empty results and non-cancellation resolver exceptions are reported as
+    typed {!Error.Dns_error} failures. Eio cancellation propagates. *)
 
 val connect_tcp :
   ?host_eio:Eta.Host_eio.t ->
@@ -35,8 +35,8 @@ val connect_tcp :
   (tcp_flow, Error.t) Eta.Effect.t
 (** Resolve [target], then connect to the first stream address that succeeds.
 
-    Resolver failures are {!Error.Dns_error}; failed connection
-    attempts are collapsed into {!Error.Connect_error}. *)
+    Resolver failures are {!Error.Dns_error}; failed connection attempts are
+    collapsed into {!Error.Connect_error}. Eio cancellation propagates. *)
 
 val connect_tls :
   ?host_eio:Eta.Host_eio.t ->
@@ -50,5 +50,5 @@ val connect_tls :
 
     [ca_file] adds a PEM CA bundle on top of the system trust store.
     Returns the TLS-wrapped flow and the negotiated ALPN protocol.
-    TLS failures are reported as
-    {!Error.Tls_handshake_error}. *)
+    Non-cancellation TLS failures are reported as
+    {!Error.Tls_handshake_error}. Eio cancellation propagates. *)

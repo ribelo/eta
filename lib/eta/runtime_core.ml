@@ -238,7 +238,8 @@ let render_finalizer_cause ~error_renderer cause =
       RObs.render_typed_failure ~error_renderer (Obj.repr err))
     cause
 
-let with_finalizers ~runtime ~fail_key ~error_renderer finalizers body =
+let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
+    ~fail_key ~error_renderer finalizers body =
   match body () with
   | value -> (
       match run_finalizers ~runtime ~fail_key finalizers with
@@ -246,12 +247,12 @@ let with_finalizers ~runtime ~fail_key ~error_renderer finalizers body =
       | Some finalizer ->
           raise_cause fail_key
             (Cause.finalizer (render_finalizer_cause ~error_renderer finalizer)))
-  | exception (Eio.Cancel.Cancelled _ as exn) -> (
+  | exception (Eio.Cancel.Cancelled reason as exn) -> (
       match run_finalizers ~runtime ~fail_key finalizers with
       | None -> raise exn
       | Some finalizer ->
           raise_cause fail_key
-            (Cause.suppressed ~primary:Cause.interrupt
+            (Cause.suppressed ~primary:(interrupt_of_cancel reason)
                ~finalizer:(render_finalizer_cause ~error_renderer finalizer)))
   | exception exn ->
       let primary = cause_of_exn_runtime runtime fail_key exn in

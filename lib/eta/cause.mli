@@ -111,6 +111,8 @@ val die_with_diagnostics :
 (** Build a [Die] cause with explicit diagnostic context. Runtime defect
     capture uses this constructor internally; most application code should not
     need it. *)
+val fresh_interrupt_id : unit -> interrupt_id
+val equal_interrupt_id : interrupt_id -> interrupt_id -> bool
 val interrupt : 'err t
 val interrupt_with_id : interrupt_id -> 'err t
 val sequential : 'err t list -> 'err t

@@ -57,6 +57,7 @@ module H2 = struct
   module Admission = Admission
   module Connection = Connection
   module Frame = Frame
+  module Informational_filter = Informational_filter
   module Multiplexer = Multiplexer
   module Security = Security
   module Stream_state = Stream_state

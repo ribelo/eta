@@ -56,8 +56,8 @@ val write_to_flow :
     This avoids allocating a complete request string on the transport path.
     Caller-provided headers are validated before any bytes are emitted. The
     request bytes are written synchronously before the function returns. Flow
-    write exceptions are translated to [Connection_closed] during the HTTP
-    request instead of escaping. *)
+    write exceptions other than Eio cancellation are translated to
+    [Connection_closed] during the HTTP request instead of escaping. *)
 
 val to_string :
   method_:string ->

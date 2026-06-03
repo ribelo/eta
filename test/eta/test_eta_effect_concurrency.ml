@@ -72,6 +72,31 @@ let test_par_fail_fast_cancels_sibling () =
   Alcotest.check string_cause "par cause" (Cause.Fail "boom") cause;
   Alcotest.(check bool) "sibling cancelled before completion" false !other_done
 
+let test_par_catch_recovers_typed_failure_after_sibling_cancel () =
+  with_test_clock @@ fun sw _clock rt ->
+  let ready, mark_ready = Eio.Promise.create () in
+  let go, release = Eio.Promise.create () in
+  let failing =
+    Effect.sync (fun () -> Eio.Promise.await go)
+    |> Effect.bind (fun () -> Effect.fail `My_error)
+  in
+  let cancelled =
+    Effect.sync (fun () ->
+        Eio.Promise.resolve mark_ready ();
+        Eio.Fiber.await_cancel ())
+  in
+  let eff =
+    Effect.par failing cancelled
+    |> Effect.map (fun _ -> "unexpected")
+    |> Effect.catch (fun (`My_error : [ `My_error ]) ->
+           Effect.pure "recovered")
+  in
+  let promise = fork_run sw rt eff in
+  Eio.Promise.await ready;
+  Eio.Promise.resolve release ();
+  check_exit_ok Alcotest.string "recovered" "recovered"
+    (Eio.Promise.await promise)
+
 let test_all_collects_in_input_order () =
   with_runtime @@ fun rt ->
   let result =
@@ -110,6 +135,31 @@ let test_all_fail_fast () =
     | Exit.Error c -> c
   in
   Alcotest.check string_cause "all cause" (Cause.Fail "boom") cause
+
+let test_all_catch_recovers_typed_failure_after_sibling_cancel () =
+  with_test_clock @@ fun sw _clock rt ->
+  let ready, mark_ready = Eio.Promise.create () in
+  let go, release = Eio.Promise.create () in
+  let failing =
+    Effect.sync (fun () -> Eio.Promise.await go)
+    |> Effect.bind (fun () -> Effect.fail `My_error)
+  in
+  let cancelled =
+    Effect.sync (fun () ->
+        Eio.Promise.resolve mark_ready ();
+        Eio.Fiber.await_cancel ())
+  in
+  let eff =
+    Effect.all [ failing; cancelled ]
+    |> Effect.map (fun _ -> "unexpected")
+    |> Effect.catch (fun (`My_error : [ `My_error ]) ->
+           Effect.pure "recovered")
+  in
+  let promise = fork_run sw rt eff in
+  Eio.Promise.await ready;
+  Eio.Promise.resolve release ();
+  check_exit_ok Alcotest.string "recovered" "recovered"
+    (Eio.Promise.await promise)
 
 let test_all_settled_collects_successes_and_failures () =
   with_runtime @@ fun rt ->
@@ -615,22 +665,21 @@ let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
         "cancelled sibling finalizer ran before for_each_par returned" true
         !release_started
 
-let check_child_finalizer_skips_catch_handler label caught released
+let check_child_finalizer_catch_runs_after_release label caught released
     handler_observed_release = function
-  | Exit.Error (Cause.Interrupt _) ->
-      Alcotest.(check bool) (label ^ " catch handler skipped") false
+  | Exit.Ok _ ->
+      Alcotest.(check bool) (label ^ " catch handler ran") true
         (Atomic.get caught);
       Alcotest.(check bool) (label ^ " released") true (Atomic.get released);
-      Alcotest.(check bool)
-        (label ^ " handler did not observe release") false
+      Alcotest.(check bool) (label ^ " handler observed release") true
         (Atomic.get handler_observed_release)
   | Exit.Error cause ->
-      Alcotest.failf "%s: expected uncaught interrupt, got %a" label
+      Alcotest.failf "%s: expected catch recovery after release, got %a"
+        label
         (Cause.pp Format.pp_print_string)
         cause
-  | Exit.Ok _ -> Alcotest.failf "%s: expected uncaught interrupt" label
 
-let test_par_child_finalizer_skips_catch_handler () =
+let test_par_catch_runs_after_child_finalizer () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
@@ -658,10 +707,10 @@ let test_par_child_finalizer_skips_catch_handler () =
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_skips_catch_handler "par" caught released
+  check_child_finalizer_catch_runs_after_release "par" caught released
     handler_observed_release (Eio.Promise.await promise)
 
-let test_all_child_finalizer_skips_catch_handler () =
+let test_all_catch_runs_after_child_finalizer () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
@@ -689,10 +738,10 @@ let test_all_child_finalizer_skips_catch_handler () =
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_skips_catch_handler "all" caught released
+  check_child_finalizer_catch_runs_after_release "all" caught released
     handler_observed_release (Eio.Promise.await promise)
 
-let test_for_each_par_child_finalizer_skips_catch_handler () =
+let test_for_each_par_catch_runs_after_child_finalizer () =
   with_test_clock @@ fun sw clock rt ->
   let acquired, acquired_u = Eio.Promise.create () in
   let caught = Atomic.make false in
@@ -721,7 +770,7 @@ let test_for_each_par_child_finalizer_skips_catch_handler () =
   in
   let promise = fork_run sw rt eff in
   wait_for_sleepers clock 1;
-  check_child_finalizer_skips_catch_handler "for_each_par" caught released
+  check_child_finalizer_catch_runs_after_release "for_each_par" caught released
     handler_observed_release (Eio.Promise.await promise)
 
 let test_par_nested_race_all_failures_baseline () =

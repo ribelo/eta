@@ -475,6 +475,30 @@ let raw_data ?(end_stream = false) ~stream_id data =
     ~stream_id
   ^ data
 
+let test_h2_informational_filter_passes_push_promise_continuation () =
+  let filter = Eta_http.H2.Informational_filter.create () in
+  let push_fragment = Eta_http.H2.Frame.uint32 2 ^ "push-a" in
+  let push_promise =
+    Eta_http.H2.Frame.header ~length:(String.length push_fragment)
+      ~frame_type:Push_promise ~flags:0 ~stream_id:1
+    ^ push_fragment
+  in
+  let continuation_payload = "push-b" in
+  let continuation =
+    Eta_http.H2.Frame.header ~length:(String.length continuation_payload)
+      ~frame_type:Continuation ~flags:0x4 ~stream_id:1
+    ^ continuation_payload
+  in
+  let input = push_promise ^ continuation in
+  (match Eta_http.H2.Informational_filter.feed filter input ~off:0
+           ~len:(String.length input) with
+  | Ok () -> ()
+  | Error kind ->
+      Alcotest.failf "unexpected filter error: %s"
+        (Eta_http.Error.kind_name kind));
+  Alcotest.(check string) "push promise passthrough" input
+    (Eta_http.H2.Informational_filter.take filter)
+
 let raw_informational_response_server flow =
   let encoder = Hpack.Encoder.create 4096 in
   let early =

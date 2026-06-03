@@ -15,6 +15,10 @@ type pending_headers = {
   block : Buffer.t;
 }
 
+type open_header_block =
+  | Response_headers of pending_headers
+  | Passthrough_headers of { stream_id : int }
+
 type t = {
   decoder : Hpack.Decoder.t;
   encoder : Hpack.Encoder.t;
@@ -22,12 +26,13 @@ type t = {
   final_seen : (int, unit) Hashtbl.t;
   pending : Buffer.t;
   mutable pending_off : int;
-  mutable headers : pending_headers option;
+  mutable headers : open_header_block option;
 }
 
 let frame_data = 0x0
 let frame_headers = 0x1
 let frame_rst_stream = 0x3
+let frame_push_promise = 0x5
 let frame_continuation = 0x9
 
 let flag_end_stream = 0x1
@@ -156,6 +161,13 @@ let complete_headers t { stream_id; end_stream; block } =
         if end_stream then Hashtbl.remove t.final_seen stream_id;
         Ok ())
 
+let pass_frame t frame_type flags stream_id ~off ~total =
+  if frame_type = frame_rst_stream then Hashtbl.remove t.final_seen stream_id;
+  if frame_type = frame_data && flags land flag_end_stream <> 0 then
+    Hashtbl.remove t.final_seen stream_id;
+  Buffer.add_string t.output (Buffer.sub t.pending off total);
+  Ok ()
+
 let handle_headers t ~flags ~stream_id payload =
   match t.headers with
   | Some _ -> error "HEADERS arrived while a header block is open"
@@ -173,27 +185,27 @@ let handle_headers t ~flags ~stream_id payload =
           Buffer.add_string pending.block fragment;
           if flags land flag_end_headers <> 0 then complete_headers t pending
           else (
-            t.headers <- Some pending;
+            t.headers <- Some (Response_headers pending);
             Ok ()))
+
+let handle_push_promise t ~flags ~stream_id ~off ~total =
+  if flags land flag_end_headers = 0 then
+    t.headers <- Some (Passthrough_headers { stream_id });
+  pass_frame t frame_push_promise flags stream_id ~off ~total
 
 let handle_continuation t ~flags ~stream_id payload =
   match t.headers with
   | None -> error "CONTINUATION arrived without an open header block"
-  | Some pending when pending.stream_id <> stream_id ->
+  | Some (Passthrough_headers _) ->
+      error "CONTINUATION arrived without a response header block"
+  | Some (Response_headers pending) when pending.stream_id <> stream_id ->
       error "CONTINUATION stream does not match open header block"
-  | Some pending ->
+  | Some (Response_headers pending) ->
       Buffer.add_string pending.block payload;
       if flags land flag_end_headers = 0 then Ok ()
       else (
         t.headers <- None;
         complete_headers t pending)
-
-let pass_frame t frame_type flags stream_id ~off ~total =
-  if frame_type = frame_rst_stream then Hashtbl.remove t.final_seen stream_id;
-  if frame_type = frame_data && flags land flag_end_stream <> 0 then
-    Hashtbl.remove t.final_seen stream_id;
-  Buffer.add_string t.output (Buffer.sub t.pending off total);
-  Ok ()
 
 let handle_frame t ~off ~total =
   let open Frame in
@@ -206,6 +218,14 @@ let handle_frame t ~off ~total =
   | _, frame when frame = frame_headers && stream_id > 0 ->
       let payload = Buffer.sub t.pending (off + header_size) length in
       handle_headers t ~flags ~stream_id payload
+  | _, frame when frame = frame_push_promise ->
+      handle_push_promise t ~flags ~stream_id ~off ~total
+  | Some (Passthrough_headers { stream_id = open_stream }), frame
+    when frame = frame_continuation && open_stream = stream_id ->
+      if flags land flag_end_headers <> 0 then t.headers <- None;
+      pass_frame t frame_continuation flags stream_id ~off ~total
+  | Some (Passthrough_headers _), frame when frame = frame_continuation ->
+      error "CONTINUATION stream does not match open header block"
   | _, frame when frame = frame_continuation -> (
       let payload = Buffer.sub t.pending (off + header_size) length in
       match handle_continuation t ~flags ~stream_id payload with
@@ -249,7 +269,8 @@ let buffered_bytes t =
   +
   match t.headers with
   | None -> 0
-  | Some headers -> Buffer.length headers.block
+  | Some (Response_headers headers) -> Buffer.length headers.block
+  | Some (Passthrough_headers _) -> 0
 
 let is_passthrough t =
   Buffer.length t.pending - t.pending_off = 0

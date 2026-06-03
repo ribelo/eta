@@ -4,9 +4,9 @@
 
 open Effect_core
 
-let run_child frame sw effect =
+let run_child ?internal_cancel frame sw effect =
   frame.runtime.tracer#with_fiber_context @@ fun () ->
-  run_scope ~sw frame effect
+  run_scope ?internal_cancel ~sw frame effect
 
 let atomic_push cell value =
   let rec loop () =
@@ -37,23 +37,45 @@ let cause_of_list = function
   | [ cause ] -> cause
   | causes -> Cause.concurrent causes
 
+let rec is_interrupt_with_id : type err. Cause.interrupt_id -> err Cause.t -> bool =
+ fun expected -> function
+  | Cause.Interrupt (Some actual) -> Cause.equal_interrupt_id actual expected
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.for_all (is_interrupt_with_id expected) causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt None | Cause.Finalizer _
+  | Cause.Suppressed _ ->
+      false
+
 (** Run side-effecting forks under one switch and aggregate child causes. *)
 let par_run_forks frame ~forks ~assemble =
   let causes = Atomic.make [] in
+  let stopping = Atomic.make false in
   let exception Stop in
+  let stop_id = Cause.fresh_interrupt_id () in
+  let internal_cancel =
+    {
+      interrupt_id = stop_id;
+      matches_cancel = (function Stop -> true | _ -> false);
+    }
+  in
+  let stop_once par_sw =
+    if Atomic.compare_and_set stopping false true then
+      try switch_fail frame par_sw Stop with _ -> ()
+  in
   (try
      switch_run frame @@ fun par_sw ->
      List.iter
       (fun fork ->
          fiber_fork frame ~sw:par_sw (fun () ->
              frame.runtime.tracer#with_fiber_context @@ fun () ->
-             try fork par_sw
+             try fork internal_cancel par_sw
              with exn ->
                let cause =
                  Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
                in
-               atomic_push causes cause;
-               (try switch_fail frame par_sw Stop with _ -> ())))
+               if not (is_interrupt_with_id stop_id cause) then
+                 atomic_push causes cause;
+               stop_once par_sw))
        forks
    with Stop -> ());
   match List.rev (Atomic.get causes) with
@@ -64,7 +86,10 @@ let par_collect frame ~name tasks =
   let n = List.length tasks in
   let results = Array.make n None in
   let forks =
-    List.mapi (fun index task sw -> results.(index) <- Some (task sw)) tasks
+    List.mapi
+      (fun index task internal_cancel sw ->
+        results.(index) <- Some (task internal_cancel sw))
+      tasks
   in
   par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
@@ -184,12 +209,14 @@ let par_pair frame left right =
   par_run_forks frame
     ~forks:
       [
-        (fun sw ->
+        (fun internal_cancel sw ->
           Eio.Promise.resolve left_resolver
-            (exit_to_value frame (run_child frame sw left)));
-        (fun sw ->
+            (exit_to_value frame
+               (run_child ~internal_cancel frame sw left)));
+        (fun internal_cancel sw ->
           Eio.Promise.resolve right_resolver
-            (exit_to_value frame (run_child frame sw right)));
+            (exit_to_value frame
+               (run_child ~internal_cancel frame sw right)));
       ]
     ~assemble:(fun () ->
       {
@@ -209,7 +236,8 @@ let all_eval effects () =
   let frame = current_frame () in
   par_collect frame ~name:"Effect.all"
     (List.map
-       (fun effect sw -> exit_to_value frame (run_child frame sw effect))
+       (fun effect internal_cancel sw ->
+         exit_to_value frame (run_child ~internal_cancel frame sw effect))
        effects)
 
 let all effects = make ~names:(concat_names effects) (all_eval effects)
@@ -239,12 +267,15 @@ let all_settled effects =
 let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
-  let run_task sw effect = exit_to_value frame (run_child frame sw effect) in
-  let worker sw =
+  let run_task internal_cancel sw effect =
+    exit_to_value frame (run_child ~internal_cancel frame sw effect)
+  in
+  let worker internal_cancel sw =
     let rec loop () =
       let i = P_atomic.fetch_and_add next 1 in
       if i < n then begin
-        results.(i) <- Some (run_task sw (Array.unsafe_get tasks i));
+        results.(i) <-
+          Some (run_task internal_cancel sw (Array.unsafe_get tasks i));
         loop ()
       end
     in

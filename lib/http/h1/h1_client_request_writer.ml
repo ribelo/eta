@@ -23,8 +23,9 @@ let request_body_source = function
 
 let write_sync request f =
   Effect.sync (fun () ->
-      try Ok (f ()) with _ ->
-        Error (H1_client_errors.io_closed request Http_request))
+      try Ok (f ()) with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> Error (H1_client_errors.io_closed request Http_request))
   |> Effect.bind (function Ok value -> Effect.pure value | Error error -> Effect.fail error)
 
 let write_bytes_effect ?host_eio request flow bytes =
@@ -88,7 +89,9 @@ let write_to_host_flow host_eio request flow ~headers ~body =
         let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
         Flow.write flow [ Cstruct.of_string bytes ];
         Ok ()
-      with _ -> Error (H1_client_errors.io_closed request Http_request))
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> Error (H1_client_errors.io_closed request Http_request))
 
 let write_headers_effect ?host_eio request flow ~headers =
   Effect.sync (fun () ->
@@ -99,7 +102,9 @@ let write_headers_effect ?host_eio request flow ~headers =
               ~headers ~body:Write.Empty
         | Some host_eio ->
             write_to_host_flow host_eio request flow ~headers ~body:Write.Empty
-      with _ -> Error (H1_client_errors.io_closed request Http_request))
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> Error (H1_client_errors.io_closed request Http_request))
   |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
 
 let write_request ?host_eio flow (request : request) =
@@ -114,7 +119,9 @@ let write_request ?host_eio flow (request : request) =
               | Some host_eio ->
                   write_to_host_flow host_eio request flow ~headers:request.headers
                     ~body:(write_body request.body)
-            with _ -> Error (H1_client_errors.io_closed request Http_request))
+            with
+            | Eio.Cancel.Cancelled _ as exn -> raise exn
+            | _ -> Error (H1_client_errors.io_closed request Http_request))
         |> Effect.bind (function
              | Ok () -> Effect.unit
              | Error error -> Effect.fail error)

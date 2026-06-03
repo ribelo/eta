@@ -78,6 +78,21 @@ let test_h1_writer_flow_write_failure_is_typed () =
   | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
   | Ok () -> Alcotest.fail "flow write failure unexpectedly succeeded"
 
+let test_h1_writer_flow_write_cancellation_propagates () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  let flow = Eio_mock.Flow.make "eta-http-h1-write-cancel-flow" in
+  Eio_mock.Flow.on_copy_bytes flow
+    [ `Raise (Eio.Cancel.Cancelled (Failure "write cancelled")) ];
+  match
+    Eta_http.H1.Write.write_to_flow flow ~method_:"POST" ~url ~headers:[]
+      ~body:(Fixed [ Bytes.of_string "abc" ])
+  with
+  | exception Eio.Cancel.Cancelled _ -> ()
+  | Error error ->
+      Alcotest.failf "flow write cancellation became typed failure: %s"
+        (Eta_http.Error.to_string error)
+  | Ok () -> Alcotest.fail "flow write cancellation unexpectedly succeeded"
+
 let test_h1_writer_bytes_matches_string_writer () =
   let url =
     Eta_http.Core.Url.of_string
@@ -172,5 +187,4 @@ let test_h1_writer_rejects_header_injection () =
             (contains (Buffer.contents buffer) "injected: 1");
           Alcotest.failf "%s flow unexpectedly accepted invalid header" label))
     h1_injection_cases
-
 

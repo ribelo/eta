@@ -543,7 +543,7 @@ static value duckdb_column_names(duckdb_result *result, idx_t cols)
   for (idx_t col_idx = 0; col_idx < cols; col_idx++) {
     const char *name = api.column_name(result, col_idx);
     field_name = caml_copy_string(name == NULL ? "" : name);
-    Store_field(field_names, (mlsize_t)col_idx, field_name);
+    caml_modify(&Field(field_names, (mlsize_t)col_idx), field_name);
   }
   CAMLreturn(field_names);
 }

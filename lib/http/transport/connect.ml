@@ -40,6 +40,11 @@ let tls_error ?(stage = Error.Tls_handshake) ~method_ target
   Error.make ~method_ ~uri:(Url.to_string target.url)
     (Tls_handshake_error { stage; message })
 
+let protect_eio_cancel f =
+  try Ok (f ()) with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> Error (Printexc.to_string exn)
+
 let net_module = function
   | None -> (module Default_eio_net : EIO_NET)
   | Some host_eio ->
@@ -49,8 +54,8 @@ let net_module = function
 let resolve_stream ?host_eio ~net ~method_ target =
   let module Net = (val net_module host_eio : EIO_NET) in
   Effect.sync (fun () ->
-      try Ok (Net.getaddrinfo_stream net target.host ~service:target.service)
-      with exn -> Error (Printexc.to_string exn))
+      protect_eio_cancel (fun () ->
+          Net.getaddrinfo_stream net target.host ~service:target.service))
   |> Effect.bind (function
        | Ok (_ :: _ as addrs) -> Effect.pure addrs
        | Ok [] ->
@@ -67,11 +72,10 @@ let set_nodelay flow =
         ~if_closed:(fun () -> ())
 
 let connect_one (module Net : EIO_NET) ~sw ~net addr =
-  try
+  protect_eio_cancel (fun () ->
     let flow = (Net.connect ~sw net addr :> tcp_flow) in
     set_nodelay flow;
-    Ok flow
-  with exn -> Error (Printexc.to_string exn)
+    flow)
 
 let rec connect_first eio_net ~sw ~net errors = function
   | [] -> Error (String.concat "; " (List.rev errors))
@@ -127,7 +131,9 @@ let connect_tls ?host_eio ?alpn_protocols ?ca_file ~method_ target flow =
             let tls = Tls_eio.client_of_flow ?host_eio config flow in
             let alpn = Tls_eio.alpn_protocol tls in
             Ok (tls, alpn)
-      with exn -> Error (Printexc.to_string exn))
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | exn -> Error (Printexc.to_string exn))
   |> Effect.bind (function
        | Ok (flow, alpn) -> Effect.pure ((flow :> tcp_flow), alpn)
        | Error message ->

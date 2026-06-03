@@ -334,6 +334,9 @@ let die_with_diagnostics ?backtrace ?span_name ?(annotations = []) exn =
 
 let die exn = die_with_diagnostics exn
 let die_with_backtrace exn bt = die_with_diagnostics ~backtrace:bt exn
+let interrupt_id_counter = Atomic.make 0
+let fresh_interrupt_id () = Atomic.fetch_and_add interrupt_id_counter 1 + 1
+let equal_interrupt_id = Int.equal
 let interrupt = Interrupt None
 let interrupt_with_id id = Interrupt (Some id)
 

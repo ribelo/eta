@@ -105,13 +105,27 @@ let run_to_exit frame effect =
 
 let run_to_value frame effect = exit_to_value frame (run_to_exit frame effect)
 
-let run_scope_body ?sw frame body =
+type internal_cancel = {
+  interrupt_id : Cause.interrupt_id;
+  matches_cancel : exn -> bool;
+}
+
+let interrupt_of_cancel = function
+  | Some { interrupt_id; matches_cancel } ->
+      fun reason ->
+        if matches_cancel reason then Cause.interrupt_with_id interrupt_id
+        else Cause.interrupt
+  | None -> fun _ -> Cause.interrupt
+
+let run_scope_body ?sw ?internal_cancel frame body =
   let finalizers = ref [] in
   let sw = Option.value sw ~default:frame.sw in
   let child_frame = { frame with sw; finalizers } in
+  let interrupt_of_cancel = interrupt_of_cancel internal_cancel in
   try
     ok
       (Runtime_core.with_finalizers ~runtime:frame.runtime
+         ~interrupt_of_cancel
          ~fail_key:frame.fail_key
          ~error_renderer:child_frame.error_renderer finalizers (fun () ->
            body child_frame))
@@ -119,10 +133,13 @@ let run_scope_body ?sw frame body =
      retry/repeat, and supervisors can compose interruption with finalizers
      uniformly. Root Runtime.run remains the boundary that re-raises plain Eio
      cancellation to callers. *)
-  with exn -> exit_of_exn child_frame exn
+  with
+  | Eio.Cancel.Cancelled reason -> error (interrupt_of_cancel reason)
+  | exn -> exit_of_exn child_frame exn
 
-let run_scope ?sw frame effect =
-  run_scope_body ?sw frame (fun child_frame -> run_to_value child_frame effect)
+let run_scope ?sw ?internal_cancel frame effect =
+  run_scope_body ?sw ?internal_cancel frame (fun child_frame ->
+      run_to_value child_frame effect)
 
 let run_scope_value ?sw frame effect = exit_to_value frame (run_scope ?sw frame effect)
 

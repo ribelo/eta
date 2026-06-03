@@ -20,6 +20,11 @@ let require_sub source ~needle =
   | Some index -> index
   | None -> Alcotest.failf "missing source marker: %s" needle
 
+let require_sub_after source ~needle index =
+  match find_sub_from source ~needle index with
+  | Some index -> index
+  | None -> Alcotest.failf "missing source marker after %d: %s" index needle
+
 let find_source label candidates =
   match List.find_opt Sys.file_exists candidates with
   | Some path -> path
@@ -146,6 +151,24 @@ let check_column_name_arrays_initialize_gc_roots () =
     ~end_marker:"static value materialize_arrow_rows("
     ~init_marker:"Store_field(field_names, (mlsize_t)col_idx, Val_int(0))"
 
+let check_column_name_arrays_use_write_barrier () =
+  let check source ~start_marker ~end_marker =
+    let body = function_source source ~start_marker ~end_marker in
+    let copy = require_sub body ~needle:"field_name = caml_copy_string" in
+    let store =
+      require_sub body
+        ~needle:"caml_modify(&Field(field_names, (mlsize_t)col_idx), field_name)"
+    in
+    Alcotest.(check bool) "field name store uses write barrier after copy" true
+      (copy < store)
+  in
+  check (read_file (find_duckdb_stubs_source ()))
+    ~start_marker:"static value duckdb_column_names("
+    ~end_marker:"static value materialize_rows(";
+  check (read_file (find_ladybug_stubs_source ()))
+    ~start_marker:"static value arrow_field_names("
+    ~end_marker:"static value materialize_arrow_rows("
+
 let check_foreign_strings_are_owned_before_ocaml_copy () =
   let check source ~start_marker ~end_marker ~alloc_marker ~set_marker
       ~copy_marker ~release_marker =
@@ -233,6 +256,64 @@ let check_sqlite_and_turso_column_pointers_are_guarded () =
   check_non_empty_guard turso_source
     ~start_marker:"CAMLprim value eta_turso_column_blob("
     ~end_marker:"CAMLprim value eta_turso_column_blob_bc(" ~pointer:"blob"
+
+let check_interrupts_lock_native_handles () =
+  let check source ~struct_marker ~close_start ~close_end ~interrupt_start
+      ~interrupt_end ~lock_marker ~unlock_marker ~close_marker ~interrupt_marker
+      =
+    ignore (require_sub source ~needle:struct_marker : int);
+    let close_body =
+      function_source source ~start_marker:close_start ~end_marker:close_end
+    in
+    let interrupt_body =
+      function_source source ~start_marker:interrupt_start
+        ~end_marker:interrupt_end
+    in
+    let close_lock = require_sub close_body ~needle:lock_marker in
+    let close_call = require_sub close_body ~needle:close_marker in
+    let close_unlock =
+      require_sub_after close_body ~needle:unlock_marker close_call
+    in
+    let interrupt_lock = require_sub interrupt_body ~needle:lock_marker in
+    let interrupt_call = require_sub interrupt_body ~needle:interrupt_marker in
+    let interrupt_unlock =
+      require_sub_after interrupt_body ~needle:unlock_marker interrupt_call
+    in
+    Alcotest.(check bool) "close serializes native handle mutation" true
+      (close_lock < close_call && close_call < close_unlock);
+    Alcotest.(check bool) "interrupt serializes native handle access" true
+      (interrupt_lock < interrupt_call && interrupt_call < interrupt_unlock)
+  in
+  check (read_file (find_sqlite_stubs_source ()))
+    ~struct_marker:"pthread_mutex_t mutex;"
+    ~close_start:"CAMLprim intnat eta_sqlite_close("
+    ~close_end:"CAMLprim value eta_sqlite_close_bc("
+    ~interrupt_start:"CAMLprim value eta_sqlite_interrupt("
+    ~interrupt_end:"CAMLprim value eta_sqlite_is_interrupted("
+    ~lock_marker:"pthread_mutex_lock(&slot->mutex)"
+    ~unlock_marker:"pthread_mutex_unlock(&slot->mutex)"
+    ~close_marker:"sqlite3_close_v2(db)"
+    ~interrupt_marker:"sqlite3_interrupt(db)";
+  check (read_file (find_turso_stubs_source ()))
+    ~struct_marker:"pthread_mutex_t mutex;"
+    ~close_start:"CAMLprim intnat eta_turso_close("
+    ~close_end:"CAMLprim value eta_turso_close_bc("
+    ~interrupt_start:"CAMLprim value eta_turso_interrupt("
+    ~interrupt_end:"CAMLprim value eta_turso_prepare("
+    ~lock_marker:"pthread_mutex_lock(&slot->mutex)"
+    ~unlock_marker:"pthread_mutex_unlock(&slot->mutex)"
+    ~close_marker:"api.close_v2(db)"
+    ~interrupt_marker:"api.interrupt(db)";
+  check (read_file (find_ladybug_stubs_source ()))
+    ~struct_marker:"pthread_mutex_t mutex;"
+    ~close_start:"CAMLprim value eta_ladybug_close_connection("
+    ~close_end:"CAMLprim value eta_ladybug_interrupt("
+    ~interrupt_start:"CAMLprim value eta_ladybug_interrupt("
+    ~interrupt_end:"static int bind_param("
+    ~lock_marker:"pthread_mutex_lock(&slot->mutex)"
+    ~unlock_marker:"pthread_mutex_unlock(&slot->mutex)"
+    ~close_marker:"api.connection_destroy(&conn)"
+    ~interrupt_marker:"api.connection_interrupt(&conn)"
 
 let check_duckdb_available () =
   match Eta_duckdb.available () with
@@ -377,6 +458,8 @@ let () =
             check_ladybug_arrow_materialization_reuses_column_names;
           Alcotest.test_case "column name arrays initialize GC roots" `Quick
             check_column_name_arrays_initialize_gc_roots;
+          Alcotest.test_case "column name arrays use write barrier" `Quick
+            check_column_name_arrays_use_write_barrier;
           Alcotest.test_case "foreign strings owned before copy" `Quick
             check_foreign_strings_are_owned_before_ocaml_copy;
           Alcotest.test_case "Ladybug direct queries check strdup" `Quick
@@ -385,5 +468,7 @@ let () =
             check_turso_prepare_copies_sql_and_blocks;
           Alcotest.test_case "SQLite and Turso column pointers are guarded" `Quick
             check_sqlite_and_turso_column_pointers_are_guarded;
+          Alcotest.test_case "interrupt locks native handles" `Quick
+            check_interrupts_lock_native_handles;
         ] );
     ]

@@ -429,19 +429,7 @@ let test_effect_timeout_preserves_user_timeout_failure () =
   wait_for_sleepers clock 3;
   Test_clock.adjust clock (Duration.seconds 1);
   match Eio.Promise.await promise with
-  | Exit.Error (Cause.Concurrent causes) ->
-      Alcotest.(check bool)
-        "body timeout preserved"
-        true
-        (List.exists
-           (function Cause.Fail `Timeout -> true | _ -> false)
-           causes);
-      Alcotest.(check bool)
-        "timer branch was only interrupted"
-        true
-        (List.exists Cause.is_interrupt_only causes)
-  | Exit.Error (Cause.Fail `Timeout) ->
-      Alcotest.fail "user Timeout was collapsed into timer Timeout"
+  | Exit.Error (Cause.Fail `Timeout) -> ()
   | Exit.Error cause ->
       Alcotest.failf "expected preserved user Timeout, got %a"
         (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))

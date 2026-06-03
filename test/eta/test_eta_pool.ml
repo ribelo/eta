@@ -385,6 +385,38 @@ let test_pool_idle_eviction () =
       stats.Pool.idle = 0 && stats.Pool.closed = 1);
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_idle_eviction_continues_after_close_failure () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let release_attempts = ref 0 in
+  let release conn =
+    Effect.sync (fun () -> incr release_attempts)
+    |> Effect.bind (fun () ->
+           if !release_attempts = 1 then Effect.fail `Close_failed
+           else pool_close factory conn)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1 ~max_idle:1
+         ~idle_lifetime:(Duration.ms 2)
+         ~idle_check_interval:(Duration.ms 1)
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
+  wait_until (fun () -> (Pool.stats pool).Pool.idle = 1);
+  Eio_unix.sleep 0.02;
+  wait_until (fun () ->
+      let stats = Pool.stats pool in
+      stats.Pool.idle = 0 && stats.Pool.closed = 1);
+  ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
+  wait_until (fun () -> (Pool.stats pool).Pool.idle = 1);
+  Eio_unix.sleep 0.02;
+  wait_until (fun () ->
+      let stats = Pool.stats pool in
+      stats.Pool.idle = 0 && stats.Pool.closed = 2);
+  Alcotest.(check int) "second close reached release" 2 !release_attempts;
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

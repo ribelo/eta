@@ -248,7 +248,9 @@ let write_to_flow flow ~method_ ~url ~headers ~body =
            | Fixed chunks -> List.iter (fun chunk -> Buffer.add_bytes buf chunk) chunks);
            write_string flow (Buffer.contents buf);
            Ok ()
-         with _ -> Error (flow_write_error ~method_ ~url))
+         with
+         | Eio.Cancel.Cancelled _ as exn -> raise exn
+         | _ -> Error (flow_write_error ~method_ ~url))
 
 let to_string ~method_ ~url ~headers ~body =
   let buffer = Buffer.create 256 in

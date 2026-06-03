@@ -15,26 +15,7 @@ let create ?schema connection ~table =
         active = 0;
       })
 
-let append_row appender values =
-  if_appender_open appender @@ fun () ->
-  match
-    wrap "appender append row" (fun () -> raw_appender_append_row appender.raw values)
-  with
-  | Ok () -> Ok ()
-  | Result.Error _ as err ->
-      appender.closed <- true;
-      err
-
-let flush appender =
-  if_appender_open appender @@ fun () ->
-  match wrap "appender flush" (fun () -> raw_appender_flush appender.raw) with
-  | Ok () -> Ok ()
-  | Result.Error _ as err ->
-      appender.closed <- true;
-      err
-
-let close appender =
-  if_appender_open appender @@ fun () ->
+let close_raw appender =
   match wrap "appender close" (fun () -> raw_appender_close appender.raw) with
   | Ok () ->
       appender.closed <- true;
@@ -42,6 +23,27 @@ let close appender =
   | Result.Error _ as err ->
       appender.closed <- true;
       err
+
+let append_row appender values =
+  if_appender_open appender @@ fun () ->
+  match
+    wrap "appender append row" (fun () -> raw_appender_append_row appender.raw values)
+  with
+  | Ok () -> Ok ()
+  | Result.Error _ as err ->
+      ignore (close_raw appender);
+      err
+
+let flush appender =
+  if_appender_open appender @@ fun () ->
+  match wrap "appender flush" (fun () -> raw_appender_flush appender.raw) with
+  | Ok () -> Ok ()
+  | Result.Error _ as err ->
+      ignore (close_raw appender);
+      err
+
+let close appender =
+  if_appender_open appender @@ fun () -> close_raw appender
 
 let with_appender ?schema connection ~table f =
   match create ?schema connection ~table with
