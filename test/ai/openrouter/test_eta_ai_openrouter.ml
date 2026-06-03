@@ -165,7 +165,7 @@ let test_provider_headers () =
     "path" "/api/v1/responses" provider.chat_path;
   Alcotest.(check bool) "embeddings" true provider.capabilities.embeddings;
   Alcotest.(check bool) "image input" true provider.capabilities.image_input;
-  Alcotest.(check bool) "audio prompt input" false provider.capabilities.audio_input;
+  Alcotest.(check bool) "audio prompt input" true provider.capabilities.audio_input;
   Alcotest.(check bool) "video prompt input" false provider.capabilities.video_input;
   Alcotest.(check bool) "image generation" true provider.capabilities.image_generation;
   Alcotest.(check bool) "speech" true provider.capabilities.speech;
@@ -210,6 +210,34 @@ let test_encode_routing_and_rejects_empty_provider () =
   match O.routing ~order:[ "anthropic"; "" ] () with
   | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
   | _ -> Alcotest.fail "expected empty provider rejection"
+
+let test_encode_audio_prompt_input () =
+  let request : A.chat_request =
+    {
+      model = "xiaomi/mimo-v2.5";
+      prompt =
+        [
+          A.User
+            [
+              A.Text "Transcribe the audio.";
+              A.Audio
+                {
+                  data = A.Bytes (Bytes.of_string "RIFF");
+                  format = A.Wav;
+                  transcript = None;
+                };
+            ];
+        ];
+      tools = [];
+      temperature = Some 0.0;
+      max_output_tokens = Some 32;
+      stream = false;
+    }
+  in
+  let raw = O.encode_responses request |> expect_ok "audio prompt encode" in
+  require_contains "audio part" ~needle:"\"type\":\"input_audio\"" raw;
+  require_contains "audio format" ~needle:"\"format\":\"wav\"" raw;
+  require_contains "audio data" ~needle:"\"data\":\"UklGRg==\"" raw
 
 let test_request_uses_openrouter_endpoint () =
   let request =
@@ -638,6 +666,8 @@ let () =
           Alcotest.test_case "headers" `Quick test_provider_headers;
           Alcotest.test_case "encode routing" `Quick
             test_encode_routing_and_rejects_empty_provider;
+          Alcotest.test_case "encode audio prompt input" `Quick
+            test_encode_audio_prompt_input;
           Alcotest.test_case "request endpoint" `Quick
             test_request_uses_openrouter_endpoint;
           Alcotest.test_case "unified provider modules" `Quick

@@ -2,9 +2,9 @@
 
     Chat requests use OpenRouter's Responses-style envelope plus optional
     routing controls and attribution headers. Prompt capability flags are
-    conservative for routing: image parts are encoded, while audio/video prompt
-    input is not advertised. Image generation, speech, transcription, rerank,
-    and video generation use OpenRouter-specific endpoint helpers. *)
+    conservative for routing: image and audio parts are encoded, while video
+    prompt input is not advertised. Image generation, speech, transcription,
+    rerank, and video generation use OpenRouter-specific endpoint helpers. *)
 
 type attribution = {
   referer : string option;
