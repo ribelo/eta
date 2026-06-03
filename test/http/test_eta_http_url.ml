@@ -23,6 +23,19 @@ let test_url_parse_client_subset () =
   Alcotest.(check string) "authority" "api.example.test:8443"
     (Eta_http.Core.Url.authority url)
 
+let test_url_fragment_question_mark_not_query () =
+  match
+    Eta_http.Core.Url.parse "https://example.test/callback#token?secret=1"
+  with
+  | Error err ->
+      Alcotest.failf "parse failed: %a" Eta_http.Core.Url.pp_parse_error err
+  | Ok url ->
+      Alcotest.(check (option string)) "query after # is not a URI query" None
+        (Eta_http.Core.Url.query url);
+      Alcotest.(check string)
+        "origin-form must not include fragment-derived query" "/callback"
+        (Eta_http.Core.Url.origin_form url)
+
 let test_url_ipv6_authority_restores_brackets () =
   let url = Eta_http.Core.Url.of_string "https://[::1]:8443/path" in
   Alcotest.(check string) "host unbracketed" "::1" (Eta_http.Core.Url.host url);
@@ -62,5 +75,4 @@ let test_url_rejects_unsupported_forms () =
     "ftp://example.test/";
   check_error "port" "invalid URL port \"99999\""
     "https://example.test:99999/"
-
 

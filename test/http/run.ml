@@ -120,6 +120,8 @@ let () =
       ( "url",
         [
           Alcotest.test_case "client subset" `Quick test_url_parse_client_subset;
+          Alcotest.test_case "fragment question mark is not query" `Quick
+            test_url_fragment_question_mark_not_query;
           Alcotest.test_case "IPv6 authority brackets" `Quick
             test_url_ipv6_authority_restores_brackets;
           Alcotest.test_case "reject unsupported forms" `Quick

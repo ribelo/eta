@@ -133,8 +133,9 @@ let parse_authority raw start finish =
 let parse_path_query_fragment raw start =
   let len = String.length raw in
   let path_start = if start < len && Char.equal raw.[start] '/' then start else len in
-  let query_mark = find_from raw start len '?' in
   let fragment_mark = find_from raw start len '#' in
+  let query_end = Option.value ~default:len fragment_mark in
+  let query_mark = find_from raw start query_end '?' in
   let path_end =
     match (query_mark, fragment_mark) with
     | Some query, Some fragment -> min query fragment
@@ -150,11 +151,6 @@ let parse_path_query_fragment raw start =
     match query_mark with
     | None -> None
     | Some query_start ->
-        let query_end =
-          match fragment_mark with
-          | Some fragment when fragment > query_start -> fragment
-          | _ -> len
-        in
         Some (span ~off:(query_start + 1) ~len:(query_end - query_start - 1))
   in
   let fragment =
