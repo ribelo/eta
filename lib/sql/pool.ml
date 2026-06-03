@@ -205,12 +205,22 @@ let fetch_batch conn stmt batch_size =
 
 let fetch_typed_batch conn stmt batch_size decode =
   let db = Connection.sqlite conn in
+  let decode_row stmt =
+    try Ok (decode stmt) with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | exn ->
+        Result.Error
+          (Types.Decode_error
+             { operation = "select"; message = Printexc.to_string exn })
+  in
   let rec loop remaining acc =
     if remaining = 0 then Ok (List.rev acc, false)
     else
       let rc = Sqlite.step stmt in
       if Sqlite.rc_equal rc Sqlite.row then
-        loop (remaining - 1) (decode stmt :: acc)
+        match decode_row stmt with
+        | Ok row -> loop (remaining - 1) (row :: acc)
+        | Result.Error _ as err -> err
       else if Sqlite.rc_equal rc Sqlite.done_ then Ok (List.rev acc, true)
       else
         match Types.check_sqlite db ~operation:"select" rc with

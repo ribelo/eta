@@ -943,6 +943,48 @@ let test_sql_pool_typed_compiled_queries () =
   Alcotest.(check int) "typed fold" 141 folded;
   Eta.Effect.unit
 
+let test_sql_pool_typed_fold_select_decode_failure_is_typed () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let module Mismatch = Q.Table.Make (struct
+    let name = "typed_fold_decode_mismatch"
+  end) in
+  let id = Mismatch.column "id" Q.int in
+  let query =
+    Q.Select.(from Mismatch.table Q.Projection.(one id) |> compile)
+  in
+  let program =
+    Eta.Effect.scoped
+      (Eta.Effect.acquire_release
+         ~acquire:
+           (Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
+              (S.memory_config ()))
+         ~release:Q.Pool.shutdown
+      |> Eta.Effect.bind (fun pool ->
+             let* _ =
+               Q.Pool.Raw.execute pool
+                 "CREATE TABLE typed_fold_decode_mismatch (id INTEGER)" []
+             in
+             let* _ =
+               Q.Pool.Raw.execute pool
+                 "INSERT INTO typed_fold_decode_mismatch VALUES (4611686018427387904)"
+                 []
+             in
+             Q.Pool.Typed.fold_select pool query ~init:0
+               ~f:(fun acc _ -> acc + 1)))
+  in
+  match Eta.Runtime.run rt program with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        (`Eta_sql (Q.Decode_error { operation = "select"; _ }))) ->
+      ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected typed Decode_error, got %a"
+        (Eta.Cause.pp pp_pool_error) cause
+  | Eta.Exit.Ok count ->
+      Alcotest.failf "expected typed Decode_error, got success count=%d" count
+
 let test_sql_pool_timeout_interrupts_and_reuses_connection () =
   let long_sql =
     "WITH RECURSIVE cnt(x) AS (\

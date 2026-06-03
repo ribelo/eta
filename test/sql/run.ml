@@ -37,6 +37,8 @@ let () =
             test_sql_pool_fold_scans_in_batches;
           Alcotest.test_case "pool executes typed compiled queries" `Quick
             test_sql_pool_typed_compiled_queries;
+          Alcotest.test_case "typed fold decode failure is typed" `Quick
+            test_sql_pool_typed_fold_select_decode_failure_is_typed;
           Alcotest.test_case "pool timeout interrupts and reuses connection"
             `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
           Alcotest.test_case "database pool shutdown keeps parent on timeout"
