@@ -76,26 +76,30 @@ let status_finish json =
   match Json.string_member "status" json with
   | Some "completed" -> [ A.Stop ]
   | Some "incomplete" -> [ A.Length ]
-  | Some "failed" -> [ A.Error ]
   | Some status -> [ A.Other status ]
   | None -> []
 
 let decode_responses ~provider raw =
   let* json = parse_json ~provider raw in
-  let output = Json.array_member "output" json |> Option.value ~default:[] in
-  let text = output |> List.concat_map output_text |> String.concat "" in
-  let tool_calls = output |> List.filter_map responses_tool_call in
-  Stdlib.Ok
-    {
-      A.id = Json.string_member "id" json;
-      model = Json.string_member "model" json;
-      message =
-        A.Assistant
-          {
-            content = (if String.equal text "" then [] else [ A.Text text ]);
-            tool_calls;
-          };
-      finish_reasons = status_finish json;
-      usage = Option.map usage (Json.object_member "usage" json);
-      raw = Some raw;
-    }
+  match Json.string_member "status" json with
+  | Some "failed" ->
+      Stdlib.Error (Error_codec.provider_error_json ~raw ~provider json)
+  | _ ->
+      let output = Json.array_member "output" json |> Option.value ~default:[] in
+      let text = output |> List.concat_map output_text |> String.concat "" in
+      let tool_calls = output |> List.filter_map responses_tool_call in
+      Stdlib.Ok
+        {
+          A.id = Json.string_member "id" json;
+          model = Json.string_member "model" json;
+          message =
+            A.Assistant
+              {
+                content =
+                  (if String.equal text "" then [] else [ A.Text text ]);
+                tool_calls;
+              };
+          finish_reasons = status_finish json;
+          usage = Option.map usage (Json.object_member "usage" json);
+          raw = Some raw;
+        }

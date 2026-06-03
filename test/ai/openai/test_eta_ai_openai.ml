@@ -274,6 +274,34 @@ let test_decode_responses_fixture () =
       Alcotest.(check string) "call name" "weather" call.name
   | _ -> Alcotest.fail "expected responses function call"
 
+let test_decode_responses_failed_status_is_error () =
+  let raw =
+    {|
+    {
+      "id": "resp_1",
+      "model": "gpt-test",
+      "status": "failed",
+      "error": { "code": "server_error", "message": "model crashed" },
+      "output": []
+    }
+    |}
+  in
+  match O.decode_responses raw with
+  | Error (A.Provider_error { code = Some "server_error"; message; _ }) ->
+      Alcotest.(check string) "message" "model crashed" message
+  | Error other ->
+      Alcotest.failf "wrong error constructor: %s"
+        (match other with
+        | A.Provider_error _ -> "provider"
+        | A.Decode_error _ -> "decode"
+        | A.Unsupported _ -> "unsupported"
+        | A.Invalid_tool _ -> "invalid_tool"
+        | A.Eta_http_error _ -> "http")
+  | Ok response ->
+      Alcotest.failf
+        "failed provider response decoded as Ok; finish_reasons length=%d"
+        (List.length response.finish_reasons)
+
 let stream_text events =
   events
   |> List.filter_map (function
@@ -780,6 +808,8 @@ let () =
           Alcotest.test_case "tool fixture" `Quick test_decode_tool_fixture;
           Alcotest.test_case "responses fixture" `Quick
             test_decode_responses_fixture;
+          Alcotest.test_case "responses failed status is error" `Quick
+            test_decode_responses_failed_status_is_error;
         ] );
       ( "streaming",
         [
