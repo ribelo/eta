@@ -23,6 +23,10 @@ type routing = {
   sort : string option;
 }
 
+type reasoning = {
+  effort : string option;
+}
+
 type structured_output = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
@@ -72,6 +76,13 @@ let routing ?(order = []) ?(only_providers = []) ?(ignored_providers = [])
                   sort;
                 }))
 
+let reasoning ?effort () =
+  match effort with
+  | Some effort when String.trim effort = "" ->
+      invalid_routing "reasoning effort is empty"
+  | Some effort -> Stdlib.Ok { effort = Some (String.trim effort) }
+  | None -> Stdlib.Ok { effort = None }
+
 let string_array values = Json.array (List.map Json.string values)
 
 let routing_json routing =
@@ -90,13 +101,16 @@ let routing_json routing =
       ("sort", Option.map Json.string routing.sort);
     ]
 
-let add_routing routing json =
-  match routing with
+let reasoning_json reasoning =
+  Json.object_ [ ("effort", Option.map Json.string reasoning.effort) ]
+
+let add_object_field name value json =
+  match value with
   | None -> Stdlib.Ok json
-  | Some routing -> (
+  | Some value -> (
       match json with
       | `Assoc fields ->
-          Stdlib.Ok (`Assoc (fields @ [ ("provider", routing_json routing) ]))
+          Stdlib.Ok (`Assoc (fields @ [ (name, value) ]))
       | _ ->
           Stdlib.Error
             (A.Decode_error
@@ -106,7 +120,13 @@ let add_routing routing json =
                  raw = Some (Json.to_string json);
                }))
 
-let encode_responses ?structured_output ?routing request =
+let add_routing routing json =
+  add_object_field "provider" (Option.map routing_json routing) json
+
+let add_reasoning reasoning json =
+  add_object_field "reasoning" (Option.map reasoning_json reasoning) json
+
+let encode_responses ?structured_output ?routing ?reasoning request =
   match
     Codec.encode_responses_json ~provider:"openrouter"
       ~schema_value:require_json ?structured_output request
@@ -115,7 +135,10 @@ let encode_responses ?structured_output ?routing request =
   | Stdlib.Ok json -> (
       match add_routing routing json with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json))
+      | Stdlib.Ok json -> (
+          match add_reasoning reasoning json with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)))
 
 let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 

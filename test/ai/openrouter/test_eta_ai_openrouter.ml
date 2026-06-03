@@ -150,6 +150,9 @@ let routing () =
     ~allow_fallbacks:true ~require_parameters:true ~sort:"throughput" ()
   |> expect_ok "routing"
 
+let reasoning () =
+  O.reasoning ~effort:"high" () |> expect_ok "reasoning"
+
 let provider () =
   let attribution =
     O.attribution ~referer:"https://eta.example" ~title:"Eta Tests" ()
@@ -192,6 +195,7 @@ let test_encode_routing_and_rejects_empty_provider () =
   in
   let raw =
     O.encode_responses ~structured_output:output ~routing:(routing ())
+      ~reasoning:(reasoning ())
       (chat_request ())
     |> expect_ok "openrouter encode"
   in
@@ -202,6 +206,8 @@ let test_encode_routing_and_rejects_empty_provider () =
   require_contains "fallbacks" ~needle:"\"allow_fallbacks\":true" raw;
   require_contains "require params" ~needle:"\"require_parameters\":true" raw;
   require_contains "sort" ~needle:"\"sort\":\"throughput\"" raw;
+  require_contains "reasoning effort"
+    ~needle:"\"reasoning\":{\"effort\":\"high\"}" raw;
   require_contains "responses input" ~needle:"\"input\":[" raw;
   require_contains "responses max tokens" ~needle:"\"max_output_tokens\":64" raw;
   require_contains "structured output"

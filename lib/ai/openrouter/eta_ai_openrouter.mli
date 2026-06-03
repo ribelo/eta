@@ -39,6 +39,16 @@ val routing :
   unit ->
   (routing, Eta_ai.ai_error) result
 
+type reasoning = {
+  effort : string option;
+}
+(** OpenRouter reasoning controls for Responses requests. *)
+
+val reasoning :
+  ?effort:string ->
+  unit ->
+  (reasoning, Eta_ai.ai_error) result
+
 val provider :
   ?base_url:string ->
   ?attribution:attribution ->
@@ -67,12 +77,14 @@ module Chat : sig
   val encode_responses :
     ?structured_output:structured_output ->
     ?routing:routing ->
+    ?reasoning:reasoning ->
     Eta_ai.chat_request ->
     (Eta_ai.raw_json, Eta_ai.ai_error) result
 
   val responses_request :
     ?structured_output:structured_output ->
     ?routing:routing ->
+    ?reasoning:reasoning ->
     ?provider:Eta_ai.provider ->
     api_key:Eta_ai.api_key ->
     Eta_ai.chat_request ->
@@ -81,6 +93,7 @@ module Chat : sig
   val responses :
     ?structured_output:structured_output ->
     ?routing:routing ->
+    ?reasoning:reasoning ->
     ?provider:Eta_ai.provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
@@ -90,6 +103,7 @@ module Chat : sig
   val stream_responses :
     ?structured_output:structured_output ->
     ?routing:routing ->
+    ?reasoning:reasoning ->
     ?provider:Eta_ai.provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
@@ -133,6 +147,7 @@ module Video : Eta_ai.Provider.Video
 val encode_responses :
   ?structured_output:structured_output ->
   ?routing:routing ->
+  ?reasoning:reasoning ->
   Eta_ai.chat_request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 (** Encode eta-ai chat requests as OpenRouter Responses API requests. *)
@@ -174,6 +189,7 @@ val decode_error :
 val responses_request :
   ?structured_output:structured_output ->
   ?routing:routing ->
+  ?reasoning:reasoning ->
   ?provider:Eta_ai.provider ->
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
@@ -233,6 +249,7 @@ val video_content_request :
 val responses :
   ?structured_output:structured_output ->
   ?routing:routing ->
+  ?reasoning:reasoning ->
   ?provider:Eta_ai.provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
@@ -300,6 +317,7 @@ val video_content :
 val stream_responses :
   ?structured_output:structured_output ->
   ?routing:routing ->
+  ?reasoning:reasoning ->
   ?provider:Eta_ai.provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
