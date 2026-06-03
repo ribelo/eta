@@ -681,6 +681,24 @@ let test_stream_reads_partial_chunks_and_done () =
   Alcotest.(check string) "text deltas" "Hello" (stream_text events);
   Alcotest.(check bool) "done" true (stream_has_done events)
 
+let test_stream_accepts_chunk_with_many_small_records () =
+  with_runtime @@ fun rt ->
+  let provider =
+    {
+      stream_provider with
+      decode_stream_event =
+        (fun event -> Ok [ Stream_content_delta event.data ]);
+    }
+  in
+  let body =
+    Eta_http.Body.Stream.of_bytes
+      [ Bytes.of_string "data: a\n\ndata: b\n\ndata: c\n\n" ]
+  in
+  let stream = stream_of_body ~max_buffer_bytes:12 provider body in
+  let events = run_ok rt "read compact stream chunk" (read_stream_events stream) in
+  Alcotest.(check int) "all events decoded" 3 (List.length events);
+  Alcotest.(check string) "content" "abc" (stream_text events)
+
 let test_stream_rejects_oversized_complete_record_before_decode () =
   with_runtime @@ fun rt ->
   let decoded = ref 0 in
@@ -1094,6 +1112,8 @@ let () =
         [
           Alcotest.test_case "partial chunks and done" `Quick
             test_stream_reads_partial_chunks_and_done;
+          Alcotest.test_case "many small records in one chunk" `Quick
+            test_stream_accepts_chunk_with_many_small_records;
           Alcotest.test_case "oversized complete record rejected" `Quick
             test_stream_rejects_oversized_complete_record_before_decode;
           Alcotest.test_case "named tool deltas" `Quick

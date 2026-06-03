@@ -125,9 +125,6 @@ let buffer_too_large stream =
       raw = None;
     }
 
-let would_exceed_buffer stream chunk =
-  Buffer.length stream.buffer + String.length chunk > stream.max_buffer_bytes
-
 let record_too_large stream record =
   String.length record > stream.max_buffer_bytes
 
@@ -135,30 +132,60 @@ let parse_sse_record_capped stream record =
   if record_too_large stream record then Stdlib.Error (buffer_too_large stream)
   else Stdlib.Ok (parse_sse_record record)
 
-let feed_sse stream chunk =
-  if would_exceed_buffer stream chunk then Stdlib.Error (buffer_too_large stream)
-  else (
-    Buffer.add_string stream.buffer chunk;
-    let rec drain acc =
-      match find_sse_separator stream with
-      | None ->
-          stream.scan_pos <- max 0 (Buffer.length stream.buffer - 3);
-          Stdlib.Ok (List.rev acc)
-      | Some (index, sep_len) ->
-          let contents = Buffer.contents stream.buffer in
-          let record = String.sub contents 0 index in
-          let rest_start = index + sep_len in
-          Buffer.clear stream.buffer;
-          Buffer.add_substring stream.buffer contents rest_start
-            (String.length contents - rest_start);
-          stream.scan_pos <- 0;
-          if String.trim record = "" then drain acc
-          else
-            match parse_sse_record_capped stream record with
-            | Stdlib.Ok event -> drain (event :: acc)
-            | Stdlib.Error _ as error -> error
+let trailing_separator_prefix_len buffer =
+  let len = Buffer.length buffer in
+  let suffix_is value =
+    let value_len = String.length value in
+    let rec loop index =
+      index = value_len
+      || (Buffer.nth buffer (len - value_len + index) = value.[index]
+         && loop (index + 1))
     in
-    drain [])
+    len >= value_len && loop 0
+  in
+  if suffix_is "\r\n\r" then 3
+  else if suffix_is "\r\n" then 2
+  else if len > 0 then
+    match Buffer.nth buffer (len - 1) with '\n' | '\r' -> 1 | _ -> 0
+  else 0
+
+let unframed_buffer_too_large stream =
+  let len = Buffer.length stream.buffer in
+  len - trailing_separator_prefix_len stream.buffer > stream.max_buffer_bytes
+
+let rec drain_sse_records stream acc =
+  match find_sse_separator stream with
+  | None ->
+      stream.scan_pos <- max 0 (Buffer.length stream.buffer - 3);
+      Stdlib.Ok acc
+  | Some (index, sep_len) ->
+      let contents = Buffer.contents stream.buffer in
+      let record = String.sub contents 0 index in
+      let rest_start = index + sep_len in
+      Buffer.clear stream.buffer;
+      Buffer.add_substring stream.buffer contents rest_start
+        (String.length contents - rest_start);
+      stream.scan_pos <- 0;
+      if String.trim record = "" then drain_sse_records stream acc
+      else
+        match parse_sse_record_capped stream record with
+        | Stdlib.Ok event -> drain_sse_records stream (event :: acc)
+        | Stdlib.Error _ as error -> error
+
+let feed_sse stream chunk =
+  let len = String.length chunk in
+  let rec loop index acc =
+    if index = len then Stdlib.Ok (List.rev acc)
+    else (
+      Buffer.add_char stream.buffer chunk.[index];
+      match drain_sse_records stream acc with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok acc ->
+          if unframed_buffer_too_large stream then
+            Stdlib.Error (buffer_too_large stream)
+          else loop (index + 1) acc)
+  in
+  loop 0 []
 
 let flush_sse stream =
   let record = String.trim (Buffer.contents stream.buffer) in
