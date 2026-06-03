@@ -19,7 +19,8 @@ let decr_by counter n =
   if n < 0 then invalid_arg "Drain_counter.decr_by: n must be >= 0";
   if n > 0 then
     Eio.Mutex.use_rw ~protect:false counter.mutex (fun () ->
-        counter.count <- max 0 (counter.count - n);
+        if n > counter.count then invalid_arg "Drain_counter.decr_by: underflow";
+        counter.count <- counter.count - n;
         if counter.count = 0 then Eio.Condition.broadcast counter.condition)
 
 let incr counter = incr_by counter 1

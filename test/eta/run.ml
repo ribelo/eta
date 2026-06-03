@@ -599,6 +599,8 @@ let () =
             test_pool_idle_eviction_continues_after_close_failure;
           Alcotest.test_case "expired idle preserves capacity waiters" `Quick
             test_pool_expired_idle_cleanup_preserves_capacity_waiters;
+          Alcotest.test_case "expired close failure releases permit" `Quick
+            test_pool_expired_idle_close_failure_releases_admission_permit;
           Alcotest.test_case "shutdown wakes and drains" `Quick
             test_pool_shutdown_wakes_waiters_and_drains;
           Alcotest.test_case "shutdown rejects waiter before permit release"

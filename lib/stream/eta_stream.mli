@@ -173,7 +173,7 @@ module Drain_counter : sig
       wait as an Eta effect.
 
       @raise Invalid_argument if [incr_by] or [decr_by] receive a negative
-      count. *)
+      count, or if [decr_by] would decrement below zero. *)
 end
 
 module Sink : sig

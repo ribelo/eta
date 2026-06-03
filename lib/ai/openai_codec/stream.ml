@@ -72,6 +72,31 @@ let responses_stream_tool_delta json =
         Option.value ~default:"" (Json.string_member "delta" json);
     }
 
+let responses_stream_tool_added json =
+  match Json.object_member "item" json with
+  | Some item when Json.string_member "type" item = Some "function_call" ->
+      let id =
+        match Json.string_member "call_id" item with
+        | Some _ as value -> value
+        | None -> Json.string_member "id" item
+      in
+      let arguments_json_delta =
+        match Json.member "arguments" item with
+        | Some (`String arguments) -> arguments
+        | Some arguments -> Json.compact arguments
+        | None -> ""
+      in
+      [
+        A.Stream_tool_call_delta
+          {
+            index = Json.int_member "output_index" json;
+            id;
+            name = Json.string_member "name" item;
+            arguments_json_delta;
+          };
+      ]
+  | _ -> []
+
 let response_event_name event json =
   match event.A.event with
   | Some _ as value -> value
@@ -84,6 +109,7 @@ let responses_stream_events ?(nested_response_error = false) ~provider raw
       match Json.string_member "delta" json with
       | Some text -> [ A.Stream_content_delta text ]
       | None -> [])
+  | Some "response.output_item.added" -> responses_stream_tool_added json
   | Some "response.function_call_arguments.delta" ->
       [ responses_stream_tool_delta json ]
   | Some "response.completed" -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
@@ -117,4 +143,3 @@ let decode_stream_event ?(nested_response_error = false) ~provider event =
           if response_events = [] then
             Stdlib.Ok (chat_stream_events ~finish_reason data json)
           else Stdlib.Ok response_events
-

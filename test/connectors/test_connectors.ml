@@ -826,6 +826,47 @@ let test_duckdb_bind_error_does_not_leak_prepared_statements () =
                     (grew %d KB, limit %d KB)" growth_kb max_acceptable_kb)
                 true (growth_kb < max_acceptable_kb)))
 
+let test_duckdb_list_result_is_materialized_as_value_list () =
+  match Eta_duckdb.available () with
+  | Error _ -> ()
+  | Ok () ->
+      let db = duckdb_ok (Eta_duckdb.Database.open_memory ()) in
+      Fun.protect
+        ~finally:(fun () -> ignore (Eta_duckdb.Database.close db))
+        (fun () ->
+          let conn = duckdb_ok (Eta_duckdb.Connection.connect db) in
+          Fun.protect
+            ~finally:(fun () -> ignore (Eta_duckdb.Connection.close conn))
+            (fun () ->
+              match Eta_duckdb.Connection.query conn "SELECT [1, 2, 3] AS xs" [] with
+              | Ok
+                  [
+                    [
+                      ( "xs",
+                        Eta_duckdb.Value.List
+                          [
+                            Eta_duckdb.Value.Int 1;
+                            Eta_duckdb.Value.Int 2;
+                            Eta_duckdb.Value.Int 3;
+                          ] );
+                    ];
+                  ] ->
+                  ()
+              | Ok rows ->
+                  Alcotest.failf
+                    "expected DuckDB list result to decode as Value.List, got: %s"
+                    (String.concat "; "
+                       (List.map
+                          (fun row ->
+                            String.concat ", "
+                              (List.map
+                                 (fun (name, value) ->
+                                   name ^ "=" ^ Eta_duckdb.Value.to_string value)
+                                 row))
+                          rows))
+              | Error err ->
+                  Alcotest.failf "query failed: %s" (Eta_duckdb.show_error err)))
+
 let test_ladybug_bind_error_does_not_leak_prepared_statements () =
   match Eta_ladybug.available () with
   | Error _ -> Alcotest.fail "LadybugDB not available"
@@ -967,6 +1008,8 @@ let () =
             test_duckdb_decode_error_is_structured;
           Alcotest.test_case "bind error does not leak statements" `Slow
             test_duckdb_bind_error_does_not_leak_prepared_statements;
+          Alcotest.test_case "list result materializes value list" `Quick
+            test_duckdb_list_result_is_materialized_as_value_list;
           Alcotest.test_case "appender failed close poisons handle" `Quick
             test_duckdb_appender_failed_close_poisons_handle;
         ] );

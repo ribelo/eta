@@ -292,6 +292,46 @@ let stream_tool_args events =
 let has_done events =
   List.exists (function A.Stream_done -> true | _ -> false) events
 
+let test_responses_stream_preserves_function_call_name () =
+  let added : A.sse_event =
+    {
+      event = Some "response.output_item.added";
+      data =
+        {|
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "lookup",
+            "arguments": ""
+          }
+        }
+        |};
+    }
+  in
+  match O.decode_stream_event added with
+  | Stdlib.Ok
+      [
+        A.Stream_tool_call_delta
+          {
+            index = Some 0;
+            id = Some "call_1";
+            name = Some "lookup";
+            arguments_json_delta = "";
+          };
+      ] ->
+      ()
+  | Stdlib.Ok events ->
+      Alcotest.failf
+        "function-call metadata event was dropped or incomplete; got %d events"
+        (List.length events)
+  | Stdlib.Error _ ->
+      Alcotest.fail
+        "decoder rejected a valid Responses function-call metadata event"
+
 let test_stream_fixture () =
   with_runtime @@ fun rt ->
   let stream =
@@ -744,6 +784,8 @@ let () =
       ( "streaming",
         [
           Alcotest.test_case "SSE fixture" `Quick test_stream_fixture;
+          Alcotest.test_case "responses function call metadata" `Quick
+            test_responses_stream_preserves_function_call_name;
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
         ] );
       ( "http",

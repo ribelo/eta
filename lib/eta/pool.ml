@@ -439,6 +439,18 @@ let with_fixed_acquire_guard release f =
 let close_acquired_entry t entry =
   close_entry t entry |> Effect.finally (mark_active_close_finished t)
 
+let release_admission_permit t =
+  Effect.sync (fun () -> Semaphore.release t.sem 1)
+
+let close_expired_entries_before_retry t entries =
+  with_fixed_acquire_guard
+    (fun () -> release_admission_permit t)
+    (fun ~disarm ->
+      close_entries ~release_permit:false t entries
+      |> Effect.map (fun () ->
+             disarm ();
+             Reserve_slot))
+
 let state_of_reservation = function
   | `Shutdown -> Effect.fail `Pool_shutdown
   | `Wait -> Effect.pure Wait_for_permit
@@ -482,8 +494,7 @@ let next_state t = function
       Effect.sync (fun () -> reserve t) |> Effect.bind state_of_reservation
   | Wait_for_permit -> acquire_permit t |> Effect.map (fun () -> Reserve_slot)
   | Close_expired_entries entries ->
-      close_entries ~release_permit:false t entries
-      |> Effect.map (fun () -> Reserve_slot)
+      close_expired_entries_before_retry t entries
   | Check_reserved_entry entry -> check_reserved_entry t entry
   | Open_entry -> open_entry t
   | Entry_acquired _ as state -> Effect.pure state

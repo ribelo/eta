@@ -447,6 +447,48 @@ let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
     holders;
   run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
 
+let test_pool_expired_idle_close_failure_releases_admission_permit () =
+  with_runtime @@ fun rt ->
+  let factory = make_pool_factory () in
+  let release_calls = ref 0 in
+  let release conn =
+    Effect.sync (fun () -> incr release_calls)
+    |> Effect.bind (fun () -> pool_close factory conn)
+    |> Effect.bind (fun () ->
+           if !release_calls = 1 then Effect.fail `Close_failed
+           else Effect.unit)
+  in
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1 ~max_idle:1
+         ~idle_lifetime:(Duration.ms 1)
+         ~idle_check_interval:(Duration.hours 1)
+         ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+  in
+  ignore (run_ok rt (Pool.with_resource pool pool_use) : int);
+  Eio_unix.sleep 0.005;
+  let close_failure =
+    Pool.with_resource pool (fun _ -> Effect.unit)
+    |> Effect.catch (function
+         | `Close_failed -> Effect.unit
+         | #pool_test_error as err -> Effect.fail err)
+  in
+  run_ok rt close_failure;
+  let checkout_after_failure =
+    Pool.with_resource pool (fun _ -> Effect.unit)
+    |> Effect.timeout_as (Duration.ms 20) ~on_timeout:`Timeout
+  in
+  (match Runtime.run rt checkout_after_failure with
+  | Exit.Ok () -> ()
+  | Exit.Error cause ->
+      Alcotest.failf
+        "pool permit leaked after expired idle close failure: %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<pool>"))
+        cause);
+  Alcotest.(check int) "expired close attempted once" 1 !release_calls;
+  Alcotest.(check int) "replacement opened" 2 !(factory.opened);
+  run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+
 let test_pool_shutdown_wakes_waiters_and_drains () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

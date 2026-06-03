@@ -394,6 +394,12 @@ let test_drain_counter_await_zero () =
   |> check_ok_unit "drain counter reaches zero";
   Alcotest.(check int) "counter value" 0 (Drain_counter.value counter)
 
+let test_drain_counter_underflow_raises () =
+  let counter = Drain_counter.create () in
+  match Drain_counter.decr counter with
+  | exception Invalid_argument _ -> ()
+  | () -> Alcotest.fail "drain counter underflow was silently clamped"
+
 let suite =
   ( "Eta_stream",
     [
@@ -435,6 +441,8 @@ let suite =
         test_from_queue_error_close_fails_after_drain;
       Alcotest.test_case "drain counter await zero" `Quick
         test_drain_counter_await_zero;
+      Alcotest.test_case "drain counter underflow raises" `Quick
+        test_drain_counter_underflow_raises;
     ] )
 
 let () = Alcotest.run "eta-stream" [ suite ]
