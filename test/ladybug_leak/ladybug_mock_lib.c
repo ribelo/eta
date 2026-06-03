@@ -13,9 +13,11 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct ArrowSchema {
   const char *format;
@@ -63,17 +65,33 @@ typedef struct {
 #endif
 } lbug_system_config;
 
+typedef struct {
+  int active;
+  int destroy_deferred;
+} mock_connection;
+
+static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_created = 0;
 static int g_destroyed = 0;
+static int g_active_queries = 0;
+static int g_destroyed_while_active = 0;
 
-static void write_state(void)
+static void write_state_locked(void)
 {
   const char *path = getenv("ETA_LADYBUG_MOCK_STATE");
   if (path == NULL || path[0] == '\0') return;
   FILE *f = fopen(path, "w");
   if (f == NULL) return;
-  fprintf(f, "%d %d\n", g_created, g_destroyed);
+  fprintf(f, "%d %d %d %d\n", g_created, g_destroyed, g_active_queries,
+          g_destroyed_while_active);
   fclose(f);
+}
+
+static void write_state(void)
+{
+  pthread_mutex_lock(&g_mutex);
+  write_state_locked();
+  pthread_mutex_unlock(&g_mutex);
 }
 
 const char *lbug_get_version(void) { return "mock-0"; }
@@ -105,25 +123,65 @@ void lbug_database_destroy(lbug_database *db)
 lbug_state lbug_connection_init(lbug_database *db, lbug_connection *conn)
 {
   (void)db;
-  conn->ptr = malloc(1);
+  mock_connection *mock = malloc(sizeof(mock_connection));
+  if (mock == NULL) return LbugError;
+  mock->active = 0;
+  mock->destroy_deferred = 0;
+  conn->ptr = mock;
   return LbugSuccess;
 }
 
 void lbug_connection_destroy(lbug_connection *conn)
 {
-  free(conn->ptr);
+  mock_connection *mock = conn->ptr;
+  if (mock != NULL) {
+    pthread_mutex_lock(&g_mutex);
+    if (mock->active) {
+      g_destroyed_while_active = 1;
+      mock->destroy_deferred = 1;
+      write_state_locked();
+      pthread_mutex_unlock(&g_mutex);
+      conn->ptr = NULL;
+      return;
+    }
+    pthread_mutex_unlock(&g_mutex);
+    free(mock);
+  }
   conn->ptr = NULL;
 }
 
 lbug_state lbug_connection_query(lbug_connection *conn, const char *cypher,
                                  lbug_query_result *result)
 {
-  (void)conn;
-  (void)cypher;
+  mock_connection *mock = conn->ptr;
+  bool slow = cypher != NULL && strcmp(cypher, "eta_test_slow_query") == 0;
+  if (slow && mock != NULL) {
+    pthread_mutex_lock(&g_mutex);
+    mock->active = 1;
+    g_active_queries++;
+    write_state_locked();
+    pthread_mutex_unlock(&g_mutex);
+    usleep(200000);
+    pthread_mutex_lock(&g_mutex);
+    mock->active = 0;
+    g_active_queries--;
+    if (mock->destroy_deferred) {
+      write_state_locked();
+      pthread_mutex_unlock(&g_mutex);
+      free(mock);
+      result->ptr = NULL;
+      result->owned = false;
+      return LbugError;
+    }
+    write_state_locked();
+    pthread_mutex_unlock(&g_mutex);
+  }
   result->ptr = malloc(1);
   result->owned = true;
+  pthread_mutex_lock(&g_mutex);
   g_created++;
-  write_state();
+  write_state_locked();
+  pthread_mutex_unlock(&g_mutex);
   return LbugSuccess;
 }
 
@@ -171,8 +229,10 @@ void lbug_query_result_destroy(lbug_query_result *result)
   if (result->ptr != NULL) {
     free(result->ptr);
     result->ptr = NULL;
+    pthread_mutex_lock(&g_mutex);
     g_destroyed++;
-    write_state();
+    write_state_locked();
+    pthread_mutex_unlock(&g_mutex);
   }
 }
 

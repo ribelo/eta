@@ -59,10 +59,19 @@ typedef struct {
 } lbug_system_config;
 
 typedef struct { lbug_database db; } eta_ladybug_db;
-typedef struct {
+
+typedef struct eta_ladybug_conn_state {
   lbug_connection conn;
   pthread_mutex_t mutex;
+  pthread_cond_t cond;
   int mutex_initialized;
+  int cond_initialized;
+  int active;
+  int closing;
+} eta_ladybug_conn_state;
+
+typedef struct {
+  eta_ladybug_conn_state *state;
 } eta_ladybug_conn;
 
 typedef struct {
@@ -128,17 +137,33 @@ static void db_finalize(value v_db)
 
 static void conn_finalize(value v_conn)
 {
-  eta_ladybug_conn *conn = (eta_ladybug_conn *)Data_custom_val(v_conn);
-  if (conn->mutex_initialized) pthread_mutex_lock(&conn->mutex);
-  if (conn->conn.ptr != NULL && api.loaded) {
-    api.connection_destroy(&conn->conn);
+  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  eta_ladybug_conn_state *conn = slot->state;
+  lbug_connection native;
+  native.ptr = NULL;
+  if (conn == NULL) return;
+  slot->state = NULL;
+  if (conn->mutex_initialized) {
+    pthread_mutex_lock(&conn->mutex);
+    if (conn->conn.ptr != NULL) {
+      native = conn->conn;
+      conn->conn.ptr = NULL;
+    }
+    pthread_mutex_unlock(&conn->mutex);
+  } else if (conn->conn.ptr != NULL) {
+    native = conn->conn;
     conn->conn.ptr = NULL;
   }
+  if (native.ptr != NULL && api.loaded) api.connection_destroy(&native);
   if (conn->mutex_initialized) {
-    pthread_mutex_unlock(&conn->mutex);
+    if (conn->cond_initialized) {
+      pthread_cond_destroy(&conn->cond);
+      conn->cond_initialized = 0;
+    }
     pthread_mutex_destroy(&conn->mutex);
     conn->mutex_initialized = 0;
   }
+  free(conn);
 }
 
 static struct custom_operations db_ops = {
@@ -340,19 +365,100 @@ static void ladybug_string_owner_release(value v_owner)
 }
 
 static lbug_database *db_val(value v) { return &((eta_ladybug_db *)Data_custom_val(v))->db; }
-static lbug_connection *conn_val(value v) { return &((eta_ladybug_conn *)Data_custom_val(v))->conn; }
+
+static eta_ladybug_conn_state *conn_state_val(value v_conn)
+{
+  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  return slot->state;
+}
+
+static int conn_acquire(value v_conn, lbug_connection *out)
+{
+  eta_ladybug_conn_state *slot = conn_state_val(v_conn);
+  int acquired = 0;
+  if (slot == NULL) return 0;
+  pthread_mutex_lock(&slot->mutex);
+  if (!slot->closing && slot->conn.ptr != NULL) {
+    *out = slot->conn;
+    slot->active++;
+    acquired = 1;
+  }
+  pthread_mutex_unlock(&slot->mutex);
+  return acquired;
+}
+
+static void conn_release(value v_conn)
+{
+  eta_ladybug_conn_state *slot = conn_state_val(v_conn);
+  if (slot == NULL) return;
+  pthread_mutex_lock(&slot->mutex);
+  if (slot->active > 0) {
+    slot->active--;
+    if (slot->active == 0 && slot->cond_initialized)
+      pthread_cond_broadcast(&slot->cond);
+  }
+  pthread_mutex_unlock(&slot->mutex);
+}
+
+static void conn_close_state_blocking(eta_ladybug_conn_state *slot)
+{
+  lbug_connection conn;
+  conn.ptr = NULL;
+  if (slot == NULL) return;
+  caml_enter_blocking_section();
+  pthread_mutex_lock(&slot->mutex);
+  while (slot->closing && slot->conn.ptr != NULL && slot->cond_initialized)
+    pthread_cond_wait(&slot->cond, &slot->mutex);
+  if (slot->conn.ptr != NULL) {
+    slot->closing = 1;
+    while (slot->active > 0 && slot->cond_initialized)
+      pthread_cond_wait(&slot->cond, &slot->mutex);
+    conn = slot->conn;
+    slot->conn.ptr = NULL;
+    slot->closing = 0;
+    if (slot->cond_initialized) pthread_cond_broadcast(&slot->cond);
+  }
+  pthread_mutex_unlock(&slot->mutex);
+  if (conn.ptr != NULL) api.connection_destroy(&conn);
+  caml_leave_blocking_section();
+}
+
+static void fail_connection_closed(void)
+{
+  caml_failwith("LadybugDB connection is closed");
+}
 
 static void conn_init(value v_conn, lbug_connection conn)
 {
   eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
-  slot->conn = conn;
-  slot->mutex_initialized = 0;
-  if (pthread_mutex_init(&slot->mutex, NULL) != 0) {
-    api.connection_destroy(&slot->conn);
-    slot->conn.ptr = NULL;
+  eta_ladybug_conn_state *state = malloc(sizeof(eta_ladybug_conn_state));
+  slot->state = NULL;
+  if (state == NULL) {
+    api.connection_destroy(&conn);
+    caml_failwith("ladybug connect: state allocation failed");
+  }
+  state->conn = conn;
+  state->mutex_initialized = 0;
+  state->cond_initialized = 0;
+  state->active = 0;
+  state->closing = 0;
+  if (pthread_mutex_init(&state->mutex, NULL) != 0) {
+    api.connection_destroy(&state->conn);
+    state->conn.ptr = NULL;
+    free(state);
     caml_failwith("ladybug connect: mutex init failed");
   }
-  slot->mutex_initialized = 1;
+  state->mutex_initialized = 1;
+  if (pthread_cond_init(&state->cond, NULL) != 0) {
+    pthread_mutex_destroy(&state->mutex);
+    state->mutex_initialized = 0;
+    api.connection_destroy(&state->conn);
+    state->conn.ptr = NULL;
+    free(state);
+    caml_failwith("ladybug connect: condition init failed");
+  }
+  state->cond_initialized = 1;
+  slot->state = state;
 }
 
 static int load_symbol(void **slot, const char *name)
@@ -695,14 +801,8 @@ CAMLprim value eta_ladybug_close_connection(value v_conn)
 {
   CAMLparam1(v_conn);
   ensure_loaded();
-  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
-  pthread_mutex_lock(&slot->mutex);
-  lbug_connection conn = slot->conn;
-  if (conn.ptr != NULL) {
-    slot->conn.ptr = NULL;
-    api.connection_destroy(&conn);
-  }
-  pthread_mutex_unlock(&slot->mutex);
+  eta_ladybug_conn_state *state = conn_state_val(v_conn);
+  conn_close_state_blocking(state);
   CAMLreturn(Val_unit);
 }
 
@@ -710,7 +810,8 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
 {
   CAMLparam1(v_conn);
   ensure_loaded();
-  eta_ladybug_conn *slot = (eta_ladybug_conn *)Data_custom_val(v_conn);
+  eta_ladybug_conn_state *slot = conn_state_val(v_conn);
+  if (slot == NULL) CAMLreturn(Val_unit);
   pthread_mutex_lock(&slot->mutex);
   lbug_connection conn = slot->conn;
   if (conn.ptr != NULL) api.connection_interrupt(&conn);
@@ -1071,19 +1172,25 @@ static value materialize_arrow_rows(lbug_query_result *result)
   CAMLreturn(list_rev(rows));
 }
 
-static value execute_direct(lbug_connection *conn, const char *cypher)
+static value execute_direct(value v_conn, const char *cypher)
 {
-  CAMLparam0();
+  CAMLparam1(v_conn);
   CAMLlocal2(out, result_owner);
+  lbug_connection conn;
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
   char *cypher_copy = caml_stat_strdup(cypher);
   if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
+  if (!conn_acquire(v_conn, &conn)) {
+    caml_stat_free(cypher_copy);
+    fail_connection_closed();
+  }
   caml_enter_blocking_section();
-  state = api.connection_query(conn, cypher_copy, &result);
+  state = api.connection_query(&conn, cypher_copy, &result);
   caml_leave_blocking_section();
+  conn_release(v_conn);
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
   result_owner = result_owner_alloc();
@@ -1102,10 +1209,11 @@ static value execute_direct(lbug_connection *conn, const char *cypher)
   CAMLreturn(out);
 }
 
-static value execute_prepared(lbug_connection *conn, const char *cypher, value params)
+static value execute_prepared(value v_conn, const char *cypher, value params)
 {
-  CAMLparam1(params);
+  CAMLparam2(v_conn, params);
   CAMLlocal2(out, result_owner);
+  lbug_connection conn;
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
@@ -1116,8 +1224,14 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
   result.ptr = NULL;
   result.owned = false;
   if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
-  if (api.connection_prepare(conn, cypher_copy, &stmt) != LbugSuccess)
+  if (!conn_acquire(v_conn, &conn)) {
+    string_copies_free(&copies);
+    fail_connection_closed();
+  }
+  if (api.connection_prepare(&conn, cypher_copy, &stmt) != LbugSuccess) {
+    conn_release(v_conn);
     fail_last_with_copies("prepare", &copies);
+  }
   if (!api.prepared_statement_is_success(&stmt)) {
     char *err = api.prepared_statement_get_error_message(&stmt);
     char buffer[1024];
@@ -1125,21 +1239,24 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
     if (err != NULL) api.destroy_string(err);
     api.prepared_statement_destroy(&stmt);
     string_copies_free(&copies);
+    conn_release(v_conn);
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
     if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
       api.prepared_statement_destroy(&stmt);
       string_copies_free(&copies);
+      conn_release(v_conn);
       caml_failwith("LadybugDB bind failed");
     }
     params = Field(params, 1);
   }
   caml_enter_blocking_section();
-  state = api.connection_execute(conn, &stmt, &result);
+  state = api.connection_execute(&conn, &stmt, &result);
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
+    conn_release(v_conn);
     fail_last_with_copies("execute", &copies);
   }
   /* The query result is self-contained, so release the statement and input
@@ -1147,6 +1264,7 @@ static value execute_prepared(lbug_connection *conn, const char *cypher, value p
      result as the only foreign resource that needs exception-safe cleanup. */
   api.prepared_statement_destroy(&stmt);
   string_copies_free(&copies);
+  conn_release(v_conn);
   result_owner = result_owner_alloc();
   *result_owner_result(result_owner) = result;
   result_owner_activate(result_owner);
@@ -1167,24 +1285,29 @@ CAMLprim value eta_ladybug_query_string(value v_conn, value v_cypher, value v_pa
 {
   CAMLparam3(v_conn, v_cypher, v_params);
   ensure_loaded();
-  lbug_connection *conn = conn_val(v_conn);
-  if (v_params == Val_emptylist) CAMLreturn(execute_direct(conn, String_val(v_cypher)));
-  CAMLreturn(execute_prepared(conn, String_val(v_cypher), v_params));
+  if (v_params == Val_emptylist) CAMLreturn(execute_direct(v_conn, String_val(v_cypher)));
+  CAMLreturn(execute_prepared(v_conn, String_val(v_cypher), v_params));
 }
 
-static value execute_direct_values(lbug_connection *conn, const char *cypher)
+static value execute_direct_values(value v_conn, const char *cypher)
 {
-  CAMLparam0();
+  CAMLparam1(v_conn);
   CAMLlocal2(out, result_owner);
+  lbug_connection conn;
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
   char *cypher_copy = caml_stat_strdup(cypher);
   if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
+  if (!conn_acquire(v_conn, &conn)) {
+    caml_stat_free(cypher_copy);
+    fail_connection_closed();
+  }
   caml_enter_blocking_section();
-  state = api.connection_query(conn, cypher_copy, &result);
+  state = api.connection_query(&conn, cypher_copy, &result);
   caml_leave_blocking_section();
+  conn_release(v_conn);
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
   result_owner = result_owner_alloc();
@@ -1203,10 +1326,11 @@ static value execute_direct_values(lbug_connection *conn, const char *cypher)
   CAMLreturn(out);
 }
 
-static value execute_prepared_values(lbug_connection *conn, const char *cypher, value params)
+static value execute_prepared_values(value v_conn, const char *cypher, value params)
 {
-  CAMLparam1(params);
+  CAMLparam2(v_conn, params);
   CAMLlocal2(out, result_owner);
+  lbug_connection conn;
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
@@ -1217,8 +1341,14 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
   result.ptr = NULL;
   result.owned = false;
   if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
-  if (api.connection_prepare(conn, cypher_copy, &stmt) != LbugSuccess)
+  if (!conn_acquire(v_conn, &conn)) {
+    string_copies_free(&copies);
+    fail_connection_closed();
+  }
+  if (api.connection_prepare(&conn, cypher_copy, &stmt) != LbugSuccess) {
+    conn_release(v_conn);
     fail_last_with_copies("prepare", &copies);
+  }
   if (!api.prepared_statement_is_success(&stmt)) {
     char *err = api.prepared_statement_get_error_message(&stmt);
     char buffer[1024];
@@ -1226,21 +1356,24 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
     if (err != NULL) api.destroy_string(err);
     api.prepared_statement_destroy(&stmt);
     string_copies_free(&copies);
+    conn_release(v_conn);
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
     if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
       api.prepared_statement_destroy(&stmt);
       string_copies_free(&copies);
+      conn_release(v_conn);
       caml_failwith("LadybugDB bind failed");
     }
     params = Field(params, 1);
   }
   caml_enter_blocking_section();
-  state = api.connection_execute(conn, &stmt, &result);
+  state = api.connection_execute(&conn, &stmt, &result);
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
+    conn_release(v_conn);
     fail_last_with_copies("execute", &copies);
   }
   /* The query result is self-contained, so release the statement and input
@@ -1248,6 +1381,7 @@ static value execute_prepared_values(lbug_connection *conn, const char *cypher, 
      result as the only foreign resource that needs exception-safe cleanup. */
   api.prepared_statement_destroy(&stmt);
   string_copies_free(&copies);
+  conn_release(v_conn);
   result_owner = result_owner_alloc();
   *result_owner_result(result_owner) = result;
   result_owner_activate(result_owner);
@@ -1268,7 +1402,6 @@ CAMLprim value eta_ladybug_query_values(value v_conn, value v_cypher, value v_pa
 {
   CAMLparam3(v_conn, v_cypher, v_params);
   ensure_loaded();
-  lbug_connection *conn = conn_val(v_conn);
-  if (v_params == Val_emptylist) CAMLreturn(execute_direct_values(conn, String_val(v_cypher)));
-  CAMLreturn(execute_prepared_values(conn, String_val(v_cypher), v_params));
+  if (v_params == Val_emptylist) CAMLreturn(execute_direct_values(v_conn, String_val(v_cypher)));
+  CAMLreturn(execute_prepared_values(v_conn, String_val(v_cypher), v_params));
 }

@@ -199,9 +199,11 @@ let check_ladybug_direct_queries_check_strdup () =
     let body = function_source source ~start_marker ~end_marker in
     let copy = require_sub body ~needle:"cypher_copy = caml_stat_strdup(cypher)" in
     let guard = require_sub body ~needle:"if (cypher_copy == NULL)" in
-    let query = require_sub body ~needle:"api.connection_query(conn, cypher_copy" in
+    let acquire = require_sub body ~needle:"conn_acquire(v_conn, &conn)" in
+    let query = require_sub body ~needle:"api.connection_query(&conn, cypher_copy" in
+    let release = require_sub body ~needle:"conn_release(v_conn)" in
     Alcotest.(check bool) "strdup guard precedes query" true
-      (copy < guard && guard < query)
+      (copy < guard && guard < acquire && acquire < query && query < release)
   in
   check_function "static value execute_direct(" "static value execute_prepared(";
   check_function "static value execute_direct_values("
@@ -304,16 +306,35 @@ let check_interrupts_lock_native_handles () =
     ~unlock_marker:"pthread_mutex_unlock(&slot->mutex)"
     ~close_marker:"api.close_v2(db)"
     ~interrupt_marker:"api.interrupt(db)";
-  check (read_file (find_ladybug_stubs_source ()))
+  let ladybug_source = read_file (find_ladybug_stubs_source ()) in
+  check ladybug_source
     ~struct_marker:"pthread_mutex_t mutex;"
-    ~close_start:"CAMLprim value eta_ladybug_close_connection("
-    ~close_end:"CAMLprim value eta_ladybug_interrupt("
+    ~close_start:"static void conn_close_state_blocking("
+    ~close_end:"static void fail_connection_closed("
     ~interrupt_start:"CAMLprim value eta_ladybug_interrupt("
     ~interrupt_end:"static int bind_param("
     ~lock_marker:"pthread_mutex_lock(&slot->mutex)"
     ~unlock_marker:"pthread_mutex_unlock(&slot->mutex)"
-    ~close_marker:"api.connection_destroy(&conn)"
-    ~interrupt_marker:"api.connection_interrupt(&conn)"
+    ~close_marker:"slot->conn.ptr = NULL"
+    ~interrupt_marker:"api.connection_interrupt(&conn)";
+  let close_body =
+    function_source ladybug_source
+      ~start_marker:"static void conn_close_state_blocking("
+      ~end_marker:"static void fail_connection_closed("
+  in
+  let wait = require_sub close_body ~needle:"while (slot->active > 0" in
+  let copy = require_sub close_body ~needle:"conn = slot->conn" in
+  let clear = require_sub close_body ~needle:"slot->conn.ptr = NULL" in
+  let unlock = require_sub_after close_body ~needle:"pthread_mutex_unlock(&slot->mutex)" clear in
+  let destroy = require_sub_after close_body ~needle:"api.connection_destroy(&conn)" unlock in
+  Alcotest.(check bool) "Ladybug close waits before destroying native handle" true
+    (wait < copy && copy < clear && clear < unlock && unlock < destroy);
+  let exported_close =
+    function_source ladybug_source
+      ~start_marker:"CAMLprim value eta_ladybug_close_connection("
+      ~end_marker:"CAMLprim value eta_ladybug_interrupt("
+  in
+  ignore (require_sub exported_close ~needle:"conn_close_state_blocking(state)" : int)
 
 let check_cleanup_handles_survive_blocking_sections () =
   let check_native_state source ~state_helper ~close_start ~close_end =
@@ -337,6 +358,29 @@ let check_cleanup_handles_survive_blocking_sections () =
     ~state_helper:"eta_turso_db_state_val(v_db)"
     ~close_start:"CAMLprim intnat eta_turso_close("
     ~close_end:"CAMLprim value eta_turso_close_bc(";
+  let ladybug_source = read_file (find_ladybug_stubs_source ()) in
+  let ladybug_exported_close =
+    function_source ladybug_source
+      ~start_marker:"CAMLprim value eta_ladybug_close_connection("
+      ~end_marker:"CAMLprim value eta_ladybug_interrupt("
+  in
+  ignore
+    (require_sub ladybug_exported_close ~needle:"conn_state_val(v_conn)" : int);
+  let ladybug_close_body =
+    function_source ladybug_source
+      ~start_marker:"static void conn_close_state_blocking("
+      ~end_marker:"static void fail_connection_closed("
+  in
+  let enter =
+    require_sub ladybug_close_body ~needle:"caml_enter_blocking_section();"
+  in
+  let leave =
+    require_sub ladybug_close_body ~needle:"caml_leave_blocking_section();"
+  in
+  (match find_sub_from ladybug_close_body ~needle:"Data_custom_val" enter with
+  | Some index when index < leave ->
+      Alcotest.fail "Ladybug close touches OCaml custom block inside blocking section"
+  | _ -> ());
   let duckdb_source = read_file (find_duckdb_stubs_source ()) in
   let check_duckdb_close ~start_marker ~end_marker ~safe_call ~unsafe_call =
     let body = function_source duckdb_source ~start_marker ~end_marker in
