@@ -747,6 +747,58 @@ let test_h1_pool_discarded_body_does_not_poison_next_response () =
   Alcotest.(check int) "discarded connection was not reused" 2 stats.opened;
   Alcotest.(check int) "discarded connection was closed" 1 stats.closed
 
+let test_h1_pool_oversized_fixed_body_does_not_poison_next_response () =
+  let net = Eio_mock.Net.make "eta-http-h1-pool-oversized-net" in
+  let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
+  let first_flow = Eio_mock.Flow.make "eta-http-h1-pool-oversized-first" in
+  let second_flow = Eio_mock.Flow.make "eta-http-h1-pool-oversized-second" in
+  Eio_mock.Flow.on_read first_flow
+    [
+      `Return "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n";
+      `Return "ABCDHTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbad!";
+    ];
+  Eio_mock.Flow.on_read second_flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\ns" ];
+  Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ]; `Return [ addr ] ];
+  Eio_mock.Net.on_connect net [ `Return first_flow; `Return second_flow ];
+  let url = Eta_http.Core.Url.of_string "http://example.test/oversized" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  let health_check _flow = Eta.Effect.unit in
+  with_test_clock @@ fun sw _clock rt ->
+  let pool =
+    Eta_http.H1.Client.make_pool ~max_size:1 ~max_response_body_bytes:1
+      ~health_check ~sw ~net url
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let first =
+    Eta_http.H1.Client.request_with_pool pool request
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Eta_http.Body.Stream.read_all first.body
+  |> Eta.Runtime.run rt
+  |> expect_body_too_large "oversized fixed body" ~limit:1;
+  let released_stats = Eta_http.H1.Client.pool_stats pool in
+  Alcotest.(check int) "released after oversized failure" 0 released_stats.active;
+  let second =
+    Eta_http.H1.Client.request_with_pool pool request
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let body =
+    Eta_http.Body.Stream.read_all second.body
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+    |> Bytes.to_string
+  in
+  Alcotest.(check string) "second response body" "s" body;
+  let stats = Eta_http.H1.Client.pool_stats pool in
+  Alcotest.(check int) "oversized connection was not reused" 2 stats.opened;
+  Alcotest.(check int) "oversized connection was closed" 1 stats.closed
+
 let wait_until label predicate =
   let rec loop attempts =
     if predicate () then ()

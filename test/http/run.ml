@@ -192,6 +192,9 @@ let () =
             test_h1_pool_discard_releases_checkout;
           Alcotest.test_case "pool discard prevents response poisoning" `Quick
             test_h1_pool_discarded_body_does_not_poison_next_response;
+          Alcotest.test_case
+            "pool oversized fixed body prevents response poisoning" `Quick
+            test_h1_pool_oversized_fixed_body_does_not_poison_next_response;
           Alcotest.test_case "pool cancellation releases checkout" `Quick
             test_h1_pool_request_cancellation_releases_checkout;
           Alcotest.test_case "pool marks undelivered response unreusable" `Quick

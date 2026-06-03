@@ -288,8 +288,11 @@ let response_body ?host_eio ~max_response_body_bytes ~release
     match head.content_length with
     | Some length ->
         if length > max_response_body_bytes then
+          let clean = ref false in
           let body =
-            Body.of_reader ~release (fun () ->
+            Body.of_reader
+              ~release:(fun () -> release_body ~release ~on_unread_body clean)
+              (fun () ->
                 Effect.fail
                   (H1_client_errors.body_too_large request
                      ~limit:max_response_body_bytes ~length))
