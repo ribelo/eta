@@ -19,6 +19,7 @@
    Turso's loader contract implicit. */
 
 #define SQLITE_OK 0
+#define SQLITE_BUSY 5
 #define SQLITE_MISUSE 21
 #define SQLITE_NOMEM 7
 #define SQLITE_NULL 5
@@ -48,12 +49,17 @@ typedef struct eta_turso_db_state {
   sqlite3 *db;
   pthread_mutex_t mutex;
   int mutex_initialized;
+  int active;
+  int refs;
 } eta_turso_db_state;
 
 typedef struct {
   eta_turso_db_state *state;
 } eta_turso_db;
-typedef struct { sqlite3_stmt *stmt; sqlite3 *db; } eta_turso_stmt;
+typedef struct {
+  sqlite3_stmt *stmt;
+  eta_turso_db_state *state;
+} eta_turso_stmt;
 
 typedef struct {
   void *handle;
@@ -89,25 +95,16 @@ typedef struct {
 static eta_turso_api api;
 static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static void db_state_unref(eta_turso_db_state *db);
+static void stmt_release_state(eta_turso_stmt *stmt);
+
 static void eta_turso_db_finalize(value v_db)
 {
   eta_turso_db *slot = (eta_turso_db *)Data_custom_val(v_db);
   eta_turso_db_state *db = slot->state;
   if (db == NULL) return;
-  if (db->mutex_initialized) pthread_mutex_lock(&db->mutex);
-  if (db->db != NULL && api.loaded) {
-    /* OCaml custom finalizers cannot safely enter blocking sections; explicit
-       close/finalize functions below release the runtime lock. */
-    (void)api.close_v2(db->db);
-    db->db = NULL;
-  }
-  if (db->mutex_initialized) {
-    pthread_mutex_unlock(&db->mutex);
-    pthread_mutex_destroy(&db->mutex);
-    db->mutex_initialized = 0;
-  }
-  free(db);
   slot->state = NULL;
+  db_state_unref(db);
 }
 
 static void eta_turso_stmt_finalize(value v_stmt)
@@ -116,8 +113,7 @@ static void eta_turso_stmt_finalize(value v_stmt)
   if (stmt->stmt != NULL && api.loaded) {
     /* See eta_turso_db_finalize for finalizer constraints. */
     (void)api.finalize(stmt->stmt);
-    stmt->stmt = NULL;
-    stmt->db = NULL;
+    stmt_release_state(stmt);
   }
 }
 
@@ -149,12 +145,73 @@ static eta_turso_db_state *eta_turso_db_state_val(value v_db)
   return db->state;
 }
 
-static sqlite3 *db_val(value v_db)
-{
-  eta_turso_db_state *db = eta_turso_db_state_val(v_db);
-  return db == NULL ? NULL : db->db;
-}
 static sqlite3_stmt *stmt_val(value v_stmt) { return ((eta_turso_stmt *)Data_custom_val(v_stmt))->stmt; }
+
+static void db_state_close_for_finalizer(eta_turso_db_state *db)
+{
+  if (db->db != NULL && api.loaded) {
+    /* OCaml custom finalizers cannot safely enter blocking sections; explicit
+       close/finalize functions below release the runtime lock. */
+    (void)api.close_v2(db->db);
+    db->db = NULL;
+  }
+}
+
+static void db_state_ref(eta_turso_db_state *db)
+{
+  pthread_mutex_lock(&db->mutex);
+  db->refs++;
+  pthread_mutex_unlock(&db->mutex);
+}
+
+static void db_state_unref(eta_turso_db_state *db)
+{
+  int free_state = 0;
+  pthread_mutex_lock(&db->mutex);
+  db->refs--;
+  free_state = db->refs == 0;
+  pthread_mutex_unlock(&db->mutex);
+  if (!free_state) return;
+  db_state_close_for_finalizer(db);
+  if (db->mutex_initialized) {
+    pthread_mutex_destroy(&db->mutex);
+    db->mutex_initialized = 0;
+  }
+  free(db);
+}
+
+static int db_state_acquire(eta_turso_db_state *slot, sqlite3 **out)
+{
+  int acquired = 0;
+  if (slot == NULL) return 0;
+  pthread_mutex_lock(&slot->mutex);
+  if (slot->db != NULL) {
+    *out = slot->db;
+    slot->active++;
+    acquired = 1;
+  }
+  pthread_mutex_unlock(&slot->mutex);
+  return acquired;
+}
+
+static void db_state_release(eta_turso_db_state *slot)
+{
+  if (slot == NULL) return;
+  pthread_mutex_lock(&slot->mutex);
+  if (slot->active > 0) slot->active--;
+  pthread_mutex_unlock(&slot->mutex);
+}
+
+static void stmt_release_state(eta_turso_stmt *stmt)
+{
+  eta_turso_db_state *state = stmt->state;
+  stmt->stmt = NULL;
+  stmt->state = NULL;
+  if (state != NULL) {
+    db_state_release(state);
+    db_state_unref(state);
+  }
+}
 
 static void db_init(value v_db)
 {
@@ -166,6 +223,8 @@ static void db_init(value v_db)
   }
   db->db = NULL;
   db->mutex_initialized = 0;
+  db->active = 0;
+  db->refs = 1;
   if (pthread_mutex_init(&db->mutex, NULL) != 0) {
     free(db);
     caml_failwith("turso open: mutex init failed");
@@ -179,13 +238,6 @@ static void fail_closed_handle(const char *operation)
   char buffer[128];
   snprintf(buffer, sizeof(buffer), "%s: closed handle", operation);
   caml_failwith(buffer);
-}
-
-static sqlite3 *require_db(value v_db, const char *operation)
-{
-  sqlite3 *db = db_val(v_db);
-  if (db == NULL) fail_closed_handle(operation);
-  return db;
 }
 
 static sqlite3_stmt *require_stmt(value v_stmt, const char *operation)
@@ -336,6 +388,10 @@ CAMLprim intnat eta_turso_close(value v_db)
     pthread_mutex_unlock(&slot->mutex);
     CAMLreturnT(intnat, SQLITE_OK);
   }
+  if (slot->active > 0) {
+    pthread_mutex_unlock(&slot->mutex);
+    CAMLreturnT(intnat, SQLITE_BUSY);
+  }
   caml_enter_blocking_section();
   rc = api.close_v2(db);
   caml_leave_blocking_section();
@@ -367,16 +423,20 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   CAMLparam2(v_db, v_sql);
   CAMLlocal1(v_block);
   ensure_loaded();
-  sqlite3 *db = db_val(v_db);
-  if (db == NULL) caml_failwith("sqlite3_prepare_v2 rc=21: closed database");
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
   sqlite3_stmt *stmt = NULL;
   char *sql;
   int rc;
   v_block = caml_alloc_custom(&eta_turso_stmt_ops, sizeof(eta_turso_stmt), 0, 1);
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = NULL;
-  ((eta_turso_stmt *)Data_custom_val(v_block))->db = NULL;
+  ((eta_turso_stmt *)Data_custom_val(v_block))->state = NULL;
   sql = caml_stat_strdup(String_val(v_sql));
   if (sql == NULL) caml_failwith("turso allocation failed");
+  if (!db_state_acquire(state, &db)) {
+    caml_stat_free(sql);
+    caml_failwith("sqlite3_prepare_v2 rc=21: closed database");
+  }
   /* prepare_v2 may touch disk or extension state. Copy the OCaml string before
      releasing the runtime lock because String_val is not stable in a blocking
      section. */
@@ -387,10 +447,12 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   if (rc != SQLITE_OK || stmt == NULL) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "sqlite3_prepare_v2 rc=%d: %s", rc, db == NULL ? "closed" : api.errmsg(db));
+    db_state_release(state);
     caml_failwith(buffer);
   }
+  db_state_ref(state);
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = stmt;
-  ((eta_turso_stmt *)Data_custom_val(v_block))->db = db;
+  ((eta_turso_stmt *)Data_custom_val(v_block))->state = state;
   CAMLreturn(v_block);
 }
 
@@ -405,8 +467,7 @@ CAMLprim intnat eta_turso_finalize(value v_stmt)
   rc = api.finalize(stmt->stmt);
   caml_leave_blocking_section();
   if (rc == SQLITE_OK) {
-    stmt->stmt = NULL;
-    stmt->db = NULL;
+    stmt_release_state(stmt);
   }
   CAMLreturnT(intnat, rc);
 }
@@ -535,7 +596,7 @@ CAMLprim value eta_turso_column_text(value v_stmt, intnat index)
   ensure_loaded();
   eta_turso_stmt *raw = (eta_turso_stmt *)Data_custom_val(v_stmt);
   sqlite3_stmt *stmt = raw->stmt;
-  sqlite3 *db = raw->db;
+  sqlite3 *db = raw->state == NULL ? NULL : raw->state->db;
   int kind;
   if (stmt == NULL) fail_closed_handle("sqlite3_column_text");
   if (db == NULL) fail_closed_handle("sqlite3_column_text database");
@@ -572,7 +633,13 @@ CAMLprim value eta_turso_column_blob_bc(value v_stmt, value v_index) { return et
 CAMLprim intnat eta_turso_changes(value v_db)
 {
   ensure_loaded();
-  return api.changes(require_db(v_db, "sqlite3_changes"));
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  int rc;
+  if (!db_state_acquire(state, &db)) return SQLITE_MISUSE;
+  rc = api.changes(db);
+  db_state_release(state);
+  return rc;
 }
 
 CAMLprim value eta_turso_changes_bc(value v_db) { return Val_int(eta_turso_changes(v_db)); }
@@ -580,20 +647,51 @@ CAMLprim value eta_turso_changes_bc(value v_db) { return Val_int(eta_turso_chang
 CAMLprim intnat eta_turso_busy_timeout(value v_db, intnat ms)
 {
   ensure_loaded();
-  sqlite3 *db = db_val(v_db);
-  return db == NULL ? SQLITE_MISUSE : api.busy_timeout(db, (int)ms);
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  int rc;
+  if (!db_state_acquire(state, &db)) return SQLITE_MISUSE;
+  rc = api.busy_timeout(db, (int)ms);
+  db_state_release(state);
+  return rc;
 }
 
 CAMLprim value eta_turso_busy_timeout_bc(value v_db, value v_ms) { return Val_int(eta_turso_busy_timeout(v_db, Int_val(v_ms))); }
-CAMLprim intnat eta_turso_errcode(value v_db) { ensure_loaded(); sqlite3 *db = db_val(v_db); return db == NULL ? SQLITE_MISUSE : api.errcode(db); }
+CAMLprim intnat eta_turso_errcode(value v_db) {
+  ensure_loaded();
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  int rc;
+  if (!db_state_acquire(state, &db)) return SQLITE_MISUSE;
+  rc = api.errcode(db);
+  db_state_release(state);
+  return rc;
+}
 CAMLprim value eta_turso_errcode_bc(value v_db) { return Val_int(eta_turso_errcode(v_db)); }
-CAMLprim intnat eta_turso_extended_errcode(value v_db) { ensure_loaded(); sqlite3 *db = db_val(v_db); return db == NULL ? SQLITE_MISUSE : api.extended_errcode(db); }
+CAMLprim intnat eta_turso_extended_errcode(value v_db) {
+  ensure_loaded();
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  int rc;
+  if (!db_state_acquire(state, &db)) return SQLITE_MISUSE;
+  rc = api.extended_errcode(db);
+  db_state_release(state);
+  return rc;
+}
 CAMLprim value eta_turso_extended_errcode_bc(value v_db) { return Val_int(eta_turso_extended_errcode(v_db)); }
 
 CAMLprim value eta_turso_errmsg(value v_db)
 {
   CAMLparam1(v_db);
+  CAMLlocal1(out);
   ensure_loaded();
-  sqlite3 *db = db_val(v_db);
-  CAMLreturn(caml_copy_string(db == NULL ? "closed database" : api.errmsg(db)));
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  const char *message;
+  if (!db_state_acquire(state, &db))
+    CAMLreturn(caml_copy_string("closed database"));
+  message = api.errmsg(db);
+  out = caml_copy_string(message == NULL ? "closed database" : message);
+  db_state_release(state);
+  CAMLreturn(out);
 }

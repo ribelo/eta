@@ -1,0 +1,15 @@
+(rule
+ (target libturso_sqlite3_mock.so)
+ (deps turso_mock_lib.c)
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{deps})))
+
+(test
+ (name test_turso_race)
+ (libraries eta_turso alcotest unix)
+ (deps
+  (:mock libturso_sqlite3_mock.so))
+ (action
+  (setenv ETA_TURSO_LIBRARY ./%{mock}
+   (setenv ETA_TURSO_MOCK_STATE turso_mock.state
+    (run %{test})))))

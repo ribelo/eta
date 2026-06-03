@@ -217,15 +217,20 @@ let check_turso_prepare_copies_sql_and_blocks () =
   in
   let copy = require_sub body ~needle:"sql = caml_stat_strdup(String_val(v_sql))" in
   let guard = require_sub body ~needle:"if (sql == NULL)" in
+  let acquire = require_sub body ~needle:"db_state_acquire(state, &db)" in
   let enter = require_sub body ~needle:"caml_enter_blocking_section()" in
   let prepare = require_sub body ~needle:"api.prepare_v2(db, sql" in
   let leave = require_sub body ~needle:"caml_leave_blocking_section()" in
-  let free = require_sub body ~needle:"caml_stat_free(sql)" in
+  let free = require_sub_after body ~needle:"caml_stat_free(sql)" leave in
+  let release = require_sub body ~needle:"db_state_release(state)" in
+  let state_ref = require_sub body ~needle:"db_state_ref(state)" in
   Alcotest.(check bool) "copy guard precedes prepare" true
-    (copy < guard && guard < prepare);
+    (copy < guard && guard < acquire && acquire < prepare);
   Alcotest.(check bool) "prepare runs inside blocking section" true
     (enter < prepare && prepare < leave);
-  Alcotest.(check bool) "copied SQL is freed after prepare" true (leave < free)
+  Alcotest.(check bool) "copied SQL is freed after prepare" true (leave < free);
+  Alcotest.(check bool) "prepare releases failed leases before success lease" true
+    (release < state_ref)
 
 let check_sqlite_and_turso_column_pointers_are_guarded () =
   let sqlite_source = read_file (find_sqlite_stubs_source ()) in
