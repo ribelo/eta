@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,6 +126,15 @@ typedef struct {
 
 static eta_ladybug_api api;
 static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
+static atomic_int fail_next_result_owner_alloc = 0;
+
+CAMLprim value eta_ladybug_test_fail_next_result_owner_alloc(value v_unit)
+{
+  CAMLparam1(v_unit);
+  (void)v_unit;
+  atomic_store_explicit(&fail_next_result_owner_alloc, 1, memory_order_relaxed);
+  CAMLreturn(Val_unit);
+}
 
 static void db_finalize(value v_db)
 {
@@ -251,13 +261,12 @@ static void arrow_owner_set_array(arrow_release_owner *owner)
    owned result. Hence the owner is activated before the is_success check, and
    the is_success-false path destroys through the owner.
 
-   Residual window (accepted, matches DuckDB): result_owner_alloc itself can
-   raise Out_of_memory after a successful query but before ownership transfer,
-   leaking that one stack result. This is an OOM-only corner, not the common
-   materialization/validation failure this owner exists to cover.
+   The owner is allocated before query execution, so Out_of_memory cannot occur
+   after a successful native query but before ownership transfer.
 
    Regression test: test/ladybug_leak (drives a materialize failure through a
-   mock liblbug and asserts every created query result is destroyed). */
+   mock liblbug and asserts every created query result is destroyed, including
+   owner-allocation fault injection). */
 typedef struct {
   lbug_query_result result;
   bool active;
@@ -288,6 +297,10 @@ static value result_owner_alloc(void)
   CAMLparam0();
   CAMLlocal1(v_owner);
   eta_ladybug_result_owner *owner;
+  if (atomic_exchange_explicit(&fail_next_result_owner_alloc, 0,
+                               memory_order_relaxed) != 0) {
+    caml_raise_out_of_memory();
+  }
   v_owner = caml_alloc_custom(&result_owner_ops, sizeof(eta_ladybug_result_owner), 0, 1);
   owner = result_owner_val(v_owner);
   memset(&owner->result, 0, sizeof(owner->result));
@@ -303,6 +316,14 @@ static lbug_query_result *result_owner_result(value v_owner)
 static void result_owner_activate(value v_owner)
 {
   result_owner_val(v_owner)->active = true;
+}
+
+static void result_owner_take(value v_owner, lbug_query_result *result)
+{
+  *result_owner_result(v_owner) = *result;
+  result->ptr = NULL;
+  result->owned = false;
+  result_owner_activate(v_owner);
 }
 
 static void result_owner_destroy(value v_owner)
@@ -1172,15 +1193,16 @@ static value materialize_arrow_rows(lbug_query_result *result)
   CAMLreturn(list_rev(rows));
 }
 
-static value execute_direct(value v_conn, const char *cypher)
+static value execute_direct(value v_conn, value v_cypher)
 {
-  CAMLparam1(v_conn);
+  CAMLparam2(v_conn, v_cypher);
   CAMLlocal2(out, result_owner);
   lbug_connection conn;
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
-  char *cypher_copy = caml_stat_strdup(cypher);
+  result_owner = result_owner_alloc();
+  char *cypher_copy = caml_stat_strdup(String_val(v_cypher));
   if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
   if (!conn_acquire(v_conn, &conn)) {
@@ -1193,9 +1215,7 @@ static value execute_direct(value v_conn, const char *cypher)
   conn_release(v_conn);
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
-  result_owner = result_owner_alloc();
-  *result_owner_result(result_owner) = result;
-  result_owner_activate(result_owner);
+  result_owner_take(result_owner, &result);
   if (!api.query_result_is_success(result_owner_result(result_owner))) {
     char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
@@ -1209,9 +1229,9 @@ static value execute_direct(value v_conn, const char *cypher)
   CAMLreturn(out);
 }
 
-static value execute_prepared(value v_conn, const char *cypher, value params)
+static value execute_prepared(value v_conn, value v_cypher, value params)
 {
-  CAMLparam2(v_conn, params);
+  CAMLparam3(v_conn, v_cypher, params);
   CAMLlocal2(out, result_owner);
   lbug_connection conn;
   lbug_prepared_statement stmt;
@@ -1223,7 +1243,9 @@ static value execute_prepared(value v_conn, const char *cypher, value params)
   stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
-  if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
+  result_owner = result_owner_alloc();
+  if (!string_copies_add(&copies, String_val(v_cypher), &cypher_copy))
+    caml_failwith("LadybugDB allocation failed");
   if (!conn_acquire(v_conn, &conn)) {
     string_copies_free(&copies);
     fail_connection_closed();
@@ -1265,9 +1287,7 @@ static value execute_prepared(value v_conn, const char *cypher, value params)
   api.prepared_statement_destroy(&stmt);
   string_copies_free(&copies);
   conn_release(v_conn);
-  result_owner = result_owner_alloc();
-  *result_owner_result(result_owner) = result;
-  result_owner_activate(result_owner);
+  result_owner_take(result_owner, &result);
   if (!api.query_result_is_success(result_owner_result(result_owner))) {
     char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
@@ -1285,19 +1305,20 @@ CAMLprim value eta_ladybug_query_string(value v_conn, value v_cypher, value v_pa
 {
   CAMLparam3(v_conn, v_cypher, v_params);
   ensure_loaded();
-  if (v_params == Val_emptylist) CAMLreturn(execute_direct(v_conn, String_val(v_cypher)));
-  CAMLreturn(execute_prepared(v_conn, String_val(v_cypher), v_params));
+  if (v_params == Val_emptylist) CAMLreturn(execute_direct(v_conn, v_cypher));
+  CAMLreturn(execute_prepared(v_conn, v_cypher, v_params));
 }
 
-static value execute_direct_values(value v_conn, const char *cypher)
+static value execute_direct_values(value v_conn, value v_cypher)
 {
-  CAMLparam1(v_conn);
+  CAMLparam2(v_conn, v_cypher);
   CAMLlocal2(out, result_owner);
   lbug_connection conn;
   lbug_query_result result;
   result.ptr = NULL;
   result.owned = false;
-  char *cypher_copy = caml_stat_strdup(cypher);
+  result_owner = result_owner_alloc();
+  char *cypher_copy = caml_stat_strdup(String_val(v_cypher));
   if (cypher_copy == NULL) caml_failwith("LadybugDB allocation failed");
   lbug_state state;
   if (!conn_acquire(v_conn, &conn)) {
@@ -1310,9 +1331,7 @@ static value execute_direct_values(value v_conn, const char *cypher)
   conn_release(v_conn);
   caml_stat_free(cypher_copy);
   if (state != LbugSuccess) fail_last("connection_query");
-  result_owner = result_owner_alloc();
-  *result_owner_result(result_owner) = result;
-  result_owner_activate(result_owner);
+  result_owner_take(result_owner, &result);
   if (!api.query_result_is_success(result_owner_result(result_owner))) {
     char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
@@ -1326,9 +1345,9 @@ static value execute_direct_values(value v_conn, const char *cypher)
   CAMLreturn(out);
 }
 
-static value execute_prepared_values(value v_conn, const char *cypher, value params)
+static value execute_prepared_values(value v_conn, value v_cypher, value params)
 {
-  CAMLparam2(v_conn, params);
+  CAMLparam3(v_conn, v_cypher, params);
   CAMLlocal2(out, result_owner);
   lbug_connection conn;
   lbug_prepared_statement stmt;
@@ -1340,7 +1359,9 @@ static value execute_prepared_values(value v_conn, const char *cypher, value par
   stmt.bound_values = NULL;
   result.ptr = NULL;
   result.owned = false;
-  if (!string_copies_add(&copies, cypher, &cypher_copy)) caml_failwith("LadybugDB allocation failed");
+  result_owner = result_owner_alloc();
+  if (!string_copies_add(&copies, String_val(v_cypher), &cypher_copy))
+    caml_failwith("LadybugDB allocation failed");
   if (!conn_acquire(v_conn, &conn)) {
     string_copies_free(&copies);
     fail_connection_closed();
@@ -1382,9 +1403,7 @@ static value execute_prepared_values(value v_conn, const char *cypher, value par
   api.prepared_statement_destroy(&stmt);
   string_copies_free(&copies);
   conn_release(v_conn);
-  result_owner = result_owner_alloc();
-  *result_owner_result(result_owner) = result;
-  result_owner_activate(result_owner);
+  result_owner_take(result_owner, &result);
   if (!api.query_result_is_success(result_owner_result(result_owner))) {
     char *err = api.query_result_get_error_message(result_owner_result(result_owner));
     char buffer[1024];
@@ -1402,6 +1421,6 @@ CAMLprim value eta_ladybug_query_values(value v_conn, value v_cypher, value v_pa
 {
   CAMLparam3(v_conn, v_cypher, v_params);
   ensure_loaded();
-  if (v_params == Val_emptylist) CAMLreturn(execute_direct_values(v_conn, String_val(v_cypher)));
-  CAMLreturn(execute_prepared_values(v_conn, String_val(v_cypher), v_params));
+  if (v_params == Val_emptylist) CAMLreturn(execute_direct_values(v_conn, v_cypher));
+  CAMLreturn(execute_prepared_values(v_conn, v_cypher, v_params));
 }

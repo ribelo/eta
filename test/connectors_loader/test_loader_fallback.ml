@@ -216,17 +216,21 @@ let check_foreign_strings_are_owned_before_ocaml_copy () =
     ~set_marker:"ladybug_string_owner_set(owner, s)"
     ~copy_marker:"caml_copy_string" ~release_marker:"ladybug_string_owner_release(owner)"
 
-let check_ladybug_direct_queries_check_strdup () =
+let check_ladybug_direct_queries_copy_rooted_cypher () =
   let source = read_file (find_ladybug_stubs_source ()) in
   let check_function start_marker end_marker =
     let body = function_source source ~start_marker ~end_marker in
-    let copy = require_sub body ~needle:"cypher_copy = caml_stat_strdup(cypher)" in
+    let owner = require_sub body ~needle:"result_owner = result_owner_alloc()" in
+    let copy =
+      require_sub body ~needle:"cypher_copy = caml_stat_strdup(String_val(v_cypher))"
+    in
     let guard = require_sub body ~needle:"if (cypher_copy == NULL)" in
     let acquire = require_sub body ~needle:"conn_acquire(v_conn, &conn)" in
     let query = require_sub body ~needle:"api.connection_query(&conn, cypher_copy" in
     let release = require_sub body ~needle:"conn_release(v_conn)" in
-    Alcotest.(check bool) "strdup guard precedes query" true
-      (copy < guard && guard < acquire && acquire < query && query < release)
+    Alcotest.(check bool) "owner and strdup guard precede query" true
+      (owner < copy && copy < guard && guard < acquire && acquire < query
+     && query < release)
   in
   check_function "static value execute_direct(" "static value execute_prepared(";
   check_function "static value execute_direct_values("
@@ -598,8 +602,8 @@ let () =
             check_column_name_arrays_use_write_barrier;
           Alcotest.test_case "foreign strings owned before copy" `Quick
             check_foreign_strings_are_owned_before_ocaml_copy;
-          Alcotest.test_case "Ladybug direct queries check strdup" `Quick
-            check_ladybug_direct_queries_check_strdup;
+          Alcotest.test_case "Ladybug direct queries copy rooted cypher" `Quick
+            check_ladybug_direct_queries_copy_rooted_cypher;
           Alcotest.test_case "Turso prepare copies SQL and blocks" `Quick
             check_turso_prepare_copies_sql_and_blocks;
           Alcotest.test_case "SQLite and Turso column pointers are guarded" `Quick

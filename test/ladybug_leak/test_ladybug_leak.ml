@@ -20,6 +20,9 @@ type mock_state = {
   destroyed_while_active : bool;
 }
 
+external fail_next_result_owner_alloc : unit -> unit
+  = "eta_ladybug_test_fail_next_result_owner_alloc"
+
 let read_state path =
   let ic = open_in path in
   Fun.protect
@@ -50,6 +53,11 @@ let mock_state_path () =
   match Sys.getenv_opt "ETA_LADYBUG_MOCK_STATE" with
   | Some path when path <> "" -> path
   | _ -> Alcotest.fail "ETA_LADYBUG_MOCK_STATE is not configured"
+
+let live_results path =
+  match read_state_opt path with
+  | None -> 0
+  | Some state -> state.created - state.destroyed
 
 let wait_until_active_query path =
   let deadline = Unix.gettimeofday () +. 1.0 in
@@ -98,6 +106,32 @@ let test_query_result_not_leaked_on_materialize_failure () =
     (state.created >= 1);
   Alcotest.(check int) "every created query result was destroyed (no leak)"
     state.created state.destroyed
+
+let test_query_result_not_leaked_on_owner_alloc_oom () =
+  let open Eta_ladybug in
+  (match available () with
+  | Ok () -> ()
+  | Error err -> Alcotest.failf "mock ladybug library unavailable: %a" pp_error err);
+  let state_path = mock_state_path () in
+  let live_before = live_results state_path in
+  let db =
+    match Database.open_memory () with
+    | Ok db -> db
+    | Error err -> Alcotest.failf "open_memory: %a" pp_error err
+  in
+  let conn =
+    match Connection.connect db with
+    | Ok conn -> conn
+    | Error err -> Alcotest.failf "connect: %a" pp_error err
+  in
+  fail_next_result_owner_alloc ();
+  Alcotest.check_raises "owner allocation OOM" Out_of_memory (fun () ->
+      ignore (Connection.query_string conn "RETURN 1" : (string, error) result));
+  Gc.full_major ();
+  Gc.full_major ();
+  Alcotest.(check int)
+    "native query results live after owner allocation OOM" live_before
+    (live_results state_path)
 
 let test_connection_close_waits_for_active_query () =
   let open Eta_ladybug in
@@ -180,6 +214,8 @@ let () =
         [
           Alcotest.test_case "query result not leaked on materialize failure"
             `Quick test_query_result_not_leaked_on_materialize_failure;
+          Alcotest.test_case "query result not leaked on owner alloc OOM"
+            `Quick test_query_result_not_leaked_on_owner_alloc_oom;
           Alcotest.test_case "connection close waits for active query" `Quick
             test_connection_close_waits_for_active_query;
           Alcotest.test_case "query timeout bounds caller wait" `Quick
