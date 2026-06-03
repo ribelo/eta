@@ -293,10 +293,10 @@ val race : ('a, 'err) t list -> ('a, 'err) t
     Losers' values are discarded by design. Resource lifetime is owned by
     scopes, not by race: a loser that holds its resource under
     {!acquire_release} / {!Semaphore.with_permits} has it released when it is
-    cancelled, even if it ran to completion before losing. An un-scoped
-    acquisition whose ownership is carried out through the (discarded) winning
-    value is the caller's responsibility — see {!Semaphore.acquire_or_abort}
-    for the leak-safe abortable-acquire pattern. *)
+    cancelled, even if it ran to completion before losing. An acquisition whose
+    ownership is carried through a value can be discarded by race; use
+    {!Semaphore.with_permits_or_abort} when racing permit acquisition against an
+    abort signal. *)
 
 val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
 (** Run two effects concurrently; collect both successes as a pair.

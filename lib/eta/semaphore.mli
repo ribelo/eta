@@ -38,15 +38,20 @@ val with_permits : t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effec
 (** [with_permits t n f] acquires [n] permits, runs [f ()], and releases the
     permits on exit (success, typed failure, or cancellation). *)
 
-val acquire_or_abort :
-  t -> int -> abort:('a, 'err) Effect.t -> (bool, 'err) Effect.t
-(** [acquire_or_abort t n ~abort] races acquiring [n] permits against [abort].
-    Returns [true] if the permits were acquired, or [false] if [abort] produced
-    a value first.
+val with_permits_or_abort :
+  t ->
+  int ->
+  abort:('abort, 'err) Effect.t ->
+  (unit -> ('a, 'err) Effect.t) ->
+  ('a option, 'err) Effect.t
+(** [with_permits_or_abort t n ~abort f] races acquiring [n] permits against
+    [abort]. If the permits are acquired first, [f ()] runs while holding them
+    and the result is returned as [Some value]. If [abort] produces a value
+    first, [f] is not run and the result is [None].
 
-    Unlike racing {!acquire} against a signal directly, a lost acquisition never
-    leaks capacity: if the acquisition concurrently claimed its permits but lost
-    the race, those permits are released before returning [false].
+    The permit lifetime is scoped to [f]: permits are released on success,
+    typed failure, defect, abort, or cancellation, including when an outer
+    concurrent combinator discards this effect's result.
     @raise Invalid_argument if [n <= 0] or [n] exceeds the semaphore capacity. *)
 
 val available : t -> int

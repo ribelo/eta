@@ -661,12 +661,17 @@ let () =
             test_semaphore_fifo_wakes_waiters_in_order;
           Alcotest.test_case "multi-permit contention" `Quick
             test_semaphore_multi_permit_contention;
-          Alcotest.test_case "acquire_or_abort acquires when available" `Quick
-            test_semaphore_acquire_or_abort_acquires_when_available;
-          Alcotest.test_case "acquire_or_abort aborts without permit" `Quick
-            test_semaphore_acquire_or_abort_aborts_without_permit;
-          Alcotest.test_case "acquire_or_abort reclaims claimed permit" `Quick
-            test_semaphore_acquire_or_abort_reclaims_claimed_permit_on_abort;
+          Alcotest.test_case
+            "with_permits_or_abort acquires when available" `Quick
+            test_semaphore_with_permits_or_abort_acquires_when_available;
+          Alcotest.test_case "with_permits_or_abort aborts without permit" `Quick
+            test_semaphore_with_permits_or_abort_aborts_without_permit;
+          Alcotest.test_case
+            "with_permits_or_abort reclaims claimed permit" `Quick
+            test_semaphore_with_permits_or_abort_reclaims_claimed_permit_on_abort;
+          Alcotest.test_case "with_permits_or_abort releases on outer cancel"
+            `Quick
+            test_semaphore_with_permits_or_abort_releases_on_outer_cancel;
         ] );
       ( "Upstream invariants",
         [

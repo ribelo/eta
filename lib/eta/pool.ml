@@ -184,9 +184,7 @@ type 'conn reservation =
 
 let reserve t =
   with_lock t @@ fun () ->
-  if t.shutting_down then (
-    Semaphore.release t.sem 1;
-    `Shutdown)
+  if t.shutting_down then `Shutdown
   else
     let expired = if t.expires_entries then take_expired_idle_locked t else [] in
     match expired with
@@ -202,33 +200,16 @@ let reserve t =
             t.total <- t.total + 1;
             t.active <- t.active + 1;
             `Open_new
-        | [] ->
-            Semaphore.release t.sem 1;
-            `Wait)
+        | [] -> `Wait)
 
 let wait_for_shutdown t =
   Effect.sync (fun () -> Eio.Promise.await t.shutdown_requested)
-
-let acquire_permit t =
-  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down))
-  |> Effect.bind (function
-       | true -> Effect.fail `Pool_shutdown
-       | false ->
-           (* Race admission against shutdown. [acquire_or_abort] guarantees the
-              permit is reclaimed if shutdown wins the race after the permit was
-              already claimed, so a shutdown that coincides with permit grant
-              never leaks pool capacity. *)
-           Semaphore.acquire_or_abort t.sem 1 ~abort:(wait_for_shutdown t)
-           |> Effect.bind (function
-                | true -> Effect.unit
-                | false -> Effect.fail `Pool_shutdown))
 
 let mark_open_failed t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
   decr_active_locked t;
-  decr_total_locked t;
-  Semaphore.release t.sem 1
+  decr_total_locked t
 
 let mark_opened t =
   Effect.sync @@ fun () ->
@@ -359,7 +340,7 @@ let mark_released_to_close t =
 let mark_active_close_finished t =
   mark_released_to_close t |> Effect.bind (fun () -> emit_gauges t)
 
-let release_entry t entry =
+let release_entry ?(release_permit = true) t entry =
   let decide =
     Effect.sync @@ fun () ->
     let now = if t.expires_entries then now_ms () else 0 in
@@ -385,20 +366,22 @@ let release_entry t entry =
   decide
   |> Effect.bind (function
        | `Keep ->
-           Semaphore.release t.sem 1;
+           if release_permit then Semaphore.release t.sem 1;
            emit_gauges t
        | `Close ->
            emit_gauges t
            |> Effect.bind (fun () ->
-                  close_entry t entry |> Effect.finally (mark_active_close_finished t)))
+                  close_entry ~release_permit t entry
+                  |> Effect.finally (mark_active_close_finished t)))
 
-let reject_entry t entry =
+let reject_entry ?(release_permit = true) t entry =
   mark_health_rejected t
   |> Effect.bind (fun () -> log t "eta.pool.health_rejected")
   |> Effect.bind (fun () -> emit_health_rejected t)
   |> Effect.bind (fun () -> emit_gauges t)
   |> Effect.bind (fun () ->
-         close_entry t entry |> Effect.finally (mark_active_close_finished t))
+         close_entry ~release_permit t entry
+         |> Effect.finally (mark_active_close_finished t))
 
 let check_health t entry =
   span t "eta.pool.health_check" (t.health_check entry.conn)
@@ -410,9 +393,7 @@ let make_entry t conn =
   { conn; created_ms = now; last_used_ms = now }
 
 type 'conn acquisition_state =
-  | Acquire_permit
   | Reserve_slot
-  | Wait_for_permit
   | Close_expired_entries of 'conn entry list
   | Check_reserved_entry of 'conn entry
   | Open_entry
@@ -437,23 +418,19 @@ let with_fixed_acquire_guard release f =
     |> Effect.bind (fun () -> f ~disarm))
 
 let close_acquired_entry t entry =
-  close_entry t entry |> Effect.finally (mark_active_close_finished t)
-
-let release_admission_permit t =
-  Effect.sync (fun () -> Semaphore.release t.sem 1)
+  close_entry ~release_permit:false t entry
+  |> Effect.finally (mark_active_close_finished t)
 
 let close_expired_entries_before_retry t entries =
-  with_fixed_acquire_guard
-    (fun () -> release_admission_permit t)
-    (fun ~disarm ->
-      close_entries ~release_permit:false t entries
-      |> Effect.map (fun () ->
-             disarm ();
-             Reserve_slot))
+  close_entries ~release_permit:false t entries
+  |> Effect.map (fun () -> Reserve_slot)
 
 let state_of_reservation = function
   | `Shutdown -> Effect.fail `Pool_shutdown
-  | `Wait -> Effect.pure Wait_for_permit
+  | `Wait ->
+      Effect.sync (fun () ->
+          invalid_arg
+            "Eta.Pool invariant violated: admitted checkout had no reservable slot")
   | `Close_expired entries -> Effect.pure (Close_expired_entries entries)
   | `Use entry -> Effect.pure (Check_reserved_entry entry)
   | `Open_new -> Effect.pure Open_entry
@@ -464,7 +441,8 @@ let health_transition t ~disarm = function
       emit_gauges t |> Effect.map (fun () -> Entry_acquired entry)
   | `Rejected entry ->
       disarm ();
-      reject_entry t entry |> Effect.map (fun () -> Acquire_permit)
+      reject_entry ~release_permit:false t entry
+      |> Effect.map (fun () -> Reserve_slot)
 
 let check_reserved_entry t entry =
   with_fixed_acquire_guard
@@ -489,10 +467,8 @@ let open_entry t =
       t.acquire_conn |> Effect.bind (after_open ~disarm ~set_release))
 
 let next_state t = function
-  | Acquire_permit -> acquire_permit t |> Effect.map (fun () -> Reserve_slot)
   | Reserve_slot ->
       Effect.sync (fun () -> reserve t) |> Effect.bind state_of_reservation
-  | Wait_for_permit -> acquire_permit t |> Effect.map (fun () -> Reserve_slot)
   | Close_expired_entries entries ->
       close_expired_entries_before_retry t entries
   | Check_reserved_entry entry -> check_reserved_entry t entry
@@ -505,14 +481,25 @@ let rec run_acquisition t state =
        | Entry_acquired entry -> Effect.pure entry
        | next -> run_acquisition t next)
 
-let acquire_entry t = run_acquisition t Acquire_permit
+let acquire_entry t = run_acquisition t Reserve_slot
 
 let with_resource t body =
-  Effect.scoped
-    (Effect.acquire_release
-       ~acquire:(span t "eta.pool.acquire" (acquire_entry t))
-       ~release:(release_entry t)
-    |> Effect.bind (fun entry -> body entry.conn))
+  let checkout =
+    Effect.scoped
+      (Effect.acquire_release
+         ~acquire:(span t "eta.pool.acquire" (acquire_entry t))
+         ~release:(release_entry ~release_permit:false t)
+      |> Effect.bind (fun entry -> body entry.conn))
+  in
+  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down))
+  |> Effect.bind (function
+       | true -> Effect.fail `Pool_shutdown
+       | false ->
+           Semaphore.with_permits_or_abort t.sem 1
+             ~abort:(wait_for_shutdown t) (fun () -> checkout)
+           |> Effect.bind (function
+                | Some value -> Effect.pure value
+                | None -> Effect.fail `Pool_shutdown))
 
 let evict_idle_once t =
   let expired =

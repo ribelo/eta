@@ -284,18 +284,25 @@ let test_semaphore_multi_permit_contention () =
   ignore (Eio.Promise.await h2 : (unit, _) Exit.t);
   Alcotest.(check int) "final available" 5 (Semaphore.available sem)
 
-let test_semaphore_acquire_or_abort_acquires_when_available () =
+let test_semaphore_with_permits_or_abort_acquires_when_available () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:1 in
   let never =
     let p, _ = Eio.Promise.create () in
     Effect.sync (fun () -> Eio.Promise.await p)
   in
-  let acquired = run_ok rt (Semaphore.acquire_or_abort sem 1 ~abort:never) in
-  Alcotest.(check bool) "acquired" true acquired;
-  Alcotest.(check int) "permit consumed" 0 (Semaphore.available sem)
+  let observed =
+    run_ok rt
+      (Semaphore.with_permits_or_abort sem 1 ~abort:never (fun () ->
+           Effect.sync (fun () -> Semaphore.available sem)))
+  in
+  (match observed with
+  | Some available ->
+      Alcotest.(check int) "permit held in body" 0 available
+  | None -> Alcotest.fail "expected permit body to run");
+  Alcotest.(check int) "permit released after body" 1 (Semaphore.available sem)
 
-let test_semaphore_acquire_or_abort_aborts_without_permit () =
+let test_semaphore_with_permits_or_abort_aborts_without_permit () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
@@ -303,18 +310,21 @@ let test_semaphore_acquire_or_abort_aborts_without_permit () =
   run_ok rt (Semaphore.acquire sem 1);
   let abort_p, abort_u = Eio.Promise.create () in
   let abort = Effect.sync (fun () -> Eio.Promise.await abort_p) in
-  let result = fork_run sw rt (Semaphore.acquire_or_abort sem 1 ~abort) in
+  let result =
+    fork_run sw rt
+      (Semaphore.with_permits_or_abort sem 1 ~abort (fun () -> Effect.unit))
+  in
   wait_until (fun () -> Semaphore.waiting sem = 1);
   Eio.Promise.resolve abort_u ();
   (match Eio.Promise.await result with
-  | Exit.Ok false -> ()
-  | Exit.Ok true -> Alcotest.fail "expected abort to win"
+  | Exit.Ok None -> ()
+  | Exit.Ok (Some ()) -> Alcotest.fail "expected abort to win"
   | Exit.Error _ -> Alcotest.fail "unexpected error");
   Alcotest.(check int) "no waiter left" 0 (Semaphore.waiting sem);
   Alcotest.(check int) "no permit consumed by aborted acquire" 0
     (Semaphore.available sem)
 
-let test_semaphore_acquire_or_abort_reclaims_claimed_permit_on_abort () =
+let test_semaphore_with_permits_or_abort_reclaims_claimed_permit_on_abort () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
@@ -322,7 +332,10 @@ let test_semaphore_acquire_or_abort_reclaims_claimed_permit_on_abort () =
   run_ok rt (Semaphore.acquire sem 1);
   let abort_p, abort_u = Eio.Promise.create () in
   let abort = Effect.sync (fun () -> Eio.Promise.await abort_p) in
-  let result = fork_run sw rt (Semaphore.acquire_or_abort sem 1 ~abort) in
+  let result =
+    fork_run sw rt
+      (Semaphore.with_permits_or_abort sem 1 ~abort (fun () -> Effect.unit))
+  in
   wait_until (fun () -> Semaphore.waiting sem = 1);
   (* Drive the leak interleaving: signal the abort first so its race branch is
      scheduled ahead of the woken acquirer, then release the permit so the
@@ -332,8 +345,38 @@ let test_semaphore_acquire_or_abort_reclaims_claimed_permit_on_abort () =
   Eio.Promise.resolve abort_u ();
   Semaphore.release sem 1;
   (match Eio.Promise.await result with
-  | Exit.Ok false -> ()
-  | Exit.Ok true -> Alcotest.fail "expected abort to win"
+  | Exit.Ok None -> ()
+  | Exit.Ok (Some ()) -> Alcotest.fail "expected abort to win"
   | Exit.Error _ -> Alcotest.fail "unexpected error");
   Alcotest.(check int) "claimed permit reclaimed, none leaked" 1
+    (Semaphore.available sem)
+
+let test_semaphore_with_permits_or_abort_releases_on_outer_cancel () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sem = Semaphore.make ~permits:1 in
+  let never_p, _ = Eio.Promise.create () in
+  let never = Effect.sync (fun () -> Eio.Promise.await never_p) in
+  let observe_claim =
+    Effect.sync (fun () ->
+        while Semaphore.available sem > 0 do
+          Eio.Fiber.yield ()
+        done;
+        `Observed_claim)
+  in
+  let acquire =
+    Semaphore.with_permits_or_abort sem 1 ~abort:never (fun () -> never)
+    |> Effect.map (function Some () -> `Acquired | None -> `Aborted)
+  in
+  let result = Runtime.run rt (Effect.race [ observe_claim; acquire ]) in
+  (match result with
+  | Exit.Ok `Observed_claim -> ()
+  | Exit.Ok `Acquired -> Alcotest.fail "acquire branch unexpectedly won"
+  | Exit.Ok `Aborted -> Alcotest.fail "abort branch unexpectedly won"
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected error: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<sem>"))
+        cause);
+  Alcotest.(check int) "discarded claimed permit released" 1
     (Semaphore.available sem)
