@@ -227,6 +227,25 @@ let test_flat_map_par_concurrency () =
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
         cause
 
+let test_flat_map_par_inner_failure_does_not_deadlock () =
+  with_runtime @@ fun _env rt ->
+  let stream =
+    Eta_stream.Stream.range ~start:1 ~stop:10
+    |> Eta_stream.Stream.flat_map_par ~max_concurrency:1 (fun value ->
+           if value = 1 then Eta_stream.Stream.fail `Boom
+           else Eta_stream.Stream.succeed value)
+  in
+  let eff =
+    run_drain stream |> Effect.timeout_as (Duration.ms 1_000) ~on_timeout:`Timed_out
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail `Boom) -> ()
+  | Exit.Ok () -> Alcotest.fail "flat_map_par inner failure unexpectedly succeeded"
+  | Exit.Error cause ->
+      Alcotest.failf "flat_map_par inner failure produced unexpected cause: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause
+
 let test_bounded_queue_no_deadlock () =
   with_runtime @@ fun _env rt ->
   let left = delayed_counted_source (ref 0) in
@@ -424,6 +443,8 @@ let suite =
         test_merge_cancellation;
       Alcotest.test_case "flat_map_par is bounded concurrent" `Quick
         test_flat_map_par_concurrency;
+      Alcotest.test_case "flat_map_par inner failure does not deadlock" `Quick
+        test_flat_map_par_inner_failure_does_not_deadlock;
       Alcotest.test_case "bounded queue no deadlock on early stop" `Quick
         test_bounded_queue_no_deadlock;
       Alcotest.test_case "explicit deps/error rows compose" `Quick

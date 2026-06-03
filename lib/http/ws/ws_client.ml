@@ -21,7 +21,7 @@ type t = {
   flow : flow;
   incoming : (message, ws_error) Queue.t;
   write_mutex : Eio.Mutex.t;
-  mutable close_sent : bool;
+  close_sent : bool Atomic.t;
   selected_protocol : string option;
 }
 
@@ -322,10 +322,9 @@ let random_mask () = Openssl.random_bytes 4
 let send_frame_sync ?(allow_after_close = false) t frame =
   try
     with_write_lock t @@ fun () ->
-    (* close_sent is guarded by the write mutex because a sender can queue on
-       the mutex before close starts; it still must not write after close has
-       flipped the state. *)
-    if t.close_sent && not allow_after_close then
+    (* [close_sent] is atomic because close publishes before waiting on the
+       write mutex; queued senders must observe it after taking the lock. *)
+    if Atomic.get t.close_sent && not allow_after_close then
       Error (`Closed (1000, "WebSocket is closing"))
     else
       let encoded = Codec.encode ~mask:(random_mask ()) frame in
@@ -356,7 +355,7 @@ let send_close_frame_sync ?code ?reason t =
   match close_payload ?code ?reason () with
   | Error _ as error -> error
   | Ok payload ->
-      t.close_sent <- true;
+      Atomic.set t.close_sent true;
       send_frame_sync ~allow_after_close:true t
         { Codec.fin = true; opcode = Close; payload }
 
@@ -456,7 +455,7 @@ let make_connection ~flow ~selected_protocol ~max_frame_size initial =
       flow;
       incoming = Queue.create ();
       write_mutex = Eio.Mutex.create ();
-      close_sent = false;
+      close_sent = Atomic.make false;
       selected_protocol;
     }
   in

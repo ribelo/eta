@@ -256,8 +256,6 @@ static struct custom_operations data_chunk_owner_ops = {
 
 static duckdb_database db_val(value v) { return ((eta_duckdb_db *)Data_custom_val(v))->db; }
 static duckdb_connection conn_val(value v) { return ((eta_duckdb_conn *)Data_custom_val(v))->conn; }
-static duckdb_appender appender_val(value v) { return ((eta_duckdb_appender *)Data_custom_val(v))->appender; }
-
 static void appender_destroy_blocking(eta_duckdb_appender *appender)
 {
   if (appender->appender != NULL) {
@@ -548,12 +546,12 @@ CAMLprim value eta_duckdb_close_database(value v_db)
 {
   CAMLparam1(v_db);
   ensure_loaded();
-  eta_duckdb_db *db = (eta_duckdb_db *)Data_custom_val(v_db);
-  if (db->db != NULL) {
+  duckdb_database db = db_val(v_db);
+  if (db != NULL) {
     caml_enter_blocking_section();
-    api.close(&db->db);
+    api.close(&db);
     caml_leave_blocking_section();
-    db->db = NULL;
+    ((eta_duckdb_db *)Data_custom_val(v_db))->db = db;
   }
   CAMLreturn(Val_unit);
 }
@@ -579,12 +577,12 @@ CAMLprim value eta_duckdb_disconnect(value v_conn)
 {
   CAMLparam1(v_conn);
   ensure_loaded();
-  eta_duckdb_conn *conn = (eta_duckdb_conn *)Data_custom_val(v_conn);
-  if (conn->conn != NULL) {
+  duckdb_connection conn = conn_val(v_conn);
+  if (conn != NULL) {
     caml_enter_blocking_section();
-    api.disconnect(&conn->conn);
+    api.disconnect(&conn);
     caml_leave_blocking_section();
-    conn->conn = NULL;
+    ((eta_duckdb_conn *)Data_custom_val(v_conn))->conn = conn;
   }
   CAMLreturn(Val_unit);
 }
@@ -1313,13 +1311,16 @@ CAMLprim value eta_duckdb_appender_flush(value v_appender)
 {
   CAMLparam1(v_appender);
   ensure_loaded();
-  if (appender_val(v_appender) == NULL) caml_failwith("duckdb appender is closed");
+  eta_duckdb_appender *appender_block =
+    (eta_duckdb_appender *)Data_custom_val(v_appender);
+  duckdb_appender appender = appender_block->appender;
+  if (appender == NULL) caml_failwith("duckdb appender is closed");
   int rc;
   caml_enter_blocking_section();
-  rc = api.appender_flush(appender_val(v_appender));
+  rc = api.appender_flush(appender);
   caml_leave_blocking_section();
   if (rc != 0) {
-    appender_destroy_blocking((eta_duckdb_appender *)Data_custom_val(v_appender));
+    appender_destroy_blocking(appender_block);
     caml_failwith("duckdb_appender_flush failed");
   }
   CAMLreturn(Val_unit);

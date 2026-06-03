@@ -315,6 +315,49 @@ let check_interrupts_lock_native_handles () =
     ~close_marker:"api.connection_destroy(&conn)"
     ~interrupt_marker:"api.connection_interrupt(&conn)"
 
+let check_cleanup_handles_survive_blocking_sections () =
+  let check_native_state source ~state_helper ~close_start ~close_end =
+    ignore (require_sub source ~needle:state_helper : int);
+    let body = function_source source ~start_marker:close_start ~end_marker:close_end in
+    let state = require_sub body ~needle:state_helper in
+    let enter = require_sub body ~needle:"caml_enter_blocking_section();" in
+    let leave = require_sub body ~needle:"caml_leave_blocking_section();" in
+    Alcotest.(check bool) "stable state loaded before blocking" true
+      (state < enter);
+    match find_sub_from body ~needle:"Data_custom_val" enter with
+    | Some index when index < leave ->
+        Alcotest.fail "close touches OCaml custom block inside blocking section"
+    | _ -> ()
+  in
+  check_native_state (read_file (find_sqlite_stubs_source ()))
+    ~state_helper:"eta_sqlite_db_state_val(v_db)"
+    ~close_start:"CAMLprim intnat eta_sqlite_close("
+    ~close_end:"CAMLprim value eta_sqlite_close_bc(";
+  check_native_state (read_file (find_turso_stubs_source ()))
+    ~state_helper:"eta_turso_db_state_val(v_db)"
+    ~close_start:"CAMLprim intnat eta_turso_close("
+    ~close_end:"CAMLprim value eta_turso_close_bc(";
+  let duckdb_source = read_file (find_duckdb_stubs_source ()) in
+  let check_duckdb_close ~start_marker ~end_marker ~safe_call ~unsafe_call =
+    let body = function_source duckdb_source ~start_marker ~end_marker in
+    let enter = require_sub body ~needle:"caml_enter_blocking_section();" in
+    let safe = require_sub body ~needle:safe_call in
+    Alcotest.(check bool) "close uses local handle in blocking section" true
+      (enter < safe);
+    match find_sub body ~needle:unsafe_call with
+    | None -> ()
+    | Some _ -> Alcotest.fail "close passes OCaml custom-block field to C API"
+  in
+  check_duckdb_close
+    ~start_marker:"CAMLprim value eta_duckdb_close_database("
+    ~end_marker:"CAMLprim value eta_duckdb_connect("
+    ~safe_call:"api.close(&db)" ~unsafe_call:"api.close(&db->db)";
+  check_duckdb_close
+    ~start_marker:"CAMLprim value eta_duckdb_disconnect("
+    ~end_marker:"CAMLprim value eta_duckdb_query("
+    ~safe_call:"api.disconnect(&conn)"
+    ~unsafe_call:"api.disconnect(&conn->conn)"
+
 let check_duckdb_available () =
   match Eta_duckdb.available () with
   | Ok () -> ()
@@ -414,6 +457,23 @@ let check_duckdb_appender_does_not_expose_ocaml_buffers () =
           Alcotest.(check string) "text unchanged" "Ada" text;
           Alcotest.(check string) "blob unchanged" "blob" (Bytes.to_string blob)))
 
+let check_duckdb_appender_flush_extracts_handle_before_blocking () =
+  let source = read_file (find_duckdb_stubs_source ()) in
+  let body =
+    function_source source
+      ~start_marker:"CAMLprim value eta_duckdb_appender_flush("
+      ~end_marker:"CAMLprim value eta_duckdb_appender_close("
+  in
+  let extract = require_sub body ~needle:"duckdb_appender appender =" in
+  let enter = require_sub body ~needle:"caml_enter_blocking_section();" in
+  let flush = require_sub body ~needle:"api.appender_flush(appender)" in
+  Alcotest.(check bool) "handle extracted before blocking" true
+    (extract < enter);
+  Alcotest.(check bool) "flush uses extracted handle" true (enter < flush);
+  match find_sub_from body ~needle:"appender_val(v_appender)" enter with
+  | None -> ()
+  | Some _ -> Alcotest.fail "appender flush touches OCaml value in blocking section"
+
 let check_duckdb_blob_result_survives_driver_free_gc () =
   with_duckdb_conn (fun conn ->
       let rows = Eta_duckdb.Connection.query conn "SELECT payload" [] |> duckdb_ok in
@@ -446,6 +506,8 @@ let () =
             check_duckdb_prepared_query_does_not_expose_ocaml_buffers;
           Alcotest.test_case "DuckDB appender copies buffers" `Quick
             check_duckdb_appender_does_not_expose_ocaml_buffers;
+          Alcotest.test_case "DuckDB appender flush extracts handle" `Quick
+            check_duckdb_appender_flush_extracts_handle_before_blocking;
           Alcotest.test_case "DuckDB blob survives driver free GC" `Quick
             check_duckdb_blob_result_survives_driver_free_gc;
           Alcotest.test_case "DuckDB bind params root list cursor" `Quick
@@ -470,5 +532,7 @@ let () =
             check_sqlite_and_turso_column_pointers_are_guarded;
           Alcotest.test_case "interrupt locks native handles" `Quick
             check_interrupts_lock_native_handles;
+          Alcotest.test_case "cleanup handles survive blocking sections" `Quick
+            check_cleanup_handles_survive_blocking_sections;
         ] );
     ]

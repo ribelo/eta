@@ -218,6 +218,8 @@ let () =
             test_ws_send_text_masks_client_frame;
           Alcotest.test_case "queued send observes close" `Quick
             test_ws_queued_send_observes_close_sent;
+          Alcotest.test_case "close sent is atomic" `Quick
+            test_ws_close_sent_uses_atomic_state;
           Alcotest.test_case "ping is internal and sends pong" `Quick
             test_ws_ping_is_internal_and_pong_is_sent;
           Alcotest.test_case "1011 close fails inbound stream" `Quick

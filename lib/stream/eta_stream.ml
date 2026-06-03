@@ -734,6 +734,17 @@ and fold_flat_map_par :
                 await_all rest
           in
           let* workers = start_workers max_concurrency [] in
+          let stop_outer_producer () =
+            lift
+              (Eta.Effect.named "Eta_stream.flat_map_par.stop_outer" (Eta.Effect.sync (fun () ->
+                   Atomic.set stopped true;
+                   let rec drain_outer () =
+                     match Eio.Stream.take_nonblocking outer_queue with
+                     | None -> ()
+                     | Some _ -> drain_outer ()
+                   in
+                   drain_outer ())))
+          in
           let cancel_everything () =
             let () = Atomic.set stopped true in
             let* () = cancel outer_child in
@@ -753,8 +764,9 @@ and fold_flat_map_par :
             cancel_all workers
           in
           let await_everything () =
-            let* () = await outer_child in
-            await_all workers
+            let* () = stop_outer_producer () in
+            let* () = await_all workers in
+            await outer_child
           in
           let rec consume remaining_workers acc =
             if remaining_workers = 0 then

@@ -17,10 +17,14 @@
    runtime-loading contract; keep shared SQL behavior in OCaml modules instead
    of hiding these different foreign contracts behind one C extension. */
 
-typedef struct {
+typedef struct eta_sqlite_db_state {
   sqlite3 *db;
   pthread_mutex_t mutex;
   int mutex_initialized;
+} eta_sqlite_db_state;
+
+typedef struct {
+  eta_sqlite_db_state *state;
 } eta_sqlite_db;
 
 typedef struct {
@@ -33,7 +37,9 @@ typedef struct {
 
 static void eta_sqlite_finalize_db(value v_db)
 {
-  eta_sqlite_db *db = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db *slot = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db_state *db = slot->state;
+  if (db == NULL) return;
   if (db->mutex_initialized) pthread_mutex_lock(&db->mutex);
   if (db->db != NULL) {
     /* Custom finalizers run from the OCaml runtime's finalization path; entering
@@ -48,6 +54,8 @@ static void eta_sqlite_finalize_db(value v_db)
     pthread_mutex_destroy(&db->mutex);
     db->mutex_initialized = 0;
   }
+  free(db);
+  slot->state = NULL;
 }
 
 static void eta_sqlite_finalize_stmt(value v_stmt)
@@ -135,21 +143,34 @@ static void sqlite_string_owner_release(value v_owner)
   }
 }
 
-static sqlite3 *eta_sqlite_db_val(value v_db)
+static eta_sqlite_db_state *eta_sqlite_db_state_val(value v_db)
 {
   eta_sqlite_db *db = (eta_sqlite_db *)Data_custom_val(v_db);
-  return db->db;
+  return db->state;
+}
+
+static sqlite3 *eta_sqlite_db_val(value v_db)
+{
+  eta_sqlite_db_state *db = eta_sqlite_db_state_val(v_db);
+  return db == NULL ? NULL : db->db;
 }
 
 static void eta_sqlite_db_init(value v_db)
 {
-  eta_sqlite_db *db = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db *slot = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db_state *db = malloc(sizeof(eta_sqlite_db_state));
+  slot->state = NULL;
+  if (db == NULL) {
+    caml_failwith("sqlite open: state allocation failed");
+  }
   db->db = NULL;
   db->mutex_initialized = 0;
   if (pthread_mutex_init(&db->mutex, NULL) != 0) {
+    free(db);
     caml_failwith("sqlite open: mutex init failed");
   }
   db->mutex_initialized = 1;
+  slot->state = db;
 }
 
 static sqlite3_stmt *eta_sqlite_stmt_val(value v_stmt)
@@ -293,7 +314,7 @@ CAMLprim value eta_sqlite_open(value v_path, intnat mode)
     caml_failwith(buffer);
   }
 
-  ((eta_sqlite_db *)Data_custom_val(v_block))->db = db;
+  eta_sqlite_db_state_val(v_block)->db = db;
   CAMLreturn(v_block);
 }
 
@@ -305,9 +326,12 @@ CAMLprim value eta_sqlite_open_bc(value v_path, value v_mode)
 CAMLprim intnat eta_sqlite_close(value v_db)
 {
   CAMLparam1(v_db);
-  eta_sqlite_db *slot = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db_state *slot = eta_sqlite_db_state_val(v_db);
   sqlite3 *db;
   int rc;
+  if (slot == NULL) {
+    CAMLreturnT(intnat, SQLITE_OK);
+  }
   pthread_mutex_lock(&slot->mutex);
   db = slot->db;
   if (db == NULL) {
@@ -950,8 +974,11 @@ CAMLprim value eta_sqlite_database_readonly_bc(value v_db, value v_name)
 
 CAMLprim value eta_sqlite_interrupt(value v_db)
 {
-  eta_sqlite_db *slot = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db_state *slot = eta_sqlite_db_state_val(v_db);
   sqlite3 *db;
+  if (slot == NULL) {
+    return Val_unit;
+  }
   pthread_mutex_lock(&slot->mutex);
   db = slot->db;
   if (db != NULL) {
@@ -963,9 +990,12 @@ CAMLprim value eta_sqlite_interrupt(value v_db)
 
 CAMLprim value eta_sqlite_is_interrupted(value v_db)
 {
-  eta_sqlite_db *slot = (eta_sqlite_db *)Data_custom_val(v_db);
+  eta_sqlite_db_state *slot = eta_sqlite_db_state_val(v_db);
   sqlite3 *db;
   value result;
+  if (slot == NULL) {
+    return Val_false;
+  }
   pthread_mutex_lock(&slot->mutex);
   db = slot->db;
   if (db == NULL) {

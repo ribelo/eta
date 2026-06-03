@@ -44,10 +44,14 @@
 typedef struct sqlite3 sqlite3;
 typedef struct sqlite3_stmt sqlite3_stmt;
 
-typedef struct {
+typedef struct eta_turso_db_state {
   sqlite3 *db;
   pthread_mutex_t mutex;
   int mutex_initialized;
+} eta_turso_db_state;
+
+typedef struct {
+  eta_turso_db_state *state;
 } eta_turso_db;
 typedef struct { sqlite3_stmt *stmt; sqlite3 *db; } eta_turso_stmt;
 
@@ -87,7 +91,9 @@ static pthread_mutex_t api_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void eta_turso_db_finalize(value v_db)
 {
-  eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db *slot = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db_state *db = slot->state;
+  if (db == NULL) return;
   if (db->mutex_initialized) pthread_mutex_lock(&db->mutex);
   if (db->db != NULL && api.loaded) {
     /* OCaml custom finalizers cannot safely enter blocking sections; explicit
@@ -100,6 +106,8 @@ static void eta_turso_db_finalize(value v_db)
     pthread_mutex_destroy(&db->mutex);
     db->mutex_initialized = 0;
   }
+  free(db);
+  slot->state = NULL;
 }
 
 static void eta_turso_stmt_finalize(value v_stmt)
@@ -135,18 +143,35 @@ static struct custom_operations eta_turso_stmt_ops = {
   custom_fixed_length_default
 };
 
-static sqlite3 *db_val(value v_db) { return ((eta_turso_db *)Data_custom_val(v_db))->db; }
+static eta_turso_db_state *eta_turso_db_state_val(value v_db)
+{
+  eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
+  return db->state;
+}
+
+static sqlite3 *db_val(value v_db)
+{
+  eta_turso_db_state *db = eta_turso_db_state_val(v_db);
+  return db == NULL ? NULL : db->db;
+}
 static sqlite3_stmt *stmt_val(value v_stmt) { return ((eta_turso_stmt *)Data_custom_val(v_stmt))->stmt; }
 
 static void db_init(value v_db)
 {
-  eta_turso_db *db = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db *slot = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db_state *db = malloc(sizeof(eta_turso_db_state));
+  slot->state = NULL;
+  if (db == NULL) {
+    caml_failwith("turso open: state allocation failed");
+  }
   db->db = NULL;
   db->mutex_initialized = 0;
   if (pthread_mutex_init(&db->mutex, NULL) != 0) {
+    free(db);
     caml_failwith("turso open: mutex init failed");
   }
   db->mutex_initialized = 1;
+  slot->state = db;
 }
 
 static void fail_closed_handle(const char *operation)
@@ -289,7 +314,7 @@ CAMLprim value eta_turso_open(value v_path, intnat mode)
     if (db != NULL) (void)api.close_v2(db);
     caml_failwith(buffer);
   }
-  ((eta_turso_db *)Data_custom_val(v_block))->db = db;
+  eta_turso_db_state_val(v_block)->db = db;
   CAMLreturn(v_block);
 }
 
@@ -299,9 +324,12 @@ CAMLprim intnat eta_turso_close(value v_db)
 {
   CAMLparam1(v_db);
   ensure_loaded();
-  eta_turso_db *slot = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db_state *slot = eta_turso_db_state_val(v_db);
   sqlite3 *db;
   int rc;
+  if (slot == NULL) {
+    CAMLreturnT(intnat, SQLITE_OK);
+  }
   pthread_mutex_lock(&slot->mutex);
   db = slot->db;
   if (db == NULL) {
@@ -322,8 +350,11 @@ CAMLprim value eta_turso_interrupt(value v_db)
 {
   CAMLparam1(v_db);
   ensure_loaded();
-  eta_turso_db *slot = (eta_turso_db *)Data_custom_val(v_db);
+  eta_turso_db_state *slot = eta_turso_db_state_val(v_db);
   sqlite3 *db;
+  if (slot == NULL) {
+    CAMLreturn(Val_unit);
+  }
   pthread_mutex_lock(&slot->mutex);
   db = slot->db;
   if (db != NULL) api.interrupt(db);

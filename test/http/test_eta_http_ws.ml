@@ -136,6 +136,34 @@ let header_value name raw =
                   |> String.trim)
              else None)
 
+let read_file path =
+  let input = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input)
+    (fun () -> really_input_string input (in_channel_length input))
+
+let rec contains_from haystack ~needle index =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  if index + needle_len > haystack_len then false
+  else if String.sub haystack index needle_len = needle then true
+  else contains_from haystack ~needle (index + 1)
+
+let contains haystack needle = contains_from haystack ~needle 0
+
+let find_ws_client_source () =
+  let candidates =
+    [
+      "lib/http/ws/ws_client.ml";
+      "../lib/http/ws/ws_client.ml";
+      "../../lib/http/ws/ws_client.ml";
+      "../../../lib/http/ws/ws_client.ml";
+    ]
+  in
+  match List.find_opt Sys.file_exists candidates with
+  | Some path -> path
+  | None -> Alcotest.failf "could not locate ws_client.ml from %s" (Sys.getcwd ())
+
 let has_suffix suffix value =
   let suffix_len = String.length suffix in
   let value_len = String.length value in
@@ -456,6 +484,17 @@ let test_ws_queued_send_observes_close_sent () =
     "client frames"
     [ Eta_http.Ws.Codec.opcode_to_int Text; Eta_http.Ws.Codec.opcode_to_int Close ]
     (List.map Eta_http.Ws.Codec.opcode_to_int opcodes)
+
+let test_ws_close_sent_uses_atomic_state () =
+  let source = read_file (find_ws_client_source ()) in
+  Alcotest.(check bool) "atomic close_sent field" true
+    (contains source "close_sent : bool Atomic.t;");
+  Alcotest.(check bool) "atomic close_sent read" true
+    (contains source "Atomic.get t.close_sent");
+  Alcotest.(check bool) "atomic close_sent publish" true
+    (contains source "Atomic.set t.close_sent true");
+  Alcotest.(check bool) "no mutable close_sent assignment" false
+    (contains source "t.close_sent <-")
 
 let test_ws_ping_is_internal_and_pong_is_sent () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
