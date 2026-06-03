@@ -204,6 +204,43 @@ let test_merge_cancellation () =
   Alcotest.(check bool) "right cancelled before full production" true
     (!right_count < 1_000)
 
+let test_merge_child_failure_does_not_wait_for_full_queue () =
+  with_runtime @@ fun _env rt ->
+  let filled, filled_resolver = Eio.Promise.create () in
+  let signaled = Atomic.make false in
+  let left =
+    Eta_stream.Stream.from_iterable (List.init 2_000 (fun i -> i))
+    |> Eta_stream.Stream.map_effect (fun value ->
+           Effect.sync (fun () ->
+               if value = 1_024 && Atomic.compare_and_set signaled false true
+               then Eio.Promise.resolve filled_resolver ();
+               value))
+  in
+  let right =
+    Eta_stream.Stream.from_effect
+      (Effect.sync (fun () -> Eio.Promise.await filled)
+      |> Effect.bind (fun () -> Effect.fail `Boom))
+  in
+  let slow_drain =
+    Eta_stream.Sink.fold_effect
+      (fun () _ -> Effect.delay (Duration.ms 1) Effect.unit)
+      ()
+  in
+  let eff =
+    Eta_stream.Stream.merge left right
+    |> fun stream -> run stream slow_drain
+    |> Effect.timeout_as (Duration.ms 500) ~on_timeout:`Timed_out
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail `Boom) -> ()
+  | Exit.Error (Cause.Fail `Timed_out) ->
+      Alcotest.fail "merge child failure waited behind a full queue"
+  | Exit.Ok () -> Alcotest.fail "merge unexpectedly succeeded"
+  | Exit.Error cause ->
+      Alcotest.failf "merge produced unexpected cause: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause
+
 let test_flat_map_par_concurrency () =
   with_runtime @@ fun _env rt ->
   let input = Eta_stream.Stream.from_iterable (List.init 100 (fun i -> i)) in
@@ -243,6 +280,46 @@ let test_flat_map_par_inner_failure_does_not_deadlock () =
   | Exit.Ok () -> Alcotest.fail "flat_map_par inner failure unexpectedly succeeded"
   | Exit.Error cause ->
       Alcotest.failf "flat_map_par inner failure produced unexpected cause: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause
+
+let test_flat_map_par_child_failure_does_not_wait_for_full_queue () =
+  with_runtime @@ fun _env rt ->
+  let filled, filled_resolver = Eio.Promise.create () in
+  let signaled = Atomic.make false in
+  let stream =
+    Eta_stream.Stream.from_iterable [ 0; 1 ]
+    |> Eta_stream.Stream.flat_map_par ~max_concurrency:2 (function
+         | 0 ->
+             Eta_stream.Stream.from_iterable (List.init 2_000 (fun i -> i))
+             |> Eta_stream.Stream.map_effect (fun value ->
+                    Effect.sync (fun () ->
+                        if
+                          value = 1_024
+                          && Atomic.compare_and_set signaled false true
+                        then Eio.Promise.resolve filled_resolver ();
+                        value))
+         | _ ->
+             Eta_stream.Stream.from_effect
+               (Effect.sync (fun () -> Eio.Promise.await filled)
+               |> Effect.bind (fun () -> Effect.fail `Boom)))
+  in
+  let slow_drain =
+    Eta_stream.Sink.fold_effect
+      (fun () _ -> Effect.delay (Duration.ms 1) Effect.unit)
+      ()
+  in
+  let eff =
+    run stream slow_drain
+    |> Effect.timeout_as (Duration.ms 500) ~on_timeout:`Timed_out
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail `Boom) -> ()
+  | Exit.Error (Cause.Fail `Timed_out) ->
+      Alcotest.fail "flat_map_par child failure waited behind a full queue"
+  | Exit.Ok () -> Alcotest.fail "flat_map_par unexpectedly succeeded"
+  | Exit.Error cause ->
+      Alcotest.failf "flat_map_par produced unexpected cause: %a"
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
         cause
 
@@ -441,10 +518,15 @@ let suite =
         test_from_file_downstream_failure_closes;
       Alcotest.test_case "merge cancels upstream on downstream stop" `Quick
         test_merge_cancellation;
+      Alcotest.test_case "merge child failure does not wait for full queue"
+        `Quick test_merge_child_failure_does_not_wait_for_full_queue;
       Alcotest.test_case "flat_map_par is bounded concurrent" `Quick
         test_flat_map_par_concurrency;
       Alcotest.test_case "flat_map_par inner failure does not deadlock" `Quick
         test_flat_map_par_inner_failure_does_not_deadlock;
+      Alcotest.test_case
+        "flat_map_par child failure does not wait for full queue" `Quick
+        test_flat_map_par_child_failure_does_not_wait_for_full_queue;
       Alcotest.test_case "bounded queue no deadlock on early stop" `Quick
         test_bounded_queue_no_deadlock;
       Alcotest.test_case "explicit deps/error rows compose" `Quick
