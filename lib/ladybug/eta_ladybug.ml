@@ -580,24 +580,12 @@ module Connection = struct
     exec_with_operation "query" ?params conn cypher
 
   let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-    let query =
-      Eta.Effect.blocking ?pool:blocking_pool ~name ~on_cancel:(fun () ->
-          interrupt conn)
-        f
-      |> Eta.Effect.map (function
-           | Ok value -> `Query_ok value
-           | Result.Error err -> `Query_error err)
-    in
-    let timeout =
-      Eta.Effect.delay timeout
-        (Eta.Effect.sync (fun () -> interrupt conn)
-         |> Eta.Effect.map (fun () -> `Timed_out))
-    in
-    Eta.Effect.race [ query; timeout ]
-    |> Eta.Effect.bind (function
-         | `Query_ok value -> Eta.Effect.pure value
-         | `Query_error err -> Eta.Effect.fail (`Ladybug err)
-         | `Timed_out -> Eta.Effect.fail `Timeout)
+    Eta.Effect.blocking_result_timeout ?pool:blocking_pool ~name
+      ~on_cancel:(fun () -> interrupt conn)
+      ~timeout ~on_timeout:`Timeout (fun () ->
+        match f () with
+        | Ok value -> Ok value
+        | Result.Error err -> Error (`Ladybug err))
 
   let query_string_with_timeout ?blocking_pool ~timeout ?params conn cypher =
     timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.query"

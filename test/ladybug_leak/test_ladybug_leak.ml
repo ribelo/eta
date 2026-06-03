@@ -134,6 +134,45 @@ let test_connection_close_waits_for_active_query () =
     "connection_destroy was not called while query was active" false
     state.destroyed_while_active
 
+let pp_timed_error ppf = function
+  | Eta_ladybug.Connection.Ladybug err -> Eta_ladybug.pp_error ppf err
+  | Eta_ladybug.Connection.Timeout -> Format.pp_print_string ppf "timeout"
+
+let test_query_timeout_bounds_caller_wait () =
+  let open Eta_ladybug in
+  (match available () with
+  | Ok () -> ()
+  | Error err -> Alcotest.failf "mock ladybug library unavailable: %a" pp_error err);
+  let db =
+    match Database.open_memory () with
+    | Ok db -> db
+    | Error err -> Alcotest.failf "open_memory: %a" pp_error err
+  in
+  let conn =
+    match Connection.connect db with
+    | Ok conn -> conn
+    | Error err -> Alcotest.failf "connect: %a" pp_error err
+  in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let started = Unix.gettimeofday () in
+  let exit =
+    Eta.Runtime.run rt
+      (Connection.query_string_with_timeout ~timeout:(Eta.Duration.ms 10) conn
+         "eta_test_slow_query")
+  in
+  let elapsed_ms = int_of_float ((Unix.gettimeofday () -. started) *. 1000.0) in
+  Alcotest.(check bool)
+    "timeout should bound caller wait, not wait for slow native query" true
+    (elapsed_ms < 100);
+  match exit with
+  | Eta.Exit.Error (Eta.Cause.Fail Connection.Timeout) -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected Ladybug Timeout, got %a"
+        (Eta.Cause.pp pp_timed_error) cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected Ladybug Timeout"
+
 let () =
   Alcotest.run "eta_ladybug_leak"
     [
@@ -143,5 +182,7 @@ let () =
             `Quick test_query_result_not_leaked_on_materialize_failure;
           Alcotest.test_case "connection close waits for active query" `Quick
             test_connection_close_waits_for_active_query;
+          Alcotest.test_case "query timeout bounds caller wait" `Quick
+            test_query_timeout_bounds_caller_wait;
         ] );
     ]
