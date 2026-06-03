@@ -87,6 +87,29 @@ let check_duckdb_bind_params_roots_list_cursor () =
   | None -> ()
   | Some _ -> Alcotest.fail "bind_params must leave through CAMLreturnT"
 
+let check_duckdb_query_result_owner_precedes_native_result () =
+  let source = read_file (find_duckdb_stubs_source ()) in
+  let body =
+    function_source source ~start_marker:"CAMLprim value eta_duckdb_query("
+      ~end_marker:"CAMLprim value eta_duckdb_execute("
+  in
+  let alloc = require_sub body ~needle:"result_owner = result_owner_alloc()" in
+  let execute = require_sub body ~needle:"api.execute_prepared(stmt, &result)" in
+  let transfer =
+    require_sub_after body ~needle:"*result_owner_val(result_owner) = result"
+      execute
+  in
+  let activate = require_sub body ~needle:"result_owner_activate(result_owner)" in
+  Alcotest.(check bool) "result owner is allocated before native result" true
+    (alloc < execute);
+  Alcotest.(check bool) "native result is transferred before activation" true
+    (execute < transfer && transfer < activate);
+  match find_sub body ~needle:"api.execute_prepared(stmt, result_owner_val" with
+  | None -> ()
+  | Some _ ->
+      Alcotest.fail
+        "blocking execute must not touch the OCaml result owner directly"
+
 let check_ladybug_arrow_materialization_uses_release_owner () =
   let source = read_file (find_ladybug_stubs_source ()) in
   let body =
@@ -561,6 +584,8 @@ let () =
             check_duckdb_blob_result_survives_driver_free_gc;
           Alcotest.test_case "DuckDB bind params root list cursor" `Quick
             check_duckdb_bind_params_roots_list_cursor;
+          Alcotest.test_case "DuckDB query result owner precedes native result"
+            `Quick check_duckdb_query_result_owner_precedes_native_result;
           Alcotest.test_case "Ladybug Arrow materialization owns releases" `Quick
             check_ladybug_arrow_materialization_uses_release_owner;
           Alcotest.test_case "DuckDB materialization reuses column names" `Quick

@@ -1056,6 +1056,7 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
   const char *sql;
   int rc;
   memset(&result, 0, sizeof(result));
+  result_owner = result_owner_alloc();
   if (!duckdb_input_copy_string(&copies, String_val(v_sql), &sql))
     caml_failwith("duckdb allocation failed");
   caml_enter_blocking_section();
@@ -1087,7 +1088,6 @@ CAMLprim value eta_duckdb_query(value v_conn, value v_sql, value v_params)
     api.destroy_result(&result);
     caml_failwith(buffer);
   }
-  result_owner = result_owner_alloc();
   *result_owner_val(result_owner) = result;
   result_owner_activate(result_owner);
   rows = materialize_rows(result_owner_val(result_owner));
