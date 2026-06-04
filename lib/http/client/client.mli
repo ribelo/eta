@@ -1,8 +1,8 @@
 (** Top-level eta-http client API. *)
 
-type protocol = H1 | H2 | Auto
+type protocol : immutable_data = H1 | H2 | Auto
 
-type stats = {
+type stats : immutable_data = {
   protocol : protocol;
   active : int;
   idle : int;

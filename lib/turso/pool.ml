@@ -14,7 +14,7 @@ type raw_error =
   ]
 type t = (db, raw_error) Eta.Pool.t
 
-type nonrec error =
+type nonrec error : immutable_data =
   | Turso of error
   | Invalid_blocking_pool of string
   | Pool_shutdown

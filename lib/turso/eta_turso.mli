@@ -11,16 +11,16 @@ type db
 type stmt
 type rc = private int
 
-type open_mode =
+type open_mode : immutable_data =
   | Read_only
   | Read_write
   | Read_write_create
 
-type journal_mode =
+type journal_mode : immutable_data =
   | Mvcc
   | Wal
 
-type config = {
+type config : immutable_data = {
   path : string;
   mode : open_mode;
   busy_timeout_ms : int option;
@@ -28,12 +28,12 @@ type config = {
   journal_mode : journal_mode;
 }
 
-type transaction_mode =
+type transaction_mode : immutable_data =
   | Read
   | Write
   | Concurrent
 
-type error =
+type error : immutable_data =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -94,7 +94,7 @@ val run_schema : db -> Compiled.schema -> (unit, error) result
 module Pool : sig
   type t
 
-  type nonrec error =
+  type nonrec error : immutable_data =
     | Turso of error
     | Invalid_blocking_pool of string
     | Pool_shutdown

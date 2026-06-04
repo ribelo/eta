@@ -1,4 +1,4 @@
-type offer_result = Enqueued | Dropped | Closed
+type offer_result : immutable_data = Enqueued | Dropped | Closed
 
 type 'a take = Item of 'a | Take_closed
 

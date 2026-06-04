@@ -24,10 +24,14 @@ module Scope : sig
   val fail : 'err -> ('s, 'a, 'err) t
 
   val bind :
-    ('a -> ('s, 'b, 'err) t) -> ('s, 'a, 'err) t -> ('s, 'b, 'err) t
+    ('a -> ('s, 'b, 'err) t) @ many ->
+    ('s, 'a, 'err) t ->
+    ('s, 'b, 'err) t
 
   val ( let* ) :
-    ('s, 'a, 'err) t -> ('a -> ('s, 'b, 'err) t) -> ('s, 'b, 'err) t
+    ('s, 'a, 'err) t ->
+    ('a -> ('s, 'b, 'err) t) @ many ->
+    ('s, 'b, 'err) t
 
   val start :
     ('s, 'err) supervisor ->

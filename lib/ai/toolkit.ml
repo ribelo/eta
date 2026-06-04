@@ -5,12 +5,12 @@ module Tool_name_set = Set.Make (String)
 type t = { rev_tools : tool list; names : Tool_name_set.t }
 
 let invalid_tool name message = Stdlib.Error (Invalid_tool { name; message })
-let normalize_tool_name = String.trim
+let normalize_tool_name = Eta.String_helpers.trim
 
 let validate_tool (tool : tool) =
   let name = normalize_tool_name tool.name in
   if String.equal name "" then invalid_tool tool.name "tool name is required"
-  else if String.equal (String.trim tool.input_schema_json) "" then
+  else if Eta.String_helpers.is_blank tool.input_schema_json then
     invalid_tool tool.name "input_schema_json is required"
   else Stdlib.Ok { tool with name }
 

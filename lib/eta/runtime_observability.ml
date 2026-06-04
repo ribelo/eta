@@ -9,11 +9,11 @@ let blocking_event_emit_key : (BR.event -> unit) Eio.Fiber.key =
 
 type die_context = {
   span_name : string option;
-  annotations : (string * string) list;
+  rev_annotations : (string * string) list;
 }
 
 let die_context_key : die_context Eio.Fiber.key = Eio.Fiber.create_key ()
-let empty_die_context = { span_name = None; annotations = [] }
+let empty_die_context = { span_name = None; rev_annotations = [] }
 let fiberless_die_context = ref empty_die_context
 
 let fiber_get key =
@@ -46,17 +46,18 @@ let with_die_span_name name f =
 
 let with_die_annotation key value f =
   let context = current_die_context () in
-  let annotations = context.annotations @ [ (key, value) ] in
-  with_die_context { context with annotations } f
+  with_die_context
+    { context with rev_annotations = (key, value) :: context.rev_annotations }
+    f
 
 let with_die_annotations attrs f =
-  let rec loop attrs k =
-    match attrs with
-    | [] -> k ()
-    | (key, value) :: rest ->
-        loop rest (fun () -> with_die_annotation key value k)
-  in
-  loop attrs f
+  match attrs with
+  | [] -> f ()
+  | _ ->
+      let context = current_die_context () in
+      with_die_context
+        { context with rev_annotations = List.rev_append attrs context.rev_annotations }
+        f
 
 let default_error_renderer _ = "<typed failure>"
 let error_renderer_raised = "<error renderer raised>"
@@ -88,7 +89,7 @@ let die_of_exn ?backtrace ~capture_backtrace exn =
   in
   let context = current_die_context () in
   Cause.die_with_diagnostics ?backtrace ?span_name:context.span_name
-    ~annotations:context.annotations exn
+    ~annotations:(List.rev context.rev_annotations) exn
 
 let rec status_of_finalizer_cause : Cause.Finalizer.t -> Capabilities.span_status =
  function
@@ -196,10 +197,11 @@ let exception_event_attrs ~error_renderer path cause =
         | None -> with_stack
         | Some name -> ("eta.die.span_name", name) :: with_stack
       in
-      List.map
-        (fun (key, value) -> ("eta.annotation." ^ key, value))
-        die.annotations
-      @ with_span
+      List.rev_append
+        (List.rev_map
+           (fun (key, value) -> ("eta.annotation." ^ key, value))
+           die.annotations)
+        with_span
   | Cause.Fail _ | Cause.Interrupt _ -> base
   | Cause.Sequential _ | Cause.Concurrent _ | Cause.Finalizer _
   | Cause.Suppressed _ ->
@@ -227,33 +229,30 @@ let exception_event_attrs_finalizer path cause =
         | None -> with_stack
         | Some name -> ("eta.die.span_name", name) :: with_stack
       in
-      List.map
-        (fun (key, value) -> ("eta.annotation." ^ key, value))
-        die.annotations
-      @ with_span
+      List.rev_append
+        (List.rev_map
+           (fun (key, value) -> ("eta.annotation." ^ key, value))
+           die.annotations)
+        with_span
   | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> base
   | Cause.Finalizer.Sequential _ | Cause.Finalizer.Concurrent _
   | Cause.Finalizer.Finalizer _ | Cause.Finalizer.Suppressed _ ->
       assert false
 
 let exception_event_attrs_tree ~error_renderer cause =
+  let rec fold_indexed f path index acc = function
+    | [] -> acc
+    | cause :: rest ->
+        let acc = f (path ^ string_of_int index) acc cause in
+        fold_indexed f path (index + 1) acc rest
+  in
   let rec collect path acc = function
     | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ as c ->
         exception_event_attrs ~error_renderer path c :: acc
     | Cause.Sequential causes ->
-        causes
-        |> List.mapi (fun i c -> (i, c))
-        |> List.fold_left
-             (fun acc (i, c) ->
-               collect (path ^ ".seq." ^ string_of_int i) acc c)
-             acc
+        fold_indexed collect (path ^ ".seq.") 0 acc causes
     | Cause.Concurrent causes ->
-        causes
-        |> List.mapi (fun i c -> (i, c))
-        |> List.fold_left
-             (fun acc (i, c) ->
-               collect (path ^ ".concurrent." ^ string_of_int i) acc c)
-             acc
+        fold_indexed collect (path ^ ".concurrent.") 0 acc causes
     | Cause.Finalizer cause -> collect_finalizer (path ^ ".finalizer") acc cause
     | Cause.Suppressed { primary; finalizer } ->
         let acc = collect (path ^ ".primary") acc primary in
@@ -263,19 +262,9 @@ let exception_event_attrs_tree ~error_renderer cause =
       as c ->
         exception_event_attrs_finalizer path c :: acc
     | Cause.Finalizer.Sequential causes ->
-        causes
-        |> List.mapi (fun i c -> (i, c))
-        |> List.fold_left
-             (fun acc (i, c) ->
-               collect_finalizer (path ^ ".seq." ^ string_of_int i) acc c)
-             acc
+        fold_indexed collect_finalizer (path ^ ".seq.") 0 acc causes
     | Cause.Finalizer.Concurrent causes ->
-        causes
-        |> List.mapi (fun i c -> (i, c))
-        |> List.fold_left
-             (fun acc (i, c) ->
-               collect_finalizer (path ^ ".concurrent." ^ string_of_int i) acc c)
-             acc
+        fold_indexed collect_finalizer (path ^ ".concurrent.") 0 acc causes
     | Cause.Finalizer.Finalizer cause ->
         collect_finalizer (path ^ ".finalizer") acc cause
     | Cause.Finalizer.Suppressed { primary; finalizer } ->
@@ -289,9 +278,16 @@ let emit_daemon_failure ~now_ms ~logging_enabled
     ~(tracer : Capabilities.tracer) cause =
   if not (Cause.is_interrupt_only cause) then (
     let ts_ms = now_ms () in
+    let rec with_failure_outcome acc = function
+      | [] -> List.rev acc
+      | attrs :: rest ->
+          with_failure_outcome
+            ((("eta.daemon.outcome", "failure") :: attrs) :: acc)
+            rest
+    in
     let attrs =
       exception_event_attrs_tree ~error_renderer:default_error_renderer cause
-      |> List.map (fun attrs -> ("eta.daemon.outcome", "failure") :: attrs)
+      |> with_failure_outcome []
     in
     if logging_enabled then
       List.iter

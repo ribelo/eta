@@ -4,9 +4,9 @@ let default_file_chunk_size = 64 * 1024
 let file_queue_capacity = 16
 
 module Stream = struct
-  type file_operation = Eta_stream_file.operation
-  type file_error_kind = Eta_stream_file.error_kind
-  type file_error = Eta_stream_file.error = {
+  type file_operation : immutable_data = Eta_stream_file.operation
+  type file_error_kind : immutable_data = Eta_stream_file.error_kind
+  type file_error : immutable_data = Eta_stream_file.error = {
     operation : file_operation;
     path : string;
     kind : file_error_kind;
@@ -74,21 +74,21 @@ module Stream = struct
     Range { start; stop }
   let from_effect eff = From_effect eff
   let fail error = Fail error
-  let map f stream = Map (stream, f)
-  let map_effect f stream = Map_effect (stream, f)
-  let filter f stream = Filter (stream, f)
+  let map (f @ many) stream = Map (stream, f)
+  let map_effect (f @ many) stream = Map_effect (stream, f)
+  let filter (f @ many) stream = Filter (stream, f)
   let take n stream = Take (n, stream)
-  let take_until_effect f stream = Take_until_effect (stream, f)
+  let take_until_effect (f @ many) stream = Take_until_effect (stream, f)
   let drop n stream = Drop (n, stream)
-  let scan f init stream = Scan (f, init, stream)
+  let scan (f @ many) init stream = Scan (f, init, stream)
   let grouped n stream =
     if n <= 0 then invalid_arg "Eta_stream.grouped: n must be > 0";
     Grouped (n, stream)
   let concat left right = Concat (left, right)
-  let flat_map f stream = Flat_map (stream, f)
+  let flat_map (f @ many) stream = Flat_map (stream, f)
   let merge left right = Merge (left, right)
 
-  let flat_map_par ~max_concurrency f stream =
+  let flat_map_par ~max_concurrency (f @ many) stream =
     if max_concurrency <= 0 then
       invalid_arg "Eta_stream.flat_map_par: max_concurrency must be > 0";
     Flat_map_par (max_concurrency, stream, f)
@@ -124,13 +124,13 @@ module Drain_counter = Drain_counter_internal
 
 module Sink = struct
   type ('in_, 'out, 'err) t = {
-    init : unit -> 'out;
-    step : 'out -> 'in_ -> ('out, 'err) Eta.Effect.t;
+    init : (unit -> 'out) @@ many;
+    step : ('out -> 'in_ -> ('out, 'err) Eta.Effect.t) @@ many;
     pure_step : ('out -> 'in_ -> 'out) option;
-    done_ : 'out -> ('out, 'err) Eta.Effect.t;
+    done_ : ('out -> ('out, 'err) Eta.Effect.t) @@ many;
   }
 
-  let fold f init =
+  let fold (f @ many) init =
     {
       init = (fun () -> init);
       step = (fun acc value -> Eta.Effect.pure (f acc value));
@@ -138,7 +138,7 @@ module Sink = struct
       done_ = Eta.Effect.pure;
     }
 
-  let fold_effect f init =
+  let fold_effect (f @ many) init =
     { init = (fun () -> init); step = f; pure_step = None; done_ = Eta.Effect.pure }
 
   let collect_to_list =
@@ -167,10 +167,10 @@ module Sink = struct
 end
 
 type ('acc, 'a, 'err) folder = {
-  emit : 'acc -> 'a -> ('acc * bool, 'err) Eta.Effect.t;
+  emit : ('acc -> 'a -> ('acc * bool, 'err) Eta.Effect.t) @@ many;
 }
 
-type 'a queue_event = Item of 'a | Done
+type ('a, 'err) queue_event = Item of 'a | Done | Failed of 'err
 type 'a outer_event = Outer_item of 'a | Outer_done
 
 
@@ -471,59 +471,39 @@ and fold_stream :
       loop acc
   | From_file { chunk_size; path; path_label; on_error } ->
       let queue = Eio.Stream.create file_queue_capacity in
-      let done_promise, done_resolver = Eio.Promise.create () in
       let stopped = Atomic.make false in
       let producer =
-        Eta.Effect.bind
-          (function
-            | Ok () -> Eta.Effect.unit
-            | Error error -> Eta.Effect.fail (on_error error))
-          (Eta.Effect.named "Eta_stream.from_file.read" (Eta.Effect.sync (fun () ->
-               let finish () =
-                 ignore (Eio.Promise.try_resolve done_resolver ())
-               in
-               Fun.protect ~finally:finish (fun () ->
-                   let operation = ref `Open in
-                   try
-                     Eio.Switch.run ~name:"Eta_stream.from_file" @@ fun sw ->
-                     let flow = Eio.Path.open_in ~sw path in
-                     operation := `Read;
-                     let buffer = Cstruct.create chunk_size in
-                     let rec read_loop () =
-                       if Atomic.get stopped then ()
-                       else
-                         match Eio.Flow.single_read flow buffer with
-                         | bytes_read ->
-                             if bytes_read > 0 then (
-                               let chunk =
-                                 Cstruct.to_bytes
-                                   (Cstruct.sub buffer 0 bytes_read)
-                               in
-                               Eio.Stream.add queue chunk;
-                               read_loop ())
-                         | exception End_of_file -> operation := `Close
-                     in
-                     read_loop ();
-                     Ok ()
-                   with
-                   | Eio.Cancel.Cancelled _ as exn -> raise exn
-                   | exn ->
-                       Error
-                         (make_file_error ~operation:!operation
-                            ~path:path_label exn)))))
-      in
-      let next_event () =
-        match Eio.Stream.take_nonblocking queue with
-        | Some chunk -> Item chunk
-        | None when Eio.Promise.is_resolved done_promise -> Done
-        | None ->
-            Eio.Fiber.first
-              (fun () -> Item (Eio.Stream.take queue))
-              (fun () ->
-                Eio.Promise.await done_promise;
-                match Eio.Stream.take_nonblocking queue with
-                | Some chunk -> Item chunk
-                | None -> Done)
+        Eta.Effect.named "Eta_stream.from_file.read" (Eta.Effect.sync (fun () ->
+            let operation = ref `Open in
+            try
+              Eio.Switch.run ~name:"Eta_stream.from_file" @@ fun sw ->
+              let flow = Eio.Path.open_in ~sw path in
+              operation := `Read;
+              let buffer = Cstruct.create chunk_size in
+              let rec read_loop () =
+                if Atomic.get stopped then ()
+                else
+                  match Eio.Flow.single_read flow buffer with
+                  | bytes_read ->
+                      if bytes_read > 0 then (
+                        let chunk =
+                          Cstruct.to_bytes (Cstruct.sub buffer 0 bytes_read)
+                        in
+                        Eio.Stream.add queue (Item chunk);
+                        read_loop ())
+                  | exception End_of_file -> operation := `Close
+              in
+              read_loop ();
+              if not (Atomic.get stopped) then Eio.Stream.add queue Done
+            with
+            | Eio.Cancel.Cancelled _ as exn -> raise exn
+            | exn ->
+                if not (Atomic.get stopped) then
+                  Eio.Stream.add queue
+                    (Failed
+                       (on_error
+                          (make_file_error ~operation:!operation
+                             ~path:path_label exn)))))
       in
       Eta.Supervisor.scoped
         {
@@ -535,14 +515,15 @@ and fold_stream :
               in
               let rec consume acc =
                 let* event =
-                  lift
-                    (Eta.Effect.named "Eta_stream.from_file.take" (Eta.Effect.sync (fun () ->
-                         next_event ())))
+                  lift (Eta.Effect.sync (fun () -> Eio.Stream.take queue))
                 in
                 match event with
                 | Done ->
                     let* () = await child in
                     pure (acc, true)
+                | Failed error ->
+                    let () = Atomic.set stopped true in
+                    fail error
                 | Item chunk ->
                     let* acc, keep_going = lift (folder.emit acc chunk) in
                     if keep_going then consume acc
@@ -579,27 +560,24 @@ and fold_merge :
  fun left right acc folder ->
   let queue = Eio.Stream.create 1024 in
   let stopped = Atomic.make false in
-  let failure = Atomic.make None in
-  let failure_promise, failure_resolver = Eio.Promise.create () in
   let producer stream =
     let publish_failure error =
       Eta.Effect.named "Eta_stream.merge.failed" (Eta.Effect.sync (fun () ->
           if Atomic.compare_and_set stopped false true then (
-            Atomic.set failure (Some error);
-            Eio.Promise.resolve failure_resolver ();
             let rec drain () =
               match Eio.Stream.take_nonblocking queue with
               | None -> ()
               | Some _ -> drain ()
             in
-            drain ())))
+            drain ();
+            Eio.Stream.add queue (Failed error))))
     in
     let add_item value =
-      Eta.Effect.named "Eta_stream.merge.emit" (Eta.Effect.sync (fun () ->
+      Eta.Effect.sync (fun () ->
           if Atomic.get stopped then false
           else (
             Eio.Stream.add queue (Item value);
-            true)))
+            true))
     in
     let publish_done =
       Eta.Effect.named "Eta_stream.merge.done" (Eta.Effect.sync (fun () ->
@@ -640,18 +618,6 @@ and fold_merge :
             let* () = await left_child in
             await right_child
           in
-          let take_event () : [ `Queue of a queue_event | `Failed of err ] =
-            match Atomic.get failure with
-            | Some error -> `Failed error
-            | None ->
-                Eio.Fiber.first
-                  (fun () -> `Queue (Eio.Stream.take queue))
-                  (fun () ->
-                    Eio.Promise.await failure_promise;
-                    match Atomic.get failure with
-                    | Some error -> `Failed error
-                    | None -> `Queue Done)
-          in
           let rec consume remaining acc =
             if remaining = 0 then
               let* () = await_both () in
@@ -659,15 +625,14 @@ and fold_merge :
             else
               let* event =
                 lift
-                  (Eta.Effect.named "Eta_stream.merge.take" (Eta.Effect.sync (fun () ->
-                       take_event ())))
+                  (Eta.Effect.sync (fun () -> Eio.Stream.take queue))
               in
               match event with
-              | `Queue Done -> consume (remaining - 1) acc
-              | `Failed error ->
+              | Done -> consume (remaining - 1) acc
+              | Failed error ->
                   let () = Atomic.set stopped true in
                   fail error
-              | `Queue (Item value) ->
+              | Item value ->
                   let* acc, keep_going = lift (folder.emit acc value) in
                   if keep_going then consume remaining acc
                   else
@@ -690,8 +655,6 @@ and fold_flat_map_par :
   let outer_queue = Eio.Stream.create max_concurrency in
   let output_queue = Eio.Stream.create 1024 in
   let stopped = Atomic.make false in
-  let failure = Atomic.make None in
-  let failure_promise, failure_resolver = Eio.Promise.create () in
   let drain stream =
     let rec loop () =
       match Eio.Stream.take_nonblocking stream with
@@ -709,9 +672,8 @@ and fold_flat_map_par :
   let publish_failure error =
     Eta.Effect.named "Eta_stream.flat_map_par.failed" (Eta.Effect.sync (fun () ->
         if Atomic.compare_and_set stopped false true then (
-          Atomic.set failure (Some error);
-          Eio.Promise.resolve failure_resolver ();
           drain output_queue;
+          Eio.Stream.add output_queue (Failed error);
           wake_workers ())))
   in
   let outer_producer =
@@ -730,8 +692,8 @@ and fold_flat_map_par :
                   else
                     Eta.Effect.map
                       (fun () -> ((), true))
-                      (Eta.Effect.named "Eta_stream.flat_map_par.outer_emit" (Eta.Effect.sync (fun () ->
-                           Eio.Stream.add outer_queue (Outer_item value)))));
+                      (Eta.Effect.sync (fun () ->
+                           Eio.Stream.add outer_queue (Outer_item value))));
             }))
     |> Eta.Effect.catch (fun error ->
            Eta.Effect.bind (fun () -> Eta.Effect.fail error)
@@ -762,12 +724,11 @@ and fold_flat_map_par :
                             else
                               Eta.Effect.map
                                 (fun () -> ((), true))
-                                (Eta.Effect.named "Eta_stream.flat_map_par.inner_emit" (Eta.Effect.sync (fun () ->
+                                (Eta.Effect.sync (fun () ->
                                      Eio.Stream.add output_queue
-                                       (Item item)))));
+                                       (Item item))));
                       })))
-        (Eta.Effect.named "Eta_stream.flat_map_par.outer_take" (Eta.Effect.sync (fun () ->
-             Eio.Stream.take outer_queue)))
+        (Eta.Effect.sync (fun () -> Eio.Stream.take outer_queue))
     in
     Eta.Effect.bind (fun () -> publish_done) (loop ())
     |> Eta.Effect.catch (fun error ->
@@ -824,18 +785,6 @@ and fold_flat_map_par :
             let* () = await_all workers in
             await outer_child
           in
-          let take_output_event () : [ `Queue of b queue_event | `Failed of err ] =
-            match Atomic.get failure with
-            | Some error -> `Failed error
-            | None ->
-                Eio.Fiber.first
-                  (fun () -> `Queue (Eio.Stream.take output_queue))
-                  (fun () ->
-                    Eio.Promise.await failure_promise;
-                    match Atomic.get failure with
-                    | Some error -> `Failed error
-                    | None -> `Queue Done)
-          in
           let rec consume remaining_workers acc =
             if remaining_workers = 0 then
               let* () = await_everything () in
@@ -843,15 +792,14 @@ and fold_flat_map_par :
             else
               let* event =
                 lift
-                  (Eta.Effect.named "Eta_stream.flat_map_par.take" (Eta.Effect.sync (fun () ->
-                       take_output_event ())))
+                  (Eta.Effect.sync (fun () -> Eio.Stream.take output_queue))
               in
               match event with
-              | `Queue Done -> consume (remaining_workers - 1) acc
-              | `Failed error ->
+              | Done -> consume (remaining_workers - 1) acc
+              | Failed error ->
                   let () = Atomic.set stopped true in
                   fail error
-              | `Queue (Item value) ->
+              | Item value ->
                   let* acc, keep_going = lift (folder.emit acc value) in
                   if keep_going then consume remaining_workers acc
                   else

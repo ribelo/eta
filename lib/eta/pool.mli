@@ -14,7 +14,7 @@
 
 type ('conn, 'err) t
 
-type stats = {
+type stats : immutable_data = {
   active : int;
   idle : int;
   waiting : int;

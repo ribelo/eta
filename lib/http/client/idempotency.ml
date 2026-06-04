@@ -1,18 +1,29 @@
 module Header = Header
 
-type classification =
+type classification : immutable_data =
   | Retryable
   | Needs_idempotency_key
   | One_shot_body
 
 let method_is_idempotent method_ =
-  match String.uppercase_ascii method_ with
-  | "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS" | "TRACE" -> true
-  | _ -> false
+  match Method.of_string method_ with
+  | `GET | `HEAD | `PUT | `DELETE | `OPTIONS | `TRACE -> true
+  | `POST | `PATCH | `CONNECT | `Other _ -> false
+
+let[@zero_alloc] has_non_trim_space value =
+  let len = String.length value in
+  let mutable index = 0 in
+  let mutable found = false in
+  while (not found) && index < len do
+    found <-
+      not (Eta.String_helpers.is_trim_space (String.unsafe_get value index));
+    index <- index + 1
+  done;
+  found
 
 let has_idempotency_key request =
   match Header.get "idempotency-key" request.Request.headers with
-  | Some value -> String.trim value <> ""
+  | Some value -> has_non_trim_space value
   | None -> false
 
 let body_replayable request =

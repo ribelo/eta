@@ -1,6 +1,6 @@
 (** Small raw HTTP/2 frame helpers for tests and defensive probes. *)
 
-type frame_type =
+type frame_type : immutable_data =
   | Data
   | Headers
   | Priority
@@ -13,7 +13,7 @@ type frame_type =
   | Continuation
   | Other of int
 
-type envelope = {
+type envelope : immutable_data = {
   length : int;
   frame_type : int;
   flags : int;

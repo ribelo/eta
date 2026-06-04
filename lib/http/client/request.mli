@@ -6,7 +6,7 @@ type body =
   | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : unit -> Stream.t;
+      make : (unit -> Stream.t) @@ many;
     }
 
 type t = {

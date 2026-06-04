@@ -3,7 +3,7 @@ open Test_eta_http_support
 let test_url_parse_client_subset () =
   let url =
     Eta_http.Core.Url.of_string
-      "https://API.Example.test:8443/v1/models?limit=1#top"
+      "HTTPS://API.Example.test:8443/v1/models?limit=1#top"
   in
   Alcotest.(check string) "scheme" "https"
     (Eta_http.Core.Url.scheme_to_string (Eta_http.Core.Url.scheme url));
@@ -75,4 +75,3 @@ let test_url_rejects_unsupported_forms () =
     "ftp://example.test/";
   check_error "port" "invalid URL port \"99999\""
     "https://example.test:99999/"
-

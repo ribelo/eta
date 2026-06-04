@@ -230,7 +230,8 @@ let par_eval left right () =
   | Exit.Ok { left; right } -> ok (left, right)
   | Exit.Error cause -> error cause
 
-let par left right = make ~names:(left.names @ right.names) (par_eval left right)
+let par left right =
+  make ~names:(left.names @ right.names) (par_eval left right)
 
 let all_eval effects () =
   let frame = current_frame () in
@@ -284,7 +285,7 @@ let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let forks = List.init workers (fun _ -> worker) in
   par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
-let for_each_par xs f =
+let for_each_par xs (f @ many) =
   let n = List.length xs in
   let xs_arr = Array.of_list xs in
   let tasks = Array.map f xs_arr in
@@ -293,7 +294,7 @@ let for_each_par xs f =
   let workers = min n 8 in
   for_each_par_workers frame ~name:"Effect.for_each_par" ~workers ~tasks ~n
 
-let for_each_par_bounded ~max xs f =
+let for_each_par_bounded ~max xs (f @ many) =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
   let n = List.length xs in
   let xs_arr = Array.of_list xs in

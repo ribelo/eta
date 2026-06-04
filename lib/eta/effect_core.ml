@@ -14,7 +14,7 @@ module P_atomic = Portable.Atomic
 
 type frame = {
   runtime : Obj.t Runtime_core.t;
-  error_renderer : Obj.t -> string;
+  error_renderer : (Obj.t -> string) @@ many;
   fail_key : Runtime_core.Typed_fail.key;
   sw : Eio.Switch.t;
   finalizers : (unit -> unit) list ref;
@@ -38,24 +38,24 @@ let current_frame () =
           | None -> frame)
       | None -> failwith "Eta effect requires Runtime.run")
 
-let with_fiberless_frame frame f =
+let with_fiberless_frame frame (f @ many) =
   let previous = Domain.DLS.get fiberless_frame_key in
   Domain.DLS.set fiberless_frame_key (Some frame);
   Fun.protect
     ~finally:(fun () -> Domain.DLS.set fiberless_frame_key previous)
     f
 
-let with_frame frame f =
+let with_frame frame (f @ many) =
   frame.runtime.substrate.fiber_with_binding
     ~dls_active:(Option.is_some (Domain.DLS.get fiberless_frame_key))
     ~enter_fiberless:(with_fiberless_frame frame)
     frame_key frame f
 
-let switch_run frame f = frame.runtime.substrate.switch_run f
+let switch_run frame (f @ many) = frame.runtime.substrate.switch_run f
 
 let switch_fail frame sw exn = frame.runtime.substrate.switch_fail sw exn
 
-let fiber_fork frame ~sw f = frame.runtime.substrate.fiber_fork ~sw f
+let fiber_fork frame ~sw (f @ many) = frame.runtime.substrate.fiber_fork ~sw f
 
 let fiber_fork_daemon frame ~sw f =
   frame.runtime.substrate.fiber_fork_daemon ~sw f
@@ -64,7 +64,7 @@ let fiber_await_cancel frame = frame.runtime.substrate.fiber_await_cancel ()
 
 let fiber_yield frame = frame.runtime.substrate.fiber_yield ()
 
-let cancel_sub frame f = frame.runtime.substrate.cancel_sub f
+let cancel_sub frame (f @ many) = frame.runtime.substrate.cancel_sub f
 
 let cancel_cancel frame cancel_context exn =
   frame.runtime.substrate.cancel_cancel cancel_context exn
@@ -77,13 +77,13 @@ let render_error frame err =
 (* ---------------------------------------------------------------- *)
 
 type ('a, 'err) t = {
-  eval : unit -> ('a, 'err) Exit.t;
+  eval : (unit -> ('a, 'err) Exit.t) @@ many;
   leaf_name : string option;
   names : string list;
 }
 
-let make ?leaf_name ?(names = []) eval = { eval; leaf_name; names }
-let preserve effect eval = make ~names:effect.names eval
+let make ?leaf_name ?(names = []) (eval @ many) = { eval; leaf_name; names }
+let preserve effect (eval @ many) = make ~names:effect.names eval
 let concat_names effects = List.concat_map (fun effect -> effect.names) effects
 let with_names names effect = { effect with names }
 
@@ -117,7 +117,7 @@ let interrupt_of_cancel = function
         else Cause.interrupt
   | None -> fun _ -> Cause.interrupt
 
-let run_scope_body ?sw ?internal_cancel frame body =
+let run_scope_body ?sw ?internal_cancel frame (body @ many) =
   let finalizers = ref [] in
   let sw = Option.value sw ~default:frame.sw in
   let child_frame = { frame with sw; finalizers } in
@@ -150,7 +150,7 @@ let pure value = make (fun () -> ok value)
 let fail err = make (fun () -> error (Cause.Fail err))
 let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
-let sync f =
+let sync (f @ many) =
   make (fun () ->
       try ok (f ()) with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
@@ -160,20 +160,20 @@ let sync f =
 (* Combinators                                                       *)
 (* ---------------------------------------------------------------- *)
 
-let map f effect =
+let map (f @ many) effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok value -> ok (f value)
   | Exit.Error _ as err -> err
 
-let bind k effect =
+let bind (k @ many) effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok value -> (k value).eval ()
   | Exit.Error _ as err -> err
 
-let ( >>= ) effect k = bind k effect
-let tap k effect = bind (fun value -> map (fun () -> value) (k value)) effect
+let ( >>= ) effect (k @ many) = bind k effect
+let tap (k @ many) effect = bind (fun value -> map (fun () -> value) (k value)) effect
 let seq next self = bind (fun () -> next) self
 
 let concat effects =
@@ -215,7 +215,7 @@ let rec first_typed_failure : type err. err Cause.t -> err option = function
   | Cause.Suppressed { primary; _ } -> first_typed_failure primary
   | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
 
-let catch handler effect =
+let catch (handler @ many) effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok _ as ok -> ok
@@ -234,13 +234,13 @@ let render_cause_error frame cause =
 
 let finalizer_cause frame cause = Cause.finalizer (render_cause_error frame cause)
 
-let map_error f effect =
+let map_error (f @ many) effect =
   preserve effect @@ fun () ->
   match effect.eval () with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> error (map_cause_error f cause)
 
-let tap_error observe effect =
+let tap_error (observe @ many) effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   match effect.eval () with
@@ -336,7 +336,7 @@ let repeat schedule effect =
     ok ()
   with exn -> exit_of_exn frame exn
 
-let retry schedule predicate effect =
+let retry schedule (predicate @ many) effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   let driver = ref (Sch.start ~random:frame.runtime.random schedule) in

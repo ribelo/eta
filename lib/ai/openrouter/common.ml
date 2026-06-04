@@ -7,14 +7,14 @@ module Codec = Eta_ai_openai_codec
 module H = Eta_http
 module Json = A.Json
 
-type attribution = {
+type attribution : immutable_data = {
   referer : string option;
   title : string option;
 }
 
 let attribution ?referer ?title () = { referer; title }
 
-type routing = {
+type routing : immutable_data = {
   order : string list;
   only_providers : string list;
   ignored_providers : string list;
@@ -23,11 +23,11 @@ type routing = {
   sort : string option;
 }
 
-type reasoning = {
+type reasoning : immutable_data = {
   effort : string option;
 }
 
-type structured_output = Codec.structured_output = {
+type structured_output : immutable_data = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;
@@ -49,9 +49,7 @@ let invalid_routing message =
   Stdlib.Error (A.Unsupported { provider = "openrouter"; feature = message })
 
 let validate_names field values =
-  match
-    List.find_opt (fun value -> String.equal (String.trim value) "") values
-  with
+  match List.find_opt A.Json_helpers.is_blank values with
   | Some _ -> invalid_routing (field ^ " contains an empty provider name")
   | None -> Stdlib.Ok values
 
@@ -78,9 +76,9 @@ let routing ?(order = []) ?(only_providers = []) ?(ignored_providers = [])
 
 let reasoning ?effort () =
   match effort with
-  | Some effort when String.trim effort = "" ->
+  | Some effort when A.Json_helpers.is_blank effort ->
       invalid_routing "reasoning effort is empty"
-  | Some effort -> Stdlib.Ok { effort = Some (String.trim effort) }
+  | Some effort -> Stdlib.Ok { effort = Some (A.Json_helpers.trim effort) }
   | None -> Stdlib.Ok { effort = None }
 
 let string_array values = Json.array (List.map Json.string values)
@@ -104,27 +102,28 @@ let routing_json routing =
 let reasoning_json reasoning =
   Json.object_ [ ("effort", Option.map Json.string reasoning.effort) ]
 
-let add_object_field name value json =
+let add_object_field ~message name value json =
   match value with
   | None -> Stdlib.Ok json
   | Some value -> (
       match json with
-      | `Assoc fields ->
-          Stdlib.Ok (`Assoc (fields @ [ (name, value) ]))
+      | `Assoc fields -> Stdlib.Ok (`Assoc (fields @ [ (name, value) ]))
       | _ ->
           Stdlib.Error
             (A.Decode_error
                {
                  provider = "openrouter";
-                 message = "Responses encoder did not return a JSON object";
+                 message;
                  raw = Some (Json.to_string json);
                }))
 
 let add_routing routing json =
-  add_object_field "provider" (Option.map routing_json routing) json
+  add_object_field ~message:"Responses encoder did not return a JSON object"
+    "provider" (Option.map routing_json routing) json
 
 let add_reasoning reasoning json =
-  add_object_field "reasoning" (Option.map reasoning_json reasoning) json
+  add_object_field ~message:"Responses encoder did not return a JSON object"
+    "reasoning" (Option.map reasoning_json reasoning) json
 
 let encode_responses ?structured_output ?routing ?reasoning request =
   match
@@ -142,35 +141,22 @@ let encode_responses ?structured_output ?routing ?reasoning request =
 
 let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 
-let add_input_type input_type json =
-  match input_type with
-  | None -> Stdlib.Ok json
-  | Some input_type -> (
-      match json with
-      | `Assoc fields ->
-          Stdlib.Ok (`Assoc (fields @ [ ("input_type", Json.string input_type) ]))
-      | _ ->
-          Stdlib.Error
-            (A.Decode_error
-               {
-                 provider = "openrouter";
-                 message = "Embeddings encoder did not return a JSON object";
-                 raw = Some (Json.to_string json);
-               }))
-
 let encode_embeddings_json ?routing ?input_type request =
   match Codec.encode_embeddings_json ~provider:"openrouter" request with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok json -> (
       match
         Codec.optional_non_empty ~provider:"openrouter" "embedding input_type"
-          input_type
+              input_type
       with
       | Stdlib.Error _ as error -> error
       | Stdlib.Ok input_type -> (
           match add_routing routing json with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok json -> add_input_type input_type json))
+          | Stdlib.Ok json ->
+              add_object_field
+                ~message:"Embeddings encoder did not return a JSON object"
+                "input_type" (Option.map Json.string input_type) json))
 
 let encode_embeddings ?routing ?input_type request =
   match encode_embeddings_json ?routing ?input_type request with

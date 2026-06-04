@@ -116,13 +116,6 @@ let run_stream = A.run_stream_request
 let run_raw_decoded = A.run_raw_decoded
 let run_binary = A.run_binary_decoded
 
-let join_url base path =
-  let base =
-    if String.ends_with ~suffix:"/" base then
-      String.sub base 0 (String.length base - 1)
-    else base
-  in
-  let path = if String.starts_with ~prefix:"/" path then path else "/" ^ path in
-  base ^ path
+let join_url = A.join_url
 
 let with_json_fields = Codec.with_json_fields

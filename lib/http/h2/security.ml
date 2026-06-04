@@ -1,6 +1,6 @@
 module Error = Error
 
-type config = {
+type config : immutable_data = {
   max_settings_per_connection : int;
   max_goaway_per_connection : int;
   max_hpack_block_bytes : int;

@@ -1655,3 +1655,22 @@ let test_sql_schema_dsl_raw_interpolation () =
   Alcotest.(check (list string)) "users table still exists" [ "users" ]
     (List.filter_map (Q.Row.string "name") rows);
   Eta.Effect.pure ()
+
+let test_sql_schema_reference_action_normalization () =
+  let schema =
+    Q.Eta_schema.(
+      create_table Posts.table
+        [
+          column ~primary_key:true Posts.id;
+          column
+            ~references:
+              (references ~on_delete:"  set null\t" ~on_update:"no action\n"
+                 Users.id)
+            Posts.author_id;
+          column Posts.title;
+        ]
+      |> compile)
+  in
+  Alcotest.(check string) "reference actions are canonicalized"
+    "CREATE TABLE \"posts\" (\"id\" INTEGER PRIMARY KEY, \"author_id\" INTEGER REFERENCES \"users\" (\"id\") ON DELETE SET NULL ON UPDATE NO ACTION, \"title\" TEXT)"
+    (Q.Compiled.schema_sql schema)

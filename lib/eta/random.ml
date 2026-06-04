@@ -41,15 +41,20 @@ let sample random = function
       Some (List.nth list index)
 
 let weighted_choice random choices =
-  let choices = List.filter (fun (_, weight) -> weight > 0.0) choices in
-  let total = List.fold_left (fun acc (_, weight) -> acc +. weight) 0.0 choices in
+  let total =
+    List.fold_left
+      (fun acc (_, weight) -> if weight > 0.0 then acc +. weight else acc)
+      0.0 choices
+  in
   if total <= 0.0 then None
   else
     let target = Capabilities.random_float random total in
     let rec loop seen = function
       | [] -> None
       | (value, weight) :: rest ->
-          let seen = seen +. weight in
-          if target < seen then Some value else loop seen rest
+          if weight <= 0.0 then loop seen rest
+          else
+            let seen = seen +. weight in
+            if target < seen then Some value else loop seen rest
     in
     loop 0.0 choices

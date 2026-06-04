@@ -1,8 +1,8 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type scheme = Http | Https
+type scheme : immutable_data = Http | Https
 
-type parse_error =
+type parse_error : immutable_data =
   | Empty
   | Missing_scheme
   | Unsupported_scheme of string
@@ -16,14 +16,14 @@ type parse_error =
       char : char;
     }
 
-type span = {
+type span : immutable_data = {
   off : int;
   len : int;
 }
 
-type host_kind = Reg_name | Ip_literal
+type host_kind : immutable_data = Reg_name | Ip_literal
 
-type t = {
+type t : immutable_data = {
   raw : string;
   scheme : scheme;
   host : span;
@@ -36,6 +36,14 @@ type t = {
 
 let span ~off ~len = { off; len }
 let slice raw span = String.sub raw span.off span.len
+
+let lowercase_ascii_slice raw off len =
+  let bytes = Bytes.create len in
+  for index = 0 to len - 1 do
+    Bytes.unsafe_set bytes index
+      (Eta.String_helpers.lowercase_ascii_char (String.unsafe_get raw (off + index)))
+  done;
+  Bytes.unsafe_to_string bytes
 
 let is_ctl_or_space c =
   let code = Char.code c in
@@ -71,16 +79,26 @@ let find_first_path_mark raw start =
   in
   loop start
 
+let[@zero_alloc] rec equal_ascii_case_insensitive_slice_loop raw token len index =
+  index = len
+  ||
+  let c = Char.lowercase_ascii raw.[index] in
+  Char.equal c token.[index]
+  && equal_ascii_case_insensitive_slice_loop raw token len (index + 1)
+
+let[@zero_alloc] equal_ascii_case_insensitive_prefix raw token len =
+  len = String.length token
+  && equal_ascii_case_insensitive_slice_loop raw token len 0
+
 let parse_scheme raw =
   match find_from raw 0 (String.length raw) ':' with
   | None -> Error Missing_scheme
   | Some 0 -> Error Missing_scheme
   | Some colon ->
-      let scheme = String.sub raw 0 colon |> String.lowercase_ascii in
-      match scheme with
-      | "http" -> Ok (Http, colon)
-      | "https" -> Ok (Https, colon)
-      | other -> Error (Unsupported_scheme other)
+      if equal_ascii_case_insensitive_prefix raw "http" colon then Ok (Http, colon)
+      else if equal_ascii_case_insensitive_prefix raw "https" colon then
+        Ok (Https, colon)
+      else Error (Unsupported_scheme (lowercase_ascii_slice raw 0 colon))
 
 let parse_port raw start finish =
   if start = finish then Error (Invalid_port "")
@@ -234,7 +252,7 @@ let of_string raw =
 let to_string t = t.raw
 let scheme t = t.scheme
 let scheme_to_string = function Http -> "http" | Https -> "https"
-let host t = slice t.raw t.host |> String.lowercase_ascii
+let host t = lowercase_ascii_slice t.raw t.host.off t.host.len
 let port t = t.port
 let default_port = function Http -> 80 | Https -> 443
 let effective_port t = Option.value ~default:(default_port t.scheme) t.port

@@ -251,8 +251,8 @@ module Portable = struct
 
   let rec of_cause :
       type err (portable_err : value mod portable).
-      (err -> portable_err) -> err same_domain_t -> portable_err t =
-   fun convert -> function
+      (err -> portable_err) @ many -> err same_domain_t -> portable_err t =
+   fun (convert @ many) -> function
     | Fail err -> Fail (convert err)
     | Die die -> Die (die_of_cause die)
     | Interrupt id -> Interrupt id
@@ -275,7 +275,7 @@ module Portable = struct
          (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
          left.annotations right.annotations
 
-  let rec equal equal_err left right =
+  let rec equal (equal_err @ many) left right =
     match (left, right) with
     | Fail a, Fail b -> equal_err a b
     | Die a, Die b -> equal_die a b
@@ -304,7 +304,7 @@ module Portable = struct
     pp_backtrace fmt die.backtrace;
     Format.pp_print_string fmt "}"
 
-  let rec pp pp_err fmt = function
+  let rec pp (pp_err @ many) fmt = function
     | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
     | Die die -> pp_die fmt die
     | Interrupt None -> Format.pp_print_string fmt "Interrupt"
@@ -336,7 +336,7 @@ let die exn = die_with_diagnostics exn
 let die_with_backtrace exn bt = die_with_diagnostics ~backtrace:bt exn
 let interrupt_id_counter = Atomic.make 0
 let fresh_interrupt_id () = Atomic.fetch_and_add interrupt_id_counter 1 + 1
-let equal_interrupt_id = Int.equal
+let equal_interrupt_id a b = Int.equal a b
 let interrupt = Interrupt None
 let interrupt_with_id id = Interrupt (Some id)
 
@@ -358,8 +358,8 @@ let suppressed ~primary ~finalizer = Suppressed { primary; finalizer }
 let to_portable = Portable.of_cause
 
 let rec finalizer_of_cause :
-    type err. (err -> string) -> err t -> Finalizer.t =
- fun render -> function
+    type err. (err -> string) @ many -> err t -> Finalizer.t =
+ fun (render @ many) -> function
   | Fail err -> Finalizer.Fail (render err)
   | Die die -> Finalizer.Die die
   | Interrupt id -> Finalizer.Interrupt id
@@ -370,8 +370,8 @@ let rec finalizer_of_cause :
       Finalizer.Suppressed
         { primary = finalizer_of_cause render primary; finalizer }
 
-let rec map : type err mapped. (err -> mapped) -> err t -> mapped t =
- fun f -> function
+let rec map : type err mapped. (err -> mapped) @ many -> err t -> mapped t =
+ fun (f @ many) -> function
   | Fail err -> Fail (f err)
   | Die die -> Die die
   | Interrupt id -> Interrupt id
@@ -390,7 +390,7 @@ let rec is_interrupt_only : type err. err t -> bool = function
   | Fail _ | Die _ -> false
 
 let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
- fun equal_err left right ->
+ fun (equal_err @ many) left right ->
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> equal_die a b
@@ -404,8 +404,8 @@ let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
   | _ -> false
 
 let rec diagnostic_equal :
-    type err. (err -> err -> bool) -> err t -> err t -> bool =
- fun equal_err left right ->
+    type err. (err -> err -> bool) @ many -> err t -> err t -> bool =
+ fun (equal_err @ many) left right ->
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> diagnostic_equal_die a b
@@ -419,9 +419,10 @@ let rec diagnostic_equal :
   | _ -> false
 
 let rec pp :
-    type err. (Format.formatter -> err -> unit) -> Format.formatter -> err t -> unit
+    type err.
+    (Format.formatter -> err -> unit) @ many -> Format.formatter -> err t -> unit
     =
- fun pp_err fmt -> function
+ fun (pp_err @ many) fmt -> function
   | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
   | Die die -> pp_die fmt die
   | Interrupt None -> Format.pp_print_string fmt "Interrupt"

@@ -2,33 +2,33 @@ type status = Capabilities.span_status = Ok | Error of string | Cancelled
 type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 
 type event : immutable_data = {
-  ev_name : string;
+  global_ ev_name : string;
   ev_ts_ms : int;
-  ev_attrs : (string * string) list;
+  global_ ev_attrs : (string * string) list;
 }
 
 type link = Capabilities.span_link = {
-  link_trace_id : string;
-  link_span_id : string;
-  link_attrs : (string * string) list;
+  global_ link_trace_id : string;
+  global_ link_span_id : string;
+  global_ link_attrs : (string * string) list;
 }
 
 type span : immutable_data = {
   span_id : int;
   parent_id : int option;
-  name : string;
-  attrs : (string * string) list;
-  events : event list;
-  links : link list;
+  global_ name : string;
+  global_ attrs : (string * string) list;
+  global_ events : event list;
+  global_ links : link list;
   kind : kind;
   status : status;
   started_ms : int;
   ended_ms : int;
-  trace_id : string;
+  global_ trace_id : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
-  external_parent : Capabilities.trace_context option;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
+  global_ external_parent : Capabilities.trace_context option;
 }
 
 type open_span = {
@@ -108,7 +108,16 @@ let with_lock t f =
   Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Mutex.unlock t.mutex) f
 
-let hex16 n = Printf.sprintf "%016x" n
+let hex16 n =
+  let bytes = Bytes.create 16 in
+  let mutable value = n in
+  for index = 15 downto 0 do
+    Bytes.unsafe_set bytes index
+      (String_helpers.lower_hex_digit (value land 0xf));
+    value <- value lsr 4
+  done;
+  Bytes.unsafe_to_string bytes
+
 let root_trace_id t span_id = hex16 t.context_id ^ hex16 (span_id + 1)
 
 let begin_span t ?parent_id

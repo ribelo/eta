@@ -206,7 +206,7 @@ let test_chunked_decodes_trailers () =
   in
   let reader =
     chunked_reader_of_string context
-      "4\r\nWiki\r\n5;ext=1\r\npedia\r\n0\r\nX-Trailer: ok\r\n\r\n"
+      " 4 \r\nWiki\r\n 5 ;ext=1\r\npedia\r\n0\r\nX-Trailer: ok\r\n\r\n"
   in
   let decoder = Eta_http.Body.Chunked.create ~context ~reader () in
   let body =
@@ -223,6 +223,19 @@ let test_chunked_decodes_trailers () =
     "trailer" (Some "ok")
     (Eta_http.Core.Header.get "x-trailer"
        (Eta_http.Body.Chunked.trailers decoder))
+
+let test_chunked_encoder () =
+  let encoded =
+    Eta_http.Body.Chunked.encode_chunk (Bytes.of_string "abcdefghijklmnop")
+  in
+  let encoded = Bytes.concat Bytes.empty encoded |> Bytes.to_string in
+  Alcotest.(check string) "chunk" "10\r\nabcdefghijklmnop\r\n" encoded;
+  let trailers = Eta_http.Core.Header.unsafe_of_list [ ("x-trailer", "ok") ] in
+  let last =
+    Eta_http.Body.Chunked.encode_last_chunk ~trailers ()
+    |> Bytes.to_string
+  in
+  Alcotest.(check string) "last" "0\r\nx-trailer: ok\r\n\r\n" last
 
 let test_gzip_transducer_roundtrip () =
   with_test_clock @@ fun _sw _clock rt ->

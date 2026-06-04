@@ -90,19 +90,35 @@ let of_list headers =
 let unsafe_add name value headers = (name, value) :: headers
 let unsafe_of_list headers = headers
 let to_list headers = headers
-let normalize_name name = String.lowercase_ascii (String.trim name)
+let normalize_name = Eta.String_helpers.lowercase_ascii_trim
+
+let equal_normalized_name = Eta.String_helpers.trim_equal_ascii_ci
 
 let get_all name headers =
   let normalized = normalize_name name in
-  headers
-  |> List.filter_map (fun (candidate, value) ->
-         if String.equal (normalize_name candidate) normalized then Some value
-         else None)
+  let rec loop acc = function
+    | [] -> List.rev acc
+    | (candidate, value) :: rest ->
+        if equal_normalized_name normalized candidate then loop (value :: acc) rest
+        else loop acc rest
+  in
+  loop [] headers
 
-let get name headers = match get_all name headers with [] -> None | value :: _ -> Some value
+let get name headers =
+  let normalized = normalize_name name in
+  let rec loop = function
+    | [] -> None
+    | (candidate, value) :: rest ->
+        if equal_normalized_name normalized candidate then Some value else loop rest
+  in
+  loop headers
 
 let remove name headers =
   let normalized = normalize_name name in
-  List.filter
-    (fun (candidate, _) -> not (String.equal (normalize_name candidate) normalized))
-    headers
+  let rec loop acc = function
+    | [] -> List.rev acc
+    | (candidate, _) as header :: rest ->
+        if equal_normalized_name normalized candidate then loop acc rest
+        else loop (header :: acc) rest
+  in
+  loop [] headers

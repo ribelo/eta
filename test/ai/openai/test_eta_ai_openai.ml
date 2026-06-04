@@ -360,6 +360,13 @@ let test_responses_stream_preserves_function_call_name () =
       Alcotest.fail
         "decoder rejected a valid Responses function-call metadata event"
 
+let test_stream_done_allows_surrounding_whitespace () =
+  match O.decode_stream_event { A.event = None; data = " \n[DONE]\t" } with
+  | Stdlib.Ok [ A.Stream_done ] -> ()
+  | Stdlib.Ok events ->
+      Alcotest.failf "expected stream done; got %d events" (List.length events)
+  | Stdlib.Error _ -> Alcotest.fail "decoder rejected padded stream done"
+
 let test_stream_fixture () =
   with_runtime @@ fun rt ->
   let stream =
@@ -816,6 +823,8 @@ let () =
           Alcotest.test_case "SSE fixture" `Quick test_stream_fixture;
           Alcotest.test_case "responses function call metadata" `Quick
             test_responses_stream_preserves_function_call_name;
+          Alcotest.test_case "padded done sentinel" `Quick
+            test_stream_done_allows_surrounding_whitespace;
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
         ] );
       ( "http",

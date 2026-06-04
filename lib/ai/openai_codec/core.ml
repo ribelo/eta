@@ -3,14 +3,14 @@ module Json = A.Json
 
 let ( let* ) = Result.bind
 
-type structured_output = {
+type structured_output : immutable_data = {
   name : string;
   schema : A.Json.t;
   strict : bool option;
 }
 
 let structured_output ~schema_value ?strict ~name ~schema_json () =
-  let trimmed = String.trim name in
+  let trimmed = A.Json_helpers.trim name in
   if String.equal trimmed "" then
     Stdlib.Error
       (A.Invalid_tool { name; message = "structured output name is required" })
@@ -23,6 +23,7 @@ let parse_json = A.Json_helpers.parse_json
 let schema_value = A.Json_helpers.schema_value
 
 let result_all = A.Json_helpers.result_all
+let result_map_all = A.Json_helpers.result_map_all
 
 let unsupported ~provider feature =
   Stdlib.Error (A.Unsupported { provider; feature })
@@ -38,7 +39,7 @@ let positive_int_json ~provider label = function
 
 let optional_non_empty ~provider label = function
   | None -> Stdlib.Ok None
-  | Some value when String.equal (String.trim value) "" ->
+  | Some value when A.Json_helpers.is_blank value ->
       unsupported ~provider (label ^ " must not be empty")
   | Some value -> Stdlib.Ok (Some value)
 
@@ -96,14 +97,17 @@ let raw_json = function
   | json -> Json.compact json
 
 let with_json_fields extra fields =
-  Json.object_
-    (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
+  match extra with
+  | [] -> Json.object_ fields
+  | _ ->
+      Json.object_
+        (fields @ List.map (fun (name, value) -> (name, Some value)) extra)
 
 let encode_speech ?(instructions = true) ~provider
     (request : A.Speech.request) =
-  if String.equal (String.trim request.input) "" then
+  if A.Json_helpers.is_blank request.input then
     unsupported ~provider "speech input must not be empty"
-  else if String.equal (String.trim request.voice) "" then
+  else if A.Json_helpers.is_blank request.voice then
     unsupported ~provider "speech voice must not be empty"
   else if (not instructions) && Option.is_some request.instructions then
     unsupported ~provider "speech instructions"

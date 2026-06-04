@@ -5,17 +5,23 @@ open Core
 open Content
 open Tools
 
+let response_input_items ~provider prompt =
+  let rec loop acc = function
+    | [] -> Stdlib.Ok (List.rev acc)
+    | message :: rest -> (
+        match input_items ~provider message with
+        | Stdlib.Error _ as error -> error
+        | Stdlib.Ok items -> loop (List.rev_append items acc) rest)
+  in
+  loop [] prompt
+
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
   let* temperature = temperature_json ~provider request.temperature in
   let* tools =
-    request.tools
-    |> List.map (tool_json ~schema_value ~shape:Responses_tool)
-    |> result_all
+    result_map_all (tool_json ~schema_value ~shape:Responses_tool) request.tools
   in
-  let* input =
-    request.prompt |> List.map (input_items ~provider) |> result_all
-  in
+  let* input = response_input_items ~provider request.prompt in
   let text_format =
     structured_output
     |> Option.map (fun output ->
@@ -26,7 +32,7 @@ let encode_responses_json ~provider ~schema_value ?structured_output
     (Json.object_
        [
          ("model", Some (Json.string request.model));
-         ("input", Some (Json.array (List.concat input)));
+         ("input", Some (Json.array input));
          ("stream", Some (Json.bool request.stream));
          ("temperature", temperature);
          ("max_output_tokens", Option.map Json.int request.max_output_tokens);

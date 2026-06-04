@@ -1,6 +1,6 @@
 (** Redaction policy for HTTP diagnostic output. *)
 
-type t = { redacted_headers : string list }
+type t : immutable_data = { redacted_headers : string list } [@@unboxed]
 (** Header names are matched case-insensitively after trimming. *)
 
 val default : t

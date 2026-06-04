@@ -3,7 +3,7 @@
 type ctx
 type ssl
 
-type handshake_result =
+type handshake_result : immutable_data =
   | Handshake_ok
   | Handshake_error of int
 

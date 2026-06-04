@@ -255,6 +255,25 @@ let url_request () =
 let h2_security () =
   ignore (Eta_http.H2.Security.validate_headers [ ("content-type", "text/plain") ])
 
+let projection_error =
+  Eta_http.Error.make ~protocol:H2 ~method_:"GET"
+    ~uri:"https://api.example.test/v1/models?token=secret#frag"
+    (HTTP_status
+       {
+         status = 503;
+         headers =
+           [
+             ("authorization", "Bearer secret");
+             ("Cookie", "sid=secret-cookie");
+             ("Set-Cookie", "sid=secret-cookie");
+             ("X-API-Key", "secret-key");
+             ("Content-Type", "text/plain");
+           ];
+       })
+
+let error_projection_json () =
+  ignore (Eta_http.Error_projection.to_json projection_error)
+
 let workloads =
   let item name run =
     { Bench_lib.name = "http." ^ name; run; samples = None }
@@ -264,6 +283,8 @@ let workloads =
     item "h1.parse_raw.response.100k" (fun () -> repeat 100_000 parse_response_raw);
     item "h1.write.request.100k" (fun () -> repeat 100_000 write_request);
     item "request.url_body.100k" (fun () -> repeat 100_000 url_request);
+    item "error.projection_json.100k" (fun () ->
+        repeat 100_000 error_projection_json);
     item "h2.security.headers.10k" (fun () -> repeat 10_000 h2_security);
     item "ws.codec.encode.text.100k" (fun () -> repeat 100_000 ws_codec_encode_text);
     item "ws.codec.decode.text.100k" (fun () -> repeat 100_000 ws_codec_decode_text);

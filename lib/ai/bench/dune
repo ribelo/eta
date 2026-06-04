@@ -1,6 +1,6 @@
 (executable
  (name bench_ai)
- (libraries bench_lib eta_ai eta_redacted eta_http))
+ (libraries bench_lib eta_ai eta_redacted eta_http eio_main))
 
 (rule
  (alias bench)

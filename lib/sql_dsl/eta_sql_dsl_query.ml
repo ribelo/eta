@@ -6,8 +6,8 @@ module type BACKEND = sig
   exception Error of error
 
   type 'a typ = {
-    value : 'a -> value;
-    decode : row -> int -> 'a;
+    value : ('a -> value) @@ many;
+    decode : (row -> int -> 'a) @@ many;
     sql_type : string;
   }
 
@@ -31,8 +31,8 @@ module Make (Backend : BACKEND) = struct
   type error = Backend.error
 
   type 'a typ = 'a Backend.typ = {
-    value : 'a -> Backend.value;
-    decode : Backend.row -> int -> 'a;
+    value : ('a -> Backend.value) @@ many;
+    decode : (Backend.row -> int -> 'a) @@ many;
     sql_type : string;
   }
 
@@ -74,6 +74,11 @@ module Make (Backend : BACKEND) = struct
 
     let value = value_of_param
   end)
+
+  let append_params left right =
+    match (left, right) with
+    | [], params | params, [] -> params
+    | _ -> left @ right
 
   let params_to_values params = List.map Compiled.value_of_param params
 
@@ -203,7 +208,7 @@ module Make (Backend : BACKEND) = struct
     let render_binary op left right typ =
       {
         sql = "(" ^ left.sql ^ " " ^ op ^ " " ^ right.sql ^ ")";
-        params = left.params @ right.params;
+        params = append_params left.params right.params;
         typ;
       }
 
@@ -251,13 +256,19 @@ module Make (Backend : BACKEND) = struct
         typ = bool;
       }
 
+    let placeholders count =
+      let buf = Buffer.create ((count * 3) - 2) in
+      for index = 1 to count do
+        if index > 1 then Buffer.add_string buf ", ";
+        Buffer.add_char buf '?'
+      done;
+      Buffer.contents buf
+
     let in_values column values =
       match values with
       | [] -> false_
       | values ->
-          let placeholders =
-            values |> List.map (fun _ -> "?") |> String.concat ", "
-          in
+          let placeholders = placeholders (List.length values) in
           {
             sql = column_sql column ^ " IN (" ^ placeholders ^ ")";
             params = List.map (fun value -> Param (column.typ, value)) values;
@@ -330,7 +341,11 @@ module Make (Backend : BACKEND) = struct
       Buffer.add_char buf ' ';
       Buffer.add_string buf right.sql;
       Buffer.add_char buf ')';
-      { sql = Buffer.contents buf; params = left.params @ right.params; typ = bool }
+      {
+        sql = Buffer.contents buf;
+        params = append_params left.params right.params;
+        typ = bool;
+      }
 
     let and_ left right = join "AND" left right
     let or_ left right = join "OR" left right
@@ -380,8 +395,8 @@ module Make (Backend : BACKEND) = struct
 
     let combine left right f =
       {
-        columns = left.columns @ right.columns;
-        params = left.params @ right.params;
+        columns = append_params left.columns right.columns;
+        params = append_params left.params right.params;
         width = left.width + right.width;
         decode =
           (fun row offset ->
@@ -401,19 +416,25 @@ module Make (Backend : BACKEND) = struct
     let max ?as_ column = expr ?as_ (Expr.max column)
 
     let row_number ?as_ ?(partition_by = []) ?order_by () =
-      let clauses =
-        [
-          (match partition_by with
-           | [] -> None
-           | columns ->
-               Some
-                 ("PARTITION BY "
-                 ^ String.concat ", " (List.map column_sql columns)));
-          Option.map (fun column -> "ORDER BY " ^ column_sql column) order_by;
-        ]
-        |> List.filter_map Fun.id
-      in
-      let sql = "ROW_NUMBER() OVER (" ^ String.concat " " clauses ^ ")" in
+      let buf = Buffer.create 32 in
+      Buffer.add_string buf "ROW_NUMBER() OVER (";
+      (match partition_by with
+       | [] -> ()
+       | columns ->
+           Buffer.add_string buf "PARTITION BY ";
+           List.iteri
+             (fun index column ->
+               if index > 0 then Buffer.add_string buf ", ";
+               Buffer.add_string buf (column_sql column))
+             columns);
+      (match order_by with
+       | None -> ()
+       | Some column ->
+           if partition_by <> [] then Buffer.add_char buf ' ';
+           Buffer.add_string buf "ORDER BY ";
+           Buffer.add_string buf (column_sql column));
+      Buffer.add_char buf ')';
+      let sql = Buffer.contents buf in
       let sql =
         match as_ with
         | None -> sql
@@ -473,10 +494,10 @@ module Make (Backend : BACKEND) = struct
   module Source = struct
     type 'scope t = {
       sql : string;
-      params : param list;
+      rev_params : param list;
     }
 
-    let from table = { sql = table_from_sql table; params = [] }
+    let from table = { sql = table_from_sql table; rev_params = [] }
     let table = from
 
     let join ?(op = `Inner) ~on added existing =
@@ -493,14 +514,17 @@ module Make (Backend : BACKEND) = struct
       Buffer.add_string buf (table_from_sql added);
       Buffer.add_string buf " ON ";
       Buffer.add_string buf on.Expr.sql;
-      { sql = Buffer.contents buf; params = existing.params @ on.Expr.params }
+      {
+        sql = Buffer.contents buf;
+        rev_params = List.rev_append on.Expr.params existing.rev_params;
+      }
 
     let inner_join left right ~on = join ~op:`Inner left right ~on
     let left_join left right ~on = join ~op:`Left left right ~on
   end
 
   module Select = struct
-    type order = {
+    type order : immutable_data = {
       sql : string;
       desc : bool;
     }
@@ -582,20 +606,29 @@ module Make (Backend : BACKEND) = struct
         invalid_arg (Backend.module_name ^ ".Select.limit: count must be non-negative");
       { query with limit = Some count }
 
+    let rec add_cte_params acc = function
+      | [] -> acc
+      | (_, params) :: rest ->
+          let acc = add_cte_params acc rest in
+          List.rev_append params acc
+
+    let add_expr_params opt acc =
+      match opt with
+      | None -> acc
+      | Some expr -> List.rev_append expr.Expr.params acc
+
+    let rec prepend_all values acc =
+      match values with
+      | [] -> acc
+      | value :: rest -> value :: prepend_all rest acc
+
     let params query =
-      let where_params =
-        match query.where_ with
-        | None -> []
-        | Some expr -> expr.Expr.params
-      in
-      let having_params =
-        match query.having with
-        | None -> []
-        | Some expr -> expr.Expr.params
-      in
-      let cte_params = List.rev query.rev_ctes |> List.concat_map snd in
-      cte_params @ query.row.Projection.params @ query.source.Source.params
-      @ where_params @ having_params
+      add_cte_params [] query.rev_ctes
+      |> List.rev_append query.row.Projection.params
+      |> prepend_all query.source.Source.rev_params
+      |> add_expr_params query.where_
+      |> add_expr_params query.having
+      |> List.rev
 
     let to_sql query =
       let buf = Buffer.create 192 in
@@ -673,7 +706,7 @@ module Make (Backend : BACKEND) = struct
   end
 
   module Insert = struct
-    type 'table conflict =
+    type 'table conflict : immutable_data =
       | Do_nothing of string list
       | Do_update_excluded of string list * string list
 
@@ -688,20 +721,52 @@ module Make (Backend : BACKEND) = struct
     let value column value query =
       { query with rev_values = Assignment.Set (column, value) :: query.rev_values }
 
+    let concat3_sep sep a b c =
+      let sep_len = String.length sep in
+      let a_len = String.length a
+      and b_len = String.length b
+      and c_len = String.length c in
+      let out = Bytes.create (a_len + b_len + c_len + (2 * sep_len)) in
+      Bytes.blit_string a 0 out 0 a_len;
+      Bytes.blit_string sep 0 out a_len sep_len;
+      Bytes.blit_string b 0 out (a_len + sep_len) b_len;
+      Bytes.blit_string sep 0 out (a_len + sep_len + b_len) sep_len;
+      Bytes.blit_string c 0 out (a_len + (2 * sep_len) + b_len) c_len;
+      Bytes.unsafe_to_string out
+
     let render_values values =
       match values with
       | [] -> Result.Error (Backend.invalid_query "INSERT requires at least one value")
+      | [ a; b; c ] ->
+          Ok
+            ( concat3_sep ", " (Assignment.column_sql a) (Assignment.column_sql b)
+                (Assignment.column_sql c),
+              "?, ?, ?" )
       | values ->
-          let columns = List.map Assignment.column_sql values |> String.concat ", " in
-          let placeholders = List.map (fun _ -> "?") values |> String.concat ", " in
-          Ok (columns, placeholders)
+          let columns = Buffer.create 64 in
+          let placeholders = Buffer.create 32 in
+          let rec add_values first = function
+            | [] -> ()
+            | value :: rest ->
+                if not first then (
+                  Buffer.add_string columns ", ";
+                  Buffer.add_string placeholders ", ");
+                Buffer.add_string columns (Assignment.column_sql value);
+                Buffer.add_char placeholders '?';
+                add_values false rest
+          in
+          add_values true values;
+          Ok (Buffer.contents columns, Buffer.contents placeholders)
+
+    let column_idents columns =
+      List.map column_ident columns
 
     let conflict_target columns =
       match columns with
       | [] ->
           invalid_arg
             (Backend.module_name ^ ".Insert.on_conflict: target columns must not be empty")
-      | columns -> List.map column_ident columns
+      | columns -> column_idents columns
 
     let on_conflict_do_nothing columns query =
       { query with conflict = Some (Do_nothing (conflict_target columns)) }
@@ -718,7 +783,7 @@ module Make (Backend : BACKEND) = struct
             conflict =
               Some
                 (Do_update_excluded
-                   (conflict_target columns, List.map column_ident set));
+                   (conflict_target columns, column_idents set));
           }
 
     let conflict_sql = function
@@ -770,7 +835,12 @@ module Make (Backend : BACKEND) = struct
       | Ok (columns, placeholders) ->
           to_sql_precomputed (columns, placeholders) query
 
-    let params query = List.rev_map Assignment.value query.rev_values
+    let rec prepend_values values acc =
+      match values with
+      | [] -> acc
+      | value :: rest -> prepend_values rest (Assignment.value value :: acc)
+
+    let params query = prepend_values query.rev_values []
 
     let compile query =
       match render_values (List.rev query.rev_values) with
@@ -793,7 +863,7 @@ module Make (Backend : BACKEND) = struct
           Compiled.
             {
               sql = Buffer.contents buf;
-              params = params query @ projection.Projection.params;
+              params = prepend_values query.rev_values projection.Projection.params;
               decode = (fun row -> projection.decode row 0);
             }
   end
@@ -812,11 +882,18 @@ module Make (Backend : BACKEND) = struct
 
     let where expr query = { query with where_ = Some expr }
 
+    let rec prepend_sets sets acc =
+      match sets with
+      | [] -> acc
+      | set :: rest -> prepend_sets rest (Assignment.value set :: acc)
+
     let params query =
-      let set_params = List.rev_map Assignment.value query.rev_sets in
-      match query.where_ with
-      | None -> set_params
-      | Some expr -> set_params @ expr.Expr.params
+      let tail =
+        match query.where_ with
+        | None -> []
+        | Some expr -> expr.Expr.params
+      in
+      prepend_sets query.rev_sets tail
 
     let render_sets sets =
       match sets with
@@ -863,7 +940,11 @@ module Make (Backend : BACKEND) = struct
       Compiled.
         {
           sql = Buffer.contents buf;
-          params = params query @ projection.Projection.params;
+          params =
+            prepend_sets query.rev_sets
+              (match query.where_ with
+               | None -> projection.Projection.params
+               | Some expr -> append_params expr.Expr.params projection.Projection.params);
           decode = (fun row -> projection.decode row 0);
         }
   end
@@ -907,7 +988,10 @@ module Make (Backend : BACKEND) = struct
       Compiled.
         {
           sql = Buffer.contents buf;
-          params = params query @ projection.Projection.params;
+          params =
+            (match query.where_ with
+             | None -> projection.Projection.params
+             | Some expr -> append_params expr.Expr.params projection.Projection.params);
           decode = (fun row -> projection.decode row 0);
         }
   end

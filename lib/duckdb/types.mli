@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type decode_failure = {
+type decode_failure : immutable_data = {
   column : int;
   expected : string;
   actual : string;
@@ -40,12 +40,12 @@ type appender = {
   mutable active : int;
 }
 
-type config = {
+type config : immutable_data = {
   path : string option;
   threads : int option;
 }
 
-type error =
+type error : immutable_data =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -91,8 +91,8 @@ val if_connection_open :
 val if_appender_open : appender -> (unit -> ('a, error) result) -> ('a, error) result
 
 type 'a typ = {
-  value : 'a -> Value.t;
-  decode : Row.t -> int -> 'a;
+  value : ('a -> Value.t) @@ many;
+  decode : (Row.t -> int -> 'a) @@ many;
   sql_type : string;
 }
 

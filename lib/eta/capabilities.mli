@@ -33,30 +33,30 @@ type span_kind : immutable_data = Internal | Server | Client | Producer | Consum
 
 (** W3C trace context plus baggage propagated across service boundaries. *)
 type trace_context : immutable_data = {
-  trace_id : string;  (** Hex 32 chars. *)
-  span_id : string;  (** Hex 16 chars. *)
+  global_ trace_id : string;  (** Hex 32 chars. *)
+  global_ span_id : string;  (** Hex 16 chars. *)
   trace_flags : int;  (** W3C flags byte. Bit 0 is the sampled flag. *)
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 
 (** Information about an active span surfaced through {!tracer.inspect}. *)
 type span_info : immutable_data = {
-  trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
-  span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
-  name : string;
+  global_ trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
+  global_ span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
+  global_ name : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 
 (** A reference to another span that the current span is linked to.
     [trace_id] and [span_id] are hex strings; for links to in-process spans
     use {!tracer.inspect} to resolve them. *)
 type span_link : immutable_data = {
-  link_trace_id : string;
-  link_span_id : string;
-  link_attrs : (string * string) list;
+  global_ link_trace_id : string;
+  global_ link_span_id : string;
+  global_ link_attrs : (string * string) list;
 }
 
 (** Severity for a {!log_record}. Maps to OTLP severityNumber. *)
@@ -67,11 +67,11 @@ type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
     span is active. *)
 type log_record : immutable_data = {
   level : log_level;
-  body : string;
+  global_ body : string;
   ts_ms : int;
-  attrs : (string * string) list;
-  trace_id : string;
-  span_id : string;
+  global_ attrs : (string * string) list;
+  global_ trace_id : string;
+  global_ span_id : string;
 }
 
 (** Minimal tracing capability. Implementations may back this with an

@@ -105,9 +105,14 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
       encode_chat =
         (fun request ->
           Ok
-            (Printf.sprintf
-               "{\"model\":%S,\"stream\":%b,\"message_count\":%d}" request.model
-               request.stream (List.length request.prompt)));
+            (Eta_ai.Json.to_string
+               (Eta_ai.Json.object_
+                  [
+                    ("model", Some (Eta_ai.Json.string request.model));
+                    ("stream", Some (Eta_ai.Json.bool request.stream));
+                    ( "message_count",
+                      Some (Eta_ai.Json.int (List.length request.prompt)) );
+                  ])));
       decode_chat =
         (fun raw ->
           Ok
@@ -122,8 +127,12 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
       encode_embeddings =
         (fun request ->
           Ok
-            (Printf.sprintf "{\"model\":%S,\"input\":\"fixture\"}"
-               request.model));
+            (Eta_ai.Json.to_string
+               (Eta_ai.Json.object_
+                  [
+                    ("model", Some (Eta_ai.Json.string request.model));
+                    ("input", Some (Eta_ai.Json.string "fixture"));
+                  ])));
       decode_embeddings =
         (fun raw ->
           Ok
@@ -375,7 +384,7 @@ let test_toolkit_rejects_duplicate_names () =
   | _ -> Alcotest.fail "expected spaced duplicate tool rejection"
 
 let test_toolkit_rejects_missing_schema () =
-  match make_tool ~name:"bad" ~input_schema_json:" " () with
+  match make_tool ~name:"bad" ~input_schema_json:" \t\n\r" () with
   | Error
       (Invalid_tool
         { name = "bad"; message = "input_schema_json is required" }) ->

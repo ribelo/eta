@@ -1,7 +1,7 @@
 module Version : sig
-  type t
+  type t : immutable_data
 
-  type error =
+  type error : immutable_data =
     | Not_positive of int64
     | Invalid_integer of string
     | Expected_integer_value
@@ -18,9 +18,9 @@ module Version : sig
 end
 
 module Table_name : sig
-  type t
+  type t : immutable_data
 
-  type error =
+  type error : immutable_data =
     | Empty
     | Invalid_identifier of string
 
@@ -31,7 +31,7 @@ module Table_name : sig
   val error_to_string : error -> string
 end
 
-type migration_type =
+type migration_type : immutable_data =
   | Simple
   | Reversible_up
   | Reversible_down
@@ -39,7 +39,7 @@ type migration_type =
 val migration_type_to_string : migration_type -> string
 
 module Migration : sig
-  type t = private {
+  type t : immutable_data = private {
     version : Version.t;
     description : string;
     migration_type : migration_type;
@@ -60,14 +60,14 @@ module Migration : sig
 end
 
 module Applied_migration : sig
-  type t = {
+  type t : immutable_data = {
     version : Version.t;
     checksum : string;
   }
 end
 
 module Config : sig
-  type t = {
+  type t : immutable_data = {
     table_name : Table_name.t;
     ignore_missing : bool;
   }
@@ -75,17 +75,17 @@ module Config : sig
   val default : t
 end
 
-type applied = {
+type applied : immutable_data = {
   migration : Migration.t;
   elapsed_ms : int;
 }
 
-type run_report = {
+type run_report : immutable_data = {
   applied : applied list;
   already_applied : Applied_migration.t list;
 }
 
-type source_error =
+type source_error : immutable_data =
   | Read_migration_file_failed of {
       path : string;
       reason : string;
@@ -99,7 +99,7 @@ type source_error =
       reason : string;
     }
 
-type error =
+type error : immutable_data =
   | Source_error of source_error
   | Invalid_version of Version.error
   | Invalid_table_name of Table_name.error
@@ -114,9 +114,10 @@ type error =
     }
 
 module Source : sig
-  type resolve_config = {
+  type resolve_config : immutable_data = {
     ignored_checksum_chars : char list;
   }
+  [@@unboxed]
 
   val default_resolve_config : resolve_config
 
@@ -149,4 +150,3 @@ val undo :
   Source.t ->
   target:Version.t ->
   (run_report, error) Eta.Effect.t
-

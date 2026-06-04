@@ -3,7 +3,7 @@ module E = Eta.Effect
 module H = Eta_http
 module Json = A.Json
 
-type prompt_cache = {
+type prompt_cache : immutable_data = {
   beta_header : string;
   cache_system : bool;
 }
@@ -19,6 +19,7 @@ let parse_raw_json label raw =
   A.Json_helpers.schema_value ~provider:"anthropic" label raw
 
 let result_all = A.Json_helpers.result_all
+let result_map_all = A.Json_helpers.result_map_all
 let ( let* ) = Result.bind
 
 let contents_text contents =
@@ -53,30 +54,57 @@ let text_block ?cache_control text =
       ("cache_control", cache_control);
     ]
 
+let[@zero_alloc] equal_token url start stop token =
+  let len = stop - start in
+  len = String.length token
+  &&
+  let mutable index = 0 in
+  let mutable equal = true in
+  while equal && index < len do
+    equal <- Char.equal (String.unsafe_get url (start + index)) token.[index];
+    index <- index + 1
+  done;
+  equal
+
+let[@zero_alloc] metadata_has_token url start stop token =
+  let mutable pos = start in
+  let mutable found = false in
+  while (not found) && pos <= stop do
+    let token_start = pos in
+    while pos < stop && not (Char.equal (String.unsafe_get url pos) ';') do
+      pos <- pos + 1
+    done;
+    found <- equal_token url token_start pos token;
+    pos <- pos + 1
+  done;
+  found
+
 let image_source media =
   match media.A.detail with
   | Some _ ->
       Stdlib.Error
         (A.Unsupported { provider = "anthropic"; feature = "image detail" })
-  | None when String.starts_with ~prefix:"data:" media.url -> (
+  | None when Eta.String_helpers.starts_with media.url ~prefix:"data:" -> (
       match String.index_opt media.url ',' with
       | None ->
           Stdlib.Error
             (A.Unsupported
                { provider = "anthropic"; feature = "image data URL payload" })
       | Some comma ->
-          let metadata = String.sub media.url 5 (comma - 5) in
           let data =
             String.sub media.url (comma + 1)
               (String.length media.url - comma - 1)
           in
-          let parts = String.split_on_char ';' metadata in
-          let media_type =
-            match parts with
-            | value :: _ when not (String.equal value "") -> Some value
-            | _ -> None
+          let media_type_stop =
+            match String.index_from_opt media.url 5 ';' with
+            | Some semicolon when semicolon < comma -> semicolon
+            | _ -> comma
           in
-          if not (List.exists (String.equal "base64") parts) then
+          let media_type =
+            if media_type_stop = 5 then None
+            else Some (String.sub media.url 5 (media_type_stop - 5))
+          in
+          if not (metadata_has_token media.url 5 comma "base64") then
             Stdlib.Error
               (A.Unsupported
                  { provider = "anthropic"; feature = "image data URL base64" })
@@ -128,7 +156,7 @@ let content_block = function
            { provider = "anthropic"; feature = "video content" })
 
 let content_blocks contents =
-  result_all (List.map content_block contents)
+  result_map_all content_block contents
 
 let tool_use_block (call : A.tool_call) =
   let* input =
@@ -174,7 +202,7 @@ let message_json (message : A.message) =
                   ]))
   | A.Assistant { content; tool_calls } ->
       let* blocks = content_blocks content in
-      let* tool_blocks = result_all (List.map tool_use_block tool_calls) in
+      let* tool_blocks = result_map_all tool_use_block tool_calls in
       Stdlib.Ok
         (Some
            (Json.object_
@@ -243,7 +271,7 @@ let encode_messages ?prompt_cache (request : A.chat_request) =
   let* max_tokens = max_tokens in
   let* temperature = temperature in
   let* messages = result_all (List.map message_json request.prompt) in
-  let* tools = result_all (List.map tool_json request.tools) in
+  let* tools = result_map_all tool_json request.tools in
   Stdlib.Ok
     (Json.to_string
        (Json.object_
@@ -429,8 +457,7 @@ let stream_message_delta json =
   | None -> []
 
 let decode_stream_event (event : A.sse_event) =
-  let data = String.trim event.data in
-  match Json.parse data with
+  match Json.parse event.data with
   | Stdlib.Error message ->
       Stdlib.Error
         (A.Decode_error { provider = "anthropic"; message; raw = Some event.data })

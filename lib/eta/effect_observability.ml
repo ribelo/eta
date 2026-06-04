@@ -4,7 +4,7 @@
 
 open Effect_core
 
-let with_error_renderer render effect =
+let with_error_renderer (render @ many) effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   let frame = { frame with error_renderer = (fun err -> render (Obj.obj err)) } in
@@ -52,9 +52,23 @@ let annotate ~key ~value effect =
   RObs.with_die_annotation key value @@ fun () -> effect.eval ()
 
 let annotate_all attrs effect =
-  List.fold_right
-    (fun (key, value) acc -> annotate ~key ~value acc)
-    attrs effect
+  match attrs with
+  | [] -> effect
+  | _ ->
+      preserve effect @@ fun () ->
+      let frame = current_frame () in
+      (if frame.runtime.tracing_enabled then
+         match Eio.Fiber.get RObs.active_span_key with
+         | Some span_id ->
+             List.iter
+               (fun (key, value) ->
+                 frame.runtime.tracer#add_attr_to ~span_id ~key ~value)
+               attrs
+         | None ->
+             List.iter
+               (fun (key, value) -> frame.runtime.tracer#add_attr ~key ~value)
+               attrs);
+      RObs.with_die_annotations attrs @@ fun () -> effect.eval ()
 
 let add_attrs_to_active_span frame attrs =
   if frame.runtime.tracing_enabled then
@@ -87,7 +101,7 @@ let rec iter_cause_fail f = function
       iter_cause_fail f primary;
       ignore finalizer
 
-let with_result_attrs ~ok_attrs ~err_attrs effect =
+let with_result_attrs ~(ok_attrs @ many) ~(err_attrs @ many) effect =
   preserve effect @@ fun () ->
   let frame = current_frame () in
   match effect.eval () with

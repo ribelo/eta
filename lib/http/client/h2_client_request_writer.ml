@@ -15,17 +15,19 @@ let headers request url =
   match Header.validate request.Request.headers with
   | Some kind -> Error (H2_client_errors.error request kind)
   | None ->
-      let user_headers =
-        request.Request.headers
-        |> List.filter_map (fun (name, value) ->
-               if skip_header name then None
-               else Some (Header.normalize_name name, value))
-      in
-      let has_content_length =
-        List.exists
-          (fun (name, _) ->
-            String.equal (Header.normalize_name name) "content-length")
-          user_headers
+      let user_headers, has_content_length =
+        let rec loop acc has_content_length = function
+          | [] -> (List.rev acc, has_content_length)
+          | (name, value) :: rest ->
+              if skip_header name then loop acc has_content_length rest
+              else
+                let normalized = Header.normalize_name name in
+                loop ((normalized, value) :: acc)
+                  (has_content_length
+                  || String.equal normalized "content-length")
+                  rest
+        in
+        loop [] false request.Request.headers
       in
       let content_length =
         if has_content_length then None
@@ -85,7 +87,7 @@ let write_chunk_result writer chunk =
     else
       let len = min 16_384 (String.length chunk - off) in
       Eta.Effect.sync (fun () ->
-          H2_proto.Body.Writer.write_string writer (String.sub chunk off len);
+          H2_proto.Body.Writer.write_string writer chunk ~off ~len;
           flush_body_writer writer)
       |> Eta.Effect.bind (function
            | `Written -> loop (off + len)
@@ -96,9 +98,14 @@ let write_chunk_result writer chunk =
 let write_chunk writer chunk =
   write_chunk_result writer chunk |> Eta.Effect.map (fun _ -> ())
 
+let rec write_chunks writer = function
+  | [] -> Eta.Effect.unit
+  | chunk :: rest ->
+      write_chunk writer chunk |> Eta.Effect.bind (fun () -> write_chunks writer rest)
+
 let write_fixed_body_sync writer chunks =
   let write_chunk chunk =
-    let s = Bytes.unsafe_to_string chunk in
+    let s = Bytes.to_string chunk in
     let len = Bytes.length chunk in
     let rec loop off =
       if off < len then (
@@ -110,7 +117,13 @@ let write_fixed_body_sync writer chunks =
     in
     loop 0
   in
-  List.iter write_chunk chunks;
+  let rec write_chunks = function
+    | [] -> ()
+    | chunk :: rest ->
+        write_chunk chunk;
+        write_chunks rest
+  in
+  write_chunks chunks;
   H2_proto.Body.Writer.close writer
 
 let rec write_stream writer body =
@@ -129,7 +142,7 @@ let write_body writer request_body upload =
   | None -> (
       match request_body with
       | Request.Empty -> Eta.Effect.unit
-      | Fixed chunks -> chunks |> List.map (write_chunk writer) |> Eta.Effect.concat
+      | Fixed chunks -> write_chunks writer chunks
       | Stream _ | Rewindable_stream _ -> Eta.Effect.unit)
 
 let close_request_body writer =

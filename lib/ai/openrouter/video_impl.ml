@@ -6,7 +6,7 @@ module H = Common.H
 module Json = Common.Json
 
 let encode (request : A.Video.request) =
-  if String.equal (String.trim request.prompt) "" then
+  if A.Json_helpers.is_blank request.prompt then
     Common.invalid_routing "video prompt must not be empty"
   else
     Stdlib.Ok
@@ -56,7 +56,7 @@ let decode raw =
             })
 
 let validate_job_id job_id =
-  if String.equal (String.trim job_id) "" then
+  if A.Json_helpers.is_blank job_id then
     Common.invalid_routing "video job_id must not be empty"
   else if
     String.contains job_id '/'

@@ -6,11 +6,11 @@
     injected into outbound headers. *)
 
 type t : immutable_data = Capabilities.trace_context = {
-  trace_id : string;
-  span_id : string;
+  global_ trace_id : string;
+  global_ span_id : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 (** Propagation context for a remote or local span.
 

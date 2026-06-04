@@ -9,7 +9,7 @@
     churn signal. Header-block/CONTINUATION byte caps protect incomplete or
     oversized HPACK envelopes; HPACK decoding remains owned by [ocaml-h2]. *)
 
-type config = {
+type config : immutable_data = {
   max_settings_per_connection : int;
   max_goaway_per_connection : int;
   max_hpack_block_bytes : int;

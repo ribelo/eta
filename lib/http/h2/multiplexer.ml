@@ -10,7 +10,7 @@ module Security = Security
 
 type stream = Stream_state.stream
 
-type request_error =
+type request_error : immutable_data =
   | Admission_rejected of { limit : int }
   | Connection_closed
   | Request_failed of string
@@ -151,7 +151,7 @@ type client_reader = {
   mutable eof : bool;
 }
 
-type read_result =
+type read_result : immutable_data =
   | Read of int
   | Eof of int
   | Close

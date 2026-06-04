@@ -5,16 +5,16 @@ type raw_stmt
 
 type rc = int
 
-type open_mode =
+type open_mode : immutable_data =
   | Read_only
   | Read_write
   | Read_write_create
 
-type journal_mode =
+type journal_mode : immutable_data =
   | Mvcc
   | Wal
 
-type config = {
+type config : immutable_data = {
   path : string;
   mode : open_mode;
   busy_timeout_ms : int option;
@@ -22,12 +22,12 @@ type config = {
   journal_mode : journal_mode;
 }
 
-type transaction_mode =
+type transaction_mode : immutable_data =
   | Read
   | Write
   | Concurrent
 
-type error =
+type error : immutable_data =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -45,7 +45,7 @@ type error =
 
 exception Error of error
 
-type decode_failure = {
+type decode_failure : immutable_data = {
   column : int;
   expected : string;
   actual : string;

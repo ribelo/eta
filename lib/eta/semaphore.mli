@@ -34,7 +34,8 @@ val release : t -> int -> unit
     @raise Invalid_argument if [n <= 0] or if the release would exceed the
     semaphore capacity. *)
 
-val with_permits : t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effect.t
+val with_permits :
+  t -> int -> (unit -> ('a, 'err) Effect.t) @ many -> ('a, 'err) Effect.t
 (** [with_permits t n f] acquires [n] permits, runs [f ()], and releases the
     permits on exit (success, typed failure, or cancellation). *)
 
@@ -42,7 +43,7 @@ val with_permits_or_abort :
   t ->
   int ->
   abort:('abort, 'err) Effect.t ->
-  (unit -> ('a, 'err) Effect.t) ->
+  (unit -> ('a, 'err) Effect.t) @ many ->
   ('a option, 'err) Effect.t
 (** [with_permits_or_abort t n ~abort f] races acquiring [n] permits against
     [abort]. If the permits are acquired first, [f ()] runs while holding them

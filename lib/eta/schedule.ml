@@ -54,7 +54,7 @@ let scale_capped d factor =
 
 let default_random = lazy (Capabilities.random_default ())
 
-type state =
+type state : immutable_data =
   | Driver_recurs of int
   | Driver_forever
   | Driver_spaced of Duration.t

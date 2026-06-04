@@ -375,6 +375,20 @@ let test_observability_noop_runtime_keeps_die_diagnostics () =
         (List.assoc_opt "request.id" die.annotations)
   | _ -> Alcotest.fail "expected Die with noop runtime diagnostics"
 
+let test_observability_annotate_all_die_diagnostics () =
+  with_runtime @@ fun rt ->
+  let exn = Failure "annotate_all diagnostic" in
+  let eff =
+    Effect.sync (fun () -> raise exn)
+    |> Effect.annotate_all [ ("first", "1"); ("second", "2") ]
+  in
+  match Runtime.run rt eff with
+  | Exit.Error (Cause.Die die) ->
+      Alcotest.(check bool) "same exception" true (die.exn == exn);
+      Alcotest.(check (list (pair string string)))
+        "annotation order" [ ("first", "1"); ("second", "2") ] die.annotations
+  | _ -> Alcotest.fail "expected Die with annotate_all diagnostics"
+
 let counting_noop_tracer count : Capabilities.tracer =
   object
     method with_fiber_context : 'a. (unit -> 'a) -> 'a = fun f -> f ()
@@ -455,6 +469,33 @@ let test_trace_context_extract_inject () =
       Alcotest.(check (option string)) "traceparent injected"
         (Some "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
         (List.assoc_opt "traceparent" (Trace_context.inject ctx))
+
+let test_trace_context_extract_pair_scanner_edges () =
+  let ctx =
+    Trace_context.extract
+      [
+        ( " TraceParent ",
+          " 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 " );
+        ( "tracestate",
+          " good = value , empty= , repeated=a=b , also = ok " );
+        ("baggage", " tenant = acme ; ignored=param , broken=a=b , flag ");
+      ]
+  in
+  match ctx with
+  | None -> Alcotest.fail "expected trace context with edge pairs"
+  | Some ctx ->
+      Alcotest.(check (option string)) "tracestate good" (Some "value")
+        (List.assoc_opt "good" ctx.trace_state);
+      Alcotest.(check (option string)) "tracestate also" (Some "ok")
+        (List.assoc_opt "also" ctx.trace_state);
+      Alcotest.(check (option string)) "tracestate empty rejected" None
+        (List.assoc_opt "empty" ctx.trace_state);
+      Alcotest.(check (option string)) "tracestate repeated rejected" None
+        (List.assoc_opt "repeated" ctx.trace_state);
+      Alcotest.(check (option string)) "baggage parameter ignored" (Some "acme")
+        (List.assoc_opt "tenant" ctx.baggage);
+      Alcotest.(check (option string)) "baggage repeated rejected" None
+        (List.assoc_opt "broken" ctx.baggage)
 
 let test_trace_context_extracts_higher_version_traceparent () =
   let ctx =

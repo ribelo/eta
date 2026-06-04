@@ -10,7 +10,7 @@ val manual :
   (('a, 'err) t, 'err) Effect.t
 
 val auto :
-  ?on_error:('err -> unit) ->
+  ?on_error:('err -> unit) @ many ->
   load:('a, 'err) Effect.t ->
   ?random:Capabilities.random ->
   schedule:Schedule.t ->

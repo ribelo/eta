@@ -3,12 +3,12 @@ module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module H = Eta_http
 
-type auth = {
+type auth : immutable_data = {
   header : string;
   prefix : string option;
 }
 
-type structured_output = Codec.structured_output = {
+type structured_output : immutable_data = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;
@@ -64,12 +64,9 @@ let provider ?(name = "openai-compatible")
     ?(extra_headers = []) ~base_url () =
   let auth_headers api_key =
     H.Core.Header.unsafe_of_list
-      ([
-         (auth.header, auth_value auth api_key);
-         ("Content-Type", "application/json");
-         ("Accept", "application/json");
-       ]
-      @ extra_headers)
+      ((auth.header, auth_value auth api_key)
+      :: ("Content-Type", "application/json")
+      :: ("Accept", "application/json") :: extra_headers)
   in
   {
     A.name;

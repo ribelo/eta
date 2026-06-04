@@ -1,6 +1,6 @@
 (** Byte span inside a parser buffer. *)
 
-type t = {
+type t : immutable_data = {
   off : int;
   len : int;
 }

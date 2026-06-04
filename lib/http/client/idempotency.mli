@@ -5,7 +5,7 @@
     method, but callers can opt in with an Idempotency-Key header when the body
     is replayable. *)
 
-type classification =
+type classification : immutable_data =
   | Retryable
   | Needs_idempotency_key
   | One_shot_body

@@ -15,6 +15,17 @@ let test_header_value_accepts_htab () =
   | Ok _ -> ()
   | Error _ -> Alcotest.fail "HTAB header value rejected"
 
+let test_method_of_string_fast_path_semantics () =
+  Alcotest.(check string) "known lowercase trimmed" "GET"
+    (Eta_http.Core.Method.to_string
+       (Eta_http.Core.Method.of_string "  get\t"));
+  Alcotest.(check bool) "post not idempotent" false
+    (Eta_http.Core.Method.is_idempotent
+       (Eta_http.Core.Method.of_string "\r\npost "));
+  Alcotest.(check string) "unknown uppercased trimmed" "BREW"
+    (Eta_http.Core.Method.to_string
+       (Eta_http.Core.Method.of_string " brew "))
+
 let test_error_redaction_and_projection () =
   let uri = "https://api.example.test/v1/models?token=secret#frag" in
   let error =
@@ -39,6 +50,14 @@ let test_error_redaction_and_projection () =
     (Eta_http.Error.retryability_to_string (Eta_http.Error.retryability error));
   let pretty = Eta_http.Error.to_string error in
   let json = Eta_http.Error_projection.to_json error in
+  let parsed = Yojson.Safe.from_string json in
+  Alcotest.(check string) "json method" "GET"
+    (Yojson.Safe.Util.member "method" parsed |> Yojson.Safe.Util.to_string);
+  Alcotest.(check int) "json status" 503
+    (Yojson.Safe.Util.member "status" parsed |> Yojson.Safe.Util.to_int);
+  Alcotest.(check string) "json redacted uri"
+    "https://api.example.test/v1/models?<redacted>#frag"
+    (Yojson.Safe.Util.member "uri" parsed |> Yojson.Safe.Util.to_string);
   List.iter
     (fun output ->
       Alcotest.(check bool) "redacted marker" true

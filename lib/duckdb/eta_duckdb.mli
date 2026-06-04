@@ -39,12 +39,12 @@ type database
 type connection
 type appender
 
-type config = {
+type config : immutable_data = {
   path : string option;
   threads : int option;
 }
 
-type error =
+type error : immutable_data =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -152,7 +152,7 @@ end
 module Pool : sig
   type t
 
-  type nonrec error =
+  type nonrec error : immutable_data =
     | Duckdb of error
     | Invalid_blocking_pool of string
     | Pool_shutdown

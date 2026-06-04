@@ -5,7 +5,7 @@ type database = Types.database
 type connection = Types.connection
 type appender = Types.appender
 
-type config = Types.config = {
+type config : immutable_data = Types.config = {
   path : string option;
   threads : int option;
 }
@@ -26,8 +26,8 @@ type error = Types.error =
 exception Error = Types.Error
 
 type 'a typ = 'a Types.typ = {
-  value : 'a -> Value.t;
-  decode : Row.t -> int -> 'a;
+  value : ('a -> Value.t) @@ many;
+  decode : (Row.t -> int -> 'a) @@ many;
   sql_type : string;
 }
 

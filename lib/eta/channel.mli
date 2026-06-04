@@ -16,7 +16,7 @@
 
 type ('a, 'err) t
 
-type stats = {
+type stats : immutable_data = {
   depth : int;
   sent : int;
   received : int;

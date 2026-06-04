@@ -3,6 +3,10 @@ module Json = Json
 include Types
 
 module Json_helpers = struct
+  let is_blank = Eta.String_helpers.is_blank
+  let trim = Eta.String_helpers.trim
+  let trim_equal = Eta.String_helpers.trim_equal
+
   let decode_error_result ?raw ~provider message =
     Stdlib.Error (Decode_error { provider; message; raw })
 
@@ -23,6 +27,16 @@ module Json_helpers = struct
       | [] -> Stdlib.Ok (List.rev acc)
       | Stdlib.Ok value :: rest -> loop (value :: acc) rest
       | Stdlib.Error _ as error :: _ -> error
+    in
+    loop [] values
+
+  let result_map_all (f @ many) values =
+    let rec loop acc = function
+      | [] -> Stdlib.Ok (List.rev acc)
+      | value :: rest -> (
+          match f value with
+          | Stdlib.Ok mapped -> loop (mapped :: acc) rest
+          | Stdlib.Error _ as error -> error)
     in
     loop [] values
 end

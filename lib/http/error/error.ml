@@ -1,8 +1,8 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type protocol = H1 | H2 | Unknown
+type protocol : immutable_data = H1 | H2 | Unknown
 
-type layer =
+type layer : immutable_data =
   | Tcp
   | Tls
   | Alpn
@@ -12,21 +12,21 @@ type layer =
   | Body_decode
   | Cancellation
 
-type retryability =
+type retryability : immutable_data =
   | Retryable
   | Retryable_if_body_replayable
   | Not_retryable
 
-type tls_stage = Tls_handshake | Alpn_negotiation
+type tls_stage : immutable_data = Tls_handshake | Alpn_negotiation
 
-type certificate_reason =
+type certificate_reason : immutable_data =
   | Expired
   | Name_mismatch
   | Untrusted_chain
   | Revoked
   | Certificate_policy_error of string
 
-type kind =
+type kind : immutable_data =
   | Dns_error of { host : string; message : string }
   | Connect_error of { message : string }
   | Connect_timeout of { timeout_ms : int option }
@@ -61,13 +61,13 @@ type kind =
     }
   | Header_invalid of { reason : string }
 
-type context = {
+type context : immutable_data = {
   method_ : string;
   uri : string;
   protocol : protocol;
 }
 
-type t = {
+type t : immutable_data = {
   context : context;
   kind : kind;
 }
@@ -75,7 +75,10 @@ type t = {
 let make ?(protocol = Unknown) ~method_ ~uri kind =
   { context = { method_; uri; protocol }; kind }
 
-let protocol_to_string = function H1 -> "h1" | H2 -> "h2" | Unknown -> "unknown"
+let protocol_to_string = function
+  | H1 -> "h1"
+  | H2 -> "h2"
+  | Unknown -> "unknown"
 
 let layer_to_string = function
   | Tcp -> "tcp"
@@ -198,7 +201,8 @@ let error_class t =
       "response_header_change_rate_exceeded"
   | Header_invalid _ -> "header_invalid"
 
-let headers t = match t.kind with HTTP_status { headers; _ } -> headers | _ -> []
+let headers t =
+  match t.kind with HTTP_status { headers; _ } -> headers | _ -> []
 
 let pp fmt t =
   Format.fprintf fmt
@@ -214,10 +218,13 @@ let pp fmt t =
   | Some status ->
       Format.fprintf fmt " status=%d status_class=%s" status
         (Option.value ~default:"none" (status_class t)));
-  (match Redaction.headers (headers t) with
+  (match headers t with
   | [] -> ()
   | headers ->
-      let pp_header fmt (name, value) = Format.fprintf fmt "%s=%s" name value in
+      let pp_header fmt (name, value) =
+        let value = if Redaction.is_sensitive name then "<redacted>" else value in
+        Format.fprintf fmt "%s=%s" name value
+      in
       Format.fprintf fmt " headers=[%a]"
         (Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt "; ")
            pp_header)

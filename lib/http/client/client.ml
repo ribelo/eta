@@ -7,9 +7,9 @@ module Header = Header
 module Url = Url
 module H2_proto = H2
 
-type protocol = H1 | H2 | Auto
+type protocol : immutable_data = H1 | H2 | Auto
 
-type stats = {
+type stats : immutable_data = {
   protocol : protocol;
   active : int;
   idle : int;
@@ -25,12 +25,15 @@ type t = {
      operations check this before touching mutable protocol state so sending a
      client to another domain fails loudly instead of racing H1 pools, Auto
      refs, or H2 state machines. *)
-  request_impl : Request.t -> (Response.t, Error.t) Eta.Effect.t;
-  stats_impl : unit -> (stats, Error.t) Eta.Effect.t;
-  shutdown_impl : unit -> (unit, Error.t) Eta.Effect.t;
+  request_impl : (Request.t -> (Response.t, Error.t) Eta.Effect.t) @@ many;
+  stats_impl : (unit -> (stats, Error.t) Eta.Effect.t) @@ many;
+  shutdown_impl : (unit -> (unit, Error.t) Eta.Effect.t) @@ many;
 }
 
-let protocol_to_string = function H1 -> "h1" | H2 -> "h2" | Auto -> "auto"
+let protocol_to_string = function
+  | H1 -> "h1"
+  | H2 -> "h2"
+  | Auto -> "auto"
 let default_max_response_body_bytes =
   H1_client.default_max_response_body_bytes
 
@@ -264,7 +267,7 @@ let h2_default_config =
   }
 
 let h2_key target =
-  Printf.sprintf "https://%s:%d" target.Connect.host target.port
+  "https://" ^ target.Connect.host ^ ":" ^ string_of_int target.port
 
 let with_alpn_lock state f =
   Eio.Mutex.lock state.alpn_mutex;

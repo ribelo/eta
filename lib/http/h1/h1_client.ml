@@ -14,7 +14,7 @@ type nonrec request_body = request_body =
   | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : unit -> Stream.t;
+      make : (unit -> Stream.t) @@ many;
     }
 
 type nonrec request = request = {
@@ -28,7 +28,7 @@ type nonrec response = response = {
   status : int;
   headers : Header.t;
   body : Stream.t;
-  trailers : unit -> (Header.t, Error.t) Effect.t;
+  trailers : (unit -> (Header.t, Error.t) Effect.t) @@ many;
 }
 
 type nonrec pool = pool
@@ -36,9 +36,9 @@ type nonrec pool = pool
 let default_max_response_body_bytes =
   H1_client_response_reader.default_max_response_body_bytes
 
-let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
+let request_on_flow ?host_eio ?(on_unread_body @ many = fun () -> Effect.unit)
     ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?release ~flow request =
+    ?(release @ many) ~flow request =
   if max_response_body_bytes < 0 then
     invalid_arg
       "Eta_http.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
@@ -104,9 +104,11 @@ let release_body release_ch =
    reuse. The string form is the canonical diagnostic form checked by
    request_with_pool as well as the client pool table. *)
 let origin_key url =
-  Printf.sprintf "%s://%s:%d"
-    (Url.scheme_to_string (Url.scheme url))
-    (Url.host url) (Url.effective_port url)
+  Url.scheme_to_string (Url.scheme url)
+  ^ "://"
+  ^ Url.host url
+  ^ ":"
+  ^ string_of_int (Url.effective_port url)
 
 let origin_error pool request =
   H1_client_errors.make_error request
@@ -114,8 +116,10 @@ let origin_error pool request =
        {
          kind = "pool_origin";
          message =
-           Printf.sprintf "request origin %s does not match pool origin %s"
-             (origin_key request.url) pool.origin;
+           "request origin "
+           ^ origin_key request.url
+           ^ " does not match pool origin "
+           ^ pool.origin;
        })
 
 let health_error (target : Connect.target) message =

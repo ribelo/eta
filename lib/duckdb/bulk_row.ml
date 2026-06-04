@@ -2,7 +2,7 @@
 
 open Dsl_backend
 
-type t = { rev_values : Value.t list }
+type t = { rev_values : Value.t list } [@@unboxed]
 
 let empty = { rev_values = [] }
 let value column value row = { rev_values = column_value column value :: row.rev_values }

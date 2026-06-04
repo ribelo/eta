@@ -19,7 +19,7 @@ module Blocking = struct
       with exn -> exit_of_exn frame exn
   end
 
-  let submit ?pool ?(name = "blocking") ?on_cancel f =
+  let submit ?pool ?(name = "blocking") ?on_cancel (f @ many) =
     Blocking_runtime.check_not_worker "Effect.Blocking.submit";
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
@@ -37,13 +37,13 @@ module Blocking = struct
     with exn -> exit_of_exn frame exn
 end
 
-let blocking ?pool ?(name = "blocking") ?on_cancel f =
+let blocking ?pool ?(name = "blocking") ?on_cancel (f @ many) =
   Blocking.submit ?pool ~name ?on_cancel f
 
-let blocking_result ?pool ?name ?on_cancel f =
+let blocking_result ?pool ?name ?on_cancel (f @ many) =
   blocking ?pool ?name ?on_cancel f |> bind from_result
 
-let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
+let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout (f @ many) =
   let name = Option.value ~default:"blocking" name in
   let cancel_hook_called = Atomic.make false in
   let on_cancel_once =

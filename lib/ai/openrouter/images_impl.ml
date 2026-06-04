@@ -10,7 +10,7 @@ let encode (request : A.Image.request) =
   match request.model with
   | None -> Common.invalid_routing "image generation model is required"
   | Some model ->
-      if String.equal (String.trim request.prompt) "" then
+      if A.Json_helpers.is_blank request.prompt then
         Common.invalid_routing "image generation prompt must not be empty"
       else if Option.is_some request.n then
         Common.invalid_routing "image generation n"

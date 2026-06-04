@@ -1,11 +1,11 @@
 module Value = struct
-  type node = {
+  type node : immutable_data = {
     id : int64 option;
     labels : string list;
     properties : (string * t) list;
   }
 
-  and rel = {
+  and rel : immutable_data = {
     id : int64 option;
     src : int64 option;
     dst : int64 option;
@@ -13,12 +13,12 @@ module Value = struct
     properties : (string * t) list;
   }
 
-  and path = {
+  and path : immutable_data = {
     nodes : node list;
     rels : rel list;
   }
 
-  and t =
+  and t : immutable_data =
     | Null
     | Bool of bool
     | Int of int64
@@ -99,7 +99,7 @@ module Decode = struct
   let float field = expect field "float" Row.float
   let node field = expect field "node" Row.node
 
-  let map f decode row = Result.map f (decode row)
+  let map (f @ many) decode row = Result.map f (decode row)
 
   let tuple2 left right row =
     match left row with

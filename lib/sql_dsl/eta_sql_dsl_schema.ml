@@ -30,14 +30,14 @@ module Make
       val compiled_schema : string -> compiled_schema
     end) =
 struct
-  type reference = {
+  type reference : immutable_data = {
     table_name : string;
     column_name : string option;
     on_delete : string option;
     on_update : string option;
   }
 
-  type column_def = {
+  type column_def : immutable_data = {
     name : string;
     sql_type : string;
     primary_key : bool;
@@ -47,7 +47,7 @@ struct
     references : reference option;
   }
 
-  type t =
+  type t : immutable_data =
     | Create_table of {
         if_not_exists : bool;
         table : string;
@@ -65,12 +65,53 @@ struct
         columns : string list;
       }
 
+  let[@zero_alloc] is_trim_space = function
+    | ' ' | '\t' | '\n' | '\r' -> true
+    | _ -> false
+
+  let[@zero_alloc] rec trim_left action index finish =
+    if index >= finish then finish
+    else if is_trim_space action.[index] then trim_left action (index + 1) finish
+    else index
+
+  let[@zero_alloc] rec trim_right action start index =
+    if index < start then start - 1
+    else if is_trim_space action.[index] then trim_right action start (index - 1)
+    else index
+
+  let[@zero_alloc] rec equal_ascii_case_insensitive_slice_loop action token start len index =
+    index = len
+    ||
+    let c = Char.uppercase_ascii action.[start + index] in
+    Char.equal c token.[index]
+    && equal_ascii_case_insensitive_slice_loop action token start len (index + 1)
+
+  let[@zero_alloc] equal_ascii_case_insensitive_slice action token start len =
+    len = String.length token
+    && equal_ascii_case_insensitive_slice_loop action token start len 0
+
   let reference_action label action =
-    let normalized = String.uppercase_ascii (String.trim action) in
+    let len = String.length action in
+    let start = trim_left action 0 len in
+    let finish = trim_right action start (len - 1) in
+    let action_len = finish - start + 1 in
+    let normalized =
+      match action_len with
+      | 7 when equal_ascii_case_insensitive_slice action "CASCADE" start action_len ->
+          Some "CASCADE"
+      | 8 when equal_ascii_case_insensitive_slice action "RESTRICT" start action_len ->
+          Some "RESTRICT"
+      | 8 when equal_ascii_case_insensitive_slice action "SET NULL" start action_len ->
+          Some "SET NULL"
+      | 9 when equal_ascii_case_insensitive_slice action "NO ACTION" start action_len ->
+          Some "NO ACTION"
+      | 11 when equal_ascii_case_insensitive_slice action "SET DEFAULT" start action_len ->
+          Some "SET DEFAULT"
+      | _ -> None
+    in
     match normalized with
-    | "CASCADE" | "RESTRICT" | "SET NULL" | "SET DEFAULT" | "NO ACTION" ->
-        normalized
-    | _ ->
+    | Some normalized -> normalized
+    | None ->
         invalid_arg
           (Backend.module_name ^ ".Eta_schema.references: invalid " ^ label)
 

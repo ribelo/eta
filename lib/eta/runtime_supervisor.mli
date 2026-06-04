@@ -21,4 +21,4 @@ val make_child :
 val child_promise :
   ('s, 'err, 'a) child -> ('a, 'err Cause.t) result Eio.Promise.t
 
-val child_cancel : ('s, 'err, 'a) child -> unit -> unit
+val[@zero_alloc arity 1] child_cancel : ('s, 'err, 'a) child -> unit -> unit

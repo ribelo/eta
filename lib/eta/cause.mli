@@ -93,10 +93,11 @@ module Portable : sig
     | Finalizer of Finalizer.t
     | Suppressed of { primary : 'err t; finalizer : Finalizer.t }
 
-  val of_cause : ('err -> 'portable_err) -> 'err same_domain_t -> 'portable_err t
-  val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
+  val of_cause :
+    ('err -> 'portable_err) @ many -> 'err same_domain_t -> 'portable_err t
+  val equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
   val pp :
-    (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
+    (Format.formatter -> 'err -> unit) @ many -> Format.formatter -> 'err t -> unit
 end
 
 val fail : 'err -> 'err t
@@ -123,18 +124,19 @@ val finalizer : Finalizer.t -> 'err t
 val suppressed : primary:'err t -> finalizer:Finalizer.t -> 'err t
 
 val is_interrupt_only : 'err t -> bool
-val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
-val finalizer_of_cause : ('err -> string) -> 'err t -> Finalizer.t
+val map : ('err1 -> 'err2) @ many -> 'err1 t -> 'err2 t
+val finalizer_of_cause : ('err -> string) @ many -> 'err t -> Finalizer.t
 
-val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
+val equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
 (** Structural equality for causes. [Die] causes compare by physical exception
     identity, plus diagnostic span and annotation metadata. This preserves
     same-domain exception identity; use {!diagnostic_equal} when test code wants
     to compare materialized exception diagnostics instead. *)
 
-val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
+val diagnostic_equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
 (** Diagnostic equality for causes. [Die] causes compare exception slot,
     rendered exception message, rendered backtrace, span name, and annotations. *)
 
-val pp : (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
-val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t
+val pp :
+  (Format.formatter -> 'err -> unit) @ many -> Format.formatter -> 'err t -> unit
+val to_portable : ('err -> 'portable_err) @ many -> 'err t -> 'portable_err Portable.t

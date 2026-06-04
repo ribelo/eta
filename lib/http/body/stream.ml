@@ -7,8 +7,8 @@ module Error = Error
 type read_result = Chunk of bytes | Last of bytes | End
 
 type t = {
-  read_next : unit -> (read_result, Error.t) Effect.t;
-  release : unit -> (unit, Error.t) Effect.t;
+  read_next : (unit -> (read_result, Error.t) Effect.t) @@ many;
+  release : (unit -> (unit, Error.t) Effect.t) @@ many;
   mutable released : bool;
   active : bool Atomic.t;
 }
@@ -42,10 +42,10 @@ let empty () =
     active = Atomic.make false;
   }
 
-let of_reader ?(release = fun () -> Effect.unit) read_next =
+let of_reader ?(release @ many = fun () -> Effect.unit) (read_next @ many) =
   { read_next; release; released = false; active = Atomic.make false }
 
-let of_bytes ?(release = fun () -> Effect.unit) chunks =
+let of_bytes ?(release @ many = fun () -> Effect.unit) chunks =
   let chunks = Array.of_list chunks in
   let next = ref 0 in
   let read_next () =

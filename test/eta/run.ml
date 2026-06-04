@@ -16,6 +16,7 @@ open Test_eta_channel
 open Test_eta_pubsub
 open Test_eta_pool
 open Test_eta_semaphore
+open Test_eta_string_helpers
 open Test_eta_properties
 open Test_eta_observability
 open Test_eta_redacted
@@ -712,6 +713,8 @@ let () =
           Alcotest.test_case "fn records location" `Quick test_observability_fn_loc;
           Alcotest.test_case "annotate_all and fn attrs" `Quick
             test_observability_annotate_all_and_fn_attrs;
+          Alcotest.test_case "annotate_all die diagnostics" `Quick
+            test_observability_annotate_all_die_diagnostics;
           Alcotest.test_case "event records current span" `Quick
             test_observability_event_records_current_span;
           Alcotest.test_case "with_result_attrs" `Quick
@@ -750,6 +753,8 @@ let () =
             test_observability_suppress_observability;
           Alcotest.test_case "trace context extract inject" `Quick
             test_trace_context_extract_inject;
+          Alcotest.test_case "trace context pair scanner edges" `Quick
+            test_trace_context_extract_pair_scanner_edges;
           Alcotest.test_case "trace context higher version traceparent" `Quick
             test_trace_context_extracts_higher_version_traceparent;
           Alcotest.test_case "trace context rejects malformed traceparent" `Quick
@@ -786,6 +791,16 @@ let () =
           Alcotest.test_case "hash" `Quick test_redacted_hash;
           Alcotest.test_case "wipe_unsafe" `Quick test_redacted_wipe_unsafe;
           Alcotest.test_case "label" `Quick test_redacted_label;
+        ] );
+      ( "String_helpers",
+        [
+          Alcotest.test_case "prefix suffix and ascii-ci contains" `Quick
+            test_string_helpers_prefix_suffix_contains;
+          Alcotest.test_case "lowercase returns original when unchanged" `Quick
+            test_string_helpers_lowercase_identity;
+          Alcotest.test_case "trim and equality helpers" `Quick
+            test_string_helpers_trim_and_equal;
+          Alcotest.test_case "digit helpers" `Quick test_string_helpers_digits;
         ] );
       ( "Stress",
         [

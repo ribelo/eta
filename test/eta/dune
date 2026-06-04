@@ -23,6 +23,7 @@
   test_eta_pubsub
   test_eta_pool
   test_eta_redacted
+  test_eta_string_helpers
   test_eta_mutable_ref
   test_eta_semaphore)
  (libraries eta eta_test eta_redacted alcotest eio_main eio_linux eio.unix unix threads)

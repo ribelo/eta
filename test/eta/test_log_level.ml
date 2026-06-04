@@ -133,6 +133,8 @@ let test_string_roundtrip () =
     all;
   Alcotest.(check (option log_level))
     "case insensitive" (Some Info) (of_string "info");
+  Alcotest.(check (option log_level))
+    "mixed case alias" (Some Off) (of_string "oFf");
   Alcotest.(check (option log_level)) "NONE alias" (Some Off) (of_string "NONE");
   Alcotest.(check (option log_level)) "OFF alias" (Some Off) (of_string "OFF");
   Alcotest.(check (option log_level))

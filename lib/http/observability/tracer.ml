@@ -3,8 +3,10 @@ module Request = Request
 module Retry = Retry
 module Semconv = Semconv
 
+let method_name method_ = Method.(method_ |> of_string |> to_string)
+
 let span_name request =
-  "HTTP " ^ String.uppercase_ascii request.Request.method_
+  "HTTP " ^ method_name request.Request.method_
 
 let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
   let request_attrs =

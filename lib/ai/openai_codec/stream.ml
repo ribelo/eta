@@ -19,45 +19,53 @@ let stream_tool_delta json =
 
 let chat_stream_events ~finish_reason raw json =
   let choices = Json.array_member "choices" json |> Option.value ~default:[] in
-  let starts =
-    choices
-    |> List.filter_map (fun choice ->
-           match Json.object_member "delta" choice with
-           | Some delta when Json.string_member "role" delta = Some "assistant" ->
-               Some
-                 (A.Stream_message_start
-                    {
-                      id = Json.string_member "id" json;
-                      model = Json.string_member "model" json;
-                      raw = Some raw;
-                    })
-           | _ -> None)
+  let id = Json.string_member "id" json in
+  let model = Json.string_member "model" json in
+  let add_choice (starts, deltas, finishes) choice =
+    let finishes =
+      match Json.string_member "finish_reason" choice with
+      | None -> finishes
+      | Some reason -> finish_reason reason :: finishes
+    in
+    match Json.object_member "delta" choice with
+    | None -> (starts, deltas, finishes)
+    | Some delta ->
+        let deltas =
+          match Json.string_member "content" delta with
+          | None -> deltas
+          | Some text -> A.Stream_content_delta text :: deltas
+        in
+        let deltas =
+          match Json.array_member "tool_calls" delta with
+          | None -> deltas
+          | Some tool_calls ->
+              let rec add_tool_deltas deltas = function
+                | [] -> deltas
+                | tool_call :: rest ->
+                    add_tool_deltas
+                      (stream_tool_delta tool_call :: deltas)
+                      rest
+              in
+              add_tool_deltas deltas tool_calls
+        in
+        let starts =
+          if Json.string_member "role" delta = Some "assistant" then
+            A.Stream_message_start { id; model; raw = Some raw } :: starts
+          else starts
+        in
+        (starts, deltas, finishes)
   in
-  let deltas =
-    choices
-    |> List.concat_map (fun choice ->
-           match Json.object_member "delta" choice with
-           | None -> []
-           | Some delta ->
-               let content =
-                 match Json.string_member "content" delta with
-                 | Some text -> [ A.Stream_content_delta text ]
-                 | None -> []
-               in
-               let tool_calls =
-                 Json.array_member "tool_calls" delta
-                 |> Option.value ~default:[]
-                 |> List.map stream_tool_delta
-               in
-               content @ tool_calls)
+  let rec add_choices acc = function
+    | [] -> acc
+    | choice :: rest -> add_choices (add_choice acc choice) rest
   in
-  let finishes =
-    choices
-    |> List.filter_map (Json.string_member "finish_reason")
-    |> List.map finish_reason
+  let starts, deltas, finishes = add_choices ([], [], []) choices in
+  let tail =
+    match finishes with
+    | [] -> []
+    | _ -> [ A.Stream_finish (List.rev finishes) ]
   in
-  starts @ deltas
-  @ if finishes = [] then [] else [ A.Stream_finish finishes ]
+  List.rev_append starts (List.rev_append deltas tail)
 
 let responses_stream_tool_delta json =
   A.Stream_tool_call_delta
@@ -122,8 +130,8 @@ let responses_stream_events ?(nested_response_error = false) ~provider raw
   | _ -> []
 
 let decode_stream_event ?(nested_response_error = false) ~provider event =
-  let data = String.trim event.A.data in
-  if String.equal data "[DONE]" then Stdlib.Ok [ A.Stream_done ]
+  let data = event.A.data in
+  if A.Json_helpers.trim_equal data "[DONE]" then Stdlib.Ok [ A.Stream_done ]
   else
     match parse_json ~provider data with
     | Stdlib.Error _ as error -> error

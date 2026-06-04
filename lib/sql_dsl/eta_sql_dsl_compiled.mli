@@ -36,7 +36,7 @@ module Make
     params : param list;
   }
 
-  type schema = { sql : string }
+  type schema : immutable_data = { sql : string } [@@unboxed]
 
   val value_of_param : param -> Backend.value
   val select_sql : 'a select -> string

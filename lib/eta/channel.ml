@@ -41,7 +41,7 @@ type ('a, 'err) t = {
   mutable cancelled_senders : int;
 }
 
-type stats = {
+type stats : immutable_data = {
   depth : int;
   sent : int;
   received : int;
@@ -75,7 +75,8 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
-let capacity_used (t : ('a, 'err) t) = t.depth + t.pending_receivers
+let capacity_used (t : ('a, 'err) t) =
+  t.depth + t.pending_receivers
 
 let ensure_capacity (t : ('a, 'err) t) operation =
   if capacity_used t >= t.capacity then

@@ -3,8 +3,6 @@ module Json = A.Json
 
 open Core
 
-let int_array values = Json.array (List.map Json.int values)
-
 let embedding_input_json ~provider (input : A.Embedding.input) =
   match input with
   | A.Embedding.Text text -> Stdlib.Ok (Json.string text)
@@ -13,15 +11,17 @@ let embedding_input_json ~provider (input : A.Embedding.input) =
       |> Result.map (fun texts -> Json.array (List.map Json.string texts))
   | A.Embedding.Tokens tokens ->
       non_empty_list ~provider "embedding token input" tokens
-      |> Result.map int_array
+      |> Result.map (fun tokens -> Json.array (List.map Json.int tokens))
   | A.Embedding.Token_batches batches ->
       let* batches = non_empty_list ~provider "embedding token batch input" batches in
       let* batches =
-        batches
-        |> List.map (non_empty_list ~provider "embedding token input")
-        |> result_all
+        result_map_all (non_empty_list ~provider "embedding token input") batches
       in
-      Stdlib.Ok (Json.array (List.map int_array batches))
+      Stdlib.Ok
+        (Json.array
+           (List.map
+              (fun tokens -> Json.array (List.map Json.int tokens))
+              batches))
   | A.Embedding.Raw_json raw -> parse_json ~provider raw
 
 let encode_embeddings_json ~provider (request : A.Embedding.request) =
@@ -64,8 +64,7 @@ let decode_embedding_vector ~provider ~raw json =
   match json with
   | `List values ->
       values
-      |> List.map (decode_float ~provider ~raw)
-      |> result_all
+      |> result_map_all (decode_float ~provider ~raw)
       |> Result.map (fun values -> A.Embedding.Float values)
   | `String value -> Stdlib.Ok (A.Embedding.Base64 value)
   | _ ->
@@ -104,7 +103,7 @@ let decode_embeddings ?(usage_extra_raw_names = []) ~provider raw =
   | None -> decode_error_result ~provider ~raw "embeddings response missing data"
   | Some data ->
       let* embeddings =
-        data |> List.map (decode_embedding_item ~provider ~raw) |> result_all
+        result_map_all (decode_embedding_item ~provider ~raw) data
       in
       Stdlib.Ok
         {

@@ -31,12 +31,12 @@ let invariant_failed context message =
 (* Job state for a join frame. [Reclaimed] means the owner took back a promoted
    job before another worker started it. *)
 
-type job_state =
+type job_state : immutable_data =
   | Queued
   | Executing
   | Reclaimed
 
-type owner_join_decision =
+type owner_join_decision : immutable_data =
   | Run_inline
   | Wait_promoted
 

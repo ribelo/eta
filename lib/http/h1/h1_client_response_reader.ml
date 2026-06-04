@@ -10,21 +10,18 @@ module Header = Header
 
 let is_chunked headers =
   match Header.get "transfer-encoding" headers with
-  | Some value ->
-      value |> String.lowercase_ascii |> String.split_on_char ','
-      |> List.exists (fun token -> String.equal (String.trim token) "chunked")
+  | Some value -> String_helpers.contains_token_ascii_ci value "chunked"
   | None -> false
 
 let response_has_body request status =
-  (not (String.equal (String.uppercase_ascii request.method_) "HEAD"))
+  (match Method.of_string request.method_ with `HEAD -> false | _ -> true)
   && (status < 100 || status >= 200)
   && status <> 204 && status <> 304
 
 let connection_close_requested headers =
   match Header.get "connection" headers with
   | None -> false
-  | Some value ->
-      String.equal "close" (String.lowercase_ascii (String.trim value))
+  | Some value -> String_helpers.contains_token_ascii_ci value "close"
 
 let max_header_bytes = 32 * 1024
 let default_max_response_body_bytes = Body.default_max_bytes

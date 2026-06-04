@@ -1,6 +1,6 @@
 (** HTTP/2 client socket writer adapter. *)
 
-type drain_result =
+type drain_result : immutable_data =
   | Yield of { written : int }
   | Close of {
       written : int;

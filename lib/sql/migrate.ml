@@ -1,7 +1,7 @@
 module Version = struct
   type t = int64
 
-  type error =
+  type error : immutable_data =
     | Not_positive of int64
     | Invalid_integer of string
     | Expected_integer_value
@@ -37,7 +37,7 @@ end
 module Table_name = struct
   type t = string
 
-  type error =
+  type error : immutable_data =
     | Empty
     | Invalid_identifier of string
 
@@ -49,24 +49,37 @@ module Table_name = struct
     | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true
     | _ -> false
 
+  let valid_part value start stop =
+    start < stop && is_ident_start (String.unsafe_get value start)
+    &&
+    let rec loop index =
+      index = stop
+      || (is_ident_char (String.unsafe_get value index) && loop (index + 1))
+    in
+    loop (start + 1)
+
+  let valid_parts value start stop =
+    let rec loop part_start index =
+      if index = stop then valid_part value part_start stop
+      else if Char.equal (String.unsafe_get value index) '.' then
+        valid_part value part_start index && loop (index + 1) (index + 1)
+      else loop part_start (index + 1)
+    in
+    loop start start
+
   let from_string value =
-    let value = String.trim value in
-    if String.equal value "" then
+    let start, stop = Eta.String_helpers.trim_bounds value in
+    if start = stop then
       Result.Error Empty
+    else if valid_parts value start stop then
+      Ok
+        (if start = 0 && stop = String.length value then value
+         else String.sub value start (stop - start))
     else
-      let valid_part part =
-        let len = String.length part in
-        len > 0 && is_ident_start part.[0]
-        &&
-        let rec loop index =
-          index = len || (is_ident_char part.[index] && loop (index + 1))
-        in
-        loop 1
-      in
-      if List.for_all valid_part (String.split_on_char '.' value) then
-        Ok value
-      else
-        Result.Error (Invalid_identifier value)
+      Result.Error
+        (Invalid_identifier
+           (if start = 0 && stop = String.length value then value
+            else String.sub value start (stop - start)))
 
   let from_string_unchecked value = value
   let default = "__eta_migrations"
@@ -77,7 +90,7 @@ module Table_name = struct
     | Invalid_identifier value -> "invalid migration table name: " ^ value
 end
 
-type migration_type =
+type migration_type : immutable_data =
   | Simple
   | Reversible_up
   | Reversible_down
@@ -89,22 +102,18 @@ let migration_type_to_string = function
 
 let no_transaction_directive = "-- no-transaction"
 
-let starts_with value prefix =
-  let value_len = String.length value in
-  let prefix_len = String.length prefix in
-  value_len >= prefix_len
-  && String.equal (String.sub value 0 prefix_len) prefix
+let starts_with value prefix = Eta.String_helpers.starts_with value ~prefix
 
 let strip_no_transaction_directive sql =
   if starts_with sql no_transaction_directive then
     let offset = String.length no_transaction_directive in
-    let rest = String.sub sql offset (String.length sql - offset) in
-    if starts_with rest "\r\n" then
-      String.sub rest 2 (String.length rest - 2)
-    else if starts_with rest "\n" then
-      String.sub rest 1 (String.length rest - 1)
+    let len = String.length sql in
+    if Eta.String_helpers.starts_with_at sql ~offset "\r\n" then
+      String.sub sql (offset + 2) (len - offset - 2)
+    else if Eta.String_helpers.starts_with_at sql ~offset "\n" then
+      String.sub sql (offset + 1) (len - offset - 1)
     else
-      rest
+      String.sub sql offset (len - offset)
   else
     sql
 
@@ -112,7 +121,7 @@ let checksum_sql sql =
   Digest.to_hex (Digest.string (strip_no_transaction_directive sql))
 
 module Migration = struct
-  type t = {
+  type t : immutable_data = {
     version : Version.t;
     description : string;
     migration_type : migration_type;
@@ -136,14 +145,14 @@ module Migration = struct
 end
 
 module Applied_migration = struct
-  type t = {
+  type t : immutable_data = {
     version : Version.t;
     checksum : string;
   }
 end
 
 module Config = struct
-  type t = {
+  type t : immutable_data = {
     table_name : Table_name.t;
     ignore_missing : bool;
   }
@@ -151,17 +160,17 @@ module Config = struct
   let default = { table_name = Table_name.default; ignore_missing = false }
 end
 
-type applied = {
+type applied : immutable_data = {
   migration : Migration.t;
   elapsed_ms : int;
 }
 
-type run_report = {
+type run_report : immutable_data = {
   applied : applied list;
   already_applied : Applied_migration.t list;
 }
 
-type source_error =
+type source_error : immutable_data =
   | Read_migration_file_failed of {
       path : string;
       reason : string;
@@ -175,7 +184,7 @@ type source_error =
       reason : string;
     }
 
-type error =
+type error : immutable_data =
   | Source_error of source_error
   | Invalid_version of Version.error
   | Invalid_table_name of Table_name.error
@@ -190,7 +199,8 @@ type error =
     }
 
 module Source = struct
-  type resolve_config = { ignored_checksum_chars : char list }
+  type resolve_config : immutable_data = { ignored_checksum_chars : char list }
+  [@@unboxed]
 
   let default_resolve_config = { ignored_checksum_chars = [] }
 
@@ -203,13 +213,7 @@ module Source = struct
   let from_directory path = Directory path
   let from_migrations migrations = Migrations migrations
 
-  let has_suffix value suffix =
-    let value_len = String.length value in
-    let suffix_len = String.length suffix in
-    value_len >= suffix_len
-    && String.equal
-         (String.sub value (value_len - suffix_len) suffix_len)
-         suffix
+  let has_suffix value suffix = Eta.String_helpers.ends_with value ~suffix
 
   let strip_suffix value suffix =
     if has_suffix value suffix then
@@ -222,9 +226,26 @@ module Source = struct
     match config.ignored_checksum_chars with
     | [] -> sql
     | ignored ->
-        String.to_seq sql
-        |> Seq.filter (fun c -> not (List.exists (Char.equal c) ignored))
-        |> String.of_seq
+        let is_ignored char = List.exists (Char.equal char) ignored in
+        let len = String.length sql in
+        let mutable index = 0 in
+        let mutable first_ignored = -1 in
+        while first_ignored < 0 && index < len do
+          if is_ignored (String.unsafe_get sql index) then
+            first_ignored <- index
+          else
+            index <- index + 1
+        done;
+        if first_ignored < 0 then
+          sql
+        else
+          let buf = Buffer.create len in
+          Buffer.add_substring buf sql 0 first_ignored;
+          for index = first_ignored to len - 1 do
+            let char = String.unsafe_get sql index in
+            if not (is_ignored char) then Buffer.add_char buf char
+          done;
+          Buffer.contents buf
 
   let read_file path =
     match open_in_bin path with
@@ -409,19 +430,32 @@ let load_applied_states conn config =
           in
           loop [] rows)
 
+let applied_migration_of_state state =
+  {
+    Applied_migration.version = state.applied_version;
+    checksum = state.applied_checksum;
+  }
+
+let successful_applied_migrations states =
+  states
+  |> List.filter (fun state -> state.applied_success)
+  |> List.map applied_migration_of_state
+
+let applied_migrations_at_or_before target states =
+  states
+  |> List.filter (fun state -> Version.compare state.applied_version target <= 0)
+  |> List.map applied_migration_of_state
+
+let applied_states_after target states =
+  List.filter
+    (fun state -> Version.compare state.applied_version target > 0)
+    states
+
 let list_applied ?(config = Config.default) pool =
   with_pool_connection pool @@ fun conn ->
     match load_applied_states conn config with
     | Result.Error _ as err -> err
-    | Ok states ->
-        Ok
-          (states
-           |> List.filter (fun state -> state.applied_success)
-           |> List.map (fun state ->
-                  {
-                    Applied_migration.version = state.applied_version;
-                    checksum = state.applied_checksum;
-                  }))
+    | Ok states -> Ok (successful_applied_migrations states)
 
 let up_migrations migrations =
   migrations
@@ -430,8 +464,25 @@ let up_migrations migrations =
          | Simple | Reversible_up -> true
          | Reversible_down -> false)
 
+let migrations_at_or_before target migrations =
+  List.filter
+    (fun migration -> Version.compare migration.Migration.version target <= 0)
+    migrations
+
 let find_migration version migrations =
   List.find_opt (fun migration -> Version.equal migration.Migration.version version) migrations
+
+let migration_already_applied migration states =
+  List.exists
+    (fun state ->
+      state.applied_success
+      && Version.equal state.applied_version migration.Migration.version)
+    states
+
+let migration_version_present target migrations =
+  List.exists
+    (fun migration -> Version.equal migration.Migration.version target)
+    migrations
 
 let validate_applied config migrations applied =
   let rec loop already = function
@@ -521,25 +572,17 @@ let run_migrations config pool migrations =
           match validate_applied config up applied_states with
           | Result.Error _ as err -> err
           | Ok already_applied ->
-              let pending =
-                up
-                |> List.filter (fun migration ->
-                       not
-                         (List.exists
-                            (fun state ->
-                              state.applied_success
-                              && Version.equal state.applied_version
-                                   migration.Migration.version)
-                            applied_states))
-              in
               let rec loop acc = function
                 | [] -> Ok { applied = List.rev acc; already_applied }
-                | migration :: rest -> (
-                    match apply_one conn config migration with
-                    | Ok applied -> loop (applied :: acc) rest
-                    | Result.Error _ as err -> err)
+                | migration :: rest ->
+                    if migration_already_applied migration applied_states then
+                      loop acc rest
+                    else (
+                      match apply_one conn config migration with
+                      | Ok applied -> loop (applied :: acc) rest
+                      | Result.Error _ as err -> err)
               in
-              loop [] pending)
+              loop [] up)
 
 let run ?(config = Config.default) pool source =
   match Source.resolve source with
@@ -551,14 +594,10 @@ let run_to ?(config = Config.default) pool source ~target =
   | Result.Error err -> Eta.Effect.fail err
   | Ok migrations ->
       let up = up_migrations migrations in
-      if not (List.exists (fun migration -> Version.equal migration.Migration.version target) up) then
+      if not (migration_version_present target up) then
         Eta.Effect.fail (Version_not_present target)
       else
-        let migrations =
-          List.filter
-            (fun migration -> Version.compare migration.Migration.version target <= 0)
-            migrations
-        in
+        let migrations = migrations_at_or_before target migrations in
         run_migrations config pool migrations
 
 let down_migration_for version migrations =
@@ -586,9 +625,7 @@ let undo ?(config = Config.default) pool source ~target =
               | Some state -> Result.Error (Dirty state.applied_version)
               | None ->
                   let to_undo =
-                    applied_states
-                    |> List.filter (fun state ->
-                           Version.compare state.applied_version target > 0)
+                    applied_states_after target applied_states
                     |> List.sort (fun left right ->
                            Version.compare right.applied_version left.applied_version)
                   in
@@ -599,14 +636,7 @@ let undo ?(config = Config.default) pool source ~target =
                           {
                             applied = List.rev acc;
                             already_applied =
-                              applied_states
-                              |> List.filter (fun state ->
-                                     Version.compare state.applied_version target <= 0)
-                              |> List.map (fun state ->
-                                     {
-                                       Applied_migration.version = state.applied_version;
-                                       checksum = state.applied_checksum;
-                                     });
+                              applied_migrations_at_or_before target applied_states;
                           }
                     | state :: rest -> (
                         match down_migration_for state.applied_version migrations with

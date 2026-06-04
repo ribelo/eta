@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type opcode = Continuation | Text | Binary | Close | Ping | Pong
+type opcode : immutable_data = Continuation | Text | Binary | Close | Ping | Pong
 
 type frame = {
   fin : bool;
@@ -8,7 +8,7 @@ type frame = {
   payload : bytes;
 }
 
-type parse_error =
+type parse_error : immutable_data =
   | Incomplete
   | Reserved_bits
   | Unsupported_opcode of int
@@ -170,4 +170,4 @@ let accept_key key =
   |> Base64.encode_string
 
 let random_key () =
-  Openssl.random_bytes 16 |> Bytes.to_string |> Base64.encode_string
+  Openssl.random_bytes 16 |> Bytes.unsafe_to_string |> Base64.encode_string

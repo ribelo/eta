@@ -1,61 +1,48 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-let escape_json s =
-  let b = Buffer.create (String.length s + 8) in
-  String.iter
-    (function
-      | '"' -> Buffer.add_string b "\\\""
-      | '\\' -> Buffer.add_string b "\\\\"
-      | '\n' -> Buffer.add_string b "\\n"
-      | '\r' -> Buffer.add_string b "\\r"
-      | '\t' -> Buffer.add_string b "\\t"
-      | c when Char.code c < 0x20 ->
-          Buffer.add_string b (Printf.sprintf "\\u%04x" (Char.code c))
-      | c -> Buffer.add_char b c)
-    s;
-  Buffer.contents b
+let string_field name value = (name, `String value)
+let int_field name value = (name, `Int value)
 
-let string_field name value =
-  Printf.sprintf "\"%s\":\"%s\"" name (escape_json value)
+let array_map (f @ many) values =
+  let rec loop acc = function
+    | [] -> `List (List.rev acc)
+    | value :: rest -> loop (f value :: acc) rest
+  in
+  loop [] values
 
-let int_field name value = Printf.sprintf "\"%s\":%d" name value
+let header_json (name, value) =
+  `Assoc [ string_field "name" name; string_field "value" value ]
 
-let headers_json headers =
-  headers
-  |> Redaction.headers
-  |> List.map (fun (name, value) ->
-         Printf.sprintf "{%s,%s}" (string_field "name" name)
-           (string_field "value" value))
-  |> String.concat ","
-  |> Printf.sprintf "[%s]"
+let redacted_header_json (name, value) =
+  let value = if Redaction.is_sensitive name then "<redacted>" else value in
+  header_json (name, value)
 
 let to_json t =
-  let base =
+  let fields =
     [
       string_field "method" t.Error.context.method_;
       string_field "uri" (Redaction.uri t.context.uri);
       string_field "protocol" (Error.protocol_to_string t.context.protocol);
       string_field "kind" (Error.kind_name t.kind);
       string_field "layer" (Error.layer_to_string (Error.layer t));
-      string_field "retryability"
-        (Error.retryability_to_string (Error.retryability t));
+      string_field "retryability" (Error.retryability_to_string (Error.retryability t));
       string_field "error_class" (Error.error_class t);
       string_field "body" "<omitted>";
     ]
   in
-  let with_status =
+  let fields =
     match Error.status t with
-    | None -> base
+    | None -> fields
     | Some status ->
         int_field "status" status
         :: string_field "status_class"
              (Option.value ~default:"none" (Error.status_class t))
-        :: base
+        :: fields
   in
   let fields =
     match Error.headers t with
-    | [] -> with_status
+    | [] -> fields
     | headers ->
-        Printf.sprintf "\"headers\":%s" (headers_json headers) :: with_status
+        ("headers", array_map redacted_header_json headers) :: fields
   in
-  "{" ^ String.concat "," (List.rev fields) ^ "}"
+  Yojson.Safe.to_string (`Assoc (List.rev fields))

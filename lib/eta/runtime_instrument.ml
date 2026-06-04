@@ -1,15 +1,19 @@
 open Runtime_core
 
-let random_hex16 random =
-  Printf.sprintf "%04x"
-    (int_of_float (Capabilities.random_float random 65_536.0))
+let add_random_hex16 buffer random =
+  let value = int_of_float (Capabilities.random_float random 65_536.0) in
+  Buffer.add_char buffer (String_helpers.lower_hex_digit ((value lsr 12) land 0xf));
+  Buffer.add_char buffer (String_helpers.lower_hex_digit ((value lsr 8) land 0xf));
+  Buffer.add_char buffer (String_helpers.lower_hex_digit ((value lsr 4) land 0xf));
+  Buffer.add_char buffer (String_helpers.lower_hex_digit (value land 0xf))
 
 let random_trace_id runtime =
   let rec loop () =
-    let trace_id =
-      String.concat ""
-        (List.init 8 (fun _ -> random_hex16 runtime.random))
-    in
+    let buffer = Buffer.create 32 in
+    for _ = 1 to 8 do
+      add_random_hex16 buffer runtime.random
+    done;
+    let trace_id = Buffer.contents buffer in
     if String.exists (( <> ) '0') trace_id then trace_id else loop ()
   in
   loop ()

@@ -3,7 +3,7 @@
     The parser works over a caller-owned buffer and returns spans into that
     buffer. Converting spans to strings is explicit and allocates. *)
 
-type parse_error =
+type parse_error : immutable_data =
   | Partial
   | Invalid_version
   | Invalid_status of string
@@ -14,12 +14,12 @@ type parse_error =
   | Body_too_large of { limit : int; length : int }
   | Body_truncated of { expected : int; available : int }
 
-type header = {
+type header : immutable_data = {
   name : Span.t;
   value : Span.t;
 }
 
-type response = {
+type response : immutable_data = {
   version : Version.t;
   status : int;
   reason : Span.t;

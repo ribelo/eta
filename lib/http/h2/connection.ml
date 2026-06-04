@@ -14,7 +14,7 @@ type flow = Connect.tcp_flow
 
 type failure_waiter = {
   mutable active : bool;
-  notify : Error.kind -> unit;
+  notify : (Error.kind -> unit) @@ many;
 }
 
 type t = {
@@ -28,7 +28,7 @@ type t = {
   mutable failure : Error.kind option;
   mutable failure_waiters : failure_waiter list;
   mutable wake_writer : (unit -> unit) option;
-  on_close : unit -> unit;
+  on_close : (unit -> unit) @@ many;
 }
 
 let close_kind = Error.Connection_closed { during = Error.Http_response }
@@ -40,7 +40,7 @@ let pp_client_error = function
       Format.asprintf "protocol_error:%a:%s" H2.Error_code.pp_hum code message
   | `Exn exn -> "exn:" ^ Printexc.to_string exn
 
-let with_lock t f =
+let with_lock t (f @ many) =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 

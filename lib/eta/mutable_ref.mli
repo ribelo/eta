@@ -9,11 +9,11 @@ type 'a t
 val make : 'a -> 'a t
 val get : 'a t -> 'a
 val set : 'a t -> 'a -> unit
-val update : 'a t -> ('a -> 'a) -> unit
+val update : 'a t -> ('a -> 'a) @ many -> unit
 (** [update t f] applies [f] to the current value and stores the result,
     retrying on CAS failure until it succeeds. *)
 
-val update_and_get : 'a t -> ('a -> 'a) -> 'a
+val update_and_get : 'a t -> ('a -> 'a) @ many -> 'a
 (** Like [update] but returns the new value. *)
 
 val get_and_set : 'a t -> 'a -> 'a

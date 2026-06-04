@@ -2,7 +2,8 @@
 
 type t = int
 
-let of_int status = if status >= 100 && status <= 599 then Some status else None
+let of_int status =
+  if status >= 100 && status <= 599 then Some status else None
 
 let unsafe_of_int status =
   match of_int status with

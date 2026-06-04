@@ -4,8 +4,8 @@ open Types
 open Connection
 
 type 'a typ = {
-  value : 'a -> Value.t;
-  decode : Row.t -> int -> 'a;
+  value : ('a -> Value.t) @@ many;
+  decode : (Row.t -> int -> 'a) @@ many;
   sql_type : string;
 }
 
@@ -94,8 +94,8 @@ module Dsl = Eta_sql_dsl.Make (struct
   exception Error = Error
 
   type nonrec 'a typ = 'a typ = {
-    value : 'a -> value;
-    decode : row -> int -> 'a;
+    value : ('a -> value) @@ many;
+    decode : (row -> int -> 'a) @@ many;
     sql_type : string;
   }
 

@@ -2,7 +2,7 @@
 
 type config = Config.t
 
-type epoch = { alpn_protocol : string option }
+type epoch : immutable_data = { alpn_protocol : string option } [@@unboxed]
 
 type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t
@@ -38,9 +38,10 @@ let debug_io direction storage ~storage_off ~display_off ~len =
       let dump_n = min len 32 in
       let hex = Buffer.create (dump_n * 3) in
       for i = 0 to dump_n - 1 do
-        Buffer.add_string hex
-          (Printf.sprintf "%02x "
-             (Char.code (Bigarray.Array1.get storage (storage_off + i))))
+        let value = Char.code (Bigarray.Array1.get storage (storage_off + i)) in
+        Buffer.add_char hex (Eta.String_helpers.lower_hex_digit (value lsr 4));
+        Buffer.add_char hex (Eta.String_helpers.lower_hex_digit (value land 0xf));
+        Buffer.add_char hex ' '
       done;
       Printf.eprintf "[tls] %s rc=%d off=%d head: %s\n%!" direction len
         display_off (Buffer.contents hex)
@@ -205,8 +206,8 @@ end
 let ops =
   Eio.Resource.handler (
     Eio.Resource.H (Tls_state, (fun t -> St t))
+    :: Eio.Resource.H (Eio.Resource.Close, close)
     :: Eio.Resource.bindings (Eio.Flow.Pi.two_way (module Flow_impl))
-    @ [ Eio.Resource.H (Eio.Resource.Close, close) ]
   )
 
 let flow_module = function

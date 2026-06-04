@@ -5,23 +5,23 @@
     resources. The transport dispatcher supplies those resources around the
     decisions returned here. *)
 
-type protocol = H1 | H2
+type protocol : immutable_data = H1 | H2
 
-type pending
+type pending : immutable_data
 
 type t
 
-type begin_result =
+type begin_result : immutable_data =
   | Leader of pending
   | Wait of pending
   | Ready of protocol
 
-type resolve_result =
+type resolve_result : immutable_data =
   | Installed of protocol
   | Already_ready of protocol
   | Ignored
 
-type stats = {
+type stats : immutable_data = {
   leaders : int;
   waiters : int;
   redundant_cancelled : int;

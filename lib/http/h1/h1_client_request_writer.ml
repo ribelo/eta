@@ -39,9 +39,7 @@ let write_bytes_effect ?host_eio request flow bytes =
 let transfer_encoding_chunked headers =
   match Header.get "transfer-encoding" headers with
   | None -> false
-  | Some value ->
-      value |> String.lowercase_ascii |> String.split_on_char ','
-      |> List.exists (fun token -> String.equal (String.trim token) "chunked")
+  | Some value -> String_helpers.contains_token_ascii_ci value "chunked"
 
 let write_raw_stream ?host_eio request flow body =
   let rec loop () =

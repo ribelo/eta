@@ -18,10 +18,12 @@ let float value =
 let array values = `List values
 
 let object_ fields =
-  fields
-  |> List.filter_map (fun (name, value) ->
-         Option.map (fun value -> (name, value)) value)
-  |> fun fields -> `Assoc fields
+  let rec loop acc = function
+    | [] -> `Assoc (List.rev acc)
+    | (_, None) :: rest -> loop acc rest
+    | (name, Some value) :: rest -> loop ((name, value) :: acc) rest
+  in
+  loop [] fields
 
 let member name = function
   | `Assoc fields -> List.assoc_opt name fields

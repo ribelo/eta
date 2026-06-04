@@ -4,7 +4,7 @@ module A = Common.A
 module Json = Common.Json
 
 let encode (request : A.Image.request) =
-  if String.equal (String.trim request.prompt) "" then
+  if A.Json_helpers.is_blank request.prompt then
     Common.unsupported "image prompt must not be empty"
   else
     Stdlib.Ok

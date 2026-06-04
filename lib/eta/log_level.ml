@@ -1,4 +1,4 @@
-type t =
+type t : immutable_data =
   | All
   | Trace
   | Debug

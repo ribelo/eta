@@ -24,6 +24,8 @@ let () =
         [
           Alcotest.test_case "value accepts HTAB" `Quick
             test_header_value_accepts_htab;
+          Alcotest.test_case "method parsing preserves semantics" `Quick
+            test_method_of_string_fast_path_semantics;
           Alcotest.test_case "trace context request helpers" `Quick
             test_trace_context_request_helpers;
         ] );
@@ -47,6 +49,7 @@ let () =
             test_body_stream_read_all_caps_default;
           Alcotest.test_case "chunked trailers" `Quick
             test_chunked_decodes_trailers;
+          Alcotest.test_case "chunked encoder" `Quick test_chunked_encoder;
           Alcotest.test_case "gzip roundtrip" `Quick
             test_gzip_transducer_roundtrip;
           Alcotest.test_case "gzip expansion cap" `Quick

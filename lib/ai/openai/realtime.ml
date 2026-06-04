@@ -3,9 +3,9 @@ module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module Json = A.Json
 
-type modality = Text | Audio
+type modality : immutable_data = Text | Audio
 
-type session = {
+type session : immutable_data = {
   model : string option;
   instructions : string option;
   output_modalities : modality list;
@@ -83,16 +83,13 @@ let session_json session =
 
 let session_to_string session = session_json session |> Json.to_string
 
-type client_secret = {
+type client_secret : immutable_data = {
   value : string;
   expires_at : int option;
   raw : A.raw_json option;
 }
 
-let trim_trailing_slash value =
-  if String.ends_with ~suffix:"/" value then
-    String.sub value 0 (String.length value - 1)
-  else value
+let trim_trailing_slash = A.trim_trailing_slash
 
 let http_base_url ?(base_url = "https://api.openai.com") () =
   trim_trailing_slash base_url
@@ -117,7 +114,7 @@ let client_secret_request ?base_url ~api_key session =
 let read_response_body body =
   Eta_http.Body.Stream.read_all body
   |> E.catch (fun error -> E.fail (A.Eta_http_error error))
-  |> E.map Bytes.to_string
+  |> E.map Bytes.unsafe_to_string
 
 let decode_client_secret raw =
   match Json.parse raw with
@@ -161,13 +158,13 @@ type client_event =
   | Response_create
   | Raw_client_event of A.Json.t
 
-type server_error = {
+type server_error : immutable_data = {
   code : string option;
   message : string;
   raw : A.raw_json option;
 }
 
-type server_event =
+type server_event : immutable_data =
   | Session_created of A.raw_json option
   | Response_audio_delta of string
   | Response_text_delta of string
@@ -232,7 +229,7 @@ let decode_server_event raw =
       | Some "error" -> server_error_json raw json
       | type_ -> Raw_server_event { type_; raw })
 
-type t = { ws : Eta_http.Ws.Client.t }
+type t = { ws : Eta_http.Ws.Client.t } [@@unboxed]
 
 let is_unreserved = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' -> true
@@ -243,16 +240,29 @@ let percent_encode value =
   String.iter
     (fun c ->
       if is_unreserved c then Buffer.add_char out c
-      else Buffer.add_string out (Printf.sprintf "%%%02X" (Char.code c)))
+      else (
+        let code = Char.code c in
+        Buffer.add_char out '%';
+        Buffer.add_char out (Eta.String_helpers.upper_hex_digit (code lsr 4));
+        Buffer.add_char out (Eta.String_helpers.upper_hex_digit (code land 0xf))))
     value;
   Buffer.contents out
 
+let rewrite_prefix value ~prefix ~replacement =
+  let prefix_len = String.length prefix in
+  let replacement_len = String.length replacement in
+  let suffix_len = String.length value - prefix_len in
+  let bytes = Bytes.create (replacement_len + suffix_len) in
+  Bytes.blit_string replacement 0 bytes 0 replacement_len;
+  Bytes.blit_string value prefix_len bytes replacement_len suffix_len;
+  Bytes.unsafe_to_string bytes
+
 let ws_base_url ?(base_url = "wss://api.openai.com") () =
   let base_url = trim_trailing_slash base_url in
-  if String.starts_with ~prefix:"https://" base_url then
-    "wss://" ^ String.sub base_url 8 (String.length base_url - 8)
-  else if String.starts_with ~prefix:"http://" base_url then
-    "ws://" ^ String.sub base_url 7 (String.length base_url - 7)
+  if Eta.String_helpers.starts_with base_url ~prefix:"https://" then
+    rewrite_prefix base_url ~prefix:"https://" ~replacement:"wss://"
+  else if Eta.String_helpers.starts_with base_url ~prefix:"http://" then
+    rewrite_prefix base_url ~prefix:"http://" ~replacement:"ws://"
   else base_url
 
 let realtime_url ?base_url ~model () =

@@ -16,7 +16,8 @@
   angstrom
   faraday
   h2
-  hpack)
+  hpack
+  yojson)
  (foreign_stubs
   (language c)
   (names tls_openssl_stubs)

@@ -82,6 +82,8 @@ let () =
             test_sql_expr_type_unsoundness;
           Alcotest.test_case "schema DSL raw interpolation" `Quick
             test_sql_schema_dsl_raw_interpolation;
+          Alcotest.test_case "schema reference action normalization" `Quick
+            test_sql_schema_reference_action_normalization;
         ] );
       ( "Sqlite",
         [

@@ -8,20 +8,20 @@ type t = {
   fiber_with_binding :
     'a 'b.
     dls_active:bool ->
-    enter_fiberless:((unit -> 'b) -> 'b) ->
+    enter_fiberless:((unit -> 'b) @ many -> 'b) @ many ->
     'a Eio.Fiber.key ->
     'a ->
-    (unit -> 'b) ->
+    (unit -> 'b) @ many ->
     'b;
-  fiber_fork : sw:Eio.Switch.t -> (unit -> unit) -> unit;
+  fiber_fork : sw:Eio.Switch.t -> (unit -> unit) @ many -> unit;
   fiber_fork_daemon :
-    sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) -> unit;
+    sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) @ many -> unit;
   fiber_await_cancel : 'a. unit -> 'a;
   fiber_yield : unit -> unit;
-  switch_run : 'a. ?name:string -> (Eio.Switch.t -> 'a) -> 'a;
+  switch_run : 'a. ?name:string -> (Eio.Switch.t -> 'a) @ many -> 'a;
   switch_fail :
     ?bt:Printexc.raw_backtrace -> Eio.Switch.t -> exn -> unit;
-  cancel_sub : 'a. (Eio.Cancel.t -> 'a) -> 'a;
+  cancel_sub : 'a. (Eio.Cancel.t -> 'a) @ many -> 'a;
   cancel_cancel : Eio.Cancel.t -> exn -> unit;
 }
 

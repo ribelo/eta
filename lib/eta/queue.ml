@@ -11,7 +11,7 @@ type ('a, 'err) t = {
   mutable cancelled_receivers : int;
 }
 
-type stats = {
+type stats : immutable_data = {
   depth : int;
   sent : int;
   received : int;

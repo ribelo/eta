@@ -1,5 +1,18 @@
 let weather_schema =
-  "{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"}}}"
+  Eta_ai.Json.to_string
+    (Eta_ai.Json.object_
+       [
+         ("type", Some (Eta_ai.Json.string "object"));
+         ( "properties",
+           Some
+             (Eta_ai.Json.object_
+                [
+                  ( "location",
+                    Some
+                      (Eta_ai.Json.object_
+                         [ ("type", Some (Eta_ai.Json.string "string")) ]) );
+                ]) );
+       ])
 
 let expect_ok = function
   | Ok value -> value
@@ -50,8 +63,13 @@ let provider () =
     encode_chat =
       (fun request ->
         Ok
-          (Printf.sprintf "{\"model\":%S,\"messages\":%d}" request.model
-             (List.length request.prompt)));
+          (Eta_ai.Json.to_string
+             (Eta_ai.Json.object_
+                [
+                  ("model", Some (Eta_ai.Json.string request.model));
+                  ( "messages",
+                    Some (Eta_ai.Json.int (List.length request.prompt)) );
+                ])));
     decode_chat =
       (fun raw ->
         Ok

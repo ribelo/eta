@@ -4,7 +4,7 @@ end
 
 module P_atomic = Portable.Atomic
 
-type random : value mod portable contended = { seed : int P_atomic.t }
+type random : value mod portable contended = { seed : int P_atomic.t } [@@unboxed]
 
 class type log = object
   method info : string -> unit
@@ -16,37 +16,37 @@ type span_status : immutable_data = Ok | Error of string | Cancelled
 type span_kind : immutable_data = Internal | Server | Client | Producer | Consumer
 
 type trace_context : immutable_data = {
-  trace_id : string;
-  span_id : string;
+  global_ trace_id : string;
+  global_ span_id : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 
 type span_info : immutable_data = {
-  trace_id : string;
-  span_id : string;
-  name : string;
+  global_ trace_id : string;
+  global_ span_id : string;
+  global_ name : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 
 type span_link : immutable_data = {
-  link_trace_id : string;
-  link_span_id : string;
-  link_attrs : (string * string) list;
+  global_ link_trace_id : string;
+  global_ link_span_id : string;
+  global_ link_attrs : (string * string) list;
 }
 
 type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
 
 type log_record : immutable_data = {
   level : log_level;
-  body : string;
+  global_ body : string;
   ts_ms : int;
-  attrs : (string * string) list;
-  trace_id : string;
-  span_id : string;
+  global_ attrs : (string * string) list;
+  global_ trace_id : string;
+  global_ span_id : string;
 }
 
 type metric_kind : immutable_data =
@@ -112,7 +112,8 @@ let random_float_denominator = 9_007_199_254_740_992.0
 
 let random_of_seed seed = { seed = P_atomic.make (seed land random_mask) }
 
-let random_set_seed random seed = P_atomic.set random.seed (seed land random_mask)
+let random_set_seed random seed =
+  P_atomic.set random.seed (seed land random_mask)
 
 let random_default () = random_of_seed 0x5eed5
 

@@ -2,8 +2,8 @@
 
 (** Protocol dispatch policy for negotiated HTTP transports. *)
 
-type protocol = H1 | H2
-type decision = Use_h1 | Use_h2
+type protocol : immutable_data = H1 | H2
+type decision : immutable_data = Use_h1 | Use_h2
 
 let protocol_to_string = function H1 -> "h1" | H2 -> "h2"
 let decision_protocol = function Use_h1 -> H1 | Use_h2 -> H2

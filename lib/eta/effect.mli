@@ -36,7 +36,7 @@ val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
 val from_result : ('a, 'err) result -> ('a, 'err) t
 
-val sync : (unit -> 'a) -> ('a, 'err) t
+val sync : (unit -> 'a) @ many -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an effect. Use {!Effect.named} to
     attach a span name for tracing.
 
@@ -147,17 +147,17 @@ module Blocking : sig
   module Pool : sig
     type t
 
-    type queue_policy = Wait | Reject
-    type shutdown_policy = Drain | Detach_started
+    type queue_policy : immutable_data = Wait | Reject
+    type shutdown_policy : immutable_data = Drain | Detach_started
 
-    type config = {
+    type config : immutable_data = {
       max_threads : int;
       max_queued : int;
       queue_policy : queue_policy;
       shutdown_policy : shutdown_policy;
     }
 
-    type stats = {
+    type stats : immutable_data = {
       active : int;
       queued : int;
       completed : int;
@@ -222,7 +222,7 @@ module Blocking : sig
     ?pool:Pool.t ->
     ?name:string ->
     ?on_cancel:(unit -> unit) ->
-    (unit -> 'a) ->
+    (unit -> 'a) @ many ->
     ('a, 'err) effect
   (** Namespaced spelling for {!blocking}. *)
 end
@@ -231,7 +231,7 @@ val blocking :
   ?pool:Blocking.Pool.t ->
   ?name:string ->
   ?on_cancel:(unit -> unit) ->
-  (unit -> 'a) ->
+  (unit -> 'a) @ many ->
   ('a, 'err) t
 (** Run [f ()] on a bounded blocking pool.
 
@@ -251,7 +251,7 @@ val blocking_result :
   ?pool:Blocking.Pool.t ->
   ?name:string ->
   ?on_cancel:(unit -> unit) ->
-  (unit -> ('a, 'err) result) ->
+  (unit -> ('a, 'err) result) @ many ->
   ('a, 'err) t
 (** [blocking_result f] runs [f] like {!blocking} and lifts its OCaml
     [result] into Eta's typed failure channel. Exceptions raised by [f] remain
@@ -263,7 +263,7 @@ val blocking_result_timeout :
   ?on_cancel:(unit -> unit) ->
   timeout:Duration.t ->
   on_timeout:'err ->
-  (unit -> ('a, 'err) result) ->
+  (unit -> ('a, 'err) result) @ many ->
   ('a, 'err) t
 (** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
     {!blocking_result} and races the caller's wait against [timeout]. The
@@ -277,11 +277,11 @@ val blocking_result_timeout :
     wins after parent cancellation reached the fiber, Eta checks the
     cancellation state before publishing the success or typed failure. *)
 
-val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
-val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
-val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
+val map : ('a -> 'b) @ many -> ('a, 'err) t -> ('b, 'err) t
+val bind : ('a -> ('b, 'err) t) @ many -> ('a, 'err) t -> ('b, 'err) t
+val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) @ many -> ('b, 'err) t
 
-val tap : ('a -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+val tap : ('a -> (unit, 'err) t) @ many -> ('a, 'err) t -> ('a, 'err) t
 
 val seq : (unit, 'err) t -> (unit, 'err) t -> (unit, 'err) t
 val concat : (unit, 'err) t list -> (unit, 'err) t
@@ -318,7 +318,7 @@ val all_settled :
     Child failures are returned as [Error cause] values instead of failing the
     outer effect. *)
 
-val for_each_par : 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
+val for_each_par : 'x list -> ('x -> ('a, 'err) t) @ many -> ('a list, 'err) t
 (** Map over [xs] concurrently with [f]; collect results in input order.
     Fail-fast like {!all}.
 
@@ -327,7 +327,7 @@ val for_each_par : 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
     {!Effect.Island.map} for portable CPU-bound batch work. *)
 
 val for_each_par_bounded :
-  max:int -> 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
+  max:int -> 'x list -> ('x -> ('a, 'err) t) @ many -> ('a list, 'err) t
 (** Map over [xs] with at most [max] child effects running at once. Results
     are returned in input order and failures are fail-fast like {!for_each_par}.
     The bound limits concurrent fibers, not domain workers.
@@ -340,7 +340,7 @@ val uninterruptible : ('a, 'err) t -> ('a, 'err) t
     into a typed failure, and it does not catch defects. *)
 
 val catch :
-  ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
+  ('err1 -> ('a, 'err2) t) @ many -> ('a, 'err1) t -> ('a, 'err2) t
 (** Handle typed failures in an effect's cause tree.
 
     [catch handler effect] does not catch unchecked defects, interruption, or
@@ -361,7 +361,7 @@ val catch :
     values when every branch outcome matters. Recover or ignore cleanup failure
     inside the cleanup effect itself. *)
 
-val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
+val map_error : ('err1 -> 'err2) @ many -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
     and the surrounding cause structure. [Cause.Fail] values in the primary
     cause tree are mapped, including failures nested under [Sequential] and
@@ -369,13 +369,13 @@ val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
     {!Cause.Finalizer} nodes and are preserved unchanged, including
     [Cause.Suppressed.finalizer] branches. *)
 
-val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
+val tap_error : ('err -> unit) @ many -> ('a, 'err) t -> ('a, 'err) t
 (** Run an observer when the effect fails with a typed error, then rethrow the
     original typed failure. If the observer raises, the runtime reports a
     suppressed cause with the original [Cause.Fail] as [primary] and the
     observer exception as [finalizer], so diagnostics retain both failures. *)
 
-val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
+val retry : Schedule.t -> ('err -> bool) @ many -> ('a, 'err) t -> ('a, 'err) t
 
 val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
 val timeout : Duration.t -> ('a, [> `Timeout ] as 'err) t -> ('a, 'err) t
@@ -411,7 +411,7 @@ val acquire_release :
 val acquire_use_release :
   acquire:('a, 'err) t ->
   release:('a -> (unit, 'release_err) t) ->
-  ('a -> ('b, 'err) t) ->
+  ('a -> ('b, 'err) t) @ many ->
   ('b, 'err) t
 (** Acquire a resource, run [body], and release it when [body] finishes.
 
@@ -446,7 +446,7 @@ val supervisor_scoped :
 (** Low-level abstract supervisor-scope runner used by {!Supervisor}. Prefer
     {!Supervisor.scoped} and {!Supervisor.Scope} in user code. *)
 
-val with_error_renderer : ('err -> string) -> ('a, 'err) t -> ('a, 'err) t
+val with_error_renderer : ('err -> string) @ many -> ('a, 'err) t -> ('a, 'err) t
 (** Render typed failures in observability span status and exception events for
     the wrapped effect. The renderer is scoped to this effect's error channel. *)
 

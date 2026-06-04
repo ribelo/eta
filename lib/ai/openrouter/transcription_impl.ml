@@ -6,19 +6,45 @@ module A = Common.A
 module Json = Common.Json
 module Codec = Common.Codec
 
+let[@zero_alloc] ends_with_sep_token_ci value sep token =
+  let value_len = String.length value in
+  let token_len = String.length token in
+  let suffix_len = token_len + 1 in
+  if value_len < suffix_len then false
+  else
+    let start = value_len - suffix_len in
+    Char.equal (String.unsafe_get value start) sep
+    &&
+    let mutable index = 0 in
+    while
+      index < token_len
+      && Eta.String_helpers.ascii_equal_ci
+           (String.unsafe_get value (start + 1 + index))
+           (String.unsafe_get token index)
+    do
+      index <- index + 1
+    done;
+    index = token_len
+
 let format_of_file (file : A.binary_file) =
-  let content_type = String.lowercase_ascii file.content_type in
-  let filename = String.lowercase_ascii file.filename in
-  let has value =
-    String.ends_with ~suffix:("/" ^ value) content_type
-    || String.ends_with ~suffix:("." ^ value) filename
-    || String.ends_with ~suffix:("-" ^ value) content_type
+  let has suffix =
+    ends_with_sep_token_ci file.content_type '/' suffix
+    || ends_with_sep_token_ci file.filename '.' suffix
+    || ends_with_sep_token_ci file.content_type '-' suffix
   in
   if has "wav" then Stdlib.Ok "wav"
-  else if has "mp3" || String.equal content_type "audio/mpeg" then
+  else if
+    has "mp3"
+    || Eta.String_helpers.ends_with_ascii_ci file.content_type
+         ~suffix:"audio/mpeg"
+  then
     Stdlib.Ok "mp3"
   else if has "flac" then Stdlib.Ok "flac"
-  else if has "m4a" || String.equal content_type "audio/mp4" then
+  else if
+    has "m4a"
+    || Eta.String_helpers.ends_with_ascii_ci file.content_type
+         ~suffix:"audio/mp4"
+  then
     Stdlib.Ok "m4a"
   else if has "ogg" then Stdlib.Ok "ogg"
   else if has "webm" then Stdlib.Ok "webm"

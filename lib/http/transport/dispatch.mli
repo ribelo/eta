@@ -1,7 +1,7 @@
 (** Protocol dispatch policy for negotiated HTTP transports. *)
 
-type protocol = H1 | H2
-type decision = Use_h1 | Use_h2
+type protocol : immutable_data = H1 | H2
+type decision : immutable_data = Use_h1 | Use_h2
 
 val protocol_to_string : protocol -> string
 val decision_protocol : decision -> protocol

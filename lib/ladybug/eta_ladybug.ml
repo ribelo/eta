@@ -3,6 +3,16 @@ module Row = Eta_ladybug_data.Row
 module Param = Eta_ladybug_data.Param
 module Decode = Eta_ladybug_data.Decode
 
+let add_joined buffer sep = function
+  | [] -> ()
+  | item :: rest ->
+      Buffer.add_string buffer item;
+      List.iter
+        (fun item ->
+          Buffer.add_string buffer sep;
+          Buffer.add_string buffer item)
+        rest
+
 module Expr = struct
   type operand =
     | Raw_operand of string
@@ -36,12 +46,12 @@ module Expr = struct
 end
 
 module Pattern = struct
-  type direction =
+  type direction : immutable_data =
     | Out
     | In
     | Undirected
 
-  type hops =
+  type hops : immutable_data =
     | One
     | Range of int option * int option
 
@@ -78,11 +88,21 @@ module Pattern = struct
   let param_props props =
     match props with
     | [] -> ""
-    | props ->
-        props
-        |> List.map (fun (name, param) -> name ^ ": $" ^ param)
-        |> String.concat ", "
-        |> fun body -> " {" ^ body ^ "}"
+    | (name, param) :: rest ->
+        let buf = Buffer.create 32 in
+        Buffer.add_string buf " {";
+        Buffer.add_string buf name;
+        Buffer.add_string buf ": $";
+        Buffer.add_string buf param;
+        List.iter
+          (fun (name, param) ->
+            Buffer.add_string buf ", ";
+            Buffer.add_string buf name;
+            Buffer.add_string buf ": $";
+            Buffer.add_string buf param)
+          rest;
+        Buffer.add_char buf '}';
+        Buffer.contents buf
 
   let labels = function
     | [] -> ""
@@ -99,26 +119,47 @@ module Pattern = struct
     | Raw value -> value
     | Node { alias; labels = node_labels; props } ->
         let name = Option.value alias ~default:"" in
-        "(" ^ name ^ labels node_labels ^ param_props props ^ ")"
+        let buf = Buffer.create 32 in
+        Buffer.add_char buf '(';
+        Buffer.add_string buf name;
+        Buffer.add_string buf (labels node_labels);
+        Buffer.add_string buf (param_props props);
+        Buffer.add_char buf ')';
+        Buffer.contents buf
     | Rel { alias; label; direction; hops = rel_hops; props } ->
         let name = Option.value alias ~default:"" in
-        let label =
-          match label with
-          | None -> ""
-          | Some label -> ":" ^ label
-        in
-        let body = "[" ^ name ^ label ^ hops rel_hops ^ param_props props ^ "]" in
+        let buf = Buffer.create 32 in
         begin match direction with
-        | Out -> "-" ^ body ^ "->"
-        | In -> "<-" ^ body ^ "-"
-        | Undirected -> "-" ^ body ^ "-"
-        end
+        | Out | Undirected -> Buffer.add_char buf '-'
+        | In -> Buffer.add_string buf "<-"
+        end;
+        Buffer.add_char buf '[';
+        Buffer.add_string buf name;
+        begin
+          match label with
+          | None -> ()
+          | Some label ->
+              Buffer.add_char buf ':';
+              Buffer.add_string buf label
+        end;
+        Buffer.add_string buf (hops rel_hops);
+        Buffer.add_string buf (param_props props);
+        Buffer.add_char buf ']';
+        begin match direction with
+        | Out -> Buffer.add_string buf "->"
+        | In | Undirected -> Buffer.add_char buf '-'
+        end;
+        Buffer.contents buf
     | Path { alias; parts } ->
-        let body = parts |> List.map to_cypher |> String.concat "" in
+        let buf = Buffer.create 64 in
         begin match alias with
-        | None -> body
-        | Some alias -> alias ^ " = " ^ body
-        end
+        | None -> ()
+        | Some alias ->
+            Buffer.add_string buf alias;
+            Buffer.add_string buf " = "
+        end;
+        List.iter (fun part -> Buffer.add_string buf (to_cypher part)) parts;
+        Buffer.contents buf
 end
 
 module Query = struct
@@ -130,14 +171,15 @@ module Query = struct
 
   type builder = {
     rev_clauses : string list;
-    params : Param.t list;
+    rev_params : Param.t list;
     rev_order_by : string list;
     limit : int option;
   }
 
-  let empty = { rev_clauses = []; params = []; rev_order_by = []; limit = None }
+  let empty = { rev_clauses = []; rev_params = []; rev_order_by = []; limit = None }
   let add clause query = { query with rev_clauses = clause :: query.rev_clauses }
-  let with_params params query = { query with params = query.params @ params }
+  let with_params params query =
+    { query with rev_params = List.rev_append params query.rev_params }
   let match_ pattern = empty |> add ("MATCH " ^ Pattern.to_cypher pattern)
   let optional pattern query = add ("OPTIONAL MATCH " ^ Pattern.to_cypher pattern) query
   let where expr query = add ("WHERE " ^ expr) query
@@ -153,19 +195,32 @@ module Query = struct
     { query with limit = Some count }
 
   let returning items ~decode query =
-    let clauses = List.rev query.rev_clauses in
-    let clauses = ("RETURN " ^ String.concat ", " items) :: List.rev clauses in
-    let clauses =
-      match List.rev query.rev_order_by with
-      | [] -> clauses
-      | order_by -> ("ORDER BY " ^ String.concat ", " order_by) :: clauses
+    let buf = Buffer.create 128 in
+    let add_clause clause =
+      if Buffer.length buf > 0 then Buffer.add_char buf ' ';
+      Buffer.add_string buf clause
     in
-    let clauses =
-      match query.limit with
-      | None -> clauses
-      | Some count -> ("LIMIT " ^ string_of_int count) :: clauses
-    in
-    { cypher = String.concat " " (List.rev clauses); params = query.params; decode }
+    List.iter add_clause (List.rev query.rev_clauses);
+    add_clause "RETURN";
+    Buffer.add_char buf ' ';
+    add_joined buf ", " items;
+    begin match List.rev query.rev_order_by with
+    | [] -> ()
+    | order_by ->
+        Buffer.add_string buf " ORDER BY ";
+        add_joined buf ", " order_by
+    end;
+    begin match query.limit with
+    | None -> ()
+    | Some count ->
+        Buffer.add_string buf " LIMIT ";
+        Buffer.add_string buf (string_of_int count)
+    end;
+    {
+      cypher = Buffer.contents buf;
+      params = List.rev query.rev_params;
+      decode;
+    }
 
   let raw ?(params = []) ~cypher ~decode () = { cypher; params; decode }
   let cypher (query : _ t) = query.cypher
@@ -187,7 +242,7 @@ type connection = {
   mutable closed : bool;
 }
 
-type error_category =
+type error_category : immutable_data =
   | Query_syntax
   | Type_mismatch
   | Integrity_violation
@@ -195,7 +250,7 @@ type error_category =
   | Connection_closed_or_invalid
   | Other
 
-type error =
+type error : immutable_data =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -221,24 +276,7 @@ external raw_interrupt : raw_connection -> unit = "eta_ladybug_interrupt"
 external raw_query_string : raw_connection -> string -> Param.t list -> string = "eta_ladybug_query_string"
 external raw_query_values : raw_connection -> string -> Param.t list -> Row.t list = "eta_ladybug_query_values"
 
-let lower_ascii value = String.lowercase_ascii value
-
-let contains haystack needle =
-  let haystack = lower_ascii haystack in
-  let needle = lower_ascii needle in
-  let h_len = String.length haystack in
-  let n_len = String.length needle in
-  let rec at pos i =
-    i = n_len
-    || (pos + i < h_len
-       && Char.equal haystack.[pos + i] needle.[i]
-       && at pos (i + 1))
-  in
-  let rec loop pos =
-    n_len = 0
-    || (pos + n_len <= h_len && (at pos 0 || loop (pos + 1)))
-  in
-  loop 0
+let contains = Eta.String_helpers.contains_ascii_ci
 
 let classify_error message =
   if contains message "parser exception" then Query_syntax
@@ -271,19 +309,19 @@ let pp_ladybug_error = pp_error
 module Extension = struct
   type official = string
 
-  type source =
+  type source : immutable_data =
     | Official
     | User
     | Static_link
     | Unknown of string
 
-  type loaded = {
+  type loaded : immutable_data = {
     name : string;
     source : source;
     path : string;
   }
 
-  type available = {
+  type available : immutable_data = {
     name : string;
     description : string;
   }
@@ -328,7 +366,7 @@ module Extension = struct
         (Invalid_value
            ("invalid LadybugDB official extension name: " ^ value))
     else
-      let value = String.lowercase_ascii value in
+      let value = Eta.String_helpers.lowercase_ascii value in
       if is_known_official value then Ok value
       else
         Result.Error
@@ -659,7 +697,7 @@ module Pool = struct
   type raw_error = [ `Ladybug of driver_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
   type t = (connection, raw_error) Eta.Pool.t
 
-  type nonrec error =
+  type nonrec error : immutable_data =
     | Ladybug of driver_error
     | Pool_shutdown
     | Pool_shutdown_timeout

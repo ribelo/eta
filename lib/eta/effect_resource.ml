@@ -16,7 +16,7 @@ let finally cleanup effect =
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn -> exit_of_exn frame exn
 
-let acquire_release ~acquire ~release =
+let acquire_release ~acquire ~(release @ many) =
   preserve acquire @@ fun () ->
   let frame = current_frame () in
   match acquire.eval () with
@@ -39,5 +39,5 @@ let scoped effect =
     switch_run frame run_scoped)
   with exn -> exit_of_exn frame exn
 
-let acquire_use_release ~acquire ~release body =
+let acquire_use_release ~acquire ~(release @ many) (body @ many) =
   scoped (acquire_release ~acquire ~release |> bind body)

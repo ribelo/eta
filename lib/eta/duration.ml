@@ -1,4 +1,4 @@
-type t : immutable_data = { ms : int }
+type t : immutable_data = { ms : int } [@@unboxed]
 
 let zero = { ms = 0 }
 let clamp_nonnegative n = if n < 0 then 0 else n
@@ -20,7 +20,7 @@ let to_ms t = t.ms
 let to_seconds_float t = float_of_int t.ms /. 1000.0
 let is_zero t = t.ms = 0
 let add a b = { ms = checked_add "Duration.add" a.ms b.ms }
-let ( + ) = add
+let ( + ) a b = add a b
 let subtract a b = ms (a.ms - b.ms)
 let times t n =
   if n <= 0 then zero

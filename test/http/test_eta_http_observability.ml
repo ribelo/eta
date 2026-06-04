@@ -26,7 +26,7 @@ let test_observability_success_get_semconv () =
   let client =
     observability_client (fun _ -> Eta.Effect.pure (retry_response 200))
   in
-  let request = Eta_http.Request.make "GET" "https://api.example.test:8443/a?b=c" in
+  let request = Eta_http.Request.make "get" "https://api.example.test:8443/a?b=c" in
   let response =
     Eta.Runtime.run rt (Eta_http.Observability.Tracer.request client request)
     |> Eta_test.Expect.expect_ok

@@ -1,5 +1,5 @@
 module Metric_key = struct
-  type t = {
+  type t : immutable_data = {
     name : string;
     description : string;
     unit_ : string;

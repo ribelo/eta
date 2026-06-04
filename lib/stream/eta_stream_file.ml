@@ -1,6 +1,6 @@
-type operation = [ `Close | `Open | `Read ]
+type operation : immutable_data = [ `Close | `Open | `Read ]
 
-type error_kind =
+type error_kind : immutable_data =
   [ `Already_exists
   | `File_too_large
   | `Io
@@ -9,7 +9,7 @@ type error_kind =
   | `Permission_denied
   | `Unexpected ]
 
-type error = {
+type error : immutable_data = {
   operation : operation;
   path : string;
   kind : error_kind;

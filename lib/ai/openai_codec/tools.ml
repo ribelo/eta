@@ -3,7 +3,7 @@ module Json = A.Json
 
 open Core
 
-type tool_shape =
+type tool_shape : immutable_data =
   | Chat_tool
   | Responses_tool
 
@@ -41,7 +41,7 @@ let tool_json ~schema_value ~shape (tool : A.tool) =
   in
   Stdlib.Ok json
 
-type structured_output_shape =
+type structured_output_shape : immutable_data =
   | Chat_response_format
   | Responses_format
 
@@ -68,4 +68,3 @@ let structured_output_json ~shape output =
           ("schema", Some output.schema);
           ("strict", Option.map Json.bool output.strict);
         ]
-

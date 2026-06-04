@@ -56,8 +56,8 @@ module type BACKEND = sig
   exception Error of error
 
   type 'a typ = {
-    value : 'a -> value;
-    decode : row -> int -> 'a;
+    value : ('a -> value) @@ many;
+    decode : (row -> int -> 'a) @@ many;
     sql_type : string;
   }
   (** Primitive codecs are a backend-owned invariant, not a shared Eta_sql_dsl

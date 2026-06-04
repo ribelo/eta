@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type parse_error =
+type parse_error : immutable_data =
   | Partial
   | Invalid_version
   | Invalid_status of string
@@ -11,12 +11,12 @@ type parse_error =
   | Body_too_large of { limit : int; length : int }
   | Body_truncated of { expected : int; available : int }
 
-type header = {
+type header : immutable_data = {
   name : Span.t;
   value : Span.t;
 }
 
-type response = {
+type response : immutable_data = {
   version : Version.t;
   status : int;
   reason : Span.t;
@@ -428,12 +428,24 @@ let response_of_raw headers raw =
     body = Span.make ~off:raw.body_off ~len:raw.body_len;
   }
 
-let parse ?(max_header_bytes = 32 * 1024) buf ~len =
-  let headers = create_raw_headers 256 in
+let parse_with_capacity ~max_header_bytes buf ~len capacity =
+  let headers = create_raw_headers capacity in
   let raw = create_raw_response () in
   match parse_raw buf ~len ~max_header_bytes ~headers raw with
-  | code when code = raw_ok -> Ok (response_of_raw headers raw)
-  | code -> Error (raw_error buf raw ~max_header_bytes code)
+  | code when code = raw_ok -> `Ok (response_of_raw headers raw)
+  | code when code = raw_header_section_too_large -> `Header_section_too_large
+  | code -> `Error (raw_error buf raw ~max_header_bytes code)
+
+let parse ?(max_header_bytes = 32 * 1024) buf ~len =
+  match parse_with_capacity ~max_header_bytes buf ~len 16 with
+  | `Ok response -> Ok response
+  | `Error error -> Error error
+  | `Header_section_too_large -> (
+      match parse_with_capacity ~max_header_bytes buf ~len 256 with
+      | `Ok response -> Ok response
+      | `Error error -> Error error
+      | `Header_section_too_large ->
+          Error (Header_section_too_large { limit = max_header_bytes }))
 
 let body_to_bytes buf response =
   Bytes.sub buf response.body.off response.body.len

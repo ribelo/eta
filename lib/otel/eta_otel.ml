@@ -16,11 +16,16 @@ module Mailbox = S.Mailbox
 module Drain_counter = S.Drain_counter
 
 let hex_of_bytes b =
-  let buf = Buffer.create (2 * Bytes.length b) in
-  Bytes.iter
-    (fun c -> Buffer.add_string buf (Printf.sprintf "%02x" (Char.code c)))
-    b;
-  Buffer.contents buf
+  let len = Bytes.length b in
+  let out = Bytes.create (2 * len) in
+  for index = 0 to len - 1 do
+    let value = Char.code (Bytes.unsafe_get b index) in
+    let out_index = index * 2 in
+    Bytes.unsafe_set out out_index (Eta.String_helpers.lower_hex_digit (value lsr 4));
+    Bytes.unsafe_set out (out_index + 1)
+      (Eta.String_helpers.lower_hex_digit (value land 0xf))
+  done;
+  Bytes.unsafe_to_string out
 
 let random_bytes rng n =
   let b = Bytes.create n in
@@ -32,13 +37,13 @@ let random_bytes rng n =
 module Otlp_json = Otlp_json
 
 type span = Otlp_json.span = {
-  trace_id : string; (* 32 hex chars *)
-  span_id : string; (* 16 hex chars *)
-  parent_span_id : string option;
+  global_ trace_id : string; (* 32 hex chars *)
+  global_ span_id : string; (* 16 hex chars *)
+  global_ parent_span_id : string option;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
-  name : string;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
+  global_ name : string;
   kind : Eta.Capabilities.span_kind;
   start_unix_ns : int;
   mutable end_unix_ns : int;
@@ -49,7 +54,7 @@ type span = Otlp_json.span = {
   mutable status_message : string;
 }
 
-type export_config = {
+type export_config : immutable_data = {
   host : string;
   port : int;
   traces_path : string;
@@ -67,7 +72,7 @@ type signal_batch =
   | Metric_batch of Eta.Meter.point list
   | Self_metric_batch of Eta.Meter.point list
 
-type signal_kind = Traces | Logs | Metrics | Self_metrics
+type signal_kind : immutable_data = Traces | Logs | Metrics | Self_metrics
 
 let encode_traces_request = Otlp_json.encode_traces_request
 let encode_logs_request = Otlp_json.encode_logs_request
@@ -98,7 +103,7 @@ let otlp_headers config =
     default_otlp_headers config.headers
 
 let otlp_url config path =
-  Printf.sprintf "http://%s:%d%s" config.host config.port path
+  "http://" ^ config.host ^ ":" ^ string_of_int config.port ^ path
 
 let otlp_request config ~path ~body =
   Eta_http.Request.make ~headers:(otlp_headers config)
@@ -106,9 +111,20 @@ let otlp_request config ~path ~body =
     "POST" (otlp_url config path)
 
 let render_http_status status body =
-  let body = String.trim (Bytes.to_string body) in
-  if body = "" then Printf.sprintf "HTTP %d" status
-  else Printf.sprintf "HTTP %d: %s" status body
+  let len = Bytes.length body in
+  let mutable start = 0 in
+  while start < len && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body start) do
+    start <- start + 1
+  done;
+  let prefix = "HTTP " ^ string_of_int status in
+  if start = len then prefix
+  else
+    let mutable stop = len in
+    while stop > start && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body (stop - 1)) do
+      stop <- stop - 1
+    done;
+    let body = Bytes.sub_string body start (stop - start) in
+    prefix ^ ": " ^ body
 
 (* ------------------------------------------------------------------ *)
 (* Exporter state                                                     *)
@@ -212,43 +228,41 @@ let self_metric t ~name ~description ~unit_ ~kind ~attrs ~value =
   }
 
 let self_queue_metrics t =
-  [
-    ("traces", Mailbox.length t.queue, Mailbox.dropped t.queue);
-    ("logs", Mailbox.length t.log_queue, Mailbox.dropped t.log_queue);
-    ("metrics", Mailbox.length t.metric_queue, Mailbox.dropped t.metric_queue);
-    ( "self_metrics",
-      Mailbox.length t.self_metric_queue,
-      Mailbox.dropped t.self_metric_queue );
-  ]
-  |> List.concat_map (fun (queue, length, dropped) ->
-         [
-           self_metric t ~name:"eta_otel.queue.depth"
-             ~description:"Current eta-otel exporter queue depth" ~unit_:"item"
-             ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
-             ~value:(Eta.Capabilities.Int length);
-           self_metric t ~name:"eta_otel.queue.dropped"
-             ~description:"Cumulative eta-otel exporter queue drops" ~unit_:"item"
-             ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
-             ~value:(Eta.Capabilities.Int dropped);
-         ])
+  let add_queue queue length dropped metrics =
+    self_metric t ~name:"eta_otel.queue.depth"
+      ~description:"Current eta-otel exporter queue depth" ~unit_:"item"
+      ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
+      ~value:(Eta.Capabilities.Int length)
+    :: self_metric t ~name:"eta_otel.queue.dropped"
+         ~description:"Cumulative eta-otel exporter queue drops" ~unit_:"item"
+         ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
+         ~value:(Eta.Capabilities.Int dropped)
+    :: metrics
+  in
+  []
+  |> add_queue "self_metrics" (Mailbox.length t.self_metric_queue)
+       (Mailbox.dropped t.self_metric_queue)
+  |> add_queue "metrics" (Mailbox.length t.metric_queue)
+       (Mailbox.dropped t.metric_queue)
+  |> add_queue "logs" (Mailbox.length t.log_queue) (Mailbox.dropped t.log_queue)
+  |> add_queue "traces" (Mailbox.length t.queue) (Mailbox.dropped t.queue)
 
 let self_export_metrics t signal ~batch_size =
   let signal = signal_name signal in
-  [
-    self_metric t ~name:"eta_otel.export.batches"
+  let queue_metrics = self_queue_metrics t in
+  self_metric t ~name:"eta_otel.export.batches"
       ~description:"Eta-otel export batch attempts" ~unit_:"batch"
       ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
-      ~value:(Eta.Capabilities.Int 1);
-    self_metric t ~name:"eta_otel.export.items"
+      ~value:(Eta.Capabilities.Int 1)
+  :: self_metric t ~name:"eta_otel.export.items"
       ~description:"Eta-otel export items attempted" ~unit_:"item"
       ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
-      ~value:(Eta.Capabilities.Int batch_size);
-    self_metric t ~name:"eta_otel.in_flight"
+      ~value:(Eta.Capabilities.Int batch_size)
+  :: self_metric t ~name:"eta_otel.in_flight"
       ~description:"Current eta-otel in-flight export work" ~unit_:"item"
       ~kind:Eta.Capabilities.Gauge ~attrs:[]
-      ~value:(Eta.Capabilities.Int (Drain_counter.value t.in_flight));
-  ]
-  @ self_queue_metrics t
+      ~value:(Eta.Capabilities.Int (Drain_counter.value t.in_flight))
+  :: queue_metrics
 
 let enqueue_self_export_metrics t config signal ~batch_size =
   match config.self_metrics_path with
@@ -631,13 +645,11 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       user_on_send ~path ~body
   in
   let resource_attrs =
-    let base = [ ("service.name", service_name) ] in
-    let base =
-      match service_version with
-      | Some v -> base @ [ ("service.version", v) ]
-      | None -> base
-    in
-    base @ resource_attrs
+    ("service.name", service_name)
+    ::
+    (match service_version with
+    | Some v -> ("service.version", v) :: resource_attrs
+    | None -> resource_attrs)
   in
   let rng = Stdlib.Random.State.make_self_init () in
   let self_tracer = Eta.Tracer.in_memory () in
@@ -735,13 +747,13 @@ let meter t : Eta.Capabilities.meter =
 
 module Internal = struct
   type nonrec span = span = {
-    trace_id : string;
-    span_id : string;
-    parent_span_id : string option;
+    global_ trace_id : string;
+    global_ span_id : string;
+    global_ parent_span_id : string option;
     trace_flags : int;
-    trace_state : (string * string) list;
-    baggage : (string * string) list;
-    name : string;
+    global_ trace_state : (string * string) list;
+    global_ baggage : (string * string) list;
+    global_ name : string;
     kind : Eta.Capabilities.span_kind;
     start_unix_ns : int;
     mutable end_unix_ns : int;

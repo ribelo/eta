@@ -21,7 +21,7 @@ val create_ssl : ctx -> hostname:string option -> alpn_protocols:string list -> 
 (** Create an SSL connection with memory BIOs. [hostname] sets SNI.
     [alpn_protocols] are sent in wire order. *)
 
-type handshake_result =
+type handshake_result : immutable_data =
   | Handshake_ok
   | Handshake_error of int
 

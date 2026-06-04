@@ -12,7 +12,7 @@ type stream = {
   status : status P_atomic.t;
 }
 
-type stats = {
+type stats : immutable_data = {
   active : int;
   cancelled : int;
   inflight : int;
@@ -26,7 +26,7 @@ type stats = {
   max_concurrent : int;
 }
 
-type release = Queue_rst | No_rst
+type release : immutable_data = Queue_rst | No_rst
 
 type t = {
   admission : Admission.t;

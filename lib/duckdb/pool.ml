@@ -16,7 +16,7 @@ type t = {
   pool : (connection, raw_error) Eta.Pool.t;
 }
 
-type nonrec error =
+type nonrec error : immutable_data =
   | Duckdb of error
   | Invalid_blocking_pool of string
   | Pool_shutdown

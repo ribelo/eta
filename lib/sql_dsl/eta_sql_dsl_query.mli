@@ -6,8 +6,8 @@ module type BACKEND = sig
   exception Error of error
 
   type 'a typ = {
-    value : 'a -> value;
-    decode : row -> int -> 'a;
+    value : ('a -> value) @@ many;
+    decode : (row -> int -> 'a) @@ many;
     sql_type : string;
   }
 
@@ -29,8 +29,8 @@ module Make (Backend : BACKEND) : sig
   type error = Backend.error
 
   type 'a typ = 'a Backend.typ = {
-    value : 'a -> Backend.value;
-    decode : Backend.row -> int -> 'a;
+    value : ('a -> Backend.value) @@ many;
+    decode : (Backend.row -> int -> 'a) @@ many;
     sql_type : string;
   }
 

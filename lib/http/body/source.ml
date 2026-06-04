@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type replayability = Replayable | Rewindable | One_shot
+type replayability : immutable_data = Replayable | Rewindable | One_shot
 
 type t =
   | Empty
@@ -8,7 +8,7 @@ type t =
   | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : unit -> Stream.t;
+      make : (unit -> Stream.t) @@ many;
     }
 
 type owned_stream = {
@@ -19,7 +19,7 @@ type owned_stream = {
 let empty = Empty
 let fixed chunks = Fixed chunks
 let stream body = Stream body
-let rewindable ?length make = Rewindable_stream { length; make }
+let rewindable ?length (make @ many) = Rewindable_stream { length; make }
 
 let replayability = function
   | Empty | Fixed _ -> Replayable
@@ -42,7 +42,7 @@ let to_stream = function
   | Stream stream -> stream
   | Rewindable_stream { make; _ } -> make ()
 
-let with_owned_stream t f =
+let with_owned_stream t (f @ many) =
   match t with
   | Empty | Fixed _ -> f None
   | Stream stream ->

@@ -1,11 +1,13 @@
 (** Binding operators for {!Effect.t}. *)
 
 val ( let* ) :
-  ('a, 'err) Effect.t -> ('a -> ('b, 'err) Effect.t) -> ('b, 'err) Effect.t
+  ('a, 'err) Effect.t ->
+  ('a -> ('b, 'err) Effect.t) @ many ->
+  ('b, 'err) Effect.t
 
-val ( let+ ) : ('a, 'err) Effect.t -> ('a -> 'b) -> ('b, 'err) Effect.t
+val ( let+ ) : ('a, 'err) Effect.t -> ('a -> 'b) @ many -> ('b, 'err) Effect.t
 
-val ( let@ ) : (('a -> 'b) -> 'c) -> ('a -> 'b) -> 'c
+val ( let@ ) : (('a -> 'b) @ many -> 'c) @ many -> ('a -> 'b) @ many -> 'c
 (** Callback inversion for CPS [with_*] functions.
 
     [let@ x = with_thing args in body] is [with_thing args (fun x -> body)].

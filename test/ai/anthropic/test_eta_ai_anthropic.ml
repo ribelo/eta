@@ -209,7 +209,11 @@ let test_encode_user_image_does_not_reject () =
           A.User
             [
               A.Text "What is in this image?";
-              A.Image { url = "data:image/png;base64,iVBORw0KGgo="; detail = None };
+              A.Image
+                {
+                  url = "data:image/png;charset=utf-8;base64,iVBORw0KGgo=";
+                  detail = None;
+                };
             ];
         ];
       tools = [];
@@ -221,7 +225,8 @@ let test_encode_user_image_does_not_reject () =
   match O.encode_messages request with
   | Stdlib.Ok raw ->
       (* Should contain the image content block *)
-      require_contains "image block" ~needle:"image" raw
+      require_contains "image block" ~needle:"image" raw;
+      require_contains "media type" ~needle:"\"media_type\":\"image/png\"" raw
   | Stdlib.Error (A.Unsupported { feature; _ }) ->
       Alcotest.failf
         "user image should be supported by Claude 3+ but got Unsupported: %s"
@@ -375,6 +380,15 @@ let test_stream_error_fixture () =
       ()
   | _ -> Alcotest.fail "expected stream provider error"
 
+let test_stream_error_accepts_padded_json () =
+  match
+    O.decode_stream_event
+      { A.event = Some "error"; data = " \n" ^ read_fixture "error.json" ^ "\t" }
+  with
+  | Stdlib.Ok [ A.Stream_error (A.Provider_error { message = "Overloaded"; _ }) ] ->
+      ()
+  | _ -> Alcotest.fail "expected padded stream provider error"
+
 let test_message_runner_uses_eta_http_and_suppresses_transport_span () =
   with_traced_runtime @@ fun rt tracer ->
   let captured = ref None in
@@ -500,6 +514,8 @@ let () =
         [
           Alcotest.test_case "SSE fixture" `Quick test_stream_fixture;
           Alcotest.test_case "error fixture" `Quick test_stream_error_fixture;
+          Alcotest.test_case "padded error JSON" `Quick
+            test_stream_error_accepts_padded_json;
           Alcotest.test_case "stream runner and cache header" `Quick
             test_stream_runner_and_prompt_cache_header;
         ] );

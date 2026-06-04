@@ -1,9 +1,9 @@
 type t : immutable_data = Capabilities.trace_context = {
-  trace_id : string;
-  span_id : string;
+  global_ trace_id : string;
+  global_ span_id : string;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
 }
 
 let sampled t = t.trace_flags land 1 = 1
@@ -21,6 +21,8 @@ let not_zero s = String.exists (( <> ) '0') s
 let valid_trace_id s = is_hex 32 s && not_zero s
 let valid_span_id s = is_hex 16 s && not_zero s
 
+let equal_header_name = String_helpers.trim_equal_trimmed_ascii_ci
+
 let make ?(trace_flags = 1) ?(trace_state = []) ?(baggage = []) ~trace_id
     ~span_id () =
   if valid_trace_id trace_id && valid_span_id span_id then
@@ -35,10 +37,8 @@ let make ?(trace_flags = 1) ?(trace_state = []) ?(baggage = []) ~trace_id
   else None
 
 let find_header name headers =
-  let name = String.lowercase_ascii name in
   List.find_map
-    (fun (k, v) ->
-      if String.lowercase_ascii k = name then Some (String.trim v) else None)
+    (fun (k, v) -> if equal_header_name name k then Some v else None)
     headers
 
 let parse_flags s =
@@ -46,32 +46,97 @@ let parse_flags s =
 
 let valid_version s = is_hex 2 s && s <> "ff"
 
+let trimmed_sub s start stop =
+  let mutable left = start in
+  let mutable right = stop in
+  while left < right && String_helpers.is_trim_space (String.unsafe_get s left) do
+    left <- left + 1
+  done;
+  while right > left && String_helpers.is_trim_space (String.unsafe_get s (right - 1)) do
+    right <- right - 1
+  done;
+  String.sub s left (right - left)
+
+let find_char_between s start stop needle =
+  let mutable pos = start in
+  let mutable found = -1 in
+  while found < 0 && pos < stop do
+    if Char.equal (String.unsafe_get s pos) needle then found <- pos;
+    pos <- pos + 1
+  done;
+  found
+
+let has_char_between s start stop needle =
+  let mutable pos = start in
+  let mutable found = false in
+  while (not found) && pos < stop do
+    found <- Char.equal (String.unsafe_get s pos) needle;
+    pos <- pos + 1
+  done;
+  found
+
+let parse_comma_pairs ?comment_char ~allow_empty_value s =
+  let len = String.length s in
+  let rec loop item_start acc pos =
+    if pos > len then List.rev acc
+    else if pos = len || Char.equal (String.unsafe_get s pos) ',' then
+      let item_stop =
+        match comment_char with
+        | None -> pos
+        | Some comment -> (
+            match find_char_between s item_start pos comment with
+            | -1 -> pos
+            | comment_pos -> comment_pos)
+      in
+      let acc =
+        match find_char_between s item_start item_stop '=' with
+        | -1 -> acc
+        | eq when has_char_between s (eq + 1) item_stop '=' -> acc
+        | eq ->
+            let key = trimmed_sub s item_start eq in
+            if String.equal key "" then acc
+            else
+              let value = trimmed_sub s (eq + 1) item_stop in
+              if (not allow_empty_value) && String.equal value "" then acc
+              else (key, value) :: acc
+      in
+      loop (pos + 1) acc (pos + 1)
+    else loop item_start acc (pos + 1)
+  in
+  if String_helpers.is_blank s then [] else loop 0 [] 0
+
 let parse_trace_state s =
-  if String.trim s = "" then []
-  else
-    s |> String.split_on_char ','
-    |> List.filter_map (fun item ->
-           match String.split_on_char '=' item with
-           | [ k; v ] ->
-               let k = String.trim k and v = String.trim v in
-               if k = "" || v = "" then None else Some (k, v)
-           | _ -> None)
+  parse_comma_pairs ~allow_empty_value:false s
 
 let parse_baggage s =
-  if String.trim s = "" then []
+  parse_comma_pairs ~comment_char:';' ~allow_empty_value:true s
+
+let parse_traceparent s =
+  let start, stop = String_helpers.trim_bounds s in
+  let first = find_char_between s start stop '-' in
+  if first < 0 then None
   else
-    s |> String.split_on_char ','
-    |> List.filter_map (fun item ->
-           let item =
-             match String.split_on_char ';' item with
-             | head :: _ -> head
-             | [] -> item
-           in
-           match String.split_on_char '=' item with
-           | [ k; v ] ->
-               let k = String.trim k and v = String.trim v in
-               if k = "" then None else Some (k, v)
-           | _ -> None)
+    let second = find_char_between s (first + 1) stop '-' in
+    if second < 0 then None
+    else
+      let third = find_char_between s (second + 1) stop '-' in
+      if third < 0 then None
+      else
+        let fourth = find_char_between s (third + 1) stop '-' in
+        let version = String.sub s start (first - start) in
+        let trace_id = String.sub s (first + 1) (second - first - 1) in
+        let span_id = String.sub s (second + 1) (third - second - 1) in
+        let flags_stop = if fourth < 0 then stop else fourth in
+        let flags = String.sub s (third + 1) (flags_stop - third - 1) in
+        match parse_flags flags with
+        | None -> None
+        | Some trace_flags ->
+            if String.equal version "00" then
+              if fourth < 0 then Some (version, trace_id, span_id, trace_flags)
+              else None
+            else if valid_version version then
+              Some (version, trace_id, span_id, trace_flags land 1)
+            else None
 
 let extract headers =
   let make_from_traceparent ~trace_id ~span_id ~trace_flags =
@@ -89,38 +154,35 @@ let extract headers =
   match find_header "traceparent" headers with
   | None -> None
   | Some traceparent -> (
-      match String.split_on_char '-' traceparent with
-      | [ "00"; trace_id; span_id; flags ] -> (
-          match parse_flags flags with
-          | None -> None
-          | Some trace_flags ->
-              make_from_traceparent ~trace_id ~span_id ~trace_flags)
-      | version :: trace_id :: span_id :: flags :: _
-        when valid_version version && version <> "00" -> (
-          match parse_flags flags with
-          | None -> None
-          | Some trace_flags ->
-              (* W3C Trace Context 3.2.4 requires higher versions to parse the
-                 v00 prefix fields when valid, ignore unknown trailing fields,
-                 and carry only the sampled bit this version understands. *)
-              make_from_traceparent ~trace_id ~span_id
-                ~trace_flags:(trace_flags land 1))
-      | _ -> None)
+      match parse_traceparent traceparent with
+      | None -> None
+      | Some (_, trace_id, span_id, trace_flags) ->
+          make_from_traceparent ~trace_id ~span_id ~trace_flags)
 
 let render_pairs xs =
   String.concat "," (List.map (fun (k, v) -> k ^ "=" ^ v) xs)
 
 let inject t =
-  let traceparent =
-    Printf.sprintf "00-%s-%s-%02x" t.trace_id t.span_id
-      (t.trace_flags land 255)
+  let traceparent = Bytes.create 55 in
+  Bytes.unsafe_set traceparent 0 '0';
+  Bytes.unsafe_set traceparent 1 '0';
+  Bytes.unsafe_set traceparent 2 '-';
+  Bytes.blit_string t.trace_id 0 traceparent 3 32;
+  Bytes.unsafe_set traceparent 35 '-';
+  Bytes.blit_string t.span_id 0 traceparent 36 16;
+  Bytes.unsafe_set traceparent 52 '-';
+  let flags = t.trace_flags land 255 in
+  Bytes.unsafe_set traceparent 53 (String_helpers.lower_hex_digit (flags lsr 4));
+  Bytes.unsafe_set traceparent 54 (String_helpers.lower_hex_digit (flags land 0xf));
+  let traceparent = Bytes.unsafe_to_string traceparent in
+  let headers =
+    match t.baggage with
+    | [] -> []
+    | xs -> [ ("baggage", render_pairs xs) ]
   in
-  let headers = [ ("traceparent", traceparent) ] in
   let headers =
     match t.trace_state with
     | [] -> headers
-    | xs -> headers @ [ ("tracestate", render_pairs xs) ]
+    | xs -> ("tracestate", render_pairs xs) :: headers
   in
-  match t.baggage with
-  | [] -> headers
-  | xs -> headers @ [ ("baggage", render_pairs xs) ]
+  ("traceparent", traceparent) :: headers

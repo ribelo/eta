@@ -15,7 +15,7 @@ type request_body =
   | Stream of Body.t
   | Rewindable_stream of {
       length : int option;
-      make : unit -> Body.t;
+      make : (unit -> Body.t) @@ many;
     }
 
 type request = {
@@ -29,7 +29,7 @@ type response = {
   status : int;
   headers : Header.t;
   body : Body.t;
-  trailers : unit -> (Header.t, Error.t) Eta.Effect.t;
+  trailers : (unit -> (Header.t, Error.t) Eta.Effect.t) @@ many;
 }
 
 type conn = {
@@ -39,7 +39,7 @@ type conn = {
   mutable last_used_ms : int;
 }
 
-type pool_error =
+type pool_error : immutable_data =
   [ `Http of Error.t
   | `Pool_shutdown
   | `Pool_shutdown_timeout

@@ -7,6 +7,12 @@ let test_idempotency_classifier () =
   in
   Alcotest.(check bool) "GET retryable" true
     (Eta_http.Idempotency.retryable get);
+  let trimmed_lower_get =
+    Eta_http.Request.make ~body:(Fixed [ Bytes.of_string "x" ]) " get "
+      "https://api.example.test/resource"
+  in
+  Alcotest.(check bool) "trimmed lowercase GET retryable" true
+    (Eta_http.Idempotency.retryable trimmed_lower_get);
   let post =
     Eta_http.Request.make ~body:(Fixed [ Bytes.of_string "x" ]) "POST"
       "https://api.example.test/resource"
@@ -16,6 +22,11 @@ let test_idempotency_classifier () =
   let post_with_key = Eta_http.Idempotency.with_idempotency_key "k1" post in
   Alcotest.(check bool) "POST with key" true
     (Eta_http.Idempotency.retryable post_with_key);
+  let post_with_blank_key =
+    Eta_http.Idempotency.with_idempotency_key " \t\r\n" post
+  in
+  Alcotest.(check bool) "POST with blank key" false
+    (Eta_http.Idempotency.retryable post_with_blank_key);
   let one_shot =
     Eta_http.Request.make
       ~body:(Stream (Eta_http.Body.Stream.of_bytes [ Bytes.of_string "x" ]))
@@ -29,6 +40,14 @@ let test_retry_after_parser () =
     Eta_http.Retry_policy.retry_after "5" |> Option.map Eta.Duration.to_ms
   in
   Alcotest.(check (option int)) "delta seconds" (Some 5000) seconds;
+  let spaced_seconds =
+    Eta_http.Retry_policy.retry_after " \t5\r\n"
+    |> Option.map Eta.Duration.to_ms
+  in
+  Alcotest.(check (option int)) "spaced delta seconds" (Some 5000)
+    spaced_seconds;
+  Alcotest.(check (option int)) "signed seconds rejected" None
+    (Eta_http.Retry_policy.retry_after "+5" |> Option.map Eta.Duration.to_ms);
   let http_date =
     Eta_http.Retry_policy.retry_after ~now_s:1445412475.0
       "Wed, 21 Oct 2015 07:28:00 GMT"

@@ -127,7 +127,7 @@ let apply_config db =
           Result.bind
             (query_one_string db ("PRAGMA journal_mode = '" ^ expected ^ "'"))
             (fun actual ->
-              if String.equal (String.lowercase_ascii actual) expected then Ok ()
+              if Eta.String_helpers.trim_equal_ascii_ci actual expected then Ok ()
               else
                 Result.Error
                   (Invalid_config

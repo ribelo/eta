@@ -1,24 +1,30 @@
 type yj = Yojson.Safe.t
 
+let array_map (f @ many) values =
+  let rec loop acc = function
+    | [] -> `List (List.rev acc)
+    | value :: rest -> loop (f value :: acc) rest
+  in
+  loop [] values
+
 let attr_value_string s : yj = `Assoc [ ("stringValue", `String s) ]
 
 let attrs_json (attrs : (string * string) list) : yj =
-  `List
-    (List.map
-       (fun (k, v) ->
-         `Assoc [ ("key", `String k); ("value", attr_value_string v) ])
-       attrs)
+  array_map
+    (fun (k, v) ->
+      `Assoc [ ("key", `String k); ("value", attr_value_string v) ])
+    attrs
 
 let str_int n = `String (string_of_int n)
 
 type span = {
-  trace_id : string;
-  span_id : string;
-  parent_span_id : string option;
+  global_ trace_id : string;
+  global_ span_id : string;
+  global_ parent_span_id : string option;
   trace_flags : int;
-  trace_state : (string * string) list;
-  baggage : (string * string) list;
-  name : string;
+  global_ trace_state : (string * string) list;
+  global_ baggage : (string * string) list;
+  global_ name : string;
   kind : Eta.Capabilities.span_kind;
   start_unix_ns : int;
   mutable end_unix_ns : int;
@@ -38,17 +44,21 @@ let event_json (name, ts_ns, attrs) : yj =
     ]
 
 let link_json (l : Eta.Capabilities.span_link) : yj =
-  let base =
-    [
-      ("traceId", `String l.link_trace_id);
-      ("spanId", `String l.link_span_id);
-    ]
+  let fields =
+    match l.link_attrs with
+    | [] ->
+        [
+          ("traceId", `String l.link_trace_id);
+          ("spanId", `String l.link_span_id);
+        ]
+    | attrs ->
+        [
+          ("traceId", `String l.link_trace_id);
+          ("spanId", `String l.link_span_id);
+          ("attributes", attrs_json attrs);
+        ]
   in
-  let with_attrs =
-    if l.link_attrs = [] then base
-    else base @ [ ("attributes", attrs_json l.link_attrs) ]
-  in
-  `Assoc with_attrs
+  `Assoc fields
 
 let status_json code message : yj option =
   if code = 0 then None
@@ -64,49 +74,46 @@ let span_kind_int = function
   | Consumer -> 5
 
 let span_json (s : span) : yj =
-  let parent =
-    match s.parent_span_id with
-    | Some p -> [ ("parentSpanId", `String p) ]
-    | None -> []
-  in
-  let events =
-    if s.events = [] then []
-    else [ ("events", `List (List.map event_json s.events)) ]
-  in
-  let links =
-    if s.links = [] then []
-    else [ ("links", `List (List.map link_json s.links)) ]
-  in
-  let trace_state =
-    match s.trace_state with
-    | [] -> []
-    | xs ->
-        [
-          ( "traceState",
-            `String
-              (String.concat ","
-                 (List.map (fun (k, v) -> k ^ "=" ^ v) xs)) );
-        ]
-  in
-  let status =
+  let fields =
     match status_json s.status_code s.status_message with
     | None -> []
     | Some j -> [ ("status", j) ]
   in
+  let fields =
+    match s.links with
+    | [] -> fields
+    | links -> ("links", array_map link_json links) :: fields
+  in
+  let fields =
+    match s.events with
+    | [] -> fields
+    | events -> ("events", array_map event_json events) :: fields
+  in
+  let fields =
+    match s.trace_state with
+    | [] -> fields
+    | xs ->
+        ( "traceState",
+          `String (String.concat "," (List.map (fun (k, v) -> k ^ "=" ^ v) xs))
+        )
+        :: fields
+  in
+  let fields =
+    ("attributes", attrs_json s.attrs)
+    :: ("endTimeUnixNano", str_int s.end_unix_ns)
+    :: ("startTimeUnixNano", str_int s.start_unix_ns)
+    :: ("kind", `Int (span_kind_int s.kind))
+    :: ("name", `String s.name)
+    :: fields
+  in
+  let fields =
+    match s.parent_span_id with
+    | Some p -> ("parentSpanId", `String p) :: fields
+    | None -> fields
+  in
   `Assoc
-    ([
-       ("traceId", `String s.trace_id);
-       ("spanId", `String s.span_id);
-     ]
-    @ parent
-    @ [
-        ("name", `String s.name);
-        ("kind", `Int (span_kind_int s.kind));
-        ("startTimeUnixNano", str_int s.start_unix_ns);
-        ("endTimeUnixNano", str_int s.end_unix_ns);
-        ("attributes", attrs_json s.attrs);
-      ]
-    @ trace_state @ events @ links @ status)
+    (("traceId", `String s.trace_id) :: ("spanId", `String s.span_id)
+    :: fields)
 
 let resource_json resource_attrs : yj =
   `Assoc [ ("attributes", attrs_json resource_attrs) ]
@@ -129,7 +136,7 @@ let encode_traces_request ~resource_attrs ~scope_name spans =
                         `Assoc
                           [
                             ("scope", scope_json scope_name);
-                            ("spans", `List (List.map span_json spans));
+                            ("spans", array_map span_json spans);
                           ];
                       ] );
                 ];
@@ -156,22 +163,20 @@ let severity_text = function
 
 let log_json (r : Eta.Capabilities.log_record) : yj =
   let ts_ns = r.ts_ms * 1_000_000 in
-  let trace =
-    if r.trace_id = "" then [] else [ ("traceId", `String r.trace_id) ]
-  in
-  let span =
+  let fields =
     if r.span_id = "" then [] else [ ("spanId", `String r.span_id) ]
   in
+  let fields =
+    if r.trace_id = "" then fields else ("traceId", `String r.trace_id) :: fields
+  in
   `Assoc
-    ([
-       ("timeUnixNano", str_int ts_ns);
-       ("observedTimeUnixNano", str_int ts_ns);
-       ("severityNumber", `Int (severity_number r.level));
-       ("severityText", `String (severity_text r.level));
-       ("body", `Assoc [ ("stringValue", `String r.body) ]);
-       ("attributes", attrs_json r.attrs);
-     ]
-    @ trace @ span)
+    (("timeUnixNano", str_int ts_ns)
+    :: ("observedTimeUnixNano", str_int ts_ns)
+    :: ("severityNumber", `Int (severity_number r.level))
+    :: ("severityText", `String (severity_text r.level))
+    :: ("body", `Assoc [ ("stringValue", `String r.body) ])
+    :: ("attributes", attrs_json r.attrs)
+    :: fields)
 
 let encode_logs_request ~resource_attrs ~scope_name records =
   let payload : yj =
@@ -189,7 +194,7 @@ let encode_logs_request ~resource_attrs ~scope_name records =
                         `Assoc
                           [
                             ("scope", scope_json scope_name);
-                            ("logRecords", `List (List.map log_json records));
+                            ("logRecords", array_map log_json records);
                           ];
                       ] );
                 ];
@@ -265,10 +270,8 @@ let encode_metrics_request ~resource_attrs ~scope_name points =
                           [
                             ("scope", scope_json scope_name);
                             ( "metrics",
-                              `List
-                                (List.map
-                                   (fun (k, v) -> metric_json k v)
-                                   aggregated) );
+                              array_map (fun (k, v) -> metric_json k v) aggregated
+                            );
                           ];
                       ] );
                 ];

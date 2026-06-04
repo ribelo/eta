@@ -51,7 +51,7 @@ let decode raw =
       | None ->
           Common.decode_error_result ~raw "rerank response missing results"
       | Some results -> (
-          match Codec.result_all (List.map result_of_json results) with
+          match Codec.result_map_all result_of_json results with
           | Stdlib.Error _ as error -> error
           | Stdlib.Ok results ->
               Stdlib.Ok

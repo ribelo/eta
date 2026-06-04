@@ -9,7 +9,7 @@ let response_headers response =
          String.length name = 0 || not (Char.equal name.[0] ':'))
 
 let response_has_body request status =
-  (not (String.equal (String.uppercase_ascii request.Request.method_) "HEAD"))
+  (match Method.of_string request.Request.method_ with `HEAD -> false | _ -> true)
   && (status < 100 || status >= 200)
   && status <> 204 && status <> 304
 

@@ -7,7 +7,7 @@ let api_key value = Eta_redacted.make ~label:"api_key" value
 type model = string
 type provider_name = string
 
-type audio_format = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
+type audio_format : immutable_data = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
 
 type audio_data = Base64 of string | Bytes of bytes
 
@@ -17,7 +17,7 @@ type audio = {
   transcript : string option;
 }
 
-type media = {
+type media : immutable_data = {
   url : string;
   detail : string option;
 }
@@ -33,7 +33,7 @@ let audio_pcm16_base64 ?transcript data = Audio { data = Base64 data; format = P
 let url ?detail url = Image { url; detail }
 let video_url ?detail url = Video { url; detail }
 
-type tool_call = {
+type tool_call : immutable_data = {
   id : string;
   name : string;
   arguments_json : raw_json;
@@ -53,7 +53,7 @@ type message =
 
 type prompt = message list
 
-type finish_reason =
+type finish_reason : immutable_data =
   | Stop
   | Length
   | Tool_calls
@@ -61,7 +61,7 @@ type finish_reason =
   | Error
   | Other of string
 
-type usage = {
+type usage : immutable_data = {
   input_tokens : int option;
   output_tokens : int option;
   total_tokens : int option;
@@ -77,7 +77,7 @@ type response = {
   raw : raw_json option;
 }
 
-type tool = {
+type tool : immutable_data = {
   name : string;
   description : string option;
   input_schema_json : raw_json;
@@ -100,14 +100,14 @@ type binary_file = {
 }
 
 module Embedding = struct
-  type input =
+  type input : immutable_data =
     | Text of string
     | Texts of string list
     | Tokens of int list
     | Token_batches of int list list
     | Raw_json of raw_json
 
-  type request = {
+  type request : immutable_data = {
     model : model;
     input : input;
     encoding_format : string option;
@@ -115,22 +115,22 @@ module Embedding = struct
     user : string option;
   }
 
-  type vector =
+  type vector : immutable_data =
     | Float of float list
     | Base64 of string
 
-  type item = {
+  type item : immutable_data = {
     embedding : vector;
     index : int option;
   }
 
-  type usage = {
+  type usage : immutable_data = {
     input_tokens : int option;
     total_tokens : int option;
     raw : (string * string) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string option;
     model : model option;
     embeddings : item list;
@@ -140,13 +140,13 @@ module Embedding = struct
 end
 
 module Image = struct
-  type generated = {
+  type generated : immutable_data = {
     url : string option;
     base64 : string option;
     revised_prompt : string option;
   }
 
-  type request = {
+  type request : immutable_data = {
     model : model option;
     prompt : string;
     n : int option;
@@ -157,7 +157,7 @@ module Image = struct
     extra : (string * Json.t) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     created : int option;
     images : generated list;
     usage : usage option;
@@ -166,7 +166,7 @@ module Image = struct
 end
 
 module Speech = struct
-  type request = {
+  type request : immutable_data = {
     model : model;
     input : string;
     voice : string;
@@ -193,7 +193,7 @@ module Transcription = struct
     extra_fields : (string * string) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     text : string option;
     usage : usage option;
     raw : raw_json option;
@@ -201,20 +201,20 @@ module Transcription = struct
 end
 
 module Rerank = struct
-  type request = {
+  type request : immutable_data = {
     model : model;
     query : string;
     documents : string list;
     top_n : int option;
   }
 
-  type result = {
+  type result : immutable_data = {
     index : int;
     score : float option;
     document : string option;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string option;
     model : model option;
     provider : string option;
@@ -225,7 +225,7 @@ module Rerank = struct
 end
 
 module Video = struct
-  type request = {
+  type request : immutable_data = {
     model : model;
     prompt : string;
     aspect_ratio : string option;
@@ -234,7 +234,7 @@ module Video = struct
     extra : (string * Json.t) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string;
     generation_id : string option;
     status : string option;
@@ -245,7 +245,7 @@ module Video = struct
     raw : raw_json option;
   }
 
-  type content_request = {
+  type content_request : immutable_data = {
     job_id : string;
     index : int option;
   }
@@ -256,7 +256,7 @@ module Video = struct
   }
 end
 
-type ai_error =
+type ai_error : immutable_data =
   | Eta_http_error of Eta_http.Error.t
   | Provider_error of {
       provider : provider_name;
@@ -279,19 +279,19 @@ type ai_error =
       feature : string;
     }
 
-type sse_event = {
+type sse_event : immutable_data = {
   event : string option;
   data : raw_json;
 }
 
-type tool_call_delta = {
+type tool_call_delta : immutable_data = {
   index : int option;
   id : string option;
   name : string option;
   arguments_json_delta : string;
 }
 
-type stream_event =
+type stream_event : immutable_data =
   | Stream_message_start of {
       id : string option;
       model : model option;
@@ -303,7 +303,7 @@ type stream_event =
   | Stream_error of ai_error
   | Stream_done
 
-type capabilities = {
+type capabilities : immutable_data = {
   streaming : bool;
   tools : bool;
   tool_choice : bool;
@@ -325,13 +325,12 @@ type provider = {
   base_url : string;
   chat_path : string;
   embeddings_path : string option;
-  auth_headers : api_key -> headers;
+  auth_headers : (api_key -> headers) @@ many;
   capabilities : capabilities;
-  encode_chat : chat_request -> (raw_json, ai_error) result;
-  decode_chat : raw_json -> (response, ai_error) result;
-  encode_embeddings : Embedding.request -> (raw_json, ai_error) result;
-  decode_embeddings : raw_json -> (Embedding.response, ai_error) result;
-  decode_stream_event : sse_event -> (stream_event list, ai_error) result;
-  decode_error : status:int -> headers:headers -> raw_json -> ai_error;
+  encode_chat : (chat_request -> (raw_json, ai_error) result) @@ many;
+  decode_chat : (raw_json -> (response, ai_error) result) @@ many;
+  encode_embeddings : (Embedding.request -> (raw_json, ai_error) result) @@ many;
+  decode_embeddings : (raw_json -> (Embedding.response, ai_error) result) @@ many;
+  decode_stream_event : (sse_event -> (stream_event list, ai_error) result) @@ many;
+  decode_error : (status:int -> headers:headers -> raw_json -> ai_error) @@ many;
 }
-

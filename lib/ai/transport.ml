@@ -6,14 +6,29 @@ let unsupported_result provider feature =
 let unsupported_embeddings provider =
   unsupported_result provider "embeddings"
 
+let trim_trailing_slash value =
+  let len = String.length value in
+  if len > 0 && Char.equal (String.unsafe_get value (len - 1)) '/' then
+    String.sub value 0 (len - 1)
+  else value
+
 let join_url base path =
-  let base =
-    if String.ends_with ~suffix:"/" base then
-      String.sub base 0 (String.length base - 1)
-    else base
+  let base_len = String.length base in
+  let base_len =
+    if base_len > 0 && Char.equal (String.unsafe_get base (base_len - 1)) '/'
+    then base_len - 1
+    else base_len
   in
-  let path = if String.starts_with ~prefix:"/" path then path else "/" ^ path in
-  base ^ path
+  let path_len = String.length path in
+  let path_start =
+    if path_len > 0 && Char.equal (String.unsafe_get path 0) '/' then 1 else 0
+  in
+  let path_len = path_len - path_start in
+  let out = Bytes.create (base_len + 1 + path_len) in
+  Bytes.blit_string base 0 out 0 base_len;
+  Bytes.unsafe_set out base_len '/';
+  Bytes.blit_string path path_start out (base_len + 1) path_len;
+  Bytes.unsafe_to_string out
 
 let provider_post_request provider ~path api_key raw =
   let headers = provider.auth_headers api_key in
@@ -66,7 +81,7 @@ let read_response_body ?max_bytes body =
   |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
 
 let read_response_text ?max_bytes body =
-  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.to_string
+  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.unsafe_to_string
 
 let result_effect = function
   | Stdlib.Ok value -> Eta.Effect.pure value

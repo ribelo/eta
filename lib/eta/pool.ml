@@ -1,7 +1,7 @@
 (* Pool state transitions and counters must move together under the same
    lifecycle authority. *)
 
-type stats = {
+type stats : immutable_data = {
   active : int;
   idle : int;
   waiting : int;
@@ -30,8 +30,8 @@ type ('conn, 'err) t = {
   expires_entries : bool;
   idle_check_interval : Duration.t;
   acquire_conn : ('conn, 'err) Effect.t;
-  release_conn : 'conn -> (unit, 'err) Effect.t;
-  health_check : 'conn -> (unit, 'err) Effect.t;
+  release_conn : ('conn -> (unit, 'err) Effect.t) @@ many;
+  health_check : ('conn -> (unit, 'err) Effect.t) @@ many;
   mutex : Eio.Mutex.t;
   sem : Semaphore.t;
   mutable idle : 'conn entry list;
@@ -525,13 +525,10 @@ let validate ~max_size ~max_idle ~idle_check_interval =
     invalid_arg "Eta.Pool.create: idle_check_interval must be > 0"
 
 let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
-    ?max_lifetime ?(idle_check_interval = Duration.seconds 1) ~acquire ~release
-    ?health_check () =
+    ?max_lifetime ?(idle_check_interval = Duration.seconds 1) ~acquire
+    ~(release @ many) ?(health_check @ many = fun _ -> Effect.unit) () =
   let max_idle = Option.value max_idle ~default:max_size in
   validate ~max_size ~max_idle ~idle_check_interval;
-  let health_check =
-    Option.value health_check ~default:(fun _ -> Effect.unit)
-  in
   let shutdown_requested, shutdown_resolver = Eio.Promise.create () in
   let t =
     {

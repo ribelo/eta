@@ -37,7 +37,7 @@ val api_key : string -> api_key
 type model = string
 type provider_name = string
 
-type audio_format = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
+type audio_format : immutable_data = Pcm16 | G711_alaw | G711_ulaw | Mp3 | Opus | Wav
 
 type audio_data = Base64 of string | Bytes of bytes
 
@@ -47,7 +47,7 @@ type audio = {
   transcript : string option;
 }
 
-type media = {
+type media : immutable_data = {
   url : string;
   detail : string option;
 }
@@ -68,7 +68,7 @@ val url : ?detail:string -> string -> content
 val video_url : ?detail:string -> string -> content
 (** Build video content from a provider-ready URL or data URL. *)
 
-type tool_call = {
+type tool_call : immutable_data = {
   id : string;
   name : string;
   arguments_json : raw_json;
@@ -88,7 +88,7 @@ type message =
 
 type prompt = message list
 
-type finish_reason =
+type finish_reason : immutable_data =
   | Stop
   | Length
   | Tool_calls
@@ -96,7 +96,7 @@ type finish_reason =
   | Error
   | Other of string
 
-type usage = {
+type usage : immutable_data = {
   input_tokens : int option;
   output_tokens : int option;
   total_tokens : int option;
@@ -112,7 +112,7 @@ type response = {
   raw : raw_json option;
 }
 
-type tool = {
+type tool : immutable_data = {
   name : string;
   description : string option;
   input_schema_json : raw_json;
@@ -135,14 +135,14 @@ type binary_file = {
 }
 
 module Embedding : sig
-  type input =
+  type input : immutable_data =
     | Text of string
     | Texts of string list
     | Tokens of int list
     | Token_batches of int list list
     | Raw_json of raw_json
 
-  type request = {
+  type request : immutable_data = {
     model : model;
     input : input;
     encoding_format : string option;
@@ -150,22 +150,22 @@ module Embedding : sig
     user : string option;
   }
 
-  type vector =
+  type vector : immutable_data =
     | Float of float list
     | Base64 of string
 
-  type item = {
+  type item : immutable_data = {
     embedding : vector;
     index : int option;
   }
 
-  type usage = {
+  type usage : immutable_data = {
     input_tokens : int option;
     total_tokens : int option;
     raw : (string * string) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string option;
     model : model option;
     embeddings : item list;
@@ -175,13 +175,13 @@ module Embedding : sig
 end
 
 module Image : sig
-  type generated = {
+  type generated : immutable_data = {
     url : string option;
     base64 : string option;
     revised_prompt : string option;
   }
 
-  type request = {
+  type request : immutable_data = {
     model : model option;
     prompt : string;
     n : int option;
@@ -192,7 +192,7 @@ module Image : sig
     extra : (string * Json.t) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     created : int option;
     images : generated list;
     usage : usage option;
@@ -201,7 +201,7 @@ module Image : sig
 end
 
 module Speech : sig
-  type request = {
+  type request : immutable_data = {
     model : model;
     input : string;
     voice : string;
@@ -228,7 +228,7 @@ module Transcription : sig
     extra_fields : (string * string) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     text : string option;
     usage : usage option;
     raw : raw_json option;
@@ -236,20 +236,20 @@ module Transcription : sig
 end
 
 module Rerank : sig
-  type request = {
+  type request : immutable_data = {
     model : model;
     query : string;
     documents : string list;
     top_n : int option;
   }
 
-  type result = {
+  type result : immutable_data = {
     index : int;
     score : float option;
     document : string option;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string option;
     model : model option;
     provider : string option;
@@ -260,7 +260,7 @@ module Rerank : sig
 end
 
 module Video : sig
-  type request = {
+  type request : immutable_data = {
     model : model;
     prompt : string;
     aspect_ratio : string option;
@@ -269,7 +269,7 @@ module Video : sig
     extra : (string * Json.t) list;
   }
 
-  type response = {
+  type response : immutable_data = {
     id : string;
     generation_id : string option;
     status : string option;
@@ -280,7 +280,7 @@ module Video : sig
     raw : raw_json option;
   }
 
-  type content_request = {
+  type content_request : immutable_data = {
     job_id : string;
     index : int option;
   }
@@ -291,7 +291,7 @@ module Video : sig
   }
 end
 
-type ai_error =
+type ai_error : immutable_data =
   | Eta_http_error of Eta_http.Error.t
   | Provider_error of {
       provider : provider_name;
@@ -315,6 +315,10 @@ type ai_error =
     }
 
 module Json_helpers : sig
+  val is_blank : raw_json -> bool
+  val trim : raw_json -> raw_json
+  val trim_equal : raw_json -> string -> bool
+
   val decode_error_result :
     ?raw:raw_json -> provider:provider_name -> string -> ('a, ai_error) result
 
@@ -324,6 +328,7 @@ module Json_helpers : sig
     provider:provider_name -> string -> raw_json -> (Json.t, ai_error) result
 
   val result_all : ('a, 'err) result list -> ('a list, 'err) result
+  val result_map_all : ('a -> ('b, 'err) result) @ many -> 'a list -> ('b list, 'err) result
 end
 
 type toolkit
@@ -349,19 +354,19 @@ val find_tool : string -> toolkit -> tool option
 val toolkit_tools : toolkit -> tool list
 (** Return tools in registration order. *)
 
-type sse_event = {
+type sse_event : immutable_data = {
   event : string option;
   data : raw_json;
 }
 
-type tool_call_delta = {
+type tool_call_delta : immutable_data = {
   index : int option;
   id : string option;
   name : string option;
   arguments_json_delta : string;
 }
 
-type stream_event =
+type stream_event : immutable_data =
   | Stream_message_start of {
       id : string option;
       model : model option;
@@ -373,7 +378,7 @@ type stream_event =
   | Stream_error of ai_error
   | Stream_done
 
-type capabilities = {
+type capabilities : immutable_data = {
   streaming : bool;
   tools : bool;
   tool_choice : bool;
@@ -395,19 +400,25 @@ type provider = {
   base_url : string;
   chat_path : string;
   embeddings_path : string option;
-  auth_headers : api_key -> headers;
+  auth_headers : (api_key -> headers) @@ many;
   capabilities : capabilities;
-  encode_chat : chat_request -> (raw_json, ai_error) result;
-  decode_chat : raw_json -> (response, ai_error) result;
-  encode_embeddings : Embedding.request -> (raw_json, ai_error) result;
-  decode_embeddings : raw_json -> (Embedding.response, ai_error) result;
-  decode_stream_event : sse_event -> (stream_event list, ai_error) result;
-  decode_error : status:int -> headers:headers -> raw_json -> ai_error;
+  encode_chat : (chat_request -> (raw_json, ai_error) result) @@ many;
+  decode_chat : (raw_json -> (response, ai_error) result) @@ many;
+  encode_embeddings : (Embedding.request -> (raw_json, ai_error) result) @@ many;
+  decode_embeddings : (raw_json -> (Embedding.response, ai_error) result) @@ many;
+  decode_stream_event : (sse_event -> (stream_event list, ai_error) result) @@ many;
+  decode_error : (status:int -> headers:headers -> raw_json -> ai_error) @@ many;
 }
 
 val provider_request :
   provider -> api_key -> raw_json -> Eta_http.Request.t
 (** Build the standard POST request for a provider chat endpoint. *)
+
+val trim_trailing_slash : string -> string
+(** Remove one trailing slash from a provider base URL when present. *)
+
+val join_url : string -> string -> string
+(** Join a provider base URL and endpoint path with exactly one slash. *)
 
 val provider_post_request :
   provider -> path:string -> api_key -> raw_json -> Eta_http.Request.t

@@ -6,7 +6,7 @@ module Header = Header
 module Url = Url
 module Connect = Connect
 
-type ws_error =
+type ws_error : immutable_data =
   [ `Connect of string
   | `Upgrade_failed of int
   | `Closed of int * string
@@ -36,18 +36,15 @@ let http_error_to_connect error =
 let map_http_error effect =
   Effect.catch (fun error -> Effect.fail (http_error_to_connect error)) effect
 
-let starts_with ~prefix value =
-  let prefix_len = String.length prefix in
-  String.length value >= prefix_len
-  && String.equal prefix (String.sub value 0 prefix_len)
-
 let http_url_of_ws_url raw =
   let rewrite prefix replacement =
     replacement
     ^ String.sub raw (String.length prefix) (String.length raw - String.length prefix)
   in
-  if starts_with ~prefix:"ws://" raw then Ok (rewrite "ws://" "http://")
-  else if starts_with ~prefix:"wss://" raw then Ok (rewrite "wss://" "https://")
+  if Eta.String_helpers.starts_with raw ~prefix:"ws://" then
+    Ok (rewrite "ws://" "http://")
+  else if Eta.String_helpers.starts_with raw ~prefix:"wss://" then
+    Ok (rewrite "wss://" "https://")
   else Error (`Connect "WebSocket URL must use ws:// or wss://")
 
 let parse_url raw =
@@ -58,13 +55,7 @@ let parse_url raw =
       | Ok url -> Ok url
       | Error error -> Error (`Connect (Url.parse_error_to_string error)))
 
-let trim value = String.trim value
-
-let lower value = String.lowercase_ascii (trim value)
-
-let header_token_contains token value =
-  value |> String.split_on_char ','
-  |> List.exists (fun candidate -> String.equal (lower candidate) token)
+let trim = Eta.String_helpers.trim
 
 let find_header_end_buffer buffer start =
   let len = Buffer.length buffer in
@@ -86,48 +77,75 @@ type response_head = {
 }
 
 let parse_status_line line =
-  match String.split_on_char ' ' line with
-  | version :: status :: _ when starts_with ~prefix:"HTTP/" version -> (
-      match int_of_string_opt status with
-      | Some status when status >= 100 && status <= 599 -> Ok status
-      | _ -> Error (`Protocol ("invalid HTTP status " ^ status)))
-  | _ -> Error (`Protocol "invalid HTTP response status line")
+  let len = String.length line in
+  let first_space = String.index_opt line ' ' in
+  match first_space with
+  | None -> Error (`Protocol "invalid HTTP response status line")
+  | Some first_space ->
+      if not (Eta.String_helpers.starts_with_at line ~offset:0 "HTTP/") then
+        Error (`Protocol "invalid HTTP response status line")
+      else
+        let status_start = first_space + 1 in
+        let mutable status_stop = status_start in
+        while status_stop < len && not (Char.equal line.[status_stop] ' ') do
+          status_stop <- status_stop + 1
+        done;
+        let status = String.sub line status_start (status_stop - status_start) in
+        match int_of_string_opt status with
+        | Some status when status >= 100 && status <= 599 -> Ok status
+        | _ -> Error (`Protocol ("invalid HTTP status " ^ status))
 
 let parse_header_line line =
   match String.index_opt line ':' with
   | None -> Error (`Protocol ("invalid HTTP header line " ^ line))
   | Some index ->
-      let name = String.sub line 0 index |> trim in
+      let name_start = Eta.String_helpers.trim_left line 0 index in
+      let name_stop = Eta.String_helpers.trim_right line name_start index in
+      let name = String.sub line name_start (name_stop - name_start) in
+      let value_start =
+        Eta.String_helpers.trim_left line (index + 1) (String.length line)
+      in
+      let value_stop =
+        Eta.String_helpers.trim_right line value_start (String.length line)
+      in
       let value =
-        String.sub line (index + 1) (String.length line - index - 1) |> trim
+        String.sub line value_start (value_stop - value_start)
       in
       Ok (name, value)
 
 let parse_response_head raw initial =
-  let lines =
-    raw |> String.split_on_char '\n'
-    |> List.map (fun line ->
-           let len = String.length line in
-           if len > 0 && Char.equal line.[len - 1] '\r' then String.sub line 0 (len - 1)
-           else line)
+  let line_end raw start =
+    match String.index_from_opt raw start '\n' with
+    | None -> String.length raw
+    | Some index ->
+        if index > start && Char.equal raw.[index - 1] '\r' then index - 1
+        else index
   in
-  match lines with
-  | [] -> Error (`Protocol "empty HTTP response")
-  | status_line :: header_lines -> (
-      match parse_status_line status_line with
-      | Error _ as error -> error
-      | Ok status ->
-          let rec collect acc = function
-            | [] -> Ok (List.rev acc)
-            | "" :: rest -> collect acc rest
-            | line :: rest -> (
-                match parse_header_line line with
-                | Ok header -> collect (header :: acc) rest
-                | Error _ as error -> error)
-          in
-          Result.map
-            (fun headers -> { status; headers = Header.unsafe_of_list headers; initial })
-            (collect [] header_lines))
+  let next_start raw stop =
+    if stop < String.length raw && Char.equal raw.[stop] '\r' then stop + 2
+    else stop + 1
+  in
+  if String.length raw = 0 then Error (`Protocol "empty HTTP response")
+  else
+    let status_stop = line_end raw 0 in
+    let status_line = String.sub raw 0 status_stop in
+    match parse_status_line status_line with
+    | Error _ as error -> error
+    | Ok status ->
+        let rec collect acc start =
+          if start >= String.length raw then Ok (List.rev acc)
+          else
+            let stop = line_end raw start in
+            if stop = start then collect acc (next_start raw stop)
+            else
+              let line = String.sub raw start (stop - start) in
+              match parse_header_line line with
+              | Ok header -> collect (header :: acc) (next_start raw stop)
+              | Error _ as error -> error
+        in
+        Result.map
+          (fun headers -> { status; headers = Header.unsafe_of_list headers; initial })
+          (collect [] (next_start raw status_stop))
 
 let read_response_head flow =
   let scratch = Cstruct.create read_chunk_size in
@@ -193,9 +211,12 @@ let validate_handshake ?(protocols = []) key head =
   if head.status <> 101 then Error (`Upgrade_failed head.status)
   else
     match Header.get "upgrade" head.headers with
-    | Some upgrade when String.equal (lower upgrade) "websocket" -> (
+    | Some upgrade
+      when Eta.String_helpers.trim_equal_ascii_ci_bounds upgrade 0
+             (String.length upgrade) "websocket" -> (
         match Header.get "connection" head.headers with
-        | Some connection when header_token_contains "upgrade" connection -> (
+        | Some connection
+          when Eta.String_helpers.contains_token_ascii_ci connection "upgrade" -> (
             let expected = Codec.accept_key key in
             match Header.get "sec-websocket-accept" head.headers with
             | Some actual when String.equal (trim actual) expected ->
@@ -225,16 +246,17 @@ let check_max_frame_size max_frame_size =
   if max_frame_size < 0 then
     invalid_arg "Eta_http.Ws.Client: max_frame_size must be >= 0"
 
-let bytes_concat chunks =
-  let len = List.fold_left (fun acc chunk -> acc + Bytes.length chunk) 0 chunks in
+let bytes_concat4 a b c d =
+  let a_len = Bytes.length a in
+  let b_len = Bytes.length b in
+  let c_len = Bytes.length c in
+  let d_len = Bytes.length d in
+  let len = a_len + b_len + c_len + d_len in
   let out = Bytes.create len in
-  let off = ref 0 in
-  List.iter
-    (fun chunk ->
-      let chunk_len = Bytes.length chunk in
-      Bytes.blit chunk 0 out !off chunk_len;
-      off := !off + chunk_len)
-    chunks;
+  Bytes.blit a 0 out 0 a_len;
+  Bytes.blit b 0 out a_len b_len;
+  Bytes.blit c 0 out (a_len + b_len) c_len;
+  Bytes.blit d 0 out (a_len + b_len + c_len) d_len;
   out
 
 let read_exact reader len =
@@ -280,14 +302,14 @@ let payload_length ~max_frame_size header ext =
            ((Char.code (Bytes.get ext 0) lsl 8)
            lor Char.code (Bytes.get ext 1)))
   | _ ->
-      let value = ref 0L in
+      let mutable value = 0L in
       for index = 0 to 7 do
-        value :=
+        value <-
           Int64.logor
-            (Int64.shift_left !value 8)
+            (Int64.shift_left value 8)
             (Int64.of_int (Char.code (Bytes.get ext index)))
       done;
-      check !value
+      check value
 
 let read_frame reader =
   match read_exact reader 2 with
@@ -309,11 +331,11 @@ let read_frame reader =
                   match read_exact reader payload_len with
                   | Error _ as error -> error
                   | Ok payload -> (
-                      match Codec.decode ~masked:false (bytes_concat [ header; ext; mask; payload ]) with
+                      match Codec.decode ~masked:false (bytes_concat4 header ext mask payload) with
                       | Ok (frame, _consumed) -> Ok frame
                       | Error error -> Error (`Protocol (Codec.parse_error_to_string error)))))))
 
-let with_write_lock t f =
+let with_write_lock t (f @ many) =
   Eio.Mutex.lock t.write_mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.write_mutex) f
 

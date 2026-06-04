@@ -9,12 +9,10 @@ let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
   let* temperature = temperature_json ~provider request.temperature in
   let* tools =
-    request.tools
-    |> List.map (tool_json ~schema_value ~shape:Chat_tool)
-    |> result_all
+    result_map_all (tool_json ~schema_value ~shape:Chat_tool) request.tools
   in
   let* messages =
-    request.prompt |> List.map (chat_message_json ~provider) |> result_all
+    result_map_all (chat_message_json ~provider) request.prompt
   in
   let response_format =
     structured_output
@@ -70,23 +68,28 @@ let assistant_message message_json =
   in
   A.Assistant { content; tool_calls }
 
+let finish_reasons choices =
+  let rec loop acc = function
+    | [] -> List.rev acc
+    | choice :: rest -> (
+        match Json.string_member "finish_reason" choice with
+        | None -> loop acc rest
+        | Some reason -> loop (finish_reason reason :: acc) rest)
+  in
+  loop [] choices
+
 let decode_chat ?(usage_raw_prompt_names = false) ~provider raw =
   let* json = parse_json ~provider raw in
   match Json.array_member "choices" json with
   | Some (choice :: _ as choices) -> (
       match Json.object_member "message" choice with
       | Some message_json ->
-          let finish_reasons =
-            choices
-            |> List.filter_map (Json.string_member "finish_reason")
-            |> List.map finish_reason
-          in
           Stdlib.Ok
             {
               A.id = Json.string_member "id" json;
               model = Json.string_member "model" json;
               message = assistant_message message_json;
-              finish_reasons;
+              finish_reasons = finish_reasons choices;
               usage =
                 Option.map
                   (usage ~raw_prompt_names:usage_raw_prompt_names)

@@ -8,12 +8,12 @@
     object row. *)
 
 module Json : sig
-  type number =
+  type number : immutable_data =
     | Int of int
     | Intlit of string
     | Float of float
 
-  type t =
+  type t : immutable_data =
     | Null
     | Bool of bool
     | Number of number
@@ -39,11 +39,11 @@ end
 
 type json = Json.t
 
-type path_segment =
+type path_segment : immutable_data =
   | Field of string
   | Index of int
 
-type issue_kind =
+type issue_kind : immutable_data =
   | Type_mismatch of {
       expected : string;
       got : string;
@@ -55,7 +55,7 @@ type issue_kind =
       reason : string;
     }
 
-type issue = {
+type issue : immutable_data = {
   path : path_segment list;
   schema_name : string option;
   kind : issue_kind;
@@ -67,7 +67,7 @@ type issue = {
     issue when the schema is named. [kind] is intended for programmatic
     classification; use {!render_issue} only for human-readable text. *)
 
-type error = [ `Decode of issue list | `Encode of issue list ]
+type error : immutable_data = [ `Decode of issue list | `Encode of issue list ]
 (** Typed Eta error emitted by schema codecs. *)
 
 val issue : ?path:path_segment list -> ?schema_name:string -> string -> issue
@@ -129,17 +129,17 @@ module Eta_schema : sig
   type ('record, 'field) field
 
   val required :
-    string -> 'field t -> ('record -> 'field) -> ('record, 'field) field
+    string -> 'field t -> ('record -> 'field) @ many -> ('record, 'field) field
 
   val optional :
     string ->
     'field t ->
-    ('record -> 'field option) ->
+    ('record -> 'field option) @ many ->
     ('record, 'field option) field
 
   val record1 :
     name:string ->
-    ('a -> 'record) ->
+    ('a -> 'record) @ many ->
     ('record, 'a) field ->
     equal:('record -> 'record -> bool) ->
     unit ->
@@ -147,7 +147,7 @@ module Eta_schema : sig
 
   val record2 :
     name:string ->
-    ('a -> 'b -> 'record) ->
+    ('a -> 'b -> 'record) @ many ->
     ('record, 'a) field ->
     ('record, 'b) field ->
     equal:('record -> 'record -> bool) ->
@@ -156,7 +156,7 @@ module Eta_schema : sig
 
   val record3 :
     name:string ->
-    ('a -> 'b -> 'c -> 'record) ->
+    ('a -> 'b -> 'c -> 'record) @ many ->
     ('record, 'a) field ->
     ('record, 'b) field ->
     ('record, 'c) field ->
@@ -166,7 +166,7 @@ module Eta_schema : sig
 
   val record4 :
     name:string ->
-    ('a -> 'b -> 'c -> 'd -> 'record) ->
+    ('a -> 'b -> 'c -> 'd -> 'record) @ many ->
     ('record, 'a) field ->
     ('record, 'b) field ->
     ('record, 'c) field ->
@@ -177,7 +177,7 @@ module Eta_schema : sig
 
   val record5 :
     name:string ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'record) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'record) @ many ->
     ('record, 'a) field ->
     ('record, 'b) field ->
     ('record, 'c) field ->
@@ -189,7 +189,7 @@ module Eta_schema : sig
 
   val record6 :
     name:string ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'record) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'record) @ many ->
     ('record, 'a) field ->
     ('record, 'b) field ->
     ('record, 'c) field ->
@@ -202,7 +202,7 @@ module Eta_schema : sig
   (** Arity-specific builders are the v0 hand-written product API. A PPX can
       generate these calls later without changing ['a t]. *)
 
-  val refine : name:string -> ('a -> issue list) -> 'a t -> 'a t
+  val refine : name:string -> ('a -> issue list) @ many -> 'a t -> 'a t
 
   val transform :
     name:string ->
@@ -224,7 +224,7 @@ module Eta_schema : sig
 
   val decode_with_policy :
     'a t ->
-    ('a -> ('b, [> `Decode of issue list ] as 'err) Eta.Effect.t) ->
+    ('a -> ('b, [> `Decode of issue list ] as 'err) Eta.Effect.t) @ many ->
     json ->
     ('b, 'err) Eta.Effect.t
   (** Decode with an effectful validation/enrichment policy. This is where

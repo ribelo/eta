@@ -8,11 +8,11 @@ type level = Capabilities.log_level =
 
 type record : immutable_data = Capabilities.log_record = {
   level : level;
-  body : string;
+  global_ body : string;
   ts_ms : int;
-  attrs : (string * string) list;
-  trace_id : string;
-  span_id : string;
+  global_ attrs : (string * string) list;
+  global_ trace_id : string;
+  global_ span_id : string;
 }
 
 type in_memory = { mutex : Mutex.t; mutable records : record list }
