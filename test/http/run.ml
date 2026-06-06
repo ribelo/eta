@@ -230,6 +230,10 @@ let () =
           Alcotest.test_case "accept key vector" `Quick test_ws_accept_key_vector;
           Alcotest.test_case "masked text roundtrip" `Quick
             test_ws_codec_masked_text_roundtrip;
+          Alcotest.test_case "rejects one-byte close payload" `Quick
+            test_ws_codec_rejects_one_byte_close_payload;
+          Alcotest.test_case "rejects encoded one-byte close payload" `Quick
+            test_ws_codec_rejects_encoded_one_byte_close_payload;
           Alcotest.test_case "random material avoids Stdlib.Random" `Quick
             test_ws_random_material_does_not_use_stdlib_random;
           Alcotest.test_case "accept key does not own SHA-1" `Quick

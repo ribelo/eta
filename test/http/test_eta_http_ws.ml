@@ -340,6 +340,22 @@ let test_ws_codec_masked_text_roundtrip () =
       Alcotest.failf "masked frame failed: %s"
         (Eta_http.Ws.Codec.parse_error_to_string error)
 
+let test_ws_codec_rejects_one_byte_close_payload () =
+  let frame = Bytes.of_string "\x88\x01\000" in
+  match Eta_http.Ws.Codec.decode frame with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "one-byte close payload decoded successfully"
+
+let test_ws_codec_rejects_encoded_one_byte_close_payload () =
+  Alcotest.check_raises "one-byte close payload rejected"
+    (Invalid_argument
+       "WebSocket close frame payload must be empty or at least two bytes")
+    (fun () ->
+      ignore
+        (Eta_http.Ws.Codec.encode
+           { fin = true; opcode = Close; payload = Bytes.of_string "\000" }
+          : bytes))
+
 let test_ws_random_material_does_not_use_stdlib_random () =
   let codec = read_file (find_ws_source "codec.ml") in
   let client = read_file (find_ws_source "ws_client.ml") in

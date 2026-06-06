@@ -14,6 +14,7 @@ type parse_error =
   | Unsupported_opcode of int
   | Control_fragmented
   | Control_payload_too_large
+  | Invalid_close_payload
   | Non_minimal_length
   | Mask_required
   | Mask_forbidden

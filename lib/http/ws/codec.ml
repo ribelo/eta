@@ -14,6 +14,7 @@ type parse_error =
   | Unsupported_opcode of int
   | Control_fragmented
   | Control_payload_too_large
+  | Invalid_close_payload
   | Non_minimal_length
   | Mask_required
   | Mask_forbidden
@@ -25,6 +26,8 @@ let parse_error_to_string = function
   | Unsupported_opcode opcode -> Printf.sprintf "unsupported opcode %d" opcode
   | Control_fragmented -> "control frame is fragmented"
   | Control_payload_too_large -> "control frame payload exceeds 125 bytes"
+  | Invalid_close_payload ->
+      "close frame payload must be empty or at least two bytes"
   | Non_minimal_length -> "payload length is not minimally encoded"
   | Mask_required -> "masked frame required"
   | Mask_forbidden -> "masked frame forbidden"
@@ -53,7 +56,9 @@ let is_control = function Close | Ping | Pong -> true | _ -> false
 let validate_frame frame =
   if is_control frame.opcode && not frame.fin then invalid_arg "WebSocket control frame fragmented";
   if is_control frame.opcode && Bytes.length frame.payload > 125 then
-    invalid_arg "WebSocket control frame payload exceeds 125 bytes"
+    invalid_arg "WebSocket control frame payload exceeds 125 bytes";
+  if frame.opcode = Close && Bytes.length frame.payload = 1 then
+    invalid_arg "WebSocket close frame payload must be empty or at least two bytes"
 
 let write_uint16 bytes off value =
   Bytes.set_int16_be bytes off value
@@ -147,6 +152,8 @@ let decode ?(masked = false) bytes =
             | Ok payload_len64 ->
                 if is_control opcode && Int64.compare payload_len64 125L > 0 then
                   Error Control_payload_too_large
+                else if opcode = Close && Int64.equal payload_len64 1L then
+                  Error Invalid_close_payload
                 else if Int64.compare payload_len64 (Int64.of_int Sys.max_string_length) > 0 then
                   Error (Payload_too_large payload_len64)
                 else
