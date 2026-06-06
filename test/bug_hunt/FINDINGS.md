@@ -78,6 +78,19 @@ nix dev shell ships `libturso_sqlite3` via `ETA_TURSO_LIBRARY`): after
 `exec_script "CREATE TABLE a (...); CREATE TABLE b (...);"`, table `b` does not
 exist (`no such table: b`).
 
+## Bug 9 — LadybugDB decodes every Cypher LIST value as an empty string
+`lib/ladybug/ladybug_stubs.c` (`arrow_value`)
+
+Results come back over the Arrow C data interface. `arrow_value` handles the
+scalar formats `b`/`l`/`g`/`u` and structs/nodes (`+s`) but has no case for the
+Arrow list formats `+l`/`+L`; it falls through to a default that returns
+`String ""`. So every Cypher LIST (e.g. `[1,2,3]`, `collect(x)`, a list nested
+in a map) silently decodes as the empty string instead of `Value.List` — even
+though `Value.t` has a `List` constructor and `query_string` renders the list
+correctly. Verified: `RETURN [1,2,3] AS v` via `Decode.value` yields
+`String ""`.
+
+
 ## Bug 7 — DuckDB `execute` always reports 0 changed rows
 `lib/duckdb/duckdb_stubs.c` (`eta_duckdb_execute`)
 

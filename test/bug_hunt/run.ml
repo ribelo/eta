@@ -31,4 +31,9 @@ let () =
           Alcotest.test_case "exec_script runs every statement" `Quick
             test_turso_exec_script_runs_every_statement;
         ] );
+      ( "eta_ladybug",
+        [
+          Alcotest.test_case "LIST value decodes as a list" `Quick
+            test_ladybug_list_decodes_as_list;
+        ] );
     ]

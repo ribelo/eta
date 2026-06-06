@@ -326,3 +326,43 @@ let test_turso_exec_script_runs_every_statement () =
                Alcotest.failf
                  "second statement of the script never ran (table b missing): %a"
                  Tu.pp_error err))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 9: LadybugDB LIST values decode as String "" instead of a list. *)
+(* ------------------------------------------------------------------ *)
+
+module Lb = Eta_ladybug
+
+let test_ladybug_list_decodes_as_list () =
+  (* LadybugDB returns query results over the Arrow C data interface.
+     [arrow_value] in the stub handles scalars ("b"/"l"/"g"/"u") and structs
+     ("+s") but has NO case for the Arrow list formats ("+l"/"+L"); it falls
+     through to a default that returns [String ""]. So every Cypher LIST value
+     (e.g. [1,2,3]) silently decodes as the empty string instead of
+     [Value.List]. A list must decode to [Value.List] with its elements. *)
+  match Lb.available () with
+  | Error _ -> () (* liblbug not present: skip rather than false-fail *)
+  | Ok () -> (
+      match Lb.Database.open_memory () with
+      | Error e -> Alcotest.failf "ladybug open: %s" (Lb.show_error e)
+      | Ok db ->
+          Fun.protect ~finally:(fun () -> ignore (Lb.Database.close db)) @@ fun () ->
+          match Lb.Connection.connect db with
+          | Error e -> Alcotest.failf "ladybug connect: %s" (Lb.show_error e)
+          | Ok conn ->
+              Fun.protect ~finally:(fun () -> ignore (Lb.Connection.close conn))
+              @@ fun () ->
+              let q =
+                Lb.Query.raw ~cypher:"RETURN [1, 2, 3] AS v"
+                  ~decode:(Lb.Decode.value "v") ()
+              in
+              (match Lb.Connection.query conn q with
+               | Ok [ Lb.Value.List [ Lb.Value.Int 1L; Lb.Value.Int 2L; Lb.Value.Int 3L ] ]
+                 -> ()
+               | Ok [ Lb.Value.String s ] ->
+                   Alcotest.failf
+                     "Cypher LIST decoded as String %S instead of Value.List" s
+               | Ok [ _ ] ->
+                   Alcotest.fail "Cypher LIST decoded as the wrong constructor"
+               | Ok _ -> Alcotest.fail "expected exactly one row"
+               | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
