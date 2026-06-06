@@ -42,6 +42,18 @@ let always ?max_attempts ?schedule ?retry_status () =
   make ?max_attempts ?schedule ?retry_status ~mode:Always ()
 
 let default_now_s () = Unix.gettimeofday ()
+let max_delta_seconds = max_int / 1_000
+let max_delay_ms_float = float_of_int max_int
+
+let duration_of_seconds seconds =
+  if seconds < 0 || seconds > max_delta_seconds then None
+  else Some (Eta.Duration.seconds seconds)
+
+let duration_of_delay_ms_float delay_ms =
+  if Float.is_nan delay_ms then None
+  else if delay_ms <= 0.0 then Some Eta.Duration.zero
+  else if delay_ms >= max_delay_ms_float then None
+  else Some (Eta.Duration.ms (int_of_float delay_ms))
 
 let month_number = function
   | "Jan" -> Some 1
@@ -86,13 +98,12 @@ let retry_after ?(now_s = 0.0) value =
     if Eta.String_helpers.starts_with value ~prefix:"+" then None
     else int_of_string_opt value
   with
-  | Some seconds when seconds >= 0 -> Some (Eta.Duration.seconds seconds)
+  | Some seconds -> duration_of_seconds seconds
   | _ -> (
       match parse_http_date value with
       | None -> None
       | Some epoch_s ->
-          let delay_ms = int_of_float (ceil ((epoch_s -. now_s) *. 1000.0)) in
-          Some (Eta.Duration.ms (max 0 delay_ms)))
+          duration_of_delay_ms_float (ceil ((epoch_s -. now_s) *. 1000.0)))
 
 let request_allowed t request =
   match t.mode with

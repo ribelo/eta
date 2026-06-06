@@ -55,6 +55,12 @@ let test_retry_after_parser () =
   in
   Alcotest.(check (option int)) "http date" (Some 5000) http_date
 
+let test_retry_after_overflow_delta_seconds_is_ignored () =
+  let huge = string_of_int ((max_int / 1000) + 1) in
+  Alcotest.(check (option int))
+    "overflow delta seconds" None
+    (Eta_http.Retry_policy.retry_after huge |> Option.map Eta.Duration.to_ms)
+
 let http_date_of_epoch_s epoch_s =
   let tm = Unix.gmtime epoch_s in
   let weekdays =
@@ -103,6 +109,44 @@ let test_retry_after_absolute_date_uses_clock () =
     (classify [ "Retry-After", "5" ]);
   Alcotest.(check int) "past date clamps" 0
     (classify [ "Retry-After", http_date_of_epoch_s (now_s -. 5.0) ])
+
+let test_retry_policy_overflow_retry_after_falls_back_to_schedule () =
+  let policy =
+    Eta_http.Retry_policy.make ~max_attempts:2
+      ~schedule:(Eta.Schedule.spaced (Eta.Duration.ms 7))
+      ()
+  in
+  let request =
+    Eta_http.Request.make "GET" "https://api.example.test/retry"
+  in
+  let huge = string_of_int ((max_int / 1000) + 1) in
+  match
+    Eta_http.Retry_policy.classify_response policy ~request ~attempt:1
+      (retry_response ~headers:[ "Retry-After", huge ] 503)
+  with
+  | Retry_after delay ->
+      Alcotest.(check int) "fallback delay" 7 (Eta.Duration.to_ms delay)
+  | Stop -> Alcotest.fail "retry stopped"
+
+let test_retry_policy_overflow_retry_after_date_falls_back_to_schedule () =
+  let policy =
+    Eta_http.Retry_policy.make ~max_attempts:2
+      ~schedule:(Eta.Schedule.spaced (Eta.Duration.ms 7))
+      ()
+  in
+  let request =
+    Eta_http.Request.make "GET" "https://api.example.test/retry"
+  in
+  match
+    Eta_http.Retry_policy.classify_response policy ~now_s:0.0 ~request
+      ~attempt:1
+      (retry_response
+         ~headers:[ "Retry-After", "Wed, 01 Jan 999999999 00:00:00 GMT" ]
+         503)
+  with
+  | Retry_after delay ->
+      Alcotest.(check int) "fallback delay" 7 (Eta.Duration.to_ms delay)
+  | Stop -> Alcotest.fail "retry stopped"
 
 let test_retry_policy_schedule_backoff () =
   let policy =

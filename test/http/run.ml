@@ -78,8 +78,14 @@ let () =
             test_idempotency_classifier;
           Alcotest.test_case "Retry-After parser" `Quick
             test_retry_after_parser;
+          Alcotest.test_case "Retry-After overflow delta ignored" `Quick
+            test_retry_after_overflow_delta_seconds_is_ignored;
           Alcotest.test_case "Retry-After absolute date uses clock" `Quick
             test_retry_after_absolute_date_uses_clock;
+          Alcotest.test_case "Retry-After overflow falls back" `Quick
+            test_retry_policy_overflow_retry_after_falls_back_to_schedule;
+          Alcotest.test_case "Retry-After overflow date falls back" `Quick
+            test_retry_policy_overflow_retry_after_date_falls_back_to_schedule;
           Alcotest.test_case "schedule backoff" `Quick
             test_retry_policy_schedule_backoff;
           Alcotest.test_case "rejects invalid max_attempts" `Quick
