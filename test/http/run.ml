@@ -168,6 +168,8 @@ let () =
             test_h1_parser_rejects_bad_content_length;
           Alcotest.test_case "conflicting content length" `Quick
             test_h1_parser_rejects_conflicting_content_length;
+          Alcotest.test_case "invalid header value controls" `Quick
+            test_h1_parser_rejects_invalid_header_value_controls;
         ] );
       ( "h1-client",
         [

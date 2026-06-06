@@ -62,4 +62,14 @@ let test_h1_parser_rejects_conflicting_content_length () =
         "error" "invalid Content-Length \"6\""
         (Eta_http.H1.Parse.parse_error_to_string error)
 
+let test_h1_parser_rejects_invalid_header_value_controls () =
+  let raw =
+    Bytes.of_string "HTTP/1.1 200 OK\r\nX-Bad: ok\000bad\r\n\r\n"
+  in
+  match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+  | Error (Eta_http.H1.Parse.Invalid_header _) -> ()
+  | Error error ->
+      Alcotest.failf "expected invalid header, got %s"
+        (Eta_http.H1.Parse.parse_error_to_string error)
+  | Ok _ -> Alcotest.fail "control byte in header value was accepted"
 

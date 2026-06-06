@@ -153,6 +153,15 @@ let[@zero_alloc] rec raw_validate_header_name buf index limit =
   || (raw_is_tchar (Bytes.unsafe_get buf index)
       && raw_validate_header_name buf (index + 1) limit)
 
+let[@zero_alloc] raw_invalid_header_value_char c =
+  let code = Char.code c in
+  (code < 32 && code <> 9) || code = 127
+
+let[@zero_alloc] rec raw_validate_header_value buf index limit =
+  index >= limit
+  || ((not (raw_invalid_header_value_char (Bytes.unsafe_get buf index)))
+      && raw_validate_header_value buf (index + 1) limit)
+
 let[@zero_alloc] rec raw_trim_left buf index limit =
   if index >= limit then limit
   else if raw_is_ows (Bytes.unsafe_get buf index) then
@@ -297,13 +306,16 @@ let[@zero_alloc] raw_parse_header buf headers raw count line_start line_end =
     else
       let value_start = raw_trim_left buf (colon + 1) line_end in
       let value_end = raw_trim_right buf value_start line_end in
-      let name_len = colon - line_start in
-      let value_len = value_end - value_start in
-      raw_store_header headers count line_start name_len value_start value_len;
-      if
-        raw_header_name_eq_literal buf line_start name_len "content-length"
-      then raw_parse_content_length buf raw value_start value_end
-      else raw_ok
+      if not (raw_validate_header_value buf value_start value_end) then
+        raw_set_error raw raw_invalid_header line_start (line_end - line_start)
+      else (
+        let name_len = colon - line_start in
+        let value_len = value_end - value_start in
+        raw_store_header headers count line_start name_len value_start value_len;
+        if
+          raw_header_name_eq_literal buf line_start name_len "content-length"
+        then raw_parse_content_length buf raw value_start value_end
+        else raw_ok)
 
 let rec raw_headers_to_list_loop buf headers index acc =
   if index < 0 then acc
