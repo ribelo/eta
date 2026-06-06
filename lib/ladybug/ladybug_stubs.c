@@ -992,6 +992,42 @@ static value arrow_string(struct ArrowArray *array, int64_t row)
 
 static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row);
 
+static value arrow_list(struct ArrowSchema *schema, struct ArrowArray *array,
+                        int64_t row, int large_offsets)
+{
+  CAMLparam0();
+  CAMLlocal3(items, item, out);
+  if (schema == NULL || array == NULL || schema->n_children != 1 ||
+      array->n_children != 1 || schema->children == NULL ||
+      array->children == NULL || schema->children[0] == NULL ||
+      array->children[0] == NULL) {
+    caml_failwith("ladybug: malformed Arrow list");
+  }
+  require_arrow_buffers(array, 2);
+  int64_t logical = array->offset + row;
+  int64_t start;
+  int64_t end;
+  if (large_offsets) {
+    const int64_t *offsets = (const int64_t *)array->buffers[1];
+    start = offsets[logical];
+    end = offsets[logical + 1];
+  } else {
+    const int32_t *offsets = (const int32_t *)array->buffers[1];
+    start = offsets[logical];
+    end = offsets[logical + 1];
+  }
+  if (end < start || start < 0) {
+    caml_failwith("ladybug: malformed Arrow list offsets");
+  }
+  items = Val_emptylist;
+  for (int64_t idx = end; idx > start; idx--) {
+    item = arrow_value(schema->children[0], array->children[0], idx - 1);
+    items = cons(item, items);
+  }
+  out = make_block(4, items);
+  CAMLreturn(out);
+}
+
 static value make_pair(const char *name, value v)
 {
   CAMLparam1(v);
@@ -1106,6 +1142,12 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
   if (strcmp(format, "u") == 0) {
     v = arrow_string(array, row);
     CAMLreturn(make_block(3, v));
+  }
+  if (strcmp(format, "+l") == 0) {
+    CAMLreturn(arrow_list(schema, array, row, 0));
+  }
+  if (strcmp(format, "+L") == 0) {
+    CAMLreturn(arrow_list(schema, array, row, 1));
   }
   if (strcmp(format, "+s") == 0) {
     if (find_child(schema, "_LABEL") >= 0) CAMLreturn(arrow_node(schema, array, row));
