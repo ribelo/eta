@@ -84,7 +84,7 @@ is:
 | API | Lives in | Pool | Closures | Payloads |
 |---|---|---|---|---|
 | `Eta.Par.join`, `par_*`, `Iter` | `eta` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
-| `Island.run`, `Island.map` | `eta` | Heartbeat domain pool | typed (`@ portable`); compiler-forbids shared mutable state | `: immutable_data` |
+| `Island.run`, `Island.map` | `eta` | Heartbeat domain pool | untyped worker callback; caller owns cross-domain safety | unconstrained |
 
 See [Concurrency Guide](../../docs/concurrency-guide.md) for the full
 when-to-use-what decision flow.
@@ -99,7 +99,7 @@ promote their oldest queued frame into a stealable slot for idle workers.
 `Pool.run` registers the caller as worker 0 and runs the root task on the
 caller, which is the right shape for explicit fork/join. `Pool.run_on_worker`
 submits a root task to a long-lived worker domain; Eta uses that entry point for
-`Island.run` so portable callbacks keep their offload semantics.
+`Island.run` so offloaded callbacks keep their worker-domain semantics.
 
 ## Correctness
 

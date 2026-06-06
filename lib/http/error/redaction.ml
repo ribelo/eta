@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type t : immutable_data = { redacted_headers : string list } [@@unboxed]
+type t = { redacted_headers : string list } [@@unboxed]
 
 let default =
   {

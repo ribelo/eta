@@ -115,7 +115,7 @@ let test_body_source_owned_stream_releases_on_scope_exit () =
         Eta.Effect.unit)
       [ Bytes.of_string "abc" ]
   in
-  let effect =
+  let eff =
     Eta_http.Body.Source.with_owned_stream
       (Eta_http.Body.Source.stream stream)
       (function
@@ -124,7 +124,7 @@ let test_body_source_owned_stream_releases_on_scope_exit () =
             Alcotest.(check (option int)) "length" None owned.length;
             Eta.Effect.unit)
   in
-  ignore (Eta.Runtime.run rt effect |> Eta_test.Expect.expect_ok);
+  ignore (Eta.Runtime.run rt eff |> Eta_test.Expect.expect_ok);
   Alcotest.(check int) "released" 1 !released
 
 let test_body_source_rewindable_stream_is_owned_per_call () =

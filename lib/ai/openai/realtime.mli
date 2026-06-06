@@ -1,8 +1,8 @@
 (** OpenAI Realtime session and WebSocket API. *)
 
-type modality : immutable_data = Text | Audio
+type modality = Text | Audio
 
-type session : immutable_data = {
+type session = {
   model : string option;
   instructions : string option;
   output_modalities : modality list;
@@ -32,7 +32,7 @@ val session :
 val session_json : session -> Eta_ai.Json.t
 val session_to_string : session -> Eta_ai.raw_json
 
-type client_secret : immutable_data = {
+type client_secret = {
   value : string;
   expires_at : int option;
   raw : Eta_ai.raw_json option;
@@ -55,13 +55,13 @@ type client_event =
   | Response_create
   | Raw_client_event of Eta_ai.Json.t
 
-type server_error : immutable_data = {
+type server_error = {
   code : string option;
   message : string;
   raw : Eta_ai.raw_json option;
 }
 
-type server_event : immutable_data =
+type server_event =
   | Session_created of Eta_ai.raw_json option
   | Response_audio_delta of string
   | Response_text_delta of string

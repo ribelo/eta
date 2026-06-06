@@ -104,14 +104,14 @@ module Pool = struct
     Array.iter Domain.join t.domains;
     Domain.join t.heartbeat_domain
 
-  let with_pool ?n_workers ?heartbeat_interval_ns ?par_threshold (f @ once) =
+  let with_pool ?n_workers ?heartbeat_interval_ns ?par_threshold (f) =
     let t = create ?n_workers ?heartbeat_interval_ns ?par_threshold () in
     Fun.protect ~finally:(fun () -> shutdown t) (fun () -> f t)
 
   (* The caller of [run] becomes a transient worker (id 0) for the
      duration of the call. Other workers are already idle in
      [drive_until_shutdown] waiting for shared jobs. *)
-  let run (t : t) (f @ once) =
+  let run (t : t) (f) =
     let prev_dls = Domain.DLS.get current_dls in
     let w = S.make_worker ~pool:t.pool ~id:0 in
     Domain.DLS.set current_dls
@@ -212,7 +212,7 @@ module Pool = struct
         (Printf.sprintf "expected one result, got %d" (List.length values))
 end
 
-let run ?n_workers ?heartbeat_interval_ns ?par_threshold (f @ once) =
+let run ?n_workers ?heartbeat_interval_ns ?par_threshold (f) =
   Pool.with_pool ?n_workers ?heartbeat_interval_ns ?par_threshold (fun p ->
       Pool.run p f)
 

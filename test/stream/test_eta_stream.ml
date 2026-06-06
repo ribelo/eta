@@ -452,7 +452,7 @@ let test_from_queue_error_close_fails_after_drain () =
   run_ok rt (Queue.send queue 2);
   Queue.close_with_error queue `Broken;
   let seen = ref [] in
-  let effect =
+  let eff =
     let stream = Eta_stream.Stream.from_queue queue in
     run stream
       (Sink.fold_effect
@@ -462,7 +462,7 @@ let test_from_queue_error_close_fails_after_drain () =
                value :: values))
          [])
   in
-  (match Runtime.run rt effect with
+  (match Runtime.run rt eff with
   | Exit.Error (Cause.Fail `Broken) -> ()
   | Exit.Ok values ->
       Alcotest.failf "error-closed queue unexpectedly succeeded with %d values"

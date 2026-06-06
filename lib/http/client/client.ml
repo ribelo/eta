@@ -7,9 +7,9 @@ module Header = Header
 module Url = Url
 module H2_proto = H2
 
-type protocol : immutable_data = H1 | H2 | Auto
+type protocol = H1 | H2 | Auto
 
-type stats : immutable_data = {
+type stats = {
   protocol : protocol;
   active : int;
   idle : int;
@@ -25,9 +25,9 @@ type t = {
      operations check this before touching mutable protocol state so sending a
      client to another domain fails loudly instead of racing H1 pools, Auto
      refs, or H2 state machines. *)
-  request_impl : (Request.t -> (Response.t, Error.t) Eta.Effect.t) @@ many;
-  stats_impl : (unit -> (stats, Error.t) Eta.Effect.t) @@ many;
-  shutdown_impl : (unit -> (unit, Error.t) Eta.Effect.t) @@ many;
+  request_impl : (Request.t -> (Response.t, Error.t) Eta.Effect.t);
+  stats_impl : (unit -> (stats, Error.t) Eta.Effect.t);
+  shutdown_impl : (unit -> (unit, Error.t) Eta.Effect.t);
 }
 
 let protocol_to_string = function

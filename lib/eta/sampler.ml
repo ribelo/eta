@@ -1,4 +1,4 @@
-type t : immutable_data =
+type t =
   | Always_on
   | Always_off
   | Ratio of float

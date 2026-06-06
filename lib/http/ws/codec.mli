@@ -1,6 +1,6 @@
 (** RFC 6455 frame codec and handshake helpers. *)
 
-type opcode : immutable_data = Continuation | Text | Binary | Close | Ping | Pong
+type opcode = Continuation | Text | Binary | Close | Ping | Pong
 
 type frame = {
   fin : bool;
@@ -8,7 +8,7 @@ type frame = {
   payload : bytes;
 }
 
-type parse_error : immutable_data =
+type parse_error =
   | Incomplete
   | Reserved_bits
   | Unsupported_opcode of int

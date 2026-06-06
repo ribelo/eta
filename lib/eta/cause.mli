@@ -8,14 +8,14 @@
     [Sequential] preserves ordered failures from sequential composition.
     [Concurrent] preserves failures observed from parallel composition.
     [Finalizer] marks diagnostic failures produced while cleaning up after a
-    successful primary effect; ordinary [Effect.catch] leaves failures under
+    successful primary eff; ordinary [Effect.catch] leaves failures under
     this node untouched. Finalizer failures are rendered to strings when they
-    leave the cleanup effect, so they are no longer part of the typed error
+    leave the cleanup eff, so they are no longer part of the typed error
     channel.
     [Suppressed] preserves a primary failure together with a finalizer failure
     that occurred while cleaning up the primary failure. *)
 
-type interrupt_id : immutable_data
+type interrupt_id
 
 (** Diagnostic payload for unchecked defects.
 
@@ -62,7 +62,7 @@ type 'err same_domain_t = 'err t
     diagnostics preserve OCaml exception identity. [Portable.t] materializes
     those raw fields into strings before moving causes across domains. *)
 module Portable : sig
-  type die : value mod portable = {
+  type die = {
     kind : string;
     message : string;
     backtrace : string option;
@@ -71,7 +71,7 @@ module Portable : sig
   }
 
   module Finalizer : sig
-    type t : value mod portable =
+    type t =
       | Fail of string
       | Die of die
       | Interrupt of interrupt_id option
@@ -84,7 +84,7 @@ module Portable : sig
     val pp : Format.formatter -> t -> unit
   end
 
-  type ('err : value mod portable) t : value mod portable =
+  type ('err) t =
     | Fail of 'err
     | Die of die
     | Interrupt of interrupt_id option
@@ -94,10 +94,10 @@ module Portable : sig
     | Suppressed of { primary : 'err t; finalizer : Finalizer.t }
 
   val of_cause :
-    ('err -> 'portable_err) @ many -> 'err same_domain_t -> 'portable_err t
-  val equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
+    ('err -> 'portable_err) -> 'err same_domain_t -> 'portable_err t
+  val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
   val pp :
-    (Format.formatter -> 'err -> unit) @ many -> Format.formatter -> 'err t -> unit
+    (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
 end
 
 val fail : 'err -> 'err t
@@ -124,19 +124,19 @@ val finalizer : Finalizer.t -> 'err t
 val suppressed : primary:'err t -> finalizer:Finalizer.t -> 'err t
 
 val is_interrupt_only : 'err t -> bool
-val map : ('err1 -> 'err2) @ many -> 'err1 t -> 'err2 t
-val finalizer_of_cause : ('err -> string) @ many -> 'err t -> Finalizer.t
+val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
+val finalizer_of_cause : ('err -> string) -> 'err t -> Finalizer.t
 
-val equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
+val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Structural equality for causes. [Die] causes compare by physical exception
     identity, plus diagnostic span and annotation metadata. This preserves
     same-domain exception identity; use {!diagnostic_equal} when test code wants
     to compare materialized exception diagnostics instead. *)
 
-val diagnostic_equal : ('err -> 'err -> bool) @ many -> 'err t -> 'err t -> bool
+val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Diagnostic equality for causes. [Die] causes compare exception slot,
     rendered exception message, rendered backtrace, span name, and annotations. *)
 
 val pp :
-  (Format.formatter -> 'err -> unit) @ many -> Format.formatter -> 'err t -> unit
-val to_portable : ('err -> 'portable_err) @ many -> 'err t -> 'portable_err Portable.t
+  (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
+val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t

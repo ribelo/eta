@@ -1,7 +1,7 @@
 module Version = struct
   type t = int64
 
-  type error : immutable_data =
+  type error =
     | Not_positive of int64
     | Invalid_integer of string
     | Expected_integer_value
@@ -37,7 +37,7 @@ end
 module Table_name = struct
   type t = string
 
-  type error : immutable_data =
+  type error =
     | Empty
     | Invalid_identifier of string
 
@@ -90,7 +90,7 @@ module Table_name = struct
     | Invalid_identifier value -> "invalid migration table name: " ^ value
 end
 
-type migration_type : immutable_data =
+type migration_type =
   | Simple
   | Reversible_up
   | Reversible_down
@@ -121,7 +121,7 @@ let checksum_sql sql =
   Digest.to_hex (Digest.string (strip_no_transaction_directive sql))
 
 module Migration = struct
-  type t : immutable_data = {
+  type t = {
     version : Version.t;
     description : string;
     migration_type : migration_type;
@@ -145,14 +145,14 @@ module Migration = struct
 end
 
 module Applied_migration = struct
-  type t : immutable_data = {
+  type t = {
     version : Version.t;
     checksum : string;
   }
 end
 
 module Config = struct
-  type t : immutable_data = {
+  type t = {
     table_name : Table_name.t;
     ignore_missing : bool;
   }
@@ -160,17 +160,17 @@ module Config = struct
   let default = { table_name = Table_name.default; ignore_missing = false }
 end
 
-type applied : immutable_data = {
+type applied = {
   migration : Migration.t;
   elapsed_ms : int;
 }
 
-type run_report : immutable_data = {
+type run_report = {
   applied : applied list;
   already_applied : Applied_migration.t list;
 }
 
-type source_error : immutable_data =
+type source_error =
   | Read_migration_file_failed of {
       path : string;
       reason : string;
@@ -184,7 +184,7 @@ type source_error : immutable_data =
       reason : string;
     }
 
-type error : immutable_data =
+type error =
   | Source_error of source_error
   | Invalid_version of Version.error
   | Invalid_table_name of Table_name.error
@@ -199,7 +199,7 @@ type error : immutable_data =
     }
 
 module Source = struct
-  type resolve_config : immutable_data = { ignored_checksum_chars : char list }
+  type resolve_config = { ignored_checksum_chars : char list }
   [@@unboxed]
 
   let default_resolve_config = { ignored_checksum_chars = [] }
@@ -228,20 +228,20 @@ module Source = struct
     | ignored ->
         let is_ignored char = List.exists (Char.equal char) ignored in
         let len = String.length sql in
-        let mutable index = 0 in
-        let mutable first_ignored = -1 in
-        while first_ignored < 0 && index < len do
-          if is_ignored (String.unsafe_get sql index) then
-            first_ignored <- index
+        let index = ref 0 in
+        let first_ignored = ref (-1) in
+        while !first_ignored < 0 && !index < len do
+          if is_ignored (String.unsafe_get sql !index) then
+            first_ignored := !index
           else
-            index <- index + 1
+            incr index
         done;
-        if first_ignored < 0 then
+        if !first_ignored < 0 then
           sql
         else
           let buf = Buffer.create len in
-          Buffer.add_substring buf sql 0 first_ignored;
-          for index = first_ignored to len - 1 do
+          Buffer.add_substring buf sql 0 !first_ignored;
+          for index = !first_ignored to len - 1 do
             let char = String.unsafe_get sql index in
             if not (is_ignored char) then Buffer.add_char buf char
           done;

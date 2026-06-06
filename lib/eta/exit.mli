@@ -1,4 +1,4 @@
-(** Runtime result of an effect. *)
+(** Runtime result of an eff. *)
 
 type ('a, 'err) t =
   | Ok of 'a

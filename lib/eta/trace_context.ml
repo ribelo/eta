@@ -1,9 +1,9 @@
-type t : immutable_data = Capabilities.trace_context = {
-  global_ trace_id : string;
-  global_ span_id : string;
+type t = Capabilities.trace_context = {
+  trace_id : string;
+  span_id : string;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
 let sampled t = t.trace_flags land 1 = 1
@@ -47,33 +47,33 @@ let parse_flags s =
 let valid_version s = is_hex 2 s && s <> "ff"
 
 let trimmed_sub s start stop =
-  let mutable left = start in
-  let mutable right = stop in
-  while left < right && String_helpers.is_trim_space (String.unsafe_get s left) do
-    left <- left + 1
+  let left = ref start in
+  let right = ref stop in
+  while !left < !right && String_helpers.is_trim_space (String.unsafe_get s !left) do
+    incr left
   done;
-  while right > left && String_helpers.is_trim_space (String.unsafe_get s (right - 1)) do
-    right <- right - 1
+  while !right > !left && String_helpers.is_trim_space (String.unsafe_get s (!right - 1)) do
+    decr right
   done;
-  String.sub s left (right - left)
+  String.sub s !left (!right - !left)
 
 let find_char_between s start stop needle =
-  let mutable pos = start in
-  let mutable found = -1 in
-  while found < 0 && pos < stop do
-    if Char.equal (String.unsafe_get s pos) needle then found <- pos;
-    pos <- pos + 1
+  let pos = ref start in
+  let found = ref (-1) in
+  while !found < 0 && !pos < stop do
+    if Char.equal (String.unsafe_get s !pos) needle then found := !pos;
+    incr pos
   done;
-  found
+  !found
 
 let has_char_between s start stop needle =
-  let mutable pos = start in
-  let mutable found = false in
-  while (not found) && pos < stop do
-    found <- Char.equal (String.unsafe_get s pos) needle;
-    pos <- pos + 1
+  let pos = ref start in
+  let found = ref false in
+  while (not !found) && !pos < stop do
+    found := Char.equal (String.unsafe_get s !pos) needle;
+    incr pos
   done;
-  found
+  !found
 
 let parse_comma_pairs ?comment_char ~allow_empty_value s =
   let len = String.length s in

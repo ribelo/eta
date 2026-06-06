@@ -9,8 +9,3 @@
   (flags :standard))
  (c_library_flags :standard -ldl)
  (libraries eta eta_sql_driver eta_sql eta_sql_dsl unix threads))
-
-(env
- (release
-  (ocamlopt_flags
-   (:standard -zero-alloc-check all))))

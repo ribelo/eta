@@ -3,7 +3,7 @@ module Json = A.Json
 
 let ( let* ) = Result.bind
 
-type structured_output : immutable_data = {
+type structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;

@@ -1,6 +1,6 @@
 type yj = Yojson.Safe.t
 
-let array_map (f @ many) values =
+let array_map (f) values =
   let rec loop acc = function
     | [] -> `List (List.rev acc)
     | value :: rest -> loop (f value :: acc) rest
@@ -18,13 +18,13 @@ let attrs_json (attrs : (string * string) list) : yj =
 let str_int n = `String (string_of_int n)
 
 type span = {
-  global_ trace_id : string;
-  global_ span_id : string;
-  global_ parent_span_id : string option;
+  trace_id : string;
+  span_id : string;
+  parent_span_id : string option;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
-  global_ name : string;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+  name : string;
   kind : Eta.Capabilities.span_kind;
   start_unix_ns : int;
   mutable end_unix_ns : int;

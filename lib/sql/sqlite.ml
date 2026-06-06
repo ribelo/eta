@@ -13,12 +13,12 @@ type stmt = {
 
 type rc = int
 
-type open_mode : immutable_data =
+type open_mode =
   | Read_only
   | Read_write
   | Read_write_create
 
-type journal_mode : immutable_data =
+type journal_mode =
   [ `Delete
   | `Truncate
   | `Persist
@@ -27,14 +27,14 @@ type journal_mode : immutable_data =
   | `Off
   ]
 
-type synchronous : immutable_data =
+type synchronous =
   [ `Extra
   | `Full
   | `Normal
   | `Off
   ]
 
-type config : immutable_data = {
+type config = {
   path : string;
   mode : open_mode;
   busy_timeout_ms : int option;
@@ -44,12 +44,12 @@ type config : immutable_data = {
   cache_size : int option;
 }
 
-type transaction_mode : immutable_data =
+type transaction_mode =
   | Deferred
   | Immediate
   | Exclusive
 
-type error : immutable_data = {
+type error = {
   operation : string;
   code : rc;
   message : string;

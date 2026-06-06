@@ -7,8 +7,8 @@ module Error = Error
 type read_result = Chunk of bytes | Last of bytes | End
 
 type t = {
-  read_next : (unit -> (read_result, Error.t) Effect.t) @@ many;
-  release : (unit -> (unit, Error.t) Effect.t) @@ many;
+  read_next : (unit -> (read_result, Error.t) Effect.t);
+  release : (unit -> (unit, Error.t) Effect.t);
   mutable released : bool;
   active : bool Atomic.t;
 }
@@ -21,11 +21,11 @@ let concurrent_use () =
          message = "concurrent body stream operation";
        })
 
-let with_operation t effect =
+let with_operation t eff =
   if not (Atomic.compare_and_set t.active false true) then
     Effect.fail (concurrent_use ())
   else (
-    effect
+    eff
     |> Effect.finally (Effect.sync (fun () -> Atomic.set t.active false)))
 
 let release_once t =
@@ -42,10 +42,10 @@ let empty () =
     active = Atomic.make false;
   }
 
-let of_reader ?(release @ many = fun () -> Effect.unit) (read_next @ many) =
+let of_reader ?(release = fun () -> Effect.unit) (read_next) =
   { read_next; release; released = false; active = Atomic.make false }
 
-let of_bytes ?(release @ many = fun () -> Effect.unit) chunks =
+let of_bytes ?(release = fun () -> Effect.unit) chunks =
   let chunks = Array.of_list chunks in
   let next = ref 0 in
   let read_next () =

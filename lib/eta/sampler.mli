@@ -1,4 +1,4 @@
-type t : immutable_data
+type t
 
 val always_on : t
 val always_off : t

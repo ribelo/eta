@@ -12,8 +12,8 @@ type context = {
 }
 
 type reader = {
-  read_exact : (int -> (bytes, Error.t) Effect.t) @@ many;
-  read_line : (limit:int -> (string, Error.t) Effect.t) @@ many;
+  read_exact : (int -> (bytes, Error.t) Effect.t);
+  read_line : (limit:int -> (string, Error.t) Effect.t);
 }
 
 type t = {
@@ -62,18 +62,18 @@ let[@zero_alloc] chunk_size_stop line =
   | Some index -> index
 
 let[@zero_alloc] trim_left_bound line stop =
-  let mutable index = 0 in
-  while index < stop && is_ows (String.unsafe_get line index) do
-    index <- index + 1
+  let index = ref 0 in
+  while !index < stop && is_ows (String.unsafe_get line !index) do
+    incr index
   done;
-  index
+  !index
 
 let[@zero_alloc] trim_right_bound line start stop =
-  let mutable index = stop in
-  while index > start && is_ows (String.unsafe_get line (index - 1)) do
-    index <- index - 1
+  let index = ref stop in
+  while !index > start && is_ows (String.unsafe_get line (!index - 1)) do
+    decr index
   done;
-  index
+  !index
 
 let invalid_chunk_size line start stop =
   Error ("invalid chunk size " ^ String.escaped (String.sub line start (stop - start)))
@@ -155,22 +155,22 @@ let read t =
 let trailers t = t.trailers
 
 let[@zero_alloc] hex_digit_count value =
-  let mutable count = 1 in
-  let mutable value = value lsr 4 in
-  while value > 0 do
-    count <- count + 1;
-    value <- value lsr 4
+  let count = ref 1 in
+  let value = ref (value lsr 4) in
+  while !value > 0 do
+    incr count;
+    value := !value lsr 4
   done;
-  count
+  !count
 
 let chunk_header_bytes length =
   let digits = hex_digit_count length in
   let out = Bytes.create (digits + 2) in
-  let mutable value = length in
+  let value = ref length in
   for index = digits - 1 downto 0 do
     Bytes.unsafe_set out index
-      (Eta.String_helpers.lower_hex_digit (value land 0xf));
-    value <- value lsr 4
+      (Eta.String_helpers.lower_hex_digit (!value land 0xf));
+    value := !value lsr 4
   done;
   Bytes.unsafe_set out digits '\r';
   Bytes.unsafe_set out (digits + 1) '\n';

@@ -246,13 +246,13 @@ let test_h2_connection_returns_early_response () =
                     Eta.Effect.unit)
                   ()))
       in
-      let effect =
+      let eff =
         Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.seconds 1)
              ~on_timeout:(timeout_error uri)
       in
-      let response = Eta.Runtime.run rt effect |> Eta_test.Expect.expect_ok in
+      let response = Eta.Runtime.run rt eff |> Eta_test.Expect.expect_ok in
       Alcotest.(check int) "early status" 413 response.status;
       Alcotest.(check int) "upload body released" 1 !released)
 
@@ -272,13 +272,13 @@ let test_h2_connection_cancelled_upload_releases_body () =
                     Eta.Effect.unit)
                   ()))
       in
-      let effect =
+      let eff =
         Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
       in
-      (match Eta.Runtime.run rt effect with
+      (match Eta.Runtime.run rt eff with
       | Eta.Exit.Ok _ -> Alcotest.fail "expected upload cancellation"
       | Eta.Exit.Error _ -> ());
       Alcotest.(check int) "cancelled upload body released" 1 !released)
@@ -353,13 +353,13 @@ let test_h2_connection_cancelled_fixed_request_releases_stream () =
         Eta_http.Request.make "POST" uri
           ~body:(Eta_http.Request.Fixed [ Bytes.of_string "{}" ])
       in
-      let effect =
+      let eff =
         Eta_http.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
       in
-      (match Eta.Runtime.run rt effect with
+      (match Eta.Runtime.run rt eff with
       | Eta.Exit.Error
           (Eta.Cause.Fail
             { Eta_http.Error.kind = Connection_protocol_violation _; _ }) ->
@@ -383,12 +383,12 @@ let test_h2_connection_cancelled_body_read_preserves_connection () =
       H2.Body.Writer.write_string body "partial")
     (fun _clock rt connection ->
       let uri = "https://api.example.test/body-stall" in
-      let effect =
+      let eff =
         request_effect connection "/body-stall"
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
       in
-      (match Eta.Runtime.run rt effect with
+      (match Eta.Runtime.run rt eff with
       | Eta.Exit.Error
           (Eta.Cause.Fail
             { Eta_http.Error.kind = Connection_protocol_violation _; _ }) ->
@@ -565,12 +565,12 @@ let raw_goaway_mid_body_server flow =
 let test_h2_connection_continues_after_informational_headers () =
   with_raw_h2_server raw_informational_response_server
     (fun _clock rt connection ->
-      let effect =
+      let eff =
         request_effect connection "/early-hints"
         |> Eta.Effect.timeout_as (Eta.Duration.seconds 1)
              ~on_timeout:(timeout_error "https://api.example.test/early-hints")
       in
-      match Eta.Runtime.run rt effect with
+      match Eta.Runtime.run rt eff with
       | Eta.Exit.Ok (status, body) ->
           Alcotest.(check int) "final status" 200 status;
           Alcotest.(check string) "final body" "final" body
@@ -585,12 +585,12 @@ let test_h2_connection_continues_after_informational_headers () =
 let test_h2_connection_goaway_mid_body_completes_existing_stream () =
   with_raw_h2_server raw_goaway_mid_body_server
     (fun _clock rt connection ->
-      let effect =
+      let eff =
         request_effect connection "/goaway-mid"
         |> Eta.Effect.timeout_as (Eta.Duration.seconds 2)
              ~on_timeout:(timeout_error "https://api.example.test/goaway-mid")
       in
-      match Eta.Runtime.run rt effect with
+      match Eta.Runtime.run rt eff with
       | Eta.Exit.Ok (status, body) ->
           Alcotest.(check int) "status" 200 status;
           Alcotest.(check string) "complete body" "chunk1chunk2" body

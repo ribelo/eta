@@ -33,7 +33,7 @@ let rec eta_bind_chain n acc =
 (* Fully prebuilt fail_catch chain. All 100k catch nodes are constructed at
    module-load time via a tail-recursive outward build. Each handler is
    [fun _ -> next_node] where [next_node] is the pre-allocated inner node.
-   No closures or effect records are allocated per sample — only
+   No closures or eff records are allocated per sample — only
    Cause.Fail/Exit.Error wrapping at runtime. *)
 let eta_fail_catch_loop n =
   let fail_boom = Effect.fail `Boom in

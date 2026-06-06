@@ -10,8 +10,8 @@ module Dsl = Eta_sql_dsl.Make (struct
   exception Error = Error
 
   type nonrec 'a typ = 'a typ = {
-    value : ('a -> value) @@ many;
-    decode : (row -> int -> 'a) @@ many;
+    value : ('a -> value);
+    decode : (row -> int -> 'a);
     sql_type : string;
   }
 

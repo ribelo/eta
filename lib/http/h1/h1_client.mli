@@ -6,7 +6,7 @@ type request_body =
   | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : (unit -> Stream.t) @@ many;
+      make : (unit -> Stream.t);
     }
 
 type request = {
@@ -20,7 +20,7 @@ type response = {
   status : int;
   headers : Header.t;
   body : Stream.t;
-  trailers : (unit -> (Header.t, Error.t) Eta.Effect.t) @@ many;
+  trailers : (unit -> (Header.t, Error.t) Eta.Effect.t);
 }
 
 type pool
@@ -31,9 +31,9 @@ val default_max_response_body_bytes : int
 
 val request_on_flow :
   ?host_eio:Eta.Host_eio.t ->
-  ?on_unread_body:(unit -> (unit, Error.t) Eta.Effect.t) @ many ->
+  ?on_unread_body:(unit -> (unit, Error.t) Eta.Effect.t) ->
   ?max_response_body_bytes:int ->
-  ?release:(unit -> (unit, Error.t) Eta.Effect.t) @ many ->
+  ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
   flow:[> Eio.Flow.two_way_ty | Eio.Resource.close_ty] Eio.Resource.t ->
   request ->
   (response, Error.t) Eta.Effect.t

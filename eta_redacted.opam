@@ -4,8 +4,7 @@ synopsis: "Secret-wrapping types that hide values from logs and traces"
 description:
   "eta_redacted provides small secret wrappers for Eta logs, traces, and provider clients."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "odoc" {with-doc}
 ]

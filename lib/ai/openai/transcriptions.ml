@@ -42,28 +42,28 @@ let rec safe_extra_fields = function
           | Stdlib.Ok fields -> Stdlib.Ok ((name, value) :: fields)))
 
 let[@zero_alloc] string_has_substring_at value ~needle index needle_len =
-  let mutable offset = 0 in
+  let offset = ref 0 in
   while
-    offset < needle_len
+    !offset < needle_len
     && Char.equal
-         (String.unsafe_get value (index + offset))
-         (String.unsafe_get needle offset)
+         (String.unsafe_get value (index + !offset))
+         (String.unsafe_get needle !offset)
   do
-    offset <- offset + 1
+    incr offset
   done;
-  offset = needle_len
+  !offset = needle_len
 
 let[@zero_alloc] bytes_has_substring_at value ~needle index needle_len =
-  let mutable offset = 0 in
+  let offset = ref 0 in
   while
-    offset < needle_len
+    !offset < needle_len
     && Char.equal
-         (Bytes.unsafe_get value (index + offset))
-         (String.unsafe_get needle offset)
+         (Bytes.unsafe_get value (index + !offset))
+         (String.unsafe_get needle !offset)
   do
-    offset <- offset + 1
+    incr offset
   done;
-  offset = needle_len
+  !offset = needle_len
 
 let[@zero_alloc] contains_substring value ~needle =
   let needle_len = String.length needle in
@@ -71,13 +71,13 @@ let[@zero_alloc] contains_substring value ~needle =
   if needle_len = 0 then true
   else (
     let stop = value_len - needle_len in
-    let mutable index = 0 in
-    let mutable found = false in
-    while (not found) && index <= stop do
-      found <- string_has_substring_at value ~needle index needle_len;
-      index <- index + 1
+    let index = ref 0 in
+    let found = ref false in
+    while (not !found) && !index <= stop do
+      found := string_has_substring_at value ~needle !index needle_len;
+      incr index
     done;
-    found)
+    !found)
 
 let[@zero_alloc] bytes_contains_substring value ~needle =
   let needle_len = String.length needle in
@@ -85,13 +85,13 @@ let[@zero_alloc] bytes_contains_substring value ~needle =
   if needle_len = 0 then true
   else (
     let stop = value_len - needle_len in
-    let mutable index = 0 in
-    let mutable found = false in
-    while (not found) && index <= stop do
-      found <- bytes_has_substring_at value ~needle index needle_len;
-      index <- index + 1
+    let index = ref 0 in
+    let found = ref false in
+    while (not !found) && !index <= stop do
+      found := bytes_has_substring_at value ~needle !index needle_len;
+      incr index
     done;
-    found)
+    !found)
 
 let multipart_boundary (file : A.binary_file) strings =
   let base = "eta-ai-" ^ Digest.to_hex (Digest.bytes file.data) in

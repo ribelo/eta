@@ -4,8 +4,7 @@ synopsis: "OpenAI wire codecs for Eta AI providers"
 description:
   "eta_ai_openai_codec provides shared OpenAI-compatible wire codecs for Eta AI providers."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta_ai"
   "base64"

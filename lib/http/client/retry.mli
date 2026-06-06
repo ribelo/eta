@@ -9,9 +9,9 @@
     useful for protocols layered on HTTP whose retry table is stricter than the
     eta-http default, for example OTLP/HTTP. *)
 
-type mode : immutable_data = Default | Always | Never
+type mode = Default | Always | Never
 
-type decision : immutable_data =
+type decision =
   | Stop
   | Retry_after of Eta.Duration.t
 
@@ -24,7 +24,7 @@ val make :
   ?max_attempts:int ->
   ?schedule:Eta.Schedule.t ->
   ?respect_retry_after:bool ->
-  ?retry_status:(int -> bool) @ many ->
+  ?retry_status:(int -> bool) ->
   unit ->
   t
 (** [make ~max_attempts ()] raises [Invalid_argument] when [max_attempts] is
@@ -35,7 +35,7 @@ val never : t
 val always :
   ?max_attempts:int ->
   ?schedule:Eta.Schedule.t ->
-  ?retry_status:(int -> bool) @ many ->
+  ?retry_status:(int -> bool) ->
   unit ->
   t
 

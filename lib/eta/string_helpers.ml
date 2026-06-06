@@ -19,18 +19,18 @@ let[@zero_alloc] upper_hex_digit value =
   else Char.unsafe_chr (Char.code 'A' + value - 10)
 
 let[@zero_alloc] trim_left value start finish =
-  let mutable index = start in
-  while index < finish && is_trim_space (String.unsafe_get value index) do
-    index <- index + 1
+  let index = ref start in
+  while !index < finish && is_trim_space (String.unsafe_get value !index) do
+    incr index
   done;
-  index
+  !index
 
 let[@zero_alloc] trim_right value start finish =
-  let mutable index = finish in
-  while index > start && is_trim_space (String.unsafe_get value (index - 1)) do
-    index <- index - 1
+  let index = ref finish in
+  while !index > start && is_trim_space (String.unsafe_get value (!index - 1)) do
+    decr index
   done;
-  index
+  !index
 
 let trim_bounds value =
   let len = String.length value in
@@ -47,14 +47,14 @@ let trim value =
   else String.sub value start (stop - start)
 
 let[@zero_alloc] has_uppercase_ascii value start stop =
-  let mutable index = start in
-  let mutable found = false in
-  while (not found) && index < stop do
-    let c = String.unsafe_get value index in
-    found <- c >= 'A' && c <= 'Z';
-    index <- index + 1
+  let index = ref start in
+  let found = ref false in
+  while (not !found) && !index < stop do
+    let c = String.unsafe_get value !index in
+    found := c >= 'A' && c <= 'Z';
+    incr index
   done;
-  found
+  !found
 
 let lowercase_ascii_trim value =
   let value_len = String.length value in
@@ -88,81 +88,81 @@ let[@zero_alloc] contains_ascii_ci haystack needle =
   if needle_len = 0 then true
   else if needle_len > haystack_len then false
   else (
-    let mutable pos = 0 in
-    let mutable found = false in
-    while (not found) && pos + needle_len <= haystack_len do
-      let mutable index = 0 in
+    let pos = ref 0 in
+    let found = ref false in
+    while (not !found) && !pos + needle_len <= haystack_len do
+      let index = ref 0 in
       while
-        index < needle_len
+        !index < needle_len
         && ascii_equal_ci
-             (String.unsafe_get haystack (pos + index))
-             (String.unsafe_get needle index)
+             (String.unsafe_get haystack (!pos + !index))
+             (String.unsafe_get needle !index)
       do
-        index <- index + 1
+        incr index
       done;
-      found <- index = needle_len;
-      pos <- pos + 1
+      found := !index = needle_len;
+      incr pos
     done;
-    found)
+    !found)
 
 let[@zero_alloc] is_http_token_space = function
   | ' ' | '\t' -> true
   | _ -> false
 
 let[@zero_alloc] trim_equal_ascii_ci_bounds value start stop token =
-  let mutable start = start in
-  let mutable stop = stop in
-  while start < stop && is_http_token_space (String.unsafe_get value start) do
-    start <- start + 1
+  let start = ref start in
+  let stop = ref stop in
+  while !start < !stop && is_http_token_space (String.unsafe_get value !start) do
+    incr start
   done;
-  while stop > start && is_http_token_space (String.unsafe_get value (stop - 1)) do
-    stop <- stop - 1
+  while !stop > !start && is_http_token_space (String.unsafe_get value (!stop - 1)) do
+    decr stop
   done;
-  let len = stop - start in
+  let len = !stop - !start in
   let token_len = String.length token in
   if len <> token_len then false
   else (
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < token_len
+      !index < token_len
       && ascii_equal_ci
-           (String.unsafe_get value (start + index))
-           (String.unsafe_get token index)
+           (String.unsafe_get value (!start + !index))
+           (String.unsafe_get token !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = token_len)
+    !index = token_len)
 
 let[@zero_alloc] contains_token_ascii_ci value token =
   let len = String.length value in
-  let mutable start = 0 in
-  let mutable found = false in
-  while (not found) && start <= len do
+  let start = ref 0 in
+  let found = ref false in
+  while (not !found) && !start <= len do
     let stop =
-      match String.index_from_opt value start ',' with
+      match String.index_from_opt value !start ',' with
       | None -> len
       | Some index -> index
     in
-    found <- trim_equal_ascii_ci_bounds value start stop token;
-    start <- stop + 1
+    found := trim_equal_ascii_ci_bounds value !start stop token;
+    start := stop + 1
   done;
-  found
+  !found
 
 let[@zero_alloc] starts_with_at value ~offset prefix =
   let value_len = String.length value in
   let prefix_len = String.length prefix in
   if offset < 0 || value_len - offset < prefix_len then false
   else (
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < prefix_len
+      !index < prefix_len
       && Char.equal
-           (String.unsafe_get value (offset + index))
-           (String.unsafe_get prefix index)
+           (String.unsafe_get value (offset + !index))
+           (String.unsafe_get prefix !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = prefix_len)
+    !index = prefix_len)
 
 let[@zero_alloc] starts_with value ~prefix = starts_with_at value ~offset:0 prefix
 
@@ -172,16 +172,16 @@ let[@zero_alloc] ends_with value ~suffix =
   if value_len < suffix_len then false
   else (
     let offset = value_len - suffix_len in
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < suffix_len
+      !index < suffix_len
       && Char.equal
-           (String.unsafe_get value (offset + index))
-           (String.unsafe_get suffix index)
+           (String.unsafe_get value (offset + !index))
+           (String.unsafe_get suffix !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = suffix_len)
+    !index = suffix_len)
 
 let[@zero_alloc] ends_with_ascii_ci value ~suffix =
   let value_len = String.length value in
@@ -189,16 +189,16 @@ let[@zero_alloc] ends_with_ascii_ci value ~suffix =
   if value_len < suffix_len then false
   else (
     let offset = value_len - suffix_len in
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < suffix_len
+      !index < suffix_len
       && ascii_equal_ci
-           (String.unsafe_get value (offset + index))
-           (String.unsafe_get suffix index)
+           (String.unsafe_get value (offset + !index))
+           (String.unsafe_get suffix !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = suffix_len)
+    !index = suffix_len)
 
 let[@zero_alloc] trim_equal value literal =
   let value_len = String.length value in
@@ -208,16 +208,16 @@ let[@zero_alloc] trim_equal value literal =
   let literal_len = String.length literal in
   if len <> literal_len then false
   else (
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < literal_len
+      !index < literal_len
       && Char.equal
-           (String.unsafe_get value (value_start + index))
-           (String.unsafe_get literal index)
+           (String.unsafe_get value (value_start + !index))
+           (String.unsafe_get literal !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = literal_len)
+    !index = literal_len)
 
 let[@zero_alloc] trim_equal_ascii_ci value literal =
   let value_len = String.length value in
@@ -227,16 +227,16 @@ let[@zero_alloc] trim_equal_ascii_ci value literal =
   let literal_len = String.length literal in
   if len <> literal_len then false
   else (
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < literal_len
+      !index < literal_len
       && ascii_equal_ci
-           (String.unsafe_get value (value_start + index))
-           (String.unsafe_get literal index)
+           (String.unsafe_get value (value_start + !index))
+           (String.unsafe_get literal !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = literal_len)
+    !index = literal_len)
 
 let[@zero_alloc] trim_equal_trimmed_ascii_ci left right =
   let left_len = String.length left in
@@ -248,13 +248,13 @@ let[@zero_alloc] trim_equal_trimmed_ascii_ci left right =
   let len = left_stop - left_start in
   if len <> right_stop - right_start then false
   else (
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < len
+      !index < len
       && ascii_equal_ci
-           (String.unsafe_get left (left_start + index))
-           (String.unsafe_get right (right_start + index))
+           (String.unsafe_get left (left_start + !index))
+           (String.unsafe_get right (right_start + !index))
     do
-      index <- index + 1
+      incr index
     done;
-    index = len)
+    !index = len)

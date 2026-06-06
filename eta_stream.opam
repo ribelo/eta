@@ -4,8 +4,7 @@ synopsis: "Streams, channels, mailboxes, and bounded queues for Eta"
 description:
   "eta_stream provides stream and queue primitives for Eta programs."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eio" {>= "1.0"}

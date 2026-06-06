@@ -51,7 +51,7 @@ let test_leased_blocking_rejects_detach_started_pool () =
 let test_timed_leased_blocking_calls_on_cancel () =
   let interrupted = Atomic.make false in
   with_runtime @@ fun rt ->
-  let effect =
+  let eff =
     Helper.leased_blocking_result_timeout ~timeout:(Eta.Duration.ms 5)
       ~on_timeout:`Timeout
       ~on_cancel:(fun () -> Atomic.set interrupted true)
@@ -61,7 +61,7 @@ let test_timed_leased_blocking_calls_on_cancel () =
         done;
         Error "interrupted")
   in
-  match Runtime.run rt effect with
+  match Runtime.run rt eff with
   | Exit.Error (Cause.Fail `Timeout) ->
       Alcotest.(check bool) "cancel hook called" true (Atomic.get interrupted)
   | Exit.Error cause ->

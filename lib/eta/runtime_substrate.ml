@@ -1,27 +1,27 @@
 (** Resolved Eio primitives used by the Eta interpreter.
 
     Runtime creation chooses direct Eio or host-injected Eio once; hot-path
-    effect interpretation calls this substrate without re-checking Host_eio. *)
+    eff interpretation calls this substrate without re-checking Host_eio. *)
 
 type t = {
   fiber_get : 'a. 'a Eio.Fiber.key -> 'a option;
   fiber_with_binding :
     'a 'b.
     dls_active:bool ->
-    enter_fiberless:((unit -> 'b) @ many -> 'b) @ many ->
+    enter_fiberless:((unit -> 'b) -> 'b) ->
     'a Eio.Fiber.key ->
     'a ->
-    (unit -> 'b) @ many ->
+    (unit -> 'b) ->
     'b;
-  fiber_fork : sw:Eio.Switch.t -> (unit -> unit) @ many -> unit;
+  fiber_fork : sw:Eio.Switch.t -> (unit -> unit) -> unit;
   fiber_fork_daemon :
-    sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) @ many -> unit;
+    sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) -> unit;
   fiber_await_cancel : 'a. unit -> 'a;
   fiber_yield : unit -> unit;
-  switch_run : 'a. ?name:string -> (Eio.Switch.t -> 'a) @ many -> 'a;
+  switch_run : 'a. ?name:string -> (Eio.Switch.t -> 'a) -> 'a;
   switch_fail :
     ?bt:Printexc.raw_backtrace -> Eio.Switch.t -> exn -> unit;
-  cancel_sub : 'a. (Eio.Cancel.t -> 'a) @ many -> 'a;
+  cancel_sub : 'a. (Eio.Cancel.t -> 'a) -> 'a;
   cancel_cancel : Eio.Cancel.t -> exn -> unit;
 }
 

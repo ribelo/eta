@@ -16,7 +16,7 @@ type t = {
   pool : (connection, raw_error) Eta.Pool.t;
 }
 
-type nonrec error : immutable_data =
+type nonrec error =
   | Duckdb of error
   | Invalid_blocking_pool of string
   | Pool_shutdown
@@ -37,7 +37,7 @@ let to_raw_error = function
   | Pool_shutdown_timeout -> `Pool_shutdown_timeout
   | Timeout -> `Timeout
 
-let public effect = Eta.Effect.map_error to_public_error effect
+let public eff = Eta.Effect.map_error to_public_error eff
 
 module Driver_blocking = Eta_sql_driver.Make (struct
   type driver_error = Types.error

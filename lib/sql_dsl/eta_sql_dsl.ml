@@ -109,8 +109,8 @@ module type BACKEND = sig
   exception Error of error
 
   type 'a typ = {
-    value : ('a -> value) @@ many;
-    decode : (row -> int -> 'a) @@ many;
+    value : ('a -> value);
+    decode : (row -> int -> 'a);
     sql_type : string;
   }
   (* The DSL needs a uniform primitive surface, but codec behavior belongs to

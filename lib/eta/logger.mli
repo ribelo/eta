@@ -10,13 +10,13 @@ type level = Capabilities.log_level =
   | Error
   | Fatal
 
-type record : immutable_data = Capabilities.log_record = {
+type record = Capabilities.log_record = {
   level : level;
-  global_ body : string;
+  body : string;
   ts_ms : int;
-  global_ attrs : (string * string) list;
-  global_ trace_id : string;
-  global_ span_id : string;
+  attrs : (string * string) list;
+  trace_id : string;
+  span_id : string;
 }
 
 type in_memory

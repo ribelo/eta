@@ -115,14 +115,14 @@ let test_blocking_result_exception_is_defect () =
 let test_blocking_result_timeout_interrupts_and_fails_typed () =
   with_runtime @@ fun rt ->
   let interrupted = Atomic.make false in
-  let effect =
+  let eff =
     Effect.blocking_result_timeout ~name:"blocking.result.timeout"
       ~on_cancel:(fun () -> Atomic.set interrupted true)
       ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
         Unix.sleepf 0.030;
         Ok 7)
   in
-  match Runtime.run rt effect with
+  match Runtime.run rt eff with
   | Exit.Ok _ -> Alcotest.fail "expected timeout"
   | Exit.Error (Cause.Fail `Timeout) ->
       Alcotest.(check bool) "on_cancel called" true (Atomic.get interrupted)
@@ -140,7 +140,7 @@ let test_blocking_result_timeout_calls_on_cancel_once () =
   in
   let hook_calls = Atomic.make 0 in
   let finished = Atomic.make false in
-  let effect =
+  let eff =
     Effect.blocking_result_timeout ~pool
       ~name:"blocking.result.timeout-once"
       ~on_cancel:(fun () -> Atomic.incr hook_calls)
@@ -149,7 +149,7 @@ let test_blocking_result_timeout_calls_on_cancel_once () =
         Atomic.set finished true;
         Ok 7)
   in
-  (match Runtime.run rt effect with
+  (match Runtime.run rt eff with
   | Exit.Ok _ -> Alcotest.fail "expected timeout"
   | Exit.Error (Cause.Fail `Timeout) -> ()
   | Exit.Error cause ->

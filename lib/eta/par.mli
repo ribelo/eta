@@ -40,7 +40,7 @@ module Pool : sig
       combinators run on this pool when they do not receive [?chunk]
       directly.  The pool stays alive until {!shutdown} is called. *)
 
-  val run : t -> (unit -> 'a) @ once -> 'a
+  val run : t -> (unit -> 'a) -> 'a
   (** [run pool f] runs [f] as the root task on the calling thread.  The
       caller participates as worker 0 for the duration of the call.
 
@@ -76,7 +76,7 @@ module Pool : sig
     ?n_workers:int ->
     ?heartbeat_interval_ns:int ->
     ?par_threshold:int ->
-    (t -> 'a) @ once ->
+    (t -> 'a) ->
     'a
   (** [with_pool ?n_workers f] = [create ?n_workers (), f, shutdown]. *)
 end
@@ -87,7 +87,7 @@ val run :
   ?n_workers:int ->
   ?heartbeat_interval_ns:int ->
   ?par_threshold:int ->
-  (unit -> 'a) @ once ->
+  (unit -> 'a) ->
   'a
 (** Convenience: create a pool, run [f], shut down.  Use {!Pool.run} if
     you want to reuse the pool across multiple top-level calls. *)
@@ -112,7 +112,7 @@ val join3 :
 (** {1 Parallel iteration} *)
 
 val par_for :
-  ?chunk:int -> start:int -> stop:int -> (int -> unit) @ many -> unit
+  ?chunk:int -> start:int -> stop:int -> (int -> unit) -> unit
 (** [par_for ?chunk ~start ~stop f] applies [f] to every integer in
     [[start, stop)] in parallel.  The range is recursively halved until
     each leaf is at most [chunk] integers wide; below that it runs
@@ -121,27 +121,27 @@ val par_for :
     per-iteration work and few iterations (e.g., [par_for ~chunk:1] over
     rows of a matmul). *)
 
-val par_iter : ?chunk:int -> 'a array -> ('a -> unit) @ many -> unit
+val par_iter : ?chunk:int -> 'a array -> ('a -> unit) -> unit
 (** [par_iter arr f] applies [f] to every element of [arr] in parallel. *)
 
-val par_iteri : ?chunk:int -> 'a array -> (int -> 'a -> unit) @ many -> unit
+val par_iteri : ?chunk:int -> 'a array -> (int -> 'a -> unit) -> unit
 (** Like {!par_iter} but [f] also receives the index. *)
 
 (** {1 Parallel map / reduce} *)
 
-val par_map : ?chunk:int -> 'a array -> ('a -> 'b) @ many -> 'b array
+val par_map : ?chunk:int -> 'a array -> ('a -> 'b) -> 'b array
 (** [par_map arr f] returns an array containing [f x] for each [x] in
     [arr], with elements computed in parallel.  Order is preserved. *)
 
-val par_mapi : ?chunk:int -> 'a array -> (int -> 'a -> 'b) @ many -> 'b array
+val par_mapi : ?chunk:int -> 'a array -> (int -> 'a -> 'b) -> 'b array
 (** Like {!par_map} but [f] receives the index. *)
 
 val par_reduce :
   ?chunk:int ->
   'a array ->
   init:'b ->
-  map:('a -> 'b) @ many ->
-  combine:('b -> 'b -> 'b) @ many ->
+  map:('a -> 'b) ->
+  combine:('b -> 'b -> 'b) ->
   'b
 (** [par_reduce arr ~init ~map ~combine] computes
     [combine (map arr.(0)) (combine ... init)] in parallel using a
@@ -150,7 +150,7 @@ val par_reduce :
 
 (** {1 Parallel sort} *)
 
-val par_sort : 'a array -> ('a -> 'a -> int) @ many -> unit
+val par_sort : 'a array -> ('a -> 'a -> int) -> unit
 (** In-place parallel quicksort with three-way (Dutch national flag)
     partitioning.  The comparator must define a total order.  Inputs
     with many duplicate keys (in particular all-equal arrays) collapse
@@ -179,18 +179,18 @@ module Iter : sig
   val of_array_sub : ?chunk:int -> 'a array -> start:int -> stop:int -> 'a t
   val of_range : ?chunk:int -> start:int -> stop:int -> unit -> int t
 
-  val map : ('a -> 'b) @ many -> 'a t -> 'b t
-  val mapi : (int -> 'a -> 'b) @ many -> 'a t -> 'b t
-  val filter : ('a -> bool) @ many -> 'a t -> 'a t
+  val map : ('a -> 'b) -> 'a t -> 'b t
+  val mapi : (int -> 'a -> 'b) -> 'a t -> 'b t
+  val filter : ('a -> bool) -> 'a t -> 'a t
 
-  val for_each : ('a -> unit) @ many -> 'a t -> unit
-  val iter : ('a -> unit) @ many -> 'a t -> unit
+  val for_each : ('a -> unit) -> 'a t -> unit
+  val iter : ('a -> unit) -> 'a t -> unit
 
-  val reduce : init:'a -> combine:('a -> 'a -> 'a) @ many -> 'a t -> 'a
+  val reduce : init:'a -> combine:('a -> 'a -> 'a) -> 'a t -> 'a
   val fold :
     init:'b ->
-    step:('b -> 'a -> 'b) @ many ->
-    combine:('b -> 'b -> 'b) @ many ->
+    step:('b -> 'a -> 'b) ->
+    combine:('b -> 'b -> 'b) ->
     'a t ->
     'b
 
@@ -198,12 +198,12 @@ module Iter : sig
   val count : 'a t -> int
   val min : 'a t -> 'a option
   val max : 'a t -> 'a option
-  val min_with : cmp:('a -> 'a -> int) @ many -> 'a t -> 'a option
-  val max_with : cmp:('a -> 'a -> int) @ many -> 'a t -> 'a option
+  val min_with : cmp:('a -> 'a -> int) -> 'a t -> 'a option
+  val max_with : cmp:('a -> 'a -> int) -> 'a t -> 'a option
 
   val collect_array : 'a t -> 'a array
 
-  val find_any : ('a -> bool) @ many -> 'a t -> 'a option
-  val any : ('a -> bool) @ many -> 'a t -> bool
-  val all : ('a -> bool) @ many -> 'a t -> bool
+  val find_any : ('a -> bool) -> 'a t -> 'a option
+  val any : ('a -> bool) -> 'a t -> bool
+  val all : ('a -> bool) -> 'a t -> bool
 end

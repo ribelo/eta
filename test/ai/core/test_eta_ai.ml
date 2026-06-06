@@ -428,8 +428,8 @@ let with_observed_runtime f =
   in
   f rt tracer logger
 
-let run_ok rt label effect =
-  match Eta.Runtime.run rt effect with
+let run_ok rt label eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       Alcotest.failf "%s failed: %s" label
@@ -437,8 +437,8 @@ let run_ok rt label effect =
            (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<error>"))
            cause)
 
-let expect_decode_error rt label effect =
-  match Eta.Runtime.run rt effect with
+let expect_decode_error rt label eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Error
       (Eta.Cause.Fail (Decode_error { provider; message; raw })) ->
       (provider, message, raw)

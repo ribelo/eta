@@ -4,8 +4,7 @@ synopsis: "Schema definitions and JSON codecs for Eta"
 description:
   "eta_schema provides lightweight schema definitions for Eta programs."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "odoc" {with-doc}

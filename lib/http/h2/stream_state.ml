@@ -1,9 +1,9 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 module Admission = Admission
-module P_atomic = Portable.Atomic
+module P_atomic = Atomic
 
-type status : immutable_data = Active | Remote_reset | Complete | Released
+type status = Active | Remote_reset | Complete | Released
 
 type stream = {
   id : int;
@@ -12,7 +12,7 @@ type stream = {
   status : status P_atomic.t;
 }
 
-type stats : immutable_data = {
+type stats = {
   active : int;
   cancelled : int;
   inflight : int;
@@ -26,7 +26,7 @@ type stats : immutable_data = {
   max_concurrent : int;
 }
 
-type release : immutable_data = Queue_rst | No_rst
+type release = Queue_rst | No_rst
 
 type t = {
   admission : Admission.t;
@@ -47,11 +47,7 @@ let status stream = P_atomic.get stream.status
 let is_client_stream_id id = id > 0 && (id land 1) = 1
 
 let cas_status stream seen replace_with =
-  match
-    P_atomic.compare_and_set stream.status ~if_phys_equal_to:seen ~replace_with
-  with
-  | P_atomic.Compare_failed_or_set_here.Set_here -> true
-  | P_atomic.Compare_failed_or_set_here.Compare_failed -> false
+  P_atomic.compare_and_set stream.status seen replace_with
 
 let open_stream t ~tag =
   if t.closed then Error ()

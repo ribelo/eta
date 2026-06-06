@@ -35,19 +35,3 @@
  (name test_log_level)
  (modules test_log_level)
  (libraries eta alcotest))
-
-(rule
- (alias runtest)
- (deps
-  (source_tree island_negative)
-  (:eta_cmxa ../../lib/eta/eta.cmxa))
- (action
-  (run bash island_negative/run.sh %{eta_cmxa})))
-
-(rule
- (alias runtest)
- (deps
-  (source_tree soundness)
-  (:eta_cmxa ../../lib/eta/eta.cmxa))
- (action
-  (run bash soundness/run.sh %{eta_cmxa})))

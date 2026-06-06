@@ -1,13 +1,13 @@
 (** LadybugDB graph connector for Eta. *)
 
 module Value : sig
-  type node : immutable_data = {
+  type node = {
     id : int64 option;
     labels : string list;
     properties : (string * t) list;
   }
 
-  and rel : immutable_data = {
+  and rel = {
     id : int64 option;
     src : int64 option;
     dst : int64 option;
@@ -15,12 +15,12 @@ module Value : sig
     properties : (string * t) list;
   }
 
-  and path : immutable_data = {
+  and path = {
     nodes : node list;
     rels : rel list;
   }
 
-  and t : immutable_data =
+  and t =
     | Null
     | Bool of bool
     | Int of int64
@@ -70,7 +70,7 @@ module Decode : sig
   val bool : string -> bool t
   val float : string -> float t
   val node : string -> Value.node t
-  val map : ('a -> 'b) @ many -> 'a t -> 'b t
+  val map : ('a -> 'b) -> 'a t -> 'b t
   val tuple2 : 'a t -> 'b t -> ('a * 'b) t
   val tuple3 : 'a t -> 'b t -> 'c t -> ('a * 'b * 'c) t
 end
@@ -95,12 +95,12 @@ module Expr : sig
 end
 
 module Pattern : sig
-  type direction : immutable_data =
+  type direction =
     | Out
     | In
     | Undirected
 
-  type hops : immutable_data =
+  type hops =
     | One
     | Range of int option * int option
 
@@ -144,7 +144,7 @@ end
 type database
 type connection
 
-type error_category : immutable_data =
+type error_category =
   | Query_syntax
   | Type_mismatch
   | Integrity_violation
@@ -152,7 +152,7 @@ type error_category : immutable_data =
   | Connection_closed_or_invalid
   | Other
 
-type error : immutable_data =
+type error =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -177,19 +177,19 @@ val classify_error : string -> error_category
 module Extension : sig
   type official
 
-  type source : immutable_data =
+  type source =
     | Official
     | User
     | Static_link
     | Unknown of string
 
-  type loaded : immutable_data = {
+  type loaded = {
     name : string;
     source : source;
     path : string;
   }
 
-  type available : immutable_data = {
+  type available = {
     name : string;
     description : string;
   }
@@ -223,7 +223,7 @@ end
 module Connection : sig
   type t = connection
 
-  type timed_error : immutable_data =
+  type timed_error =
     | Ladybug of error
     | Timeout
 
@@ -271,7 +271,7 @@ module Pool : sig
   type t
   type driver_error = error
 
-  type nonrec error : immutable_data =
+  type nonrec error =
     | Ladybug of driver_error
     | Pool_shutdown
     | Pool_shutdown_timeout

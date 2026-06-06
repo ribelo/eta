@@ -4,9 +4,9 @@ let default_file_chunk_size = 64 * 1024
 let file_queue_capacity = 16
 
 module Stream = struct
-  type file_operation : immutable_data = Eta_stream_file.operation
-  type file_error_kind : immutable_data = Eta_stream_file.error_kind
-  type file_error : immutable_data = Eta_stream_file.error = {
+  type file_operation = Eta_stream_file.operation
+  type file_error_kind = Eta_stream_file.error_kind
+  type file_error = Eta_stream_file.error = {
     operation : file_operation;
     path : string;
     kind : file_error_kind;
@@ -74,21 +74,21 @@ module Stream = struct
     Range { start; stop }
   let from_effect eff = From_effect eff
   let fail error = Fail error
-  let map (f @ many) stream = Map (stream, f)
-  let map_effect (f @ many) stream = Map_effect (stream, f)
-  let filter (f @ many) stream = Filter (stream, f)
+  let map (f) stream = Map (stream, f)
+  let map_effect (f) stream = Map_effect (stream, f)
+  let filter (f) stream = Filter (stream, f)
   let take n stream = Take (n, stream)
-  let take_until_effect (f @ many) stream = Take_until_effect (stream, f)
+  let take_until_effect (f) stream = Take_until_effect (stream, f)
   let drop n stream = Drop (n, stream)
-  let scan (f @ many) init stream = Scan (f, init, stream)
+  let scan (f) init stream = Scan (f, init, stream)
   let grouped n stream =
     if n <= 0 then invalid_arg "Eta_stream.grouped: n must be > 0";
     Grouped (n, stream)
   let concat left right = Concat (left, right)
-  let flat_map (f @ many) stream = Flat_map (stream, f)
+  let flat_map (f) stream = Flat_map (stream, f)
   let merge left right = Merge (left, right)
 
-  let flat_map_par ~max_concurrency (f @ many) stream =
+  let flat_map_par ~max_concurrency (f) stream =
     if max_concurrency <= 0 then
       invalid_arg "Eta_stream.flat_map_par: max_concurrency must be > 0";
     Flat_map_par (max_concurrency, stream, f)
@@ -124,13 +124,13 @@ module Drain_counter = Drain_counter_internal
 
 module Sink = struct
   type ('in_, 'out, 'err) t = {
-    init : (unit -> 'out) @@ many;
-    step : ('out -> 'in_ -> ('out, 'err) Eta.Effect.t) @@ many;
+    init : (unit -> 'out);
+    step : ('out -> 'in_ -> ('out, 'err) Eta.Effect.t);
     pure_step : ('out -> 'in_ -> 'out) option;
-    done_ : ('out -> ('out, 'err) Eta.Effect.t) @@ many;
+    done_ : ('out -> ('out, 'err) Eta.Effect.t);
   }
 
-  let fold (f @ many) init =
+  let fold (f) init =
     {
       init = (fun () -> init);
       step = (fun acc value -> Eta.Effect.pure (f acc value));
@@ -138,7 +138,7 @@ module Sink = struct
       done_ = Eta.Effect.pure;
     }
 
-  let fold_effect (f @ many) init =
+  let fold_effect (f) init =
     { init = (fun () -> init); step = f; pure_step = None; done_ = Eta.Effect.pure }
 
   let collect_to_list =
@@ -167,7 +167,7 @@ module Sink = struct
 end
 
 type ('acc, 'a, 'err) folder = {
-  emit : ('acc -> 'a -> ('acc * bool, 'err) Eta.Effect.t) @@ many;
+  emit : ('acc -> 'a -> ('acc * bool, 'err) Eta.Effect.t);
 }
 
 type ('a, 'err) queue_event = Item of 'a | Done | Failed of 'err
@@ -212,30 +212,29 @@ and try_fold_pure :
       | Chunk values -> List.fold_left k acc values
       (* Fused source-specific loops: avoid composed closure indirection *)
       | Range { start; stop } ->
-          let mutable acc = acc in
-          for i = start to stop do
-            acc <- k acc i
-          done;
-          acc
+          let rec loop i acc =
+            if i > stop then acc else loop (i + 1) (k acc i)
+          in
+          loop start acc
       | Map (Range { start; stop }, f) ->
-          let mutable acc = acc in
-          for i = start to stop do
-            acc <- k acc (f i)
-          done;
-          acc
+          let rec loop i acc =
+            if i > stop then acc else loop (i + 1) (k acc (f i))
+          in
+          loop start acc
       | Filter (Range { start; stop }, pred) ->
-          let mutable acc = acc in
-          for i = start to stop do
-            if pred i then acc <- k acc i
-          done;
-          acc
+          let rec loop i acc =
+            if i > stop then acc
+            else loop (i + 1) (if pred i then k acc i else acc)
+          in
+          loop start acc
       | Filter (Map (Range { start; stop }, f), pred) ->
-          let mutable acc = acc in
-          for i = start to stop do
-            let y = f i in
-            if pred y then acc <- k acc y
-          done;
-          acc
+          let rec loop i acc =
+            if i > stop then acc
+            else
+              let y = f i in
+              loop (i + 1) (if pred y then k acc y else acc)
+          in
+          loop start acc
       | Map (Chunk values, f) ->
           let rec loop acc = function
             | [] -> acc
@@ -266,6 +265,16 @@ and try_fold_pure :
             (fun a x ->
               if !remaining > 0 then (decr remaining; a) else k a x)
             acc
+      | Take (n, Merge (Chunk left, Chunk right)) ->
+          if n <= 0 then acc
+          else
+            let rec take_list remaining acc = function
+              | [] -> (acc, remaining)
+              | _ when remaining <= 0 -> (acc, 0)
+              | x :: xs -> take_list (remaining - 1) (k acc x) xs
+            in
+            let acc, remaining = take_list n acc left in
+            if remaining <= 0 then acc else fst (take_list remaining acc right)
       | Take (n, inner) ->
           if n <= 0 then acc
           else
@@ -287,6 +296,9 @@ and try_fold_pure :
               k a next)
             acc
       | Concat (left, right) -> go right k (go left k acc)
+      | Merge (left, right) -> go right k (go left k acc)
+      | Flat_map (inner, f) -> go inner (fun a x -> go (f x) k a) acc
+      | Flat_map_par (_, inner, f) -> go inner (fun a x -> go (f x) k a) acc
       | Named (_, inner) | Fn (_, _, _, _, _, inner) -> go inner k acc
       | _ -> raise Bail
   in
@@ -319,9 +331,9 @@ and fold_stream :
       fold_stream inner acc
         {
           emit =
-            (fun acc value ->
-              if f value then folder.emit acc value
-              else Eta.Effect.pure (acc, true));
+              (fun acc value ->
+                if f value then folder.emit acc value
+                else Eta.Effect.pure (acc, true));
         }
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)
@@ -817,7 +829,8 @@ and effect_list :
     (fold_stream stream []
        { emit = (fun acc value -> Eta.Effect.pure (value :: acc, true)) })
 
-let run stream sink =
+let run : type a b err. (a, err) Stream.t -> (a, b, err) Sink.t -> (b, err) Eta.Effect.t =
+ fun stream sink ->
   let init = sink.Sink.init () in
   match sink.Sink.pure_step with
   | Some step ->

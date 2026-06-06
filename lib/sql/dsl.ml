@@ -6,8 +6,8 @@ module Backend = struct
   exception Error = Types.Error
 
   type nonrec 'a typ = 'a Types.typ = {
-    value : ('a -> value) @@ many;
-    decode : (row -> int -> 'a) @@ many;
+    value : ('a -> value);
+    decode : (row -> int -> 'a);
     sql_type : string;
   }
 

@@ -4,8 +4,7 @@ synopsis: "Shared Eta SQL driver runtime helpers"
 description:
   "eta_sql_driver provides shared blocking-pool and cancellation helpers for Eta SQL connector packages."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "odoc" {with-doc}

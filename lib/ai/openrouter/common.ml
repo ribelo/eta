@@ -7,14 +7,14 @@ module Codec = Eta_ai_openai_codec
 module H = Eta_http
 module Json = A.Json
 
-type attribution : immutable_data = {
+type attribution = {
   referer : string option;
   title : string option;
 }
 
 let attribution ?referer ?title () = { referer; title }
 
-type routing : immutable_data = {
+type routing = {
   order : string list;
   only_providers : string list;
   ignored_providers : string list;
@@ -23,11 +23,11 @@ type routing : immutable_data = {
   sort : string option;
 }
 
-type reasoning : immutable_data = {
+type reasoning = {
   effort : string option;
 }
 
-type structured_output : immutable_data = Codec.structured_output = {
+type structured_output = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;

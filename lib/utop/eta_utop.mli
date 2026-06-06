@@ -43,7 +43,7 @@ val run :
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->
   ('a, 'err) Eta.Exit.t
-(** Run one effect and return its full Eta exit. *)
+(** Run one eff and return its full Eta exit. *)
 
 val run_exn :
   ?tracer:Eta.Capabilities.tracer ->
@@ -57,4 +57,4 @@ val run_exn :
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->
   'a
-(** Run one effect and raise on non-success, using {!Eta.Runtime.run_exn}. *)
+(** Run one eff and raise on non-success, using {!Eta.Runtime.run_exn}. *)

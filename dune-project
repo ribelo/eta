@@ -10,11 +10,9 @@
  (description
   "Eta ports the core ideas of TypeScript Effect and Scala ZIO to idiomatic OCaml: typed failures, success values, resource scopes, schedules, retry, race, timeout, and detached fibers.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   (eio (>= 1.0))
-  portable
   (cstruct (>= 6.0.0))))
 
 (package
@@ -23,8 +21,7 @@
  (description
   "eta_utop provides small Eio_main-backed helpers for running Eta effects from dune utop sessions.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   (eio (>= 1.0))
@@ -36,8 +33,7 @@
  (description
   "eta_stream provides stream and queue primitives for Eta programs.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   (eio (>= 1.0))
@@ -49,8 +45,7 @@
  (description
   "eta_http provides HTTP, WebSocket, TLS, and HTTP/2 support for Eta programs.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_stream
@@ -76,8 +71,7 @@
  (description
   "eta_sql_dsl provides the backend-agnostic typed SQL builder shared by Eta SQL connector packages.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))))
 
 (package
@@ -86,8 +80,7 @@
  (description
   "eta_sql_driver provides shared blocking-pool and cancellation helpers for Eta SQL connector packages.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta))
 
@@ -97,8 +90,7 @@
  (description
   "eta_sql provides prepared SQLite statements and a typed Eta effect surface.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_sql_driver
@@ -112,8 +104,7 @@
  (description
   "eta_duckdb provides an optional DuckDB connector for Eta programs. The DuckDB C library is loaded at runtime by the connector package, not by root eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_sql_driver
@@ -125,8 +116,7 @@
  (description
   "eta_turso provides an optional Turso SQL connector for Eta programs. The Turso SQLite-compatible C library is loaded at runtime by the connector package, not by root eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_sql_driver
@@ -139,8 +129,7 @@
  (description
   "eta_ladybug provides an optional LadybugDB graph connector for Eta programs. The LadybugDB C library is loaded at runtime by the connector package, not by root eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta))
 
@@ -150,8 +139,7 @@
  (description
   "eta_redacted provides small secret wrappers for Eta logs, traces, and provider clients.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))))
 
 (package
@@ -160,8 +148,7 @@
  (description
   "eta_schema provides lightweight schema definitions for Eta programs.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta))
 
@@ -171,8 +158,7 @@
  (description
   "eta_test provides virtual clocks, deterministic random values, and Alcotest helpers for Eta programs.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   (eio (>= 1.0))
@@ -185,8 +171,7 @@
  (description
   "eta_schema_test provides test helpers for eta_schema codecs and values.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_schema
@@ -199,8 +184,7 @@
  (description
   "eta_otel exports Eta logger, tracer, and meter capabilities through OpenTelemetry protocols.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_stream
@@ -214,8 +198,7 @@
  (description
   "eta_ai provides provider-agnostic chat and streaming types for Eta LLM clients.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_redacted
@@ -228,8 +211,7 @@
  (description
   "eta_ai_openai_codec provides shared OpenAI-compatible wire codecs for Eta AI providers.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta_ai
   base64))
@@ -240,8 +222,7 @@
  (description
   "eta_ai_openai provides OpenAI chat, streaming, and realtime clients for Eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_ai
@@ -258,8 +239,7 @@
  (description
   "eta_ai_anthropic provides Anthropic chat and streaming clients for Eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_ai
@@ -273,8 +253,7 @@
  (description
   "eta_ai_openai_compat provides OpenAI-compatible provider adapters for Eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_ai
@@ -289,8 +268,7 @@
  (description
   "eta_ai_openrouter provides OpenRouter clients for Eta.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_ai
@@ -306,8 +284,7 @@
  (description
   "ppx_eta provides small syntax helpers for Eta effects and Eta SQL table declarations.")
  (depends
-  (ocaml (= 5.2.0))
-  (ocaml-variants (= 5.2.0+ox))
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   ppxlib
   (eta :with-test)

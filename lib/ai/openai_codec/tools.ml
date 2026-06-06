@@ -3,7 +3,7 @@ module Json = A.Json
 
 open Core
 
-type tool_shape : immutable_data =
+type tool_shape =
   | Chat_tool
   | Responses_tool
 
@@ -41,7 +41,7 @@ let tool_json ~schema_value ~shape (tool : A.tool) =
   in
   Stdlib.Ok json
 
-type structured_output_shape : immutable_data =
+type structured_output_shape =
   | Chat_response_format
   | Responses_format
 

@@ -1,10 +1,10 @@
 module Json = struct
-  type number : immutable_data =
+  type number =
     | Int of int
     | Intlit of string
     | Float of float
 
-  type t : immutable_data =
+  type t =
     | Null
     | Bool of bool
     | Number of number
@@ -75,7 +75,14 @@ module Json = struct
     | Intlit n -> n
     | Float n -> float_to_string n
 
-  let find key = function Object fields -> List.assoc_opt key fields | _ -> None
+  let rec find_field key = function
+    | [] -> None
+    | (name, value) :: rest ->
+        if String.equal key name then Some value else find_field key rest
+
+  let find key = function
+    | Object fields -> find_field key fields
+    | _ -> None
 
   let rec equal a b =
     match (a, b) with
@@ -118,11 +125,14 @@ module Json = struct
         Buffer.add_char buffer (hex_digit (code land 0xf))
     | c -> Buffer.add_char buffer c
 
-  let json_string s =
-    let buffer = Buffer.create (String.length s + 2) in
+  let add_json_string buffer s =
     Buffer.add_char buffer '"';
     String.iter (add_json_escape buffer) s;
-    Buffer.add_char buffer '"';
+    Buffer.add_char buffer '"'
+
+  let json_string s =
+    let buffer = Buffer.create (String.length s + 2) in
+    add_json_string buffer s;
     Buffer.contents buffer
 
   let rec add_to_buffer buffer = function
@@ -130,7 +140,7 @@ module Json = struct
     | Bool true -> Buffer.add_string buffer "true"
     | Bool false -> Buffer.add_string buffer "false"
     | Number n -> Buffer.add_string buffer (number_to_string n)
-    | String s -> Buffer.add_string buffer (json_string s)
+    | String s -> add_json_string buffer s
     | Array xs ->
         Buffer.add_char buffer '[';
         add_array_items buffer xs;
@@ -156,14 +166,14 @@ module Json = struct
   and add_object_fields buffer = function
     | [] -> ()
     | (key, value) :: rest ->
-        Buffer.add_string buffer (json_string key);
+        add_json_string buffer key;
         Buffer.add_string buffer ": ";
         add_to_buffer buffer value;
         let rec add_rest = function
           | [] -> ()
           | (key, value) :: rest ->
             Buffer.add_string buffer ", ";
-            Buffer.add_string buffer (json_string key);
+            add_json_string buffer key;
             Buffer.add_string buffer ": ";
             add_to_buffer buffer value;
             add_rest rest
@@ -178,11 +188,11 @@ end
 
 type json = Json.t
 
-type path_segment : immutable_data =
+type path_segment =
   | Field of string
   | Index of int
 
-type issue_kind : immutable_data =
+type issue_kind =
   | Type_mismatch of {
       expected : string;
       got : string;
@@ -194,13 +204,13 @@ type issue_kind : immutable_data =
       reason : string;
     }
 
-type issue : immutable_data = {
+type issue = {
   path : path_segment list;
   schema_name : string option;
   kind : issue_kind;
 }
 
-type error : immutable_data = [ `Decode of issue list | `Encode of issue list ]
+type error = [ `Decode of issue list | `Encode of issue list ]
 
 let issue ?(path = []) ?schema_name message =
   { path; schema_name; kind = Custom message }
@@ -210,6 +220,12 @@ let type_mismatch ?(path = []) ?schema_name ~expected ~got () =
 
 let missing_field ?(path = []) ?schema_name name =
   { path; schema_name; kind = Missing_field name }
+
+let json_got = function
+  | Json.Null -> "null"
+  | Json.Bool true -> "true"
+  | Json.Bool false -> "false"
+  | json -> Json.to_string json
 
 let at segment issues =
   List.map (fun issue -> { issue with path = segment :: issue.path }) issues
@@ -290,27 +306,27 @@ let issue_to_json_pointer issue =
 
 module Eta_schema = struct
   type 'a t = {
-    decode : (Json.t -> ('a, issue list) result) @@ many;
-    encode : ('a -> (Json.t, issue list) result) @@ many;
-    equal : ('a -> 'a -> bool) @@ many;
+    decode : (Json.t -> ('a, issue list) result);
+    encode : ('a -> (Json.t, issue list) result);
+    equal : ('a -> 'a -> bool);
   }
 
   type ('record, 'field) field =
     | Required : {
         name : string;
         schema : 'field t;
-        get : ('record -> 'field) @@ many;
+        get : ('record -> 'field);
       }
         -> ('record, 'field) field
     | Optional : {
         name : string;
         schema : 'field t;
-        get : ('record -> 'field option) @@ many;
+        get : ('record -> 'field option);
       }
         -> ('record, 'field option) field
 
-  let required name schema (get @ many) = Required { name; schema; get }
-  let optional name schema (get @ many) = Optional { name; schema; get }
+  let required name schema (get) = Required { name; schema; get }
+  let optional name schema (get) = Optional { name; schema; get }
 
   let int_of_string_exact s =
     match int_of_string_opt s with
@@ -344,7 +360,7 @@ module Eta_schema = struct
         (function
         | Json.String s -> Ok s
         | json ->
-            Error [ type_mismatch ~expected:"string" ~got:(Json.to_string json) () ]);
+            Error [ type_mismatch ~expected:"string" ~got:(json_got json) () ]);
       encode = (fun s -> Ok (Json.String s));
       equal = String.equal;
     }
@@ -355,7 +371,7 @@ module Eta_schema = struct
         (function
         | Json.Bool b -> Ok b
         | json ->
-            Error [ type_mismatch ~expected:"boolean" ~got:(Json.to_string json) () ]);
+            Error [ type_mismatch ~expected:"boolean" ~got:(json_got json) () ]);
       encode = (fun b -> Ok (Json.Bool b));
       equal = Bool.equal;
     }
@@ -370,7 +386,7 @@ module Eta_schema = struct
             | None ->
                 Error
                   [ type_mismatch ~expected:"int" ~got:(Json.to_string (Json.Number n)) () ])
-        | json -> Error [ type_mismatch ~expected:"int" ~got:(Json.to_string json) () ]);
+        | json -> Error [ type_mismatch ~expected:"int" ~got:(json_got json) () ]);
       encode = (fun n -> Ok (Json.int n));
       equal = Int.equal;
     }
@@ -386,7 +402,7 @@ module Eta_schema = struct
                 Error
                   [ type_mismatch ~expected:"number" ~got:(Json.to_string (Json.Number n)) () ])
         | json ->
-            Error [ type_mismatch ~expected:"number" ~got:(Json.to_string json) () ]);
+            Error [ type_mismatch ~expected:"number" ~got:(json_got json) () ]);
       encode = (fun n -> Ok (Json.number n));
       equal = Float.equal;
     }
@@ -407,7 +423,7 @@ module Eta_schema = struct
                       rest)
           in
           loop 0 [] [] xs
-      | json -> Error [ type_mismatch ~expected:"array" ~got:(Json.to_string json) () ]
+      | json -> Error [ type_mismatch ~expected:"array" ~got:(json_got json) () ]
     in
     {
       decode;
@@ -454,7 +470,7 @@ module Eta_schema = struct
                     ~got:(Json.to_string (Json.String s)) ();
                 ])
       | json ->
-          Error [ type_mismatch ~schema_name:name ~expected:name ~got:(Json.to_string json) () ]
+          Error [ type_mismatch ~schema_name:name ~expected:name ~got:(json_got json) () ]
     in
     let encode value =
       match List.find_opt (fun (_, candidate) -> equal value candidate) cases with
@@ -469,11 +485,11 @@ module Eta_schema = struct
 
   type 'a case = {
     tag_value : string;
-    decode_case : (Json.t -> ('a, issue list) result) @@ many;
-    encode_case : ('a -> (Json.t option, issue list) result) @@ many;
+    decode_case : (Json.t -> ('a, issue list) result);
+    encode_case : ('a -> (Json.t option, issue list) result);
   }
 
-  let case ~tag ~(decode @ many) ~(encode @ many) =
+  let case ~tag ~(decode) ~(encode) =
     { tag_value = tag; decode_case = decode; encode_case = encode }
 
   let tagged_union ~name ~tag cases ~equal =
@@ -487,7 +503,7 @@ module Eta_schema = struct
           Error
             [
               type_mismatch ~path:[ Field tag ] ~schema_name:name ~expected:"string tag"
-                ~got:(Json.to_string json) ();
+                ~got:(json_got json) ();
             ]
       | None -> Error [ missing_field ~path:[ Field tag ] ~schema_name:name tag ]
     in
@@ -565,6 +581,31 @@ module Eta_schema = struct
     in
     loop [] [] fields
 
+  let emit_acc : type record a.
+      record ->
+      (string * Json.t) list ->
+      issue list ->
+      (record, a) field ->
+      (string * Json.t) list * issue list =
+   fun record values issues field ->
+    match emit_field field record with
+    | Ok None -> (values, issues)
+    | Ok (Some field) -> (field :: values, issues)
+    | Error field_issues -> (values, List.rev_append field_issues issues)
+
+  let finish_object values issues =
+    if issues = [] then Ok (Json.Object (List.rev values))
+    else Error (List.rev issues)
+
+  let encode_object6 f1 f2 f3 f4 f5 f6 record =
+    let values, issues = emit_acc record [] [] f1 in
+    let values, issues = emit_acc record values issues f2 in
+    let values, issues = emit_acc record values issues f3 in
+    let values, issues = emit_acc record values issues f4 in
+    let values, issues = emit_acc record values issues f5 in
+    let values, issues = emit_acc record values issues f6 in
+    finish_object values issues
+
   let decode_apply decoded_f decoded_value =
     match (decoded_f, decoded_value) with
     | Ok f, Ok value -> Ok (f value)
@@ -577,7 +618,7 @@ module Eta_schema = struct
      record builders. Shared encode/decode helpers above hold the object
      invariants; the record1..record6 functions below only sequence fields into
      ordinary curried constructors. *)
-  let record ~name ~fields ~(decode @ many) ~(equal @ many) =
+  let record ~name ~(decode) ~(encode) ~(equal) =
     {
       decode =
         (function
@@ -587,68 +628,69 @@ module Eta_schema = struct
             Error
               [
                 type_mismatch ~schema_name:name ~expected:("object " ^ name)
-                  ~got:(Json.to_string json) ();
+                  ~got:(json_got json) ();
               ]);
       encode =
         (fun record ->
-          Result.map_error (with_schema_name name) (encode_object fields record));
+          Result.map_error (with_schema_name name) (encode record));
       equal;
     }
 
-  let record1 ~name (make @ many) f1 ~(equal @ many) () =
-    record ~name ~fields:[ Any_field f1 ]
+  let record1 ~name (make) f1 ~(equal) () =
+    record ~name ~encode:(encode_object [ Any_field f1 ])
       ~decode:(fun json -> Ok make <*> decode_field json f1)
       ~equal
 
-  let record2 ~name (make @ many) f1 f2 ~(equal @ many) () =
-    record ~name ~fields:[ Any_field f1; Any_field f2 ]
+  let record2 ~name (make) f1 f2 ~(equal) () =
+    record ~name ~encode:(encode_object [ Any_field f1; Any_field f2 ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2)
       ~equal
 
-  let record3 ~name (make @ many) f1 f2 f3 ~(equal @ many) () =
-    record ~name ~fields:[ Any_field f1; Any_field f2; Any_field f3 ]
+  let record3 ~name (make) f1 f2 f3 ~(equal) () =
+    record ~name ~encode:(encode_object [ Any_field f1; Any_field f2; Any_field f3 ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
         <*> decode_field json f3)
       ~equal
 
-  let record4 ~name (make @ many) f1 f2 f3 f4 ~(equal @ many) () =
+  let record4 ~name (make) f1 f2 f3 f4 ~(equal) () =
     record ~name
-      ~fields:[ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ]
+      ~encode:
+        (encode_object
+           [ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
         <*> decode_field json f3 <*> decode_field json f4)
       ~equal
 
-  let record5 ~name (make @ many) f1 f2 f3 f4 f5 ~(equal @ many) () =
+  let record5 ~name (make) f1 f2 f3 f4 f5 ~(equal) () =
     record ~name
-      ~fields:
-        [ Any_field f1; Any_field f2; Any_field f3; Any_field f4; Any_field f5 ]
+      ~encode:
+        (encode_object
+           [
+             Any_field f1;
+             Any_field f2;
+             Any_field f3;
+             Any_field f4;
+             Any_field f5;
+           ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
         <*> decode_field json f3 <*> decode_field json f4
         <*> decode_field json f5)
       ~equal
 
-  let record6 ~name (make @ many) f1 f2 f3 f4 f5 f6 ~(equal @ many) () =
+  let record6 ~name (make) f1 f2 f3 f4 f5 f6 ~(equal) () =
     record ~name
-      ~fields:
-        [
-          Any_field f1;
-          Any_field f2;
-          Any_field f3;
-          Any_field f4;
-          Any_field f5;
-          Any_field f6;
-        ]
+      ~encode:(encode_object6 f1 f2 f3 f4 f5 f6)
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
         <*> decode_field json f3 <*> decode_field json f4
         <*> decode_field json f5 <*> decode_field json f6)
       ~equal
 
-  let refine ~name (check @ many) schema =
+  let refine ~name (check) schema =
     {
       schema with
       decode =
@@ -661,7 +703,7 @@ module Eta_schema = struct
               | issues -> Error (with_refinement_name name issues)));
     }
 
-  let transform ~name ~(equal @ many) ~(decode @ many) ~(encode @ many) schema =
+  let transform ~name ~(equal) ~(decode) ~(encode) schema =
     {
       decode =
         (fun json ->

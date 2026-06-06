@@ -23,10 +23,4 @@
   runtime_observability
   runtime_substrate
   runtime_supervisor)
- (libraries eio eio.unix cstruct portable unix threads)
- (flags (:standard -alert -unsafe_multidomain -alert -do_not_spawn_domains)))
-
-(env
- (release
-  (ocamlopt_flags
-   (:standard -zero-alloc-check all))))
+ (libraries eio eio.unix cstruct unix threads))

@@ -51,7 +51,7 @@ let () =
           Alcotest.test_case "decode error" `Quick test_decode_error;
           Alcotest.test_case "encode error" `Quick test_encode_error;
           Alcotest.test_case "roundtrip json" `Quick test_roundtrip_json;
-          Alcotest.test_case "effect subset policy" `Quick
+          Alcotest.test_case "eff subset policy" `Quick
             test_effect_subset_policy;
         ] );
     ]

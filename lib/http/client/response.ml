@@ -4,10 +4,10 @@ type t = {
   status : int;
   headers : Header.t;
   body : Stream.t;
-  trailers : (unit -> (Header.t, Error.t) Eta.Effect.t) @@ many;
+  trailers : (unit -> (Header.t, Error.t) Eta.Effect.t);
 }
 
 let make ?(headers = Header.empty)
-    ?(trailers @ many = fun () -> Eta.Effect.pure Header.empty) ~status
+    ?(trailers = fun () -> Eta.Effect.pure Header.empty) ~status
     ~body () =
   { status; headers; body; trailers }

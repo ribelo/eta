@@ -77,7 +77,7 @@ val queue_depth : t -> int
 (** {1 Internals exposed for testing} *)
 
 module Metric_key : sig
-  type t : immutable_data = {
+  type t = {
     name : string;
     description : string;
     unit_ : string;
@@ -98,13 +98,13 @@ val aggregate_points :
 
 module Internal : sig
   type span = {
-    global_ trace_id : string;
-    global_ span_id : string;
-    global_ parent_span_id : string option;
+    trace_id : string;
+    span_id : string;
+    parent_span_id : string option;
     trace_flags : int;
-    global_ trace_state : (string * string) list;
-    global_ baggage : (string * string) list;
-    global_ name : string;
+    trace_state : (string * string) list;
+    baggage : (string * string) list;
+    name : string;
     kind : Eta.Capabilities.span_kind;
     start_unix_ns : int;
     mutable end_unix_ns : int;

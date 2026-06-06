@@ -4,8 +4,7 @@ synopsis: "Testing helpers for Eta"
 description:
   "eta_test provides virtual clocks, deterministic random values, and Alcotest helpers for Eta programs."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eio" {>= "1.0"}

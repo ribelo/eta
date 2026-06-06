@@ -9,13 +9,13 @@ let with_runtime ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
     ?blocking_pool ?capture_backtrace f
 
 let run ?tracer ?sampler ?auto_instrument ?logger ?meter ?random ?island_pool
-    ?blocking_pool ?capture_backtrace effect =
+    ?blocking_pool ?capture_backtrace eff =
   with_runtime ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
     ?island_pool ?blocking_pool ?capture_backtrace @@ fun runtime ->
-  Eta.Runtime.run runtime effect
+  Eta.Runtime.run runtime eff
 
 let run_exn ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
-    ?island_pool ?blocking_pool ?capture_backtrace effect =
+    ?island_pool ?blocking_pool ?capture_backtrace eff =
   with_runtime ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
     ?island_pool ?blocking_pool ?capture_backtrace @@ fun runtime ->
-  Eta.Runtime.run_exn runtime effect
+  Eta.Runtime.run_exn runtime eff

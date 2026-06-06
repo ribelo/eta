@@ -1,20 +1,27 @@
-module P_atomic = Portable.Atomic
-module P_atomic_array = Portable.Atomic_array
+module P_atomic = Atomic
 
-type state : immutable_data = {
+module P_atomic_array = struct
+  type 'a t = 'a Atomic.t array
+
+  let create ~len value = Array.init len (fun _ -> Atomic.make value)
+  let get slots index = Atomic.get slots.(index)
+  let set slots index value = Atomic.set slots.(index) value
+end
+
+type state = {
   head : int;
   tail : int;
   published : int;
   closed : bool;
 }
 
-type ('a : value mod portable) t : value mod portable contended = {
+type ('a) t = {
   capacity : int;
   state : state P_atomic.t;
   slots : 'a option P_atomic_array.t;
 }
 
-type push_result : immutable_data =
+type push_result =
   | Pushed
   | Full
   | Closed
@@ -33,11 +40,7 @@ let create ~capacity =
   }
 
 let cas_state queue seen replace_with =
-  match
-    P_atomic.compare_and_set queue.state ~if_phys_equal_to:seen ~replace_with
-  with
-  | P_atomic.Compare_failed_or_set_here.Set_here -> true
-  | P_atomic.Compare_failed_or_set_here.Compare_failed -> false
+  P_atomic.compare_and_set queue.state seen replace_with
 
 let rec wait_empty slots index =
   match P_atomic_array.get slots index with

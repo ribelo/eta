@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type t : immutable_data = H1_0 | H1_1 | H2
+type t = H1_0 | H1_1 | H2
 
 let to_string = function
   | H1_0 -> "http/1.0"

@@ -18,17 +18,19 @@ module Test_clock = struct
     | 0 -> Int.compare a.sequence b.sequence
     | order -> order
 
+  let rec insert_sleeper sleeper = function
+    | [] -> [ sleeper ]
+    | next :: rest as sleepers ->
+        if sleeper_compare sleeper next <= 0 then sleeper :: sleepers
+        else next :: insert_sleeper sleeper rest
+
   let take_next_due t target_ms =
-    let due, pending =
-      List.partition
-        (fun sleeper -> sleeper.deadline_ms <= target_ms)
-        t.sleepers
-    in
-    match List.sort sleeper_compare due with
+    match t.sleepers with
     | [] -> None
-    | sleeper :: rest ->
-        t.sleepers <- rest @ pending;
+    | sleeper :: rest when sleeper.deadline_ms <= target_ms ->
+        t.sleepers <- rest;
         Some sleeper
+    | _ -> None
 
   let rec wake_until t target_ms =
     match take_next_due t target_ms with
@@ -46,7 +48,8 @@ module Test_clock = struct
       let promise, resolver = Eio.Promise.create () in
       let sequence = t.next_sequence in
       t.next_sequence <- t.next_sequence + 1;
-      t.sleepers <- { deadline_ms; sequence; resolver } :: t.sleepers;
+      t.sleepers <-
+        insert_sleeper { deadline_ms; sequence; resolver } t.sleepers;
       Eio.Promise.await promise
 
   let adjust t duration =
@@ -115,10 +118,10 @@ let with_traced_test_clock f =
 module Async = struct
   type 'a promise = 'a Eio.Promise.t
 
-  let fork_run sw rt effect =
+  let fork_run sw rt eff =
     let promise, resolver = Eio.Promise.create () in
     Eio.Fiber.fork ~sw (fun () ->
-        Eio.Promise.resolve resolver (Eta.Runtime.run rt effect));
+        Eio.Promise.resolve resolver (Eta.Runtime.run rt eff));
     promise
 
   let await = Eio.Promise.await

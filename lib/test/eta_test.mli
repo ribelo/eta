@@ -1,7 +1,7 @@
 (** Testing helpers for Eta programs.
 
     The v1 surface follows Eta's runtime seams rather than cloning
-    effect-smol's test services. See journal.md, TestClock port near line 529,
+    eff-smol's test services. See journal.md, TestClock port near line 529,
     and V-CM-H2-C1 for the portable random token rationale. *)
 
 module Test_clock : sig
@@ -69,7 +69,7 @@ module Async : sig
     'err Eta.Runtime.t ->
     ('a, 'err) Eta.Effect.t ->
     ('a, 'err) Eta.Exit.t promise
-  (** [fork_run sw rt effect] runs [effect] on [rt] in a child fiber and
+  (** [fork_run sw rt eff] runs [eff] on [rt] in a child fiber and
       resolves the returned promise with its [Exit.t]. *)
 
   val await : 'a promise -> 'a

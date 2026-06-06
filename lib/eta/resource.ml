@@ -7,7 +7,7 @@ type ('a, 'err) t = {
   mutable failures : 'err Cause.t list;
 }
 
-let with_lock resource (f @ many) =
+let with_lock resource (f) =
   Eio.Mutex.lock resource.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock resource.mutex) f
 
@@ -60,7 +60,7 @@ let failures resource =
     (Effect.sync (fun () ->
          with_lock resource @@ fun () -> List.rev resource.failures))
 
-let auto ?(on_error @ many) ~load ?random ~schedule () =
+let auto ?(on_error) ~load ?random ~schedule () =
   let add_failure resource cause =
     Effect.sync (fun () ->
         with_lock resource @@ fun () ->

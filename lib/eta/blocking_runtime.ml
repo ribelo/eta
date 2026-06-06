@@ -1,14 +1,14 @@
-type queue_policy : immutable_data = Wait | Reject
-type shutdown_policy : immutable_data = Drain | Detach_started
+type queue_policy = Wait | Reject
+type shutdown_policy = Drain | Detach_started
 
-type config : immutable_data = {
+type config = {
   max_threads : int;
   max_queued : int;
   queue_policy : queue_policy;
   shutdown_policy : shutdown_policy;
 }
 
-type stats : immutable_data = {
+type stats = {
   active : int;
   queued : int;
   completed : int;
@@ -17,7 +17,7 @@ type stats : immutable_data = {
   detached : int;
 }
 
-type outcome : immutable_data =
+type outcome =
   | Blocking_ok
   | Blocking_error of string
   | Blocking_cancelled
@@ -25,7 +25,7 @@ type outcome : immutable_data =
   | Blocking_shutdown_rejected
   | Blocking_detached
 
-type event : immutable_data = {
+type event = {
   pool : string;
   name : string;
   queue_wait_ms : int;
@@ -448,17 +448,17 @@ let shutdown ~emit t =
 
 module Pool = struct
   type nonrec t = t
-  type nonrec queue_policy : immutable_data = queue_policy = Wait | Reject
-  type nonrec shutdown_policy : immutable_data = shutdown_policy = Drain | Detach_started
+  type nonrec queue_policy = queue_policy = Wait | Reject
+  type nonrec shutdown_policy = shutdown_policy = Drain | Detach_started
 
-  type nonrec config : immutable_data = config = {
+  type nonrec config = config = {
     max_threads : int;
     max_queued : int;
     queue_policy : queue_policy;
     shutdown_policy : shutdown_policy;
   }
 
-  type nonrec stats : immutable_data = stats = {
+  type nonrec stats = stats = {
     active : int;
     queued : int;
     completed : int;

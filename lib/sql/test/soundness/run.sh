@@ -16,8 +16,8 @@ for src in "$fixture_dir"/*_negative.ml; do
   log="$tmp_dir/$name.log"
   obj="$tmp_dir/${name%.ml}.cmx"
 
-  if ocamlfind ocamlopt -extension-universe alpha \
-      -package "eio,eio_main,portable,unix,threads" \
+  if ocamlfind ocamlopt \
+      -package "eio,eio_main,unix,threads" \
       -I "$par_obj_dir" -I "$eta_obj_dir" -I "$sql_obj_dir" \
       -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"

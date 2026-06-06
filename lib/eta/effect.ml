@@ -9,8 +9,8 @@ include Effect_observability
 include Effect_supervisor_scope
 include Effect_blocking
 
-let daemon_internal effect =
-  preserve effect @@ fun () ->
+let daemon_internal eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   Runtime_core.incr_active frame.runtime;
   fiber_fork_daemon frame ~sw:frame.runtime.outer_sw (fun () ->
@@ -31,7 +31,7 @@ let daemon_internal effect =
              Runtime_core.with_finalizers ~runtime:frame.runtime
                ~fail_key:frame.runtime.default_fail_key
                ~error_renderer:child_frame.error_renderer finalizers (fun () ->
-                 run_to_value child_frame effect)
+                 run_to_value child_frame eff)
            with exn ->
              Runtime_core.cause_of_exn_runtime frame.runtime
                frame.runtime.default_fail_key exn

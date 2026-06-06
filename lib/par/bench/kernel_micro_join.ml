@@ -14,11 +14,11 @@ let depth_quick = 14
 
 (* Tiny work per leaf — a few hundred cycles. *)
 let leaf_work x =
-  let mutable y = x in
+  let y = ref x in
   for _ = 1 to 4 do
-    y <- ((y * 2654435761) lxor (y lsr 13)) land 0x3FFFFFFF
+    y := ((!y * 2654435761) lxor (!y lsr 13)) land 0x3FFFFFFF
   done;
-  y
+  !y
 
 let rec serial_tree depth seed =
   if depth = 0 then leaf_work seed

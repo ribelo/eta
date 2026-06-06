@@ -1,4 +1,4 @@
-(* Port of @effect/opentelemetry/test/Logger.test.ts.
+(* Port of @eff/opentelemetry/test/Logger.test.ts.
 
    Effect-TS asserts that:
    1. Effect.log emits log records to the configured logger; ten emissions
@@ -43,7 +43,7 @@ let with_logger_and_tracer f =
   f rt logger tracer
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("emits log records", ...)`. *)
+(* Mirrors `it.eff("emits log records", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_emits_log_records () =
   with_logger @@ fun rt logger ->
@@ -52,7 +52,7 @@ let test_emits_log_records () =
     (List.length (Logger.dump logger))
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("uses monotonic clock timestamps and keeps them
+(* Mirrors `it.eff("uses monotonic clock timestamps and keeps them
    aligned with spans", ...)`.
 
    We can't substitute a custom Clock service the way Effect-TS does (Eta
@@ -98,7 +98,7 @@ let test_log_carries_active_span_ids () =
      else 0)
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `describe("not provided") > it.effect("withSpan", ...)`. *)
+(* Mirrors `describe("not provided") > it.eff("withSpan", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_not_provided_log_dropped () =
   Eio_main.run @@ fun stdenv ->

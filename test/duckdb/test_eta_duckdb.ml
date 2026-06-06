@@ -93,8 +93,8 @@ let pp_pool_error ppf = function
       Format.pp_print_string ppf "Pool_shutdown_timeout"
   | D.Pool.Timeout -> Format.pp_print_string ppf "Timeout"
 
-let run_pool_ok rt label effect =
-  match Runtime.run rt effect with
+let run_pool_ok rt label eff =
+  match Runtime.run rt eff with
   | Exit.Ok value -> value
   | Exit.Error cause ->
       Alcotest.failf "%s: %a" label

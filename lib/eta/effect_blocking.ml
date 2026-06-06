@@ -5,7 +5,7 @@ open Effect_core
 open Effect_concurrent
 
 module Blocking = struct
-  type ('a, 'err) effect = ('a, 'err) t
+  type ('a, 'err) eff = ('a, 'err) t
 
   module Pool = struct
     include Blocking_runtime.Pool
@@ -19,7 +19,7 @@ module Blocking = struct
       with exn -> exit_of_exn frame exn
   end
 
-  let submit ?pool ?(name = "blocking") ?on_cancel (f @ many) =
+  let submit ?pool ?(name = "blocking") ?on_cancel (f) =
     Blocking_runtime.check_not_worker "Effect.Blocking.submit";
     make ~names:[ name ] @@ fun () ->
     let frame = current_frame () in
@@ -37,13 +37,13 @@ module Blocking = struct
     with exn -> exit_of_exn frame exn
 end
 
-let blocking ?pool ?(name = "blocking") ?on_cancel (f @ many) =
+let blocking ?pool ?(name = "blocking") ?on_cancel (f) =
   Blocking.submit ?pool ~name ?on_cancel f
 
-let blocking_result ?pool ?name ?on_cancel (f @ many) =
+let blocking_result ?pool ?name ?on_cancel (f) =
   blocking ?pool ?name ?on_cancel f |> bind from_result
 
-let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout (f @ many) =
+let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout (f) =
   let name = Option.value ~default:"blocking" name in
   let cancel_hook_called = Atomic.make false in
   let on_cancel_once =
@@ -132,7 +132,7 @@ let blocking_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout (f @ man
       ]
   in
   try
-    match wait.eval () with
+    match eval wait with
     | Exit.Error cause -> error cause
     | Exit.Ok (`Completed (Exit.Ok (`Ok value))) -> publish_value value
     | Exit.Ok (`Completed (Exit.Ok (`Error err))) -> publish_error err

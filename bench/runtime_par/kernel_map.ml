@@ -12,11 +12,11 @@ let n_quick = 1_000_000
 (* Per-element work: 32 rounds of a mixing function.  Heavy enough that
    the indirect call to [f] in [par_map] is amortised. *)
 let work x =
-  let mutable y = x in
+  let y = ref x in
   for _ = 1 to 32 do
-    y <- ((y * 2654435761) lxor (y lsr 13)) land 0x3FFFFFFF
+    y := ((!y * 2654435761) lxor (!y lsr 13)) land 0x3FFFFFFF
   done;
-  y
+  !y
 
 let make_input n = Array.init n Fun.id
 

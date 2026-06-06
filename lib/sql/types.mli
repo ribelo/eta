@@ -1,4 +1,4 @@
-type error : immutable_data =
+type error =
   | Sqlite of Sqlite.error
   | Pool_error of string
   | Invalid_query of string
@@ -17,8 +17,8 @@ exception Error of error
 val raise_error : error -> 'a
 
 type 'a typ = {
-  value : ('a -> Value.t) @@ many;
-  decode : (Sqlite.stmt -> int -> 'a) @@ many;
+  value : ('a -> Value.t);
+  decode : (Sqlite.stmt -> int -> 'a);
   sql_type : string;
 }
 

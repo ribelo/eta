@@ -1,10 +1,10 @@
-type worker_die : immutable_data = {
+type worker_die = {
   kind : string;
   message : string;
   backtrace : string option;
 }
 
-type ('a : immutable_data, 'e : immutable_data) settled : immutable_data =
+type ('a, 'e) settled =
   | Ok of 'a
   | Error of 'e
   | Worker_died of worker_die
@@ -14,17 +14,16 @@ type pool = {
   stopped : bool Atomic.t;
 }
 
-type ('a : immutable_data) map_outcome : immutable_data =
+type ('a) map_outcome =
   | Map_ok of 'a
   | Map_worker_died of worker_die
 
-type ('a : immutable_data, 'e : immutable_data) result_outcome :
-  immutable_data =
+type ('a, 'e) result_outcome =
   | Result_ok of 'a
   | Result_error of 'e
   | Result_worker_died of worker_die
 
-let (worker_die_of_exn @ portable) exn =
+let worker_die_of_exn exn =
   let backtrace =
     Printexc.raw_backtrace_to_string (Printexc.get_raw_backtrace ())
   in
@@ -62,48 +61,48 @@ let ensure_running pool =
   if Atomic.get pool.stopped then
     invalid_arg "Eta.Island: pool already shut down"
 
-let (capture_map @ portable) (f @ portable) input =
+let capture_map (f) input =
   try Map_ok (f input) with exn -> Map_worker_died (worker_die_of_exn exn)
 
-let (capture_result @ portable) (f @ portable) input =
+let capture_result (f) input =
   try
     match f input with
     | Stdlib.Ok value -> Result_ok value
     | Stdlib.Error error -> Result_error error
   with exn -> Result_worker_died (worker_die_of_exn exn)
 
-let map_outcomes pool (f @ portable) inputs =
+let map_outcomes pool (f) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_map f input)
   |> Par.Pool.run_many_on_workers pool.pool
 
-let result_outcomes pool (f @ portable) inputs =
+let result_outcomes pool (f) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_result f input)
   |> Par.Pool.run_many_on_workers pool.pool
 
-let submit name pool (f @ portable) input =
+let submit name pool (f) input =
   match map_outcomes pool f [ input ] with
   | [ Map_ok value ] -> value
   | [ Map_worker_died die ] -> raise_worker_die name die
   | outcomes -> unexpected_outcome_count name (List.length outcomes)
 
-let submit_map name pool (f @ portable) inputs =
+let submit_map name pool (f) inputs =
   map_outcomes pool f inputs
   |> List.map (function
        | Map_ok value -> value
        | Map_worker_died die -> raise_worker_die name die)
 
-let submit_map_result name pool (f @ portable) inputs =
+let submit_map_result name pool (f) inputs =
   result_outcomes pool f inputs
   |> List.map (function
        | Result_ok value -> Stdlib.Ok value
        | Result_error error -> Stdlib.Error error
        | Result_worker_died die -> raise_worker_die name die)
 
-let submit_all_settled pool (f @ portable) inputs =
+let submit_all_settled pool (f) inputs =
   result_outcomes pool f inputs
   |> List.map (function
        | Result_ok value -> Ok value

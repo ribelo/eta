@@ -7,7 +7,7 @@
     [Typed.execute_compiled], [Typed.returning], and [Typed.run_schema] when
     table, column, and projection typing should apply. *)
 
-type error : immutable_data =
+type error =
   [ `Eta_sql of Types.sql_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
 type pool
 type tx

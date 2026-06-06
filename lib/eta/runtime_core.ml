@@ -1,4 +1,4 @@
-module P_atomic = Portable.Atomic
+module P_atomic = Atomic
 module RObs = Runtime_observability
 module Sch = Schedule
 

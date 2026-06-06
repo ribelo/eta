@@ -37,11 +37,11 @@ let concurrent_use stream =
       raw = None;
     }
 
-let with_operation stream effect =
+let with_operation stream eff =
   if not (Atomic.compare_and_set stream.active false true) then
     Eta.Effect.fail (concurrent_use stream)
   else (
-    effect
+    eff
     |> Eta.Effect.finally
          (Eta.Effect.sync (fun () -> Atomic.set stream.active false)))
 

@@ -22,12 +22,12 @@ let map_filter_fold_list n =
   |> fun s -> run_stream s (Sink.fold ( + ) 0)
 
 let direct_map_filter_fold n =
-  let mutable acc = 0 in
+  let acc = ref 0 in
   for i = 1 to n do
     let y = i * 2 in
-    if y mod 3 = 0 then acc <- acc + y
+    if y mod 3 = 0 then acc := !acc + y
   done;
-  assert (acc > 0)
+  assert (!acc > 0)
 
 let map_take_fold n k =
   range n |> Eta_stream.Stream.map (fun x -> x * 2) |> Eta_stream.Stream.take k

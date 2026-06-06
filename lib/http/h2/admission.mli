@@ -8,7 +8,7 @@ type t
 
 type permit
 
-type stats : immutable_data = {
+type stats = {
   active : int;
   cancelled : int;
   inflight : int;
@@ -21,7 +21,7 @@ type stats : immutable_data = {
   max_concurrent : int;
 }
 
-type release : immutable_data = Queue_rst | No_rst
+type release = Queue_rst | No_rst
 
 val create : max_concurrent:int -> t
 val try_acquire : t -> (permit, unit) result

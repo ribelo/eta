@@ -15,16 +15,16 @@ let[@zero_alloc] ends_with_sep_token_ci value sep token =
     let start = value_len - suffix_len in
     Char.equal (String.unsafe_get value start) sep
     &&
-    let mutable index = 0 in
+    let index = ref 0 in
     while
-      index < token_len
+      !index < token_len
       && Eta.String_helpers.ascii_equal_ci
-           (String.unsafe_get value (start + 1 + index))
-           (String.unsafe_get token index)
+           (String.unsafe_get value (start + 1 + !index))
+           (String.unsafe_get token !index)
     do
-      index <- index + 1
+      incr index
     done;
-    index = token_len
+    !index = token_len
 
 let format_of_file (file : A.binary_file) =
   let has suffix =

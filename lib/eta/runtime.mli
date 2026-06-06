@@ -75,7 +75,7 @@ val with_host_eio :
         ~clock:(Eio.Stdenv.clock env)
         ~random:(Capabilities.random_of_seed 1)
       @@ fun rt ->
-      Runtime.run rt effect
+      Runtime.run rt eff
     ]} *)
 
 val run_host_eio :
@@ -93,7 +93,7 @@ val run_host_eio :
   ?capture_backtrace:bool ->
   ('a, 'err) Effect.t ->
   ('a, 'err) Exit.t
-(** Create a host-backed runtime and run one effect to completion. *)
+(** Create a host-backed runtime and run one eff to completion. *)
 
 val run :
   ?island_pool:Island.pool ->
@@ -101,11 +101,11 @@ val run :
   'err t ->
   ('a, 'err) Effect.t ->
   ('a, 'err) Exit.t
-(** Run an effect to completion. [island_pool] and [blocking_pool] override the
+(** Run an eff to completion. [island_pool] and [blocking_pool] override the
     runtime defaults for this run only. *)
 
 val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
-(** Run an effect and raise on non-success. Prefer {!run} when
+(** Run an eff and raise on non-success. Prefer {!run} when
     inspecting failures. *)
 
 val drain : 'err t -> unit

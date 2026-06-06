@@ -29,9 +29,9 @@ module Make
       val quote_ident : string -> string
       val compiled_schema : string -> compiled_schema
     end) : sig
-  type reference : immutable_data
-  type column_def : immutable_data
-  type t : immutable_data
+  type reference
+  type column_def
+  type t
 
   val references :
     ?on_delete:string -> ?on_update:string -> (_, _) Model.column -> reference

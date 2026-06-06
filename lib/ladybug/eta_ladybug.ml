@@ -46,12 +46,12 @@ module Expr = struct
 end
 
 module Pattern = struct
-  type direction : immutable_data =
+  type direction =
     | Out
     | In
     | Undirected
 
-  type hops : immutable_data =
+  type hops =
     | One
     | Range of int option * int option
 
@@ -242,7 +242,7 @@ type connection = {
   mutable closed : bool;
 }
 
-type error_category : immutable_data =
+type error_category =
   | Query_syntax
   | Type_mismatch
   | Integrity_violation
@@ -250,7 +250,7 @@ type error_category : immutable_data =
   | Connection_closed_or_invalid
   | Other
 
-type error : immutable_data =
+type error =
   | Library_unavailable of string
   | Driver_error of {
       operation : string;
@@ -309,19 +309,19 @@ let pp_ladybug_error = pp_error
 module Extension = struct
   type official = string
 
-  type source : immutable_data =
+  type source =
     | Official
     | User
     | Static_link
     | Unknown of string
 
-  type loaded : immutable_data = {
+  type loaded = {
     name : string;
     source : source;
     path : string;
   }
 
-  type available : immutable_data = {
+  type available = {
     name : string;
     description : string;
   }
@@ -560,7 +560,7 @@ module Connection = struct
     | `Ladybug err -> Ladybug err
     | `Timeout -> Timeout
 
-  let timed_public effect = Eta.Effect.map_error to_timed_error effect
+  let timed_public eff = Eta.Effect.map_error to_timed_error eff
 
   let connect database =
     if_database_open database @@ fun () ->
@@ -697,7 +697,7 @@ module Pool = struct
   type raw_error = [ `Ladybug of driver_error | `Pool_shutdown | `Pool_shutdown_timeout | `Timeout ]
   type t = (connection, raw_error) Eta.Pool.t
 
-  type nonrec error : immutable_data =
+  type nonrec error =
     | Ladybug of driver_error
     | Pool_shutdown
     | Pool_shutdown_timeout
@@ -715,7 +715,7 @@ module Pool = struct
     | Pool_shutdown_timeout -> `Pool_shutdown_timeout
     | Timeout -> `Timeout
 
-  let public effect = Eta.Effect.map_error to_public_error effect
+  let public eff = Eta.Effect.map_error to_public_error eff
 
   let lift_result = function
     | Ok value -> Eta.Effect.pure value

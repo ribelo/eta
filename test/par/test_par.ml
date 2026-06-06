@@ -87,7 +87,7 @@ let test_par_iter () =
   let arr = Array.init n (fun i -> i) in
   let sum = Atomic.make 0 in
   Eta.Par.run ~n_workers:4 (fun () ->
-    Eta.Par.par_iter arr (fun x -> Atomic.add sum x |> ignore));
+    Eta.Par.par_iter arr (fun x -> ignore (Atomic.fetch_and_add sum x)));
   let expected = n * (n - 1) / 2 in
   check_int "par_iter sum" expected (Atomic.get sum)
 
@@ -542,7 +542,7 @@ let () =
           ("map then reduce", `Quick, test_iter_map_reduce);
           ("filter count", `Quick, test_iter_filter_count);
           ("filter + map + collect", `Quick, test_iter_collect_array_filter);
-          ("for_each side effect", `Quick, test_iter_for_each_side_effect);
+          ("for_each side eff", `Quick, test_iter_for_each_side_effect);
           ("find_any present", `Quick, test_iter_find_any_present);
           ("find_any absent", `Quick, test_iter_find_any_absent);
           ("any/all", `Quick, test_iter_any_all);

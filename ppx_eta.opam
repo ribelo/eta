@@ -4,8 +4,7 @@ synopsis: "PPX syntax helpers for Eta"
 description:
   "ppx_eta provides small syntax helpers for Eta effects and Eta SQL table declarations."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "ppxlib"
   "eta" {with-test}

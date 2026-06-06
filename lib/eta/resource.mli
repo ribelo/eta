@@ -1,6 +1,6 @@
 (** Cached effectful resources.
 
-    A resource owns a loader effect and the last successfully loaded
+    A resource owns a loader eff and the last successfully loaded
     value. Refreshing only updates the cache after the loader succeeds. *)
 
 type ('a, 'err) t
@@ -10,7 +10,7 @@ val manual :
   (('a, 'err) t, 'err) Effect.t
 
 val auto :
-  ?on_error:('err -> unit) @ many ->
+  ?on_error:('err -> unit) ->
   load:('a, 'err) Effect.t ->
   ?random:Capabilities.random ->
   schedule:Schedule.t ->

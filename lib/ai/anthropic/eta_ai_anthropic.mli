@@ -5,7 +5,7 @@
     use [tool_result] blocks, and optional prompt-cache support only covers
     system text. *)
 
-type prompt_cache : immutable_data = {
+type prompt_cache = {
   beta_header : string;
   cache_system : bool;
 }

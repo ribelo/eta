@@ -4,8 +4,7 @@ synopsis: "HTTP/1.1, HTTP/2, WebSockets and TLS client and server for Eta"
 description:
   "eta_http provides HTTP, WebSocket, TLS, and HTTP/2 support for Eta programs."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_stream"

@@ -83,13 +83,13 @@ let test_observability_event_records_current_span () =
 
 let test_observability_with_result_attrs () =
   with_traced_runtime @@ fun rt tracer ->
-  let observe effect =
+  let observe eff =
     Effect.with_result_attrs
       ~ok_attrs:(fun rows ->
         [ ("result", "ok"); ("row_count", string_of_int (List.length rows)) ])
       ~err_attrs:(fun (`Bad code) ->
         [ ("result", "error"); ("error.code", string_of_int code) ])
-      effect
+      eff
   in
   let ok_effect = Effect.named "rows.ok" (observe (Effect.pure [ 1; 2; 3 ])) in
   let err_effect = Effect.named "rows.err" (observe (Effect.fail (`Bad 7))) in

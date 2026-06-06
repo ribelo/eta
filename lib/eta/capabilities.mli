@@ -16,7 +16,7 @@ end
     because object-method capabilities are nonportable across OxCaml domain
     boundaries. Portable runtimes should create one token per worker or pass
     explicit seeds from the coordinator. *)
-type random : value mod portable contended
+type random
 
 (** An optional logger. Provided as an example trait; not required. *)
 class type log = object
@@ -26,52 +26,52 @@ class type log = object
 end
 
 (** Span completion status used by {!tracer}. *)
-type span_status : immutable_data = Ok | Error of string | Cancelled
+type span_status = Ok | Error of string | Cancelled
 
 (** OpenTelemetry span kind. *)
-type span_kind : immutable_data = Internal | Server | Client | Producer | Consumer
+type span_kind = Internal | Server | Client | Producer | Consumer
 
 (** W3C trace context plus baggage propagated across service boundaries. *)
-type trace_context : immutable_data = {
-  global_ trace_id : string;  (** Hex 32 chars. *)
-  global_ span_id : string;  (** Hex 16 chars. *)
+type trace_context = {
+  trace_id : string;  (** Hex 32 chars. *)
+  span_id : string;  (** Hex 16 chars. *)
   trace_flags : int;  (** W3C flags byte. Bit 0 is the sampled flag. *)
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
 (** Information about an active span surfaced through {!tracer.inspect}. *)
-type span_info : immutable_data = {
-  global_ trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
-  global_ span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
-  global_ name : string;
+type span_info = {
+  trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
+  span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)
+  name : string;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
 (** A reference to another span that the current span is linked to.
     [trace_id] and [span_id] are hex strings; for links to in-process spans
     use {!tracer.inspect} to resolve them. *)
-type span_link : immutable_data = {
-  global_ link_trace_id : string;
-  global_ link_span_id : string;
-  global_ link_attrs : (string * string) list;
+type span_link = {
+  link_trace_id : string;
+  link_span_id : string;
+  link_attrs : (string * string) list;
 }
 
 (** Severity for a {!log_record}. Maps to OTLP severityNumber. *)
-type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
+type log_level = Trace | Debug | Info | Warn | Error | Fatal
 
 (** A structured log record. Trace and span identifiers are populated by the
     runtime from the active span on the emitting fiber, or left empty if no
     span is active. *)
-type log_record : immutable_data = {
+type log_record = {
   level : log_level;
-  global_ body : string;
+  body : string;
   ts_ms : int;
-  global_ attrs : (string * string) list;
-  global_ trace_id : string;
-  global_ span_id : string;
+  attrs : (string * string) list;
+  trace_id : string;
+  span_id : string;
 }
 
 (** Minimal tracing capability. Implementations may back this with an
@@ -113,12 +113,12 @@ end
 
 (** Counters and gauges for the metrics signal. Implementations may
     accumulate in memory or stream to an OTLP exporter. *)
-type metric_kind : immutable_data =
+type metric_kind =
   | Counter_cumulative  (** latest cumulative value for the export window *)
   | Counter_monotonic  (** monotonic increment summed within the export window *)
   | Gauge
 
-type metric_value : immutable_data = Int of int | Float of float
+type metric_value = Int of int | Float of float
 
 class type meter = object
   method record :

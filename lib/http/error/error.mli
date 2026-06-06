@@ -1,8 +1,8 @@
 (** Typed eta-http client errors. *)
 
-type protocol : immutable_data = H1 | H2 | Unknown
+type protocol = H1 | H2 | Unknown
 
-type layer : immutable_data =
+type layer =
   | Tcp
   | Tls
   | Alpn
@@ -12,21 +12,21 @@ type layer : immutable_data =
   | Body_decode
   | Cancellation
 
-type retryability : immutable_data =
+type retryability =
   | Retryable
   | Retryable_if_body_replayable
   | Not_retryable
 
-type tls_stage : immutable_data = Tls_handshake | Alpn_negotiation
+type tls_stage = Tls_handshake | Alpn_negotiation
 
-type certificate_reason : immutable_data =
+type certificate_reason =
   | Expired
   | Name_mismatch
   | Untrusted_chain
   | Revoked
   | Certificate_policy_error of string
 
-type kind : immutable_data =
+type kind =
   | Dns_error of { host : string; message : string }
   | Connect_error of { message : string }
   | Connect_timeout of { timeout_ms : int option }
@@ -61,13 +61,13 @@ type kind : immutable_data =
     }
   | Header_invalid of { reason : string }
 
-type context : immutable_data = {
+type context = {
   method_ : string;
   uri : string;
   protocol : protocol;
 }
 
-type t : immutable_data = {
+type t = {
   context : context;
   kind : kind;
 }

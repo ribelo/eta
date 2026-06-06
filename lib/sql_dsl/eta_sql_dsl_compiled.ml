@@ -29,7 +29,7 @@ struct
     params : param list;
   }
 
-  type schema : immutable_data = { sql : string } [@@unboxed]
+  type schema = { sql : string } [@@unboxed]
 
   let value_of_param = Param.value
   let values_of_params params = List.map value_of_param params

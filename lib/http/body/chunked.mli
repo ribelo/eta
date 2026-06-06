@@ -11,8 +11,8 @@ type context = {
 }
 
 type reader = {
-  read_exact : (int -> (bytes, Error.t) Eta.Effect.t) @@ many;
-  read_line : (limit:int -> (string, Error.t) Eta.Effect.t) @@ many;
+  read_exact : (int -> (bytes, Error.t) Eta.Effect.t);
+  read_line : (limit:int -> (string, Error.t) Eta.Effect.t);
 }
 
 type t

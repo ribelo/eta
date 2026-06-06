@@ -3,8 +3,8 @@
 type +'a chunk = 'a list
 
 module Stream : sig
-  type file_operation : immutable_data = [ `Close | `Open | `Read ]
-  type file_error_kind : immutable_data =
+  type file_operation = [ `Close | `Open | `Read ]
+  type file_error_kind =
     [ `Already_exists
     | `File_too_large
     | `Io
@@ -13,7 +13,7 @@ module Stream : sig
     | `Permission_denied
     | `Unexpected ]
 
-  type file_error : immutable_data = {
+  type file_error = {
     operation : file_operation;
     path : string;
     kind : file_error_kind;
@@ -38,19 +38,19 @@ module Stream : sig
   val from_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
   val fail : 'err -> ('a, 'err) t
 
-  val map : ('a -> 'b) @ many -> ('a, 'err) t -> ('b, 'err) t
+  val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
   val map_effect :
-    ('a -> ('b, 'err) Eta.Effect.t) @ many ->
+    ('a -> ('b, 'err) Eta.Effect.t) ->
     ('a, 'err) t ->
     ('b, 'err) t
-  val filter : ('a -> bool) @ many -> ('a, 'err) t -> ('a, 'err) t
+  val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_until_effect :
-    ('a -> (bool, 'err) Eta.Effect.t) @ many -> ('a, 'err) t -> ('a, 'err) t
+    ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit values until [predicate] returns [true]. The value that satisfies
       [predicate] is emitted before the stream stops. *)
   val drop : int -> ('a, 'err) t -> ('a, 'err) t
-  val scan : ('s -> 'a -> 's) @ many -> 's -> ('a, 'err) t -> ('s, 'err) t
+  val scan : ('s -> 'a -> 's) -> 's -> ('a, 'err) t -> ('s, 'err) t
   val grouped : int -> ('a, 'err) t -> ('a list, 'err) t
   (** Collect upstream values into non-empty batches of at most [n] items.
       The final batch may contain fewer than [n] items.
@@ -60,7 +60,7 @@ module Stream : sig
   val concat :
     ('a, 'err) t -> ('a, 'err) t -> ('a, 'err) t
   val flat_map :
-    ('a -> ('b, 'err) t) @ many -> ('a, 'err) t -> ('b, 'err) t
+    ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 
   val merge :
     ('a, 'err) t -> ('a, 'err) t -> ('a, 'err) t
@@ -69,7 +69,7 @@ module Stream : sig
 
   val flat_map_par :
     max_concurrency:int ->
-    ('a -> ('b, 'err) t) @ many ->
+    ('a -> ('b, 'err) t) ->
     ('a, 'err) t ->
     ('b, 'err) t
   (** Evaluate inner streams concurrently, with at most [max_concurrency]
@@ -124,7 +124,7 @@ end
 
 module Mailbox : sig
   type 'a t
-  type offer_result : immutable_data = Enqueued | Dropped | Closed
+  type offer_result = Enqueued | Dropped | Closed
 
   val create : ?capacity:int -> unit -> 'a t
   (** Create a bounded producer-side stream mailbox.
@@ -170,7 +170,7 @@ module Drain_counter : sig
   val await_zero : ?name:string -> t -> (unit, 'err) Eta.Effect.t
   (** Wait until the counter reaches zero. This is useful for producer/consumer
       adapters that need a non-polling drain signal while still exposing the
-      wait as an Eta effect.
+      wait as an Eta eff.
 
       @raise Invalid_argument if [incr_by] or [decr_by] receive a negative
       count, or if [decr_by] would decrement below zero. *)
@@ -180,9 +180,9 @@ module Sink : sig
   type ('in_, 'out, 'err) t
 
   val fold :
-    ('out -> 'in_ -> 'out) @ many -> 'out -> ('in_, 'out, 'err) t
+    ('out -> 'in_ -> 'out) -> 'out -> ('in_, 'out, 'err) t
   val fold_effect :
-    ('out -> 'in_ -> ('out, 'err) Eta.Effect.t) @ many ->
+    ('out -> 'in_ -> ('out, 'err) Eta.Effect.t) ->
     'out ->
     ('in_, 'out, 'err) t
   val collect_to_list : ('a, 'a list, 'err) t

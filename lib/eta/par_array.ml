@@ -12,7 +12,7 @@ let chunk_or_default = Par_runtime.chunk_or_default
    the [chunk] parameter only sets the leaf size below which we stop
    recursing. *)
 
-let rec par_for_rec ~chunk ~start ~stop (f @ many) =
+let rec par_for_rec ~chunk ~start ~stop (f) =
   let len = stop - start in
   if len <= chunk then
     for i = start to stop - 1 do f i done
@@ -23,7 +23,7 @@ let rec par_for_rec ~chunk ~start ~stop (f @ many) =
       (fun () -> par_for_rec ~chunk ~start:mid ~stop f)
   end
 
-let par_for ?chunk ~start ~stop (f @ many) =
+let par_for ?chunk ~start ~stop (f) =
   let chunk = chunk_or_default chunk in
   if start >= stop then ()
   else if stop - start <= chunk then
@@ -31,13 +31,13 @@ let par_for ?chunk ~start ~stop (f @ many) =
   else
     par_for_rec ~chunk ~start ~stop f
 
-let par_iter ?chunk arr (f @ many) =
+let par_iter ?chunk arr (f) =
   par_for ?chunk ~start:0 ~stop:(Array.length arr) (fun i -> f arr.(i))
 
-let par_iteri ?chunk arr (f @ many) =
+let par_iteri ?chunk arr (f) =
   par_for ?chunk ~start:0 ~stop:(Array.length arr) (fun i -> f i arr.(i))
 
-let rec par_map_rec out (arr : 'a array) (f @ many) ~chunk ~start ~stop =
+let rec par_map_rec out (arr : 'a array) (f) ~chunk ~start ~stop =
   let len = stop - start in
   if len <= chunk then
     for i = start to stop - 1 do out.(i) <- f arr.(i) done
@@ -48,7 +48,7 @@ let rec par_map_rec out (arr : 'a array) (f @ many) ~chunk ~start ~stop =
       (fun () -> par_map_rec out arr f ~chunk ~start:mid ~stop)
   end
 
-let par_map ?chunk (arr : 'a array) (f @ many) =
+let par_map ?chunk (arr : 'a array) (f) =
   let n = Array.length arr in
   if n = 0 then [||]
   else begin
@@ -58,7 +58,7 @@ let par_map ?chunk (arr : 'a array) (f @ many) =
     out
   end
 
-let rec par_mapi_rec out (arr : 'a array) (f @ many) ~chunk ~start ~stop =
+let rec par_mapi_rec out (arr : 'a array) (f) ~chunk ~start ~stop =
   let len = stop - start in
   if len <= chunk then
     for i = start to stop - 1 do out.(i) <- f i arr.(i) done
@@ -69,7 +69,7 @@ let rec par_mapi_rec out (arr : 'a array) (f @ many) ~chunk ~start ~stop =
       (fun () -> par_mapi_rec out arr f ~chunk ~start:mid ~stop)
   end
 
-let par_mapi ?chunk (arr : 'a array) (f @ many) =
+let par_mapi ?chunk (arr : 'a array) (f) =
   let n = Array.length arr in
   if n = 0 then [||]
   else begin
@@ -79,8 +79,8 @@ let par_mapi ?chunk (arr : 'a array) (f @ many) =
     out
   end
 
-let rec par_reduce_rec arr ~chunk ~start ~stop ~init ~(map @ many)
-    ~(combine @ many) =
+let rec par_reduce_rec arr ~chunk ~start ~stop ~init ~(map)
+    ~(combine) =
   let len = stop - start in
   if len = 0 then init
   else if len <= chunk then begin
@@ -100,7 +100,7 @@ let rec par_reduce_rec arr ~chunk ~start ~stop ~init ~(map @ many)
     combine l r
   end
 
-let par_reduce ?chunk arr ~init ~(map @ many) ~(combine @ many) =
+let par_reduce ?chunk arr ~init ~(map) ~(combine) =
   let chunk = chunk_or_default chunk in
   par_reduce_rec arr ~chunk ~start:0 ~stop:(Array.length arr) ~init ~map ~combine
 
@@ -120,18 +120,18 @@ let swap (arr : 'a array) i j =
     arr.(j) <- tmp
   end
 
-let serial_isort arr (cmp @ many) lo hi =
+let serial_isort arr (cmp) lo hi =
   for i = lo + 1 to hi do
     let x = arr.(i) in
-    let mutable j = i - 1 in
-    while j >= lo && cmp arr.(j) x > 0 do
-      arr.(j + 1) <- arr.(j);
-      j <- j - 1
+    let j = ref (i - 1) in
+    while !j >= lo && cmp arr.(!j) x > 0 do
+      arr.(!j + 1) <- arr.(!j);
+      decr j
     done;
-    arr.(j + 1) <- x
+    arr.(!j + 1) <- x
   done
 
-let median_of_three arr (cmp @ many) a b c =
+let median_of_three arr (cmp) a b c =
   if cmp arr.(a) arr.(b) < 0 then
     if cmp arr.(b) arr.(c) < 0 then b
     else if cmp arr.(a) arr.(c) < 0 then c
@@ -145,32 +145,32 @@ let median_of_three arr (cmp @ many) a b c =
    - [lo .. lt-1]  : elements < pivot
    - [lt .. gt]    : elements = pivot (no further sorting needed)
    - [gt+1 .. hi]  : elements > pivot *)
-let partition3 arr (cmp @ many) lo hi =
+let partition3 arr (cmp) lo hi =
   (* Pivot = median of three; move it to [lo]. *)
   let mid = lo + ((hi - lo) / 2) in
   let p = median_of_three arr cmp lo mid hi in
   swap arr lo p;
   let pivot = arr.(lo) in
-  let mutable lt = lo in
-  let mutable gt = hi in
-  let mutable i = lo + 1 in
-  while i <= gt do
-    let c = cmp arr.(i) pivot in
+  let lt = ref lo in
+  let gt = ref hi in
+  let i = ref (lo + 1) in
+  while !i <= !gt do
+    let c = cmp arr.(!i) pivot in
     if c < 0 then begin
-      swap arr lt i;
-      lt <- lt + 1;
-      i <- i + 1
+      swap arr !lt !i;
+      incr lt;
+      incr i
     end else if c > 0 then begin
-      swap arr i gt;
-      gt <- gt - 1
+      swap arr !i !gt;
+      decr gt
     end else
-      i <- i + 1
+      incr i
   done;
-  (lt, gt)
+  (!lt, !gt)
 
 let qsort_threshold = 32
 
-let rec par_qsort arr (cmp @ many) lo hi =
+let rec par_qsort arr (cmp) lo hi =
   let len = hi - lo + 1 in
   if len <= qsort_threshold then serial_isort arr cmp lo hi
   else begin
@@ -180,6 +180,6 @@ let rec par_qsort arr (cmp @ many) lo hi =
       (fun () -> par_qsort arr cmp (gt + 1) hi)
   end
 
-let par_sort arr (cmp @ many) =
+let par_sort arr (cmp) =
   let n = Array.length arr in
   if n > 1 then par_qsort arr cmp 0 (n - 1)

@@ -1,25 +1,25 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type protocol : immutable_data = H1 | H2
+type protocol = H1 | H2
 
-type pending : immutable_data = { id : int } [@@unboxed]
+type pending = { id : int } [@@unboxed]
 
-type state : immutable_data =
+type state =
   | Empty
   | Pending of pending
   | Ready of protocol
 
-type begin_result : immutable_data =
+type begin_result =
   | Leader of pending
   | Wait of pending
   | Ready of protocol
 
-type resolve_result : immutable_data =
+type resolve_result =
   | Installed of protocol
   | Already_ready of protocol
   | Ignored
 
-type stats : immutable_data = {
+type stats = {
   leaders : int;
   waiters : int;
   redundant_cancelled : int;

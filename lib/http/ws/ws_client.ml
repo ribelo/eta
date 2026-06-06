@@ -6,7 +6,7 @@ module Header = Header
 module Url = Url
 module Connect = Connect
 
-type ws_error : immutable_data =
+type ws_error =
   [ `Connect of string
   | `Upgrade_failed of int
   | `Closed of int * string
@@ -33,8 +33,8 @@ let close_flow flow = try Eio.Flow.close flow with _ -> ()
 let http_error_to_connect error =
   `Connect (Format.asprintf "%a" Error.pp error)
 
-let map_http_error effect =
-  Effect.catch (fun error -> Effect.fail (http_error_to_connect error)) effect
+let map_http_error eff =
+  Effect.catch (fun error -> Effect.fail (http_error_to_connect error)) eff
 
 let http_url_of_ws_url raw =
   let rewrite prefix replacement =
@@ -86,11 +86,11 @@ let parse_status_line line =
         Error (`Protocol "invalid HTTP response status line")
       else
         let status_start = first_space + 1 in
-        let mutable status_stop = status_start in
-        while status_stop < len && not (Char.equal line.[status_stop] ' ') do
-          status_stop <- status_stop + 1
+        let status_stop = ref status_start in
+        while !status_stop < len && not (Char.equal line.[!status_stop] ' ') do
+          incr status_stop
         done;
-        let status = String.sub line status_start (status_stop - status_start) in
+        let status = String.sub line status_start (!status_stop - status_start) in
         match int_of_string_opt status with
         | Some status when status >= 100 && status <= 599 -> Ok status
         | _ -> Error (`Protocol ("invalid HTTP status " ^ status))
@@ -302,14 +302,14 @@ let payload_length ~max_frame_size header ext =
            ((Char.code (Bytes.get ext 0) lsl 8)
            lor Char.code (Bytes.get ext 1)))
   | _ ->
-      let mutable value = 0L in
+      let value = ref 0L in
       for index = 0 to 7 do
-        value <-
+        value :=
           Int64.logor
-            (Int64.shift_left value 8)
+            (Int64.shift_left !value 8)
             (Int64.of_int (Char.code (Bytes.get ext index)))
       done;
-      check value
+      check !value
 
 let read_frame reader =
   match read_exact reader 2 with
@@ -335,7 +335,7 @@ let read_frame reader =
                       | Ok (frame, _consumed) -> Ok frame
                       | Error error -> Error (`Protocol (Codec.parse_error_to_string error)))))))
 
-let with_write_lock t (f @ many) =
+let with_write_lock t (f) =
   Eio.Mutex.lock t.write_mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.write_mutex) f
 

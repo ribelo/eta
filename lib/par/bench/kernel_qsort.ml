@@ -43,12 +43,12 @@ let swap arr i j =
 let isort arr lo hi =
   for i = lo + 1 to hi do
     let x = arr.(i) in
-    let mutable j = i - 1 in
-    while j >= lo && compare arr.(j) x > 0 do
-      arr.(j + 1) <- arr.(j);
-      j <- j - 1
+    let j = ref (i - 1) in
+    while !j >= lo && compare arr.(!j) x > 0 do
+      arr.(!j + 1) <- arr.(!j);
+      decr j
     done;
-    arr.(j + 1) <- x
+    arr.(!j + 1) <- x
   done
 
 let median_of_three arr a b c =
@@ -65,22 +65,22 @@ let partition3 arr lo hi =
   let p = median_of_three arr lo mid hi in
   swap arr lo p;
   let pivot = arr.(lo) in
-  let mutable lt = lo in
-  let mutable gt = hi in
-  let mutable i = lo + 1 in
-  while i <= gt do
-    let c = compare arr.(i) pivot in
+  let lt = ref lo in
+  let gt = ref hi in
+  let i = ref (lo + 1) in
+  while !i <= !gt do
+    let c = compare arr.(!i) pivot in
     if c < 0 then begin
-      swap arr lt i;
-      lt <- lt + 1;
-      i <- i + 1
+      swap arr !lt !i;
+      incr lt;
+      incr i
     end else if c > 0 then begin
-      swap arr i gt;
-      gt <- gt - 1
+      swap arr !i !gt;
+      decr gt
     end else
-      i <- i + 1
+      incr i
   done;
-  (lt, gt)
+  (!lt, !gt)
 
 let qsort_threshold = 32
 

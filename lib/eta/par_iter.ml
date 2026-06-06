@@ -5,14 +5,14 @@ let chunk_or_default = Par_runtime.chunk_or_default
 
 type 'a producer = {
   len : int;
-  at : (int -> 'a) @@ many;
+  at : (int -> 'a);
 }
 
 type ('a, 'r) consumer = {
   split_at :
-    (int -> ('a, 'r) consumer * ('a, 'r) consumer * ('r -> 'r -> 'r)) @@ many;
-  fold_seq : ((int -> 'a) -> start:int -> stop:int -> 'r) @@ many;
-  full : (unit -> bool) @@ many;
+    (int -> ('a, 'r) consumer * ('a, 'r) consumer * ('r -> 'r -> 'r));
+  fold_seq : ((int -> 'a) -> start:int -> stop:int -> 'r);
+  full : (unit -> bool);
 }
 
 type 'a t = {
@@ -72,7 +72,7 @@ let of_array_sub ?chunk (arr : 'a array) ~start ~stop : 'a t =
 
 (* Adapters. *)
 
-let map (f @ many) (it : 'a t) =
+let map (f) (it : 'a t) =
   let drive : type r. ('b, r) consumer -> r =
    fun b_consumer ->
     let rec adapt (b : ('b, r) consumer) : ('a, r) consumer =
@@ -91,7 +91,7 @@ let map (f @ many) (it : 'a t) =
   in
   { drive }
 
-let mapi (f @ many) (it : 'a t) =
+let mapi (f) (it : 'a t) =
   let drive : type r. ('b, r) consumer -> r =
    fun b_consumer ->
     let rec adapt (b : ('b, r) consumer) : ('a, r) consumer =
@@ -110,7 +110,7 @@ let mapi (f @ many) (it : 'a t) =
   in
   { drive }
 
-let filter (p @ many) (it : 'a t) =
+let filter (p) (it : 'a t) =
   let drive : type r. ('a, r) consumer -> r =
    fun a_consumer ->
     let rec adapt (b : ('a, r) consumer) : ('a, r) consumer =
@@ -143,7 +143,7 @@ let filter (p @ many) (it : 'a t) =
 
 (* Consumers. *)
 
-let for_each (f @ many) (it : 'a t) =
+let for_each (f) (it : 'a t) =
   let rec consumer : ('a, unit) consumer = {
     split_at = (fun _mid -> (consumer, consumer, fun () () -> ()));
     fold_seq =
@@ -155,7 +155,7 @@ let for_each (f @ many) (it : 'a t) =
 
 let iter = for_each
 
-let reduce ~(init : 'a) ~(combine @ many) (it : 'a t) =
+let reduce ~(init : 'a) ~(combine) (it : 'a t) =
   let rec consumer : ('a, 'a) consumer = {
     split_at = (fun _mid -> (consumer, consumer, combine));
     fold_seq =
@@ -169,7 +169,7 @@ let reduce ~(init : 'a) ~(combine @ many) (it : 'a t) =
   } in
   it.drive consumer
 
-let fold ~(init : 'b) ~(step @ many) ~(combine @ many) (it : 'a t) =
+let fold ~(init : 'b) ~(step) ~(combine) (it : 'a t) =
   let rec consumer : ('a, 'b) consumer = {
     split_at = (fun _mid -> (consumer, consumer, combine));
     fold_seq =
@@ -188,7 +188,7 @@ let sum (it : int t) : int = reduce ~init:0 ~combine:( + ) it
 let count (it : 'a t) : int =
   fold ~init:0 ~step:(fun n _ -> n + 1) ~combine:( + ) it
 
-let min_with ~(cmp @ many) (it : 'a t) =
+let min_with ~(cmp) (it : 'a t) =
   let combine a b =
     match a, b with
     | None, x | x, None -> x
@@ -211,7 +211,7 @@ let min_with ~(cmp @ many) (it : 'a t) =
   } in
   it.drive consumer
 
-let max_with ~(cmp @ many) it =
+let max_with ~(cmp) it =
   min_with ~cmp:(fun a b -> -(cmp a b)) it
 
 let min it = min_with ~cmp:compare it
@@ -235,7 +235,7 @@ let collect_array (it : 'a t) : 'a array =
   } in
   it.drive consumer
 
-let find_any (p @ many) (it : 'a t) =
+let find_any (p) (it : 'a t) =
   let found : 'a option Atomic.t = Atomic.make None in
   let is_full () = Atomic.get found <> None in
   let combine a b = match a with Some _ -> a | None -> b in
@@ -258,10 +258,10 @@ let find_any (p @ many) (it : 'a t) =
   } in
   it.drive consumer
 
-let any (p @ many) (it : 'a t) =
+let any (p) (it : 'a t) =
   match find_any p it with
   | Some _ -> true
   | None -> false
 
-let all (p @ many) (it : 'a t) =
+let all (p) (it : 'a t) =
   not (any (fun x -> not (p x)) it)

@@ -2,9 +2,9 @@ class type clock = object
   method sleep : Duration.t -> unit
 end
 
-module P_atomic = Portable.Atomic
+module P_atomic = Atomic
 
-type random : value mod portable contended = { seed : int P_atomic.t } [@@unboxed]
+type random = { seed : int P_atomic.t } [@@unboxed]
 
 class type log = object
   method info : string -> unit
@@ -12,49 +12,49 @@ class type log = object
   method error : string -> unit
 end
 
-type span_status : immutable_data = Ok | Error of string | Cancelled
-type span_kind : immutable_data = Internal | Server | Client | Producer | Consumer
+type span_status = Ok | Error of string | Cancelled
+type span_kind = Internal | Server | Client | Producer | Consumer
 
-type trace_context : immutable_data = {
-  global_ trace_id : string;
-  global_ span_id : string;
+type trace_context = {
+  trace_id : string;
+  span_id : string;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
-type span_info : immutable_data = {
-  global_ trace_id : string;
-  global_ span_id : string;
-  global_ name : string;
+type span_info = {
+  trace_id : string;
+  span_id : string;
+  name : string;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 
-type span_link : immutable_data = {
-  global_ link_trace_id : string;
-  global_ link_span_id : string;
-  global_ link_attrs : (string * string) list;
+type span_link = {
+  link_trace_id : string;
+  link_span_id : string;
+  link_attrs : (string * string) list;
 }
 
-type log_level : immutable_data = Trace | Debug | Info | Warn | Error | Fatal
+type log_level = Trace | Debug | Info | Warn | Error | Fatal
 
-type log_record : immutable_data = {
+type log_record = {
   level : log_level;
-  global_ body : string;
+  body : string;
   ts_ms : int;
-  global_ attrs : (string * string) list;
-  global_ trace_id : string;
-  global_ span_id : string;
+  attrs : (string * string) list;
+  trace_id : string;
+  span_id : string;
 }
 
-type metric_kind : immutable_data =
+type metric_kind =
   | Counter_cumulative
   | Counter_monotonic
   | Gauge
 
-type metric_value : immutable_data = Int of int | Float of float
+type metric_value = Int of int | Float of float
 
 class type tracer = object
   method with_fiber_context : 'a. (unit -> 'a) -> 'a
@@ -123,12 +123,8 @@ let next_seed seed =
 let rec advance_random random =
   let seed = P_atomic.get random.seed in
   let next = next_seed seed in
-  match
-    P_atomic.compare_and_set random.seed ~if_phys_equal_to:seed
-      ~replace_with:next
-  with
-  | P_atomic.Compare_failed_or_set_here.Set_here -> next
-  | P_atomic.Compare_failed_or_set_here.Compare_failed -> advance_random random
+  if P_atomic.compare_and_set random.seed seed next then next
+  else advance_random random
 
 let random_float random bound =
   if bound <= 0.0 then 0.0

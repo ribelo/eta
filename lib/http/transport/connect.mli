@@ -1,6 +1,6 @@
 (** DNS and TCP/TLS connection helpers for eta-http. *)
 
-type target : immutable_data = {
+type target = {
   url : Url.t;
   scheme : Url.scheme;
   host : string;

@@ -257,7 +257,7 @@ let test_race_retry_accumulated_resources_released_on_scope_exit () =
   done;
   check_exit_ok Alcotest.string "fast wins" "fast"
     (Eio.Promise.await promise);
-  (* After the scoped effect returns, all resources should be released *)
+  (* After the scoped eff returns, all resources should be released *)
   Alcotest.(check int) "all released after scope" 0 !active
 
 (* -------------------------------------------------------------------------- *)
@@ -333,7 +333,7 @@ let test_race_many_branches_resource_cleanup () =
     (Atomic.get released)
 
 (* -------------------------------------------------------------------------- *)
-(* Randomized effect composition: generate random nested effect trees and
+(* Randomized eff composition: generate random nested eff trees and
    verify that all scoped resources are properly released. *)
 
 let generate_random_effect max_depth rng ~active =
@@ -376,7 +376,7 @@ let test_randomized_effect_compositions_release_resources () =
     | Exit.Ok _ -> ()
     | Exit.Error _ -> ());
     if !active <> 0 then
-      Alcotest.failf "random effect leaked %d resources" !active
+      Alcotest.failf "random eff leaked %d resources" !active
   done
 
 let test_randomized_race_compositions_release_resources () =

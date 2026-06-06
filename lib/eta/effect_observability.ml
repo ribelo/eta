@@ -4,14 +4,14 @@
 
 open Effect_core
 
-let with_error_renderer (render @ many) effect =
-  preserve effect @@ fun () ->
+let with_error_renderer (render) eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let frame = { frame with error_renderer = (fun err -> render (Obj.obj err)) } in
-  run_to_exit frame effect
+  run_to_exit frame eff
 
-let suppress_observability effect =
-  preserve effect @@ fun () ->
+let suppress_observability eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let runtime =
     {
@@ -22,10 +22,10 @@ let suppress_observability effect =
       metrics_enabled = false;
     }
   in
-  run_to_exit { frame with runtime } effect
+  run_to_exit { frame with runtime } eff
 
-let named_kind ?error_renderer ~kind name effect =
-  make ~leaf_name:name ~names:(name :: effect.names) @@ fun () ->
+let named_kind ?error_renderer ~kind name eff =
+  make ~leaf_name:name ~names:(name :: names eff) @@ fun () ->
   let frame = current_frame () in
   let frame =
     match error_renderer with
@@ -36,26 +36,26 @@ let named_kind ?error_renderer ~kind name effect =
     ok
       (Runtime_instrument.with_span ~runtime:frame.runtime
          ~error_renderer:frame.error_renderer ~fail_key:frame.fail_key ~kind
-         ~name ~attrs:[] (fun () -> run_to_value frame effect))
+         ~name ~attrs:[] (fun () -> run_to_value frame eff))
   with exn -> exit_of_exn frame exn
 
-let named ?error_renderer name effect =
-  named_kind ?error_renderer ~kind:Capabilities.Internal name effect
+let named ?error_renderer name eff =
+  named_kind ?error_renderer ~kind:Capabilities.Internal name eff
 
-let annotate ~key ~value effect =
-  preserve effect @@ fun () ->
+let annotate ~key ~value eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   (if frame.runtime.tracing_enabled then
     match Eio.Fiber.get RObs.active_span_key with
     | Some span_id -> frame.runtime.tracer#add_attr_to ~span_id ~key ~value
     | None -> frame.runtime.tracer#add_attr ~key ~value);
-  RObs.with_die_annotation key value @@ fun () -> effect.eval ()
+  RObs.with_die_annotation key value @@ fun () -> eval eff
 
-let annotate_all attrs effect =
+let annotate_all attrs eff =
   match attrs with
-  | [] -> effect
+  | [] -> eff
   | _ ->
-      preserve effect @@ fun () ->
+      preserve eff @@ fun () ->
       let frame = current_frame () in
       (if frame.runtime.tracing_enabled then
          match Eio.Fiber.get RObs.active_span_key with
@@ -68,7 +68,7 @@ let annotate_all attrs effect =
              List.iter
                (fun (key, value) -> frame.runtime.tracer#add_attr ~key ~value)
                attrs);
-      RObs.with_die_annotations attrs @@ fun () -> effect.eval ()
+      RObs.with_die_annotations attrs @@ fun () -> eval eff
 
 let add_attrs_to_active_span frame attrs =
   if frame.runtime.tracing_enabled then
@@ -101,10 +101,10 @@ let rec iter_cause_fail f = function
       iter_cause_fail f primary;
       ignore finalizer
 
-let with_result_attrs ~(ok_attrs @ many) ~(err_attrs @ many) effect =
-  preserve effect @@ fun () ->
+let with_result_attrs ~(ok_attrs) ~(err_attrs) eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
-  match effect.eval () with
+  match eval eff with
   | Exit.Ok value as ok -> (
       try
         add_attrs_to_active_span frame (ok_attrs value);
@@ -124,8 +124,8 @@ let with_result_attrs ~(ok_attrs @ many) ~(err_attrs @ many) effect =
           (Cause.suppressed ~primary:cause
              ~finalizer:(render_cause_error frame finalizer)))
 
-let link_span ?(attrs = []) ~trace_id ~span_id effect =
-  preserve effect @@ fun () ->
+let link_span ?(attrs = []) ~trace_id ~span_id eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let link =
     { Capabilities.link_trace_id = trace_id; link_span_id = span_id; link_attrs = attrs }
@@ -134,19 +134,20 @@ let link_span ?(attrs = []) ~trace_id ~span_id effect =
     match Eio.Fiber.get RObs.active_span_key with
     | Some span_id -> frame.runtime.tracer#add_link_to ~span_id link
     | None -> frame.runtime.tracer#add_link link);
-  effect.eval ()
+  eval eff
 
-let with_context ctx effect =
-  preserve effect @@ fun () ->
+let with_context ctx eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   Eio.Fiber.with_binding RObs.trace_context_key ctx @@ fun () ->
   if frame.runtime.tracing_enabled then
-    Eio.Fiber.with_binding RObs.sampled_key (Trace_context.sampled ctx) effect.eval
-  else effect.eval ()
+    Eio.Fiber.with_binding RObs.sampled_key (Trace_context.sampled ctx) (fun () ->
+        eval eff)
+  else eval eff
 
-let with_external_parent ~trace_id ~span_id effect =
+let with_external_parent ~trace_id ~span_id eff =
   match Trace_context.make ~trace_id ~span_id () with
-  | Some ctx -> with_context ctx effect
+  | Some ctx -> with_context ctx eff
   | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
 
 let current_span =
@@ -219,12 +220,12 @@ let metric_updates updates =
 let metric_updates_lazy make_updates =
   make @@ fun () ->
   let frame = current_frame () in
-  if frame.runtime.metrics_enabled then (metric_updates (make_updates ())).eval () else ok ()
+  if frame.runtime.metrics_enabled then eval (metric_updates (make_updates ())) else ok ()
 
-let here_attr (file, line, col_start, col_end) effect =
+let here_attr (file, line, col_start, col_end) eff =
   annotate ~key:"loc"
     ~value:(Printf.sprintf "%s:%d:%d-%d" file line col_start col_end)
-    effect
+    eff
 
-let fn ?(kind = Capabilities.Internal) ?error_renderer ?(attrs = []) pos name effect =
-  effect |> annotate_all attrs |> here_attr pos |> named_kind ?error_renderer ~kind name
+let fn ?(kind = Capabilities.Internal) ?error_renderer ?(attrs = []) pos name eff =
+  eff |> annotate_all attrs |> here_attr pos |> named_kind ?error_renderer ~kind name

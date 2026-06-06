@@ -7,7 +7,7 @@ let compare_and_set t expected desired =
   Atomic.compare_and_set t.cell expected desired
 let get_and_set t v = Atomic.exchange t.cell v
 
-let update t (f @ many) =
+let update t (f) =
   let rec loop () =
     let old = Atomic.get t.cell in
     let new_ = f old in
@@ -16,7 +16,7 @@ let update t (f @ many) =
   in
   loop ()
 
-let update_and_get t (f @ many) =
+let update_and_get t (f) =
   let rec loop () =
     let old = Atomic.get t.cell in
     let new_ = f old in

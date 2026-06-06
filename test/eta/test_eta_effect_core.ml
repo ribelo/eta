@@ -313,12 +313,12 @@ let test_effect_fiberless_frame_is_domain_local () =
       Domain.cpu_relax ()
     done
   in
-  let effect =
+  let eff =
     Effect.sync barrier
     |> Effect.bind (fun () -> Effect.delay (Duration.ms 1) Effect.unit)
   in
   let run rt =
-    match Runtime.run rt effect with
+    match Runtime.run rt eff with
     | Exit.Ok () -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected Ok, got %a"
@@ -558,7 +558,7 @@ let test_effect_catch_preserves_suppressed_finalizer_failure () =
   match Runtime.run rt eff with
   | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
       Alcotest.(check bool)
-        "handler skipped because finalizer failure keeps effect failed" false
+        "handler skipped because finalizer failure keeps eff failed" false
         !handler_ran
   | Exit.Ok `Caught ->
       Alcotest.fail "catch erased the finalizer typed failure"
@@ -905,7 +905,7 @@ let test_effect_catch_preserves_concurrent_defect () =
   match Eio.Promise.await promise with
   | Exit.Error (Cause.Die { exn; _ }) when exn == defect ->
       Alcotest.(check bool)
-        "handler skipped because defect keeps effect failed" false !handler_ran
+        "handler skipped because defect keeps eff failed" false !handler_ran
   | Exit.Error cause ->
       Alcotest.failf "expected concurrent defect, got %a"
         (Cause.pp Format.pp_print_string) cause
@@ -941,7 +941,7 @@ let test_effect_catch_preserves_concurrent_interrupt () =
   match Eio.Promise.await promise with
   | Exit.Error (Cause.Interrupt None) ->
       Alcotest.(check bool)
-        "handler skipped because interrupt keeps effect failed" false
+        "handler skipped because interrupt keeps eff failed" false
         !handler_ran
   | Exit.Error cause ->
       Alcotest.failf "expected concurrent interrupt, got %a"

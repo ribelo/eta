@@ -150,7 +150,7 @@ let acquire t n =
                       | Resolved_unclaimed -> waiter.state <- Claimed
                       | Waiting | Claimed | Cancelled -> ()))))
 
-let with_permits_or_abort t n ~abort (f @ many) =
+let with_permits_or_abort t n ~abort (f) =
   (* [claimed] means this combinator owns a granted permit. The finalizer is the
      only release path, so permits cannot escape through a result that a race or
      parent cancellation later discards. *)
@@ -168,7 +168,7 @@ let with_permits_or_abort t n ~abort (f @ many) =
   in
   Effect.finally release_claimed body
 
-let with_permits t n (f @ many) =
+let with_permits t n (f) =
   Effect.scoped
     (Effect.acquire_release
        ~acquire:(acquire t n)

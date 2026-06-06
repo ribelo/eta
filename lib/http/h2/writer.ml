@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type drain_result : immutable_data =
+type drain_result =
   | Yield of { written : int }
   | Close of {
       written : int;

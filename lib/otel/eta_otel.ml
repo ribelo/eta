@@ -37,13 +37,13 @@ let random_bytes rng n =
 module Otlp_json = Otlp_json
 
 type span = Otlp_json.span = {
-  global_ trace_id : string; (* 32 hex chars *)
-  global_ span_id : string; (* 16 hex chars *)
-  global_ parent_span_id : string option;
+  trace_id : string; (* 32 hex chars *)
+  span_id : string; (* 16 hex chars *)
+  parent_span_id : string option;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
-  global_ name : string;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
+  name : string;
   kind : Eta.Capabilities.span_kind;
   start_unix_ns : int;
   mutable end_unix_ns : int;
@@ -54,7 +54,7 @@ type span = Otlp_json.span = {
   mutable status_message : string;
 }
 
-type export_config : immutable_data = {
+type export_config = {
   host : string;
   port : int;
   traces_path : string;
@@ -72,7 +72,7 @@ type signal_batch =
   | Metric_batch of Eta.Meter.point list
   | Self_metric_batch of Eta.Meter.point list
 
-type signal_kind : immutable_data = Traces | Logs | Metrics | Self_metrics
+type signal_kind = Traces | Logs | Metrics | Self_metrics
 
 let encode_traces_request = Otlp_json.encode_traces_request
 let encode_logs_request = Otlp_json.encode_logs_request
@@ -112,18 +112,18 @@ let otlp_request config ~path ~body =
 
 let render_http_status status body =
   let len = Bytes.length body in
-  let mutable start = 0 in
-  while start < len && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body start) do
-    start <- start + 1
+  let start = ref 0 in
+  while !start < len && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body !start) do
+    incr start
   done;
   let prefix = "HTTP " ^ string_of_int status in
-  if start = len then prefix
+  if !start = len then prefix
   else
-    let mutable stop = len in
-    while stop > start && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body (stop - 1)) do
-      stop <- stop - 1
+    let stop = ref len in
+    while !stop > !start && Eta.String_helpers.is_trim_space (Bytes.unsafe_get body (!stop - 1)) do
+      decr stop
     done;
-    let body = Bytes.sub_string body start (stop - start) in
+    let body = Bytes.sub_string body !start (!stop - !start) in
     prefix ^ ": " ^ body
 
 (* ------------------------------------------------------------------ *)
@@ -417,8 +417,8 @@ let export_program t =
   |> S.run_drain
   |> Eta.Effect.named "eta_otel.exporter"
 
-let start_daemon rt effect =
-  match Eta.Runtime.run rt (Eta.Effect.daemon effect) with
+let start_daemon rt eff =
+  match Eta.Runtime.run rt (Eta.Effect.daemon eff) with
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error _ -> ()
 
@@ -747,13 +747,13 @@ let meter t : Eta.Capabilities.meter =
 
 module Internal = struct
   type nonrec span = span = {
-    global_ trace_id : string;
-    global_ span_id : string;
-    global_ parent_span_id : string option;
+    trace_id : string;
+    span_id : string;
+    parent_span_id : string option;
     trace_flags : int;
-    global_ trace_state : (string * string) list;
-    global_ baggage : (string * string) list;
-    global_ name : string;
+    trace_state : (string * string) list;
+    baggage : (string * string) list;
+    name : string;
     kind : Eta.Capabilities.span_kind;
     start_unix_ns : int;
     mutable end_unix_ns : int;

@@ -4,11 +4,11 @@
     port, path, query, and fragment. It rejects userinfo and unsupported
     schemes because eta-http v1 does not own authentication policy. *)
 
-type t : immutable_data
+type t
 
-type scheme : immutable_data = Http | Https
+type scheme = Http | Https
 
-type parse_error : immutable_data =
+type parse_error =
   | Empty
   | Missing_scheme
   | Unsupported_scheme of string

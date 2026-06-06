@@ -15,35 +15,35 @@ let with_island_runtime ?domains f =
       in
       f rt pool)
 
-type island_error : immutable_data =
+type island_error =
   | Odd of int
   | Invalid_payload of string
 
-type parse_input : immutable_data = {
+type parse_input = {
   parse_id : int;
   payload : string;
 }
 
-type schema_input : immutable_data = {
+type schema_input = {
   schema_version : int;
   required : int;
   values : int list;
 }
 
-type hash_input : immutable_data = {
+type hash_input = {
   hash_seed : int;
   rounds : int;
   bytes : string;
 }
 
-type island_entry : immutable_data = {
+type island_entry = {
   entry_input : int;
   entry_ms : int;
 }
 
-let (island_square @ portable) n = n * n
+let island_square n = n * n
 
-let (island_order_work @ portable) n =
+let island_order_work n =
   let rec burn acc i =
     if i = 0 then acc
     else burn (((acc lxor (i * 33)) + n) land 0x3fffffff) (i - 1)
@@ -51,18 +51,18 @@ let (island_order_work @ portable) n =
   ignore (burn 0 (((n mod 3) + 1) * 250));
   n * 10
 
-let (island_even_result @ portable) n =
+let island_even_result n =
   if n mod 2 = 0 then Ok (n / 2) else Error (Odd n)
 
-let (island_settled_work @ portable) n =
+let island_settled_work n =
   if n = 0 then failwith "worker died"
   else if n mod 2 = 0 then Ok (n * 2)
   else Error (Odd n)
 
-let (island_specific_worker_error @ portable) n =
+let island_specific_worker_error n =
   if n = 0 then failwith "specific worker error" else Ok n
 
-let (island_parse_work @ portable) input =
+let island_parse_work input =
   let len = String.length input.payload in
   let rec count_colons i acc =
     if i = len then acc
@@ -72,14 +72,14 @@ let (island_parse_work @ portable) input =
   in
   input.parse_id + len + count_colons 0 0
 
-let (island_schema_work @ portable) input =
+let island_schema_work input =
   let rec sum acc = function
     | [] -> acc
     | x :: xs -> sum (acc + x) xs
   in
   input.schema_version + input.required + sum 0 input.values
 
-let (island_hash_work @ portable) input =
+let island_hash_work input =
   let len = String.length input.bytes in
   let rec loop i acc =
     if i = input.rounds then acc
@@ -89,12 +89,12 @@ let (island_hash_work @ portable) input =
   in
   loop 0 input.hash_seed
 
-let (island_entry_probe @ portable) n =
+let island_entry_probe n =
   let started_ms = int_of_float (Unix.gettimeofday () *. 1000.0) in
   Thread.delay 0.05;
   { entry_input = n; entry_ms = started_ms }
 
-let (island_sleep_ms @ portable) ms =
+let island_sleep_ms ms =
   Thread.delay (float_of_int ms /. 1000.0);
   ms
 

@@ -1,14 +1,14 @@
-type overflow : immutable_data =
+type overflow =
   | Unbounded
   | Drop_new of { capacity : int }
   | Backpressure of { capacity : int }
 
-type publish_result : immutable_data = {
+type publish_result = {
   subscriber_count : int;
   dropped : int;
 }
 
-type stats : immutable_data = {
+type stats = {
   depth : int;
   subscribers : int;
   published : int;

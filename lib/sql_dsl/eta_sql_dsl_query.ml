@@ -6,8 +6,8 @@ module type BACKEND = sig
   exception Error of error
 
   type 'a typ = {
-    value : ('a -> value) @@ many;
-    decode : (row -> int -> 'a) @@ many;
+    value : ('a -> value);
+    decode : (row -> int -> 'a);
     sql_type : string;
   }
 
@@ -31,8 +31,8 @@ module Make (Backend : BACKEND) = struct
   type error = Backend.error
 
   type 'a typ = 'a Backend.typ = {
-    value : ('a -> Backend.value) @@ many;
-    decode : (Backend.row -> int -> 'a) @@ many;
+    value : ('a -> Backend.value);
+    decode : (Backend.row -> int -> 'a);
     sql_type : string;
   }
 
@@ -524,7 +524,7 @@ module Make (Backend : BACKEND) = struct
   end
 
   module Select = struct
-    type order : immutable_data = {
+    type order = {
       sql : string;
       desc : bool;
     }
@@ -706,7 +706,7 @@ module Make (Backend : BACKEND) = struct
   end
 
   module Insert = struct
-    type 'table conflict : immutable_data =
+    type 'table conflict =
       | Do_nothing of string list
       | Do_update_excluded of string list * string list
 

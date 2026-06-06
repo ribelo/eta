@@ -30,7 +30,7 @@ module Json_helpers = struct
     in
     loop [] values
 
-  let result_map_all (f @ many) values =
+  let result_map_all (f) values =
     let rec loop acc = function
       | [] -> Stdlib.Ok (List.rev acc)
       | value :: rest -> (

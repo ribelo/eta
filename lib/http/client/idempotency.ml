@@ -1,6 +1,6 @@
 module Header = Header
 
-type classification : immutable_data =
+type classification =
   | Retryable
   | Needs_idempotency_key
   | One_shot_body
@@ -12,14 +12,14 @@ let method_is_idempotent method_ =
 
 let[@zero_alloc] has_non_trim_space value =
   let len = String.length value in
-  let mutable index = 0 in
-  let mutable found = false in
-  while (not found) && index < len do
-    found <-
-      not (Eta.String_helpers.is_trim_space (String.unsafe_get value index));
-    index <- index + 1
+  let index = ref 0 in
+  let found = ref false in
+  while (not !found) && !index < len do
+    found :=
+      not (Eta.String_helpers.is_trim_space (String.unsafe_get value !index));
+    incr index
   done;
-  found
+  !found
 
 let has_idempotency_key request =
   match Header.get "idempotency-key" request.Request.headers with

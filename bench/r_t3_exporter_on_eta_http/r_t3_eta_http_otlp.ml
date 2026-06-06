@@ -70,7 +70,7 @@ let run ~host ~port ~count =
     Eta_http.Retry_policy.always ~max_attempts:3 ~retry_status:otlp_retry_status
       ()
   in
-  let effect =
+  let eff =
     Eta_http.Observability.Tracer.request_with_retry ~enabled:false ~policy client
       request
     |> Eta.Effect.bind (fun response ->
@@ -78,7 +78,7 @@ let run ~host ~port ~count =
            |> Eta.Effect.map (fun response_body ->
                   (response.Eta_http.Response.status, response_body)))
   in
-  match Eta.Runtime.run rt effect with
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok (status, response_body) ->
       let eta_http_spans = Eta.Tracer.dump tracer in
       if eta_http_spans <> [] then (

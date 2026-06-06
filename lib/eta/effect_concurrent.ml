@@ -4,9 +4,9 @@
 
 open Effect_core
 
-let run_child ?internal_cancel frame sw effect =
+let run_child ?internal_cancel frame sw eff =
   frame.runtime.tracer#with_fiber_context @@ fun () ->
-  run_scope ?internal_cancel ~sw frame effect
+  run_scope ?internal_cancel ~sw frame eff
 
 let atomic_push cell value =
   let rec loop () =
@@ -129,9 +129,9 @@ let race_eval effects () =
       (try
          switch_run frame @@ fun race_sw ->
          List.iter
-           (fun effect ->
+           (fun eff ->
              fiber_fork frame ~sw:race_sw (fun () ->
-                 Eio.Stream.add results (run_child frame race_sw effect)))
+                 Eio.Stream.add results (run_child frame race_sw eff)))
            effects;
          let rec drain_cancelled_losers acc remaining =
            if remaining = 0 then List.rev acc
@@ -231,14 +231,14 @@ let par_eval left right () =
   | Exit.Error cause -> error cause
 
 let par left right =
-  make ~names:(left.names @ right.names) (par_eval left right)
+  make ~names:(names left @ names right) (par_eval left right)
 
 let all_eval effects () =
   let frame = current_frame () in
   par_collect frame ~name:"Effect.all"
     (List.map
-       (fun effect internal_cancel sw ->
-         exit_to_value frame (run_child ~internal_cancel frame sw effect))
+       (fun eff internal_cancel sw ->
+         exit_to_value frame (run_child ~internal_cancel frame sw eff))
        effects)
 
 let all effects = make ~names:(concat_names effects) (all_eval effects)
@@ -248,11 +248,11 @@ let all_settled_eval effects () =
   let results = Array.make (List.length effects) None in
   switch_run frame (fun sw ->
       List.iteri
-        (fun index effect ->
+        (fun index eff ->
           fiber_fork frame ~sw (fun () ->
               results.(index) <-
                 Some
-                  (match run_child frame sw effect with
+                  (match run_child frame sw eff with
                   | Exit.Ok value -> Ok value
                   | Exit.Error cause -> Error cause)))
         effects);
@@ -268,8 +268,8 @@ let all_settled effects =
 let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
-  let run_task internal_cancel sw effect =
-    exit_to_value frame (run_child ~internal_cancel frame sw effect)
+  let run_task internal_cancel sw eff =
+    exit_to_value frame (run_child ~internal_cancel frame sw eff)
   in
   let worker internal_cancel sw =
     let rec loop () =
@@ -285,7 +285,7 @@ let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let forks = List.init workers (fun _ -> worker) in
   par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
-let for_each_par xs (f @ many) =
+let for_each_par xs (f) =
   let n = List.length xs in
   let xs_arr = Array.of_list xs in
   let tasks = Array.map f xs_arr in
@@ -294,7 +294,7 @@ let for_each_par xs (f @ many) =
   let workers = min n 8 in
   for_each_par_workers frame ~name:"Effect.for_each_par" ~workers ~tasks ~n
 
-let for_each_par_bounded ~max xs (f @ many) =
+let for_each_par_bounded ~max xs (f) =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
   let n = List.length xs in
   let xs_arr = Array.of_list xs in

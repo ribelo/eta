@@ -1,5 +1,5 @@
 module type UNIX = sig
-  val run_in_systhread : ?label:string -> (unit -> 'a) @ many -> 'a
+  val run_in_systhread : ?label:string -> (unit -> 'a) -> 'a
 end
 
 module type TIME = sig
@@ -24,28 +24,28 @@ module type FLOW = sig
 end
 
 module type SWITCH = sig
-  val run : ?name:string -> (Eio.Switch.t -> 'a) @ many -> 'a
+  val run : ?name:string -> (Eio.Switch.t -> 'a) -> 'a
   val fail : ?bt:Printexc.raw_backtrace -> Eio.Switch.t -> exn -> unit
 end
 
 module type FIBER = sig
   val get : 'a Eio.Fiber.key -> 'a option
-  val with_binding : 'a Eio.Fiber.key -> 'a -> (unit -> 'b) @ many -> 'b
+  val with_binding : 'a Eio.Fiber.key -> 'a -> (unit -> 'b) -> 'b
 
   val first :
-    ?combine:('a -> 'a -> 'a) @ many ->
-    (unit -> 'a) @ many ->
-    (unit -> 'a) @ many ->
+    ?combine:('a -> 'a -> 'a) ->
+    (unit -> 'a) ->
+    (unit -> 'a) ->
     'a
 
   val await_cancel : unit -> 'a
-  val fork : sw:Eio.Switch.t -> (unit -> unit) @ many -> unit
-  val fork_daemon : sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) @ many -> unit
+  val fork : sw:Eio.Switch.t -> (unit -> unit) -> unit
+  val fork_daemon : sw:Eio.Switch.t -> (unit -> [ `Stop_daemon ]) -> unit
   val yield : unit -> unit
 end
 
 module type CANCEL = sig
-  val sub : (Eio.Cancel.t -> 'a) @ many -> 'a
+  val sub : (Eio.Cancel.t -> 'a) -> 'a
   val cancel : Eio.Cancel.t -> exn -> unit
 end
 

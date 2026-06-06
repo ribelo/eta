@@ -1,4 +1,4 @@
-(* Port of @effect/opentelemetry/test/Tracer.test.ts.
+(* Port of @eff/opentelemetry/test/Tracer.test.ts.
 
    Each test mirrors a case from the Effect-TS suite. Where Effect-TS relies
    on a feature Eta does not yet have (or has by another mechanism), the
@@ -60,7 +60,7 @@ let span_info = Alcotest.testable span_info_pp span_info_eq
 let attr key attrs = List.assoc_opt key attrs
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("withSpan", ...)`. *)
+(* Mirrors `it.eff("withSpan", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_with_span () =
   with_traced_runtime @@ fun rt tracer ->
@@ -76,7 +76,7 @@ let test_with_span () =
   | None -> Alcotest.fail "current_span returned None inside withSpan"
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("withSpan links", ...)`.
+(* Mirrors `it.eff("withSpan links", ...)`.
 
    Effect-TS exposes `Effect.makeSpanScoped` to mint a span without
    activating it. Eta does not, so the equivalent move here is to first
@@ -109,7 +109,7 @@ let test_with_span_links () =
       Alcotest.failf "expected two spans, got %d" (List.length spans)
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("nested withSpan sets correct parent chain", ...)`.
+(* Mirrors `it.eff("nested withSpan sets correct parent chain", ...)`.
 
    Effect-TS asserts `child.parent.value.name === "parent"`. Eta's
    in-memory tracer records `parent_id : int option` rather than a span
@@ -135,7 +135,7 @@ let test_nested_with_span_parent_chain () =
     (Some parent.span_id) child.parent_id
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("supervisor sets context", ...)` and the generator
+(* Mirrors `it.eff("supervisor sets context", ...)` and the generator
    variant.
 
    The Effect-TS test asserts that an OTel global Context (set by
@@ -163,7 +163,7 @@ let test_supervisor_sets_context () =
          active-span context not propagated)"
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("currentOtelSpan", ...)`.
+(* Mirrors `it.eff("currentOtelSpan", ...)`.
 
    In Effect-TS the assertion is that `Effect.currentSpan` and
    `Tracer.currentOtelSpan` agree on the span identity. Eta does not
@@ -187,7 +187,7 @@ let test_current_otel_span () =
       Alcotest.check span_info "two reads agree" first second
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("records every pretty error", ...)`. *)
+(* Mirrors `it.eff("records every pretty error", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_records_every_pretty_error () =
   with_traced_runtime @@ fun rt tracer ->
@@ -216,7 +216,7 @@ let test_records_every_pretty_error () =
   | spans -> Alcotest.failf "expected one span, got %d" (List.length spans)
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("withSpanContext", ...)`. *)
+(* Mirrors `it.eff("withSpanContext", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_with_span_context () =
   with_traced_runtime @@ fun rt _tracer ->
@@ -236,7 +236,7 @@ let test_with_span_context () =
   | None -> Alcotest.fail "current_span returned None"
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `describe("not provided", ...) > it.effect("withSpan", ...)`. *)
+(* Mirrors `describe("not provided", ...) > it.eff("withSpan", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_not_provided_with_span () =
   Eio_main.run @@ fun stdenv ->

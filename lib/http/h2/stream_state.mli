@@ -4,11 +4,11 @@
     ocaml-h2 state machine. Remotely reset streams continue to occupy
     admission until the caller releases the response body. *)
 
-type status : immutable_data = Active | Remote_reset | Complete | Released
+type status = Active | Remote_reset | Complete | Released
 
 type stream
 
-type stats : immutable_data = {
+type stats = {
   active : int;
   cancelled : int;
   inflight : int;
@@ -22,7 +22,7 @@ type stats : immutable_data = {
   max_concurrent : int;
 }
 
-type release : immutable_data = Queue_rst | No_rst
+type release = Queue_rst | No_rst
 
 type t
 

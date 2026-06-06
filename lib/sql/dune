@@ -18,11 +18,6 @@
    (with-stdout-to sqlite_c_library_flags.sexp
     (bash "echo '('; pkg-config sqlite3 --libs | tr ' ' '\n'; echo ')'")))))
 
-(env
- (release
-  (ocamlopt_flags
-   (:standard -zero-alloc-check all))))
-
 (rule
  (alias runtest)
  (deps

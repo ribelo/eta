@@ -3,7 +3,7 @@ module E = Eta.Effect
 module H = Eta_http
 module Json = A.Json
 
-type prompt_cache : immutable_data = {
+type prompt_cache = {
   beta_header : string;
   cache_system : bool;
 }
@@ -58,26 +58,26 @@ let[@zero_alloc] equal_token url start stop token =
   let len = stop - start in
   len = String.length token
   &&
-  let mutable index = 0 in
-  let mutable equal = true in
-  while equal && index < len do
-    equal <- Char.equal (String.unsafe_get url (start + index)) token.[index];
-    index <- index + 1
+  let index = ref 0 in
+  let equal = ref true in
+  while !equal && !index < len do
+    equal := Char.equal (String.unsafe_get url (start + !index)) token.[!index];
+    incr index
   done;
-  equal
+  !equal
 
 let[@zero_alloc] metadata_has_token url start stop token =
-  let mutable pos = start in
-  let mutable found = false in
-  while (not found) && pos <= stop do
-    let token_start = pos in
-    while pos < stop && not (Char.equal (String.unsafe_get url pos) ';') do
-      pos <- pos + 1
+  let pos = ref start in
+  let found = ref false in
+  while (not !found) && !pos <= stop do
+    let token_start = !pos in
+    while !pos < stop && not (Char.equal (String.unsafe_get url !pos) ';') do
+      incr pos
     done;
-    found <- equal_token url token_start pos token;
-    pos <- pos + 1
+    found := equal_token url token_start !pos token;
+    incr pos
   done;
-  found
+  !found
 
 let image_source media =
   match media.A.detail with

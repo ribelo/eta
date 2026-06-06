@@ -72,19 +72,19 @@ let ai_error_message = function
       message
   | Unsupported { provider; feature } -> provider ^ " unsupported " ^ feature
 
-let with_error_type effect =
-  effect
+let with_error_type eff =
+  eff
   |> Eta.Effect.catch (fun error ->
          Eta.Effect.fail error
          |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
 
-let with_span ~kind ~name ~attrs effect =
-  effect |> with_error_type |> Eta.Effect.annotate_all attrs
+let with_span ~kind ~name ~attrs eff =
+  eff |> with_error_type |> Eta.Effect.annotate_all attrs
   |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
 
-let with_chat_span provider (request : chat_request) effect =
-  let effect =
-    effect
+let with_chat_span provider (request : chat_request) eff =
+  let eff =
+    eff
     |> Eta.Effect.bind (fun response ->
            Eta.Effect.pure response
            |> Eta.Effect.annotate_all (response_attrs response))
@@ -95,10 +95,10 @@ let with_chat_span provider (request : chat_request) effect =
   in
   with_span ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
-    ~attrs effect
+    ~attrs eff
 
 let with_stream_span ?time_to_first_chunk_s provider (request : chat_request)
-    effect =
+    eff =
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
     @ [ ("gen_ai.request.stream", "true") ]
@@ -107,7 +107,7 @@ let with_stream_span ?time_to_first_chunk_s provider (request : chat_request)
   in
   with_span ~kind:Eta.Capabilities.Client
     ~name:("chat " ^ request.model)
-    ~attrs effect
+    ~attrs eff
 
 let embedding_usage_attrs (usage : Embedding.usage) =
   option_int_attr "gen_ai.usage.input_tokens" usage.input_tokens
@@ -121,9 +121,9 @@ let embedding_response_attrs (response : Embedding.response) =
   | Some usage -> embedding_usage_attrs usage
   | None -> []
 
-let with_embeddings_span provider (request : Embedding.request) effect =
-  let effect =
-    effect
+let with_embeddings_span provider (request : Embedding.request) eff =
+  let eff =
+    eff
     |> Eta.Effect.bind (fun response ->
            Eta.Effect.pure response
            |> Eta.Effect.annotate_all (embedding_response_attrs response))
@@ -135,9 +135,9 @@ let with_embeddings_span provider (request : Embedding.request) effect =
   in
   with_span ~kind:Eta.Capabilities.Client
     ~name:("embeddings " ^ request.model)
-    ~attrs effect
+    ~attrs eff
 
-let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name effect =
+let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name eff =
   let attrs =
     [
       ("gen_ai.operation.name", "execute_tool");
@@ -148,7 +148,7 @@ let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name effect =
   in
   with_span ~kind:Eta.Capabilities.Internal
     ~name:("execute_tool " ^ tool_name)
-    ~attrs effect
+    ~attrs eff
 
 let suppress_provider_transport_observability =
   Eta.Effect.suppress_observability

@@ -95,8 +95,8 @@ let with_traced_runtime f =
   in
   f rt tracer
 
-let run_ok rt label effect =
-  match Eta.Runtime.run rt effect with
+let run_ok rt label eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       Alcotest.failf "%s failed: %a" label
@@ -124,10 +124,10 @@ let response_of_bytes ?(status = 200) ?(headers = []) body =
 let test_client ?(with_http_span = false) response captured =
   let request http_request =
     captured := Some http_request;
-    let effect = E.pure response in
+    let eff = E.pure response in
     if with_http_span then
-      E.named_kind ~kind:Eta.Capabilities.Client "HTTP POST" effect
-    else effect
+      E.named_kind ~kind:Eta.Capabilities.Client "HTTP POST" eff
+    else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request
     ~stats:(fun () -> E.pure zero_stats)

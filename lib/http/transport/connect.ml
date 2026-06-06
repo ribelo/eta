@@ -2,7 +2,7 @@
 
 open Eta
 
-type target : immutable_data = {
+type target = {
   url : Url.t;
   scheme : Url.scheme;
   host : string;

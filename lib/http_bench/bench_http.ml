@@ -177,8 +177,8 @@ let pp_ws_error fmt = function
   | `Protocol message -> Format.fprintf fmt "protocol %s" message
   | `Timeout -> Format.pp_print_string fmt "timeout"
 
-let run_ws_effect rt effect =
-  match Eta.Runtime.run rt effect with
+let run_ws_effect rt eff =
+  match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       failwith (Format.asprintf "%a" (Eta.Cause.pp pp_ws_error) cause)

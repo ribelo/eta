@@ -269,6 +269,47 @@
               pkgs.scala-cli
               pkgs.zlib
             ];
+          mainlineShippedTests = pkgs.writeShellApplication {
+            name = "eta-mainline-test-shipped";
+            runtimeInputs = [
+              pkgs.git
+            ];
+            text = ''
+              repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              cd "$repo_root"
+
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
+              export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
+              export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
+
+              dune build \
+                lib/redacted \
+                lib/eta \
+                lib/stream \
+                lib/http \
+                lib/schema \
+                lib/schema_test \
+                lib/test \
+                lib/ppx \
+                lib/ai \
+                lib/ai/openai_codec \
+                lib/ai/anthropic \
+                lib/ai/openai_compat \
+                lib/ai/openai \
+                lib/ai/openrouter \
+                lib/otel \
+                lib/sql_dsl \
+                lib/sql_driver \
+                lib/sql \
+                lib/duckdb \
+                lib/turso \
+                lib/ladybug
+
+              dune runtest --force
+              dune build @bench
+            '';
+          };
         in
         {
           default = pkgs.mkShell {
@@ -314,24 +355,47 @@
           };
 
           # Mainline is retained only for before/after performance comparison.
-          # The default development shell is OxCaml.
+          # It is also the upstream OCaml compatibility gate for this experiment.
           mainline = pkgs.mkShell {
             packages = [
+              mainlineShippedTests
               ocamlPackages.ocaml
               ocamlPackages.dune_3
               ocamlPackages.findlib
               ocamlPackages.eio
               ocamlPackages.eio_main
               ocamlPackages.alcotest
+              ocamlPackages.angstrom
+              ocamlPackages.base64
+              ocamlPackages.bigstringaf
               ocamlPackages.cstruct
+              ocamlPackages.crowbar
+              ocamlPackages.decompress
+              ocamlPackages.domain-name
               ocamlPackages.utop
+              ocamlPackages.faraday
+              ocamlPackages.h2
+              ocamlPackages.hpack
+              ocamlPackages.ipaddr
               ocamlPackages.yojson
               ocamlPackages.ppxlib
+              pkgs.duckdb
+              pkgs.git
+              pkgs.ladybugdb.lib
+              pkgs.nghttp2
+              pkgs.openssl
+              pkgs.pkg-config
+              pkgs.sqlite
+              tursoSqlite3
             ];
 
             shellHook = ''
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
+              export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
+              export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
               echo "Eta mainline OCaml comparison shell (nixpkgs ocamlPackages.ocaml ${ocamlPackages.ocaml.version})"
-              echo "Use this only for benchmark comparison; default development is OxCaml."
+              echo "Use this for upstream OCaml compatibility work and benchmark comparison."
             '';
           };
         }

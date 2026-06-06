@@ -18,12 +18,16 @@ let run_effect eff =
   | Eta.Exit.Ok value -> Ok value
   | Eta.Exit.Error (Eta.Cause.Fail error) -> Error error
   | Eta.Exit.Error cause ->
-      Alcotest.failf "unexpected schema effect failure: %a"
+      Alcotest.failf "unexpected schema eff failure: %a"
         (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<schema-error>"))
         cause
 
 let fail_issues name kind issues =
   Alcotest.failf "%s: %s: %s" name kind (Eta_schema.render_issues issues)
+
+let expect_result_ok name kind = function
+  | Ok value -> value
+  | Error issues -> fail_issues name kind issues
 
 let expect_ok ?(name = "schema") = function
   | Ok value -> value
@@ -43,10 +47,12 @@ let expect_encode_error ?(name = "schema") = function
       Alcotest.failf "%s: expected encode failure, got decode failure" name
 
 let decode_ok ?(name = "decode") schema value =
-  Eta_schema.Eta_schema.decode schema value |> run_effect |> expect_ok ~name
+  Eta_schema.Eta_schema.decode_result schema value
+  |> expect_result_ok name "decode failed"
 
 let encode_ok ?(name = "encode") schema value =
-  Eta_schema.Eta_schema.encode schema value |> run_effect |> expect_ok ~name
+  Eta_schema.Eta_schema.encode_result schema value
+  |> expect_result_ok name "encode failed"
 
 let check_decode testable ?(name = "decode") schema json expected =
   Alcotest.check testable name expected (decode_ok ~name schema json)

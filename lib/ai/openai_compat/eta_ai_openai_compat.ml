@@ -3,12 +3,12 @@ module Codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module H = Eta_http
 
-type auth : immutable_data = {
+type auth = {
   header : string;
   prefix : string option;
 }
 
-type structured_output : immutable_data = Codec.structured_output = {
+type structured_output = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
   strict : bool option;

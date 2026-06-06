@@ -1,4 +1,4 @@
-type t : immutable_data = { ms : int } [@@unboxed]
+type t = { ms : int } [@@unboxed]
 
 let zero = { ms = 0 }
 let clamp_nonnegative n = if n < 0 then 0 else n

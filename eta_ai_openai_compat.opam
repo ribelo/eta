@@ -4,8 +4,7 @@ synopsis: "OpenAI-compatible provider adapter for Eta AI"
 description:
   "eta_ai_openai_compat provides OpenAI-compatible provider adapters for Eta."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_ai"

@@ -5,12 +5,12 @@
     HTTP-style headers, carried through fiber-local runtime context, and
     injected into outbound headers. *)
 
-type t : immutable_data = Capabilities.trace_context = {
-  global_ trace_id : string;
-  global_ span_id : string;
+type t = Capabilities.trace_context = {
+  trace_id : string;
+  span_id : string;
   trace_flags : int;
-  global_ trace_state : (string * string) list;
-  global_ baggage : (string * string) list;
+  trace_state : (string * string) list;
+  baggage : (string * string) list;
 }
 (** Propagation context for a remote or local span.
 

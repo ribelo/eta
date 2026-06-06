@@ -10,15 +10,15 @@ type db
 type stmt
 (** Prepared statement. A statement keeps its database handle reachable. *)
 
-type rc : immutable_data = private int
+type rc = private int
 (** SQLite result code. *)
 
-type open_mode : immutable_data =
+type open_mode =
   | Read_only
   | Read_write
   | Read_write_create
 
-type journal_mode : immutable_data =
+type journal_mode =
   [ `Delete
   | `Truncate
   | `Persist
@@ -27,14 +27,14 @@ type journal_mode : immutable_data =
   | `Off
   ]
 
-type synchronous : immutable_data =
+type synchronous =
   [ `Extra
   | `Full
   | `Normal
   | `Off
   ]
 
-type config : immutable_data = {
+type config = {
   path : string;
   mode : open_mode;
   busy_timeout_ms : int option;
@@ -44,12 +44,12 @@ type config : immutable_data = {
   cache_size : int option;
 }
 
-type transaction_mode : immutable_data =
+type transaction_mode =
   | Deferred
   | Immediate
   | Exclusive
 
-type error : immutable_data = {
+type error = {
   operation : string;
   code : rc;
   message : string;
@@ -187,12 +187,12 @@ val query_one_int : db -> string -> int
 (** Small typed convenience used by tests and smoke probes. *)
 
 module Config : sig
-  type mode : immutable_data = open_mode =
+  type mode = open_mode =
     | Read_only
     | Read_write
     | Read_write_create
 
-  type t : immutable_data = config = {
+  type t = config = {
     path : string;
     mode : open_mode;
     busy_timeout_ms : int option;
@@ -207,7 +207,7 @@ module Config : sig
 end
 
 module Error : sig
-  type t : immutable_data = error = {
+  type t = error = {
     operation : string;
     code : rc;
     message : string;

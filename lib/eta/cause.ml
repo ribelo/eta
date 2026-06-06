@@ -1,4 +1,4 @@
-type interrupt_id : immutable_data = int
+type interrupt_id = int
 
 type die = {
   exn : exn;
@@ -130,7 +130,7 @@ type 'err t =
 type 'err same_domain_t = 'err t
 
 module Portable = struct
-  type die : value mod portable = {
+  type die = {
     kind : string;
     message : string;
     backtrace : string option;
@@ -139,7 +139,7 @@ module Portable = struct
   }
 
   module Finalizer = struct
-    type t : value mod portable =
+    type t =
       | Fail of string
       | Die of die
       | Interrupt of interrupt_id option
@@ -231,7 +231,7 @@ module Portable = struct
             finalizer
   end
 
-  type ('err : value mod portable) t : value mod portable =
+  type ('err) t =
     | Fail of 'err
     | Die of die
     | Interrupt of interrupt_id option
@@ -250,9 +250,9 @@ module Portable = struct
     }
 
   let rec of_cause :
-      type err (portable_err : value mod portable).
-      (err -> portable_err) @ many -> err same_domain_t -> portable_err t =
-   fun (convert @ many) -> function
+      type err portable_err.
+      (err -> portable_err) -> err same_domain_t -> portable_err t =
+   fun convert -> function
     | Fail err -> Fail (convert err)
     | Die die -> Die (die_of_cause die)
     | Interrupt id -> Interrupt id
@@ -275,7 +275,7 @@ module Portable = struct
          (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
          left.annotations right.annotations
 
-  let rec equal (equal_err @ many) left right =
+  let rec equal (equal_err) left right =
     match (left, right) with
     | Fail a, Fail b -> equal_err a b
     | Die a, Die b -> equal_die a b
@@ -304,7 +304,7 @@ module Portable = struct
     pp_backtrace fmt die.backtrace;
     Format.pp_print_string fmt "}"
 
-  let rec pp (pp_err @ many) fmt = function
+  let rec pp (pp_err) fmt = function
     | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
     | Die die -> pp_die fmt die
     | Interrupt None -> Format.pp_print_string fmt "Interrupt"
@@ -358,8 +358,8 @@ let suppressed ~primary ~finalizer = Suppressed { primary; finalizer }
 let to_portable = Portable.of_cause
 
 let rec finalizer_of_cause :
-    type err. (err -> string) @ many -> err t -> Finalizer.t =
- fun (render @ many) -> function
+    type err. (err -> string) -> err t -> Finalizer.t =
+ fun (render) -> function
   | Fail err -> Finalizer.Fail (render err)
   | Die die -> Finalizer.Die die
   | Interrupt id -> Finalizer.Interrupt id
@@ -370,8 +370,8 @@ let rec finalizer_of_cause :
       Finalizer.Suppressed
         { primary = finalizer_of_cause render primary; finalizer }
 
-let rec map : type err mapped. (err -> mapped) @ many -> err t -> mapped t =
- fun (f @ many) -> function
+let rec map : type err mapped. (err -> mapped) -> err t -> mapped t =
+ fun (f) -> function
   | Fail err -> Fail (f err)
   | Die die -> Die die
   | Interrupt id -> Interrupt id
@@ -390,7 +390,7 @@ let rec is_interrupt_only : type err. err t -> bool = function
   | Fail _ | Die _ -> false
 
 let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
- fun (equal_err @ many) left right ->
+ fun (equal_err) left right ->
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> equal_die a b
@@ -404,8 +404,8 @@ let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
   | _ -> false
 
 let rec diagnostic_equal :
-    type err. (err -> err -> bool) @ many -> err t -> err t -> bool =
- fun (equal_err @ many) left right ->
+    type err. (err -> err -> bool) -> err t -> err t -> bool =
+ fun (equal_err) left right ->
   match (left, right) with
   | Fail a, Fail b -> equal_err a b
   | Die a, Die b -> diagnostic_equal_die a b
@@ -420,9 +420,9 @@ let rec diagnostic_equal :
 
 let rec pp :
     type err.
-    (Format.formatter -> err -> unit) @ many -> Format.formatter -> err t -> unit
+    (Format.formatter -> err -> unit) -> Format.formatter -> err t -> unit
     =
- fun (pp_err @ many) fmt -> function
+ fun (pp_err) fmt -> function
   | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
   | Die die -> pp_die fmt die
   | Interrupt None -> Format.pp_print_string fmt "Interrupt"

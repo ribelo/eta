@@ -1,8 +1,8 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type scheme : immutable_data = Http | Https
+type scheme = Http | Https
 
-type parse_error : immutable_data =
+type parse_error =
   | Empty
   | Missing_scheme
   | Unsupported_scheme of string
@@ -16,14 +16,14 @@ type parse_error : immutable_data =
       char : char;
     }
 
-type span : immutable_data = {
+type span = {
   off : int;
   len : int;
 }
 
-type host_kind : immutable_data = Reg_name | Ip_literal
+type host_kind = Reg_name | Ip_literal
 
-type t : immutable_data = {
+type t = {
   raw : string;
   scheme : scheme;
   host : span;

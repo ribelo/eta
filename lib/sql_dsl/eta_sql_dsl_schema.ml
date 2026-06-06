@@ -30,14 +30,14 @@ module Make
       val compiled_schema : string -> compiled_schema
     end) =
 struct
-  type reference : immutable_data = {
+  type reference = {
     table_name : string;
     column_name : string option;
     on_delete : string option;
     on_update : string option;
   }
 
-  type column_def : immutable_data = {
+  type column_def = {
     name : string;
     sql_type : string;
     primary_key : bool;
@@ -47,7 +47,7 @@ struct
     references : reference option;
   }
 
-  type t : immutable_data =
+  type t =
     | Create_table of {
         if_not_exists : bool;
         table : string;

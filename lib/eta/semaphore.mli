@@ -35,7 +35,7 @@ val release : t -> int -> unit
     semaphore capacity. *)
 
 val with_permits :
-  t -> int -> (unit -> ('a, 'err) Effect.t) @ many -> ('a, 'err) Effect.t
+  t -> int -> (unit -> ('a, 'err) Effect.t) -> ('a, 'err) Effect.t
 (** [with_permits t n f] acquires [n] permits, runs [f ()], and releases the
     permits on exit (success, typed failure, or cancellation). *)
 
@@ -43,7 +43,7 @@ val with_permits_or_abort :
   t ->
   int ->
   abort:('abort, 'err) Effect.t ->
-  (unit -> ('a, 'err) Effect.t) @ many ->
+  (unit -> ('a, 'err) Effect.t) ->
   ('a option, 'err) Effect.t
 (** [with_permits_or_abort t n ~abort f] races acquiring [n] permits against
     [abort]. If the permits are acquired first, [f ()] runs while holding them
@@ -52,7 +52,7 @@ val with_permits_or_abort :
 
     The permit lifetime is scoped to [f]: permits are released on success,
     typed failure, defect, abort, or cancellation, including when an outer
-    concurrent combinator discards this effect's result.
+    concurrent combinator discards this eff's result.
     @raise Invalid_argument if [n <= 0] or [n] exceeds the semaphore capacity. *)
 
 val available : t -> int

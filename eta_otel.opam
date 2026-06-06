@@ -4,8 +4,7 @@ synopsis: "OpenTelemetry exporter for Eta"
 description:
   "eta_otel exports Eta logger, tracer, and meter capabilities through OpenTelemetry protocols."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_stream"

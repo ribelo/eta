@@ -1,13 +1,13 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type state : immutable_data = Active | Cancelled | Complete | Released
+type state = Active | Cancelled | Complete | Released
 
 type permit = {
   id : int;
   mutable state : state;
 }
 
-type stats : immutable_data = {
+type stats = {
   active : int;
   cancelled : int;
   inflight : int;
@@ -20,7 +20,7 @@ type stats : immutable_data = {
   max_concurrent : int;
 }
 
-type release : immutable_data = Queue_rst | No_rst
+type release = Queue_rst | No_rst
 
 type t = {
   max_concurrent : int;

@@ -1,6 +1,6 @@
 (** HTTP request methods. *)
 
-type t : immutable_data =
+type t =
   [ `GET
   | `HEAD
   | `POST

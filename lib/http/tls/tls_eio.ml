@@ -2,7 +2,7 @@
 
 type config = Config.t
 
-type epoch : immutable_data = { alpn_protocol : string option } [@@unboxed]
+type epoch = { alpn_protocol : string option } [@@unboxed]
 
 type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t

@@ -15,8 +15,8 @@ for src in "$fixture_dir"/*_negative.ml; do
   log="$tmp_dir/$name.log"
   obj="$tmp_dir/${name%.ml}.cmo"
 
-  if ocamlfind ocamlc -extension-universe alpha \
-      -package "eio,eio_main,portable,threads" \
+  if ocamlfind ocamlc \
+      -package "eio,eio_main,threads" \
       -I "/.eta_ai.objs/byte" \
       -I "/lib/par/.eta_par.objs/byte" \
       -I "$build_root/lib/eta/.eta.objs/byte" \

@@ -235,7 +235,7 @@ let () =
             test_effect_timeout_nested_cancel_maps_to_outer_timeout;
           Alcotest.test_case "timeout_as exact error row" `Quick
             test_effect_timeout_as_keeps_exact_error_row;
-          Alcotest.test_case "timeout_as maps delayed effect" `Quick
+          Alcotest.test_case "timeout_as maps delayed eff" `Quick
             test_effect_timeout_as_maps_delayed_effect;
           Alcotest.test_case "timeout_as preserves simultaneous failure" `Quick
             test_effect_timeout_as_preserves_simultaneous_body_failure;
@@ -339,7 +339,7 @@ let () =
             test_island_all_settled_returns_worker_died;
           Alcotest.test_case "worker_died captures exception details" `Quick
             test_island_worker_died_captures_exception_details;
-          Alcotest.test_case "map worker crash fails outer effect" `Quick
+          Alcotest.test_case "map worker crash fails outer eff" `Quick
             test_island_map_worker_crash_fails_outer_effect;
           Alcotest.test_case "workloads" `Quick test_island_workloads;
         ] );
@@ -681,13 +681,13 @@ let () =
       ( "Upstream invariants",
         [
           Alcotest.test_case
-            "effect-smol acquireUseRelease interrupt releases" `Quick
+            "eff-smol acquireUseRelease interrupt releases" `Quick
             test_effect_smol_acquire_use_release_timeout_releases;
-          Alcotest.test_case "effect-smol ensuring interrupt finalizes" `Quick
+          Alcotest.test_case "eff-smol ensuring interrupt finalizes" `Quick
             test_effect_smol_finally_runs_on_timeout_interrupt;
-          Alcotest.test_case "effect-smol race cancels losers before return"
+          Alcotest.test_case "eff-smol race cancels losers before return"
             `Quick test_effect_smol_race_cancels_losers_before_return;
-          Alcotest.test_case "effect-smol all fail-fast releases siblings"
+          Alcotest.test_case "eff-smol all fail-fast releases siblings"
             `Quick test_effect_smol_all_fail_fast_releases_losing_scopes;
           Alcotest.test_case "ZIO timeout waits for resource release" `Quick
             test_zio_timeout_waits_for_resource_release;
@@ -820,7 +820,7 @@ let () =
             test_all_settled_scoped_resources_released_per_branch;
           Alcotest.test_case "race many branches resource cleanup" `Quick
             test_race_many_branches_resource_cleanup;
-          Alcotest.test_case "randomized effect compositions release" `Quick
+          Alcotest.test_case "randomized eff compositions release" `Quick
             test_randomized_effect_compositions_release_resources;
           Alcotest.test_case "randomized race compositions release" `Quick
             test_randomized_race_compositions_release_resources;

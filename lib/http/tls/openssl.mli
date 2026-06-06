@@ -14,14 +14,14 @@ val create_ctx : unit -> ctx
 
 val ctx_load_ca : ctx -> string -> unit
 (** [ctx_load_ca ctx path] adds [path] (a PEM CA file) to the trust
-    store of [ctx]. The default system trust store remains in effect.
+    store of [ctx]. The default system trust store remains in eff.
     Raises [Failure] if the file cannot be loaded. *)
 
 val create_ssl : ctx -> hostname:string option -> alpn_protocols:string list -> ssl
 (** Create an SSL connection with memory BIOs. [hostname] sets SNI.
     [alpn_protocols] are sent in wire order. *)
 
-type handshake_result : immutable_data =
+type handshake_result =
   | Handshake_ok
   | Handshake_error of int
 

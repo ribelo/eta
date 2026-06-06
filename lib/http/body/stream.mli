@@ -11,12 +11,12 @@ type read_result = Chunk of bytes | Last of bytes | End
 
 val empty : unit -> t
 val of_bytes :
-  ?release:(unit -> (unit, Error.t) Eta.Effect.t) @ many ->
+  ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
   bytes list ->
   t
 val of_reader :
-  ?release:(unit -> (unit, Error.t) Eta.Effect.t) @ many ->
-  (unit -> (read_result, Error.t) Eta.Effect.t) @ many ->
+  ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
+  (unit -> (read_result, Error.t) Eta.Effect.t) ->
   t
 
 val default_max_bytes : int

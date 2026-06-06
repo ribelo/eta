@@ -80,7 +80,7 @@ let rec interpret_supervisor_scope :
  fun frame scope ->
   match scope with
   | Supervisor_pure value -> value
-  | Supervisor_lift effect -> run_to_value frame effect
+  | Supervisor_lift eff -> run_to_value frame eff
   | Supervisor_fail err -> Runtime_core.raise_fail frame.fail_key err
   | Supervisor_bind (scope, k) ->
       let value = interpret_supervisor_scope frame scope in
@@ -225,10 +225,10 @@ let with_background ?name background use =
     }
 
 let supervisor_pure value = Supervisor_pure value
-let supervisor_lift effect = Supervisor_lift effect
+let supervisor_lift eff = Supervisor_lift eff
 let supervisor_fail err = Supervisor_fail err
-let supervisor_bind k effect = Supervisor_bind (effect, k)
-let supervisor_start supervisor effect = Supervisor_start (supervisor, effect)
+let supervisor_bind k eff = Supervisor_bind (eff, k)
+let supervisor_start supervisor eff = Supervisor_start (supervisor, eff)
 let supervisor_await child = Supervisor_await child
 let supervisor_cancel child = Supervisor_cancel child
 let supervisor_failures supervisor = Supervisor_failures supervisor

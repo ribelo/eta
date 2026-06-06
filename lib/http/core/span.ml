@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type t : immutable_data = {
+type t = {
   off : int;
   len : int;
 }

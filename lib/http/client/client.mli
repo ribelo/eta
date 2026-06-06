@@ -1,8 +1,8 @@
 (** Top-level eta-http client API. *)
 
-type protocol : immutable_data = H1 | H2 | Auto
+type protocol = H1 | H2 | Auto
 
-type stats : immutable_data = {
+type stats = {
   protocol : protocol;
   active : int;
   idle : int;
@@ -76,7 +76,7 @@ val run_host_h1 :
   (t -> ('a, 'err) Eta.Effect.t) ->
   ('a, 'err) Eta.Exit.t
 (** Create a host-backed runtime and one-shot HTTP/1.1 client, then run one
-    effect to completion.
+    eff to completion.
 
     This is the compact path for [dune utop] workflows: Exergy code can keep
     accepting a normal {!t}, while the interactive session supplies the host

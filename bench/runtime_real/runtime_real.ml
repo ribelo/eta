@@ -105,7 +105,7 @@ let pipeline_bind_catch_1k () =
 
 (* ---- realuse.scope.acquire_release.64 ----
    64 nested acquire_release scopes, each acquires a counter, threads
-   the value through the inner effect, and releases on exit.  *)
+   the value through the inner eff, and releases on exit.  *)
 let scope_acquire_release_64 () =
   let counter = ref 0 in
   let acquire_one =

@@ -6,7 +6,7 @@
     prompt input is not advertised. Image generation, speech, transcription,
     rerank, and video generation use OpenRouter-specific endpoint helpers. *)
 
-type attribution : immutable_data = {
+type attribution = {
   referer : string option;
   title : string option;
 }
@@ -15,7 +15,7 @@ type attribution : immutable_data = {
 
 val attribution : ?referer:string -> ?title:string -> unit -> attribution
 
-type routing : immutable_data = {
+type routing = {
   order : string list;
   only_providers : string list;
   ignored_providers : string list;
@@ -39,7 +39,7 @@ val routing :
   unit ->
   (routing, Eta_ai.ai_error) result
 
-type reasoning : immutable_data = {
+type reasoning = {
   effort : string option;
 }
 (** OpenRouter reasoning controls for Responses requests. *)
@@ -58,7 +58,7 @@ val provider :
 (** OpenRouter Responses API provider value. The default base URL is
     [https://openrouter.ai] and the path is [/api/v1/responses]. *)
 
-type structured_output : immutable_data = Eta_ai_openai_codec.structured_output = {
+type structured_output = Eta_ai_openai_codec.structured_output = {
   name : string;
   schema : Eta_ai.Json.t;
   strict : bool option;

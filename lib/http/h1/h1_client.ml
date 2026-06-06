@@ -14,7 +14,7 @@ type nonrec request_body = request_body =
   | Stream of Stream.t
   | Rewindable_stream of {
       length : int option;
-      make : (unit -> Stream.t) @@ many;
+      make : (unit -> Stream.t);
     }
 
 type nonrec request = request = {
@@ -28,7 +28,7 @@ type nonrec response = response = {
   status : int;
   headers : Header.t;
   body : Stream.t;
-  trailers : (unit -> (Header.t, Error.t) Effect.t) @@ many;
+  trailers : (unit -> (Header.t, Error.t) Effect.t);
 }
 
 type nonrec pool = pool
@@ -36,9 +36,9 @@ type nonrec pool = pool
 let default_max_response_body_bytes =
   H1_client_response_reader.default_max_response_body_bytes
 
-let request_on_flow ?host_eio ?(on_unread_body @ many = fun () -> Effect.unit)
+let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?(release @ many) ~flow request =
+    ?(release) ~flow request =
   if max_response_body_bytes < 0 then
     invalid_arg
       "Eta_http.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";

@@ -5,14 +5,14 @@
     header, and extra headers. It does not claim OpenAI-only task endpoints such
     as image generation, speech, or transcription. *)
 
-type auth : immutable_data = {
+type auth = {
   header : string;
   prefix : string option;
 }
 (** API-key header policy. [prefix] is prepended to the redacted key value when
     present. *)
 
-type structured_output : immutable_data = Eta_ai_openai_codec.structured_output = {
+type structured_output = Eta_ai_openai_codec.structured_output = {
   name : string;
   schema : Eta_ai.Json.t;
   strict : bool option;

@@ -26,7 +26,7 @@ let pool_context_error ~method_ ~uri = function
         (Connection_protocol_violation
            { kind = "pool_health"; message = "health probe timed out" })
 
-let map_http_error effect = Effect.catch (fun e -> Effect.fail (`Http e)) effect
+let map_http_error eff = Effect.catch (fun e -> Effect.fail (`Http e)) eff
 
 let close_flow request flow =
   Effect.sync (fun () ->

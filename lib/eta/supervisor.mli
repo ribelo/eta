@@ -4,13 +4,8 @@
     [scoped]. The rank-2 body prevents a child from escaping its owning
     supervisor scope.
 
-    Ordering note: this module documents the same-domain supervisor contract.
-    Same-domain failures are returned in observation order, which follows the
-    order in which this runtime records completed child failures. The H3
-    portable supervisor path uses a different contract: each child is assigned
-    a stable task index, and portable failure snapshots are reassembled in
-    task-index order. Do not infer portable supervisor ordering from the
-    same-domain observation order below. *)
+    Ordering note: failures are returned in observation order, which follows
+    the order in which this runtime records completed child failures. *)
 
 type ('s, 'err) t = ('s, 'err) Effect.supervisor
 type ('s, 'err) supervisor = ('s, 'err) t
@@ -24,13 +19,13 @@ module Scope : sig
   val fail : 'err -> ('s, 'a, 'err) t
 
   val bind :
-    ('a -> ('s, 'b, 'err) t) @ many ->
+    ('a -> ('s, 'b, 'err) t) ->
     ('s, 'a, 'err) t ->
     ('s, 'b, 'err) t
 
   val ( let* ) :
     ('s, 'a, 'err) t ->
-    ('a -> ('s, 'b, 'err) t) @ many ->
+    ('a -> ('s, 'b, 'err) t) ->
     ('s, 'b, 'err) t
 
   val start :

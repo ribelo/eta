@@ -1,6 +1,6 @@
 (** Shared OpenAI-family JSON codec helpers for eta-ai providers. *)
 
-type structured_output : immutable_data = {
+type structured_output = {
   name : string;
   schema : Eta_ai.Json.t;
   strict : bool option;
@@ -82,7 +82,7 @@ val input_items :
 val chat_message_json :
   provider:string -> Eta_ai.message -> (Eta_ai.Json.t, Eta_ai.ai_error) result
 
-type tool_shape : immutable_data =
+type tool_shape =
   | Chat_tool
   | Responses_tool
 
@@ -93,7 +93,7 @@ val tool_json :
   Eta_ai.tool ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
-type structured_output_shape : immutable_data =
+type structured_output_shape =
   | Chat_response_format
   | Responses_format
 
@@ -194,4 +194,4 @@ val decode_stream_event :
   (Eta_ai.stream_event list, Eta_ai.ai_error) result
 
 val result_all : ('a, 'err) result list -> ('a list, 'err) result
-val result_map_all : ('a -> ('b, 'err) result) @ many -> 'a list -> ('b list, 'err) result
+val result_map_all : ('a -> ('b, 'err) result) -> 'a list -> ('b list, 'err) result

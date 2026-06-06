@@ -4,8 +4,7 @@ synopsis: "OpenAI provider for Eta AI"
 description:
   "eta_ai_openai provides OpenAI chat, streaming, and realtime clients for Eta."
 depends: [
-  "ocaml" {= "5.2.0"}
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_ai"

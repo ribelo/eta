@@ -6,7 +6,7 @@ open Runtime_core
 
 module RObs = Runtime_observability
 module Sch = Schedule
-module P_atomic = Portable.Atomic
+module P_atomic = Atomic
 
 (* ---------------------------------------------------------------- *)
 (* Frame infrastructure                                              *)
@@ -14,7 +14,7 @@ module P_atomic = Portable.Atomic
 
 type frame = {
   runtime : Obj.t Runtime_core.t;
-  error_renderer : (Obj.t -> string) @@ many;
+  error_renderer : (Obj.t -> string);
   fail_key : Runtime_core.Typed_fail.key;
   sw : Eio.Switch.t;
   finalizers : (unit -> unit) list ref;
@@ -36,26 +36,26 @@ let current_frame () =
           match frame.runtime.substrate.fiber_get frame_key with
           | Some frame -> frame
           | None -> frame)
-      | None -> failwith "Eta effect requires Runtime.run")
+      | None -> failwith "Eta eff requires Runtime.run")
 
-let with_fiberless_frame frame (f @ many) =
+let with_fiberless_frame frame (f) =
   let previous = Domain.DLS.get fiberless_frame_key in
   Domain.DLS.set fiberless_frame_key (Some frame);
   Fun.protect
     ~finally:(fun () -> Domain.DLS.set fiberless_frame_key previous)
     f
 
-let with_frame frame (f @ many) =
+let with_frame frame (f) =
   frame.runtime.substrate.fiber_with_binding
     ~dls_active:(Option.is_some (Domain.DLS.get fiberless_frame_key))
     ~enter_fiberless:(with_fiberless_frame frame)
     frame_key frame f
 
-let switch_run frame (f @ many) = frame.runtime.substrate.switch_run f
+let switch_run frame (f) = frame.runtime.substrate.switch_run f
 
 let switch_fail frame sw exn = frame.runtime.substrate.switch_fail sw exn
 
-let fiber_fork frame ~sw (f @ many) = frame.runtime.substrate.fiber_fork ~sw f
+let fiber_fork frame ~sw (f) = frame.runtime.substrate.fiber_fork ~sw f
 
 let fiber_fork_daemon frame ~sw f =
   frame.runtime.substrate.fiber_fork_daemon ~sw f
@@ -64,7 +64,7 @@ let fiber_await_cancel frame = frame.runtime.substrate.fiber_await_cancel ()
 
 let fiber_yield frame = frame.runtime.substrate.fiber_yield ()
 
-let cancel_sub frame (f @ many) = frame.runtime.substrate.cancel_sub f
+let cancel_sub frame (f) = frame.runtime.substrate.cancel_sub f
 
 let cancel_cancel frame cancel_context exn =
   frame.runtime.substrate.cancel_cancel cancel_context exn
@@ -76,20 +76,46 @@ let render_error frame err =
 (* Effect type and basic constructors                                *)
 (* ---------------------------------------------------------------- *)
 
-type ('a, 'err) t = {
-  eval : (unit -> ('a, 'err) Exit.t) @@ many;
-  leaf_name : string option;
-  names : string list;
-}
-
-let make ?leaf_name ?(names = []) (eval @ many) = { eval; leaf_name; names }
-let preserve effect (eval @ many) = make ~names:effect.names eval
-let concat_names effects = List.concat_map (fun effect -> effect.names) effects
-let with_names names effect = { effect with names }
-
 let ok value = Exit.Ok value
 let[@cold] [@zero_alloc assume error] error cause = Exit.Error cause
 let default_renderer _ = "<typed failure>"
+
+type ('a, +'err) t =
+  | Pure : 'a -> ('a, 'err) t
+  | Fail : 'err -> ('a, 'err) t
+  | Custom :
+      {
+        eval : unit -> ('a, 'err) Exit.t;
+        leaf_name : string option;
+        names : string list;
+      }
+      -> ('a, 'err) t
+  | Map :
+      {
+        inner : ('a, 'err) t;
+        f : 'a -> 'b;
+      }
+      -> ('b, 'err) t
+  | Bind :
+      {
+        inner : ('a, 'err) t;
+        k : 'a -> ('b, 'err) t;
+      }
+      -> ('b, 'err) t
+
+let rec names : type a err. (a, err) t -> string list = function
+  | Pure _ | Fail _ -> []
+  | Custom { names; _ } -> names
+  | Map { inner; _ } -> names inner
+  | Bind { inner; _ } -> names inner
+
+let leaf_name : type a err. (a, err) t -> string option = function
+  | Custom { leaf_name; _ } -> leaf_name
+  | Pure _ | Fail _ | Map _ | Bind _ -> None
+
+let make ?leaf_name ?(names = []) (eval) = Custom { eval; leaf_name; names }
+let preserve eff (eval) = make ~names:(names eff) eval
+let concat_names effects = List.concat_map names effects
 
 let[@inline always] [@zero_alloc opt] exit_to_value frame = function
   | Exit.Ok value -> value
@@ -98,12 +124,30 @@ let[@inline always] [@zero_alloc opt] exit_to_value frame = function
 let[@cold] [@zero_alloc assume error] exit_of_exn frame exn =
   Exit.Error (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
 
-let run_to_exit frame effect =
-  try with_frame frame effect.eval with
+let rec eval : type a err. (a, err) t -> (a, err) Exit.t = function
+  | Pure value -> ok value
+  | Fail err -> error (Cause.Fail err)
+  | Custom { eval; _ } -> eval ()
+  | Map { inner; f; _ } -> (
+      match eval inner with
+      | Exit.Ok value -> ok (f value)
+      | Exit.Error _ as err -> err)
+  | Bind { inner; k; _ } -> (
+      match eval inner with
+      | Exit.Ok value -> eval (k value)
+      | Exit.Error _ as err -> err)
+
+let with_names names eff =
+  match eff with
+  | Custom custom -> Custom { custom with names }
+  | Pure _ | Fail _ | Map _ | Bind _ -> make ~names (fun () -> eval eff)
+
+let run_to_exit frame eff =
+  try with_frame frame (fun () -> eval eff) with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn -> exit_of_exn frame exn
 
-let run_to_value frame effect = exit_to_value frame (run_to_exit frame effect)
+let run_to_value frame eff = exit_to_value frame (run_to_exit frame eff)
 
 type internal_cancel = {
   interrupt_id : Cause.interrupt_id;
@@ -117,7 +161,7 @@ let interrupt_of_cancel = function
         else Cause.interrupt
   | None -> fun _ -> Cause.interrupt
 
-let run_scope_body ?sw ?internal_cancel frame (body @ many) =
+let run_scope_body ?sw ?internal_cancel frame (body) =
   let finalizers = ref [] in
   let sw = Option.value sw ~default:frame.sw in
   let child_frame = { frame with sw; finalizers } in
@@ -137,20 +181,20 @@ let run_scope_body ?sw ?internal_cancel frame (body @ many) =
   | Eio.Cancel.Cancelled reason -> error (interrupt_of_cancel reason)
   | exn -> exit_of_exn child_frame exn
 
-let run_scope ?sw ?internal_cancel frame effect =
+let run_scope ?sw ?internal_cancel frame eff =
   run_scope_body ?sw ?internal_cancel frame (fun child_frame ->
-      run_to_value child_frame effect)
+      run_to_value child_frame eff)
 
-let run_scope_value ?sw frame effect = exit_to_value frame (run_scope ?sw frame effect)
+let run_scope_value ?sw frame eff = exit_to_value frame (run_scope ?sw frame eff)
 
 let run_scope_body_value ?sw frame body =
   exit_to_value frame (run_scope_body ?sw frame body)
 
-let pure value = make (fun () -> ok value)
-let fail err = make (fun () -> error (Cause.Fail err))
+let pure value = Pure value
+let fail err = Fail err
 let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
-let sync (f @ many) =
+let sync (f) =
   make (fun () ->
       try ok (f ()) with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
@@ -160,25 +204,19 @@ let sync (f @ many) =
 (* Combinators                                                       *)
 (* ---------------------------------------------------------------- *)
 
-let map (f @ many) effect =
-  preserve effect @@ fun () ->
-  match effect.eval () with
-  | Exit.Ok value -> ok (f value)
-  | Exit.Error _ as err -> err
+let map (f) eff =
+  Map { inner = eff; f }
 
-let bind (k @ many) effect =
-  preserve effect @@ fun () ->
-  match effect.eval () with
-  | Exit.Ok value -> (k value).eval ()
-  | Exit.Error _ as err -> err
+let bind (k) eff =
+  Bind { inner = eff; k }
 
-let ( >>= ) effect (k @ many) = bind k effect
-let tap (k @ many) effect = bind (fun value -> map (fun () -> value) (k value)) effect
+let ( >>= ) eff (k) = bind k eff
+let tap (k) eff = bind (fun value -> map (fun () -> value) (k value)) eff
 let seq next self = bind (fun () -> next) self
 
 let concat effects =
   with_names (concat_names effects)
-    (List.fold_left (fun acc effect -> seq effect acc) unit effects)
+    (List.fold_left (fun acc eff -> seq eff acc) unit effects)
 
 let combine_stripped combine causes =
   match List.filter_map Fun.id causes with
@@ -186,9 +224,9 @@ let combine_stripped combine causes =
   | causes -> Some (combine causes)
 
 let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t option =
-  (* ZIO [catchAll]/[foldZIO] and effect-ts [catch]/[findError] select one
+  (* ZIO [catchAll]/[foldZIO] and eff-ts [catch]/[findError] select one
      recoverable [Fail]; they do not traverse a composite cause running one
-     recovery effect per leaf. Eta keeps the additional local invariant that
+     recovery eff per leaf. Eta keeps the additional local invariant that
      defects, interruption, and finalizer diagnostics are not caught. If any of
      those uncatchable leaves remain, return them without invoking the handler:
      handler side effects must not run when the operation is still going to
@@ -215,17 +253,22 @@ let rec first_typed_failure : type err. err Cause.t -> err option = function
   | Cause.Suppressed { primary; _ } -> first_typed_failure primary
   | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
 
-let catch (handler @ many) effect =
-  preserve effect @@ fun () ->
-  match effect.eval () with
-  | Exit.Ok _ as ok -> ok
-  | Exit.Error cause -> (
-      match stripped_uncatchable cause with
-      | Some cause -> error cause
-      | None -> (
-          match first_typed_failure cause with
-          | Some err -> (handler err).eval ()
-          | None -> invalid_arg "Effect.catch: empty composite cause"))
+let catch :
+    type a err1 err2. (err1 -> (a, err2) t) -> (a, err1) t -> (a, err2) t =
+ fun (handler) eff ->
+ match eff with
+  | Pure value -> Pure value
+  | _ ->
+      preserve eff @@ fun () ->
+      match eval eff with
+      | Exit.Ok value -> ok value
+      | Exit.Error cause -> (
+          match stripped_uncatchable cause with
+          | Some cause -> error cause
+          | None -> (
+              match first_typed_failure cause with
+              | Some err -> eval (handler err)
+              | None -> invalid_arg "Effect.catch: empty composite cause"))
 
 let map_cause_error = Cause.map
 
@@ -234,16 +277,16 @@ let render_cause_error frame cause =
 
 let finalizer_cause frame cause = Cause.finalizer (render_cause_error frame cause)
 
-let map_error (f @ many) effect =
-  preserve effect @@ fun () ->
-  match effect.eval () with
+let map_error (f) eff =
+  preserve eff @@ fun () ->
+  match eval eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> error (map_cause_error f cause)
 
-let tap_error (observe @ many) effect =
-  preserve effect @@ fun () ->
+let tap_error (observe) eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
-  match effect.eval () with
+  match eval eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error (Cause.Fail err) as original -> (
       try
@@ -258,14 +301,14 @@ let tap_error (observe @ many) effect =
              ~finalizer:(render_cause_error frame finalizer)))
   | Exit.Error _ as err -> err
 
-let delay duration effect =
-  preserve effect @@ fun () ->
+let delay duration eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   frame.runtime.sleep duration;
-  effect.eval ()
+  eval eff
 
-let timeout_as duration ~on_timeout effect =
-  preserve effect @@ fun () ->
+let timeout_as duration ~on_timeout eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let body_result = ref None in
   let timeout_fired = ref false in
@@ -288,7 +331,7 @@ let timeout_as duration ~on_timeout effect =
      fiber_fork frame ~sw:timeout_sw (fun () ->
          let result =
            frame.runtime.tracer#with_fiber_context @@ fun () ->
-           run_scope ~sw:timeout_sw frame effect
+           run_scope ~sw:timeout_sw frame eff
          in
          body_result := Some result;
          select timeout_sw `Body);
@@ -310,16 +353,16 @@ let timeout_as duration ~on_timeout effect =
   | None, false, None -> error Cause.interrupt
   | Some `Body, _, None -> error Cause.interrupt
 
-let timeout duration effect = timeout_as duration ~on_timeout:`Timeout effect
+let timeout duration eff = timeout_as duration ~on_timeout:`Timeout eff
 
-let uninterruptible effect =
-  preserve effect @@ fun () -> Runtime_core.cancel_protect (fun () -> effect.eval ())
+let uninterruptible eff =
+  preserve eff @@ fun () -> Runtime_core.cancel_protect (fun () -> eval eff)
 
-let repeat schedule effect =
-  preserve effect @@ fun () ->
+let repeat schedule eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let run_iteration () =
-    run_scope_value frame effect
+    run_scope_value frame eff
   in
   try
     run_iteration ();
@@ -336,11 +379,11 @@ let repeat schedule effect =
     ok ()
   with exn -> exit_of_exn frame exn
 
-let retry schedule (predicate @ many) effect =
-  preserve effect @@ fun () ->
+let retry schedule (predicate) eff =
+  preserve eff @@ fun () ->
   let frame = current_frame () in
   let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-  let run_attempt () = run_scope frame effect in
+  let run_attempt () = run_scope frame eff in
   let rec loop () =
     match run_attempt () with
     | Exit.Ok _ as ok -> ok
@@ -355,5 +398,5 @@ let retry schedule (predicate @ many) effect =
   in
   loop ()
 
-let name effect = effect.leaf_name
-let collect_names effect = effect.names
+let name eff = leaf_name eff
+let collect_names eff = names eff

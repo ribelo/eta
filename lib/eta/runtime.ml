@@ -51,7 +51,7 @@ let with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
   in
   f runtime
 
-let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
+let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
     ('a, 'err) Exit.t =
   if Blocking_runtime.in_worker () then
     invalid_arg
@@ -73,7 +73,7 @@ let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
         ~fail_key:runtime.Runtime_core.default_fail_key
         ~error_renderer:frame.error_renderer finalizers (fun () ->
           Effect_core.run_to_value frame
-            (Runtime_erasure.effect_of_public effect))
+            (Runtime_erasure.effect_of_public eff))
     in
     Exit.Ok
       (if runtime.Runtime_core.tracing_enabled
@@ -91,10 +91,10 @@ let run_effect (runtime : 'err Runtime_core.t) (effect : ('a, 'err) Effect.t) :
            runtime.Runtime_core.default_fail_key exn)
 
 let run_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
-    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace effect =
+    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace eff =
   with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger ?meter
     ?random ?island_pool ?blocking_pool ?capture_backtrace (fun runtime ->
-      run_effect runtime effect)
+      run_effect runtime eff)
 
 let run ?island_pool ?blocking_pool runtime eff =
   let runtime =

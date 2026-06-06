@@ -11,11 +11,11 @@ let n_quick = 2_000_000
    24 rounds gives substantial per-element work so par_reduce's
    indirect calls don't dominate. *)
 let map_fn x =
-  let mutable y = x in
+  let y = ref x in
   for _ = 1 to 24 do
-    y <- ((y * 2654435761) lxor (y lsr 13)) land 0x3FFFFFFF
+    y := ((!y * 2654435761) lxor (!y lsr 13)) land 0x3FFFFFFF
   done;
-  y
+  !y
 
 let make_input n = Array.init n (fun i -> i + 1)
 

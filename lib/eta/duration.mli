@@ -1,6 +1,6 @@
 (** Millisecond-precision durations. Same shape as v1 \u2014 pure and small. *)
 
-type t : immutable_data
+type t
 
 val zero : t
 val ms : int -> t

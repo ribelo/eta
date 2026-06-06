@@ -24,7 +24,7 @@ module Island = struct
     backtrace : string option;
   }
 
-  type ('a : immutable_data, 'e : immutable_data) settled =
+  type ('a, 'e) settled =
     ('a, 'e) Island_runtime.settled =
     | Ok of 'a
     | Error of 'e

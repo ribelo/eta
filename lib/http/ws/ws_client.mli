@@ -1,6 +1,6 @@
 (** HTTP/1.1 WebSocket client transport. *)
 
-type ws_error : immutable_data =
+type ws_error =
   [ `Connect of string
   | `Upgrade_failed of int
   | `Closed of int * string

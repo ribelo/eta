@@ -3,7 +3,7 @@
 let string_field name value = (name, `String value)
 let int_field name value = (name, `Int value)
 
-let array_map (f @ many) values =
+let array_map (f) values =
   let rec loop acc = function
     | [] -> `List (List.rev acc)
     | value :: rest -> loop (f value :: acc) rest

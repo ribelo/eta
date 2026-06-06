@@ -1,7 +1,7 @@
 module Q = Eta_sql
 module S = Eta_sql.Sqlite
 
-let ( let* ) effect f = Eta.Effect.bind f effect
+let ( let* ) eff f = Eta.Effect.bind f eff
 
 let read_file path =
   let input = open_in_bin path in

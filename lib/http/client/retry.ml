@@ -2,9 +2,9 @@ module Body = Stream
 module Error = Error
 module Header = Header
 
-type mode : immutable_data = Default | Always | Never
+type mode = Default | Always | Never
 
-type decision : immutable_data =
+type decision =
   | Stop
   | Retry_after of Eta.Duration.t
 
@@ -13,7 +13,7 @@ type t = {
   max_attempts : int;
   schedule : Eta.Schedule.t;
   respect_retry_after : bool;
-  retry_status : (int -> bool) @@ many;
+  retry_status : (int -> bool);
 }
 
 let default_retry_status = function
@@ -25,7 +25,7 @@ let make ?(mode = Default) ?(max_attempts = 3)
       Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 100)
       |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
       |> Eta.Schedule.jittered ~min:0.0 ~max:1.0)
-    ?(respect_retry_after = true) ?(retry_status @ many = default_retry_status) () =
+    ?(respect_retry_after = true) ?(retry_status = default_retry_status) () =
   if max_attempts <= 0 then
     invalid_arg "Eta_http.Retry_policy.make: max_attempts must be > 0";
   {

@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type parse_error : immutable_data =
+type parse_error =
   | Partial
   | Invalid_version
   | Invalid_status of string
@@ -11,12 +11,12 @@ type parse_error : immutable_data =
   | Body_too_large of { limit : int; length : int }
   | Body_truncated of { expected : int; available : int }
 
-type header : immutable_data = {
+type header = {
   name : Span.t;
   value : Span.t;
 }
 
-type response : immutable_data = {
+type response = {
   version : Version.t;
   status : int;
   reason : Span.t;

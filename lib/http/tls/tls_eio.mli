@@ -5,7 +5,7 @@
 type config = Config.t
 (** Client configuration. *)
 
-type epoch : immutable_data = { alpn_protocol : string option } [@@unboxed]
+type epoch = { alpn_protocol : string option } [@@unboxed]
 (** Post-handshake metadata. *)
 
 type flow =

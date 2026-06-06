@@ -73,7 +73,7 @@ let test_h2_writer_blocked_write_teardown () =
     |> Eta.Effect.bind (fun () ->
            Eta.Channel.recv blocked |> Eta.Effect.map (fun () -> 1))
   in
-  let effect =
+  let eff =
     Eta.Supervisor.scoped
       {
         run =
@@ -87,7 +87,7 @@ let test_h2_writer_blocked_write_teardown () =
             pure ());
       }
   in
-  (match Eta.Runtime.run rt effect with
+  (match Eta.Runtime.run rt eff with
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error cause ->
       Alcotest.failf "blocked writer scope failed: %a"

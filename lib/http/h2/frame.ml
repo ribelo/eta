@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type frame_type : immutable_data =
+type frame_type =
   | Data
   | Headers
   | Priority
@@ -13,7 +13,7 @@ type frame_type : immutable_data =
   | Continuation
   | Other of int
 
-type envelope : immutable_data = {
+type envelope = {
   length : int;
   frame_type : int;
   flags : int;

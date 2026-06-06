@@ -24,11 +24,11 @@ let cost_of_index i =
 
 (* Heavy work: integer mixing.  Returns the final accumulator. *)
 let busy n =
-  let mutable acc = 0 in
+  let acc = ref 0 in
   for j = 1 to n do
-    acc <- acc + j * j
+    acc := !acc + j * j
   done;
-  acc
+  !acc
 
 let serial_run n =
   let acc = ref 0 in

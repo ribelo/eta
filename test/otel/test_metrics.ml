@@ -1,4 +1,4 @@
-(* Port of @effect/opentelemetry/test/Metrics.test.ts.
+(* Port of @eff/opentelemetry/test/Metrics.test.ts.
 
    The Effect-TS test exercises gauges and counters (cumulative + monotonic,
    double + bigint), then collects via MetricProducerImpl and asserts on
@@ -38,7 +38,7 @@ let gauge ?(description = "") ?(unit_ = "") ?(attrs = []) ~name value =
     ~attrs value
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("gauge", ...)`. *)
+(* Mirrors `it.eff("gauge", ...)`. *)
 (* ------------------------------------------------------------------ *)
 
 let metric_value_pp fmt = function
@@ -87,7 +87,7 @@ let test_gauge () =
     (Capabilities.Int 20) v2
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("counter", ...)`. *)
+(* Mirrors `it.eff("counter", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_counter () =
   with_meter @@ fun rt meter ->
@@ -129,7 +129,7 @@ let test_counter_cumulative_keeps_latest_value () =
         (List.length points)
 
 (* ------------------------------------------------------------------ *)
-(* Mirrors `it.effect("counter-inc", ...)`. *)
+(* Mirrors `it.eff("counter-inc", ...)`. *)
 (* ------------------------------------------------------------------ *)
 let test_counter_monotonic () =
   with_meter @@ fun rt meter ->
