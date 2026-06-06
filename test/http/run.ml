@@ -141,6 +141,8 @@ let () =
             test_h1_writer_rejects_mismatched_content_length;
           Alcotest.test_case "rejects invalid Content-Length framing" `Quick
             test_h1_writer_rejects_invalid_content_length_framing;
+          Alcotest.test_case "rejects Transfer-Encoding fixed body" `Quick
+            test_h1_writer_rejects_transfer_encoding_for_fixed_body;
           Alcotest.test_case "stream override does not reframe fixed body" `Quick
             test_h1_writer_stream_override_does_not_reframe_fixed_body;
           Alcotest.test_case "flow matches string writer" `Quick

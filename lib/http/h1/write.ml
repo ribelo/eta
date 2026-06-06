@@ -6,10 +6,15 @@ let buffer_too_small = -1
 let invalid_method = -2
 let invalid_header = -3
 let invalid_framing = -4
+let invalid_transfer_encoding = -5
 
 let invalid_framing_reason =
   "invalid request framing: Content-Length must match body length and not "
   ^ "conflict with Transfer-Encoding"
+
+let invalid_transfer_encoding_reason =
+  "invalid request framing: Transfer-Encoding cannot be used with a fixed body "
+  ^ "writer"
 
 let content_length = function
   | Empty -> None
@@ -103,11 +108,12 @@ let[@zero_alloc] rec content_length_header_raw current = function
         else invalid_framing
       else content_length_header_raw current rest
 
-let[@zero_alloc] validate_framing_raw ~body_length headers =
+let[@zero_alloc] validate_framing_raw ~fixed_body ~body_length headers =
   let caller_content_length = content_length_header_raw (-1) headers in
+  let transfer_encoding = has_header_raw "transfer-encoding" headers in
   if caller_content_length < -1 then invalid_framing
-  else if caller_content_length >= 0 && has_header_raw "transfer-encoding" headers
-  then invalid_framing
+  else if caller_content_length >= 0 && transfer_encoding then invalid_framing
+  else if fixed_body && transfer_encoding then invalid_transfer_encoding
   else if body_length >= 0 && caller_content_length >= 0
           && caller_content_length <> body_length
   then invalid_framing
@@ -173,6 +179,8 @@ let[@zero_alloc] framing_body_length_raw = function
   | Empty -> 0
   | Fixed chunks -> content_length_chunks 0 chunks
 
+let[@zero_alloc] fixed_body_raw = function Empty -> false | Fixed _ -> true
+
 let[@zero_alloc] blit_header_line dst pos name value =
   let pos = blit_literal dst pos name in
   let pos = blit_literal dst pos ": " in
@@ -196,7 +204,8 @@ let[@zero_alloc] write_to_bytes_raw dst ~pos ~method_ ~url ~headers ~body =
   else if not (Header.valid headers) then invalid_header
   else
     let framing =
-      validate_framing_raw ~body_length:(framing_body_length_raw body) headers
+      validate_framing_raw ~fixed_body:(fixed_body_raw body)
+        ~body_length:(framing_body_length_raw body) headers
     in
     if framing < 0 then framing
     else
@@ -242,6 +251,10 @@ let write_to_bytes dst ~pos ~method_ ~url ~headers ~body =
       Error
         (Error.make ~method_ ~uri:(Url.to_string url)
            (Header_invalid { reason = invalid_framing_reason }))
+  | n when n = invalid_transfer_encoding ->
+      Error
+        (Error.make ~method_ ~uri:(Url.to_string url)
+           (Header_invalid { reason = invalid_transfer_encoding_reason }))
   | _ ->
       Error
         (Error.make ~method_ ~uri:(Url.to_string url)
@@ -256,12 +269,21 @@ let validate_headers ~method_ ~url headers =
            ~uri:(Url.to_string url)
            kind)
 
-let validate_request_framing ~body_length ~method_ ~url ~headers =
-  if validate_framing_raw ~body_length headers < 0 then
-    Error
-      (Error.make ~method_ ~uri:(Url.to_string url)
-         (Header_invalid { reason = invalid_framing_reason }))
-  else Ok ()
+let fixed_body = function Empty -> false | Fixed _ -> true
+
+let validate_request_framing ~body ~body_length ~method_ ~url ~headers =
+  match
+    validate_framing_raw ~fixed_body:(fixed_body body) ~body_length headers
+  with
+  | 0 -> Ok ()
+  | n when n = invalid_transfer_encoding ->
+      Error
+        (Error.make ~method_ ~uri:(Url.to_string url)
+           (Header_invalid { reason = invalid_transfer_encoding_reason }))
+  | _ ->
+      Error
+        (Error.make ~method_ ~uri:(Url.to_string url)
+           (Header_invalid { reason = invalid_framing_reason }))
 
 let resolved_framing_body_length ?framing_body_length body =
   match body with
@@ -287,6 +309,7 @@ let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
     | Ok () ->
         (match
            validate_request_framing
+             ~body
              ~body_length:(resolved_framing_body_length ?framing_body_length body)
              ~method_ ~url ~headers
          with
@@ -323,6 +346,7 @@ let write_to_flow ?framing_body_length flow ~method_ ~url ~headers ~body =
     | Ok () ->
         (match
            validate_request_framing
+             ~body
              ~body_length:(resolved_framing_body_length ?framing_body_length body)
              ~method_ ~url ~headers
          with

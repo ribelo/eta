@@ -128,6 +128,52 @@ let test_h1_writer_rejects_invalid_content_length_framing () =
             (Buffer.contents buffer)))
     cases
 
+let test_h1_writer_rejects_transfer_encoding_for_fixed_body () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  let headers = [ ("Transfer-Encoding", "chunked") ] in
+  let body = Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] in
+  let expect_rejected label = function
+    | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+        Alcotest.(check bool)
+          (label ^ " mentions Transfer-Encoding")
+          true
+          (contains reason "Transfer-Encoding")
+    | Error error ->
+        Alcotest.failf "%s unexpected error: %s" label
+          (Eta_http.Error.to_string error)
+    | Ok wire ->
+        Alcotest.failf "%s serialized invalid request: %S" label wire
+  in
+  Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers ~body
+  |> expect_rejected "string";
+  let bytes = Bytes.create 512 in
+  (match
+     Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
+       ~headers ~body
+   with
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        "bytes mentions Transfer-Encoding" true
+        (contains reason "Transfer-Encoding")
+  | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
+  | Ok len ->
+      Alcotest.failf "bytes serialized invalid request: %S"
+        (Bytes.sub_string bytes 0 len));
+  let buffer = Buffer.create 128 in
+  let flow = Eio.Flow.buffer_sink buffer in
+  match
+    Eta_http.H1.Write.write_to_flow flow ~method_:"POST" ~url ~headers ~body
+  with
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        "flow mentions Transfer-Encoding" true
+        (contains reason "Transfer-Encoding");
+      Alcotest.(check string) "flow emitted nothing" "" (Buffer.contents buffer)
+  | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
+  | Ok () ->
+      Alcotest.failf "flow serialized invalid request: %S"
+        (Buffer.contents buffer)
+
 let test_h1_writer_stream_override_does_not_reframe_fixed_body () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
   let buffer = Buffer.create 128 in
