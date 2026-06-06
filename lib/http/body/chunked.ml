@@ -201,6 +201,11 @@ let encode_chunk chunk =
     ]
 
 let encode_last_chunk ?(trailers = Header.empty) () =
+  (match Header.validate trailers with
+  | None -> ()
+  | Some _ ->
+      invalid_arg
+        "Eta_http.Body.Chunked.encode_last_chunk: invalid trailer header");
   let buffer = Buffer.create 32 in
   Buffer.add_string buffer "0\r\n";
   let rec add_trailers = function

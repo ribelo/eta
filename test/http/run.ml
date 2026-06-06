@@ -52,6 +52,8 @@ let () =
           Alcotest.test_case "chunked rejects invalid trailer header" `Quick
             test_chunked_decoder_rejects_invalid_trailer_header;
           Alcotest.test_case "chunked encoder" `Quick test_chunked_encoder;
+          Alcotest.test_case "chunked encoder rejects invalid trailers" `Quick
+            test_chunked_encoder_rejects_invalid_trailers;
           Alcotest.test_case "gzip roundtrip" `Quick
             test_gzip_transducer_roundtrip;
           Alcotest.test_case "gzip expansion cap" `Quick

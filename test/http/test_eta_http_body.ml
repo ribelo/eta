@@ -262,6 +262,18 @@ let test_chunked_encoder () =
   in
   Alcotest.(check string) "last" "0\r\nx-trailer: ok\r\n\r\n" last
 
+let test_chunked_encoder_rejects_invalid_trailers () =
+  let trailers =
+    Eta_http.Core.Header.unsafe_of_list
+      [ ("X-Good", "ok\r\nX-Evil: yes") ]
+  in
+  Alcotest.check_raises "invalid trailer rejected"
+    (Invalid_argument
+       "Eta_http.Body.Chunked.encode_last_chunk: invalid trailer header")
+    (fun () ->
+      ignore
+        (Eta_http.Body.Chunked.encode_last_chunk ~trailers () : bytes))
+
 let test_gzip_transducer_roundtrip () =
   with_test_clock @@ fun _sw _clock rt ->
   let input =
