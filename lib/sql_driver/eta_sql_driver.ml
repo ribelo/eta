@@ -18,13 +18,13 @@ module Make (Backend : BACKEND) = struct
     | Error err -> Error (Backend.map_error err)
 
   let blocking_result ?blocking_pool ?name ?on_cancel f =
-    Eta.Effect.blocking_result ?pool:blocking_pool ?name ?on_cancel
+    Eta_blocking.result ?pool:blocking_pool ?name ?on_cancel
       (map_result f)
 
   let reject_detach_started_blocking_pool = function
     | Some pool
-      when Eta.Effect.Blocking.Pool.shutdown_policy pool
-           = Eta.Effect.Blocking.Pool.Detach_started ->
+      when Eta_blocking.Pool.shutdown_policy pool
+           = Eta_blocking.Pool.Detach_started ->
         Eta.Effect.fail Backend.detach_started_error
     | Some _ | None -> Eta.Effect.unit
 
@@ -40,6 +40,6 @@ module Make (Backend : BACKEND) = struct
       ~on_timeout f =
     reject_detach_started_blocking_pool blocking_pool
     |> Eta.Effect.bind (fun () ->
-           Eta.Effect.blocking_result_timeout ?pool:blocking_pool ?name
+           Eta_blocking.result_timeout ?pool:blocking_pool ?name
              ?on_cancel ~timeout ~on_timeout (map_result f))
 end

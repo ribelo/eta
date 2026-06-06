@@ -25,7 +25,7 @@ let expect_effect = function
 let run_effect program =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   Eta.Runtime.run rt program |> expect_effect
 
 let repeat n f =

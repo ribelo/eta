@@ -1,119 +1,49 @@
-let blocking_runner_of_public runner =
-  {
-    Blocking_runtime.run_in_systhread =
-      runner.Effect.Blocking.Pool.run_in_systhread;
-  }
-
 type 'err t = 'err Runtime_core.t
 
-let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
-    ?random ?island_pool ?blocking_pool ?blocking_runner ?capture_backtrace () =
-  let island_pool =
-    Option.map Runtime_erasure.island_pool_of_public island_pool
-  in
-  let blocking_pool =
-    Option.map Runtime_erasure.blocking_pool_of_public blocking_pool
-  in
-  let blocking_runner = Option.map blocking_runner_of_public blocking_runner in
-  Runtime_core.create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument
-    ?logger ?meter ?random ?island_pool ?blocking_pool ?blocking_runner
+let create_with_contract contract ?sleep ?tracer ?sampler ?auto_instrument
+    ?logger ?meter ?random ?services ?capture_backtrace () =
+  Runtime_core.create_with_contract ~contract ?sleep ?tracer ?sampler
+    ?auto_instrument ?logger ?meter ?random ?services ?capture_backtrace ()
+
+let create_with_runtime backend ?sleep ?tracer ?sampler ?auto_instrument
+    ?logger ?meter ?random ?services ?capture_backtrace () =
+  create_with_contract (Runtime_contract.of_runtime backend) ?sleep ?tracer
+    ?sampler ?auto_instrument ?logger ?meter ?random ?services
     ?capture_backtrace ()
-
-let host_sleep host clock duration =
-  let module Time = (val Host_eio.time host : Host_eio.TIME) in
-  let seconds = Duration.to_seconds_float duration in
-  if seconds > 0.0 then Time.sleep clock seconds
-
-let host_now_ms host clock =
-  let module Time = (val Host_eio.time host : Host_eio.TIME) in
-  fun () -> int_of_float (Time.now clock *. 1000.0)
-
-let host_blocking_runner host =
-  let module Unix = (val Host_eio.unix host : Host_eio.UNIX) in
-  {
-    Effect.Blocking.Pool.run_in_systhread =
-      (fun ~label f -> Unix.run_in_systhread ~label f);
-  }
-
-let with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
-    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace f =
-  let sleep = host_sleep host clock in
-  let blocking_runner = host_blocking_runner host in
-  let runtime =
-    {
-      (create ~sw ~clock ~sleep ?tracer ?sampler ?auto_instrument ?logger
-         ?meter ?random ?island_pool ?blocking_pool ~blocking_runner
-         ?capture_backtrace ())
-      with
-      Runtime_core.substrate = Runtime_substrate.of_host host;
-      now_ms = host_now_ms host clock;
-    }
-  in
-  f runtime
 
 let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
     ('a, 'err) Exit.t =
-  if Blocking_runtime.in_worker () then
+  if runtime.Runtime_core.contract.Runtime_contract.in_worker_context () then
     invalid_arg
-      "Eta.Runtime.run must not be called from inside an Effect.Blocking worker callback";
-  runtime.Runtime_core.tracer#with_fiber_context @@ fun () ->
+      "Eta.Runtime.run must not be called from inside a runtime worker callback";
+  runtime.Runtime_core.tracer#with_task_context runtime.Runtime_core.contract
+  @@ fun () ->
   let finalizers = ref [] in
   let frame =
     {
       Effect_core.runtime = Runtime_erasure.erase_runtime_error runtime;
       error_renderer = Effect_core.default_renderer;
       fail_key = runtime.Runtime_core.default_fail_key;
-      sw = runtime.Runtime_core.outer_sw;
+      sw = runtime.Runtime_core.outer_scope;
       finalizers;
     }
   in
   try
-    let body () =
-      Runtime_core.with_finalizers ~runtime
-        ~fail_key:runtime.Runtime_core.default_fail_key
-        ~error_renderer:frame.error_renderer finalizers (fun () ->
-          Effect_core.run_to_value frame
-            (Runtime_erasure.effect_of_public eff))
-    in
     Exit.Ok
-      (if runtime.Runtime_core.tracing_enabled
-       || runtime.Runtime_core.metrics_enabled
-      then
-        Runtime_observability.with_blocking_event_emit
-          (Runtime_core.emit_blocking_event runtime)
-          body
-      else body ())
+      (Runtime_core.with_finalizers ~runtime
+         ~fail_key:runtime.Runtime_core.default_fail_key
+         ~error_renderer:frame.error_renderer finalizers (fun () ->
+           Effect_core.run_to_value frame
+             (Runtime_erasure.effect_of_public eff)))
   with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn when Runtime_core.is_cancellation runtime.Runtime_core.contract exn ->
+      raise exn
   | exn ->
       Exit.Error
         (Runtime_core.cause_of_exn_runtime runtime
            runtime.Runtime_core.default_fail_key exn)
 
-let run_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
-    ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace eff =
-  with_host_eio host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger ?meter
-    ?random ?island_pool ?blocking_pool ?capture_backtrace (fun runtime ->
-      run_effect runtime eff)
-
-let run ?island_pool ?blocking_pool runtime eff =
-  let runtime =
-    match (island_pool, blocking_pool) with
-    | None, None -> runtime
-    | _ ->
-        {
-          runtime with
-          Runtime_core.island_pool =
-            (match island_pool with
-             | Some pool -> Some (Runtime_erasure.island_pool_of_public pool)
-             | None -> runtime.Runtime_core.island_pool);
-          Runtime_core.blocking_pool =
-            (match blocking_pool with
-             | Some pool -> Some (Runtime_erasure.blocking_pool_of_public pool)
-             | None -> runtime.Runtime_core.blocking_pool);
-        }
-  in
-  run_effect runtime eff
+let run runtime eff = run_effect runtime eff
 
 let run_exn t eff =
   let pp_typed_failure fmt err =
@@ -139,3 +69,16 @@ let run_exn t eff =
            cause)
 
 let drain t = Runtime_core.wait_active_zero t
+
+module Make (R : Runtime_contract.RUNTIME) = struct
+  let backend = (module R : Runtime_contract.RUNTIME)
+
+  let create ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
+      ?services ?capture_backtrace () =
+    create_with_runtime backend ?sleep ?tracer ?sampler ?auto_instrument
+      ?logger ?meter ?random ?services ?capture_backtrace ()
+
+  let run = run
+  let run_exn = run_exn
+  let drain = drain
+end

@@ -21,7 +21,7 @@ type interrupt_id
 
     [span_name] and [annotations] are copied from the active Eta
     [named]/[annotate] context when the defect is captured. [backtrace] is
-    controlled by [Runtime.create ?capture_backtrace]. *)
+    controlled by [Eta_eio.Runtime.create ?capture_backtrace]. *)
 type die = {
   exn : exn;
   backtrace : Printexc.raw_backtrace option;

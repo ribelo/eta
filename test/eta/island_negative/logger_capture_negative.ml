@@ -1,7 +1,7 @@
 let logger = Eta.Logger.in_memory ()
 
-let _ =
-  Eta.Island.map
+let program pool =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
       ignore (Eta.Logger.dump logger);
       n)

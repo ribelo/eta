@@ -67,7 +67,7 @@ let runtime_retry_delays ~seed =
     Test_clock.sleep clock duration
   in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~sleep ~random ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~sleep ~random ()
   in
   let attempts = ref 0 in
   let attempt =

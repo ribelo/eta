@@ -2,4 +2,4 @@
  (name eta_utop)
  (public_name eta_utop)
  (synopsis "UTop convenience helpers for Eta effects")
- (libraries eta eio_main))
+ (libraries eta eta_blocking eta_eio eio_main))

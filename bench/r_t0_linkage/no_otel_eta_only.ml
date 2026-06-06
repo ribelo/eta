@@ -7,7 +7,7 @@ let rec chain n acc =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   match Runtime.run rt (chain 1_000 (Effect.pure 0)) with
   | Exit.Ok 1_000 -> print_endline "no_otel_eta_only=ok"
   | Exit.Ok n -> Printf.eprintf "unexpected result: %d\n" n; exit 1

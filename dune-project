@@ -6,14 +6,46 @@
 
 (package
  (name eta)
- (synopsis "Typed functional effects for OCaml, backed by Eio")
+ (synopsis "Typed functional effects for OCaml")
  (description
   "Eta ports the core ideas of TypeScript Effect and Scala ZIO to idiomatic OCaml: typed failures, success values, resource scopes, schedules, retry, race, timeout, and detached fibers.")
  (depends
   (ocaml (>= 5.2.0))
+  (dune (>= 3.0))))
+
+(package
+ (name eta_eio)
+ (synopsis "Eio runtime backend for Eta")
+ (description
+  "eta_eio provides the Eio-backed runtime constructor and host bridges for Eta programs.")
+ (depends
+  (ocaml (>= 5.2.0))
   (dune (>= 3.0))
+  eta
+  eta_blocking
   (eio (>= 1.0))
   (cstruct (>= 6.0.0))))
+
+(package
+ (name eta_blocking)
+ (synopsis "Native blocking worker pools for Eta")
+ (description
+  "eta_blocking provides bounded blocking worker-pool helpers for Eta native runtime packages and synchronous connector bindings.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta))
+
+(package
+ (name eta_par)
+ (synopsis "Native heartbeat-backed parallel runtime for Eta")
+ (description
+  "eta_par provides Eta's native worker-domain fork-join scheduler and island offload helpers as an optional package.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_blocking))
 
 (package
  (name eta_utop)
@@ -24,6 +56,8 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_blocking
+  eta_eio
   (eio (>= 1.0))
   eio_main))
 
@@ -48,6 +82,8 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_blocking
+  eta_eio
   eta_stream
   (eio (>= 1.0))
   (cstruct (>= 6.0.0))
@@ -82,7 +118,8 @@
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
-  eta))
+  eta
+  eta_blocking))
 
 (package
  (name eta_sql)
@@ -93,6 +130,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_blocking
   eta_sql_driver
   (eio (>= 1.0))
   conf-pkg-config
@@ -107,6 +145,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_blocking
   eta_sql_driver
   eta_sql_dsl))
 
@@ -119,6 +158,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_blocking
   eta_sql_driver
   eta_sql
   eta_sql_dsl))
@@ -131,7 +171,8 @@
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
-  eta))
+  eta
+  eta_blocking))
 
 (package
  (name eta_redacted)
@@ -161,6 +202,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_eio
   (eio (>= 1.0))
   (eio_main (>= 1.0))
   alcotest))
@@ -187,6 +229,7 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_eio
   eta_stream
   eta_http
   (eio (>= 1.0))

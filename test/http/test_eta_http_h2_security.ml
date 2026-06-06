@@ -105,6 +105,32 @@ let test_h2_security_continuation_cap () =
         (Eta_http.Error.kind_name kind)
   | None -> Alcotest.fail "continuation cap was not detected"
 
+let test_h2_security_rejects_oversized_initial_headers_fragment () =
+  let config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_hpack_block_bytes = 1024;
+      max_continuation_accumulator_bytes = 16;
+    }
+  in
+  let security = Eta_http.H2.Security.create ~config () in
+  let frame =
+    Eta_http.H2.Frame.header ~length:17
+      ~frame_type:Eta_http.H2.Frame.Headers ~flags:0 ~stream_id:1
+  in
+  let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
+  match
+    Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+  with
+  | Some
+      (Eta_http.Error.Continuation_flood
+        { accumulated_bytes; limit_bytes; _ }) ->
+      Alcotest.(check int) "accumulated" 17 accumulated_bytes;
+      Alcotest.(check int) "limit" 16 limit_bytes
+  | Some kind ->
+      Alcotest.failf "unexpected error: %s" (Eta_http.Error.kind_name kind)
+  | None -> Alcotest.fail "oversized initial HEADERS fragment was accepted"
+
 let test_h2_security_goaway_churn () =
   let data =
     h2_goaway_no_error ~last_stream_id:1

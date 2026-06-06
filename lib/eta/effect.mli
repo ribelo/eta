@@ -15,7 +15,7 @@
     ZIO-style environment or layer graph.
 
     This signature is intentionally a facade over Eta's eff algebra,
-    structured concurrency, observability hooks, and blocking bridge. Keep
+    structured concurrency, and observability hooks. Keep
     implementation-only representation details out of this file:
     if a helper is needed only by Runtime or private modules, put it behind a
     private module such as Runtime_erasure instead of widening Effect. *)
@@ -44,143 +44,7 @@ val sync : (unit -> 'a) -> ('a, 'err) t
     as {!Cause.Die}. They are not converted into the typed error channel and
     are not caught by {!catch}. Return an explicit [result] and use
     {!from_result} when a leaf operation has an expected typed failure.
-    [Eio.Cancel.Cancelled _] remains interruption. *)
-
-module Blocking : sig
-  type ('a, 'err) eff = ('a, 'err) t
-
-  module Pool : sig
-    type t
-
-    type queue_policy = Wait | Reject
-    type shutdown_policy = Drain | Detach_started
-
-    type config = {
-      max_threads : int;
-      max_queued : int;
-      queue_policy : queue_policy;
-      shutdown_policy : shutdown_policy;
-    }
-
-    type stats = {
-      active : int;
-      queued : int;
-      completed : int;
-      rejected : int;
-      cancelled_before_start : int;
-      detached : int;
-    }
-
-    type runner = {
-      run_in_systhread : 'a. label:string -> (unit -> 'a) -> 'a;
-    }
-    (** Worker substrate used by systhread blocking pools. In normal compiled
-        applications the default runner is sufficient. In [dune utop] workflows
-        that load Eta before [eio_main], use {!runner_of_eio_unix}. *)
-
-    module type EIO_UNIX = sig
-      val run_in_systhread : ?label:string -> (unit -> 'a) -> 'a
-    end
-    (** Minimal host module shape needed by {!runner_of_eio_unix}. *)
-
-    val default_runner : runner
-
-    val runner_of_eio_unix : (module EIO_UNIX) -> runner
-    (** Build a blocking runner from the host application's [Eio_unix] module.
-        This is mainly for [dune utop] workflows where Eta is loaded before
-        [eio_main]. For a runtime-owned default blocking pool, prefer
-        {!Runtime.with_host_eio}. Use this helper directly when creating a
-        standalone pool with {!create}. *)
-
-    val create : ?name:string -> ?runner:runner -> config -> t
-    (** Create a bounded blocking pool.
-
-        Use separate pools for independent blocking resource classes, such as
-        database calls, filesystem work, and third-party synchronous SDKs. One
-        full pool does not back-pressure another.
-
-        The runtime-owned default pool uses [max_threads = 128],
-        [max_queued = 64], [queue_policy = Wait], and
-        [shutdown_policy = Drain]. Tune explicitly for applications with known
-        blocking I/O concurrency. *)
-
-    val shutdown_policy : t -> shutdown_policy
-    (** Return the pool's started-work shutdown policy. Connectors that lease
-        non-thread-safe resources use this to reject detached started work. *)
-
-    val stats : t -> stats
-    (** Snapshot pool counters. [active] is started work still running;
-        [queued] is admitted work waiting for an active slot; [completed] is
-        started work that reached a value or exception; [rejected] counts
-        [Reject] submissions refused because the pool was full;
-        [cancelled_before_start] counts admitted jobs removed before start by
-        parent cancellation; [detached] counts started jobs no longer awaited by
-        the caller or by [shutdown] because the pool used [Detach_started]. *)
-
-    val shutdown : t -> (unit, 'err) eff
-    (** Stop accepting new work. [Drain] waits for admitted work to finish.
-        [Detach_started] returns promptly and records still-running started
-        work as detached. *)
-  end
-
-  val submit :
-    ?pool:Pool.t ->
-    ?name:string ->
-    ?on_cancel:(unit -> unit) ->
-    (unit -> 'a) ->
-    ('a, 'err) eff
-  (** Namespaced spelling for {!blocking}. *)
-end
-
-val blocking :
-  ?pool:Blocking.Pool.t ->
-  ?name:string ->
-  ?on_cancel:(unit -> unit) ->
-  (unit -> 'a) ->
-  ('a, 'err) t
-(** Run [f ()] on a bounded blocking pool.
-
-    Use this for legacy synchronous I/O such as blocking DB clients, filesystem
-    libraries, synchronous SDKs, and blocking C bindings. Do not use it for
-    CPU-bound work; use {!Island.run} or {!Island.map} instead.
-
-    Running callbacks are not preempted. Parent cancellation interrupts queued
-    work, but started work must finish unless the pool uses
-    [Detach_started] or [?on_cancel] cooperatively unblocks it.
-
-    Worker callbacks must not call Eio operations, run Eta runtimes, submit
-    nested blocking jobs, or resolve parent-domain promises. [?name] labels
-    tracing and metrics. [?on_cancel] must be thread-safe with respect to [f]. *)
-
-val blocking_result :
-  ?pool:Blocking.Pool.t ->
-  ?name:string ->
-  ?on_cancel:(unit -> unit) ->
-  (unit -> ('a, 'err) result) ->
-  ('a, 'err) t
-(** [blocking_result f] runs [f] like {!blocking} and lifts its OCaml
-    [result] into Eta's typed failure channel. Exceptions raised by [f] remain
-    unchecked defects, exactly as with {!blocking}. *)
-
-val blocking_result_timeout :
-  ?pool:Blocking.Pool.t ->
-  ?name:string ->
-  ?on_cancel:(unit -> unit) ->
-  timeout:Duration.t ->
-  on_timeout:'err ->
-  (unit -> ('a, 'err) result) ->
-  ('a, 'err) t
-(** [blocking_result_timeout ~timeout ~on_timeout f] runs [f] like
-    {!blocking_result} and races the caller's wait against [timeout]. The
-    timeout bounds the caller's wait; it is not CPU/thread preemption. If [f]
-    has already started in a [Drain] blocking pool, Eta returns [on_timeout] to
-    the caller but keeps the started job under pool accounting until it finishes.
-    If [f] is still queued when the timeout wins, Eta cancels it before start.
-
-    If the timeout wins, the eff fails with [on_timeout]. [?on_cancel] is
-    invoked once so [f] can cooperatively unblock. If the blocking operation
-    wins after parent cancellation reached the fiber, Eta checks the
-    cancellation state before publishing the success or typed failure. *)
+    Runtime cancellation exceptions remain interruption. *)
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
@@ -207,9 +71,9 @@ val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
     Fail-fast: the first child failure cancels the sibling and the
     cause propagates upward.
 
-    This is eff concurrency on the current Eio runtime, not CPU
-    parallelism. Use {!Island.run} / {!Island.map} for worker-domain offload,
-    or {!Par} for explicit fork-join parallel algorithms. *)
+    This is eff concurrency on the current runtime substrate, not CPU
+    parallelism. Use the optional [eta_par] package for worker-domain offload
+    or explicit fork-join parallel algorithms. *)
 
 val all : ('a, 'err) t list -> ('a list, 'err) t
 (** Run effects concurrently, collecting results in input order.
@@ -227,8 +91,8 @@ val for_each_par : 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
     Fail-fast like {!all}.
 
     This runs child effects as concurrent fibers on the current runtime
-    substrate. It does not move arbitrary effects to worker domains; use
-    {!Island.map} for CPU-bound batch work. *)
+    substrate. It does not move arbitrary effects to worker domains; use the
+    optional [eta_par] package for CPU-bound batch work. *)
 
 val for_each_par_bounded :
   max:int -> 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
@@ -240,8 +104,8 @@ val for_each_par_bounded :
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
 (** Defer parent cancellation while running the wrapped eff.
 
-    This maps to [Eio.Cancel.protect]. It does not turn interruption
-    into a typed failure, and it does not catch defects. *)
+    This maps to backend cancellation protection. It does not turn
+    interruption into a typed failure, and it does not catch defects. *)
 
 val catch :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
@@ -400,6 +264,72 @@ val named :
   ('a, 'err) t ->
   ('a, 'err) t
 (** [named name body] attaches a span name for tracing around [body]. *)
+
+module Expert : sig
+  type context
+
+  val make :
+    ?leaf_name:string ->
+    ?names:string list ->
+    (context -> ('a, 'err) Exit.t) ->
+    ('a, 'err) t
+  (** Build a runtime-backed effect without exposing Eta's internal effect
+      representation. Runtime-specific packages use this to attach operations
+      to the current {!Runtime_contract.t}; ordinary user code should prefer
+      the typed combinators in this module. *)
+
+  val contract : context -> Runtime_contract.t
+  (** Runtime contract selected by the current interpreter. *)
+
+  val current_scope : context -> Runtime_contract.scope
+  (** Current lexical runtime scope. *)
+
+  val outer_scope : context -> Runtime_contract.scope
+  (** Runtime boundary scope used for runtime-owned background work. *)
+
+  val runtime_service : context -> 'a Runtime_contract.service_key -> 'a option
+  (** Runtime-package service attached when the interpreter was created. *)
+
+  val auto_instrument : context -> bool
+  (** Whether runtime leaf auto-instrumentation is enabled. *)
+
+  val instrument_leaf : context -> name:string -> (unit -> 'a) -> 'a
+  (** Run a leaf body under Eta's standard runtime instrumentation. *)
+
+  val emit_trace_event :
+    context -> name:string -> attrs:(string * string) list -> unit
+  (** Emit an event on the active span, if tracing is enabled and sampled. *)
+
+  val record_metric :
+    context ->
+    name:string ->
+    description:string ->
+    unit_:string ->
+    kind:Capabilities.metric_kind ->
+    attrs:(string * string) list ->
+    value:Capabilities.metric_value ->
+    unit
+  (** Record a metric point when runtime metrics are enabled. *)
+
+  val fork_daemon : context -> (unit -> [ `Stop_daemon ]) -> unit
+  (** Fork runtime-owned finite background work and include it in
+      {!Runtime.drain} accounting. *)
+
+  val eval : context -> ('a, 'err) t -> ('a, 'err) Exit.t
+  (** Evaluate a child effect in the current runtime context. *)
+
+  val eval_in_scope :
+    context -> Runtime_contract.scope -> ('a, 'err) t -> ('a, 'err) Exit.t
+  (** Evaluate a child effect in an explicit runtime scope. *)
+
+  val exit_of_exn : context -> exn -> ('a, 'err) Exit.t
+  (** Convert an unchecked exception raised by a custom operation into Eta's
+      diagnostic cause using the current runtime settings. *)
+end
+(** Narrow extension point for runtime packages. This module is intentionally
+    small: it lets optional packages implement backend-specific leaves while
+    keeping the root [Effect.t] representation private. *)
+
 val named_kind :
   ?error_renderer:('err -> string) ->
   kind:Capabilities.span_kind ->

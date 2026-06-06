@@ -60,7 +60,7 @@ let acquire ?blocking_pool config =
   blocking_result ?blocking_pool ~name:"turso.open" (fun () -> open_ config)
 
 let release ?blocking_pool db =
-  Eta.Effect.blocking ?pool:blocking_pool ~name:"turso.close" (fun () ->
+  Eta_blocking.run ?pool:blocking_pool ~name:"turso.close" (fun () ->
       ignore (close db))
 
 let health_check ?blocking_pool db =

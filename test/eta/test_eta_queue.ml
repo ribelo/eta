@@ -42,7 +42,7 @@ let test_queue_close_with_error_drains () =
 let test_queue_cancel_blocked_recv_cleans_waiter () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let q = Queue.create () in
   let cancel_ctx = ref None in
   let receiver =

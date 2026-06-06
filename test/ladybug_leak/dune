@@ -6,7 +6,7 @@
 
 (test
  (name test_ladybug_leak)
- (libraries eta eta_ladybug alcotest eio_main unix)
+ (libraries eta_eio eta eta_blocking eta_ladybug alcotest eio_main unix)
  (deps
   (:mock libladybug_mock.so))
  (action

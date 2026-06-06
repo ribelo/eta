@@ -55,7 +55,7 @@ let run ~host ~port ~count =
   let client = Eta_http.Client.make_h1 ~sw ~net () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()
+    Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   let request =
     Eta_http.Request.make "POST" uri

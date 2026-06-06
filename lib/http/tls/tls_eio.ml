@@ -7,7 +7,7 @@ type epoch = { alpn_protocol : string option } [@@unboxed]
 type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t
 
-module type EIO_FLOW = Eta.Host_eio.FLOW
+module type EIO_FLOW = Eta_eio.Host.FLOW
 
 module Default_eio_flow : EIO_FLOW = Eio.Flow
 
@@ -213,7 +213,7 @@ let ops =
 let flow_module = function
   | None -> (module Default_eio_flow : EIO_FLOW)
   | Some host_eio ->
-      let module Flow = (val Eta.Host_eio.flow host_eio : Eta.Host_eio.FLOW) in
+      let module Flow = (val Eta_eio.Host.flow host_eio : Eta_eio.Host.FLOW) in
       (module Flow : EIO_FLOW)
 
 let client_of_flow ?host_eio (config : config) ?host

@@ -272,7 +272,4 @@ let buffered_bytes t =
   | Some (Response_headers headers) -> Buffer.length headers.block
   | Some (Passthrough_headers _) -> 0
 
-let is_passthrough t =
-  Buffer.length t.pending - t.pending_off = 0
-  && t.headers = None
-  && Hashtbl.length t.final_seen > 0
+let is_passthrough _ = false

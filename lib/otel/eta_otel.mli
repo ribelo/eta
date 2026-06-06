@@ -47,13 +47,13 @@ val create :
     logs_path="/v1/logs", metrics_path="/v1/metrics", service_name="eta". *)
 
 val tracer : t -> Eta.Capabilities.tracer
-(** Tracer adapter for {!Eta.Runtime.create}. *)
+(** Tracer adapter for {!Eta_eio.Runtime.create}. *)
 
 val logger : t -> Eta.Capabilities.logger
-(** Logger adapter for {!Eta.Runtime.create}. *)
+(** Logger adapter for {!Eta_eio.Runtime.create}. *)
 
 val meter : t -> Eta.Capabilities.meter
-(** Meter adapter for {!Eta.Runtime.create}. Counter values are aggregated
+(** Meter adapter for {!Eta_eio.Runtime.create}. Counter values are aggregated
     by attribute set within each batch; gauges retain the latest value. *)
 
 val flush : ?timeout_s:float -> t -> unit

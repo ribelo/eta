@@ -14,18 +14,18 @@ owns rendering, binding, execution, decoding, pooling, and migration mechanics.
 ## SQLite Execution Model
 
 SQLite is synchronous embedded I/O. Eta applications should use `Eta_sql.Pool`
-so database work runs through `Eta.Effect.blocking` instead of pinning the Eio
+so database work runs through `Eta_blocking` instead of pinning the Eio
 calling domain.
 
 The substrate decision is recorded in
 `scratch/eta_research/sqlite_eta_effect/`:
 
 - same-domain SQLite can starve Eio co-fibers under lock contention;
-- per-call `Effect.blocking` is within the preliminary floor budget versus a
+- per-call `Eta_blocking.run` is within the preliminary floor budget versus a
   pinned worker;
 - query deadlines must interrupt SQLite with `sqlite3_interrupt`;
 - parent/supervisor cancellation must also interrupt started SQLite work through
-  `Effect.blocking ?on_cancel`;
+  `Eta_blocking.run ?on_cancel`;
 - row scans must use bounded blocking batches, not one blocking handoff per row;
 - transactions are expressed by holding one internal pool connection for the
   whole transaction body while exposing the same `Pool.Raw` and `Pool.Typed`
@@ -35,7 +35,7 @@ The substrate decision is recorded in
 
 For scans, the measured tradeoff is explicit: same-domain stepping was the cost
 optimum in the 200k-row fixture (about 28.5 ms and 3.2 MB allocated), but it
-held the calling Eio domain for the whole scan. Batched `Effect.blocking` at
+held the calling Eio domain for the whole scan. Batched `Eta_blocking.run` at
 1024 rows paid about 12% wall time and 23% allocation in that run (about
 32.0 ms and 3.9 MB allocated) while keeping heartbeat p99/max near 39 us. This
 package optimizes for co-fiber fairness, so `Eta_sql.Pool.Raw.fold` uses
@@ -59,12 +59,12 @@ end
 
 let program =
   let blocking_pool =
-    Eta.Effect.Blocking.Pool.create ~name:"sqlite"
+    Eta_blocking.Pool.create ~name:"sqlite"
       {
         max_threads = 16;
         max_queued = 64;
-        queue_policy = Eta.Effect.Blocking.Pool.Wait;
-        shutdown_policy = Eta.Effect.Blocking.Pool.Drain;
+        queue_policy = Eta_blocking.Pool.Wait;
+        shutdown_policy = Eta_blocking.Pool.Drain;
       }
   in
   let create_items =

@@ -49,6 +49,8 @@ let () =
             test_body_stream_read_all_caps_default;
           Alcotest.test_case "chunked trailers" `Quick
             test_chunked_decodes_trailers;
+          Alcotest.test_case "chunked rejects invalid trailer header" `Quick
+            test_chunked_decoder_rejects_invalid_trailer_header;
           Alcotest.test_case "chunked encoder" `Quick test_chunked_encoder;
           Alcotest.test_case "gzip roundtrip" `Quick
             test_gzip_transducer_roundtrip;
@@ -135,6 +137,12 @@ let () =
           Alcotest.test_case "GET origin-form" `Quick
             test_h1_writer_get_origin_form;
           Alcotest.test_case "fixed body" `Quick test_h1_writer_fixed_body;
+          Alcotest.test_case "rejects mismatched Content-Length" `Quick
+            test_h1_writer_rejects_mismatched_content_length;
+          Alcotest.test_case "rejects invalid Content-Length framing" `Quick
+            test_h1_writer_rejects_invalid_content_length_framing;
+          Alcotest.test_case "stream override does not reframe fixed body" `Quick
+            test_h1_writer_stream_override_does_not_reframe_fixed_body;
           Alcotest.test_case "flow matches string writer" `Quick
             test_h1_writer_flow_matches_string_writer;
           Alcotest.test_case "flow write failure is typed" `Quick
@@ -175,6 +183,8 @@ let () =
             test_h1_client_streaming_request_body_releases_on_write_failure;
           Alcotest.test_case "stream write cancellation remains cancellation" `Quick
             test_h1_client_streaming_request_body_write_cancellation_propagates;
+          Alcotest.test_case "rejects mismatched stream Content-Length" `Quick
+            test_h1_client_rejects_mismatched_stream_content_length;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick
@@ -335,6 +345,8 @@ let () =
             test_h2_connection_continues_after_informational_headers;
           Alcotest.test_case "filter passes PUSH_PROMISE continuation" `Quick
             test_h2_informational_filter_passes_push_promise_continuation;
+          Alcotest.test_case "informational filter passthrough is not global"
+            `Quick test_h2_informational_filter_passthrough_is_not_global;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request preserves connection" `Quick
@@ -356,6 +368,8 @@ let () =
             test_h2_security_hpack_block_cap;
           Alcotest.test_case "CONTINUATION cap" `Quick
             test_h2_security_continuation_cap;
+          Alcotest.test_case "initial HEADERS fragment cap" `Quick
+            test_h2_security_rejects_oversized_initial_headers_fragment;
           Alcotest.test_case "GOAWAY churn" `Quick
             test_h2_security_goaway_churn;
           Alcotest.test_case "header churn" `Quick

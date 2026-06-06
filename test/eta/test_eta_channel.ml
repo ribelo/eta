@@ -39,7 +39,7 @@ let test_channel_fifo_send_recv () =
 let test_channel_blocking_send_backpressure () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch 1);
   let sender = fork_run sw rt (Channel.send ch 2) in
@@ -52,7 +52,7 @@ let test_channel_blocking_send_backpressure () =
 let test_channel_blocked_sender_is_not_passed_by_later_sender () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch 1);
   let first_sender = fork_run sw rt (Channel.send ch 2) in
@@ -70,7 +70,7 @@ let test_channel_blocked_sender_is_not_passed_by_later_sender () =
 let test_channel_blocking_recv () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   let receiver = fork_run sw rt (Channel.recv ch) in
   wait_until (fun () -> (Channel.stats ch).Channel.waiting_receivers = 1);
@@ -80,7 +80,7 @@ let test_channel_blocking_recv () =
 let test_channel_close_wakes_blocked_senders_and_receivers () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sender_ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send sender_ch 1);
   let sender = fork_run sw rt (Channel.send sender_ch 2) in
@@ -141,7 +141,7 @@ let test_channel_close_drains_buffer_then_reports_closed () =
 let test_channel_cancel_blocked_send_cleans_waiter () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch 1);
   let cancel_ctx = ref None in
@@ -166,7 +166,7 @@ let test_channel_cancel_blocked_send_cleans_waiter () =
 let test_channel_cancelled_blocked_senders_release_payloads () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch (Bytes.create 1));
   Gc.full_major ();
@@ -192,7 +192,7 @@ let test_channel_cancelled_blocked_senders_release_payloads () =
 let test_channel_cancel_blocked_recv_cleans_waiter () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   let cancel_ctx = ref None in
   let receiver =
@@ -210,7 +210,7 @@ let test_channel_cancel_blocked_recv_cleans_waiter () =
 let test_channel_cancel_receiver_after_delivery_requeues_message () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   let cancel_ctx = ref None in
   let receiver =
@@ -231,7 +231,7 @@ let test_channel_cancel_receiver_after_delivery_requeues_message () =
 let test_channel_parent_switch_teardown_does_not_hang () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch 1);
   let outcome =
@@ -252,7 +252,7 @@ let test_channel_parent_switch_teardown_does_not_hang () =
 let test_channel_cancel_receiver_overflow_does_not_corrupt () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:1 () in
   let cancel_ctx = ref None in
   let receiver =

@@ -3,16 +3,21 @@ open Eta_test
 open Test_eta_support
 
 let test_tracer_manual_spans () =
-  run_eio @@ fun _stdenv ->
-  Tracer.with_fiber_context @@ fun () ->
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let contract =
+    Runtime_contract.of_runtime
+      (Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv))
+  in
+  Tracer.with_task_context contract @@ fun () ->
   let tracer = Tracer.in_memory () in
   let t = Tracer.as_capability tracer in
-  t#add_attr ~key:"pending" ~value:"yes";
-  let parent = t#begin_span ~name:"parent" ~started_ms:1 () in
-  t#add_attr ~key:"inside" ~value:"parent";
-  let child = t#begin_span ~name:"child" ~started_ms:2 () in
-  t#end_span ~span_id:child ~status:Tracer.Ok ~ended_ms:3;
-  t#end_span ~span_id:parent ~status:(Tracer.Error "boom") ~ended_ms:4;
+  t#add_attr contract ~key:"pending" ~value:"yes";
+  let parent = t#begin_span contract ~name:"parent" ~started_ms:1 () in
+  t#add_attr contract ~key:"inside" ~value:"parent";
+  let child = t#begin_span contract ~name:"child" ~started_ms:2 () in
+  t#end_span contract ~span_id:child ~status:Tracer.Ok ~ended_ms:3;
+  t#end_span contract ~span_id:parent ~status:(Tracer.Error "boom") ~ended_ms:4;
   match Tracer.dump tracer with
   | [ child_span; parent_span ] ->
       Alcotest.(check int) "child parent" parent
@@ -331,7 +336,7 @@ let test_observability_sampler_ratio_same_name_uses_trace_id () =
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer) ~sampler:(Sampler.ratio 0.5)
       ~random:(Capabilities.random_of_seed 0x51a7) ()
   in
@@ -391,20 +396,21 @@ let test_observability_annotate_all_die_diagnostics () =
 
 let counting_noop_tracer count : Capabilities.tracer =
   object
-    method with_fiber_context : 'a. (unit -> 'a) -> 'a = fun f -> f ()
+    method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
+      fun _ f -> f ()
 
-    method begin_span ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
+    method begin_span _ ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
         ?trace_state:_ ?baggage:_ ?kind:_ ~name:_ ~started_ms:_ () =
       incr count;
       -1
 
-    method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
-    method add_attr ~key:_ ~value:_ = ()
-    method add_attr_to ~span_id:_ ~key:_ ~value:_ = ()
-    method add_event ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
-    method add_link _ = ()
-    method add_link_to ~span_id:_ _ = ()
-    method inspect ~span_id:_ = None
+    method end_span _ ~span_id:_ ~status:_ ~ended_ms:_ = ()
+    method add_attr _ ~key:_ ~value:_ = ()
+    method add_attr_to _ ~span_id:_ ~key:_ ~value:_ = ()
+    method add_event _ ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
+    method add_link _ _ = ()
+    method add_link_to _ ~span_id:_ _ = ()
+    method inspect _ ~span_id:_ = None
   end
 
 let test_observability_custom_noop_tracer_is_explicitly_enabled () =
@@ -412,7 +418,7 @@ let test_observability_custom_noop_tracer_is_explicitly_enabled () =
   Eio.Switch.run @@ fun sw ->
   let spans_started = ref 0 in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(counting_noop_tracer spans_started) ()
   in
   check_exit_ok Alcotest.unit "named" ()
@@ -426,7 +432,7 @@ let test_observability_suppress_observability () =
   let logger = Logger.in_memory () in
   let meter = Meter.in_memory () in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer)
       ~logger:(Logger.as_capability logger)
       ~meter:(Meter.as_capability meter) ()
@@ -650,9 +656,9 @@ let test_in_memory_tracer_shared_state_is_locked_source () =
     in
     if not (search 0) then Alcotest.failf "missing source marker: %s" needle
   in
-  require "mutex : Mutex.t";
+  require "mutex : Sync_lock.t";
   require "let with_lock t f =";
-  require "Mutex.lock t.mutex";
+  require "Sync_lock.use t.mutex";
   require "t.next_id <- t.next_id + 1";
   require "with_lock t @@ fun () ->"
 

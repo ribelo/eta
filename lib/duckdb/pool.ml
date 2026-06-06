@@ -85,7 +85,7 @@ let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
                       (blocking_result ?blocking_pool ~name:"duckdb.connect"
                          (fun () -> Connection.connect database))
                     ~release:(fun conn ->
-                      Eta.Effect.blocking ?pool:blocking_pool
+                      Eta_blocking.run ?pool:blocking_pool
                         ~name:"duckdb.disconnect" (fun () ->
                           ignore (Connection.close conn)))
                     ~health_check:(fun conn ->

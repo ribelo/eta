@@ -6,13 +6,13 @@ type tx
 
 type pool_state = {
   pool : (Connection.t, error) Eta.Pool.t;
-  blocking_pool : Eta.Effect.Blocking.Pool.t option;
+  blocking_pool : Eta_blocking.Pool.t option;
   default_timeout : Eta.Duration.t option;
 }
 
 type tx_state = {
   conn : Connection.t;
-  blocking_pool : Eta.Effect.Blocking.Pool.t option;
+  blocking_pool : Eta_blocking.Pool.t option;
   default_timeout : Eta.Duration.t option;
 }
 
@@ -64,7 +64,7 @@ let release_connection ?blocking_pool conn =
       Connection.close conn)
 
 let health_check ?blocking_pool conn =
-  Eta.Effect.blocking ?pool:blocking_pool ~name:"sqlite.ping" (fun () ->
+  Eta_blocking.run ?pool:blocking_pool ~name:"sqlite.ping" (fun () ->
       Connection.ping conn)
   |> Eta.Effect.bind (fun healthy ->
          if healthy then

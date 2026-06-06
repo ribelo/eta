@@ -42,7 +42,7 @@ let parallel_run n =
      reduction does not affect the result; identity 0 is the left
      identity for [+]. *)
   let idx = Array.init n Fun.id in
-  Eta.Par.par_reduce idx
+  Eta_par.par_reduce idx
     ~init:0
     ~map:(fun i -> busy (cost_of_index i))
     ~combine:( + )
@@ -56,5 +56,5 @@ let run_serial ~quick () =
 
 let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
-  let r = Eta.Par.Pool.run pool (fun () -> parallel_run n) in
+  let r = Eta_par.Pool.run pool (fun () -> parallel_run n) in
   string_of_int r

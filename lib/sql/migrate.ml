@@ -193,6 +193,10 @@ type error =
   | Version_missing of Version.t
   | Version_mismatch of Version.t
   | Version_not_present of Version.t
+  | Duplicate_migration_version of {
+      version : Version.t;
+      migration_type : migration_type;
+    }
   | Migration_execution_error of {
       version : Version.t;
       error : Types.sql_error;
@@ -212,6 +216,46 @@ module Source = struct
 
   let from_directory path = Directory path
   let from_migrations migrations = Migrations migrations
+
+  let sort_migrations migrations =
+    List.sort
+      (fun left right -> Version.compare left.Migration.version right.version)
+      migrations
+
+  let rec version_mem version = function
+    | [] -> false
+    | candidate :: rest ->
+        Version.equal version candidate || version_mem version rest
+
+  let validate_unique_versions migrations =
+    let rec loop executable_versions down_versions = function
+      | [] -> Ok ()
+      | migration :: rest -> (
+          let version = migration.Migration.version in
+          match migration.Migration.migration_type with
+          | Simple | Reversible_up ->
+              if version_mem version executable_versions then
+                Result.Error
+                  (Duplicate_migration_version
+                     {
+                       version;
+                       migration_type = migration.Migration.migration_type;
+                     })
+              else loop (version :: executable_versions) down_versions rest
+          | Reversible_down ->
+              if version_mem version down_versions then
+                Result.Error
+                  (Duplicate_migration_version
+                     { version; migration_type = Reversible_down })
+              else loop executable_versions (version :: down_versions) rest)
+    in
+    loop [] [] migrations
+
+  let resolve_migrations migrations =
+    let migrations = sort_migrations migrations in
+    match validate_unique_versions migrations with
+    | Ok () -> Ok migrations
+    | Result.Error _ as err -> err
 
   let has_suffix value suffix = Eta.String_helpers.ends_with value ~suffix
 
@@ -292,7 +336,7 @@ module Source = struct
 
   let resolve ?(config = default_resolve_config) = function
     | Migrations migrations ->
-        Ok (List.sort (fun left right -> Version.compare left.Migration.version right.version) migrations)
+        resolve_migrations migrations
     | Directory dir -> (
         let entries =
           match Sys.readdir dir with
@@ -302,10 +346,7 @@ module Source = struct
         in
         let rec loop acc = function
           | [] ->
-              Ok
-                (List.sort
-                   (fun left right -> Version.compare left.Migration.version right.version)
-                   acc)
+              resolve_migrations acc
           | name :: rest -> (
               let path = Filename.concat dir name in
               match is_regular_file path with
@@ -362,6 +403,10 @@ let error_to_string = function
   | Version_missing version -> "migration version missing: " ^ Version.to_string version
   | Version_mismatch version -> "migration checksum mismatch: " ^ Version.to_string version
   | Version_not_present version -> "migration version not present: " ^ Version.to_string version
+  | Duplicate_migration_version { version; migration_type } ->
+      "duplicate migration version: " ^ Version.to_string version ^ " ("
+      ^ migration_type_to_string migration_type
+      ^ ")"
   | Migration_execution_error { version; error } ->
       "migration " ^ Version.to_string version ^ " failed: " ^ Types.show_error error
 
@@ -527,7 +572,7 @@ let execute_body conn migration =
 
 let mark_dirty conn table migration =
   Connection.Raw.execute conn
-    ("INSERT OR REPLACE INTO " ^ table
+    ("INSERT INTO " ^ table
    ^ " (version, description, checksum, success, installed_at, execution_time_ms) VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP, 0)")
     [
       Value.Int64 migration.Migration.version;

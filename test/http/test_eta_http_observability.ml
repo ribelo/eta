@@ -208,7 +208,7 @@ let test_observability_pool_stats_meter () =
   Eio.Switch.run @@ fun sw ->
   let meter = Eta.Meter.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~meter:(Eta.Meter.as_capability meter) ()
   in
   let client =

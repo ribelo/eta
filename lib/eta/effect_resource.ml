@@ -4,8 +4,7 @@
 open Effect_core
 
 let finally cleanup eff =
-  preserve eff @@ fun () ->
-  let frame = current_frame () in
+  preserve eff @@ fun frame ->
   try
     let finalizers = ref [ (fun () -> run_scope_value frame cleanup) ] in
     ok
@@ -13,13 +12,12 @@ let finally cleanup eff =
          ~fail_key:frame.fail_key ~error_renderer:frame.error_renderer finalizers
          (fun () -> run_to_value frame eff))
   with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn when Runtime_core.is_cancellation frame.runtime.contract exn -> raise exn
   | exn -> exit_of_exn frame exn
 
 let acquire_release ~acquire ~(release) =
-  preserve acquire @@ fun () ->
-  let frame = current_frame () in
-  match eval acquire with
+  preserve acquire @@ fun frame ->
+  match eval frame acquire with
   | Exit.Error _ as err -> err
   | Exit.Ok value ->
       frame.finalizers :=
@@ -29,8 +27,7 @@ let acquire_release ~acquire ~(release) =
       ok value
 
 let scoped eff =
-  preserve eff @@ fun () ->
-  let frame = current_frame () in
+  preserve eff @@ fun frame ->
   try
     ok
       (let run_scoped sw =

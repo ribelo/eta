@@ -32,6 +32,7 @@ val write_to_bytes :
     Caller-provided headers are validated before any bytes are written. *)
 
 val write :
+  ?framing_body_length:int ->
   Buffer.t ->
   method_:string ->
   url:Url.t ->
@@ -42,9 +43,12 @@ val write :
 
     The request target is origin-form. [Host] is added when the caller did not
     provide one. Fixed bodies get a [Content-Length] header when absent.
-    Caller-provided headers are validated before any bytes are appended. *)
+    Caller-provided headers are validated before any bytes are appended.
+    [framing_body_length] overrides body length validation only when [body] is
+    [Empty], for callers that write headers separately from a streamed body. *)
 
 val write_to_flow :
+  ?framing_body_length:int ->
   [> Eio.Flow.sink_ty] Eio.Resource.t ->
   method_:string ->
   url:Url.t ->

@@ -66,7 +66,7 @@ let with_logger f =
   Eio.Switch.run @@ fun sw ->
   let logger = Eta.Logger.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~logger:(Eta.Logger.as_capability logger) ()
   in
   f sw rt logger
@@ -76,7 +76,7 @@ let with_tracer f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f sw rt tracer
@@ -87,7 +87,7 @@ let with_logger_and_tracer f =
   let logger = Eta.Logger.in_memory () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~logger:(Eta.Logger.as_capability logger)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
@@ -98,7 +98,7 @@ let with_test_clock f =
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock) ()
   in
   f sw clock rt
@@ -109,7 +109,7 @@ let with_traced_test_clock f =
   let clock = Test_clock.create () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in

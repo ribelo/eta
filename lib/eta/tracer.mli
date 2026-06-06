@@ -34,7 +34,7 @@ type span = {
 type in_memory
 
 val in_memory : unit -> in_memory
-val with_fiber_context : (unit -> 'a) -> 'a
+val with_task_context : Runtime_contract.t -> (unit -> 'a) -> 'a
 val noop : Capabilities.tracer
 val as_capability : in_memory -> Capabilities.tracer
 val dump : in_memory -> span list

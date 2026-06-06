@@ -7,6 +7,8 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
+  "eta_blocking"
+  "eta_eio"
   "eta_stream"
   "eio" {>= "1.0"}
   "cstruct" {>= "6.0.0"}

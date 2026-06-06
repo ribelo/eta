@@ -1,61 +1,47 @@
-module BR = Blocking_runtime
-
-let active_span_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
-let sampled_key : bool Eio.Fiber.key = Eio.Fiber.create_key ()
-let trace_context_key : Capabilities.trace_context Eio.Fiber.key =
-  Eio.Fiber.create_key ()
-let blocking_event_emit_key : (BR.event -> unit) Eio.Fiber.key =
-  Eio.Fiber.create_key ()
-
+let active_span_key : int Runtime_contract.local =
+  Runtime_contract.create_local ()
+let sampled_key : bool Runtime_contract.local =
+  Runtime_contract.create_local ()
+let trace_context_key : Capabilities.trace_context Runtime_contract.local =
+  Runtime_contract.create_local ()
 type die_context = {
   span_name : string option;
   rev_annotations : (string * string) list;
 }
 
-let die_context_key : die_context Eio.Fiber.key = Eio.Fiber.create_key ()
+let die_context_key : die_context Runtime_contract.local =
+  Runtime_contract.create_local ()
 let empty_die_context = { span_name = None; rev_annotations = [] }
-let fiberless_die_context = ref empty_die_context
 
-let fiber_get key =
-  try Eio.Fiber.get key with Stdlib.Effect.Unhandled _ -> None
+let local_get contract key = contract.Runtime_contract.local_get key
 
-let has_fiber_context key =
-  try
-    ignore (Eio.Fiber.get key);
-    true
-  with Stdlib.Effect.Unhandled _ -> false
+let local_with_binding contract key value f =
+  contract.Runtime_contract.local_with_binding key value f
 
-let current_die_context () =
-  match fiber_get die_context_key with
+let current_die_context contract =
+  match local_get contract die_context_key with
   | Some context -> context
-  | None -> !fiberless_die_context
+  | None -> empty_die_context
 
-let with_fiberless_die_context context f =
-  let previous = !fiberless_die_context in
-  fiberless_die_context := context;
-  Fun.protect ~finally:(fun () -> fiberless_die_context := previous) f
+let with_die_context contract context f =
+  local_with_binding contract die_context_key context f
 
-let with_die_context context f =
-  if has_fiber_context die_context_key then
-    Eio.Fiber.with_binding die_context_key context f
-  else with_fiberless_die_context context f
+let with_die_span_name contract name f =
+  let context = current_die_context contract in
+  with_die_context contract { context with span_name = Some name } f
 
-let with_die_span_name name f =
-  let context = current_die_context () in
-  with_die_context { context with span_name = Some name } f
-
-let with_die_annotation key value f =
-  let context = current_die_context () in
-  with_die_context
+let with_die_annotation contract key value f =
+  let context = current_die_context contract in
+  with_die_context contract
     { context with rev_annotations = (key, value) :: context.rev_annotations }
     f
 
-let with_die_annotations attrs f =
+let with_die_annotations contract attrs f =
   match attrs with
   | [] -> f ()
   | _ ->
-      let context = current_die_context () in
-      with_die_context
+      let context = current_die_context contract in
+      with_die_context contract
         { context with rev_annotations = List.rev_append attrs context.rev_annotations }
         f
 
@@ -69,17 +55,7 @@ let render_typed_failure ~error_renderer err =
      failure. *)
   try error_renderer err with _ -> error_renderer_raised
 
-let with_blocking_event_emit emit f =
-  if has_fiber_context blocking_event_emit_key then
-    Eio.Fiber.with_binding blocking_event_emit_key emit f
-  else f ()
-
-let emit_current_blocking_event event =
-  match fiber_get blocking_event_emit_key with
-  | None -> ()
-  | Some emit -> emit event
-
-let die_of_exn ?backtrace ~capture_backtrace exn =
+let die_of_exn contract ?backtrace ~capture_backtrace exn =
   let backtrace =
     if capture_backtrace then
       match backtrace with
@@ -87,7 +63,7 @@ let die_of_exn ?backtrace ~capture_backtrace exn =
       | None -> Some (Printexc.get_raw_backtrace ())
     else None
   in
-  let context = current_die_context () in
+  let context = current_die_context contract in
   Cause.die_with_diagnostics ?backtrace ?span_name:context.span_name
     ~annotations:(List.rev context.rev_annotations) exn
 
@@ -273,7 +249,7 @@ let exception_event_attrs_tree ~error_renderer cause =
   in
   List.rev (collect "cause" [] cause)
 
-let emit_daemon_failure ~now_ms ~logging_enabled
+let emit_daemon_failure ~contract ~now_ms ~logging_enabled
     ~(logger : Capabilities.logger) ~tracing_enabled
     ~(tracer : Capabilities.tracer) cause =
   if not (Cause.is_interrupt_only cause) then (
@@ -304,49 +280,13 @@ let emit_daemon_failure ~now_ms ~logging_enabled
         attrs;
     if tracing_enabled then (
       let span_id =
-        tracer#begin_span ~kind:Capabilities.Internal ~name:"eta.daemon"
+        tracer#begin_span contract ~kind:Capabilities.Internal ~name:"eta.daemon"
           ~started_ms:ts_ms ()
       in
       List.iter
-        (fun attrs -> tracer#add_event ~span_id ~name:"exception" ~ts_ms ~attrs)
+        (fun attrs ->
+          tracer#add_event contract ~span_id ~name:"exception" ~ts_ms ~attrs)
         attrs;
-      tracer#end_span ~span_id
+      tracer#end_span contract ~span_id
         ~status:(status_of_cause ~error_renderer:default_error_renderer cause)
         ~ended_ms:(now_ms ())))
-
-let string_of_blocking_outcome = function
-  | BR.Blocking_ok -> "ok"
-  | BR.Blocking_error msg -> "error:" ^ msg
-  | BR.Blocking_cancelled -> "cancelled"
-  | BR.Blocking_rejected -> "rejected"
-  | BR.Blocking_shutdown_rejected -> "shutdown"
-  | BR.Blocking_detached -> "detached"
-
-let emit_blocking_event ~now_ms ~tracing_enabled
-    ~(tracer : Capabilities.tracer) ~metrics_enabled
-    ~(meter : Capabilities.meter) event =
-  if tracing_enabled || metrics_enabled then
-    let attrs =
-      [
-        ("eta.blocking.pool", event.BR.pool);
-        ("eta.blocking.name", event.name);
-        ("eta.blocking.outcome", string_of_blocking_outcome event.outcome);
-        ("eta.blocking.queue_wait_ms", string_of_int event.queue_wait_ms);
-        ("eta.blocking.run_ms", string_of_int event.run_ms);
-      ]
-    in
-    (if tracing_enabled then
-       match Eio.Fiber.get active_span_key with
-       | None -> ()
-       | Some span_id ->
-           tracer#add_event ~span_id ~name:"eta.blocking" ~ts_ms:(now_ms ())
-             ~attrs);
-    if metrics_enabled then (
-      meter#record ~name:"eta.blocking.queue_wait_ms"
-        ~description:"Time spent admitted but waiting for a blocking worker"
-        ~unit_:"ms" ~kind:Capabilities.Gauge ~attrs
-        ~value:(Capabilities.Int event.queue_wait_ms) ~ts_ms:(now_ms ());
-      meter#record ~name:"eta.blocking.run_ms"
-        ~description:"Time spent running a blocking callback" ~unit_:"ms"
-        ~kind:Capabilities.Gauge ~attrs ~value:(Capabilities.Int event.run_ms)
-        ~ts_ms:(now_ms ()))

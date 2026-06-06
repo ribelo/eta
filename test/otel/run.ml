@@ -4,6 +4,9 @@
 
 open Eta
 
+let runtime_contract ~sw ~clock =
+  Runtime_contract.of_runtime (Eta_eio.runtime ~sw ~clock)
+
 let rec json_has_span_kind ~name ~kind = function
   | `Assoc fields ->
       let has_name = List.assoc_opt "name" fields = Some (`String name) in
@@ -189,9 +192,9 @@ let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
           `Stop_daemon);
       (port, hits)
 
-let emit_span (tracer : Capabilities.tracer) name =
-  let span = tracer#begin_span ~name ~started_ms:0 () in
-  tracer#end_span ~span_id:span ~status:Capabilities.Ok ~ended_ms:0
+let emit_span contract (tracer : Capabilities.tracer) name =
+  let span = tracer#begin_span contract ~name ~started_ms:0 () in
+  tracer#end_span contract ~span_id:span ~status:Capabilities.Ok ~ended_ms:0
 
 let test_encoder_smoke () =
   let bodies = ref [] in
@@ -208,6 +211,7 @@ let test_encoder_smoke () =
       ()
   in
   let tracer = Eta_otel.tracer exporter in
+  let contract = runtime_contract ~sw ~clock:(Eio.Stdenv.clock stdenv) in
   let external_parent =
     Option.get
       (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
@@ -216,15 +220,16 @@ let test_encoder_smoke () =
          ~baggage:[ ("tenant", "acme") ] ())
   in
   let parent =
-    tracer#begin_span ~external_parent ~name:"parent" ~started_ms:1000 ()
+    tracer#begin_span contract ~external_parent ~name:"parent" ~started_ms:1000
+      ()
   in
-  tracer#add_attr ~key:"phase" ~value:"setup";
+  tracer#add_attr contract ~key:"phase" ~value:"setup";
   let child =
-    tracer#begin_span ~parent_id:parent ~kind:Capabilities.Server ~name:"child"
-      ~started_ms:1010 ()
+    tracer#begin_span contract ~parent_id:parent ~kind:Capabilities.Server
+      ~name:"child" ~started_ms:1010 ()
   in
-  tracer#end_span ~span_id:child ~status:Capabilities.Ok ~ended_ms:1020;
-  tracer#end_span ~span_id:parent
+  tracer#end_span contract ~span_id:child ~status:Capabilities.Ok ~ended_ms:1020;
+  tracer#end_span contract ~span_id:parent
     ~status:(Capabilities.Error "boom") ~ended_ms:1030;
   Eta_otel.flush exporter;
   Alcotest.(check pass) "encoder ran without raising" () ();
@@ -262,7 +267,7 @@ let test_exception_stacktrace_exported () =
       ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
       ()
   in
-  let rt = Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
   let eff =
     Effect.named "failing.span"
       (Effect.named "failing.leaf" (Effect.sync (fun () -> failwith "wire stacktrace"))
@@ -298,7 +303,7 @@ let test_concurrent_span_attributes_stay_on_active_span () =
       ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
       ()
   in
-  let rt = Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
   let left =
     Effect.named "left"
       (Effect.delay (Duration.ms 5)
@@ -339,7 +344,8 @@ let test_direct_tracer_attributes_use_fiber_span_stack () =
       ()
   in
   let tracer = Eta_otel.tracer exporter in
-  let rt = Runtime.create ~sw ~clock ~tracer () in
+  let contract = runtime_contract ~sw ~clock in
+  let rt = Eta_eio.Runtime.create ~sw ~clock ~tracer () in
   let right_started, wake_right_started = Eio.Promise.create () in
   let left_attr_done, wake_left_attr_done = Eio.Promise.create () in
   let left =
@@ -347,7 +353,7 @@ let test_direct_tracer_attributes_use_fiber_span_stack () =
       (Effect.sync (fun () -> Eio.Promise.await right_started)
       |> Effect.bind (fun () ->
              Effect.sync (fun () ->
-                 tracer#add_attr ~key:"side" ~value:"left-direct";
+                 tracer#add_attr contract ~key:"side" ~value:"left-direct";
                  Eio.Promise.resolve wake_left_attr_done ())))
   in
   let right =
@@ -382,17 +388,19 @@ let test_network_partition_reports_error () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
     Eta_otel.create ~sw
       ~net
-      ~clock:(Eio.Stdenv.clock stdenv)
+      ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-network-partition"
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "partitioned";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "partitioned";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "network error reported" true (!errors <> [])
 
@@ -412,7 +420,7 @@ let test_malformed_response_reports_error () =
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "malformed";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter) "malformed";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "collector error reported" true (!errors <> [])
 
@@ -441,7 +449,8 @@ let test_custom_otlp_headers_are_sent () =
       ~on_error:(fun _ -> ())
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "custom-headers";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "custom-headers";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check (option string))
     "authorization header" (Some "Bearer test-token")
@@ -496,7 +505,8 @@ let test_encode_failure_keeps_exporter_alive () =
     ~value:(Capabilities.Float (0.0 /. 0.0))
     ~ts_ms:0;
   Eta_otel.flush ~timeout_s:0.2 exporter;
-  emit_span (Eta_otel.tracer exporter) "after-encode-failure";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "after-encode-failure";
   Eta_otel.flush ~timeout_s:0.5 exporter;
   Alcotest.(check int) "later span drained" 0 (Eta_otel.in_flight exporter);
   let exported =
@@ -528,7 +538,8 @@ let test_otlp_retry_excludes_408 () =
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "no-408-retry";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "no-408-retry";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   let trace_hits =
     !paths |> List.filter (String.equal "/v1/traces") |> List.length
@@ -557,7 +568,7 @@ let test_otlp_retry_includes_429 () =
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "retry-429";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter) "retry-429";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   let trace_hits =
     !paths |> List.filter (String.equal "/v1/traces") |> List.length
@@ -580,7 +591,7 @@ let test_slow_collector_flush_timeout () =
       ~on_error:(fun _ -> ())
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "slow";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter) "slow";
   let started = Eio.Time.now clock in
   Eta_otel.flush ~timeout_s:0.02 exporter;
   let elapsed = Eio.Time.now clock -. started in
@@ -591,11 +602,12 @@ let test_backpressure_overflow_drops () =
   Eio.Switch.run @@ fun sw ->
   let gate, release = Eio.Promise.create () in
   let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
     Eta_otel.create ~sw
       ~net
-      ~clock:(Eio.Stdenv.clock stdenv)
+      ~clock
       ~host:"127.0.0.1" ~port ~queue_capacity:1
       ~service_name:"eta-otel-backpressure"
       ~on_error:(fun _ -> ())
@@ -603,8 +615,9 @@ let test_backpressure_overflow_drops () =
       ()
   in
   let tracer = Eta_otel.tracer exporter in
+  let contract = runtime_contract ~sw ~clock in
   for i = 1 to 128 do
-    emit_span tracer ("overflow-" ^ string_of_int i)
+    emit_span contract tracer ("overflow-" ^ string_of_int i)
   done;
   Alcotest.(check bool)
     "overflow drops instead of blocking producers" true
@@ -617,11 +630,12 @@ let test_shutdown_closes_queues () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
     Eta_otel.create ~sw
       ~net
-      ~clock:(Eio.Stdenv.clock stdenv)
+      ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-shutdown"
       ~on_error:(fun _ -> ())
@@ -629,10 +643,11 @@ let test_shutdown_closes_queues () =
       ()
   in
   let tracer = Eta_otel.tracer exporter in
-  emit_span tracer "before-shutdown";
+  let contract = runtime_contract ~sw ~clock in
+  emit_span contract tracer "before-shutdown";
   Eta_otel.shutdown ~timeout_s:1.0 exporter;
   let sent_before_closed_offer = !sends in
-  emit_span tracer "after-shutdown";
+  emit_span contract tracer "after-shutdown";
   Eta_otel.flush ~timeout_s:0.05 exporter;
   Alcotest.(check int)
     "signals after shutdown are not exported" sent_before_closed_offer !sends
@@ -642,17 +657,19 @@ let test_self_spans_do_not_reenter_export () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
     Eta_otel.create ~sw ~net
-      ~clock:(Eio.Stdenv.clock stdenv)
+      ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-spans"
       ~on_error:(fun _ -> ())
       ~on_send:(fun ~path:_ ~body -> bodies := body :: !bodies)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "application-span";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "application-span";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   let self_names =
     Eta_otel.Internal.self_spans exporter |> List.map (fun s -> s.Tracer.name)
@@ -669,10 +686,11 @@ let test_self_spans_are_bounded_across_flushes () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
     Eta_otel.create ~sw ~net
-      ~clock:(Eio.Stdenv.clock stdenv)
+      ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-spans-bounded"
       ~disable_self_metrics:true
@@ -680,8 +698,9 @@ let test_self_spans_are_bounded_across_flushes () =
       ()
   in
   let tracer = Eta_otel.tracer exporter in
+  let contract = runtime_contract ~sw ~clock in
   for i = 1 to 40 do
-    emit_span tracer ("application-span-" ^ string_of_int i);
+    emit_span contract tracer ("application-span-" ^ string_of_int i);
     Eta_otel.flush ~timeout_s:1.0 exporter
   done;
   Alcotest.(check bool) "self spans are bounded" true
@@ -704,7 +723,8 @@ let test_self_metrics_export_without_recursion () =
       ~on_send:(fun ~path ~body -> sends := (path, body) :: !sends)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "application-span";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "application-span";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   let metrics =
     !sends
@@ -748,7 +768,8 @@ let test_self_metrics_can_be_disabled () =
       ~on_send:(fun ~path ~body:_ -> sends := path :: !sends)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "application-span";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "application-span";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "trace exported" true
     (List.exists (String.equal "/v1/traces") !sends);
@@ -773,7 +794,8 @@ let test_self_metrics_path_is_separate () =
       ~on_send:(fun ~path ~body:_ -> sends := path :: !sends)
       ()
   in
-  emit_span (Eta_otel.tracer exporter) "application-span";
+  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
+    "application-span";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check bool) "self metrics custom path" true
     (List.exists (String.equal "/internal/metrics") !sends);
@@ -802,7 +824,7 @@ let live_motel_test net clock =
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
+    Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
   in
   let demo =
     Effect.named "demo.root"

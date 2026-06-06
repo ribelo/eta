@@ -4,7 +4,7 @@ type child_registration = {
 }
 
 type ('s, !'err) supervisor = {
-  sw : Eio.Switch.t;
+  scope : Runtime_contract.scope;
   max_failures : int option;
   failures : 'err Cause.t list Atomic.t;
   failure_count : int Atomic.t;
@@ -15,13 +15,13 @@ type ('s, !'err) supervisor = {
 }
 
 type ('s, !'err, !'a) child = {
-  promise : ('a, 'err Cause.t) result Eio.Promise.t;
+  promise : ('a, 'err Cause.t) result Runtime_contract.promise;
   cancel : unit -> unit;
 }
 
 let make ~sw ~max_failures =
   {
-    sw;
+    scope = sw;
     max_failures;
     failures = Atomic.make [];
     failure_count = Atomic.make 0;
@@ -29,8 +29,7 @@ let make ~sw ~max_failures =
     children = Atomic.make [];
   }
 
-let fork supervisor body = Eio.Fiber.fork ~sw:supervisor.sw body
-
+let scope supervisor = supervisor.scope
 let max_failures supervisor = supervisor.max_failures
 
 let record_failure supervisor failure =

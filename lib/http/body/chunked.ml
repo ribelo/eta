@@ -117,13 +117,22 @@ let[@zero_alloc] bytes_is_crlf bytes =
   && Char.equal (Bytes.unsafe_get bytes 0) '\r'
   && Char.equal (Bytes.unsafe_get bytes 1) '\n'
 
+let invalid_trailer_message = function
+  | Error.Header_invalid { reason } -> "invalid trailer header: " ^ reason
+  | kind -> "invalid trailer header: " ^ Error.kind_name kind
+
+let store_trailers t trailers =
+  match Header.of_list (List.rev trailers) with
+  | Ok trailers ->
+      t.trailers <- trailers;
+      t.done_ <- true;
+      Effect.pure None
+  | Error kind -> Effect.fail (decode_error t (invalid_trailer_message kind))
+
 let rec read_trailers t acc =
   t.reader.read_line ~limit:default_line_limit
   |> Effect.bind (fun line ->
-         if String.equal line "" then (
-           t.trailers <- Header.unsafe_of_list (List.rev acc);
-           t.done_ <- true;
-           Effect.pure None)
+         if String.equal line "" then store_trailers t acc
          else
            match parse_trailer line with
            | Error message -> Effect.fail (decode_error t message)

@@ -8,4 +8,4 @@
   (names duckdb_stubs)
   (flags :standard))
  (c_library_flags :standard -ldl)
- (libraries eta eta_sql_driver eta_sql_dsl unix threads))
+ (libraries eta eta_blocking eta_sql_driver eta_sql_dsl unix threads))

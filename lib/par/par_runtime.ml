@@ -302,9 +302,12 @@ let[@inline] join (a : unit -> 'a) (b : unit -> 'b) : 'a * 'b =
   if w.join_count land heartbeat_period_mask <> 0
      && w.queue_len >= min_queue_for_fast_path
   then begin
-    let rb = b () in
-    let ra = a () in
-    (ra, rb)
+    let rb = try Ok (b ()) with e -> Error e in
+    let ra = try Ok (a ()) with e -> Error e in
+    match ra, rb with
+    | Ok ra, Ok rb -> (ra, rb)
+    | Error e, _ -> raise e
+    | _, Error e -> raise e
   end else
     join_slow w a b
 
@@ -316,8 +319,11 @@ let[@inline] join_unit (a : unit -> unit) (b : unit -> unit) : unit =
   if w.join_count land heartbeat_period_mask <> 0
      && w.queue_len >= min_queue_for_fast_path
   then begin
-    b ();
-    a ()
+    let exn_b = try b (); None with e -> Some e in
+    let exn_a = try a (); None with e -> Some e in
+    match exn_a, exn_b with
+    | None, None -> ()
+    | Some e, _ | _, Some e -> raise e
   end else
     join_unit_slow w a b
 

@@ -218,7 +218,7 @@ let test_effect_with_background_reports_child_cleanup_failure () =
 let test_supervisor_scope_cancels_unawaited_children_on_return () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let child_started, child_started_resolver = Eio.Promise.create () in
   let released = Atomic.make false in
   let child =

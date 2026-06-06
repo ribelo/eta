@@ -43,7 +43,7 @@ let run ?tracer ?logger ?meter ?(auto_instrument = false) program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ?tracer ?logger ?meter
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ?tracer ?logger ?meter
       ~auto_instrument ()
   in
   ignore (Runtime.run rt program : (_, _) Exit.t)

@@ -1,7 +1,7 @@
 let raw = Eta.Cause.die (Failure "boom")
 
-let _ =
-  Eta.Island.map
+let program pool =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
       ignore raw;
       n)

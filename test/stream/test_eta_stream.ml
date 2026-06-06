@@ -27,7 +27,7 @@ let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
   in
   f env rt
 
@@ -368,9 +368,9 @@ let test_row_pipeline_runtime () =
       method get = 2
     end
   in
-  let clock = Capabilities.clock_of_eio (Eio.Stdenv.clock env) in
+  let clock = Eta_eio.clock (Eio.Stdenv.clock env) in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
   in
   match Runtime.run rt (row_pipeline clock db ()) with
   | Exit.Ok values ->

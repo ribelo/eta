@@ -1,6 +1,6 @@
 (test
  (name test_eta_ai_openai_compat)
- (libraries eta eta_ai eta_ai_openai_compat eta_http alcotest eio_main)
+ (libraries eta_eio eta eta_ai eta_ai_openai_compat eta_http alcotest eio_main)
  (deps
   (source_tree fixtures))
  (action

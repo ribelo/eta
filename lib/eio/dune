@@ -1,0 +1,5 @@
+(library
+ (name eta_eio)
+ (public_name eta_eio)
+ (synopsis "Eio runtime backend for Eta")
+ (libraries eta eta_blocking eio eio.unix cstruct unix threads))

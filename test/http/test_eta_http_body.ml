@@ -224,6 +224,31 @@ let test_chunked_decodes_trailers () =
     (Eta_http.Core.Header.get "x-trailer"
        (Eta_http.Body.Chunked.trailers decoder))
 
+let test_chunked_decoder_rejects_invalid_trailer_header () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let context =
+    {
+      Eta_http.Body.Chunked.protocol = Eta_http.Error.H1;
+      method_ = "GET";
+      uri = "http://example.test/chunked";
+    }
+  in
+  let reader =
+    chunked_reader_of_string context "0\r\nBad Name: nope\r\n\r\n"
+  in
+  let decoder = Eta_http.Body.Chunked.create ~context ~reader () in
+  match Eta.Runtime.run rt (Eta_http.Body.Chunked.read decoder) with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        { Eta_http.Error.kind = Decode_error { message; _ }; _ }) ->
+      Alcotest.(check bool) "trailer validation error" true
+        (contains message "trailer")
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected failure: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+  | Eta.Exit.Ok _ -> Alcotest.fail "invalid trailer was accepted"
+
 let test_chunked_encoder () =
   let encoded =
     Eta_http.Body.Chunked.encode_chunk (Bytes.of_string "abcdefghijklmnop")

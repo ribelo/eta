@@ -1,7 +1,7 @@
 (test
  (name test_ppx_eta)
  (modules test_ppx_eta)
- (libraries eta alcotest eio_main)
+ (libraries eta_eio eta alcotest eio_main)
  (preprocess
   (pps ppx_eta))
  (action

@@ -91,7 +91,7 @@ let test_uninterruptible_race_loser_without_checkpoints_returns () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let domain_mgr = Eio.Stdenv.domain_mgr stdenv in
   let completed = ref false in

@@ -1,4 +1,4 @@
-(* Correctness tests for Eta.Par. *)
+(* Correctness tests for Eta_par. *)
 
 let check_int = Alcotest.(check int)
 let check_int_array = Alcotest.(check (array int))
@@ -8,41 +8,41 @@ let check_float_array = Alcotest.(check (array (float 0.0)))
 
 let test_pool_run_returns_value () =
   let r =
-    Eta.Par.Pool.with_pool ~n_workers:4 (fun pool ->
-      Eta.Par.Pool.run pool (fun () -> 42))
+    Eta_par.Pool.with_pool ~n_workers:4 (fun pool ->
+      Eta_par.Pool.run pool (fun () -> 42))
   in
   check_int "pool returns value" 42 r
 
 let test_pool_propagates_exceptions () =
   let raised = ref false in
   (try
-     Eta.Par.Pool.with_pool ~n_workers:2 (fun pool ->
-       Eta.Par.Pool.run pool (fun () -> raise (Failure "boom")))
+     Eta_par.Pool.with_pool ~n_workers:2 (fun pool ->
+       Eta_par.Pool.run pool (fun () -> raise (Failure "boom")))
      |> ignore
    with Failure msg when msg = "boom" -> raised := true);
   Alcotest.(check bool) "exception propagated" true !raised
 
 let test_top_level_run () =
-  let r = Eta.Par.run ~n_workers:2 (fun () -> 7) in
+  let r = Eta_par.run ~n_workers:2 (fun () -> 7) in
   check_int "top-level run" 7 r
 
 (* --- join ----------------------------------------------------------------- *)
 
 let test_join_basic () =
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      let a, b = Eta.Par.join (fun () -> 10) (fun () -> 32) in
+    Eta_par.run ~n_workers:4 (fun () ->
+      let a, b = Eta_par.join (fun () -> 10) (fun () -> 32) in
       a + b)
   in
   check_int "join sum" 42 r
 
 let test_join_nested () =
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
+    Eta_par.run ~n_workers:4 (fun () ->
       let a, (b, c) =
-        Eta.Par.join
+        Eta_par.join
           (fun () -> 1)
-          (fun () -> Eta.Par.join (fun () -> 2) (fun () -> 3))
+          (fun () -> Eta_par.join (fun () -> 2) (fun () -> 3))
       in
       a + b + c)
   in
@@ -50,9 +50,9 @@ let test_join_nested () =
 
 let test_join3 () =
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
+    Eta_par.run ~n_workers:4 (fun () ->
       let a, b, c =
-        Eta.Par.join3 (fun () -> 1) (fun () -> 2) (fun () -> 3)
+        Eta_par.join3 (fun () -> 1) (fun () -> 2) (fun () -> 3)
       in
       a + b + c)
   in
@@ -65,19 +65,19 @@ let rec pfib n =
     let rec sfib n = if n < 2 then n else sfib (n - 1) + sfib (n - 2) in
     sfib n
   else
-    let a, b = Eta.Par.join (fun () -> pfib (n - 1)) (fun () -> pfib (n - 2)) in
+    let a, b = Eta_par.join (fun () -> pfib (n - 1)) (fun () -> pfib (n - 2)) in
     a + b
 
 let test_join_fib () =
-  let r = Eta.Par.run ~n_workers:4 (fun () -> pfib 25) in
+  let r = Eta_par.run ~n_workers:4 (fun () -> pfib 25) in
   check_int "pfib 25" 75025 r
 
 (* --- par_for / par_iter --------------------------------------------------- *)
 
 let test_par_for () =
   let arr = Array.make 10_000 0 in
-  Eta.Par.run ~n_workers:4 (fun () ->
-    Eta.Par.par_for ~start:0 ~stop:(Array.length arr) (fun i -> arr.(i) <- i * 2));
+  Eta_par.run ~n_workers:4 (fun () ->
+    Eta_par.par_for ~start:0 ~stop:(Array.length arr) (fun i -> arr.(i) <- i * 2));
   for i = 0 to Array.length arr - 1 do
     check_int (Printf.sprintf "arr.(%d)" i) (i * 2) arr.(i)
   done
@@ -86,8 +86,8 @@ let test_par_iter () =
   let n = 5_000 in
   let arr = Array.init n (fun i -> i) in
   let sum = Atomic.make 0 in
-  Eta.Par.run ~n_workers:4 (fun () ->
-    Eta.Par.par_iter arr (fun x -> ignore (Atomic.fetch_and_add sum x)));
+  Eta_par.run ~n_workers:4 (fun () ->
+    Eta_par.par_iter arr (fun x -> ignore (Atomic.fetch_and_add sum x)));
   let expected = n * (n - 1) / 2 in
   check_int "par_iter sum" expected (Atomic.get sum)
 
@@ -97,7 +97,7 @@ let test_par_map () =
   let n = 1_000 in
   let arr = Array.init n (fun i -> i) in
   let doubled =
-    Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_map arr (fun x -> x * 2))
+    Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_map arr (fun x -> x * 2))
   in
   let expected = Array.init n (fun i -> i * 2) in
   check_int_array "par_map doubles" expected doubled
@@ -106,7 +106,7 @@ let test_par_mapi () =
   let n = 1_000 in
   let arr = Array.init n (fun i -> i) in
   let summed =
-    Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_mapi arr (fun i x -> i + x))
+    Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_mapi arr (fun i x -> i + x))
   in
   let expected = Array.init n (fun i -> i + i) in
   check_int_array "par_mapi adds index" expected summed
@@ -114,12 +114,12 @@ let test_par_mapi () =
 let test_par_map_float_output () =
   let arr = Array.init 1_000 (fun i -> i) in
   let mapped =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.par_map arr (fun i -> Float.of_int i /. 2.0))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_map arr (fun i -> Float.of_int i /. 2.0))
   in
   let mapied =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.par_mapi arr (fun i x -> Float.of_int (i + x) /. 4.0))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_mapi arr (fun i x -> Float.of_int (i + x) /. 4.0))
   in
   check_float_array "par_map float output"
     (Array.init 1_000 (fun i -> Float.of_int i /. 2.0))
@@ -140,8 +140,8 @@ let test_par_reduce_sum () =
   let n = 10_000 in
   let arr = Array.init n (fun i -> i) in
   let s =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.par_reduce arr ~init:0 ~map:(fun x -> x) ~combine:( + ))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_reduce arr ~init:0 ~map:(fun x -> x) ~combine:( + ))
   in
   let expected = n * (n - 1) / 2 in
   check_int "par_reduce sum" expected s
@@ -149,8 +149,8 @@ let test_par_reduce_sum () =
 let test_par_reduce_max () =
   let arr = Array.init 1_000 (fun i -> (i * 7919) mod 1_000_003) in
   let m =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.par_reduce arr ~init:min_int
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_reduce arr ~init:min_int
         ~map:(fun x -> x)
         ~combine:max)
   in
@@ -165,19 +165,19 @@ let test_par_sort_random () =
   let arr = Array.init n (fun _ -> Random.State.int rs 1_000_000) in
   let expected = Array.copy arr in
   Array.sort compare expected;
-  Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_sort arr compare);
+  Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_sort arr compare);
   check_int_array "par_sort random matches Array.sort" expected arr
 
 let test_par_sort_already_sorted () =
   let arr = Array.init 1_000 (fun i -> i) in
   let expected = Array.copy arr in
-  Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_sort arr compare);
+  Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_sort arr compare);
   check_int_array "par_sort sorted is no-op" expected arr
 
 let test_par_sort_reverse () =
   let arr = Array.init 1_000 (fun i -> 1_000 - i) in
   let expected = Array.init 1_000 (fun i -> i + 1) in
-  Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_sort arr compare);
+  Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_sort arr compare);
   check_int_array "par_sort reversed" expected arr
 
 (* --- Sequential threshold -------------------------------------------------- *)
@@ -187,7 +187,7 @@ let test_below_threshold_runs_serial () =
      correct results.  This also catches off-by-one bugs in slicing. *)
   let arr = Array.init 100 (fun i -> i) in
   let doubled =
-    Eta.Par.run ~n_workers:2 (fun () -> Eta.Par.par_map arr (fun x -> x * 2))
+    Eta_par.run ~n_workers:2 (fun () -> Eta_par.par_map arr (fun x -> x * 2))
   in
   let expected = Array.init 100 (fun i -> i * 2) in
   check_int_array "below-threshold map" expected doubled
@@ -204,8 +204,8 @@ let test_below_threshold_runs_serial () =
 let test_par_for_deep_recursion () =
   let n = 200_000 in
   let arr = Array.make n 0 in
-  Eta.Par.run ~n_workers:4 (fun () ->
-    Eta.Par.par_for ~chunk:1 ~start:0 ~stop:n (fun i -> arr.(i) <- i + 1));
+  Eta_par.run ~n_workers:4 (fun () ->
+    Eta_par.par_for ~chunk:1 ~start:0 ~stop:n (fun i -> arr.(i) <- i + 1));
   for i = 0 to n - 1 do
     if arr.(i) <> i + 1 then
       Alcotest.failf "arr.(%d) = %d, expected %d" i arr.(i) (i + 1)
@@ -218,8 +218,8 @@ let test_par_map_deep_recursion () =
   let n = 100_000 in
   let arr = Array.init n (fun i -> i) in
   let out =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.par_map ~chunk:1 arr (fun i -> i * 3 + 1))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_map ~chunk:1 arr (fun i -> i * 3 + 1))
   in
   for i = 0 to n - 1 do
     if out.(i) <> i * 3 + 1 then
@@ -237,8 +237,8 @@ exception Boom of int
 let test_par_for_exception_propagates () =
   let raised = ref false in
   (try
-     Eta.Par.run ~n_workers:4 (fun () ->
-       Eta.Par.par_for ~chunk:1 ~start:0 ~stop:1000 (fun i ->
+     Eta_par.run ~n_workers:4 (fun () ->
+       Eta_par.par_for ~chunk:1 ~start:0 ~stop:1000 (fun i ->
          if i = 537 then raise (Boom i)))
    with Boom 537 -> raised := true);
   Alcotest.(check bool) "par_for exception propagated" true !raised
@@ -248,8 +248,8 @@ let test_par_map_exception_propagates () =
   let arr = Array.init 1_000 (fun i -> i) in
   (try
      let _ : int array =
-       Eta.Par.run ~n_workers:4 (fun () ->
-         Eta.Par.par_map ~chunk:1 arr (fun x ->
+       Eta_par.run ~n_workers:4 (fun () ->
+         Eta_par.par_map ~chunk:1 arr (fun x ->
            if x = 412 then raise (Boom x) else x * 2))
      in
      ()
@@ -261,8 +261,8 @@ let test_par_reduce_exception_propagates () =
   let arr = Array.init 1_000 (fun i -> i) in
   (try
      let _ : int =
-       Eta.Par.run ~n_workers:4 (fun () ->
-         Eta.Par.par_reduce ~chunk:1 arr ~init:0
+       Eta_par.run ~n_workers:4 (fun () ->
+         Eta_par.par_reduce ~chunk:1 arr ~init:0
            ~map:(fun x -> if x = 700 then raise (Boom x) else x)
            ~combine:( + ))
      in
@@ -276,8 +276,8 @@ let test_join_left_exception () =
   let raised = ref false in
   (try
      let _ : int * int =
-       Eta.Par.run ~n_workers:2 (fun () ->
-         Eta.Par.join (fun () -> raise (Boom 1)) (fun () -> 2))
+       Eta_par.run ~n_workers:2 (fun () ->
+         Eta_par.join (fun () -> raise (Boom 1)) (fun () -> 2))
      in
      ()
    with Boom 1 -> raised := true);
@@ -287,12 +287,30 @@ let test_join_right_exception () =
   let raised = ref false in
   (try
      let _ : int * int =
-       Eta.Par.run ~n_workers:2 (fun () ->
-         Eta.Par.join (fun () -> 1) (fun () -> raise (Boom 2)))
+       Eta_par.run ~n_workers:2 (fun () ->
+         Eta_par.join (fun () -> 1) (fun () -> raise (Boom 2)))
      in
      ()
    with Boom 2 -> raised := true);
   Alcotest.(check bool) "join right exception" true !raised
+
+let test_join_fast_path_runs_left_when_right_raises () =
+  let left_ran = Atomic.make 0 in
+  let rec nested depth =
+    if depth = 0 then raise (Boom 999)
+    else
+      ignore
+        (Eta_par.join
+           (fun () -> Atomic.incr left_ran)
+           (fun () -> nested (depth - 1)))
+  in
+  let raised = ref false in
+  (try Eta_par.run ~n_workers:1 (fun () -> nested 8)
+   with Boom 999 -> raised := true);
+  Alcotest.(check bool) "right exception propagated" true !raised;
+  Alcotest.(check int)
+    "left branch ran for every join frame despite right exception"
+    8 (Atomic.get left_ran)
 
 (* par_sort on an all-equal array.  With Lomuto partitioning the
    partition index always lands at [hi], producing maximally
@@ -304,7 +322,7 @@ let test_par_sort_all_equal () =
   let n = 50_000 in
   let arr = Array.make n 7 in
   let expected = Array.copy arr in
-  Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_sort arr compare);
+  Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_sort arr compare);
   check_int_array "par_sort all-equal" expected arr
 
 (* par_sort on an array with many duplicate keys: also catches Lomuto
@@ -315,7 +333,7 @@ let test_par_sort_few_distinct () =
   let arr = Array.init n (fun _ -> Random.State.int rs 4) in
   let expected = Array.copy arr in
   Array.sort compare expected;
-  Eta.Par.run ~n_workers:4 (fun () -> Eta.Par.par_sort arr compare);
+  Eta_par.run ~n_workers:4 (fun () -> Eta_par.par_sort arr compare);
   check_int_array "par_sort 4-distinct values" expected arr
 
 (* Heartbeat behaviour: with multiple workers and a workload large
@@ -325,8 +343,8 @@ let test_par_sort_few_distinct () =
 let test_par_for_uses_multiple_workers () =
   let n = 200_000 in
   let arr = Array.make n 0 in
-  Eta.Par.run ~n_workers:4 ~heartbeat_interval_ns:10_000 (fun () ->
-    Eta.Par.par_for ~chunk:1 ~start:0 ~stop:n (fun i ->
+  Eta_par.run ~n_workers:4 ~heartbeat_interval_ns:10_000 (fun () ->
+    Eta_par.par_for ~chunk:1 ~start:0 ~stop:n (fun i ->
       arr.(i) <- (Domain.self () :> int)));
   let seen = Hashtbl.create 8 in
   Array.iter (fun d -> Hashtbl.replace seen d ()) arr;
@@ -345,14 +363,14 @@ let rec deep_join_count s e =
   else
     let mid = s + ((e - s) / 2) in
     let l, r =
-      Eta.Par.join (fun () -> deep_join_count s mid)
+      Eta_par.join (fun () -> deep_join_count s mid)
                    (fun () -> deep_join_count mid e)
     in
     l + r
 
 let test_join_very_long () =
   let n = 1 lsl 16 in
-  let r = Eta.Par.run ~n_workers:4 (fun () -> deep_join_count 0 n) in
+  let r = Eta_par.run ~n_workers:4 (fun () -> deep_join_count 0 n) in
   check_int "deep_join_count" n r
 
 (* --- Iter (parallel iterators) -------------------------------------------- *)
@@ -360,23 +378,23 @@ let test_join_very_long () =
 let test_iter_of_array_sum () =
   let arr = Array.init 10_000 (fun i -> i) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> sum))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> sum))
   in
   check_int "iter sum" (10_000 * 9_999 / 2) r
 
 let test_iter_of_range_sum () =
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_range ~start:0 ~stop:10_000 () |> sum))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_range ~start:0 ~stop:10_000 () |> sum))
   in
   check_int "iter range sum" (10_000 * 9_999 / 2) r
 
 let test_iter_map_reduce () =
   let arr = Array.init 1_000 (fun i -> i + 1) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(
         of_array arr
         |> map (fun x -> x * x)
         |> reduce ~init:0 ~combine:( + )))
@@ -388,8 +406,8 @@ let test_iter_filter_count () =
   let n = 10_000 in
   let arr = Array.init n (fun i -> i) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(
         of_array arr
         |> filter (fun x -> x mod 3 = 0)
         |> count))
@@ -399,8 +417,8 @@ let test_iter_filter_count () =
 let test_iter_collect_array_filter () =
   let arr = Array.init 1_000 (fun i -> i) in
   let result =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(
         of_array arr
         |> filter (fun x -> x mod 7 = 0)
         |> map (fun x -> x * 2)
@@ -417,8 +435,8 @@ let test_iter_collect_array_filter () =
 let test_iter_for_each_side_effect () =
   let arr = Array.init 1_000 (fun i -> i) in
   let acc = Atomic.make 0 in
-  Eta.Par.run ~n_workers:4 (fun () ->
-    Eta.Par.Iter.(
+  Eta_par.run ~n_workers:4 (fun () ->
+    Eta_par.Iter.(
       of_array arr
       |> map (fun x -> x + 1)
       |> for_each (fun x -> Atomic.fetch_and_add acc x |> ignore)));
@@ -429,8 +447,8 @@ let test_iter_find_any_present () =
   let n = 100_000 in
   let arr = Array.init n (fun i -> i) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> find_any (fun x -> x = 12_345)))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> find_any (fun x -> x = 12_345)))
   in
   match r with
   | Some 12_345 -> ()
@@ -439,20 +457,20 @@ let test_iter_find_any_present () =
 let test_iter_find_any_absent () =
   let arr = Array.init 10_000 (fun i -> i) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> find_any (fun x -> x < 0)))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> find_any (fun x -> x < 0)))
   in
   Alcotest.(check (option int)) "find_any absent" None r
 
 let test_iter_any_all () =
   let arr = Array.init 1_000 (fun i -> i) in
   let any_pos =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> any (fun x -> x > 500)))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> any (fun x -> x > 500)))
   in
   let all_nonneg =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> all (fun x -> x >= 0)))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> all (fun x -> x >= 0)))
   in
   Alcotest.(check bool) "any > 500" true any_pos;
   Alcotest.(check bool) "all >= 0" true all_nonneg
@@ -460,12 +478,12 @@ let test_iter_any_all () =
 let test_iter_min_max () =
   let arr = [| 3; 1; 4; 1; 5; 9; 2; 6; 5; 3; 5 |] in
   let min_v =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> min))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> min))
   in
   let max_v =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(of_array arr |> max))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(of_array arr |> max))
   in
   Alcotest.(check (option int)) "min" (Some 1) min_v;
   Alcotest.(check (option int)) "max" (Some 9) max_v
@@ -475,8 +493,8 @@ let test_iter_chunk_one_stress () =
   let n = 50_000 in
   let arr = Array.init n (fun i -> i) in
   let r =
-    Eta.Par.run ~n_workers:4 (fun () ->
-      Eta.Par.Iter.(
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.Iter.(
         of_array ~chunk:1 arr
         |> map (fun x -> x * 2)
         |> sum))
@@ -502,6 +520,9 @@ let () =
           ("fib via join", `Quick, test_join_fib);
           ("left exception", `Quick, test_join_left_exception);
           ("right exception", `Quick, test_join_right_exception);
+          ( "fast path runs left when right raises",
+            `Quick,
+            test_join_fast_path_runs_left_when_right_raises );
           ("very long chain", `Quick, test_join_very_long);
         ] );
       ( "par_for_iter",

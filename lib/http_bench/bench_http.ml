@@ -202,7 +202,7 @@ let ws_loopback_echo messages =
       Eio.Switch.run @@ fun conn_sw ->
       let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
       run_ws_echo_server ~messages flow);
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let url = Printf.sprintf "ws://127.0.0.1:%d/realtime" port in
   let program =
     Eta_http.Ws.Client.connect ~sw ~net url

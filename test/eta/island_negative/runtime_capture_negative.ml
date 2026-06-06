@@ -1,5 +1,5 @@
-let program rt =
-  Eta.Island.map
+let program pool rt =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
       ignore (Eta.Runtime.run rt (Eta.Effect.pure n));
       n)

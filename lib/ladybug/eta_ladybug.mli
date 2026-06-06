@@ -234,20 +234,20 @@ module Connection : sig
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
   val query_string_with_timeout :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     ?params:Param.t list ->
     t ->
     string ->
     (string, timed_error) Eta.Effect.t
   val query_with_timeout :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     'a Query.t ->
     ('a list, timed_error) Eta.Effect.t
   val exec_with_timeout :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     ?params:Param.t list ->
     t ->
@@ -278,7 +278,7 @@ module Pool : sig
     | Timeout
 
   val create :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     ?name:string ->
     ?max_size:int ->
     ?max_idle:int ->
@@ -288,7 +288,7 @@ module Pool : sig
     (t, error) Eta.Effect.t
 
   val query_string :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     ?params:Param.t list ->
     t ->
@@ -296,14 +296,14 @@ module Pool : sig
     (string, error) Eta.Effect.t
 
   val query :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     'a Query.t ->
     ('a list, error) Eta.Effect.t
 
   val install_extension :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     ?repo:string ->
     ?force:bool ->
@@ -312,47 +312,47 @@ module Pool : sig
     (unit, error) Eta.Effect.t
 
   val update_extension :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     Extension.official ->
     (unit, error) Eta.Effect.t
 
   val uninstall_extension :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     Extension.official ->
     (unit, error) Eta.Effect.t
 
   val load_extension :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     Extension.official ->
     (unit, error) Eta.Effect.t
 
   val load_extension_path :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     path:string ->
     (unit, error) Eta.Effect.t
 
   val loaded_extensions :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     (Extension.loaded list, error) Eta.Effect.t
 
   val official_extensions :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     (Extension.available list, error) Eta.Effect.t
 
   val transaction :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
     t ->
     (Connection.t -> ('a, driver_error) result) ->

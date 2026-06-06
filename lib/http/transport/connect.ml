@@ -12,7 +12,7 @@ type target = {
 
 type tcp_flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
-module type EIO_NET = Host_eio.NET
+module type EIO_NET = Eta_eio.Host.NET
 
 module Default_eio_net : EIO_NET = Eio.Net
 
@@ -48,7 +48,7 @@ let protect_eio_cancel f =
 let net_module = function
   | None -> (module Default_eio_net : EIO_NET)
   | Some host_eio ->
-      let module Net = (val Host_eio.net host_eio : Host_eio.NET) in
+      let module Net = (val Eta_eio.Host.net host_eio : Eta_eio.Host.NET) in
       (module Net : EIO_NET)
 
 let resolve_stream ?host_eio ~net ~method_ target =

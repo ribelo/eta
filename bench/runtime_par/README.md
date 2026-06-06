@@ -1,8 +1,8 @@
-# bench/runtime_par — Eta.Par benchmark suite
+# bench/runtime_par — Eta_par benchmark suite
 
 Eight kernels covering the workload taxonomy work-stealing schedulers
 care about. Used both for human-readable health checks and as the
-numeric target for autoresearch loops over `Eta.Par`.
+numeric target for autoresearch loops over `Eta_par`.
 
 ## Kernels
 
@@ -30,7 +30,7 @@ file declares one library dependency:
 (libraries eta unix)
 ```
 
-That is all every kernel can see: the public surface of `Eta.Par` plus
+That is all every kernel can see: the public surface of `Eta_par` plus
 `Unix` for clocks. The internal `Par_scheduler` module is private in the
 core `eta` library, and there is no escape hatch.
 
@@ -102,7 +102,7 @@ sensitivity.
    val name : string
    val description : string
    val run_serial : quick:bool -> unit -> string
-   val run_parallel : quick:bool -> Eta.Par.Pool.t -> string
+   val run_parallel : quick:bool -> Eta_par.Pool.t -> string
    ```
    Both run functions return the same checksum on the same input.
 2. Add `(module Kernel_<name>)` to the `kernels` list in

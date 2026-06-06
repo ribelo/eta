@@ -23,7 +23,10 @@ modules: `(libraries eta_http)` in your `dune` file imports `Eta_http.*`.
 
 | ocamlfind name        | toplevel module       | extra deps it pulls in                                                              |
 | --------------------- | --------------------- | ----------------------------------------------------------------------------------- |
-| `eta`                  | `Eta`                  | eio, eio.unix, threads, portable, cstruct; includes `Eta.Par`                       |
+| `eta`                  | `Eta`                  | —                                                                                   |
+| `eta_blocking`         | `Eta_blocking`         | —                                                                                   |
+| `eta_eio`              | `Eta_eio`              | eio, cstruct                                                                        |
+| `eta_par`              | `Eta_par`              | native domains/threads only                                                         |
 | `eta_stream`           | `Eta_stream`           | cstruct                                                                             |
 | `eta_redacted`         | `Eta_redacted`         | —                                                                                   |
 | `eta_schema`           | `Eta_schema`           | —                                                                                   |
@@ -82,10 +85,10 @@ The invariant is the foreign loading contract, not only the C ABI shape:
   do not collide with the process SQLite.
 
 Shared behavior belongs above that foreign seam: SQL values and rows live in
-`Eta_sql`, backend-agnostic query construction lives in `eta_sql_dsl`, and
-blocking-pool/cancellation policy lives in `eta_sql_driver`. Do not collapse the
-C stubs into one generic extension unless the design preserves both foreign
-contracts explicitly.
+`Eta_sql`, backend-agnostic query construction lives in `eta_sql_dsl`,
+bounded-worker blocking lives in `eta_blocking`, and connector cancellation
+policy lives in `eta_sql_driver`. Do not collapse the C stubs into one generic
+extension unless the design preserves both foreign contracts explicitly.
 
 ## Recipes
 
@@ -93,7 +96,13 @@ contracts explicitly.
 ```dune
 (executable (name app) (libraries eta))
 ```
-Cost: eio, eio.unix, threads, portable.
+Cost: no runtime backend or native worker dependency.
+
+### Native blocking calls
+```dune
+(executable (name app) (libraries eta eta_blocking eta_eio))
+```
+Adds: Eio when using the Eio-backed worker runner.
 
 ### Effect core + streams
 ```dune

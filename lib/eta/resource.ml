@@ -1,6 +1,6 @@
 type ('a, 'err) t = {
   load : ('a, 'err) Effect.t;
-  mutex : Eio.Mutex.t;
+  mutex : Sync_lock.t;
   mutable value : 'a option;
   mutable next_version : int;
   mutable published_version : int;
@@ -8,13 +8,12 @@ type ('a, 'err) t = {
 }
 
 let with_lock resource (f) =
-  Eio.Mutex.lock resource.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock resource.mutex) f
+  Sync_lock.use resource.mutex f
 
 let loaded load value =
   {
     load;
-    mutex = Eio.Mutex.create ();
+    mutex = Sync_lock.create ();
     value = Some value;
     next_version = 0;
     published_version = 0;

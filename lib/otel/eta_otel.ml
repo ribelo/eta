@@ -157,8 +157,9 @@ and fiber_state = {
   mutable pending_links : Eta.Capabilities.span_link list;
 }
 
-let fiber_context_key : (int, fiber_state) Hashtbl.t Eio.Fiber.key =
-  Eio.Fiber.create_key ()
+let task_context_local :
+    (int, fiber_state) Hashtbl.t Eta.Runtime_contract.local =
+  Eta.Runtime_contract.create_local ()
 
 let next_context_id = ref 0
 
@@ -168,14 +169,15 @@ let fresh_context_id () =
 
 let empty_fiber_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
-let with_fiber_context f =
-  Eio.Fiber.with_binding fiber_context_key (Hashtbl.create 1) f
+let with_task_context contract f =
+  contract.Eta.Runtime_contract.local_with_binding task_context_local
+    (Hashtbl.create 1) f
 
-let fiber_context () =
-  try Eio.Fiber.get fiber_context_key with Stdlib.Effect.Unhandled _ -> None
+let task_context contract =
+  contract.Eta.Runtime_contract.local_get task_context_local
 
-let fiber_state t =
-  match fiber_context () with
+let fiber_state contract t =
+  match task_context contract with
   | None -> t.fallback
   | Some context -> (
       match Hashtbl.find_opt context t.context_id with
@@ -496,9 +498,10 @@ let resolve_parent t ?trace_id ?(trace_flags = 1) ?(trace_state = [])
           (p.trace_id, Some p.span_id, p.trace_flags, p.trace_state, p.baggage)
       | None -> (hex_of_bytes (random_bytes t.rng 16), None, 1, [], []))
 
-let begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags ?trace_state
-    ?baggage ?(kind = Eta.Capabilities.Internal) ~name ~started_ms () =
-  let state = fiber_state t in
+let begin_span contract t ?parent_id ?external_parent ?trace_id ?trace_flags
+    ?trace_state ?baggage ?(kind = Eta.Capabilities.Internal) ~name
+    ~started_ms () =
+  let state = fiber_state contract t in
   let parent_id =
     match parent_id with
     | Some _ as parent -> parent
@@ -545,8 +548,8 @@ let map_status (st : Eta.Capabilities.span_status) =
   | Eta.Capabilities.Error msg -> (2, msg)
   | Eta.Capabilities.Cancelled -> (2, "cancelled")
 
-let end_span t ~span_id ~status ~ended_ms =
-  let state = fiber_state t in
+let end_span contract t ~span_id ~status ~ended_ms =
+  let state = fiber_state contract t in
   state.stack <- List.filter (fun id -> id <> span_id) state.stack;
   match Hashtbl.find_opt t.table span_id with
   | None -> ()
@@ -558,8 +561,8 @@ let end_span t ~span_id ~status ~ended_ms =
       s.status_message <- message;
       enqueue t t.queue s
 
-let add_attr t ~key ~value =
-  let state = fiber_state t in
+let add_attr contract t ~key ~value =
+  let state = fiber_state contract t in
   match state.stack with
   | span_id :: _ -> (
       match Hashtbl.find_opt t.table span_id with
@@ -579,8 +582,8 @@ let add_event t ~span_id ~name ~ts_ms ~attrs =
       let ts_ns = if ts_ms = 0 then now_ns t else ts_ms * 1_000_000 in
       s.events <- (name, ts_ns, attrs) :: s.events
 
-let add_link t link =
-  let state = fiber_state t in
+let add_link contract t link =
+  let state = fiber_state contract t in
   match state.stack with
   | span_id :: _ -> (
       match Hashtbl.find_opt t.table span_id with
@@ -654,12 +657,12 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
   let rng = Stdlib.Random.State.make_self_init () in
   let self_tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock
+    Eta_eio.Runtime.create ~sw ~clock
       ~tracer:(Eta.Tracer.as_capability self_tracer)
       ()
   in
   let flush_rt : unit Eta.Runtime.t =
-    Eta.Runtime.create ~sw ~clock
+    Eta_eio.Runtime.create ~sw ~clock
       ~tracer:(Eta.Tracer.as_capability self_tracer)
       ()
   in
@@ -681,7 +684,7 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
     {
       http_client;
       clock;
-      eta_clock = Eta.Capabilities.clock_of_eio clock;
+      eta_clock = Eta_eio.clock clock;
       config;
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();
@@ -704,23 +707,25 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
 
 let tracer t : Eta.Capabilities.tracer =
   object
-    method with_fiber_context : 'a. (unit -> 'a) -> 'a = with_fiber_context
+    method with_task_context :
+        'a. Eta.Runtime_contract.t -> (unit -> 'a) -> 'a =
+      with_task_context
 
-    method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
+    method begin_span contract ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags
+      begin_span contract t ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms ()
 
-    method end_span ~span_id ~status ~ended_ms =
-      end_span t ~span_id ~status ~ended_ms
+    method end_span contract ~span_id ~status ~ended_ms =
+      end_span contract t ~span_id ~status ~ended_ms
 
-    method add_attr ~key ~value = add_attr t ~key ~value
-    method add_attr_to ~span_id ~key ~value = add_attr_to t ~span_id ~key ~value
-    method add_event ~span_id ~name ~ts_ms ~attrs =
+    method add_attr contract ~key ~value = add_attr contract t ~key ~value
+    method add_attr_to _ ~span_id ~key ~value = add_attr_to t ~span_id ~key ~value
+    method add_event _ ~span_id ~name ~ts_ms ~attrs =
       add_event t ~span_id ~name ~ts_ms ~attrs
-    method add_link link = add_link t link
-    method add_link_to ~span_id link = add_link_to t ~span_id link
-    method inspect ~span_id = inspect t ~span_id
+    method add_link contract link = add_link contract t link
+    method add_link_to _ ~span_id link = add_link_to t ~span_id link
+    method inspect _ ~span_id = inspect t ~span_id
   end
 
 let logger t : Eta.Capabilities.logger =

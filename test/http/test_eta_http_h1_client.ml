@@ -383,6 +383,41 @@ let test_h1_client_streaming_request_body_write_cancellation_propagates () =
         cause);
   Alcotest.(check int) "cancelled write body released" 1 !released
 
+let test_h1_client_rejects_mismatched_stream_content_length () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-stream-framing-flow" in
+  let released = ref 0 in
+  let body =
+    Eta_http.H1.Client.Rewindable_stream
+      {
+        length = Some 6;
+        make =
+          (fun () ->
+            Eta_http.Body.Stream.of_bytes
+              ~release:(fun () ->
+                incr released;
+                Eta.Effect.unit)
+              [ Bytes.of_string "abcdef" ]);
+      }
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/framing" in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [ ("Content-Length", "3") ];
+      body;
+    }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  let result =
+    Eta_http.H1.Client.request_on_flow ~flow request |> Eta.Runtime.run rt
+  in
+  Eta_test.Expect.expect_typed_failure result (function
+    | { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+        contains reason "Content-Length"
+    | _ -> false);
+  Alcotest.(check int) "rejected stream body released" 1 !released
+
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
   Eio_mock.Flow.on_copy_bytes flow
@@ -826,7 +861,7 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   let clock = Eta_test.Test_clock.create () in
   let logger = Eta.Logger.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~logger:(Eta.Logger.as_capability logger) ()
   in

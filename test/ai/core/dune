@@ -1,6 +1,6 @@
 (test
  (name test_eta_ai)
- (libraries eta eta_ai eta_redacted eta_http alcotest eio_main eio.mock)
+ (libraries eta_eio eta eta_ai eta_redacted eta_http alcotest eio_main eio.mock)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

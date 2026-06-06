@@ -56,36 +56,34 @@ type fiber_state = {
 
 type in_memory = {
   context_id : int;
-  mutex : Mutex.t;
+  mutex : Sync_lock.t;
   mutable next_id : int;
   mutable spans : span list;
   fallback : fiber_state;
 }
 
-let fiber_context_key : (int, fiber_state) Hashtbl.t Eio.Fiber.key =
-  Eio.Fiber.create_key ()
+let task_context_local : (int, fiber_state) Hashtbl.t Runtime_contract.local =
+  Runtime_contract.create_local ()
 
 let next_context_id = ref 0
-let context_id_mutex = Mutex.create ()
+let context_id_mutex = Sync_lock.create ()
 
 let fresh_context_id () =
-  Mutex.lock context_id_mutex;
-  Fun.protect
-    ~finally:(fun () -> Mutex.unlock context_id_mutex)
-    (fun () ->
+  Sync_lock.use context_id_mutex @@ fun () ->
       incr next_context_id;
-      !next_context_id)
+      !next_context_id
 
 let empty_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
-let with_fiber_context f =
-  Eio.Fiber.with_binding fiber_context_key (Hashtbl.create 1) f
+let with_task_context contract f =
+  contract.Runtime_contract.local_with_binding task_context_local
+    (Hashtbl.create 1) f
 
-let fiber_context () =
-  try Eio.Fiber.get fiber_context_key with Stdlib.Effect.Unhandled _ -> None
+let task_context contract =
+  contract.Runtime_contract.local_get task_context_local
 
-let state t =
-  match fiber_context () with
+let state contract t =
+  match task_context contract with
   | None -> t.fallback
   | Some context -> (
       match Hashtbl.find_opt context t.context_id with
@@ -98,15 +96,13 @@ let state t =
 let in_memory () =
   {
     context_id = fresh_context_id ();
-    mutex = Mutex.create ();
+    mutex = Sync_lock.create ();
     next_id = 0;
     spans = [];
     fallback = empty_state ();
   }
 
-let with_lock t f =
-  Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Mutex.unlock t.mutex) f
+let with_lock t f = Sync_lock.use t.mutex f
 
 let hex16 n =
   let bytes = Bytes.create 16 in
@@ -120,12 +116,12 @@ let hex16 n =
 
 let root_trace_id t span_id = hex16 t.context_id ^ hex16 (span_id + 1)
 
-let begin_span t ?parent_id
+let begin_span contract t ?parent_id
     ?(external_parent : Capabilities.trace_context option) ?trace_id
     ?(trace_flags = 1) ?(trace_state = []) ?(baggage = [])
     ?(kind = Internal) ~name ~started_ms () =
   with_lock t @@ fun () ->
-  let state = state t in
+  let state = state contract t in
   let span_id = t.next_id in
   t.next_id <- t.next_id + 1;
   let span_context_id = hex16 (span_id + 1) in
@@ -173,8 +169,8 @@ let begin_span t ?parent_id
     :: state.stack;
   span_id
 
-let find_open t span_id =
-  let state = state t in
+let find_open contract t span_id =
+  let state = state contract t in
   let rec aux = function
     | [] -> None
     | s :: _ when s.span_id = span_id -> Some s
@@ -182,9 +178,9 @@ let find_open t span_id =
   in
   aux state.stack
 
-let end_span t ~span_id ~status ~ended_ms =
+let end_span contract t ~span_id ~status ~ended_ms =
   with_lock t @@ fun () ->
-  let state = state t in
+  let state = state contract t in
   let rec remove acc = function
     | [] -> None
     | span :: rest when span.span_id = span_id ->
@@ -215,42 +211,42 @@ let end_span t ~span_id ~status ~ended_ms =
         }
         :: t.spans
 
-let add_attr t ~key ~value =
+let add_attr contract t ~key ~value =
   with_lock t @@ fun () ->
-  let state = state t in
+  let state = state contract t in
   match state.stack with
   | span :: _ -> span.attrs <- (key, value) :: span.attrs
   | [] -> state.pending_attrs <- (key, value) :: state.pending_attrs
 
-let add_attr_to t ~span_id ~key ~value =
+let add_attr_to contract t ~span_id ~key ~value =
   with_lock t @@ fun () ->
-  match find_open t span_id with
+  match find_open contract t span_id with
   | Some span -> span.attrs <- (key, value) :: span.attrs
   | None -> ()
 
-let add_event t ~span_id ~name ~ts_ms ~attrs =
+let add_event contract t ~span_id ~name ~ts_ms ~attrs =
   with_lock t @@ fun () ->
-  match find_open t span_id with
+  match find_open contract t span_id with
   | Some s ->
       s.events <- { ev_name = name; ev_ts_ms = ts_ms; ev_attrs = attrs } :: s.events
   | None -> ()
 
-let add_link t link =
+let add_link contract t link =
   with_lock t @@ fun () ->
-  let state = state t in
+  let state = state contract t in
   match state.stack with
   | s :: _ -> s.links <- link :: s.links
   | [] -> state.pending_links <- link :: state.pending_links
 
-let add_link_to t ~span_id link =
+let add_link_to contract t ~span_id link =
   with_lock t @@ fun () ->
-  match find_open t span_id with
+  match find_open contract t span_id with
   | Some span -> span.links <- link :: span.links
   | None -> ()
 
-let inspect t ~span_id : Capabilities.span_info option =
+let inspect contract t ~span_id : Capabilities.span_info option =
   with_lock t @@ fun () ->
-  match find_open t span_id with
+  match find_open contract t span_id with
   | Some s ->
       Some
         {
@@ -265,42 +261,45 @@ let inspect t ~span_id : Capabilities.span_info option =
 
 let as_capability t : Capabilities.tracer =
   object
-    method with_fiber_context : 'a. (unit -> 'a) -> 'a = with_fiber_context
+    method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
+      with_task_context
 
-    method begin_span ?parent_id ?external_parent ?trace_id ?trace_flags
+    method begin_span contract ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms () =
-      begin_span t ?parent_id ?external_parent ?trace_id ?trace_flags
+      begin_span contract t ?parent_id ?external_parent ?trace_id ?trace_flags
         ?trace_state ?baggage ?kind ~name ~started_ms ()
 
-    method end_span ~span_id ~status ~ended_ms =
-      end_span t ~span_id ~status ~ended_ms
+    method end_span contract ~span_id ~status ~ended_ms =
+      end_span contract t ~span_id ~status ~ended_ms
 
-    method add_attr ~key ~value = add_attr t ~key ~value
-    method add_attr_to ~span_id ~key ~value = add_attr_to t ~span_id ~key ~value
+    method add_attr contract ~key ~value = add_attr contract t ~key ~value
+    method add_attr_to contract ~span_id ~key ~value =
+      add_attr_to contract t ~span_id ~key ~value
 
-    method add_event ~span_id ~name ~ts_ms ~attrs =
-      add_event t ~span_id ~name ~ts_ms ~attrs
+    method add_event contract ~span_id ~name ~ts_ms ~attrs =
+      add_event contract t ~span_id ~name ~ts_ms ~attrs
 
-    method add_link link = add_link t link
-    method add_link_to ~span_id link = add_link_to t ~span_id link
+    method add_link contract link = add_link contract t link
+    method add_link_to contract ~span_id link = add_link_to contract t ~span_id link
 
-    method inspect ~span_id = inspect t ~span_id
+    method inspect contract ~span_id = inspect contract t ~span_id
   end
 
 let noop : Capabilities.tracer =
   object
-    method with_fiber_context : 'a. (unit -> 'a) -> 'a = fun f -> f ()
+    method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
+      fun _ f -> f ()
 
-    method begin_span ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
+    method begin_span _ ?parent_id:_ ?external_parent:_ ?trace_id:_ ?trace_flags:_
         ?trace_state:_ ?baggage:_ ?kind:_ ~name:_ ~started_ms:_ () =
       -1
-    method end_span ~span_id:_ ~status:_ ~ended_ms:_ = ()
-    method add_attr ~key:_ ~value:_ = ()
-    method add_attr_to ~span_id:_ ~key:_ ~value:_ = ()
-    method add_event ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
-    method add_link _ = ()
-    method add_link_to ~span_id:_ _ = ()
-    method inspect ~span_id:_ = None
+    method end_span _ ~span_id:_ ~status:_ ~ended_ms:_ = ()
+    method add_attr _ ~key:_ ~value:_ = ()
+    method add_attr_to _ ~span_id:_ ~key:_ ~value:_ = ()
+    method add_event _ ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
+    method add_link _ _ = ()
+    method add_link_to _ ~span_id:_ _ = ()
+    method inspect _ ~span_id:_ = None
   end
 
 let dump t = with_lock t @@ fun () -> List.rev t.spans

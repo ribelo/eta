@@ -82,7 +82,7 @@ let with_h2_server ?max_concurrent handler client_action =
     Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
       ?max_concurrent ()
   in
-  let rt = Eta.Runtime.create ~sw ~clock () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
   Fun.protect
     ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
     (fun () -> client_action clock rt connection)
@@ -108,7 +108,7 @@ let with_raw_h2_server server client_action =
     Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
       ()
   in
-  let rt = Eta.Runtime.create ~sw ~clock () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
   Fun.protect
     ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
     (fun () -> client_action clock rt connection)
@@ -433,7 +433,7 @@ let test_h2_connection_completed_error_response_does_not_hold_switch () =
               ~flow:(flow :> Eta_http.H2.Connection.flow)
               ()
           in
-          let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+          let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
           let status, body =
             request_effect connection "/unauthorized"
             |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -498,6 +498,27 @@ let test_h2_informational_filter_passes_push_promise_continuation () =
         (Eta_http.Error.kind_name kind));
   Alcotest.(check string) "push promise passthrough" input
     (Eta_http.H2.Informational_filter.take filter)
+
+let test_h2_informational_filter_passthrough_is_not_global () =
+  let filter = Eta_http.H2.Informational_filter.create () in
+  let encoder = Hpack.Encoder.create 4096 in
+  let first_final =
+    raw_headers encoder ~stream_id:1
+      [ hpack_header ":status" "200"; hpack_header "content-length" "0" ]
+  in
+  (match
+     Eta_http.H2.Informational_filter.feed filter first_final ~off:0
+       ~len:(String.length first_final)
+   with
+  | Ok () -> ()
+  | Error kind ->
+      Alcotest.failf "unexpected filter error: %s"
+        (Eta_http.Error.kind_name kind));
+  ignore (Eta_http.H2.Informational_filter.take filter : string);
+  Alcotest.(check bool)
+    "final response on stream 1 must not bypass filtering for stream 3"
+    false
+    (Eta_http.H2.Informational_filter.is_passthrough filter)
 
 let raw_informational_response_server flow =
   let encoder = Hpack.Encoder.create 4096 in
@@ -668,7 +689,7 @@ let test_h2_connection_switch_close_does_not_fire_security_error () =
             security_errors := kind :: !security_errors)
           ()
       in
-      let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+      let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
       let status, body =
         request_effect connection "/test"
         |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -719,7 +740,7 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
         Eta_http.H2.Connection.register_failure_handler connection (fun kind ->
             if Option.is_none !failure_kind then failure_kind := Some kind)
       in
-      let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+      let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
       let status, body =
         request_effect connection "/test"
         |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -810,7 +831,7 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
               ~flow:(flow :> Eta_http.H2.Connection.flow)
               ()
           in
-          let rt = Eta.Runtime.create ~sw:client_sw ~clock () in
+          let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
           let uri = "https://api.example.test/stream" in
           let request = Eta_http.Request.make "GET" uri in
           let response =
@@ -829,7 +850,7 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
       (* client_sw closed here: daemons cancelled, failure set *));
   (* Read body from outer scope after daemon cancellation *)
   let body = Eio.Promise.await body_promise in
-  let rt = Eta.Runtime.create ~sw ~clock () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
   match Eta_http.Body.Stream.read body |> Eta.Runtime.run rt with
   | Eta.Exit.Ok None -> () (* acceptable: stream already released *)
   | Eta.Exit.Ok (Some _) ->

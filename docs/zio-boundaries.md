@@ -16,16 +16,18 @@ Eta's core type is:
 There is no environment parameter, `Layer`, service `Tag`, or dynamic
 `provide` operation. Applications pass dependencies as ordinary OCaml values:
 records, modules, closures, and handles. Runtime services such as clock,
-tracing, logging, metrics, random, blocking pools, and island pools are
-interpreter configuration rather than an application dependency row.
+tracing, logging, metrics, and random are interpreter configuration rather
+than an application dependency row. Native worker capabilities such as
+`Eta_blocking.Pool.t` and `Eta_par.Island.Pool.t` live in optional packages
+and are passed explicitly where code needs them.
 
 See [Services Without Layer](services.md) for the project convention.
 
 ## Errors and Defects
 
 Typed failures are values produced by `Effect.fail`, `Effect.from_result`, or
-helpers such as `Effect.blocking_result`. Ordinary OCaml exceptions raised
-inside `Effect.sync`, `Effect.blocking`, or a blocking callback are unchecked
+helpers such as `Eta_blocking.result`. Ordinary OCaml exceptions raised
+inside `Effect.sync`, `Eta_blocking.run`, or a blocking callback are unchecked
 defects and surface as `Cause.Die`.
 
 `Effect.catch` handles typed failures only. It does not catch defects,

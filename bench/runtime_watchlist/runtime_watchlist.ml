@@ -81,7 +81,7 @@ let retry_flaky_program () =
 let run_retry_flaky_sample () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   match Runtime.run rt (retry_flaky_program ()) with
   | Exit.Ok _ -> ()
   | Exit.Error _ -> failwith "retry should succeed"
@@ -108,5 +108,5 @@ let () =
   Bench_lib.run opts (realuse_workloads ());
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   Bench_lib.run opts (overhead_workloads rt)

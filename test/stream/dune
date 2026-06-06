@@ -1,6 +1,6 @@
 (test
  (name test_eta_stream)
- (libraries eta_stream eta alcotest eio_main unix)
+ (libraries eta_stream eta eta_eio alcotest eio_main unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

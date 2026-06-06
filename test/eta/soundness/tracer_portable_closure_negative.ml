@@ -1,6 +1,6 @@
-let capture_tracer (tracer : Eta.Capabilities.tracer) =
-  Eta.Island.map
+let capture_tracer pool (tracer : Eta.Capabilities.tracer) =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
-      tracer#add_attr ~key:"soundness" ~value:(string_of_int n);
+      tracer#add_attr (Obj.magic ()) ~key:"soundness" ~value:(string_of_int n);
       n)
     [ 1 ]

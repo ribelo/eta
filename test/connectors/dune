@@ -1,6 +1,6 @@
 (test
  (name test_connectors)
- (libraries eta_duckdb eta_turso eta_ladybug eio_main alcotest)
+ (libraries eta_eio eta_duckdb eta_turso eta_ladybug eio_main alcotest)
  (deps
   (:ladybug_extension libeta_ladybug_test_extension.lbug_extension))
  (action

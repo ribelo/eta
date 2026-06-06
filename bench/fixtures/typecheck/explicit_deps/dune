@@ -1,4 +1,4 @@
 (library
  (name bench_typecheck_explicit_deps)
  (wrapped false)
- (libraries eta eio_main))
+ (libraries eta_eio eta eio_main))

@@ -12,7 +12,7 @@ module Test_clock : sig
   (** [create ()] starts a virtual clock at millisecond 0. *)
 
   val sleep : t -> Eta.Duration.t -> unit
-  (** [sleep clock duration] is passed to [Eta.Runtime.create ~sleep]. *)
+  (** [sleep clock duration] is passed to [Eta_eio.Runtime.create ~sleep]. *)
 
   val adjust : t -> Eta.Duration.t -> unit
   (** [adjust clock (Duration.ms 10)] advances virtual time and wakes due

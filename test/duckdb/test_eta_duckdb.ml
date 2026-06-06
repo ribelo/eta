@@ -224,7 +224,7 @@ let test_pool_shutdown_timeout_keeps_active_connection_open () =
       Eio_main.run @@ fun stdenv ->
       Eio.Switch.run @@ fun sw ->
       let rt =
-        Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+        Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
       in
       let pool =
         D.Pool.create ~max_size:1 { path = None; threads = None }

@@ -66,7 +66,7 @@ val create_reader :
 val client : client_reader -> H2.Client_connection.t
 
 val reader_is_passthrough : client_reader -> bool
-(** True when the informational filter has switched to raw passthrough mode. *)
+(** Always false while the informational filter must inspect response HEADERS. *)
 
 val read_client_once :
   flow:[> Eio.Flow.source_ty] Eio.Resource.t ->

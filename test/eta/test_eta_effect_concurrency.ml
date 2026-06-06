@@ -26,7 +26,7 @@ let test_explicit_dependency_passing () =
     end
   in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let b msg = Effect.named "log" (Effect.sync (fun () -> services#info msg)) in
   let c id =

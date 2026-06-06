@@ -1,8 +1,8 @@
-(** Same-domain bounded resource pool.
+(** Same-runtime bounded resource pool.
 
-    Pool owns bounded checkout/release of ordinary same-domain values such as
-    HTTP/1.1 or SQL connections. v1 uses Eio synchronization internally and is
-    not a portable or cross-domain handoff primitive.
+    Pool owns bounded checkout/release of ordinary runtime-local values such as
+    HTTP/1.1 or SQL connections. It is not a cross-domain payload handoff
+    primitive.
 
     The pool stores idle resources in LIFO order for warm reuse. Waiting
     acquirers use a private wake-one queue; cancellation removes the waiter

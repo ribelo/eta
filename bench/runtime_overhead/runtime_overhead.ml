@@ -100,7 +100,7 @@ let setup_workloads () =
         Eio_main.run @@ fun stdenv ->
         Eio.Switch.run @@ fun sw ->
         let rt =
-          Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+          Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
         in
         run_eta_int rt (Effect.pure 0));
   ]
@@ -125,7 +125,7 @@ let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   Bench_lib.run opts (eta_workloads rt)
 

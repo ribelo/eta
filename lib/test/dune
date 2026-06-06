@@ -2,4 +2,4 @@
  (name eta_test)
  (public_name eta_test)
  (synopsis "Testing helpers for Eta: virtual clock, deterministic random, cause-aware Alcotest assertions")
- (libraries eta eio eio_main alcotest))
+ (libraries eta eta_eio eio eio_main alcotest))

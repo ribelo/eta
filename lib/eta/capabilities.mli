@@ -6,7 +6,7 @@
     and close over them in [Effect.sync] leaves when needed. *)
 
 (** A clock can sleep for a duration. Every Eta runtime supplies a
-    default clock backed by [Eio.Time.clock]. *)
+    runtime-backed default clock. *)
 class type clock = object
   method sleep : Duration.t -> unit
 end
@@ -77,8 +77,9 @@ type log_record = {
 (** Minimal tracing capability. Implementations may back this with an
     in-memory collector, OpenTelemetry, or a noop sink. *)
 class type tracer = object
-  method with_fiber_context : 'a. (unit -> 'a) -> 'a
+  method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a
   method begin_span :
+    Runtime_contract.t ->
     ?parent_id:int ->
     ?external_parent:trace_context ->
     ?trace_id:string ->
@@ -89,18 +90,21 @@ class type tracer = object
     name:string ->
     started_ms:int ->
     unit -> int
-  method end_span : span_id:int -> status:span_status -> ended_ms:int -> unit
-  method add_attr : key:string -> value:string -> unit
-  method add_attr_to : span_id:int -> key:string -> value:string -> unit
+  method end_span :
+    Runtime_contract.t -> span_id:int -> status:span_status -> ended_ms:int -> unit
+  method add_attr : Runtime_contract.t -> key:string -> value:string -> unit
+  method add_attr_to :
+    Runtime_contract.t -> span_id:int -> key:string -> value:string -> unit
   method add_event :
+    Runtime_contract.t ->
     span_id:int ->
     name:string ->
     ts_ms:int ->
     attrs:(string * string) list ->
     unit
-  method add_link : span_link -> unit
-  method add_link_to : span_id:int -> span_link -> unit
-  method inspect : span_id:int -> span_info option
+  method add_link : Runtime_contract.t -> span_link -> unit
+  method add_link_to : Runtime_contract.t -> span_id:int -> span_link -> unit
+  method inspect : Runtime_contract.t -> span_id:int -> span_info option
 end
 
 (** Logging capability. Implementations may back this with an in-memory
@@ -131,10 +135,6 @@ class type meter = object
     ts_ms:int ->
     unit
 end
-
-(** Bridge an [Eio.Time.clock] into the [clock] trait. *)
-val clock_of_eio :
-  [> float Eio.Time.clock_ty ] Eio.Std.r -> clock
 
 (** Create a portable random token from an explicit seed. *)
 val random_of_seed : int -> random

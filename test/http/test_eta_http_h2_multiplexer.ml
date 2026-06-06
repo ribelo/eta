@@ -560,11 +560,11 @@ let test_h2_multiplexer_release_forgets_informational_filter_stream () =
   in
   read_until_response 16;
   Alcotest.(check bool)
-    "final response marker enables passthrough" true
+    "final response marker does not enable global passthrough" false
     (Eta_http.H2.Multiplexer.reader_is_passthrough reader);
   ignore (Eta_http.H2.Multiplexer.release mux opened.stream);
   Alcotest.(check bool)
-    "local release forgets final response marker" false
+    "local release keeps filter active" false
     (Eta_http.H2.Multiplexer.reader_is_passthrough reader)
 
 let test_h2_multiplexer_client_cancel_releases_stream () =

@@ -104,7 +104,7 @@ module Pool : sig
   val pp_error : Format.formatter -> error -> unit
 
   val create :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     ?name:string ->
     ?max_size:int ->
     ?max_idle:int ->
@@ -124,39 +124,39 @@ module Pool : sig
     ('a, error) Eta.Effect.t
 
   val query :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     string ->
     Value.t list ->
     (Row.t list, error) Eta.Effect.t
 
   val select :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     'a Compiled.select ->
     ('a list, error) Eta.Effect.t
 
   val returning :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     'a Compiled.returning ->
     ('a list, error) Eta.Effect.t
 
   val execute :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     string ->
     Value.t list ->
     (int, error) Eta.Effect.t
 
   val execute_compiled :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     Compiled.change ->
     (int, error) Eta.Effect.t
 
   val run_schema :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     t ->
     Compiled.schema ->
     (unit, error) Eta.Effect.t

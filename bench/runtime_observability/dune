@@ -1,6 +1,6 @@
 (executable
  (name runtime_observability)
- (libraries bench_lib eta eta_otel eio_main))
+ (libraries eta_eio bench_lib eta eta_otel eio_main))
 
 (rule
  (alias legacy_bench)

@@ -38,7 +38,7 @@ let read_more ?host_eio flow read_buffer buffer used =
         match host_eio with
         | None -> Eio.Flow.single_read flow (Cstruct.sub read_buffer used len)
         | Some host_eio ->
-            let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+            let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
             Flow.single_read flow (Cstruct.sub read_buffer used len)
       in
       if read = 0 then Error Parse.Partial
@@ -117,7 +117,7 @@ let make_body_source ?host_eio flow request initial =
         match host_eio with
         | None -> Eio.Flow.single_read flow buffer
         | Some host_eio ->
-            let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+            let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
             Flow.single_read flow buffer);
   }
 

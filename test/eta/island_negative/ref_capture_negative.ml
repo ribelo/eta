@@ -1,7 +1,7 @@
 let counter = ref 0
 
-let _ =
-  Eta.Island.map
+let program pool =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
       incr counter;
       n)

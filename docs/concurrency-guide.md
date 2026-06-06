@@ -22,7 +22,7 @@ do I use?**
                          ┌────────────┼────────────┐
                          │ Yes                     │ No
                          ▼                         ▼
-               Effect.Blocking.submit   ┌─────────────────────────┐
+               Eta_blocking.submit      ┌─────────────────────────┐
                (OS thread pool)         │ Is the work CPU-heavy   │
                                         │ AND you want structured │
                                         │ parallelism?            │
@@ -33,9 +33,9 @@ do I use?**
                                         ┌────────────┼────────────┐
                                         │ Yes                     │ No
                                         ▼                         ▼
-                                  Par               Island.run
+                                  Eta_par           Eta_par.Island.run
                                   (heartbeat            (domain pool,
-                                  scheduler,            one portable
+                                  scheduler,            one native
                                   join/par_*)           callback)
 ```
 
@@ -49,53 +49,55 @@ Every box in the diagram:
 |---|---|---|---|---|
 | `Effect.sync` | Runs on the current domain, same fiber | None | Anything not too heavy or blocking | Blocks the domain if the work is CPU-heavy |
 | `Effect.par` / `Effect.for_each_par` | Runs child effects as Eio fibers on the current runtime | None | Concurrent effect workflows: overlapping sleeps, async I/O, queues, resources | Not CPU parallelism; heavy sync work still blocks the domain |
-| `Island.run` | Runs a single portable callback on a worker domain | Domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback must be `@ portable`, payloads `: immutable_data`, and return on its own |
-| `Island.map` | Runs N portable callbacks in parallel batch | Domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; started callbacks are not preempted by Eta cancellation |
-| `Effect.Blocking.submit` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |
-| `Par.join` | Forks two tasks; heartbeat scheduler distributes at runtime | Domain pool (heartbeat) | Recursive parallel algorithms, tree walks | Must be called from inside `Par.run` or `Par.Pool.run` |
-| `Par.par_for` / `.par_map` | Data-parallel combinators over arrays | Domain pool (heartbeat) | Structured CPU parallelism: parallel sort, parallel reduce, parallel map | Shapes are fixed; no per-element async decisions |
-| `Par.Iter` | Lazy iterator chains (map/filter/reduce/collect) | Domain pool (heartbeat) | Rayon-style pipelines over arrays | Indexed sources only; consumer wraps the chain |
+| `Eta_par.Island.run` | Runs a single callback on a worker domain | Explicit domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback crosses a native domain boundary and must return on its own |
+| `Eta_par.Island.map` | Runs N callbacks in parallel batch | Explicit domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; started callbacks are not preempted by Eta cancellation |
+| `Eta_blocking.submit` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |
+| `Eta_par.join` | Forks two tasks; heartbeat scheduler distributes at runtime | Domain pool (heartbeat) | Recursive parallel algorithms, tree walks | Must be called from inside `Eta_par.run` or `Eta_par.Pool.run` |
+| `Eta_par.par_for` / `.par_map` | Data-parallel combinators over arrays | Domain pool (heartbeat) | Structured CPU parallelism: parallel sort, parallel reduce, parallel map | Shapes are fixed; no per-element async decisions |
+| `Eta_par.Iter` | Lazy iterator chains (map/filter/reduce/collect) | Domain pool (heartbeat) | Rayon-style pipelines over arrays | Indexed sources only; consumer wraps the chain |
 
 ---
 
 ## Where heartbeat fits
 
-**Heartbeat is the domain-pool scheduler inside both Par and Island.**
+**Heartbeat is the domain-pool scheduler inside `eta_par`.**
 
 You never call "heartbeat" directly.  You call:
 
-- `Par.join` / `Par.par_for` / `Par.par_sort` / `Par.Iter` — the
+- `Eta_par.join` / `Eta_par.par_for` / `Eta_par.par_sort` /
+  `Eta_par.Iter` — the
   structured-parallelism API, which uses heartbeat's work-stealing to distribute
   nested fork-join tasks across domain workers.
-- `Island.run` / `Island.map` — the typed offload API, which uses
-  a heartbeat-backed island pool for single and batch worker-domain offload.
+- `Eta_par.Island.run` / `Eta_par.Island.map` — the native offload API,
+  which uses an explicit heartbeat-backed island pool for single and batch
+  worker-domain offload.
 
 Both APIs share the same scheduler implementation.  The public pool types stay
-separate: use `Island.Pool.t` for runtime-owned portable callbacks and
-`Par.Pool.t` for explicit CPU-parallel code.
+separate: use `Eta_par.Island.Pool.t` for offload callbacks and
+`Eta_par.Pool.t` for explicit CPU-parallel code.
 
 ```
        ┌──────────────────────────────────┐
        │      Heartbeat domain pool       │
-       │   (Par.Pool.t underneath)    │
+       │   (Eta_par.Pool.t underneath)│
        └────────────┬─────────────────────┘
                     │
         ┌───────────┴───────────┐
         │                       │
         ▼                       ▼
-  Par.join             Island.run
-  Par.par_for          Island.map
-  Par.par_sort         Island.map_result
-  Par.Iter             Island.all_settled
+  Eta_par.join         Eta_par.Island.run
+  Eta_par.par_for      Eta_par.Island.map
+  Eta_par.par_sort     Eta_par.Island.map_result
+  Eta_par.Iter         Eta_par.Island.all_settled
   (CPU-parallel,           (typed offload,
-   untyped closures,        @portable callbacks,
-   mutable arrays OK)       :immutable_data payloads)
+   untyped closures,        native callbacks,
+   mutable arrays OK)       explicit pool)
 ```
 
-The split is deliberate: CPU-parallel code wants to close over mutable arrays;
-island code wants the compiler to forbid shared mutable state across domains.
-Keeping the scheduler shared and the public APIs separate gives each use case
-the type guarantees (or freedom) it needs.
+The split is deliberate: CPU-parallel code often closes over mutable arrays,
+while island code is an explicit native boundary where callers must avoid unsafe
+shared mutable state. Keeping the scheduler shared and the public APIs separate
+keeps each use case honest.
 
 ---
 
@@ -104,30 +106,33 @@ the type guarantees (or freedom) it needs.
 ### "I have a heavy pure computation (SHA-256 a file, parse 50 MB of JSON)"
 
 ```ocaml
+let island_pool = Eta_par.Island.Pool.create ~domains:2 ()
+
 let hash_file path =
-  Island.run ~name:"hash" (fun () -> sha256_of_file path) ()
+  Eta_par.Island.run ~name:"hash" ~pool:island_pool
+    (fun () -> sha256_of_file path) ()
 ```
 
-One-shot, portable callback, runs on its own domain.  Your event loop stays
-responsive.  For a batch of files, use `Island.map`.
+One-shot callback, runs on its own domain. Your event loop stays responsive.
+For a batch of files, use `Eta_par.Island.map`.
 
 ### "I need to sort 10 million records"
 
 ```ocaml
-Par.run (fun () ->
-  Par.par_sort arr compare_my_records)
+Eta_par.run (fun () ->
+  Eta_par.par_sort arr compare_my_records)
 ```
 
 Structured parallelism with the heartbeat scheduler.  `par_sort` is a
-quicksort implementation that uses `Par.join` for recursive halving.
+quicksort implementation that uses `Eta_par.join` for recursive halving.
 Heartbeat distributes the partitions across domain workers without you
 manually chunking anything.
 
 ### "I need to do parallel map-reduce over a large array"
 
 ```ocaml
-Par.run (fun () ->
-  Par.Iter.(
+Eta_par.run (fun () ->
+  Eta_par.Iter.(
     of_array data
     |> map (fun x -> heavy_per_element x)
     |> reduce ~init:0 ~combine:(+)))
@@ -140,7 +145,7 @@ etc.) is called.
 ### "I need to call a blocking C library"
 
 ```ocaml
-Effect.Blocking.submit ~name:"legacy_parse" (fun () ->
+Eta_blocking.submit ~name:"legacy_parse" (fun () ->
   C_lib.parse_binary buf)
 ```
 
@@ -149,7 +154,7 @@ resumed when the result is ready.  Use a separate pool per resource class (DB,
 filesystem, third-party SDK) so saturation in one doesn't starve the others.
 
 ```ocaml
-let db_pool = Effect.Blocking.Pool.create ~name:"db" {
+let db_pool = Eta_blocking.Pool.create ~name:"db" {
   max_threads = 32; max_queued = 64;
   queue_policy = Wait; shutdown_policy = Drain
 }
@@ -161,17 +166,19 @@ Compose them:
 
 ```ocaml
 let process path =
-  let* raw = Effect.Blocking.submit ~name:"read" (fun () -> read_file path) in
-  let* parsed = Island.run ~name:"parse" (fun () -> parse_json raw) in
+  let* raw = Eta_blocking.submit ~name:"read" (fun () -> read_file path) in
+  let* parsed =
+    Eta_par.Island.run ~name:"parse" ~pool:island_pool
+      (fun () -> parse_json raw) in
   let results =
-    Par.run ~n_workers:4 (fun () ->
-      Par.par_map parsed (fun record -> heavy_per_record record))
+    Eta_par.run ~n_workers:4 (fun () ->
+      Eta_par.par_map parsed (fun record -> heavy_per_record record))
   in
   Effect.pure results
 ```
 
 File read → OS thread pool.  Parse → domain pool (island).  Process batch →
-domain pool (Par).  The blocking pool is separate from both domain-pool
+domain pool (`Eta_par`).  The blocking pool is separate from both domain-pool
 surfaces because OS threads and domain workers solve different problems.
 
 ---
@@ -181,12 +188,12 @@ surfaces because OS threads and domain workers solve different problems.
 | Primitive | Pool type | Default size | Guidance |
 |---|---|---|---|
 | `Effect.sync` | None | — | — |
-| `Island.run` / `Island.map` | Domain pool (heartbeat) | 2 domains | Increase if you regularly have >=2 concurrent island calls. Decrease if you're GPU- or I/O-bound. |
-| `Par.join` / `par_*` | Domain pool (heartbeat) | `core_count` | `Par.run` defaults to `Domain.recommended_domain_count()`. Use `Par.Pool` when you want explicit reuse. |
-| `Effect.Blocking` | OS thread pool | configurable; typically 32-128 | One pool per resource class. DB pool != filesystem pool. |
+| `Eta_par.Island.run` / `Eta_par.Island.map` | Domain pool (heartbeat) | 2 domains | Increase if you regularly have >=2 concurrent island calls. Decrease if you're GPU- or I/O-bound. |
+| `Eta_par.join` / `par_*` | Domain pool (heartbeat) | `core_count` | `Eta_par.run` defaults to `Domain.recommended_domain_count()`. Use `Eta_par.Pool` when you want explicit reuse. |
+| `Eta_blocking` | OS thread pool | configurable; typically 32-128 | One pool per resource class. DB pool != filesystem pool. |
 
-`Island.Pool` wraps `Par.Pool` internally but does not expose it.  Keep
-island pools and explicit `Par.Pool` values separate unless Eta grows an
+`Eta_par.Island.Pool` wraps `Eta_par.Pool` internally but does not expose it.
+Keep island pools and explicit `Eta_par.Pool` values separate unless Eta grows an
 intentional sharing API.
 
 ---
@@ -196,14 +203,14 @@ intentional sharing API.
 | You want to... | Use | Lives in |
 |---|---|---|
 | Run normal OCaml code without blocking the fiber | `Effect.sync` | `eta` (the base effect library) |
-| Run CPU-heavy callback on a separate domain, compiler-checked safety | `Island.run` | `eta` |
-| Run batch of portable callbacks in parallel, get results in order | `Island.map` | `eta` |
-| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Effect.Blocking.submit` | `eta` |
-| Fork-join two recursive subproblems | `Par.join` | `par` |
-| Parallel map/reduce/sort over arrays | `Par.par_map` / `par_reduce` / `par_sort` | `par` |
-| Lazy iterator chains (map/filter/reduce/collect) | `Par.Iter` | `par` |
-| Create a reusable domain pool, shut it down manually | `Par.Pool.create` / `shutdown` | `par` |
-| Create a reusable OS thread pool for blocking I/O | `Effect.Blocking.Pool.create` / `shutdown` | `eta` |
+| Run CPU-heavy callback on a separate domain | `Eta_par.Island.run` | `eta_par` |
+| Run batch callbacks in parallel, get results in order | `Eta_par.Island.map` | `eta_par` |
+| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Eta_blocking.submit` | `eta_blocking` |
+| Fork-join two recursive subproblems | `Eta_par.join` | `eta_par` |
+| Parallel map/reduce/sort over arrays | `Eta_par.par_map` / `par_reduce` / `par_sort` | `eta_par` |
+| Lazy iterator chains (map/filter/reduce/collect) | `Eta_par.Iter` | `eta_par` |
+| Create a reusable domain pool, shut it down manually | `Eta_par.Pool.create` / `shutdown` | `eta_par` |
+| Create a reusable OS thread pool for blocking I/O | `Eta_blocking.Pool.create` / `shutdown` | `eta_blocking` |
 
 ---
 
@@ -211,16 +218,15 @@ intentional sharing API.
 
 - **Don't put CPU work on the blocking pool.**  The blocking pool's threads
   share one runtime lock per domain; CPU work on them serialises, defeating
-  parallelism.  Use `Island.run` or `Par`.
+  parallelism. Use `Eta_par.Island.run` or `Eta_par`.
 - **Don't put blocking I/O on the island pool.**  Island workers are domains;
   a blocked syscall blocks the entire domain until it returns.  Use
-  `Effect.Blocking`.
+  `Eta_blocking`.
 - **Don't use islands for unbounded or non-cooperative loops.**  Eta
   cancellation and timeouts can stop waiting for an island result, but they do
   not safely stop worker-domain code that is already running.
-- **Don't call `Par.join` / `par_*` / `Iter` outside
-  `Par.run` / `Par.Pool.run`.**  These require a running heartbeat
+- **Don't call `Eta_par.join` / `par_*` / `Iter` outside
+  `Eta_par.run` / `Eta_par.Pool.run`.**  These require a running heartbeat
   pool.  Calling them from a raw fiber raises `Invalid_argument`.
-- **Don't assume `Island.run` will silently fall back to same-domain
-  execution.**  It won't.  Provide an island pool at runtime creation or
-  per-run override.
+- **Don't assume `Eta_par.Island.run` will silently fall back to same-domain
+  execution.**  It won't. Pass an explicit island pool.

@@ -82,7 +82,7 @@ let body_of_fixture name =
 let with_runtime f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   f rt
 
 let with_traced_runtime f =
@@ -90,7 +90,7 @@ let with_traced_runtime f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f rt tracer

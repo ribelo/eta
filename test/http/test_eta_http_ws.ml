@@ -652,7 +652,7 @@ let test_ws_connect_real_tcp_echo () =
           Eio.Switch.run @@ fun conn_sw ->
           let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
           run_echo_ws_server ~expect_target:"/realtime?model=x" ~messages:2 flow));
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let url = Printf.sprintf "ws://127.0.0.1:%d/realtime?model=x" port in
   let conn =
     Eta_http.Ws.Client.connect ~sw ~net url

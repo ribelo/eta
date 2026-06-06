@@ -23,7 +23,7 @@ let with_logger f =
   Eio.Switch.run @@ fun sw ->
   let logger = Logger.in_memory () in
   let rt =
-    Runtime.create ~sw
+    Eta_eio.Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
       ~logger:(Logger.as_capability logger) ()
   in
@@ -35,7 +35,7 @@ let with_logger_and_tracer f =
   let logger = Logger.in_memory () in
   let tracer = Tracer.in_memory () in
   let rt =
-    Runtime.create ~sw
+    Eta_eio.Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
       ~logger:(Logger.as_capability logger)
       ~tracer:(Tracer.as_capability tracer) ()
@@ -56,7 +56,7 @@ let test_emits_log_records () =
    aligned with spans", ...)`.
 
    We can't substitute a custom Clock service the way Effect-TS does (Eta
-   uses Eio's clock via Runtime.create). Equivalent observable property:
+   uses Eio's clock via Eta_eio.Runtime.create). Equivalent observable property:
    the log emitted inside a named span carries the span's trace_id and
    span_id, and its timestamp is bracketed by the span's start/end. *)
 (* ------------------------------------------------------------------ *)
@@ -105,7 +105,7 @@ let test_not_provided_log_dropped () =
   Eio.Switch.run @@ fun sw ->
   (* No logger configured: Logger.noop default drops everything silently. *)
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let _ = Runtime.run rt (Effect.log "test") in
   (* No assertion target — the contract is "doesn't crash". *)
@@ -141,7 +141,7 @@ let test_log_otlp_live () =
         ()
     in
     let rt =
-      Runtime.create ~sw ~clock
+      Eta_eio.Runtime.create ~sw ~clock
         ~tracer:(Eta_otel.tracer exporter)
         ~logger:(Eta_otel.logger exporter) ()
     in

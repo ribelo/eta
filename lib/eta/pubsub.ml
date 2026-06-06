@@ -32,13 +32,15 @@ type 'err publish_out =
   [ `Published of publish_result | `Closed | `Closed_with_error of 'err ]
 
 type receiver = {
-  resolver : unit Eio.Promise.u;
+  contract : Runtime_contract.t;
+  resolver : unit Runtime_contract.resolver;
   mutable active : bool;
 }
 
 type ('a, 'err) publisher = {
   value : 'a;
-  resolver : 'err publish_out Eio.Promise.u;
+  contract : Runtime_contract.t;
+  resolver : 'err publish_out Runtime_contract.resolver;
   mutable active : bool;
 }
 
@@ -49,7 +51,7 @@ type ('a, 'err) entry = {
 }
 
 type ('a, 'err) t = {
-  mutex : Eio.Mutex.t;
+  mutex : Sync_lock.t;
   overflow : overflow;
   entries : ('a, 'err) entry Stdlib.Queue.t;
   publishers : ('a, 'err) publisher Stdlib.Queue.t;
@@ -82,7 +84,7 @@ let create ~overflow () =
       if capacity <= 0 then
         invalid_arg "Eta.Pubsub.create: bounded capacity must be > 0");
   {
-    mutex = Eio.Mutex.create ();
+    mutex = Sync_lock.create ();
     overflow;
     entries = Stdlib.Queue.create ();
     publishers = Stdlib.Queue.create ();
@@ -101,15 +103,22 @@ let create ~overflow () =
   }
 
 let with_lock t f =
-  Eio.Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
+  Sync_lock.use t.mutex f
 
-let with_lock_during_cancel t f =
-  Eio.Cancel.protect (fun () -> with_lock t f)
+let with_lock_during_cancel contract t f =
+  contract.Runtime_contract.protect (fun () -> with_lock t f)
 
 let close_result = function
   | Clean -> `Closed
   | Failed err -> `Closed_with_error err
+
+let resolve_receiver (receiver : receiver) =
+  receiver.contract.Runtime_contract.resolve_promise receiver.resolver ()
+
+let resolve_publisher
+    (publisher : ('a, 'err) publisher)
+    (result : 'err publish_out) =
+  publisher.contract.Runtime_contract.resolve_promise publisher.resolver result
 
 let capacity_available t =
   match t.overflow with
@@ -157,7 +166,7 @@ let wake_receiver t (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
-    Eio.Promise.resolve receiver.resolver ())
+    resolve_receiver receiver)
 
 let wake_subscription_receivers t (sub : ('a, 'err) subscription) =
   while not (Stdlib.Queue.is_empty sub.receivers) do
@@ -217,7 +226,7 @@ and admit_waiting_publishers_locked t =
               publisher.active <- false;
               t.waiting_publishers <- t.waiting_publishers - 1;
               let result = admit_value_locked t publisher.value in
-              Eio.Promise.resolve publisher.resolver (`Published result);
+              resolve_publisher publisher (`Published result);
               loop ()
       in
       loop ()
@@ -226,9 +235,9 @@ let cleanup_locked t =
   drop_drained_head_entries t;
   admit_waiting_publishers_locked t
 
-let enqueue_publisher t value =
-  let promise, resolver = Eio.Promise.create () in
-  let publisher = { value; resolver; active = true } in
+let enqueue_publisher contract t value =
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let publisher = { value; contract; resolver; active = true } in
   Stdlib.Queue.add publisher t.publishers;
   t.waiting_publishers <- t.waiting_publishers + 1;
   (promise, publisher)
@@ -241,7 +250,7 @@ let cancel_publisher t (publisher : ('a, 'err) publisher) =
     compact_cancelled_publishers_locked t;
     admit_waiting_publishers_locked t)
 
-let publish_sync t value =
+let publish_sync contract t value =
   match
     with_lock t @@ fun () ->
     match t.closed with
@@ -254,20 +263,23 @@ let publish_sync t value =
             `Ready (`Published { subscriber_count; dropped = subscriber_count })
         | Backpressure _ when subscriber_count > 0 && not (capacity_available t)
           ->
-            let promise, publisher = enqueue_publisher t value in
+            let promise, publisher = enqueue_publisher contract t value in
             `Wait (promise, publisher)
         | Unbounded | Drop_new _ | Backpressure _ ->
             `Ready (`Published (admit_value_locked t value)))
   with
   | `Ready result -> result
   | `Wait (promise, publisher) -> (
-      try Eio.Promise.await promise
-      with Eio.Cancel.Cancelled _ as exn ->
-        with_lock_during_cancel t (fun () -> cancel_publisher t publisher);
+      try contract.Runtime_contract.await_promise promise
+      with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+        with_lock_during_cancel contract t
+          (fun () -> cancel_publisher t publisher);
         raise exn)
 
 let publish t value =
-  Effect.sync (fun () -> publish_sync t value)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         publish_sync frame.Effect_core.runtime.Runtime_core.contract t value))
   |> Effect.bind (function
        | `Published result -> Effect.pure result
        | `Closed -> Effect.fail `Closed
@@ -330,9 +342,9 @@ let consume_available_locked sub =
         | None -> `Empty
         | Some reason -> close_result reason)
 
-let enqueue_receiver sub =
-  let promise, resolver = Eio.Promise.create () in
-  let receiver = { resolver; active = true } in
+let enqueue_receiver contract sub =
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let receiver = { contract; resolver; active = true } in
   Stdlib.Queue.add receiver sub.receivers;
   sub.hub.waiting_receivers <- sub.hub.waiting_receivers + 1;
   (promise, receiver)
@@ -345,29 +357,32 @@ let cancel_receiver sub (receiver : receiver) =
     t.cancelled_receivers <- t.cancelled_receivers + 1;
     compact_cancelled_receivers_locked sub)
 
-let recv_sync sub =
+let recv_sync contract sub =
   let rec loop () =
     match
       with_lock sub.hub @@ fun () ->
       match consume_available_locked sub with
       | `Empty ->
-          let promise, receiver = enqueue_receiver sub in
+          let promise, receiver = enqueue_receiver contract sub in
           `Wait (promise, receiver)
       | ((`Item _ | `Closed | `Closed_with_error _) as result) -> `Ready result
     with
     | `Ready result -> result
     | `Wait (promise, receiver) -> (
         try
-          Eio.Promise.await promise;
+          contract.Runtime_contract.await_promise promise;
           loop ()
-        with Eio.Cancel.Cancelled _ as exn ->
-          with_lock_during_cancel sub.hub (fun () -> cancel_receiver sub receiver);
+        with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+          with_lock_during_cancel contract sub.hub
+            (fun () -> cancel_receiver sub receiver);
           raise exn)
   in
   loop ()
 
 let recv sub =
-  Effect.sync (fun () -> recv_sync sub)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         recv_sync frame.Effect_core.runtime.Runtime_core.contract sub))
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false
@@ -386,7 +401,7 @@ let close_locked t reason =
       | Some publisher ->
           publisher.active <- false;
           t.waiting_publishers <- t.waiting_publishers - 1;
-          Eio.Promise.resolve publisher.resolver (close_result reason)
+          resolve_publisher publisher (close_result reason)
     done;
     wake_all_receivers t)
 
@@ -396,7 +411,7 @@ let close_with_error t err =
   with_lock t @@ fun () -> close_locked t (Failed err)
 
 let stats t =
-  Eio.Mutex.use_ro t.mutex @@ fun () ->
+  Sync_lock.use t.mutex @@ fun () ->
   {
     depth = t.depth;
     subscribers = active_subscriber_count t;

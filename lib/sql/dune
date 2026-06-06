@@ -7,7 +7,7 @@
   (names sqlite_stubs)
   (flags :standard (:include sqlite_c_flags.sexp)))
  (c_library_flags :standard (:include sqlite_c_library_flags.sexp))
- (libraries eta eta_sql_driver eta_sql_dsl eio unix threads))
+ (libraries eta eta_blocking eta_sql_driver eta_sql_dsl eio unix threads))
 
 (rule
  (targets sqlite_c_flags.sexp sqlite_c_library_flags.sexp)

@@ -21,7 +21,7 @@ let with_meter f =
   Eio.Switch.run @@ fun sw ->
   let meter = Meter.in_memory () in
   let rt =
-    Runtime.create ~sw
+    Eta_eio.Runtime.create ~sw
       ~clock:(Eio.Stdenv.clock stdenv)
       ~meter:(Meter.as_capability meter) ()
   in
@@ -237,7 +237,7 @@ let test_metrics_otlp_live () =
         ()
     in
     let rt =
-      Runtime.create ~sw ~clock
+      Eta_eio.Runtime.create ~sw ~clock
         ~meter:(Eta_otel.meter exporter) ()
     in
     let prog =

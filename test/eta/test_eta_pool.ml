@@ -173,7 +173,7 @@ let test_pool_release_defect_releases_capacity () =
 let test_pool_shutdown_reports_failure_after_closing_all_idle () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let release_attempts = ref 0 in
   let release conn =
@@ -205,10 +205,33 @@ let test_pool_shutdown_reports_failure_after_closing_all_idle () =
   Alcotest.(check int) "all idle closes attempted" 2 !release_attempts;
   Alcotest.(check int) "pool accounting closed both" 2 (Pool.stats pool).Pool.closed
 
+let test_pool_shutdown_release_defect_removes_idle_entry () =
+  with_runtime @@ fun rt ->
+  let pool =
+    run_ok rt
+      (Pool.create ~name:"defective-close" ~max_size:1 ~acquire:(Effect.pure ())
+         ~release:(fun () -> Effect.sync (fun () -> failwith "close boom"))
+         ())
+  in
+  run_ok rt (Pool.with_resource pool (fun () -> Effect.unit));
+  (match Runtime.run rt (Pool.shutdown pool) with
+  | Exit.Error (Cause.Die _) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected release defect, got %a"
+        (Cause.pp (fun fmt -> function
+          | `Pool_shutdown -> Format.pp_print_string fmt "Pool_shutdown"
+          | `Pool_shutdown_timeout ->
+              Format.pp_print_string fmt "Pool_shutdown_timeout"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected release defect");
+  let stats = Pool.stats pool in
+  Alcotest.(check int) "idle removed after failed close" 0 stats.Pool.idle;
+  Alcotest.(check int) "close was accounted" 1 stats.Pool.closed
+
 let test_pool_max_size_respected_under_concurrent_checkout () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let pool = run_ok rt (create_test_pool ~max_size:2 factory) in
   let use_for ms =
@@ -420,7 +443,7 @@ let test_pool_idle_eviction_continues_after_close_failure () =
 let test_pool_expired_idle_cleanup_preserves_capacity_waiters () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let pool =
     run_ok rt
@@ -492,7 +515,7 @@ let test_pool_expired_idle_close_failure_releases_admission_permit () =
 let test_pool_shutdown_wakes_waiters_and_drains () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
   let holder =
@@ -543,7 +566,7 @@ let test_pool_shutdown_rejects_waiter_before_permit_release () =
 let test_pool_shutdown_waits_for_active_close () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let close_started = ref false in
   let release conn =
@@ -575,7 +598,7 @@ let test_pool_shutdown_waits_for_active_close () =
 let test_pool_shutdown_deadline_timeout () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let factory = make_pool_factory () in
   let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
   let holder =
@@ -611,7 +634,7 @@ let test_pool_shutdown_deadline_waits_for_idle_close () =
   let shutdown = fork_run sw rt (Pool.shutdown ~deadline:(Duration.ms 5) pool) in
   Eio.Promise.await release_started;
   let while_closing = Pool.stats pool in
-  Alcotest.(check int) "idle tracked until release completes" 1
+  Alcotest.(check int) "idle removed while release is closing" 0
     while_closing.Pool.idle;
   Alcotest.(check int) "not counted closed before release completes" 0
     while_closing.Pool.closed;
@@ -664,7 +687,7 @@ let test_pool_observability_signals () =
   let meter = Meter.in_memory () in
   let logger = Logger.in_memory () in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer)
       ~meter:(Meter.as_capability meter)
       ~logger:(Logger.as_capability logger) ()

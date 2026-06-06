@@ -35,7 +35,7 @@ let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
   let input = make_input n in
   let r =
-    Eta.Par.Pool.run pool (fun () ->
-      Eta.Par.par_reduce input ~init:min_int ~map:map_fn ~combine:max)
+    Eta_par.Pool.run pool (fun () ->
+      Eta_par.par_reduce input ~init:min_int ~map:map_fn ~combine:max)
   in
   string_of_int r

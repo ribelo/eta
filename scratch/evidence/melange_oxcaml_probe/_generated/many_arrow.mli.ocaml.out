@@ -1,0 +1,4 @@
+File "/home/ribelo/projects/ribelo/ocaml/Eta/scratch/evidence/melange_oxcaml_probe/_generated/many_arrow.mli", line 1, characters 21-22:
+1 | val map : ('a -> 'b) @ many -> 'a -> 'b
+                         ^
+Error: Syntax error

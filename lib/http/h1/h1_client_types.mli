@@ -7,7 +7,7 @@ module Url = Url
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
-module type EIO_FLOW = Eta.Host_eio.FLOW
+module type EIO_FLOW = Eta_eio.Host.FLOW
 
 type request_body =
   | Empty

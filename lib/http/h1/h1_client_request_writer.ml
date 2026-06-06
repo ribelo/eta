@@ -33,7 +33,7 @@ let write_bytes_effect ?host_eio request flow bytes =
       match host_eio with
       | None -> Eio.Flow.copy_string (Bytes.to_string bytes) flow
       | Some host_eio ->
-          let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
+          let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
           Flow.write flow [ Cstruct.of_bytes bytes ])
 
 let transfer_encoding_chunked headers =
@@ -77,29 +77,32 @@ let stream_headers (request : request) length =
       Header.unsafe_add "Transfer-Encoding" "chunked" request.headers
   | _ -> request.headers
 
-let write_to_host_flow host_eio request flow ~headers ~body =
+let write_to_host_flow ?framing_body_length host_eio request flow ~headers ~body =
+  let buffer = Buffer.create 256 in
   match
-    Write.to_string ~method_:request.method_ ~url:request.url ~headers ~body
+    Write.write ?framing_body_length buffer ~method_:request.method_
+      ~url:request.url ~headers ~body
   with
   | Error _ as error -> error
-  | Ok bytes -> (
+  | Ok () -> (
       try
-        let module Flow = (val Host_eio.flow host_eio : EIO_FLOW) in
-        Flow.write flow [ Cstruct.of_string bytes ];
+        let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
+        Flow.write flow [ Cstruct.of_string (Buffer.contents buffer) ];
         Ok ()
       with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | _ -> Error (H1_client_errors.io_closed request Http_request))
 
-let write_headers_effect ?host_eio request flow ~headers =
+let write_headers_effect ?host_eio request flow ~headers ~framing_body_length =
   Effect.sync (fun () ->
       try
         match host_eio with
         | None ->
-            Write.write_to_flow flow ~method_:request.method_ ~url:request.url
-              ~headers ~body:Write.Empty
+            Write.write_to_flow ~framing_body_length flow ~method_:request.method_
+              ~url:request.url ~headers ~body:Write.Empty
         | Some host_eio ->
-            write_to_host_flow host_eio request flow ~headers ~body:Write.Empty
+            write_to_host_flow ~framing_body_length host_eio request flow ~headers
+              ~body:Write.Empty
       with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | _ -> Error (H1_client_errors.io_closed request Http_request))
@@ -125,7 +128,8 @@ let write_request ?host_eio flow (request : request) =
              | Error error -> Effect.fail error)
     | Some { length; stream } ->
         let headers = stream_headers request length in
-        write_headers_effect ?host_eio request flow ~headers
+        let framing_body_length = Option.value length ~default:(-1) in
+        write_headers_effect ?host_eio request flow ~headers ~framing_body_length
         |> Effect.bind (fun () ->
                if transfer_encoding_chunked headers then
                  write_chunked_stream ?host_eio request flow stream

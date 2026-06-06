@@ -1,4 +1,4 @@
 (library
  (name bench_typecheck_deep_bind)
  (wrapped false)
- (libraries eta eio_main))
+ (libraries eta_eio eta eio_main))

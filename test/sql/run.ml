@@ -70,6 +70,8 @@ let () =
             test_sql_migrations_reject_dirty_checksum_and_missing;
           Alcotest.test_case "migration source resolution metadata" `Quick
             test_sql_migration_source_resolution_metadata;
+          Alcotest.test_case "migration source rejects duplicate versions" `Quick
+            test_sql_migration_source_rejects_duplicate_versions;
           Alcotest.test_case "pool leaked transaction poisons next borrower" `Quick
             test_sql_pool_leaked_transaction_poisons_next_borrower;
           Alcotest.test_case "health check does not detect active transaction" `Quick

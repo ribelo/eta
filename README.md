@@ -57,7 +57,7 @@ let () =
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
-| `Runtime` | Eio-backed interpreter for `Effect.t`. |
+| `Runtime` | Backend-neutral interpreter for `Effect.t`, built from a runtime module. |
 | `Duration` | Millisecond-precision durations. |
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
@@ -65,40 +65,36 @@ let () =
 | `Redacted` | Opaque wrapper for sensitive values that redacts string and JSON output. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
-## Portable Islands
+## Native Parallelism
 
-`Island.run` is the portable twin of `Effect.sync`: it runs one
-compiler-checked portable callback through a runtime-owned island pool.
+The optional `eta_par` package contains Eta's native worker-domain scheduler.
+It is deliberately outside the root `eta` package so the core effect model can
+be interpreted by other runtimes.
 
 ```ocaml
-let (square @ portable) n = n * n
+let pool = Eta_par.Island.Pool.create ~domains:2 ()
 
 let program =
-  Island.run ~name:"square" square 7
+  Eta_par.Island.run ~name:"square" ~pool (fun n -> n * n) 7
 ```
 
-Finite batches use `Island.map`, `map_result`, or `all_settled`.
-Inputs, outputs, and callback error values must be `immutable_data`; the
-callback itself is `@ portable`, so captures such as refs, Eio streams,
-runtimes, loggers, or raw causes are rejected by the compiler.
-
-```ocaml
-let pool = Island.Pool.create ~domains:2 ()
-
-let rt =
-  Runtime.create ~sw ~clock ~island_pool:pool ()
-```
-
-There is no silent fallback. If island work reaches `Runtime.run` without a
-runtime pool or per-run `~island_pool` override, the effect dies. Island v1 is
-callback-based only: no timeout, cancellation, preemption, online queue, public
-`Effect.Portable.t`, or portable Resource/Supervisor/Stream/OTel surface is
-implied.
+Finite island batches use `Eta_par.Island.map`, `map_result`, or
+`all_settled`. Island pools are explicit native resources; the root
+`Eta.Runtime` does not carry an ambient island pool or a per-run island
+override.
 
 For structured CPU parallelism over arrays or recursive fork/join algorithms,
-use `Eta.Par` from the core `eta` package (`Eta.Par.run`, `Eta.Par.join`,
-`Eta.Par.par_map`, `Eta.Par.Iter`). See [Concurrency primitives in Eta](docs/concurrency-guide.md) for
-the decision flow between `Effect.sync`, Islands, `Par`, and Blocking.
+use `Eta_par.run`, `Eta_par.join`, `Eta_par.par_map`, and
+`Eta_par.Iter`. See [Concurrency primitives in Eta](docs/concurrency-guide.md)
+for the decision flow between `Effect.sync`, islands, fork-join parallelism,
+and blocking work.
+
+## Native Blocking Calls
+
+The optional `eta_blocking` package contains bounded OS-thread worker pools for
+synchronous native calls such as database engines, syscalls, and blocking C
+libraries. Runtime packages provide the worker substrate; for example
+`eta_eio` installs an Eio `run_in_systhread` runner by default.
 
 ## PPX Helpers
 

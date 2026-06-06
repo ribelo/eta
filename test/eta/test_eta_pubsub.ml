@@ -264,7 +264,7 @@ let test_pubsub_backpressure_canceled_publish_is_atomic () =
 let test_pubsub_cancelled_blocked_publishers_release_payloads () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 1 }) () in
   let ready = Queue.create () in
   let never = Queue.create () in
@@ -369,7 +369,7 @@ let test_pubsub_close_wakes_blocked_backpressure_publisher () =
 let test_pubsub_close_wakes_blocked_subscriber () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
   let holder = ref None in
   let ready = Queue.create () in
@@ -456,7 +456,7 @@ let test_pubsub_subscription_cleanup_on_body_cancellation () =
 let test_pubsub_cancel_blocked_recv_cleans_waiter () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
   let ready = Queue.create () in
   let never = Queue.create () in

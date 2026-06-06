@@ -19,7 +19,7 @@ let run_get () =
   let net = Eio.Stdenv.net env in
   let client = Eta_http.Client.make_h1 ~sw ~net () in
   let request = Eta_http.Request.make "GET" url in
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   match Eta.Runtime.run rt (Eta_http.request client request) with
   | Eta.Exit.Ok response ->
       let body_result =

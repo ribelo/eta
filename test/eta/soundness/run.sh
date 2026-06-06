@@ -3,8 +3,8 @@ set -u
 
 cmxa="$1"
 fixture_dir="$(dirname "$0")"
-obj_dir="$(dirname "$cmxa")/.eta.objs/byte"
-par_obj_dir="$(dirname "$cmxa")/../par/.par.objs/byte"
+obj_dir="$(dirname "$cmxa")/.eta.objs/native"
+par_obj_dir="$(dirname "$cmxa")/../par/.eta_par.objs/native"
 tmp_dir="${TMPDIR:-/tmp}/eta-soundness-negative-$$"
 mkdir -p "$tmp_dir"
 

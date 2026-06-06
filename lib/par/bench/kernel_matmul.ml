@@ -37,7 +37,7 @@ let parallel_matmul n a b =
   let c = Array.make (n * n) 0.0 in
   (* Each row is heavy work (~n^2 multiply-adds); chunking by 1 row
      means one task per row. *)
-  Eta.Par.par_for ~chunk:1 ~start:0 ~stop:n (fun i -> matmul_row n a b c i);
+  Eta_par.par_for ~chunk:1 ~start:0 ~stop:n (fun i -> matmul_row n a b c i);
   c
 
 let checksum c =
@@ -62,4 +62,4 @@ let run_parallel ~quick pool =
   let n = if quick then n_quick else n_default in
   let a = make_matrix n 1 in
   let b = make_matrix n 2 in
-  checksum (Eta.Par.Pool.run pool (fun () -> parallel_matmul n a b))
+  checksum (Eta_par.Pool.run pool (fun () -> parallel_matmul n a b))

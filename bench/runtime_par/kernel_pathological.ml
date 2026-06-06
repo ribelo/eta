@@ -34,7 +34,7 @@ let rec parallel_skewed depth work_per_leaf =
   if depth = 0 then heavy_work work_per_leaf
   else
     let left, right =
-      Eta.Par.join
+      Eta_par.join
         (fun () -> parallel_skewed (depth - 1) work_per_leaf)
         (fun () -> heavy_work work_per_leaf)
     in
@@ -55,4 +55,4 @@ let run_serial ~quick () =
 let run_parallel ~quick pool =
   let depth = if quick then depth_quick else depth_default in
   let w = if quick then work_per_leaf_quick else work_per_leaf_default in
-  fmt_checksum (Eta.Par.Pool.run pool (fun () -> parallel_skewed depth w))
+  fmt_checksum (Eta_par.Pool.run pool (fun () -> parallel_skewed depth w))

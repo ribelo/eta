@@ -5,7 +5,7 @@
 open Effect_core
 
 let run_child ?internal_cancel frame sw eff =
-  frame.runtime.tracer#with_fiber_context @@ fun () ->
+  frame.runtime.tracer#with_task_context frame.runtime.contract @@ fun () ->
   run_scope ?internal_cancel ~sw frame eff
 
 let atomic_push cell value =
@@ -67,7 +67,8 @@ let par_run_forks frame ~forks ~assemble =
      List.iter
       (fun fork ->
          fiber_fork frame ~sw:par_sw (fun () ->
-             frame.runtime.tracer#with_fiber_context @@ fun () ->
+             frame.runtime.tracer#with_task_context frame.runtime.contract
+             @@ fun () ->
              try fork internal_cancel par_sw
              with exn ->
                let cause =
@@ -93,50 +94,57 @@ let par_collect frame ~name tasks =
   in
   par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
-let race_eval effects () =
-  let frame = current_frame () in
+let race_eval effects frame =
   match effects with
   | [] -> invalid_arg "Effect.race: empty list"
   | _ ->
       let winner = ref None in
       let causes = ref [] in
-      let results = Eio.Stream.create (List.length effects) in
+      let contract = frame.runtime.contract in
+      let results = contract.Runtime_contract.create_stream (List.length effects) in
       let exception Race_won in
       let rec has_race_won = function
         | Race_won -> true
-        | Eio.Exn.Multiple causes ->
-            List.exists (fun (exn, _bt) -> has_race_won exn) causes
-        | _ -> false
+        | exn -> (
+            match contract.Runtime_contract.multiple_exceptions exn with
+            | Some causes ->
+                List.exists (fun (exn, _bt) -> has_race_won exn) causes
+            | None -> false)
       in
       let rec causes_without_race_won = function
         | Race_won -> []
-        | Eio.Exn.Multiple causes ->
-            List.concat_map
-              (fun (exn, bt) ->
-                match exn with
-                | Race_won -> []
-                | Eio.Exn.Multiple _ -> causes_without_race_won exn
-                | _ ->
-                    [
-                      Runtime_core.cause_of_exn ~backtrace:bt
-                        ~capture_backtrace:frame.runtime.capture_backtrace
-                        frame.fail_key exn;
-                    ])
-              causes
         | exn ->
-            [ Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn ]
+            (match contract.Runtime_contract.multiple_exceptions exn with
+             | Some causes ->
+                 List.concat_map
+                   (fun (exn, bt) ->
+                     match exn with
+                     | Race_won -> []
+                     | _ when has_race_won exn -> causes_without_race_won exn
+                     | _ ->
+                         [
+                           Runtime_core.cause_of_exn_runtime ~backtrace:bt
+                             frame.runtime frame.fail_key exn;
+                         ])
+                   causes
+             | None ->
+                 [
+                   Runtime_core.cause_of_exn_runtime frame.runtime
+                     frame.fail_key exn;
+                 ])
       in
       (try
          switch_run frame @@ fun race_sw ->
          List.iter
            (fun eff ->
-             fiber_fork frame ~sw:race_sw (fun () ->
-                 Eio.Stream.add results (run_child frame race_sw eff)))
+            fiber_fork frame ~sw:race_sw (fun () ->
+                 contract.Runtime_contract.stream_add results
+                   (run_child frame race_sw eff)))
            effects;
          let rec drain_cancelled_losers acc remaining =
            if remaining = 0 then List.rev acc
            else
-             match Eio.Stream.take results with
+             match contract.Runtime_contract.stream_take results with
              | Exit.Error cause when has_finalizer_diagnostic cause ->
                  drain_cancelled_losers (cause :: acc) (remaining - 1)
              | Exit.Error _ | Exit.Ok _ ->
@@ -145,7 +153,7 @@ let race_eval effects () =
          let rec collect failed remaining =
            if remaining = 0 then causes := List.rev failed
            else
-             match Eio.Stream.take results with
+             match contract.Runtime_contract.stream_take results with
              | Exit.Ok value ->
                  winner := Some value;
                  (* Once a winner has produced side effects and published its
@@ -156,11 +164,18 @@ let race_eval effects () =
                  switch_fail frame race_sw Race_won;
                  let diagnostics = ref [] in
                  (try
-                    Runtime_core.cancel_protect (fun () ->
+                    frame.runtime.contract.Runtime_contract.protect (fun () ->
                         diagnostics :=
                           drain_cancelled_losers [] (remaining - 1))
-                  with
-                  | Eio.Cancel.Cancelled _ | Race_won -> ());
+                  with exn ->
+                    if
+                      Option.is_some
+                        (contract.Runtime_contract.cancellation_reason exn)
+                    then ()
+                    else
+                      match exn with
+                      | Race_won -> ()
+                      | exn -> raise exn);
                  causes := List.rev_append !diagnostics !causes;
                  raise Race_won
              | Exit.Error cause -> collect (cause :: failed) (remaining - 1)
@@ -169,16 +184,17 @@ let race_eval effects () =
       with
       | Race_won -> ()
       | exn when has_race_won exn ->
-          (* Eio may aggregate the internal Race_won escape with simultaneous
-             switch-level failures. Race_won is only a control signal used to
-             stop losers after a winner has been stored; it must never leak as
-             a public Die cause. Ordinary loser failures remain ignored by race
-             semantics, while finalizer diagnostics below are still surfaced. *)
+          (* A runtime may aggregate the internal Race_won escape with
+             simultaneous switch-level failures. Race_won is only a control
+             signal used to stop losers after a winner has been stored; it must
+             never leak as a public Die cause. Ordinary loser failures remain
+             ignored by race semantics, while finalizer diagnostics below are
+             still surfaced. *)
           causes := List.rev_append (causes_without_race_won exn) !causes);
       (match !winner with
       | Some value ->
           let rec drain_diagnostics acc =
-            match Eio.Stream.take_nonblocking results with
+            match contract.Runtime_contract.stream_take_nonblocking results with
             | Some (Exit.Error cause) when has_finalizer_diagnostic cause ->
                 drain_diagnostics (cause :: acc)
             | Some _ -> drain_diagnostics acc
@@ -204,28 +220,32 @@ let race effects = make ~names:(concat_names effects) (race_eval effects)
 type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
 let par_pair frame left right =
-  let left_result, left_resolver = Eio.Promise.create () in
-  let right_result, right_resolver = Eio.Promise.create () in
+  let contract = frame.runtime.contract in
+  let left_result, left_resolver =
+    contract.Runtime_contract.create_promise ()
+  in
+  let right_result, right_resolver =
+    contract.Runtime_contract.create_promise ()
+  in
   par_run_forks frame
     ~forks:
       [
         (fun internal_cancel sw ->
-          Eio.Promise.resolve left_resolver
+          contract.Runtime_contract.resolve_promise left_resolver
             (exit_to_value frame
                (run_child ~internal_cancel frame sw left)));
         (fun internal_cancel sw ->
-          Eio.Promise.resolve right_resolver
+          contract.Runtime_contract.resolve_promise right_resolver
             (exit_to_value frame
                (run_child ~internal_cancel frame sw right)));
       ]
     ~assemble:(fun () ->
       {
-        left = Eio.Promise.await left_result;
-        right = Eio.Promise.await right_result;
+        left = contract.Runtime_contract.await_promise left_result;
+        right = contract.Runtime_contract.await_promise right_result;
       })
 
-let par_eval left right () =
-  let frame = current_frame () in
+let par_eval left right frame =
   match par_pair frame left right with
   | Exit.Ok { left; right } -> ok (left, right)
   | Exit.Error cause -> error cause
@@ -233,8 +253,7 @@ let par_eval left right () =
 let par left right =
   make ~names:(names left @ names right) (par_eval left right)
 
-let all_eval effects () =
-  let frame = current_frame () in
+let all_eval effects frame =
   par_collect frame ~name:"Effect.all"
     (List.map
        (fun eff internal_cancel sw ->
@@ -243,8 +262,7 @@ let all_eval effects () =
 
 let all effects = make ~names:(concat_names effects) (all_eval effects)
 
-let all_settled_eval effects () =
-  let frame = current_frame () in
+let all_settled_eval effects frame =
   let results = Array.make (List.length effects) None in
   switch_run frame (fun sw ->
       List.iteri
@@ -262,9 +280,8 @@ let all_settled effects =
   make ~names:(concat_names effects) (all_settled_eval effects)
 
 (** Worker-pool variant: [workers] forks share an atomic counter, each pulling
-    the next task off [tasks] until the index reaches [n]. Wrapping the worker
-    body in [with_frame] is required because each [task.eval ()] call uses
-    [current_frame ()] internally. *)
+    the next task off [tasks] until the index reaches [n]. The parent frame is
+    passed explicitly into each task evaluation. *)
 let for_each_par_workers frame ~name ~workers ~tasks ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
@@ -289,8 +306,7 @@ let for_each_par xs (f) =
   let n = List.length xs in
   let xs_arr = Array.of_list xs in
   let tasks = Array.map f xs_arr in
-  make @@ fun () ->
-  let frame = current_frame () in
+  make @@ fun frame ->
   let workers = min n 8 in
   for_each_par_workers frame ~name:"Effect.for_each_par" ~workers ~tasks ~n
 
@@ -299,8 +315,7 @@ let for_each_par_bounded ~max xs (f) =
   let n = List.length xs in
   let xs_arr = Array.of_list xs in
   let tasks = Array.map f xs_arr in
-  make @@ fun () ->
-  let frame = current_frame () in
+  make @@ fun frame ->
   let workers = min max n in
   for_each_par_workers frame ~name:"Effect.for_each_par_bounded" ~workers
     ~tasks ~n

@@ -24,7 +24,7 @@ let with_law_runtime f =
   Eio.Switch.run @@ fun sw ->
   let deps = { add = (fun n -> n + 1); mul = (fun n -> n * 2) } in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   f rt deps
 

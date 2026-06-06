@@ -1,6 +1,6 @@
 (executable
  (name bench_http)
- (libraries bench_lib eta eta_http eta_stream eio eio_main cstruct unix))
+ (libraries eta_eio bench_lib eta eta_blocking eta_http eta_stream eio eio_main cstruct unix))
 
 (rule
  (alias bench)

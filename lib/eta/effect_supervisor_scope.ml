@@ -78,6 +78,7 @@ let rec is_internal_cancel_cause = function
 let rec interpret_supervisor_scope :
     type s err a. frame -> (s, a, err) supervisor_scope -> a =
  fun frame scope ->
+  let contract = frame.runtime.contract in
   match scope with
   | Supervisor_pure value -> value
   | Supervisor_lift eff -> run_to_value frame eff
@@ -86,12 +87,12 @@ let rec interpret_supervisor_scope :
       let value = interpret_supervisor_scope frame scope in
       interpret_supervisor_scope frame (k value)
   | Supervisor_start (supervisor, child_scope) ->
-      let promise, resolver = Eio.Promise.create () in
+      let promise, resolver = contract.Runtime_contract.create_promise () in
       let resolved = Atomic.make false in
       let cancel_requested = Atomic.make false in
       let resolve value =
         if Atomic.compare_and_set resolved false true then
-          Eio.Promise.resolve resolver value
+          contract.Runtime_contract.resolve_promise resolver value
       in
       let child_sw = ref None in
       let child_cancel = ref None in
@@ -109,12 +110,13 @@ let rec interpret_supervisor_scope :
                   | _ -> ())))
       in
       let child_id = Runtime_supervisor.register_child supervisor cancel in
-      Runtime_supervisor.fork supervisor (fun () ->
+      fiber_fork frame ~sw:(Runtime_supervisor.scope supervisor) (fun () ->
           Fun.protect
             ~finally:(fun () ->
               Runtime_supervisor.unregister_child supervisor child_id)
             (fun () ->
-              frame.runtime.tracer#with_fiber_context @@ fun () ->
+              frame.runtime.tracer#with_task_context frame.runtime.contract
+              @@ fun () ->
               let child_result = ref None in
               let internal_cancel_result () =
                 match !child_result with
@@ -168,12 +170,18 @@ let rec interpret_supervisor_scope :
               resolve result));
       Runtime_supervisor.make_child ~promise ~cancel
   | Supervisor_await child -> (
-      match Eio.Promise.await (Runtime_supervisor.child_promise child) with
+      match
+        contract.Runtime_contract.await_promise
+          (Runtime_supervisor.child_promise child)
+      with
       | Ok value -> value
       | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
   | Supervisor_cancel child -> (
       Runtime_supervisor.child_cancel child ();
-      match Eio.Promise.await (Runtime_supervisor.child_promise child) with
+      match
+        contract.Runtime_contract.await_promise
+          (Runtime_supervisor.child_promise child)
+      with
       | Ok _ -> ()
       | Error cause when Cause.is_interrupt_only cause -> ()
       | Error cause -> Runtime_core.raise_cause frame.fail_key cause)
@@ -187,8 +195,7 @@ let rec interpret_supervisor_scope :
   | Supervisor_yield -> fiber_yield frame
 
 let supervisor_scoped ?max_failures body =
-  make @@ fun () ->
-  let frame = current_frame () in
+  make @@ fun frame ->
   try
     ok
       (switch_run frame @@ fun sw ->
@@ -200,9 +207,13 @@ let supervisor_scoped ?max_failures body =
   with exn -> exit_of_exn frame exn
 
 let cancel_child_effect child =
-  make @@ fun () ->
+  make @@ fun frame ->
+  let contract = frame.runtime.contract in
   Runtime_supervisor.child_cancel child ();
-  match Eio.Promise.await (Runtime_supervisor.child_promise child) with
+  match
+    contract.Runtime_contract.await_promise
+      (Runtime_supervisor.child_promise child)
+  with
   | Ok _ -> ok ()
   | Error cause when Cause.is_interrupt_only cause -> ok ()
   | Error cause -> error cause

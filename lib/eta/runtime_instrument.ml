@@ -19,9 +19,14 @@ let random_trace_id runtime =
   loop ()
 
 let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
+  let contract = runtime.contract in
+  let local_get key = contract.Runtime_contract.local_get key in
+  let local_with_binding key value f =
+    contract.Runtime_contract.local_with_binding key value f
+  in
   let with_die_context f =
-    RObs.with_die_span_name name @@ fun () ->
-    RObs.with_die_annotations attrs f
+    RObs.with_die_span_name contract name @@ fun () ->
+    RObs.with_die_annotations contract attrs f
   in
   let run_body () =
     try body () with exn ->
@@ -29,10 +34,10 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
   in
   if not runtime.tracing_enabled then with_die_context run_body
   else
-    let parent_id = Eio.Fiber.get RObs.active_span_key in
-    let ambient_context = Eio.Fiber.get RObs.trace_context_key in
+    let parent_id = local_get RObs.active_span_key in
+    let ambient_context = local_get RObs.trace_context_key in
     let parent_sampled =
-      Option.value (Eio.Fiber.get RObs.sampled_key)
+      Option.value (local_get RObs.sampled_key)
         ~default:
           (match ambient_context with
           | None -> true
@@ -46,7 +51,7 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
     let trace_id, root_trace_id =
       match (parent_id, ambient_context) with
       | Some span_id, _ -> (
-          match runtime.tracer#inspect ~span_id with
+          match runtime.tracer#inspect contract ~span_id with
           | Some info -> (info.trace_id, None)
           | None ->
               let trace_id = random_trace_id runtime in
@@ -63,28 +68,30 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
     in
     if not sampled then
       with_die_context @@ fun () ->
-      Eio.Fiber.with_binding RObs.sampled_key false run_body
+      local_with_binding RObs.sampled_key false run_body
     else
       let started_ms = runtime.now_ms () in
       let span_id =
-        runtime.tracer#begin_span ?parent_id ?external_parent
+        runtime.tracer#begin_span contract ?parent_id ?external_parent
           ?trace_id:root_trace_id ~name ~kind ~started_ms ()
       in
       let finish status =
-        runtime.tracer#end_span ~span_id ~status ~ended_ms:(runtime.now_ms ())
+        runtime.tracer#end_span contract ~span_id ~status
+          ~ended_ms:(runtime.now_ms ())
       in
       let emit_exception_event cause =
         RObs.exception_event_attrs_tree ~error_renderer cause
         |> List.iter (fun attrs ->
-               runtime.tracer#add_event ~span_id ~name:"exception"
+               runtime.tracer#add_event contract ~span_id ~name:"exception"
                  ~ts_ms:(runtime.now_ms ()) ~attrs)
       in
       with_die_context @@ fun () ->
-      Eio.Fiber.with_binding RObs.active_span_key span_id @@ fun () ->
-      Eio.Fiber.with_binding RObs.sampled_key true @@ fun () ->
+      local_with_binding RObs.active_span_key span_id @@ fun () ->
+      local_with_binding RObs.sampled_key true @@ fun () ->
       try
         List.iter
-          (fun (key, value) -> runtime.tracer#add_attr_to ~span_id ~key ~value)
+          (fun (key, value) ->
+            runtime.tracer#add_attr_to contract ~span_id ~key ~value)
           attrs;
         let value = body () in
         finish Ok;

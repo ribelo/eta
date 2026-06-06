@@ -4,37 +4,37 @@ let checksum_array arr =
   Array.fold_left (fun acc x -> acc + x) 0 arr
 
 let run_pool f =
-  Eta.Par.Pool.with_pool ~n_workers:4 (fun pool ->
+  Eta_par.Pool.with_pool ~n_workers:4 (fun pool ->
       sink := Sys.opaque_identity (f pool))
 
 let par_map n =
   let input = Array.init n Fun.id in
   run_pool (fun pool ->
-      Eta.Par.Pool.run pool (fun () ->
-          Eta.Par.par_map ~chunk:1024 input (fun x -> (x * 17) lxor (x lsl 1))
+      Eta_par.Pool.run pool (fun () ->
+          Eta_par.par_map ~chunk:1024 input (fun x -> (x * 17) lxor (x lsl 1))
           |> checksum_array))
 
 let par_reduce n =
   let input = Array.init n (fun i -> i land 1023) in
   run_pool (fun pool ->
-      Eta.Par.Pool.run pool (fun () ->
-          Eta.Par.par_reduce ~chunk:1024 input ~init:0 ~map:Fun.id ~combine:( + )))
+      Eta_par.Pool.run pool (fun () ->
+          Eta_par.par_reduce ~chunk:1024 input ~init:0 ~map:Fun.id ~combine:( + )))
 
 let par_for n =
   let output = Array.make n 0 in
   run_pool (fun pool ->
-      Eta.Par.Pool.run pool (fun () ->
-          Eta.Par.par_for ~chunk:1024 ~start:0 ~stop:n (fun i ->
+      Eta_par.Pool.run pool (fun () ->
+          Eta_par.par_for ~chunk:1024 ~start:0 ~stop:n (fun i ->
               output.(i) <- (i * 31) land 0xffff);
           checksum_array output))
 
 let iter_sum n =
   let input = Array.init n Fun.id in
   run_pool (fun pool ->
-      Eta.Par.Pool.run pool (fun () ->
-          input |> Eta.Par.Iter.of_array ~chunk:1024 |> Eta.Par.Iter.map (fun x -> x + 1)
-          |> Eta.Par.Iter.filter (fun x -> x land 1 = 0)
-          |> Eta.Par.Iter.sum))
+      Eta_par.Pool.run pool (fun () ->
+          input |> Eta_par.Iter.of_array ~chunk:1024 |> Eta_par.Iter.map (fun x -> x + 1)
+          |> Eta_par.Iter.filter (fun x -> x land 1 = 0)
+          |> Eta_par.Iter.sum))
 
 let workloads =
   let item name run =

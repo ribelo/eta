@@ -214,11 +214,11 @@ let make_h1_direct ~sw ~net ?host_eio
   }
 
 let run_host_h1 host_eio ~sw ~clock ~net ?tracer ?sampler ?auto_instrument
-    ?logger ?meter ?random ?island_pool ?blocking_pool ?capture_backtrace
+    ?logger ?meter ?random ?blocking_pool ?capture_backtrace
     ?max_response_body_bytes ?ca_file f =
-  Eta.Runtime.with_host_eio host_eio ~sw ~clock ?tracer ?sampler
-    ?auto_instrument ?logger ?meter ?random ?island_pool ?blocking_pool
-    ?capture_backtrace @@ fun runtime ->
+  Eta_eio.Runtime.with_host host_eio ~sw ~clock ?tracer ?sampler
+    ?auto_instrument ?logger ?meter ?random ?blocking_pool ?capture_backtrace
+  @@ fun runtime ->
   let client =
     make_h1_direct ~sw ~net ~host_eio ?max_response_body_bytes ?ca_file ()
   in

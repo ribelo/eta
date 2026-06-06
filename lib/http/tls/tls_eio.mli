@@ -12,11 +12,11 @@ type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t
 (** An [Eio.Flow.two_way] backed by OpenSSL over an underlying flow. *)
 
-module type EIO_FLOW = Eta.Host_eio.FLOW
+module type EIO_FLOW = Eta_eio.Host.FLOW
 (** Minimal host module shape needed by TLS flow hooks. *)
 
 val client_of_flow :
-  ?host_eio:Eta.Host_eio.t ->
+  ?host_eio:Eta_eio.Host.t ->
   config ->
   ?host:[ `host ] Domain_name.t ->
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t ->

@@ -42,11 +42,13 @@ let create ~capacity =
 let cas_state queue seen replace_with =
   P_atomic.compare_and_set queue.state seen replace_with
 
+let cpu_relax () = ()
+
 let rec wait_empty slots index =
   match P_atomic_array.get slots index with
   | None -> ()
   | Some _ ->
-      Domain.cpu_relax ();
+      cpu_relax ();
       wait_empty slots index
 
 let rec try_push queue value =
@@ -66,7 +68,7 @@ let rec try_push queue value =
           let next = { state with published = ticket + 1 } in
           if not (cas_state queue state next) then publish ()
         else (
-          Domain.cpu_relax ();
+          cpu_relax ();
           publish ())
       in
       publish ();
@@ -79,13 +81,13 @@ let rec try_take queue =
     if state.closed && state.head = state.tail then Closed_empty
     else if state.head = state.tail then Empty
     else (
-      Domain.cpu_relax ();
+      cpu_relax ();
       try_take queue)
   else
     let index = state.head mod queue.capacity in
     match P_atomic_array.get queue.slots index with
     | None ->
-        Domain.cpu_relax ();
+        cpu_relax ();
         try_take queue
     | Some value ->
         let next = { state with head = state.head + 1 } in

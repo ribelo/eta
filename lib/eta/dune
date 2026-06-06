@@ -1,26 +1,16 @@
 (library
  (name eta)
  (public_name eta)
- (synopsis "Typed functional effects for OCaml: typed failures, exits, schedules, retry, race, timeout, and detached fibers; backed by Eio")
- (private_modules
-  blocking_runtime
+ (synopsis "Typed functional effects for OCaml: typed failures, exits, schedules, retry, race, timeout, and detached fibers")
+(private_modules
   effect_erasure
-  effect_blocking
   effect_concurrent
   effect_core
-  effect_island
   effect_observability
   effect_resource
   effect_supervisor_scope
-  island_runtime
-  par_array
-  par_iter
-  par_runtime
-  par_scheduler
   runtime_core
   runtime_erasure
   runtime_instrument
   runtime_observability
-  runtime_substrate
-  runtime_supervisor)
- (libraries eio eio.unix cstruct unix threads))
+  runtime_supervisor))

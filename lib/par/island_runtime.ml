@@ -10,7 +10,8 @@ type ('a, 'e) settled =
   | Worker_died of worker_die
 
 type pool = {
-  pool : Par.Pool.t;
+  pool : Par_runtime.Pool.t;
+  wait_pool : Eta_blocking.Pool.t;
   stopped : bool Atomic.t;
 }
 
@@ -44,22 +45,35 @@ let unexpected_outcome_count name actual =
 module Pool = struct
   type t = pool
 
+  let wait_config =
+    {
+      Eta_blocking.Pool.max_threads = 128;
+      max_queued = 64;
+      queue_policy = Eta_blocking.Pool.Wait;
+      shutdown_policy = Eta_blocking.Pool.Detach_started;
+    }
+
   let create ?(domains = 2) () =
     if domains <= 0 then
-      invalid_arg "Eta.Island.Pool.create: domains must be > 0";
+      invalid_arg "Eta_par.Island.Pool.create: domains must be > 0";
     {
-      pool = Par.Pool.create ~n_workers:(domains + 1) ();
+      pool = Par_runtime.Pool.create ~n_workers:(domains + 1) ();
+      wait_pool =
+        Eta_blocking.Pool.create ~name:"eta_par.island_wait"
+          wait_config;
       stopped = Atomic.make false;
     }
 
   let shutdown pool =
     if Atomic.compare_and_set pool.stopped false true then
-      Par.Pool.shutdown pool.pool
+      Par_runtime.Pool.shutdown pool.pool
 end
+
+let wait_pool pool = pool.wait_pool
 
 let ensure_running pool =
   if Atomic.get pool.stopped then
-    invalid_arg "Eta.Island: pool already shut down"
+    invalid_arg "Eta_par.Island: pool already shut down"
 
 let capture_map (f) input =
   try Map_ok (f input) with exn -> Map_worker_died (worker_die_of_exn exn)
@@ -75,13 +89,13 @@ let map_outcomes pool (f) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_map f input)
-  |> Par.Pool.run_many_on_workers pool.pool
+  |> Par_runtime.Pool.run_many_on_workers pool.pool
 
 let result_outcomes pool (f) inputs =
   ensure_running pool;
   inputs
   |> List.map (fun input () -> capture_result f input)
-  |> Par.Pool.run_many_on_workers pool.pool
+  |> Par_runtime.Pool.run_many_on_workers pool.pool
 
 let submit name pool (f) input =
   match map_outcomes pool f [ input ] with

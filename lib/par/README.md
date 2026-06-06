@@ -1,6 +1,6 @@
-# par
+# eta_par
 
-Rayon-style data parallelism for OxCaml — fork-join on top of a heartbeat
+Rayon-style native data parallelism for Eta: fork-join on top of a heartbeat
 work-stealing scheduler.
 
 > Status: v1, single-domain entry, no nested `Pool.run`, no cancellation.
@@ -9,7 +9,7 @@ work-stealing scheduler.
 ## Quick start
 
 ```ocaml
-open Eta.Par
+open Eta_par
 
 (* Top-level convenience: spin up a pool, run, tear down. *)
 let () =
@@ -73,18 +73,19 @@ without an enclosing `run` raises `Invalid_argument`.
 
 ## Where par fits
 
-`Eta.Par` is the structured CPU-parallelism layer.  If you need manual
+`eta_par` is the optional native CPU-parallelism package. If you need manual
 fork-join, parallel-map, parallel-sort, or lazy iterator chains over arrays,
-this is the core module.
+use the top-level `Eta_par` module.
 
-It shares the heartbeat scheduler implementation with `Island.run`
-(the typed-offload layer).  The public pool types remain separate.  The split
-is:
+It also exposes `Eta_par.Island` for typed worker-domain offload. Island pools
+are explicit native resources: create a pool and pass it to `Island.run` /
+`Island.map`, or bind it once with `Island.Make`. The root `eta` runtime
+does not carry an ambient island pool.
 
 | API | Lives in | Pool | Closures | Payloads |
 |---|---|---|---|---|
-| `Eta.Par.join`, `par_*`, `Iter` | `eta` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
-| `Island.run`, `Island.map` | `eta` | Heartbeat domain pool | untyped worker callback; caller owns cross-domain safety | unconstrained |
+| `Eta_par.join`, `par_*`, `Iter` | `eta_par` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
+| `Eta_par.Island.run`, `Eta_par.Island.map` | `eta_par` | Explicit heartbeat island pool | untyped worker callback; caller owns cross-domain safety | unconstrained |
 
 See [Concurrency Guide](../../docs/concurrency-guide.md) for the full
 when-to-use-what decision flow.
@@ -98,13 +99,13 @@ promote their oldest queued frame into a stealable slot for idle workers.
 
 `Pool.run` registers the caller as worker 0 and runs the root task on the
 caller, which is the right shape for explicit fork/join. `Pool.run_on_worker`
-submits a root task to a long-lived worker domain; Eta uses that entry point for
-`Island.run` so offloaded callbacks keep their worker-domain semantics.
+submits a root task to a long-lived worker domain; `Eta_par.Island` uses that
+entry point so offloaded callbacks keep their worker-domain semantics.
 
 ## Correctness
 
 ```bash
-nix develop -c dune runtest lib/par --force
+nix develop .#mainline -c dune runtest test/par --force
 ```
 
 The test suite covers pool lifecycle, fork-join, nested joins, exception

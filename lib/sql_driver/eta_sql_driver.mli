@@ -16,24 +16,24 @@ module Make (Backend : BACKEND) : sig
     (unit -> ('a, driver_error) result) -> unit -> ('a, error) result
 
   val blocking_result :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     ?name:string ->
     ?on_cancel:(unit -> unit) ->
     (unit -> ('a, driver_error) result) ->
     ('a, error) Eta.Effect.t
 
   val reject_detach_started_blocking_pool :
-    Eta.Effect.Blocking.Pool.t option -> (unit, error) Eta.Effect.t
+    Eta_blocking.Pool.t option -> (unit, error) Eta.Effect.t
 
   val leased_blocking_result :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     ?name:string ->
     ?on_cancel:(unit -> unit) ->
     (unit -> ('a, driver_error) result) ->
     ('a, error) Eta.Effect.t
 
   val leased_blocking_result_timeout :
-    ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+    ?blocking_pool:Eta_blocking.Pool.t ->
     ?name:string ->
     ?on_cancel:(unit -> unit) ->
     timeout:Eta.Duration.t ->

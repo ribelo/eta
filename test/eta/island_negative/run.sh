@@ -3,9 +3,9 @@ set -u
 
 cmxa="$1"
 fixture_dir="$(dirname "$0")"
-obj_dir="$(dirname "$cmxa")/.eta.objs/byte"
-par_cmxa="$(dirname "$cmxa")/../par/par.cmxa"
-par_obj_dir="$(dirname "$cmxa")/../par/.par.objs/byte"
+obj_dir="$(dirname "$cmxa")/.eta.objs/native"
+par_cmxa="$(dirname "$cmxa")/../par/eta_par.cmxa"
+par_obj_dir="$(dirname "$cmxa")/../par/.eta_par.objs/native"
 tmp_dir="${TMPDIR:-/tmp}/eta-island-negative-$$"
 mkdir -p "$tmp_dir"
 
@@ -18,7 +18,7 @@ for src in "$fixture_dir"/*_negative.ml; do
 
   if ocamlfind ocamlopt -extension-universe alpha \
       -package "eio,eio_main,portable,unix,threads" \
-      -linkpkg -I "$par_obj_dir" -I "$obj_dir" "$par_cmxa" "$cmxa" "$src" -o "$exe" >"$log" 2>&1; then
+      -linkpkg -I "$obj_dir" -I "$par_obj_dir" "$cmxa" "$par_cmxa" "$src" -o "$exe" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
   elif ! grep -Eq "portable|shareable|contended|local|mode" "$log"; then

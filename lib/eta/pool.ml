@@ -32,7 +32,7 @@ type ('conn, 'err) t = {
   acquire_conn : ('conn, 'err) Effect.t;
   release_conn : ('conn -> (unit, 'err) Effect.t);
   health_check : ('conn -> (unit, 'err) Effect.t);
-  mutex : Eio.Mutex.t;
+  mutex : Sync_lock.t;
   sem : Semaphore.t;
   mutable idle : 'conn entry list;
   mutable idle_count : int;
@@ -42,11 +42,13 @@ type ('conn, 'err) t = {
   mutable closed : int;
   mutable health_rejected : int;
   mutable shutting_down : bool;
-  shutdown_requested : unit Eio.Promise.t;
-  shutdown_resolver : unit Eio.Promise.u;
+  shutdown_requested : unit Runtime_contract.promise;
+  shutdown_resolver : unit Runtime_contract.resolver;
+  shutdown_contract : Runtime_contract.t;
+  shutdown_resolved : bool Atomic.t;
 }
 
-let now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
+let now_ms t = t.shutdown_contract.Runtime_contract.now_ms ()
 
 let duration_expired ~now duration started_at =
   now - started_at >= Duration.to_ms duration
@@ -91,7 +93,7 @@ let stats_locked t =
   }
 
 let emit_gauges t =
-  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex @@ fun () -> stats_locked t)
+  Effect.sync (fun () -> Sync_lock.use t.mutex @@ fun () -> stats_locked t)
   |> Effect.bind (fun (s : stats) ->
          Effect.all
            [
@@ -113,17 +115,17 @@ let emit_gauges t =
 let emit_opened t =
   metric_int t ~name:"eta.pool.opened"
     ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
-      Eio.Mutex.use_ro t.mutex @@ fun () -> t.opened)
+      Sync_lock.use t.mutex @@ fun () -> t.opened)
 
 let emit_closed t =
   metric_int t ~name:"eta.pool.closed"
     ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
-      Eio.Mutex.use_ro t.mutex @@ fun () -> t.closed)
+      Sync_lock.use t.mutex @@ fun () -> t.closed)
 
 let emit_health_rejected t =
   metric_int t ~name:"eta.pool.health_rejected"
     ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
-      Eio.Mutex.use_ro t.mutex @@ fun () -> t.health_rejected)
+      Sync_lock.use t.mutex @@ fun () -> t.health_rejected)
 
 let emit_cancelled_waiters t =
   metric_int t ~name:"eta.pool.cancelled_waiters"
@@ -133,11 +135,10 @@ let emit_cancelled_waiters t =
 let emit_wait_ms t started_ms =
   metric_float t ~name:"eta.pool.acquire_wait_ms"
     ~kind:Capabilities.Counter_cumulative ~unit_:"ms" (fun () ->
-      float_of_int (max 0 (now_ms () - started_ms)))
+      float_of_int (max 0 (now_ms t - started_ms)))
 
 let with_lock t f =
-  Eio.Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
+  Sync_lock.use t.mutex f
 
 let invariant_violation field =
   invalid_arg ("Eta.Pool invariant violated: " ^ field ^ " underflow")
@@ -161,7 +162,7 @@ let is_expired t now entry =
       | None -> false)
 
 let take_expired_idle_locked t =
-  let now = now_ms () in
+  let now = now_ms t in
   let rec split expired keep keep_count = function
     | [] -> (List.rev expired, List.rev keep, keep_count)
     | entry :: rest ->
@@ -203,7 +204,8 @@ let reserve t =
         | [] -> `Wait)
 
 let wait_for_shutdown t =
-  Effect.sync (fun () -> Eio.Promise.await t.shutdown_requested)
+  Effect.sync (fun () ->
+      t.shutdown_contract.Runtime_contract.await_promise t.shutdown_requested)
 
 let mark_open_failed t =
   Effect.sync @@ fun () ->
@@ -262,25 +264,29 @@ let remove_idle_entry_locked t entry =
     t.idle_count <- t.idle_count - 1);
   removed
 
-let mark_idle_closed t entry =
+let remove_idle_entry t entry =
+  Effect.sync @@ fun () ->
+  with_lock t @@ fun () -> remove_idle_entry_locked t entry
+
+let mark_removed_idle_closed t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () ->
-  let removed = remove_idle_entry_locked t entry in
-  if removed then (
-    decr_total_locked t;
-    t.closed <- t.closed + 1);
-  removed
+  decr_total_locked t;
+  t.closed <- t.closed + 1
 
 let close_idle_entry t entry =
-  close_entry_once t entry
-  |> Effect.bind (fun result ->
-         mark_idle_closed t entry
-         |> Effect.bind (function
-              | true ->
-                  emit_closed t
-                  |> Effect.bind (fun () -> emit_gauges t)
-                  |> Effect.bind (fun () -> finish_close result)
-              | false -> emit_gauges t |> Effect.bind (fun () -> finish_close result)))
+  remove_idle_entry t entry
+  |> Effect.bind (function
+       | false -> emit_gauges t
+       | true ->
+           let mark_close_finished =
+             mark_removed_idle_closed t
+             |> Effect.bind (fun () -> emit_closed t)
+             |> Effect.bind (fun () -> emit_gauges t)
+           in
+           close_entry_once t entry
+           |> Effect.finally mark_close_finished
+           |> Effect.bind finish_close)
 
 exception Close_entries_failed of string
 
@@ -343,7 +349,7 @@ let mark_active_close_finished t =
 let release_entry ?(release_permit = true) t entry =
   let decide =
     Effect.sync @@ fun () ->
-    let now = if t.expires_entries then now_ms () else 0 in
+    let now = if t.expires_entries then now_ms t else 0 in
     with_lock t @@ fun () ->
     let close =
       t.shutting_down
@@ -389,7 +395,7 @@ let check_health t entry =
   |> Effect.catch (fun _ -> Effect.pure (`Rejected entry))
 
 let make_entry t conn =
-  let now = if t.expires_entries then now_ms () else 0 in
+  let now = if t.expires_entries then now_ms t else 0 in
   { conn; created_ms = now; last_used_ms = now }
 
 type 'conn acquisition_state =
@@ -491,7 +497,7 @@ let with_resource t body =
          ~release:(release_entry ~release_permit:false t)
       |> Effect.bind (fun entry -> body entry.conn))
   in
-  Effect.sync (fun () -> Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down))
+  Effect.sync (fun () -> Sync_lock.use t.mutex (fun () -> t.shutting_down))
   |> Effect.bind (function
        | true -> Effect.fail `Pool_shutdown
        | false ->
@@ -512,7 +518,7 @@ let evict_idle_once t =
 let rec eviction_loop t =
   Effect.delay t.idle_check_interval (evict_idle_once t)
   |> Effect.bind (fun () ->
-         if Eio.Mutex.use_ro t.mutex (fun () -> t.shutting_down) then
+         if Sync_lock.use t.mutex (fun () -> t.shutting_down) then
            Effect.unit
          else eviction_loop t)
 
@@ -529,45 +535,54 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
     ~(release) ?(health_check = fun _ -> Effect.unit) () =
   let max_idle = Option.value max_idle ~default:max_size in
   validate ~max_size ~max_idle ~idle_check_interval;
-  let shutdown_requested, shutdown_resolver = Eio.Promise.create () in
-  let t =
-    {
-      name;
-      kind;
-      attrs = make_attrs name kind;
-      max_size;
-      max_idle;
-      idle_lifetime;
-      max_lifetime;
-      expires_entries = Option.is_some idle_lifetime || Option.is_some max_lifetime;
-      idle_check_interval;
-      acquire_conn = acquire;
-      release_conn = release;
-      health_check;
-      mutex = Eio.Mutex.create ();
-      sem = Semaphore.make ~permits:max_size;
-      idle = [];
-      idle_count = 0;
-      total = 0;
-      active = 0;
-      opened = 0;
-      closed = 0;
-      health_rejected = 0;
-      shutting_down = false;
-      shutdown_requested;
-      shutdown_resolver;
-    }
-  in
-  let start_daemon =
-    match (idle_lifetime, max_lifetime) with
-    | None, None -> Effect.unit
-    | Some _, _ | _, Some _ -> Effect.daemon (eviction_loop t)
-  in
-  start_daemon |> Effect.map (fun () -> t)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         let shutdown_contract =
+           frame.Effect_core.runtime.Runtime_core.contract
+         in
+         let shutdown_requested, shutdown_resolver =
+           shutdown_contract.Runtime_contract.create_promise ()
+         in
+         {
+           name;
+           kind;
+           attrs = make_attrs name kind;
+           max_size;
+           max_idle;
+           idle_lifetime;
+           max_lifetime;
+           expires_entries =
+             Option.is_some idle_lifetime || Option.is_some max_lifetime;
+           idle_check_interval;
+           acquire_conn = acquire;
+           release_conn = release;
+           health_check;
+           mutex = Sync_lock.create ();
+           sem = Semaphore.make ~permits:max_size;
+           idle = [];
+           idle_count = 0;
+           total = 0;
+           active = 0;
+           opened = 0;
+           closed = 0;
+           health_rejected = 0;
+           shutting_down = false;
+           shutdown_requested;
+           shutdown_resolver;
+           shutdown_contract;
+           shutdown_resolved = Atomic.make false;
+         }))
+  |> Effect.bind (fun t ->
+         let start_daemon =
+           match (idle_lifetime, max_lifetime) with
+           | None, None -> Effect.unit
+           | Some _, _ | _, Some _ -> Effect.daemon (eviction_loop t)
+         in
+         start_daemon |> Effect.map (fun () -> t))
 
 let rec wait_until_drained t =
   Effect.sync
-    (fun () -> Eio.Mutex.use_ro t.mutex @@ fun () -> t.active = 0)
+    (fun () -> Sync_lock.use t.mutex @@ fun () -> t.active = 0)
   |> Effect.bind (function
        | true -> Effect.unit
        | false ->
@@ -580,8 +595,9 @@ let begin_shutdown t =
     with_lock t @@ fun () ->
     if not t.shutting_down then (
       t.shutting_down <- true;
-      if not (Eio.Promise.is_resolved t.shutdown_requested) then
-        Eio.Promise.resolve t.shutdown_resolver ());
+      if Atomic.compare_and_set t.shutdown_resolved false true then
+        t.shutdown_contract.Runtime_contract.resolve_promise
+          t.shutdown_resolver ());
     t.idle
   in
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
@@ -608,4 +624,4 @@ let shutdown ?deadline t =
   in
   span t "eta.pool.shutdown" (begin_shutdown t |> Effect.bind (fun () -> with_deadline))
 
-let stats t = Eio.Mutex.use_ro t.mutex @@ fun () -> stats_locked t
+let stats t = Sync_lock.use t.mutex @@ fun () -> stats_locked t

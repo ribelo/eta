@@ -41,6 +41,16 @@ module Counting_host_eio = struct
       let fork ~sw f = Eio.Fiber.fork ~sw f
       let fork_daemon ~sw f = Eio.Fiber.fork_daemon ~sw f
       let yield = Eio.Fiber.yield
+      let check = Eio.Fiber.check
+    end
+
+    module Stream = struct
+      type 'a t = 'a Eio.Stream.t
+
+      let create = Eio.Stream.create
+      let add = Eio.Stream.add
+      let take = Eio.Stream.take
+      let take_nonblocking = Eio.Stream.take_nonblocking
     end
 
     module Cancel = struct
@@ -54,7 +64,7 @@ module Counting_host_eio = struct
     Atomic.set active_switch (Some sw);
     Fun.protect
       ~finally:(fun () -> Atomic.set active_switch None)
-      (fun () -> f (Host_eio.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()))
+      (fun () -> f (Eta_eio.Host.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()))
 end
 
 let run_in_system_thread f =
@@ -279,7 +289,7 @@ let test_effect_scoped_creates_switch_in_fiberless_host_run () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   Counting_host_eio.with_host sw @@ fun host ->
-  Runtime.with_host_eio host ~sw ~clock:(Eio.Stdenv.clock stdenv)
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock stdenv)
   @@ fun rt ->
   let before = Atomic.get Counting_host_eio.switch_runs in
   let exit =
@@ -297,12 +307,12 @@ let test_effect_fiberless_frame_is_domain_local () =
   let sleep_a = Atomic.make 0 in
   let sleep_b = Atomic.make 0 in
   let rt_a =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(fun _ -> Atomic.incr sleep_a)
       ()
   in
   let rt_b =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(fun _ -> Atomic.incr sleep_b)
       ()
   in
@@ -492,7 +502,7 @@ let test_effect_finally_runs_on_cancellation () =
 let test_effect_finally_runs_on_eio_cancellation () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let finalized = ref false in
   let cancel_ctx = ref None in
   let never, _resolver = Eio.Promise.create () in
@@ -512,7 +522,7 @@ let test_effect_finally_runs_on_eio_cancellation () =
 let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let finalized = ref false in
   let cancel_ctx = ref None in
   let never, _resolver = Eio.Promise.create () in
@@ -625,7 +635,7 @@ let test_runtime_user_exit_is_defect () =
 let test_runtime_run_propagates_eio_cancellation () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let cancelled = Failure "runtime cancelled" in
   let raised_cancelled = ref false in
   Eio.Cancel.sub @@ fun ctx ->

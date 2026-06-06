@@ -1,6 +1,6 @@
 (executable
  (name runtime_real)
- (libraries bench_lib eta eio_main))
+ (libraries eta_eio bench_lib eta eio_main))
 
 (rule
  (alias legacy_bench)

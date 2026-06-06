@@ -15,7 +15,7 @@ end)
 let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   f rt
 
 let pp_error ppf = function
@@ -25,7 +25,7 @@ let pp_error ppf = function
   | `Timeout -> Format.pp_print_string ppf "Timeout"
 
 let test_leased_blocking_rejects_detach_started_pool () =
-  let module BP = Effect.Blocking.Pool in
+  let module BP = Eta_blocking.Pool in
   let blocking_pool =
     BP.create ~name:"sql-driver-detach"
       {

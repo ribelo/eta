@@ -23,7 +23,7 @@ let with_test_clock f =
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock) ()
   in
   f sw clock rt
@@ -34,7 +34,7 @@ let with_traced_test_clock f =
   let clock = Eta_test.Test_clock.create () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in

@@ -403,7 +403,7 @@ let test_make_toolkit_preserves_raw_schema () =
 let with_runtime f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   f rt
 
 let with_traced_runtime f =
@@ -411,7 +411,7 @@ let with_traced_runtime f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f rt tracer
@@ -422,7 +422,7 @@ let with_observed_runtime f =
   let tracer = Eta.Tracer.in_memory () in
   let logger = Eta.Logger.in_memory () in
   let rt =
-    Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Eta.Tracer.as_capability tracer)
       ~logger:(Eta.Logger.as_capability logger) ()
   in
@@ -596,7 +596,7 @@ let test_transport_caps_error_body_before_provider_decode () =
   Eio_mock.Net.on_connect net [ `Return flow ];
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let client = Eta_http.Client.make_h1 ~sw ~net () in
   let request = Eta_http.Request.make "GET" "http://api.example.test/fail" in
   match Eta.Runtime.run rt (perform_raw ~max_bytes:8 provider client request) with

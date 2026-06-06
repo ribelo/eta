@@ -246,7 +246,7 @@ let test_effect_retry_jittered_schedule_uses_runtime_random () =
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~random:(Capabilities.random_of_seed 17)
       ()

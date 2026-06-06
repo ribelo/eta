@@ -1,5 +1,5 @@
-let capture_logger (logger : Eta.Capabilities.logger) =
-  Eta.Island.map
+let capture_logger pool (logger : Eta.Capabilities.logger) =
+  Eta_par.Island.map ~pool
     ~f:(fun n ->
       logger#log
         {

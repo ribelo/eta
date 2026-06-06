@@ -8,6 +8,7 @@
   test_eta_effect_retry_repeat
   test_eta_effect_resource_timeout
   test_eta_effect_uninterruptible
+  test_eta_runtime_contract
   test_eta_upstream_invariants
   test_eta_observability
   test_eta_duration_schedule
@@ -17,7 +18,6 @@
   test_eta_stress
   test_eta_portable_queue
   test_eta_queue
-  test_eta_island
   test_eta_blocking
   test_eta_channel
   test_eta_pubsub
@@ -26,7 +26,7 @@
   test_eta_string_helpers
   test_eta_mutable_ref
   test_eta_semaphore)
- (libraries eta eta_test eta_redacted alcotest eio_main eio_linux eio.unix unix threads)
+ (libraries eta eta_blocking eta_eio eta_test eta_redacted alcotest eio_main eio_linux eio.unix unix threads)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

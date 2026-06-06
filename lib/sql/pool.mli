@@ -15,7 +15,7 @@ type 'kind runner
 type t = pool runner
 
 val create :
-  ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+  ?blocking_pool:Eta_blocking.Pool.t ->
   ?default_timeout:Eta.Duration.t ->
   ?name:string ->
   ?max_size:int ->

@@ -3,4 +3,4 @@
  (public_name eta_otel)
  (synopsis "OpenTelemetry exporter for Eta logger/tracer/meter capabilities")
  (private_modules metric_aggregation otlp_json)
- (libraries eta eta_stream eta_http eio eio.unix yojson))
+ (libraries eta eta_eio eta_stream eta_http eio eio.unix yojson))

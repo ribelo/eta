@@ -104,14 +104,15 @@ let current_user auth =
   Effect.named "auth.current_user" (Effect.sync (fun () -> Auth.current_user auth))
 ```
 
-If a leaf must run in a portable island, make the input and callback explicit.
-The compiler then rejects non-portable captures.
+If a leaf must run in a native island, make the pool, input, and callback
+explicit. Under upstream OCaml, tests must cover cross-domain safety because the
+compiler does not reject non-portable captures for this API.
 
 ```ocaml
-let (decode @ portable) bytes = Schema.decode bytes
+let decode bytes = Schema.decode bytes
 
 let decode_all pool buffers =
-  Island.map ~pool ~f:decode buffers
+  Eta_par.Island.map ~pool ~f:decode buffers
 ```
 
 ## Failure Modes

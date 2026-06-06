@@ -1,6 +1,6 @@
 (executable
  (name bench_par)
- (libraries bench_lib eta unix))
+ (libraries bench_lib eta_par unix))
 
 (rule
  (alias bench)

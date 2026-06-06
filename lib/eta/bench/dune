@@ -1,6 +1,6 @@
 (executable
  (name bench_eta)
- (libraries bench_lib eta eio_main))
+ (libraries eta_eio bench_lib eta eio_main))
 
 (rule
  (alias bench)

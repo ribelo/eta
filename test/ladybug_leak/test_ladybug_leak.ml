@@ -189,7 +189,7 @@ let test_query_timeout_bounds_caller_wait () =
   in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let started = Unix.gettimeofday () in
   let exit =
     Eta.Runtime.run rt

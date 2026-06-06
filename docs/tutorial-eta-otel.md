@@ -184,9 +184,9 @@ schedule another metrics export.
   is not exposed on eta-otel's constructor.
 - Wire format is OTLP/JSON, not protobuf.
 - Mailbox overflow drops telemetry by design.
-- `Island.run` is not used because the encoder benchmark did not prove a
+- `Eta_par.Island.run` is not used because the encoder benchmark did not prove a
   CPU-offload benefit.
-- `Effect.blocking` is not used because eta-http already exposes an Eta effect
+- `Eta_blocking` is not used because eta-http already exposes an Eta effect
   for transport.
 - Historical scratch files may contain old dependency-row experiments. Current
   benchmark code and results use explicit dependency naming.

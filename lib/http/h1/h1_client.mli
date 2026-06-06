@@ -30,7 +30,7 @@ val default_max_response_body_bytes : int
     close-delimited HTTP/1.1 responses. *)
 
 val request_on_flow :
-  ?host_eio:Eta.Host_eio.t ->
+  ?host_eio:Eta_eio.Host.t ->
   ?on_unread_body:(unit -> (unit, Error.t) Eta.Effect.t) ->
   ?max_response_body_bytes:int ->
   ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
@@ -77,7 +77,7 @@ val shutdown_pool : pool -> (unit, Error.t) Eta.Effect.t
 
 val request :
   ?max_response_body_bytes:int ->
-  ?host_eio:Eta.Host_eio.t ->
+  ?host_eio:Eta_eio.Host.t ->
   ?ca_file:string ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->

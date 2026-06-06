@@ -712,7 +712,7 @@ let test_ladybug_connection_query_timeout () =
   if require_ladybug_available () then
     Eio_main.run @@ fun stdenv ->
     Eio.Switch.run @@ fun sw ->
-    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+    let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
     let db = Database.open_memory () |> ladybug_ok in
     Fun.protect
       ~finally:(fun () -> ignore (Database.close db))

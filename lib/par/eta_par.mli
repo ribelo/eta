@@ -1,14 +1,14 @@
-(** Eta.Par: fork-join data parallelism for OxCaml.
+(** Eta_par: native fork-join data parallelism.
 
-    Eta.Par offers fork-join data parallelism on multiple cores.
+    Eta_par offers fork-join data parallelism on multiple cores.
     The public surface is deliberately small: pools, [run], [join], and a
     handful of array and iterator combinators.
 
     {1 Quick start}
 
     {[
-      let _ = Eta.Par.run (fun () ->
-        let a, b = Eta.Par.join
+      let _ = Eta_par.run (fun () ->
+        let a, b = Eta_par.join
             (fun () -> compute_left ())
             (fun () -> compute_right ()) in
         a + b)
@@ -164,12 +164,12 @@ val par_sort : 'a array -> ('a -> 'a -> int) -> unit
     {!Iter.collect_array}.
 
     {[
-      Eta.Par.run @@ fun () ->
+      Eta_par.run @@ fun () ->
         arr
-        |> Eta.Par.Iter.of_array
-        |> Eta.Par.Iter.map (fun x -> x * x)
-        |> Eta.Par.Iter.filter (fun x -> x mod 3 = 0)
-        |> Eta.Par.Iter.reduce ~init:0 ~combine:(+)
+        |> Eta_par.Iter.of_array
+        |> Eta_par.Iter.map (fun x -> x * x)
+        |> Eta_par.Iter.filter (fun x -> x mod 3 = 0)
+        |> Eta_par.Iter.reduce ~init:0 ~combine:(+)
     ]}
 *)
 module Iter : sig
@@ -206,4 +206,124 @@ module Iter : sig
   val find_any : ('a -> bool) -> 'a t -> 'a option
   val any : ('a -> bool) -> 'a t -> bool
   val all : ('a -> bool) -> 'a t -> bool
+end
+
+(** {1 Worker-domain islands} *)
+
+module Island : sig
+  (** Worker-domain offload for CPU-bound or noncooperative workloads.
+
+      Islands are explicit native resources. Create a pool in this module and
+      pass it to the island operations, or bind it once with {!Make}. The root
+      Eta runtime does not carry an ambient island pool. *)
+
+  type worker_die = {
+    kind : string;
+    message : string;
+    backtrace : string option;
+  }
+  (** Diagnostic returned when a worker-domain callback raises before producing
+      its declared result. *)
+
+  type ('a, 'e) settled =
+    | Ok of 'a
+    | Error of 'e
+    | Worker_died of worker_die
+  (** Per-item result for {!all_settled}. [Ok] and [Error] are the callback's
+      own result channel; [Worker_died] is an unchecked worker crash. *)
+
+  type pool
+  (** Reusable heartbeat-backed island pool. Create it once and shut it down at
+      program exit. Pool creation is intentionally explicit because it is
+      comparatively expensive and because same-domain fallback would hide a
+      native boundary. *)
+
+  val run :
+    ?name:string ->
+    pool:pool ->
+    ('input -> 'output) ->
+    'input ->
+    ('output, 'err) Eta.Effect.t
+  (** Run one callback through [pool].
+
+      Anything accepted by [run] can also be expressed with
+      {!Eta.Effect.sync}; the reverse is deliberately false because [run]
+      crosses a worker-domain boundary. No timeout, cancellation, preemption,
+      streaming/online queueing, worker-safe AST, or OTel behavior is implied by
+      this primitive. Upstream OCaml does not enforce cross-domain payload
+      safety here; callers must keep callbacks bounded and avoid sharing mutable
+      state unsafely. *)
+
+  val map :
+    ?name:string ->
+    pool:pool ->
+    f:('input -> 'output) ->
+    'input list ->
+    ('output list, 'err) Eta.Effect.t
+  (** Run a finite batch of callbacks and return results in input order.
+      Worker crashes fail the outer effect as defects.
+
+      Running callbacks are not preempted. Parent cancellation or an Eta timeout
+      can stop waiting for the batch, but cannot safely reclaim worker domains
+      already executing user code. Use only bounded callbacks that return on
+      their own. *)
+
+  val map_result :
+    ?name:string ->
+    pool:pool ->
+    f:('input -> ('output, 'error) result) ->
+    'input list ->
+    (('output, 'error) result list, 'err) Eta.Effect.t
+  (** Like {!map}, but the callback returns a typed per-item [result].
+      Callback [Error _] values are returned in place; worker crashes still fail
+      the outer effect as defects. *)
+
+  val all_settled :
+    ?name:string ->
+    pool:pool ->
+    f:('input -> ('output, 'error) result) ->
+    'input list ->
+    (('output, 'error) settled list, 'err) Eta.Effect.t
+  (** Run a finite batch and return one settled outcome per input, preserving
+      input order. Worker crashes are represented as [Worker_died] values
+      instead of aborting siblings. *)
+
+  module Pool : sig
+    type t = pool
+
+    val create : ?domains:int -> unit -> t
+    (** Create a reusable island pool. [domains] defaults to [2].
+        @raise Invalid_argument if [domains <= 0]. *)
+
+    val shutdown : t -> unit
+    (** Stop the pool. Calling it more than once is harmless; submitting work
+        to a stopped pool raises [Invalid_argument]. *)
+  end
+
+  module type POOL = sig
+    val pool : pool
+  end
+
+  module Make (_ : POOL) : sig
+    val run :
+      ?name:string -> ('input -> 'output) -> 'input -> ('output, 'err) Eta.Effect.t
+
+    val map :
+      ?name:string ->
+      f:('input -> 'output) ->
+      'input list ->
+      ('output list, 'err) Eta.Effect.t
+
+    val map_result :
+      ?name:string ->
+      f:('input -> ('output, 'error) result) ->
+      'input list ->
+      (('output, 'error) result list, 'err) Eta.Effect.t
+
+    val all_settled :
+      ?name:string ->
+      f:('input -> ('output, 'error) result) ->
+      'input list ->
+      (('output, 'error) settled list, 'err) Eta.Effect.t
+  end
 end

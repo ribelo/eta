@@ -21,7 +21,7 @@ let pool_stress_factory =
 let test_pool_stress_no_resource_leak () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let open_fn, close_fn, live = pool_stress_factory in
   let pool =
     run_ok rt
@@ -91,7 +91,7 @@ let test_semaphore_stress_permit_accounting () =
 let test_channel_stress_no_lost_messages () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let ch = Channel.create ~capacity:4 () in
   let n_messages = 100 in
   let received = Atomic.make 0 in

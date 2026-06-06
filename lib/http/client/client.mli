@@ -45,7 +45,7 @@ val make_h1 :
 val make_h1_direct :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
-  ?host_eio:Eta.Host_eio.t ->
+  ?host_eio:Eta_eio.Host.t ->
   ?max_response_body_bytes:int ->
   ?ca_file:string ->
   unit ->
@@ -58,7 +58,7 @@ val make_h1_direct :
     fibers. *)
 
 val run_host_h1 :
-  Eta.Host_eio.t ->
+  Eta_eio.Host.t ->
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   net:_ Eio.Net.t ->
@@ -68,8 +68,7 @@ val run_host_h1 :
   ?logger:Eta.Capabilities.logger ->
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
-  ?island_pool:Eta.Island.pool ->
-  ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
+  ?blocking_pool:Eta_blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ?max_response_body_bytes:int ->
   ?ca_file:string ->
@@ -80,7 +79,7 @@ val run_host_h1 :
 
     This is the compact path for [dune utop] workflows: Exergy code can keep
     accepting a normal {!t}, while the interactive session supplies the host
-    Eio modules through {!Eta.Host_eio}. *)
+    Eio modules through {!Eta_eio.Host}. *)
 
 val make :
   sw:Eio.Switch.t ->

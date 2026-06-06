@@ -8,12 +8,14 @@ type 'err close_reason = Clean | Error of 'err
 
 type ('a, 'err) sender = {
   value : 'a;
-  resolver : 'err send_result Eio.Promise.u;
+  contract : Runtime_contract.t;
+  resolver : 'err send_result Runtime_contract.resolver;
   mutable active : bool;
 }
 
 type ('a, 'err) receiver = {
-  resolver : ('a, 'err) recv_result Eio.Promise.u;
+  contract : Runtime_contract.t;
+  resolver : ('a, 'err) recv_result Runtime_contract.resolver;
   mutable state : 'a receiver_state;
 }
 
@@ -24,7 +26,7 @@ and 'a receiver_state =
   | Cancelled
 
 type ('a, 'err) t = {
-  mutex : Eio.Mutex.t;
+  mutex : Sync_lock.t;
   buffer : 'a option array;
   senders : ('a, 'err) sender Stdlib.Queue.t;
   receivers : ('a, 'err) receiver Stdlib.Queue.t;
@@ -54,7 +56,7 @@ type stats = {
 let create ~capacity () =
   if capacity <= 0 then invalid_arg "Eta.Channel.create: capacity must be > 0";
   {
-    mutex = Eio.Mutex.create ();
+    mutex = Sync_lock.create ();
     buffer = Array.make capacity None;
     senders = Stdlib.Queue.create ();
     receivers = Stdlib.Queue.create ();
@@ -74,6 +76,14 @@ let create ~capacity () =
 let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
+
+let resolve_sender (sender : ('a, 'err) sender) (result : 'err send_result) =
+  sender.contract.Runtime_contract.resolve_promise sender.resolver result
+
+let resolve_receiver
+    (receiver : ('a, 'err) receiver)
+    (result : ('a, 'err) recv_result) =
+  receiver.contract.Runtime_contract.resolve_promise receiver.resolver result
 
 let capacity_used (t : ('a, 'err) t) =
   t.depth + t.pending_receivers
@@ -178,7 +188,7 @@ let release_receiver_delivery (t : ('a, 'err) t) =
 let deliver_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) value =
   reserve_receiver_delivery t;
   receiver.state <- Delivered value;
-  Eio.Promise.resolve receiver.resolver (`Item value)
+  resolve_receiver receiver (`Item value)
 
 let claim_receiver (t : ('a, 'err) t) receiver =
   match receiver.state with
@@ -212,15 +222,15 @@ let rec admit_waiting_senders (t : ('a, 'err) t) =
           | Some receiver ->
               t.sent <- t.sent + 1;
               deliver_receiver t receiver sender.value;
-              Eio.Promise.resolve sender.resolver `Sent;
+              resolve_sender sender `Sent;
               admit_waiting_senders t
           | None ->
               push_counted t sender.value;
-              Eio.Promise.resolve sender.resolver `Sent;
+              resolve_sender sender `Sent;
               admit_waiting_senders t
         else (
           push_counted t sender.value;
-          Eio.Promise.resolve sender.resolver `Sent;
+          resolve_sender sender `Sent;
           admit_waiting_senders t))
 
 let pump (t : ('a, 'err) t) =
@@ -228,22 +238,21 @@ let pump (t : ('a, 'err) t) =
   admit_waiting_senders t
 
 let with_lock (t : ('a, 'err) t) f =
-  Eio.Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
+  Sync_lock.use t.mutex f
 
-let with_lock_during_cancel t f =
-  Eio.Cancel.protect (fun () -> with_lock t f)
+let with_lock_during_cancel contract t f =
+  contract.Runtime_contract.protect (fun () -> with_lock t f)
 
-let enqueue_sender (t : ('a, 'err) t) value =
-  let promise, resolver = Eio.Promise.create () in
-  let sender = { value; resolver; active = true } in
+let enqueue_sender contract (t : ('a, 'err) t) value =
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let sender = { value; contract; resolver; active = true } in
   Stdlib.Queue.push sender t.senders;
   t.waiting_senders <- t.waiting_senders + 1;
   (promise, sender)
 
-let enqueue_receiver (t : ('a, 'err) t) =
-  let promise, resolver = Eio.Promise.create () in
-  let receiver = { resolver; state = Waiting } in
+let enqueue_receiver contract (t : ('a, 'err) t) =
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let receiver = { contract; resolver; state = Waiting } in
   Stdlib.Queue.push receiver t.receivers;
   t.waiting_receivers <- t.waiting_receivers + 1;
   (promise, receiver)
@@ -277,7 +286,7 @@ let close_locked (t : ('a, 'err) t) reason =
       match take_sender t with
       | None -> ()
       | Some sender ->
-          Eio.Promise.resolve sender.resolver (close_result reason);
+          resolve_sender sender (close_result reason);
           close_senders ()
     in
     let rec close_receivers () =
@@ -285,13 +294,13 @@ let close_locked (t : ('a, 'err) t) reason =
       | None -> ()
       | Some receiver ->
           receiver.state <- Cancelled;
-          Eio.Promise.resolve receiver.resolver (close_result reason);
+          resolve_receiver receiver (close_result reason);
           close_receivers ()
     in
     close_senders ();
     close_receivers ())
 
-let send_sync (t : ('a, 'err) t) value =
+let send_sync contract (t : ('a, 'err) t) value =
   match
     with_lock t @@ fun () ->
     match t.closed with
@@ -309,17 +318,17 @@ let send_sync (t : ('a, 'err) t) value =
         push_counted t value;
         `Ready `Sent
     | None ->
-        let promise, sender = enqueue_sender t value in
+        let promise, sender = enqueue_sender contract t value in
         `Wait (promise, sender)
   with
   | `Ready result -> result
   | `Wait (promise, sender) -> (
-      try Eio.Promise.await promise
-      with Eio.Cancel.Cancelled _ as exn ->
-        with_lock_during_cancel t (fun () -> cancel_sender t sender);
+      try contract.Runtime_contract.await_promise promise
+      with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+        with_lock_during_cancel contract t (fun () -> cancel_sender t sender);
         raise exn)
 
-let recv_sync (t : ('a, 'err) t) =
+let recv_sync contract (t : ('a, 'err) t) =
   match
     with_lock t @@ fun () ->
     if t.depth > 0 then (
@@ -331,31 +340,33 @@ let recv_sync (t : ('a, 'err) t) =
       | Some sender ->
           t.sent <- t.sent + 1;
           t.received <- t.received + 1;
-          Eio.Promise.resolve sender.resolver `Sent;
+          resolve_sender sender `Sent;
           `Ready (`Item sender.value)
       | None -> (
           match t.closed with
           | Some reason -> `Ready (close_result reason)
           | None ->
-              let promise, receiver = enqueue_receiver t in
+              let promise, receiver = enqueue_receiver contract t in
               `Wait (promise, receiver))
   with
   | `Ready result -> result
   | `Wait (promise, receiver) -> (
       try
-        match Eio.Promise.await promise with
+        match contract.Runtime_contract.await_promise promise with
         | `Item _ as result ->
             with_lock t (fun () ->
                 claim_receiver t receiver;
                 pump t);
             result
         | (`Empty | `Closed | `Closed_with_error _) as result -> result
-      with Eio.Cancel.Cancelled _ as exn ->
-        with_lock_during_cancel t (fun () -> cancel_receiver t receiver);
+      with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+        with_lock_during_cancel contract t (fun () -> cancel_receiver t receiver);
         raise exn)
 
 let send t value =
-  Effect.sync (fun () -> send_sync t value)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         send_sync frame.Effect_core.runtime.Runtime_core.contract t value))
   |> Effect.bind (function
        | `Sent -> Effect.unit
        | `Full -> assert false
@@ -363,7 +374,9 @@ let send t value =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let recv t =
-  Effect.sync (fun () -> recv_sync t)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         recv_sync frame.Effect_core.runtime.Runtime_core.contract t))
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false
@@ -401,7 +414,7 @@ let try_recv (t : ('a, 'err) t) =
     | Some sender ->
         t.sent <- t.sent + 1;
         t.received <- t.received + 1;
-        Eio.Promise.resolve sender.resolver `Sent;
+        resolve_sender sender `Sent;
         `Item sender.value
     | None -> (
         match t.closed with
@@ -414,7 +427,7 @@ let close_with_error (t : ('a, 'err) t) error =
   with_lock t @@ fun () -> close_locked t (Error error)
 
 let stats (t : ('a, 'err) t) =
-  Eio.Mutex.use_ro t.mutex @@ fun () ->
+  Sync_lock.use t.mutex @@ fun () ->
   {
     depth = t.depth;
     sent = t.sent;

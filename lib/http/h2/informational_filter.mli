@@ -27,7 +27,7 @@ val forget_stream : t -> int -> unit
 
 val buffered_bytes : t -> int
 
-(** [is_passthrough t] is true when the filter has no pending data, no open
-    header block, and has already processed a final response. In this state,
-    feeding data through the filter is a no-op. *)
+(** [is_passthrough t] is always false. A safe raw passthrough mode would need
+    to be stream-specific; callers should continue feeding server-to-client
+    bytes through the filter. *)
 val is_passthrough : t -> bool

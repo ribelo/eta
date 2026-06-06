@@ -1,10 +1,9 @@
-(** Eio-backed interpreter for Eta effects. *)
+(** Runtime-backed interpreter for Eta effects. *)
 
 type 'err t
 
-val create :
-  sw:Eio.Switch.t ->
-  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+val create_with_runtime :
+  (module Runtime_contract.RUNTIME) ->
   ?sleep:(Duration.t -> unit) ->
   ?tracer:Capabilities.tracer ->
   ?sampler:Sampler.t ->
@@ -12,97 +11,52 @@ val create :
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
   ?random:Capabilities.random ->
-  ?island_pool:Island.pool ->
-  ?blocking_pool:Effect.Blocking.Pool.t ->
-  ?blocking_runner:Effect.Blocking.Pool.runner ->
+  ?services:Runtime_contract.service list ->
   ?capture_backtrace:bool ->
   unit ->
   'err t
-(** Create an interpreter.
+(** Create an interpreter from a module-shaped backend runtime.
 
-    [island_pool] configures the reusable worker-domain executor used by
-    {!Island} combinators. Missing configuration is
-    a runtime defect; Eta does not silently run island work in the current
-    domain.
+    Runtime packages should implement {!Runtime_contract.RUNTIME} and pass the
+    module here. Eta currently erases that module into the interpreter's
+    internal representation; the module boundary is the public contract for
+    future functorized runtimes.
 
-    [blocking_pool] overrides the runtime-owned default pool used by
-    {!Effect.blocking} when a call does not pass [?pool]. If omitted, the
-    runtime lazily creates a bounded Phase 1 pool using the measured default
-    config documented on {!Effect.Blocking.Pool.create}.
-
-    [blocking_runner] configures the worker substrate for that lazy default
-    blocking pool.
+    [services] attaches optional runtime-package services. Root [eta] does not
+    inspect their types; packages such as [eta_blocking] own their keys and
+    retrieve them through [Effect.Expert].
 
     [capture_backtrace] controls whether unchecked exceptions captured as
     [Cause.Die] carry [Printexc.raw_backtrace]. It defaults to [true]. Disable
     it only for runtimes where defect-path allocation cost matters more than
     diagnostics. *)
 
-val with_host_eio :
-  Host_eio.t ->
-  sw:Eio.Switch.t ->
-  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
-  ?tracer:Capabilities.tracer ->
-  ?sampler:Sampler.t ->
-  ?auto_instrument:bool ->
-  ?logger:Capabilities.logger ->
-  ?meter:Capabilities.meter ->
-  ?random:Capabilities.random ->
-  ?island_pool:Island.pool ->
-  ?blocking_pool:Effect.Blocking.Pool.t ->
-  ?capture_backtrace:bool ->
-  ('err t -> 'a) ->
-  'a
-(** Create a runtime from a host switch using host Eio operations for blocking
-    workers and sleeps.
+module Make (_ : Runtime_contract.RUNTIME) : sig
+  val create :
+    ?sleep:(Duration.t -> unit) ->
+    ?tracer:Capabilities.tracer ->
+    ?sampler:Sampler.t ->
+    ?auto_instrument:bool ->
+    ?logger:Capabilities.logger ->
+    ?meter:Capabilities.meter ->
+    ?random:Capabilities.random ->
+    ?services:Runtime_contract.service list ->
+    ?capture_backtrace:bool ->
+    unit ->
+    'err t
+  (** Create an interpreter using the runtime module applied to this functor. *)
 
-    This is mainly for [dune utop] workflows where Eta is loaded before
-    [eio_main]:
+  val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
 
-    {[
-      #require "eio_main";;
+  val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
+  val drain : 'err t -> unit
+end
+(** Functor-shaped runtime constructor for backends that want a statically
+    applied module instead of passing a first-class module through each create
+    call. *)
 
-      let host =
-        Host_eio.make
-          ~unix:(module Eio_unix)
-          ~eio:(module Eio)
-          ()
-      ;;
-
-      Eio_main.run @@ fun env ->
-      Eio.Switch.run @@ fun sw ->
-      Runtime.with_host_eio host ~sw
-        ~clock:(Eio.Stdenv.clock env)
-        ~random:(Capabilities.random_of_seed 1)
-      @@ fun rt ->
-      Runtime.run rt eff
-    ]} *)
-
-val run_host_eio :
-  Host_eio.t ->
-  sw:Eio.Switch.t ->
-  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
-  ?tracer:Capabilities.tracer ->
-  ?sampler:Sampler.t ->
-  ?auto_instrument:bool ->
-  ?logger:Capabilities.logger ->
-  ?meter:Capabilities.meter ->
-  ?random:Capabilities.random ->
-  ?island_pool:Island.pool ->
-  ?blocking_pool:Effect.Blocking.Pool.t ->
-  ?capture_backtrace:bool ->
-  ('a, 'err) Effect.t ->
-  ('a, 'err) Exit.t
-(** Create a host-backed runtime and run one eff to completion. *)
-
-val run :
-  ?island_pool:Island.pool ->
-  ?blocking_pool:Effect.Blocking.Pool.t ->
-  'err t ->
-  ('a, 'err) Effect.t ->
-  ('a, 'err) Exit.t
-(** Run an eff to completion. [island_pool] and [blocking_pool] override the
-    runtime defaults for this run only. *)
+val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
+(** Run an eff to completion. *)
 
 val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
 (** Run an eff and raise on non-success. Prefer {!run} when

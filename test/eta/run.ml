@@ -4,8 +4,8 @@ open Test_eta_effect_concurrency
 open Test_eta_effect_retry_repeat
 open Test_eta_effect_resource_timeout
 open Test_eta_effect_uninterruptible
+open Test_eta_runtime_contract
 open Test_eta_upstream_invariants
-open Test_eta_island
 open Test_eta_blocking
 open Test_eta_supervisor
 open Test_eta_clock_resource_scope
@@ -320,44 +320,32 @@ let () =
           Alcotest.test_case "uninterruptible no-checkpoint loser" `Quick
             test_uninterruptible_race_loser_without_checkpoints_returns;
         ] );
-      ( "Island",
+      ( "Runtime contract",
         [
-          Alcotest.test_case "single uses runtime pool" `Quick
-            test_island_single_uses_runtime_pool;
-          Alcotest.test_case "requires pool" `Quick test_island_requires_pool;
-          Alcotest.test_case "run pool override" `Quick
-            test_island_run_pool_override;
-          Alcotest.test_case "map preserves order" `Quick
-            test_island_map_preserves_order;
-          Alcotest.test_case "map uses pool fanout" `Quick
-            test_island_map_uses_pool_fanout;
-          Alcotest.test_case "timeout stops waiting for batch" `Quick
-            test_island_timeout_stops_waiting_for_batch;
-          Alcotest.test_case "map_result returns item results" `Quick
-            test_island_map_result_returns_item_results;
-          Alcotest.test_case "all_settled returns worker_died" `Quick
-            test_island_all_settled_returns_worker_died;
-          Alcotest.test_case "worker_died captures exception details" `Quick
-            test_island_worker_died_captures_exception_details;
-          Alcotest.test_case "map worker crash fails outer eff" `Quick
-            test_island_map_worker_crash_fails_outer_effect;
-          Alcotest.test_case "workloads" `Quick test_island_workloads;
+          Alcotest.test_case "functor runtime runs core effect" `Quick
+            test_functor_runtime_runs_core_effect;
+          Alcotest.test_case "first-class runtime uses contract sleep" `Quick
+            test_first_class_runtime_uses_contract_sleep;
+          Alcotest.test_case "direct runtime preserves task context" `Quick
+            test_direct_runtime_preserves_task_context;
+          Alcotest.test_case "expert custom effect uses runtime contract" `Quick
+            test_expert_custom_effect_uses_runtime_contract;
         ] );
       ( "Blocking",
         [
-          Alcotest.test_case "submit alias and stats" `Quick
-            test_blocking_submit_alias_and_stats;
-          Alcotest.test_case "blocking_result lifts result" `Quick
-            test_blocking_result_lifts_result;
-          Alcotest.test_case "blocking_result exception is defect" `Quick
+          Alcotest.test_case "run and stats" `Quick
+            test_blocking_run_and_stats;
+          Alcotest.test_case "result lifts result" `Quick
+            test_blocking_result_lifts_result_value;
+          Alcotest.test_case "result exception is defect" `Quick
             test_blocking_result_exception_is_defect;
-          Alcotest.test_case "blocking_result_timeout interrupts" `Quick
+          Alcotest.test_case "result_timeout interrupts" `Quick
             test_blocking_result_timeout_interrupts_and_fails_typed;
-          Alcotest.test_case "blocking_result_timeout cancels once" `Quick
+          Alcotest.test_case "result_timeout cancels once" `Quick
             test_blocking_result_timeout_calls_on_cancel_once;
-          Alcotest.test_case "blocking_result_timeout bounds caller wait"
+          Alcotest.test_case "result_timeout bounds caller wait"
             `Quick test_blocking_result_timeout_bounds_started_drain_wait;
-          Alcotest.test_case "blocking_result_timeout cancels queued work"
+          Alcotest.test_case "result_timeout cancels queued work"
             `Quick test_blocking_result_timeout_cancels_queued_work;
           Alcotest.test_case "custom runner" `Quick
             test_blocking_pool_custom_runner;
@@ -383,8 +371,8 @@ let () =
             test_blocking_detach_started_counts_each_job_once;
           Alcotest.test_case "named pools isolate" `Quick
             test_blocking_named_pools_prevent_starvation;
-          Alcotest.test_case "worker rejects nested submit" `Quick
-            test_blocking_worker_rejects_nested_submit;
+          Alcotest.test_case "worker rejects nested run" `Quick
+            test_blocking_worker_rejects_nested_run;
           Alcotest.test_case "worker rejects runtime run" `Quick
             test_blocking_worker_rejects_runtime_run;
           Alcotest.test_case "cpu antipattern" `Quick
@@ -585,6 +573,8 @@ let () =
             test_pool_release_defect_releases_capacity;
           Alcotest.test_case "shutdown reports close failure after all idle"
             `Quick test_pool_shutdown_reports_failure_after_closing_all_idle;
+          Alcotest.test_case "shutdown release defect removes idle" `Quick
+            test_pool_shutdown_release_defect_removes_idle_entry;
           Alcotest.test_case "max size under concurrent checkout" `Quick
             test_pool_max_size_respected_under_concurrent_checkout;
           Alcotest.test_case "timeout cleans waiter" `Quick
@@ -645,6 +635,8 @@ let () =
             test_semaphore_acquire_at_capacity_succeeds;
           Alcotest.test_case "try_acquire is atomic" `Quick
             test_semaphore_try_acquire_is_atomic;
+          Alcotest.test_case "try_acquire does not barge queued waiter" `Quick
+            test_semaphore_try_acquire_does_not_barge_queued_waiter;
           Alcotest.test_case "with_permits releases on success" `Quick
             test_semaphore_with_permits_releases_on_success;
           Alcotest.test_case "with_permits releases on failure" `Quick

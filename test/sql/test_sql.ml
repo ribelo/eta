@@ -351,7 +351,7 @@ let pp_pool_error ppf = function
 let run_effect program =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   match Eta.Runtime.run rt program with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
@@ -596,7 +596,7 @@ let test_sql_find_opt_rejects_many_rows () =
   let result =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
     let program =
       Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
         (S.memory_config ())
@@ -823,7 +823,7 @@ let test_sql_connection_rejects_closed_and_invalid_transaction_state () =
   let result =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
     Q.Pool.create ~max_size:1 (S.memory_config ())
     |> Eta.Effect.bind (fun pool ->
            Q.Pool.Raw.query pool "SELECT 1" []
@@ -946,7 +946,7 @@ let test_sql_pool_typed_compiled_queries () =
 let test_sql_pool_typed_fold_select_decode_failure_is_typed () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let module Mismatch = Q.Table.Make (struct
     let name = "typed_fold_decode_mismatch"
   end) in
@@ -1010,7 +1010,7 @@ let test_sql_pool_parent_cancel_interrupts_and_reuses_connection () =
   test_sql_pool_timeout_interrupts_and_reuses_connection ()
 
 let test_sql_pool_rejects_detach_started_blocking_pool () =
-  let module BP = Eta.Effect.Blocking.Pool in
+  let module BP = Eta_blocking.Pool in
   let blocking_pool =
     BP.create ~name:"sqlite-detach"
       {
@@ -1034,7 +1034,7 @@ let test_sql_pool_rejects_detach_started_blocking_pool () =
   match
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
     Eta.Runtime.run rt program
   with
   | Eta.Exit.Error
@@ -1244,7 +1244,7 @@ let pp_migrate_error ppf err =
 let run_migrate_effect program =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   match Eta.Runtime.run rt program with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
@@ -1380,6 +1380,45 @@ let test_sql_migration_source_resolution_metadata () =
   Alcotest.(check string) "description" "create users"
     first.M.Migration.description
 
+let test_sql_migration_source_rejects_duplicate_versions () =
+  let module M = Q.Migrate in
+  let version =
+    match M.Version.from_int 1 with
+    | Ok version -> version
+    | Result.Error _ -> Alcotest.fail "unexpected invalid migration version"
+  in
+  let migration migration_type description sql =
+    M.Migration.make ~version ~description ~migration_type ~sql ()
+  in
+  let expect_duplicate label migrations =
+    match M.Source.resolve (M.Source.from_migrations migrations) with
+    | Result.Error _ -> ()
+    | Ok migrations ->
+        Alcotest.failf "%s accepted; resolved %d migrations" label
+          (List.length migrations)
+  in
+  expect_duplicate "duplicate simple migration version"
+    [
+      migration M.Simple "first duplicate"
+        "CREATE TABLE eta_duplicate_first (id INTEGER);";
+      migration M.Simple "second duplicate"
+        "CREATE TABLE eta_duplicate_second (id INTEGER);";
+    ];
+  expect_duplicate "duplicate reversible-up migration version"
+    [
+      migration M.Reversible_up "first up duplicate"
+        "CREATE TABLE eta_duplicate_up_first (id INTEGER);";
+      migration M.Reversible_up "second up duplicate"
+        "CREATE TABLE eta_duplicate_up_second (id INTEGER);";
+    ];
+  expect_duplicate "duplicate reversible-down migration version"
+    [
+      migration M.Reversible_down "first down duplicate"
+        "DROP TABLE eta_duplicate_down_first;";
+      migration M.Reversible_down "second down duplicate"
+        "DROP TABLE eta_duplicate_down_second;";
+    ]
+
 (* P1: SQL timeouts reset per-step instead of bounding the total operation.
    In fold/with_transaction, the user's timeout is passed to each sub-step
    (prepare, fetch_batch, rollback) independently. Each gets a fresh timeout
@@ -1400,7 +1439,7 @@ let test_sql_fold_timeout_does_not_bound_total_elapsed () =
      fold completes without ever timing out. *)
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let program =
     let* pool =
       Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1
@@ -1477,7 +1516,7 @@ let test_sql_pool_leaked_transaction_poisons_next_borrower () =
      with an active transaction. *)
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let program =
     let* pool =
       Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1
@@ -1552,7 +1591,7 @@ let test_sql_pool_health_check_does_not_detect_active_transaction () =
      a transaction-state-aware check. *)
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let program =
     let* pool =
       Q.Pool.create ~default_timeout:(Eta.Duration.ms 5000) ~max_size:1

@@ -72,7 +72,7 @@ let expected = 465
 let run_with_deps deps eff =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   Runtime.run rt eff
 
 let ok = function

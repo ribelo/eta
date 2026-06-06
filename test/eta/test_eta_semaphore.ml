@@ -75,6 +75,26 @@ let test_semaphore_try_acquire_is_atomic () =
     (Semaphore.try_acquire sem 1);
   Alcotest.(check int) "empty" 0 (Semaphore.available sem)
 
+let test_semaphore_try_acquire_does_not_barge_queued_waiter () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let sem = Semaphore.make ~permits:2 in
+  Alcotest.(check bool) "initial acquire" true (Semaphore.try_acquire sem 2);
+  let waiter = fork_run sw rt (Semaphore.acquire sem 2) in
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  Semaphore.release sem 1;
+  Alcotest.(check bool) "queued waiter remains blocked" false
+    (Eio.Promise.is_resolved waiter);
+  Alcotest.(check bool)
+    "try_acquire must not barge ahead of queued waiter"
+    false
+    (Semaphore.try_acquire sem 1);
+  Semaphore.release sem 1;
+  check_exit_ok Alcotest.unit "older waiter receives permits" ()
+    (Eio.Promise.await waiter);
+  Semaphore.release sem 2
+
 let test_semaphore_with_permits_releases_on_success () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:5 in
@@ -188,7 +208,7 @@ let test_semaphore_cancellation_removes_waiters_behind_active_waiter () =
 let test_semaphore_fifo_wakes_waiters_in_order () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   run_ok rt (Semaphore.acquire sem 1);
   let completed = ref [] in
@@ -211,7 +231,7 @@ let test_semaphore_fifo_wakes_waiters_in_order () =
 let test_semaphore_cancel_after_wakeup_returns_permit () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   run_ok rt (Semaphore.acquire sem 1);
   let cancel_ctx = ref None in
@@ -233,7 +253,7 @@ let test_semaphore_cancel_after_wakeup_returns_permit () =
 let test_semaphore_waiting_ignores_resolved_waiter () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   run_ok rt (Semaphore.acquire sem 1);
   let waiter = fork_run sw rt (Semaphore.acquire sem 1) in
@@ -305,7 +325,7 @@ let test_semaphore_with_permits_or_abort_acquires_when_available () =
 let test_semaphore_with_permits_or_abort_aborts_without_permit () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   run_ok rt (Semaphore.acquire sem 1);
   let abort_p, abort_u = Eio.Promise.create () in
@@ -327,7 +347,7 @@ let test_semaphore_with_permits_or_abort_aborts_without_permit () =
 let test_semaphore_with_permits_or_abort_reclaims_claimed_permit_on_abort () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   run_ok rt (Semaphore.acquire sem 1);
   let abort_p, abort_u = Eio.Promise.create () in
@@ -354,7 +374,7 @@ let test_semaphore_with_permits_or_abort_reclaims_claimed_permit_on_abort () =
 let test_semaphore_with_permits_or_abort_releases_on_outer_cancel () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let sem = Semaphore.make ~permits:1 in
   let never_p, _ = Eio.Promise.create () in
   let never = Effect.sync (fun () -> Eio.Promise.await never_p) in

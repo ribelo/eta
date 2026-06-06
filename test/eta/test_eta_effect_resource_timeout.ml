@@ -575,7 +575,7 @@ let test_drain_does_not_busy_wait () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   (* Launch a daemon that sleeps for 100ms *)
   let daemon_body =

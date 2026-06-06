@@ -41,6 +41,113 @@ let test_h1_writer_fixed_body () =
          abcdef"
         request
 
+let test_h1_writer_rejects_mismatched_content_length () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  match
+    Eta_http.H1.Write.to_string ~method_:"POST" ~url
+      ~headers:[ ("Content-Length", "3") ]
+      ~body:(Fixed [ Bytes.of_string "abcdef" ])
+  with
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        "mentions Content-Length" true
+        (contains reason "Content-Length")
+  | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
+  | Ok wire -> Alcotest.failf "serialized mismatched request: %S" wire
+
+let expect_h1_content_length_invalid label = function
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        (label ^ " mentions Content-Length")
+        true
+        (contains reason "Content-Length")
+  | Error error ->
+      Alcotest.failf "%s unexpected error: %s" label
+        (Eta_http.Error.to_string error)
+  | Ok wire ->
+      Alcotest.failf "%s serialized invalid request: %S" label wire
+
+let expect_h1_content_length_invalid_len label bytes = function
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        (label ^ " mentions Content-Length")
+        true
+        (contains reason "Content-Length")
+  | Error error ->
+      Alcotest.failf "%s unexpected error: %s" label
+        (Eta_http.Error.to_string error)
+  | Ok len ->
+      let wire = Bytes.sub_string bytes 0 len in
+      Alcotest.failf "%s serialized invalid request: %S" label wire
+
+let test_h1_writer_rejects_invalid_content_length_framing () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  let cases =
+    [
+      ( "invalid",
+        [ ("Content-Length", "nope") ],
+        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+      ( "duplicate conflict",
+        [ ("Content-Length", "6"); ("Content-Length", "3") ],
+        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+      ( "empty mismatch",
+        [ ("Content-Length", "1") ],
+        Eta_http.H1.Write.Empty );
+      ( "content length with transfer encoding",
+        [ ("Content-Length", "6"); ("Transfer-Encoding", "chunked") ],
+        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+    ]
+  in
+  List.iter
+    (fun (label, headers, body) ->
+      Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers ~body
+      |> expect_h1_content_length_invalid (label ^ " string");
+      let bytes = Bytes.create 512 in
+      Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
+        ~headers ~body
+      |> expect_h1_content_length_invalid_len (label ^ " bytes") bytes;
+      let buffer = Buffer.create 128 in
+      let flow = Eio.Flow.buffer_sink buffer in
+      (match
+         Eta_http.H1.Write.write_to_flow flow ~method_:"POST" ~url ~headers
+           ~body
+       with
+      | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+          Alcotest.(check bool)
+            (label ^ " flow mentions Content-Length")
+            true
+            (contains reason "Content-Length");
+          Alcotest.(check string)
+            (label ^ " flow emitted nothing")
+            "" (Buffer.contents buffer)
+      | Error error ->
+          Alcotest.failf "%s flow unexpected error: %s" label
+            (Eta_http.Error.to_string error)
+      | Ok () ->
+          Alcotest.failf "%s flow serialized invalid request: %S" label
+            (Buffer.contents buffer)))
+    cases
+
+let test_h1_writer_stream_override_does_not_reframe_fixed_body () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  let buffer = Buffer.create 128 in
+  let flow = Eio.Flow.buffer_sink buffer in
+  match
+    Eta_http.H1.Write.write_to_flow ~framing_body_length:3 flow ~method_:"POST"
+      ~url ~headers:[ ("Content-Length", "3") ]
+      ~body:(Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ])
+  with
+  | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
+      Alcotest.(check bool)
+        "fixed override mentions Content-Length" true
+        (contains reason "Content-Length");
+      Alcotest.(check string) "fixed override emitted nothing" ""
+        (Buffer.contents buffer)
+  | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
+  | Ok () ->
+      Alcotest.failf "fixed override serialized invalid request: %S"
+        (Buffer.contents buffer)
+
 let test_h1_writer_flow_matches_string_writer () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
   let body =
@@ -187,4 +294,3 @@ let test_h1_writer_rejects_header_injection () =
             (contains (Buffer.contents buffer) "injected: 1");
           Alcotest.failf "%s flow unexpectedly accepted invalid header" label))
     h1_injection_cases
-

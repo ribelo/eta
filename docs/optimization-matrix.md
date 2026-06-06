@@ -24,7 +24,7 @@ not record benchmark numbers; benchmark history stays under `bench/results/`.
 | `eta_schema_test` | Alcotest helpers for schema packages. | Later | No optimization pass needed unless test runtime becomes noisy. | Package tests. | Defer; utility package. |
 | `eta_redacted` | Redacted sensitive values and rendering helpers. | Later | Small surface; no optimization pass recorded. | `test/redacted`. | Defer unless provider benchmarks show redaction overhead. |
 | `eta_test` | Test clock, deterministic random, expectations, runtime fixtures. | Later | Test support only. | `test/test`. | Defer; optimize only if it slows the suite. |
-| `Eta.Par` | Rayon-style fork/join and array parallelism. | Ready | Benchmarks exist; no package-level optimization pass recorded here. | `lib/par/bench`, `bench/runtime_par`. | Tackle when CPU parallel workloads become the focus; high leverage but less urgent for realtime audio substrate than stream/WS. |
+| `eta_par` | Rayon-style fork/join, array parallelism, and native island offload. | Ready | Benchmarks exist; no package-level optimization pass recorded here. | `lib/par/bench`, `bench/runtime_par`. | Tackle when CPU parallel workloads become the focus; high leverage but less urgent for realtime audio substrate than stream/WS. |
 | Eta SQL | SQLite connector, SQL builders, Eta pool, migrations. | Ready | Dependency cleanup done; no optimization pass recorded here. | `test/sql`, `lib/sql/bench`. | Tackle after substrate/provider packages unless SQLite latency is a product priority. |
 | `eta_otel` | OTLP/JSON exporter, batching, stream merging, retry, transport. | Needs harness | Audit exists; exporter path depends on eta_stream and eta_http. | `test/otel`, current OTLP adapter benchmark. | Optimize after stream because batching/export pipelines use stream primitives. |
 | `eta_ai` | Core AI vocabulary, SSE parser, telemetry wrappers, redacted API keys. | Needs harness | No package-level optimization pass recorded; depends on eta_http and eta_stream. | `test/ai/core`, provider fixtures. | Add focused benches for SSE parse and message/content encoding before optimizing. |
@@ -44,7 +44,7 @@ not record benchmark numbers; benchmark history stays under `bench/results/`.
 5. `eta_ai`.
 6. Provider packages: `eta_ai_openai`, `eta_ai_anthropic`, `eta_ai_openai_compat`, `eta_ai_openrouter`.
 7. `eta_otel`.
-8. `Eta.Par` or Eta SQL, depending on whether CPU workloads or SQLite workloads are the next product bottleneck.
+8. `eta_par` or Eta SQL, depending on whether CPU workloads or SQLite workloads are the next product bottleneck.
 9. Utility packages: `eta_redacted`, `eta_test`, `eta_schema_test`, `ppx_eta`.
 
 The immediate recommendation is to finish WebSocket inside `eta_http` before
@@ -52,4 +52,3 @@ moving on. HTTP/1.1 and HTTP/2 are done, but WebSocket is new realtime substrate
 code with fresh tests and benchmarks; optimizing it closes the package cleanly.
 If the goal is strictly to leave eta_http alone, start with `eta_stream` next
 because it sits under WebSocket inbound flow, AI SSE parsing, and OTel batching.
-

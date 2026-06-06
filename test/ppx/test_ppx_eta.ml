@@ -17,7 +17,7 @@ let test_ppx_fn () =
   Eio.Switch.run @@ fun sw ->
   let tracer = Tracer.in_memory () in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer) ()
   in
   let expected_name = __FUNCTION__ in
@@ -44,7 +44,7 @@ let test_ppx_thunk_leaf () =
   let tracer = Tracer.in_memory () in
   let auth = { Auth.user = "alice" } in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer) ()
   in
   Alcotest.(check string) "value" "alice" (run_ok rt (current_user auth));

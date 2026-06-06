@@ -2,13 +2,14 @@ type waiter_state = Waiting | Resolved_unclaimed | Claimed | Cancelled
 
 type waiter = {
   permits : int;
-  resolver : unit Eio.Promise.u;
+  contract : Runtime_contract.t;
+  resolver : unit Runtime_contract.resolver;
   mutable state : waiter_state;
 }
 
 type t = {
   max_permits : int;
-  mutex : Eio.Mutex.t;
+  mutex : Sync_lock.t;
   mutable available : int;
   waiters : waiter Stdlib.Queue.t;
   mutable cancelled_waiters : int;
@@ -18,15 +19,15 @@ let make ~permits =
   if permits <= 0 then invalid_arg "Eta.Semaphore.make: permits must be > 0";
   {
     max_permits = permits;
-    mutex = Eio.Mutex.create ();
+    mutex = Sync_lock.create ();
     available = permits;
     waiters = Stdlib.Queue.create ();
     cancelled_waiters = 0;
   }
 
-let available t = Eio.Mutex.use_ro t.mutex @@ fun () -> t.available
+let available t = Sync_lock.use t.mutex @@ fun () -> t.available
 let waiting t =
-  Eio.Mutex.use_ro t.mutex @@ fun () ->
+  Sync_lock.use t.mutex @@ fun () ->
   let count = ref 0 in
   Stdlib.Queue.iter
     (fun waiter -> match waiter.state with Waiting -> incr count | _ -> ())
@@ -34,14 +35,13 @@ let waiting t =
   !count
 
 let cancelled_waiters t =
-  Eio.Mutex.use_ro t.mutex @@ fun () -> t.cancelled_waiters
+  Sync_lock.use t.mutex @@ fun () -> t.cancelled_waiters
 
 let with_lock t f =
-  Eio.Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
+  Sync_lock.use t.mutex f
 
-let with_lock_during_cancel t f =
-  Eio.Cancel.protect (fun () -> with_lock t f)
+let with_lock_during_cancel contract t f =
+  contract.Runtime_contract.protect (fun () -> with_lock t f)
 
 let validate_request name t n =
   if n <= 0 || n > t.max_permits then
@@ -79,13 +79,16 @@ let rec wake_waiters_locked t =
   | Some waiter ->
       t.available <- t.available - waiter.permits;
       waiter.state <- Resolved_unclaimed;
-      Eio.Promise.resolve waiter.resolver ();
+      waiter.contract.Runtime_contract.resolve_promise waiter.resolver ();
       wake_waiters_locked t
 
 let try_acquire t n =
   validate_request "try_acquire" t n;
   with_lock t @@ fun () ->
-  if t.available >= n then (
+  compact_cancelled_waiters_locked t;
+  wake_waiters_locked t;
+  if not (Stdlib.Queue.is_empty t.waiters) then false
+  else if t.available >= n then (
     t.available <- t.available - n;
     true)
   else false
@@ -100,22 +103,24 @@ let release t n =
 
 let acquire t n =
   validate_request "acquire" t n;
-  let promise, resolver = Eio.Promise.create () in
-  let waiter = { permits = n; resolver; state = Waiting } in
-  Effect.sync (fun () ->
-    with_lock t @@ fun () ->
-    if t.available >= n then (
-      t.available <- t.available - n;
-      true)
-    else (
-      Stdlib.Queue.push waiter t.waiters;
-      false))
-  |> Effect.bind (fun got_now ->
-       if got_now then Effect.unit
-       else
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         let contract = frame.Effect_core.runtime.Runtime_core.contract in
+         let promise, resolver = contract.Runtime_contract.create_promise () in
+         let waiter = { permits = n; contract; resolver; state = Waiting } in
+         with_lock t @@ fun () ->
+         if t.available >= n then (
+           t.available <- t.available - n;
+           `Acquired)
+         else (
+           Stdlib.Queue.push waiter t.waiters;
+           `Waiting (contract, promise, waiter))))
+  |> Effect.bind (function
+       | `Acquired -> Effect.unit
+       | `Waiting (contract, promise, waiter) ->
          let cleanup () =
            Effect.sync (fun () ->
-             with_lock_during_cancel t @@ fun () ->
+             with_lock_during_cancel contract t @@ fun () ->
              (* Invariant (validated): on cancellation a permit is returned
                 only while the waiter has not yet taken ownership. [Waiting]
                 was never granted a permit; [Resolved_unclaimed] was granted
@@ -144,7 +149,7 @@ let acquire t n =
               ~release:(fun () -> cleanup ())
            |> Effect.bind (fun () ->
                   Effect.sync (fun () ->
-                      Eio.Promise.await promise;
+                      contract.Runtime_contract.await_promise promise;
                       with_lock t @@ fun () ->
                       match waiter.state with
                       | Resolved_unclaimed -> waiter.state <- Claimed

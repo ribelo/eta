@@ -108,6 +108,10 @@ type error =
   | Version_missing of Version.t
   | Version_mismatch of Version.t
   | Version_not_present of Version.t
+  | Duplicate_migration_version of {
+      version : Version.t;
+      migration_type : migration_type;
+    }
   | Migration_execution_error of {
       version : Version.t;
       error : Types.sql_error;

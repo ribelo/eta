@@ -1,0 +1,6 @@
+(library
+ (name eta_par)
+ (public_name eta_par)
+ (synopsis "Native heartbeat-backed parallel runtime for Eta")
+ (private_modules par_array par_iter par_runtime par_scheduler island_runtime)
+ (libraries eta eta_blocking unix threads))

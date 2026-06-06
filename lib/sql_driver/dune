@@ -2,4 +2,4 @@
  (name eta_sql_driver)
  (public_name eta_sql_driver)
  (synopsis "Shared blocking-pool and cancellation helpers for Eta SQL drivers")
- (libraries eta))
+ (libraries eta eta_blocking))

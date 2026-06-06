@@ -86,6 +86,18 @@ let account_response_headers t stream_id =
          })
   else None
 
+let saturating_add left right =
+  if left > max_int - right then max_int else left + right
+
+let continuation_flood t =
+  Some
+    (Error.Continuation_flood
+       {
+         accumulated_bytes = t.header_block_bytes;
+         limit_bytes = t.config.max_continuation_accumulator_bytes;
+         frames = t.header_block_frames;
+       })
+
 let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
   match frame_type with
   | 0x1 ->
@@ -100,21 +112,19 @@ let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
                decoded_bytes = length;
                limit_bytes = t.config.max_hpack_block_bytes;
              })
+      | None
+        when (not (end_headers flags))
+             && length > t.config.max_continuation_accumulator_bytes ->
+        continuation_flood t
       | None when end_headers flags -> (
         reset_header_block t;
         None)
       | None -> None)
   | 0x9 ->
-      t.header_block_bytes <- t.header_block_bytes + length;
+      t.header_block_bytes <- saturating_add t.header_block_bytes length;
       t.header_block_frames <- t.header_block_frames + 1;
       if t.header_block_bytes > t.config.max_continuation_accumulator_bytes then
-        Some
-          (Error.Continuation_flood
-             {
-               accumulated_bytes = t.header_block_bytes;
-               limit_bytes = t.config.max_continuation_accumulator_bytes;
-               frames = t.header_block_frames;
-             })
+        continuation_flood t
       else if end_headers flags then (
         reset_header_block t;
         None)

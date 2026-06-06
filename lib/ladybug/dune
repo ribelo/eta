@@ -8,4 +8,4 @@
   (names ladybug_stubs)
   (flags :standard))
  (c_library_flags :standard -ldl)
- (libraries eta unix threads))
+ (libraries eta eta_blocking unix threads))

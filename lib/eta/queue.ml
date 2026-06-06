@@ -1,9 +1,15 @@
 type 'err close_reason = Clean | Error of 'err
 
+type receiver = {
+  contract : Runtime_contract.t;
+  resolver : unit Runtime_contract.resolver;
+  mutable active : bool;
+}
+
 type ('a, 'err) t = {
-  mutex : Eio.Mutex.t;
-  cond : Eio.Condition.t;
+  mutex : Sync_lock.t;
   values : 'a Stdlib.Queue.t;
+  receivers : receiver Stdlib.Queue.t;
   mutable closed : 'err close_reason option;
   mutable sent : int;
   mutable received : int;
@@ -26,9 +32,9 @@ type ('a, 'err) recv_result =
 
 let create () =
   {
-    mutex = Eio.Mutex.create ();
-    cond = Eio.Condition.create ();
+    mutex = Sync_lock.create ();
     values = Stdlib.Queue.create ();
+    receivers = Stdlib.Queue.create ();
     closed = None;
     sent = 0;
     received = 0;
@@ -38,13 +44,62 @@ let create () =
 
 let unbounded = create
 
-let with_lock t f =
-  Eio.Mutex.lock t.mutex;
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
+let with_lock (t : ('a, 'err) t) f =
+  Sync_lock.use t.mutex f
+
+let with_lock_during_cancel contract t f =
+  contract.Runtime_contract.protect (fun () -> with_lock t f)
 
 let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
+
+let wake_receiver receiver =
+  if receiver.active then (
+    receiver.active <- false;
+    receiver.contract.Runtime_contract.resolve_promise receiver.resolver ())
+
+let rec take_active_receiver receivers =
+  if Stdlib.Queue.is_empty receivers then None
+  else
+    let receiver = Stdlib.Queue.take receivers in
+    if receiver.active then Some receiver else take_active_receiver receivers
+
+let wake_one_receiver_locked (t : ('a, 'err) t) =
+  match take_active_receiver t.receivers with
+  | None -> ()
+  | Some receiver ->
+      t.waiting_receivers <- t.waiting_receivers - 1;
+      wake_receiver receiver
+
+let wake_all_receivers_locked (t : ('a, 'err) t) =
+  let rec loop () =
+    match take_active_receiver t.receivers with
+    | None -> ()
+    | Some receiver ->
+        t.waiting_receivers <- t.waiting_receivers - 1;
+        wake_receiver receiver;
+        loop ()
+  in
+  loop ()
+
+let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
+  if t.cancelled_receivers > 0 then (
+    let live = Stdlib.Queue.create () in
+    Stdlib.Queue.iter
+      (fun receiver -> if receiver.active then Stdlib.Queue.push receiver live)
+      t.receivers;
+    Stdlib.Queue.clear t.receivers;
+    Stdlib.Queue.iter
+      (fun receiver -> Stdlib.Queue.push receiver t.receivers)
+      live)
+
+let cancel_receiver (t : ('a, 'err) t) receiver =
+  if receiver.active then (
+    receiver.active <- false;
+    t.waiting_receivers <- t.waiting_receivers - 1;
+    t.cancelled_receivers <- t.cancelled_receivers + 1;
+    compact_cancelled_receivers_locked t)
 
 let send_sync t value =
   with_lock t @@ fun () ->
@@ -53,7 +108,7 @@ let send_sync t value =
   | None ->
       Stdlib.Queue.add value t.values;
       t.sent <- t.sent + 1;
-      Eio.Condition.broadcast t.cond;
+      wake_one_receiver_locked t;
       `Sent
 
 let try_send t value = Effect.sync (fun () -> send_sync t value)
@@ -79,27 +134,43 @@ let try_recv t =
     | None -> `Empty
     | Some reason -> close_result reason
 
-let recv_sync t =
-  Eio.Mutex.lock t.mutex;
+let enqueue_receiver contract t =
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let receiver = { contract; resolver; active = true } in
+  Stdlib.Queue.add receiver t.receivers;
+  t.waiting_receivers <- t.waiting_receivers + 1;
+  (promise, receiver)
+
+let recv_sync contract t =
   let rec loop () =
-    if not (Stdlib.Queue.is_empty t.values) then take_value t
-    else
-      match t.closed with
-      | Some reason -> close_result reason
-      | None ->
-          t.waiting_receivers <- t.waiting_receivers + 1;
-          (try Eio.Condition.await t.cond t.mutex
-           with exn ->
-             t.waiting_receivers <- t.waiting_receivers - 1;
-             t.cancelled_receivers <- t.cancelled_receivers + 1;
-             raise exn);
-          t.waiting_receivers <- t.waiting_receivers - 1;
+    match
+      with_lock t @@ fun () ->
+      if not (Stdlib.Queue.is_empty t.values) then `Ready (take_value t)
+      else
+        match t.closed with
+        | Some reason -> `Ready (close_result reason)
+        | None ->
+            let promise, receiver = enqueue_receiver contract t in
+            `Wait (promise, receiver)
+    with
+    | `Ready result -> result
+    | `Wait (promise, receiver) -> (
+        try
+          contract.Runtime_contract.await_promise promise;
           loop ()
+        with exn
+          when Option.is_some
+                 (contract.Runtime_contract.cancellation_reason exn) ->
+          with_lock_during_cancel contract t (fun () ->
+              cancel_receiver t receiver);
+          raise exn)
   in
-  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) loop
+  loop ()
 
 let recv t =
-  Effect.sync (fun () -> recv_sync t)
+  Effect_erasure.effect_to_public
+    (Effect_core.sync_frame (fun frame ->
+         recv_sync frame.Effect_core.runtime.Runtime_core.contract t))
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false
@@ -112,13 +183,13 @@ let close_with reason t =
   | Some _ -> ()
   | None ->
       t.closed <- Some reason;
-      Eio.Condition.broadcast t.cond
+      wake_all_receivers_locked t
 
 let close t = close_with Clean t
 let close_with_error t error = close_with (Error error) t
 
 let stats t =
-  Eio.Mutex.use_ro t.mutex @@ fun () ->
+  Sync_lock.use t.mutex @@ fun () ->
   {
     depth = Stdlib.Queue.length t.values;
     sent = t.sent;

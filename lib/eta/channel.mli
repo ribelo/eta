@@ -2,8 +2,8 @@
 
     Channel is a WAIT/backpressure primitive for Eta programs that need
     bounded send/receive semantics. v1 is deliberately same-domain: it uses
-    Eio synchronization internally and must not be used as a portable or
-    cross-domain handoff channel.
+    native runtime synchronization internally and must not be used as a
+    portable or cross-domain handoff channel.
 
     The storage is preallocated at creation time. A closed channel wakes blocked
     senders and receivers. Buffered values remain available to receivers after

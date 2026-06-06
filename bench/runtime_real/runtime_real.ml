@@ -6,7 +6,7 @@
  * caught failure, and nested resource acquire/release scopes.
  *
  * Each workload pays the full "real entry point" cost on the OCaml
- * side: a fresh Eio_main.run + Switch.run + Runtime.create per
+ * side: a fresh Eio_main.run + Switch.run + Eta_eio.Runtime.create per
  * sample. This matches what a user pays at the boundary of a binary;
  * it is comparable to what `Effect.runSync` charges per call on the
  * Bun side.
@@ -19,7 +19,7 @@ let sink = ref 0
 let run_effect program =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   match Runtime.run rt program with
   | Exit.Ok v -> sink := v
   | Exit.Error _ -> failwith "unexpected failure"

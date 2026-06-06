@@ -2,7 +2,7 @@ open Eta
 open Eta_test
 open Test_eta_support
 
-module BP = Effect.Blocking.Pool
+module BP = Eta_blocking.Pool
 
 let blocking_config ?(max_threads = 4) ?(max_queued = 64)
     ?(queue_policy = BP.Wait) ?(shutdown_policy = BP.Drain) () : BP.config =
@@ -67,23 +67,23 @@ let cpu_burn_ms ms =
 let check_pool_shutdown label cause =
   check_die_message label "Pool_shutting_down" cause
 
-let test_blocking_submit_alias_and_stats () =
+let test_blocking_run_and_stats () =
   with_runtime @@ fun rt ->
   let pool = BP.create ~name:"basic" (blocking_config ~max_threads:2 ()) in
-  Alcotest.(check int) "blocking" 42
-    (run_ok rt (Effect.blocking ~pool ~name:"basic.answer" (fun () -> 42)));
-  Alcotest.(check int) "submit" 43
-    (run_ok rt (Effect.Blocking.submit ~pool ~name:"basic.submit" (fun () -> 43)));
+  Alcotest.(check int) "first run" 42
+    (run_ok rt (Eta_blocking.run ~pool ~name:"basic.answer" (fun () -> 42)));
+  Alcotest.(check int) "second run" 43
+    (run_ok rt (Eta_blocking.run ~pool ~name:"basic.second" (fun () -> 43)));
   let stats = BP.stats pool in
   Alcotest.(check int) "completed" 2 stats.completed;
   Alcotest.(check int) "active" 0 stats.active;
   Alcotest.(check int) "queued" 0 stats.queued
 
-let test_blocking_result_lifts_result () =
+let test_blocking_result_lifts_result_value () =
   with_runtime @@ fun rt ->
-  let ok = Effect.blocking_result ~name:"blocking.result.ok" (fun () -> Ok 7) in
+  let ok = Eta_blocking.result ~name:"blocking.result.ok" (fun () -> Ok 7) in
   let err =
-    Effect.blocking_result ~name:"blocking.result.err" (fun () -> Error `Bad)
+    Eta_blocking.result ~name:"blocking.result.err" (fun () -> Error `Bad)
   in
   Alcotest.(check int) "ok" 7 (run_ok rt ok);
   match Runtime.run rt err with
@@ -99,7 +99,7 @@ let test_blocking_result_exception_is_defect () =
   let pool = BP.create ~name:"blocking-result-defect" (blocking_config ()) in
   let defect = Failure "blocking result defect" in
   let eff =
-    Effect.blocking_result ~pool ~name:"blocking.result.defect" (fun () ->
+    Eta_blocking.result ~pool ~name:"blocking.result.defect" (fun () ->
         (raise defect : (int, [ `Expected ]) result))
   in
   match Runtime.run rt eff with
@@ -116,7 +116,7 @@ let test_blocking_result_timeout_interrupts_and_fails_typed () =
   with_runtime @@ fun rt ->
   let interrupted = Atomic.make false in
   let eff =
-    Effect.blocking_result_timeout ~name:"blocking.result.timeout"
+    Eta_blocking.result_timeout ~name:"blocking.result.timeout"
       ~on_cancel:(fun () -> Atomic.set interrupted true)
       ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
         Unix.sleepf 0.030;
@@ -141,7 +141,7 @@ let test_blocking_result_timeout_calls_on_cancel_once () =
   let hook_calls = Atomic.make 0 in
   let finished = Atomic.make false in
   let eff =
-    Effect.blocking_result_timeout ~pool
+    Eta_blocking.result_timeout ~pool
       ~name:"blocking.result.timeout-once"
       ~on_cancel:(fun () -> Atomic.incr hook_calls)
       ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
@@ -170,7 +170,7 @@ let test_blocking_result_timeout_bounds_started_drain_wait () =
   let started = Unix.gettimeofday () in
   let exit =
     Runtime.run rt
-      (Effect.blocking_result_timeout ~pool
+      (Eta_blocking.result_timeout ~pool
          ~name:"blocking.result.timeout-started-drain"
          ~timeout:(Duration.ms 10) ~on_timeout:`Timeout (fun () ->
            Unix.sleepf 0.25;
@@ -201,7 +201,7 @@ let test_blocking_result_timeout_cancels_queued_work () =
   let queued_ran = Atomic.make false in
   Runtime.run rt
     (Effect.daemon
-       (Effect.blocking ~pool ~name:"blocking.result.timeout-queued.blocker"
+       (Eta_blocking.run ~pool ~name:"blocking.result.timeout-queued.blocker"
           (fun () ->
             Unix.sleepf 0.10;
             Atomic.set blocker_done true)))
@@ -209,7 +209,7 @@ let test_blocking_result_timeout_cancels_queued_work () =
   wait_until (fun () -> (BP.stats pool).active = 1);
   let exit =
     Runtime.run rt
-      (Effect.blocking_result_timeout ~pool
+      (Eta_blocking.result_timeout ~pool
          ~name:"blocking.result.timeout-queued"
          ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
            Atomic.set queued_ran true;
@@ -242,12 +242,12 @@ let test_blocking_pool_custom_runner () =
   end in
   Eio.Switch.run @@ fun sw ->
   let host =
-    Host_eio.make ~unix:(module Host) ~eio:(module Eio) ()
+    Eta_eio.Host.make ~unix:(module Host) ~eio:(module Eio) ()
   in
-  Runtime.with_host_eio host ~sw ~clock:(Eio.Stdenv.clock stdenv)
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock stdenv)
   @@ fun rt ->
   Alcotest.(check int) "blocking" 45
-    (run_ok rt (Effect.blocking ~name:"custom.runner" (fun () -> 45)));
+    (run_ok rt (Eta_blocking.run ~name:"custom.runner" (fun () -> 45)));
   Alcotest.(check int) "runner calls" 1 (Atomic.get calls)
 
 let test_blocking_runner_cancellation_releases_started_slot () =
@@ -255,7 +255,7 @@ let test_blocking_runner_cancellation_releases_started_slot () =
   Eio.Switch.run @@ fun sw ->
   let runner : BP.runner =
     {
-      run_in_systhread =
+      run_worker =
         (fun ~label:_ _ ->
           raise (Eio.Cancel.Cancelled (Failure "runner cancelled")));
     }
@@ -264,10 +264,10 @@ let test_blocking_runner_cancellation_releases_started_slot () =
     BP.create ~name:"runner-cancel" ~runner
       (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   (match
      Runtime.run rt
-       (Effect.blocking ~pool ~name:"runner-cancel.interrupted" (fun () -> ()))
+       (Eta_blocking.run ~pool ~name:"runner-cancel.interrupted" (fun () -> ()))
    with
   | Exit.Ok _ -> Alcotest.fail "expected runner cancellation"
   | Exit.Error _ -> ());
@@ -276,12 +276,12 @@ let test_blocking_runner_cancellation_releases_started_slot () =
 let test_blocking_direct_control_and_blocking_heartbeat () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let direct_p99, () = heartbeat_p99_us (fun () -> Unix.sleepf 0.030) in
   let pool = BP.create ~name:"heartbeat" (blocking_config ~max_threads:4 ()) in
   let blocking_p99, () =
     heartbeat_p99_us (fun () ->
-        run_ok rt (Effect.blocking ~pool ~name:"heartbeat.sleep" (fun () -> Unix.sleepf 0.030)))
+        run_ok rt (Eta_blocking.run ~pool ~name:"heartbeat.sleep" (fun () -> Unix.sleepf 0.030)))
   in
   Alcotest.(check bool) "direct freezes heartbeat" true (direct_p99 > 20_000);
   Alcotest.(check bool) "blocking preserves heartbeat" true (blocking_p99 < 10_000)
@@ -293,7 +293,7 @@ let test_blocking_wait_policy_caps_active_and_queue () =
     BP.create ~name:"wait-cap"
       (blocking_config ~max_threads:4 ~max_queued:8 ~queue_policy:BP.Wait ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let max_active = ref 0 in
   let max_queued = ref 0 in
   let sampling = ref true in
@@ -308,7 +308,7 @@ let test_blocking_wait_policy_caps_active_and_queue () =
     heartbeat_p99_us (fun () ->
         run_ok rt
           (Effect.for_each_par (List.init 30 Fun.id) (fun _ ->
-               Effect.blocking ~pool ~name:"wait-cap.job" (fun () ->
+               Eta_blocking.run ~pool ~name:"wait-cap.job" (fun () ->
                    Unix.sleepf 0.010;
                    1))))
   in
@@ -330,12 +330,12 @@ let test_blocking_reject_policy_deterministic () =
     BP.create ~name:"reject"
       (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let first_started, first_resolver = Eio.Promise.create () in
   let first =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"reject.first" (fun () ->
+          (Eta_blocking.run ~pool ~name:"reject.first" (fun () ->
                Eio.Promise.resolve first_resolver ();
                Unix.sleepf 0.060)))
   in
@@ -343,7 +343,7 @@ let test_blocking_reject_policy_deterministic () =
   wait_until (fun () -> (BP.stats pool).active = 1);
   let rejected =
     List.init 4 (fun _ ->
-        match Runtime.run rt (Effect.blocking ~pool ~name:"reject.extra" (fun () -> ())) with
+        match Runtime.run rt (Eta_blocking.run ~pool ~name:"reject.extra" (fun () -> ())) with
         | Exit.Ok _ -> false
         | Exit.Error _ -> true)
   in
@@ -359,11 +359,11 @@ let test_blocking_pending_cancellation_removes_queued_job () =
     BP.create ~name:"cancel-pending"
       (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let blocker =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"cancel-pending.blocker" (fun () ->
+          (Eta_blocking.run ~pool ~name:"cancel-pending.blocker" (fun () ->
                Unix.sleepf 0.050)))
   in
   wait_until (fun () -> (BP.stats pool).active = 1);
@@ -373,7 +373,7 @@ let test_blocking_pending_cancellation_removes_queued_job () =
         Eio.Cancel.sub @@ fun ctx ->
         cancel_ctx := Some ctx;
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"cancel-pending.queued" (fun () -> ())))
+          (Eta_blocking.run ~pool ~name:"cancel-pending.queued" (fun () -> ())))
   in
   wait_until (fun () -> (BP.stats pool).queued = 1);
   Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
@@ -391,7 +391,7 @@ let test_blocking_started_cancellation_is_nonpreemptive () =
   let elapsed, result =
     elapsed_us (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"cancel-started.job"
+          (Eta_blocking.run ~pool ~name:"cancel-started.job"
              (fun () ->
                Unix.sleepf 0.030;
                Atomic.set completed true)
@@ -405,7 +405,7 @@ let test_blocking_shutdown_rejects_new_jobs () =
   with_runtime @@ fun rt ->
   let pool = BP.create ~name:"shutdown" (blocking_config ()) in
   run_ok rt (BP.shutdown pool);
-  match Runtime.run rt (Effect.blocking ~pool ~name:"after-shutdown" (fun () -> ())) with
+  match Runtime.run rt (Eta_blocking.run ~pool ~name:"after-shutdown" (fun () -> ())) with
   | Exit.Ok _ -> Alcotest.fail "expected shutdown rejection"
   | Exit.Error cause -> check_pool_shutdown "shutdown" cause
 
@@ -415,11 +415,11 @@ let test_blocking_shutdown_drain_waits_for_started () =
   let pool =
     BP.create ~name:"drain" (blocking_config ~max_threads:1 ~shutdown_policy:BP.Drain ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let worker =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"drain.job" (fun () -> Unix.sleepf 0.030)))
+          (Eta_blocking.run ~pool ~name:"drain.job" (fun () -> Unix.sleepf 0.030)))
   in
   wait_until (fun () -> (BP.stats pool).active = 1);
   let elapsed, () = elapsed_us (fun () -> run_ok rt (BP.shutdown pool)) in
@@ -435,13 +435,13 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
       (blocking_config ~max_threads:1 ~shutdown_policy:BP.Detach_started ())
   in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~meter:(Meter.as_capability meter) ()
   in
   let worker =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"detach.job" (fun () ->
+          (Eta_blocking.run ~pool ~name:"detach.job" (fun () ->
                Unix.sleepf 0.050;
                failwith "detached failure")))
   in
@@ -469,14 +469,14 @@ let test_blocking_detach_started_counts_each_job_once () =
     BP.create ~name:"detach-once"
       (blocking_config ~max_threads:2 ~shutdown_policy:BP.Detach_started ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let cancel_ctx = ref None in
   let cancelled =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Eio.Cancel.sub @@ fun ctx ->
         cancel_ctx := Some ctx;
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"detach-once.cancelled" (fun () ->
+          (Eta_blocking.run ~pool ~name:"detach-once.cancelled" (fun () ->
                Unix.sleepf 0.080)))
   in
   wait_until (fun () -> (BP.stats pool).active = 1);
@@ -485,7 +485,7 @@ let test_blocking_detach_started_counts_each_job_once () =
   let shutdown_detached =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"detach-once.shutdown" (fun () ->
+          (Eta_blocking.run ~pool ~name:"detach-once.shutdown" (fun () ->
                Unix.sleepf 0.080)))
   in
   wait_until (fun () -> (BP.stats pool).active = 2);
@@ -502,41 +502,41 @@ let test_blocking_named_pools_prevent_starvation () =
   Eio.Switch.run @@ fun sw ->
   let fs_pool = BP.create ~name:"fs" (blocking_config ~max_threads:4 ~max_queued:64 ()) in
   let db_pool = BP.create ~name:"db" (blocking_config ~max_threads:2 ~max_queued:8 ()) in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let fs =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
           (Effect.for_each_par (List.init 40 Fun.id) (fun _ ->
-               Effect.blocking ~pool:fs_pool ~name:"fs.scan" (fun () ->
+               Eta_blocking.run ~pool:fs_pool ~name:"fs.scan" (fun () ->
                    Unix.sleepf 0.050))))
   in
   Eio_unix.sleep 0.010;
   let elapsed, result =
     elapsed_us (fun () ->
-        Runtime.run rt (Effect.blocking ~pool:db_pool ~name:"db.query" (fun () -> 1)))
+        Runtime.run rt (Eta_blocking.run ~pool:db_pool ~name:"db.query" (fun () -> 1)))
   in
   check_exit_ok Alcotest.int "db result" 1 result;
   Alcotest.(check bool) "db not starved" true (elapsed < 10_000);
   ignore (Eio.Promise.await_exn fs : (unit list, _) Exit.t)
 
-let test_blocking_worker_rejects_nested_submit () =
+let test_blocking_worker_rejects_nested_run () =
   with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"worker-nested-submit" (blocking_config ()) in
+  let pool = BP.create ~name:"worker-nested-run" (blocking_config ()) in
   match
     Runtime.run rt
-      (Effect.blocking ~pool ~name:"outer" (fun () ->
-           ignore (Effect.Blocking.submit ~pool ~name:"inner" (fun () -> ()))))
+      (Eta_blocking.run ~pool ~name:"outer" (fun () ->
+           ignore (Eta_blocking.run ~pool ~name:"inner" (fun () -> ()))))
   with
-  | Exit.Ok _ -> Alcotest.fail "expected nested submit failure"
+  | Exit.Ok _ -> Alcotest.fail "expected nested run failure"
   | Exit.Error cause ->
-      check_die_message "nested submit" "Effect.Blocking.submit" cause
+      check_die_message "nested run" "Eta_blocking.run" cause
 
 let test_blocking_worker_rejects_runtime_run () =
   with_runtime @@ fun rt ->
   let pool = BP.create ~name:"worker-runtime" (blocking_config ()) in
   match
     Runtime.run rt
-      (Effect.blocking ~pool ~name:"outer" (fun () ->
+      (Eta_blocking.run ~pool ~name:"outer" (fun () ->
            ignore (Runtime.run rt (Effect.pure ()))))
   with
   | Exit.Ok _ -> Alcotest.fail "expected nested runtime failure"
@@ -549,7 +549,7 @@ let test_blocking_cpu_antipattern_has_no_speedup () =
   let blocking_elapsed, result =
     elapsed_us (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"cpu.antipattern" (fun () -> cpu_burn_ms 20)))
+          (Eta_blocking.run ~pool ~name:"cpu.antipattern" (fun () -> cpu_burn_ms 20)))
   in
   check_exit_ok Alcotest.unit "cpu blocking result" () result;
   Alcotest.(check bool) "no meaningful speedup" true
@@ -562,12 +562,12 @@ let test_blocking_observability_labels_and_timings () =
   let meter = Meter.in_memory () in
   let pool = BP.create ~name:"observed" (blocking_config ~max_threads:2 ()) in
   let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~tracer:(Tracer.as_capability tracer) ~meter:(Meter.as_capability meter)
       ~auto_instrument:true ()
   in
   run_ok rt
-    (Effect.blocking ~pool ~name:"test.label" (fun () ->
+    (Eta_blocking.run ~pool ~name:"test.label" (fun () ->
          Unix.sleepf 0.020;
          1))
   |> ignore;
@@ -606,7 +606,7 @@ let test_blocking_user_exit_not_swallowed_as_interrupt () =
   let pool = BP.create ~name:"user-exit" (blocking_config ~max_threads:1 ()) in
   let result =
     Runtime.run rt
-      (Effect.blocking ~pool ~name:"user-exit.raise" (fun () ->
+      (Eta_blocking.run ~pool ~name:"user-exit.raise" (fun () ->
            raise Stdlib.Exit))
   in
   match result with
@@ -635,12 +635,12 @@ let test_blocking_eio_cancellation_preserves_cancelled_identity () =
     BP.create ~name:"cancel-identity"
       (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait ())
   in
-  let rt = Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   (* Fill the pool so the next job queues *)
   let _blocker =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.blocking ~pool ~name:"cancel-identity.blocker" (fun () ->
+          (Eta_blocking.run ~pool ~name:"cancel-identity.blocker" (fun () ->
                Unix.sleepf 0.100)))
   in
   wait_until (fun () -> (BP.stats pool).active = 1);
@@ -653,7 +653,7 @@ let test_blocking_eio_cancellation_preserves_cancelled_identity () =
         cancel_ctx := Some ctx;
         (try
            Runtime.run rt
-             (Effect.blocking ~pool ~name:"cancel-identity.victim" (fun () ->
+             (Eta_blocking.run ~pool ~name:"cancel-identity.victim" (fun () ->
                   ()))
          with exn ->
            observed_exn := Some exn;
@@ -681,7 +681,7 @@ let test_cause_of_exn_distinguishes_exit_from_cancelled () =
   (* Run a job that raises Exit *)
   let exit_result =
     Runtime.run rt
-      (Effect.blocking ~pool ~name:"distinguish.exit" (fun () ->
+      (Eta_blocking.run ~pool ~name:"distinguish.exit" (fun () ->
            raise Stdlib.Exit))
   in
   (* Raw Eio cancellation must propagate to the enclosing Eio fiber. *)
