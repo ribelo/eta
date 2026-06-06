@@ -131,6 +131,33 @@ let test_h2_security_rejects_oversized_initial_headers_fragment () =
       Alcotest.failf "unexpected error: %s" (Eta_http.Error.kind_name kind)
   | None -> Alcotest.fail "oversized initial HEADERS fragment was accepted"
 
+let test_h2_security_rejects_oversized_push_promise_fragment () =
+  let config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_hpack_block_bytes = 16;
+      max_continuation_accumulator_bytes = 16;
+    }
+  in
+  let security = Eta_http.H2.Security.create ~config () in
+  let payload_len = 4 + 17 in
+  let frame =
+    Eta_http.H2.Frame.header ~length:payload_len
+      ~frame_type:Eta_http.H2.Frame.Push_promise ~flags:0x4 ~stream_id:1
+    ^ Eta_http.H2.Frame.uint32 2
+    ^ String.make 17 '\000'
+  in
+  let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
+  match
+    Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+  with
+  | Some (Eta_http.Error.Hpack_decode_overflow { decoded_bytes; limit_bytes }) ->
+      Alcotest.(check int) "decoded" payload_len decoded_bytes;
+      Alcotest.(check int) "limit" 16 limit_bytes
+  | Some kind ->
+      Alcotest.failf "unexpected error: %s" (Eta_http.Error.kind_name kind)
+  | None -> Alcotest.fail "oversized PUSH_PROMISE fragment was accepted"
+
 let test_h2_security_goaway_churn () =
   let data =
     h2_goaway_no_error ~last_stream_id:1

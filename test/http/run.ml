@@ -378,6 +378,8 @@ let () =
             test_h2_security_continuation_cap;
           Alcotest.test_case "initial HEADERS fragment cap" `Quick
             test_h2_security_rejects_oversized_initial_headers_fragment;
+          Alcotest.test_case "PUSH_PROMISE fragment cap" `Quick
+            test_h2_security_rejects_oversized_push_promise_fragment;
           Alcotest.test_case "GOAWAY churn" `Quick
             test_h2_security_goaway_churn;
           Alcotest.test_case "header churn" `Quick

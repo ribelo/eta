@@ -100,10 +100,12 @@ let continuation_flood t =
 
 let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
   match frame_type with
-  | 0x1 ->
+  | 0x1 | 0x5 ->
       t.header_block_bytes <- length;
       t.header_block_frames <- 1;
-      (match account_response_headers t stream_id with
+      (match
+         if frame_type = 0x1 then account_response_headers t stream_id else None
+       with
       | Some error -> Some error
       | None when length > t.config.max_hpack_block_bytes ->
         Some
@@ -144,7 +146,8 @@ let start_frame t =
   match frame_type with
   | 0x4 -> account_settings t
   | 0x7 -> account_goaway t
-  | 0x1 | 0x9 -> account_header_bytes t ~frame_type ~flags ~length ~stream_id
+  | 0x1 | 0x5 | 0x9 ->
+      account_header_bytes t ~frame_type ~flags ~length ~stream_id
   | _ -> None
 
 let observe_byte t byte =
