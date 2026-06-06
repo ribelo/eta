@@ -109,7 +109,9 @@ let acquire t n =
          let promise, resolver = contract.Runtime_contract.create_promise () in
          let waiter = { permits = n; contract; resolver; state = Waiting } in
          with_lock t @@ fun () ->
-         if t.available >= n then (
+         compact_cancelled_waiters_locked t;
+         wake_waiters_locked t;
+         if Stdlib.Queue.is_empty t.waiters && t.available >= n then (
            t.available <- t.available - n;
            `Acquired)
          else (

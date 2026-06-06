@@ -95,6 +95,44 @@ let test_semaphore_try_acquire_does_not_barge_queued_waiter () =
     (Eio.Promise.await waiter);
   Semaphore.release sem 2
 
+let test_semaphore_acquire_does_not_barge_waiters () =
+  with_test_clock @@ fun sw _clock rt ->
+  let sem = Semaphore.make ~permits:2 in
+  run_ok rt (Semaphore.acquire sem 1);
+  let first_started, first_started_u = Eio.Promise.create () in
+  let second_started, second_started_u = Eio.Promise.create () in
+  let first =
+    fork_run sw rt
+      (Effect.sync (fun () -> Eio.Promise.resolve first_started_u ())
+       |> Effect.bind (fun () -> Semaphore.acquire sem 2)
+       |> Effect.map (fun () -> "first"))
+  in
+  Eio.Promise.await first_started;
+  wait_until (fun () -> Semaphore.waiting sem = 1);
+  let second =
+    fork_run sw rt
+      (Effect.sync (fun () -> Eio.Promise.resolve second_started_u ())
+       |> Effect.bind (fun () -> Semaphore.acquire sem 1)
+       |> Effect.map (fun () -> "second"))
+  in
+  Eio.Promise.await second_started;
+  Eio.Fiber.yield ();
+  Alcotest.(check bool) "first waits" false (Eio.Promise.is_resolved first);
+  Alcotest.(check bool)
+    "second must not barge" false
+    (Eio.Promise.is_resolved second);
+  Semaphore.release sem 1;
+  check_exit_ok Alcotest.string "first acquired" "first"
+    (Eio.Promise.await first);
+  Eio.Fiber.yield ();
+  Alcotest.(check bool)
+    "second waits while first owns both permits" false
+    (Eio.Promise.is_resolved second);
+  Semaphore.release sem 2;
+  check_exit_ok Alcotest.string "second acquired" "second"
+    (Eio.Promise.await second);
+  Semaphore.release sem 1
+
 let test_semaphore_with_permits_releases_on_success () =
   with_runtime @@ fun rt ->
   let sem = Semaphore.make ~permits:5 in

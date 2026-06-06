@@ -637,6 +637,8 @@ let () =
             test_semaphore_try_acquire_is_atomic;
           Alcotest.test_case "try_acquire does not barge queued waiter" `Quick
             test_semaphore_try_acquire_does_not_barge_queued_waiter;
+          Alcotest.test_case "acquire does not barge waiters" `Quick
+            test_semaphore_acquire_does_not_barge_waiters;
           Alcotest.test_case "with_permits releases on success" `Quick
             test_semaphore_with_permits_releases_on_success;
           Alcotest.test_case "with_permits releases on failure" `Quick
