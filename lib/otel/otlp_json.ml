@@ -228,14 +228,14 @@ let metric_json (key : Metric_key.t) point : yj =
         `Assoc
           [
             ("dataPoints", `List [ data_point_json key point ]);
-            ("aggregationTemporality", `Int 1);
+            ("aggregationTemporality", `Int 2);
             ("isMonotonic", `Bool false);
           ]
     | Counter_monotonic ->
         `Assoc
           [
             ("dataPoints", `List [ data_point_json key point ]);
-            ("aggregationTemporality", `Int 2);
+            ("aggregationTemporality", `Int 1);
             ("isMonotonic", `Bool true);
           ]
   in

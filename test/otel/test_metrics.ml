@@ -201,9 +201,9 @@ let test_counter_temporality_json () =
           ~kind:Capabilities.Counter_monotonic (Capabilities.Int 2);
       ]
   in
-  Alcotest.(check (option int)) "cumulative temporality" (Some 1)
+  Alcotest.(check (option int)) "cumulative temporality" (Some 2)
     (metric_temporality "cumulative" body);
-  Alcotest.(check (option int)) "delta temporality" (Some 2)
+  Alcotest.(check (option int)) "monotonic delta temporality" (Some 1)
     (metric_temporality "delta" body)
 
 (* ------------------------------------------------------------------ *)
