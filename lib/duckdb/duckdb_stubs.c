@@ -19,11 +19,27 @@ typedef void *duckdb_appender;
 typedef void *duckdb_logical_type;
 typedef void *duckdb_data_chunk;
 typedef void *duckdb_vector;
+typedef void *duckdb_value;
 
 typedef struct {
   void *data;
   idx_t size;
 } duckdb_blob;
+
+typedef struct {
+  char *data;
+  idx_t size;
+} duckdb_string;
+
+typedef struct {
+  uint64_t lower;
+  int64_t upper;
+} duckdb_hugeint;
+
+typedef struct {
+  uint64_t lower;
+  uint64_t upper;
+} duckdb_uhugeint;
 
 typedef struct {
   idx_t deprecated_column_count;
@@ -104,14 +120,18 @@ typedef struct {
   const char *(*result_error)(duckdb_result *);
   idx_t (*column_count)(duckdb_result *);
   idx_t (*row_count)(duckdb_result *);
+  idx_t (*rows_changed)(duckdb_result *);
   const char *(*column_name)(duckdb_result *, idx_t);
   int (*column_type)(duckdb_result *, idx_t);
   int (*value_is_null)(duckdb_result *, idx_t, idx_t);
   int (*value_boolean)(duckdb_result *, idx_t, idx_t);
   int64_t (*value_int64)(duckdb_result *, idx_t, idx_t);
   double (*value_double)(duckdb_result *, idx_t, idx_t);
-  char *(*value_varchar)(duckdb_result *, idx_t, idx_t);
+  duckdb_string (*value_string)(duckdb_result *, idx_t, idx_t);
   duckdb_blob (*value_blob)(duckdb_result *, idx_t, idx_t);
+  duckdb_value (*create_uuid)(duckdb_uhugeint);
+  char *(*get_varchar)(duckdb_value);
+  void (*destroy_value)(duckdb_value *);
   int (*get_type_id)(duckdb_logical_type);
   void (*destroy_logical_type)(duckdb_logical_type *);
   idx_t (*result_chunk_count)(duckdb_result);
@@ -422,9 +442,10 @@ static int load_api_unlocked(void)
   if (!LOAD(library_version) || !LOAD(open) || !LOAD(close) || !LOAD(connect) ||
       !LOAD(disconnect) || !LOAD(query) || !LOAD(destroy_result) ||
       !LOAD(result_error) || !LOAD(column_count) || !LOAD(row_count) ||
-      !LOAD(column_name) || !LOAD(column_type) || !LOAD(value_is_null) ||
-      !LOAD(value_boolean) || !LOAD(value_int64) || !LOAD(value_double) ||
-      !LOAD(value_varchar) || !LOAD(value_blob) ||
+      !LOAD(rows_changed) || !LOAD(column_name) || !LOAD(column_type) ||
+      !LOAD(value_is_null) || !LOAD(value_boolean) || !LOAD(value_int64) ||
+      !LOAD(value_double) || !LOAD(value_string) || !LOAD(value_blob) ||
+      !LOAD(create_uuid) || !LOAD(get_varchar) || !LOAD(destroy_value) ||
       !LOAD_AS(free_ptr, "duckdb_free") ||
       !LOAD(prepare) || !LOAD(prepare_error) || !LOAD(destroy_prepare) ||
       !LOAD(bind_null) || !LOAD(bind_boolean) || !LOAD(bind_int64) ||
@@ -605,14 +626,6 @@ static value make_block(int tag, value field)
   CAMLreturn(out);
 }
 
-static value make_string_block(int tag, const char *s)
-{
-  CAMLparam0();
-  CAMLlocal1(str);
-  str = caml_copy_string(s == NULL ? "" : s);
-  CAMLreturn(make_block(tag, str));
-}
-
 static value cons(value head, value tail)
 {
   CAMLparam2(head, tail);
@@ -649,7 +662,48 @@ static value make_string_block_len(int tag, const char *s, uint32_t len)
   CAMLreturn(out);
 }
 
+static value make_owned_string_block_len(int tag, char *s, idx_t len)
+{
+  CAMLparam0();
+  CAMLlocal3(str, out, owner);
+  owner = ptr_owner_alloc();
+  if (s != NULL) ptr_owner_set(owner, s);
+  if (len > (idx_t)Max_wosize) {
+    ptr_owner_release(owner);
+    caml_failwith("duckdb string too large for OCaml string");
+  }
+  if (len > 0 && s == NULL) {
+    ptr_owner_release(owner);
+    caml_failwith("duckdb string has null data");
+  }
+  str = caml_alloc_string((mlsize_t)len);
+  if (len > 0) memcpy(Bytes_val(str), s, (size_t)len);
+  out = make_block(tag, str);
+  ptr_owner_release(owner);
+  CAMLreturn(out);
+}
+
+static value string_value_from_result(duckdb_result *result, idx_t col, idx_t row,
+                                      int tag)
+{
+  duckdb_string s = api.value_string(result, col, row);
+  return make_owned_string_block_len(tag, s.data, s.size);
+}
+
+static value uuid_value_from_bits(duckdb_uhugeint bits)
+{
+  CAMLparam0();
+  duckdb_value uuid = api.create_uuid(bits);
+  char *s;
+  if (uuid == NULL) caml_failwith("duckdb uuid conversion failed");
+  s = api.get_varchar(uuid);
+  api.destroy_value(&uuid);
+  if (s == NULL) caml_failwith("duckdb uuid string conversion failed");
+  CAMLreturn(make_owned_string_block_len(10, s, (idx_t)strlen(s)));
+}
+
 static value value_from_vector(duckdb_vector vector, idx_t row);
+static value value_from_result(duckdb_result *result, idx_t col, idx_t row);
 
 static value list_value_from_vector(duckdb_vector vector, idx_t row)
 {
@@ -722,11 +776,46 @@ static value value_from_vector(duckdb_vector vector, idx_t row)
     out = make_block(5, bytes);
     break;
   }
+  case ETA_DUCKDB_TYPE_UUID: {
+    duckdb_uhugeint *values = (duckdb_uhugeint *)api.vector_get_data(vector);
+    duckdb_uhugeint bits = values[row];
+    bits.upper ^= UINT64_C(0x8000000000000000);
+    CAMLreturn(uuid_value_from_bits(bits));
+  }
   default: {
     caml_failwith("duckdb unsupported vector result type");
   }
   }
   CAMLreturn(out);
+}
+
+static int vector_type_supported_directly(int typ)
+{
+  switch (typ) {
+  case ETA_DUCKDB_TYPE_BOOLEAN:
+  case ETA_DUCKDB_TYPE_TINYINT:
+  case ETA_DUCKDB_TYPE_SMALLINT:
+  case ETA_DUCKDB_TYPE_INTEGER:
+  case ETA_DUCKDB_TYPE_BIGINT:
+  case ETA_DUCKDB_TYPE_FLOAT:
+  case ETA_DUCKDB_TYPE_DOUBLE:
+  case ETA_DUCKDB_TYPE_LIST:
+  case ETA_DUCKDB_TYPE_UUID:
+  case ETA_DUCKDB_TYPE_VARCHAR:
+  case ETA_DUCKDB_TYPE_BLOB:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+static value value_from_vector_or_result(duckdb_result *result, idx_t col,
+                                         idx_t global_row, duckdb_vector vector,
+                                         idx_t row)
+{
+  int typ = vector_type_id(vector);
+  if (vector_type_supported_directly(typ)) return value_from_vector(vector, row);
+  return value_from_result(result, col, global_row);
 }
 
 static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
@@ -755,14 +844,8 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
   case ETA_DUCKDB_TYPE_DOUBLE:
     out = make_block(3, caml_copy_double(api.value_double(result, col, row)));
     CAMLreturn(out);
-  case ETA_DUCKDB_TYPE_VARCHAR: {
-    char *s = api.value_varchar(result, col, row);
-    owner = ptr_owner_alloc();
-    if (s != NULL) ptr_owner_set(owner, s);
-    out = make_string_block(4, s == NULL ? "" : s);
-    ptr_owner_release(owner);
-    CAMLreturn(out);
-  }
+  case ETA_DUCKDB_TYPE_VARCHAR:
+    CAMLreturn(string_value_from_result(result, col, row, 4));
   case ETA_DUCKDB_TYPE_BLOB: {
     duckdb_blob blob = api.value_blob(result, col, row);
     owner = ptr_owner_alloc();
@@ -780,8 +863,9 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
   }
   case ETA_DUCKDB_TYPE_LIST:
     caml_failwith("duckdb list result requires chunk materialization");
+  case ETA_DUCKDB_TYPE_UUID:
+    caml_failwith("duckdb uuid result requires chunk materialization");
   default: {
-    char *s = api.value_varchar(result, col, row);
     int tag = 4;
     if (typ == ETA_DUCKDB_TYPE_DECIMAL) tag = 6;
     else if (typ == ETA_DUCKDB_TYPE_DATE) tag = 7;
@@ -792,13 +876,8 @@ static value value_from_result(duckdb_result *result, idx_t col, idx_t row)
              typ == ETA_DUCKDB_TYPE_TIMESTAMP_NS ||
              typ == ETA_DUCKDB_TYPE_TIMESTAMP_TZ)
       tag = 9;
-    else if (typ == ETA_DUCKDB_TYPE_UUID) tag = 10;
     else if (typ == ETA_DUCKDB_TYPE_ENUM) tag = 12;
-    owner = ptr_owner_alloc();
-    if (s != NULL) ptr_owner_set(owner, s);
-    out = make_string_block(tag, s == NULL ? "" : s);
-    ptr_owner_release(owner);
-    CAMLreturn(out);
+    CAMLreturn(string_value_from_result(result, col, row, tag));
   }
   }
 }
@@ -822,10 +901,11 @@ static value duckdb_column_names(duckdb_result *result, idx_t cols)
   CAMLreturn(field_names);
 }
 
-static int result_has_list_columns(duckdb_result *result, idx_t cols)
+static int result_uses_chunk_materialization(duckdb_result *result, idx_t cols)
 {
   for (idx_t col_idx = 0; col_idx < cols; col_idx++) {
-    if (api.column_type(result, col_idx) == ETA_DUCKDB_TYPE_LIST) return 1;
+    int typ = api.column_type(result, col_idx);
+    if (typ == ETA_DUCKDB_TYPE_LIST || typ == ETA_DUCKDB_TYPE_UUID) return 1;
   }
   return 0;
 }
@@ -836,6 +916,8 @@ static value materialize_rows_from_chunks(duckdb_result *result, idx_t cols,
   CAMLparam1(field_names);
   CAMLlocal5(rows, row_list, pair, value_v, chunk_owner);
   idx_t chunk_count = api.result_chunk_count(*result);
+  idx_t total_rows = api.row_count(result);
+  idx_t rows_after = 0;
   rows = Val_emptylist;
   for (idx_t chunk_pos = chunk_count; chunk_pos > 0; chunk_pos--) {
     chunk_owner = data_chunk_owner_alloc();
@@ -846,13 +928,16 @@ static value materialize_rows_from_chunks(duckdb_result *result, idx_t cols,
     }
     data_chunk_owner_set(chunk_owner, chunk);
     idx_t count = api.data_chunk_get_size(chunk);
+    idx_t chunk_start = total_rows - rows_after - count;
     for (idx_t r = count; r > 0; r--) {
       idx_t row_idx = r - 1;
+      idx_t global_row_idx = chunk_start + row_idx;
       row_list = Val_emptylist;
       for (idx_t c = cols; c > 0; c--) {
         idx_t col_idx = c - 1;
         duckdb_vector vector = api.data_chunk_get_vector(chunk, col_idx);
-        value_v = value_from_vector(vector, row_idx);
+        value_v =
+          value_from_vector_or_result(result, col_idx, global_row_idx, vector, row_idx);
         pair = caml_alloc_tuple(2);
         Store_field(pair, 0, Field(field_names, (mlsize_t)col_idx));
         Store_field(pair, 1, value_v);
@@ -861,6 +946,7 @@ static value materialize_rows_from_chunks(duckdb_result *result, idx_t cols,
       rows = cons(row_list, rows);
     }
     data_chunk_owner_release(chunk_owner);
+    rows_after += count;
   }
   CAMLreturn(rows);
 }
@@ -875,7 +961,7 @@ static value materialize_rows(duckdb_result *result)
      API should use a separate cursor entrypoint instead of hiding one behind a
      list-returning contract. */
   field_names = duckdb_column_names(result, cols);
-  if (result_has_list_columns(result, cols)) {
+  if (result_uses_chunk_materialization(result, cols)) {
     ensure_list_result_api();
     rows = materialize_rows_from_chunks(result, cols, field_names);
     CAMLreturn(rows);
@@ -1137,9 +1223,10 @@ CAMLprim value eta_duckdb_execute(value v_conn, value v_sql, value v_params)
     api.destroy_result(&result);
     caml_failwith(buffer);
   }
-  int changed = (int)result.deprecated_rows_changed;
+  idx_t changed = api.rows_changed(&result);
   api.destroy_result(&result);
-  CAMLreturn(Val_int(changed));
+  if (changed > (idx_t)Max_long) caml_failwith("duckdb changed-row count too large");
+  CAMLreturn(Val_long((intnat)changed));
 }
 
 CAMLprim value eta_duckdb_exec_script(value v_conn, value v_sql)

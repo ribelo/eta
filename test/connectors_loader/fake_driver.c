@@ -11,11 +11,22 @@ typedef void *duckdb_database;
 typedef void *duckdb_connection;
 typedef void *duckdb_prepared_statement;
 typedef void *duckdb_appender;
+typedef void *duckdb_value;
 
 typedef struct {
   void *data;
   idx_t size;
 } duckdb_blob;
+
+typedef struct {
+  char *data;
+  idx_t size;
+} duckdb_string;
+
+typedef struct {
+  uint64_t lower;
+  uint64_t upper;
+} duckdb_uhugeint;
 
 typedef struct {
   idx_t deprecated_column_count;
@@ -82,6 +93,10 @@ void duckdb_destroy_result(duckdb_result *result) { (void)result; }
 const char *duckdb_result_error(duckdb_result *result) { (void)result; return "fake error"; }
 idx_t duckdb_column_count(duckdb_result *result) { (void)result; return 1; }
 idx_t duckdb_row_count(duckdb_result *result) { (void)result; return duckdb_fake_rows; }
+idx_t duckdb_rows_changed(duckdb_result *result)
+{
+  return result == NULL ? 0 : result->deprecated_rows_changed;
+}
 const char *duckdb_column_name(duckdb_result *result, idx_t col) { (void)result; (void)col; return "payload"; }
 int duckdb_column_type(duckdb_result *result, idx_t col) { (void)result; (void)col; return 18; }
 int duckdb_value_is_null(duckdb_result *result, idx_t col, idx_t row) { (void)result; (void)col; (void)row; return 0; }
@@ -94,6 +109,12 @@ char *duckdb_value_varchar(duckdb_result *result, idx_t col, idx_t row)
   (void)col;
   (void)row;
   return NULL;
+}
+
+duckdb_string duckdb_value_string(duckdb_result *result, idx_t col, idx_t row)
+{
+  char *value = duckdb_value_varchar(result, col, row);
+  return (duckdb_string){ value, value == NULL ? 0 : (idx_t)strlen(value) };
 }
 
 duckdb_blob duckdb_value_blob(duckdb_result *result, idx_t col, idx_t row)
@@ -123,6 +144,29 @@ void duckdb_free(void *ptr)
     }
   }
   free(ptr);
+}
+
+duckdb_value duckdb_create_uuid(duckdb_uhugeint input)
+{
+  (void)input;
+  return malloc(1);
+}
+
+char *duckdb_get_varchar(duckdb_value value)
+{
+  (void)value;
+  char *text = malloc(37);
+  if (text == NULL) return NULL;
+  memcpy(text, "00000000-0000-0000-0000-000000000000", 37);
+  return text;
+}
+
+void duckdb_destroy_value(duckdb_value *value)
+{
+  if (value != NULL && *value != NULL) {
+    free(*value);
+    *value = NULL;
+  }
 }
 
 int duckdb_prepare(duckdb_connection conn, const char *sql, duckdb_prepared_statement *out)
@@ -406,6 +450,7 @@ void sqlite3_open_v2(void) {}
 void sqlite3_close_v2(void) {}
 void sqlite3_interrupt(void) {}
 void sqlite3_prepare_v2(void) {}
+void sqlite3_exec(void) {}
 void sqlite3_finalize(void) {}
 void sqlite3_step(void) {}
 void sqlite3_bind_null(void) {}

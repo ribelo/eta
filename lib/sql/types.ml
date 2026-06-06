@@ -28,45 +28,59 @@ type 'a typ = {
   sql_type : string;
 }
 
+let decode_non_null expected decode stmt index =
+  if Sqlite.column_is_null stmt index then
+    raise_error
+      (Decode_error
+         {
+           operation = "decode";
+           message =
+             Printf.sprintf "column %d: expected non-null %s, got NULL" index
+               expected;
+         })
+  else
+    decode stmt index
+
 let int =
   {
     value = (fun value -> Value.Int value);
-    decode = Sqlite.column_int;
+    decode = decode_non_null "int" Sqlite.column_int;
     sql_type = "INTEGER";
   }
 
 let int64 =
   {
     value = (fun value -> Value.Int64 value);
-    decode = Sqlite.column_int64;
+    decode = decode_non_null "int64" Sqlite.column_int64;
     sql_type = "INTEGER";
   }
 
 let text =
   {
     value = (fun value -> Value.String value);
-    decode = Sqlite.column_text;
+    decode = decode_non_null "text" Sqlite.column_text;
     sql_type = "TEXT";
   }
 
 let float =
   {
     value = (fun value -> Value.Float value);
-    decode = Sqlite.column_float;
+    decode = decode_non_null "float" Sqlite.column_float;
     sql_type = "REAL";
   }
 
 let blob =
   {
     value = (fun value -> Value.Bytes value);
-    decode = Sqlite.column_blob;
+    decode = decode_non_null "blob" Sqlite.column_blob;
     sql_type = "BLOB";
   }
 
 let bool =
   {
     value = (fun value -> Value.Bool value);
-    decode = (fun stmt index -> Sqlite.column_int stmt index <> 0);
+    decode =
+      decode_non_null "bool" (fun stmt index -> Sqlite.column_int stmt index <> 0);
     sql_type = "INTEGER";
   }
 

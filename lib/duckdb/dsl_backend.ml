@@ -27,6 +27,7 @@ module Dsl = Eta_sql_dsl.Make (struct
 
   let quote_text = Eta_sql_dsl.quote_text
   let quote_blob = Eta_sql_dsl.quote_blob
+  let quote_float = Eta_sql_dsl.quote_float
 
   let value_to_sql_literal = function
     | Value.Null -> "NULL"
@@ -34,7 +35,7 @@ module Dsl = Eta_sql_dsl.Make (struct
     | Value.Bool false -> "FALSE"
     | Value.Int value -> string_of_int value
     | Value.Int64 value -> Int64.to_string value
-    | Value.Float value -> string_of_float value
+    | Value.Float value -> quote_float value
     | Value.String value
     | Value.Decimal value
     | Value.Date value

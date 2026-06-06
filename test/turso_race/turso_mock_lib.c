@@ -115,6 +115,18 @@ int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int nbytes,
   return SQLITE_OK;
 }
 
+int sqlite3_exec(sqlite3 *db, const char *sql,
+                 int (*callback)(void *, int, char **, char **), void *arg,
+                 char **errmsg)
+{
+  (void)sql;
+  (void)callback;
+  (void)arg;
+  if (errmsg != NULL) *errmsg = NULL;
+  if (db == NULL || db->closed) return SQLITE_MISUSE;
+  return SQLITE_OK;
+}
+
 int sqlite3_finalize(sqlite3_stmt *stmt)
 {
   free(stmt);

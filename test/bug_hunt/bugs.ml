@@ -79,7 +79,13 @@ let run_effect program =
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause -> Alcotest.failf "%a" (Eta.Cause.pp pp_pool_error) cause
 
-let with_pool f =
+let run_effect_exit program =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  Eta.Runtime.run rt program
+
+let with_pool_effect f =
   let acquire =
     Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
       (S.memory_config ())
@@ -87,7 +93,9 @@ let with_pool f =
   Eta.Effect.scoped
     (Eta.Effect.acquire_release ~acquire ~release:Q.Pool.shutdown
      |> Eta.Effect.bind f)
-  |> run_effect
+
+let with_pool f = with_pool_effect f |> run_effect
+let with_pool_exit f = with_pool_effect f |> run_effect_exit
 
 let test_schema_float_default_round_trips () =
   (* The full-precision double for pi needs 17 significant digits to round-trip.
@@ -161,8 +169,8 @@ let test_sqlite_null_decoded_as_nonnull_int () =
 
      Correct behavior: decoding a NULL through a non-nullable column must not
      yield 0 — it must surface an error (as DuckDB/Turso do). *)
-  let rows =
-    with_pool @@ fun pool ->
+  let result =
+    with_pool_exit @@ fun pool ->
     let* () =
       Q.Pool.Typed.run_schema pool
         (Q.Eta_schema.compile
@@ -182,13 +190,18 @@ let test_sqlite_null_decoded_as_nonnull_int () =
            from Nullables.table (Q.Projection.one Nullables.n)
            |> where (Q.Expr.eq Nullables.id 1)))
   in
-  match rows with
-  | [ 0 ] ->
+  match result with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Eta_sql (Q.Decode_error _))) ->
+      ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected typed Decode_error, got %a"
+        (Eta.Cause.pp pp_pool_error) cause
+  | Eta.Exit.Ok [ 0 ] ->
       Alcotest.failf
         "decoded SQL NULL as non-nullable int and silently produced 0"
-  | [ other ] ->
-      Alcotest.failf "expected a decode error for NULL, got %d" other
-  | _ -> Alcotest.failf "expected exactly one row"
+  | Eta.Exit.Ok rows ->
+      Alcotest.failf "expected a decode error for NULL, got %d row(s)"
+        (List.length rows)
 
 (* ------------------------------------------------------------------ *)
 (* Bug 5: DuckDB cannot read a TIMESTAMP/DATE/DECIMAL/UUID/ENUM column  *)

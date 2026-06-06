@@ -110,6 +110,8 @@ external raw_open : string -> (int[@untagged]) -> raw_db = "eta_turso_open_bc" "
 external raw_close : raw_db -> (int[@untagged]) = "eta_turso_close_bc" "eta_turso_close"
 external raw_interrupt : raw_db -> unit = "eta_turso_interrupt"
 external raw_prepare : raw_db -> string -> raw_stmt = "eta_turso_prepare"
+external raw_exec_script : raw_db -> string -> (int[@untagged])
+  = "eta_turso_exec_script_bc" "eta_turso_exec_script"
 external raw_finalize : raw_stmt -> (int[@untagged]) = "eta_turso_finalize_bc" "eta_turso_finalize"
 external raw_step : raw_stmt -> (int[@untagged]) = "eta_turso_step_bc" "eta_turso_step"
 external raw_bind_null : raw_stmt -> (int[@untagged]) -> (int[@untagged]) = "eta_turso_bind_null_bc" "eta_turso_bind_null"

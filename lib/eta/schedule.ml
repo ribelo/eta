@@ -49,7 +49,7 @@ let scale_capped d factor =
   | FP_nan -> invalid_arg "Duration.scale"
   | FP_infinite -> Duration.ms max_int
   | FP_normal | FP_subnormal | FP_zero ->
-      if scaled > float_of_int max_int then Duration.ms max_int
+      if scaled >= float_of_int max_int then Duration.ms max_int
       else Duration.scale d factor
 
 let default_random = lazy (Capabilities.random_default ())
@@ -131,7 +131,7 @@ let rec next_state random = function
           let factor =
             lo +. ((hi -. lo) *. Capabilities.random_float random 1.0)
           in
-          Some (Duration.scale d factor, Driver_jittered (inner', lo, hi)))
+          Some (scale_capped d factor, Driver_jittered (inner', lo, hi)))
   | Driver_named inner -> (
       match next_state random inner with
       | None -> None

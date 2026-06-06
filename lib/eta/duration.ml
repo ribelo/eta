@@ -35,9 +35,11 @@ let between ~min:min_ ~max:max_ t = min_.ms <= t.ms && t.ms <= max_.ms
 let compare a b = Int.compare a.ms b.ms
 let scale t f =
   let f = if f < 0.0 then 0.0 else f in
-  let scaled = float_of_int t.ms *. f in
-  if Float.is_nan scaled || scaled > float_of_int max_int then
-    invalid_arg "Duration.scale"
-  else { ms = clamp_nonnegative (int_of_float scaled) }
+  if Float.equal f 1.0 then t
+  else
+    let scaled = float_of_int t.ms *. f in
+    if Float.is_nan scaled || scaled >= float_of_int max_int then
+      invalid_arg "Duration.scale"
+    else { ms = clamp_nonnegative (int_of_float scaled) }
 let pp ppf t = Format.fprintf ppf "%dms" t.ms
 let equal a b = a.ms = b.ms

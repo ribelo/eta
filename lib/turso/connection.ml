@@ -100,7 +100,8 @@ let execute db sql params =
   if rc = done_ then Ok (raw_changes db.raw)
   else Result.Error (make_driver_error db ~operation:"execute" rc)
 
-let exec_script db sql = execute db sql [] |> Result.map (fun _ -> ())
+let exec_script db sql =
+  if_open db @@ fun () -> check db ~operation:"exec_script" (raw_exec_script db.raw sql)
 
 let query_one_string db sql =
   match query db sql [] with

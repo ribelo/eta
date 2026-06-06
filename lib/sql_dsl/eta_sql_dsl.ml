@@ -32,6 +32,8 @@ let quote_blob value =
   Bytes.unsafe_set out ((len * 2) + 2) '\'';
   Bytes.unsafe_to_string out
 
+let quote_float value = Printf.sprintf "%.17g" value
+
 let transaction ~begin_ ~commit ~rollback resource f =
   match begin_ resource with
   | Result.Error _ as err -> err

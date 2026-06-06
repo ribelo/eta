@@ -5,6 +5,8 @@ val quote_text : string -> string
 
 val quote_blob : bytes -> string
 
+val quote_float : float -> string
+
 val transaction :
   begin_:('resource -> (unit, 'error) result) ->
   commit:('resource -> (unit, 'error) result) ->

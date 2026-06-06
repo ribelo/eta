@@ -70,6 +70,7 @@ typedef struct {
   int (*close_v2)(sqlite3 *);
   void (*interrupt)(sqlite3 *);
   int (*prepare_v2)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
+  int (*exec)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
   int (*finalize)(sqlite3_stmt *);
   int (*step)(sqlite3_stmt *);
   int (*bind_null)(sqlite3_stmt *, int);
@@ -297,8 +298,8 @@ static int eta_turso_load_unlocked(void)
   }
 
   if (!LOAD(open_v2) || !LOAD(close_v2) || !LOAD(interrupt) ||
-      !LOAD(prepare_v2) || !LOAD(finalize) || !LOAD(step) || !LOAD(bind_null) ||
-      !LOAD(bind_int64) || !LOAD(bind_double) || !LOAD(bind_text) ||
+      !LOAD(prepare_v2) || !LOAD(exec) || !LOAD(finalize) || !LOAD(step) ||
+      !LOAD(bind_null) || !LOAD(bind_int64) || !LOAD(bind_double) || !LOAD(bind_text) ||
       !LOAD(bind_blob) || !LOAD(column_count) || !LOAD(column_name) ||
       !LOAD(column_type) || !LOAD(column_int64) || !LOAD(column_double) ||
       !LOAD(column_text) || !LOAD(column_blob) || !LOAD(column_bytes) ||
@@ -454,6 +455,33 @@ CAMLprim value eta_turso_prepare(value v_db, value v_sql)
   ((eta_turso_stmt *)Data_custom_val(v_block))->stmt = stmt;
   ((eta_turso_stmt *)Data_custom_val(v_block))->state = state;
   CAMLreturn(v_block);
+}
+
+CAMLprim intnat eta_turso_exec_script(value v_db, value v_sql)
+{
+  CAMLparam2(v_db, v_sql);
+  ensure_loaded();
+  eta_turso_db_state *state = eta_turso_db_state_val(v_db);
+  sqlite3 *db;
+  char *sql;
+  int rc;
+  sql = caml_stat_strdup(String_val(v_sql));
+  if (sql == NULL) caml_failwith("turso allocation failed");
+  if (!db_state_acquire(state, &db)) {
+    caml_stat_free(sql);
+    CAMLreturnT(intnat, SQLITE_MISUSE);
+  }
+  caml_enter_blocking_section();
+  rc = api.exec(db, sql, NULL, NULL, NULL);
+  caml_leave_blocking_section();
+  caml_stat_free(sql);
+  db_state_release(state);
+  CAMLreturnT(intnat, rc);
+}
+
+CAMLprim value eta_turso_exec_script_bc(value v_db, value v_sql)
+{
+  return Val_int(eta_turso_exec_script(v_db, v_sql));
 }
 
 CAMLprim intnat eta_turso_finalize(value v_stmt)
