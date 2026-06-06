@@ -7,7 +7,6 @@ include Effect_resource
 include Effect_concurrent
 include Effect_observability
 include Effect_supervisor_scope
-include Effect_island
 include Effect_blocking
 
 let daemon_internal effect =

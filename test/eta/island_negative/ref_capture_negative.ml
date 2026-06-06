@@ -1,7 +1,7 @@
 let counter = ref 0
 
 let _ =
-  Eta.Effect.Island.map
+  Eta.Island.map
     ~f:(fun n ->
       incr counter;
       n)

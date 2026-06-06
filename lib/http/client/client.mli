@@ -68,7 +68,7 @@ val run_host_h1 :
   ?logger:Eta.Capabilities.logger ->
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
-  ?island_pool:Eta.Effect.Island.pool ->
+  ?island_pool:Eta.Island.pool ->
   ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ?max_response_body_bytes:int ->

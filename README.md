@@ -67,23 +67,23 @@ let () =
 
 ## Portable Islands
 
-`Effect.island` is the portable twin of `Effect.sync`: it runs one
+`Island.run` is the portable twin of `Effect.sync`: it runs one
 compiler-checked portable callback through a runtime-owned island pool.
 
 ```ocaml
 let (square @ portable) n = n * n
 
 let program =
-  Effect.island ~name:"square" square 7
+  Island.run ~name:"square" square 7
 ```
 
-Finite batches use `Effect.Island.map`, `map_result`, or `all_settled`.
+Finite batches use `Island.map`, `map_result`, or `all_settled`.
 Inputs, outputs, and callback error values must be `immutable_data`; the
 callback itself is `@ portable`, so captures such as refs, Eio streams,
 runtimes, loggers, or raw causes are rejected by the compiler.
 
 ```ocaml
-let pool = Effect.Island.Pool.create ~domains:2 ()
+let pool = Island.Pool.create ~domains:2 ()
 
 let rt =
   Runtime.create ~sw ~clock ~island_pool:pool ()

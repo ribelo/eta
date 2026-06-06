@@ -111,7 +111,7 @@ The compiler then rejects non-portable captures.
 let (decode @ portable) bytes = Schema.decode bytes
 
 let decode_all pool buffers =
-  Effect.Island.map ~pool ~f:decode buffers
+  Island.map ~pool ~f:decode buffers
 ```
 
 ## Failure Modes

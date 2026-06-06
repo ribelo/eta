@@ -1,5 +1,5 @@
 let capture_logger (logger : Eta.Capabilities.logger) =
-  Eta.Effect.Island.map
+  Eta.Island.map
     ~f:(fun n ->
       logger#log
         {

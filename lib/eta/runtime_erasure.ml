@@ -4,7 +4,7 @@
    typed-failure key remains owned by Runtime_core; these casts only cross
    module abstraction boundaries inside the eta library. *)
 
-external island_pool_of_public : Effect.Island.pool -> Island_runtime.pool
+external island_pool_of_public : Island.pool -> Island_runtime.pool
   = "%identity"
 
 external blocking_pool_of_public : Effect.Blocking.Pool.t -> Blocking_runtime.t

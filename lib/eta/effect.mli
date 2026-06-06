@@ -15,8 +15,8 @@
     ZIO-style environment or layer graph.
 
     This signature is intentionally a facade over Eta's effect algebra,
-    structured concurrency, observability hooks, blocking bridge, and island
-    bridge. Keep implementation-only representation details out of this file:
+    structured concurrency, observability hooks, and blocking bridge. Keep
+    implementation-only representation details out of this file:
     if a helper is needed only by Runtime or private modules, put it behind a
     private module such as Runtime_erasure instead of widening Effect. *)
 
@@ -45,101 +45,6 @@ val sync : (unit -> 'a) @ many -> ('a, 'err) t
     are not caught by {!catch}. Return an explicit [result] and use
     {!from_result} when a leaf operation has an expected typed failure.
     [Eio.Cancel.Cancelled _] remains interruption. *)
-
-val island :
-  ('input : immutable_data) ('output : immutable_data).
-  ?name:string ->
-  ('input -> 'output) @ portable ->
-  'input ->
-  ('output, 'err) t
-(** Portable twin of {!sync} for one domain-offloaded callback.
-
-    Anything accepted by [island] can also be expressed with {!sync}; the
-    reverse is deliberately false because [island] requires a [@ portable]
-    callback and portable input/output values. The runtime must be configured
-    with an island pool; Eta never silently falls back to same-domain
-    execution. No timeout, cancellation, preemption, streaming/online queueing,
-    portable AST, or portable Resource/Supervisor/Eta_stream/OTel behavior is
-    implied by this primitive. *)
-
-module Island : sig
-  type worker_die = {
-    kind : string;
-    message : string;
-    backtrace : string option;
-  }
-  (** Diagnostic returned when a worker-domain callback raises before producing
-      its declared result. This stays portable and smaller than {!Cause.t}
-      because raw OCaml causes do not cross the island boundary. *)
-
-  type ('a : immutable_data, 'e : immutable_data) settled =
-    | Ok of 'a
-    | Error of 'e
-    | Worker_died of worker_die
-  (** Per-item result for {!all_settled}. [Ok] and [Error] are the callback's
-      own result channel; [Worker_died] is an unchecked worker crash. *)
-
-  type pool
-  (** Reusable heartbeat-backed island pool. Create it once, pass it to the
-      runtime or to a batch override, and shut it down at program exit. Pool
-      creation is intentionally not hidden because it is comparatively
-      expensive and because missing configuration must fail loudly. *)
-
-  val map :
-    ('input : immutable_data) ('output : immutable_data).
-    ?name:string ->
-    ?pool:pool ->
-    f:('input -> 'output) @ portable ->
-    'input list ->
-    ('output list, 'err) t
-  (** Run a finite batch of portable callbacks and return results in input
-      order. Worker crashes fail the outer effect as defects.
-
-      Running callbacks are not preempted. Parent cancellation or an Eta
-      timeout can stop waiting for the batch, but cannot safely reclaim worker
-      domains already executing user code. Use only bounded callbacks that
-      return on their own. *)
-
-  val map_result :
-    ('input : immutable_data)
-    ('output : immutable_data)
-    ('error : immutable_data).
-    ?name:string ->
-    ?pool:pool ->
-    f:('input -> ('output, 'error) result) @ portable ->
-    'input list ->
-    (('output, 'error) result list, 'err) t
-  (** Like {!map}, but the portable callback returns a typed per-item [result].
-      Callback [Error _] values are returned in place; worker crashes still fail
-      the outer effect as defects. The same non-preemptive callback contract as
-      {!map} applies. *)
-
-  val all_settled :
-    ('input : immutable_data)
-    ('output : immutable_data)
-    ('error : immutable_data).
-    ?name:string ->
-    ?pool:pool ->
-    f:('input -> ('output, 'error) result) @ portable ->
-    'input list ->
-    (('output, 'error) settled list, 'err) t
-  (** Run a finite batch and return one settled outcome per input, preserving
-      input order. Worker crashes are represented as [Worker_died] values
-      instead of aborting siblings. The same non-preemptive callback contract as
-      {!map} applies. *)
-
-  module Pool : sig
-    type t = pool
-
-    val create : ?domains:int -> unit -> t
-    (** Create a reusable island pool. [domains] defaults to [2].
-        @raise Invalid_argument if [domains <= 0]. *)
-
-    val shutdown : t -> unit
-    (** Stop the pool. Calling it more than once is harmless; submitting work to
-        a stopped pool raises [Invalid_argument]. *)
-  end
-end
 
 module Blocking : sig
   type ('a, 'err) effect = ('a, 'err) t
@@ -237,7 +142,7 @@ val blocking :
 
     Use this for legacy synchronous I/O such as blocking DB clients, filesystem
     libraries, synchronous SDKs, and blocking C bindings. Do not use it for
-    CPU-bound work; use {!Effect.island} or {!Effect.Island.map} instead.
+    CPU-bound work; use {!Island.run} or {!Island.map} instead.
 
     Running callbacks are not preempted. Parent cancellation interrupts queued
     work, but started work must finish unless the pool uses
@@ -303,8 +208,8 @@ val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
     cause propagates upward.
 
     This is effect concurrency on the current Eio runtime, not CPU
-    parallelism. Use {!Effect.island} / {!Effect.Island.map} for
-    portable worker-domain offload, or {!Par} for explicit fork-join
+    parallelism. Use {!Island.run} / {!Island.map} for portable worker-domain
+    offload, or {!Par} for explicit fork-join
     parallel algorithms. *)
 
 val all : ('a, 'err) t list -> ('a list, 'err) t
@@ -324,7 +229,7 @@ val for_each_par : 'x list -> ('x -> ('a, 'err) t) @ many -> ('a list, 'err) t
 
     This runs child effects as concurrent fibers on the current runtime
     substrate. It does not move arbitrary effects to worker domains; use
-    {!Effect.Island.map} for portable CPU-bound batch work. *)
+    {!Island.map} for portable CPU-bound batch work. *)
 
 val for_each_par_bounded :
   max:int -> 'x list -> ('x -> ('a, 'err) t) @ many -> ('a list, 'err) t

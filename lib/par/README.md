@@ -77,14 +77,14 @@ without an enclosing `run` raises `Invalid_argument`.
 fork-join, parallel-map, parallel-sort, or lazy iterator chains over arrays,
 this is the core module.
 
-It shares the heartbeat scheduler implementation with `Effect.island`
+It shares the heartbeat scheduler implementation with `Island.run`
 (the typed-offload layer).  The public pool types remain separate.  The split
 is:
 
 | API | Lives in | Pool | Closures | Payloads |
 |---|---|---|---|---|
 | `Eta.Par.join`, `par_*`, `Iter` | `eta` | Heartbeat domain pool | untyped (`unit -> 'a`); can close over mutable arrays | unconstrained |
-| `Effect.island`, `Island.map` | `eta` | Heartbeat domain pool | typed (`@ portable`); compiler-forbids shared mutable state | `: immutable_data` |
+| `Island.run`, `Island.map` | `eta` | Heartbeat domain pool | typed (`@ portable`); compiler-forbids shared mutable state | `: immutable_data` |
 
 See [Concurrency Guide](../../docs/concurrency-guide.md) for the full
 when-to-use-what decision flow.
@@ -99,7 +99,7 @@ promote their oldest queued frame into a stealable slot for idle workers.
 `Pool.run` registers the caller as worker 0 and runs the root task on the
 caller, which is the right shape for explicit fork/join. `Pool.run_on_worker`
 submits a root task to a long-lived worker domain; Eta uses that entry point for
-`Effect.island` so portable callbacks keep their offload semantics.
+`Island.run` so portable callbacks keep their offload semantics.
 
 ## Correctness
 

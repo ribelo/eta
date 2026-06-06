@@ -12,7 +12,7 @@ val create :
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
   ?random:Capabilities.random ->
-  ?island_pool:Effect.Island.pool ->
+  ?island_pool:Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
   ?blocking_runner:Effect.Blocking.Pool.runner ->
   ?capture_backtrace:bool ->
@@ -21,7 +21,7 @@ val create :
 (** Create an interpreter.
 
     [island_pool] configures the reusable worker-domain executor used by
-    {!Effect.island} and {!Effect.Island} combinators. Missing configuration is
+    {!Island} combinators. Missing configuration is
     a runtime defect; Eta does not silently run island work in the current
     domain.
 
@@ -48,7 +48,7 @@ val with_host_eio :
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
   ?random:Capabilities.random ->
-  ?island_pool:Effect.Island.pool ->
+  ?island_pool:Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ('err t -> 'a) ->
@@ -88,7 +88,7 @@ val run_host_eio :
   ?logger:Capabilities.logger ->
   ?meter:Capabilities.meter ->
   ?random:Capabilities.random ->
-  ?island_pool:Effect.Island.pool ->
+  ?island_pool:Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ('a, 'err) Effect.t ->
@@ -96,7 +96,7 @@ val run_host_eio :
 (** Create a host-backed runtime and run one effect to completion. *)
 
 val run :
-  ?island_pool:Effect.Island.pool ->
+  ?island_pool:Island.pool ->
   ?blocking_pool:Effect.Blocking.Pool.t ->
   'err t ->
   ('a, 'err) Effect.t ->

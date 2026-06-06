@@ -5,9 +5,9 @@ open Test_eta_support
 let with_island_runtime ?domains f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let pool = Effect.Island.Pool.create ?domains () in
+  let pool = Island.Pool.create ?domains () in
   Fun.protect
-    ~finally:(fun () -> Effect.Island.Pool.shutdown pool)
+    ~finally:(fun () -> Island.Pool.shutdown pool)
     (fun () ->
       let rt =
         Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~island_pool:pool
@@ -102,36 +102,36 @@ let test_island_single_uses_runtime_pool () =
   with_island_runtime @@ fun rt _pool ->
   Alcotest.(check int)
     "single island" 49
-    (run_ok rt (Effect.island ~name:"square" island_square 7))
+    (run_ok rt (Island.run ~name:"square" island_square 7))
 
 let test_island_requires_pool () =
   with_runtime @@ fun rt ->
-  match Runtime.run rt (Effect.island ~name:"missing" island_square 3) with
+  match Runtime.run rt (Island.run ~name:"missing" island_square 3) with
   | Exit.Ok _ -> Alcotest.fail "expected missing island pool to fail"
   | Exit.Error cause ->
       check_die_message "missing pool" "island executor not configured" cause
 
 let test_island_run_pool_override () =
   with_runtime @@ fun rt ->
-  let pool = Effect.Island.Pool.create () in
+  let pool = Island.Pool.create () in
   Fun.protect
-    ~finally:(fun () -> Effect.Island.Pool.shutdown pool)
+    ~finally:(fun () -> Island.Pool.shutdown pool)
     (fun () ->
       check_exit_ok Alcotest.int "override pool" 36
         (Runtime.run ~island_pool:pool rt
-           (Effect.island ~name:"override" island_square 6)))
+           (Island.run ~name:"override" island_square 6)))
 
 let test_island_map_preserves_order () =
   with_island_runtime @@ fun rt _pool ->
   let inputs = [ 5; 1; 4; 2; 3 ] in
   Alcotest.(check (list int))
     "input order" [ 50; 10; 40; 20; 30 ]
-    (run_ok rt (Effect.Island.map ~f:island_order_work inputs))
+    (run_ok rt (Island.map ~f:island_order_work inputs))
 
 let test_island_map_uses_pool_fanout () =
   with_island_runtime ~domains:8 @@ fun rt _pool ->
   let inputs = List.init 16 Fun.id in
-  let results = run_ok rt (Effect.Island.map ~f:island_entry_probe inputs) in
+  let results = run_ok rt (Island.map ~f:island_entry_probe inputs) in
   Alcotest.(check (list int)) "input order" inputs
     (List.map (fun result -> result.entry_input) results);
   let min_start, max_start =
@@ -152,7 +152,7 @@ let test_island_timeout_stops_waiting_for_batch () =
   let started = Unix.gettimeofday () in
   match
     Runtime.run rt
-      (Effect.Island.map ~f:island_sleep_ms [ 200 ]
+      (Island.map ~f:island_sleep_ms [ 200 ]
       |> Effect.timeout (Duration.ms 10))
   with
   | Exit.Error (Cause.Fail `Timeout) ->
@@ -167,7 +167,7 @@ let test_island_timeout_stops_waiting_for_batch () =
 
 let test_island_map_result_returns_item_results () =
   with_island_runtime @@ fun rt _pool ->
-  match run_ok rt (Effect.Island.map_result ~f:island_even_result [ 2; 3; 4 ])
+  match run_ok rt (Island.map_result ~f:island_even_result [ 2; 3; 4 ])
   with
   | [ Ok 1; Error (Odd 3); Ok 2 ] -> ()
   | _ -> Alcotest.fail "unexpected map_result output"
@@ -176,13 +176,13 @@ let test_island_all_settled_returns_worker_died () =
   with_island_runtime @@ fun rt _pool ->
   match
     run_ok rt
-      (Effect.Island.all_settled ~f:island_settled_work [ 2; 3; 0; 4 ])
+      (Island.all_settled ~f:island_settled_work [ 2; 3; 0; 4 ])
   with
   | [
-   Effect.Island.Ok 4;
-   Effect.Island.Error (Odd 3);
-   Effect.Island.Worker_died die;
-   Effect.Island.Ok 8;
+   Island.Ok 4;
+   Island.Error (Odd 3);
+   Island.Worker_died die;
+   Island.Ok 8;
   ] ->
       Alcotest.(check string) "worker die kind" "worker_died" die.kind
   | _ -> Alcotest.fail "unexpected all_settled output"
@@ -190,9 +190,9 @@ let test_island_all_settled_returns_worker_died () =
 let test_island_worker_died_captures_exception_details () =
   with_island_runtime @@ fun rt _pool ->
   match
-    run_ok rt (Effect.Island.all_settled ~f:island_specific_worker_error [ 0 ])
+    run_ok rt (Island.all_settled ~f:island_specific_worker_error [ 0 ])
   with
-  | [ Effect.Island.Worker_died die ] ->
+  | [ Island.Worker_died die ] ->
       Alcotest.(check bool) "worker die message" true
         (contains_substring die.message "specific worker error");
       (match die.backtrace with
@@ -204,7 +204,7 @@ let test_island_worker_died_captures_exception_details () =
 
 let test_island_map_worker_crash_fails_outer_effect () =
   with_island_runtime @@ fun rt _pool ->
-  match Runtime.run rt (Effect.Island.map ~f:island_settled_work [ 1; 0 ]) with
+  match Runtime.run rt (Island.map ~f:island_settled_work [ 1; 0 ]) with
   | Exit.Ok _ -> Alcotest.fail "expected worker crash to fail map"
   | Exit.Error cause -> check_die_message "worker crash" "worker died" cause
 
@@ -232,14 +232,14 @@ let test_island_workloads () =
   in
   Alcotest.(check (list int))
     "parse workload" [ 8; 5; 7 ]
-    (run_ok rt (Effect.Island.map ~name:"parse" ~f:island_parse_work parse_inputs));
+    (run_ok rt (Island.map ~name:"parse" ~f:island_parse_work parse_inputs));
   Alcotest.(check (list int))
     "schema workload" [ 17; 12 ]
     (run_ok rt
-       (Effect.Island.map ~name:"schema" ~f:island_schema_work schema_inputs));
+       (Island.map ~name:"schema" ~f:island_schema_work schema_inputs));
   Alcotest.(check int)
     "hash workload count" 3
     (List.length
        (run_ok rt
-          (Effect.Island.map ~name:"hash" ~f:island_hash_work hash_inputs)))
+          (Island.map ~name:"hash" ~f:island_hash_work hash_inputs)))
 

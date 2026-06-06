@@ -47,7 +47,7 @@ module Pool = struct
 
   let create ?(domains = 2) () =
     if domains <= 0 then
-      invalid_arg "Effect.Island.Pool.create: domains must be > 0";
+      invalid_arg "Eta.Island.Pool.create: domains must be > 0";
     {
       pool = Par.Pool.create ~n_workers:(domains + 1) ();
       stopped = Atomic.make false;
@@ -60,7 +60,7 @@ end
 
 let ensure_running pool =
   if Atomic.get pool.stopped then
-    invalid_arg "Effect.Island: pool already shut down"
+    invalid_arg "Eta.Island: pool already shut down"
 
 let (capture_map @ portable) (f @ portable) input =
   try Map_ok (f input) with exn -> Map_worker_died (worker_die_of_exn exn)

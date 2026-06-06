@@ -56,7 +56,7 @@ module Pool : sig
       occupied and keeps the caller blocked.
 
       This is the entry point for typed offload wrappers such as
-      [Effect.island].  Use {!run} for explicit fork-join roots where the
+      [Island.run].  Use {!run} for explicit fork-join roots where the
       caller should participate as worker 0. *)
 
   val run_many_on_workers : t -> (unit -> 'a) list -> 'a list

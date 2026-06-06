@@ -23,7 +23,7 @@ val with_runtime :
   ?logger:Eta.Capabilities.logger ->
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
-  ?island_pool:Eta.Effect.Island.pool ->
+  ?island_pool:Eta.Island.pool ->
   ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ('err Eta.Runtime.t -> 'a) ->
@@ -38,7 +38,7 @@ val run :
   ?logger:Eta.Capabilities.logger ->
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
-  ?island_pool:Eta.Effect.Island.pool ->
+  ?island_pool:Eta.Island.pool ->
   ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->
@@ -52,7 +52,7 @@ val run_exn :
   ?logger:Eta.Capabilities.logger ->
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
-  ?island_pool:Eta.Effect.Island.pool ->
+  ?island_pool:Eta.Island.pool ->
   ?blocking_pool:Eta.Effect.Blocking.Pool.t ->
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->

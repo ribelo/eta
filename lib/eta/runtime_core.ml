@@ -200,7 +200,7 @@ let island_pool runtime override =
   | None -> (
       match runtime.island_pool with
       | Some pool -> pool
-      | None -> failwith "Effect.island: island executor not configured")
+      | None -> failwith "Eta.Island: island executor not configured")
 
 let blocking_pool runtime override =
   match override with
