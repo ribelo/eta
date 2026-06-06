@@ -712,6 +712,78 @@ let test_h2_multiplexer_rejects_after_goaway () =
   Alcotest.(check int) "opened before only" 1 stats.opened;
   Alcotest.(check int) "no admission pressure" 0 stats.admission_rejected
 
+let test_h2_body_stream_sync_delivers_prebuffered_body () =
+  let num_chunks = 256 in
+  let chunk_data = String.make 1024 'x' in
+  let total_size = num_chunks * String.length chunk_data in
+  let h2_config =
+    {
+      H2.Config.default with
+      response_body_buffer_size = total_size;
+      initial_window_size = Int32.of_int (total_size * 2);
+    }
+  in
+  let held_writer = ref None in
+  let server =
+    H2.Server_connection.create ~config:h2_config (fun reqd ->
+        held_writer :=
+          Some (H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK)))
+  in
+  let mux = h2_mux_create ~config:h2_config (h2_mux_result ()) () in
+  let client = Eta_http.H2.Multiplexer.client_connection mux in
+  let body_stream_ref = ref None in
+  let request =
+    H2.Request.create ~scheme:"https"
+      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
+      `GET "/large-buffered-sync"
+  in
+  let closed_error =
+    Eta_http.Error.make ~protocol:H2 ~method_:"GET"
+      ~uri:"https://api.example.test/large-buffered-sync"
+      (Connection_closed { during = Http_response })
+  in
+  let opened =
+    match
+      Eta_http.H2.Multiplexer.request mux ~tag:1 request
+        ~error_handler:(fun _ _ -> ())
+        ~response_handler:(fun stream _ body ->
+          let pump () =
+            match h2_drain_server_to_client server client with
+            | true -> Eta.Effect.pure (Eta_http.H2.Multiplexer.Read 1)
+            | false -> Eta.Effect.pure (Eta_http.H2.Multiplexer.Read 0)
+          in
+          body_stream_ref :=
+            Some
+              (Eta_http.H2.Multiplexer.body_stream ~closed_error ~pump mux stream
+                 body))
+    with
+    | Ok opened -> opened
+    | Error _ -> Alcotest.fail "request setup failed"
+  in
+  H2.Body.Writer.close opened.request_body;
+  h2_pump_pair client server;
+  let writer =
+    match !held_writer with
+    | Some writer -> writer
+    | None -> Alcotest.fail "server did not install writer"
+  in
+  for _ = 1 to num_chunks do
+    H2.Body.Writer.write_string writer chunk_data
+  done;
+  H2.Body.Writer.close writer;
+  h2_pump_pair client server;
+  match !body_stream_ref with
+  | None -> Alcotest.fail "body_stream was never created"
+  | Some body_stream ->
+      with_test_clock @@ fun _sw _clock rt ->
+      let body =
+        Eta.Runtime.run rt
+          (Eta_http.Body.Stream.read_all ~max_bytes:total_size body_stream)
+        |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int)
+        "full body delivered without loss" total_size (Bytes.length body)
+
 (* body_stream_async pull-based backpressure + no-loss invariant (reflects the
    ZIO/Effect Stream contract: every produced element is delivered, exactly
    one per consumer demand).

@@ -325,7 +325,7 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
       mark_complete t stream)
   in
   let schedule_read () =
-    if (not !scheduled) && (not !eof) && not (H2.Body.Reader.is_closed body) then (
+    if (not !scheduled) && not !eof then (
       scheduled := true;
       H2.Body.Reader.schedule_read body
         ~on_eof:(fun () ->
@@ -350,9 +350,6 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     match poll_error () with
     | Some error -> Eta.Effect.fail error
     | None when !eof -> Eta.Effect.pure Stream.End
-    | None when H2.Body.Reader.is_closed body ->
-        finish_eof ();
-        Eta.Effect.pure Stream.End
     | None -> Eta.Effect.fail closed_error
   in
   let rec read_next () =
@@ -362,9 +359,6 @@ let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
         match poll_error () with
         | Some error -> Eta.Effect.fail error
         | None when !eof -> Eta.Effect.pure Stream.End
-        | None when H2.Body.Reader.is_closed body ->
-            finish_eof ();
-            Eta.Effect.pure Stream.End
         | None -> read_after_schedule ())
   and read_after_schedule () =
     schedule_read ();

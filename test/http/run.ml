@@ -423,6 +423,8 @@ let () =
             test_h2_multiplexer_buffer_full_is_security_error;
           Alcotest.test_case "GOAWAY rejects new streams" `Quick
             test_h2_multiplexer_rejects_after_goaway;
+          Alcotest.test_case "body_stream sync prebuffered body" `Quick
+            test_h2_body_stream_sync_delivers_prebuffered_body;
           Alcotest.test_case "body_stream_async bounded recursion" `Quick
             test_h2_body_stream_async_bounded_recursion;
         ] );
