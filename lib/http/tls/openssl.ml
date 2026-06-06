@@ -9,7 +9,8 @@ type handshake_result =
 
 external create_ctx : unit -> ctx = "eta_openssl_ctx_create"
 external ctx_load_ca : ctx -> string -> unit = "eta_openssl_ctx_load_ca"
-external create_ssl_raw : ctx -> string option -> string list -> ssl = "eta_openssl_ssl_create"
+external create_ssl_raw : ctx -> string option -> string option -> string list -> ssl
+  = "eta_openssl_ssl_create"
 external handshake_raw : ssl -> int = "eta_openssl_ssl_handshake"
 external read_raw : ssl -> Cstruct.buffer -> int -> int -> int = "eta_openssl_ssl_read"
 external write_raw : ssl -> Cstruct.buffer -> int -> int -> int = "eta_openssl_ssl_write"
@@ -31,8 +32,8 @@ let random_bytes len =
   random_bytes_into bytes 0 len;
   bytes
 
-let create_ssl ctx ~hostname ~alpn_protocols =
-  create_ssl_raw ctx hostname alpn_protocols
+let create_ssl ctx ~hostname ~ip ~alpn_protocols =
+  create_ssl_raw ctx hostname ip alpn_protocols
 
 let handshake ssl =
   match handshake_raw ssl with

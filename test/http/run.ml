@@ -297,6 +297,8 @@ let () =
             test_openssl_ssl_finalizer_keeps_ctx_ownership_separate;
           Alcotest.test_case "handshake enters SSL mutex" `Quick
             test_tls_handshake_enters_ssl_mutex_before_openssl;
+          Alcotest.test_case "client uses IP peer identity" `Quick
+            test_tls_client_of_flow_uses_ip_identity;
         ] );
       ( "h2-admission",
         [

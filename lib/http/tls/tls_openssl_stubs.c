@@ -1,11 +1,13 @@
 /* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT */
 
+#include <stdlib.h>
 #include <string.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/x509v3.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
@@ -225,10 +227,10 @@ CAMLprim value eta_openssl_ctx_load_ca(value v_ctx, value v_path)
 }
 
 CAMLprim value eta_openssl_ssl_create(value v_ctx, value v_hostname,
-                                      value v_alpn)
+                                      value v_ip, value v_alpn)
 {
-  CAMLparam3(v_ctx, v_hostname, v_alpn);
-  CAMLlocal2(v_item, v_result);
+  CAMLparam4(v_ctx, v_hostname, v_ip, v_alpn);
+  CAMLlocal1(v_item);
 
   SSL_CTX *ctx = eta_ssl_ctx_val(v_ctx);
   SSL *ssl = SSL_new(ctx);
@@ -254,6 +256,31 @@ CAMLprim value eta_openssl_ssl_create(value v_ctx, value v_hostname,
     if (!SSL_set_tlsext_host_name(ssl, host)) {
       SSL_free(ssl);
       caml_failwith("SSL_set_tlsext_host_name failed");
+    }
+  }
+
+  /* Peer certificate identity.  SNI stays DNS-only; IP literals use OpenSSL's
+     IP SAN matcher instead of falling through to hostname-less verification. */
+  {
+    X509_VERIFY_PARAM *param = SSL_get0_param(ssl);
+    if (param == NULL) {
+      SSL_free(ssl);
+      caml_failwith("SSL_get0_param failed");
+    }
+    if (Is_some(v_ip)) {
+      const char *ip = String_val(Some_val(v_ip));
+      if (X509_VERIFY_PARAM_set1_ip_asc(param, ip) != 1) {
+        SSL_free(ssl);
+        caml_failwith("X509_VERIFY_PARAM_set1_ip_asc failed");
+      }
+    } else if (Is_some(v_hostname)) {
+      const char *host = String_val(Some_val(v_hostname));
+      X509_VERIFY_PARAM_set_hostflags(
+          param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+      if (X509_VERIFY_PARAM_set1_host(param, host, 0) != 1) {
+        SSL_free(ssl);
+        caml_failwith("X509_VERIFY_PARAM_set1_host failed");
+      }
     }
   }
 

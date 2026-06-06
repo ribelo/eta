@@ -17,9 +17,16 @@ val ctx_load_ca : ctx -> string -> unit
     store of [ctx]. The default system trust store remains in eff.
     Raises [Failure] if the file cannot be loaded. *)
 
-val create_ssl : ctx -> hostname:string option -> alpn_protocols:string list -> ssl
-(** Create an SSL connection with memory BIOs. [hostname] sets SNI.
-    [alpn_protocols] are sent in wire order. *)
+val create_ssl :
+  ctx ->
+  hostname:string option ->
+  ip:string option ->
+  alpn_protocols:string list ->
+  ssl
+(** Create an SSL connection with memory BIOs. [hostname] sets SNI and,
+    when [ip] is absent, DNS peer certificate identity verification. [ip]
+    sets IP peer certificate identity verification. [alpn_protocols] are sent
+    in wire order. *)
 
 type handshake_result =
   | Handshake_ok

@@ -224,11 +224,15 @@ let client_of_flow ?host_eio (config : config) ?host
     | Some h -> Some (Domain_name.to_string h)
     | None -> Option.map Domain_name.to_string (Config.peer_name config)
   in
+  let ip = Option.map Ipaddr.to_string (Config.ip config) in
   let ctx = Openssl.create_ctx () in
   (match Config.ca_file config with
    | Some path -> Openssl.ctx_load_ca ctx path
    | None -> ());
-  let ssl = Openssl.create_ssl ctx ~hostname ~alpn_protocols:(Config.alpn_protocols config) in
+  let ssl =
+    Openssl.create_ssl ctx ~hostname ~ip
+      ~alpn_protocols:(Config.alpn_protocols config)
+  in
   let t =
     {
       ssl;
