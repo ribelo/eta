@@ -1166,6 +1166,65 @@ static value arrow_rel(struct ArrowSchema *schema, struct ArrowArray *array, int
   CAMLreturn(make_block(8, record));
 }
 
+/* Decode a list child of records (path _NODES / _RELS) into an OCaml list of
+   bare node/rel records (not wrapped in Value.Node/Value.Rel). */
+static value arrow_graph_list(struct ArrowSchema *list_schema,
+                              struct ArrowArray *list_array, int64_t row,
+                              int is_rel)
+{
+  CAMLparam0();
+  CAMLlocal2(items, item);
+  if (list_schema == NULL || list_array == NULL || list_schema->n_children != 1 ||
+      list_array->n_children != 1 || list_schema->children == NULL ||
+      list_array->children == NULL || list_schema->children[0] == NULL ||
+      list_array->children[0] == NULL) {
+    caml_failwith("ladybug: malformed Arrow path list");
+  }
+  require_arrow_buffers(list_array, 2);
+  int64_t logical = list_array->offset + row;
+  int large = (list_schema->format != NULL && strcmp(list_schema->format, "+L") == 0);
+  int64_t start;
+  int64_t end;
+  if (large) {
+    const int64_t *offsets = (const int64_t *)list_array->buffers[1];
+    start = offsets[logical];
+    end = offsets[logical + 1];
+  } else {
+    const int32_t *offsets = (const int32_t *)list_array->buffers[1];
+    start = offsets[logical];
+    end = offsets[logical + 1];
+  }
+  if (end < start || start < 0) caml_failwith("ladybug: malformed Arrow path offsets");
+  items = Val_emptylist;
+  for (int64_t idx = end; idx > start; idx--) {
+    item = is_rel
+               ? arrow_rel_record(list_schema->children[0], list_array->children[0], idx - 1)
+               : arrow_node_record(list_schema->children[0], list_array->children[0], idx - 1);
+    items = cons(item, items);
+  }
+  CAMLreturn(items);
+}
+
+static value arrow_path(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal3(nodes, rels, record);
+  int nodes_idx = find_child(schema, "_NODES");
+  int rels_idx = find_child(schema, "_RELS");
+  nodes =
+      (nodes_idx >= 0 && array->children != NULL && array->children[nodes_idx] != NULL)
+          ? arrow_graph_list(schema->children[nodes_idx], array->children[nodes_idx], row, 0)
+          : Val_emptylist;
+  rels =
+      (rels_idx >= 0 && array->children != NULL && array->children[rels_idx] != NULL)
+          ? arrow_graph_list(schema->children[rels_idx], array->children[rels_idx], row, 1)
+          : Val_emptylist;
+  record = caml_alloc(2, 0);
+  Store_field(record, 0, nodes);
+  Store_field(record, 1, rels);
+  CAMLreturn(make_block(9, record));
+}
+
 static value arrow_struct_map(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
 {
   CAMLparam0();
@@ -1209,6 +1268,8 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
     CAMLreturn(arrow_list(schema, array, row, 1));
   }
   if (strcmp(format, "+s") == 0) {
+    if (find_child(schema, "_NODES") >= 0 && find_child(schema, "_RELS") >= 0)
+      CAMLreturn(arrow_path(schema, array, row));
     if (find_child(schema, "_SRC") >= 0 && find_child(schema, "_DST") >= 0)
       CAMLreturn(arrow_rel(schema, array, row));
     if (find_child(schema, "_LABEL") >= 0) CAMLreturn(arrow_node(schema, array, row));
