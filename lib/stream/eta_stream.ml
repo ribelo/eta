@@ -213,18 +213,29 @@ and try_fold_pure :
       (* Fused source-specific loops: avoid composed closure indirection *)
       | Range { start; stop } ->
           let rec loop i acc =
-            if i > stop then acc else loop (i + 1) (k acc i)
+            if i > stop then acc
+            else
+              let acc = k acc i in
+              (* Stop at [stop] without computing [i + 1], which would overflow
+                 to [min_int] when [stop = max_int] and emit out-of-range
+                 values. *)
+              if i = stop then acc else loop (i + 1) acc
           in
           loop start acc
       | Map (Range { start; stop }, f) ->
           let rec loop i acc =
-            if i > stop then acc else loop (i + 1) (k acc (f i))
+            if i > stop then acc
+            else
+              let acc = k acc (f i) in
+              if i = stop then acc else loop (i + 1) acc
           in
           loop start acc
       | Filter (Range { start; stop }, pred) ->
           let rec loop i acc =
             if i > stop then acc
-            else loop (i + 1) (if pred i then k acc i else acc)
+            else
+              let acc = if pred i then k acc i else acc in
+              if i = stop then acc else loop (i + 1) acc
           in
           loop start acc
       | Filter (Map (Range { start; stop }, f), pred) ->
@@ -232,7 +243,8 @@ and try_fold_pure :
             if i > stop then acc
             else
               let y = f i in
-              loop (i + 1) (if pred y then k acc y else acc)
+              let acc = if pred y then k acc y else acc in
+              if i = stop then acc else loop (i + 1) acc
           in
           loop start acc
       | Map (Chunk values, f) ->
@@ -552,8 +564,10 @@ and fold_stream :
         else
           Eta.Effect.bind
             (fun (acc, keep_going) ->
-              if keep_going then loop (i + 1) acc
-              else Eta.Effect.pure (acc, false))
+              (* Stop at [stop] without computing [i + 1], which would overflow
+                 to [min_int] when [stop = max_int]. *)
+              if keep_going && i <> stop then loop (i + 1) acc
+              else Eta.Effect.pure (acc, keep_going))
             (folder.emit acc i)
       in
       loop start acc

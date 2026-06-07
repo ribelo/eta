@@ -496,6 +496,30 @@ let test_drain_counter_underflow_raises () =
   | exception Invalid_argument _ -> ()
   | () -> Alcotest.fail "drain counter underflow was silently clamped"
 
+let test_stream_range_stops_at_max_int () =
+  with_runtime @@ fun _env rt ->
+  let stream =
+    Eta_stream.Stream.range ~start:(max_int - 1) ~stop:max_int
+    |> Eta_stream.Stream.take 3
+  in
+  Alcotest.(check (list int))
+    "range stops at max_int"
+    [ max_int - 1; max_int ]
+    (run_ok rt (run_collect stream))
+
+let test_stream_range_pure_fold_stops_at_max_int () =
+  with_runtime @@ fun _env rt ->
+  (* Exercises the fused pure fold path (map over a Range). *)
+  let stream =
+    Eta_stream.Stream.range ~start:(max_int - 1) ~stop:max_int
+    |> Eta_stream.Stream.map (fun i -> i)
+    |> Eta_stream.Stream.take 3
+  in
+  Alcotest.(check (list int))
+    "mapped range stops at max_int"
+    [ max_int - 1; max_int ]
+    (run_ok rt (run_collect stream))
+
 let suite =
   ( "Eta_stream",
     [
@@ -546,6 +570,10 @@ let suite =
         test_drain_counter_await_zero;
       Alcotest.test_case "drain counter underflow raises" `Quick
         test_drain_counter_underflow_raises;
+      Alcotest.test_case "range stops at max_int" `Quick
+        test_stream_range_stops_at_max_int;
+      Alcotest.test_case "mapped range stops at max_int" `Quick
+        test_stream_range_pure_fold_stops_at_max_int;
     ] )
 
 let () = Alcotest.run "eta-stream" [ suite ]
