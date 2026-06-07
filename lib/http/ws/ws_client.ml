@@ -361,11 +361,19 @@ let send_frame ?allow_after_close t frame =
   Effect.sync (fun () -> send_frame_sync ?allow_after_close t frame)
   |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
 
+(* RFC 6455 close codes valid on the wire: 1000-1014 (excluding the
+   connection-local codes 1005/1006, and 1015 which is also connection-local),
+   plus the registered (3000-3999) and private (4000-4999) ranges. *)
+let valid_close_code code =
+  (code >= 1000 && code <= 1014 && code <> 1005 && code <> 1006)
+  || (code >= 3000 && code <= 4999)
+
 let close_payload ?code ?(reason = "") () =
   match code with
   | None -> Ok Bytes.empty
   | Some code ->
-      if code < 1000 || code > 4999 then Error (`Protocol "invalid WebSocket close code")
+      if not (valid_close_code code) then
+        Error (`Protocol "invalid WebSocket close code")
       else if String.length reason > 123 then
         Error (`Protocol "WebSocket close reason exceeds 123 bytes")
       else
@@ -407,7 +415,9 @@ let parse_close_payload payload =
       (Char.code (Bytes.get payload 0) lsl 8) lor Char.code (Bytes.get payload 1)
     in
     let reason = Bytes.sub_string payload 2 (len - 2) in
-    Ok (code, reason)
+    if not (valid_close_code code) then
+      Error (`Protocol "invalid WebSocket close code")
+    else Ok (code, reason)
 
 type fragment = {
   opcode : Codec.opcode;

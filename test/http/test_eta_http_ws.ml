@@ -602,6 +602,41 @@ let test_ws_close_1011_fails_inbound_stream () =
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
+let test_ws_invalid_peer_close_code_is_protocol_error () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  (* 999 is below the valid WebSocket close-code range; the peer must not be
+     able to surface it as a normal `Closed` — it is a protocol violation. *)
+  let invalid_close =
+    Eta_http.Ws.Codec.encode
+      { fin = true; opcode = Close; payload = close_payload 999 "" }
+    |> Bytes.to_string
+  in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ invalid_close) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  match
+    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Protocol _)) -> ()
+  | Eta.Exit.Error (Eta.Cause.Fail (`Closed (999, _))) ->
+      Alcotest.fail "invalid close code 999 was accepted as Closed"
+  | Eta.Exit.Ok () -> Alcotest.fail "expected protocol error for invalid close code"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected cause: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+
 let test_ws_selected_subprotocol () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let _state, flow =

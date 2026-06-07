@@ -264,6 +264,8 @@ let () =
             test_ws_ping_is_internal_and_pong_is_sent;
           Alcotest.test_case "1011 close fails inbound stream" `Quick
             test_ws_close_1011_fails_inbound_stream;
+          Alcotest.test_case "invalid peer close code is protocol error" `Quick
+            test_ws_invalid_peer_close_code_is_protocol_error;
           Alcotest.test_case "selected subprotocol" `Quick
             test_ws_selected_subprotocol;
           Alcotest.test_case "fragmented text reassembles" `Quick
