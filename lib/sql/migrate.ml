@@ -312,7 +312,10 @@ module Source = struct
         raise (Sys_error reason)
 
   let is_regular_file path =
-    match Unix.lstat path with
+    (* Follow symlinks: a symlink pointing to a regular migration file must
+       not be skipped. [Unix.lstat] reports the link itself (S_LNK), so use
+       [Unix.stat] to inspect the target. *)
+    match Unix.stat path with
     | stats -> Ok (stats.Unix.st_kind = Unix.S_REG)
     | exception Unix.Unix_error (err, _, _) ->
         Result.Error (Unix.error_message err)
