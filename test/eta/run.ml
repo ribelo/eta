@@ -355,6 +355,8 @@ let () =
             test_blocking_direct_control_and_blocking_heartbeat;
           Alcotest.test_case "wait caps active and queue" `Quick
             test_blocking_wait_policy_caps_active_and_queue;
+          Alcotest.test_case "wait policy no lost wakeup under churn" `Quick
+            test_blocking_wait_policy_no_lost_wakeup_under_churn;
           Alcotest.test_case "reject deterministic" `Quick
             test_blocking_reject_policy_deterministic;
           Alcotest.test_case "pending cancellation" `Quick

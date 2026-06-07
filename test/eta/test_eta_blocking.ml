@@ -704,3 +704,65 @@ let test_cause_of_exn_distinguishes_exit_from_cancelled () =
     "cancelled job should propagate" true cancel_propagated;
   Alcotest.(check bool)
     "user Exit should NOT be interrupt (it's a user exception)" false exit_is_interrupt
+
+let test_blocking_wait_policy_no_lost_wakeup_under_churn () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let config =
+    blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Wait
+      ~shutdown_policy:BP.Drain ()
+  in
+  for iter = 1 to 2_000 do
+    let pool =
+      BP.create ~name:(Printf.sprintf "lost-wakeup-%d" iter) config
+    in
+    let release_first, release_first_u = Eio.Promise.create () in
+    let first_started, first_started_u = Eio.Promise.create () in
+
+    let first =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Runtime.run rt
+            (Eta_blocking.run ~pool ~name:"first" (fun () ->
+                 Eio.Promise.resolve first_started_u ();
+                 Eio.Promise.await release_first)))
+    in
+    Eio.Promise.await first_started;
+
+    let second =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Runtime.run rt
+            (Eta_blocking.run ~pool ~name:"second" (fun () -> 42)))
+    in
+
+    (* Encourage the second fiber to enter the Wait_full path. *)
+    for _ = 1 to 5 do
+      Eio.Fiber.yield ()
+    done;
+
+    Eio.Promise.resolve release_first_u ();
+
+    let bounded_second =
+      Effect.timeout_as (Duration.ms 250)
+        ~on_timeout:`Second_submitter_stuck
+        (Effect.sync (fun () -> Eio.Promise.await_exn second))
+    in
+    (match Runtime.run rt bounded_second with
+    | Exit.Ok (Exit.Ok 42) -> ()
+    | Exit.Ok (Exit.Ok n) ->
+        Alcotest.failf "second job returned %d on iteration %d" n iter
+    | Exit.Ok (Exit.Error cause) ->
+        Alcotest.failf "second job failed on iteration %d: %a" iter
+          (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<blocking>"))
+          cause
+    | Exit.Error (Cause.Fail `Second_submitter_stuck) ->
+        Alcotest.failf "lost wakeup: second submitter stuck on iteration %d" iter
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected timeout wrapper failure on iteration %d: %a"
+          iter
+          (Cause.pp (fun fmt _ ->
+               Format.pp_print_string fmt "<blocking-timeout>"))
+          cause);
+
+    ignore (Eio.Promise.await_exn first : (unit, _) Exit.t)
+  done

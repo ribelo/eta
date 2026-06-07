@@ -119,12 +119,18 @@ let resolve_waiters contract waiters =
         contract.Runtime_contract.resolve_promise waiter.resolver ()))
     waiters
 
-let wait_for_change contract t =
+(* Register a waiter while already holding [t.mutex]. Folding the registration
+   into the same critical section that observed the unavailable state closes
+   the lost-wakeup window: a release that wakes the waiter list cannot slip
+   between "observed full" and "registered waiter". *)
+let register_waiter_locked contract t =
+  compact_waiters_locked t;
   let promise, resolver = contract.Runtime_contract.create_promise () in
   let waiter = { resolver; active = true } in
-  Sync_lock.use t.mutex (fun () ->
-      compact_waiters_locked t;
-      t.waiters <- waiter :: t.waiters);
+  t.waiters <- waiter :: t.waiters;
+  (promise, waiter)
+
+let await_waiter contract t promise (waiter : waiter) =
   try contract.Runtime_contract.await_promise promise
   with exn
     when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
@@ -211,14 +217,16 @@ let rec reserve_slot ~now_ms contract t name emit submitted_at =
       | Reject ->
           t.rejected <- t.rejected + 1;
           `Reject
-      | Wait -> `Wait_full
+      | Wait ->
+          let promise, waiter = register_waiter_locked contract t in
+          `Wait_full (promise, waiter)
   with
   | `Started job_id -> `Started job_id
   | `Queued -> `Queued
   | `Shutdown -> raise_pool_shutting_down ~now_ms t name emit submitted_at
   | `Reject -> raise_pool_full ~now_ms t name emit submitted_at
-  | `Wait_full ->
-      wait_for_change contract t;
+  | `Wait_full (promise, waiter) ->
+      await_waiter contract t promise waiter;
       reserve_slot ~now_ms contract t name emit submitted_at
 
 let wait_queued_slot ~now_ms contract t name emit submitted_at =
@@ -238,7 +246,9 @@ let wait_queued_slot ~now_ms contract t name emit submitted_at =
           Hashtbl.replace t.active_jobs job_id ();
           let waiters = wake_waiters_locked t in
           `Started (job_id, waiters))
-        else `Wait
+        else
+          let promise, waiter = register_waiter_locked contract t in
+          `Wait (promise, waiter)
       in
       match state with
       | `Started (job_id, waiters) ->
@@ -247,8 +257,8 @@ let wait_queued_slot ~now_ms contract t name emit submitted_at =
       | `Shutdown waiters ->
           resolve_waiters contract waiters;
           raise_pool_shutting_down ~now_ms t name emit submitted_at
-      | `Wait ->
-          wait_for_change contract t;
+      | `Wait (promise, waiter) ->
+          await_waiter contract t promise waiter;
           loop ()
     in
     loop ()
@@ -460,13 +470,17 @@ let shutdown ~contract ~emit t =
   | Detach_started -> ()
   | Drain ->
       let rec loop () =
-        if
+        match
           Sync_lock.use t.mutex @@ fun () ->
-          t.active = 0 && t.queued = 0
-        then ()
-        else (
-          wait_for_change contract t;
-          loop ())
+          if t.active = 0 && t.queued = 0 then `Done
+          else
+            let promise, waiter = register_waiter_locked contract t in
+            `Wait (promise, waiter)
+        with
+        | `Done -> ()
+        | `Wait (promise, waiter) ->
+            await_waiter contract t promise waiter;
+            loop ()
       in
       loop ()
 
