@@ -268,6 +268,10 @@ let () =
             test_ws_close_1011_fails_inbound_stream;
           Alcotest.test_case "invalid peer close code is protocol error" `Quick
             test_ws_invalid_peer_close_code_is_protocol_error;
+          Alcotest.test_case "rejects invalid UTF-8 text frame" `Quick
+            test_ws_rejects_invalid_utf8_text_frame;
+          Alcotest.test_case "rejects invalid UTF-8 close reason" `Quick
+            test_ws_rejects_invalid_utf8_close_reason;
           Alcotest.test_case "selected subprotocol" `Quick
             test_ws_selected_subprotocol;
           Alcotest.test_case "fragmented text reassembles" `Quick

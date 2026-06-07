@@ -637,6 +637,66 @@ let test_ws_invalid_peer_close_code_is_protocol_error () =
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
+let pp_ws_error fmt = function
+  | `Connect message -> Format.fprintf fmt "connect %s" message
+  | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+  | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+  | `Protocol message -> Format.fprintf fmt "protocol %s" message
+  | `Timeout -> Format.pp_print_string fmt "timeout"
+
+let expect_ws_protocol_failure label = function
+  | Eta.Exit.Error (Eta.Cause.Fail (`Protocol _)) -> ()
+  | Eta.Exit.Ok () -> Alcotest.failf "%s: expected protocol failure" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: unexpected failure: %a" label
+        (Eta.Cause.pp pp_ws_error) cause
+
+let test_ws_rejects_invalid_utf8_text_frame () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let invalid_text =
+    Eta_http.Ws.Codec.encode
+      { fin = true; opcode = Text; payload = Bytes.of_string "\xff" }
+    |> Bytes.to_string
+  in
+  let close =
+    Eta_http.Ws.Codec.encode
+      { fin = true; opcode = Close; payload = close_payload 1000 "" }
+    |> Bytes.to_string
+  in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ invalid_text ^ close) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  |> expect_ws_protocol_failure "invalid UTF-8 text"
+
+let test_ws_rejects_invalid_utf8_close_reason () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let payload = Bytes.create 3 in
+  Bytes.set payload 0 (Char.chr (1000 lsr 8));
+  Bytes.set payload 1 (Char.chr (1000 land 0xff));
+  Bytes.set payload 2 '\xff';
+  let close =
+    Eta_http.Ws.Codec.encode { fin = true; opcode = Close; payload }
+    |> Bytes.to_string
+  in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ close) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  |> expect_ws_protocol_failure "invalid UTF-8 close reason"
+
 let test_ws_selected_subprotocol () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let _state, flow =

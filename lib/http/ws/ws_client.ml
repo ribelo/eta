@@ -361,6 +361,20 @@ let send_frame ?allow_after_close t frame =
   Effect.sync (fun () -> send_frame_sync ?allow_after_close t frame)
   |> Effect.bind (function Ok () -> Effect.unit | Error error -> Effect.fail error)
 
+let valid_utf8 s =
+  let rec loop i =
+    if i = String.length s then true
+    else
+      let dec = String.get_utf_8_uchar s i in
+      Uchar.utf_decode_is_valid dec && loop (i + Uchar.utf_decode_length dec)
+  in
+  loop 0
+
+let utf8_payload kind payload =
+  let s = Bytes.unsafe_to_string payload in
+  if valid_utf8 s then Ok (Bytes.to_string payload)
+  else Error (`Protocol ("invalid UTF-8 " ^ kind))
+
 (* RFC 6455 close codes valid on the wire: 1000-1014 (excluding the
    connection-local codes 1005/1006, and 1015 which is also connection-local),
    plus the registered (3000-3999) and private (4000-4999) ranges. *)
@@ -376,6 +390,8 @@ let close_payload ?code ?(reason = "") () =
         Error (`Protocol "invalid WebSocket close code")
       else if String.length reason > 123 then
         Error (`Protocol "WebSocket close reason exceeds 123 bytes")
+      else if not (valid_utf8 reason) then
+        Error (`Protocol "invalid UTF-8 close reason")
       else
         let payload = Bytes.create (2 + String.length reason) in
         Bytes.set payload 0 (Char.chr ((code lsr 8) land 0xff));
@@ -417,6 +433,8 @@ let parse_close_payload payload =
     let reason = Bytes.sub_string payload 2 (len - 2) in
     if not (valid_close_code code) then
       Error (`Protocol "invalid WebSocket close code")
+    else if not (valid_utf8 reason) then
+      Error (`Protocol "invalid UTF-8 close reason")
     else Ok (code, reason)
 
 type fragment = {
@@ -426,9 +444,12 @@ type fragment = {
 
 let message_of_payload opcode payload =
   match opcode with
-  | Codec.Text -> Some (`Text (Bytes.to_string payload))
-  | Binary -> Some (`Binary payload)
-  | Continuation | Close | Ping | Pong -> None
+  | Codec.Text -> (
+      match utf8_payload "text" payload with
+      | Ok s -> Ok (Some (`Text s))
+      | Error _ as error -> error)
+  | Binary -> Ok (Some (`Binary payload))
+  | Continuation | Close | Ping | Pong -> Ok None
 
 let fail_reader t error =
   queue_close_error t error;
@@ -464,8 +485,9 @@ and handle_data_frame t reader fragment frame =
   | None ->
       if frame.fin then
         match message_of_payload frame.opcode frame.payload with
-        | None -> fail_reader t (`Protocol "invalid data frame opcode")
-        | Some message -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
+        | Error error -> fail_reader t error
+        | Ok None -> fail_reader t (`Protocol "invalid data frame opcode")
+        | Ok (Some message) -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
       else
         let buffer = Buffer.create (Bytes.length frame.payload) in
         Buffer.add_bytes buffer frame.payload;
@@ -479,8 +501,9 @@ and handle_continuation t reader fragment frame =
       if frame.fin then
         let payload = Bytes.of_string (Buffer.contents fragment.buffer) in
         match message_of_payload fragment.opcode payload with
-        | None -> fail_reader t (`Protocol "invalid continuation opcode")
-        | Some message -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
+        | Error error -> fail_reader t error
+        | Ok None -> fail_reader t (`Protocol "invalid continuation opcode")
+        | Ok (Some message) -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
       else reader_loop t reader (Some fragment)
 
 let make_connection ~flow ~selected_protocol ~max_frame_size initial =
@@ -550,7 +573,10 @@ let incoming t = Eta_stream.Stream.from_queue t.incoming
 let selected_protocol t = t.selected_protocol
 
 let send_text t text =
-  send_frame t { Codec.fin = true; opcode = Text; payload = Bytes.of_string text }
+  if not (valid_utf8 text) then Effect.fail (`Protocol "invalid UTF-8 text")
+  else
+    send_frame t
+      { Codec.fin = true; opcode = Text; payload = Bytes.of_string text }
 
 let send_binary t payload =
   send_frame t { Codec.fin = true; opcode = Binary; payload }
