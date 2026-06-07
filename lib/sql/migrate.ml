@@ -104,8 +104,19 @@ let no_transaction_directive = "-- no-transaction"
 
 let starts_with value prefix = Eta.String_helpers.starts_with value ~prefix
 
+(* The directive only applies when it stands alone on the first line: the
+   prefix must be followed by a newline, a CRLF, or end-of-string. Otherwise
+   "-- no-transactional" would be mistaken for "-- no-transaction". *)
+let has_no_transaction_directive sql =
+  starts_with sql no_transaction_directive
+  &&
+  let offset = String.length no_transaction_directive in
+  offset = String.length sql
+  || Eta.String_helpers.starts_with_at sql ~offset "\n"
+  || Eta.String_helpers.starts_with_at sql ~offset "\r\n"
+
 let strip_no_transaction_directive sql =
-  if starts_with sql no_transaction_directive then
+  if has_no_transaction_directive sql then
     let offset = String.length no_transaction_directive in
     let len = String.length sql in
     if Eta.String_helpers.starts_with_at sql ~offset "\r\n" then
@@ -366,7 +377,7 @@ module Source = struct
                         | exception Sys_error reason ->
                             raise (Read_file_failed (path, reason))
                       in
-                      let no_tx = starts_with sql "-- no-transaction" in
+                      let no_tx = has_no_transaction_directive sql in
                       let checksum =
                         checksum_sql (normalize_checksum_sql config sql)
                       in
