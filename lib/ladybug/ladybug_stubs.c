@@ -1242,6 +1242,45 @@ static value arrow_struct_map(struct ArrowSchema *schema, struct ArrowArray *arr
   CAMLreturn(out);
 }
 
+/* Arrow map ("+m"): a list of <key,value> entry structs. Decode to Value.Map,
+   reading each entry's key as a string and its value via arrow_value. */
+static value arrow_map(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal3(items, pair, value_v);
+  if (schema == NULL || array == NULL || schema->n_children != 1 ||
+      array->n_children != 1 || schema->children == NULL ||
+      array->children == NULL || schema->children[0] == NULL ||
+      array->children[0] == NULL) {
+    caml_failwith("ladybug: malformed Arrow map");
+  }
+  struct ArrowSchema *entries_schema = schema->children[0];
+  struct ArrowArray *entries_array = array->children[0];
+  int key_idx = find_child(entries_schema, "KEY");
+  int val_idx = find_child(entries_schema, "VALUE");
+  if (key_idx < 0 || val_idx < 0 || entries_array->children == NULL ||
+      entries_array->children[key_idx] == NULL ||
+      entries_array->children[val_idx] == NULL) {
+    caml_failwith("ladybug: malformed Arrow map entries");
+  }
+  require_arrow_buffers(array, 2);
+  int64_t logical = array->offset + row;
+  const int32_t *offsets = (const int32_t *)array->buffers[1];
+  int64_t start = offsets[logical];
+  int64_t end = offsets[logical + 1];
+  if (end < start || start < 0) caml_failwith("ladybug: malformed Arrow map offsets");
+  items = Val_emptylist;
+  for (int64_t idx = end; idx > start; idx--) {
+    value_v = arrow_value(entries_schema->children[val_idx],
+                          entries_array->children[val_idx], idx - 1);
+    pair = caml_alloc_tuple(2);
+    Store_field(pair, 0, arrow_string(entries_array->children[key_idx], idx - 1));
+    Store_field(pair, 1, value_v);
+    items = cons(pair, items);
+  }
+  CAMLreturn(make_block(5, items));
+}
+
 static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
 {
   CAMLparam0();
@@ -1273,6 +1312,9 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
   }
   if (strcmp(format, "+L") == 0) {
     CAMLreturn(arrow_list(schema, array, row, 1));
+  }
+  if (strcmp(format, "+m") == 0) {
+    CAMLreturn(arrow_map(schema, array, row));
   }
   if (strcmp(format, "+s") == 0) {
     if (find_child(schema, "_NODES") >= 0 && find_child(schema, "_RELS") >= 0)
