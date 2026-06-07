@@ -965,6 +965,13 @@ static double arrow_f64(struct ArrowArray *array, int64_t row)
   return values[array->offset + row];
 }
 
+static int32_t arrow_i32(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const int32_t *values = (const int32_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
 static int arrow_bool(struct ArrowArray *array, int64_t row)
 {
   require_arrow_buffers(array, 2);
@@ -1274,6 +1281,22 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
       CAMLreturn(arrow_rel(schema, array, row));
     if (find_child(schema, "_LABEL") >= 0) CAMLreturn(arrow_node(schema, array, row));
     CAMLreturn(arrow_struct_map(schema, array, row));
+  }
+  /* Temporal types (date/time/timestamp/duration) carry their underlying
+     integer representation. date32 ("tdD") is 32-bit; the other encodings are
+     64-bit. Decode them to Value.Int rather than the empty-string default. */
+  if (format[0] == 't') {
+    if (strcmp(format, "tdD") == 0) {
+      out = caml_alloc(1, 1);
+      Store_field(out, 0, caml_copy_int64((int64_t)arrow_i32(array, row)));
+      CAMLreturn(out);
+    }
+    if (format[1] == 's' || format[1] == 't' || format[1] == 'd' ||
+        format[1] == 'D') {
+      out = caml_alloc(1, 1);
+      Store_field(out, 0, caml_copy_int64(arrow_i64(array, row)));
+      CAMLreturn(out);
+    }
   }
   v = caml_copy_string("");
   CAMLreturn(make_block(3, v));
