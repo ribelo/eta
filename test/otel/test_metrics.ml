@@ -231,6 +231,39 @@ let test_monotonic_counter_aggregation_does_not_overflow_negative () =
     "monotonic counter did not wrap negative" false
     (json_contains_negative_as_int json)
 
+let rec json_contains_negative_time = function
+  | `Assoc fields ->
+      List.exists
+        (function
+          | ( ("timeUnixNano" | "startTimeUnixNano" | "observedTimeUnixNano"),
+              `String s ) ->
+              String.length s > 0 && Char.equal s.[0] '-'
+          | _, value -> json_contains_negative_time value)
+        fields
+  | `List values -> List.exists json_contains_negative_time values
+  | _ -> false
+
+let test_metric_timestamp_conversion_does_not_wrap_negative () =
+  let point : Meter.point =
+    {
+      name = "eta.test.timestamp";
+      description = "timestamp overflow regression";
+      unit_ = "1";
+      kind = Capabilities.Gauge;
+      attrs = [];
+      value = Capabilities.Int 1;
+      ts_ms = (max_int / 1_000_000) + 1;
+    }
+  in
+  let body =
+    Eta_otel.Internal.encode_metrics_request ~resource_attrs:[]
+      ~scope_name:"eta-otel-test" [ point ]
+  in
+  let json = Yojson.Safe.from_string body in
+  Alcotest.(check bool)
+    "timestamp did not wrap negative" false
+    (json_contains_negative_time json)
+
 (* ------------------------------------------------------------------ *)
 (* Live OTLP integration. *)
 (* ------------------------------------------------------------------ *)
@@ -337,5 +370,7 @@ let suite =
         test_counter_temporality_json;
       Alcotest.test_case "monotonic counter aggregation no negative overflow"
         `Quick test_monotonic_counter_aggregation_does_not_overflow_negative;
+      Alcotest.test_case "metric timestamp conversion no negative wrap" `Quick
+        test_metric_timestamp_conversion_does_not_wrap_negative;
       Alcotest.test_case "metrics OTLP live" `Quick test_metrics_otlp_live;
     ] )

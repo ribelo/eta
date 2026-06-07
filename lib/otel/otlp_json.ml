@@ -162,7 +162,7 @@ let severity_text = function
   | Fatal -> "FATAL"
 
 let log_json (r : Eta.Capabilities.log_record) : yj =
-  let ts_ns = r.ts_ms * 1_000_000 in
+  let ts_ns = Metric_aggregation.ms_to_ns_saturating r.ts_ms in
   let fields =
     if r.span_id = "" then [] else [ ("spanId", `String r.span_id) ]
   in

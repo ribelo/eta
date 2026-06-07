@@ -195,7 +195,7 @@ let now_ms t =
   let secs = Eio.Time.now t.clock in
   int_of_float (secs *. 1_000.0)
 
-let ms_to_ns ms = ms * 1_000_000
+let ms_to_ns ms = Metric_aggregation.ms_to_ns_saturating ms
 
 (* ------------------------------------------------------------------ *)
 (* Eta exporter programs                                               *)
@@ -579,7 +579,7 @@ let add_event t ~span_id ~name ~ts_ms ~attrs =
   match Hashtbl.find_opt t.table span_id with
   | None -> ()
   | Some s ->
-      let ts_ns = if ts_ms = 0 then now_ns t else ts_ms * 1_000_000 in
+      let ts_ns = if ts_ms = 0 then now_ns t else ms_to_ns ts_ms in
       s.events <- (name, ts_ns, attrs) :: s.events
 
 let add_link contract t link =

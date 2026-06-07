@@ -27,6 +27,11 @@ module Metric_key = struct
     && a.kind = b.kind && a.attrs = b.attrs
 end
 
+let ms_to_ns_saturating ms =
+  if ms <= 0 then 0
+  else if ms > max_int / 1_000_000 then max_int
+  else ms * 1_000_000
+
 let add_int_counter a b =
   if (b > 0 && a > max_int - b) || (b < 0 && a < min_int - b) then
     Eta.Capabilities.Float (float_of_int a +. float_of_int b)
@@ -47,7 +52,7 @@ let aggregate_points_table points =
   List.iter
     (fun (p : Eta.Meter.point) ->
       let key = Metric_key.normalize p in
-      let ts_ns = p.ts_ms * 1_000_000 in
+      let ts_ns = ms_to_ns_saturating p.ts_ms in
       match Hashtbl.find_opt table key with
       | None -> Hashtbl.add table key (p.value, ts_ns, ts_ns)
       | Some (acc, start_ts, _end_ts) ->
@@ -60,13 +65,13 @@ let aggregate_points = function
   | [] -> []
   | first :: rest as points -> (
       let first_key = Metric_key.normalize first in
-      let start_ts = first.ts_ms * 1_000_000 in
+      let start_ts = ms_to_ns_saturating first.ts_ms in
       let rec same_key acc end_ts = function
         | [] -> Some [ (first_key, (acc, start_ts, end_ts)) ]
         | point :: points ->
             let key = Metric_key.normalize point in
             if Metric_key.equal first_key key then
-              let ts_ns = point.ts_ms * 1_000_000 in
+              let ts_ns = ms_to_ns_saturating point.ts_ms in
               let acc = merge_metric_value point.kind acc point.value in
               same_key acc ts_ns points
             else None
