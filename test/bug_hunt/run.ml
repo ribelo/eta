@@ -9,6 +9,12 @@ let () =
             test_duration_scale_identity_at_max;
           Alcotest.test_case "jittered exponential backoff never raises" `Quick
             test_schedule_jittered_exponential_does_not_raise;
+          Alcotest.test_case "All is the most verbose level" `Quick
+            test_log_level_all_is_most_verbose;
+          Alcotest.test_case "int_in_range rejects inverted bounds" `Quick
+            test_random_int_in_range_rejects_inverted_bounds;
+          Alcotest.test_case "float_in_range rejects inverted bounds" `Quick
+            test_random_float_in_range_rejects_inverted_bounds;
         ] );
       ( "eta_sql",
         [

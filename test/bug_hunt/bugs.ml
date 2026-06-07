@@ -556,6 +556,53 @@ let test_migration_no_transaction_prefix_match () =
   | Ok _ -> Alcotest.fail "expected exactly one migration"
   | Error err -> Alcotest.failf "resolve: %s" (Q.Migrate.error_to_string err)
 
+(* ------------------------------------------------------------------ *)
+(* Bug 16: Log_level.is_enabled treats All as the least verbose level. *)
+(* ------------------------------------------------------------------ *)
+
+let test_log_level_all_is_most_verbose () =
+  (* The [All] level means "log everything". When an event is logged at [All]
+     and the threshold is [Info], the event must be emitted because [All]
+     is more verbose than [Info]. The current ranking puts [All] at 0 (below
+     [Trace] at 1), so [compare All Info >= 0] is false and the event is
+     incorrectly dropped. *)
+  Alcotest.(check bool)
+    "All is more verbose than Info"
+    true
+    (Eta.Log_level.is_enabled ~at:All ~threshold:Info);
+  Alcotest.(check bool)
+    "All is more verbose than Trace"
+    true
+    (Eta.Log_level.is_enabled ~at:All ~threshold:Trace)
+
+(* ------------------------------------------------------------------ *)
+(* Bug 17: Random.int_in_range silently accepts inverted bounds.       *)
+(* ------------------------------------------------------------------ *)
+
+let test_random_int_in_range_rejects_inverted_bounds () =
+  (* [int_in_range] must raise [Invalid_argument] when [max <= min], because
+     the requested interval is empty. The current implementation silently
+     returns [min], which is outside the (empty) interval and hides a caller
+     bug. *)
+  let random = Eta.Capabilities.random_of_seed 42 in
+  Alcotest.check_raises "int_in_range with inverted bounds must raise"
+    (Invalid_argument "Eta.Random.int_in_range: min > max")
+    (fun () -> ignore (Eta.Random.int_in_range random ~min:10 ~max:5))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 18: Random.float_in_range silently accepts inverted bounds.     *)
+(* ------------------------------------------------------------------ *)
+
+let test_random_float_in_range_rejects_inverted_bounds () =
+  (* [float_in_range] must raise [Invalid_argument] when [max <= min], because
+     the requested interval is empty. The current implementation silently
+     returns [min], which is outside the (empty) interval and hides a caller
+     bug. *)
+  let random = Eta.Capabilities.random_of_seed 42 in
+  Alcotest.check_raises "float_in_range with inverted bounds must raise"
+    (Invalid_argument "Eta.Random.float_in_range: min > max")
+    (fun () -> ignore (Eta.Random.float_in_range random ~min:10.0 ~max:5.0))
+
 let test_ladybug_param_map_round_trips () =
   (* A [Param.map] binds correctly (query_string shows the map reaches the
      engine), but when the same value is returned and decoded through the typed

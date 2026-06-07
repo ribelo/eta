@@ -164,6 +164,33 @@ newline or end-of-string should trigger the no-transaction path.
 Verified: a file `001_test.sql` containing `-- no-transactional\nSELECT 1;`
 resolves with `no_tx=true`.
 
+## Bug 16 — `Log_level.is_enabled` treats `All` as the least verbose level
+`lib/eta/log_level.ml` (`is_enabled`)
+
+The `All` level is ranked 0 (below `Trace` at 1), so `is_enabled ~at:All
+~threshold:Info` returns `false`. `All` is documented as "log everything"; it
+should be the most verbose level, not the least. Any logger that emits an
+event at `All` and filters with a threshold of `Info` or higher will
+incorrectly drop the event.
+Verified: `is_enabled ~at:All ~threshold:Info` is `false`.
+
+## Bug 17 — `Random.int_in_range` silently accepts inverted bounds
+`lib/eta/random.ml` (`int_in_range`)
+
+Passing `~min:10 ~max:5` returns `10` instead of raising `Invalid_argument`.
+The empty interval `[10, 5]` is silently collapsed to the left endpoint, so a
+caller that accidentally swaps min/max gets a deterministic value instead of a
+loud failure. The same bug exists in `float_in_range`.
+Verified: `int_in_range random ~min:10 ~max:5` returns `10`.
+
+## Bug 18 — `Random.float_in_range` silently accepts inverted bounds
+`lib/eta/random.ml` (`float_in_range`)
+
+Same root cause as Bug 17: `max <= min` short-circuits to `min` instead of
+raising. A caller that inverts bounds gets a deterministic value and never
+notices the bug.
+Verified: `float_in_range random ~min:10.0 ~max:5.0` returns `10.0`.
+
 ## Bug 15 — Migrate silently skips symlinked migration files
 `lib/sql/migrate.ml` (`is_regular_file`)
 
