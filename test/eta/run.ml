@@ -85,6 +85,11 @@ let () =
             `Quick test_for_each_par_bounded_rejects_nonpositive_max;
           Alcotest.test_case "for_each_par_bounded fail-fast" `Quick
             test_for_each_par_bounded_fail_fast;
+          Alcotest.test_case "for_each_par mapper defect is runtime die" `Quick
+            test_for_each_par_mapper_defect_is_runtime_die;
+          Alcotest.test_case
+            "for_each_par_bounded mapper defect is runtime die" `Quick
+            test_for_each_par_bounded_mapper_defect_is_runtime_die;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;

@@ -352,6 +352,61 @@ let test_for_each_par_bounded_fail_fast () =
   yield ();
   Alcotest.(check bool) "slow cancelled" false !slow_done
 
+let test_for_each_par_mapper_defect_is_runtime_die () =
+  with_runtime @@ fun rt ->
+  let mapper_called = ref false in
+  let eff =
+    try
+      Some
+        (Effect.for_each_par [ 1 ] (fun _ ->
+             mapper_called := true;
+             raise (Failure "mapper boom")))
+    with Failure msg when String.equal msg "mapper boom" -> None
+  in
+  Alcotest.(check bool)
+    "mapper not called during construction" false !mapper_called;
+  match eff with
+  | None -> Alcotest.fail "for_each_par forced mapper during construction"
+  | Some eff -> (
+      match Runtime.run rt eff with
+      | Exit.Error (Cause.Die die) ->
+          Alcotest.(check string)
+            "defect" "Failure(\"mapper boom\")"
+            (Printexc.to_string die.exn)
+      | Exit.Ok _ -> Alcotest.fail "mapper defect unexpectedly succeeded"
+      | Exit.Error cause ->
+          Alcotest.failf "expected Die, got %a"
+            (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+            cause)
+
+let test_for_each_par_bounded_mapper_defect_is_runtime_die () =
+  with_runtime @@ fun rt ->
+  let mapper_called = ref false in
+  let eff =
+    try
+      Some
+        (Effect.for_each_par_bounded ~max:2 [ 1 ] (fun _ ->
+             mapper_called := true;
+             raise (Failure "bounded mapper boom")))
+    with Failure msg when String.equal msg "bounded mapper boom" -> None
+  in
+  Alcotest.(check bool)
+    "mapper not called during construction" false !mapper_called;
+  match eff with
+  | None ->
+      Alcotest.fail "for_each_par_bounded forced mapper during construction"
+  | Some eff -> (
+      match Runtime.run rt eff with
+      | Exit.Error (Cause.Die die) ->
+          Alcotest.(check string)
+            "defect" "Failure(\"bounded mapper boom\")"
+            (Printexc.to_string die.exn)
+      | Exit.Ok _ -> Alcotest.fail "mapper defect unexpectedly succeeded"
+      | Exit.Error cause ->
+          Alcotest.failf "expected Die, got %a"
+            (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+            cause)
+
 let test_effect_race_ignores_early_failure_until_success () =
   with_test_clock @@ fun sw clock rt ->
   let delayed_success ms value =

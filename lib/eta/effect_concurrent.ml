@@ -282,18 +282,16 @@ let all_settled effects =
 (** Worker-pool variant: [workers] forks share an atomic counter, each pulling
     the next task off [tasks] until the index reaches [n]. The parent frame is
     passed explicitly into each task evaluation. *)
-let for_each_par_workers frame ~name ~workers ~tasks ~n =
+let for_each_par_workers frame ~name ~workers ~inputs ~f ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
-  let run_task internal_cancel sw eff =
-    exit_to_value frame (run_child ~internal_cancel frame sw eff)
-  in
   let worker internal_cancel sw =
     let rec loop () =
       let i = P_atomic.fetch_and_add next 1 in
       if i < n then begin
+        let eff = f (Array.unsafe_get inputs i) in
         results.(i) <-
-          Some (run_task internal_cancel sw (Array.unsafe_get tasks i));
+          Some (exit_to_value frame (run_child ~internal_cancel frame sw eff));
         loop ()
       end
     in
@@ -303,19 +301,16 @@ let for_each_par_workers frame ~name ~workers ~tasks ~n =
   par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
 let for_each_par xs (f) =
-  let n = List.length xs in
-  let xs_arr = Array.of_list xs in
-  let tasks = Array.map f xs_arr in
+  let inputs = Array.of_list xs in
+  let n = Array.length inputs in
   make @@ fun frame ->
-  let workers = min n 8 in
-  for_each_par_workers frame ~name:"Effect.for_each_par" ~workers ~tasks ~n
+  for_each_par_workers frame ~name:"Effect.for_each_par" ~workers:(min n 8)
+    ~inputs ~f ~n
 
 let for_each_par_bounded ~max xs (f) =
   if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
-  let n = List.length xs in
-  let xs_arr = Array.of_list xs in
-  let tasks = Array.map f xs_arr in
+  let inputs = Array.of_list xs in
+  let n = Array.length inputs in
   make @@ fun frame ->
-  let workers = min max n in
-  for_each_par_workers frame ~name:"Effect.for_each_par_bounded" ~workers
-    ~tasks ~n
+  for_each_par_workers frame ~name:"Effect.for_each_par_bounded"
+    ~workers:(min max n) ~inputs ~f ~n
