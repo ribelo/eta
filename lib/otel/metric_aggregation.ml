@@ -27,13 +27,17 @@ module Metric_key = struct
     && a.kind = b.kind && a.attrs = b.attrs
 end
 
+let add_int_counter a b =
+  if (b > 0 && a > max_int - b) || (b < 0 && a < min_int - b) then
+    Eta.Capabilities.Float (float_of_int a +. float_of_int b)
+  else Eta.Capabilities.Int (a + b)
+
 let merge_metric_value kind acc value =
   match kind with
   | Eta.Capabilities.Gauge | Counter_cumulative -> value
   | Counter_monotonic -> (
       match (acc, value) with
-      | Eta.Capabilities.Int a, Eta.Capabilities.Int b ->
-          Eta.Capabilities.Int (a + b)
+      | Eta.Capabilities.Int a, Eta.Capabilities.Int b -> add_int_counter a b
       | Float a, Float b -> Float (a +. b)
       | Int a, Float b -> Float (float_of_int a +. b)
       | Float a, Int b -> Float (a +. float_of_int b))

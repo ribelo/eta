@@ -206,6 +206,31 @@ let test_counter_temporality_json () =
   Alcotest.(check (option int)) "monotonic delta temporality" (Some 1)
     (metric_temporality "delta" body)
 
+let rec json_contains_negative_as_int = function
+  | `Assoc fields ->
+      List.exists
+        (function
+          | "asInt", `String s -> String.length s > 0 && Char.equal s.[0] '-'
+          | _, value -> json_contains_negative_as_int value)
+        fields
+  | `List values -> List.exists json_contains_negative_as_int values
+  | _ -> false
+
+let test_monotonic_counter_aggregation_does_not_overflow_negative () =
+  let p value =
+    metric_point ~name:"eta.test.overflowing_counter"
+      ~kind:Capabilities.Counter_monotonic (Capabilities.Int value)
+  in
+  let body =
+    Eta_otel.Internal.encode_metrics_request ~resource_attrs:[]
+      ~scope_name:"eta-otel-test"
+      [ p (max_int - 1); p 3 ]
+  in
+  let json = Yojson.Safe.from_string body in
+  Alcotest.(check bool)
+    "monotonic counter did not wrap negative" false
+    (json_contains_negative_as_int json)
+
 (* ------------------------------------------------------------------ *)
 (* Live OTLP integration. *)
 (* ------------------------------------------------------------------ *)
@@ -310,5 +335,7 @@ let suite =
       Alcotest.test_case "counter monotonic" `Quick test_counter_monotonic;
       Alcotest.test_case "counter temporality JSON" `Quick
         test_counter_temporality_json;
+      Alcotest.test_case "monotonic counter aggregation no negative overflow"
+        `Quick test_monotonic_counter_aggregation_does_not_overflow_negative;
       Alcotest.test_case "metrics OTLP live" `Quick test_metrics_otlp_live;
     ] )
