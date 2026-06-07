@@ -16,6 +16,8 @@ let () =
             test_schema_float_default_round_trips;
           Alcotest.test_case "NULL decoded as non-nullable int" `Quick
             test_sqlite_null_decoded_as_nonnull_int;
+          Alcotest.test_case "no-transaction prefix is exact" `Quick
+            test_migration_no_transaction_prefix_match;
         ] );
       ( "eta_duckdb",
         [

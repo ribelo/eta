@@ -490,6 +490,42 @@ let test_ladybug_timestamp_not_empty_string () =
 (* Bug 13: LadybugDB Param.map round-trips as String "" instead of Map.*)
 (* ------------------------------------------------------------------ *)
 
+(* ------------------------------------------------------------------ *)
+(* Bug 14: Migrate strips "-- no-transaction" prefix too greedily.     *)
+(* ------------------------------------------------------------------ *)
+
+let test_migration_no_transaction_prefix_match () =
+  (* [strip_no_transaction_directive] uses [starts_with sql "-- no-transaction"],
+     which matches ANY string starting with that prefix — including
+     "-- no-transactional" (a different word). A migration file starting with
+     "-- no-transactional\n..." is therefore incorrectly flagged as no_tx=true
+     and its checksum is computed on the stripped SQL instead of the original.
+
+     Correct behavior: only the exact directive "-- no-transaction" followed by
+     a newline or end-of-string should trigger the no-transaction path. *)
+  let dir = "/tmp/eta_bug_hunt_" ^ string_of_int (Unix.getpid ()) in
+  Unix.mkdir dir 0o755;
+  Fun.protect ~finally:(fun () ->
+    let rec rmrf path =
+      if Sys.is_directory path then (
+        Array.iter (fun name -> rmrf (Filename.concat path name)) (Sys.readdir path);
+        Unix.rmdir path)
+      else Sys.remove path
+    in
+    rmrf dir
+  ) @@ fun () ->
+  let path = dir ^ "/001_test.sql" in
+  let oc = open_out path in
+  output_string oc "-- no-transactional\nSELECT 1;\n";
+  close_out oc;
+  match Q.Migrate.Source.resolve (Q.Migrate.Source.from_directory dir) with
+  | Ok [ migration ] ->
+      if migration.Q.Migrate.Migration.no_tx then
+        Alcotest.fail
+          "'-- no-transactional' incorrectly matched as '-- no-transaction'"
+  | Ok _ -> Alcotest.fail "expected exactly one migration"
+  | Error err -> Alcotest.failf "resolve: %s" (Q.Migrate.error_to_string err)
+
 let test_ladybug_param_map_round_trips () =
   (* A [Param.map] binds correctly (query_string shows the map reaches the
      engine), but when the same value is returned and decoded through the typed

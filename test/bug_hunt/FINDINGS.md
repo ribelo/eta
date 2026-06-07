@@ -151,6 +151,19 @@ the parameter is rendered with `=` syntax instead of `:` and Ladybug returns a
 different Arrow type the stub cannot decode.
 Verified: `RETURN $x` with `Param.map "x" [("a", Int 1L)] yields `String ""`.
 
+## Bug 14 — Migrate `-- no-transaction` prefix is too greedy
+`lib/sql/migrate.ml` (`strip_no_transaction_directive`)
+
+The directive stripper uses `starts_with sql "-- no-transaction"`, which
+matches ANY string starting with that prefix — including
+`"-- no-transactional"` (a different word). A migration file starting with
+`-- no-transactional\n...` is therefore incorrectly flagged as `no_tx=true`
+and its checksum is computed on the stripped SQL instead of the original.
+Correct behavior: only the exact directive `-- no-transaction` followed by a
+newline or end-of-string should trigger the no-transaction path.
+Verified: a file `001_test.sql` containing `-- no-transactional\nSELECT 1;`
+resolves with `no_tx=true`.
+
 
 
 
