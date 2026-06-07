@@ -212,7 +212,7 @@ let min_with ~(cmp) (it : 'a t) =
   it.drive consumer
 
 let max_with ~(cmp) it =
-  min_with ~cmp:(fun a b -> -(cmp a b)) it
+  min_with ~cmp:(fun a b -> cmp b a) it
 
 let min it = min_with ~cmp:compare it
 let max it = max_with ~cmp:compare it

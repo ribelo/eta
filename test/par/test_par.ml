@@ -488,6 +488,26 @@ let test_iter_min_max () =
   Alcotest.(check (option int)) "min" (Some 1) min_v;
   Alcotest.(check (option int)) "max" (Some 9) max_v
 
+let test_iter_max_with_does_not_negate_min_int () =
+  (* A valid comparator may return min_int for "less than"; max_with must not
+     implement "reverse" by negating the result (min_int negates to itself).
+     Exercise both element orders and both the combine path (chunk=1) and the
+     in-chunk fold_seq path (default chunk). *)
+  let cmp a b =
+    match (a, b) with
+    | 0, 1 -> min_int
+    | 1, 0 -> max_int
+    | _ -> Int.compare a b
+  in
+  let max_of ?chunk arr =
+    Eta_par.run ~n_workers:2 @@ fun () ->
+    arr |> Eta_par.Iter.of_array ?chunk |> Eta_par.Iter.max_with ~cmp
+  in
+  Alcotest.(check (option int)) "combine [|0;1|]" (Some 1) (max_of ~chunk:1 [| 0; 1 |]);
+  Alcotest.(check (option int)) "combine [|1;0|]" (Some 1) (max_of ~chunk:1 [| 1; 0 |]);
+  Alcotest.(check (option int)) "fold_seq [|0;1|]" (Some 1) (max_of [| 0; 1 |]);
+  Alcotest.(check (option int)) "fold_seq [|1;0|]" (Some 1) (max_of [| 1; 0 |])
+
 let test_iter_chunk_one_stress () =
   (* Force every step through join to surface scheduler bugs. *)
   let n = 50_000 in
@@ -568,6 +588,9 @@ let () =
           ("find_any absent", `Quick, test_iter_find_any_absent);
           ("any/all", `Quick, test_iter_any_all);
           ("min/max", `Quick, test_iter_min_max);
+          ( "max_with does not negate min_int",
+            `Quick,
+            test_iter_max_with_does_not_negate_min_int );
           ("chunk=1 stress", `Quick, test_iter_chunk_one_stress);
         ] );
     ]
