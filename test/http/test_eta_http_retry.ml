@@ -61,6 +61,14 @@ let test_retry_after_overflow_delta_seconds_is_ignored () =
     "overflow delta seconds" None
     (Eta_http.Retry_policy.retry_after huge |> Option.map Eta.Duration.to_ms)
 
+let test_retry_after_rejects_impossible_http_date () =
+  let invalid = "Wed, 99 Jun 2026 99:99:99 GMT" in
+  Alcotest.(check (option int))
+    "invalid Retry-After date rejected"
+    None
+    (Option.map Eta.Duration.to_ms
+       (Eta_http.Retry_policy.retry_after ~now_s:0.0 invalid))
+
 let http_date_of_epoch_s epoch_s =
   let tm = Unix.gmtime epoch_s in
   let weekdays =

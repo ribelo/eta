@@ -79,6 +79,15 @@ let days_from_civil ~year ~month ~day =
   let doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy in
   (era * 146097) + doe - 719468
 
+let leap year =
+  (year mod 4 = 0 && year mod 100 <> 0) || year mod 400 = 0
+
+let days_in_month ~year = function
+  | 1 | 3 | 5 | 7 | 8 | 10 | 12 -> 31
+  | 4 | 6 | 9 | 11 -> 30
+  | 2 -> if leap year then 29 else 28
+  | _ -> 0
+
 let parse_http_date value =
   try
     Scanf.sscanf value "%3s, %d %3s %d %d:%d:%d GMT"
@@ -86,10 +95,19 @@ let parse_http_date value =
         match month_number month_name with
         | None -> None
         | Some month ->
-            let days = days_from_civil ~year ~month ~day in
-            Some
-              (float_of_int
-                 (((days * 24 + hour) * 60 + minute) * 60 + second)))
+            let valid =
+              day >= 1
+              && day <= days_in_month ~year month
+              && hour >= 0 && hour <= 23
+              && minute >= 0 && minute <= 59
+              && second >= 0 && second <= 59
+            in
+            if not valid then None
+            else
+              let days = days_from_civil ~year ~month ~day in
+              Some
+                (float_of_int
+                   (((days * 24 + hour) * 60 + minute) * 60 + second)))
   with _ -> None
 
 let retry_after ?(now_s = 0.0) value =

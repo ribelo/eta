@@ -80,6 +80,8 @@ let () =
             test_retry_after_parser;
           Alcotest.test_case "Retry-After overflow delta ignored" `Quick
             test_retry_after_overflow_delta_seconds_is_ignored;
+          Alcotest.test_case "Retry-After rejects impossible date" `Quick
+            test_retry_after_rejects_impossible_http_date;
           Alcotest.test_case "Retry-After absolute date uses clock" `Quick
             test_retry_after_absolute_date_uses_clock;
           Alcotest.test_case "Retry-After overflow falls back" `Quick
