@@ -103,6 +103,24 @@ let test_exponential_saturates_on_overflow () =
     (Some (Duration.ms max_int))
     (Schedule.next_delay s ~step:1024)
 
+let test_schedule_linear_saturates_on_overflow () =
+  let driver =
+    Schedule.start
+      (Schedule.linear ~initial:(Duration.ms 1) ~step:(Duration.ms max_int))
+  in
+  let driver =
+    match Schedule.next driver with
+    | Some (delay, next) ->
+        Alcotest.(check dur) "first delay" (Duration.ms 1) delay;
+        next
+    | None -> Alcotest.fail "linear schedule ended too early"
+  in
+  match Schedule.next driver with
+  | Some (delay, _) ->
+      Alcotest.(check dur)
+        "second delay saturates" (Duration.ms max_int) delay
+  | None -> Alcotest.fail "linear schedule ended on overflow"
+
 let test_spaced_fixed_linear () =
   Alcotest.(check some_dur) "spaced" (Some (Duration.seconds 1))
     (Schedule.next_delay (Schedule.spaced (Duration.seconds 1)) ~step:4);

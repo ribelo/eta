@@ -52,6 +52,12 @@ let scale_capped d factor =
       if scaled >= float_of_int max_int then Duration.ms max_int
       else Duration.scale d factor
 
+let add_capped a b =
+  let a_ms = Duration.to_ms a in
+  let b_ms = Duration.to_ms b in
+  if a_ms > max_int - b_ms then Duration.ms max_int
+  else Duration.ms (a_ms + b_ms)
+
 let default_random = lazy (Capabilities.random_default ())
 
 type state =
@@ -105,8 +111,9 @@ let rec next_state random = function
         ( scale_capped d (pow_factor factor step),
           Driver_exponential (d, factor, step + 1) )
   | Driver_linear { initial; step; index } ->
+      let delta = scale_capped step (float_of_int index) in
       Some
-        ( Duration.add initial (Duration.scale step (float_of_int index)),
+        ( add_capped initial delta,
           Driver_linear { initial; step; index = index + 1 } )
   | Driver_both (a, b) -> (
       match next_state random a, next_state random b with

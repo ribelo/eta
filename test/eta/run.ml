@@ -449,6 +449,8 @@ let () =
           Alcotest.test_case "exponential" `Quick test_exponential;
           Alcotest.test_case "exponential saturates on overflow" `Quick
             test_exponential_saturates_on_overflow;
+          Alcotest.test_case "linear saturates on overflow" `Quick
+            test_schedule_linear_saturates_on_overflow;
           Alcotest.test_case "spaced fixed linear" `Quick
             test_spaced_fixed_linear;
           Alcotest.test_case "composition" `Quick test_schedule_composition;
