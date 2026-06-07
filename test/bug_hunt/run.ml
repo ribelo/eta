@@ -18,6 +18,8 @@ let () =
             test_sqlite_null_decoded_as_nonnull_int;
           Alcotest.test_case "no-transaction prefix is exact" `Quick
             test_migration_no_transaction_prefix_match;
+          Alcotest.test_case "symlink migration not skipped" `Quick
+            test_migration_symlink_not_skipped;
         ] );
       ( "eta_duckdb",
         [

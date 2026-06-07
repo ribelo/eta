@@ -494,6 +494,36 @@ let test_ladybug_timestamp_not_empty_string () =
 (* Bug 14: Migrate strips "-- no-transaction" prefix too greedily.     *)
 (* ------------------------------------------------------------------ *)
 
+let test_migration_symlink_not_skipped () =
+  (* [is_regular_file] in migrate.ml uses [Unix.lstat] which returns [S_LNK]
+     for symlinks. A symlink pointing to a regular migration file is therefore
+     silently skipped. It should follow the symlink and check the target type
+     instead (using [Unix.stat] or [Sys.is_regular_file]). *)
+  let dir = "/tmp/eta_bug_hunt_" ^ string_of_int (Unix.getpid ()) in
+  let subdir = dir ^ "/real" in
+  Unix.mkdir dir 0o755;
+  Unix.mkdir subdir 0o755;
+  let real_file = subdir ^ "/001_test.sql" in
+  let symlink = dir ^ "/001_test.sql" in
+  let oc = open_out real_file in
+  output_string oc "SELECT 1;\n";
+  close_out oc;
+  Unix.symlink real_file symlink;
+  Fun.protect ~finally:(fun () ->
+    let rec rmrf path =
+      if Sys.is_directory path then (
+        Array.iter (fun name -> rmrf (Filename.concat path name)) (Sys.readdir path);
+        Unix.rmdir path)
+      else Sys.remove path
+    in
+    rmrf dir
+  ) @@ fun () ->
+  match Q.Migrate.Source.resolve (Q.Migrate.Source.from_directory dir) with
+  | Ok [ _ ] -> ()
+  | Ok [] -> Alcotest.fail "symlinked migration file was silently skipped"
+  | Ok migrations -> Alcotest.failf "expected 1 migration, got %d" (List.length migrations)
+  | Error err -> Alcotest.failf "resolve: %s" (Q.Migrate.error_to_string err)
+
 let test_migration_no_transaction_prefix_match () =
   (* [strip_no_transaction_directive] uses [starts_with sql "-- no-transaction"],
      which matches ANY string starting with that prefix — including

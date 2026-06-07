@@ -164,6 +164,17 @@ newline or end-of-string should trigger the no-transaction path.
 Verified: a file `001_test.sql` containing `-- no-transactional\nSELECT 1;`
 resolves with `no_tx=true`.
 
+## Bug 15 — Migrate silently skips symlinked migration files
+`lib/sql/migrate.ml` (`is_regular_file`)
+
+The directory scanner uses `Unix.lstat` to test whether a path is a regular
+file. `lstat` returns `S_LNK` for symlinks, even when they point to regular
+files, so any symlinked migration is silently skipped. A common deployment
+pattern is to symlink migrations into a staging directory; this bug breaks
+that workflow without any error.
+Verified: a directory containing only a symlink `001_test.sql -> real/001_test.sql`
+resolves to 0 migrations.
+
 
 
 
