@@ -111,6 +111,35 @@ empty string. DATE/TIME/TIMESTAMP/DECIMAL/INTERVAL still stringify correctly,
 which is why the bug hides. Verified: `'…'::UUID` and a populated `ENUM` column
 both decode to `""`.
 
+## Bug 10 — LadybugDB decodes every relationship as Node instead of Rel
+`lib/ladybug/ladybug_stubs.c` (`arrow_value` → `arrow_node`)
+
+Relationships are returned as Arrow structs with `_LABEL`, `_ID`, `_SRC`, and
+`_DST` children. `arrow_value` uses `find_child(schema, "_LABEL") >= 0` to
+decide "this is a node", but relationships ALSO have `_LABEL`. There is no
+check for `_SRC`/`_DST` (which only rels have), so every relationship silently
+decodes as `Value.Node` instead of `Value.Rel`.
+Verified: `MATCH ()-[r:Knows]->() RETURN r` yields `Node(labels=[Knows])`.
+
+## Bug 11 — LadybugDB decodes every path as Map instead of Path
+`lib/ladybug/ladybug_stubs.c` (`arrow_value`)
+
+Paths are returned as Arrow structs with `_NODES` and `_RELS` children. The
+stub has no `arrow_path` function at all, so paths fall through to
+`arrow_struct_map` and decode as `Value.Map` instead of `Value.Path`.
+Verified: `MATCH p=(:Person)-[:Knows]->(:Person) RETURN p` yields
+`Map{_NODES=List[...]; _RELS=List[...]}`.
+
+## Bug 12 — LadybugDB decodes timestamps/dates/intervals as empty String ""
+`lib/ladybug/ladybug_stubs.c` (`arrow_value`)
+
+Arrow temporal types use format strings like `ttn` (timestamp[ns]), `tdD`
+(date32), and interval formats. `arrow_value` handles `b`/`l`/`g`/`u`/`+l`/`+L`/`+s`
+but has NO case for temporal types; they fall through to the default
+`String ""`. So `timestamp('2020-01-01')`, `date('2020-01-01')`, and
+`interval('1 day')` all silently decode as the empty string.
+Verified: `RETURN timestamp('2020-01-01') AS v` yields `String ""`.
+
 
 
 

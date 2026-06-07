@@ -35,5 +35,11 @@ let () =
         [
           Alcotest.test_case "LIST value decodes as a list" `Quick
             test_ladybug_list_decodes_as_list;
+          Alcotest.test_case "Rel value decodes as Rel" `Quick
+            test_ladybug_rel_decodes_as_rel;
+          Alcotest.test_case "Path value decodes as Path" `Quick
+            test_ladybug_path_decodes_as_path;
+          Alcotest.test_case "timestamp not empty string" `Quick
+            test_ladybug_timestamp_not_empty_string;
         ] );
     ]

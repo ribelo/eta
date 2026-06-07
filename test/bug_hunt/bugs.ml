@@ -366,3 +366,122 @@ let test_ladybug_list_decodes_as_list () =
                    Alcotest.fail "Cypher LIST decoded as the wrong constructor"
                | Ok _ -> Alcotest.fail "expected exactly one row"
                | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 10: LadybugDB Rel values decode as Node instead of Rel.         *)
+(* ------------------------------------------------------------------ *)
+
+let test_ladybug_rel_decodes_as_rel () =
+  (* LadybugDB relationships are returned as Arrow structs with _LABEL, _ID,
+     _SRC, and _DST children. [arrow_value] checks for a _LABEL child to
+     decide "this is a node", but relationships ALSO have _LABEL. There is no
+     check for _SRC/_DST (which only rels have), so every relationship
+     silently decodes as [Value.Node] instead of [Value.Rel]. *)
+  match Lb.available () with
+  | Error _ -> ()
+  | Ok () -> (
+      match Lb.Database.open_memory () with
+      | Error e -> Alcotest.failf "ladybug open: %s" (Lb.show_error e)
+      | Ok db ->
+          Fun.protect ~finally:(fun () -> ignore (Lb.Database.close db)) @@ fun () ->
+          match Lb.Connection.connect db with
+          | Error e -> Alcotest.failf "ladybug connect: %s" (Lb.show_error e)
+          | Ok conn ->
+              Fun.protect ~finally:(fun () -> ignore (Lb.Connection.close conn))
+              @@ fun () ->
+              ignore (Lb.Connection.exec conn "CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name))");
+              ignore (Lb.Connection.exec conn "CREATE REL TABLE Knows(FROM Person TO Person, since INT64, MANY_MANY)");
+              ignore (Lb.Connection.exec conn "CREATE (:Person {name:'Ada', age:36})");
+              ignore (Lb.Connection.exec conn "CREATE (:Person {name:'Bob', age:30})");
+              ignore (Lb.Connection.exec conn "MATCH (a:Person {name:'Ada'}), (b:Person {name:'Bob'}) CREATE (a)-[:Knows {since:2020}]->(b)");
+              let q =
+                Lb.Query.raw ~cypher:"MATCH ()-[r:Knows]->() RETURN r AS v"
+                  ~decode:(Lb.Decode.value "v") ()
+              in
+              (match Lb.Connection.query conn q with
+               | Ok [ Lb.Value.Rel r ] ->
+                   Alcotest.(check (option string))
+                     "rel label" (Some "Knows") r.label
+               | Ok [ Lb.Value.Node n ] ->
+                   Alcotest.failf
+                     "relationship decoded as Node(labels=%s) instead of Rel"
+                     (String.concat "," n.labels)
+               | Ok [ _ ] ->
+                   Alcotest.fail "relationship decoded as wrong constructor"
+               | Ok _ -> Alcotest.fail "expected exactly one row"
+               | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 11: LadybugDB Path values decode as Map instead of Path.        *)
+(* ------------------------------------------------------------------ *)
+
+let test_ladybug_path_decodes_as_path () =
+  (* LadybugDB paths are returned as Arrow structs with _NODES and _RELS
+     children. The stub has no [arrow_path] function, so paths fall through to
+     [arrow_struct_map] and decode as [Value.Map] instead of [Value.Path]. *)
+  match Lb.available () with
+  | Error _ -> ()
+  | Ok () -> (
+      match Lb.Database.open_memory () with
+      | Error e -> Alcotest.failf "ladybug open: %s" (Lb.show_error e)
+      | Ok db ->
+          Fun.protect ~finally:(fun () -> ignore (Lb.Database.close db)) @@ fun () ->
+          match Lb.Connection.connect db with
+          | Error e -> Alcotest.failf "ladybug connect: %s" (Lb.show_error e)
+          | Ok conn ->
+              Fun.protect ~finally:(fun () -> ignore (Lb.Connection.close conn))
+              @@ fun () ->
+              ignore (Lb.Connection.exec conn "CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name))");
+              ignore (Lb.Connection.exec conn "CREATE REL TABLE Knows(FROM Person TO Person, since INT64, MANY_MANY)");
+              ignore (Lb.Connection.exec conn "CREATE (:Person {name:'Ada', age:36})");
+              ignore (Lb.Connection.exec conn "CREATE (:Person {name:'Bob', age:30})");
+              ignore (Lb.Connection.exec conn "MATCH (a:Person {name:'Ada'}), (b:Person {name:'Bob'}) CREATE (a)-[:Knows {since:2020}]->(b)");
+              let q =
+                Lb.Query.raw ~cypher:"MATCH p=(:Person)-[:Knows]->(:Person) RETURN p AS v"
+                  ~decode:(Lb.Decode.value "v") ()
+              in
+              (match Lb.Connection.query conn q with
+               | Ok [ Lb.Value.Path _ ] -> ()
+               | Ok [ Lb.Value.Map _ ] ->
+                   Alcotest.fail "path decoded as Map instead of Path"
+               | Ok [ _ ] ->
+                   Alcotest.fail "path decoded as wrong constructor"
+               | Ok _ -> Alcotest.fail "expected exactly one row"
+               | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 12: LadybugDB timestamp/date decode as empty String "".         *)
+(* ------------------------------------------------------------------ *)
+
+let test_ladybug_timestamp_not_empty_string () =
+  (* LadybugDB timestamps and dates are returned over Arrow with format
+     strings like [ttn] (timestamp[ns]) and [tdD] (date32). [arrow_value]
+     handles b/l/g/u/+l/+L/+s but has NO case for temporal types; they fall
+     through to a default returning [String ""]. A timestamp must not silently
+     decode as the empty string (it should become [Int] or a non-empty
+     [String] at minimum). *)
+  match Lb.available () with
+  | Error _ -> ()
+  | Ok () -> (
+      match Lb.Database.open_memory () with
+      | Error e -> Alcotest.failf "ladybug open: %s" (Lb.show_error e)
+      | Ok db ->
+          Fun.protect ~finally:(fun () -> ignore (Lb.Database.close db)) @@ fun () ->
+          match Lb.Connection.connect db with
+          | Error e -> Alcotest.failf "ladybug connect: %s" (Lb.show_error e)
+          | Ok conn ->
+              Fun.protect ~finally:(fun () -> ignore (Lb.Connection.close conn))
+              @@ fun () ->
+              let q =
+                Lb.Query.raw ~cypher:"RETURN timestamp('2020-01-01') AS v"
+                  ~decode:(Lb.Decode.value "v") ()
+              in
+              (match Lb.Connection.query conn q with
+               | Ok [ Lb.Value.String "" ] ->
+                   Alcotest.fail "timestamp decoded as empty string"
+               | Ok [ Lb.Value.Int _ ] -> ()
+               | Ok [ Lb.Value.String _ ] -> ()
+               | Ok [ _ ] ->
+                   Alcotest.fail "timestamp decoded as unexpected constructor"
+               | Ok _ -> Alcotest.fail "expected exactly one row"
+               | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
