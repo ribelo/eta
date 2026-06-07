@@ -288,7 +288,9 @@ let read_exact reader len =
 let payload_length ~max_frame_size header ext =
   let b1 = Char.code (Bytes.get header 1) in
   let check len64 =
-    if Int64.compare len64 (Int64.of_int max_frame_size) > 0 then
+    if Int64.compare len64 0L < 0 then
+      Error (`Protocol "WebSocket frame length uses reserved high bit")
+    else if Int64.compare len64 (Int64.of_int max_frame_size) > 0 then
       Error (`Protocol "WebSocket frame payload exceeds max_frame_size")
     else if Int64.compare len64 (Int64.of_int Sys.max_string_length) > 0 then
       Error (`Protocol "WebSocket payload too large")

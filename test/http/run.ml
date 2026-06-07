@@ -252,6 +252,8 @@ let () =
             test_ws_connect_reads_inbound_text;
           Alcotest.test_case "oversized frame rejected before payload read" `Quick
             test_ws_rejects_oversized_frame_before_payload_read;
+          Alcotest.test_case "64-bit length with MSB set rejected as protocol error"
+            `Quick test_ws_rejects_64bit_length_with_msb_set_as_protocol_error;
           Alcotest.test_case "send text masks client frame" `Quick
             test_ws_send_text_masks_client_frame;
           Alcotest.test_case "queued send observes close" `Quick

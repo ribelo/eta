@@ -435,6 +435,39 @@ let test_ws_rejects_oversized_frame_before_payload_read () =
           | `Timeout -> Format.pp_print_string fmt "timeout"))
         cause
 
+let test_ws_rejects_64bit_length_with_msb_set_as_protocol_error () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  (* Binary frame, length code 127, extended 64-bit length 0xC000_0000_0000_0000.
+     As a signed Int64 this is negative, so it slips past the upper-bound
+     checks, and Int64.to_int yields a negative length. It must be rejected as a
+     typed protocol error, not allocate a negative-length buffer and crash. *)
+  let malicious_header = "\x82\x7f\xc0\x00\x00\x00\x00\x00\x00\x00" in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ malicious_header) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/ws" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  match
+    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Protocol _)) -> ()
+  | Eta.Exit.Error (Eta.Cause.Die _) ->
+      Alcotest.fail "negative 64-bit payload length escaped as defect"
+  | Eta.Exit.Ok () -> Alcotest.fail "expected protocol error"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected cause: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+
 let test_ws_send_text_masks_client_frame () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let never, _resolver = Eio.Promise.create () in
