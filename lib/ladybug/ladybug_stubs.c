@@ -1039,6 +1039,15 @@ static value make_pair(const char *name, value v)
   CAMLreturn(pair);
 }
 
+static value some_value(value v)
+{
+  CAMLparam1(v);
+  CAMLlocal1(some);
+  some = caml_alloc(1, 0);
+  Store_field(some, 0, v);
+  CAMLreturn(some);
+}
+
 static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *array,
     int64_t row, int skip_graph_fields)
 {
@@ -1057,7 +1066,8 @@ static value struct_properties(struct ArrowSchema *schema, struct ArrowArray *ar
     }
     const char *name = schema->children[idx]->name;
     if (skip_graph_fields && name != NULL &&
-        (strcmp(name, "_ID") == 0 || strcmp(name, "_LABEL") == 0)) {
+        (strcmp(name, "_ID") == 0 || strcmp(name, "_LABEL") == 0 ||
+         strcmp(name, "_SRC") == 0 || strcmp(name, "_DST") == 0)) {
       continue;
     }
     v = arrow_value(schema->children[idx], array->children[idx], row);
@@ -1078,33 +1088,82 @@ static int find_child(struct ArrowSchema *schema, const char *name)
   return -1;
 }
 
-static value arrow_node(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+static value internal_id_opt(struct ArrowArray *array, int idx, int64_t row)
 {
   CAMLparam0();
-  CAMLlocal5(label_v, labels, props, record, node_v);
+  CAMLlocal1(id_opt);
+  id_opt = Val_none;
+  if (idx >= 0 && array->children != NULL && array->children[idx] != NULL &&
+      array->children[idx]->children != NULL &&
+      array->children[idx]->n_children > 0 &&
+      array->children[idx]->children[0] != NULL) {
+    id_opt = some_int64(arrow_i64(array->children[idx]->children[0], row));
+  }
+  CAMLreturn(id_opt);
+}
+
+static value arrow_node_record(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal4(label_v, labels, props, record);
   CAMLlocal1(id_opt);
   int label_idx = find_child(schema, "_LABEL");
   int id_idx = find_child(schema, "_ID");
-  id_opt = Val_none;
   if (label_idx >= 0 && array->children != NULL && array->children[label_idx] != NULL) {
     label_v = arrow_string(array->children[label_idx], row);
     labels = cons(label_v, Val_emptylist);
   } else {
     labels = Val_emptylist;
   }
-  if (id_idx >= 0 && array->children != NULL && array->children[id_idx] != NULL &&
-      array->children[id_idx]->children != NULL && array->children[id_idx]->n_children > 0 &&
-      array->children[id_idx]->children[0] != NULL) {
-    id_opt = some_int64(arrow_i64(array->children[id_idx]->children[0], row));
-  }
+  id_opt = internal_id_opt(array, id_idx, row);
   props = struct_properties(schema, array, row, 1);
   record = caml_alloc(3, 0);
   Store_field(record, 0, id_opt);
   Store_field(record, 1, labels);
   Store_field(record, 2, props);
-  node_v = caml_alloc(1, 7);
-  Store_field(node_v, 0, record);
-  CAMLreturn(node_v);
+  CAMLreturn(record);
+}
+
+static value arrow_node(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal1(record);
+  record = arrow_node_record(schema, array, row);
+  CAMLreturn(make_block(7, record));
+}
+
+static value arrow_rel_record(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal3(id_opt, src_opt, dst_opt);
+  CAMLlocal3(label_opt, props, record);
+  int label_idx = find_child(schema, "_LABEL");
+  int id_idx = find_child(schema, "_ID");
+  int src_idx = find_child(schema, "_SRC");
+  int dst_idx = find_child(schema, "_DST");
+  id_opt = internal_id_opt(array, id_idx, row);
+  src_opt = internal_id_opt(array, src_idx, row);
+  dst_opt = internal_id_opt(array, dst_idx, row);
+  label_opt = Val_none;
+  if (label_idx >= 0 && array->children != NULL && array->children[label_idx] != NULL) {
+    label_opt = some_value(arrow_string(array->children[label_idx], row));
+  }
+  props = struct_properties(schema, array, row, 1);
+  record = caml_alloc(5, 0);
+  Store_field(record, 0, id_opt);
+  Store_field(record, 1, src_opt);
+  Store_field(record, 2, dst_opt);
+  Store_field(record, 3, label_opt);
+  Store_field(record, 4, props);
+  CAMLreturn(record);
+}
+
+static value arrow_rel(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
+{
+  CAMLparam0();
+  CAMLlocal1(record);
+  record = arrow_rel_record(schema, array, row);
+  CAMLreturn(make_block(8, record));
 }
 
 static value arrow_struct_map(struct ArrowSchema *schema, struct ArrowArray *array, int64_t row)
@@ -1150,6 +1209,8 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
     CAMLreturn(arrow_list(schema, array, row, 1));
   }
   if (strcmp(format, "+s") == 0) {
+    if (find_child(schema, "_SRC") >= 0 && find_child(schema, "_DST") >= 0)
+      CAMLreturn(arrow_rel(schema, array, row));
     if (find_child(schema, "_LABEL") >= 0) CAMLreturn(arrow_node(schema, array, row));
     CAMLreturn(arrow_struct_map(schema, array, row));
   }
