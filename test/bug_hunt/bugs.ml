@@ -485,3 +485,42 @@ let test_ladybug_timestamp_not_empty_string () =
                    Alcotest.fail "timestamp decoded as unexpected constructor"
                | Ok _ -> Alcotest.fail "expected exactly one row"
                | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))
+
+(* ------------------------------------------------------------------ *)
+(* Bug 13: LadybugDB Param.map round-trips as String "" instead of Map.*)
+(* ------------------------------------------------------------------ *)
+
+let test_ladybug_param_map_round_trips () =
+  (* A [Param.map] binds correctly (query_string shows the map reaches the
+     engine), but when the same value is returned and decoded through the typed
+     [query] path it becomes [String ""]. [Param.struct_] and inline maps both
+     round-trip correctly as [Map], so the bug is specific to the map param
+     path — likely the parameter is rendered with [=] syntax instead of [:]
+     and Ladybug returns a different Arrow type that the stub cannot decode. *)
+  match Lb.available () with
+  | Error _ -> ()
+  | Ok () -> (
+      match Lb.Database.open_memory () with
+      | Error e -> Alcotest.failf "ladybug open: %s" (Lb.show_error e)
+      | Ok db ->
+          Fun.protect ~finally:(fun () -> ignore (Lb.Database.close db)) @@ fun () ->
+          match Lb.Connection.connect db with
+          | Error e -> Alcotest.failf "ladybug connect: %s" (Lb.show_error e)
+          | Ok conn ->
+              Fun.protect ~finally:(fun () -> ignore (Lb.Connection.close conn))
+              @@ fun () ->
+              let q =
+                Lb.Query.raw ~cypher:"RETURN $x AS v"
+                  ~decode:(Lb.Decode.value "v")
+                  ~params:[ Lb.Param.map "x" [ ("a", Lb.Value.Int 1L) ] ]
+                  ()
+              in
+              (match Lb.Connection.query conn q with
+               | Ok [ Lb.Value.Map [ ("a", Lb.Value.Int 1L) ] ] -> ()
+               | Ok [ Lb.Value.String "" ] ->
+                   Alcotest.fail "Param.map round-tripped as empty String"
+               | Ok [ other ] ->
+                   Alcotest.failf "Param.map round-tripped as wrong constructor"
+                     ()
+               | Ok _ -> Alcotest.fail "expected exactly one row"
+               | Error e -> Alcotest.failf "ladybug query: %s" (Lb.show_error e)))

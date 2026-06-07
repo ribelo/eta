@@ -41,5 +41,7 @@ let () =
             test_ladybug_path_decodes_as_path;
           Alcotest.test_case "timestamp not empty string" `Quick
             test_ladybug_timestamp_not_empty_string;
+          Alcotest.test_case "Param.map round-trips as Map" `Quick
+            test_ladybug_param_map_round_trips;
         ] );
     ]

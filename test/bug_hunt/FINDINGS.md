@@ -140,6 +140,17 @@ but has NO case for temporal types; they fall through to the default
 `interval('1 day')` all silently decode as the empty string.
 Verified: `RETURN timestamp('2020-01-01') AS v` yields `String ""`.
 
+## Bug 13 — LadybugDB `Param.map` round-trips as empty String ""
+`lib/ladybug/ladybug_stubs.c` (param binding / result decode)
+
+A `Param.map` binds correctly (`query_string` shows the map reaches the
+engine), but when the value is returned and decoded through the typed `query`
+path it becomes `String ""`. `Param.struct_` and inline maps both round-trip
+correctly as `Map`, so the bug is specific to the map-parameter path — likely
+the parameter is rendered with `=` syntax instead of `:` and Ladybug returns a
+different Arrow type the stub cannot decode.
+Verified: `RETURN $x` with `Param.map "x" [("a", Int 1L)] yields `String ""`.
+
 
 
 
