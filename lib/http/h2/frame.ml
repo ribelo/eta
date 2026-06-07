@@ -93,7 +93,8 @@ let header ~length ~frame_type ~flags ~stream_id =
   | _ -> assert false
 
 let uint32 n =
-  if n < 0 then invalid_arg "Eta_http.H2.Frame.uint32: negative value";
+  if n < 0 || n > 0xffff_ffff then
+    invalid_arg "Eta_http.H2.Frame.uint32: value outside uint32";
   String.init 4 @@ function
   | 0 -> byte (n lsr 24)
   | 1 -> byte (n lsr 16)

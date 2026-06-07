@@ -350,6 +350,8 @@ let () =
             test_h2_writer_drains_client_preface_and_request;
           Alcotest.test_case "blocked write teardown" `Quick
             test_h2_writer_blocked_write_teardown;
+          Alcotest.test_case "frame uint32 rejects overflow" `Quick
+            test_h2_frame_uint32_rejects_overflow;
         ] );
       ( "h2-connection",
         [

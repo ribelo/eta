@@ -98,3 +98,8 @@ let test_h2_writer_blocked_write_teardown () =
         cause);
   Alcotest.(check bool) "write started" true !write_started
 
+
+let test_h2_frame_uint32_rejects_overflow () =
+  Alcotest.check_raises "uint32 overflow"
+    (Invalid_argument "Eta_http.H2.Frame.uint32: value outside uint32")
+    (fun () -> ignore (Eta_http.H2.Frame.uint32 (Int.shift_left 1 32)))
