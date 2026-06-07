@@ -45,7 +45,14 @@ let read_more ?host_eio flow read_buffer buffer used =
       else (
         Cstruct.blit_to_bytes read_buffer used buffer used read;
         Ok (used + read))
-    with End_of_file -> Error Parse.Partial
+    with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | End_of_file -> Error Parse.Partial
+    (* Any other read failure (TLS/socket/mock) means the connection closed
+       mid-response. Map it to Partial so the caller surfaces a typed
+       Connection_closed (Http_response) instead of letting the raw exception
+       escape the parser and bypass release. *)
+    | _ -> Error Parse.Partial
 
 type response_head = {
   status : int;
@@ -137,20 +144,29 @@ let mark_clean_response_end source clean =
   if source_pending source = 0 then clean := true
 
 let source_read_some source max_len =
-  Effect.sync (fun () ->
-      if max_len <= 0 then None
-      else if source_pending source > 0 then
-        Some (source_take_pending source max_len)
-      else
-        let len = min max_len (Cstruct.length source.scratch) in
-        try
-          let read = source.read_into (Cstruct.sub source.scratch 0 len) in
-          if read = 0 then None
-          else
-            let chunk = Bytes.create read in
-            Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
-            Some chunk
-        with End_of_file -> None)
+  if max_len <= 0 then Effect.pure None
+  else if source_pending source > 0 then
+    Effect.pure (Some (source_take_pending source max_len))
+  else
+    let len = min max_len (Cstruct.length source.scratch) in
+    Effect.sync (fun () ->
+        try `Read (source.read_into (Cstruct.sub source.scratch 0 len))
+        with
+        | Eio.Cancel.Cancelled _ as exn -> raise exn
+        | End_of_file -> `Eof
+        (* A non-EOF read failure means the connection closed mid-response.
+           Surface a typed Connection_closed instead of a raw defect. *)
+        | _ -> `Closed)
+    |> Effect.bind (function
+         | `Eof -> Effect.pure None
+         | `Read 0 -> Effect.pure None
+         | `Read read ->
+             let chunk = Bytes.create read in
+             Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
+             Effect.pure (Some chunk)
+         | `Closed ->
+             Effect.fail
+               (H1_client_errors.io_closed source.request Http_response))
 
 let source_read_exact source n =
   let out = Bytes.create n in

@@ -230,6 +230,10 @@ let () =
             test_h1_pool_connection_close_opens_new_connection;
           Alcotest.test_case "read exception leaks release" `Quick
             test_body_stream_read_exception_leaks_release;
+          Alcotest.test_case "response head read exception is typed and releases"
+            `Quick test_h1_response_head_read_exception_is_typed_and_releases;
+          Alcotest.test_case "body read exception is typed" `Quick
+            test_h1_body_read_exception_is_typed;
         ] );
       ( "ws",
         [
