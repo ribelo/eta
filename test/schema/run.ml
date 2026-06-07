@@ -804,6 +804,17 @@ let test_lazy_schema_memoizes_thunk () =
   check_bool "lazy equal" (Eta_schema.equal schema "x" "x");
   check_int "lazy forced once" 1 !forced
 
+let test_decode_int_rejects_upper_float_boundary () =
+  let issues =
+    run_effect
+      (Eta_schema.decode Eta_schema.int (Json.number (float_of_int max_int)))
+    |> expect_decode_error ~name:"upper int float"
+  in
+  check_int "upper int float issue count" 1 (List.length issues);
+  match List.hd issues with
+  | { kind = Type_mismatch { expected = "int"; _ }; _ } -> ()
+  | issue -> failwith ("unexpected issue: " ^ render_issue issue)
+
 let () =
   test_config_roundtrip ();
   test_many_issues ();
@@ -818,4 +829,5 @@ let () =
   test_json_adapter_make_functor ();
   test_encode_failures_are_typed ();
   test_lazy_schema_memoizes_thunk ();
+  test_decode_int_rejects_upper_float_boundary ();
   print_endline "eta-schema tests passed"

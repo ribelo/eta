@@ -333,17 +333,20 @@ module Eta_schema = struct
     | Some n when String.equal (string_of_int n) s || String.equal s "-0" -> Some n
     | _ -> None
 
-  let is_int_float n =
-    Float.is_finite n
-    && Float.equal n (Float.round n)
-    && n >= float_of_int min_int
-    && n <= float_of_int max_int
+  let int_of_float_exact n =
+    if Float.is_finite n && Float.equal n (Float.round n) then
+      let upper_exclusive = Float.ldexp 1. (Sys.int_size - 1) in
+      let lower_inclusive = -.upper_exclusive in
+      if n >= lower_inclusive && n < upper_exclusive then
+        let i = int_of_float n in
+        if Float.equal n (float_of_int i) then Some i else None
+      else None
+    else None
 
   let int_of_number = function
     | Json.Int n -> Some n
     | Json.Intlit s -> int_of_string_exact s
-    | Json.Float n when is_int_float n -> Some (int_of_float n)
-    | Json.Float _ -> None
+    | Json.Float n -> int_of_float_exact n
 
   let float_of_number = function
     | Json.Int n -> Some (float_of_int n)
