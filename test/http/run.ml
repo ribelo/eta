@@ -415,6 +415,8 @@ let () =
         [
           Alcotest.test_case "reads server response" `Quick
             test_h2_multiplexer_reads_server_response;
+          Alcotest.test_case "read exception is typed result" `Quick
+            test_h2_multiplexer_read_exception_is_typed_result;
           Alcotest.test_case "default reader accepts max DATA frame" `Quick
             test_h2_default_reader_accepts_max_sized_data_frame;
           Alcotest.test_case "body stream releases on EOF" `Quick

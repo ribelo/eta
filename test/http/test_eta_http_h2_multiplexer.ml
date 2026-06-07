@@ -73,6 +73,26 @@ let test_h2_multiplexer_reads_server_response () =
   Alcotest.(check int) "client errors" 0 result.client_errors;
   Alcotest.(check int) "stream errors" 0 result.stream_errors
 
+let test_h2_multiplexer_read_exception_is_typed_result () =
+  let client = H2.Client_connection.create ~error_handler:(fun _ -> ()) () in
+  let reader = Eta_http.H2.Multiplexer.create_client_reader client in
+  let flow = Eio_mock.Flow.make "eta-http-h2-read-raises" in
+  Eio_mock.Flow.on_read flow [ `Raise (Failure "h2 socket boom") ];
+  match Eta_http.H2.Multiplexer.read_client_once ~flow reader with
+  | Eta_http.H2.Multiplexer.Security_error
+      (Eta_http.Error.Connection_closed { during = Eta_http.Error.Http_response })
+    ->
+      ()
+  | Eta_http.H2.Multiplexer.Security_error
+      (Eta_http.Error.Connection_protocol_violation { kind = "h2_read"; _ }) ->
+      ()
+  | Eta_http.H2.Multiplexer.Security_error kind ->
+      Alcotest.failf "unexpected typed read error kind: %s"
+        (Eta_http.Error.kind_name kind)
+  | Eta_http.H2.Multiplexer.Read _ | Eta_http.H2.Multiplexer.Eof _
+  | Eta_http.H2.Multiplexer.Close ->
+      Alcotest.fail "read exception was not reported as a typed read error"
+
 let h2_opened label = function
   | Ok opened -> opened
   | Error `Admission_rejected -> Alcotest.failf "%s rejected by admission" label

@@ -270,7 +270,15 @@ let read_more ~flow reader =
                         >= capacity reader
                   then `Buffer_full
                   else `Read_more copied))
-      with End_of_file -> `Eof
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | End_of_file -> `Eof
+      (* The public read_client_once contract returns typed read errors rather
+         than raising. Translate non-EOF flow failures (socket/TLS/mock) into a
+         typed connection-closed result. *)
+      | _ ->
+          `Security_error
+            (Error.Connection_closed { during = Error.Http_response })
 
 let buffer_exhausted reader =
   Security_error
