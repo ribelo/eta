@@ -29,16 +29,16 @@
 | `bind` | `Effect.ts` | `Effect.bind` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `tap` | `Effect.ts` | `Effect.tap` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `zip` | `Effect.ts` | `Effect.zip` (via `par`) | `implemented` | stable | `test/js/test_runtime.ml` |
-| `match` / `matchEffect` | `Effect.ts` | `Effect.match_` / `match_effect` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `match` / `matchEffect` | `Effect.ts` | `Effect.match_` / `match_effect` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
 | `catch` | `Effect.ts` | `Effect.catch` | `implemented` | stable | `test/js/test_runtime.ml` |
-| `catchCause` | `Effect.ts` | `Effect.catch_cause` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
-| `tapCause` | `Effect.ts` | `Effect.tap_cause` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
-| `sandbox` / `unsandbox` | `Effect.ts` | `Effect.sandbox` / `unsandbox` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
-| `die` | `Effect.ts` | `Effect.die` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
-| `failCause` | `Effect.ts` | `Effect.fail_cause` | `planned` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `catchCause` | `Effect.ts` | `Effect.catch_cause` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `tapCause` | `Effect.ts` | `Effect.tap_cause` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `sandbox` / `unsandbox` | `Effect.ts` | `Effect.sandbox` / `unsandbox` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `die` | `Effect.ts` | `Effect.die` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
+| `failCause` | `Effect.ts` | `Effect.fail_cause` | `implemented` | Phase 3 | `test/js/test_cause_effect.ml` |
 | `yieldNow` | `Effect.ts` | `Effect.yield_now` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `check` | `Effect.ts` | `Effect.check` | `implemented` | stable | `test/js/test_runtime.ml` |
-| `delay` | `Effect.ts` | `Effect.delay` | `implemented-needs-tests` | Phase 1 | `test/js/test_clock.ml` |
+| `delay` | `Effect.ts` | `Effect.delay` | `implemented` | Phase 1 | `test/js/test_clock.ml` |
 | `timeout` / `timeoutTo` | `Effect.ts` | `Effect.timeout` / `timeout_as` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `race` | `Effect.ts` | `Effect.race` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `all` | `Effect.ts` | `Effect.all` | `implemented` | stable | `test/js/test_runtime.ml` |
@@ -49,21 +49,21 @@
 | `repeat` | `Effect.ts` | `Effect.repeat` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `acquireUseRelease` | `Effect.ts` | `Effect.acquire_use_release` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `finally` | `Effect.ts` | `Effect.finally` | `implemented` | stable | `test/js/test_runtime.ml` |
-| `uninterruptible` | `Effect.ts` | `Effect.uninterruptible` | `planned` | Phase 3 | `test/js/test_uninterruptible.ml` |
-| `uninterruptibleMask` | `Effect.ts` | `Effect.uninterruptible_mask` | `planned` | Phase 3 | `test/js/test_uninterruptible.ml` |
+| `uninterruptible` | `Effect.ts` | `Effect.uninterruptible` | `implemented` | Phase 3 | `test/js/test_uninterruptible.ml` |
+| `uninterruptibleMask` | `Effect.ts` | `Effect.uninterruptible_mask` | `deferred` | future | `test/js/test_uninterruptible.ml` |
 
 ## Fiber Handles
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
-| `fork` | `Fiber.ts` | `Par.fork` / `Runtime.fork` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `forkScoped` | `Fiber.ts` | `Scope.fork` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `forkDaemon` | `Fiber.ts` | `Effect.daemon` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `await` | `Fiber.ts` | `Fiber.await` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `join` | `Fiber.ts` | `Fiber.join` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `interrupt` | `Fiber.ts` | `Fiber.interrupt` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `poll` | `Fiber.ts` | `Fiber.poll` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
-| `id` | `Fiber.ts` | `Fiber.id` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
+| `fork` | `Fiber.ts` | `Par.fork` / `Runtime.fork` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `forkScoped` | `Fiber.ts` | `Scope.fork` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `forkDaemon` | `Fiber.ts` | `Effect.daemon` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `await` | `Fiber.ts` | `Fiber.await` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `join` | `Fiber.ts` | `Fiber.join` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `interrupt` | `Fiber.ts` | `Fiber.interrupt` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `poll` | `Fiber.ts` | `Fiber.poll` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
+| `id` | `Fiber.ts` | `Fiber.id` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
 | `Supervisor.scoped` | `Effect.ts` | `Supervisor.scoped` | `implemented` | stable | `test/js/test_supervisor.ml` |
 | `Supervisor.start/await/cancel` | `Effect.ts` | `Supervisor.Scope.start/await/cancel` | `implemented` | stable | `test/js/test_supervisor.ml` |
 
@@ -71,28 +71,28 @@
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
-| `Deferred` | `Deferred.ts` | `Deferred` (native Eta) | `planned` | Phase 4 | `test/js/test_deferred.ml` |
-| `Deferred.make` | `Deferred.ts` | `Deferred.make` | `planned` | Phase 4 | `test/js/test_deferred.ml` |
-| `Deferred.await` | `Deferred.ts` | `Deferred.await` | `planned` | Phase 4 | `test/js/test_deferred.ml` |
-| `Deferred.succeed/fail/done` | `Deferred.ts` | `Deferred.succeed/fail/done` | `planned` | Phase 4 | `test/js/test_deferred.ml` |
-| `Latch` | internal | internal | `planned` | Phase 4 | `test/js/test_latch.ml` |
+| `Deferred` | `Deferred.ts` | `Deferred` (native Eta) | `implemented` | Phase 4 | `test/js/test_deferred.ml` |
+| `Deferred.make` | `Deferred.ts` | `Deferred.make` | `implemented` | Phase 4 | `test/js/test_deferred.ml` |
+| `Deferred.await` | `Deferred.ts` | `Deferred.await` | `implemented` | Phase 4 | `test/js/test_deferred.ml` |
+| `Deferred.succeed/fail/done` | `Deferred.ts` | `Deferred.succeed/fail/done` | `implemented` | Phase 4 | `test/js/test_deferred.ml` |
+| `Latch` | internal | internal | `implemented` | Phase 4 | `test/js/test_latch.ml` |
 
 ## Ref and Synchronized Ref
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
-| `Ref.make/get/set/update` | `Ref.ts` | `Ref` | `planned` | Phase 4 | `test/js/test_ref.ml` |
-| `Ref.modify` | `Ref.ts` | `Ref.modify` | `planned` | Phase 4 | `test/js/test_ref.ml` |
-| `SynchronizedRef` | `Ref.ts` | `SynchronizedRef` | `planned` | Phase 4 | `test/js/test_synchronized_ref.ml` |
+| `Ref.make/get/set/update` | `Ref.ts` | `Ref` | `implemented` | Phase 4 | `test/js/test_ref.ml` |
+| `Ref.modify` | `Ref.ts` | `Ref.modify` | `implemented` | Phase 4 | `test/js/test_ref.ml` |
+| `SynchronizedRef` | `Ref.ts` | `SynchronizedRef` | `implemented` | Phase 4 | `test/js/test_synchronized_ref.ml` |
 
 ## Clock
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
-| `Clock.currentTimeMillis` | `Clock.ts` | `Duration.now` | `planned` | Phase 1 | `test/js/test_clock.ml` |
-| `Clock.sleep` | `Clock.ts` | `Effect.delay` | `implemented-needs-tests` | Phase 1 | `test/js/test_clock.ml` |
-| Virtual clock for tests | `Clock.ts` | `Test_clock` | `implemented-needs-tests` | Phase 1 | `test/js/test_clock.ml` |
-| Runtime clock injection | `Clock.ts` | `Runtime.create ~clock` | `planned` | Phase 1 | `test/js/test_clock.ml` |
+| `Clock.currentTimeMillis` | `Clock.ts` | `Duration.now` | `implemented` | Phase 1 | `test/js/test_clock.ml` |
+| `Clock.sleep` | `Clock.ts` | `Effect.delay` | `implemented` | Phase 1 | `test/js/test_clock.ml` |
+| Virtual clock for tests | `Clock.ts` | `Test_clock` | `implemented` | Phase 1 | `test/js/test_clock.ml` |
+| Runtime clock injection | `Clock.ts` | `Runtime.create ~clock` | `implemented` | Phase 1 | `test/js/test_clock.ml` |
 
 ## Queue / Channel / Semaphore / PubSub / Pool
 
@@ -109,8 +109,8 @@
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
-| `Stream` package shell | `Stream.ts` | `eta_stream` | `planned` | Phase 6 | `test/js_stream/` |
-| Pure constructors / sinks | `Stream.ts` | `Stream` / `Sink` | `planned` | Phase 6 | `test/js_stream/run_js_stream_tests.ml` |
+| `Stream` package shell | `Stream.ts` | `eta_stream` | `implemented` | Phase 6 | `test/js_stream/` |
+| Pure constructors / sinks | `Stream.ts` | `Stream` / `Sink` | `implemented` | Phase 6 | `test/js_stream/run_js_stream_tests.ml` |
 | Mailbox / queue sources | `Stream.ts` | `Stream.from_queue` | `planned` | Phase 6 | `test/js_stream/run_js_stream_tests.ml` |
 | `merge` | `Stream.ts` | `Stream.merge` | `planned` | Phase 6 | `test/js_stream/run_js_stream_tests.ml` |
 | `flatMapPar` | `Stream.ts` | `Stream.flat_map_par` | `planned` | Phase 6 | `test/js_stream/run_js_stream_tests.ml` |
@@ -140,7 +140,7 @@
 | `runPromise` | `Effect.ts` | `Runtime.run_promise` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `runPromiseExit` | `Effect.ts` | `Runtime.run_promise` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `runSync` | `Effect.ts` | `Runtime.run_now` | `implemented` | stable | `test/js/test_runtime.ml` |
-| `runFork` | `Effect.ts` | `Runtime.run_fork` | `planned` | Phase 2 | `test/js/test_fiber.ml` |
+| `runFork` | `Effect.ts` | `Runtime.run_fork` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
 | `Runtime.drainPromise` | internal | `Runtime.drain_promise` | `implemented` | stable | `test/js/test_runtime.ml` |
 | Node `run_main` | internal | internal | `planned` | Phase 8 | `test/js_node/run_js_node_tests.ml` |
 
