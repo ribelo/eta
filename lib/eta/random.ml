@@ -1,5 +1,6 @@
 let rec int_in_range random ~min ~max =
-  if max <= min then min
+  if max < min then invalid_arg "Eta.Random.int_in_range: min > max"
+  else if max = min then min
   else
     let min64 = Int64.of_int min in
     let max64 = Int64.of_int max in
@@ -19,7 +20,8 @@ let rec int_in_range random ~min ~max =
       else int_in_range random ~min:(mid + 1) ~max
 
 let float_in_range random ~min ~max =
-  if max <= min then min
+  if max < min then invalid_arg "Eta.Random.float_in_range: min > max"
+  else if max = min then min
   else min +. Capabilities.random_float random (max -. min)
 
 let bool random = int_in_range random ~min:0 ~max:1 = 1

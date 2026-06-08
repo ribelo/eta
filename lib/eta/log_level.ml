@@ -47,7 +47,7 @@ let is_enabled ~at ~threshold =
   match threshold with
   | Off -> false
   | All -> true
-  | _ -> at <> Off && compare at threshold >= 0
+  | _ -> at = All || (at <> Off && compare at threshold >= 0)
 
 let to_otel_severity = function
   | All -> 0
