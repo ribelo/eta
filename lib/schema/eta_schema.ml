@@ -406,7 +406,15 @@ module Eta_schema = struct
                   [ type_mismatch ~expected:"number" ~got:(Json.to_string (Json.Number n)) () ])
         | json ->
             Error [ type_mismatch ~expected:"number" ~got:(json_got json) () ]);
-      encode = (fun n -> Ok (Json.number n));
+      encode =
+        (fun n ->
+          if Float.is_finite n then Ok (Json.number n)
+          else
+            Error
+              [
+                type_mismatch ~schema_name:"float" ~expected:"finite number"
+                  ~got:(string_of_float n) ();
+              ]);
       equal = Float.equal;
     }
 

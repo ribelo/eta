@@ -792,6 +792,23 @@ let test_encode_failures_are_typed () =
   in
   check_int "tagged union issue count" 1 (List.length union_issues)
 
+let test_encode_float_rejects_non_finite () =
+  let cases =
+    [
+      ("nan", 0.0 /. 0.0);
+      ("positive infinity", 1.0 /. 0.0);
+      ("negative infinity", -.(1.0 /. 0.0));
+    ]
+  in
+  List.iter
+    (fun (label, value) ->
+      let issues =
+        run_effect (Eta_schema.encode Eta_schema.float value)
+        |> expect_encode_error ~name:("float " ^ label)
+      in
+      check_int (label ^ " issue count") 1 (List.length issues))
+    cases
+
 let test_lazy_schema_memoizes_thunk () =
   let forced = ref 0 in
   let schema =
@@ -828,6 +845,7 @@ let () =
   test_decode_with_policy_enriches_type ();
   test_json_adapter_make_functor ();
   test_encode_failures_are_typed ();
+  test_encode_float_rejects_non_finite ();
   test_lazy_schema_memoizes_thunk ();
   test_decode_int_rejects_upper_float_boundary ();
   print_endline "eta-schema tests passed"
