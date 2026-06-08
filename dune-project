@@ -1,4 +1,5 @@
 (lang dune 3.21)
+(using melange 1.0)
 
 (generate_opam_files true)
 
@@ -12,6 +13,39 @@
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))))
+
+(package
+ (name eta_js)
+ (synopsis "JavaScript runtime backend and Melange-compatible Eta subset")
+ (description
+  "eta_js provides a Melange JavaScript runtime and Eta-compatible effect surface for JS programs.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.21))
+  (melange (>= 6.0.1))))
+
+(package
+ (name eta_js_test)
+ (synopsis "Testing helpers for eta_js")
+ (description
+  "eta_js_test provides virtual clocks and Node test helpers for eta_js.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.21))
+  (melange (>= 6.0.1))
+  eta_js))
+
+(package
+ (name eta_js_stream)
+ (synopsis "JavaScript streams for eta_js")
+ (description
+  "eta_js_stream provides pull-based streams for eta_js without Eio or Cstruct dependencies.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.21))
+  (melange (>= 6.0.1))
+  eta_js
+  eta_js_test))
 
 (package
  (name eta_eio)

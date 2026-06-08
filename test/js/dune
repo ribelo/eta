@@ -1,0 +1,33 @@
+(melange.emit
+ (target js_test_dist)
+ (alias js-tests-build)
+ (enabled_if (= %{env:ETA_JS_TESTS=false} true))
+ (modules
+  run_js_tests
+  test_support
+  test_pure
+  test_runtime
+  test_queue
+  test_channel
+  test_semaphore
+  test_pubsub
+  test_pool
+  test_resource
+  test_fiber
+  test_supervisor
+  test_promise
+  test_clock
+  test_uninterruptible
+  test_cause_effect
+  test_deferred
+  test_latch
+  test_ref
+  test_synchronized_ref)
+ (module_systems (esm mjs))
+ (libraries eta_js eta_js_test))
+
+(rule
+ (alias runtest)
+ (enabled_if (= %{env:ETA_JS_TESTS=false} true))
+ (deps (alias js-tests-build))
+ (action (run node js_test_dist/test/js/run_js_tests.mjs)))

@@ -38,3 +38,13 @@
  (alias fuzz)
  (deps (alias test/http_fuzz/fuzz))
  (action (progn)))
+
+(rule
+ (alias eta-js-build)
+ (deps (alias lib/js/melange) (alias test/js/js-tests-build))
+ (action (progn)))
+
+(rule
+ (alias eta-js-runtest)
+ (deps (alias test/js/runtest))
+ (action (progn)))

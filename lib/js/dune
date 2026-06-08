@@ -1,0 +1,51 @@
+(library
+ (name eta_js)
+ (public_name eta_js)
+ (modules
+  capabilities
+  cause
+  channel
+  deferred
+  duration
+  effect
+  effect_core
+  effect_supervisor_scope
+  eta_js
+  exit
+  fiber
+  js_interop
+  latch
+  log_level
+  mutable_ref
+  pool
+  promise
+  pubsub
+  queue
+  random
+  ref
+  resource
+  runtime
+  runtime_core
+  runtime_fiber
+  runtime_local
+  runtime_promise
+  runtime_supervisor
+  runtime_stream
+  sampler
+  schedule
+  scheduler
+  semaphore
+  scope
+  string_helpers
+  supervisor
+  synchronized_ref
+  trace_context)
+ (modes melange)
+ (preprocess (pps melange.ppx))
+ (synopsis "JavaScript runtime backend and Melange-compatible Eta subset"))
+
+(melange.emit
+ (target eta_js_dist)
+ (modules)
+ (module_systems (esm mjs))
+ (libraries eta_js))
