@@ -13,6 +13,26 @@ let is_chunked headers =
   | Some value -> String_helpers.contains_token_ascii_ci value "chunked"
   | None -> false
 
+(* eta-http implements only the [chunked] transfer coding. Parse every
+   Transfer-Encoding header value into ordered tokens and accept only an absent
+   header or a single [chunked] token; reject unsupported codings (gzip, ...)
+   and non-final/compound chunked (e.g. "chunked, gzip"). *)
+let validate_transfer_encoding request headers =
+  let tokens =
+    Header.get_all "transfer-encoding" headers
+    |> List.concat_map (String.split_on_char ',')
+    |> List.filter_map (fun tok ->
+           let t = String_helpers.lowercase_ascii_trim tok in
+           if String.length t = 0 then None else Some t)
+  in
+  match tokens with
+  | [] | [ "chunked" ] -> Ok ()
+  | _ ->
+      Error
+        (H1_client_errors.protocol_violation request "transfer_encoding"
+           "unsupported or non-final Transfer-Encoding (only chunked is \
+            supported)")
+
 let response_has_body request status =
   (match Method.of_string request.method_ with `HEAD -> false | _ -> true)
   && (status < 100 || status >= 200)

@@ -204,6 +204,8 @@ let () =
           Alcotest.test_case
             "rejects unknown-length stream unsupported Transfer-Encoding" `Quick
             test_h1_client_rejects_unknown_stream_unsupported_transfer_encoding;
+          Alcotest.test_case "rejects non-final chunked Transfer-Encoding" `Quick
+            test_h1_client_rejects_non_final_chunked_transfer_encoding;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick

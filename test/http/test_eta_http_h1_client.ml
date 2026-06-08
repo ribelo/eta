@@ -492,6 +492,51 @@ let test_h1_client_rejects_unknown_stream_unsupported_transfer_encoding () =
       Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp)
         cause
 
+let expect_h1_transfer_encoding_failure label = function
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Connection_protocol_violation { kind = "transfer_encoding"; _ };
+          _;
+        }) ->
+      ()
+  | Eta.Exit.Ok _ ->
+      Alcotest.failf "%s: expected transfer-encoding failure" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: unexpected failure: %a" label
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+
+let test_h1_client_rejects_non_final_chunked_transfer_encoding () =
+  let flow =
+    Eio_mock.Flow.make "eta-http-h1-response-non-final-chunked-te"
+  in
+  Eio_mock.Flow.on_read flow
+    [
+      `Return
+        "HTTP/1.1 200 OK\r\n\
+         Transfer-Encoding: chunked, gzip\r\n\
+         \r\n\
+         3\r\n\
+         abc\r\n\
+         0\r\n\
+         \r\n";
+    ];
+  let url = Eta_http.Core.Url.of_string "http://example.test/te" in
+  let request : Eta_http.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http.H1.Client.Empty }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  match
+    Eta.Runtime.run rt (Eta_http.H1.Client.request_on_flow ~flow request)
+  with
+  | Eta.Exit.Error _ as exit ->
+      expect_h1_transfer_encoding_failure "response head" exit
+  | Eta.Exit.Ok response ->
+      Eta.Runtime.run rt (Eta_http.Body.Stream.read_all response.body)
+      |> expect_h1_transfer_encoding_failure "response body"
+
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
   Eio_mock.Flow.on_copy_bytes flow

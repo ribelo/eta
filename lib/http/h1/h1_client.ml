@@ -64,19 +64,25 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
                   when head.status >= 100 && head.status < 200
                        && head.status <> 101 ->
                     read_final_response head.initial
-                | Ok head ->
-                    let body, trailers =
-                      H1_client_response_reader.response_body ?host_eio
-                        ~max_response_body_bytes ~release ~on_unread_body flow
-                        request head
-                    in
-                    Effect.pure
-                      {
-                        status = head.status;
-                        headers = head.headers;
-                        body;
-                        trailers;
-                      })
+                | Ok head -> (
+                    match
+                      H1_client_response_reader.validate_transfer_encoding
+                        request head.headers
+                    with
+                    | Error error -> release_on_error error
+                    | Ok () ->
+                        let body, trailers =
+                          H1_client_response_reader.response_body ?host_eio
+                            ~max_response_body_bytes ~release ~on_unread_body
+                            flow request head
+                        in
+                        Effect.pure
+                          {
+                            status = head.status;
+                            headers = head.headers;
+                            body;
+                            trailers;
+                          }))
          in
          read_final_response Bytes.empty)
 
