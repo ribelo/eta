@@ -121,12 +121,29 @@ let invalid_trailer_message = function
   | Error.Header_invalid { reason } -> "invalid trailer header: " ^ reason
   | kind -> "invalid trailer header: " ^ Error.kind_name kind
 
+(* RFC 7230 6919/7230 4.1.2: framing, routing, and authentication fields must
+   not appear in trailers, since a recipient merging them into the header set
+   could be misled about body length/framing or connection handling. *)
+let forbidden_trailer_name name =
+  match String.lowercase_ascii (String.trim name) with
+  | "connection" | "keep-alive" | "proxy-authenticate" | "proxy-authorization"
+  | "te" | "trailer" | "transfer-encoding" | "upgrade" | "host"
+  | "content-length" ->
+      true
+  | _ -> false
+
 let store_trailers t trailers =
   match Header.of_list (List.rev trailers) with
-  | Ok trailers ->
-      t.trailers <- trailers;
-      t.done_ <- true;
-      Effect.pure None
+  | Ok trailers -> (
+      match
+        List.find_opt (fun (name, _) -> forbidden_trailer_name name) trailers
+      with
+      | Some (name, _) ->
+          Effect.fail (decode_error t ("forbidden trailer field: " ^ name))
+      | None ->
+          t.trailers <- trailers;
+          t.done_ <- true;
+          Effect.pure None)
   | Error kind -> Effect.fail (decode_error t (invalid_trailer_message kind))
 
 let rec read_trailers t acc =
@@ -206,6 +223,14 @@ let encode_last_chunk ?(trailers = Header.empty) () =
   | Some _ ->
       invalid_arg
         "Eta_http.Body.Chunked.encode_last_chunk: invalid trailer header");
+  (match
+     List.find_opt (fun (name, _) -> forbidden_trailer_name name) trailers
+   with
+  | None -> ()
+  | Some (name, _) ->
+      invalid_arg
+        ("Eta_http.Body.Chunked.encode_last_chunk: forbidden trailer field "
+       ^ name));
   let buffer = Buffer.create 32 in
   Buffer.add_string buffer "0\r\n";
   let rec add_trailers = function

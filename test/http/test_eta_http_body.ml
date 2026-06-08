@@ -274,6 +274,49 @@ let test_chunked_encoder_rejects_invalid_trailers () =
       ignore
         (Eta_http.Body.Chunked.encode_last_chunk ~trailers () : bytes))
 
+let test_chunked_decoder_rejects_forbidden_content_length_trailer () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let context =
+    {
+      Eta_http.Body.Chunked.protocol = Eta_http.Error.H1;
+      method_ = "GET";
+      uri = "http://example.test/chunked";
+    }
+  in
+  let reader =
+    chunked_reader_of_string context "0\r\nContent-Length: 999\r\n\r\n"
+  in
+  let decoder = Eta_http.Body.Chunked.create ~context ~reader () in
+  match Eta.Runtime.run rt (Eta_http.Body.Chunked.read decoder) with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        {
+          Eta_http.Error.kind = Decode_error { codec = "chunked"; message };
+          _;
+        }) ->
+      Alcotest.(check bool)
+        "mentions forbidden trailer" true
+        (contains message "Content-Length")
+  | Eta.Exit.Ok None ->
+      Alcotest.fail "forbidden Content-Length trailer was accepted"
+  | Eta.Exit.Ok (Some _) ->
+      Alcotest.fail "unexpected chunk while reading zero-size chunk trailers"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+
+let test_chunked_encoder_rejects_forbidden_content_length_trailer () =
+  match
+    Eta_http.Body.Chunked.encode_last_chunk
+      ~trailers:[ ("Content-Length", "999") ]
+      ()
+  with
+  | _ -> Alcotest.fail "encoded forbidden Content-Length trailer"
+  | exception Invalid_argument message ->
+      Alcotest.(check bool)
+        "mentions Content-Length" true
+        (contains message "Content-Length")
+
 let test_gzip_transducer_roundtrip () =
   with_test_clock @@ fun _sw _clock rt ->
   let input =
