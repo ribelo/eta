@@ -23,6 +23,10 @@ type 'a local
 (** Runtime-local binding key. Backends decide whether this maps to fiber-local,
     task-local, or another scoped context mechanism. *)
 
+type local_binding = Local_binding : 'a local * 'a -> local_binding
+(** Packed runtime-local binding. Runtime backends use this to transport
+    local values without erasing the value independently from its key. *)
+
 type 'a service_key
 (** Typed key for runtime services supplied by optional packages. *)
 
@@ -133,7 +137,9 @@ val of_runtime : (module RUNTIME) -> t
 
 module Backend : sig
   val local_id : 'a local -> int
+  val local_binding_value : 'a local -> local_binding -> 'a option
   val service_key_id : 'a service_key -> int
+  val service_value : 'a service_key -> service -> 'a option
   val scope : Obj.t -> scope
   val scope_value : scope -> Obj.t
   val cancel_context : Obj.t -> cancel_context

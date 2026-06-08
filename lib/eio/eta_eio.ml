@@ -152,11 +152,23 @@ end
 let () =
   Eta.Runtime_contract.register_worker_context_probe Worker_context.active
 
-let local_context_key : (int, Obj.t) Hashtbl.t Eio.Fiber.key =
-  Eio.Fiber.create_key ()
 let protect_context_key : unit Eio.Fiber.key = Eio.Fiber.create_key ()
-let fiberless_local_context_key : (int, Obj.t) Hashtbl.t option Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> None)
+let dls_new_key f =
+  (Domain.DLS.new_key [@alert "-unsafe_multidomain"]) f
+
+let dls_get key =
+  (Domain.DLS.get [@alert "-unsafe_multidomain"]) key
+
+let dls_set key value =
+  (Domain.DLS.set [@alert "-unsafe_multidomain"]) key value
+
+let local_context_key :
+    (int, Eta.Runtime_contract.local_binding list) Hashtbl.t Eio.Fiber.key =
+  Eio.Fiber.create_key ()
+
+let fiberless_local_context_key :
+    (int, Eta.Runtime_contract.local_binding list) Hashtbl.t option Domain.DLS.key =
+  dls_new_key (fun () -> None)
 
 let has_eio_fiber_context () =
   try
@@ -168,13 +180,13 @@ let protect f = if has_eio_fiber_context () then Eio.Cancel.protect f else f ()
 
 let local_context (module Fiber : Host.FIBER) =
   try Fiber.get local_context_key with Stdlib.Effect.Unhandled _ ->
-    Domain.DLS.get fiberless_local_context_key
+    dls_get fiberless_local_context_key
 
 let with_fiberless_context context f =
-  let previous = Domain.DLS.get fiberless_local_context_key in
-  Domain.DLS.set fiberless_local_context_key (Some context);
+  let previous = dls_get fiberless_local_context_key in
+  dls_set fiberless_local_context_key (Some context);
   Fun.protect
-    ~finally:(fun () -> Domain.DLS.set fiberless_local_context_key previous)
+    ~finally:(fun () -> dls_set fiberless_local_context_key previous)
     f
 
 let local_get_with fiber local =
@@ -183,7 +195,10 @@ let local_get_with fiber local =
   | Some context -> (
       match Hashtbl.find_opt context (Eta.Runtime_contract.Backend.local_id local) with
       | None -> None
-      | Some value -> Some (Obj.obj value))
+      | Some bindings ->
+          List.find_map
+            (Eta.Runtime_contract.Backend.local_binding_value local)
+            bindings)
 
 let local_with_binding_with (module Fiber : Host.FIBER) local value f =
   let id = Eta.Runtime_contract.Backend.local_id local in
@@ -192,7 +207,9 @@ let local_with_binding_with (module Fiber : Host.FIBER) local value f =
     | None -> Hashtbl.create 8
     | Some context -> Hashtbl.copy context
   in
-  Hashtbl.replace context id (Obj.repr value);
+  let stack = Option.value (Hashtbl.find_opt context id) ~default:[] in
+  Hashtbl.replace context id
+    (Eta.Runtime_contract.Local_binding (local, value) :: stack);
   try Fiber.with_binding local_context_key context f
   with Stdlib.Effect.Unhandled _ -> with_fiberless_context context f
 

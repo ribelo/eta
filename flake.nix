@@ -159,14 +159,14 @@
               opam list --installed --short ocaml-lsp-server | grep -Fxq ocaml-lsp-server
               opam list --installed --short utop | grep -Fxq utop
 
-              mode_probe="scratch/oxcaml_research/toolchain_probe/mode_syntax.ml"
-              dune build ./scratch/oxcaml_research/toolchain_probe/mode_syntax.exe
+              mode_probe="tools/oxcaml_toolchain_probe/mode_syntax.ml"
+              dune build ./tools/oxcaml_toolchain_probe/mode_syntax.exe
               ocamlformat --enable-outside-detected-project --check "$mode_probe"
               probe_source="$(cat "$mode_probe")"
               printf '%s\n' "$probe_source" \
                 | ocamlmerlin single errors -filename "$mode_probe" \
-                | python3 scratch/oxcaml_research/toolchain_probe/check_merlin_no_errors.py
-              python3 scratch/oxcaml_research/toolchain_probe/check_lsp_no_errors.py "$mode_probe"
+                | python3 tools/oxcaml_toolchain_probe/check_merlin_no_errors.py
+              python3 tools/oxcaml_toolchain_probe/check_lsp_no_errors.py "$mode_probe"
             '';
           };
           oxCamlShippedTests = pkgs.writeShellApplication {

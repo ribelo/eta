@@ -3,8 +3,9 @@ type cancel_context = Obj.t
 type 'a promise = Obj.t
 type 'a resolver = Obj.t
 type 'a stream = Obj.t
-type 'a local = int
-type 'a service_key = int
+type 'a local = 'a Type.Id.t
+type local_binding = Local_binding : 'a local * 'a -> local_binding
+type 'a service_key = 'a Type.Id.t
 type service = Service : 'a service_key * 'a -> service
 
 type t = {
@@ -72,10 +73,14 @@ module type RUNTIME = sig
 end
 
 let next_local = Atomic.make 0
-let create_local () = Atomic.fetch_and_add next_local 1
+let create_local () =
+  ignore (Atomic.fetch_and_add next_local 1);
+  Type.Id.make ()
 
 let next_service_key = Atomic.make 0
-let create_service_key () = Atomic.fetch_and_add next_service_key 1
+let create_service_key () =
+  ignore (Atomic.fetch_and_add next_service_key 1);
+  Type.Id.make ()
 
 let worker_context_probes : (unit -> bool) list Atomic.t = Atomic.make []
 
@@ -90,8 +95,20 @@ let in_registered_worker_context () =
     (Atomic.get worker_context_probes)
 
 module Backend = struct
-  let local_id local = local
-  let service_key_id key = key
+  let local_id local = Type.Id.uid local
+  let local_binding_value : type a. a local -> local_binding -> a option =
+   fun local (Local_binding (stored_local, value)) ->
+    match Type.Id.provably_equal local stored_local with
+    | Some Type.Equal -> Some value
+    | None -> None
+
+  let service_key_id key = Type.Id.uid key
+  let service_value : type a. a service_key -> service -> a option =
+   fun key (Service (stored_key, value)) ->
+    match Type.Id.provably_equal key stored_key with
+    | Some Type.Equal -> Some value
+    | None -> None
+
   let scope value = value
   let scope_value value = value
   let cancel_context value = value

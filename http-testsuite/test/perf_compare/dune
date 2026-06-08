@@ -1,6 +1,6 @@
 (executable
  (name run)
- (libraries eta_http_testsuite eio_main))
+ (libraries eta_http_testsuite eta_eio eio_main))
 
 (rule
  (alias perf-compare)

@@ -145,7 +145,7 @@ let run_get_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~iterations
   let eta_iters = ref [] in
   let curl_iters = ref [] in
   Eio.Switch.run (fun sw ->
-      let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+      let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
 	      let client = make_eta_client ~env ~sw ~protocol ~transport ~cert_dir in
 	      for i = 1 to iterations do
 	        let r = run_eta_get ~rt ~client ~url in
@@ -166,7 +166,7 @@ let run_post_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~iteration
   let eta_iters = ref [] in
   let curl_iters = ref [] in
   Eio.Switch.run (fun sw ->
-      let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+      let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
 	      let client = make_eta_client ~env ~sw ~protocol ~transport ~cert_dir in
 	      for i = 1 to iterations do
 	        let r = run_eta_post ~rt ~client ~url ~body_bytes in
@@ -188,7 +188,7 @@ let run_concurrent_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~con
   let eta_rss_before = Util.rss_kb () in
   let eta_t0 = Unix.gettimeofday () in
   Eio.Switch.run (fun sw ->
-      let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+      let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
 	      let client = make_eta_client ~env ~sw ~protocol ~transport ~cert_dir in
       let fibers =
         List.init concurrency (fun _i ->

@@ -138,7 +138,7 @@ let run_eta_once ~rt ~client ~scenario ~url request =
 let run_eta ~env ~scenario ~url ~cert_dir =
   let samples = ref [] in
   Eio.Switch.run (fun sw ->
-      let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+      let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
       let client =
         make_eta_client ~env ~sw ~protocol:scenario.protocol
           ~_transport:scenario.transport ~cert_dir

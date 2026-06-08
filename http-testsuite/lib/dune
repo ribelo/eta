@@ -2,6 +2,7 @@
  (name eta_http_testsuite)
  (libraries
   eta
+  eta_eio
   eta_http
   eio
   eio_main

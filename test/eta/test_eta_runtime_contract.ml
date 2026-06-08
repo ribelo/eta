@@ -51,18 +51,22 @@ module Direct_runtime = struct
   let cancel_sub f = f ()
   let cancel () exn = raise exn
 
-  let locals : (int, Obj.t list) Hashtbl.t = Hashtbl.create 8
+  let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
+    Hashtbl.create 8
 
   let local_get local =
     match Hashtbl.find_opt locals (Runtime_contract.Backend.local_id local) with
-    | Some (value :: _) -> Some (Obj.obj value)
-    | Some [] | None -> None
+    | None -> None
+    | Some bindings ->
+        List.find_map
+          (Runtime_contract.Backend.local_binding_value local)
+          bindings
 
   let local_with_binding local value f =
     let id = Runtime_contract.Backend.local_id local in
     let previous = Hashtbl.find_opt locals id in
     let stack = Option.value previous ~default:[] in
-    Hashtbl.replace locals id (Obj.repr value :: stack);
+    Hashtbl.replace locals id (Runtime_contract.Local_binding (local, value) :: stack);
     Fun.protect
       ~finally:(fun () ->
         match previous with

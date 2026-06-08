@@ -11,9 +11,10 @@ for example `effect.ml` and `effect.mli`. The core modules are `Effect`,
 such as `eta_http`, `eta_sql`, `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
-experiments live under `scratch/`; keep them out of the published library unless
-they are deliberately promoted into `lib/eta/`. Generated artifacts belong in
-`_build/` and local switches in `_opam/`.
+experiments live under `.scratch/`; keep them out of Dune discovery and out of
+the published library unless they are deliberately promoted into real project
+code under `lib/`, `test/`, or `tools/`. Generated artifacts belong in `_build/`
+and local switches in `_opam/`.
 
 Optional external-engine integrations live under `drivers/`. Driver packages may
 depend on Eta, but Eta core libraries under `lib/` must not depend on drivers.

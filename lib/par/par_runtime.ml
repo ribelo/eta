@@ -20,7 +20,16 @@ type worker_context = {
 }
 
 let current_dls : worker_context option Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> None)
+  (Domain.DLS.new_key [@alert "-unsafe_multidomain"]) (fun () -> None)
+
+let domain_spawn f =
+  (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"]) f
+
+let dls_get key =
+  (Domain.DLS.get [@alert "-unsafe_multidomain"]) key
+
+let dls_set key value =
+  (Domain.DLS.set [@alert "-unsafe_multidomain"]) key value
 
 let worker_context ~par_threshold worker = { worker; par_threshold }
 
@@ -33,13 +42,13 @@ let promoted_worker_context previous worker =
   worker_context ~par_threshold worker
 
 let current_worker () : S.worker =
-  match Domain.DLS.get current_dls with
+  match dls_get current_dls with
   | Some context -> context.worker
   | None ->
     invalid_arg "Eta.Par: not running inside a pool worker (call Pool.run)"
 
 let current_par_threshold () =
-  match Domain.DLS.get current_dls with
+  match dls_get current_dls with
   | Some context -> context.par_threshold
   | None -> default_par_threshold
 
@@ -85,9 +94,9 @@ module Pool = struct
     in
     let domains = Array.init n_bg (fun i ->
       let w = background_workers.(i) in
-      Domain.spawn (fun () ->
+      domain_spawn (fun () ->
         Printexc.record_backtrace true;
-        Domain.DLS.set current_dls
+        dls_set current_dls
           (Some (worker_context ~par_threshold w));
         S.register_worker pool w;
         Fun.protect
@@ -95,7 +104,7 @@ module Pool = struct
           (fun () -> S.drive_until_shutdown w)))
     in
     let heartbeat_domain =
-      Domain.spawn (fun () -> S.drive_heartbeat pool)
+      domain_spawn (fun () -> S.drive_heartbeat pool)
     in
     { pool; domains; heartbeat_domain; background_workers; par_threshold }
 
@@ -112,16 +121,16 @@ module Pool = struct
      duration of the call. Other workers are already idle in
      [drive_until_shutdown] waiting for shared jobs. *)
   let run (t : t) (f) =
-    let prev_dls = Domain.DLS.get current_dls in
+    let prev_dls = dls_get current_dls in
     let w = S.make_worker ~pool:t.pool ~id:0 in
-    Domain.DLS.set current_dls
+    dls_set current_dls
       (Some (worker_context ~par_threshold:t.par_threshold w));
     S.register_worker t.pool w;
     let result =
       Fun.protect
         ~finally:(fun () ->
           S.unregister_worker t.pool w;
-          Domain.DLS.set current_dls prev_dls)
+          dls_set current_dls prev_dls)
         (fun () -> f ())
     in
     result
@@ -152,11 +161,11 @@ module Pool = struct
         let make_job () =
           let handler : S.worker -> S.job -> unit =
             fun w _job ->
-              let prev_dls = Domain.DLS.get current_dls in
-              Domain.DLS.set current_dls
+              let prev_dls = dls_get current_dls in
+              dls_set current_dls
                 (Some (worker_context ~par_threshold:t.par_threshold w));
               Fun.protect
-                ~finally:(fun () -> Domain.DLS.set current_dls prev_dls)
+                ~finally:(fun () -> dls_set current_dls prev_dls)
                 (fun () ->
                   let rec loop () =
                     let i = Atomic.fetch_and_add next 1 in
@@ -231,10 +240,10 @@ let[@inline never] join_slow
   let r_a : ('a, exn) result ref = ref (Error Exit) in
   let handler : S.worker -> S.job -> unit =
     fun w' j ->
-      let prev_dls = Domain.DLS.get current_dls in
-      Domain.DLS.set current_dls (Some (promoted_worker_context prev_dls w'));
+      let prev_dls = dls_get current_dls in
+      dls_set current_dls (Some (promoted_worker_context prev_dls w'));
       r_a := (try Ok (a ()) with e -> Error e);
-      Domain.DLS.set current_dls prev_dls;
+      dls_set current_dls prev_dls;
       S.signal_job_done j
   in
   let job : S.job = {
@@ -269,10 +278,10 @@ let[@inline never] join_unit_slow
   let exn_a : exn option ref = ref None in
   let handler : S.worker -> S.job -> unit =
     fun w' j ->
-      let prev_dls = Domain.DLS.get current_dls in
-      Domain.DLS.set current_dls (Some (promoted_worker_context prev_dls w'));
+      let prev_dls = dls_get current_dls in
+      dls_set current_dls (Some (promoted_worker_context prev_dls w'));
       (try a () with e -> exn_a := Some e);
-      Domain.DLS.set current_dls prev_dls;
+      dls_set current_dls prev_dls;
       S.signal_job_done j
   in
   let job : S.job = {

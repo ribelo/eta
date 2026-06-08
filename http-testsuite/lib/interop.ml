@@ -202,7 +202,7 @@ let default_scenarios = [
     skip = Some "RST_STREAM mid-flight requires adversarial server fixture; covered in @cve-regress instead" };
   { name = "server_close_mid_body"; method_ = "GET"; path = "/"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
-    skip = Some "mid-body close requires dynamic server kill; covered in scratch research, not v1 interop matrix" };
+    skip = Some "mid-body close requires dynamic server kill; covered in research probes, not v1 interop matrix" };
   { name = "tls_alpn_h2_negotiation"; method_ = "GET"; path = "/healthz"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
     skip = Some "ALPN h2 vs h1 is implicitly exercised by every TLS+h2 cell; explicit ALPN test not needed for v1" };
@@ -342,7 +342,7 @@ let run_all ~env ~results_dir ~scenarios =
             scenarios
       | Ok pid_path ->
           Eio.Switch.run (fun sw ->
-              let rt = Eta.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+              let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
               List.iter (fun scenario ->
                   let results = run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario in
                   all_results := results @ !all_results

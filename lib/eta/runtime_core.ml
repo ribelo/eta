@@ -80,7 +80,7 @@ type 'err t = {
   meter : Capabilities.meter;
   metrics_enabled : bool;
   random : Capabilities.random;
-  services : (int, Obj.t) Hashtbl.t;
+  services : (int, Runtime_contract.service) Hashtbl.t;
   services_lock : Sync_lock.t;
   contract : Runtime_contract.t;
   capture_backtrace : bool;
@@ -114,7 +114,7 @@ let create_with_contract ~contract ?sleep ?tracer
     (fun (Runtime_contract.Service (key, value)) ->
       Hashtbl.replace services_table
         (Runtime_contract.Backend.service_key_id key)
-        (Obj.repr value))
+        (Runtime_contract.Service (key, value)))
     services;
   {
     sleep;
@@ -211,7 +211,7 @@ let service runtime key =
       (Runtime_contract.Backend.service_key_id key)
   with
   | None -> None
-  | Some value -> Some (Obj.obj value)
+  | Some service -> Runtime_contract.Backend.service_value key service
 
 let run_finalizers ~runtime ~fail_key finalizers =
   runtime.contract.Runtime_contract.protect @@ fun () ->
