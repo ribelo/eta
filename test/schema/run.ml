@@ -832,6 +832,27 @@ let test_decode_int_rejects_upper_float_boundary () =
   | { kind = Type_mismatch { expected = "int"; _ }; _ } -> ()
   | issue -> failwith ("unexpected issue: " ^ render_issue issue)
 
+type non_object_union = Non_object
+
+let non_object_union_equal a b =
+  match (a, b) with Non_object, Non_object -> true
+
+let test_tagged_union_rejects_non_object_case_encode () =
+  let schema =
+    Eta_schema.tagged_union ~name:"non_object_union" ~tag:"_tag"
+      [
+        Eta_schema.case ~tag:"NonObject"
+          ~decode:(fun _ -> Ok Non_object)
+          ~encode:(function Non_object -> Ok (Some (Json.string "payload")));
+      ]
+      ~equal:non_object_union_equal
+  in
+  let issues =
+    run_effect (Eta_schema.encode schema Non_object)
+    |> expect_encode_error ~name:"non-object union encode"
+  in
+  check_int "non-object union issue count" 1 (List.length issues)
+
 let () =
   test_config_roundtrip ();
   test_many_issues ();
@@ -846,6 +867,7 @@ let () =
   test_json_adapter_make_functor ();
   test_encode_failures_are_typed ();
   test_encode_float_rejects_non_finite ();
+  test_tagged_union_rejects_non_object_case_encode ();
   test_lazy_schema_memoizes_thunk ();
   test_decode_int_rejects_upper_float_boundary ();
   print_endline "eta-schema tests passed"

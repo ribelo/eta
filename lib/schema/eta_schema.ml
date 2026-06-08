@@ -526,7 +526,13 @@ module Eta_schema = struct
             | Ok None -> loop rest
             | Ok (Some (Json.Object fields)) ->
                 Ok (Json.Object ((tag, Json.String case.tag_value) :: fields))
-            | Ok (Some json) -> Ok json
+            | Ok (Some json) ->
+                Error
+                  [
+                    type_mismatch ~schema_name:name
+                      ~expected:"object case payload"
+                      ~got:(Json.to_string json) ();
+                  ]
             | Error issues -> Error (with_schema_name name issues))
       in
       loop cases
