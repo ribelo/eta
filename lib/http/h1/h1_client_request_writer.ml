@@ -127,29 +127,43 @@ let write_request ?host_eio flow (request : request) =
              | Ok () -> Effect.unit
              | Error error -> Effect.fail error)
     | Some { length; stream } ->
-        (* A streamed body of unknown length cannot honor a caller-supplied
-           Content-Length: the actual byte count is not known up front, so
-           trusting the header risks writing more/fewer bytes than declared and
-           desynchronizing the connection. Reject before writing anything; the
-           owned stream is released by [with_owned_stream] on failure. *)
-        if
-          Option.is_none length
-          && Option.is_some (Header.get "content-length" request.headers)
-        then
-          Effect.fail
-            (H1_client_errors.make_error request
-               (Error.Header_invalid
-                  {
-                    reason =
-                      "Content-Length is not allowed with an unknown-length \
-                       streamed request body";
-                  }))
-        else
-          let headers = stream_headers request length in
-          let framing_body_length = Option.value length ~default:(-1) in
-          write_headers_effect ?host_eio request flow ~headers
-            ~framing_body_length
-          |> Effect.bind (fun () ->
-                 if transfer_encoding_chunked headers then
-                   write_chunked_stream ?host_eio request flow stream
-                 else write_raw_stream ?host_eio request flow stream))
+        (* Validate framing for streamed bodies before writing any headers; the
+           owned stream is released by [with_owned_stream] on failure. An
+           unknown-length stream must be chunked: it cannot honor a
+           caller-supplied Content-Length, and the only transfer coding that
+           gives the peer a valid end-of-message is [chunked]. *)
+        let framing_error =
+          if Option.is_some length then None
+          else if Option.is_some (Header.get "content-length" request.headers)
+          then
+            Some
+              (Error.Header_invalid
+                 {
+                   reason =
+                     "Content-Length is not allowed with an unknown-length \
+                      streamed request body";
+                 })
+          else if
+            Option.is_some (Header.get "transfer-encoding" request.headers)
+            && not (transfer_encoding_chunked request.headers)
+          then
+            Some
+              (Error.Header_invalid
+                 {
+                   reason =
+                     "unsupported Transfer-Encoding for a streamed request \
+                      body (only chunked is supported)";
+                 })
+          else None
+        in
+        (match framing_error with
+        | Some kind -> Effect.fail (H1_client_errors.make_error request kind)
+        | None ->
+            let headers = stream_headers request length in
+            let framing_body_length = Option.value length ~default:(-1) in
+            write_headers_effect ?host_eio request flow ~headers
+              ~framing_body_length
+            |> Effect.bind (fun () ->
+                   if transfer_encoding_chunked headers then
+                     write_chunked_stream ?host_eio request flow stream
+                   else write_raw_stream ?host_eio request flow stream)))

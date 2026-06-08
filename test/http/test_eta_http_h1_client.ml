@@ -462,6 +462,36 @@ let test_h1_client_rejects_unknown_stream_content_length () =
         cause);
   Alcotest.(check int) "stream released after rejection" 1 !released
 
+let test_h1_client_rejects_unknown_stream_unsupported_transfer_encoding () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-unknown-stream-unsupported-te" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
+  let body = Eta_http.Body.Stream.of_bytes [ Bytes.of_string "abcdef" ] in
+  let url = Eta_http.Core.Url.of_string "http://example.test/framing" in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [ ("Transfer-Encoding", "gzip") ];
+      body = Eta_http.H1.Client.Stream body;
+    }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  match
+    Eta.Runtime.run rt (Eta_http.H1.Client.request_on_flow ~flow request)
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail { Eta_http.Error.kind = Header_invalid { reason }; _ }) ->
+      Alcotest.(check bool)
+        "mentions Transfer-Encoding" true
+        (contains reason "Transfer-Encoding")
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail
+        "unknown-length stream with unsupported Transfer-Encoding was sent"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp)
+        cause
+
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
   Eio_mock.Flow.on_copy_bytes flow
