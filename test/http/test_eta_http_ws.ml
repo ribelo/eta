@@ -356,6 +356,38 @@ let test_ws_codec_rejects_encoded_one_byte_close_payload () =
            { fin = true; opcode = Close; payload = Bytes.of_string "\000" }
           : bytes))
 
+let close_status_payload code =
+  let payload = Bytes.create 2 in
+  Bytes.set payload 0 (Char.chr ((code lsr 8) land 0xff));
+  Bytes.set payload 1 (Char.chr (code land 0xff));
+  payload
+
+let raw_close_frame code =
+  let frame = Bytes.create 4 in
+  Bytes.set frame 0 (Char.chr 0x88);
+  Bytes.set frame 1 (Char.chr 0x02);
+  Bytes.blit (close_status_payload code) 0 frame 2 2;
+  frame
+
+let test_ws_codec_rejects_invalid_close_status_codes () =
+  List.iter
+    (fun code ->
+      match Eta_http.Ws.Codec.decode (raw_close_frame code) with
+      | Error _ -> ()
+      | Ok _ -> Alcotest.failf "accepted invalid close status code %d" code)
+    [ 999; 1004; 1005; 1006; 1015; 5000 ]
+
+let test_ws_codec_encoder_rejects_invalid_close_status_code () =
+  let frame : Eta_http.Ws.Codec.frame =
+    { fin = true; opcode = Close; payload = close_status_payload 1005 }
+  in
+  match Eta_http.Ws.Codec.encode frame with
+  | _ -> Alcotest.fail "encoded invalid close status code 1005"
+  | exception Invalid_argument message ->
+      Alcotest.(check bool)
+        "mentions close status" true
+        (contains message "close")
+
 let test_ws_random_material_does_not_use_stdlib_random () =
   let codec = read_file (find_ws_source "codec.ml") in
   let client = read_file (find_ws_source "ws_client.ml") in
@@ -605,12 +637,9 @@ let test_ws_close_1011_fails_inbound_stream () =
 let test_ws_invalid_peer_close_code_is_protocol_error () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   (* 999 is below the valid WebSocket close-code range; the peer must not be
-     able to surface it as a normal `Closed` — it is a protocol violation. *)
-  let invalid_close =
-    Eta_http.Ws.Codec.encode
-      { fin = true; opcode = Close; payload = close_payload 999 "" }
-    |> Bytes.to_string
-  in
+     able to surface it as a normal `Closed` — it is a protocol violation.
+     Build raw bytes directly: Codec.encode now refuses invalid close codes. *)
+  let invalid_close = Bytes.to_string (raw_close_frame 999) in
   let _state, flow =
     scripted_flow [ Return (switching_response key ^ invalid_close) ]
   in

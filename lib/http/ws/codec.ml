@@ -15,6 +15,7 @@ type parse_error =
   | Control_fragmented
   | Control_payload_too_large
   | Invalid_close_payload
+  | Invalid_close_code
   | Non_minimal_length
   | Mask_required
   | Mask_forbidden
@@ -28,6 +29,7 @@ let parse_error_to_string = function
   | Control_payload_too_large -> "control frame payload exceeds 125 bytes"
   | Invalid_close_payload ->
       "close frame payload must be empty or at least two bytes"
+  | Invalid_close_code -> "close frame uses an invalid close status code"
   | Non_minimal_length -> "payload length is not minimally encoded"
   | Mask_required -> "masked frame required"
   | Mask_forbidden -> "masked frame forbidden"
@@ -53,12 +55,29 @@ let opcode_of_int = function
 
 let is_control = function Close | Ping | Pong -> true | _ -> false
 
+(* RFC 6455 status codes valid on the wire: 1000-1014 excluding the reserved
+   1004 and the connection-local 1005/1006 (1015 is also connection-local and
+   above 1014), plus the registered (3000-3999) and private (4000-4999)
+   ranges. *)
+let valid_close_code code =
+  (code >= 1000 && code <= 1014 && code <> 1004 && code <> 1005 && code <> 1006)
+  || (code >= 3000 && code <= 4999)
+
+let close_code_of_payload payload =
+  (Char.code (Bytes.get payload 0) lsl 8) lor Char.code (Bytes.get payload 1)
+
 let validate_frame frame =
   if is_control frame.opcode && not frame.fin then invalid_arg "WebSocket control frame fragmented";
   if is_control frame.opcode && Bytes.length frame.payload > 125 then
     invalid_arg "WebSocket control frame payload exceeds 125 bytes";
   if frame.opcode = Close && Bytes.length frame.payload = 1 then
-    invalid_arg "WebSocket close frame payload must be empty or at least two bytes"
+    invalid_arg "WebSocket close frame payload must be empty or at least two bytes";
+  if
+    frame.opcode = Close
+    && Bytes.length frame.payload >= 2
+    && not (valid_close_code (close_code_of_payload frame.payload))
+  then
+    invalid_arg "WebSocket close frame uses an invalid close status code"
 
 let write_uint16 bytes off value =
   Bytes.set_int16_be bytes off value
@@ -168,7 +187,12 @@ let decode ?(masked = false) bytes =
                       if is_masked then apply_mask (Bytes.sub bytes off 4) payload
                       else payload
                     in
-                    Ok ({ fin; opcode; payload }, consumed)
+                    if
+                      opcode = Close
+                      && Bytes.length payload >= 2
+                      && not (valid_close_code (close_code_of_payload payload))
+                    then Error Invalid_close_code
+                    else Ok ({ fin; opcode; payload }, consumed)
 
 let accept_key key =
   let guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" in

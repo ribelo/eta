@@ -15,6 +15,7 @@ type parse_error =
   | Control_fragmented
   | Control_payload_too_large
   | Invalid_close_payload
+  | Invalid_close_code
   | Non_minimal_length
   | Mask_required
   | Mask_forbidden
