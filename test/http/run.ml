@@ -199,6 +199,8 @@ let () =
             test_h1_client_streaming_request_body_write_cancellation_propagates;
           Alcotest.test_case "rejects mismatched stream Content-Length" `Quick
             test_h1_client_rejects_mismatched_stream_content_length;
+          Alcotest.test_case "rejects unknown-length stream Content-Length" `Quick
+            test_h1_client_rejects_unknown_stream_content_length;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick

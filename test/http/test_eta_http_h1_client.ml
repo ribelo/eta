@@ -357,11 +357,17 @@ let test_h1_client_streaming_request_body_write_cancellation_propagates () =
     ];
   let released = ref 0 in
   let body =
-    Eta_http.Body.Stream.of_bytes
-      ~release:(fun () ->
-        incr released;
-        Eta.Effect.unit)
-      [ Bytes.of_string "abc" ]
+    Eta_http.H1.Client.Rewindable_stream
+      {
+        length = Some 3;
+        make =
+          (fun () ->
+            Eta_http.Body.Stream.of_bytes
+              ~release:(fun () ->
+                incr released;
+                Eta.Effect.unit)
+              [ Bytes.of_string "abc" ]);
+      }
   in
   let url = Eta_http.Core.Url.of_string "http://example.test/write-cancel" in
   let request : Eta_http.H1.Client.request =
@@ -369,7 +375,7 @@ let test_h1_client_streaming_request_body_write_cancellation_propagates () =
       method_ = "POST";
       url;
       headers = [ ("Content-Length", "3") ];
-      body = Eta_http.H1.Client.Stream body;
+      body;
     }
   in
   with_test_clock @@ fun _sw _clock rt ->
@@ -417,6 +423,44 @@ let test_h1_client_rejects_mismatched_stream_content_length () =
         contains reason "Content-Length"
     | _ -> false);
   Alcotest.(check int) "rejected stream body released" 1 !released
+
+let test_h1_client_rejects_unknown_stream_content_length () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-unknown-stream-content-length" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ];
+  let released = ref 0 in
+  let body =
+    Eta_http.Body.Stream.of_bytes
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      [ Bytes.of_string "abcdef" ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/framing" in
+  let request : Eta_http.H1.Client.request =
+    {
+      method_ = "POST";
+      url;
+      headers = [ ("Content-Length", "3") ];
+      body = Eta_http.H1.Client.Stream body;
+    }
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  (match
+     Eta.Runtime.run rt (Eta_http.H1.Client.request_on_flow ~flow request)
+   with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail { Eta_http.Error.kind = Header_invalid { reason }; _ }) ->
+      Alcotest.(check bool)
+        "mentions Content-Length" true
+        (contains reason "Content-Length")
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail
+        "unknown-length stream with caller Content-Length was sent"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp)
+        cause);
+  Alcotest.(check int) "stream released after rejection" 1 !released
 
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
