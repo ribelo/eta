@@ -142,14 +142,14 @@
 | `runSync` | `Effect.ts` | `Runtime.run_now` | `implemented` | stable | `test/js/test_runtime.ml` |
 | `runFork` | `Effect.ts` | `Runtime.run_fork` | `implemented` | Phase 2 | `test/js/test_fiber.ml` |
 | `Runtime.drainPromise` | internal | `Runtime.drain_promise` | `implemented` | stable | `test/js/test_runtime.ml` |
-| Node `run_main` | internal | internal | `planned` | Phase 8 | `test/js_node/run_js_node_tests.ml` |
+| Node `run_main` | internal | `Node_main.run_main` | `implemented` | Phase 8 | `test/js_node/run_js_node_tests.ml` |
 
 ## Browser / Platform
 
 | Area | Effect-smol reference | Eta native reference | Eta JS status | Target | Tests |
 |------|----------------------|----------------------|---------------|--------|-------|
 | Browser smoke tests | internal | internal | `planned` | Phase 8 | `test/js_browser/` |
-| Node `run_main` | internal | internal | `planned` | Phase 8 | `test/js_node/` |
+| Node `run_main` | internal | `Node_main.run_main` | `implemented` | Phase 8 | `test/js_node/` |
 
 ## Explicit Non-Goals
 
