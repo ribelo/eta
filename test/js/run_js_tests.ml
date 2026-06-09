@@ -19,6 +19,8 @@ let all_tests =
       Test_latch.tests;
       Test_ref.tests;
       Test_synchronized_ref.tests;
+      Test_observability.tests;
+      Test_stress.tests;
     ]
 
 let () =

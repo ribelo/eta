@@ -8,6 +8,9 @@ let context runtime =
       Effect_core.scheduler = runtime.scheduler;
       fiber;
       clock = runtime.clock;
+      tracer = runtime.tracer;
+      logger = runtime.logger;
+      meter = runtime.meter;
       daemon_started = (fun () -> Runtime_core.daemon_started runtime);
       daemon_finished = (fun () -> Runtime_core.daemon_finished runtime);
       daemon_failed = Runtime_core.daemon_failed runtime;

@@ -35,6 +35,10 @@ val map_error : ('err -> 'err2) -> ('a, 'err) t -> ('a, 'err2) t
 val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
 val tap_cause : ('err Cause.t -> unit) -> ('a, 'err) t -> ('a, 'err) t
 val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
+val named : string -> ('a, 'err) t -> ('a, 'err) t
+val annotate : string -> string -> ('a, 'err) t -> ('a, 'err) t
+val annotate_all : (string * string) list -> ('a, 'err) t -> ('a, 'err) t
+val suppress_observability : ('a, 'err) t -> ('a, 'err) t
 val die : exn -> ('a, 'err) t
 val fail_cause : 'err Cause.t -> ('a, 'err) t
 val sandbox : ('a, 'err) t -> (('a, 'err Cause.t) result, 'no_err) t
@@ -47,6 +51,13 @@ val match_effect :
   ('a, 'err) t ->
   ('b, 'err2) t
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
+val log : string -> (unit, 'err) t
+val log_level : Capabilities.log_level -> string -> (unit, 'err) t
+val log_debug : string -> (unit, 'err) t
+val log_info : string -> (unit, 'err) t
+val log_warning : string -> (unit, 'err) t
+val log_error : string -> (unit, 'err) t
+
 val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
 val repeat : Schedule.t -> (unit, 'err) t -> (unit, 'err) t
 val with_background :

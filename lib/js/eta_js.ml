@@ -10,6 +10,7 @@ module Js_interop = Js_interop
 module Latch = Latch
 module Log_level = Log_level
 module Mutable_ref = Mutable_ref
+module Node_main = Node_main
 module Pool = Pool
 module Promise = Promise
 module Pubsub = Pubsub

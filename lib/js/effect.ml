@@ -327,6 +327,34 @@ let tap_error f eff =
 let finally = Effect_core.finally
 let uninterruptible = Effect_core.uninterruptible
 
+let named _name eff = eff
+let annotate _key _value eff = eff
+let annotate_all _attrs eff = eff
+let suppress_observability eff = eff
+
+let log_level level msg =
+  Effect_core.async_leaf (fun context ~resume ~on_cancel ->
+      (match context.logger with
+      | Some logger ->
+          logger#log
+            {
+              Capabilities.level;
+              body = msg;
+              ts_ms = context.clock.now_ms ();
+              attrs = [];
+              trace_id = "";
+              span_id = "";
+            }
+      | None -> ());
+      resume (Exit.ok ());
+      on_cancel (fun () -> ()))
+
+let log msg = log_level Capabilities.Info msg
+let log_debug msg = log_level Capabilities.Debug msg
+let log_info msg = log_level Capabilities.Info msg
+let log_warning msg = log_level Capabilities.Warn msg
+let log_error msg = log_level Capabilities.Error msg
+
 let retry schedule predicate eff =
   let rec loop driver =
     catch

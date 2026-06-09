@@ -2,6 +2,9 @@ type context = {
   scheduler : Scheduler.t;
   fiber : Runtime_fiber.t;
   clock : Runtime_core.clock;
+  tracer : Capabilities.tracer option;
+  logger : Capabilities.logger option;
+  meter : Capabilities.meter option;
   daemon_started : unit -> unit;
   daemon_finished : unit -> unit;
   daemon_failed : Obj.t Cause.t -> unit;

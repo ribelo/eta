@@ -2,6 +2,8 @@ module Test_clock = Test_clock
 
 type test = string * (unit -> unit Js.Promise.t)
 
+let fail name reason = failwith (name ^ ": " ^ reason)
+
 let exn_of_promise_error error =
   Js.Exn.anyToExnInternal (Obj.magic error)
 

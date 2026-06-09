@@ -22,7 +22,9 @@
   test_deferred
   test_latch
   test_ref
-  test_synchronized_ref)
+  test_synchronized_ref
+  test_observability
+  test_stress)
  (module_systems (esm mjs))
  (libraries eta_js eta_js_test))
 

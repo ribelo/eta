@@ -17,6 +17,7 @@
   latch
   log_level
   mutable_ref
+  node_main
   pool
   promise
   pubsub
