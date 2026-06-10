@@ -1,0 +1,6 @@
+(test
+ (name run)
+ (libraries eta_core_common_tests eta_test_backend_eio alcotest)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

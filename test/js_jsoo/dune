@@ -1,0 +1,23 @@
+(executable
+ (name test_eta_jsoo)
+ (modes js)
+ (libraries eta eta_jsoo js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
+
+(executable
+ (name test_eta_js_jsoo)
+ (modes js)
+ (libraries eta_js js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
+
+(rule
+ (alias runtest)
+ (deps
+  test_eta_jsoo.bc.js
+  test_eta_js_jsoo.bc.js)
+ (action
+  (progn
+   (run node test_eta_jsoo.bc.js)
+   (run node test_eta_js_jsoo.bc.js))))

@@ -1,5 +1,5 @@
 (library
- (name eta_schema_test)
- (public_name eta_schema_test)
- (synopsis "Alcotest helpers for eta_schema tests")
- (libraries eta eta_schema eta_test alcotest))
+(name eta_schema_test)
+(public_name eta_schema_test)
+(synopsis "Alcotest helpers for eta_schema tests")
+(libraries eta eta_schema alcotest))

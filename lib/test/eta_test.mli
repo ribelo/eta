@@ -21,6 +21,9 @@ module Test_clock : sig
   val set_time : t -> int -> unit
   (** [set_time clock 100] moves virtual time to millisecond 100. *)
 
+  val now_ms : t -> int
+  (** [now_ms clock] returns the current virtual millisecond timestamp. *)
+
   val sleeper_count : t -> int
   (** [sleeper_count clock] returns the number of fibers waiting on the test
       clock. *)

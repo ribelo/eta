@@ -7,10 +7,16 @@
 
 type t
 
+type runtime_factory = Eta.Capabilities.tracer -> unit Eta.Runtime.t
+(** Build an Eta runtime for exporter-owned work using the supplied exporter
+    self-tracer. Backend packages own the concrete runtime construction. *)
+
 val create :
-  sw:Eio.Switch.t ->
-  net:_ Eio.Net.t ->
-  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  runtime_factory:runtime_factory ->
+  ?flush_runtime_factory:runtime_factory ->
+  ?http_client:Eta_http.Client.t ->
+  ?clock:Eta.Capabilities.clock ->
+  ?now_ms:(unit -> int) ->
   ?host:string ->
   ?port:int ->
   ?traces_path:string ->
@@ -29,10 +35,13 @@ val create :
   ?on_send:(path:string -> body:string -> unit) ->
   unit ->
   t
-(** Construct an exporter. One Eta runtime daemon is started on [sw] to consume
-    merged signal batches. [queue_capacity] bounds each signal mailbox and
-    defaults to 1024. [headers] are merged into every outbound OTLP/HTTP
-    request.
+(** Construct an exporter. One Eta runtime daemon, built by [runtime_factory],
+    consumes merged signal batches. [flush_runtime_factory] defaults to
+    [runtime_factory] and is used for blocking [flush] and [shutdown].
+    [http_client] defaults to {!Eta_http.Client.make_runtime}, so the exporter
+    uses the current runtime's eta-http service unless a caller supplies a
+    dedicated client. [queue_capacity] bounds each signal mailbox and defaults
+    to 1024. [headers] are merged into every outbound OTLP/HTTP request.
 
     Self-metrics are exported to [self_metrics_path], which defaults to
     [metrics_path]. Set [disable_self_metrics] to [true] when the collector does
@@ -47,13 +56,13 @@ val create :
     logs_path="/v1/logs", metrics_path="/v1/metrics", service_name="eta". *)
 
 val tracer : t -> Eta.Capabilities.tracer
-(** Tracer adapter for {!Eta_eio.Runtime.create}. *)
+(** Tracer adapter for Eta runtime constructors. *)
 
 val logger : t -> Eta.Capabilities.logger
-(** Logger adapter for {!Eta_eio.Runtime.create}. *)
+(** Logger adapter for Eta runtime constructors. *)
 
 val meter : t -> Eta.Capabilities.meter
-(** Meter adapter for {!Eta_eio.Runtime.create}. Counter values are aggregated
+(** Meter adapter for Eta runtime constructors. Counter values are aggregated
     by attribute set within each batch; gauges retain the latest value. *)
 
 val flush : ?timeout_s:float -> t -> unit

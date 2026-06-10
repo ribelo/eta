@@ -1,14 +1,14 @@
 type 'err t = 'err Runtime_core.t
 
-let create_with_contract contract ?sleep ?tracer ?sampler ?auto_instrument
+let create_with_contract contract ?sleep ?now_ms ?tracer ?sampler ?auto_instrument
     ?logger ?meter ?random ?services ?capture_backtrace () =
-  Runtime_core.create_with_contract ~contract ?sleep ?tracer ?sampler
+  Runtime_core.create_with_contract ~contract ?sleep ?now_ms ?tracer ?sampler
     ?auto_instrument ?logger ?meter ?random ?services ?capture_backtrace ()
 
-let create_with_runtime backend ?sleep ?tracer ?sampler ?auto_instrument
+let create_with_runtime backend ?sleep ?now_ms ?tracer ?sampler ?auto_instrument
     ?logger ?meter ?random ?services ?capture_backtrace () =
-  create_with_contract (Runtime_contract.of_runtime backend) ?sleep ?tracer
-    ?sampler ?auto_instrument ?logger ?meter ?random ?services
+  create_with_contract (Runtime_contract.of_runtime backend) ?sleep ?now_ms
+    ?tracer ?sampler ?auto_instrument ?logger ?meter ?random ?services
     ?capture_backtrace ()
 
 let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
@@ -73,10 +73,10 @@ let drain t = Runtime_core.wait_active_zero t
 module Make (R : Runtime_contract.RUNTIME) = struct
   let backend = (module R : Runtime_contract.RUNTIME)
 
-  let create ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
+  let create ?sleep ?now_ms ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
       ?services ?capture_backtrace () =
-    create_with_runtime backend ?sleep ?tracer ?sampler ?auto_instrument
-      ?logger ?meter ?random ?services ?capture_backtrace ()
+    create_with_runtime backend ?sleep ?now_ms ?tracer ?sampler
+      ?auto_instrument ?logger ?meter ?random ?services ?capture_backtrace ()
 
   let run = run
   let run_exn = run_exn

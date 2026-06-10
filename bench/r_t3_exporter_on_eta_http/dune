@@ -1,3 +1,3 @@
 (executable
  (name r_t3_eta_http_otlp)
- (libraries eta_eio eta eta_http eta_otel eio_main))
+ (libraries eta_eio eta eta_http eta_http_eio eta_otel eio_main))

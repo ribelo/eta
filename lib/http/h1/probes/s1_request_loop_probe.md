@@ -7,13 +7,13 @@ without using `digestif` or an h1 dependency?
 
 ## Implementation
 
-- `Eta_http.Transport.Connect.connect_tcp` resolves and opens TCP through
+- `Eta_http_eio.Transport.Connect.connect_tcp` resolves and opens TCP through
   Eio.
-- `Eta_http.Transport.Connect.connect_tls` wraps the TCP flow with
+- `Eta_http_eio.Transport.Connect.connect_tls` wraps the TCP flow with
   `tls-eio` using the ADR 0002 TLS 1.2 ECDHE-AEAD policy.
-- `Eta_http.H1.Client.request_on_flow` writes the clean-room h1 request and
+- `Eta_http_eio.H1.Client.request_on_flow` writes the clean-room h1 request and
   reads status, headers, and fixed-length response bodies.
-- `Eta_http.Client.make_h1` exposes the path through `Eta_http.request` and
+- `Eta_http_eio.Client.make_h1` exposes the path through `Eta_http.request` and
   creates origin-scoped `Eta.Pool` pools lazily.
 - The S1 h1 path offers only `http/1.1` over ALPN. S2 owns h2 ALPN dispatch.
 

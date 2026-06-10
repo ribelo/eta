@@ -83,9 +83,29 @@ module type RUNTIME = sig
   val root_scope : scope
   val now_ms : unit -> int
   val sleep : Duration.t -> unit
+  (** Suspend the current runtime task for at least [duration]. Backends may
+      ignore non-positive durations. *)
+
   val protect : (unit -> 'a) -> 'a
+  (** Run [f] with parent cancellation deferred. If cancellation is pending
+      when [f] returns, the backend should surface it before returning to
+      ordinary interruptible execution. *)
+
   val run_scope : ?name:string -> (scope -> 'a) -> 'a
+  (** Run [f] in a child scope and wait for finite children before returning.
+
+      If {!fail_scope} fails the child scope, [run_scope] must let children and
+      cleanup settle, then propagate the original failure exception rather than
+      wrapping it as ordinary cancellation. Parent cancellation should still be
+      recognizable through {!cancellation_reason}. This mirrors Eio switch
+      behavior and is required by Eta's timeout and race control paths. *)
+
   val fail_scope : ?bt:Printexc.raw_backtrace -> scope -> exn -> unit
+  (** Fail [scope] with [exn], requesting cancellation of work owned by that
+      scope. The first failure reason is the scope failure observed by
+      {!run_scope}; additional child failures may still be reported through
+      the backend's multiple-exception mechanism. *)
+
   val fork : scope -> (unit -> unit) -> unit
   val fork_daemon : scope -> (unit -> [ `Stop_daemon ]) -> unit
   val await_cancel : unit -> 'a

@@ -186,7 +186,7 @@ let run_ws_effect rt eff =
 let rec ws_send_loop conn i n =
   if i = n then Eta.Effect.unit
   else
-    Eta_http.Ws.Client.send_text conn "ping"
+    Eta_http_eio.Ws.Client.send_text conn "ping"
     |> Eta.Effect.bind (fun () -> ws_send_loop conn (i + 1) n)
 
 let ws_loopback_echo messages =
@@ -205,11 +205,11 @@ let ws_loopback_echo messages =
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let url = Printf.sprintf "ws://127.0.0.1:%d/realtime" port in
   let program =
-    Eta_http.Ws.Client.connect ~sw ~net url
+    Eta_http_eio.Ws.Client.connect ~sw ~net url
     |> Eta.Effect.bind (fun conn ->
            Eta.Effect.par
              (ws_send_loop conn 0 messages)
-             (Eta_http.Ws.Client.incoming conn
+             (Eta_http_eio.Ws.Client.incoming conn
              |> Eta_stream.Stream.take messages
              |> Eta_stream.run_collect)
            |> Eta.Effect.map (fun (_sent, received) ->

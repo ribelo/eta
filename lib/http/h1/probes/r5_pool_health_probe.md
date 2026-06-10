@@ -7,8 +7,8 @@ application data during the health check?
 
 ## Implementation
 
-- `Eta_http.H1.Client.make_pool` builds an origin-scoped `Eta.Pool`.
-- `Eta_http.Client.make_h1` lazily creates one h1 pool per origin.
+- `Eta_http_eio.H1.Client.make_pool` builds an origin-scoped `Eta.Pool`.
+- `Eta_http_eio.Client.make_h1` lazily creates one h1 pool per origin.
 - The default health check rejects connections that eta-http marked
   unreusable and probes used idle flows with a one-byte buffered read wrapped in
   a 1 ms Eta timeout.

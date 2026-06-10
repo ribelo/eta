@@ -8,7 +8,7 @@ the response arrives?
 
 ## Implementation
 
-- `Eta_http.H1.Client.request_with_pool` starts an owner effect around
+- `Eta_http_eio.H1.Client.request_with_pool` starts an owner effect around
   `Eta.Pool.with_resource`.
 - The owner sends the response over `Eta.Channel`, then waits for a body
   release acknowledgement before the pool finalizer can return the connection.

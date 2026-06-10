@@ -6,9 +6,7 @@ description:
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.21"}
-  "melange" {>= "6.0.1"}
   "eta_js"
-  "eta_js_test"
   "odoc" {with-doc}
 ]
 build: [

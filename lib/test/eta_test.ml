@@ -58,6 +58,8 @@ module Test_clock = struct
   let set_time t time_ms =
     wake_until t (max 0 time_ms)
 
+  let now_ms t = t.now_ms
+
   let sleeper_count t = List.length t.sleepers
 end
 
@@ -99,7 +101,8 @@ let with_test_clock f =
   let clock = Test_clock.create () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ()
+      ~sleep:(Test_clock.sleep clock) ~now_ms:(fun () -> Test_clock.now_ms clock)
+      ()
   in
   f sw clock rt
 
@@ -111,6 +114,7 @@ let with_traced_test_clock f =
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer

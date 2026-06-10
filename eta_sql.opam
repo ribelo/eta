@@ -9,7 +9,6 @@ depends: [
   "eta"
   "eta_blocking"
   "eta_sql_driver"
-  "eio" {>= "1.0"}
   "conf-pkg-config"
   "conf-sqlite3"
   "odoc" {with-doc}

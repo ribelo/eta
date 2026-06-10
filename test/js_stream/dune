@@ -1,13 +1,11 @@
-(melange.emit
- (target js_stream_test_dist)
- (alias js-stream-tests-build)
- (enabled_if (= %{env:ETA_JS_TESTS=false} true))
- (modules run_js_stream_tests)
- (module_systems (esm mjs))
- (libraries eta_js_stream eta_js_test))
+(executable
+ (name run_js_stream_tests)
+ (modes js)
+ (libraries eta_js eta_js_stream eta_js_test js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
 
 (rule
  (alias runtest)
- (enabled_if (= %{env:ETA_JS_TESTS=false} true))
- (deps (alias js-stream-tests-build))
- (action (run node js_stream_test_dist/test/js_stream/run_js_stream_tests.mjs)))
+ (deps run_js_stream_tests.bc.js)
+ (action (run node run_js_stream_tests.bc.js)))

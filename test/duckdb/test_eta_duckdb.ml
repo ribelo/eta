@@ -79,6 +79,48 @@ let expect_ok label = function
   | Ok value -> value
   | Error err -> Alcotest.failf "%s: %a" label D.pp_error err
 
+let test_duckdb_list_alongside_timestamp_column () =
+  with_duckdb @@ fun conn ->
+  (match
+     D.Connection.query conn
+       "SELECT TIMESTAMP '2020-01-01 00:00:00' AS ts" []
+   with
+  | Ok _ -> ()
+  | Error err ->
+      Alcotest.failf "a TIMESTAMP column alone should decode: %a" D.pp_error
+        err);
+  match
+    D.Connection.query conn
+      "SELECT [1, 2, 3] AS lst, TIMESTAMP '2020-01-01 00:00:00' AS ts" []
+  with
+  | Ok _ -> ()
+  | Error err ->
+      Alcotest.failf
+        "LIST + TIMESTAMP must decode, but the chunk path rejected it: %a"
+        D.pp_error err
+
+let test_duckdb_execute_reports_changed_rows () =
+  with_duckdb @@ fun conn ->
+  D.Connection.exec_script conn "CREATE TABLE chg (id INTEGER)"
+  |> expect_ok "create table";
+  match D.Connection.execute conn "INSERT INTO chg VALUES (1), (2), (3)" [] with
+  | Ok 3 -> ()
+  | Ok n -> Alcotest.failf "expected 3 changed rows, got %d" n
+  | Error err -> Alcotest.failf "execute: %a" D.pp_error err
+
+let test_duckdb_uuid_decodes_to_text () =
+  with_duckdb @@ fun conn ->
+  match
+    D.Connection.query conn
+      "SELECT '12345678-1234-5678-1234-567812345678'::UUID AS u" []
+  with
+  | Ok [ [ (_, value) ] ] ->
+      Alcotest.(check string) "uuid decodes to text"
+        "12345678-1234-5678-1234-567812345678"
+        (D.Value.to_string value)
+  | Ok _ -> Alcotest.fail "expected exactly one row/column"
+  | Error err -> Alcotest.failf "query: %a" D.pp_error err
+
 let expect_closed label = function
   | Error D.Closed -> ()
   | Error err -> Alcotest.failf "%s: expected closed, got %a" label D.pp_error err
@@ -320,6 +362,15 @@ let () =
             test_row_nth_value_uses_sequential_cursor_source;
           Alcotest.test_case "decode cursor preserves indexed decoding" `Quick
             test_row_decode_cursor_preserves_indexed_decoding;
+          Alcotest.test_case "LIST column alongside TIMESTAMP decodes" `Quick
+            test_duckdb_list_alongside_timestamp_column;
+          Alcotest.test_case "UUID decodes to text" `Quick
+            test_duckdb_uuid_decodes_to_text;
+        ] );
+      ( "connection",
+        [
+          Alcotest.test_case "execute reports changed-row count" `Quick
+            test_duckdb_execute_reports_changed_rows;
         ] );
       ( "appender",
         [

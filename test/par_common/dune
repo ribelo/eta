@@ -1,0 +1,4 @@
+(library
+ (name eta_par_common_tests)
+ (modules par_common_suites)
+ (libraries eta_par eta_runtime_common_tests alcotest unix))

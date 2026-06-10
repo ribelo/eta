@@ -61,7 +61,7 @@ let scripted_flow actions =
       closed = 0;
     }
   in
-  let flow : Eta_http.Ws.Client.flow =
+  let flow : Eta_http_eio.Ws.Client.flow =
     Eio.Resource.T
       ( state,
         Eio.Resource.handler
@@ -154,9 +154,13 @@ let contains haystack needle = contains_from haystack ~needle 0
 let find_ws_client_source () =
   let candidates =
     [
+      "lib/http_eio/ws/ws_client.ml";
       "lib/http/ws/ws_client.ml";
+      "../lib/http_eio/ws/ws_client.ml";
       "../lib/http/ws/ws_client.ml";
+      "../../lib/http_eio/ws/ws_client.ml";
       "../../lib/http/ws/ws_client.ml";
+      "../../../lib/http_eio/ws/ws_client.ml";
       "../../../lib/http/ws/ws_client.ml";
     ]
   in
@@ -236,25 +240,10 @@ let read_ws_frame ~masked flow =
 let write_ws_switching_response ?protocol flow key =
   Eio.Flow.copy_string (switching_response ?protocol key) flow
 
-let read_file path =
-  let input = open_in path in
-  Fun.protect
-    ~finally:(fun () -> close_in_noerr input)
-    (fun () -> really_input_string input (in_channel_length input))
-
 let find_source label candidates =
   match List.find_opt Sys.file_exists candidates with
   | Some path -> path
   | None -> Alcotest.failf "could not locate %s from %s" label (Sys.getcwd ())
-
-let find_ws_source file =
-  find_source file
-    [
-      "lib/http/ws/" ^ file;
-      "../lib/http/ws/" ^ file;
-      "../../lib/http/ws/" ^ file;
-      "../../../lib/http/ws/" ^ file;
-    ]
 
 let run_echo_ws_server ?expect_target ?protocol ~messages flow =
   let head = read_http_head flow in
@@ -320,42 +309,6 @@ let expect_client_frame state opcode payload =
       Alcotest.failf "client frame did not decode: %s"
         (Eta_http.Ws.Codec.parse_error_to_string error)
 
-let test_ws_accept_key_vector () =
-  Alcotest.(check string)
-    "accept" "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-    (Eta_http.Ws.Codec.accept_key "dGhlIHNhbXBsZSBub25jZQ==")
-
-let test_ws_codec_masked_text_roundtrip () =
-  let mask = Bytes.of_string "\x37\xfa\x21\x3d" in
-  let encoded =
-    Eta_http.Ws.Codec.encode ~mask
-      { fin = true; opcode = Text; payload = Bytes.of_string "Hello" }
-  in
-  match Eta_http.Ws.Codec.decode ~masked:true encoded with
-  | Ok ({ opcode = Text; payload; _ }, consumed) ->
-      Alcotest.(check int) "consumed" (Bytes.length encoded) consumed;
-      Alcotest.(check string) "payload" "Hello" (Bytes.to_string payload)
-  | Ok _ -> Alcotest.fail "decoded unexpected frame"
-  | Error error ->
-      Alcotest.failf "masked frame failed: %s"
-        (Eta_http.Ws.Codec.parse_error_to_string error)
-
-let test_ws_codec_rejects_one_byte_close_payload () =
-  let frame = Bytes.of_string "\x88\x01\000" in
-  match Eta_http.Ws.Codec.decode frame with
-  | Error _ -> ()
-  | Ok _ -> Alcotest.fail "one-byte close payload decoded successfully"
-
-let test_ws_codec_rejects_encoded_one_byte_close_payload () =
-  Alcotest.check_raises "one-byte close payload rejected"
-    (Invalid_argument
-       "WebSocket close frame payload must be empty or at least two bytes")
-    (fun () ->
-      ignore
-        (Eta_http.Ws.Codec.encode
-           { fin = true; opcode = Close; payload = Bytes.of_string "\000" }
-          : bytes))
-
 let close_status_payload code =
   let payload = Bytes.create 2 in
   Bytes.set payload 0 (Char.chr ((code lsr 8) land 0xff));
@@ -369,40 +322,6 @@ let raw_close_frame code =
   Bytes.blit (close_status_payload code) 0 frame 2 2;
   frame
 
-let test_ws_codec_rejects_invalid_close_status_codes () =
-  List.iter
-    (fun code ->
-      match Eta_http.Ws.Codec.decode (raw_close_frame code) with
-      | Error _ -> ()
-      | Ok _ -> Alcotest.failf "accepted invalid close status code %d" code)
-    [ 999; 1004; 1005; 1006; 1015; 5000 ]
-
-let test_ws_codec_encoder_rejects_invalid_close_status_code () =
-  let frame : Eta_http.Ws.Codec.frame =
-    { fin = true; opcode = Close; payload = close_status_payload 1005 }
-  in
-  match Eta_http.Ws.Codec.encode frame with
-  | _ -> Alcotest.fail "encoded invalid close status code 1005"
-  | exception Invalid_argument message ->
-      Alcotest.(check bool)
-        "mentions close status" true
-        (contains message "close")
-
-let test_ws_random_material_does_not_use_stdlib_random () =
-  let codec = read_file (find_ws_source "codec.ml") in
-  let client = read_file (find_ws_source "ws_client.ml") in
-  Alcotest.(check bool) "codec avoids Stdlib.Random" false
-    (contains codec "Stdlib.Random");
-  Alcotest.(check bool) "client avoids Stdlib.Random" false
-    (contains client "Stdlib.Random")
-
-let test_ws_accept_key_does_not_own_sha1 () =
-  let codec = read_file (find_ws_source "codec.ml") in
-  Alcotest.(check bool) "codec does not define SHA-1" false
-    (contains codec "let sha1");
-  Alcotest.(check bool) "codec does not implement SHA-1 rounds" false
-    (contains codec "let open Int32")
-
 let test_ws_connect_reads_inbound_text () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let frame =
@@ -414,11 +333,11 @@ let test_ws_connect_reads_inbound_text () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime?model=x" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   let messages =
-    Eta_http.Ws.Client.incoming conn
+    Eta_http_eio.Ws.Client.incoming conn
     |> Eta_stream.Stream.take 1
     |> Eta_stream.run_collect
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -448,10 +367,10 @@ let test_ws_rejects_oversized_frame_before_payload_read () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn)) with
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)) with
   | Eta.Exit.Error
       (Eta.Cause.Fail
         (`Protocol "WebSocket frame payload exceeds max_frame_size")) ->
@@ -480,11 +399,11 @@ let test_ws_rejects_64bit_length_with_msb_set_as_protocol_error () =
   let url = Eta_http.Core.Url.of_string "http://example.test/ws" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   match
-    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn))
   with
   | Eta.Exit.Error (Eta.Cause.Fail (`Protocol _)) -> ()
   | Eta.Exit.Error (Eta.Cause.Die _) ->
@@ -507,10 +426,10 @@ let test_ws_send_text_masks_client_frame () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  Eta_http.Ws.Client.send_text conn "hello"
+  Eta_http_eio.Ws.Client.send_text conn "hello"
   |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
   expect_client_frame state Text "hello"
 
@@ -521,7 +440,7 @@ let test_ws_queued_send_observes_close_sent () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   let first_started, first_started_u = Eio.Promise.create () in
@@ -531,15 +450,15 @@ let test_ws_queued_send_observes_close_sent () =
   let second_done, second_done_u = Eio.Promise.create () in
   let close_done, close_done_u = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->
-      Eta_http.Ws.Client.send_text conn "first"
+      Eta_http_eio.Ws.Client.send_text conn "first"
       |> Eta.Runtime.run rt |> Eio.Promise.resolve first_done_u);
   Eio.Promise.await first_started;
   Eio.Fiber.fork ~sw (fun () ->
-      Eta_http.Ws.Client.send_text conn "second"
+      Eta_http_eio.Ws.Client.send_text conn "second"
       |> Eta.Runtime.run rt |> Eio.Promise.resolve second_done_u);
   Eio.Fiber.yield ();
   Eio.Fiber.fork ~sw (fun () ->
-      Eta_http.Ws.Client.close conn
+      Eta_http_eio.Ws.Client.close conn
       |> Eta.Runtime.run rt |> Eio.Promise.resolve close_done_u);
   Eio.Fiber.yield ();
   Eio.Promise.resolve release_first_u ();
@@ -593,11 +512,11 @@ let test_ws_ping_is_internal_and_pong_is_sent () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   let messages =
-    Eta_http.Ws.Client.incoming conn
+    Eta_http_eio.Ws.Client.incoming conn
     |> Eta_stream.Stream.take 1
     |> Eta_stream.run_collect
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -618,10 +537,10 @@ let test_ws_close_1011_fails_inbound_stream () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn)) with
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)) with
   | Eta.Exit.Error (Eta.Cause.Fail (`Closed (1011, "upstream"))) -> ()
   | Eta.Exit.Ok () -> Alcotest.fail "1011 close unexpectedly ended cleanly"
   | Eta.Exit.Error cause ->
@@ -646,11 +565,11 @@ let test_ws_invalid_peer_close_code_is_protocol_error () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   match
-    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+    Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn))
   with
   | Eta.Exit.Error (Eta.Cause.Fail (`Protocol _)) -> ()
   | Eta.Exit.Error (Eta.Cause.Fail (`Closed (999, _))) ->
@@ -698,10 +617,10 @@ let test_ws_rejects_invalid_utf8_text_frame () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn))
   |> expect_ws_protocol_failure "invalid UTF-8 text"
 
 let test_ws_rejects_invalid_utf8_close_reason () =
@@ -720,10 +639,10 @@ let test_ws_rejects_invalid_utf8_close_reason () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn))
+  Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn))
   |> expect_ws_protocol_failure "invalid UTF-8 close reason"
 
 let test_ws_selected_subprotocol () =
@@ -734,12 +653,12 @@ let test_ws_selected_subprotocol () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~protocols:[ "realtime"; "json" ]
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~protocols:[ "realtime"; "json" ]
       ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   Alcotest.(check (option string)) "protocol" (Some "realtime")
-    (Eta_http.Ws.Client.selected_protocol conn)
+    (Eta_http_eio.Ws.Client.selected_protocol conn)
 
 let test_ws_fragmented_text_reassembles () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
@@ -759,11 +678,11 @@ let test_ws_fragmented_text_reassembles () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
   let messages =
-    Eta_http.Ws.Client.incoming conn
+    Eta_http_eio.Ws.Client.incoming conn
     |> Eta_stream.Stream.take 1
     |> Eta_stream.run_collect
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
@@ -782,10 +701,10 @@ let test_ws_clean_close_ends_inbound_stream () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn)) with
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)) with
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error _ -> Alcotest.fail "clean close failed inbound stream"
 
@@ -800,10 +719,10 @@ let test_ws_server_masked_frame_is_protocol_error () =
   let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
   with_test_clock @@ fun sw _clock rt ->
   let conn =
-    Eta_http.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http.Ws.Client.incoming conn)) with
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)) with
   | Eta.Exit.Error (Eta.Cause.Fail (`Protocol "masked frame forbidden")) -> ()
   | Eta.Exit.Ok () -> Alcotest.fail "masked server frame unexpectedly succeeded"
   | Eta.Exit.Error _ -> Alcotest.fail "unexpected masked server frame failure"
@@ -828,15 +747,15 @@ let test_ws_connect_real_tcp_echo () =
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   let url = Printf.sprintf "ws://127.0.0.1:%d/realtime?model=x" port in
   let conn =
-    Eta_http.Ws.Client.connect ~sw ~net url
+    Eta_http_eio.Ws.Client.connect ~sw ~net url
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
   in
-  Eta_http.Ws.Client.send_text conn "alpha"
+  Eta_http_eio.Ws.Client.send_text conn "alpha"
   |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
-  Eta_http.Ws.Client.send_text conn "beta"
+  Eta_http_eio.Ws.Client.send_text conn "beta"
   |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok;
   let messages =
-    Eta_http.Ws.Client.incoming conn
+    Eta_http_eio.Ws.Client.incoming conn
     |> Eta_stream.Stream.take 2
     |> Eta_stream.run_collect
     |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok

@@ -101,6 +101,28 @@ let release t n =
   t.available <- t.available + n;
   wake_waiters_locked t
 
+let cleanup_waiter contract t waiter =
+  with_lock_during_cancel contract t @@ fun () ->
+  (* Invariant (validated): on cancellation a permit is returned only while the
+     waiter has not yet taken ownership. [Waiting] was never granted a permit;
+     [Resolved_unclaimed] was granted one that the fiber never claimed, so it
+     is given back. Once [Claimed] (or already [Cancelled]) ownership has
+     transferred to the caller and cleanup must NOT release — the caller
+     (e.g. [with_permits], [with_permits_or_abort], or Pool) is responsible. *)
+  match waiter.state with
+  | Waiting ->
+      waiter.state <- Cancelled;
+      t.cancelled_waiters <- t.cancelled_waiters + 1;
+      compact_cancelled_waiters_locked t;
+      wake_waiters_locked t
+  | Resolved_unclaimed ->
+      waiter.state <- Cancelled;
+      t.cancelled_waiters <- t.cancelled_waiters + 1;
+      t.available <- min t.max_permits (t.available + waiter.permits);
+      compact_cancelled_waiters_locked t;
+      wake_waiters_locked t
+  | Claimed | Cancelled -> ()
+
 let acquire t n =
   validate_request "acquire" t n;
   Effect_erasure.effect_to_public
@@ -108,54 +130,31 @@ let acquire t n =
          let contract = frame.Effect_core.runtime.Runtime_core.contract in
          let promise, resolver = contract.Runtime_contract.create_promise () in
          let waiter = { permits = n; contract; resolver; state = Waiting } in
-         with_lock t @@ fun () ->
-         compact_cancelled_waiters_locked t;
-         wake_waiters_locked t;
-         if Stdlib.Queue.is_empty t.waiters && t.available >= n then (
-           t.available <- t.available - n;
-           `Acquired)
-         else (
-           Stdlib.Queue.push waiter t.waiters;
-           `Waiting (contract, promise, waiter))))
-  |> Effect.bind (function
-       | `Acquired -> Effect.unit
-       | `Waiting (contract, promise, waiter) ->
-         let cleanup () =
-           Effect.sync (fun () ->
-             with_lock_during_cancel contract t @@ fun () ->
-             (* Invariant (validated): on cancellation a permit is returned
-                only while the waiter has not yet taken ownership. [Waiting]
-                was never granted a permit; [Resolved_unclaimed] was granted
-                one that the fiber never claimed, so it is given back. Once
-                [Claimed] (or already [Cancelled]) ownership has transferred to
-                the caller and cleanup must NOT release — the caller (e.g.
-                [with_permits], [with_permits_or_abort], or Pool) is
-                responsible. *)
-             match waiter.state with
-             | Waiting ->
-                 waiter.state <- Cancelled;
-                 t.cancelled_waiters <- t.cancelled_waiters + 1;
-                 compact_cancelled_waiters_locked t;
-                 wake_waiters_locked t
-             | Resolved_unclaimed ->
-                 waiter.state <- Cancelled;
-                 t.cancelled_waiters <- t.cancelled_waiters + 1;
-                 t.available <- min t.max_permits (t.available + waiter.permits);
-                 compact_cancelled_waiters_locked t;
-                 wake_waiters_locked t
-             | Claimed | Cancelled -> ())
+         let acquisition =
+           with_lock t @@ fun () ->
+           compact_cancelled_waiters_locked t;
+           wake_waiters_locked t;
+           if Stdlib.Queue.is_empty t.waiters && t.available >= n then (
+             t.available <- t.available - n;
+             `Acquired)
+           else (
+             Stdlib.Queue.push waiter t.waiters;
+             `Waiting (contract, promise, waiter))
          in
-         Effect.scoped
-           (Effect.acquire_release
-              ~acquire:Effect.unit
-              ~release:(fun () -> cleanup ())
-           |> Effect.bind (fun () ->
-                  Effect.sync (fun () ->
-                      contract.Runtime_contract.await_promise promise;
-                      with_lock t @@ fun () ->
-                      match waiter.state with
-                      | Resolved_unclaimed -> waiter.state <- Claimed
-                      | Waiting | Claimed | Cancelled -> ()))))
+         match acquisition with
+         | `Acquired -> ()
+         | `Waiting (contract, promise, waiter) -> (
+             try
+               contract.Runtime_contract.await_promise promise;
+               with_lock t @@ fun () ->
+               match waiter.state with
+               | Resolved_unclaimed -> waiter.state <- Claimed
+               | Waiting | Claimed | Cancelled -> ()
+             with exn ->
+               (match contract.Runtime_contract.cancellation_reason exn with
+               | Some _ -> cleanup_waiter contract t waiter
+               | None -> ());
+               raise exn)))
 
 let with_permits_or_abort t n ~abort (f) =
   (* [claimed] means this combinator owns a granted permit. The finalizer is the

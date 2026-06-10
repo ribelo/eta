@@ -52,7 +52,7 @@ let run ~host ~port ~count =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
-  let client = Eta_http.Client.make_h1 ~sw ~net () in
+  let client = Eta_http_eio.Client.make_h1 ~sw ~net () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()

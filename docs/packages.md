@@ -41,7 +41,7 @@ modules: `(libraries eta_http)` in your `dune` file imports `Eta_http.*`.
 | `eta_ai_openai_compat` | `Eta_ai_openai_compat` | eta_ai_openai_codec                                                                 |
 | `eta_ai_openai_codec`  | `Eta_ai_openai_codec`  | eta_ai                                                                              |
 | `eta_test`             | `Eta_test`             | alcotest, eio_main                                                                  |
-| `eta_schema_test`      | `Eta_schema_test`      | alcotest, eta_schema, eta_test                                                      |
+| `eta_schema_test`      | `Eta_schema_test`      | alcotest, eta_schema                                                                |
 
 ## How OCaml's "tree-shaking" actually works
 

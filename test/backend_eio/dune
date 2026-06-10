@@ -1,0 +1,3 @@
+(library
+ (name eta_test_backend_eio)
+ (libraries eta eta_eio eta_test eta_runtime_common_tests eio_main eio_linux eio.unix unix threads))

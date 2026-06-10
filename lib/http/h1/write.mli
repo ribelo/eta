@@ -16,8 +16,8 @@ val write_to_bytes_raw :
 
     Returns the next offset on success. Negative values are internal error
     codes. This function is intended for bounded probes and hot-path
-    measurement; use {!write_to_bytes}, {!write}, or {!write_to_flow} when
-    typed errors are needed. *)
+    measurement; use {!write_to_bytes} or {!write} when typed errors are
+    needed. *)
 
 val write_to_bytes :
   bytes ->
@@ -46,22 +46,6 @@ val write :
     Caller-provided headers are validated before any bytes are appended.
     [framing_body_length] overrides body length validation only when [body] is
     [Empty], for callers that write headers separately from a streamed body. *)
-
-val write_to_flow :
-  ?framing_body_length:int ->
-  [> Eio.Flow.sink_ty] Eio.Resource.t ->
-  method_:string ->
-  url:Url.t ->
-  headers:Header.t ->
-  body:body ->
-  (unit, Error.t) result
-(** Write one HTTP/1.1 request directly to a flow sink.
-
-    This avoids allocating a complete request string on the transport path.
-    Caller-provided headers are validated before any bytes are emitted. The
-    request bytes are written synchronously before the function returns. Flow
-    write exceptions other than Eio cancellation are translated to
-    [Connection_closed] during the HTTP request instead of escaping. *)
 
 val to_string :
   method_:string ->

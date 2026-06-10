@@ -1,6 +1,18 @@
+(library
+ (name eta_ai_anthropic_common_tests)
+ (modules anthropic_common_suites)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_anthropic
+  eta_http
+  eta_runtime_common_tests
+  alcotest))
+
 (test
- (name test_eta_ai_anthropic)
- (libraries eta_eio eta eta_ai eta_ai_anthropic eta_http alcotest eio_main)
+ (name run_eio)
+ (modules run_eio)
+ (libraries eta_ai_anthropic_common_tests eta_test_backend_eio alcotest)
  (deps
   (source_tree fixtures))
  (action

@@ -1,0 +1,22 @@
+(library
+ (name eta_http_eio)
+ (public_name eta_http_eio)
+ (synopsis "Eio transport adapter for eta-http")
+ (libraries
+  eta
+  eta_blocking
+  eta_eio
+  eta_http
+  eta_stream
+  eio
+  eio.unix
+  bigstringaf
+  cstruct
+  domain-name
+  ipaddr
+  h2
+  hpack
+  faraday
+  yojson))
+
+(include_subdirs unqualified)

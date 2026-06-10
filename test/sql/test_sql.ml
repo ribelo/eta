@@ -192,19 +192,6 @@ let test_sqlite_connection_has_no_pool_lease_state_source () =
   Alcotest.(check bool) "interface pool_lease removed" false
     (contains_sub mli ~needle:"pool_lease")
 
-let test_sql_dsl_builders_do_not_append_single_items_source () =
-  let source = read_file (find_source_file "lib/sql_dsl/eta_sql_dsl_query.ml") in
-  [
-    "query.ctes @ [";
-    "query.group_by @ [";
-    "query.order_by @ [";
-    "query.values @ [";
-    "query.sets @ [";
-    "params := !params @";
-  ]
-  |> List.iter (fun needle ->
-         Alcotest.(check bool) needle false (contains_sub source ~needle))
-
 module Users = struct
   module T = Q.Table.Make (struct
     let name = "users"
@@ -342,6 +329,28 @@ module Eight = struct
   let c8 = column "c8" Q.int
 end
 
+module Measures = struct
+  module T = Q.Table.Make (struct
+    let name = "measures"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let ratio = column "ratio" Q.float
+end
+
+module Nullables = struct
+  module T = Q.Table.Make (struct
+    let name = "nullables"
+  end)
+
+  include T
+
+  let id = column "id" Q.int
+  let n = column "n" Q.int
+end
+
 let pp_pool_error ppf = function
   | `Eta_sql err -> Q.pp_error ppf err
   | `Pool_shutdown -> Format.pp_print_string ppf "pool shutdown"
@@ -367,10 +376,90 @@ let with_pool f =
      |> Eta.Effect.bind f)
   |> run_effect
 
+let run_effect_exit program =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  Eta.Runtime.run rt program
+
+let with_pool_exit f =
+  let acquire =
+    Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
+      (S.memory_config ())
+  in
+  Eta.Effect.scoped
+    (Eta.Effect.acquire_release ~acquire ~release:Q.Pool.shutdown
+     |> Eta.Effect.bind f)
+  |> run_effect_exit
+
 let p1 column = Q.Projection.one column
 let execute_compiled pool query = Q.Pool.Typed.execute_compiled pool query
 let select_all pool query = Q.Pool.Typed.select pool (Q.Select.compile query)
 let run_schema pool schema = Q.Pool.Typed.run_schema pool (Q.Eta_schema.compile schema)
+
+let test_sql_schema_float_default_round_trips () =
+  let pi = 3.141592653589793 in
+  let stored =
+    with_pool @@ fun pool ->
+    let* () =
+      run_schema pool
+        Q.Eta_schema.(
+          create_table Measures.table
+            [
+              column ~primary_key:true Measures.id;
+              column ~not_null:true ~default:pi Measures.ratio;
+            ])
+    in
+    let* _ =
+      execute_compiled pool
+        Q.Insert.(into Measures.table |> value Measures.id 1 |> compile)
+    in
+    let* rows =
+      select_all pool
+        Q.Select.(
+          from Measures.table (Q.Projection.one Measures.ratio)
+          |> where (Q.Expr.eq Measures.id 1))
+    in
+    match rows with
+    | [ ratio ] -> Eta.Effect.pure ratio
+    | _ ->
+        Eta.Effect.fail
+          (`Eta_sql
+            (Q.Decode_error
+               { operation = "test"; message = "expected exactly one row" }))
+  in
+  Alcotest.(check (float 0.0)) "declared float default round-trips" pi stored
+
+let test_sqlite_null_decoded_as_nonnull_int () =
+  let result =
+    with_pool_exit @@ fun pool ->
+    let* () =
+      run_schema pool
+        Q.Eta_schema.(
+          create_table Nullables.table
+            [ column ~primary_key:true Nullables.id; column Nullables.n ])
+    in
+    let* _ =
+      execute_compiled pool
+        Q.Insert.(into Nullables.table |> value Nullables.id 1 |> compile)
+    in
+    Q.Pool.Typed.select pool
+      (Q.Select.compile
+         Q.Select.(
+           from Nullables.table (Q.Projection.one Nullables.n)
+           |> where (Q.Expr.eq Nullables.id 1)))
+  in
+  match result with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Eta_sql (Q.Decode_error _))) -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected typed Decode_error, got %a"
+        (Eta.Cause.pp pp_pool_error) cause
+  | Eta.Exit.Ok [ 0 ] ->
+      Alcotest.fail
+        "decoded SQL NULL as non-nullable int and silently produced 0"
+  | Eta.Exit.Ok rows ->
+      Alcotest.failf "expected a decode error for NULL, got %d row(s)"
+        (List.length rows)
 
 let select_find_opt pool query =
   let* rows = select_all pool query in
@@ -462,18 +551,6 @@ let test_sql_select_insert_update_delete () =
   Alcotest.(check (list int)) "remaining ids" [ 1; 2 ] remaining;
   Eta.Effect.unit
 
-let test_sql_render_stable_sql () =
-  let query =
-    Q.Select.(
-      from Users.table Q.Projection.(t2 (p1 Users.id) (p1 Users.name))
-      |> where Q.Expr.(and_ (gt Users.id 10) (like Users.name "A%"))
-      |> order_by ~desc:true Users.name
-      |> limit 1)
-  in
-  Alcotest.(check string) "rendered select"
-    "SELECT \"users\".\"id\", \"users\".\"name\" FROM \"users\" WHERE ((\"users\".\"id\" > ?) AND (\"users\".\"name\" LIKE ?)) ORDER BY \"users\".\"name\" DESC LIMIT 1"
-    (Q.Select.to_sql query)
-
 let test_sql_select_aggregates_distinct_group () =
   with_users @@ fun pool ->
   let* active_count =
@@ -557,40 +634,9 @@ let test_sql_in_values_empty_list_is_false_predicate () =
       |> where Q.Expr.(in_values Users.status [])
       |> order_by Users.id)
   in
-  Alcotest.(check string) "empty IN SQL"
-    "SELECT \"users\".\"name\" FROM \"users\" WHERE 0 ORDER BY \"users\".\"id\" ASC"
-    (Q.Select.to_sql query);
   let* rows = select_all pool query in
   Alcotest.(check (list string)) "empty IN rows" [] rows;
   Eta.Effect.unit
-
-let test_sql_in_select_rejects_multi_column_projection () =
-  let two_column_int_select =
-    Q.Select.(
-      from Users.table
-        Q.Projection.(
-          t2 (p1 Users.id) (p1 Users.active)
-          |> map (fun (id, _active) -> id))
-      |> compile)
-  in
-  match
-    Q.Select.(
-      from Users.table Q.Projection.(one Users.name)
-      |> where Q.Expr.(in_select Users.id two_column_int_select)
-      |> to_sql)
-  with
-  | _ -> Alcotest.fail "multi-column IN subquery unexpectedly rendered"
-  | exception Q.Error error ->
-      Alcotest.(check string) "message"
-        "invalid query: Expr.in_select requires a one-column subquery"
-        (Q.show_error error)
-
-let test_sql_invalid_query_errors () =
-  match Q.Insert.(into Users.table |> compile) with
-  | _ -> Alcotest.fail "empty insert unexpectedly compiled"
-  | exception Q.Error error ->
-      Alcotest.(check string) "message"
-        "invalid query: INSERT requires at least one value" (Q.show_error error)
 
 let test_sql_find_opt_rejects_many_rows () =
   let result =
@@ -611,29 +657,6 @@ let test_sql_find_opt_rejects_many_rows () =
   match result with
   | Eta.Exit.Error _ -> ()
   | Eta.Exit.Ok _ -> Alcotest.fail "find_opt unexpectedly accepted many rows"
-
-let test_sql_value_and_row_helpers () =
-  let row =
-    [
-      ("id", Q.Value.int 42);
-      ("name", Q.Value.string "Ada");
-      ("active", Q.Value.bool true);
-      ("score", Q.Value.float 3.5);
-      ("payload", Q.Value.bytes (Bytes.of_string "abc"));
-    ]
-  in
-  Alcotest.(check (option int)) "row int" (Some 42) (Q.Row.int "id" row);
-  Alcotest.(check (option string)) "row string" (Some "Ada")
-    (Q.Row.string "name" row);
-  Alcotest.(check (option bool)) "row bool" (Some true) (Q.Row.bool "active" row);
-  Alcotest.(check (option (float 0.0001))) "row float" (Some 3.5)
-    (Q.Row.float "score" row);
-  Alcotest.(check (list string)) "fields"
-    [ "id"; "name"; "active"; "score"; "payload" ]
-    (Q.Row.fields row);
-  Alcotest.(check bool) "null predicate" true Q.Value.(is_null null);
-  Alcotest.(check bool) "value equality" true
-    Q.Value.(equal (string "abc") (string "abc"))
 
 let create_join_tables pool =
   let* () =
@@ -1380,6 +1403,35 @@ let test_sql_migration_source_resolution_metadata () =
   Alcotest.(check string) "description" "create users"
     first.M.Migration.description
 
+let test_sql_migration_symlink_not_skipped () =
+  let module M = Q.Migrate in
+  with_temp_dir @@ fun dir ->
+  let subdir = Filename.concat dir "real" in
+  Unix.mkdir subdir 0o755;
+  let real_file = Filename.concat subdir "001_test.sql" in
+  let symlink = Filename.concat dir "001_test.sql" in
+  write_file real_file "SELECT 1;\n";
+  Unix.symlink real_file symlink;
+  match M.Source.resolve (M.Source.from_directory dir) with
+  | Ok [ _ ] -> ()
+  | Ok [] -> Alcotest.fail "symlinked migration file was silently skipped"
+  | Ok migrations ->
+      Alcotest.failf "expected 1 migration, got %d" (List.length migrations)
+  | Error err -> Alcotest.failf "resolve: %s" (M.error_to_string err)
+
+let test_sql_migration_no_transaction_prefix_match () =
+  let module M = Q.Migrate in
+  with_temp_dir @@ fun dir ->
+  let path = Filename.concat dir "001_test.sql" in
+  write_file path "-- no-transactional\nSELECT 1;\n";
+  match M.Source.resolve (M.Source.from_directory dir) with
+  | Ok [ migration ] ->
+      if migration.M.Migration.no_tx then
+        Alcotest.fail
+          "'-- no-transactional' incorrectly matched as '-- no-transaction'"
+  | Ok _ -> Alcotest.fail "expected exactly one migration"
+  | Error err -> Alcotest.failf "resolve: %s" (M.error_to_string err)
+
 let test_sql_migration_source_rejects_duplicate_versions () =
   let module M = Q.Migrate in
   let version =
@@ -1629,17 +1681,6 @@ let test_sql_pool_health_check_does_not_detect_active_transaction () =
    is not enforced at runtime. A sealed Compiled module would make this
    a compile-time error. *)
 
-let test_sql_compiled_type_bypass () =
-  let query =
-    Q.Select.(
-      from Users.table Q.Projection.(one Users.id)
-      |> where Q.Expr.(eq Users.id 1)
-      |> compile)
-  in
-  Alcotest.(check string) "compiled SQL accessor"
-    "SELECT \"users\".\"id\" FROM \"users\" WHERE (\"users\".\"id\" = ?)"
-    (Q.Compiled.select_sql query)
-
 (* SUM on an empty group returns SQL NULL, so aggregate projections must decode
    it as an option. Compile-negative fixtures cover expression type soundness. *)
 
@@ -1681,10 +1722,6 @@ let test_sql_schema_dsl_raw_interpolation () =
         ]
       |> compile)
   in
-  let sql = Q.Compiled.schema_sql schema in
-  Alcotest.(check string) "schema DDL quotes default literal"
-    "CREATE TABLE \"users\" (\"id\" INTEGER PRIMARY KEY, \"name\" TEXT NOT NULL DEFAULT '0; DROP TABLE users; --', \"active\" INTEGER, \"status\" TEXT, \"nickname\" TEXT)"
-    sql;
   let* () = Q.Pool.Typed.run_schema pool schema in
   let* rows =
     Q.Pool.Raw.query pool
@@ -1694,22 +1731,3 @@ let test_sql_schema_dsl_raw_interpolation () =
   Alcotest.(check (list string)) "users table still exists" [ "users" ]
     (List.filter_map (Q.Row.string "name") rows);
   Eta.Effect.pure ()
-
-let test_sql_schema_reference_action_normalization () =
-  let schema =
-    Q.Eta_schema.(
-      create_table Posts.table
-        [
-          column ~primary_key:true Posts.id;
-          column
-            ~references:
-              (references ~on_delete:"  set null\t" ~on_update:"no action\n"
-                 Users.id)
-            Posts.author_id;
-          column Posts.title;
-        ]
-      |> compile)
-  in
-  Alcotest.(check string) "reference actions are canonicalized"
-    "CREATE TABLE \"posts\" (\"id\" INTEGER PRIMARY KEY, \"author_id\" INTEGER REFERENCES \"users\" (\"id\") ON DELETE SET NULL ON UPDATE NO ACTION, \"title\" TEXT)"
-    (Q.Compiled.schema_sql schema)

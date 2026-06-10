@@ -1,6 +1,6 @@
 (executable
  (name tls_openssl)
- (libraries eta_eio bench_lib eta eta_http eio_main))
+ (libraries eta_eio bench_lib eta eta_http eta_http_eio eio_main))
 
 (rule
  (alias legacy_bench)

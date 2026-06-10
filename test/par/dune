@@ -1,9 +1,6 @@
 (test
- (name test_par)
- (libraries eta_par alcotest unix))
-
-(test
  (name test_eta_par_island)
+ (modules test_eta_par_island)
  (libraries eta eta_blocking eta_par eta_eio alcotest eio_main eio_linux eio.unix unix threads)
  (action
   (setenv EIO_BACKEND posix

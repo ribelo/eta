@@ -79,12 +79,12 @@ let with_h2_server ?max_concurrent handler client_action =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let connection =
-    Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ?max_concurrent ()
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock () in
   Fun.protect
-    ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
     (fun () -> client_action clock rt connection)
 
 let with_raw_h2_server server client_action =
@@ -105,18 +105,18 @@ let with_raw_h2_server server client_action =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let connection =
-    Eta_http.H2.Connection.create ~sw ~flow:(flow :> Eta_http.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ()
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock () in
   Fun.protect
-    ~finally:(fun () -> Eta_http.H2.Connection.shutdown connection)
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
     (fun () -> client_action clock rt connection)
 
 let request_effect ?body connection target =
   let uri = "https://api.example.test" ^ target in
   let request = Eta_http.Request.make ?body "GET" uri in
-  Eta_http.Client.request_h2_on_connection connection request
+  Eta_http_eio.Client.request_h2_on_connection connection request
     (Eta_http.Request.url request)
   |> Eta.Effect.bind (fun response ->
          Eta_http.Body.Stream.read_all response.body
@@ -130,16 +130,16 @@ let open_h2_request connection tag target =
       `GET target
   in
   match
-    Eta_http.H2.Connection.request connection ~tag request
+    Eta_http_eio.H2.Connection.request connection ~tag request
       ~error_handler:(fun _ _ -> ())
       ~response_handler:(fun _ _ _ -> ())
   with
   | Ok opened -> opened
-  | Error (Eta_http.H2.Multiplexer.Admission_rejected { limit }) ->
+  | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected { limit }) ->
       Alcotest.failf "request %d unexpectedly rejected at limit %d" tag limit
-  | Error Eta_http.H2.Multiplexer.Connection_closed ->
+  | Error Eta_http_eio.H2.Multiplexer.Connection_closed ->
       Alcotest.failf "request %d saw closed connection" tag
-  | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+  | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
       Alcotest.failf "request %d failed: %s" tag message
 
 let test_h2_connection_admission_error_reports_configured_limit () =
@@ -151,13 +151,13 @@ let test_h2_connection_admission_error_reports_configured_limit () =
             open_h2_request connection index
               (Printf.sprintf "/held/%d" index))
       in
-      ignore (held : Eta_http.H2.Multiplexer.opened_request list);
+      ignore (held : Eta_http_eio.H2.Multiplexer.opened_request list);
       let request =
         Eta_http.Request.make "GET" "https://api.example.test/overflow"
       in
       match
         Eta.Runtime.run rt
-          (Eta_http.Client.request_h2_on_connection connection request
+          (Eta_http_eio.Client.request_h2_on_connection connection request
              (Eta_http.Request.url request))
       with
       | Eta.Exit.Error
@@ -192,7 +192,7 @@ let test_h2_connection_concurrent_streams () =
             (Printf.sprintf "ok:/concurrent/%d" i)
             body)
         responses;
-      let stats = Eta_http.H2.Connection.stats connection in
+      let stats = Eta_http_eio.H2.Connection.stats connection in
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "opened streams" 10 stats.opened)
 
@@ -247,7 +247,7 @@ let test_h2_connection_returns_early_response () =
                   ()))
       in
       let eff =
-        Eta_http.Client.request_h2_on_connection connection request
+        Eta_http_eio.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.seconds 1)
              ~on_timeout:(timeout_error uri)
@@ -273,7 +273,7 @@ let test_h2_connection_cancelled_upload_releases_body () =
                   ()))
       in
       let eff =
-        Eta_http.Client.request_h2_on_connection connection request
+        Eta_http_eio.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
@@ -299,8 +299,8 @@ let test_h2_connection_stream_upload_observes_flow_control () =
   Eio_mock.Flow.on_read flow [ `Await read_never ];
   with_test_clock @@ fun sw clock rt ->
   let connection =
-    Eta_http.H2.Connection.create ~sw
-      ~flow:(flow :> Eta_http.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ()
   in
   let reads = ref 0 in
@@ -323,7 +323,7 @@ let test_h2_connection_stream_upload_observes_flow_control () =
   in
   let result =
     Eta_test.Async.fork_run sw rt
-      (Eta_http.Client.request_h2_on_connection connection request
+      (Eta_http_eio.Client.request_h2_on_connection connection request
          (Eta_http.Request.url request)
       |> Eta.Effect.timeout_as (Eta.Duration.ms 1)
            ~on_timeout:(timeout_error uri))
@@ -341,7 +341,7 @@ let test_h2_connection_stream_upload_observes_flow_control () =
   | Eta.Exit.Ok _ -> Alcotest.fail "closed upload unexpectedly succeeded"
   | Eta.Exit.Error _ -> ());
   Eio.Promise.resolve wake_release_write 4096;
-  Eta_http.H2.Connection.shutdown connection;
+  Eta_http_eio.H2.Connection.shutdown connection;
   Alcotest.(check int) "stream released" 1 !released
 
 let test_h2_connection_cancelled_fixed_request_releases_stream () =
@@ -354,7 +354,7 @@ let test_h2_connection_cancelled_fixed_request_releases_stream () =
           ~body:(Eta_http.Request.Fixed [ Bytes.of_string "{}" ])
       in
       let eff =
-        Eta_http.Client.request_h2_on_connection connection request
+        Eta_http_eio.Client.request_h2_on_connection connection request
           (Eta_http.Request.url request)
         |> Eta.Effect.timeout_as (Eta.Duration.ms 5)
              ~on_timeout:(timeout_error uri)
@@ -369,12 +369,12 @@ let test_h2_connection_cancelled_fixed_request_releases_stream () =
             (Eta.Cause.pp pp_http_error_detail)
             cause
       | Eta.Exit.Ok _ -> Alcotest.fail "expected fixed request cancellation");
-      let stats = Eta_http.H2.Connection.stats connection in
+      let stats = Eta_http_eio.H2.Connection.stats connection in
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "live streams" 0 stats.live;
       Alcotest.(check int) "local resets" 1 stats.local_resets;
       Alcotest.(check bool) "connection remains open" false
-        (Eta_http.H2.Connection.is_closed connection))
+        (Eta_http_eio.H2.Connection.is_closed connection))
 
 let test_h2_connection_cancelled_body_read_preserves_connection () =
   with_h2_server
@@ -398,11 +398,11 @@ let test_h2_connection_cancelled_body_read_preserves_connection () =
             (Eta.Cause.pp pp_http_error_detail)
             cause
       | Eta.Exit.Ok _ -> Alcotest.fail "expected body-read timeout");
-      let stats = Eta_http.H2.Connection.stats connection in
+      let stats = Eta_http_eio.H2.Connection.stats connection in
       Alcotest.(check int) "active streams" 0 stats.active;
       Alcotest.(check int) "live streams" 0 stats.live;
       Alcotest.(check bool) "connection remains open" false
-        (Eta_http.H2.Connection.is_closed connection))
+        (Eta_http_eio.H2.Connection.is_closed connection))
 
 let test_h2_connection_completed_error_response_does_not_hold_switch () =
   run_eio @@ fun env ->
@@ -429,8 +429,8 @@ let test_h2_connection_completed_error_response_does_not_hold_switch () =
               (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
           in
           let connection =
-            Eta_http.H2.Connection.create ~sw:client_sw
-              ~flow:(flow :> Eta_http.H2.Connection.flow)
+            Eta_http_eio.H2.Connection.create ~sw:client_sw
+              ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
               ()
           in
           let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
@@ -641,7 +641,7 @@ let test_h2_connection_timeout_preserves_connection () =
       | Eta.Exit.Error _ -> ()
       | Eta.Exit.Ok _ -> Alcotest.fail "expected timeout");
       Alcotest.(check bool) "connection remains open after timeout" false
-        (Eta_http.H2.Connection.is_closed connection);
+        (Eta_http_eio.H2.Connection.is_closed connection);
       let retry_result =
         request_effect connection "/fast" |> Eta.Runtime.run rt
       in
@@ -683,8 +683,8 @@ let test_h2_connection_switch_close_does_not_fire_security_error () =
           (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
       in
       let connection =
-        Eta_http.H2.Connection.create ~sw:client_sw
-          ~flow:(flow :> Eta_http.H2.Connection.flow)
+        Eta_http_eio.H2.Connection.create ~sw:client_sw
+          ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
           ~security_error_handler:(fun kind ->
             security_errors := kind :: !security_errors)
           ()
@@ -731,13 +731,13 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
           (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
       in
       let connection =
-        Eta_http.H2.Connection.create ~sw:client_sw
-          ~flow:(flow :> Eta_http.H2.Connection.flow)
+        Eta_http_eio.H2.Connection.create ~sw:client_sw
+          ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
           ()
       in
       (* Register a persistent failure handler that outlives the request *)
       let _unregister =
-        Eta_http.H2.Connection.register_failure_handler connection (fun kind ->
+        Eta_http_eio.H2.Connection.register_failure_handler connection (fun kind ->
             if Option.is_none !failure_kind then failure_kind := Some kind)
       in
       let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
@@ -777,23 +777,23 @@ let test_h2_connection_failure_handler_exception_skips_others () =
   let handler1_called = ref false in
   let handler2_called = ref false in
   let connection =
-    Eta_http.H2.Connection.create ~sw
-      ~flow:(flow_r :> Eta_http.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow_r :> Eta_http_eio.H2.Connection.flow)
       ()
   in
   (* Register the well-behaved handler FIRST, then the raising handler.
      Failure handlers are prepended to the list, so the raising handler
      (registered second) fires first and stops iteration. *)
   let _unregister2 =
-    Eta_http.H2.Connection.register_failure_handler connection (fun _kind ->
+    Eta_http_eio.H2.Connection.register_failure_handler connection (fun _kind ->
         handler2_called := true)
   in
   let _unregister1 =
-    Eta_http.H2.Connection.register_failure_handler connection (fun _kind ->
+    Eta_http_eio.H2.Connection.register_failure_handler connection (fun _kind ->
         handler1_called := true;
         raise (Failure "handler1 boom"))
   in
-  (try Eta_http.H2.Connection.shutdown connection
+  (try Eta_http_eio.H2.Connection.shutdown connection
    with Failure _ -> ());
   Alcotest.(check bool) "handler1 called" true !handler1_called;
   Alcotest.(check bool) "handler2 still called despite handler1 raising" true
@@ -827,15 +827,15 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
               (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
           in
           let connection =
-            Eta_http.H2.Connection.create ~sw:client_sw
-              ~flow:(flow :> Eta_http.H2.Connection.flow)
+            Eta_http_eio.H2.Connection.create ~sw:client_sw
+              ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
               ()
           in
           let rt = Eta_eio.Runtime.create ~sw:client_sw ~clock () in
           let uri = "https://api.example.test/stream" in
           let request = Eta_http.Request.make "GET" uri in
           let response =
-            Eta_http.Client.request_h2_on_connection connection request
+            Eta_http_eio.Client.request_h2_on_connection connection request
               (Eta_http.Request.url request)
             |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
           in

@@ -15,8 +15,12 @@ val issue_testable : Eta_schema.issue Alcotest.testable
 val issues_testable : Eta_schema.issue list Alcotest.testable
 (** Testable for rendered schema issue lists. *)
 
-val run_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) result
-(** Evaluate the pure Eta eff subset produced by Eta Eta_schema helpers. *)
+val run_effect :
+  (('a, 'err) Eta.Effect.t -> ('a, 'err) Eta.Exit.t) ->
+  ('a, 'err) Eta.Effect.t ->
+  ('a, 'err) result
+(** Evaluate the pure Eta eff subset produced by Eta Eta_schema helpers through
+    the supplied backend runner. *)
 
 val expect_ok : ?name:string -> ('a, schema_error) result -> 'a
 (** [expect_ok result] returns the value or fails with rendered schema issues. *)

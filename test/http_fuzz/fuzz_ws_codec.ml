@@ -11,7 +11,6 @@ let data_opcode_gen =
 let control_opcode_gen =
   Crowbar.choose
     [
-      Crowbar.const Eta_http.Ws.Codec.Close;
       Crowbar.const Eta_http.Ws.Codec.Ping;
       Crowbar.const Eta_http.Ws.Codec.Pong;
     ]
@@ -26,7 +25,49 @@ let control_frame_gen =
     [ control_opcode_gen; bounded_bytes 125 ]
     (fun opcode payload -> { Eta_http.Ws.Codec.fin = true; opcode; payload })
 
-let frame_gen = Crowbar.choose [ data_frame_gen; control_frame_gen ]
+let valid_close_code_gen =
+  Crowbar.choose
+    [
+      Crowbar.const 1000;
+      Crowbar.const 1001;
+      Crowbar.const 1002;
+      Crowbar.const 1003;
+      Crowbar.const 1007;
+      Crowbar.const 1008;
+      Crowbar.const 1009;
+      Crowbar.const 1010;
+      Crowbar.const 1011;
+      Crowbar.const 1012;
+      Crowbar.const 1013;
+      Crowbar.const 1014;
+      Crowbar.map [ Crowbar.range 1000 ] (fun offset -> 3000 + offset);
+      Crowbar.map [ Crowbar.range 1000 ] (fun offset -> 4000 + offset);
+    ]
+
+let close_payload code reason =
+  let payload = Bytes.create (2 + Bytes.length reason) in
+  Bytes.set_int16_be payload 0 code;
+  Bytes.blit reason 0 payload 2 (Bytes.length reason);
+  payload
+
+let close_frame_gen =
+  Crowbar.choose
+    [
+      Crowbar.const
+        {
+          Eta_http.Ws.Codec.fin = true;
+          opcode = Eta_http.Ws.Codec.Close;
+          payload = Bytes.empty;
+        };
+      Crowbar.map [ valid_close_code_gen; bounded_bytes 123 ] (fun code reason ->
+          {
+            Eta_http.Ws.Codec.fin = true;
+            opcode = Eta_http.Ws.Codec.Close;
+            payload = close_payload code reason;
+          });
+    ]
+
+let frame_gen = Crowbar.choose [ data_frame_gen; control_frame_gen; close_frame_gen ]
 let mask_gen = bytes_of_string_gen 4
 
 let check_frame expected actual =

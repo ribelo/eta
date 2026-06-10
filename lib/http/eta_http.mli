@@ -1,9 +1,9 @@
-(** Clean-room HTTP client for Eta.
+(** Backend-neutral HTTP surface for Eta.
 
-    The public surface exposes typed errors, request/response models, body
-    streams, retry policy handling, trace-context propagation, TLS policy,
-    transport dispatch, HTTP/1.1 and HTTP/2 implementation modules, and a
-    WebSocket upgrade client. *)
+    This package owns the shared request/response model, typed errors, body
+    streams, retry policy handling, trace-context propagation, TLS policy data,
+    and pure protocol helpers. Runtime transports live in adapter packages such
+    as [eta_http_eio]. *)
 
 module Core : sig
   module Header = Header
@@ -71,38 +71,32 @@ val request_with_retry :
 
 module Tls : sig
   module Config = Config
-  module Eio = Tls_eio
+  module OpenSSL = Openssl
 end
-(** TLS policy chokepoint. *)
+(** TLS policy and low-level protocol helpers. *)
 
 module Transport : sig
   module Alpn = Alpn
-  module Connect = Connect
   module Dispatch = Dispatch
 end
-(** DNS, TCP, TLS, ALPN, and protocol dispatch. *)
+(** Backend-neutral ALPN and protocol dispatch helpers. *)
 
 module H1 : sig
-  module Client = H1_client
   module Parse = Parse
   module Write = Write
 end
-(** HTTP/1.1 implementation modules. *)
+(** HTTP/1.1 parser and serializer modules. *)
 
 module H2 : sig
   module Admission = Admission
-  module Connection = Connection
   module Frame = Frame
   module Informational_filter = Informational_filter
-  module Multiplexer = Multiplexer
   module Security = Security
   module Stream_state = Stream_state
-  module Writer = Writer
 end
-(** HTTP/2 implementation modules. *)
+(** HTTP/2 protocol helpers that do not own sockets or scheduler state. *)
 
 module Ws : sig
-  module Client = Ws_client
   module Codec = Codec
 end
-(** WebSocket upgrade client and RFC 6455 codec. *)
+(** RFC 6455 codec. *)

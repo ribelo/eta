@@ -1,0 +1,4 @@
+(library
+ (name eta_redacted_common_tests)
+ (modules redacted_common_suites)
+ (libraries eta_redacted eta_runtime_common_tests alcotest))

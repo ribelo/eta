@@ -283,8 +283,9 @@ let host_blocking_runner host =
 module Runtime = struct
   type 'err t = 'err Eta.Runtime.t
 
-  let create ~sw ~clock ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter
-      ?random ?blocking_pool ?blocking_runner ?capture_backtrace
+  let create ~sw ~clock ?sleep ?now_ms ?tracer ?sampler ?auto_instrument ?logger
+      ?meter ?random ?blocking_pool ?blocking_runner ?(services = [])
+      ?capture_backtrace
       () =
     let blocking_runner =
       match blocking_runner with
@@ -292,30 +293,32 @@ module Runtime = struct
       | None -> Some default_blocking_runner
     in
     let services =
-      [ Eta_blocking.runtime_service ?pool:blocking_pool ?runner:blocking_runner () ]
+      Eta_blocking.runtime_service ?pool:blocking_pool ?runner:blocking_runner ()
+      :: services
     in
-    Eta.Runtime.create_with_runtime (runtime ~sw ~clock) ?sleep ?tracer
+    Eta.Runtime.create_with_runtime (runtime ~sw ~clock) ?sleep ?now_ms ?tracer
       ?sampler ?auto_instrument ?logger ?meter ?random ~services
       ?capture_backtrace ()
 
-  let with_host host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
-      ?meter ?random ?blocking_pool ?capture_backtrace f =
+  let with_host host ~sw ~clock ?now_ms ?tracer ?sampler ?auto_instrument ?logger
+      ?meter ?random ?blocking_pool ?(services = []) ?capture_backtrace f =
     let blocking_runner = host_blocking_runner host in
     let runtime =
       let services =
-        [ Eta_blocking.runtime_service ?pool:blocking_pool
-            ~runner:blocking_runner () ]
+        Eta_blocking.runtime_service ?pool:blocking_pool
+          ~runner:blocking_runner ()
+        :: services
       in
       Eta.Runtime.create_with_runtime (runtime_with_host host ~sw ~clock)
-        ?tracer ?sampler ?auto_instrument ?logger ?meter ?random ~services
-        ?capture_backtrace ()
+        ?now_ms ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
+        ~services ?capture_backtrace ()
     in
     f runtime
 
-  let run_host host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger
-      ?meter ?random ?blocking_pool ?capture_backtrace eff =
-    with_host host ~sw ~clock ?tracer ?sampler ?auto_instrument ?logger ?meter
-      ?random ?blocking_pool ?capture_backtrace (fun runtime ->
+  let run_host host ~sw ~clock ?now_ms ?tracer ?sampler ?auto_instrument ?logger
+      ?meter ?random ?blocking_pool ?services ?capture_backtrace eff =
+    with_host host ~sw ~clock ?now_ms ?tracer ?sampler ?auto_instrument ?logger
+      ?meter ?random ?blocking_pool ?services ?capture_backtrace (fun runtime ->
         Eta.Runtime.run runtime eff)
 
   let run ?blocking_pool runtime eff =

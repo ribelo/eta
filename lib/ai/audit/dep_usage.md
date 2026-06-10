@@ -99,26 +99,26 @@ Search:
 - lib/ai/openai/realtime.ml:140:  Eta_http.request client request
 - lib/ai/openai/realtime.ml:143:  |> E.bind (fun (response : Eta_http.Response.t) ->
 - lib/ai/openai/realtime.ml:144:         read_response_body response.Eta_http.Response.body
-- lib/ai/openai/realtime.ml:178:type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
-- lib/ai/openai/realtime.ml:180:let widen_ws_error (error : Eta_http.Ws.Client.ws_error) : realtime_error =
-- lib/ai/openai/realtime.ml:266:type t = { ws : Eta_http.Ws.Client.t }
+- lib/ai/openai/realtime.ml:178:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
+- lib/ai/openai/realtime.ml:180:let widen_ws_error (error : Eta_http_eio.Ws.Client.ws_error) : realtime_error =
+- lib/ai/openai/realtime.ml:266:type t = { ws : Eta_http_eio.Ws.Client.t }
 - lib/ai/openai/realtime.ml:293:  Eta_http.Core.Header.unsafe_of_list
 - lib/ai/openai/realtime.ml:294:    (("Authorization", "Bearer " ^ Eta_redacted.value api_key)
-- lib/ai/openai/realtime.ml:300:  Eta_http.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
-- lib/ai/openai/realtime.ml:308:      Eta_http.Ws.Client.send_text t.ws raw
-- lib/ai/openai/realtime.ml:312:  Eta_http.Ws.Client.incoming t.ws
+- lib/ai/openai/realtime.ml:300:  Eta_http_eio.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
+- lib/ai/openai/realtime.ml:308:      Eta_http_eio.Ws.Client.send_text t.ws raw
+- lib/ai/openai/realtime.ml:312:  Eta_http_eio.Ws.Client.incoming t.ws
 - lib/ai/openai/realtime.ml:313:  |> Eta_stream.Stream.map (function
-- lib/ai/openai/realtime.ml:319:let close t = Eta_http.Ws.Client.close t.ws
+- lib/ai/openai/realtime.ml:319:let close t = Eta_http_eio.Ws.Client.close t.ws
 - lib/ai/openai/realtime.mli:42:  ?base_url:string -> api_key:Eta_ai.api_key -> session -> Eta_http.Request.t
 - lib/ai/openai/realtime.mli:46:  Eta_http.Client.t ->
 - lib/ai/openai/realtime.mli:49:  (client_secret, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:74:type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
+- lib/ai/openai/realtime.mli:74:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
 - lib/ai/openai/realtime.mli:85:  sw:Eio.Switch.t ->
 - lib/ai/openai/realtime.mli:86:  net:_ Eio.Net.t ->
-- lib/ai/openai/realtime.mli:90:  (t, Eta_http.Ws.Client.ws_error) Eta.Effect.t
+- lib/ai/openai/realtime.mli:90:  (t, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/openai/realtime.mli:92:val send_event : t -> client_event -> (unit, realtime_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:93:val events : t -> (server_event, Eta_http.Ws.Client.ws_error) Eta_stream.Stream.t
-- lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http.Ws.Client.ws_error) Eta.Effect.t
+- lib/ai/openai/realtime.mli:93:val events : t -> (server_event, Eta_http_eio.Ws.Client.ws_error) Eta_stream.Stream.t
+- lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/eta_ai.mli:31:type headers = Eta_http.Core.Header.t
 - lib/ai/eta_ai.mli:32:type api_key = string Eta_redacted.t
 - lib/ai/eta_ai.mli:282:  | Eta_http_error of Eta_http.Error.t

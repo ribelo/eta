@@ -2,13 +2,5 @@
  (name eta_js_stream)
  (public_name eta_js_stream)
  (modules eta_js_stream)
- (modes melange)
- (preprocess (pps melange.ppx))
  (libraries eta_js)
  (synopsis "JavaScript streams for eta_js"))
-
-(melange.emit
- (target eta_js_stream_dist)
- (modules)
- (module_systems (esm mjs))
- (libraries eta_js_stream))

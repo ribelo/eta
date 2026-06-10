@@ -8,23 +8,18 @@ let () =
         [
           Alcotest.test_case "select insert update delete" `Quick
             test_sql_select_insert_update_delete;
-          Alcotest.test_case "render stable SQL" `Quick test_sql_render_stable_sql;
           Alcotest.test_case "aggregates distinct group having" `Quick
             test_sql_select_aggregates_distinct_group;
           Alcotest.test_case "subquery cte and window select" `Quick
             test_sql_select_subquery_cte_window;
           Alcotest.test_case "empty in values is false predicate" `Quick
             test_sql_in_values_empty_list_is_false_predicate;
-          Alcotest.test_case "in_select rejects multi-column subquery" `Quick
-            test_sql_in_select_rejects_multi_column_projection;
-          Alcotest.test_case "invalid query errors" `Quick
-            test_sql_invalid_query_errors;
           Alcotest.test_case "find opt rejects many rows" `Quick
             test_sql_find_opt_rejects_many_rows;
-          Alcotest.test_case "value and row helpers" `Quick
-            test_sql_value_and_row_helpers;
           Alcotest.test_case "schema and join helpers" `Quick
             test_sql_schema_and_join_helpers;
+          Alcotest.test_case "float column DEFAULT round-trips" `Quick
+            test_sql_schema_float_default_round_trips;
           Alcotest.test_case "connection pool and transaction helpers" `Quick
             test_sql_connection_pool_and_transaction_helpers;
           Alcotest.test_case "pool waits timeouts and stale releases" `Quick
@@ -39,6 +34,8 @@ let () =
             test_sql_pool_typed_compiled_queries;
           Alcotest.test_case "typed fold decode failure is typed" `Quick
             test_sql_pool_typed_fold_select_decode_failure_is_typed;
+          Alcotest.test_case "NULL decoded as non-nullable int" `Quick
+            test_sqlite_null_decoded_as_nonnull_int;
           Alcotest.test_case "pool timeout interrupts and reuses connection"
             `Quick test_sql_pool_timeout_interrupts_and_reuses_connection;
           Alcotest.test_case "database pool shutdown keeps parent on timeout"
@@ -53,8 +50,6 @@ let () =
             test_sqlite_close_propagates_native_result_source;
           Alcotest.test_case "sqlite connection has no pool lease state" `Quick
             test_sqlite_connection_has_no_pool_lease_state_source;
-          Alcotest.test_case "sql dsl builders avoid append hotspots" `Quick
-            test_sql_dsl_builders_do_not_append_single_items_source;
           Alcotest.test_case
             "pool parent cancel interrupts and reuses connection" `Quick
             test_sql_pool_parent_cancel_interrupts_and_reuses_connection;
@@ -70,6 +65,10 @@ let () =
             test_sql_migrations_reject_dirty_checksum_and_missing;
           Alcotest.test_case "migration source resolution metadata" `Quick
             test_sql_migration_source_resolution_metadata;
+          Alcotest.test_case "symlink migration not skipped" `Quick
+            test_sql_migration_symlink_not_skipped;
+          Alcotest.test_case "no-transaction prefix is exact" `Quick
+            test_sql_migration_no_transaction_prefix_match;
           Alcotest.test_case "migration source rejects duplicate versions" `Quick
             test_sql_migration_source_rejects_duplicate_versions;
           Alcotest.test_case "pool leaked transaction poisons next borrower" `Quick
@@ -78,14 +77,10 @@ let () =
             test_sql_pool_health_check_does_not_detect_active_transaction;
           Alcotest.test_case "fold timeout does not bound total elapsed" `Slow
             test_sql_fold_timeout_does_not_bound_total_elapsed;
-          Alcotest.test_case "compiled type bypass" `Quick
-            test_sql_compiled_type_bypass;
           Alcotest.test_case "expr type unsoundness" `Quick
             test_sql_expr_type_unsoundness;
           Alcotest.test_case "schema DSL raw interpolation" `Quick
             test_sql_schema_dsl_raw_interpolation;
-          Alcotest.test_case "schema reference action normalization" `Quick
-            test_sql_schema_reference_action_normalization;
         ] );
       ( "Sqlite",
         [

@@ -1,0 +1,3 @@
+(library
+ (name eta_otel_common_tests)
+ (libraries eta eta_otel eta_runtime_common_tests alcotest yojson))

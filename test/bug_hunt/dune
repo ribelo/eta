@@ -1,7 +1,0 @@
-(test
- (name run)
- (modules run bugs)
- (libraries eta eta_eio eta_blocking eta_sql eta_duckdb eta_turso eta_ladybug alcotest eio eio_main unix threads)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

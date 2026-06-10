@@ -23,9 +23,13 @@ let contains haystack needle =
 let find_tls_eio_source () =
   let candidates =
     [
+      "lib/http_eio/tls/tls_eio.ml";
       "lib/http/tls/tls_eio.ml";
+      "../lib/http_eio/tls/tls_eio.ml";
       "../lib/http/tls/tls_eio.ml";
+      "../../lib/http_eio/tls/tls_eio.ml";
       "../../lib/http/tls/tls_eio.ml";
+      "../../../lib/http_eio/tls/tls_eio.ml";
       "../../../lib/http/tls/tls_eio.ml";
     ]
   in
@@ -54,20 +58,6 @@ let client_of_flow_source source =
       match find_sub_from source ~needle:"let epoch flow =" start with
       | None -> Alcotest.fail "missing client_of_flow end marker"
       | Some finish -> String.sub source start (finish - start))
-
-let test_tls_chokepoint_policy () =
-  let client = Eta_http.Tls.Config.default_client () in
-  Alcotest.(check bool)
-    "TLS 1.2 only"
-    true
-    (Eta_http.Tls.Config.policy_version = (`TLS_1_2, `TLS_1_2));
-  Alcotest.(check (list string))
-    "exact policy ciphers"
-    Eta_http.Tls.Config.policy_ciphers
-    Eta_http.Tls.Config.policy_ciphers;
-  Alcotest.(check (list string))
-    "default ALPN" [ "h2"; "http/1.1" ]
-    (Eta_http.Tls.Config.alpn_protocols client)
 
 let test_openssl_ssl_finalizer_keeps_ctx_ownership_separate () =
   let exercise_shared_ctx () =

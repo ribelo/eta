@@ -115,6 +115,17 @@ let require_ladybug_available () =
       false
   | Error err -> Alcotest.failf "%a" Eta_ladybug.pp_error err
 
+let with_ladybug_connection f =
+  if require_ladybug_available () then
+    let db = Eta_ladybug.Database.open_memory () |> ladybug_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Eta_ladybug.Database.close db))
+      (fun () ->
+        let conn = Eta_ladybug.Connection.connect db |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Eta_ladybug.Connection.close conn))
+          (fun () -> f conn))
+
 let test_duckdb_values () =
   let row =
     [
@@ -427,6 +438,115 @@ let test_turso_text_preserves_embedded_nul () =
             Alcotest.(check bool) "text bytes" true
               (String.equal expected actual)
         | _ -> Alcotest.fail "expected one text column")
+
+let test_turso_exec_script_runs_every_statement () =
+  if require_turso_available () then
+    let config = { (Eta_turso.default_config ":memory:") with journal_mode = Eta_turso.Wal } in
+    let db = Eta_turso.open_ config |> turso_ok in
+    Fun.protect
+      ~finally:(fun () -> ignore (Eta_turso.close db))
+      (fun () ->
+        Eta_turso.exec_script db
+          "CREATE TABLE a (id INTEGER); CREATE TABLE b (id INTEGER);"
+        |> turso_ok;
+        match Eta_turso.query db "SELECT count(*) FROM b" [] with
+        | Ok _ -> ()
+        | Error err ->
+            Alcotest.failf
+              "second statement of the script never ran (table b missing): %a"
+              Eta_turso.pp_error err)
+
+let test_ladybug_list_decodes_as_list () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  let query =
+    Query.raw ~cypher:"RETURN [1, 2, 3] AS v" ~decode:(Decode.value "v") ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.List [ Value.Int 1L; Value.Int 2L; Value.Int 3L ] ] -> ()
+  | Ok [ Value.String value ] ->
+      Alcotest.failf "Cypher LIST decoded as String %S instead of Value.List"
+        value
+  | Ok [ _ ] -> Alcotest.fail "Cypher LIST decoded as the wrong constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
+
+let setup_ladybug_person_graph conn =
+  let open Eta_ladybug in
+  Connection.exec conn
+    "CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name))"
+  |> ladybug_ok;
+  Connection.exec conn
+    "CREATE REL TABLE Knows(FROM Person TO Person, since INT64, MANY_MANY)"
+  |> ladybug_ok;
+  Connection.exec conn "CREATE (:Person {name:'Ada', age:36})" |> ladybug_ok;
+  Connection.exec conn "CREATE (:Person {name:'Bob', age:30})" |> ladybug_ok;
+  Connection.exec conn
+    "MATCH (a:Person {name:'Ada'}), (b:Person {name:'Bob'}) CREATE (a)-[:Knows {since:2020}]->(b)"
+  |> ladybug_ok
+
+let test_ladybug_rel_decodes_as_rel () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  setup_ladybug_person_graph conn;
+  let query =
+    Query.raw ~cypher:"MATCH ()-[r:Knows]->() RETURN r AS v"
+      ~decode:(Decode.value "v") ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.Rel rel ] ->
+      Alcotest.(check (option string)) "rel label" (Some "Knows") rel.label
+  | Ok [ Value.Node node ] ->
+      Alcotest.failf "relationship decoded as Node(labels=%s) instead of Rel"
+        (String.concat "," node.labels)
+  | Ok [ _ ] -> Alcotest.fail "relationship decoded as wrong constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
+
+let test_ladybug_path_decodes_as_path () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  setup_ladybug_person_graph conn;
+  let query =
+    Query.raw ~cypher:"MATCH p=(:Person)-[:Knows]->(:Person) RETURN p AS v"
+      ~decode:(Decode.value "v") ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.Path _ ] -> ()
+  | Ok [ Value.Map _ ] -> Alcotest.fail "path decoded as Map instead of Path"
+  | Ok [ _ ] -> Alcotest.fail "path decoded as wrong constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
+
+let test_ladybug_timestamp_not_empty_string () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  let query =
+    Query.raw ~cypher:"RETURN timestamp('2020-01-01') AS v"
+      ~decode:(Decode.value "v") ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.String "" ] -> Alcotest.fail "timestamp decoded as empty string"
+  | Ok [ Value.Int _ ] | Ok [ Value.String _ ] -> ()
+  | Ok [ _ ] -> Alcotest.fail "timestamp decoded as unexpected constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
+
+let test_ladybug_param_map_round_trips () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  let query =
+    Query.raw ~cypher:"RETURN $x AS v" ~decode:(Decode.value "v")
+      ~params:[ Param.map "x" [ ("a", Value.Int 1L) ] ]
+      ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.Map [ ("a", Value.Int 1L) ] ] -> ()
+  | Ok [ Value.String "" ] ->
+      Alcotest.fail "Param.map round-tripped as empty String"
+  | Ok [ _ ] -> Alcotest.fail "Param.map round-tripped as wrong constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
 
 let test_ladybug_error_classification () =
   let open Eta_ladybug in
@@ -1022,6 +1142,8 @@ let () =
             test_turso_decode_error_is_structured;
           Alcotest.test_case "text preserves embedded nul" `Quick
             test_turso_text_preserves_embedded_nul;
+          Alcotest.test_case "exec_script runs every statement" `Quick
+            test_turso_exec_script_runs_every_statement;
         ] );
       ( "ladybug",
         [
@@ -1037,6 +1159,16 @@ let () =
             test_ladybug_official_extension_install_lifecycle;
           Alcotest.test_case "typed query runtime" `Quick
             test_ladybug_typed_query_runtime;
+          Alcotest.test_case "LIST values decode as lists" `Quick
+            test_ladybug_list_decodes_as_list;
+          Alcotest.test_case "relationships decode as rels" `Quick
+            test_ladybug_rel_decodes_as_rel;
+          Alcotest.test_case "paths decode as paths" `Quick
+            test_ladybug_path_decodes_as_path;
+          Alcotest.test_case "timestamps are not empty strings" `Quick
+            test_ladybug_timestamp_not_empty_string;
+          Alcotest.test_case "Param.map round-trips as map" `Quick
+            test_ladybug_param_map_round_trips;
           Alcotest.test_case "connection query timeout" `Quick
             test_ladybug_connection_query_timeout;
           Alcotest.test_case "bind error does not leak statements" `Slow

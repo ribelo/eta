@@ -431,12 +431,16 @@ let close_expired_entries_before_retry t entries =
   close_entries ~release_permit:false t entries
   |> Effect.map (fun () -> Reserve_slot)
 
+let yield_for_slot () =
+  Effect.Expert.make ~leaf_name:"eta.pool.wait_for_slot" @@ fun context ->
+  let contract = Effect.Expert.contract context in
+  contract.Runtime_contract.yield ();
+  Exit.Ok ()
+
 let state_of_reservation = function
   | `Shutdown -> Effect.fail `Pool_shutdown
   | `Wait ->
-      Effect.sync (fun () ->
-          invalid_arg
-            "Eta.Pool invariant violated: admitted checkout had no reservable slot")
+      yield_for_slot () |> Effect.map (fun () -> Reserve_slot)
   | `Close_expired entries -> Effect.pure (Close_expired_entries entries)
   | `Use entry -> Effect.pure (Check_reserved_entry entry)
   | `Open_new -> Effect.pure Open_entry
@@ -490,22 +494,36 @@ let rec run_acquisition t state =
 let acquire_entry t = run_acquisition t Reserve_slot
 
 let with_resource t body =
-  let checkout =
-    Effect.scoped
-      (Effect.acquire_release
-         ~acquire:(span t "eta.pool.acquire" (acquire_entry t))
-         ~release:(release_entry ~release_permit:false t)
-      |> Effect.bind (fun entry -> body entry.conn))
+  let checkout () =
+    let acquired = ref None in
+    let release_permit =
+      Effect.sync (fun () -> Semaphore.release t.sem 1)
+    in
+    let release_acquired =
+      Effect.sync (fun () -> !acquired)
+      |> Effect.bind (function
+           | None -> release_permit
+           | Some entry ->
+               release_entry ~release_permit:false t entry
+               |> Effect.finally release_permit)
+    in
+    Effect.finally release_acquired
+      (Effect.scoped
+         (span t "eta.pool.acquire" (acquire_entry t)
+         |> Effect.bind (fun entry ->
+                Effect.sync (fun () -> acquired := Some entry)
+                |> Effect.bind (fun () -> body entry.conn))))
   in
   Effect.sync (fun () -> Sync_lock.use t.mutex (fun () -> t.shutting_down))
   |> Effect.bind (function
        | true -> Effect.fail `Pool_shutdown
        | false ->
-           Semaphore.with_permits_or_abort t.sem 1
-             ~abort:(wait_for_shutdown t) (fun () -> checkout)
+           Effect.race
+             [ Semaphore.acquire t.sem 1 |> Effect.map (fun () -> `Acquired);
+               wait_for_shutdown t |> Effect.map (fun () -> `Shutdown) ]
            |> Effect.bind (function
-                | Some value -> Effect.pure value
-                | None -> Effect.fail `Pool_shutdown))
+                | `Shutdown -> Effect.fail `Pool_shutdown
+                | `Acquired -> checkout ()))
 
 let evict_idle_once t =
   let expired =

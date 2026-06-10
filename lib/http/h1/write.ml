@@ -30,17 +30,6 @@ let add_header_line buffer (name, value) =
   Buffer.add_string buffer value;
   Buffer.add_string buffer "\r\n"
 
-let write_string flow value = Eio.Flow.copy_string value flow
-
-let write_bytes flow bytes =
-  Eio.Flow.copy_string (Bytes.to_string bytes) flow
-
-let write_header_line flow (name, value) =
-  write_string flow name;
-  write_string flow ": ";
-  write_string flow value;
-  write_string flow "\r\n"
-
 let has_header name headers =
   Option.is_some (Header.get name headers)
 
@@ -293,11 +282,6 @@ let resolved_framing_body_length ?framing_body_length body =
       | None -> framing_body_length_raw body
       | Some length -> length)
 
-let flow_write_error ~method_ ~url =
-  Error.make ~protocol:H1 ~method_
-    ~uri:(Url.to_string url)
-    (Connection_closed { during = Http_request })
-
 let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
   if not (validate_method method_) then
     Error
@@ -334,49 +318,6 @@ let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
         | Empty -> ()
         | Fixed chunks -> List.iter (fun chunk -> Buffer.add_bytes buffer chunk) chunks);
         Ok ())
-
-let write_to_flow ?framing_body_length flow ~method_ ~url ~headers ~body =
-  if not (validate_method method_) then
-    Error
-      (Error.make ~method_ ~uri:(Url.to_string url)
-         (Header_invalid { reason = "invalid request method" }))
-  else
-    match validate_headers ~method_ ~url headers with
-    | Error _ as error -> error
-    | Ok () ->
-        (match
-           validate_request_framing
-             ~body
-             ~body_length:(resolved_framing_body_length ?framing_body_length body)
-             ~method_ ~url ~headers
-         with
-        | Error _ as error -> error
-        | Ok () ->
-        let buf = Buffer.create 512 in
-        (try
-           Buffer.add_string buf method_;
-           Buffer.add_char buf ' ';
-           Buffer.add_string buf (Url.origin_form url);
-           Buffer.add_string buf " HTTP/1.1\r\n";
-           if not (has_header "host" headers) then
-             add_header_line buf ("Host", Url.authority url);
-           if not (has_header "connection" headers) then
-             add_header_line buf ("Connection", "keep-alive");
-           (match content_length body with
-           | None -> ()
-           | Some length ->
-               if not (has_header "content-length" headers) then
-                 add_header_line buf ("Content-Length", string_of_int length));
-           List.iter (add_header_line buf) (List.rev headers);
-           Buffer.add_string buf "\r\n";
-           (match body with
-           | Empty -> ()
-           | Fixed chunks -> List.iter (fun chunk -> Buffer.add_bytes buf chunk) chunks);
-           write_string flow (Buffer.contents buf);
-           Ok ()
-         with
-         | Eio.Cancel.Cancelled _ as exn -> raise exn
-         | _ -> Error (flow_write_error ~method_ ~url)))
 
 let to_string ~method_ ~url ~headers ~body =
   let buffer = Buffer.create 256 in

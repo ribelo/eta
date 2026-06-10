@@ -174,7 +174,7 @@ type server_event =
   | Server_decode_error of { message : string; raw : A.raw_json option }
   | Raw_server_event of { type_ : string option; raw : A.raw_json }
 
-type realtime_error = Eta_http.Ws.Client.ws_error
+type realtime_error = Eta_http_eio.Ws.Client.ws_error
 
 let audio_data_base64 = function
   | A.Base64 value -> value
@@ -229,7 +229,7 @@ let decode_server_event raw =
       | Some "error" -> server_error_json raw json
       | type_ -> Raw_server_event { type_; raw })
 
-type t = { ws : Eta_http.Ws.Client.t } [@@unboxed]
+type t = { ws : Eta_http_eio.Ws.Client.t } [@@unboxed]
 
 let is_unreserved = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' -> true
@@ -276,19 +276,19 @@ let websocket_headers ?safety_identifier api_key =
        | Some value -> [ ("OpenAI-Safety-Identifier", value) ])
 
 let connect ?base_url ?safety_identifier ~sw ~net ~api_key ~model () =
-  Eta_http.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
+  Eta_http_eio.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
     ~sw ~net (realtime_url ?base_url ~model ())
   |> E.map (fun ws -> { ws })
 
 let send_event t event : (unit, realtime_error) E.t =
-  Eta_http.Ws.Client.send_text t.ws (client_event_to_string event)
+  Eta_http_eio.Ws.Client.send_text t.ws (client_event_to_string event)
 
 let events t =
-  Eta_http.Ws.Client.incoming t.ws
+  Eta_http_eio.Ws.Client.incoming t.ws
   |> Eta_stream.Stream.map (function
        | `Text raw -> decode_server_event raw
        | `Binary _ ->
            Server_decode_error
              { message = "OpenAI Realtime sent binary WebSocket message"; raw = None })
 
-let close t = Eta_http.Ws.Client.close t.ws
+let close t = Eta_http_eio.Ws.Client.close t.ws

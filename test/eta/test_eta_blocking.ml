@@ -64,172 +64,6 @@ let rec cpu_burn_until deadline acc =
 let cpu_burn_ms ms =
   ignore (cpu_burn_until (now_us () + (ms * 1000)) 0x12345)
 
-let check_pool_shutdown label cause =
-  check_die_message label "Pool_shutting_down" cause
-
-let test_blocking_run_and_stats () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"basic" (blocking_config ~max_threads:2 ()) in
-  Alcotest.(check int) "first run" 42
-    (run_ok rt (Eta_blocking.run ~pool ~name:"basic.answer" (fun () -> 42)));
-  Alcotest.(check int) "second run" 43
-    (run_ok rt (Eta_blocking.run ~pool ~name:"basic.second" (fun () -> 43)));
-  let stats = BP.stats pool in
-  Alcotest.(check int) "completed" 2 stats.completed;
-  Alcotest.(check int) "active" 0 stats.active;
-  Alcotest.(check int) "queued" 0 stats.queued
-
-let test_blocking_result_lifts_result_value () =
-  with_runtime @@ fun rt ->
-  let ok = Eta_blocking.result ~name:"blocking.result.ok" (fun () -> Ok 7) in
-  let err =
-    Eta_blocking.result ~name:"blocking.result.err" (fun () -> Error `Bad)
-  in
-  Alcotest.(check int) "ok" 7 (run_ok rt ok);
-  match Runtime.run rt err with
-  | Exit.Ok _ -> Alcotest.fail "expected typed failure"
-  | Exit.Error (Cause.Fail `Bad) -> ()
-  | Exit.Error cause ->
-      Alcotest.failf "expected Cause.Fail `Bad, got %a"
-        (Cause.pp (fun fmt (`Bad : [ `Bad ]) -> Format.pp_print_string fmt "bad"))
-        cause
-
-let test_blocking_result_exception_is_defect () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"blocking-result-defect" (blocking_config ()) in
-  let defect = Failure "blocking result defect" in
-  let eff =
-    Eta_blocking.result ~pool ~name:"blocking.result.defect" (fun () ->
-        (raise defect : (int, [ `Expected ]) result))
-  in
-  match Runtime.run rt eff with
-  | Exit.Error (Cause.Die die) when die.exn == defect -> ()
-  | Exit.Error cause ->
-      Alcotest.failf "expected blocking exception to be a defect, got %a"
-        (Cause.pp (fun fmt `Expected ->
-             Format.pp_print_string fmt "expected"))
-        cause
-  | Exit.Ok value ->
-      Alcotest.failf "expected blocking defect, got Ok %d" value
-
-let test_blocking_result_timeout_interrupts_and_fails_typed () =
-  with_runtime @@ fun rt ->
-  let interrupted = Atomic.make false in
-  let eff =
-    Eta_blocking.result_timeout ~name:"blocking.result.timeout"
-      ~on_cancel:(fun () -> Atomic.set interrupted true)
-      ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
-        Unix.sleepf 0.030;
-        Ok 7)
-  in
-  match Runtime.run rt eff with
-  | Exit.Ok _ -> Alcotest.fail "expected timeout"
-  | Exit.Error (Cause.Fail `Timeout) ->
-      Alcotest.(check bool) "on_cancel called" true (Atomic.get interrupted)
-  | Exit.Error cause ->
-      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
-        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
-             Format.pp_print_string fmt "timeout"))
-        cause
-
-let test_blocking_result_timeout_calls_on_cancel_once () =
-  with_runtime @@ fun rt ->
-  let pool =
-    BP.create ~name:"blocking-result-timeout-once"
-      (blocking_config ~max_threads:1 ())
-  in
-  let hook_calls = Atomic.make 0 in
-  let finished = Atomic.make false in
-  let eff =
-    Eta_blocking.result_timeout ~pool
-      ~name:"blocking.result.timeout-once"
-      ~on_cancel:(fun () -> Atomic.incr hook_calls)
-      ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
-        Unix.sleepf 0.030;
-        Atomic.set finished true;
-        Ok 7)
-  in
-  (match Runtime.run rt eff with
-  | Exit.Ok _ -> Alcotest.fail "expected timeout"
-  | Exit.Error (Cause.Fail `Timeout) -> ()
-  | Exit.Error cause ->
-      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
-        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
-             Format.pp_print_string fmt "timeout"))
-        cause);
-  wait_until (fun () -> Atomic.get finished);
-  Alcotest.(check int) "on_cancel calls" 1 (Atomic.get hook_calls)
-
-let test_blocking_result_timeout_bounds_started_drain_wait () =
-  with_runtime @@ fun rt ->
-  let pool =
-    BP.create ~name:"blocking-result-timeout-started-drain"
-      (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject
-         ~shutdown_policy:BP.Drain ())
-  in
-  let started = Unix.gettimeofday () in
-  let exit =
-    Runtime.run rt
-      (Eta_blocking.result_timeout ~pool
-         ~name:"blocking.result.timeout-started-drain"
-         ~timeout:(Duration.ms 10) ~on_timeout:`Timeout (fun () ->
-           Unix.sleepf 0.25;
-           Ok ()))
-  in
-  let elapsed = Unix.gettimeofday () -. started in
-  Alcotest.(check bool) "caller wait bounded" true (elapsed < 0.05);
-  Alcotest.(check int) "started work remains active" 1 (BP.stats pool).active;
-  (match exit with
-  | Exit.Error (Cause.Fail `Timeout) -> ()
-  | Exit.Ok () -> Alcotest.fail "expected timeout"
-  | Exit.Error cause ->
-      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
-        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
-             Format.pp_print_string fmt "timeout"))
-        cause);
-  wait_until ~attempts:500 (fun () -> (BP.stats pool).completed = 1);
-  Alcotest.(check int) "started work released" 0 (BP.stats pool).active
-
-let test_blocking_result_timeout_cancels_queued_work () =
-  with_runtime @@ fun rt ->
-  let pool =
-    BP.create ~name:"blocking-result-timeout-queued"
-      (blocking_config ~max_threads:1 ~max_queued:1 ~queue_policy:BP.Wait
-         ~shutdown_policy:BP.Drain ())
-  in
-  let blocker_done = Atomic.make false in
-  let queued_ran = Atomic.make false in
-  Runtime.run rt
-    (Effect.daemon
-       (Eta_blocking.run ~pool ~name:"blocking.result.timeout-queued.blocker"
-          (fun () ->
-            Unix.sleepf 0.10;
-            Atomic.set blocker_done true)))
-  |> ignore;
-  wait_until (fun () -> (BP.stats pool).active = 1);
-  let exit =
-    Runtime.run rt
-      (Eta_blocking.result_timeout ~pool
-         ~name:"blocking.result.timeout-queued"
-         ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
-           Atomic.set queued_ran true;
-           Ok ()))
-  in
-  (match exit with
-  | Exit.Error (Cause.Fail `Timeout) -> ()
-  | Exit.Ok () -> Alcotest.fail "expected timeout"
-  | Exit.Error cause ->
-      Alcotest.failf "expected Cause.Fail `Timeout, got %a"
-        (Cause.pp (fun fmt (`Timeout : [ `Timeout ]) ->
-             Format.pp_print_string fmt "timeout"))
-        cause);
-  wait_until ~attempts:300 (fun () -> Atomic.get blocker_done);
-  Eio_unix.sleep 0.02;
-  Alcotest.(check bool) "queued job did not run" false
-    (Atomic.get queued_ran);
-  Alcotest.(check int) "queued job cancelled" 1
-    (BP.stats pool).cancelled_before_start
-
 let test_blocking_pool_custom_runner () =
   run_eio @@ fun stdenv ->
   let calls = Atomic.make 0 in
@@ -323,35 +157,6 @@ let test_blocking_wait_policy_caps_active_and_queue () =
   Alcotest.(check int) "cancelled" 0 stats.cancelled_before_start;
   Alcotest.(check int) "detached" 0 stats.detached
 
-let test_blocking_reject_policy_deterministic () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let pool =
-    BP.create ~name:"reject"
-      (blocking_config ~max_threads:1 ~max_queued:0 ~queue_policy:BP.Reject ())
-  in
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  let first_started, first_resolver = Eio.Promise.create () in
-  let first =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Runtime.run rt
-          (Eta_blocking.run ~pool ~name:"reject.first" (fun () ->
-               Eio.Promise.resolve first_resolver ();
-               Unix.sleepf 0.060)))
-  in
-  Eio.Promise.await first_started;
-  wait_until (fun () -> (BP.stats pool).active = 1);
-  let rejected =
-    List.init 4 (fun _ ->
-        match Runtime.run rt (Eta_blocking.run ~pool ~name:"reject.extra" (fun () -> ())) with
-        | Exit.Ok _ -> false
-        | Exit.Error _ -> true)
-  in
-  Alcotest.(check int) "rejected count observed" 4
-    (List.length (List.filter Fun.id rejected));
-  Alcotest.(check int) "rejected stats" 4 (BP.stats pool).rejected;
-  ignore (Eio.Promise.await_exn first : (unit, _) Exit.t)
-
 let test_blocking_pending_cancellation_removes_queued_job () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -383,48 +188,6 @@ let test_blocking_pending_cancellation_removes_queued_job () =
   ignore (Eio.Promise.await_exn blocker : (unit, _) Exit.t);
   Alcotest.(check int)
     "cancelled before start" 1 (BP.stats pool).cancelled_before_start
-
-let test_blocking_started_cancellation_is_nonpreemptive () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"cancel-started" (blocking_config ~max_threads:1 ()) in
-  let completed = Atomic.make false in
-  let elapsed, result =
-    elapsed_us (fun () ->
-        Runtime.run rt
-          (Eta_blocking.run ~pool ~name:"cancel-started.job"
-             (fun () ->
-               Unix.sleepf 0.030;
-               Atomic.set completed true)
-          |> Effect.timeout (Duration.ms 5)))
-  in
-  (match result with Exit.Ok _ | Exit.Error _ -> ());
-  Alcotest.(check bool) "worker completed" true (Atomic.get completed);
-  Alcotest.(check bool) "waited for started job" true (elapsed >= 25_000)
-
-let test_blocking_shutdown_rejects_new_jobs () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"shutdown" (blocking_config ()) in
-  run_ok rt (BP.shutdown pool);
-  match Runtime.run rt (Eta_blocking.run ~pool ~name:"after-shutdown" (fun () -> ())) with
-  | Exit.Ok _ -> Alcotest.fail "expected shutdown rejection"
-  | Exit.Error cause -> check_pool_shutdown "shutdown" cause
-
-let test_blocking_shutdown_drain_waits_for_started () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let pool =
-    BP.create ~name:"drain" (blocking_config ~max_threads:1 ~shutdown_policy:BP.Drain ())
-  in
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  let worker =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Runtime.run rt
-          (Eta_blocking.run ~pool ~name:"drain.job" (fun () -> Unix.sleepf 0.030)))
-  in
-  wait_until (fun () -> (BP.stats pool).active = 1);
-  let elapsed, () = elapsed_us (fun () -> run_ok rt (BP.shutdown pool)) in
-  Alcotest.(check bool) "drain waited" true (elapsed >= 20_000);
-  ignore (Eio.Promise.await_exn worker : (unit, _) Exit.t)
 
 let test_blocking_shutdown_detach_started_returns_promptly () =
   run_eio @@ fun stdenv ->
@@ -519,29 +282,6 @@ let test_blocking_named_pools_prevent_starvation () =
   Alcotest.(check bool) "db not starved" true (elapsed < 10_000);
   ignore (Eio.Promise.await_exn fs : (unit list, _) Exit.t)
 
-let test_blocking_worker_rejects_nested_run () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"worker-nested-run" (blocking_config ()) in
-  match
-    Runtime.run rt
-      (Eta_blocking.run ~pool ~name:"outer" (fun () ->
-           ignore (Eta_blocking.run ~pool ~name:"inner" (fun () -> ()))))
-  with
-  | Exit.Ok _ -> Alcotest.fail "expected nested run failure"
-  | Exit.Error cause ->
-      check_die_message "nested run" "Eta_blocking.run" cause
-
-let test_blocking_worker_rejects_runtime_run () =
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"worker-runtime" (blocking_config ()) in
-  match
-    Runtime.run rt
-      (Eta_blocking.run ~pool ~name:"outer" (fun () ->
-           ignore (Runtime.run rt (Effect.pure ()))))
-  with
-  | Exit.Ok _ -> Alcotest.fail "expected nested runtime failure"
-  | Exit.Error cause -> check_die_message "nested runtime" "Runtime.run" cause
-
 let test_blocking_cpu_antipattern_has_no_speedup () =
   with_runtime @@ fun rt ->
   let pool = BP.create ~name:"cpu-antipattern" (blocking_config ~max_threads:4 ()) in
@@ -592,35 +332,9 @@ let test_blocking_observability_labels_and_timings () =
             &&
             match point.value with Meter.Int ms -> ms >= 15 | Meter.Float _ -> false))
 
-(* P0: Blocking_runtime swallows Eio cancellation and overloads OCaml's Exit.
-   These tests verify that:
-   1. User code raising OCaml's Exit is distinguishable from Eio cancellation.
-   2. Eio cancellation preserves the Cancelled exception identity, not Exit.
-   3. cause_of_exn does not conflate user Exit with fiber interruption. *)
-
-let test_blocking_user_exit_not_swallowed_as_interrupt () =
-  (* If user callback raises OCaml's Exit, it should surface as a Die
-     (unexpected exception), NOT as Cause.interrupt. The current code maps
-     Exit -> Cause.interrupt in cause_of_exn, which is the bug. *)
-  with_runtime @@ fun rt ->
-  let pool = BP.create ~name:"user-exit" (blocking_config ~max_threads:1 ()) in
-  let result =
-    Runtime.run rt
-      (Eta_blocking.run ~pool ~name:"user-exit.raise" (fun () ->
-           raise Stdlib.Exit))
-  in
-  match result with
-  | Exit.Ok _ -> Alcotest.fail "expected error from raise Exit"
-  | Exit.Error cause ->
-      (* The correct behavior: user's Exit should be a Die, not interrupt *)
-      let is_die =
-        match cause with Cause.Die _ -> true | _ -> false
-      in
-      let is_interrupt = Cause.is_interrupt_only cause in
-      Alcotest.(check bool)
-        "user Exit should NOT be mapped to interrupt" false is_interrupt;
-      Alcotest.(check bool)
-        "user Exit should be Die (unexpected exception)" true is_die
+(* P0: Blocking_runtime must preserve native Eio cancellation identity without
+   conflating it with ordinary OCaml exceptions. Shared user-exception coverage
+   lives in test/blocking_common. *)
 
 let test_blocking_eio_cancellation_preserves_cancelled_identity () =
   (* When a fiber is cancelled while queued in a blocking pool, the resulting

@@ -1,0 +1,3 @@
+(library
+ (name eta_core_common_tests)
+ (libraries eta eta_runtime_common_tests alcotest))

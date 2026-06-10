@@ -1,0 +1,915 @@
+open Eta
+
+module Make (B : Runtime_backend.S) = struct
+  module E = Effect
+  module Rc = Runtime_contract
+
+  let pp_hidden fmt _ = Format.pp_print_string fmt "<err>"
+
+  let expect_ok = function
+    | Exit.Ok value -> value
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let expect_fail pred = function
+    | Exit.Error (Cause.Fail err) when pred err -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected typed failure, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected typed failure, got Ok"
+
+  let expect_die = function
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected Die, got Ok"
+
+  let expect_finalizer_die = function
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Die _)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Finalizer(Die), got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected Finalizer(Die), got Ok"
+
+  let rec cause_has_fail pred = function
+    | Cause.Fail err -> pred err
+    | Cause.Sequential causes | Cause.Concurrent causes ->
+        List.exists (cause_has_fail pred) causes
+    | Cause.Suppressed { primary; finalizer = _ } -> cause_has_fail pred primary
+    | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> false
+
+  let check_ok test name expected exit =
+    Alcotest.check test name expected (expect_ok exit)
+
+  let run_ok rt eff = expect_ok (B.run rt eff)
+
+  let wait_for_sleepers clock expected =
+    let rec loop attempts =
+      if B.sleeper_count clock >= expected then ()
+      else if attempts = 0 then
+        Alcotest.failf "expected %d sleepers, got %d" expected
+          (B.sleeper_count clock)
+      else (
+        B.yield ();
+        loop (attempts - 1))
+    in
+    loop 200
+
+  let string_contains ~needle haystack =
+    let needle_len = String.length needle in
+    let haystack_len = String.length haystack in
+    let rec loop index =
+      if index + needle_len > haystack_len then false
+      else if String.sub haystack index needle_len = needle then true
+      else loop (index + 1)
+    in
+    loop 0
+
+  let test_pure_bind_catch () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      E.fail `Bad
+      |> E.catch (function `Bad -> E.pure 40)
+      |> E.bind (fun value -> E.pure (value + 2))
+    in
+    check_ok Alcotest.int "value" 42 (B.run rt eff)
+
+  let test_collect_names () =
+    let eff =
+      E.concat
+        [
+          E.named "leaf-a" (E.sync (fun () -> ())) |> E.map (fun _ -> ());
+          E.sync (fun () -> ());
+          E.named "leaf-b" (E.sync (fun () -> ()));
+        ]
+      |> E.named "outer"
+    in
+    Alcotest.(check (list string))
+      "names in pre-order" [ "outer"; "leaf-a"; "leaf-b" ]
+      (E.collect_names eff)
+
+  let test_from_result_and_exit_to_result () =
+    B.with_runtime @@ fun _ctx rt ->
+    check_ok Alcotest.int "from_result ok" 7
+      (B.run rt (E.from_result (Ok 7)));
+    expect_fail (( = ) "bad") (B.run rt (E.from_result (Error "bad")));
+    Alcotest.(check (option (result int string)))
+      "success to_result" (Some (Ok 1)) (Exit.to_result (Exit.Ok 1));
+    Alcotest.(check (option (result int string)))
+      "typed to_result" (Some (Error "bad"))
+      (Exit.to_result (Exit.Error (Cause.Fail "bad")));
+    Alcotest.(check (option (result int string)))
+      "defect to_result" None
+      (Exit.to_result (Exit.Error (Cause.die (Failure "boom"))));
+    Alcotest.(check (option (result int string)))
+      "composite to_result" None
+      (Exit.to_result
+         (Exit.Error
+            (Cause.sequential [ Cause.Fail "left"; Cause.Fail "right" ])))
+
+  let test_map_bind_tap_runtime () =
+    B.with_runtime @@ fun _ctx rt ->
+    let observed = ref [] in
+    let eff =
+      E.pure 1
+      |> E.map (fun n -> n + 1)
+      |> E.bind (fun n -> E.pure (n * 2))
+      |> E.tap (fun n ->
+             E.named "tap"
+               (E.sync (fun () -> observed := n :: !observed)))
+      |> E.map (fun n -> n + 1)
+    in
+    check_ok Alcotest.int "value" 5 (B.run rt eff);
+    Alcotest.(check (list int)) "tap saw pre-map value" [ 4 ] !observed
+
+  let test_map_error () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = E.map_error (function `Old -> `New) (E.fail `Old) in
+    expect_fail (( = ) `New) (B.run rt eff)
+
+  let test_map_error_maps_full_cause () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      E.scoped
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.fail `Release)
+        |> E.bind (fun () -> E.fail `Body))
+      |> E.map_error (function `Body -> "body" | `Release -> "release")
+    in
+    match B.run rt eff with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail "body";
+            finalizer = Cause.Finalizer.Fail _;
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected mapped suppressed cause, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok () -> Alcotest.fail "expected mapped suppressed cause"
+
+  let test_sync_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (E.sync (fun () -> raise (Failure "boom"))) |> expect_die
+
+  let test_backtrace_capture_flag () =
+    B.with_runtime_capture_backtrace false @@ fun _ctx rt ->
+    match B.run rt (E.sync (fun () -> raise (Failure "boom"))) with
+    | Exit.Error (Cause.Die { backtrace = None; _ }) -> ()
+    | Exit.Error (Cause.Die { backtrace = Some _; _ }) ->
+        Alcotest.fail "expected disabled backtrace capture"
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected Die"
+
+  let test_run_exn_uses_captured_backtrace () =
+    B.with_runtime @@ fun _ctx rt ->
+    let exn = Failure "run_exn defect" in
+    match B.run_exn rt (E.named "die.run_exn" (E.sync (fun () -> raise exn))) with
+    | _ -> Alcotest.fail "expected exception"
+    | exception actual ->
+        Alcotest.(check bool) "same exception" true (actual == exn);
+        let backtrace =
+          Printexc.raw_backtrace_to_string (Printexc.get_raw_backtrace ())
+        in
+        Alcotest.(check bool) "backtrace not empty" true
+          (String.length backtrace > 0)
+
+  let test_run_exn_preserves_typed_failure_diagnostics () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = E.fail "detailed error: connection refused on port 8080" in
+    match B.run_exn rt eff with
+    | _ -> Alcotest.fail "expected exception from typed failure"
+    | exception (Failure msg) ->
+        Alcotest.(check bool)
+          (Printf.sprintf
+             "run_exn should preserve typed failure info in message (got: %S)"
+             msg)
+          true
+          (string_contains ~needle:"connection refused" msg)
+    | exception _ -> Alcotest.fail "expected Failure exception from run_exn"
+
+  let test_finally_cleanup_failure_after_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = E.finally (E.fail `Cleanup) (E.pure 1) in
+    match B.run rt eff with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Finalizer, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected Finalizer"
+
+  let test_finally_suppressed_cleanup_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = E.finally (E.fail `Cleanup) (E.fail `Primary) in
+    match B.run rt eff with
+    | Exit.Error
+        (Cause.Suppressed
+          { primary = Cause.Fail `Primary; finalizer = Cause.Finalizer.Fail _ })
+      ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Suppressed, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected failure"
+
+  let test_acquire_release_ordering_and_root_finalizer () =
+    B.with_runtime @@ fun _ctx rt ->
+    let trail = ref [] in
+    let mark name = E.sync (fun () -> trail := name :: !trail) in
+    let scoped =
+      E.scoped
+        (E.acquire_release
+           ~acquire:(mark "acquired" |> E.map (fun () -> 1))
+           ~release:(fun _ -> mark "released")
+        |> E.bind (fun _ -> mark "body"))
+    in
+    check_ok Alcotest.unit "scoped" () (B.run rt scoped);
+    Alcotest.(check (list string))
+      "ordering" [ "acquired"; "body"; "released" ] (List.rev !trail);
+
+    let root_released = ref false in
+    let root =
+      E.acquire_release ~acquire:E.unit
+        ~release:(fun () -> E.sync (fun () -> root_released := true))
+    in
+    check_ok Alcotest.unit "root" () (B.run rt root);
+    Alcotest.(check bool) "root finalizer" true !root_released
+
+  let test_acquire_release_releases_on_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let eff =
+      E.scoped
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.sync (fun () -> released := true))
+        |> E.bind (fun () -> E.sync (fun () -> failwith "body defect")))
+    in
+    B.run rt eff |> expect_die;
+    Alcotest.(check bool) "released" true !released
+
+  let test_acquire_use_release_success_and_lexical () =
+    B.with_runtime @@ fun _ctx rt ->
+    let trail = ref [] in
+    let mark name = E.sync (fun () -> trail := name :: !trail) in
+    let bracket =
+      E.acquire_use_release
+        ~acquire:(mark "acquired" |> E.map (fun () -> 1))
+        ~release:(fun resource -> mark ("released:" ^ string_of_int resource))
+        (fun resource ->
+          mark ("body:" ^ string_of_int resource) |> E.map (fun () -> resource + 1))
+    in
+    check_ok Alcotest.int "body result" 2 (B.run rt bracket);
+    Alcotest.(check (list string))
+      "ordering" [ "acquired"; "body:1"; "released:1" ]
+      (List.rev !trail);
+
+    let active = ref 0 in
+    let max_active = ref 0 in
+    let acquire =
+      E.sync (fun () ->
+          incr active;
+          max_active := max !max_active !active)
+    in
+    let release () = E.sync (fun () -> decr active) in
+    let one =
+      E.acquire_use_release ~acquire ~release (fun () ->
+          E.sync (fun () ->
+              Alcotest.(check int) "active inside body" 1 !active))
+    in
+    check_ok Alcotest.unit "repeated brackets" ()
+      (B.run rt (E.concat [ one; one; one ]));
+    Alcotest.(check int) "released after each body" 0 !active;
+    Alcotest.(check int) "no accumulated resources" 1 !max_active
+
+  let test_acquire_use_release_defect_releases () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let eff =
+      E.scoped
+        (E.acquire_use_release ~acquire:(E.pure "resource")
+           ~release:(fun _ -> E.sync (fun () -> released := true))
+           (fun _ -> E.sync (fun () -> failwith "body defect")))
+    in
+    B.run rt eff |> expect_die;
+    Alcotest.(check bool) "released" true !released
+
+  let test_delay_with_test_clock () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let promise =
+      B.fork_run ctx rt (E.delay (Duration.ms 10) (E.pure "done"))
+    in
+    wait_for_sleepers clock 1;
+    Alcotest.(check bool) "not resolved before adjust" false
+      (B.is_resolved promise);
+    B.adjust_clock clock (Duration.ms 10);
+    check_ok Alcotest.string "delayed" "done" (B.await promise)
+
+  let test_timeout_releases_resource () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let body =
+      E.scoped
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.sync (fun () -> released := true))
+        |> E.bind (fun () -> E.delay (Duration.seconds 1) E.unit))
+    in
+    B.run rt (E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout body)
+    |> expect_fail (( = ) `Timeout);
+    Alcotest.(check bool) "released" true !released
+
+  let test_timeout_fast_success_and_nested_outer_timeout () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let fast =
+      E.delay (Duration.ms 10) (E.pure "ok")
+      |> E.timeout_as (Duration.ms 20) ~on_timeout:`Timeout
+    in
+    let fast_promise = B.fork_run ctx rt fast in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    check_ok Alcotest.string "fast success" "ok" (B.await fast_promise);
+
+    let nested =
+      E.delay (Duration.ms 1_000) (E.pure 1)
+      |> E.timeout_as (Duration.ms 500) ~on_timeout:`Inner_timeout
+      |> E.timeout_as (Duration.ms 10) ~on_timeout:`Outer_timeout
+    in
+    let nested_promise = B.fork_run ctx rt nested in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    expect_fail (( = ) `Outer_timeout) (B.await nested_promise)
+
+  let test_acquire_use_release_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let eff =
+      E.acquire_use_release
+        ~acquire:(E.pure 1)
+        ~release:(fun _ -> E.sync (fun () -> released := true))
+        (fun _ -> E.fail `Boom)
+    in
+    expect_fail (( = ) `Boom) (B.run rt eff);
+    Alcotest.(check bool) "released" true !released
+
+  let test_retry_repeat () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let retry_eff =
+      E.sync (fun () -> incr attempts; !attempts)
+      |> E.bind (fun n -> if n < 3 then E.fail `Again else E.pure n)
+      |> E.retry (Schedule.recurs 5) (function `Again -> true)
+    in
+    check_ok Alcotest.int "retry result" 3 (B.run rt retry_eff);
+    let ticks = ref 0 in
+    let repeat_eff =
+      E.repeat (Schedule.recurs 2) (E.sync (fun () -> incr ticks))
+      |> E.bind (fun () -> E.sync (fun () -> !ticks))
+    in
+    check_ok Alcotest.int "repeat result" 3 (B.run rt repeat_eff)
+
+  let test_with_background_cancels_child () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let finalizer_ran = ref false in
+    let child_started = ref false in
+    let background =
+      E.acquire_release
+        ~acquire:(E.sync (fun () -> child_started := true))
+        ~release:(fun () -> E.sync (fun () -> finalizer_ran := true))
+      |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
+    in
+    let program =
+      E.with_background background (fun () ->
+          E.delay (Duration.ms 10) (E.sync (fun () -> !child_started)))
+    in
+    let promise = B.fork_run ctx rt program in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    check_ok Alcotest.bool "background started" true (B.await promise);
+    Alcotest.(check bool) "background finalizer ran" true !finalizer_ran
+
+  let test_all_preserves_delayed_input_order () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let delayed value ms = E.delay (Duration.ms ms) (E.pure value) in
+    let promise =
+      B.fork_run ctx rt (E.all [ delayed 1 20; delayed 2 10; delayed 3 30 ])
+    in
+    wait_for_sleepers clock 3;
+    B.adjust_clock clock (Duration.ms 10);
+    B.yield ();
+    Alcotest.(check bool) "not resolved after second finishes" false
+      (B.is_resolved promise);
+    B.adjust_clock clock (Duration.ms 20);
+    check_ok (Alcotest.list Alcotest.int) "ordered" [ 1; 2; 3 ]
+      (B.await promise)
+
+  let test_all_settled_collects_outcomes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = E.all_settled [ E.pure 1; E.fail `Nope; E.pure 3 ] in
+    match B.run rt eff with
+    | Exit.Ok [ Ok 1; Error (Cause.Fail `Nope); Ok 3 ] -> ()
+    | Exit.Ok _ -> Alcotest.fail "unexpected all_settled result list"
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let test_all_empty_and_fail_fast_finalizer () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    check_ok (Alcotest.list Alcotest.int) "all empty" []
+      (B.run rt (E.all []));
+    check_ok (Alcotest.list Alcotest.int) "for_each_par empty" []
+      (B.run rt (E.for_each_par [] E.pure));
+    Alcotest.(check int) "all_settled empty" 0
+      (List.length (run_ok rt (E.all_settled [])));
+
+    let released = ref false in
+    let slow =
+      E.acquire_use_release ~acquire:E.unit
+        ~release:(fun () -> E.sync (fun () -> released := true))
+        (fun () -> E.delay (Duration.seconds 1) E.unit)
+    in
+    let eff = E.all [ E.delay (Duration.ms 1) (E.fail `Boom); slow ] in
+    let promise = B.fork_run ctx rt eff in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 1);
+    (match B.await promise with
+    | Exit.Error cause when cause_has_fail (( = ) `Boom) cause -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected cause containing Boom, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected fail-fast failure");
+    Alcotest.(check bool) "cancelled sibling released" true !released
+
+  let test_race_cancels_loser_finalizer () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let slow =
+      E.scoped
+        (E.acquire_release ~acquire:E.unit
+           ~release:(fun () -> E.sync (fun () -> released := true))
+        |> E.bind (fun () -> E.delay (Duration.seconds 1) (E.pure 1)))
+    in
+    let fast = E.delay (Duration.ms 1) (E.pure 2) in
+    check_ok Alcotest.int "winner" 2 (B.run rt (E.race [ slow; fast ]));
+    Alcotest.(check bool) "loser released" true !released
+
+  let test_for_each_par_bounded_caps_concurrency () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let current = ref 0 in
+    let max_seen = ref 0 in
+    let worker n =
+      E.sync (fun () ->
+          incr current;
+          max_seen := max !max_seen !current)
+      |> E.bind (fun () -> E.delay (Duration.ms 10) E.unit)
+      |> E.finally (E.sync (fun () -> decr current))
+      |> E.map (fun () -> n)
+    in
+    let promise =
+      B.fork_run ctx rt
+        (E.for_each_par_bounded ~max:2 [ 1; 2; 3; 4 ] worker)
+    in
+    wait_for_sleepers clock 2;
+    Alcotest.(check int) "max first wave" 2 !max_seen;
+    B.adjust_clock clock (Duration.ms 10);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    check_ok (Alcotest.list Alcotest.int) "results" [ 1; 2; 3; 4 ]
+      (B.await promise);
+    Alcotest.(check int) "max concurrency" 2 !max_seen
+
+  let test_for_each_par_bounded_rejects_nonpositive_max () =
+    Alcotest.check_raises "max zero"
+      (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
+      (fun () -> ignore (E.for_each_par_bounded ~max:0 [ 1 ] E.pure))
+
+  let test_queue_channel_semaphore_pubsub () =
+    B.with_runtime @@ fun _ctx rt ->
+    let queue = Queue.create () in
+    let queue_eff =
+      Queue.send queue 11 |> E.bind (fun () -> Queue.recv queue)
+    in
+    check_ok Alcotest.int "queue" 11 (B.run rt queue_eff);
+
+    let channel = Channel.create ~capacity:1 () in
+    let channel_eff =
+      E.par (Channel.send channel 7) (Channel.recv channel) |> E.map snd
+    in
+    check_ok Alcotest.int "channel" 7 (B.run rt channel_eff);
+
+    let semaphore = Semaphore.make ~permits:1 in
+    let semaphore_eff =
+      Semaphore.with_permits semaphore 1 (fun () ->
+          E.sync (fun () -> Semaphore.available semaphore))
+      |> E.bind (fun inside ->
+             E.sync (fun () -> (inside, Semaphore.available semaphore)))
+    in
+    check_ok
+      (Alcotest.pair Alcotest.int Alcotest.int)
+      "semaphore" (0, 1) (B.run rt semaphore_eff);
+
+    let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+    let pubsub_eff =
+      Pubsub.subscribe hub (fun sub ->
+          E.par (Pubsub.publish hub 5) (Pubsub.recv sub) |> E.map snd)
+    in
+    check_ok Alcotest.int "pubsub" 5 (B.run rt pubsub_eff)
+
+  let test_queue_close_and_close_with_error_drain () =
+    B.with_runtime @@ fun _ctx rt ->
+    let clean = Queue.create () in
+    check_ok Alcotest.unit "send before clean close" ()
+      (B.run rt (Queue.send clean 1));
+    Queue.close clean;
+    check_ok Alcotest.int "drain after clean close" 1
+      (B.run rt (Queue.recv clean));
+    expect_fail (( = ) `Closed) (B.run rt (Queue.recv clean));
+
+    let errored = Queue.create () in
+    check_ok Alcotest.unit "send before error close" ()
+      (B.run rt (Queue.send errored 2));
+    Queue.close_with_error errored `Boom;
+    check_ok Alcotest.int "drain after error close" 2
+      (B.run rt (Queue.recv errored));
+    expect_fail
+      (function `Closed_with_error `Boom -> true | _ -> false)
+      (B.run rt (Queue.recv errored))
+
+  let test_channel_close_and_close_with_error_drain () =
+    B.with_runtime @@ fun _ctx rt ->
+    let clean = Channel.create ~capacity:2 () in
+    check_ok Alcotest.unit "send before clean close" ()
+      (B.run rt (Channel.send clean 1));
+    Channel.close clean;
+    check_ok Alcotest.int "drain after clean close" 1
+      (B.run rt (Channel.recv clean));
+    expect_fail (( = ) `Closed) (B.run rt (Channel.recv clean));
+
+    let errored = Channel.create ~capacity:2 () in
+    check_ok Alcotest.unit "send before error close" ()
+      (B.run rt (Channel.send errored 2));
+    Channel.close_with_error errored `Boom;
+    check_ok Alcotest.int "drain after error close" 2
+      (B.run rt (Channel.recv errored));
+    expect_fail
+      (function `Closed_with_error `Boom -> true | _ -> false)
+      (B.run rt (Channel.recv errored))
+
+  let test_pubsub_close_with_error_drains_subscription () =
+    B.with_runtime @@ fun _ctx rt ->
+    let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+    let eff =
+      Pubsub.subscribe hub (fun sub ->
+          Pubsub.publish hub 1
+          |> E.bind (fun _ ->
+                 E.sync (fun () -> Pubsub.close_with_error hub `Boom))
+          |> E.bind (fun () ->
+                 Pubsub.recv sub
+                 |> E.bind (fun first ->
+                        Pubsub.recv sub |> E.map (fun second -> (first, second)))))
+    in
+    expect_fail
+      (function `Closed_with_error `Boom -> true | _ -> false)
+      (B.run rt eff)
+
+  let test_semaphore_validation_and_with_permits_cleanup () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.check_raises "zero permits"
+      (Invalid_argument "Eta.Semaphore.make: permits must be > 0")
+      (fun () -> ignore (Semaphore.make ~permits:0));
+    let semaphore = Semaphore.make ~permits:2 in
+    check_ok Alcotest.unit "acquire" () (B.run rt (Semaphore.acquire semaphore 2));
+    Alcotest.(check int) "available after acquire" 0
+      (Semaphore.available semaphore);
+    Semaphore.release semaphore 2;
+    Alcotest.(check int) "available after release" 2
+      (Semaphore.available semaphore);
+    let failing =
+      Semaphore.with_permits semaphore 2 (fun () -> E.fail `Boom)
+    in
+    expect_fail (( = ) `Boom) (B.run rt failing);
+    Alcotest.(check int) "released after failure" 2
+      (Semaphore.available semaphore)
+
+  let test_pool_basic_reuse () =
+    B.with_runtime @@ fun _ctx rt ->
+    let opened = ref 0 in
+    let closed = ref 0 in
+    let acquire =
+      E.sync (fun () ->
+          incr opened;
+          !opened)
+    in
+    let release _ = E.sync (fun () -> incr closed) in
+    let eff =
+      Pool.create ~max_size:1 ~acquire ~release ()
+      |> E.bind (fun pool ->
+             Pool.with_resource pool (fun conn -> E.pure conn)
+             |> E.bind (fun first ->
+                    Pool.with_resource pool (fun conn -> E.pure (first, conn))))
+    in
+    check_ok (Alcotest.pair Alcotest.int Alcotest.int) "reused" (1, 1)
+      (B.run rt eff);
+    Alcotest.(check int) "not closed while runtime alive" 0 !closed
+
+  let test_pool_body_failure_and_defect_release_resource () =
+    B.with_runtime @@ fun _ctx rt ->
+    let opened = ref 0 in
+    let closed = ref 0 in
+    let acquire =
+      E.sync (fun () ->
+          incr opened;
+          !opened)
+    in
+    let release _ = E.sync (fun () -> incr closed) in
+    let pool = run_ok rt (Pool.create ~max_size:1 ~acquire ~release ()) in
+    expect_fail (( = ) `Boom)
+      (B.run rt (Pool.with_resource pool (fun _ -> E.fail `Boom)));
+    let stats_after_failure = Pool.stats pool in
+    Alcotest.(check int) "idle after typed failure" 1
+      stats_after_failure.Pool.idle;
+    Alcotest.(check int) "active after typed failure" 0
+      stats_after_failure.Pool.active;
+
+    B.run rt
+      (Pool.with_resource pool (fun _ ->
+           E.sync (fun () -> failwith "body defect")))
+    |> expect_die;
+    let stats_after_defect = Pool.stats pool in
+    Alcotest.(check int) "idle after defect" 1 stats_after_defect.Pool.idle;
+    Alcotest.(check int) "active after defect" 0
+      stats_after_defect.Pool.active;
+    check_ok Alcotest.unit "shutdown" ()
+      (B.run rt (Pool.shutdown ~deadline:(Duration.ms 100) pool));
+    Alcotest.(check int) "closed on shutdown" 1 !closed
+
+  let test_pool_release_defect_releases_capacity () =
+    B.with_runtime @@ fun _ctx rt ->
+    let opened = ref 0 in
+    let closed = ref 0 in
+    let release_attempts = ref 0 in
+    let acquire =
+      E.sync (fun () ->
+          incr opened;
+          !opened)
+    in
+    let release _ =
+      E.sync (fun () ->
+          incr release_attempts;
+          incr closed;
+          if !release_attempts = 1 then failwith "release defect")
+    in
+    let pool =
+      run_ok rt
+        (Pool.create ~max_size:1 ~max_idle:0 ~acquire ~release ())
+    in
+    B.run rt (Pool.with_resource pool (fun _ -> E.unit))
+    |> expect_finalizer_die;
+    let after_defect = Pool.stats pool in
+    Alcotest.(check int) "active after release defect" 0
+      after_defect.Pool.active;
+    Alcotest.(check int) "closed after release defect" 1
+      after_defect.Pool.closed;
+    check_ok Alcotest.int "capacity reusable" 2
+      (B.run rt (Pool.with_resource pool E.pure));
+    check_ok Alcotest.unit "shutdown" ()
+      (B.run rt (Pool.shutdown ~deadline:(Duration.ms 100) pool))
+
+  let test_supervisor_observes_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Supervisor.scoped
+        {
+          run =
+            (fun (type s) sup ->
+              let open Supervisor.Scope in
+              let* (_child : (s, [> `Boom ], int) Supervisor.child) =
+                start sup (fail `Boom)
+              in
+              let* () = yield in
+              failures sup);
+        }
+    in
+    match B.run rt eff with
+    | Exit.Ok [ Cause.Fail `Boom ] -> ()
+    | Exit.Ok _ -> Alcotest.fail "unexpected supervisor failure list"
+    | Exit.Error cause ->
+        Alcotest.failf "expected observed failure, got %a"
+          (Cause.pp pp_hidden) cause
+
+  let test_supervisor_await_and_cancel () =
+    B.with_runtime @@ fun _ctx rt ->
+    let await_program =
+      Supervisor.scoped
+        {
+          run =
+            (fun (type s) sup ->
+              let open Supervisor.Scope in
+              let* (child : (s, [> `Boom ], int) Supervisor.child) =
+                start sup (fail `Boom)
+              in
+              await child);
+        }
+    in
+    expect_fail (( = ) `Boom) (B.run rt await_program);
+
+    let finalizer_ran = ref false in
+    let child =
+      E.acquire_release ~acquire:E.unit
+        ~release:(fun () -> E.sync (fun () -> finalizer_ran := true))
+      |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
+    in
+    let cancel_program =
+      Supervisor.scoped
+        {
+          run =
+            (fun (type s) sup ->
+              let open Supervisor.Scope in
+              let* (child : (s, [> `Boom ], unit) Supervisor.child) =
+                start sup (lift child)
+              in
+              let* () = yield in
+              let* () = cancel child in
+              await child);
+        }
+    in
+    match B.run rt cancel_program with
+    | Exit.Error (Cause.Interrupt None) ->
+        Alcotest.(check bool) "finalizer ran" true !finalizer_ran
+    | Exit.Error cause ->
+        Alcotest.failf "expected Interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "expected Interrupt, got Ok"
+
+  let test_runtime_contract_locals_and_stream () =
+    B.with_runtime @@ fun _ctx rt ->
+    let local = Rc.create_local () in
+    let locals_eff =
+      E.Expert.make @@ fun context ->
+      let contract = E.Expert.contract context in
+      let result =
+        contract.Rc.local_with_binding local 42 (fun () ->
+            contract.Rc.run_scope @@ fun sw ->
+            let promise, resolver = contract.Rc.create_promise () in
+            contract.Rc.fork sw (fun () ->
+                contract.Rc.resolve_promise resolver
+                  (contract.Rc.local_get local));
+            contract.Rc.await_promise promise)
+      in
+      match result with
+      | Some value -> Exit.Ok value
+      | None -> Exit.Error (Cause.Fail `Missing_local)
+    in
+    check_ok Alcotest.int "local" 42 (B.run rt locals_eff);
+
+    let stream_eff =
+      E.Expert.make @@ fun context ->
+      let contract = E.Expert.contract context in
+      let stream = contract.Rc.create_stream 2 in
+      let values =
+        contract.Rc.run_scope @@ fun sw ->
+        contract.Rc.fork sw (fun () ->
+            contract.Rc.stream_add stream 1;
+            contract.Rc.stream_add stream 2);
+        let first = contract.Rc.stream_take stream in
+        let second = contract.Rc.stream_take stream in
+        (first, second)
+      in
+      Exit.Ok values
+    in
+    check_ok (Alcotest.pair Alcotest.int Alcotest.int) "stream fifo" (1, 2)
+      (B.run rt stream_eff)
+
+  let test_daemon_drain () =
+    B.with_runtime @@ fun _ctx rt ->
+    let completed = ref false in
+    B.run rt (E.daemon (E.sync (fun () -> completed := true)))
+    |> expect_ok |> ignore;
+    B.drain rt;
+    Alcotest.(check bool) "daemon completed" true !completed
+
+  let test_runtime_fork_daemon_scope_does_not_join () =
+    B.with_runtime @@ fun _ctx rt ->
+    let daemon_scope =
+      E.Expert.make @@ fun context ->
+      let contract = E.Expert.contract context in
+      try
+        contract.Rc.run_scope @@ fun sw ->
+        contract.Rc.fork_daemon sw (fun () -> contract.Rc.await_cancel ());
+        Exit.Ok ()
+      with exn -> E.Expert.exit_of_exn context exn
+    in
+    match
+      B.run rt
+        (E.timeout_as (Eta.Duration.ms 50) ~on_timeout:`Timeout daemon_scope)
+    with
+    | Exit.Ok () -> ()
+    | Exit.Error (Cause.Fail `Timeout) ->
+        Alcotest.fail "runtime joined a daemon child inside run_scope"
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected failure: %a" (Cause.pp pp_hidden) cause
+
+  let test_observability_named_span () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    B.run rt (E.named "shared.runtime.span" (E.pure 1))
+    |> check_ok Alcotest.int "value" 1;
+    match Tracer.dump tracer with
+    | [ span ] ->
+        Alcotest.(check string) "span name" "shared.runtime.span"
+          span.Tracer.name
+    | spans ->
+        Alcotest.failf "expected one span, got %d" (List.length spans)
+
+  let tests =
+    [
+      ( "Effect core",
+        [
+          Alcotest.test_case "pure bind catch" `Quick test_pure_bind_catch;
+          Alcotest.test_case "collect_names" `Quick test_collect_names;
+          Alcotest.test_case "from_result and exit to_result" `Quick
+            test_from_result_and_exit_to_result;
+          Alcotest.test_case "map bind tap runtime" `Quick
+            test_map_bind_tap_runtime;
+          Alcotest.test_case "map_error" `Quick test_map_error;
+          Alcotest.test_case "map_error maps full cause" `Quick
+            test_map_error_maps_full_cause;
+          Alcotest.test_case "sync defect" `Quick test_sync_defect;
+          Alcotest.test_case "backtrace capture flag" `Quick
+            test_backtrace_capture_flag;
+          Alcotest.test_case "run_exn preserves backtrace" `Quick
+            test_run_exn_uses_captured_backtrace;
+          Alcotest.test_case "run_exn preserves typed failure diagnostics"
+            `Quick test_run_exn_preserves_typed_failure_diagnostics;
+          Alcotest.test_case "finally cleanup failure after success" `Quick
+            test_finally_cleanup_failure_after_success;
+          Alcotest.test_case "finally suppressed cleanup failure" `Quick
+            test_finally_suppressed_cleanup_failure;
+        ] );
+      ( "Time and resources",
+        [
+          Alcotest.test_case "delay with test clock" `Quick
+            test_delay_with_test_clock;
+          Alcotest.test_case "timeout releases resource" `Quick
+            test_timeout_releases_resource;
+          Alcotest.test_case "timeout fast success and nested outer timeout"
+            `Quick test_timeout_fast_success_and_nested_outer_timeout;
+          Alcotest.test_case "acquire_release ordering and root finalizer"
+            `Quick test_acquire_release_ordering_and_root_finalizer;
+          Alcotest.test_case "acquire_release releases on defect" `Quick
+            test_acquire_release_releases_on_defect;
+          Alcotest.test_case "acquire_use_release success and lexical" `Quick
+            test_acquire_use_release_success_and_lexical;
+          Alcotest.test_case "acquire_use_release typed failure" `Quick
+            test_acquire_use_release_typed_failure;
+          Alcotest.test_case "acquire_use_release defect releases" `Quick
+            test_acquire_use_release_defect_releases;
+          Alcotest.test_case "retry repeat" `Quick test_retry_repeat;
+          Alcotest.test_case "with_background cancels child" `Quick
+            test_with_background_cancels_child;
+          Alcotest.test_case "daemon drain" `Quick test_daemon_drain;
+          Alcotest.test_case "runtime daemon scope does not join" `Quick
+            test_runtime_fork_daemon_scope_does_not_join;
+        ] );
+      ( "Concurrency",
+        [
+          Alcotest.test_case "all preserves delayed input order" `Quick
+            test_all_preserves_delayed_input_order;
+          Alcotest.test_case "all_settled collects outcomes" `Quick
+            test_all_settled_collects_outcomes;
+          Alcotest.test_case "all empty and fail-fast finalizer" `Quick
+            test_all_empty_and_fail_fast_finalizer;
+          Alcotest.test_case "race cancels loser finalizer" `Quick
+            test_race_cancels_loser_finalizer;
+          Alcotest.test_case "for_each_par_bounded caps concurrency" `Quick
+            test_for_each_par_bounded_caps_concurrency;
+          Alcotest.test_case "for_each_par_bounded rejects nonpositive max"
+            `Quick test_for_each_par_bounded_rejects_nonpositive_max;
+        ] );
+      ( "Primitives",
+        [
+          Alcotest.test_case "queue channel semaphore pubsub" `Quick
+            test_queue_channel_semaphore_pubsub;
+          Alcotest.test_case "queue close and close_with_error drain" `Quick
+            test_queue_close_and_close_with_error_drain;
+          Alcotest.test_case "channel close and close_with_error drain" `Quick
+            test_channel_close_and_close_with_error_drain;
+          Alcotest.test_case "pubsub close_with_error drains subscription"
+            `Quick test_pubsub_close_with_error_drains_subscription;
+          Alcotest.test_case "semaphore validation and cleanup" `Quick
+            test_semaphore_validation_and_with_permits_cleanup;
+          Alcotest.test_case "pool basic reuse" `Quick test_pool_basic_reuse;
+          Alcotest.test_case "pool body failure and defect release" `Quick
+            test_pool_body_failure_and_defect_release_resource;
+          Alcotest.test_case "pool release defect releases capacity" `Quick
+            test_pool_release_defect_releases_capacity;
+        ] );
+      ( "Supervisor and contract",
+        [
+          Alcotest.test_case "supervisor observes failure" `Quick
+            test_supervisor_observes_failure;
+          Alcotest.test_case "supervisor await and cancel" `Quick
+            test_supervisor_await_and_cancel;
+          Alcotest.test_case "runtime contract locals and stream" `Quick
+            test_runtime_contract_locals_and_stream;
+        ] );
+      ( "Observability",
+        [
+          Alcotest.test_case "named span" `Quick test_observability_named_span;
+        ] );
+    ]
+end

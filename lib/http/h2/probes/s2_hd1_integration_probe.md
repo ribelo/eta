@@ -7,7 +7,7 @@ client/server state instead of the fake frame multiplexer?
 
 ## Implementation
 
-- `Eta_http.H2.Multiplexer.request` gates a request through eta-http
+- `Eta_http_eio.H2.Multiplexer.request` gates a request through eta-http
   `Stream_state` before calling `H2.Client_connection.request`.
 - Eta_stream-level h2 errors mark the eta-http stream as remotely reset.
 - Response body release closes the h2 body reader when it is still open, then
@@ -42,7 +42,7 @@ shape also has a deterministic 100-concurrent-GET fixture on one h2 client
 connection.
 
 The blocked-writer teardown row is covered by the Eta-effect writer loop:
-`Eta_http.H2.Writer.run_client` drives a real `H2.Client_connection`
+`Eta_http_eio.H2.Writer.run_client` drives a real `H2.Client_connection`
 write operation, the test blocks the write callback, and
 `Eta.Supervisor.scoped` exits by cancelling the writer child.
 

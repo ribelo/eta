@@ -1,0 +1,3 @@
+(library
+ (name eta_blocking_common_tests)
+ (libraries eta eta_blocking eta_runtime_common_tests alcotest unix))

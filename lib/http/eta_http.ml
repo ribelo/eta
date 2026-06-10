@@ -38,33 +38,27 @@ let request_with_retry = Client.request_with_retry
 
 module Tls = struct
   module Config = Config
-  module Eio = Tls_eio
+  module OpenSSL = Openssl
 end
 
 module Transport = struct
   module Alpn = Alpn
-  module Connect = Connect
   module Dispatch = Dispatch
 end
 
 module H1 = struct
-  module Client = H1_client
   module Parse = Parse
   module Write = Write
 end
 
 module H2 = struct
   module Admission = Admission
-  module Connection = Connection
   module Frame = Frame
   module Informational_filter = Informational_filter
-  module Multiplexer = Multiplexer
   module Security = Security
   module Stream_state = Stream_state
-  module Writer = Writer
 end
 
 module Ws = struct
-  module Client = Ws_client
   module Codec = Codec
 end

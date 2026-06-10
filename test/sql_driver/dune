@@ -1,6 +1,19 @@
+(library
+ (name eta_sql_driver_common_tests)
+ (modules sql_driver_common_suites)
+ (libraries
+  eta
+  eta_blocking
+  eta_sql_driver
+  eta_runtime_common_tests
+  alcotest
+  unix
+  threads))
+
 (test
- (name test_eta_sql_driver)
- (libraries eta_eio eta eta_blocking eta_sql_driver alcotest eio_main unix threads)
+ (name run_eio)
+ (modules run_eio)
+ (libraries eta_sql_driver_common_tests eta_test_backend_eio alcotest)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

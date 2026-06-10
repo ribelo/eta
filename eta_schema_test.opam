@@ -8,7 +8,6 @@ depends: [
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_schema"
-  "eta_test"
   "alcotest"
   "odoc" {with-doc}
 ]

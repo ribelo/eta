@@ -5,12 +5,12 @@ let test_transport_resolve_stream_success () =
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 443) in
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   Alcotest.(check string) "host" "example.test" target.host;
   Alcotest.(check int) "port" 443 target.port;
   with_test_clock @@ fun _sw _clock rt ->
   let result =
-    Eta_http.Transport.Connect.resolve_stream ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.resolve_stream ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
     |> Eta_test.Expect.expect_ok
   in
@@ -20,10 +20,10 @@ let test_transport_resolve_stream_empty_is_typed () =
   let net = Eio_mock.Net.make "eta-http-net-empty" in
   Eio_mock.Net.on_getaddrinfo net [ `Return [] ];
   let url = Eta_http.Core.Url.of_string "https://missing.example.test/" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Connect.resolve_stream ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.resolve_stream ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
   with
   | Eta.Exit.Ok _ -> Alcotest.fail "empty DNS result unexpectedly succeeded"
@@ -43,10 +43,10 @@ let test_transport_resolve_stream_cancellation_propagates () =
   Eio_mock.Net.on_getaddrinfo net
     [ `Raise (Eio.Cancel.Cancelled (Failure "dns cancelled")) ];
   let url = Eta_http.Core.Url.of_string "https://cancel.example.test/" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Connect.resolve_stream ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.resolve_stream ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
   with
   | exception Eio.Cancel.Cancelled _ -> ()
@@ -62,9 +62,9 @@ let test_transport_connect_tcp_success () =
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Return (Eio_mock.Flow.make "eta-http-tcp") ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun sw _clock rt ->
-  Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
+  Eta_http_eio.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
   |> Eta.Runtime.run rt
   |> Eta_test.Expect.expect_ok
   |> ignore
@@ -75,10 +75,10 @@ let test_transport_connect_tcp_failure_is_typed () =
   Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ] ];
   Eio_mock.Net.on_connect net [ `Raise (Failure "connect boom") ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun sw _clock rt ->
   match
-    Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
   with
   | Eta.Exit.Ok _ -> Alcotest.fail "TCP connect unexpectedly succeeded"
@@ -98,10 +98,10 @@ let test_transport_connect_tcp_cancellation_propagates () =
   Eio_mock.Net.on_connect net
     [ `Raise (Eio.Cancel.Cancelled (Failure "connect cancelled")) ];
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun sw _clock rt ->
   match
-    Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
     |> Eta.Runtime.run rt
   with
   | exception Eio.Cancel.Cancelled _ -> ()
@@ -122,10 +122,10 @@ let test_transport_connect_tcp_timeout_cancels_without_connect_error () =
     Eta_http.Error.make ~method_:"GET" ~uri
       (Connect_timeout { timeout_ms = Some 5 })
   in
-  let target = Eta_http.Transport.Connect.target_of_url url in
+  let target = Eta_http_eio.Transport.Connect.target_of_url url in
   with_test_clock @@ fun sw clock rt ->
   let timed =
-    Eta_http.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.connect_tcp ~sw ~net ~method_:"GET" target
     |> Eta.Effect.timeout_as (Eta.Duration.ms 5) ~on_timeout:timeout_error
   in
   let result = Eta_test.Async.fork_run sw rt timed in
@@ -160,7 +160,7 @@ module Counted_tls_flow = struct
   let close t = incr t.closed
 end
 
-let counted_tls_flow closed : Eta_http.Transport.Connect.tcp_flow =
+let counted_tls_flow closed : Eta_http_eio.Transport.Connect.tcp_flow =
   Eio.Resource.T
     ( { closed },
       Eio.Resource.handler
@@ -171,13 +171,13 @@ let counted_tls_flow closed : Eta_http.Transport.Connect.tcp_flow =
 let test_transport_connect_tls_closes_flow_on_failure () =
   let url = Eta_http.Core.Url.of_string "https://example.test/path" in
   let target =
-    { (Eta_http.Transport.Connect.target_of_url url) with host = "bad host" }
+    { (Eta_http_eio.Transport.Connect.target_of_url url) with host = "bad host" }
   in
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Connect.connect_tls ~method_:"GET" target
+    Eta_http_eio.Transport.Connect.connect_tls ~method_:"GET" target
       flow
     |> Eta.Runtime.run rt
   with

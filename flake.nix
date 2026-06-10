@@ -364,6 +364,8 @@
               ocamlPackages.findlib
               ocamlPackages.eio
               ocamlPackages.eio_main
+              ocamlPackages.js_of_ocaml
+              ocamlPackages.js_of_ocaml-ppx
               ocamlPackages.alcotest
               ocamlPackages.angstrom
               ocamlPackages.base64

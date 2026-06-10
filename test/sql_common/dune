@@ -1,0 +1,4 @@
+(library
+ (name eta_sql_common_tests)
+ (modules sql_common_suites)
+ (libraries eta_sql_dsl eta_runtime_common_tests alcotest))

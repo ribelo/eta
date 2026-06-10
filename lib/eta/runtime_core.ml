@@ -91,7 +91,7 @@ type 'err t = {
   default_fail_key : Typed_fail.key;
 }
 
-let create_with_contract ~contract ?sleep ?tracer
+let create_with_contract ~contract ?sleep ?now_ms ?tracer
     ?(sampler = Sampler.always_on) ?(auto_instrument = false) ?logger ?meter
     ?random ?(services = []) ?(capture_backtrace = true) () =
   let tracing_enabled = Option.is_some tracer in
@@ -101,7 +101,10 @@ let create_with_contract ~contract ?sleep ?tracer
   let logger = Option.value logger ~default:Logger.noop in
   let meter = Option.value meter ~default:Meter.noop in
   let sleep = Option.value sleep ~default:contract.Runtime_contract.sleep in
-  let now_ms = contract.Runtime_contract.now_ms in
+  let now_ms = Option.value now_ms ~default:contract.Runtime_contract.now_ms in
+  let contract =
+    { contract with Runtime_contract.sleep = sleep; now_ms = now_ms }
+  in
   let random =
     match random with
     | Some random -> random

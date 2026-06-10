@@ -1,0 +1,9 @@
+(library
+ (name eta_ai_common_tests)
+ (libraries
+  eta
+  eta_ai
+  eta_http
+  eta_redacted
+  eta_runtime_common_tests
+  alcotest))

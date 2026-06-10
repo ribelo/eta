@@ -201,7 +201,7 @@ let test_encoder_smoke () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net:(Eio.Stdenv.net stdenv)
       ~clock:(Eio.Stdenv.clock stdenv)
       ~host:"127.0.0.1" ~port:1
@@ -259,7 +259,7 @@ let test_exception_stacktrace_exported () =
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock stdenv in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net:(Eio.Stdenv.net stdenv)
       ~clock ~host:"127.0.0.1" ~port:1
       ~service_name:"eta-otel-exception-stacktrace"
@@ -295,7 +295,7 @@ let test_concurrent_span_attributes_stay_on_active_span () =
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock stdenv in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net:(Eio.Stdenv.net stdenv)
       ~clock ~host:"127.0.0.1" ~port:1
       ~service_name:"eta-otel-concurrent-attrs"
@@ -335,7 +335,7 @@ let test_direct_tracer_attributes_use_fiber_span_stack () =
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock stdenv in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net:(Eio.Stdenv.net stdenv)
       ~clock ~host:"127.0.0.1" ~port:1
       ~service_name:"eta-otel-direct-concurrent-attrs"
@@ -391,7 +391,7 @@ let test_network_partition_reports_error () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net
       ~clock
       ~host:"127.0.0.1" ~port
@@ -415,7 +415,7 @@ let test_malformed_response_reports_error () =
       "HTTP/1.1 500 Broken\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-malformed-response"
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
@@ -439,7 +439,7 @@ let test_custom_otlp_headers_are_sent () =
       ]
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-auth-headers"
       ~headers:
         [
@@ -469,7 +469,7 @@ let test_encode_failure_drains_in_flight () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-encode-failure"
       ~disable_self_metrics:true
       ~on_error:(fun _ -> ())
@@ -492,7 +492,7 @@ let test_encode_failure_keeps_exporter_alive () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-encode-recovery"
       ~disable_self_metrics:true
       ~on_error:(fun _ -> ())
@@ -533,7 +533,7 @@ let test_otlp_retry_excludes_408 () =
       ]
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-no-408-retry"
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
@@ -563,7 +563,7 @@ let test_otlp_retry_includes_429 () =
       ]
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-429-retry"
       ~on_error:(fun msg -> errors := msg :: !errors)
       ()
@@ -586,7 +586,7 @@ let test_slow_collector_flush_timeout () =
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-slow-collector"
       ~on_error:(fun _ -> ())
       ()
@@ -605,7 +605,7 @@ let test_backpressure_overflow_drops () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net
       ~clock
       ~host:"127.0.0.1" ~port ~queue_capacity:1
@@ -633,7 +633,7 @@ let test_shutdown_closes_queues () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw
+    Support.create_exporter ~sw
       ~net
       ~clock
       ~host:"127.0.0.1" ~port
@@ -660,7 +660,7 @@ let test_self_spans_do_not_reenter_export () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw ~net
+    Support.create_exporter ~sw ~net
       ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-spans"
@@ -689,7 +689,7 @@ let test_self_spans_are_bounded_across_flushes () =
   let clock = Eio.Stdenv.clock stdenv in
   let port = closed_tcp_port net in
   let exporter =
-    Eta_otel.create ~sw ~net
+    Support.create_exporter ~sw ~net
       ~clock
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-spans-bounded"
@@ -717,7 +717,7 @@ let test_self_metrics_export_without_recursion () =
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-metrics"
       ~on_error:(fun _ -> ())
       ~on_send:(fun ~path ~body -> sends := (path, body) :: !sends)
@@ -761,7 +761,7 @@ let test_self_metrics_can_be_disabled () =
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-metrics-disabled"
       ~disable_self_metrics:true
       ~on_error:(fun _ -> ())
@@ -787,7 +787,7 @@ let test_self_metrics_path_is_separate () =
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-self-metrics-path"
       ~self_metrics_path:"/internal/metrics"
       ~on_error:(fun _ -> ())
@@ -814,7 +814,7 @@ let motel_reachable net =
 let live_motel_test net clock =
   Eio.Switch.run @@ fun sw ->
   let exporter =
-    Eta_otel.create ~sw ~net ~clock ~host:"127.0.0.1" ~port:27686
+    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port:27686
       ~traces_path:"/v1/traces" ~service_name:"eta-otel-itest"
       ~service_version:"0.0.1"
       ~resource_attrs:

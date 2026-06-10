@@ -11,7 +11,9 @@ depends: [
   "eta_ai_openai_codec"
   "eta_redacted"
   "eta_http"
+  "eta_http_eio"
   "eta_stream"
+  "eio" {>= "1.0"}
   "base64"
   "yojson" {>= "2.0"}
   "odoc" {with-doc}

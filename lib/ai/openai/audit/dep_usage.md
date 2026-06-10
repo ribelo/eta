@@ -43,15 +43,15 @@ Search:
 - lib/ai/openai/realtime.ml:140:  Eta_http.request client request
 - lib/ai/openai/realtime.ml:143:  |> E.bind (fun (response : Eta_http.Response.t) ->
 - lib/ai/openai/realtime.ml:144:         read_response_body response.Eta_http.Response.body
-- lib/ai/openai/realtime.ml:178:type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
-- lib/ai/openai/realtime.ml:180:let widen_ws_error (error : Eta_http.Ws.Client.ws_error) : realtime_error =
-- lib/ai/openai/realtime.ml:266:type t = { ws : Eta_http.Ws.Client.t }
+- lib/ai/openai/realtime.ml:178:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
+- lib/ai/openai/realtime.ml:180:let widen_ws_error (error : Eta_http_eio.Ws.Client.ws_error) : realtime_error =
+- lib/ai/openai/realtime.ml:266:type t = { ws : Eta_http_eio.Ws.Client.t }
 - lib/ai/openai/realtime.ml:293:  Eta_http.Core.Header.unsafe_of_list
 - lib/ai/openai/realtime.ml:294:    (("Authorization", "Bearer " ^ Eta_redacted.value api_key)
-- lib/ai/openai/realtime.ml:300:  Eta_http.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
-- lib/ai/openai/realtime.ml:308:      Eta_http.Ws.Client.send_text t.ws raw
-- lib/ai/openai/realtime.ml:312:  Eta_http.Ws.Client.incoming t.ws
-- lib/ai/openai/realtime.ml:319:let close t = Eta_http.Ws.Client.close t.ws
+- lib/ai/openai/realtime.ml:300:  Eta_http_eio.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
+- lib/ai/openai/realtime.ml:308:      Eta_http_eio.Ws.Client.send_text t.ws raw
+- lib/ai/openai/realtime.ml:312:  Eta_http_eio.Ws.Client.incoming t.ws
+- lib/ai/openai/realtime.ml:319:let close t = Eta_http_eio.Ws.Client.close t.ws
 - lib/ai/openai/realtime.mli:9:  input_audio_format : Eta_ai.audio_format option;
 - lib/ai/openai/realtime.mli:10:  output_audio_format : Eta_ai.audio_format option;
 - lib/ai/openai/realtime.mli:12:  turn_detection : Eta_ai.Json.t option;
@@ -74,17 +74,17 @@ Search:
 - lib/ai/openai/realtime.mli:68:  | Response_done of Eta_ai.raw_json option
 - lib/ai/openai/realtime.mli:71:  | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
 - lib/ai/openai/realtime.mli:72:  | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
-- lib/ai/openai/realtime.mli:74:type realtime_error = [ Eta_http.Ws.Client.ws_error | `Encode of string ]
+- lib/ai/openai/realtime.mli:74:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
 - lib/ai/openai/realtime.mli:76:val client_event_json : client_event -> (Eta_ai.Json.t, realtime_error) result
 - lib/ai/openai/realtime.mli:77:val client_event_to_string : client_event -> (Eta_ai.raw_json, realtime_error) result
 - lib/ai/openai/realtime.mli:78:val decode_server_event : Eta_ai.raw_json -> server_event
 - lib/ai/openai/realtime.mli:85:  sw:Eio.Switch.t ->
 - lib/ai/openai/realtime.mli:86:  net:_ Eio.Net.t ->
 - lib/ai/openai/realtime.mli:87:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/realtime.mli:90:  (t, Eta_http.Ws.Client.ws_error) Eta.Effect.t
+- lib/ai/openai/realtime.mli:90:  (t, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/openai/realtime.mli:92:val send_event : t -> client_event -> (unit, realtime_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:93:val events : t -> (server_event, Eta_http.Ws.Client.ws_error) Eta_stream.Stream.t
-- lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http.Ws.Client.ws_error) Eta.Effect.t
+- lib/ai/openai/realtime.mli:93:val events : t -> (server_event, Eta_http_eio.Ws.Client.ws_error) Eta_stream.Stream.t
+- lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:9:  schema : Eta_ai.Json.t;
 - lib/ai/openai/eta_ai_openai.mli:18:  schema_json:Eta_ai.raw_json ->
 - lib/ai/openai/eta_ai_openai.mli:20:  (structured_output, Eta_ai.ai_error) result

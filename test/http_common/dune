@@ -1,0 +1,13 @@
+(library
+ (name eta_http_common_tests)
+ (libraries
+  eta
+  eta_http
+  eta_http_eio
+  eta_runtime_common_tests
+  alcotest
+  bigstringaf
+  cstruct
+  h2
+  yojson
+  unix))

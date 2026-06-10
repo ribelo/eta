@@ -1,14 +1,6 @@
 (library
  (name eta_js_test)
  (public_name eta_js_test)
- (modules eta_js_test test_clock)
- (modes melange)
- (preprocess (pps melange.ppx))
- (libraries eta_js)
+ (modules eta_js_test)
+ (libraries eta_js js_of_ocaml)
  (synopsis "Testing helpers for eta_js"))
-
-(melange.emit
- (target eta_js_test_dist)
- (modules)
- (module_systems (esm mjs))
- (libraries eta_js_test))

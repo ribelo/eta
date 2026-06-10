@@ -1,6 +1,0 @@
-(test
- (name run)
- (libraries eta_schema_test eta_schema eta yojson)
- (action
-  (setenv EIO_BACKEND posix
-   (run %{test}))))

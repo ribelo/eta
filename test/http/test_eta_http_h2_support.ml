@@ -2,7 +2,7 @@ open Test_eta_http_support
 
 let h2_iovecs_to_string iovecs =
   iovecs
-  |> Eta_http.H2.Writer.cstructs_of_iovecs
+  |> Eta_http_eio.H2.Writer.cstructs_of_iovecs
   |> List.map Cstruct.to_string
   |> String.concat ""
 
@@ -123,7 +123,7 @@ type h2_mux_result = {
   mutable mux_eof : bool;
   mutable mux_stream_errors : string list;
   mutable mux_client_errors : string list;
-  mutable mux_stream : Eta_http.H2.Multiplexer.stream option;
+  mutable mux_stream : Eta_http_eio.H2.Multiplexer.stream option;
   mutable mux_release : Eta_http.H2.Stream_state.release option;
 }
 
@@ -139,7 +139,7 @@ let h2_mux_result () =
   }
 
 let h2_mux_create ?max_concurrent ?config result () =
-  Eta_http.H2.Multiplexer.create ?max_concurrent ?config
+  Eta_http_eio.H2.Multiplexer.create ?max_concurrent ?config
     ~error_handler:(fun error ->
       result.mux_client_errors <- h2_pp_client_error error :: result.mux_client_errors)
     ()
@@ -148,7 +148,7 @@ let h2_schedule_mux_body mux result stream body =
   let rec loop () =
     H2.Body.Reader.schedule_read body
       ~on_eof:(fun () ->
-        Eta_http.H2.Multiplexer.mark_complete mux stream;
+        Eta_http_eio.H2.Multiplexer.mark_complete mux stream;
         result.mux_eof <- true)
       ~on_read:(fun bs ~off ~len ->
         Buffer.add_string result.mux_body (Bigstringaf.substring bs ~off ~len);
@@ -164,7 +164,7 @@ let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
       meth target
   in
   match
-    Eta_http.H2.Multiplexer.request mux ~tag request
+    Eta_http_eio.H2.Multiplexer.request mux ~tag request
       ~error_handler:(fun stream error ->
         result.mux_stream <- Some stream;
         result.mux_stream_errors <-
@@ -174,10 +174,10 @@ let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
         result.mux_status <- Some (H2.Status.to_code response.status);
         h2_schedule_mux_body mux result stream response_body)
   with
-  | Error (Eta_http.H2.Multiplexer.Admission_rejected _) ->
+  | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected _) ->
       Error `Admission_rejected
-  | Error Eta_http.H2.Multiplexer.Connection_closed -> Error `Connection_closed
-  | Error (Eta_http.H2.Multiplexer.Request_failed message) ->
+  | Error Eta_http_eio.H2.Multiplexer.Connection_closed -> Error `Connection_closed
+  | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
       Error (`Request_failed message)
   | Ok opened ->
       result.mux_stream <- Some opened.stream;

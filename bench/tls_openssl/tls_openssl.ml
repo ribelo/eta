@@ -9,7 +9,7 @@ let run_handshake () =
   let flow = (Eio.Net.connect ~sw net addr :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) in
   let config = Eta_http.Tls.Config.default_client
     ~peer_name:(Domain_name.host_exn (Domain_name.of_string_exn "example.com")) () in
-  let _tls = Eta_http.Tls.Eio.client_of_flow config
+  let _tls = Eta_http_eio.Tls.Eio.client_of_flow config
     ~host:(Domain_name.host_exn (Domain_name.of_string_exn "example.com")) flow in
   ()
 
@@ -17,7 +17,7 @@ let run_get () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
-  let client = Eta_http.Client.make_h1 ~sw ~net () in
+  let client = Eta_http_eio.Client.make_h1 ~sw ~net () in
   let request = Eta_http.Request.make "GET" url in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   match Eta.Runtime.run rt (Eta_http.request client request) with

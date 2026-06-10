@@ -132,8 +132,8 @@ let render_http_status status body =
 
 type t = {
   http_client : Eta_http.Client.t;
-  clock : float Eio.Time.clock_ty Eio.Std.r;
-  eta_clock : Eta.Capabilities.clock;
+  clock : Eta.Capabilities.clock;
+  now_ms : unit -> int;
   config : export_config;
   queue : span Mailbox.t;
   log_queue : Eta.Capabilities.log_record Mailbox.t;
@@ -187,15 +187,12 @@ let fiber_state contract t =
           Hashtbl.add context t.context_id state;
           state)
 
-let now_ns t =
-  let secs = Eio.Time.now t.clock in
-  int_of_float (secs *. 1_000_000_000.0)
-
-let now_ms t =
-  let secs = Eio.Time.now t.clock in
-  int_of_float (secs *. 1_000.0)
-
 let ms_to_ns ms = Metric_aggregation.ms_to_ns_saturating ms
+
+let now_ns t =
+  ms_to_ns (t.now_ms ())
+
+let now_ms t = t.now_ms ()
 
 (* ------------------------------------------------------------------ *)
 (* Eta exporter programs                                               *)
@@ -459,7 +456,7 @@ let flush ?(timeout_s = 5.0) t =
     let wait = Drain_counter.await_zero t.in_flight in
     let timeout =
       Eta.Effect.named "eta_otel.flush.timeout" (Eta.Effect.sync (fun () ->
-          t.eta_clock#sleep (duration_of_timeout_s timeout_s)))
+          t.clock#sleep (duration_of_timeout_s timeout_s)))
     in
     ignore
       (Eta.Runtime.run t.flush_rt (Eta.Effect.race [ wait; timeout ])
@@ -618,14 +615,25 @@ let debug_on_send ~path ~body =
   prerr_endline
     (Printf.sprintf "[eta-otel] POST %s (%d bytes)" path (String.length body))
 
-let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
+type runtime_factory = Eta.Capabilities.tracer -> unit Eta.Runtime.t
+
+let default_now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
+
+let default_clock : Eta.Capabilities.clock =
+  object
+    method sleep duration =
+      let seconds = Eta.Duration.to_seconds_float duration in
+      if seconds > 0.0 then Unix.sleepf seconds
+  end
+
+let create ~runtime_factory ?flush_runtime_factory ?http_client
+    ?(clock = default_clock) ?(now_ms = default_now_ms)
+    ?(host = "127.0.0.1") ?(port = 4318)
     ?(traces_path = "/v1/traces") ?(logs_path = "/v1/logs")
     ?(metrics_path = "/v1/metrics") ?self_metrics_path
     ?(disable_self_metrics = false) ?(debug = false) ?(service_name = "eta")
     ?service_version ?(resource_attrs = []) ?(scope_name = "eta")
     ?(headers = []) ?(queue_capacity = 1024) ?on_error ?on_send () =
-  let net = (net :> [ `Generic ] Eio.Net.ty Eio.Std.r) in
-  let clock = (clock :> float Eio.Time.clock_ty Eio.Std.r) in
   let self_metrics_path =
     match (disable_self_metrics, self_metrics_path) with
     | true, Some _ ->
@@ -656,15 +664,12 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
   in
   let rng = Stdlib.Random.State.make_self_init () in
   let self_tracer = Eta.Tracer.in_memory () in
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock
-      ~tracer:(Eta.Tracer.as_capability self_tracer)
-      ()
-  in
+  let self_tracer_cap = Eta.Tracer.as_capability self_tracer in
+  let rt = runtime_factory self_tracer_cap in
   let flush_rt : unit Eta.Runtime.t =
-    Eta_eio.Runtime.create ~sw ~clock
-      ~tracer:(Eta.Tracer.as_capability self_tracer)
-      ()
+    match flush_runtime_factory with
+    | Some make -> make self_tracer_cap
+    | None -> runtime_factory self_tracer_cap
   in
   let config =
     {
@@ -679,12 +684,14 @@ let create ~sw ~net ~clock ?(host = "127.0.0.1") ?(port = 4318)
       headers;
     }
   in
-  let http_client = Eta_http.Client.make_h1 ~sw ~net () in
+  let http_client =
+    Option.value http_client ~default:(Eta_http.Client.make_runtime ())
+  in
   let t =
     {
       http_client;
       clock;
-      eta_clock = Eta_eio.clock clock;
+      now_ms;
       config;
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();

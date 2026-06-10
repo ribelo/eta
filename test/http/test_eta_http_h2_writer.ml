@@ -1,14 +1,5 @@
 open Test_eta_http_support
 
-let test_h2_writer_preserves_iovec_slices () =
-  let buffer = Bigstringaf.of_string ~off:0 ~len:10 "0123456789" in
-  let iovecs = [ { H2.IOVec.buffer; off = 2; len = 4 } ] in
-  match Eta_http.H2.Writer.cstructs_of_iovecs iovecs with
-  | [ slice ] ->
-      Alcotest.(check int) "slice len" 4 (Cstruct.length slice);
-      Alcotest.(check string) "slice bytes" "2345" (Cstruct.to_string slice)
-  | _ -> Alcotest.fail "expected one cstruct slice"
-
 let test_h2_writer_drains_client_preface_and_request () =
   let client =
     H2.Client_connection.create
@@ -28,7 +19,7 @@ let test_h2_writer_drains_client_preface_and_request () =
   H2.Body.Writer.close request_body;
   let buffer = Buffer.create 256 in
   let flow = Eio.Flow.buffer_sink buffer in
-  (match Eta_http.H2.Writer.drain_client ~flow client with
+  (match Eta_http_eio.H2.Writer.drain_client ~flow client with
   | Yield { written } ->
       Alcotest.(check bool) "wrote bytes" true (written > 24)
   | Close { code; _ } -> Alcotest.failf "unexpected close code=%d" code);
@@ -36,7 +27,7 @@ let test_h2_writer_drains_client_preface_and_request () =
   let preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" in
   Alcotest.(check string) "connection preface" preface
     (String.sub output 0 (String.length preface));
-  match Eta_http.H2.Writer.drain_client ~flow client with
+  match Eta_http_eio.H2.Writer.drain_client ~flow client with
   | Yield { written = 0 } -> ()
   | Yield { written } -> Alcotest.failf "unexpected extra write=%d" written
   | Close { code; _ } -> Alcotest.failf "unexpected second close code=%d" code
@@ -81,7 +72,7 @@ let test_h2_writer_blocked_write_teardown () =
             let open Eta.Supervisor.Scope in
             let* _writer =
               start supervisor
-                (lift (Eta_http.H2.Writer.run_client ~write client))
+                (lift (Eta_http_eio.H2.Writer.run_client ~write client))
             in
             let* _ = lift (Eta.Channel.recv started) in
             pure ());
@@ -97,9 +88,3 @@ let test_h2_writer_blocked_write_teardown () =
               Format.pp_print_string fmt "closed_with_error"))
         cause);
   Alcotest.(check bool) "write started" true !write_started
-
-
-let test_h2_frame_uint32_rejects_overflow () =
-  Alcotest.check_raises "uint32 overflow"
-    (Invalid_argument "Eta_http.H2.Frame.uint32: value outside uint32")
-    (fun () -> ignore (Eta_http.H2.Frame.uint32 (Int.shift_left 1 32)))

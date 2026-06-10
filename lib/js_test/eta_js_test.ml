@@ -1,29 +1,45 @@
-module Test_clock = Test_clock
+module Js = Js_of_ocaml.Js
+module Unsafe = Js_of_ocaml.Js.Unsafe
 
-type test = string * (unit -> unit Js.Promise.t)
+type test = string * ((unit -> unit) -> unit)
 
 let fail name reason = failwith (name ^ ": " ^ reason)
 
-let exn_of_promise_error error =
-  Js.Exn.anyToExnInternal (Obj.magic error)
+let log message =
+  ignore
+    (Unsafe.fun_call (Unsafe.js_expr "console.log")
+       [| Unsafe.inject (Js.string message) |])
+
+let set_exit_code code =
+  let process = Unsafe.get Unsafe.global "process" in
+  Unsafe.set process "exitCode" code
 
 let expect_ok name f =
-  Js.Promise.make (fun ~resolve ~reject:_ ->
-      let resolve_unit : unit -> unit = Obj.magic resolve in
-      try
-        f ();
-        resolve_unit ()
-      with exn ->
-        failwith (name ^ ": " ^ Printexc.to_string exn))
+  try f () with exn -> failwith (name ^ ": " ^ Printexc.to_string exn)
+
+let finish done_ f =
+  try
+    f ();
+    done_ ()
+  with exn ->
+    set_exit_code 1;
+    log ("FAILED: " ^ Printexc.to_string exn)
 
 let rec run_all tests =
   match tests with
-  | [] -> Js.Promise.resolve ()
+  | [] -> ()
   | (name, test) :: rest ->
-      Js.Promise.then_
-        (fun () -> run_all rest)
-        (Js.Promise.catch
-           (fun error ->
-             let exn = exn_of_promise_error error in
-             failwith (name ^ ": " ^ Printexc.to_string exn))
-           (test ()))
+      let finished = ref false in
+      let done_ () =
+        if not !finished then (
+          finished := true;
+          log ("ok: " ^ name);
+          run_all rest)
+      in
+      try test done_
+      with exn ->
+        finished := true;
+        set_exit_code 1;
+        log ("FAILED: " ^ name ^ ": " ^ Printexc.to_string exn)
+
+let main tests = run_all tests

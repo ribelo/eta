@@ -9,12 +9,8 @@
       Eta_utop.run (Eta.Effect.pure 42);;
     ]}
 
-    Production code should usually keep using {!Eta_eio.Runtime.with_host} or
-    an application-owned runtime so switches, clients, and resources have an
-    obvious owner. *)
-
-val host : unit -> Eta_eio.Host.t
-(** Capture the current toplevel's Eio modules. *)
+    Production code should usually keep using an application-owned runtime so
+    clients, resources, and host services have an obvious owner. *)
 
 val with_runtime :
   ?tracer:Eta.Capabilities.tracer ->
@@ -24,11 +20,11 @@ val with_runtime :
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
   ?blocking_pool:Eta_blocking.Pool.t ->
+  ?services:Eta.Runtime_contract.service list ->
   ?capture_backtrace:bool ->
   ('err Eta_eio.Runtime.t -> 'a) ->
   'a
-(** Run [f] under [Eio_main.run] and an [Eio.Switch.t], with Eta operations
-    routed through the current toplevel's Eio modules. *)
+(** Run [f] with a fresh Eio-backed Eta runtime. *)
 
 val run :
   ?tracer:Eta.Capabilities.tracer ->
@@ -38,6 +34,7 @@ val run :
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
   ?blocking_pool:Eta_blocking.Pool.t ->
+  ?services:Eta.Runtime_contract.service list ->
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->
   ('a, 'err) Eta.Exit.t
@@ -51,6 +48,7 @@ val run_exn :
   ?meter:Eta.Capabilities.meter ->
   ?random:Eta.Capabilities.random ->
   ?blocking_pool:Eta_blocking.Pool.t ->
+  ?services:Eta.Runtime_contract.service list ->
   ?capture_backtrace:bool ->
   ('a, 'err) Eta.Effect.t ->
   'a

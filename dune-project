@@ -1,6 +1,4 @@
 (lang dune 3.21)
-(using melange 1.0)
-
 (generate_opam_files true)
 
 (name eta)
@@ -16,24 +14,37 @@
 
 (package
  (name eta_js)
- (synopsis "JavaScript runtime backend and Melange-compatible Eta subset")
+ (synopsis "js_of_ocaml Eta facade")
  (description
-  "eta_js provides a Melange JavaScript runtime and Eta-compatible effect surface for JS programs.")
+  "eta_js provides a js_of_ocaml-first Eta facade backed by the eta_jsoo runtime host.")
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.21))
-  (melange (>= 6.0.1))))
+  eta
+  eta_jsoo
+  (js_of_ocaml (>= 5.0))))
+
+(package
+ (name eta_jsoo)
+ (synopsis "js_of_ocaml-native runtime backend for Eta")
+ (description
+  "eta_jsoo implements Eta's runtime contract directly on JavaScript timers and microtasks for js_of_ocaml targets.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.21))
+  eta
+  (js_of_ocaml (>= 5.0))))
 
 (package
  (name eta_js_test)
  (synopsis "Testing helpers for eta_js")
  (description
-  "eta_js_test provides virtual clocks and Node test helpers for eta_js.")
+  "eta_js_test provides js_of_ocaml Node test helpers for eta_js.")
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.21))
-  (melange (>= 6.0.1))
-  eta_js))
+  eta_js
+  (js_of_ocaml (>= 5.0))))
 
 (package
  (name eta_js_stream)
@@ -43,9 +54,7 @@
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.21))
-  (melange (>= 6.0.1))
-  eta_js
-  eta_js_test))
+  eta_js))
 
 (package
  (name eta_eio)
@@ -85,14 +94,13 @@
  (name eta_utop)
  (synopsis "UTop convenience helpers for Eta effects")
  (description
-  "eta_utop provides small Eio_main-backed helpers for running Eta effects from dune utop sessions.")
+  "eta_utop provides small Eio-backed helpers for running Eta effects from dune utop sessions.")
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
   eta_blocking
   eta_eio
-  (eio (>= 1.0))
   eio_main))
 
 (package
@@ -109,17 +117,14 @@
 
 (package
  (name eta_http)
- (synopsis "HTTP/1.1, HTTP/2, WebSockets and TLS client and server for Eta")
+ (synopsis "Backend-neutral HTTP protocol and client contract for Eta")
  (description
-  "eta_http provides HTTP, WebSocket, TLS, and HTTP/2 support for Eta programs.")
+  "eta_http provides the shared HTTP request/response model, runtime client contract, typed errors, retry handling, body streams, and pure protocol helpers.")
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
-  eta_blocking
-  eta_eio
   eta_stream
-  (eio (>= 1.0))
   (cstruct (>= 6.0.0))
   (h2 (>= 0.12.0))
   (hpack (>= 0.12.0))
@@ -134,6 +139,30 @@
   (decompress (= 1.5.3))
   conf-pkg-config
   conf-openssl))
+
+(package
+ (name eta_http_eio)
+ (synopsis "Eio transport adapter for eta-http")
+ (description
+  "eta_http_eio provides Eio-backed HTTP/1.1, HTTP/2, TLS, and WebSocket transport adapters for eta-http.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_blocking
+  eta_eio
+  eta_http
+  eta_stream
+  (eio (>= 1.0))
+  (cstruct (>= 6.0.0))
+  (h2 (>= 0.12.0))
+  (hpack (>= 0.12.0))
+  (faraday (>= 0.8.0))
+  (angstrom (>= 0.16.0))
+  (yojson (>= 2.0))
+  domain-name
+  ipaddr
+  bigstringaf))
 
 (package
  (name eta_sql_dsl)
@@ -166,7 +195,6 @@
   eta
   eta_blocking
   eta_sql_driver
-  (eio (>= 1.0))
   conf-pkg-config
   conf-sqlite3))
 
@@ -251,7 +279,6 @@
   (dune (>= 3.0))
   eta
   eta_schema
-  eta_test
   alcotest))
 
 (package
@@ -263,10 +290,8 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
-  eta_eio
   eta_stream
   eta_http
-  (eio (>= 1.0))
   (yojson (>= 2.0))))
 
 (package
@@ -306,7 +331,9 @@
   eta_ai_openai_codec
   eta_redacted
   eta_http
+  eta_http_eio
   eta_stream
+  (eio (>= 1.0))
   base64
   (yojson (>= 2.0))))
 

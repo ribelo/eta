@@ -12,9 +12,8 @@ let issue_testable =
 
 let issues_testable = Alcotest.list issue_testable
 
-let run_effect eff =
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
-  match Eta.Runtime.run rt eff with
+let run_effect run eff =
+  match run eff with
   | Eta.Exit.Ok value -> Ok value
   | Eta.Exit.Error (Eta.Cause.Fail error) -> Error error
   | Eta.Exit.Error cause ->

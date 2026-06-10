@@ -8,14 +8,14 @@ back to `ocaml-h2`?
 
 ## Implementation
 
-- `Eta_http.H2.Writer.cstructs_of_iovecs` converts `Bigstringaf.t H2.IOVec.t`
+- `Eta_http_eio.H2.Writer.cstructs_of_iovecs` converts `Bigstringaf.t H2.IOVec.t`
   slices to `Cstruct.t` views with `Cstruct.of_bigarray`.
-- `Eta_http.H2.Writer.write_iovecs` writes those slices with
+- `Eta_http_eio.H2.Writer.write_iovecs` writes those slices with
   `Eio.Flow.single_write`.
-- `Eta_http.H2.Writer.drain_client` loops over
+- `Eta_http_eio.H2.Writer.drain_client` loops over
   `H2.Client_connection.next_write_operation`, reports `Ok n` after each
   write, and reports `Closed` on writer close.
-- `Eta_http.H2.Writer.run_client` drives the same write operations inside an
+- `Eta_http_eio.H2.Writer.run_client` drives the same write operations inside an
   `Eta.Effect.t`, using `H2.Client_connection.yield_writer` and
   `Eta.Channel.close` as the wakeup bridge.
 

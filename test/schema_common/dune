@@ -1,0 +1,3 @@
+(library
+ (name eta_schema_common_tests)
+ (libraries eta_schema_test eta_schema eta_runtime_common_tests alcotest yojson))

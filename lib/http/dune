@@ -1,14 +1,11 @@
 (library
  (name eta_http)
  (public_name eta_http)
- (synopsis "HTTP/1.1, HTTP/2, WebSockets and TLS client and server for Eta")
+ (synopsis "Backend-neutral HTTP protocol and client contract for Eta")
  (libraries
   eta
-  eta_blocking
-  eta_eio
   eta_stream
-  eio
-  eio.unix
+  unix
   bigstringaf
   cstruct
   domain-name

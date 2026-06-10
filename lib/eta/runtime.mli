@@ -5,6 +5,7 @@ type 'err t
 val create_with_runtime :
   (module Runtime_contract.RUNTIME) ->
   ?sleep:(Duration.t -> unit) ->
+  ?now_ms:(unit -> int) ->
   ?tracer:Capabilities.tracer ->
   ?sampler:Sampler.t ->
   ?auto_instrument:bool ->
@@ -34,6 +35,7 @@ val create_with_runtime :
 module Make (_ : Runtime_contract.RUNTIME) : sig
   val create :
     ?sleep:(Duration.t -> unit) ->
+    ?now_ms:(unit -> int) ->
     ?tracer:Capabilities.tracer ->
     ?sampler:Sampler.t ->
     ?auto_instrument:bool ->

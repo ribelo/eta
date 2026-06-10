@@ -207,7 +207,6 @@ let fetch_typed_batch conn stmt batch_size decode =
   let db = Connection.sqlite conn in
   let decode_row stmt =
     try Ok (decode stmt) with
-    | Eio.Cancel.Cancelled _ as exn -> raise exn
     | exn ->
         Result.Error
           (Types.Decode_error

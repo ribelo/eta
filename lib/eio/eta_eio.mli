@@ -97,6 +97,7 @@ module Runtime : sig
     sw:Eio.Switch.t ->
     clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
     ?sleep:(Eta.Duration.t -> unit) ->
+    ?now_ms:(unit -> int) ->
     ?tracer:Eta.Capabilities.tracer ->
     ?sampler:Eta.Sampler.t ->
     ?auto_instrument:bool ->
@@ -105,6 +106,7 @@ module Runtime : sig
     ?random:Eta.Capabilities.random ->
     ?blocking_pool:Eta_blocking.Pool.t ->
     ?blocking_runner:Eta_blocking.Pool.runner ->
+    ?services:Eta.Runtime_contract.service list ->
     ?capture_backtrace:bool ->
     unit ->
     'err t
@@ -113,6 +115,7 @@ module Runtime : sig
     Host.t ->
     sw:Eio.Switch.t ->
     clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+    ?now_ms:(unit -> int) ->
     ?tracer:Eta.Capabilities.tracer ->
     ?sampler:Eta.Sampler.t ->
     ?auto_instrument:bool ->
@@ -120,6 +123,7 @@ module Runtime : sig
     ?meter:Eta.Capabilities.meter ->
     ?random:Eta.Capabilities.random ->
     ?blocking_pool:Eta_blocking.Pool.t ->
+    ?services:Eta.Runtime_contract.service list ->
     ?capture_backtrace:bool ->
     ('err t -> 'a) ->
     'a
@@ -128,6 +132,7 @@ module Runtime : sig
     Host.t ->
     sw:Eio.Switch.t ->
     clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+    ?now_ms:(unit -> int) ->
     ?tracer:Eta.Capabilities.tracer ->
     ?sampler:Eta.Sampler.t ->
     ?auto_instrument:bool ->
@@ -135,6 +140,7 @@ module Runtime : sig
     ?meter:Eta.Capabilities.meter ->
     ?random:Eta.Capabilities.random ->
     ?blocking_pool:Eta_blocking.Pool.t ->
+    ?services:Eta.Runtime_contract.service list ->
     ?capture_backtrace:bool ->
     ('a, 'err) Eta.Effect.t ->
     ('a, 'err) Eta.Exit.t
