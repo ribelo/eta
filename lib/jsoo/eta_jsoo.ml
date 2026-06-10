@@ -10,29 +10,38 @@ exception Multiple of (exn * Printexc.raw_backtrace) list
 let next_id = Atomic.make 0
 let fresh_id () = Atomic.fetch_and_add next_id 1 + 1
 
-let schedule f =
-  let callback = Js.wrap_callback (fun () -> f ()) in
-  if
-    Js.to_bool
-      (Unsafe.js_expr "(typeof queueMicrotask === 'function')" : bool Js.t)
-  then
-    ignore
-      (Unsafe.fun_call (Unsafe.js_expr "queueMicrotask")
-         [| Unsafe.inject callback |])
-  else
-    ignore
-      (Unsafe.fun_call (Unsafe.js_expr "setTimeout")
-         [| Unsafe.inject callback; Unsafe.inject (Js.number_of_float 0.) |])
+module Js_host = struct
+  let set_timeout_ = Unsafe.js_expr "setTimeout"
+  let clear_timeout_ = Unsafe.js_expr "clearTimeout"
+  let date_now_ = Unsafe.js_expr "Date.now"
 
-let set_timeout ~ms f =
-  let callback = Js.wrap_callback (fun () -> f ()) in
-  (Unsafe.fun_call (Unsafe.js_expr "setTimeout")
-     [| Unsafe.inject callback; Unsafe.inject (Js.number_of_float ms) |]
-    : Unsafe.any)
+  let set_timeout ~ms f =
+    (Unsafe.fun_call set_timeout_
+       [| Unsafe.inject (Js.wrap_callback f); Unsafe.inject (Js.number_of_float ms) |]
+      : Unsafe.any)
 
-let clear_timeout timeout_id =
-  ignore
-    (Unsafe.fun_call (Unsafe.js_expr "clearTimeout") [| timeout_id |])
+  let clear_timeout timeout_id =
+    ignore (Unsafe.fun_call clear_timeout_ [| timeout_id |])
+
+  let now_ms () =
+    int_of_float
+      (Js.to_float (Unsafe.fun_call date_now_ [||] : Js.number_t))
+
+  let post_task : (unit -> unit) -> unit =
+    if
+      Js.to_bool
+        (Unsafe.js_expr "typeof queueMicrotask === 'function'" : bool Js.t)
+    then
+      let queue_microtask = Unsafe.js_expr "queueMicrotask" in
+      fun f ->
+        ignore
+          (Unsafe.fun_call queue_microtask
+             [| Unsafe.inject (Js.wrap_callback f) |])
+    else
+      fun f -> ignore (set_timeout ~ms:0.0 f)
+end
+
+let schedule = Js_host.post_task
 
 type cancel_waiter = {
   mutable cancel_waiter_active : bool;
@@ -185,7 +194,7 @@ let create_promise () =
   let cell = { state = Pending [] } in
   (cell, cell)
 
-let rec run_continuation fiber continue =
+let run_continuation fiber continue =
   schedule (fun () -> with_current fiber continue)
 
 let handle_effect fiber =
@@ -237,9 +246,9 @@ let await ?on_cancel promise =
   check_cancel fiber;
   Effect.perform (Await (promise, on_cancel))
 
-let rec await_promise promise = await promise
+let await_promise promise = await promise
 
-let protect f =
+let protect_impl ~check_after f =
   match !current_fiber with
   | None -> f ()
   | Some fiber ->
@@ -247,21 +256,14 @@ let protect f =
       match f () with
       | value ->
           fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1;
-          check_cancel fiber;
+          if check_after then check_cancel fiber;
           value
       | exception exn ->
           fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1;
           raise exn
 
-let protect_without_check f =
-  match !current_fiber with
-  | None -> f ()
-  | Some fiber ->
-      fiber.fiber_protect_depth <- fiber.fiber_protect_depth + 1;
-      Fun.protect
-        ~finally:(fun () ->
-          fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1)
-        f
+let protect f = protect_impl ~check_after:true f
+let protect_without_check f = protect_impl ~check_after:false f
 
 let new_scope ?name parent_cancel =
   let cancel = create_cancel_context () in
@@ -392,12 +394,12 @@ let sleep duration =
   if seconds > 0.0 then (
     let promise, resolver = create_promise () in
     let timeout_id =
-      set_timeout ~ms:(seconds *. 1000.0) (fun () ->
+      Js_host.set_timeout ~ms:(seconds *. 1000.0) (fun () ->
           match promise.state with
           | Settled _ -> ()
           | Pending _ -> resolve_once resolver ())
     in
-    await ~on_cancel:(fun () -> clear_timeout timeout_id) promise)
+    await ~on_cancel:(fun () -> Js_host.clear_timeout timeout_id) promise)
 
 let yield () =
   let promise, resolver = create_promise () in
@@ -540,10 +542,7 @@ let stream_take_nonblocking stream =
       stream_pump stream;
       Some value
 
-let now_ms () =
-  int_of_float
-    (Js.to_float
-       (Unsafe.meth_call Js.date "now" [||] : Js.number_t))
+let now_ms = Js_host.now_ms
 
 let clock : Eta.Capabilities.clock =
   object

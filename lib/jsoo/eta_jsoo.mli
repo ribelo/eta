@@ -28,20 +28,36 @@ module Runtime : sig
     ('a, 'err) Eta.Effect.t ->
     on_result:(('a, 'err) Eta.Exit.t -> unit) ->
     unit
+  (** Schedule [eff] on the JavaScript host and invoke [on_result] from a
+      later microtask/timer turn.
+
+      Exceptions raised by [on_result] are not re-raised to the caller of
+      [run]; they escape from that scheduled JavaScript callback and surface as
+      uncaught JavaScript errors. *)
 
   val run_exn :
     'err t ->
     ('a, 'err) Eta.Effect.t ->
     on_result:('a -> unit) ->
     unit
+  (** Like {!run}, but pass only successful values to [on_result].
+
+      Defects are re-raised from the scheduled callback. Typed failures are
+      rendered through {!Eta.Cause.pp}; because the concrete typed error printer
+      is not available at this boundary, typed error payloads are shown as
+      [<typed failure>]. *)
 
   val drain : 'err t -> on_result:(unit -> unit) -> unit
+  (** Schedule pending finalizers/work and invoke [on_result] from a later
+      microtask/timer turn. Exceptions raised by [on_result] escape as uncaught
+      JavaScript errors. *)
 end
 
 val run :
   (unit -> ('a, 'err) Eta.Effect.t) -> on_result:('a -> unit) -> unit
 (** Create a default runtime, run the effect to success, and invoke
-    [on_result]. *)
+    [on_result] from a later microtask/timer turn. Exceptions raised by
+    [on_result] escape as uncaught JavaScript errors. *)
 
 val runtime : unit -> (module Eta.Runtime_contract.RUNTIME)
 (** Low-level backend contract. Prefer {!Runtime.create}. *)
