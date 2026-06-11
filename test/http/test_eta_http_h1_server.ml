@@ -295,6 +295,12 @@ let test_h1_server_connection_rejects_duplicate_http11_host () =
     ("GET /duplicate HTTP/1.1\r\nHost: example.test\r\n"
    ^ "Host: shadow.test\r\nConnection: close\r\n\r\n")
 
+let test_h1_server_connection_rejects_duplicate_content_length () =
+  check_bad_request_rejected ~name:"duplicate content-length"
+    ("POST /duplicate-cl HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Content-Length: 5\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"
+   ^ "hello")
+
 let test_h1_server_connection_rejects_invalid_http11_host () =
   check_bad_request_rejected ~name:"invalid host"
     "GET /invalid HTTP/1.1\r\nHost: bad/name\r\nConnection: close\r\n\r\n"

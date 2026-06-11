@@ -2244,7 +2244,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h1_request_body_framing_no_body_and_fixed () =
     expect_h1_request_framing "absent" [] Eta_http.H1.Request_body.No_body;
     expect_h1_request_framing "fixed"
-      [ ("Content-Length", " 5 "); ("Content-Length", "005") ]
+      [ ("Content-Length", " 5 ") ]
       (Eta_http.H1.Request_body.Fixed 5)
 
   let test_h1_request_body_framing_rejects_content_length () =
@@ -2253,11 +2253,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (function
         | Eta_http.H1.Request_body.Invalid_content_length "nope" -> true
         | _ -> false);
-    expect_h1_request_framing_error "conflicting content-length"
+    expect_h1_request_framing_error "duplicate content-length"
+      [ ("Content-Length", "5"); ("Content-Length", "005") ]
+      (function
+        | Eta_http.H1.Request_body.Duplicate_content_length [ "5"; "005" ] ->
+            true
+        | _ -> false);
+    expect_h1_request_framing_error "different duplicate content-length"
       [ ("Content-Length", "5"); ("Content-Length", "6") ]
       (function
-        | Eta_http.H1.Request_body.Conflicting_content_length
-            { first = "5"; second = "6" } ->
+        | Eta_http.H1.Request_body.Duplicate_content_length [ "5"; "6" ] ->
             true
         | _ -> false)
 

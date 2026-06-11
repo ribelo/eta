@@ -652,6 +652,18 @@ let h1_cl_te_smuggling ~env =
         flow;
       read_h1_response flow)
 
+let h1_duplicate_content_length ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_duplicate_content_length"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: keep-alive\r\nContent-Length: 5\r\n"
+       ^ "Content-Length: 5\r\n\r\nhello"
+       ^ "GET /healthz HTTP/1.1\r\nHost: example.test\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
 let h1_missing_host ~env =
   run_eta_h1_adversarial_client ~env ~name:"h1_missing_host"
     ~expected_status:400 ~deadline_sec:1.0
@@ -856,6 +868,11 @@ let run_all ~env =
   let results =
     add_cve_result "h1_cl_te_smuggling"
       (fun () -> h1_cl_te_smuggling ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_duplicate_content_length"
+      (fun () -> h1_duplicate_content_length ~env)
       results
   in
   let results =

@@ -7,19 +7,16 @@ type framing =
 
 type error =
   | Invalid_content_length of string
-  | Conflicting_content_length of {
-      first : string;
-      second : string;
-    }
+  | Duplicate_content_length of string list
   | Content_length_with_transfer_encoding
   | Unsupported_transfer_encoding of string list
 
 let pp_error fmt = function
   | Invalid_content_length value ->
       Format.fprintf fmt "invalid Content-Length %S" value
-  | Conflicting_content_length { first; second } ->
-      Format.fprintf fmt "conflicting Content-Length values %S and %S" first
-        second
+  | Duplicate_content_length values ->
+      Format.fprintf fmt "duplicate Content-Length values %S"
+        (String.concat ", " values)
   | Content_length_with_transfer_encoding ->
       Format.pp_print_string fmt
         "Content-Length cannot be combined with Transfer-Encoding"
@@ -55,24 +52,22 @@ let parse_content_length value =
 let content_length_values headers =
   Header.get_all "content-length" headers
 
-let parse_content_lengths = function
+let parse_content_lengths values =
+  match values with
   | [] -> Ok None
-  | first :: rest -> (
-      match parse_content_length first with
+  | [ value ] -> (
+      match parse_content_length value with
       | Error _ as error -> error
-      | Ok first_length ->
-          let rec loop = function
-            | [] -> Ok (Some first_length)
-            | value :: rest -> (
-                match parse_content_length value with
-                | Error _ as error -> error
-                | Ok length ->
-                    if length = first_length then loop rest
-                    else
-                      Error
-                        (Conflicting_content_length { first; second = value }))
-          in
-          loop rest)
+      | Ok length -> Ok (Some length))
+  | _ ->
+      let rec validate_all = function
+        | [] -> Error (Duplicate_content_length values)
+        | value :: rest -> (
+            match parse_content_length value with
+            | Error _ as error -> error
+            | Ok _ -> validate_all rest)
+      in
+      validate_all values
 
 let transfer_encoding_tokens headers =
   Header.get_all "transfer-encoding" headers
