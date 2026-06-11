@@ -2,6 +2,7 @@ open Test_eta_http_h1_write
 open Test_eta_http_transport
 open Test_eta_http_h1_client
 open Test_eta_http_h1_server
+open Test_eta_http_server_config
 open Test_eta_http_server_stats
 open Test_eta_http_ws
 open Test_eta_http_tls
@@ -178,6 +179,12 @@ let () =
             test_server_stats_h1_snapshot;
           Alcotest.test_case "h2 snapshot" `Quick
             test_server_stats_h2_snapshot;
+        ] );
+      ( "server-config",
+        [
+          Alcotest.test_case "validation" `Quick test_server_config_validation;
+          Alcotest.test_case "start validates before fork" `Quick
+            test_start_h1_validates_config_before_fork;
         ] );
       ( "ws",
         [

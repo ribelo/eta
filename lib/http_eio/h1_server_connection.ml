@@ -69,11 +69,7 @@ type request_head_error =
 
 let stats t : stats = Server_stats.H1.snapshot t.stats
 
-let validate_config config =
-  if config.Types.Config.read_buffer_size <= 0 then
-    invalid_arg
-      "Eta_http_eio.H1.Server_connection.run: read_buffer_size must be > 0";
-  Eta_http.Server.Config.validate config.server
+let validate_config = Types.Config.validate
 
 let error t ?(method_ = "*") ?(target = "*") kind =
   Server.Error.make ~protocol:t.connection.protocol ~method_ ~target kind

@@ -40,6 +40,7 @@ module Config : sig
   }
 
   val default : t
+  val validate : t -> unit
 end
 
 module Stats : sig

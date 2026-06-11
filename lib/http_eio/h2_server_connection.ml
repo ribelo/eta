@@ -154,21 +154,7 @@ let method_to_string method_ = H2.Method.to_string method_
 let connection_url_scheme t =
   Server.Validation.connection_scheme ~tls:t.connection.tls
 
-let validate_config config =
-  if config.Types.Config.read_buffer_size <= 0 then
-    invalid_arg
-      "Eta_http_eio.H2.Server_connection.run: read_buffer_size must be > 0";
-  if config.max_concurrent_streams <= 0 then
-    invalid_arg
-      "Eta_http_eio.H2.Server_connection.run: max_concurrent_streams must be > 0";
-  if config.max_concurrent_streams > Int32.to_int Int32.max_int then
-    invalid_arg
-      "Eta_http_eio.H2.Server_connection.run: max_concurrent_streams exceeds \
-       int32 max";
-  if config.command_queue_capacity <= 0 then
-    invalid_arg
-      "Eta_http_eio.H2.Server_connection.run: command_queue_capacity must be > 0";
-  Eta_http.Server.Config.validate config.server
+let validate_config = Types.Config.validate
 
 let h2_config config =
   let base =

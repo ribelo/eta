@@ -52,6 +52,79 @@ module Config = struct
       h2_config = None;
       h2_security_config = None;
     }
+
+  let field name = "Eta_http_eio.Server.Config." ^ name
+
+  let require_positive name value =
+    if value <= 0 then invalid_arg (field name ^ " must be > 0")
+
+  let require_positive_duration name value =
+    if Eta.Duration.is_zero value then
+      invalid_arg (field name ^ " must be > 0")
+
+  let require_positive_int32 name value =
+    if Int32.compare value 0l <= 0 then
+      invalid_arg (field name ^ " must be > 0")
+
+  let require_non_negative_int32 name value =
+    if Int32.compare value 0l < 0 then
+      invalid_arg (field name ^ " must be >= 0")
+
+  let validate_h2_frame_size name value =
+    if value < 0x4000 || value > 0xffffff then
+      invalid_arg (field name ^ " must be between 16384 and 16777215")
+
+  let validate_h2_config (config : H2.Config.t) =
+    validate_h2_frame_size "h2_config.read_buffer_size"
+      config.H2.Config.read_buffer_size;
+    require_positive "h2_config.request_body_buffer_size"
+      config.request_body_buffer_size;
+    require_positive "h2_config.response_body_buffer_size"
+      config.response_body_buffer_size;
+    require_positive_int32 "h2_config.max_concurrent_streams"
+      config.max_concurrent_streams;
+    require_non_negative_int32 "h2_config.initial_window_size"
+      config.initial_window_size
+
+  let validate_h2_security_config
+      (config : Eta_http.H2.Security.config) =
+    require_positive "h2_security_config.max_settings_per_connection"
+      config.max_settings_per_connection;
+    require_positive "h2_security_config.max_goaway_per_connection"
+      config.max_goaway_per_connection;
+    require_positive "h2_security_config.max_rst_stream_per_connection"
+      config.max_rst_stream_per_connection;
+    require_positive "h2_security_config.max_ping_per_connection"
+      config.max_ping_per_connection;
+    require_positive "h2_security_config.max_empty_data_frames_per_connection"
+      config.max_empty_data_frames_per_connection;
+    require_positive "h2_security_config.max_window_update_per_connection"
+      config.max_window_update_per_connection;
+    require_positive "h2_security_config.max_hpack_block_bytes"
+      config.max_hpack_block_bytes;
+    require_positive "h2_security_config.max_continuation_accumulator_bytes"
+      config.max_continuation_accumulator_bytes;
+    require_positive "h2_security_config.max_response_headers_per_connection"
+      config.max_response_headers_per_connection;
+    require_positive "h2_security_config.max_header_name_bytes"
+      config.max_header_name_bytes;
+    require_positive "h2_security_config.max_header_value_bytes"
+      config.max_header_value_bytes
+
+  let validate t =
+    require_positive "max_connections" t.max_connections;
+    require_positive "backlog" t.backlog;
+    require_positive "max_concurrent_streams" t.max_concurrent_streams;
+    if t.max_concurrent_streams > Int32.to_int Int32.max_int then
+      invalid_arg
+        (field "max_concurrent_streams" ^ " must fit in int32");
+    require_positive "read_buffer_size" t.read_buffer_size;
+    require_positive "command_queue_capacity" t.command_queue_capacity;
+    require_positive_duration "tls_handshake_timeout"
+      t.tls_handshake_timeout;
+    Eta_http.Server.Config.validate t.server;
+    Option.iter validate_h2_config t.h2_config;
+    Option.iter validate_h2_security_config t.h2_security_config
 end
 
 module Stats = struct

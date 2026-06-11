@@ -39,7 +39,12 @@ let additional_domains domain_policy domain_manager =
   | Single_domain, _ | _, None -> None
   | Recommended, Some dm ->
       Some (dm, max 0 (Domain.recommended_domain_count () - 1))
-  | Additional n, Some dm -> Some (dm, max 0 n)
+  | Additional n, Some dm -> Some (dm, n)
+
+let validate_domain_policy = function
+  | Additional n when n < 0 ->
+      invalid_arg "Eta_http_eio.Server.Additional must be >= 0"
+  | Single_domain | Recommended | Additional _ -> ()
 
 let peer_of_sockaddr = function
   | `Tcp (address, port) ->
@@ -157,6 +162,7 @@ let shutdown t policy =
 let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_start
     ?on_connection_close ~(socket : _ Eio.Net.listening_socket) handler =
+  Config.validate config;
   ignore sw;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
@@ -202,6 +208,8 @@ let run_h1_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
 let run_h1_impl ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_connection_start ?on_connection_close ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -250,6 +258,7 @@ let run_h1 ~sw ~net ~clock ?domain_manager
 let run_h2c_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_start
     ?on_connection_close ~(socket : _ Eio.Net.listening_socket) handler =
+  Config.validate config;
   ignore sw;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
@@ -294,6 +303,8 @@ let run_h2c_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
 let run_h2c_impl ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_connection_start ?on_connection_close ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -412,6 +423,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?on_connection_close ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1
     ?on_alpn_h2 ?on_alpn_rejected ~tls_context
     ~(socket : _ Eio.Net.listening_socket) handler =
+  Config.validate config;
   ignore sw;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
@@ -432,6 +444,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
 let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_close
     ~tls_config ~(socket : _ Eio.Net.listening_socket) handler =
+  Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
   let on_connection_close =
     Option.map
@@ -446,6 +459,8 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
     ?runtime_factory ?on_connection_start ?on_connection_close ?on_tls_handshake
     ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
     ~tls_context ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -469,6 +484,8 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
 let run_https ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_connection_close ~tls_config ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
   let on_connection_close =
     Option.map
@@ -485,6 +502,7 @@ let tracked_h1_on_close t on_connection_close connection stats =
 
 let start_h1_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~socket handler =
+  Config.validate config;
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_h1_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
@@ -497,6 +515,8 @@ let start_h1_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
 let start_h1 ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_h1_impl ~sw ~net ~clock ?domain_manager ~domain_policy ~stop:t.stop
@@ -519,6 +539,7 @@ let tracked_https_on_close t on_connection_close connection stats =
 
 let start_h2c_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~socket handler =
+  Config.validate config;
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_h2c_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
@@ -531,6 +552,8 @@ let start_h2c_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
 let start_h2c ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_h2c_impl ~sw ~net ~clock ?domain_manager ~domain_policy ~stop:t.stop
@@ -543,6 +566,7 @@ let start_h2c ~sw ~net ~clock ?domain_manager
 
 let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~tls_config ~socket handler =
+  Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
@@ -560,6 +584,8 @@ let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
 let start_https ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~tls_config ~addr handler =
+  Config.validate config;
+  validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
