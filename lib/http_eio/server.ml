@@ -341,7 +341,7 @@ let run_h2c ~sw ~net ~clock ?domain_manager
 let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
     ?on_connection_start ?on_connection_close ?on_tls_handshake
     ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-    ~tls_config handler flow peer =
+    ~tls_context handler flow peer =
   let raw_flow =
     (flow :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
   in
@@ -350,7 +350,7 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
       let result =
         Eio.Time.with_timeout_exn clock
           (Eta.Duration.to_seconds_float config.Config.tls_handshake_timeout)
-          (fun () -> Tls_eio.server_of_flow tls_config raw_flow)
+          (fun () -> Tls_eio.server_of_flow_with_context tls_context raw_flow)
       in
       Option.iter (fun f -> f ()) on_tls_handshake;
       result
@@ -413,6 +413,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?on_alpn_h2 ?on_alpn_rejected ~tls_config
     ~(socket : _ Eio.Net.listening_socket) handler =
   ignore sw;
+  let tls_context = Tls_eio.server_context tls_config in
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -425,7 +426,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
         run_https_connection ~conn_sw ~clock ~config ~runtime_factory
           ?on_connection_start ?on_connection_close ?on_tls_handshake
           ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-          ~tls_config handler flow peer)
+          ~tls_context handler flow peer)
   in
   ()
 
@@ -448,6 +449,7 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
+  let tls_context = Tls_eio.server_context tls_config in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
@@ -461,7 +463,7 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
         run_https_connection ~conn_sw ~clock ~config ~runtime_factory
           ?on_connection_start ?on_connection_close ?on_tls_handshake
           ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-          ~tls_config handler flow peer)
+          ~tls_context handler flow peer)
   in
   ()
 

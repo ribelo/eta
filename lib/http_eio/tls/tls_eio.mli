@@ -8,6 +8,11 @@ type config = Config.t
 type server_config = Config.server
 (** Server configuration. *)
 
+type server_context
+(** Compiled server-side TLS context. It owns the OpenSSL [SSL_CTX] built from
+    certificate files and can create per-connection TLS flows without reloading
+    PEM material for every accepted connection. *)
+
 type epoch = {
   alpn_protocol : string option;
   sni : string option;
@@ -39,6 +44,18 @@ val server_of_flow :
 (** Wrap an accepted TCP flow in server-side TLS. Performs the handshake
     synchronously (blocking the fiber) before returning the TLS flow and
     negotiated epoch. *)
+
+val server_context : server_config -> server_context
+(** Compile a server TLS configuration once. Use this for listeners so
+    certificate chains, SNI certificates, ALPN policy, and strict-SNI policy are
+    loaded once instead of once per connection. *)
+
+val server_of_flow_with_context :
+  ?host_eio:Eta_eio.Host.t ->
+  server_context ->
+  [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t ->
+  flow * epoch
+(** Wrap an accepted TCP flow using a precompiled server TLS context. *)
 
 val epoch : flow -> (epoch, unit) result
 (** Extract the negotiated epoch. [Error ()] if the handshake has not

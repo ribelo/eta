@@ -2,6 +2,7 @@
 
 type config = Config.t
 type server_config = Config.server
+type server_context = { ctx : Openssl.ctx }
 
 type epoch = {
   alpn_protocol : string option;
@@ -275,9 +276,7 @@ let client_of_flow ?host_eio (config : config) ?host
    | None -> ());
   (Eio.Resource.T (t, ops) :> flow)
 
-let server_of_flow ?host_eio (config : server_config)
-    (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
-    flow * epoch =
+let server_context (config : server_config) =
   let certificates =
     Config.server_certificates config
     |> List.map (fun certificate ->
@@ -288,21 +287,29 @@ let server_of_flow ?host_eio (config : server_config)
              ~private_key_file:
                (Config.server_certificate_private_key_file certificate))
   in
-  let ctx =
-    Openssl.create_server_ctx
-      ~certificate_chain_file:(Config.certificate_chain_file config)
-      ~private_key_file:(Config.private_key_file config)
-      ~certificates
-      ~require_sni_match:(Config.require_sni_match config)
-      ~alpn_protocols:(Config.server_alpn_protocols config)
-      ()
-  in
-  let ssl = Openssl.create_server_ssl ctx in
+  {
+    ctx =
+      Openssl.create_server_ctx
+        ~certificate_chain_file:(Config.certificate_chain_file config)
+        ~private_key_file:(Config.private_key_file config)
+        ~certificates
+        ~require_sni_match:(Config.require_sni_match config)
+        ~alpn_protocols:(Config.server_alpn_protocols config)
+        ();
+  }
+
+let server_of_flow_with_context ?host_eio context
+    (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
+    flow * epoch =
+  let ssl = Openssl.create_server_ssl context.ctx in
   let t = make_tls_state ?host_eio ssl flow in
   do_handshake t;
   let t = { t with sni = Openssl.get_servername ssl } in
   let epoch = epoch_of_state t in
   ((Eio.Resource.T (t, ops) :> flow), epoch)
+
+let server_of_flow ?host_eio config flow =
+  server_of_flow_with_context ?host_eio (server_context config) flow
 
 let epoch flow =
   try

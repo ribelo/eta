@@ -436,6 +436,42 @@ let test_tls_eio_server_of_flow_handshake_epoch () =
   Eio.Flow.close client_flow;
   Eio.Flow.close server_flow
 
+let test_tls_eio_server_context_reuses_loaded_certificates () =
+  with_temp_tls_files @@ fun cert key ->
+  with_temp_ca_bundle [ cert ] @@ fun ca_bundle ->
+  let server_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let server_context = Eta_http_eio.Tls.Eio.server_context server_config in
+  remove_noerr cert;
+  remove_noerr key;
+  run_eio @@ fun _stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let server_raw, client_raw = Eio_unix.Net.socketpair_stream ~sw () in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:ca_bundle
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let server_result = ref None in
+  let client_result = ref None in
+  Eio.Fiber.both
+    (fun () ->
+      server_result :=
+        Some
+          (Eta_http_eio.Tls.Eio.server_of_flow_with_context server_context
+             server_raw))
+    (fun () ->
+      client_result :=
+        Some (Eta_http_eio.Tls.Eio.client_of_flow client_config client_raw));
+  let server_flow, server_epoch = require_some "server TLS result" !server_result in
+  let client_flow = require_some "client TLS result" !client_result in
+  Alcotest.(check (option string))
+    "server epoch ALPN" (Some "http/1.1") server_epoch.alpn_protocol;
+  Eio.Flow.close client_flow;
+  Eio.Flow.close server_flow
+
 let test_tls_eio_server_of_flow_sni_selects_named_certificate () =
   with_temp_tls_files @@ fun default_cert default_key ->
   with_generated_tls_files "alt.localhost" @@ fun alt_cert alt_key ->
