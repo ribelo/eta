@@ -71,10 +71,21 @@ type t = {
   connection_metrics : Server_metrics.t option;
   closed_signal : unit Eio.Promise.t;
   close_signal : unit Eio.Promise.u;
+  mutable reader_wakeup : unit Eio.Promise.t;
+  mutable reader_wakeup_resolver : unit Eio.Promise.u;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
+  mutable accepted_request : bool;
   mutable closed : bool;
 }
+
+let reset_reader_wakeup t =
+  let promise, resolver = Eio.Promise.create () in
+  t.reader_wakeup <- promise;
+  t.reader_wakeup_resolver <- resolver
+
+let wake_reader t =
+  ignore (Eio.Promise.try_resolve t.reader_wakeup_resolver ())
 
 let mark_closed t =
   if not t.closed then (
@@ -465,7 +476,8 @@ let close_request_body state =
 
 let forget_stream t ordinal state =
   state.response_writer <- None;
-  Hashtbl.remove t.streams ordinal
+  Hashtbl.remove t.streams ordinal;
+  wake_reader t
 
 let forget_if_complete t ordinal state =
   if state.request_done && state.response_done then forget_stream t ordinal state
@@ -865,10 +877,38 @@ let rec owner_loop t =
 let reader_loop t =
   let scratch = Bigstringaf.create t.config.read_buffer_size in
   let cstruct = Cstruct.of_bigarray scratch in
+  let ingress_timeout () =
+    if Hashtbl.length t.streams = 0 then
+      if t.accepted_request then t.config.server.timeouts.idle_timeout
+      else t.config.server.timeouts.request_header_timeout
+    else None
+  in
+  let single_read () =
+    let wakeup = t.reader_wakeup in
+    let read () =
+      match ingress_timeout () with
+      | None -> `Read (Eio.Flow.single_read t.flow cstruct)
+      | Some timeout -> (
+          try
+            `Read
+              (t.with_timeout timeout (fun () ->
+                   Eio.Flow.single_read t.flow cstruct))
+          with Eio.Time.Timeout -> `Timeout timeout)
+    in
+    Eio.Fiber.first read (fun () ->
+        Eio.Promise.await wakeup;
+        `Retry)
+  in
   let rec loop () =
-    match Eio.Flow.single_read t.flow cstruct with
-    | 0 -> ignore (enqueue t Ingress_eof)
-    | len ->
+    match single_read () with
+    | `Retry ->
+        reset_reader_wakeup t;
+        loop ()
+    | `Timeout timeout ->
+        ignore
+          (enqueue t (Ingress_failed (request_timeout_error t (Some timeout))))
+    | `Read 0 -> ignore (enqueue t Ingress_eof)
+    | `Read len ->
         let owned = Bigstringaf.create len in
         Bigstringaf.blit scratch ~src_off:0 owned ~dst_off:0 ~len;
         let promise, ack = Eio.Promise.create () in
@@ -1003,6 +1043,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
             H2.Reqd.report_exn reqd
               (Failure "Eta_http_eio.H2.Server_connection owner not initialized")
         | Some t ->
+            t.accepted_request <- true;
             incr request_ordinal;
             let ordinal = !request_ordinal in
             let body = body_of_stream t ordinal in
@@ -1035,6 +1076,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       ?config:config.Types.Config.h2_security_config ()
   in
   let closed_signal, close_signal = Eio.Promise.create () in
+  let reader_wakeup, reader_wakeup_resolver = Eio.Promise.create () in
   let t =
     let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
@@ -1063,8 +1105,11 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
         connection_metrics ~sw ~config ~runtime_factory ~connection;
       closed_signal;
       close_signal;
+      reader_wakeup;
+      reader_wakeup_resolver;
       graceful_shutdown = false;
       shutdown_timer_started = false;
+      accepted_request = false;
       closed = false;
     }
   in

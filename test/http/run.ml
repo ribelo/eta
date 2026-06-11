@@ -303,6 +303,10 @@ let () =
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick
             test_h2c_server_request_body_timeout;
+          Alcotest.test_case "h2c request header timeout" `Quick
+            test_h2c_server_request_header_timeout;
+          Alcotest.test_case "h2c idle timeout" `Quick
+            test_h2c_server_idle_timeout;
           Alcotest.test_case "generic h2 runner carries connection metadata" `Quick
             test_h2_server_connection_run_uses_connection_metadata;
           Alcotest.test_case "h2c bounded request body drain" `Quick
