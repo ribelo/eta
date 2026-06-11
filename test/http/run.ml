@@ -175,6 +175,8 @@ let () =
         [
           Alcotest.test_case "listener snapshot" `Quick
             test_server_stats_listener_snapshot;
+          Alcotest.test_case "listener error callback and stats" `Quick
+            test_server_listener_error_callback_and_stats;
           Alcotest.test_case "h1 snapshot" `Quick
             test_server_stats_h1_snapshot;
           Alcotest.test_case "h2 snapshot" `Quick

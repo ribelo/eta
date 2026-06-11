@@ -53,5 +53,6 @@ module Stats : sig
     alpn_h1 : int;
     alpn_h2 : int;
     alpn_rejected : int;
+    listener_errors : int;
   }
 end

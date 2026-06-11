@@ -10,6 +10,7 @@ module Listener : sig
     alpn_h1 : int;
     alpn_h2 : int;
     alpn_rejected : int;
+    listener_errors : int;
   }
 
   type t
@@ -22,6 +23,7 @@ module Listener : sig
   val alpn_h1 : t -> unit
   val alpn_h2 : t -> unit
   val alpn_rejected : t -> unit
+  val listener_error : t -> unit
   val snapshot : t -> active_connections:int -> snapshot
 end
 

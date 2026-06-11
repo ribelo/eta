@@ -1,4 +1,20 @@
+open Test_eta_http_support
 open Eta_http_eio
+
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> Alcotest.fail "expected TCP listener"
+
+let wait_for_server_stats clock server predicate =
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+      let rec loop () =
+        let stats = Server.stats server in
+        if predicate stats then stats
+        else (
+          Eio.Time.sleep clock 0.01;
+          loop ())
+      in
+      loop ())
 
 let test_server_stats_listener_snapshot () =
   let stats = Server_stats.Listener.create () in
@@ -10,6 +26,7 @@ let test_server_stats_listener_snapshot () =
   Server_stats.Listener.alpn_h1 stats;
   Server_stats.Listener.alpn_h2 stats;
   Server_stats.Listener.alpn_rejected stats;
+  Server_stats.Listener.listener_error stats;
   let snapshot : Server_stats.Listener.snapshot =
     Server_stats.Listener.snapshot stats ~active_connections:1
   in
@@ -21,7 +38,46 @@ let test_server_stats_listener_snapshot () =
     "tls handshake failures" 1 snapshot.tls_handshake_failures;
   Alcotest.(check int) "alpn h1" 1 snapshot.alpn_h1;
   Alcotest.(check int) "alpn h2" 1 snapshot.alpn_h2;
-  Alcotest.(check int) "alpn rejected" 1 snapshot.alpn_rejected
+  Alcotest.(check int) "alpn rejected" 1 snapshot.alpn_rejected;
+  Alcotest.(check int) "listener errors" 1 snapshot.listener_errors
+
+let test_server_listener_error_callback_and_stats () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let seen_error = ref None in
+  let runtime_factory ~sw:_ ~connection:_ () =
+    failwith "listener setup boom"
+  in
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Server.start_h1_on_socket ~sw ~clock ~runtime_factory
+      ~on_error:(fun exn -> seen_error := Some (Printexc.to_string exn))
+      ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  (try Eio.Flow.close flow with _ -> ());
+  let stats =
+    wait_for_server_stats clock server (fun stats ->
+        stats.listener_errors = 1)
+  in
+  Alcotest.(check int) "listener errors" 1 stats.listener_errors;
+  (match !seen_error with
+  | Some message ->
+      Alcotest.(check bool) "callback error" true
+        (contains message "listener setup boom")
+  | None -> Alcotest.fail "expected listener error callback");
+  Server.shutdown server Immediate
 
 let test_server_stats_h1_snapshot () =
   let stats = Server_stats.H1.create () in

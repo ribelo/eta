@@ -15,6 +15,7 @@ module Listener = struct
     alpn_h1 : int;
     alpn_h2 : int;
     alpn_rejected : int;
+    listener_errors : int;
   }
 
   type t = {
@@ -25,6 +26,7 @@ module Listener = struct
     mutable alpn_h1 : int;
     mutable alpn_h2 : int;
     mutable alpn_rejected : int;
+    mutable listener_errors : int;
   }
 
   let create () =
@@ -36,6 +38,7 @@ module Listener = struct
       alpn_h1 = 0;
       alpn_h2 = 0;
       alpn_rejected = 0;
+      listener_errors = 0;
     }
 
   let opened_connection t =
@@ -52,6 +55,7 @@ module Listener = struct
   let alpn_h1 t = t.alpn_h1 <- t.alpn_h1 + 1
   let alpn_h2 t = t.alpn_h2 <- t.alpn_h2 + 1
   let alpn_rejected t = t.alpn_rejected <- t.alpn_rejected + 1
+  let listener_error t = t.listener_errors <- t.listener_errors + 1
 
   let snapshot t ~active_connections : snapshot =
     {
@@ -63,6 +67,7 @@ module Listener = struct
       alpn_h1 = t.alpn_h1;
       alpn_h2 = t.alpn_h2;
       alpn_rejected = t.alpn_rejected;
+      listener_errors = t.listener_errors;
     }
 end
 

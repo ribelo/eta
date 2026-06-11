@@ -29,6 +29,7 @@ val start_h1 :
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H1_server_connection.stats -> unit) ->
   addr:Eio.Net.Sockaddr.stream ->
   Eta_http.Server.handler ->
@@ -39,6 +40,7 @@ val start_h1_on_socket :
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H1_server_connection.stats -> unit) ->
   socket:_ Eio.Net.listening_socket ->
   Eta_http.Server.handler ->
@@ -53,6 +55,7 @@ val run_h1 :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H1_server_connection.stats -> unit) ->
   addr:Eio.Net.Sockaddr.stream ->
   Eta_http.Server.handler ->
@@ -64,6 +67,7 @@ val run_h1_on_socket :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H1_server_connection.stats -> unit) ->
   socket:_ Eio.Net.listening_socket ->
   Eta_http.Server.handler ->
@@ -77,6 +81,7 @@ val start_h2c :
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H2_server_connection.stats -> unit) ->
   addr:Eio.Net.Sockaddr.stream ->
   Eta_http.Server.handler ->
@@ -87,6 +92,7 @@ val start_h2c_on_socket :
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H2_server_connection.stats -> unit) ->
   socket:_ Eio.Net.listening_socket ->
   Eta_http.Server.handler ->
@@ -101,6 +107,7 @@ val run_h2c :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H2_server_connection.stats -> unit) ->
   addr:Eio.Net.Sockaddr.stream ->
   Eta_http.Server.handler ->
@@ -112,6 +119,7 @@ val run_h2c_on_socket :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(H2_server_connection.stats -> unit) ->
   socket:_ Eio.Net.listening_socket ->
   Eta_http.Server.handler ->
@@ -125,6 +133,7 @@ val start_https :
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(https_connection_stats -> unit) ->
   tls_config:Eta_http.Tls.Config.server ->
   addr:Eio.Net.Sockaddr.stream ->
@@ -136,6 +145,7 @@ val start_https_on_socket :
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(https_connection_stats -> unit) ->
   tls_config:Eta_http.Tls.Config.server ->
   socket:_ Eio.Net.listening_socket ->
@@ -151,6 +161,7 @@ val run_https :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(https_connection_stats -> unit) ->
   tls_config:Eta_http.Tls.Config.server ->
   addr:Eio.Net.Sockaddr.stream ->
@@ -163,6 +174,7 @@ val run_https_on_socket :
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
+  ?on_error:(exn -> unit) ->
   ?on_connection_close:(https_connection_stats -> unit) ->
   tls_config:Eta_http.Tls.Config.server ->
   socket:_ Eio.Net.listening_socket ->
