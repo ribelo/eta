@@ -1,6 +1,7 @@
 (** Eio transport adapter for eta-http. *)
 
 module Client = Client
+module Server = Server
 
 val runtime_service :
   sw:Eio.Switch.t ->
@@ -33,6 +34,7 @@ module H2 : sig
   module Frame = Eta_http.H2.Frame
   module Informational_filter = Eta_http.H2.Informational_filter
   module Multiplexer = Multiplexer
+  module Server_connection = H2_server_connection
   module Security = Eta_http.H2.Security
   module Stream_state = Eta_http.H2.Stream_state
   module Writer = Writer

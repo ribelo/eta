@@ -1,6 +1,7 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 module Client = Client
+module Server = Server
 
 let runtime_service ~sw ~net () =
   let clients = Hashtbl.create 4 in
@@ -118,6 +119,7 @@ module H2 = struct
   module Frame = Eta_http.H2.Frame
   module Informational_filter = Eta_http.H2.Informational_filter
   module Multiplexer = Multiplexer
+  module Server_connection = H2_server_connection
   module Security = Eta_http.H2.Security
   module Stream_state = Eta_http.H2.Stream_state
   module Writer = Writer

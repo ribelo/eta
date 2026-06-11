@@ -11,7 +11,7 @@
 (executable
  (name fuzz_h1_write)
  (modules fuzz_h1_write)
- (libraries eta_http eta_http_fuzz_support crowbar eio))
+ (libraries eta_http eta_http_eio eta_http_fuzz_support crowbar eio))
 
 (executable
  (name fuzz_ws_codec)

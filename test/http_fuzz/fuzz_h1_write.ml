@@ -37,7 +37,7 @@ let () =
       let flow_buffer = Buffer.create 512 in
       let flow = Eio.Flow.buffer_sink flow_buffer in
       let flow_result =
-        Eta_http.H1.Write.write_to_flow flow ~method_ ~url ~headers ~body
+        Eta_http_eio.H1.Write.write_to_flow flow ~method_ ~url ~headers ~body
       in
       match (string_result, bytes_result, buffer_result, flow_result) with
       | Ok expected, Ok len, Ok (), Ok () ->

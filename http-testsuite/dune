@@ -1,19 +1,19 @@
 (rule
  (alias interop)
- (deps (alias eta_test/interop/interop))
+ (deps (alias test/interop/interop))
  (action (progn)))
 
 (rule
  (alias cve-regress)
- (deps (alias eta_test/cve_regress/cve-regress))
+ (deps (alias test/cve_regress/cve-regress))
  (action (progn)))
 
 (rule
  (alias http-bench)
- (deps (alias eta_test/bench/http-bench))
+ (deps (alias test/bench/http-bench))
  (action (progn)))
 
 (rule
  (alias perf-compare)
- (deps (alias eta_test/perf_compare/perf-compare))
+ (deps (alias test/perf_compare/perf-compare))
  (action (progn)))

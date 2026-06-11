@@ -26,6 +26,9 @@ end
 module Client = Client
 (** Top-level client API. *)
 
+module Server = Server
+(** Backend-neutral server API. *)
+
 module Idempotency = Idempotency
 (** HTTP method idempotency and request-body replayability classifier. *)
 
@@ -51,6 +54,12 @@ module Observability : sig
   module Meter = Meter
   module Semconv = Semconv
   module Tracer = Tracer
+
+  module Server : sig
+    module Meter = Server_meter
+    module Semconv = Server_semconv
+    module Tracer = Server_tracer
+  end
 end
 (** OpenTelemetry semantic-convention helpers using Eta tracer/meter
     capabilities. *)

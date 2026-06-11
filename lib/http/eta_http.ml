@@ -19,6 +19,7 @@ module Body = struct
 end
 
 module Client = Client
+module Server = Server
 module Idempotency = Idempotency
 module Request = Request
 module Response = Response
@@ -30,6 +31,12 @@ module Observability = struct
   module Meter = Meter
   module Semconv = Semconv
   module Tracer = Tracer
+
+  module Server = struct
+    module Meter = Server_meter
+    module Semconv = Server_semconv
+    module Tracer = Server_tracer
+  end
 end
 module Redaction = Redaction
 

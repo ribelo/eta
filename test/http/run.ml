@@ -6,6 +6,7 @@ open Test_eta_http_tls
 open Test_eta_http_h2_writer
 open Test_eta_http_h2_connection
 open Test_eta_http_h2_multiplexer
+open Test_eta_http_h2_server
 open Test_eta_http_h2_security
 
 let () =
@@ -211,6 +212,21 @@ let () =
             test_h2_connection_body_error_on_switch_close_is_connection_closed;
           Alcotest.test_case "failure handler exception skips others" `Quick
             test_h2_connection_failure_handler_exception_skips_others;
+        ] );
+      ( "h2-server",
+        [
+          Alcotest.test_case "h2c fixed, echo, unread body, stream, trailers" `Quick
+            test_h2c_server_fixed_response_and_echo_body;
+          Alcotest.test_case "h2c bounded request body drain" `Quick
+            test_h2c_server_drain_up_to_discard_waits_for_body;
+          Alcotest.test_case "h2c connection close fails pending body read" `Quick
+            test_h2c_server_connection_close_fails_pending_body_read;
+          Alcotest.test_case "h2c server handle graceful shutdown" `Quick
+            test_h2c_server_handle_graceful_shutdown_waits_for_stream;
+          Alcotest.test_case "h2c read exception closes typed" `Quick
+            test_h2c_server_read_exception_closes_typed;
+          Alcotest.test_case "h2c write exception closes typed" `Quick
+            test_h2c_server_write_exception_closes_typed;
         ] );
       ( "h2-security",
         [

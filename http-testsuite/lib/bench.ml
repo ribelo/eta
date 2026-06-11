@@ -14,10 +14,10 @@ let make_eta_client ~env ~sw ~protocol ~transport ~cert_dir:_ =
   let max_response_body_bytes = 128 * 1024 * 1024 in
   match protocol with
   | H1 ->
-      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http_eio.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
   | H2 ->
-      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ()
 
 let run_eta_get ~rt ~client ~url =

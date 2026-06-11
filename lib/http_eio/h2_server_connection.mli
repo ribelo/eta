@@ -1,0 +1,30 @@
+(** Eio-owned h2c server connection loop. *)
+
+type t
+
+type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
+
+type stats = {
+  active_streams : int;
+  opened_streams : int;
+  completed_streams : int;
+  reset_streams : int;
+  request_bytes : int;
+  response_bytes : int;
+  protocol_errors : int;
+}
+
+val run_h2c :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  flow:flow ->
+  peer:Eio.Net.Sockaddr.stream ->
+  config:Server_types.Config.t ->
+  runtime_factory:Server_types.runtime_factory ->
+  ?on_start:(t -> unit) ->
+  ?on_close:(stats -> unit) ->
+  Eta_http.Server.handler ->
+  unit
+
+val stats : t -> stats
+val shutdown : t -> Server_types.shutdown -> unit

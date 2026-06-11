@@ -79,10 +79,10 @@ let make_eta_client ~env ~sw ~protocol ~_transport ~cert_dir =
   in
   match protocol with
   | Types.H1 ->
-      Eta_http.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http_eio.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ?ca_file ()
   | H2 ->
-      Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env)
+      Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env)
         ~max_response_body_bytes ?ca_file ()
 
 let headers_for = function

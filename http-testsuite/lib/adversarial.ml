@@ -55,7 +55,7 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
                 (fun () -> try server_fn ~env flow with _ -> ()));
           `Stop_daemon);
       let url = url_builder port in
-      let client = Eta_http.Client.make ~sw ~net:(Eio.Stdenv.net env) () in
+      let client = Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env) () in
       let request = Eta_http.Request.make "GET" url in
       let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
       let consume_response =

@@ -12,6 +12,7 @@
   test_eta_http_h2_support
   test_eta_http_h2_connection
   test_eta_http_h2_multiplexer
+  test_eta_http_h2_server
   test_eta_http_h2_security)
  (libraries
   eta_eio

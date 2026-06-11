@@ -2188,6 +2188,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       h1_injection_cases
 
   module H2_multiplexer = H2_multiplexer_suites.Make (B)
+  module Server = Server_common_suites.Make (B)
 
   let tests =
     [
@@ -2423,5 +2424,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_writer_rejects_header_injection;
         ] );
     ]
+    @ Server.tests
     @ H2_multiplexer.tests
 end
