@@ -225,7 +225,7 @@ let write_scenario_output ~results_dir ~name ~server_config eta_res curl_res =
   let dir = Filename.concat results_dir
       (Printf.sprintf "%s_%s_%s_%s"
          name
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy")
+         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p dir;
@@ -302,7 +302,7 @@ let run_all ~env ~results_dir ~scenarios =
   List.iter (fun (kind, protocol, transport) ->
       let temp_dir = Filename.concat results_dir
           (Printf.sprintf "server_%s_%s_%s"
-             (match kind with Nginx -> "nginx" | Caddy -> "caddy")
+             (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
              (match protocol with H1 -> "h1" | H2 -> "h2")
              (match transport with Plain -> "plain" | TLS -> "tls")) in
       Util.mkdir_p temp_dir;
@@ -321,6 +321,7 @@ let run_all ~env ~results_dir ~scenarios =
         match kind with
         | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol ~transport
         | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol ~transport
+        | Eta -> Error "eta server lifecycle is Eio-owned; use Eta_server.start"
       in
       match pid_path with
       | Error e ->
@@ -349,6 +350,7 @@ let run_all ~env ~results_dir ~scenarios =
                 ) scenarios);
           (match kind with
            | Nginx -> ignore (Nginx.stop pid_path)
-           | Caddy -> ignore (Caddy.stop pid_path))
+           | Caddy -> ignore (Caddy.stop pid_path)
+           | Eta -> ())
     ) configs;
   List.rev !all_results

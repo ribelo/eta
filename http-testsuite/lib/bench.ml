@@ -214,7 +214,7 @@ let run_concurrent_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~con
 let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
   let temp_dir = Filename.concat results_dir
       (Printf.sprintf "bench_%s_%s_%s"
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy")
+         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p temp_dir;
@@ -233,6 +233,7 @@ let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
     match kind with
     | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
+    | Eta -> Error "eta server benchmark lifecycle is not wired yet"
   in
   match pid_path with
   | Error e ->
@@ -247,9 +248,10 @@ let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
 	             ~cert_dir:cert_dir_str ~iterations:3 ~path:"/static/1m.bin" ~tmp_dir:temp_dir @ !all;
        with exn ->
          Printf.eprintf "Bench GET scenario failed: %s\n%!" (Printexc.to_string exn));
-      (match kind with
+       (match kind with
        | Nginx -> ignore (Nginx.stop pid_path)
-       | Caddy -> ignore (Caddy.stop pid_path));
+       | Caddy -> ignore (Caddy.stop pid_path)
+       | Eta -> ());
       !all
 
 let bench_post_against_caddy ~env ~protocol ~transport ~results_dir =
@@ -290,7 +292,7 @@ let bench_post_against_caddy ~env ~protocol ~transport ~results_dir =
 let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir =
   let temp_dir = Filename.concat results_dir
       (Printf.sprintf "bench_concurrent_%s_%s_%s"
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy")
+         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p temp_dir;
@@ -309,6 +311,7 @@ let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir
     match kind with
     | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
+    | Eta -> Error "eta server benchmark lifecycle is not wired yet"
   in
   match pid_path with
   | Error e ->
@@ -321,9 +324,10 @@ let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir
 	             ~cert_dir:cert_dir_str ~concurrency:20 ~path:"/static/1k.bin" ~tmp_dir:temp_dir @ !all;
        with exn ->
          Printf.eprintf "Bench concurrent scenario failed: %s\n%!" (Printexc.to_string exn));
-      (match kind with
+       (match kind with
        | Nginx -> ignore (Nginx.stop pid_path)
-       | Caddy -> ignore (Caddy.stop pid_path));
+       | Caddy -> ignore (Caddy.stop pid_path)
+       | Eta -> ());
       !all
 
 let run_all ~env ~results_dir =

@@ -44,6 +44,7 @@ let effective_iterations scenario_iters =
 let server_name = function
   | Types.Nginx -> "nginx"
   | Caddy -> "caddy"
+  | Eta -> "eta"
 
 let protocol_name = function
   | Types.H1 -> "h1"
@@ -357,6 +358,7 @@ let start_server scenario ~temp_dir =
     | Caddy ->
         Caddy.start ~port ~temp_dir ~cert_dir:cert_dir_str
           ~protocol:scenario.protocol ~transport:scenario.transport
+    | Eta -> Error "eta server perf-compare lifecycle is not wired yet"
   in
   match pid_path with
   | Ok pid_path -> (port, cert_dir_str, pid_path)
@@ -366,6 +368,7 @@ let stop_server scenario pid_path =
   match scenario.server with
   | Types.Nginx -> ignore (Nginx.stop pid_path)
   | Caddy -> ignore (Caddy.stop pid_path)
+  | Eta -> ()
 
 let run_scenario ~env ~results_dir scenario =
   let temp_dir = Filename.concat results_dir (scenario_id scenario) in

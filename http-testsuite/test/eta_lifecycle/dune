@@ -1,0 +1,10 @@
+(executable
+ (name run)
+ (libraries eta_http_testsuite eio_main))
+
+(rule
+ (alias eta-lifecycle)
+ (deps
+  (source_tree ../../lib))
+ (action
+  (run %{dep:run.exe})))

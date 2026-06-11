@@ -14,6 +14,11 @@
  (action (progn)))
 
 (rule
+ (alias eta-lifecycle)
+ (deps (alias test/eta_lifecycle/eta-lifecycle))
+ (action (progn)))
+
+(rule
  (alias perf-compare)
  (deps (alias test/perf_compare/perf-compare))
  (action (progn)))
