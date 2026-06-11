@@ -521,7 +521,14 @@ let test_h2c_server_enforces_max_concurrent_streams () =
   in
   let port = tcp_port (Eio.Net.listening_addr socket) in
   let config =
-    { Eta_http_eio.Server.Config.default with max_concurrent_streams = 1 }
+    {
+      Eta_http_eio.Server.Config.default with
+      h2_config =
+        {
+          Eta_http_eio.Server.Config.default.h2_config with
+          max_concurrent_streams = 1l;
+        };
+    }
   in
   let release_first, resolve_release_first = Eio.Promise.create () in
   let handler (request : Eta_http.Server.Request.t) =

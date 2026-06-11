@@ -16,9 +16,6 @@ let test_server_config_validation () =
   check_invalid "read buffer"
     "Eta_http_eio.Server.Config.read_buffer_size must be > 0"
     { config with read_buffer_size = 0 };
-  check_invalid "concurrent streams"
-    "Eta_http_eio.Server.Config.max_concurrent_streams must be > 0"
-    { config with max_concurrent_streams = 0 };
   check_invalid "command queue"
     "Eta_http_eio.Server.Config.command_queue_capacity must be > 0"
     { config with command_queue_capacity = 0 };
@@ -35,29 +32,29 @@ let test_server_config_validation () =
     "Eta_http.Server.Config.max_request_headers must be > 0"
     { config with server };
   let h2_config =
-    { H2.Config.default with read_buffer_size = 1024 }
+    { config.h2_config with read_buffer_size = 1024 }
   in
   check_invalid "h2 frame size"
     "Eta_http_eio.Server.Config.h2_config.read_buffer_size must be between 16384 and 16777215"
-    { config with h2_config = Some h2_config };
+    { config with h2_config };
   let h2_config =
-    { H2.Config.default with request_body_buffer_size = 0 }
+    { config.h2_config with request_body_buffer_size = 0 }
   in
   check_invalid "h2 request body buffer"
     "Eta_http_eio.Server.Config.h2_config.request_body_buffer_size must be > 0"
-    { config with h2_config = Some h2_config };
+    { config with h2_config };
   let h2_config =
-    { H2.Config.default with max_concurrent_streams = 0l }
+    { config.h2_config with max_concurrent_streams = 0l }
   in
   check_invalid "h2 concurrent streams"
     "Eta_http_eio.Server.Config.h2_config.max_concurrent_streams must be > 0"
-    { config with h2_config = Some h2_config };
+    { config with h2_config };
   let h2_config =
-    { H2.Config.default with initial_window_size = -1l }
+    { config.h2_config with initial_window_size = -1l }
   in
   check_invalid "h2 initial window"
     "Eta_http_eio.Server.Config.h2_config.initial_window_size must be >= 0"
-    { config with h2_config = Some h2_config };
+    { config with h2_config };
   let h2_security_config =
     {
       Eta_http.H2.Security.default_config with

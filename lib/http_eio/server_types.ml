@@ -29,12 +29,11 @@ module Config = struct
   type t = {
     max_connections : int;
     backlog : int;
-    max_concurrent_streams : int;
     read_buffer_size : int;
     command_queue_capacity : int;
     tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
-    h2_config : H2.Config.t option;
+    h2_config : H2.Config.t;
     h2_security_config : Eta_http.H2.Security.config option;
   }
 
@@ -42,12 +41,11 @@ module Config = struct
     {
       max_connections = 1024;
       backlog = 128;
-      max_concurrent_streams = 128;
       read_buffer_size = 64 * 1024;
       command_queue_capacity = 1024;
       tls_handshake_timeout = Eta.Duration.seconds 10;
       server = Eta_http.Server.Config.default;
-      h2_config = None;
+      h2_config = { H2.Config.default with max_concurrent_streams = 128l };
       h2_security_config = None;
     }
 
@@ -112,16 +110,12 @@ module Config = struct
   let validate t =
     require_positive "max_connections" t.max_connections;
     require_positive "backlog" t.backlog;
-    require_positive "max_concurrent_streams" t.max_concurrent_streams;
-    if t.max_concurrent_streams > Int32.to_int Int32.max_int then
-      invalid_arg
-        (field "max_concurrent_streams" ^ " must fit in int32");
     require_positive "read_buffer_size" t.read_buffer_size;
     require_positive "command_queue_capacity" t.command_queue_capacity;
     require_positive_duration "tls_handshake_timeout"
       t.tls_handshake_timeout;
     Eta_http.Server.Config.validate t.server;
-    Option.iter validate_h2_config t.h2_config;
+    validate_h2_config t.h2_config;
     Option.iter validate_h2_security_config t.h2_security_config
 end
 

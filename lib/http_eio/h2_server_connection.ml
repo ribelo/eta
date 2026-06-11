@@ -156,16 +156,6 @@ let connection_url_scheme t =
 
 let validate_config = Types.Config.validate
 
-let h2_config config =
-  let base =
-    Option.value ~default:H2.Config.default config.Types.Config.h2_config
-  in
-  {
-    base with
-    H2.Config.max_concurrent_streams =
-      Int32.of_int config.max_concurrent_streams;
-  }
-
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
 
 let enqueue t command =
@@ -449,7 +439,7 @@ let rec drain_writes t =
       (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
-  (h2_config config).H2.Config.read_buffer_size
+  config.Types.Config.h2_config.H2.Config.read_buffer_size
 
 let max_ingress_buffer_size config =
   config.Types.Config.read_buffer_size + h2_read_buffer_size config
@@ -1190,10 +1180,11 @@ let shutdown t policy =
 let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
+  let h2_config = config.Types.Config.h2_config in
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
-    H2.Server_connection.create ~config:(h2_config config)
+    H2.Server_connection.create ~config:h2_config
       ~error_handler:(fun ?request:_ _ respond ->
         Option.iter record_protocol_error !holder;
         let body = respond H2.Headers.empty in
@@ -1268,7 +1259,9 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       ingress_off = 0;
       ingress_len = 0;
       commands = Eio.Stream.create config.command_queue_capacity;
-      streams = Hashtbl.create config.max_concurrent_streams;
+      streams =
+        Hashtbl.create
+          (Int32.to_int h2_config.H2.Config.max_concurrent_streams);
       connection;
       config;
       runtime_factory;
