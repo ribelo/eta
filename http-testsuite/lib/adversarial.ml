@@ -669,6 +669,25 @@ let h1_invalid_host ~env =
         flow;
       read_h1_response flow)
 
+let h1_invalid_request_target ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_invalid_request_target"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        "GET noslash HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+        flow;
+      read_h1_response flow)
+
+let h1_absolute_form_host_conflict ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_absolute_form_host_conflict"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("GET http://example.test/conflict HTTP/1.1\r\n"
+       ^ "Host: shadow.test\r\nConnection: close\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
 let h1_header_flood ~env =
   let config = h1_adversarial_config ~max_request_header_bytes:64 () in
   let flood = String.make 256 'x' in
@@ -820,6 +839,16 @@ let run_all ~env =
   in
   let results =
     add_cve_result "h1_invalid_host" (fun () -> h1_invalid_host ~env) results
+  in
+  let results =
+    add_cve_result "h1_invalid_request_target"
+      (fun () -> h1_invalid_request_target ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_absolute_form_host_conflict"
+      (fun () -> h1_absolute_form_host_conflict ~env)
+      results
   in
   let results =
     add_cve_result "h1_header_flood" (fun () -> h1_header_flood ~env) results

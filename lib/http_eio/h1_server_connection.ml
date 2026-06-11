@@ -29,9 +29,17 @@ type t = {
   mutable closed : bool;
 }
 
+type target_authority = {
+  value : string;
+  scheme : Eta_http.Core.Url.scheme;
+  host : string;
+  port : int;
+}
+
 type request_head = {
   method_ : string;
   target : string;
+  target_authority : target_authority option;
   version : Eta_http.Core.Version.t;
   headers : Eta_http.Core.Header.t;
   body_initial : bytes;
@@ -221,6 +229,7 @@ let read_request_head t =
           {
             method_ = Eta_http.H1.Request_parse.method_to_string buffer request;
             target = Eta_http.H1.Request_parse.target_to_string buffer request;
+            target_authority = None;
             version = request.version;
             headers;
             body_initial;
@@ -545,11 +554,16 @@ let request_body t head continue_state =
 
 let request_of_head t head ordinal body trailers =
   let path, query = Server.Request.split_target head.target in
+  let authority =
+    match head.target_authority with
+    | Some authority -> Some authority.value
+    | None -> Eta_http.Core.Header.get "host" head.headers
+  in
   {
     Server.Request.id = t.connection.id ^ "/request-" ^ string_of_int ordinal;
     version = head.version;
     scheme = if t.connection.tls then "https" else "http";
-    authority = Eta_http.Core.Header.get "host" head.headers;
+    authority;
     method_ = head.method_;
     target = head.target;
     path;
@@ -683,6 +697,23 @@ let valid_host_authority value =
     if host_finish = len then true
     else valid_port value (host_finish + 1) len
 
+let connection_url_scheme t =
+  if t.connection.tls then Eta_http.Core.Url.Https else Eta_http.Core.Url.Http
+
+let parse_host_authority ~scheme value =
+  if not (valid_host_authority value) then None
+  else
+    let raw =
+      Eta_http.Core.Url.scheme_to_string scheme ^ "://" ^ value
+    in
+    match Eta_http.Core.Url.parse raw with
+    | Error _ -> None
+    | Ok url ->
+        Some
+          ( Eta_http.Core.Url.authority url,
+            Eta_http.Core.Url.host url,
+            Eta_http.Core.Url.effective_port url )
+
 let validate_authority t head =
   match Eta_http.Core.Header.get_all "host" head.headers with
   | [] when head.version = Eta_http.Core.Version.H1_1 ->
@@ -690,15 +721,81 @@ let validate_authority t head =
         (error t ~method_:head.method_ ~target:head.target
            (Bad_request { message = "HTTP/1.1 request is missing Host header" }))
   | [] -> Ok ()
-  | [ host ] when valid_host_authority host -> Ok ()
-  | [ _ ] ->
-      Error
-        (error t ~method_:head.method_ ~target:head.target
-           (Bad_request { message = "invalid Host header" }))
+  | [ host ] ->
+      let scheme =
+        match head.target_authority with
+        | Some authority -> authority.scheme
+        | None -> connection_url_scheme t
+      in
+      (match parse_host_authority ~scheme host with
+      | None ->
+          Error
+            (error t ~method_:head.method_ ~target:head.target
+               (Bad_request { message = "invalid Host header" }))
+      | Some (_, host, port) -> (
+          match head.target_authority with
+          | Some authority
+            when (not (String.equal host authority.host)) || port <> authority.port ->
+              Error
+                (error t ~method_:head.method_ ~target:head.target
+                   (Bad_request
+                      {
+                        message =
+                          "absolute-form request target authority conflicts with \
+                           Host header";
+                      }))
+          | None | Some _ -> Ok ()))
   | _ ->
       Error
         (error t ~method_:head.method_ ~target:head.target
            (Bad_request { message = "multiple Host headers" }))
+
+let target_has_fragment target = Option.is_some (String.index_opt target '#')
+
+let unsupported_request_target t head message =
+  Error
+    (error t ~method_:head.method_ ~target:head.target
+       (Bad_request { message }))
+
+let target_authority_of_url url =
+  {
+    value = Eta_http.Core.Url.authority url;
+    scheme = Eta_http.Core.Url.scheme url;
+    host = Eta_http.Core.Url.host url;
+    port = Eta_http.Core.Url.effective_port url;
+  }
+
+let normalize_request_target t head =
+  let target = head.target in
+  if String.equal head.method_ "CONNECT" then
+    unsupported_request_target t head "CONNECT is not supported by this server"
+  else if String.equal target "*" then
+    if String.equal head.method_ "OPTIONS" then Ok head
+    else
+      unsupported_request_target t head
+        "asterisk-form request target is only valid with OPTIONS"
+  else if String.starts_with ~prefix:"/" target then
+    if target_has_fragment target then
+      unsupported_request_target t head "request target must not include fragment"
+    else Ok head
+  else
+    match Eta_http.Core.Url.parse target with
+    | Error _ ->
+        unsupported_request_target t head "invalid request target form"
+    | Ok url ->
+        if Option.is_some (Eta_http.Core.Url.fragment url) then
+          unsupported_request_target t head
+            "request target must not include fragment"
+        else if Eta_http.Core.Url.scheme url <> connection_url_scheme t then
+          unsupported_request_target t head
+            "absolute-form request target scheme does not match connection"
+        else
+          Ok
+            {
+              head with
+              target = Eta_http.Core.Url.origin_form url;
+              target_authority = Some (target_authority_of_url url);
+            }
 
 let request_allows_keep_alive head =
   let close = header_contains_token head.headers "connection" "close" in
@@ -1008,56 +1105,61 @@ let rec run_requests t ordinal handler =
   | `Read (Error Clean_eof) -> ()
   | `Read (Error (Request_head_error error)) -> handle_head_error t error
   | `Read (Ok head) -> (
-      match validate_authority t head with
+      match normalize_request_target t head with
       | Error error ->
           record_protocol_error t;
           write_default_error t (request_from_head t head ordinal) error
-      | Ok () -> (
-          match expect_continue t head with
+      | Ok head -> (
+          match validate_authority t head with
           | Error error ->
               record_protocol_error t;
-              let request = request_from_head t head ordinal in
-              write_default_error t request error
-          | Ok continue_state -> (
-              match request_body t head continue_state with
+              write_default_error t (request_from_head t head ordinal) error
+          | Ok () -> (
+              match expect_continue t head with
               | Error error ->
                   record_protocol_error t;
                   let request = request_from_head t head ordinal in
                   write_default_error t request error
-              | Ok (body, trailers, body_control) ->
-                  Server_stats.H1.request_started t.stats;
-                  let request = request_of_head t head ordinal body trailers in
-                  let rt =
-                    t.runtime_factory ~sw:t.sw ~connection:t.connection ()
-                  in
-                  let metrics = request_metrics t rt request in
-                  t.current_metrics <- metrics;
-                  Option.iter Server_metrics.request_started metrics;
-                  let request_keep_alive = request_allows_keep_alive head in
-                  let close_before_response =
-                    (not request_keep_alive)
-                    || not (body_can_reuse_before_response t body_control)
-                  in
-                  let response = run_handler t rt request handler in
-                  let response_result =
-                    write_response ~connection_close:close_before_response ~rt t
-                      request response
-                  in
-                  let reusable =
-                    match response_result with
-                    | Ok { connection_close } ->
-                        (not connection_close)
-                        && request_keep_alive
-                        && finish_request_body_for_reuse t rt body_control
-                    | Error { error; response_started = false } ->
-                        write_default_error t request error;
-                        false
-                    | Error { response_started = true; _ } -> false
-                  in
-                  Server_stats.H1.request_completed t.stats;
-                  Option.iter Server_metrics.request_finished metrics;
-                  t.current_metrics <- None;
-                  if reusable then run_requests t (ordinal + 1) handler)))
+              | Ok continue_state -> (
+                  match request_body t head continue_state with
+                  | Error error ->
+                      record_protocol_error t;
+                      let request = request_from_head t head ordinal in
+                      write_default_error t request error
+                  | Ok (body, trailers, body_control) ->
+                      Server_stats.H1.request_started t.stats;
+                      let request = request_of_head t head ordinal body trailers in
+                      let rt =
+                        t.runtime_factory ~sw:t.sw ~connection:t.connection ()
+                      in
+                      let metrics = request_metrics t rt request in
+                      t.current_metrics <- metrics;
+                      Option.iter Server_metrics.request_started metrics;
+                      let request_keep_alive = request_allows_keep_alive head in
+                      let close_before_response =
+                        (not request_keep_alive)
+                        || not (body_can_reuse_before_response t body_control)
+                      in
+                      let response = run_handler t rt request handler in
+                      let response_result =
+                        write_response ~connection_close:close_before_response
+                          ~rt t request response
+                      in
+                      let reusable =
+                        match response_result with
+                        | Ok { connection_close } ->
+                            (not connection_close)
+                            && request_keep_alive
+                            && finish_request_body_for_reuse t rt body_control
+                        | Error { error; response_started = false } ->
+                            write_default_error t request error;
+                            false
+                        | Error { response_started = true; _ } -> false
+                      in
+                      Server_stats.H1.request_completed t.stats;
+                      Option.iter Server_metrics.request_finished metrics;
+                      t.current_metrics <- None;
+                      if reusable then run_requests t (ordinal + 1) handler))))
 
 let shutdown t _policy =
   if not t.closed then (

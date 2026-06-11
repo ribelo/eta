@@ -263,7 +263,7 @@ let test_h1_server_connection_rejects_unsupported_expectation () =
   Alcotest.(check int) "completed requests" 0 stats.completed_requests;
   Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
 
-let check_bad_host_rejected ~name wire =
+let check_bad_request_rejected ~name wire =
   let handler_called = ref false in
   let handler (_request : Eta_http.Server.Request.t) =
     handler_called := true;
@@ -287,16 +287,16 @@ let check_bad_host_rejected ~name wire =
   Alcotest.(check int) (name ^ " protocol errors") 1 stats.protocol_errors
 
 let test_h1_server_connection_rejects_missing_http11_host () =
-  check_bad_host_rejected ~name:"missing host"
+  check_bad_request_rejected ~name:"missing host"
     "GET /missing HTTP/1.1\r\nConnection: close\r\n\r\n"
 
 let test_h1_server_connection_rejects_duplicate_http11_host () =
-  check_bad_host_rejected ~name:"duplicate host"
+  check_bad_request_rejected ~name:"duplicate host"
     ("GET /duplicate HTTP/1.1\r\nHost: example.test\r\n"
    ^ "Host: shadow.test\r\nConnection: close\r\n\r\n")
 
 let test_h1_server_connection_rejects_invalid_http11_host () =
-  check_bad_host_rejected ~name:"invalid host"
+  check_bad_request_rejected ~name:"invalid host"
     "GET /invalid HTTP/1.1\r\nHost: bad/name\r\nConnection: close\r\n\r\n"
 
 let test_h1_server_connection_allows_http10_without_host () =
@@ -317,6 +317,80 @@ let test_h1_server_connection_allows_http10_without_host () =
   in
   Alcotest.(check int) "completed requests" 1 stats.completed_requests;
   Alcotest.(check int) "protocol errors" 0 stats.protocol_errors
+
+let test_h1_server_connection_rejects_invalid_request_targets () =
+  [
+    ( "relative target",
+      "GET noslash HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    );
+    ( "fragment target",
+      "GET /path#frag HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    );
+    ( "asterisk target",
+      "GET * HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n" );
+    ( "connect target",
+      "CONNECT /proxy HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    );
+  ]
+  |> List.iter (fun (name, wire) -> check_bad_request_rejected ~name wire)
+
+let test_h1_server_connection_accepts_options_asterisk_target () =
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text request.target)
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "OPTIONS * HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 1\r\n\r\n*"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 0 stats.protocol_errors
+
+let test_h1_server_connection_normalizes_absolute_form_target () =
+  let seen_request, resolve_seen_request = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    ignore
+      (Eio.Promise.try_resolve resolve_seen_request
+         (request.target, request.path, request.query, request.authority));
+    Eta.Effect.pure (Eta_http.Server.Response.text request.path)
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET http://example.test/absolute?x=1 HTTP/1.1\r\n"
+   ^ "Host: example.test:80\r\nConnection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  let target, path, query, authority = Eio.Promise.await seen_request in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 9\r\n\r\n"
+   ^ "/absolute")
+    response;
+  Alcotest.(check string) "target" "/absolute?x=1" target;
+  Alcotest.(check string) "path" "/absolute" path;
+  Alcotest.(check (option string)) "query" (Some "x=1") query;
+  Alcotest.(check (option string)) "authority" (Some "example.test") authority;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 0 stats.protocol_errors
+
+let test_h1_server_connection_rejects_absolute_form_host_conflict () =
+  check_bad_request_rejected ~name:"absolute host conflict"
+    ("GET http://example.test/conflict HTTP/1.1\r\nHost: shadow.test\r\n"
+   ^ "Connection: close\r\n\r\n")
 
 let test_h1_server_connection_post_reads_chunked_body_and_trailers () =
   let seen, resolve_seen = Eio.Promise.create () in
