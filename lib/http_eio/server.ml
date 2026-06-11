@@ -30,6 +30,11 @@ type t = {
   mutable connections : connection list;
   mutable opened_connections : int;
   mutable closed_connections : int;
+  mutable tls_handshakes : int;
+  mutable tls_handshake_failures : int;
+  mutable alpn_h1 : int;
+  mutable alpn_h2 : int;
+  mutable alpn_rejected : int;
 }
 
 let default_runtime_factory ~clock ~sw ~connection:_ () =
@@ -99,6 +104,11 @@ let create () =
     connections = [];
     opened_connections = 0;
     closed_connections = 0;
+    tls_handshakes = 0;
+    tls_handshake_failures = 0;
+    alpn_h1 = 0;
+    alpn_h2 = 0;
+    alpn_rejected = 0;
   }
 
 let with_lock t f =
@@ -128,12 +138,30 @@ let unregister_connection t connection =
 
 let connections t = with_lock t (fun () -> t.connections)
 
+let record_tls_handshake t =
+  with_lock t (fun () -> t.tls_handshakes <- t.tls_handshakes + 1)
+
+let record_tls_handshake_failure t =
+  with_lock t (fun () ->
+      t.tls_handshake_failures <- t.tls_handshake_failures + 1)
+
+let record_alpn_h1 t = with_lock t (fun () -> t.alpn_h1 <- t.alpn_h1 + 1)
+let record_alpn_h2 t = with_lock t (fun () -> t.alpn_h2 <- t.alpn_h2 + 1)
+
+let record_alpn_rejected t =
+  with_lock t (fun () -> t.alpn_rejected <- t.alpn_rejected + 1)
+
 let stats t =
   with_lock t (fun () ->
       {
         Stats.active_connections = List.length t.connections;
         opened_connections = t.opened_connections;
         closed_connections = t.closed_connections;
+        tls_handshakes = t.tls_handshakes;
+        tls_handshake_failures = t.tls_handshake_failures;
+        alpn_h1 = t.alpn_h1;
+        alpn_h2 = t.alpn_h2;
+        alpn_rejected = t.alpn_rejected;
       })
 
 let shutdown t policy =
@@ -329,11 +357,31 @@ let run_h2c ~sw ~net ~clock ?domain_manager
     ?runtime_factory ?on_connection_close ~addr handler
 
 let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
-    ?on_connection_start ?on_connection_close ~tls_config handler flow peer =
+    ?on_connection_start ?on_connection_close ?on_tls_handshake
+    ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+    ~tls_config handler flow peer =
   let raw_flow =
     (flow :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
   in
-  let tls_flow, epoch = Tls_eio.server_of_flow tls_config raw_flow in
+  let tls_flow, epoch =
+    try
+      let result =
+        Eio.Time.with_timeout_exn clock
+          (Eta.Duration.to_seconds_float config.Config.tls_handshake_timeout)
+          (fun () -> Tls_eio.server_of_flow tls_config raw_flow)
+      in
+      Option.iter (fun f -> f ()) on_tls_handshake;
+      result
+    with
+    | Eio.Time.Timeout as exn ->
+        Option.iter (fun f -> f ()) on_tls_handshake_failure;
+        (try Eio.Flow.close raw_flow with _ -> ());
+        raise exn
+    | exn ->
+        Option.iter (fun f -> f ()) on_tls_handshake_failure;
+        (try Eio.Flow.close raw_flow with _ -> ());
+        raise exn
+  in
   let current = ref None in
   let on_start connection =
     current := Some connection;
@@ -350,6 +398,7 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
           on_connection_close
   in
   let run_h1 () =
+    Option.iter (fun f -> f ()) on_alpn_h1;
     H1_server_connection.run ~sw:conn_sw ~clock
       ~flow:(tls_flow :> H1_server_connection.flow)
       ~connection:(https_h1_connection_info peer epoch)
@@ -359,6 +408,7 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
       handler
   in
   let run_h2 () =
+    Option.iter (fun f -> f ()) on_alpn_h2;
     H2_server_connection.run ~sw:conn_sw ~clock
       ~flow:(tls_flow :> H2_server_connection.flow)
       ~connection:(https_h2_connection_info peer epoch)
@@ -368,14 +418,18 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
       handler
   in
   ignore
-    (Alpn_server.dispatch ~close:(fun () -> Eio.Flow.close tls_flow)
+    (Alpn_server.dispatch
+       ~close:(fun () ->
+         Option.iter (fun f -> f ()) on_alpn_rejected;
+         Eio.Flow.close tls_flow)
        ~use_h1:run_h1 ~use_h2:run_h2 epoch.alpn_protocol
       : (unit, Alpn_server.unsupported) result)
 
 let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_start
-    ?on_connection_close ~tls_config ~(socket : _ Eio.Net.listening_socket)
-    handler =
+    ?on_connection_close ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1
+    ?on_alpn_h2 ?on_alpn_rejected ~tls_config
+    ~(socket : _ Eio.Net.listening_socket) handler =
   ignore sw;
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
@@ -387,7 +441,9 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
         run_https_connection ~conn_sw ~clock ~config ~runtime_factory
-          ?on_connection_start ?on_connection_close ~tls_config handler flow peer)
+          ?on_connection_start ?on_connection_close ?on_tls_handshake
+          ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+          ~tls_config handler flow peer)
   in
   ()
 
@@ -404,8 +460,9 @@ let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
 
 let run_https_impl ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
-    ?runtime_factory ?on_connection_start ?on_connection_close ~tls_config ~addr
-    handler =
+    ?runtime_factory ?on_connection_start ?on_connection_close ?on_tls_handshake
+    ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+    ~tls_config ~addr handler =
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -420,7 +477,9 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
         run_https_connection ~conn_sw ~clock ~config ~runtime_factory
-          ?on_connection_start ?on_connection_close ~tls_config handler flow peer)
+          ?on_connection_start ?on_connection_close ?on_tls_handshake
+          ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+          ~tls_config handler flow peer)
   in
   ()
 
@@ -505,6 +564,11 @@ let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
       run_https_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
         ~on_connection_start:(fun connection -> register_connection t connection)
         ~on_connection_close:(tracked_https_on_close t on_connection_close)
+        ~on_tls_handshake:(fun () -> record_tls_handshake t)
+        ~on_tls_handshake_failure:(fun () -> record_tls_handshake_failure t)
+        ~on_alpn_h1:(fun () -> record_alpn_h1 t)
+        ~on_alpn_h2:(fun () -> record_alpn_h2 t)
+        ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
         ~tls_config ~socket handler);
   t
 
@@ -517,5 +581,10 @@ let start_https ~sw ~net ~clock ?domain_manager
         ~config ?runtime_factory
         ~on_connection_start:(fun connection -> register_connection t connection)
         ~on_connection_close:(tracked_https_on_close t on_connection_close)
+        ~on_tls_handshake:(fun () -> record_tls_handshake t)
+        ~on_tls_handshake_failure:(fun () -> record_tls_handshake_failure t)
+        ~on_alpn_h1:(fun () -> record_alpn_h1 t)
+        ~on_alpn_h2:(fun () -> record_alpn_h2 t)
+        ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
         ~tls_config ~addr handler);
   t

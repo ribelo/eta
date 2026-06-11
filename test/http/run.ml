@@ -200,6 +200,10 @@ let () =
             test_https_server_h1_alpn_request;
           Alcotest.test_case "HTTPS server H2 ALPN request" `Quick
             test_https_server_h2_alpn_request;
+          Alcotest.test_case "HTTPS server handshake timeout stats" `Quick
+            test_https_server_handshake_timeout_stats;
+          Alcotest.test_case "HTTPS server unsupported ALPN stats" `Quick
+            test_https_server_unsupported_alpn_stats;
           Alcotest.test_case "OpenSSL server ctx rejects invalid cert" `Quick
             test_openssl_server_ctx_rejects_invalid_cert;
           Alcotest.test_case "OpenSSL server ctx rejects invalid key" `Quick

@@ -32,6 +32,7 @@ module Config : sig
     max_concurrent_streams : int;
     read_buffer_size : int;
     command_queue_capacity : int;
+    tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
     shutdown : shutdown;
     h2_config : H2.Config.t option;
@@ -45,5 +46,10 @@ module Stats : sig
     active_connections : int;
     opened_connections : int;
     closed_connections : int;
+    tls_handshakes : int;
+    tls_handshake_failures : int;
+    alpn_h1 : int;
+    alpn_h2 : int;
+    alpn_rejected : int;
   }
 end

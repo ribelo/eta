@@ -32,6 +32,7 @@ module Config = struct
     max_concurrent_streams : int;
     read_buffer_size : int;
     command_queue_capacity : int;
+    tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
     shutdown : shutdown;
     h2_config : H2.Config.t option;
@@ -44,6 +45,7 @@ module Config = struct
       max_concurrent_streams = 128;
       read_buffer_size = 64 * 1024;
       command_queue_capacity = 1024;
+      tls_handshake_timeout = Eta.Duration.seconds 10;
       server = Eta_http.Server.Config.default;
       shutdown = Graceful (Eta.Duration.seconds 30);
       h2_config = None;
@@ -55,5 +57,10 @@ module Stats = struct
     active_connections : int;
     opened_connections : int;
     closed_connections : int;
+    tls_handshakes : int;
+    tls_handshake_failures : int;
+    alpn_h1 : int;
+    alpn_h2 : int;
+    alpn_rejected : int;
   }
 end
