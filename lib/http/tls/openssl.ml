@@ -2,6 +2,7 @@
 
 type ctx
 type ssl
+type session
 
 type server_certificate = {
   server_name : string;
@@ -32,6 +33,9 @@ external ssl_pending_raw : ssl -> int = "eta_openssl_ssl_pending"
 external get_alpn_selected_raw : ssl -> string option = "eta_openssl_ssl_get_alpn_selected"
 external get_servername_raw : ssl -> string option = "eta_openssl_ssl_get_servername"
 external get_verify_result_raw : ssl -> int = "eta_openssl_ssl_get_verify_result"
+external get1_session_raw : ssl -> session option = "eta_openssl_ssl_get1_session"
+external set_session_raw : ssl -> session -> unit = "eta_openssl_ssl_set_session"
+external session_reused_raw : ssl -> bool = "eta_openssl_ssl_session_reused"
 external err_peek_error_raw : unit -> string option = "eta_openssl_err_peek_error"
 external err_clear_error_raw : unit -> unit = "eta_openssl_err_clear_error"
 external random_bytes_into : bytes -> int -> int -> unit = "eta_openssl_random_bytes"
@@ -69,5 +73,8 @@ let ssl_pending ssl = ssl_pending_raw ssl
 let get_alpn_selected ssl = get_alpn_selected_raw ssl
 let get_servername ssl = get_servername_raw ssl
 let get_verify_result ssl = get_verify_result_raw ssl
+let get_session ssl = get1_session_raw ssl
+let set_session ssl session = set_session_raw ssl session
+let session_reused ssl = session_reused_raw ssl
 let err_peek_error () = err_peek_error_raw ()
 let err_clear_error () = err_clear_error_raw ()

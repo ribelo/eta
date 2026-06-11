@@ -8,6 +8,9 @@ type ctx
 type ssl
 (** Opaque SSL wrapper with memory BIO pair. *)
 
+type session
+(** Opaque TLS session reference for explicit client-side resumption. *)
+
 type server_certificate
 (** Certificate entry selected by SNI on server handshakes. *)
 
@@ -29,8 +32,9 @@ val create_server_ctx :
   unit ->
   ctx
 (** Create a server SSL_CTX with Eta's TLS policy, certificate chain,
-    private key, and ALPN selection callback. Raises [Failure] when the
-    certificate or private key cannot be loaded or do not match. *)
+    private key, ALPN selection callback, and OpenSSL session cache enabled
+    for TLS resumption. Raises [Failure] when the certificate or private key
+    cannot be loaded or do not match. *)
 
 val server_certificate :
   server_name:string ->
@@ -98,6 +102,17 @@ val get_servername : ssl -> string option
 
 val get_verify_result : ssl -> int
 (** [X509_V_OK] (0) on success, or an [X509_V_ERR_*] code. *)
+
+val get_session : ssl -> session option
+(** Return a retained TLS session after a completed handshake, when OpenSSL
+    made one available. *)
+
+val set_session : ssl -> session -> unit
+(** Attach a previous client session before driving the next client
+    handshake. Raises [Failure] if OpenSSL rejects the session. *)
+
+val session_reused : ssl -> bool
+(** [true] when the completed handshake reused a previously supplied session. *)
 
 val err_peek_error : unit -> string option
 (** Peek at the top OpenSSL error string, if any. *)

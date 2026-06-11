@@ -26,6 +26,8 @@
   "ECDHE-ECDSA-AES256-GCM-SHA384:" \
   "ECDHE-ECDSA-CHACHA20-POLY1305"
 
+static const unsigned char ETA_SESSION_ID_CONTEXT[] = "eta-http";
+
 /* ------------------------------------------------------------------ */
 /* SSL_CTX — custom block; finalizer frees the context.                */
 
@@ -239,6 +241,49 @@ static SSL *eta_ssl_val(value v)
   return ((SSL **)Data_custom_val(v))[0];
 }
 
+/* SSL_SESSION — custom block owns one SSL_SESSION reference. */
+
+static void eta_ssl_session_finalize(value v)
+{
+  SSL_SESSION *session = *((SSL_SESSION **)Data_custom_val(v));
+  if (session != NULL) {
+    SSL_SESSION_free(session);
+  }
+}
+
+static int eta_ssl_session_cmp(value v1, value v2)
+{
+  return *((void **)Data_custom_val(v1)) != *((void **)Data_custom_val(v2));
+}
+
+static intnat eta_ssl_session_hash(value v)
+{
+  return (intnat)*((void **)Data_custom_val(v));
+}
+
+static struct custom_operations eta_ssl_session_ops = {
+  "eta.openssl.session",
+  eta_ssl_session_finalize,
+  eta_ssl_session_cmp,
+  eta_ssl_session_hash,
+  custom_serialize_default,
+  custom_deserialize_default,
+  custom_compare_ext_default,
+  custom_fixed_length_default
+};
+
+static value eta_alloc_ssl_session(SSL_SESSION *session)
+{
+  value v = caml_alloc_custom(&eta_ssl_session_ops, sizeof(void *), 0, 1);
+  *((void **)Data_custom_val(v)) = session;
+  return v;
+}
+
+static SSL_SESSION *eta_ssl_session_val(value v)
+{
+  return ((SSL_SESSION **)Data_custom_val(v))[0];
+}
+
 /* Build ALPN protocol list in wire format.  Returns a freshly
    allocated buffer (or NULL on failure).  *out_len receives the
    total wire length. */
@@ -369,6 +414,14 @@ static SSL_CTX *eta_new_server_ctx(const char *cert, const char *key,
     caml_failwith("SSL_CTX_set_cipher_list failed");
   }
 
+  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
+  if (SSL_CTX_set_session_id_context(
+          ctx, ETA_SESSION_ID_CONTEXT,
+          (unsigned int)(sizeof(ETA_SESSION_ID_CONTEXT) - 1)) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_session_id_context failed");
+  }
+
   if (SSL_CTX_use_certificate_chain_file(ctx, cert) != 1) {
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_use_certificate_chain_file failed");
@@ -445,6 +498,8 @@ CAMLprim value eta_openssl_ctx_create(value v_unit)
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_set_cipher_list failed");
   }
+
+  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
 
   /* Default system trust store. */
   SSL_CTX_set_default_verify_paths(ctx);
@@ -814,6 +869,37 @@ CAMLprim value eta_openssl_ssl_get_verify_result(value v_ssl)
   SSL *ssl = eta_ssl_val(v_ssl);
   long rc = SSL_get_verify_result(ssl);
   CAMLreturn(Val_long(rc));
+}
+
+CAMLprim value eta_openssl_ssl_get1_session(value v_ssl)
+{
+  CAMLparam1(v_ssl);
+  CAMLlocal1(v_session);
+  SSL *ssl = eta_ssl_val(v_ssl);
+  SSL_SESSION *session = SSL_get1_session(ssl);
+  if (session == NULL) {
+    CAMLreturn(Val_none);
+  }
+  v_session = eta_alloc_ssl_session(session);
+  CAMLreturn(caml_alloc_some(v_session));
+}
+
+CAMLprim value eta_openssl_ssl_set_session(value v_ssl, value v_session)
+{
+  CAMLparam2(v_ssl, v_session);
+  SSL *ssl = eta_ssl_val(v_ssl);
+  SSL_SESSION *session = eta_ssl_session_val(v_session);
+  if (SSL_set_session(ssl, session) != 1) {
+    caml_failwith("SSL_set_session failed");
+  }
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value eta_openssl_ssl_session_reused(value v_ssl)
+{
+  CAMLparam1(v_ssl);
+  SSL *ssl = eta_ssl_val(v_ssl);
+  CAMLreturn(Val_bool(SSL_session_reused(ssl) == 1));
 }
 
 CAMLprim value eta_openssl_err_peek_error(value v_unit)

@@ -304,6 +304,41 @@ let test_openssl_server_alpn_selects_client_protocol () =
   Alcotest.(check (option string))
     "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
 
+let test_openssl_server_resumes_client_session () =
+  with_temp_tls_files @@ fun cert key ->
+  let server_ctx =
+    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "http/1.1" ]
+      ()
+  in
+  let client_ctx = Eta_http__Openssl.create_ctx () in
+  Eta_http__Openssl.ctx_load_ca client_ctx cert;
+  let handshake ?session () =
+    let server = Eta_http__Openssl.create_server_ssl server_ctx in
+    let client =
+      Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+        ~ip:None ~alpn_protocols:[ "http/1.1" ]
+    in
+    Option.iter (Eta_http__Openssl.set_session client) session;
+    drive_tls_handshake client server;
+    Alcotest.(check int) "client verify result" 0
+      (Eta_http__Openssl.get_verify_result client);
+    (client, server)
+  in
+  let client1, server1 = handshake () in
+  Alcotest.(check bool) "first client reused" false
+    (Eta_http__Openssl.session_reused client1);
+  Alcotest.(check bool) "first server reused" false
+    (Eta_http__Openssl.session_reused server1);
+  let session =
+    require_some "client session" (Eta_http__Openssl.get_session client1)
+  in
+  let client2, server2 = handshake ~session () in
+  Alcotest.(check bool) "second client reused" true
+    (Eta_http__Openssl.session_reused client2);
+  Alcotest.(check bool) "second server reused" true
+    (Eta_http__Openssl.session_reused server2)
+
 let test_openssl_server_sni_selects_named_certificate () =
   with_temp_tls_files @@ fun default_cert default_key ->
   with_generated_tls_files "alt.localhost" @@ fun alt_cert alt_key ->

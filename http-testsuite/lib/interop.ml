@@ -238,7 +238,7 @@ let default_scenarios = [
     skip = Some "ALPN h2 vs h1 is implicitly exercised by every TLS+h2 cell; explicit ALPN test not needed for v1" };
   { name = "tls_resumption_1rtt"; method_ = "GET"; path = "/healthz"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
-    skip = Some "TLS resumption requires session ticket support in server config; out of scope for v1" };
+    skip = Some "TLS resumption is covered by OpenSSL unit tests; interop runner does not keep a client session across requests" };
   { name = "tls_sni_mismatch"; method_ = "GET"; path = "/healthz"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
     skip = Some "strict SNI mismatch is covered in TLS unit tests; interop needs a hostname-routed TLS fixture" };
