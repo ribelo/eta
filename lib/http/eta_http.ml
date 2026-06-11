@@ -55,6 +55,7 @@ end
 
 module H1 = struct
   module Parse = Parse
+  module Request_parse = Request_parse
   module Write = Write
 end
 

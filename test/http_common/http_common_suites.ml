@@ -1961,6 +1961,108 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.H1.Parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "control byte in header value was accepted"
 
+  let parse_h1_request ?max_request_line_bytes ?max_header_bytes ?max_headers
+      raw =
+    let buf = Bytes.of_string raw in
+    match
+      Eta_http.H1.Request_parse.parse ?max_request_line_bytes
+        ?max_header_bytes ?max_headers buf ~len:(Bytes.length buf)
+    with
+    | Ok request -> (buf, request)
+    | Error error ->
+        Alcotest.fail (Eta_http.H1.Request_parse.parse_error_to_string error)
+
+  let test_h1_request_parser_request_head () =
+    let raw =
+      "GET /items?token=secret HTTP/1.1\r\nHost: example.test\r\nX-Trace:\t abc \t\r\n\r\nbody"
+    in
+    let buf, request = parse_h1_request raw in
+    Alcotest.(check string) "method" "GET"
+      (Eta_http.H1.Request_parse.method_to_string buf request);
+    Alcotest.(check string) "target" "/items?token=secret"
+      (Eta_http.H1.Request_parse.target_to_string buf request);
+    Alcotest.(check string) "version" "http/1.1"
+      (Eta_http.Core.Version.to_string request.version);
+    Alcotest.(check (list (pair string string)))
+      "headers"
+      [ ("Host", "example.test"); ("X-Trace", "abc") ]
+      (Eta_http.H1.Request_parse.headers_to_list buf request.headers);
+    Alcotest.(check string) "body bytes" "body"
+      (Bytes.sub_string buf request.body_off (Bytes.length buf - request.body_off))
+
+  let test_h1_request_parser_partial () =
+    let buf = Bytes.of_string "GET /items HTTP/1.1\r\nHost: example.test" in
+    match
+      Eta_http.H1.Request_parse.parse buf ~len:(Bytes.length buf)
+    with
+    | Error Eta_http.H1.Request_parse.Partial -> ()
+    | Error error ->
+        Alcotest.failf "expected partial, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "partial request unexpectedly parsed"
+
+  let test_h1_request_parser_rejects_limits () =
+    let request = Bytes.of_string "GET /too-long HTTP/1.1\r\n\r\n" in
+    (match
+       Eta_http.H1.Request_parse.parse request ~max_request_line_bytes:8
+         ~len:(Bytes.length request)
+     with
+    | Error (Eta_http.H1.Request_parse.Request_line_too_large { limit = 8 }) ->
+        ()
+    | Error error ->
+        Alcotest.failf "expected request line limit, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "oversized request line unexpectedly parsed");
+    let headers =
+      Bytes.of_string "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    in
+    (match
+       Eta_http.H1.Request_parse.parse headers ~max_header_bytes:8
+         ~len:(Bytes.length headers)
+     with
+    | Error (Eta_http.H1.Request_parse.Header_section_too_large { limit = 8 }) ->
+        ()
+    | Error error ->
+        Alcotest.failf "expected header size limit, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "oversized header section unexpectedly parsed");
+    let many =
+      Bytes.of_string "GET / HTTP/1.1\r\nA: 1\r\nB: 2\r\n\r\n"
+    in
+    match
+      Eta_http.H1.Request_parse.parse many ~max_headers:1
+        ~len:(Bytes.length many)
+    with
+    | Error (Eta_http.H1.Request_parse.Headers_too_many { limit = 1 }) -> ()
+    | Error error ->
+        Alcotest.failf "expected header count limit, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "too many headers unexpectedly parsed"
+
+  let test_h1_request_parser_rejects_invalid_syntax () =
+    let method_buf = Bytes.of_string "G\000T / HTTP/1.1\r\n\r\n" in
+    (match
+       Eta_http.H1.Request_parse.parse method_buf
+         ~len:(Bytes.length method_buf)
+     with
+    | Error (Eta_http.H1.Request_parse.Invalid_method _) -> ()
+    | Error error ->
+        Alcotest.failf "expected invalid method, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "invalid method unexpectedly parsed");
+    let header_buf =
+      Bytes.of_string "GET / HTTP/1.1\r\nX-Bad: ok\000bad\r\n\r\n"
+    in
+    match
+      Eta_http.H1.Request_parse.parse header_buf
+        ~len:(Bytes.length header_buf)
+    with
+    | Error (Eta_http.H1.Request_parse.Invalid_header _) -> ()
+    | Error error ->
+        Alcotest.failf "expected invalid header, got %s"
+          (Eta_http.H1.Request_parse.parse_error_to_string error)
+    | Ok _ -> Alcotest.fail "invalid header unexpectedly parsed"
+
   let test_h1_writer_get_origin_form () =
     let url =
       Eta_http.Core.Url.of_string
@@ -2404,6 +2506,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_parser_rejects_conflicting_content_length;
           Alcotest.test_case "invalid header value controls" `Quick
             test_h1_parser_rejects_invalid_header_value_controls;
+          Alcotest.test_case "request head" `Quick
+            test_h1_request_parser_request_head;
+          Alcotest.test_case "partial request" `Quick
+            test_h1_request_parser_partial;
+          Alcotest.test_case "request limits" `Quick
+            test_h1_request_parser_rejects_limits;
+          Alcotest.test_case "invalid request syntax" `Quick
+            test_h1_request_parser_rejects_invalid_syntax;
         ] );
       ( "h1-write",
         [
