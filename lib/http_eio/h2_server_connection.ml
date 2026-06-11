@@ -151,6 +151,9 @@ let request_id connection_id ordinal =
 
 let method_to_string method_ = H2.Method.to_string method_
 
+let connection_url_scheme t =
+  Server.Validation.connection_scheme ~tls:t.connection.tls
+
 let validate_config config =
   if config.Types.Config.read_buffer_size <= 0 then
     invalid_arg
@@ -291,6 +294,20 @@ let request_of_reqd ~connection ~ordinal ~body reqd =
     stream_id = None;
     connection_id = connection.id;
   }
+
+let validate_request_metadata t (request : Server.Request.t) =
+  match
+    Server.Validation.validate_h2_request
+      ~connection_scheme:(connection_url_scheme t) ~method_:request.method_
+      ~scheme:request.scheme ~target:request.target
+      ~authority:request.authority
+  with
+  | Ok () -> Ok ()
+  | Error message ->
+      Error
+        (Server.Error.make ~protocol:t.connection.protocol
+           ~method_:request.method_ ~target:request.target
+           (Bad_request { message }))
 
 let h2_header_list headers =
   headers
@@ -1146,7 +1163,15 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
                 response_write_resolver = None;
                 response_done = false;
               };
-            run_handler t ordinal request handler)
+            (match validate_request_metadata t request with
+            | Ok () -> run_handler t ordinal request handler
+            | Error error ->
+                record_protocol_error t;
+                let _promise, resolver = Eio.Promise.create () in
+                ignore
+                  (start_response t ordinal
+                     (Server.Handler.default_error_response error)
+                     resolver)))
   in
   let security =
     Eta_http.H2.Security.create

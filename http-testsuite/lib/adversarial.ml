@@ -265,23 +265,32 @@ let run_eta_h1_adversarial_client ~env ~name ?config ~expected_status
 
 let h2_client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 
-let h2_request_block ?(method_ = "GET") ?(path = "/") () =
-  String.concat ""
+let h2_request_block ?(method_ = "GET") ?(path = "/")
+    ?(authority = Some "example.test") () =
+  let headers =
     [
       Malicious_h2.hpack_literal ~name:":method" ~value:method_;
       Malicious_h2.hpack_literal ~name:":scheme" ~value:"http";
       Malicious_h2.hpack_literal ~name:":path" ~value:path;
-      Malicious_h2.hpack_literal ~name:":authority" ~value:"example.test";
     ]
+  in
+  let headers =
+    match authority with
+    | None -> headers
+    | Some authority ->
+        headers
+        @ [ Malicious_h2.hpack_literal ~name:":authority" ~value:authority ]
+  in
+  String.concat "" headers
 
 let h2_request_headers ?(end_headers = true) ?(end_stream = true) ~stream_id
-    ?method_ ?path () =
+    ?method_ ?path ?authority () =
   let flags =
     (if end_headers then 0x04 else 0x00)
     lor (if end_stream then 0x01 else 0x00)
   in
   Malicious_h2.frame ~ty:0x01 ~flags ~stream_id
-    (h2_request_block ?method_ ?path ())
+    (h2_request_block ?method_ ?path ?authority ())
 
 let h2_frame_header ~length ~ty ~flags ~stream_id =
   Eta_http.H2.Frame.header ~length ~frame_type:(Other ty) ~flags ~stream_id
@@ -753,6 +762,26 @@ let h2_slow_body_timeout ~env =
        ^ Malicious_h2.data_frame ~end_stream:false ~stream_id:1 "he")
         flow)
 
+let h2_invalid_request_target ~env =
+  run_eta_h2c_adversarial_client ~env ~name:"h2_invalid_request_target"
+    ~deadline_sec:1.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_request_headers ~path:"noslash" ~stream_id:1 ())
+        flow;
+      Eio.Flow.shutdown flow `Send)
+
+let h2_missing_authority ~env =
+  run_eta_h2c_adversarial_client ~env ~name:"h2_missing_authority"
+    ~deadline_sec:1.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_request_headers ~authority:None ~stream_id:1 ())
+        flow;
+      Eio.Flow.shutdown flow `Send)
+
 (* ---------------------------------------------------------------------------
    8. GOAWAY churn
    Server sends GOAWAY repeatedly while continuing to accept streams.
@@ -871,6 +900,16 @@ let run_all ~env =
   let results =
     add_cve_result "h2_slow_body_timeout"
       (fun () -> h2_slow_body_timeout ~env)
+      results
+  in
+  let results =
+    add_cve_result "h2_invalid_request_target"
+      (fun () -> h2_invalid_request_target ~env)
+      results
+  in
+  let results =
+    add_cve_result "h2_missing_authority"
+      (fun () -> h2_missing_authority ~env)
       results
   in
   let results =

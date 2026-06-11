@@ -29,17 +29,10 @@ type t = {
   mutable closed : bool;
 }
 
-type target_authority = {
-  value : string;
-  scheme : Eta_http.Core.Url.scheme;
-  host : string;
-  port : int;
-}
-
 type request_head = {
   method_ : string;
   target : string;
-  target_authority : target_authority option;
+  target_authority : Server.Validation.authority option;
   version : Eta_http.Core.Version.t;
   headers : Eta_http.Core.Header.t;
   body_initial : bytes;
@@ -613,189 +606,35 @@ let expect_continue t head =
           (error t ~method_:head.method_ ~target:head.target
              (Expectation_failed { expectation }))
 
-let is_hexdig = function
-  | '0' .. '9' | 'A' .. 'F' | 'a' .. 'f' -> true
-  | _ -> false
-
-let is_reg_name_char = function
-  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' | '!'
-  | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
-      true
-  | _ -> false
-
-let is_ip_literal_char = function
-  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | ':' | '.' | '-' | '_' | '~'
-  | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
-      true
-  | _ -> false
-
-let valid_port value start finish =
-  start < finish
-  &&
-  let rec loop index acc =
-    if index = finish then acc >= 1 && acc <= 65535
-    else
-      match String.unsafe_get value index with
-      | '0' .. '9' as c ->
-          let next = (acc * 10) + Char.code c - Char.code '0' in
-          next <= 65535 && loop (index + 1) next
-      | _ -> false
-  in
-  loop start 0
-
-let valid_reg_name value start finish =
-  start < finish
-  &&
-  let rec loop index =
-    if index = finish then true
-    else
-      match String.unsafe_get value index with
-      | '%' ->
-          index + 2 < finish
-          && is_hexdig (String.unsafe_get value (index + 1))
-          && is_hexdig (String.unsafe_get value (index + 2))
-          && loop (index + 3)
-      | c -> is_reg_name_char c && loop (index + 1)
-  in
-  loop start
-
-let valid_ip_literal value start finish =
-  start < finish
-  &&
-  let rec loop index =
-    if index = finish then true
-    else
-      is_ip_literal_char (String.unsafe_get value index) && loop (index + 1)
-  in
-  loop start
-
-let rec find_char_string value index finish char =
-  if index >= finish then None
-  else if Char.equal (String.unsafe_get value index) char then Some index
-  else find_char_string value (index + 1) finish char
-
-let valid_host_authority value =
-  let len = String.length value in
-  if len = 0 then false
-  else if Char.equal (String.unsafe_get value 0) '[' then
-    match find_char_string value 1 len ']' with
-    | None -> false
-    | Some close ->
-        valid_ip_literal value 1 close
-        &&
-        if close + 1 = len then true
-        else
-          close + 2 < len
-          && Char.equal (String.unsafe_get value (close + 1)) ':'
-          && valid_port value (close + 2) len
-  else
-    let host_finish =
-      Option.value ~default:len (find_char_string value 0 len ':')
-    in
-    valid_reg_name value 0 host_finish
-    &&
-    if host_finish = len then true
-    else valid_port value (host_finish + 1) len
-
 let connection_url_scheme t =
-  if t.connection.tls then Eta_http.Core.Url.Https else Eta_http.Core.Url.Http
-
-let parse_host_authority ~scheme value =
-  if not (valid_host_authority value) then None
-  else
-    let raw =
-      Eta_http.Core.Url.scheme_to_string scheme ^ "://" ^ value
-    in
-    match Eta_http.Core.Url.parse raw with
-    | Error _ -> None
-    | Ok url ->
-        Some
-          ( Eta_http.Core.Url.authority url,
-            Eta_http.Core.Url.host url,
-            Eta_http.Core.Url.effective_port url )
+  Server.Validation.connection_scheme ~tls:t.connection.tls
 
 let validate_authority t head =
-  match Eta_http.Core.Header.get_all "host" head.headers with
-  | [] when head.version = Eta_http.Core.Version.H1_1 ->
+  match
+    Server.Validation.validate_h1_authority
+      ~connection_scheme:(connection_url_scheme t) ~version:head.version
+      ~method_:head.method_ ~target:head.target
+      ~target_authority:head.target_authority ~headers:head.headers
+  with
+  | Ok () -> Ok ()
+  | Error message ->
       Error
         (error t ~method_:head.method_ ~target:head.target
-           (Bad_request { message = "HTTP/1.1 request is missing Host header" }))
-  | [] -> Ok ()
-  | [ host ] ->
-      let scheme =
-        match head.target_authority with
-        | Some authority -> authority.scheme
-        | None -> connection_url_scheme t
-      in
-      (match parse_host_authority ~scheme host with
-      | None ->
-          Error
-            (error t ~method_:head.method_ ~target:head.target
-               (Bad_request { message = "invalid Host header" }))
-      | Some (_, host, port) -> (
-          match head.target_authority with
-          | Some authority
-            when (not (String.equal host authority.host)) || port <> authority.port ->
-              Error
-                (error t ~method_:head.method_ ~target:head.target
-                   (Bad_request
-                      {
-                        message =
-                          "absolute-form request target authority conflicts with \
-                           Host header";
-                      }))
-          | None | Some _ -> Ok ()))
-  | _ ->
-      Error
-        (error t ~method_:head.method_ ~target:head.target
-           (Bad_request { message = "multiple Host headers" }))
-
-let target_has_fragment target = Option.is_some (String.index_opt target '#')
+           (Bad_request { message }))
 
 let unsupported_request_target t head message =
   Error
     (error t ~method_:head.method_ ~target:head.target
        (Bad_request { message }))
 
-let target_authority_of_url url =
-  {
-    value = Eta_http.Core.Url.authority url;
-    scheme = Eta_http.Core.Url.scheme url;
-    host = Eta_http.Core.Url.host url;
-    port = Eta_http.Core.Url.effective_port url;
-  }
-
 let normalize_request_target t head =
-  let target = head.target in
-  if String.equal head.method_ "CONNECT" then
-    unsupported_request_target t head "CONNECT is not supported by this server"
-  else if String.equal target "*" then
-    if String.equal head.method_ "OPTIONS" then Ok head
-    else
-      unsupported_request_target t head
-        "asterisk-form request target is only valid with OPTIONS"
-  else if String.starts_with ~prefix:"/" target then
-    if target_has_fragment target then
-      unsupported_request_target t head "request target must not include fragment"
-    else Ok head
-  else
-    match Eta_http.Core.Url.parse target with
-    | Error _ ->
-        unsupported_request_target t head "invalid request target form"
-    | Ok url ->
-        if Option.is_some (Eta_http.Core.Url.fragment url) then
-          unsupported_request_target t head
-            "request target must not include fragment"
-        else if Eta_http.Core.Url.scheme url <> connection_url_scheme t then
-          unsupported_request_target t head
-            "absolute-form request target scheme does not match connection"
-        else
-          Ok
-            {
-              head with
-              target = Eta_http.Core.Url.origin_form url;
-              target_authority = Some (target_authority_of_url url);
-            }
+  match
+    Server.Validation.normalize_h1_target
+      ~connection_scheme:(connection_url_scheme t) ~method_:head.method_
+      ~target:head.target
+  with
+  | Ok (target, target_authority) -> Ok { head with target; target_authority }
+  | Error message -> unsupported_request_target t head message
 
 let request_allows_keep_alive head =
   let close = header_contains_token head.headers "connection" "close" in

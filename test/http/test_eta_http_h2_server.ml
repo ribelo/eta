@@ -503,6 +503,84 @@ let test_h2c_server_fixed_response_and_echo_body () =
       Alcotest.(check bool) "response bytes recorded" true
         (stats.response_bytes > 0))
 
+let test_h2c_server_rejects_invalid_request_metadata () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler_calls = ref 0 in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.pure (Eta_http.Server.Response.text ("ok:" ^ request.path ^ "\n"))
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop
+        ~on_connection_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let bad_path =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "noslash"
+      in
+      let missing_authority =
+        H2.Request.create ~scheme:"http" ~headers:H2.Headers.empty `GET
+          "/missing-authority"
+      in
+      let scheme_mismatch =
+        H2.Request.create ~scheme:"https"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/scheme-mismatch"
+      in
+      List.iteri
+        (fun index request ->
+          let status, body =
+            Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+                await_h2_response ~tag:(index + 1) connection request)
+          in
+          Alcotest.(check int) "invalid status" 400 status;
+          Alcotest.(check string) "invalid body" "bad request\n" body)
+        [ bad_path; missing_authority; scheme_mismatch ];
+      let valid =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/valid"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response ~tag:4 connection valid)
+      in
+      Alcotest.(check int) "valid status" 200 status;
+      Alcotest.(check string) "valid body" "ok:/valid\n" body;
+      Alcotest.(check int) "handler calls" 1 !handler_calls;
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ());
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "protocol errors" 3 stats.protocol_errors)
+
 let test_h2c_server_fragmented_large_upload_echo () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

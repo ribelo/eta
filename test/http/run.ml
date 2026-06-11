@@ -315,6 +315,8 @@ let () =
         [
           Alcotest.test_case "h2c fixed, echo, unread body, stream, trailers" `Quick
             test_h2c_server_fixed_response_and_echo_body;
+          Alcotest.test_case "h2c rejects invalid request metadata" `Quick
+            test_h2c_server_rejects_invalid_request_metadata;
           Alcotest.test_case "h2c fragmented large upload echo" `Quick
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick
