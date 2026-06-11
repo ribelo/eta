@@ -581,6 +581,63 @@ let test_h2c_server_rejects_invalid_request_metadata () =
       in
       Alcotest.(check int) "protocol errors" 3 stats.protocol_errors)
 
+let test_h2c_server_rejects_response_header_limit () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let server_limits =
+    { Eta_http.Server.Config.default.limits with max_response_headers = 1 }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler_calls = ref 0 in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let handler (_request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.pure
+      (Eta_http.Server.Response.text
+         ~headers:[ ("X-One", "1"); ("X-Two", "2") ]
+         "too many headers\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~config ~socket
+        handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/too-many-response-headers"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "status" 500 status;
+      Alcotest.(check string) "body" "internal server error\n" body;
+      Alcotest.(check int) "handler calls" 1 !handler_calls)
+
 let test_h2c_server_fragmented_large_upload_echo () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

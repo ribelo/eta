@@ -149,6 +149,8 @@ let () =
             test_h1_server_connection_releases_stream_on_write_failure;
           Alcotest.test_case "response write timeout is typed" `Quick
             test_h1_server_connection_response_write_timeout_is_typed;
+          Alcotest.test_case "rejects response header limit" `Quick
+            test_h1_server_connection_rejects_response_header_limit;
           Alcotest.test_case "keep-alive sequential requests" `Quick
             test_h1_server_connection_keeps_alive_for_sequential_requests;
           Alcotest.test_case "keep-alive preserves pipelined bytes" `Quick
@@ -317,6 +319,8 @@ let () =
             test_h2c_server_fixed_response_and_echo_body;
           Alcotest.test_case "h2c rejects invalid request metadata" `Quick
             test_h2c_server_rejects_invalid_request_metadata;
+          Alcotest.test_case "h2c rejects response header limit" `Quick
+            test_h2c_server_rejects_response_header_limit;
           Alcotest.test_case "h2c fragmented large upload echo" `Quick
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick

@@ -701,6 +701,15 @@ let response_error_of_cause t cause =
       response_write_error t
         (Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause)
 
+let validate_response_headers t response =
+  match
+    Server.Validation.validate_response_headers
+      ~limits:t.config.server.limits
+      (Server.Response.headers response)
+  with
+  | Ok () -> Ok ()
+  | Error message -> response_write_failure (response_write_error t message)
+
 let write_response_bytes t bytes =
   match write_response_string t (Bytes.to_string bytes) with
   | Ok () ->
@@ -754,12 +763,20 @@ let response_trailers t rt response =
         (response_error_of_cause t cause)
 
 let write_last_chunk t trailers =
-  try
-    write_response_bytes t
-      (Eta_http.H1.Response_write.encode_last_chunk ~trailers ())
-  with Invalid_argument message ->
-    response_write_failure ~response_started:true
-      (response_write_error t message)
+  match
+    Server.Validation.validate_response_trailers
+      ~limits:t.config.server.limits trailers
+  with
+  | Error message ->
+      response_write_failure ~response_started:true
+        (response_write_error t message)
+  | Ok () -> (
+      try
+        write_response_bytes t
+          (Eta_http.H1.Response_write.encode_last_chunk ~trailers ())
+      with Invalid_argument message ->
+        response_write_failure ~response_started:true
+          (response_write_error t message))
 
 let rec pump_fixed_response_stream t rt stream length written =
   match read_response_stream t rt stream with
@@ -825,49 +842,52 @@ let release_ignored_response_stream rt response =
   | Server.Response.Body.Stream stream -> release_response_stream rt stream
   | Server.Response.Body.Empty | Server.Response.Body.Fixed _ -> ()
 
-let write_response ?(connection_close = false) ?rt t request response =
-  match
-    Eta_http.H1.Response_write.prepare ~connection_close
-      ~version:request.Server.Request.version
-      ~request_method:request.method_ response
-  with
+let release_ignored_response ?rt response =
+  Option.iter (fun rt -> release_ignored_response_stream rt response) rt
+
+let write_prepared_response ?rt t response
+    (prepared : Eta_http.H1.Response_write.prepared) =
+  match write_response_string t prepared.head with
   | Error error ->
-      Option.iter
-        (fun rt -> release_ignored_response_stream rt response)
-        rt;
-      response_write_failure
-        (response_write_error t
-           (Eta_http.H1.Response_write.error_to_string error))
-  | Ok prepared -> (
-      match write_response_string t prepared.head with
+      release_ignored_response ?rt response;
+      response_write_failure ~response_started:true error
+  | Ok () -> (
+      match prepared.body with
+      | Eta_http.H1.Response_write.No_body ->
+          release_ignored_response ?rt response;
+          Ok { connection_close = prepared.close }
+      | Eta_http.H1.Response_write.Fixed chunks ->
+          write_response_bytes_list t chunks
+          |> Result.map (fun () -> { connection_close = prepared.close })
+      | Eta_http.H1.Response_write.Stream_fixed _
+      | Eta_http.H1.Response_write.Stream_chunked _
+      | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
+          match rt with
+          | None ->
+              response_write_failure ~response_started:true
+                (response_write_error t
+                   "streaming response requires an Eta runtime")
+          | Some rt ->
+              write_stream_response t rt response prepared.body
+              |> Result.map (fun () -> { connection_close = prepared.close })))
+
+let write_response ?(connection_close = false) ?rt t request response =
+  match validate_response_headers t response with
+  | Error _ as error ->
+      release_ignored_response ?rt response;
+      error
+  | Ok () -> (
+      match
+        Eta_http.H1.Response_write.prepare ~connection_close
+          ~version:request.Server.Request.version
+          ~request_method:request.method_ response
+      with
       | Error error ->
-          Option.iter
-            (fun rt -> release_ignored_response_stream rt response)
-            rt;
-          response_write_failure ~response_started:true error
-      | Ok () -> (
-          match prepared.body with
-          | Eta_http.H1.Response_write.No_body ->
-              Option.iter
-                (fun rt -> release_ignored_response_stream rt response)
-                rt;
-              Ok { connection_close = prepared.close }
-          | Eta_http.H1.Response_write.Fixed chunks ->
-              write_response_bytes_list t chunks
-              |> Result.map (fun () ->
-                     { connection_close = prepared.close })
-          | Eta_http.H1.Response_write.Stream_fixed _
-          | Eta_http.H1.Response_write.Stream_chunked _
-          | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
-              match rt with
-              | None ->
-                  response_write_failure ~response_started:true
-                    (response_write_error t
-                       "streaming response requires an Eta runtime")
-              | Some rt ->
-                  write_stream_response t rt response prepared.body
-                  |> Result.map (fun () ->
-                         { connection_close = prepared.close }))))
+          release_ignored_response ?rt response;
+          response_write_failure
+            (response_write_error t
+               (Eta_http.H1.Response_write.error_to_string error))
+      | Ok prepared -> write_prepared_response ?rt t response prepared)
 
 let request_metrics t rt request =
   if t.config.server.enable_otel then

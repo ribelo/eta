@@ -35,3 +35,9 @@ val validate_h2_request :
   target:string ->
   authority:string option ->
   (unit, string) result
+
+val validate_response_headers :
+  limits:Server_config.limits -> Header.t -> (unit, string) result
+
+val validate_response_trailers :
+  limits:Server_config.limits -> Header.t -> (unit, string) result

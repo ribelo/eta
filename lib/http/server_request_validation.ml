@@ -194,3 +194,32 @@ let validate_h2_request ~connection_scheme ~method_ ~scheme ~target ~authority =
           match parse_authority ~scheme authority with
           | None -> Error "invalid HTTP/2 :authority"
           | Some _ -> validate_h2_path ~method_ ~target))
+
+let header_block_bytes headers =
+  List.fold_left
+    (fun total (name, value) ->
+      total + String.length name + String.length value + 4)
+    0 headers
+
+let validate_header_block ~max_bytes ~max_headers ~kind headers =
+  match Header.validate headers with
+  | Some _ -> Error ("invalid " ^ kind ^ " header")
+  | None ->
+      let count = List.length headers in
+      if count > max_headers then
+        Error
+          (Printf.sprintf "%s header count exceeds %d" kind max_headers)
+      else
+        let bytes = header_block_bytes headers in
+        if bytes > max_bytes then
+          Error
+            (Printf.sprintf "%s header section exceeds %d bytes" kind max_bytes)
+        else Ok ()
+
+let validate_response_headers ~(limits : Server_config.limits) headers =
+  validate_header_block ~max_bytes:limits.max_response_header_bytes
+    ~max_headers:limits.max_response_headers ~kind:"response" headers
+
+let validate_response_trailers ~(limits : Server_config.limits) trailers =
+  validate_header_block ~max_bytes:limits.max_trailer_bytes
+    ~max_headers:limits.max_trailers ~kind:"response trailer" trailers

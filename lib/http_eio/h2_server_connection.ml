@@ -320,6 +320,15 @@ let h2_response response =
     ~headers:(H2.Headers.of_list (h2_header_list (Server.Response.headers response)))
     (H2.Status.of_code (Server.Response.status response))
 
+let validate_response_headers t response =
+  match
+    Server.Validation.validate_response_headers
+      ~limits:t.config.server.limits
+      (Server.Response.headers response)
+  with
+  | Ok () -> Ok ()
+  | Error message -> Error (response_write_error t ~message ())
+
 let fixed_body_length chunks =
   List.fold_left (fun total chunk -> total + Bytes.length chunk) 0 chunks
 
@@ -794,14 +803,17 @@ let write_response_chunk t ordinal chunk resolver =
                    (response_write_error t ~message:"response flush closed" ()))))
 
 let schedule_response_trailers t ordinal trailers resolver =
-  match Header.validate trailers with
-  | Some _ ->
+  match
+    Server.Validation.validate_response_trailers
+      ~limits:t.config.server.limits trailers
+  with
+  | Error message ->
       resolve resolver
         (Error
            (response_write_error t
-              ~message:"invalid response trailer header" ()));
+              ~message ()));
       `Done
-  | None -> (
+  | Ok () -> (
       match Hashtbl.find_opt t.streams ordinal with
       | None ->
           resolve resolver (Error (response_write_error t ()));
@@ -1101,6 +1113,11 @@ let run_handler t ordinal request handler =
         match Eta.Runtime.run rt effect with
         | Eta.Exit.Ok response -> response
         | Eta.Exit.Error cause -> fallback_error_response t request cause
+      in
+      let response =
+        match validate_response_headers t response with
+        | Ok () -> response
+        | Error error -> Server.Handler.default_error_response error
       in
       match
         await_owner t (fun resolver -> Response_start (ordinal, response, resolver))

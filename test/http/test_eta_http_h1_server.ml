@@ -633,6 +633,39 @@ let test_h1_server_connection_response_write_timeout_is_typed () =
   Alcotest.(check int) "completed requests" 1 stats.completed_requests;
   Alcotest.(check int) "response bytes" 0 stats.response_bytes
 
+let test_h1_server_connection_rejects_response_header_limit () =
+  let server_limits =
+    { Eta_http.Server.Config.default.limits with max_response_headers = 1 }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure
+      (Eta_http.Server.Response.text
+         ~headers:[ ("X-One", "1"); ("X-Two", "2") ]
+         "too many headers\n")
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /too-many-response-headers HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n"
+   ^ "Content-Length: 22\r\n\r\ninternal server error\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let path_response (request : Eta_http.Server.Request.t) =
   Eta.Effect.pure (Eta_http.Server.Response.text request.path)
 
