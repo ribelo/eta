@@ -510,6 +510,107 @@ let test_h2c_server_response_body_timeout_resets_stream () =
       Alcotest.(check int) "connection reusable status" 200 status;
       Alcotest.(check string) "connection reusable body" "ok\n" body)
 
+let test_h2c_server_enforces_max_concurrent_streams () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let config =
+    { Eta_http_eio.Server.Config.default with max_concurrent_streams = 1 }
+  in
+  let release_first, resolve_release_first = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/hold" ->
+        let body =
+          Eta_http.Server.Response.Body.stream (fun () ->
+              Eta.Effect.sync (fun () ->
+                  Eio.Promise.await release_first;
+                  None))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eio.Promise.try_resolve resolve_release_first ());
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let first_response, resolve_first_response = Eio.Promise.create () in
+      let first_eof, resolve_first_eof = Eio.Promise.create () in
+      let first_body = ref None in
+      let first =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/hold"
+      in
+      (match
+         Eta_http_eio.H2.Connection.request connection ~tag:1 first
+           ~error_handler:(fun _stream error ->
+             Alcotest.failf "first stream failed: %a" pp_h2_client_error error)
+           ~response_handler:(fun _stream response response_body ->
+             first_body := Some response_body;
+             ignore
+               (Eio.Promise.try_resolve resolve_first_response
+                  (H2.Status.to_code response.status)))
+       with
+      | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected { limit }) ->
+          Alcotest.failf "first request rejected by admission limit=%d" limit
+      | Error Eta_http_eio.H2.Multiplexer.Connection_closed ->
+          Alcotest.fail "connection closed before first request"
+      | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
+          Alcotest.failf "first request failed: %s" message
+      | Ok opened -> H2.Body.Writer.close opened.request_body);
+      let first_status =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await first_response)
+      in
+      Alcotest.(check int) "first status" 200 first_status;
+      let second =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/second"
+      in
+      let second_outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome ~tag:2 connection second)
+      in
+      (match second_outcome with
+      | `Error (_status, _body, _error) -> ()
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected max concurrent stream reset, got EOF status=%d body=%S"
+            status body);
+      ignore (Eio.Promise.try_resolve resolve_release_first ());
+      let rec read_first_body response_body =
+        H2.Body.Reader.schedule_read response_body
+          ~on_eof:(fun () ->
+            ignore (Eio.Promise.try_resolve resolve_first_eof ()))
+          ~on_read:(fun _bs ~off:_ ~len:_ -> read_first_body response_body)
+      in
+      (match !first_body with
+      | None -> Alcotest.fail "first response body missing"
+      | Some response_body -> read_first_body response_body);
+      Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+          Eio.Promise.await first_eof))
+
 let test_h2c_server_fixed_response_and_echo_body () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

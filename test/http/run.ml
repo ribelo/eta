@@ -341,6 +341,8 @@ let () =
             test_h2c_server_handler_timeout;
           Alcotest.test_case "h2c response body timeout resets stream" `Quick
             test_h2c_server_response_body_timeout_resets_stream;
+          Alcotest.test_case "h2c enforces max concurrent streams" `Quick
+            test_h2c_server_enforces_max_concurrent_streams;
           Alcotest.test_case "h2c request body too large" `Quick
             test_h2c_server_request_body_too_large;
           Alcotest.test_case "h2c unread body drain timeout" `Quick

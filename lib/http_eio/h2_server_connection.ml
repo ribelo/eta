@@ -158,10 +158,27 @@ let validate_config config =
   if config.Types.Config.read_buffer_size <= 0 then
     invalid_arg
       "Eta_http_eio.H2.Server_connection.run: read_buffer_size must be > 0";
+  if config.max_concurrent_streams <= 0 then
+    invalid_arg
+      "Eta_http_eio.H2.Server_connection.run: max_concurrent_streams must be > 0";
+  if config.max_concurrent_streams > Int32.to_int Int32.max_int then
+    invalid_arg
+      "Eta_http_eio.H2.Server_connection.run: max_concurrent_streams exceeds \
+       int32 max";
   if config.command_queue_capacity <= 0 then
     invalid_arg
       "Eta_http_eio.H2.Server_connection.run: command_queue_capacity must be > 0";
   Eta_http.Server.Config.validate config.server
+
+let h2_config config =
+  let base =
+    Option.value ~default:H2.Config.default config.Types.Config.h2_config
+  in
+  {
+    base with
+    H2.Config.max_concurrent_streams =
+      Int32.of_int config.max_concurrent_streams;
+  }
 
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
 
@@ -436,9 +453,7 @@ let rec drain_writes t =
       (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
-  match config.Types.Config.h2_config with
-  | Some config -> config.H2.Config.read_buffer_size
-  | None -> H2.Config.default.read_buffer_size
+  (h2_config config).H2.Config.read_buffer_size
 
 let max_ingress_buffer_size config =
   config.Types.Config.read_buffer_size + h2_read_buffer_size config
@@ -1182,7 +1197,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
-    H2.Server_connection.create ?config:config.Types.Config.h2_config
+    H2.Server_connection.create ~config:(h2_config config)
       ~error_handler:(fun ?request:_ _ respond ->
         Option.iter record_protocol_error !holder;
         let body = respond H2.Headers.empty in
