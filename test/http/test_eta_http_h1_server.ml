@@ -57,6 +57,41 @@ let with_h1_connection handler client_action =
     ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () -> client_action clock flow closed_stats)
 
+let run_h1_connection_on_flow flow handler =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let connection : Eta_http_eio.Server.Connection_info.t =
+    {
+      id = "h1-mock-connection";
+      peer = { address = Some "127.0.0.1"; port = Some 8080 };
+      protocol = Eta_http.Server.Error.H1;
+      tls = false;
+      alpn_protocol = None;
+    }
+  in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let closed_stats = ref None in
+  Eta_http_eio.H1.Server_connection.run ~sw ~clock
+    ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
+    ~connection ~config:Eta_http_eio.Server.Config.default ~runtime_factory
+    ~on_close:(fun stats -> closed_stats := Some stats)
+    handler;
+  match !closed_stats with
+  | Some stats -> stats
+  | None -> Alcotest.fail "missing close stats"
+
+let stream_body ?length ?(release = fun () -> Eta.Effect.unit) chunks =
+  let chunks = ref chunks in
+  Eta_http.Server.Response.Body.stream ?length ~release (fun () ->
+      match !chunks with
+      | [] -> Eta.Effect.pure None
+      | chunk :: rest ->
+          chunks := rest;
+          Eta.Effect.pure (Some (Bytes.of_string chunk)))
+
 let test_h1_server_connection_get_fixed_response () =
   let seen_request, resolve_seen_request = Eio.Promise.create () in
   let handler (request : Eta_http.Server.Request.t) =
@@ -125,4 +160,91 @@ let test_h1_server_connection_post_reads_fixed_body () =
         Eio.Promise.await closed_stats)
   in
   Alcotest.(check int) "request bytes" 11 stats.request_bytes;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_streams_fixed_length_response () =
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body ~length:5
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "he"; "llo" ]
+    in
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /stream-fixed HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "released" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_streams_chunked_response_with_trailers () =
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "ab"; "c" ]
+    in
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~headers:[ ("Trailer", "X-Done") ]
+         ~trailers:(fun () -> Eta.Effect.pure [ ("X-Done", "yes") ])
+         ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /stream-chunked HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nTrailer: X-Done\r\n"
+   ^ "Transfer-Encoding: chunked\r\n\r\n"
+   ^ "2\r\nab\r\n1\r\nc\r\n0\r\nX-Done: yes\r\n\r\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "released" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_releases_stream_on_write_failure () =
+  let flow = Eio_mock.Flow.make "eta-http-h1-server-stream-write-fail" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "GET /stream HTTP/1.1\r\nHost: example.test\r\n\r\n" ];
+  Eio_mock.Flow.on_copy_bytes flow
+    [ `Return 4096; `Raise (Failure "response write failed") ];
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "first"; "second" ]
+    in
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  let stats = run_h1_connection_on_flow flow handler in
+  Alcotest.(check int) "released" 1 !released;
   Alcotest.(check int) "completed requests" 1 stats.completed_requests

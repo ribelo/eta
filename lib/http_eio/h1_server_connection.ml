@@ -294,6 +294,14 @@ let request_of_head t head ordinal body trailers =
     connection_id = t.connection.id;
   }
 
+type response_write_failure = {
+  error : Server.Error.t;
+  response_started : bool;
+}
+
+let response_write_failure ?(response_started = false) error =
+  Error { error; response_started }
+
 let write_response_string t wire =
   try
     Eio.Flow.copy_string wire t.flow;
@@ -307,27 +315,171 @@ let write_response_string t wire =
         (response_write_error t
            ("connection write failed: " ^ Printexc.to_string exn))
 
-let write_response t request response =
-  match
-    Eta_http.H1.Response_write.to_string ~version:request.Server.Request.version
-      ~request_method:request.method_ response
-  with
-  | Ok wire -> write_response_string t wire
-  | Error Eta_http.H1.Response_write.Streaming_body ->
-      Error
-        (response_write_error t
-           "streaming responses are not wired into H1 server yet")
-  | Error error ->
-      Error
-        (response_write_error t
-           (Eta_http.H1.Response_write.error_to_string error))
-
 let response_error_of_cause t cause =
   match find_failure cause with
   | Some error -> error
   | None ->
       response_write_error t
         (Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause)
+
+let write_response_bytes t bytes =
+  match write_response_string t (Bytes.to_string bytes) with
+  | Ok () -> Ok ()
+  | Error error -> response_write_failure ~response_started:true error
+
+let write_response_bytes_list t chunks =
+  let rec loop = function
+    | [] -> Ok ()
+    | chunk :: rest -> (
+        match write_response_bytes t chunk with
+        | Ok () -> loop rest
+        | Error _ as error -> error)
+  in
+  loop chunks
+
+let release_response_stream rt stream =
+  match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
+  | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
+
+let with_released_response_stream rt stream f =
+  let released = ref false in
+  let release_once () =
+    if not !released then (
+      released := true;
+      release_response_stream rt stream)
+  in
+  Fun.protect ~finally:release_once (fun () ->
+      match f () with
+      | Ok () ->
+          release_once ();
+          Ok ()
+      | Error _ as error ->
+          release_once ();
+          error)
+
+let read_response_stream t rt stream =
+  match Eta.Runtime.run rt (stream.Server.Response.Body.read ()) with
+  | Eta.Exit.Ok chunk -> Ok chunk
+  | Eta.Exit.Error cause ->
+      response_write_failure ~response_started:true
+        (response_error_of_cause t cause)
+
+let response_trailers t rt response =
+  match Eta.Runtime.run rt ((Server.Response.trailers response) ()) with
+  | Eta.Exit.Ok trailers -> Ok trailers
+  | Eta.Exit.Error cause ->
+      response_write_failure ~response_started:true
+        (response_error_of_cause t cause)
+
+let write_last_chunk t trailers =
+  try
+    write_response_bytes t
+      (Eta_http.H1.Response_write.encode_last_chunk ~trailers ())
+  with Invalid_argument message ->
+    response_write_failure ~response_started:true
+      (response_write_error t message)
+
+let rec pump_fixed_response_stream t rt stream length written =
+  match read_response_stream t rt stream with
+  | Error _ as error -> error
+  | Ok None ->
+      if written = length then Ok ()
+      else
+        response_write_failure ~response_started:true
+          (response_write_error t
+             "stream ended before declared Content-Length")
+  | Ok (Some chunk) ->
+      let chunk_length = Bytes.length chunk in
+      let next = written + chunk_length in
+      if next < written || next > length then
+        response_write_failure ~response_started:true
+          (response_write_error t
+             "stream exceeded declared Content-Length")
+      else
+        (match write_response_bytes t chunk with
+        | Error _ as error -> error
+        | Ok () -> pump_fixed_response_stream t rt stream length next)
+
+let rec pump_raw_response_stream t rt stream =
+  match read_response_stream t rt stream with
+  | Error _ as error -> error
+  | Ok None -> Ok ()
+  | Ok (Some chunk) -> (
+      match write_response_bytes t chunk with
+      | Error _ as error -> error
+      | Ok () -> pump_raw_response_stream t rt stream)
+
+let rec pump_chunked_response_stream t rt response stream =
+  match read_response_stream t rt stream with
+  | Error _ as error -> error
+  | Ok (Some chunk) -> (
+      match
+        write_response_bytes_list t
+          (Eta_http.H1.Response_write.encode_chunk chunk)
+      with
+      | Error _ as error -> error
+      | Ok () -> pump_chunked_response_stream t rt response stream)
+  | Ok None -> (
+      match response_trailers t rt response with
+      | Error _ as error -> error
+      | Ok trailers -> write_last_chunk t trailers)
+
+let write_stream_response t rt response = function
+  | Eta_http.H1.Response_write.Stream_fixed stream ->
+      with_released_response_stream rt stream (fun () ->
+          let length = Option.value stream.length ~default:0 in
+          pump_fixed_response_stream t rt stream length 0)
+  | Eta_http.H1.Response_write.Stream_chunked stream ->
+      with_released_response_stream rt stream (fun () ->
+          pump_chunked_response_stream t rt response stream)
+  | Eta_http.H1.Response_write.Stream_close_delimited stream ->
+      with_released_response_stream rt stream (fun () ->
+          pump_raw_response_stream t rt stream)
+  | Eta_http.H1.Response_write.No_body | Eta_http.H1.Response_write.Fixed _ ->
+      Ok ()
+
+let release_ignored_response_stream rt response =
+  match Server.Response.body response with
+  | Server.Response.Body.Stream stream -> release_response_stream rt stream
+  | Server.Response.Body.Empty | Server.Response.Body.Fixed _ -> ()
+
+let write_response ?rt t request response =
+  match
+    Eta_http.H1.Response_write.prepare ~version:request.Server.Request.version
+      ~request_method:request.method_ response
+  with
+  | Error error ->
+      Option.iter
+        (fun rt -> release_ignored_response_stream rt response)
+        rt;
+      response_write_failure
+        (response_write_error t
+           (Eta_http.H1.Response_write.error_to_string error))
+  | Ok prepared -> (
+      match write_response_string t prepared.head with
+      | Error error ->
+          Option.iter
+            (fun rt -> release_ignored_response_stream rt response)
+            rt;
+          response_write_failure ~response_started:true error
+      | Ok () -> (
+          match prepared.body with
+          | Eta_http.H1.Response_write.No_body ->
+              Option.iter
+                (fun rt -> release_ignored_response_stream rt response)
+                rt;
+              Ok ()
+          | Eta_http.H1.Response_write.Fixed chunks ->
+              write_response_bytes_list t chunks
+          | Eta_http.H1.Response_write.Stream_fixed _
+          | Eta_http.H1.Response_write.Stream_chunked _
+          | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
+              match rt with
+              | None ->
+                  response_write_failure ~response_started:true
+                    (response_write_error t
+                       "streaming response requires an Eta runtime")
+              | Some rt -> write_stream_response t rt response prepared.body)))
 
 let run_handler t request handler =
   let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
@@ -337,8 +489,8 @@ let run_handler t request handler =
       ~emit_url_full:t.config.server.emit_url_full handler request
   in
   match Eta.Runtime.run rt effect with
-  | Eta.Exit.Ok response -> response
-  | Eta.Exit.Error cause -> fallback_error_response t request cause
+  | Eta.Exit.Ok response -> (rt, response)
+  | Eta.Exit.Error cause -> (rt, fallback_error_response t request cause)
 
 let write_default_error t request error =
   match write_response t request (Server.Handler.default_error_response error) with
@@ -382,10 +534,12 @@ let run_one_request t handler =
       | Ok (body, trailers) ->
           t.stats_state.active_requests <- 1;
           let request = request_of_head t head 1 body trailers in
-          let response = run_handler t request handler in
-          (match write_response t request response with
+          let rt, response = run_handler t request handler in
+          (match write_response ~rt t request response with
           | Ok () -> ()
-          | Error error -> write_default_error t request error);
+          | Error { error; response_started = false } ->
+              write_default_error t request error
+          | Error { response_started = true; _ } -> ());
           t.stats_state.active_requests <- 0;
           t.stats_state.completed_requests <-
             t.stats_state.completed_requests + 1)

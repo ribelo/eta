@@ -110,6 +110,12 @@ let () =
             test_h1_server_connection_get_fixed_response;
           Alcotest.test_case "POST reads fixed body" `Quick
             test_h1_server_connection_post_reads_fixed_body;
+          Alcotest.test_case "streams fixed-length response" `Quick
+            test_h1_server_connection_streams_fixed_length_response;
+          Alcotest.test_case "streams chunked response with trailers" `Quick
+            test_h1_server_connection_streams_chunked_response_with_trailers;
+          Alcotest.test_case "stream write failure releases body" `Quick
+            test_h1_server_connection_releases_stream_on_write_failure;
         ] );
       ( "ws",
         [
