@@ -261,6 +261,40 @@ let validate_h2_connection_header name value =
   then Error "HTTP/2 TE header may only contain trailers"
   else Ok ()
 
+let digit = function
+  | '0' .. '9' as c -> Char.code c - Char.code '0'
+  | _ -> -1
+
+let parse_content_length value =
+  let trimmed = Eta.String_helpers.trim value in
+  let len = String.length trimmed in
+  if len = 0 then Error ("invalid HTTP/2 content-length " ^ value)
+  else
+    let rec loop index acc =
+      if index = len then Ok acc
+      else
+        let digit = digit (String.unsafe_get trimmed index) in
+        if digit < 0 then Error ("invalid HTTP/2 content-length " ^ value)
+        else if
+          acc > max_int / 10 || (acc = max_int / 10 && digit > max_int mod 10)
+        then Error ("invalid HTTP/2 content-length " ^ value)
+        else loop (index + 1) ((acc * 10) + digit)
+    in
+    loop 0 0
+
+let h2_request_content_length headers =
+  let values =
+    headers
+    |> List.filter_map (fun (name, value) ->
+           if Eta.String_helpers.trim_equal_ascii_ci "content-length" name then
+             Some value
+           else None)
+  in
+  match values with
+  | [] -> Ok None
+  | [ value ] -> Result.map Option.some (parse_content_length value)
+  | _ -> Error "multiple HTTP/2 content-length headers"
+
 let validate_h2_request_header_values headers =
   let rec loop regular_seen method_seen scheme_seen authority_seen path_seen =
     function
@@ -311,19 +345,22 @@ let validate_h2_request_header_values headers =
 let validate_h2_request_headers ~(limits : Server_config.limits) headers =
   match validate_h2_request_header_values headers with
   | Error _ as error -> error
-  | Ok () ->
-      let count = List.length headers in
-      if count > limits.max_request_headers then
-        Error
-          (Printf.sprintf "request header count exceeds %d"
-             limits.max_request_headers)
-      else
-        let bytes = header_block_bytes headers in
-        if bytes > limits.max_request_header_bytes then
-          Error
-            (Printf.sprintf "request header section exceeds %d bytes"
-               limits.max_request_header_bytes)
-        else Ok ()
+  | Ok () -> (
+      match h2_request_content_length headers with
+      | Error _ as error -> error
+      | Ok _ ->
+          let count = List.length headers in
+          if count > limits.max_request_headers then
+            Error
+              (Printf.sprintf "request header count exceeds %d"
+                 limits.max_request_headers)
+          else
+            let bytes = header_block_bytes headers in
+            if bytes > limits.max_request_header_bytes then
+              Error
+                (Printf.sprintf "request header section exceeds %d bytes"
+                   limits.max_request_header_bytes)
+            else Ok ())
 
 let validate_h2_response_header_values ~kind headers =
   let rec loop = function

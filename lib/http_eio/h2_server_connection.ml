@@ -41,6 +41,7 @@ type command =
 type stream_state = {
   reqd : H2.Reqd.t;
   request_body : H2.Body.Reader.t;
+  request_content_length : int option;
   metrics : Server_metrics.t option;
   mutable metrics_finished : bool;
   mutable request_body_bytes : int;
@@ -187,6 +188,16 @@ let handler_timeout_error t request timeout =
 let request_body_too_large_error t ~limit ~length =
   Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Request_body_too_large { limit; length })
+
+let request_body_length_mismatch_error t ~expected ~actual =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+    (Bad_request
+       {
+         message =
+           Printf.sprintf
+             "HTTP/2 content-length mismatch: expected %d bytes, got %d"
+             expected actual;
+       })
 
 let shutdown_error t = connection_closed_error t Shutdown
 
@@ -552,9 +563,23 @@ let record_request_body_bytes t state len =
   Option.iter
     (fun metrics -> Server_metrics.request_body_bytes metrics len)
     state.metrics;
-  match t.config.server.limits.max_request_body_bytes with
-  | Some limit when length > limit ->
-      Error (request_body_too_large_error t ~limit ~length)
+  match state.request_content_length with
+  | Some expected when length > expected ->
+      record_protocol_error t;
+      Error (request_body_length_mismatch_error t ~expected ~actual:length)
+  | None | Some _ -> (
+      match t.config.server.limits.max_request_body_bytes with
+      | Some limit when length > limit ->
+          Error (request_body_too_large_error t ~limit ~length)
+      | None | Some _ -> Ok ())
+
+let finish_request_body_eof t state =
+  match state.request_content_length with
+  | Some expected when state.request_body_bytes <> expected ->
+      record_protocol_error t;
+      Error
+        (request_body_length_mismatch_error t ~expected
+           ~actual:state.request_body_bytes)
   | None | Some _ -> Ok ()
 
 let schedule_request_body_drain_timeout t ordinal token timeout =
@@ -588,10 +613,16 @@ let rec drain_request_body t ordinal state remaining resolver =
       t.config.server.timeouts.request_body_timeout;
     H2.Body.Reader.schedule_read state.request_body
       ~on_eof:(fun () ->
-        state.request_done <- true;
-        clear_request_discard state;
-        forget_if_complete t ordinal state;
-        resolve_unit resolver)
+        match finish_request_body_eof t state with
+        | Ok () ->
+            state.request_done <- true;
+            clear_request_discard state;
+            forget_if_complete t ordinal state;
+            resolve_unit resolver
+        | Error error ->
+            Option.iter (fun resolver -> resolve resolver (Error error)) resolver;
+            close_request_body state;
+            forget_if_complete t ordinal state)
       ~on_read:(fun _bs ~off:_ ~len ->
         state.request_discard_timeout_token <- None;
         match record_request_body_bytes t state len with
@@ -698,9 +729,15 @@ let arm_request_body_read t ordinal resolver =
               resolve resolver (Ok (Some chunk)))
         ~on_eof:(fun () ->
           state.request_read_resolver <- None;
-          state.request_done <- true;
-          forget_if_complete t ordinal state;
-          resolve resolver (Ok None))
+          match finish_request_body_eof t state with
+          | Ok () ->
+              state.request_done <- true;
+              forget_if_complete t ordinal state;
+              resolve resolver (Ok None)
+          | Error error ->
+              close_request_body state;
+              forget_if_complete t ordinal state;
+              resolve resolver (Error error))
 
 let handle_request_body_timeout t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
@@ -1212,6 +1249,13 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
               {
                 reqd;
                 request_body = H2.Reqd.request_body reqd;
+                request_content_length =
+                  (match
+                     Server.Validation.h2_request_content_length
+                       (Eta_http.Core.Header.to_list request.headers)
+                   with
+                  | Ok content_length -> content_length
+                  | Error _ -> None);
                 metrics;
                 metrics_finished = false;
                 request_body_bytes = 0;

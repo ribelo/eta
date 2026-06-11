@@ -357,6 +357,10 @@ let () =
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;
+          Alcotest.test_case "h2c rejects invalid content-length header" `Quick
+            test_h2c_server_rejects_invalid_content_length_header;
+          Alcotest.test_case "h2c rejects content-length mismatch" `Quick
+            test_h2c_server_rejects_content_length_mismatch;
           Alcotest.test_case "h2c rejects response header limit" `Quick
             test_h2c_server_rejects_response_header_limit;
           Alcotest.test_case "h2c rejects connection-specific response header"
