@@ -7,6 +7,7 @@ type failing_server_flow_mode =
       request_bytes : string;
       timeout_writes : bool ref;
     }
+  | Blocking_read of { request_bytes : string }
 
 type failing_server_flow = {
   mode : failing_server_flow_mode;
@@ -32,12 +33,17 @@ module Failing_server_flow = struct
   let single_read t _dst =
     match t.mode with
     | Failing_read -> raise (Failure "server read boom")
-    | Failing_write | Timeout_write _ -> (
+    | Failing_write | Timeout_write _ | Blocking_read _ -> (
         match t.pending_read with
         | Some data ->
             t.pending_read <- None;
             read_string t _dst data
-        | None -> raise End_of_file)
+        | None -> (
+            match t.read_block with
+            | None -> raise End_of_file
+            | Some blocked ->
+                Eio.Promise.await blocked;
+                raise End_of_file))
 
   let single_write t bufs =
     match t.mode with
@@ -45,6 +51,7 @@ module Failing_server_flow = struct
     | Failing_write -> raise (Failure "server write boom")
     | Timeout_write { timeout_writes; _ } ->
         if !timeout_writes then raise Eio.Time.Timeout else Cstruct.lenv bufs
+    | Blocking_read _ -> Cstruct.lenv bufs
 
   let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
 
@@ -71,10 +78,14 @@ let failing_server_flow mode =
           | `Yield -> Alcotest.fail "client preface unexpectedly yielded"
           | `Close _ -> Alcotest.fail "client preface unexpectedly closed")
     | Timeout_write { request_bytes; _ } -> Some request_bytes
+    | Blocking_read { request_bytes } -> Some request_bytes
   in
   let read_block, read_release =
     match mode with
     | Failing_read | Failing_write | Timeout_write _ -> (None, None)
+    | Blocking_read _ ->
+        let blocked, release = Eio.Promise.create () in
+        (Some blocked, Some release)
   in
   let state =
     { mode; shutdowns = 0; closes = 0; pending_read; read_block; read_release }
@@ -119,6 +130,39 @@ let h2_client_request_bytes target =
         String.concat "" (List.rev acc)
   in
   drain []
+
+let hpack_header name value = { Hpack.name; value; sensitive = false }
+
+let hpack_block encoder headers =
+  let faraday = Faraday.create 0x1000 in
+  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
+  Faraday.serialize_to_string faraday
+
+let raw_h2_headers encoder ?(end_stream = false) ~stream_id headers =
+  let block = hpack_block encoder headers in
+  let flags = 0x4 lor (if end_stream then 0x1 else 0) in
+  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+    ~flags ~stream_id
+  ^ block
+
+let raw_h2_data ?(end_stream = false) ~stream_id data =
+  let flags = if end_stream then 0x1 else 0 in
+  Eta_http.H2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
+    ~stream_id
+  ^ data
+
+let h2_client_partial_request_bytes target body =
+  let encoder = Hpack.Encoder.create 4096 in
+  "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+  ^ Eta_http.H2.Frame.settings
+  ^ raw_h2_headers encoder ~stream_id:1
+      [
+        hpack_header ":method" "POST";
+        hpack_header ":scheme" "http";
+        hpack_header ":path" target;
+        hpack_header ":authority" "127.0.0.1";
+      ]
+  ^ raw_h2_data ~stream_id:1 body
 
 let tcp_port = function
   | `Tcp (_, port) -> port
@@ -513,6 +557,104 @@ let test_h2c_server_fragmented_large_upload_echo () =
       Alcotest.(check int) "body length" (String.length upload)
         (String.length body);
       Alcotest.(check string) "body" upload body)
+
+let test_h2c_server_request_body_timeout () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let server_timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      request_body_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with timeouts = server_timeouts }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let request_bytes = h2_client_partial_request_bytes "/timeout" "partial" in
+  let state, flow = failing_server_flow (Blocking_read { request_bytes }) in
+  let timeout_seen, resolve_timeout_seen = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/timeout" ->
+        let expected = "partial" in
+        let observed = Buffer.create (String.length expected) in
+        let resolve_result result =
+          ignore (Eio.Promise.try_resolve resolve_timeout_seen result)
+        in
+        let rec read_until_payload () =
+          Eta_http.Server.Body.read request.body
+          |> Eta.Effect.bind (function
+               | Some chunk ->
+                   Buffer.add_string observed (Bytes.to_string chunk);
+                   if Buffer.length observed >= String.length expected then
+                     Eta_http.Server.Body.read request.body
+                   else read_until_payload ()
+               | None ->
+                   Eta.Effect.sync (fun () ->
+                       resolve_result
+                         (`Ended_before_timeout (Buffer.contents observed)))
+                   |> Eta.Effect.map (fun () -> None))
+        in
+        read_until_payload ()
+        |> Eta.Effect.map (fun next_chunk ->
+               resolve_result
+                 (`Unexpected_second_body
+                   ( Option.map Bytes.to_string next_chunk,
+                     Buffer.contents observed ));
+               Eta_http.Server.Response.text ~status:500
+                 "unexpected second body\n")
+        |> Eta.Effect.catch (fun error ->
+               Eta.Effect.sync (fun () ->
+                   resolve_result
+                     (`Timeout
+                       ( Buffer.contents observed,
+                         Eta_http.Server.Error.error_class error,
+                         Eta_http.Server.Error.layer_to_string
+                           (Eta_http.Server.Error.layer error) )))
+               |> Eta.Effect.map (fun () ->
+                      Eta_http.Server.Response.text ~status:408 "timeout\n"))
+    | _ ->
+        Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.H2.Server_connection.run_h2c ~sw ~clock ~flow
+        ~peer:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 31337))
+        ~config ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  let timeout_result =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await timeout_seen)
+  in
+  (match timeout_result with
+  | `Timeout (observed, error_class, error_layer) ->
+      Alcotest.(check string) "observed body" "partial" observed;
+      Alcotest.(check string) "error class" "request_timeout" error_class;
+      Alcotest.(check string) "error layer" "request_body" error_layer
+  | `Ended_before_timeout observed ->
+      Alcotest.failf "request body ended before timeout after %S" observed
+  | `Unexpected_second_body (next_chunk, observed) ->
+      Alcotest.failf "expected timeout after %S, got second body chunk %S"
+        observed
+        (Option.value ~default:"<eof>" next_chunk));
+  Eio.Flow.shutdown flow `All;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "active streams" 0 stats.active_streams;
+  Alcotest.(check int) "request bytes" (String.length "partial")
+    stats.request_bytes;
+  Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
 
 let test_h2_server_connection_run_uses_connection_metadata () =
   run_eio @@ fun env ->

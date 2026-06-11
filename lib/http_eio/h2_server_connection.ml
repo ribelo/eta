@@ -28,6 +28,7 @@ type command =
   | Ingress_eof
   | Ingress_failed of Server.Error.t
   | Request_body_read of int * request_body_read Eio.Promise.u
+  | Request_body_timeout of int * request_body_read Eio.Promise.u
   | Request_body_discard of int * bool * (unit, Server.Error.t) result Eio.Promise.u
   | Response_start of int * Server.Response.t * unit_result Eio.Promise.u
   | Response_chunk of int * bytes * unit_result Eio.Promise.u
@@ -159,6 +160,11 @@ let request_body_closed_error t ordinal =
 let connection_closed_error t during =
   Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Connection_closed { during })
+
+let request_timeout_error t timeout =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+    (Request_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
 let shutdown_error t = connection_closed_error t Shutdown
 
@@ -559,6 +565,11 @@ let finish_graceful_shutdown_if_idle t =
     drain_writes t;
     try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
+let schedule_request_body_timeout t ordinal resolver timeout =
+  Eio.Fiber.fork ~sw:t.sw (fun () ->
+      t.sleep (Eta.Duration.to_seconds_float timeout);
+      ignore (enqueue t (Request_body_timeout (ordinal, resolver))))
+
 let arm_request_body_read t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
   | None -> resolve resolver (Error (request_body_closed_error t ordinal))
@@ -566,6 +577,9 @@ let arm_request_body_read t ordinal resolver =
       resolve resolver (Ok None)
   | Some state ->
       state.request_read_resolver <- Some resolver;
+      Option.iter
+        (schedule_request_body_timeout t ordinal resolver)
+        t.config.server.timeouts.request_body_timeout;
       H2.Body.Reader.schedule_read state.request_body
         ~on_read:(fun bs ~off ~len ->
           state.request_read_resolver <- None;
@@ -581,6 +595,21 @@ let arm_request_body_read t ordinal resolver =
           state.request_done <- true;
           forget_if_complete t ordinal state;
           resolve resolver (Ok None))
+
+let handle_request_body_timeout t ordinal resolver =
+  match Hashtbl.find_opt t.streams ordinal with
+  | None -> ()
+  | Some state -> (
+      match state.request_read_resolver with
+      | Some active when active == resolver ->
+          let error =
+            request_timeout_error t t.config.server.timeouts.request_body_timeout
+          in
+          state.request_read_resolver <- None;
+          resolve resolver (Error error);
+          close_request_body state;
+          forget_if_complete t ordinal state
+      | None | Some _ -> ())
 
 let discard_request_body t ordinal _drain resolver =
   match Hashtbl.find_opt t.streams ordinal with
@@ -786,6 +815,9 @@ let handle_command t = function
       (try Eio.Flow.shutdown t.flow `All with _ -> ())
   | Request_body_read (ordinal, resolver) ->
       arm_request_body_read t ordinal resolver;
+      drain_writes t
+  | Request_body_timeout (ordinal, resolver) ->
+      handle_request_body_timeout t ordinal resolver;
       drain_writes t
   | Request_body_discard (ordinal, drain, resolver) ->
       discard_request_body t ordinal drain resolver;
