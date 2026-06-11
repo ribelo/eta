@@ -21,6 +21,8 @@ type t = {
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
   stats : Server_stats.H1.t;
+  connection_metrics : Server_metrics.t option;
+  mutable current_metrics : Server_metrics.t option;
   mutable pending : bytes;
   mutable pending_off : int;
   mutable pending_len : int;
@@ -76,6 +78,18 @@ let request_parse_error t parse_error =
 
 let response_write_error t message =
   error t (Response_write_failed { message })
+
+let emit_current t f =
+  Option.iter f t.current_metrics
+
+let emit_connection t f =
+  match t.current_metrics with
+  | Some metrics -> f metrics
+  | None -> Option.iter f t.connection_metrics
+
+let record_protocol_error t =
+  Server_stats.H1.protocol_error t.stats;
+  emit_connection t (fun metrics -> Server_metrics.protocol_errors metrics 1)
 
 let find_failure cause =
   let rec loop = function
@@ -226,6 +240,8 @@ let source_read_some source max_len =
     source.remaining <- source.remaining - Bytes.length chunk;
     if source.remaining = 0 then finish_body_source source;
     Server_stats.H1.add_request_bytes source.t.stats (Bytes.length chunk);
+    emit_current source.t (fun metrics ->
+        Server_metrics.request_body_bytes metrics (Bytes.length chunk));
     Eta.Effect.pure (Some chunk)
   else
     let len =
@@ -250,6 +266,8 @@ let source_read_some source max_len =
              source.remaining <- source.remaining - read;
              if source.remaining = 0 then finish_body_source source;
              Server_stats.H1.add_request_bytes source.t.stats read;
+             emit_current source.t (fun metrics ->
+                 Server_metrics.request_body_bytes metrics read);
              Eta.Effect.pure (Some chunk))
 
 let rec drain_fixed_body source =
@@ -420,7 +438,10 @@ let response_error_of_cause t cause =
 
 let write_response_bytes t bytes =
   match write_response_string t (Bytes.to_string bytes) with
-  | Ok () -> Ok ()
+  | Ok () ->
+      emit_current t (fun metrics ->
+          Server_metrics.response_body_bytes metrics (Bytes.length bytes));
+      Ok ()
   | Error error -> response_write_failure ~response_started:true error
 
 let write_response_bytes_list t chunks =
@@ -583,16 +604,22 @@ let write_response ?(connection_close = false) ?rt t request response =
                   |> Result.map (fun () ->
                          { connection_close = prepared.close }))))
 
-let run_handler t request handler =
-  let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
+let request_metrics t rt request =
+  if t.config.server.enable_otel then
+    Some
+      (Server_metrics.request ~runtime:rt ~connection:t.connection
+         ~emit_url_full:t.config.server.emit_url_full request)
+  else None
+
+let run_handler t rt request handler =
   let effect =
     Eta_http.Observability.Server.Tracer.request
       ~enabled:t.config.server.enable_otel
       ~emit_url_full:t.config.server.emit_url_full handler request
   in
   match Eta.Runtime.run rt effect with
-  | Eta.Exit.Ok response -> (rt, response)
-  | Eta.Exit.Error cause -> (rt, fallback_error_response t request cause)
+  | Eta.Exit.Ok response -> response
+  | Eta.Exit.Error cause -> fallback_error_response t request cause
 
 let write_default_error ?(connection_close = true) t request error =
   match
@@ -641,7 +668,7 @@ let read_request_head_with_timeout t ordinal =
       with Eio.Time.Timeout -> `Timeout duration)
 
 let handle_head_error t error =
-  Server_stats.H1.protocol_error t.stats;
+  record_protocol_error t;
   write_default_error t (request_error_stub t) error
 
 let rec run_requests t ordinal handler =
@@ -655,7 +682,7 @@ let rec run_requests t ordinal handler =
   | `Read (Ok head) -> (
       match request_body t head with
       | Error error ->
-          Server_stats.H1.protocol_error t.stats;
+          record_protocol_error t;
           let request =
             request_of_head t head ordinal (Server.Body.empty ())
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
@@ -664,12 +691,16 @@ let rec run_requests t ordinal handler =
       | Ok (body, trailers, body_control) ->
           Server_stats.H1.request_started t.stats;
           let request = request_of_head t head ordinal body trailers in
+          let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
+          let metrics = request_metrics t rt request in
+          t.current_metrics <- metrics;
+          Option.iter Server_metrics.request_started metrics;
           let request_keep_alive = request_allows_keep_alive head in
           let close_before_response =
             (not request_keep_alive)
             || not (body_can_reuse_before_response t body_control)
           in
-          let rt, response = run_handler t request handler in
+          let response = run_handler t rt request handler in
           let response_result =
             write_response ~connection_close:close_before_response ~rt t
               request response
@@ -686,10 +717,15 @@ let rec run_requests t ordinal handler =
             | Error { response_started = true; _ } -> false
           in
           Server_stats.H1.request_completed t.stats;
+          Option.iter Server_metrics.request_finished metrics;
+          t.current_metrics <- None;
           if reusable then run_requests t (ordinal + 1) handler)
 
 let shutdown t _policy =
   if not t.closed then (
+    Option.iter
+      (fun metrics -> Server_metrics.shutdown_active metrics 1)
+      t.connection_metrics;
     t.closed <- true;
     try Eio.Flow.shutdown t.flow `All with _ -> ())
 
@@ -709,15 +745,32 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       config;
       runtime_factory;
       stats = Server_stats.H1.create ();
+      connection_metrics =
+        (if config.server.enable_otel then
+           Some
+             (Server_metrics.connection
+                ~runtime:(runtime_factory ~sw ~connection ())
+                ~connection)
+         else None);
+      current_metrics = None;
       pending = Bytes.empty;
       pending_off = 0;
       pending_len = 0;
       closed = false;
     }
   in
+  Option.iter
+    (fun metrics -> Server_metrics.active_connections metrics 1)
+    t.connection_metrics;
   Option.iter (fun on_start -> on_start t) on_start;
   Fun.protect
     ~finally:(fun () ->
+      Option.iter
+        (fun metrics -> Server_metrics.active_connections metrics 0)
+        t.connection_metrics;
+      Option.iter
+        (fun metrics -> Server_metrics.shutdown_active metrics 0)
+        t.connection_metrics;
       t.closed <- true;
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Option.iter (fun on_close -> on_close (stats t)) on_close)

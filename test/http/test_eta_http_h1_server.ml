@@ -448,3 +448,102 @@ let test_h1_server_run_on_socket_plain_get () =
             Eio.Promise.await closed_stats)
       in
       Alcotest.(check int) "completed requests" 1 stats.completed_requests)
+
+let metric_values name meter =
+  Eta.Meter.dump meter
+  |> List.filter_map (fun point ->
+         if String.equal point.Eta.Meter.name name then Some point.value
+         else None)
+
+let has_metric name meter = metric_values name meter <> []
+
+let has_int_metric name value meter =
+  metric_values name meter
+  |> List.exists (function Eta.Meter.Int actual -> actual = value | Float _ -> false)
+
+let test_h1_server_connection_emits_meter_metrics () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let meter = Eta.Meter.in_memory () in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock
+      ~meter:(Eta.Meter.as_capability meter) ()
+  in
+  let server_config =
+    {
+      Eta_http.Server.Config.default with
+      unread_body_policy = Eta_http.Server.Config.Drain_up_to 4096;
+    }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun _body ->
+           Eta_http.Server.Response.make ~status:200
+             ~body:
+               (Eta_http.Server.Response.Body.fixed
+                  [ Bytes.of_string "metric-ok" ])
+             ())
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      let connection : Eta_http_eio.Server.Connection_info.t =
+        {
+          id = "h1-meter-connection";
+          peer = { address = Some "127.0.0.1"; port = Some port };
+          protocol = Eta_http.Server.Error.H1;
+          tls = false;
+          alpn_protocol = None;
+        }
+      in
+      Eta_http_eio.H1.Server_connection.run ~sw:conn_sw ~clock
+        ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
+        ~connection ~config ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      Eio.Flow.copy_string
+        ("POST /metrics HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Content-Length: 5\r\n\r\nhello"
+       ^ "BOGUS\r\n\r\n")
+        flow;
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+      in
+      Alcotest.(check bool) "response body present" true
+        (String.contains response 'm');
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+      Alcotest.(check int) "protocol errors" 1 stats.protocol_errors;
+      Alcotest.(check bool) "active connection metric" true
+        (has_metric "eta_http.server.connections.active" meter);
+      Alcotest.(check bool) "request total metric" true
+        (has_int_metric "eta_http.server.requests.total" 1 meter);
+      Alcotest.(check bool) "in-flight request metric" true
+        (has_metric "eta_http.server.requests.in_flight" meter);
+      Alcotest.(check bool) "request body bytes metric" true
+        (has_int_metric "eta_http.server.request.body.bytes" 5 meter);
+      Alcotest.(check bool) "response body bytes metric" true
+        (has_int_metric "eta_http.server.response.body.bytes" 9 meter);
+      Alcotest.(check bool) "protocol error metric" true
+        (has_int_metric "eta_http.server.protocol.errors" 1 meter))

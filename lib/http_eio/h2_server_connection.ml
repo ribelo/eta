@@ -39,6 +39,8 @@ type command =
 type stream_state = {
   reqd : H2.Reqd.t;
   request_body : H2.Body.Reader.t;
+  metrics : Server_metrics.t option;
+  mutable metrics_finished : bool;
   mutable request_done : bool;
   mutable request_discarding : bool;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
@@ -57,6 +59,7 @@ type t = {
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
   stats : Server_stats.H2.t;
+  connection_metrics : Server_metrics.t option;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
   mutable closed : bool;
@@ -65,6 +68,31 @@ type t = {
 let stats t =
   Server_stats.H2.snapshot t.stats
     ~active_streams:(Hashtbl.length t.streams)
+
+let request_metrics ~sw ~config ~runtime_factory ~connection request =
+  if config.Types.Config.server.enable_otel then
+    let runtime = runtime_factory ~sw ~connection () in
+    Some
+      (Server_metrics.request ~runtime ~connection
+         ~emit_url_full:config.server.emit_url_full request)
+  else None
+
+let connection_metrics ~sw ~config ~runtime_factory ~connection =
+  if config.Types.Config.server.enable_otel then
+    Some
+      (Server_metrics.connection
+         ~runtime:(runtime_factory ~sw ~connection ())
+         ~connection)
+  else None
+
+let emit_connection_metric t f =
+  Option.iter f t.connection_metrics
+
+let finish_stream_metrics state =
+  if not state.metrics_finished then (
+    Option.iter Server_metrics.request_finished state.metrics;
+    Option.iter Server_metrics.stream_finished state.metrics;
+    state.metrics_finished <- true)
 
 let peer_of_sockaddr = function
   | `Tcp (address, port) ->
@@ -305,6 +333,9 @@ let rec drain_request_body t ordinal state remaining resolver =
         resolve_unit resolver)
       ~on_read:(fun _bs ~off:_ ~len ->
         Server_stats.H2.add_request_bytes t.stats len;
+        Option.iter
+          (fun metrics -> Server_metrics.request_body_bytes metrics len)
+          state.metrics;
         drain_request_body t ordinal state (remaining - len) resolver))
 
 let discard_request_body_with_policy ?resolver ~drain t ordinal state =
@@ -320,11 +351,13 @@ let discard_request_body_with_policy ?resolver ~drain t ordinal state =
 
 let finish_response t ordinal state =
   if not state.response_done then Server_stats.H2.stream_completed t.stats;
+  finish_stream_metrics state;
   state.response_done <- true;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
 
 let finish_reset_response t ordinal state =
+  finish_stream_metrics state;
   state.response_done <- true;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
@@ -344,6 +377,10 @@ let fail_active_streams t request_error =
   Server_stats.H2.add_reset_streams t.stats (List.length streams);
   List.iter
     (fun (ordinal, state) ->
+      Option.iter
+        (fun metrics -> Server_metrics.stream_resets metrics 1)
+        state.metrics;
+      finish_stream_metrics state;
       fail_pending_request_read state request_error;
       close_request_body state;
       close_response_writer_best_effort state;
@@ -368,6 +405,9 @@ let arm_request_body_read t ordinal resolver =
         ~on_read:(fun bs ~off ~len ->
           state.request_read_resolver <- None;
           Server_stats.H2.add_request_bytes t.stats len;
+          Option.iter
+            (fun metrics -> Server_metrics.request_body_bytes metrics len)
+            state.metrics;
           let chunk = Bytes.create len in
           Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
           resolve resolver (Ok (Some chunk)))
@@ -397,7 +437,12 @@ let start_response t ordinal response resolver =
           | Empty -> ()
           | Fixed chunks ->
               Server_stats.H2.add_response_bytes t.stats
-                (fixed_body_length chunks)
+                (fixed_body_length chunks);
+              Option.iter
+                (fun metrics ->
+                  Server_metrics.response_body_bytes metrics
+                    (fixed_body_length chunks))
+                state.metrics
           | Stream _ -> assert false);
           respond_fixed state.reqd response;
           finish_response t ordinal state;
@@ -418,13 +463,17 @@ let write_response_chunk t ordinal chunk resolver =
         (Error
            (response_write_error t
               ~message:"response streaming writer has not been started" ()))
-  | Some { response_writer = Some writer; _ } ->
+  | Some ({ response_writer = Some writer; _ } as state) ->
       if H2.Body.Writer.is_closed writer then
         resolve resolver
           (Error
              (response_write_error t ~message:"response writer is closed" ()))
       else (
         Server_stats.H2.add_response_bytes t.stats (Bytes.length chunk);
+        Option.iter
+          (fun metrics ->
+            Server_metrics.response_body_bytes metrics (Bytes.length chunk))
+          state.metrics;
         H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk);
         H2.Body.Writer.flush writer (function
           | `Written -> resolve resolver (Ok ())
@@ -477,6 +526,9 @@ let fail_response t ordinal error =
   | None -> ()
   | Some state ->
       Server_stats.H2.stream_reset t.stats;
+      Option.iter
+        (fun metrics -> Server_metrics.stream_resets metrics 1)
+        state.metrics;
       H2.Reqd.report_exn state.reqd (Failure (Server.Error.to_string error));
       finish_reset_response t ordinal state
 
@@ -501,8 +553,14 @@ let begin_graceful_shutdown t timeout =
     finish_graceful_shutdown_if_idle t)
 
 let begin_shutdown t = function
-  | Types.Immediate -> begin_immediate_shutdown t
-  | Types.Graceful timeout -> begin_graceful_shutdown t timeout
+  | Types.Immediate ->
+      emit_connection_metric t (fun metrics ->
+          Server_metrics.shutdown_active metrics 1);
+      begin_immediate_shutdown t
+  | Types.Graceful timeout ->
+      emit_connection_metric t (fun metrics ->
+          Server_metrics.shutdown_active metrics 1);
+      begin_graceful_shutdown t timeout
 
 let handle_command t = function
   | Ingress { bytes; off; len; ack } ->
@@ -668,7 +726,10 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     H2.Server_connection.create ?config:config.Types.Config.h2_config
       ~error_handler:(fun ?request:_ _ respond ->
         Option.iter
-          (fun t -> Server_stats.H2.protocol_error t.stats)
+          (fun t ->
+            Server_stats.H2.protocol_error t.stats;
+            emit_connection_metric t (fun metrics ->
+                Server_metrics.protocol_errors metrics 1))
           !holder;
         let body = respond H2.Headers.empty in
         H2.Body.Writer.close body)
@@ -682,11 +743,20 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
             let ordinal = !request_ordinal in
             let body = body_of_stream t ordinal in
             let request = request_of_reqd ~connection ~ordinal ~body reqd in
+            let metrics =
+              request_metrics ~sw:t.sw ~config:t.config
+                ~runtime_factory:t.runtime_factory ~connection:t.connection
+                request
+            in
+            Option.iter Server_metrics.request_started metrics;
+            Option.iter Server_metrics.stream_started metrics;
             Server_stats.H2.stream_opened t.stats;
             Hashtbl.add t.streams ordinal
               {
                 reqd;
                 request_body = H2.Reqd.request_body reqd;
+                metrics;
+                metrics_finished = false;
                 request_done = false;
                 request_discarding = false;
                 request_read_resolver = None;
@@ -707,15 +777,26 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       config;
       runtime_factory;
       stats = Server_stats.H2.create ();
+      connection_metrics =
+        connection_metrics ~sw ~config ~runtime_factory ~connection;
       graceful_shutdown = false;
       shutdown_timer_started = false;
       closed = false;
     }
   in
   holder := Some t;
+  Option.iter
+    (fun metrics -> Server_metrics.active_connections metrics 1)
+    t.connection_metrics;
   Option.iter (fun on_start -> on_start t) on_start;
   Fun.protect
     ~finally:(fun () ->
+      Option.iter
+        (fun metrics -> Server_metrics.active_connections metrics 0)
+        t.connection_metrics;
+      Option.iter
+        (fun metrics -> Server_metrics.shutdown_active metrics 0)
+        t.connection_metrics;
       H2.Server_connection.shutdown h2;
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Option.iter (fun on_close -> on_close (stats t)) on_close)

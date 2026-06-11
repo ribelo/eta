@@ -127,6 +127,8 @@ let () =
             test_h1_server_connection_idle_timeout_closes_keep_alive;
           Alcotest.test_case "run_h1_on_socket plain GET" `Quick
             test_h1_server_run_on_socket_plain_get;
+          Alcotest.test_case "meter metrics" `Quick
+            test_h1_server_connection_emits_meter_metrics;
         ] );
       ( "server-stats",
         [
