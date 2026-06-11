@@ -939,6 +939,92 @@ let test_h1_server_run_on_socket_plain_get () =
       in
       Alcotest.(check int) "completed requests" 1 stats.completed_requests)
 
+let test_h1_server_handle_graceful_shutdown_waits_for_request () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler_started, resolve_handler_started = Eio.Promise.create () in
+  let release_handler, resolve_release_handler = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close stats =
+    ignore (Eio.Promise.try_resolve resolve_closed_stats stats)
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/wait" ->
+        Eta.Effect.sync (fun () ->
+            ignore (Eio.Promise.try_resolve resolve_handler_started ());
+            Eio.Promise.await release_handler;
+            Eta_http.Server.Response.text "done\n")
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~on_connection_close
+      ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eio.Promise.try_resolve resolve_release_handler ());
+      Eta_http_eio.Server.shutdown server Immediate;
+      try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      let response, resolve_response = Eio.Promise.create () in
+      Eio.Fiber.fork ~sw (fun () ->
+          Eio.Flow.copy_string
+            "GET /wait HTTP/1.1\r\nHost: example.test\r\n\r\n"
+            flow;
+          ignore
+            (Eio.Promise.try_resolve resolve_response
+               (read_all_response flow)));
+      Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+          Eio.Promise.await handler_started);
+      let stats = Eta_http_eio.Server.stats server in
+      Alcotest.(check int) "active connections before shutdown" 1
+        stats.active_connections;
+      Alcotest.(check int) "opened connections before shutdown" 1
+        stats.opened_connections;
+      Alcotest.(check int) "closed connections before shutdown" 0
+        stats.closed_connections;
+      Eta_http_eio.Server.shutdown server (Graceful (Eta.Duration.ms 200));
+      let closed_before_release =
+        Eio.Fiber.first
+          (fun () ->
+            ignore (Eio.Promise.await closed_stats);
+            true)
+          (fun () ->
+            Eio.Time.sleep clock 0.02;
+            false)
+      in
+      Alcotest.(check bool) "graceful keeps active request open" false
+        closed_before_release;
+      ignore (Eio.Promise.try_resolve resolve_release_handler ());
+      Alcotest.(check string) "response"
+        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\ndone\n"
+        (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+             Eio.Promise.await response));
+      let connection_stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed requests" 1
+        connection_stats.completed_requests;
+      let stats = Eta_http_eio.Server.stats server in
+      Alcotest.(check int) "active connections after shutdown" 0
+        stats.active_connections;
+      Alcotest.(check int) "opened connections after shutdown" 1
+        stats.opened_connections;
+      Alcotest.(check int) "closed connections after shutdown" 1
+        stats.closed_connections)
+
 let metric_values name meter =
   Eta.Meter.dump meter
   |> List.filter_map (fun point ->

@@ -15,6 +15,7 @@ type stats = Server_stats.H1.snapshot = {
 
 type t = {
   sw : Eio.Switch.t;
+  sleep : float -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
   connection : Types.Connection_info.t;
@@ -26,6 +27,9 @@ type t = {
   mutable pending : bytes;
   mutable pending_off : int;
   mutable pending_len : int;
+  mutable draining : bool;
+  mutable shutdown_timer_started : bool;
+  mutable active_request : bool;
   mutable closed : bool;
 }
 
@@ -68,6 +72,33 @@ type request_head_error =
   | Request_head_error of Server.Error.t
 
 let stats t : stats = Server_stats.H1.snapshot t.stats
+
+let shutdown_all t = try Eio.Flow.shutdown t.flow `All with _ -> ()
+
+let mark_shutdown_active t =
+  Option.iter
+    (fun metrics -> Server_metrics.shutdown_active metrics 1)
+    t.connection_metrics
+
+let close_immediately t =
+  if not t.closed then (
+    t.closed <- true;
+    shutdown_all t)
+
+let start_shutdown_timer t timeout =
+  if not t.shutdown_timer_started then (
+    t.shutdown_timer_started <- true;
+    Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
+        t.sleep (Eta.Duration.to_seconds_float timeout);
+        close_immediately t;
+        `Stop_daemon))
+
+let begin_graceful_shutdown t timeout =
+  if Eta.Duration.is_zero timeout then close_immediately t
+  else if not t.closed then (
+    t.draining <- true;
+    start_shutdown_timer t timeout;
+    if not t.active_request then close_immediately t)
 
 let validate_config = Types.Config.validate
 
@@ -1014,6 +1045,7 @@ let rec run_requests t ordinal handler =
                       let request = request_from_head t head ordinal in
                       write_default_error t request error
                   | Ok (body, trailers, body_control) ->
+                      t.active_request <- true;
                       Server_stats.H1.request_started t.stats;
                       let request = request_of_head t head ordinal body trailers in
                       let rt =
@@ -1023,12 +1055,15 @@ let rec run_requests t ordinal handler =
                       t.current_metrics <- metrics;
                       Option.iter Server_metrics.request_started metrics;
                       let request_keep_alive = request_allows_keep_alive head in
-                      let close_before_response =
-                        (not request_keep_alive)
-                        || not (body_can_reuse_before_response t body_control)
+                      let reusable_before_response =
+                        request_keep_alive
+                        && body_can_reuse_before_response t body_control
                       in
                       let response, force_close =
                         run_handler t rt request handler
+                      in
+                      let close_before_response =
+                        t.draining || not reusable_before_response
                       in
                       let response_result =
                         write_response
@@ -1049,15 +1084,16 @@ let rec run_requests t ordinal handler =
                       Server_stats.H1.request_completed t.stats;
                       Option.iter Server_metrics.request_finished metrics;
                       t.current_metrics <- None;
-                      if reusable then run_requests t (ordinal + 1) handler))))
+                      t.active_request <- false;
+                      if reusable && (not t.draining) && not t.closed then
+                        run_requests t (ordinal + 1) handler))))
 
-let shutdown t _policy =
+let shutdown t policy =
   if not t.closed then (
-    Option.iter
-      (fun metrics -> Server_metrics.shutdown_active metrics 1)
-      t.connection_metrics;
-    t.closed <- true;
-    try Eio.Flow.shutdown t.flow `All with _ -> ())
+    mark_shutdown_active t;
+    match policy with
+    | Types.Immediate -> close_immediately t
+    | Types.Graceful timeout -> begin_graceful_shutdown t timeout)
 
 let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
@@ -1065,6 +1101,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
   let t =
     {
       sw;
+      sleep = Eio.Time.sleep clock;
       with_timeout =
         (fun duration f ->
           Eio.Time.with_timeout_exn clock
@@ -1086,6 +1123,9 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       pending = Bytes.empty;
       pending_off = 0;
       pending_len = 0;
+      draining = false;
+      shutdown_timer_started = false;
+      active_request = false;
       closed = false;
     }
   in
