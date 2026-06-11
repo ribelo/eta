@@ -22,6 +22,7 @@ type 'a t_rec = {
   flow : 'a;
   eio_flow : (module EIO_FLOW);
   ssl_mutex : Eio.Mutex.t;
+  io_mutex : Eio.Mutex.t;
   handshake_mutex : Eio.Mutex.t;
   read_mutex : Eio.Mutex.t;
   write_mutex : Eio.Mutex.t;
@@ -132,76 +133,85 @@ module Flow_impl = struct
   let read_methods = []
 
   let single_read t buf =
-    if t.closed then raise End_of_file;
-    if not t.handshake_done then do_handshake t;
-    let { Cstruct.off = display_off; len } = buf in
-    let storage = Cstruct.to_bigarray buf in
-    let rec loop () =
-      let rc = with_ssl t (fun () -> Openssl.read t.ssl storage 0 len) in
-      if rc > 0 then (
-        debug_io "read" storage ~storage_off:0 ~display_off ~len:rc;
-        rc)
-      else if rc = 0 then raise End_of_file
-      else (
-        let code = -rc in
-        drain_bio t;
-        if code = 2 (* SSL_ERROR_WANT_READ *) then (
-          feed_bio t;
-          loop ())
-        else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-          drain_bio t;
-          loop ())
-        else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then raise End_of_file
-        else (
-          match Openssl.err_peek_error () with
-          | Some msg -> Openssl.err_clear_error (); failwith ("TLS read: " ^ msg)
-          | None ->
-              failwith ("TLS read failed (code " ^ string_of_int code ^ ")")))
-    in
-    loop ()
+    Eio.Mutex.use_rw ~protect:false t.io_mutex (fun () ->
+        if t.closed then raise End_of_file;
+        if not t.handshake_done then do_handshake t;
+        let { Cstruct.off = display_off; len } = buf in
+        let storage = Cstruct.to_bigarray buf in
+        let rec loop () =
+          let rc = with_ssl t (fun () -> Openssl.read t.ssl storage 0 len) in
+          if rc > 0 then (
+            debug_io "read" storage ~storage_off:0 ~display_off ~len:rc;
+            rc)
+          else if rc = 0 then raise End_of_file
+          else (
+            let code = -rc in
+            drain_bio t;
+            if code = 2 (* SSL_ERROR_WANT_READ *) then (
+              feed_bio t;
+              loop ())
+            else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
+              drain_bio t;
+              loop ())
+            else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then raise End_of_file
+            else (
+              match Openssl.err_peek_error () with
+              | Some msg ->
+                  Openssl.err_clear_error ();
+                  failwith ("TLS read: " ^ msg)
+              | None ->
+                  failwith
+                    ("TLS read failed (code " ^ string_of_int code ^ ")")))
+        in
+        loop ())
 
   let single_write t bufs =
-    if t.closed then 0
-    else (
-      if not t.handshake_done then do_handshake t;
-      let total = ref 0 in
-      List.iter
-        (fun buf ->
-          let { Cstruct.off = display_off; len } = buf in
-          let storage = Cstruct.to_bigarray buf in
-          let rec write_buf offset length =
-            if length > 0 then (
-              let rc =
-                with_ssl t (fun () -> Openssl.write t.ssl storage offset length)
+    Eio.Mutex.use_rw ~protect:false t.io_mutex (fun () ->
+        if t.closed then 0
+        else (
+          if not t.handshake_done then do_handshake t;
+          let total = ref 0 in
+          List.iter
+            (fun buf ->
+              let { Cstruct.off = display_off; len } = buf in
+              let storage = Cstruct.to_bigarray buf in
+              let rec write_buf offset length =
+                if length > 0 then (
+                  let rc =
+                    with_ssl t (fun () ->
+                        Openssl.write t.ssl storage offset length)
+                  in
+                  if rc > 0 then (
+                    debug_io "write" storage ~storage_off:offset
+                      ~display_off:(display_off + offset) ~len:rc;
+                    total := !total + rc;
+                    drain_bio t;
+                    if rc < length then write_buf (offset + rc) (length - rc))
+                  else (
+                    let code = -rc in
+                    drain_bio t;
+                    if code = 2 (* SSL_ERROR_WANT_READ *) then (
+                      feed_bio t;
+                      write_buf offset length)
+                    else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
+                      drain_bio t;
+                      write_buf offset length)
+                    else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then
+                      raise End_of_file
+                    else (
+                      match Openssl.err_peek_error () with
+                      | Some msg ->
+                          Openssl.err_clear_error ();
+                          failwith ("TLS write: " ^ msg)
+                      | None ->
+                          failwith
+                            ("TLS write failed (code "
+                            ^ string_of_int code
+                            ^ ")"))))
               in
-              if rc > 0 then (
-                debug_io "write" storage ~storage_off:offset
-                  ~display_off:(display_off + offset) ~len:rc;
-                total := !total + rc;
-                drain_bio t;
-                if rc < length then write_buf (offset + rc) (length - rc))
-              else (
-                let code = -rc in
-                drain_bio t;
-                if code = 2 (* SSL_ERROR_WANT_READ *) then (
-                  feed_bio t;
-                  write_buf offset length)
-                else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-                  drain_bio t;
-                  write_buf offset length)
-                else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then raise End_of_file
-                else (
-                  match Openssl.err_peek_error () with
-                  | Some msg ->
-                      Openssl.err_clear_error ();
-                      failwith ("TLS write: " ^ msg)
-                  | None ->
-                      failwith
-                        ("TLS write failed (code " ^ string_of_int code ^ ")"))))
-          in
-          write_buf 0 len)
-        bufs;
-      !total)
+              write_buf 0 len)
+            bufs;
+          !total))
 
   let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
 
@@ -230,6 +240,7 @@ let make_tls_state ?host_eio ?sni ?(peer_certificate_verified = false) ssl flow 
     flow;
     eio_flow = flow_module host_eio;
     ssl_mutex = Eio.Mutex.create ();
+    io_mutex = Eio.Mutex.create ();
     handshake_mutex = Eio.Mutex.create ();
     read_mutex = Eio.Mutex.create ();
     write_mutex = Eio.Mutex.create ();
