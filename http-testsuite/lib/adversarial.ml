@@ -107,6 +107,161 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
         major_words_during = major_words gc_after -. major_words gc_before;
       })
 
+(** Server-side runner: starts an Eta H1 server and drives it with a raw
+    malicious client. *)
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> invalid_arg "expected TCP listener"
+
+let read_h1_response ?(max_bytes = 64 * 1024) flow =
+  let buffer = Buffer.create 256 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop total =
+    if total >= max_bytes then Buffer.contents buffer
+    else
+      let len = min (Cstruct.length scratch) (max_bytes - total) in
+      match Eio.Flow.single_read flow (Cstruct.sub scratch 0 len) with
+      | 0 -> Buffer.contents buffer
+      | read ->
+          Buffer.add_string buffer
+            (Cstruct.to_string (Cstruct.sub scratch 0 read));
+          loop (total + read)
+      | exception End_of_file -> Buffer.contents buffer
+  in
+  loop 0
+
+let h1_status response =
+  if
+    String.length response >= 12
+    && String.starts_with ~prefix:"HTTP/1.1 " response
+  then
+    try Some (int_of_string (String.sub response 9 3)) with
+    | Failure _ -> None
+  else None
+
+let h1_status_line response =
+  match String.index_opt response '\r' with
+  | Some index -> String.sub response 0 index
+  | None -> response
+
+let h1_adversarial_config ?request_header_timeout ?request_body_timeout
+    ?max_request_header_bytes ?max_trailer_bytes () =
+  let limits =
+    {
+      Eta_http.Server.Config.default.limits with
+      max_request_header_bytes =
+        Option.value max_request_header_bytes
+          ~default:
+            Eta_http.Server.Config.default.limits.max_request_header_bytes;
+      max_trailer_bytes =
+        Option.value max_trailer_bytes
+          ~default:Eta_http.Server.Config.default.limits.max_trailer_bytes;
+    }
+  in
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      request_header_timeout =
+        Option.value request_header_timeout
+          ~default:
+            Eta_http.Server.Config.default.timeouts.request_header_timeout;
+      request_body_timeout =
+        Option.value request_body_timeout
+          ~default:Eta_http.Server.Config.default.timeouts.request_body_timeout;
+    }
+  in
+  let server = { Eta_http.Server.Config.default with limits; timeouts } in
+  {
+    Eta_http_eio.Server.Config.default with
+    backlog = 1;
+    max_connections = 8;
+    server;
+  }
+
+let h1_body_draining_handler request =
+  Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
+  |> Eta.Effect.map (fun body ->
+         Eta_http.Server.Response.make ~status:200
+           ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+           ())
+
+let run_eta_h1_adversarial_client ~env ~name ?config ~expected_status
+    ~deadline_sec client_fn =
+  let fd_base = fd_count () in
+  let start = Util.now_ms () in
+  let gc_before = Util.gc_stat () in
+  let result =
+    try
+      Eio.Switch.run @@ fun sw ->
+      let net = Eio.Stdenv.net env in
+      let clock = Eio.Stdenv.clock env in
+      let socket =
+        Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+          (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+      in
+      let port = tcp_port (Eio.Net.listening_addr socket) in
+      let config =
+        Option.value config ~default:(h1_adversarial_config ())
+      in
+      let server =
+        Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~config ~socket
+          h1_body_draining_handler
+      in
+      let flow =
+        Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+      in
+      Fun.protect
+        ~finally:(fun () ->
+          (try Eio.Flow.shutdown flow `All with _ -> ());
+          Eta_http_eio.Server.shutdown server Immediate)
+        (fun () ->
+          try
+            let response =
+              Eio.Time.with_timeout_exn clock deadline_sec (fun () ->
+                  client_fn ~clock flow)
+            in
+            `Response response
+          with
+          | Eio.Time.Timeout -> `Timeout
+          | exn -> `Error (Printexc.to_string exn))
+    with exn -> `Error (Printexc.to_string exn)
+  in
+  let duration_ms = Util.now_ms () -. start in
+  let peak_rss = rss_kb () in
+  let fd_after = fd_count () in
+  let gc_after = Util.gc_stat () in
+  let passed, deadline_respected, error_variant, eta_error =
+    match result with
+    | `Response response -> (
+        match h1_status response with
+        | Some status ->
+            ( status = expected_status,
+              true,
+              Some (Printf.sprintf "h1_status_%d" status),
+              Some (h1_status_line response) )
+        | None ->
+            ( false,
+              true,
+              Some "h1_malformed_response",
+              Some (h1_status_line response) ))
+    | `Timeout -> (false, false, Some "deadline_exceeded", Some "timeout")
+    | `Error message -> (false, true, Some "exception", Some message)
+  in
+  {
+    name;
+    passed;
+    skipped = None;
+    deadline_respected;
+    peak_rss_kb = peak_rss;
+    error_variant;
+    eta_error;
+    duration_ms;
+    fd_baseline = fd_base;
+    fd_after;
+    minor_words_during = minor_words gc_after -. minor_words gc_before;
+    major_words_during = major_words gc_after -. major_words gc_before;
+  }
+
 (** TLS-wrapped malicious server runner for h2 attacks.
     eta-http auto-negotiates h2 over TLS via ALPN.
     NOTE: Requires OpenSSL server bindings (not yet implemented). *)
@@ -223,6 +378,84 @@ let decompression_bomb ~env =
     ~deadline_sec:10.0 ()
 
 (* ---------------------------------------------------------------------------
+   8. H1 server adversarial clients
+   --------------------------------------------------------------------------- *)
+let h1_slowloris_headers ~env =
+  let config =
+    h1_adversarial_config
+      ~request_header_timeout:(Some (Eta.Duration.ms 50))
+      ()
+  in
+  run_eta_h1_adversarial_client ~env ~name:"h1_slowloris_headers" ~config
+    ~expected_status:408 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        "GET / HTTP/1.1\r\nHost: example.test\r\nX-Slow: " flow;
+      read_h1_response flow)
+
+let h1_slow_body ~env =
+  let config =
+    h1_adversarial_config
+      ~request_body_timeout:(Some (Eta.Duration.ms 50))
+      ()
+  in
+  run_eta_h1_adversarial_client ~env ~name:"h1_slow_body" ~config
+    ~expected_status:408 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: close\r\nContent-Length: 5\r\n\r\nhe")
+        flow;
+      read_h1_response flow)
+
+let h1_invalid_chunk ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_invalid_chunk"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+       ^ "z\r\nboom\r\n")
+        flow;
+      read_h1_response flow)
+
+let h1_cl_te_smuggling ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_cl_te_smuggling"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: keep-alive\r\nContent-Length: 4\r\n"
+       ^ "Transfer-Encoding: chunked\r\n\r\n"
+       ^ "0\r\n\r\nGET /healthz HTTP/1.1\r\nHost: example.test\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
+let h1_header_flood ~env =
+  let config = h1_adversarial_config ~max_request_header_bytes:64 () in
+  let flood = String.make 256 'x' in
+  run_eta_h1_adversarial_client ~env ~name:"h1_header_flood" ~config
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("GET / HTTP/1.1\r\nHost: example.test\r\nX-Flood: " ^ flood
+       ^ "\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
+let h1_oversized_trailers ~env =
+  let config = h1_adversarial_config ~max_trailer_bytes:8 () in
+  run_eta_h1_adversarial_client ~env ~name:"h1_oversized_trailers" ~config
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+       ^ "0\r\nX-Too-Large: value\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
+(* ---------------------------------------------------------------------------
    8. GOAWAY churn
    Server sends GOAWAY repeatedly while continuing to accept streams.
    --------------------------------------------------------------------------- *)
@@ -243,5 +476,11 @@ let run_all ~env =
   let results = window_update ~env :: results in
   let results = data_slowloris ~env :: results in
   let results = decompression_bomb ~env :: results in
+  let results = h1_slowloris_headers ~env :: results in
+  let results = h1_slow_body ~env :: results in
+  let results = h1_invalid_chunk ~env :: results in
+  let results = h1_cl_te_smuggling ~env :: results in
+  let results = h1_header_flood ~env :: results in
+  let results = h1_oversized_trailers ~env :: results in
   let results = goaway_churn ~env :: results in
   List.rev results

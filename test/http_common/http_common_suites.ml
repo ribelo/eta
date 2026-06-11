@@ -1739,6 +1739,50 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
     | Eta.Exit.Ok _ -> Alcotest.fail "invalid trailer was accepted"
 
+  let test_chunked_decoder_rejects_oversized_trailers () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let reader =
+      chunked_reader_of_string chunked_context
+        "0\r\nX-Too-Large: value\r\n\r\n"
+    in
+    let decoder =
+      Eta_http.Body.Chunked.create ~max_trailer_bytes:8
+        ~context:chunked_context ~reader ()
+    in
+    match B.run rt (Eta_http.Body.Chunked.read decoder) with
+    | Eta.Exit.Error
+        (Eta.Cause.Fail
+          { Eta_http.Error.kind = Decode_error { message; _ }; _ }) ->
+        Alcotest.(check bool) "trailer size error" true
+          (contains message "trailer section too large")
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected failure: %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail "oversized trailers were accepted"
+
+  let test_chunked_decoder_rejects_too_many_trailers () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let reader =
+      chunked_reader_of_string chunked_context
+        "0\r\nX-One: 1\r\nX-Two: 2\r\n\r\n"
+    in
+    let decoder =
+      Eta_http.Body.Chunked.create ~max_trailers:1
+        ~context:chunked_context ~reader ()
+    in
+    match B.run rt (Eta_http.Body.Chunked.read decoder) with
+    | Eta.Exit.Error
+        (Eta.Cause.Fail
+          { Eta_http.Error.kind = Decode_error { message; _ }; _ }) ->
+        Alcotest.(check bool) "trailer count error" true
+          (contains message "too many trailers")
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected failure: %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+    | Eta.Exit.Ok _ -> Alcotest.fail "too many trailers were accepted"
+
   let test_chunked_encoder () =
     let encoded =
       Eta_http.Body.Chunked.encode_chunk (Bytes.of_string "abcdefghijklmnop")
@@ -2767,6 +2811,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_chunked_decodes_trailers;
           Alcotest.test_case "chunked rejects invalid trailer header" `Quick
             test_chunked_decoder_rejects_invalid_trailer_header;
+          Alcotest.test_case "chunked rejects oversized trailers" `Quick
+            test_chunked_decoder_rejects_oversized_trailers;
+          Alcotest.test_case "chunked rejects too many trailers" `Quick
+            test_chunked_decoder_rejects_too_many_trailers;
           Alcotest.test_case "chunked encoder" `Quick test_chunked_encoder;
           Alcotest.test_case "chunked encoder rejects invalid trailers" `Quick
             test_chunked_encoder_rejects_invalid_trailers;

@@ -24,6 +24,8 @@ val default_max_decoded_bytes : int
 
 val create :
   ?max_decoded_bytes:int ->
+  ?max_trailer_bytes:int ->
+  ?max_trailers:int ->
   context:context ->
   reader:reader ->
   unit ->

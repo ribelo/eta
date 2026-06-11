@@ -47,9 +47,16 @@ type body_source = {
   scratch : Cstruct.t;
 }
 
+type chunked_body_source = {
+  source : body_source;
+  decoder : Eta_http.Body.Chunked.t;
+  mutable done_ : bool;
+}
+
 type request_body_control =
   | No_request_body
   | Fixed_request_body of body_source
+  | Chunked_request_body of chunked_body_source
   | Close_after_response
 
 type request_head_error =
@@ -69,6 +76,11 @@ let error t ?(method_ = "*") ?(target = "*") kind =
 
 let connection_closed_error t during =
   error t (Connection_closed { during })
+
+let request_timeout_error t timeout =
+  error t
+    (Request_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
 let request_parse_error t parse_error =
   let message =
@@ -231,6 +243,25 @@ let source_take_pending source n =
   source.off <- source.off + take;
   chunk
 
+let read_body_flow source dst =
+  try
+    let read =
+      match source.t.config.server.timeouts.request_body_timeout with
+      | None -> Eio.Flow.single_read source.t.flow dst
+      | Some timeout ->
+          source.t.with_timeout timeout (fun () ->
+              Eio.Flow.single_read source.t.flow dst)
+    in
+    Ok read
+  with
+  | End_of_file -> Ok 0
+  | Eio.Time.Timeout ->
+      Error
+        (request_timeout_error source.t
+           source.t.config.server.timeouts.request_body_timeout)
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | _ -> Error (connection_closed_error source.t Request_body)
+
 let source_read_some source max_len =
   if max_len <= 0 || source.remaining <= 0 then (
     finish_body_source source;
@@ -248,19 +279,13 @@ let source_read_some source max_len =
       min max_len (min source.remaining (Cstruct.length source.scratch))
     in
     Eta.Effect.sync (fun () ->
-        try `Read (Eio.Flow.single_read source.t.flow (Cstruct.sub source.scratch 0 len))
-        with
-        | End_of_file -> `Eof
-        | Eio.Cancel.Cancelled _ as exn -> raise exn
-        | _ -> `Closed)
+        read_body_flow source (Cstruct.sub source.scratch 0 len))
     |> Eta.Effect.bind (function
-         | `Read 0 | `Eof ->
+         | Error error -> Eta.Effect.fail error
+         | Ok 0 ->
              Eta.Effect.fail
                (connection_closed_error source.t Request_body)
-         | `Closed ->
-             Eta.Effect.fail
-               (connection_closed_error source.t Request_body)
-         | `Read read ->
+         | Ok read ->
              let chunk = Bytes.create read in
              Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
              source.remaining <- source.remaining - read;
@@ -302,15 +327,146 @@ let fixed_body t initial length =
   in
   (body, source)
 
-let unsupported_chunked_body t =
-  Server.Body.of_reader (fun () ->
-      Eta.Effect.fail
-        (error t
-           (Protocol_error
-              {
-                kind = "unsupported_request_body";
-                message = "chunked request bodies are not wired into H1 server yet";
-              })))
+let chunked_http_error_to_server t (http_error : Eta_http.Error.t) =
+  match http_error.kind with
+  | Body_too_large { limit; length } ->
+      error t (Request_body_too_large { limit; length })
+  | Decode_error { codec; message } ->
+      error t (Bad_request { message = codec ^ ": " ^ message })
+  | Header_invalid { reason } -> error t (Header_invalid { reason })
+  | Total_request_timeout { timeout_ms } ->
+      error t (Request_timeout { timeout_ms })
+  | Connection_closed _ -> connection_closed_error t Request_body
+  | kind ->
+      error t
+        (Protocol_error
+           {
+             kind = Eta_http.Error.kind_name kind;
+             message = Eta_http.Error.to_string http_error;
+           })
+
+let chunked_transport_error source kind =
+  Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:"*" kind
+
+let chunked_read_exact source len =
+  let out = Bytes.create len in
+  let rec fill off =
+    if off = len then Eta.Effect.pure out
+    else if source_pending source > 0 then (
+      let chunk = source_take_pending source (len - off) in
+      let chunk_len = Bytes.length chunk in
+      Bytes.blit chunk 0 out off chunk_len;
+      fill (off + chunk_len))
+    else
+      let read_len = min (len - off) (Cstruct.length source.scratch) in
+      Eta.Effect.sync (fun () ->
+          read_body_flow source (Cstruct.sub source.scratch 0 read_len))
+      |> Eta.Effect.bind (function
+           | Error error ->
+               Eta.Effect.fail (Server.Error.to_http_error error)
+           | Ok 0 ->
+               Eta.Effect.fail
+                 (chunked_transport_error source
+                    (Connection_closed { during = Body_decode }))
+           | Ok read ->
+               Cstruct.blit_to_bytes source.scratch 0 out off read;
+               fill (off + read))
+  in
+  fill 0
+
+let chunked_decode_error source message =
+  Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:"*"
+    (Decode_error { codec = "chunked"; message })
+
+let chunked_read_line source ~limit =
+  let buffer = Buffer.create 32 in
+  let rec loop length seen_cr =
+    chunked_read_exact source 1
+    |> Eta.Effect.bind (fun byte ->
+           let c = Bytes.get byte 0 in
+           if seen_cr then
+             if Char.equal c '\n' then Eta.Effect.pure (Buffer.contents buffer)
+             else if length + 2 > limit then
+               Eta.Effect.fail
+                 (chunked_decode_error source "chunk line too large")
+             else (
+               Buffer.add_char buffer '\r';
+               Buffer.add_char buffer c;
+               loop (length + 2) false)
+           else if Char.equal c '\r' then loop length true
+           else if length + 1 > limit then
+             Eta.Effect.fail
+               (chunked_decode_error source "chunk line too large")
+           else (
+             Buffer.add_char buffer c;
+             loop (length + 1) false))
+  in
+  loop 0 false
+
+let chunked_body t head =
+  let source =
+    {
+      t;
+      initial = head.body_initial;
+      off = 0;
+      remaining = max_int;
+      close_after_response = false;
+      pending_returned = false;
+      scratch = Cstruct.create t.config.read_buffer_size;
+    }
+  in
+  let max_decoded_bytes =
+    Option.value t.config.server.limits.max_request_body_bytes ~default:max_int
+  in
+  let context =
+    {
+      Eta_http.Body.Chunked.protocol = H1;
+      method_ = head.method_;
+      uri = head.target;
+    }
+  in
+  let reader =
+    {
+      Eta_http.Body.Chunked.read_exact = chunked_read_exact source;
+      read_line = chunked_read_line source;
+    }
+  in
+  let decoder =
+    Eta_http.Body.Chunked.create ~max_decoded_bytes
+      ~max_trailer_bytes:t.config.server.limits.max_trailer_bytes
+      ~max_trailers:t.config.server.limits.max_trailers ~context ~reader ()
+  in
+  let state = { source; decoder; done_ = false } in
+  let rec read () =
+    Eta_http.Body.Chunked.read decoder
+    |> Eta.Effect.map_error (chunked_http_error_to_server t)
+    |> Eta.Effect.map (function
+         | None ->
+             state.done_ <- true;
+             None
+         | Some chunk ->
+             Server_stats.H1.add_request_bytes t.stats (Bytes.length chunk);
+             emit_current t (fun metrics ->
+                 Server_metrics.request_body_bytes metrics (Bytes.length chunk));
+             Some chunk)
+  in
+  let rec drain () =
+    read ()
+    |> Eta.Effect.bind (function
+         | None -> Eta.Effect.unit
+         | Some _ -> drain ())
+  in
+  let body =
+    Server.Body.of_reader
+      ~discard:(fun ~drain:should_drain ->
+        if should_drain then drain ()
+        else (
+          source.close_after_response <- true;
+          state.done_ <- true;
+          Eta.Effect.unit))
+      read
+  in
+  (body, state)
 
 let request_body t head =
   match Eta_http.H1.Request_body.of_headers head.headers with
@@ -337,10 +493,14 @@ let request_body t head =
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty),
               Fixed_request_body source ))
   | Ok Chunked ->
+      let body, source = chunked_body t head in
       Ok
-        ( unsupported_chunked_body t,
-          (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty),
-          Close_after_response )
+        ( body,
+          (fun () ->
+            Eta.Effect.pure
+              (if source.done_ then Eta_http.Body.Chunked.trailers source.decoder
+               else Eta_http.Core.Header.empty)),
+          Chunked_request_body source )
 
 let request_of_head t head ordinal body trailers =
   let path, query = Server.Request.split_target head.target in
@@ -381,6 +541,8 @@ let request_allows_keep_alive head =
 let body_can_reuse_before_response t = function
   | No_request_body -> true
   | Close_after_response -> false
+  | Chunked_request_body source ->
+      (not source.source.close_after_response) && source.done_
   | Fixed_request_body source ->
       if source.close_after_response then false
       else if source.remaining = 0 then true
@@ -392,6 +554,8 @@ let body_can_reuse_before_response t = function
 let finish_request_body_for_reuse t rt = function
   | No_request_body -> true
   | Close_after_response -> false
+  | Chunked_request_body source ->
+      (not source.source.close_after_response) && source.done_
   | Fixed_request_body source ->
       if source.close_after_response then false
       else if source.remaining = 0 then (
@@ -648,11 +812,6 @@ let request_error_stub t =
     stream_id = None;
     connection_id = t.connection.id;
   }
-
-let request_timeout_error t timeout =
-  error t
-    (Request_timeout
-       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
 let read_request_head_with_timeout t ordinal =
   let timeout =

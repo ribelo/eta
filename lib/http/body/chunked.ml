@@ -20,6 +20,8 @@ type t = {
   context : context;
   reader : reader;
   max_decoded_bytes : int;
+  max_trailer_bytes : int;
+  max_trailers : int;
   mutable decoded_bytes : int;
   mutable done_ : bool;
   mutable trailers : Header.t;
@@ -27,11 +29,28 @@ type t = {
 
 let default_line_limit = 8 * 1024
 let default_max_decoded_bytes = Stream.default_max_bytes
+let default_max_trailer_bytes = 8 * 1024
+let default_max_trailers = 64
 
-let create ?(max_decoded_bytes = default_max_decoded_bytes) ~context ~reader () =
+let create ?(max_decoded_bytes = default_max_decoded_bytes)
+    ?(max_trailer_bytes = default_max_trailer_bytes)
+    ?(max_trailers = default_max_trailers) ~context ~reader () =
   if max_decoded_bytes < 0 then
     invalid_arg "Eta_http.Body.Chunked.create: max_decoded_bytes must be >= 0";
-  { context; reader; max_decoded_bytes; decoded_bytes = 0; done_ = false; trailers = Header.empty }
+  if max_trailer_bytes < 0 then
+    invalid_arg "Eta_http.Body.Chunked.create: max_trailer_bytes must be >= 0";
+  if max_trailers < 0 then
+    invalid_arg "Eta_http.Body.Chunked.create: max_trailers must be >= 0";
+  {
+    context;
+    reader;
+    max_decoded_bytes;
+    max_trailer_bytes;
+    max_trailers;
+    decoded_bytes = 0;
+    done_ = false;
+    trailers = Header.empty;
+  }
 
 let decode_error t message =
   Error.make ~protocol:t.context.protocol ~method_:t.context.method_
@@ -146,14 +165,28 @@ let store_trailers t trailers =
           Effect.pure None)
   | Error kind -> Effect.fail (decode_error t (invalid_trailer_message kind))
 
-let rec read_trailers t acc =
+let trailer_section_too_large t length =
+  decode_error t
+    (Printf.sprintf "trailer section too large: limit=%d length=%d"
+       t.max_trailer_bytes length)
+
+let too_many_trailers t count =
+  decode_error t
+    (Printf.sprintf "too many trailers: limit=%d count=%d" t.max_trailers count)
+
+let rec read_trailers t acc bytes count =
   t.reader.read_line ~limit:default_line_limit
   |> Effect.bind (fun line ->
-         if String.equal line "" then store_trailers t acc
+         let next_bytes = bytes + String.length line + 2 in
+         if next_bytes < bytes || next_bytes > t.max_trailer_bytes then
+           Effect.fail (trailer_section_too_large t next_bytes)
+         else if String.equal line "" then store_trailers t acc
+         else if count >= t.max_trailers then
+           Effect.fail (too_many_trailers t (count + 1))
          else
            match parse_trailer line with
            | Error message -> Effect.fail (decode_error t message)
-           | Ok trailer -> read_trailers t (trailer :: acc))
+           | Ok trailer -> read_trailers t (trailer :: acc) next_bytes (count + 1))
 
 let read t =
   if t.done_ then Effect.pure None
@@ -162,7 +195,7 @@ let read t =
     |> Effect.bind (fun line ->
            match parse_size line with
            | Error message -> Effect.fail (decode_error t message)
-           | Ok 0 -> read_trailers t []
+           | Ok 0 -> read_trailers t [] 0 0
            | Ok size ->
                let next_total = t.decoded_bytes + size in
                if next_total < t.decoded_bytes || next_total > t.max_decoded_bytes then

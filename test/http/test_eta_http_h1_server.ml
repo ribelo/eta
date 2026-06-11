@@ -178,6 +178,135 @@ let test_h1_server_connection_post_reads_fixed_body () =
   Alcotest.(check int) "request bytes" 11 stats.request_bytes;
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
+let test_h1_server_connection_post_reads_chunked_body_and_trailers () =
+  let seen, resolve_seen = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.bind (fun body ->
+           request.trailers ()
+           |> Eta.Effect.map (fun trailers ->
+                  let trailer =
+                    Option.value ~default:"missing"
+                      (Eta_http.Core.Header.get "x-checksum" trailers)
+                  in
+                  ignore
+                    (Eio.Promise.try_resolve resolve_seen
+                       (Bytes.to_string body, trailer));
+                  Eta_http.Server.Response.text
+                    (Bytes.to_string body ^ "|" ^ trailer)))
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\nTransfer-Encoding: chunked\r\n"
+   ^ "Trailer: X-Checksum\r\n\r\n"
+   ^ "5\r\nhello\r\n6\r\n-world\r\n0\r\nX-Checksum: ok\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  let body, trailer = Eio.Promise.await seen in
+  Alcotest.(check string) "handler body" "hello-world" body;
+  Alcotest.(check string) "handler trailer" "ok" trailer;
+  Alcotest.(check string) "response"
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 14\r\n\r\nhello-world|ok"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "request bytes" 11 stats.request_bytes;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_rejects_invalid_chunked_body () =
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun _ -> Eta_http.Server.Response.text "unexpected\n")
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+   ^ "z\r\nboom\r\n0\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool) "bad request"
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_rejects_oversized_chunked_trailers () =
+  let server_limits =
+    { Eta_http.Server.Config.default.limits with max_trailer_bytes = 8 }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun _ -> Eta_http.Server.Response.text "unexpected\n")
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+   ^ "0\r\nX-Too-Large: value\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool) "bad request"
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_request_body_timeout () =
+  let server_timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      request_body_timeout = Some (Eta.Duration.ms 50);
+    }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with timeouts = server_timeouts }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun _ -> Eta_http.Server.Response.text "unexpected\n")
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /slow HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\nContent-Length: 5\r\n\r\nhe")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool) "request timeout"
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 408 Request Timeout" response);
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_streams_fixed_length_response () =
   let released = ref 0 in
   let handler (_request : Eta_http.Server.Request.t) =

@@ -111,6 +111,14 @@ let () =
             test_h1_server_connection_get_fixed_response;
           Alcotest.test_case "POST reads fixed body" `Quick
             test_h1_server_connection_post_reads_fixed_body;
+          Alcotest.test_case "POST reads chunked body and trailers" `Quick
+            test_h1_server_connection_post_reads_chunked_body_and_trailers;
+          Alcotest.test_case "rejects invalid chunked body" `Quick
+            test_h1_server_connection_rejects_invalid_chunked_body;
+          Alcotest.test_case "rejects oversized chunked trailers" `Quick
+            test_h1_server_connection_rejects_oversized_chunked_trailers;
+          Alcotest.test_case "request body timeout" `Quick
+            test_h1_server_connection_request_body_timeout;
           Alcotest.test_case "streams fixed-length response" `Quick
             test_h1_server_connection_streams_fixed_length_response;
           Alcotest.test_case "streams chunked response with trailers" `Quick
