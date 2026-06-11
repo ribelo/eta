@@ -5,7 +5,14 @@
 type config = Config.t
 (** Client configuration. *)
 
-type epoch = { alpn_protocol : string option } [@@unboxed]
+type server_config = Config.server
+(** Server configuration. *)
+
+type epoch = {
+  alpn_protocol : string option;
+  sni : string option;
+  peer_certificate_verified : bool;
+}
 (** Post-handshake metadata. *)
 
 type flow =
@@ -23,6 +30,15 @@ val client_of_flow :
   flow
 (** Wrap an existing TCP flow in TLS. Performs the handshake
     synchronously (blocking the fiber) before returning. *)
+
+val server_of_flow :
+  ?host_eio:Eta_eio.Host.t ->
+  server_config ->
+  [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t ->
+  flow * epoch
+(** Wrap an accepted TCP flow in server-side TLS. Performs the handshake
+    synchronously (blocking the fiber) before returning the TLS flow and
+    negotiated epoch. *)
 
 val epoch : flow -> (epoch, unit) result
 (** Extract the negotiated epoch. [Error ()] if the handshake has not

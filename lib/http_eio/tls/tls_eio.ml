@@ -1,8 +1,13 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 type config = Config.t
+type server_config = Config.server
 
-type epoch = { alpn_protocol : string option } [@@unboxed]
+type epoch = {
+  alpn_protocol : string option;
+  sni : string option;
+  peer_certificate_verified : bool;
+}
 
 type flow =
   [ Eio.Flow.two_way_ty | Eio.Resource.close_ty | `Eta_tls ] Eio.Resource.t
@@ -19,6 +24,8 @@ type 'a t_rec = {
   handshake_mutex : Eio.Mutex.t;
   read_mutex : Eio.Mutex.t;
   write_mutex : Eio.Mutex.t;
+  sni : string option;
+  mutable peer_certificate_verified : bool;
   mutable handshake_done : bool;
   mutable closed : bool;
 }
@@ -216,6 +223,28 @@ let flow_module = function
       let module Flow = (val Eta_eio.Host.flow host_eio : Eta_eio.Host.FLOW) in
       (module Flow : EIO_FLOW)
 
+let make_tls_state ?host_eio ?sni ?(peer_certificate_verified = false) ssl flow =
+  {
+    ssl;
+    flow;
+    eio_flow = flow_module host_eio;
+    ssl_mutex = Eio.Mutex.create ();
+    handshake_mutex = Eio.Mutex.create ();
+    read_mutex = Eio.Mutex.create ();
+    write_mutex = Eio.Mutex.create ();
+    sni;
+    peer_certificate_verified;
+    handshake_done = false;
+    closed = false;
+  }
+
+let epoch_of_state t =
+  {
+    alpn_protocol = Openssl.get_alpn_selected t.ssl;
+    sni = t.sni;
+    peer_certificate_verified = t.peer_certificate_verified;
+  }
+
 let client_of_flow ?host_eio (config : config) ?host
     (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
     flow =
@@ -233,23 +262,12 @@ let client_of_flow ?host_eio (config : config) ?host
     Openssl.create_ssl ctx ~hostname ~ip
       ~alpn_protocols:(Config.alpn_protocols config)
   in
-  let t =
-    {
-      ssl;
-      flow;
-      eio_flow = flow_module host_eio;
-      ssl_mutex = Eio.Mutex.create ();
-      handshake_mutex = Eio.Mutex.create ();
-      read_mutex = Eio.Mutex.create ();
-      write_mutex = Eio.Mutex.create ();
-      handshake_done = false;
-      closed = false;
-    }
-  in
+  let t = make_tls_state ?host_eio ?sni:hostname ssl flow in
   do_handshake t;
   let verify = Openssl.get_verify_result ssl in
   if verify <> 0 then
     failwith ("TLS certificate verification failed (code " ^ string_of_int verify ^ ")");
+  t.peer_certificate_verified <- true;
   (match Sys.getenv_opt "ETA_TLS_DEBUG" with
    | Some _ ->
        Printf.eprintf "[tls_eio] handshake done, alpn=%s\n%!"
@@ -257,12 +275,27 @@ let client_of_flow ?host_eio (config : config) ?host
    | None -> ());
   (Eio.Resource.T (t, ops) :> flow)
 
+let server_of_flow ?host_eio (config : server_config)
+    (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
+    flow * epoch =
+  let ctx =
+    Openssl.create_server_ctx
+      ~certificate_chain_file:(Config.certificate_chain_file config)
+      ~private_key_file:(Config.private_key_file config)
+      ~alpn_protocols:(Config.server_alpn_protocols config)
+  in
+  let ssl = Openssl.create_server_ssl ctx in
+  let t = make_tls_state ?host_eio ssl flow in
+  do_handshake t;
+  let epoch = epoch_of_state t in
+  ((Eio.Resource.T (t, ops) :> flow), epoch)
+
 let epoch flow =
   try
     let (Eio.Resource.T (t, handler)) = flow in
     let St t = Eio.Resource.get handler Tls_state t in
     if not t.handshake_done then Error ()
-    else Ok { alpn_protocol = Openssl.get_alpn_selected t.ssl }
+    else Ok (epoch_of_state t)
   with _ -> Error ()
 
 let alpn_protocol flow =

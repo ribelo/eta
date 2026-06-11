@@ -129,6 +129,10 @@ let drive_tls_handshake client server =
   in
   loop 100 false false
 
+let require_some label = function
+  | Some value -> value
+  | None -> Alcotest.failf "%s missing" label
+
 let find_tls_eio_source () =
   let candidates =
     [
@@ -216,6 +220,54 @@ let test_openssl_server_alpn_selects_client_protocol () =
     "client ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected client);
   Alcotest.(check (option string))
     "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
+
+let test_tls_eio_server_of_flow_handshake_epoch () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun _stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let server_raw, client_raw = Eio_unix.Net.socketpair_stream ~sw () in
+  let server_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let server_result = ref None in
+  let client_result = ref None in
+  Eio.Fiber.both
+    (fun () ->
+      server_result :=
+        Some
+          (Eta_http_eio.Tls.Eio.server_of_flow server_config server_raw))
+    (fun () ->
+      client_result :=
+        Some (Eta_http_eio.Tls.Eio.client_of_flow client_config client_raw));
+  let server_flow, server_epoch = require_some "server TLS result" !server_result in
+  let client_flow = require_some "client TLS result" !client_result in
+  Alcotest.(check (option string))
+    "server epoch ALPN" (Some "h2") server_epoch.alpn_protocol;
+  Alcotest.(check (option string)) "server SNI" None server_epoch.sni;
+  Alcotest.(check bool)
+    "server peer certificate verification" false
+    server_epoch.peer_certificate_verified;
+  Alcotest.(check (option string))
+    "server flow ALPN" (Some "h2")
+    (Eta_http_eio.Tls.Eio.alpn_protocol server_flow);
+  (match Eta_http_eio.Tls.Eio.epoch client_flow with
+   | Ok client_epoch ->
+       Alcotest.(check (option string))
+         "client epoch ALPN" (Some "h2") client_epoch.alpn_protocol;
+       Alcotest.(check (option string))
+         "client SNI" (Some "localhost") client_epoch.sni;
+       Alcotest.(check bool)
+         "client peer certificate verification" true
+         client_epoch.peer_certificate_verified
+   | Error () -> Alcotest.fail "missing client TLS epoch");
+  Eio.Flow.close client_flow;
+  Eio.Flow.close server_flow
 
 let test_openssl_server_ctx_rejects_invalid_cert () =
   with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->

@@ -192,6 +192,8 @@ let () =
             test_openssl_server_ctx_loads_cert_key_and_creates_ssl;
           Alcotest.test_case "OpenSSL server ALPN selects h2" `Quick
             test_openssl_server_alpn_selects_client_protocol;
+          Alcotest.test_case "Tls_eio server_of_flow epoch" `Quick
+            test_tls_eio_server_of_flow_handshake_epoch;
           Alcotest.test_case "OpenSSL server ctx rejects invalid cert" `Quick
             test_openssl_server_ctx_rejects_invalid_cert;
           Alcotest.test_case "OpenSSL server ctx rejects invalid key" `Quick
