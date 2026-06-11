@@ -26,19 +26,13 @@ type runtime_factory =
   Eta_http.Server.Error.t Eta.Runtime.t
 
 module Config = struct
-  type request_body_unread =
-    | Reset
-    | Drain_up_to of int
-
   type t = {
     max_connections : int;
     backlog : int;
     max_concurrent_streams : int;
     read_buffer_size : int;
     command_queue_capacity : int;
-    request_body_unread : request_body_unread;
-    enable_otel : bool;
-    emit_url_full : bool;
+    server : Eta_http.Server.Config.t;
     shutdown : shutdown;
     h2_config : H2.Config.t option;
   }
@@ -50,9 +44,7 @@ module Config = struct
       max_concurrent_streams = 128;
       read_buffer_size = 64 * 1024;
       command_queue_capacity = 1024;
-      request_body_unread = Reset;
-      enable_otel = true;
-      emit_url_full = false;
+      server = Eta_http.Server.Config.default;
       shutdown = Graceful (Eta.Duration.seconds 30);
       h2_config = None;
     }

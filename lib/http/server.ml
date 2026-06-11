@@ -2,6 +2,7 @@
 
 module Error = Server_error
 module Body = Server_body
+module Config = Server_config
 module Request = Server_request
 module Response = Server_response
 

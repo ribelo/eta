@@ -194,6 +194,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (fun () ->
         ignore (Server.Response.empty ~status:99 () : Server.Response.t))
 
+  let test_server_config_defaults_and_validation () =
+    let config = Server.Config.default in
+    Alcotest.(check bool) "otel enabled" true config.enable_otel;
+    Alcotest.(check bool) "url redaction default" false config.emit_url_full;
+    Alcotest.(check int) "request header cap" (32 * 1024)
+      config.limits.max_request_header_bytes;
+    Alcotest.(check (option int)) "request body cap"
+      (Some Eta_http.Body.Stream.default_max_bytes)
+      config.limits.max_request_body_bytes;
+    Server.Config.validate config;
+    let invalid_drain =
+      { config with unread_body_policy = Server.Config.Drain_up_to (-1) }
+    in
+    Alcotest.check_raises "invalid drain"
+      (Invalid_argument "Eta_http.Server.Config.Drain_up_to must be >= 0")
+      (fun () -> Server.Config.validate invalid_drain);
+    let invalid_limits =
+      {
+        config with
+        limits = { config.limits with max_request_headers = 0 };
+      }
+    in
+    Alcotest.check_raises "invalid header count"
+      (Invalid_argument
+         "Eta_http.Server.Config.max_request_headers must be > 0")
+      (fun () -> Server.Config.validate invalid_limits)
+
   let test_handler_helpers () =
     B.with_runtime @@ fun _ctx rt ->
     let error =
@@ -273,6 +300,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_body_discard_passes_drain_policy;
           Alcotest.test_case "response helpers" `Quick
             test_response_helpers_validate_and_preserve_body;
+          Alcotest.test_case "config defaults and validation" `Quick
+            test_server_config_defaults_and_validation;
           Alcotest.test_case "handler helpers" `Quick test_handler_helpers;
           Alcotest.test_case "semconv redacts query" `Quick
             test_server_semconv_redacts_query_by_default;

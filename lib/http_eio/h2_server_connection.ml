@@ -119,11 +119,7 @@ let validate_config config =
   if config.command_queue_capacity <= 0 then
     invalid_arg
       "Eta_http_eio.H2.Server_connection.run_h2c: command_queue_capacity must be > 0";
-  match config.request_body_unread with
-  | Types.Config.Drain_up_to limit when limit < 0 ->
-      invalid_arg
-        "Eta_http_eio.H2.Server_connection.run_h2c: Drain_up_to must be >= 0"
-  | Types.Config.Reset | Types.Config.Drain_up_to _ -> ()
+  Eta_http.Server.Config.validate config.server
 
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
 
@@ -338,13 +334,10 @@ let rec drain_request_body t ordinal state remaining resolver =
 let discard_request_body_with_policy ?resolver ~drain t ordinal state =
   if state.request_done || state.request_discarding then resolve_unit resolver
   else
-    match (drain, t.config.request_body_unread) with
-    | true, Types.Config.Drain_up_to limit ->
-        if limit < 0 then
-          invalid_arg
-            "Eta_http_eio.H2.Server_connection: Drain_up_to must be >= 0";
+    match (drain, t.config.server.unread_body_policy) with
+    | true, Eta_http.Server.Config.Drain_up_to limit ->
         drain_request_body t ordinal state limit resolver
-    | true, Types.Config.Reset | false, _ ->
+    | true, Eta_http.Server.Config.Reset | false, _ ->
         close_request_body state;
         forget_if_complete t ordinal state;
         resolve_unit resolver
@@ -667,7 +660,8 @@ let run_handler t ordinal request handler =
       let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
       let effect =
         Eta_http.Observability.Server.Tracer.request
-          ~enabled:t.config.enable_otel ~emit_url_full:t.config.emit_url_full
+          ~enabled:t.config.server.enable_otel
+          ~emit_url_full:t.config.server.emit_url_full
           handler request
       in
       let response =

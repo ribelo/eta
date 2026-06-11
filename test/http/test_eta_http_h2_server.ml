@@ -322,7 +322,14 @@ let test_h2c_server_drain_up_to_discard_waits_for_body () =
   let discard_returned, resolve_discard_returned = Eio.Promise.create () in
   let config =
     let open Eta_http_eio.Server.Config in
-    { default with request_body_unread = Drain_up_to 4 }
+    {
+      default with
+      server =
+        {
+          default.server with
+          unread_body_policy = Eta_http.Server.Config.Drain_up_to 4;
+        };
+    }
   in
   let handler (request : Eta_http.Server.Request.t) =
     match request.path with
