@@ -97,7 +97,8 @@ let pp_h2_client_error fmt = function
         message
   | `Exn exn -> Format.fprintf fmt "exn:%s" (Printexc.to_string exn)
 
-let await_h2_response ?(tag = 1) ?request_body ?trailers_ref connection request =
+let await_h2_response ?(tag = 1) ?request_body ?headers_ref ?trailers_ref
+    connection request =
   let status = ref None in
   let body = Buffer.create 32 in
   let eof, resolve_eof = Eio.Promise.create () in
@@ -121,6 +122,9 @@ let await_h2_response ?(tag = 1) ?request_body ?trailers_ref connection request 
           pp_h2_client_error error)
       ~response_handler:(fun _stream response response_body ->
         status := Some (H2.Status.to_code response.status);
+        Option.iter
+          (fun headers_ref -> headers_ref := Some (H2.Headers.to_list response.headers))
+          headers_ref;
         read_body response_body)
   with
   | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected { limit }) ->
@@ -222,10 +226,17 @@ let test_h2c_server_fixed_response_and_echo_body () =
         in
         Eta.Effect.pure
           (Eta_http.Server.Response.make ~status:200
-             ~headers:[ ("content-type", "text/plain") ]
+             ~headers:[ ("Content-Type", "text/plain") ]
              ~trailers:(fun () ->
-               Eta.Effect.pure [ ("grpc-status", "0"); ("x-done", "yes") ])
+               Eta.Effect.pure [ ("Grpc-Status", "0"); ("X-Done", "yes") ])
              ~body ())
+    | "/large-fixed" ->
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:200
+             ~body:
+               (Eta_http.Server.Response.Body.fixed
+                  [ Bytes.make (64 * 1024) 'z' ])
+             ())
     | _ ->
         Eta.Effect.pure
           (Eta_http.Server.Response.text ("ok:" ^ request.path ^ "\n"))
@@ -286,6 +297,7 @@ let test_h2c_server_fixed_response_and_echo_body () =
       in
       Alcotest.(check int) "early status" 200 early_status;
       Alcotest.(check string) "early body" "early:/early\n" early_body;
+      let stream_headers = ref None in
       let trailers = ref None in
       let stream_request =
         H2.Request.create ~scheme:"http"
@@ -293,14 +305,28 @@ let test_h2c_server_fixed_response_and_echo_body () =
           `GET "/stream"
       in
       let stream_status, stream_body =
-        await_h2_response ~tag:4 ~trailers_ref:trailers connection stream_request
+        await_h2_response ~tag:4 ~headers_ref:stream_headers
+          ~trailers_ref:trailers connection stream_request
       in
       Alcotest.(check int) "stream status" 200 stream_status;
       Alcotest.(check string) "stream body" "one-two" stream_body;
+      Alcotest.(check (option string)) "content-type" (Some "text/plain")
+        (Option.bind !stream_headers (List.assoc_opt "content-type"));
       Alcotest.(check (option string)) "grpc-status" (Some "0")
         (Option.bind !trailers (List.assoc_opt "grpc-status"));
       Alcotest.(check (option string)) "x-done" (Some "yes")
         (Option.bind !trailers (List.assoc_opt "x-done"));
+      let large_fixed =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/large-fixed"
+      in
+      let large_status, large_body =
+        await_h2_response ~tag:5 connection large_fixed
+      in
+      Alcotest.(check int) "large fixed status" 200 large_status;
+      Alcotest.(check int) "large fixed length" (64 * 1024)
+        (String.length large_body);
       Eta_http_eio.H2.Connection.shutdown connection;
       ignore (Eio.Promise.try_resolve resolve_stop ());
       let stats =
@@ -308,8 +334,8 @@ let test_h2c_server_fixed_response_and_echo_body () =
             Eio.Promise.await closed_stats)
       in
       Alcotest.(check int) "active streams" 0 stats.active_streams;
-      Alcotest.(check int) "opened streams" 4 stats.opened_streams;
-      Alcotest.(check int) "completed streams" 4 stats.completed_streams;
+      Alcotest.(check int) "opened streams" 5 stats.opened_streams;
+      Alcotest.(check int) "completed streams" 5 stats.completed_streams;
       Alcotest.(check int) "reset streams" 0 stats.reset_streams;
       Alcotest.(check int) "request bytes" 10 stats.request_bytes;
       Alcotest.(check int) "protocol errors" 0 stats.protocol_errors;

@@ -2,13 +2,15 @@
 
 open Types
 
-let build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir =
+let build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2
+    ~http2_prior_knowledge ~tmp_dir =
   let body_out = Filename.concat tmp_dir "curl_body_out" in
   let headers_out = Filename.concat tmp_dir "curl_headers" in
   let parts =
     ref [
       "curl";
       "-s";
+      "-S";
       "--connect-timeout";
       "3";
       "--max-time";
@@ -22,7 +24,8 @@ let build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir =
     ]
   in
   if insecure then parts := !parts @ [ "-k" ];
-  if http2 then parts := !parts @ [ "--http2" ];
+  if http2_prior_knowledge then parts := !parts @ [ "--http2-prior-knowledge" ]
+  else if http2 then parts := !parts @ [ "--http2" ];
   if String.equal method_ "HEAD" then parts := !parts @ [ "-I" ]
   else parts := !parts @ [ "-X"; method_ ];
   List.iter (fun (k, v) -> parts := !parts @ [ "-H"; Printf.sprintf "%s: %s" k v ]) headers;
@@ -30,7 +33,7 @@ let build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir =
    | Some path -> parts := !parts @ [ "-d"; "@" ^ path ]
    | None -> ());
   parts := !parts @ [ url ];
-  String.concat " " (List.map Filename.quote !parts)
+  String.concat " " (List.map Filename.quote !parts) ^ " 2>&1"
 
 let normalize_headers raw_lines =
   let headers = ref [] in
@@ -80,8 +83,12 @@ let read_header_lines tmp_dir =
          loop [])
   else []
 
-let run ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir =
-  let cmd = build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2 ~tmp_dir in
+let run ~url ~method_ ~headers ~body_path ~insecure ~http2
+    ~http2_prior_knowledge ~tmp_dir =
+  let cmd =
+    build_curl_cmd ~url ~method_ ~headers ~body_path ~insecure ~http2
+      ~http2_prior_knowledge ~tmp_dir
+  in
   match Util.run_cmd_out cmd with
   | Ok lines ->
       let status =

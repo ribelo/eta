@@ -89,7 +89,8 @@ let run_curl_get ~url ~insecure ~http2 ~tmp_dir =
   let rss_before = Util.rss_kb () in
   let t0 = Unix.gettimeofday () in
   let _result =
-    Curl.run ~url ~method_:"GET" ~headers:[] ~body_path:None ~insecure ~http2 ~tmp_dir
+    Curl.run ~url ~method_:"GET" ~headers:[] ~body_path:None ~insecure
+      ~http2 ~http2_prior_knowledge:false ~tmp_dir
   in
   let t1 = Unix.gettimeofday () in
   let rss_after = Util.rss_kb () in
@@ -128,7 +129,8 @@ let run_curl_post ~url ~insecure ~http2 ~tmp_dir ~body_bytes =
   let t0 = Unix.gettimeofday () in
   let _result =
     Curl.run ~url ~method_:"POST" ~headers:[("Content-Type", "text/plain")]
-      ~body_path:(Some body_path) ~insecure ~http2 ~tmp_dir
+      ~body_path:(Some body_path) ~insecure ~http2
+      ~http2_prior_knowledge:false ~tmp_dir
   in
   let t1 = Unix.gettimeofday () in
   let rss_after = Util.rss_kb () in

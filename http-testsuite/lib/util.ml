@@ -23,9 +23,18 @@ let run_cmd_out ?(env = []) cmd =
        let lines = loop [] in
        match Unix.close_process_in ic with
        | WEXITED 0 -> Ok lines
-       | WEXITED code -> Error (Printf.sprintf "exit %d: %s" code cmd)
-       | WSIGNALED n -> Error (Printf.sprintf "signal %d: %s" n cmd)
-       | WSTOPPED n -> Error (Printf.sprintf "stopped %d: %s" n cmd))
+       | WEXITED code ->
+           Error
+             (Printf.sprintf "exit %d: %s\n%s" code cmd
+                (String.concat "\n" lines))
+       | WSIGNALED n ->
+           Error
+             (Printf.sprintf "signal %d: %s\n%s" n cmd
+                (String.concat "\n" lines))
+       | WSTOPPED n ->
+           Error
+             (Printf.sprintf "stopped %d: %s\n%s" n cmd
+                (String.concat "\n" lines)))
 
 let write_file path contents =
   let out = open_out path in

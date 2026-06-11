@@ -45,6 +45,7 @@ type stream_state = {
   mutable request_discarding : bool;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
   mutable response_writer : H2.Body.Writer.t option;
+  mutable response_write_resolver : unit_result Eio.Promise.u option;
   mutable response_done : bool;
 }
 
@@ -213,18 +214,58 @@ let request_of_reqd ~connection ~ordinal ~body reqd =
     connection_id = connection.id;
   }
 
+let h2_header_list headers =
+  headers
+  |> Eta_http.Core.Header.to_list
+  |> List.map (fun (name, value) ->
+         (Eta_http.Core.Header.normalize_name name, value))
+
 let h2_response response =
   H2.Response.create
-    ~headers:
-      (H2.Headers.of_list
-         (Eta_http.Core.Header.to_list (Server.Response.headers response)))
+    ~headers:(H2.Headers.of_list (h2_header_list (Server.Response.headers response)))
     (H2.Status.of_code (Server.Response.status response))
-
-let fixed_body_string chunks =
-  Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks)
 
 let fixed_body_length chunks =
   List.fold_left (fun total chunk -> total + Bytes.length chunk) 0 chunks
+
+let max_h2_data_chunk = 16 * 1024
+
+let write_fixed_chunk writer chunk =
+  let len = Bytes.length chunk in
+  let rec loop off =
+    if off < len then (
+      let chunk_len = min max_h2_data_chunk (len - off) in
+      H2.Body.Writer.write_string writer (Bytes.sub_string chunk off chunk_len);
+      loop (off + chunk_len))
+  in
+  loop 0
+
+let fixed_response_stream chunks =
+  let total = fixed_body_length chunks in
+  let chunks = ref chunks in
+  let current = ref None in
+  let offset = ref 0 in
+  let rec read () =
+    match !current with
+    | Some chunk when !offset < Bytes.length chunk ->
+        let len = min max_h2_data_chunk (Bytes.length chunk - !offset) in
+        let out = Bytes.sub chunk !offset len in
+        offset := !offset + len;
+        Eta.Effect.pure (Some out)
+    | _ -> (
+        match !chunks with
+        | [] -> Eta.Effect.pure None
+        | chunk :: rest ->
+            chunks := rest;
+            current := Some chunk;
+            offset := 0;
+            read ())
+  in
+  {
+    Server.Response.Body.length = Some total;
+    read;
+    release = (fun () -> Eta.Effect.unit);
+  }
 
 let find_failure cause =
   let rec loop = function
@@ -252,7 +293,7 @@ let respond_fixed reqd response =
   | Empty -> H2.Reqd.respond_with_string reqd (h2_response response) ""
   | Fixed chunks ->
       H2.Reqd.respond_with_string reqd (h2_response response)
-        (fixed_body_string chunks)
+        (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
   | Stream _ ->
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
@@ -291,6 +332,12 @@ let fail_pending_request_read state error =
     (fun resolver -> resolve resolver (Error error))
     state.request_read_resolver;
   state.request_read_resolver <- None
+
+let fail_pending_response_write state error =
+  Option.iter
+    (fun resolver -> resolve resolver (Error error))
+    state.response_write_resolver;
+  state.response_write_resolver <- None
 
 let close_request_body state =
   state.request_done <- true;
@@ -382,6 +429,7 @@ let fail_active_streams t request_error =
         state.metrics;
       finish_stream_metrics state;
       fail_pending_request_read state request_error;
+      fail_pending_response_write state request_error;
       close_request_body state;
       close_response_writer_best_effort state;
       state.response_done <- true;
@@ -432,6 +480,13 @@ let start_response t ordinal response resolver =
         (Error (response_write_error t ~message:"response already completed" ()))
   | Some state -> (
       match Server.Response.body response with
+      | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
+          let writer =
+            H2.Reqd.respond_with_streaming state.reqd (h2_response response)
+          in
+          state.response_writer <- Some writer;
+          discard_request_body_with_policy ~drain:true t ordinal state;
+          resolve resolver (Ok ())
       | Empty | Fixed _ ->
           (match Server.Response.body response with
           | Empty -> ()
@@ -474,10 +529,14 @@ let write_response_chunk t ordinal chunk resolver =
           (fun metrics ->
             Server_metrics.response_body_bytes metrics (Bytes.length chunk))
           state.metrics;
-        H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk);
+        write_fixed_chunk writer chunk;
+        state.response_write_resolver <- Some resolver;
         H2.Body.Writer.flush writer (function
-          | `Written -> resolve resolver (Ok ())
+          | `Written ->
+              state.response_write_resolver <- None;
+              resolve resolver (Ok ())
           | `Closed ->
+              state.response_write_resolver <- None;
               resolve resolver
                 (Error
                    (response_write_error t ~message:"response flush closed" ()))))
@@ -495,7 +554,12 @@ let schedule_response_trailers t ordinal trailers resolver =
       | Some state -> (
           try
             if not (List.is_empty trailers) then
-              H2.Reqd.schedule_trailers state.reqd (H2.Headers.of_list trailers);
+              H2.Reqd.schedule_trailers state.reqd
+                (H2.Headers.of_list
+                   (List.map
+                      (fun (name, value) ->
+                        (Eta_http.Core.Header.normalize_name name, value))
+                      trailers));
             resolve resolver (Ok ())
           with exn ->
             resolve resolver
@@ -711,6 +775,9 @@ let run_handler t ordinal request handler =
       | Error error -> ignore (enqueue t (Response_failed (ordinal, error)))
       | Ok () -> (
           match Server.Response.body response with
+          | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
+              pump_response_stream t rt ordinal response
+                (fixed_response_stream chunks)
           | Empty | Fixed _ -> ()
           | Stream stream -> pump_response_stream t rt ordinal response stream))
 
@@ -761,6 +828,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
                 request_discarding = false;
                 request_read_resolver = None;
                 response_writer = None;
+                response_write_resolver = None;
                 response_done = false;
               };
             run_handler t ordinal request handler)

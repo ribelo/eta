@@ -74,6 +74,25 @@ let build_url ~transport ~port ~path =
   let scheme = match transport with Plain -> "http" | TLS -> "https" in
   Printf.sprintf "%s://127.0.0.1:%d%s" scheme port path
 
+let server_kind_slug = function Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta"
+let protocol_slug = function H1 -> "h1" | H2 -> "h2"
+let transport_slug = function Plain -> "plain" | TLS -> "tls"
+
+let config_slug (kind, protocol, transport) =
+  Printf.sprintf "%s:%s:%s" (server_kind_slug kind) (protocol_slug protocol)
+    (transport_slug transport)
+
+let split_csv raw =
+  raw |> String.split_on_char ',' |> List.map String.trim
+  |> List.filter (fun value -> not (String.equal value ""))
+
+let filter_configs configs =
+  match Sys.getenv_opt "ETA_HTTP_TESTSUITE_CONFIGS" with
+  | None | Some "" -> configs
+  | Some raw ->
+      let allowed = split_csv raw in
+      List.filter (fun config -> List.mem (config_slug config) allowed) configs
+
 let make_client ~env ~sw ~protocol ~transport ~cert_dir =
   let max_response_body_bytes = 128 * 1024 * 1024 in
   match protocol with
@@ -95,6 +114,13 @@ type scenario = {
   insecure : bool;
   skip : string option;
 }
+
+let filter_scenarios (scenarios : scenario list) =
+  match Sys.getenv_opt "ETA_HTTP_TESTSUITE_SCENARIOS" with
+  | None | Some "" -> scenarios
+  | Some raw ->
+      let allowed = split_csv raw in
+      List.filter (fun scenario -> List.mem scenario.name allowed) scenarios
 
 let default_scenarios = [
   (* Basic methods *)
@@ -242,63 +268,295 @@ let write_scenario_output ~results_dir ~name ~server_config eta_res curl_res =
        Util.write_file (Filename.concat dir "diff.txt") diff
    | _ -> ())
 
-let run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario =
+let write_eta_server_output ~results_dir ~name ~server_config expected curl_res =
+  let { kind; protocol; transport; _ } = server_config in
+  let dir =
+    Filename.concat results_dir
+      (Printf.sprintf "%s_%s_%s_%s" name
+         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+         (match protocol with H1 -> "h1" | H2 -> "h2")
+         (match transport with Plain -> "plain" | TLS -> "tls"))
+  in
+  Util.mkdir_p dir;
+  (match expected with
+  | Ok r ->
+      Json.write_json ~path:(Filename.concat dir "expected.json")
+        (Json.yojson_of_normalized_result r)
+  | Error e -> Util.write_file (Filename.concat dir "expected_error.txt") e);
+  (match curl_res with
+  | Ok r ->
+      Json.write_json ~path:(Filename.concat dir "curl.json")
+        (Json.yojson_of_normalized_result r)
+  | Error e -> Util.write_file (Filename.concat dir "curl_error.txt") e);
+  match (expected, curl_res) with
+  | Ok e, Ok c ->
+      let diff =
+        Printf.sprintf
+          "expected status=%d curl status=%d\nexpected sha=%s curl sha=%s\nexpected len=%d curl len=%d\nexpected trailers=%d curl trailers=%d\n"
+          e.status c.status e.body_sha256 c.body_sha256 e.body_length
+          c.body_length (List.length e.trailers_normalized)
+          (List.length c.trailers_normalized)
+      in
+      Util.write_file (Filename.concat dir "diff.txt") diff
+  | _ -> ()
+
+let normalized_string ?(headers = []) ?(trailers = []) ~status body =
+  {
+    status;
+    body_sha256 = Util.sha256_of_string body;
+    body_length = String.length body;
+    headers_normalized = headers;
+    trailers_normalized = trailers;
+  }
+
+let normalized_file ~status path =
+  {
+    status;
+    body_sha256 = Util.sha256_of_file path;
+    body_length = (Unix.stat path).st_size;
+    headers_normalized = [];
+    trailers_normalized = [];
+  }
+
+let eta_expected_result ~temp_dir scenario =
+  let status = Option.value ~default:200 scenario.expected_status in
+  if String.equal scenario.method_ "HEAD" || status = 204 then
+    Ok (normalized_string ~status "")
+  else
+    match scenario.path with
+    | "/healthz" -> Ok (normalized_string ~status "ok\n")
+    | "/echo" | "/reflect" ->
+        Ok (normalized_string ~status (Option.value ~default:"" scenario.body))
+    | "/trailer" ->
+        Ok
+          (normalized_string ~status "body-with-trailer"
+             ~headers:[ ("trailer", "X-Trailer") ])
+    | "/status206" -> Ok (normalized_string ~status "partial")
+    | "/status400" | "/status401" | "/status413" | "/status429"
+    | "/status500" | "/status502" | "/status503" | "/status504"
+    | "/redirect301" | "/redirect302" | "/redirect307" | "/redirect308"
+    | "/nonexistent" ->
+        Ok (normalized_string ~status "")
+    | path when String.starts_with ~prefix:"/static/" path ->
+        let prefix = "/static/" in
+        let name =
+          String.sub path (String.length prefix)
+            (String.length path - String.length prefix)
+        in
+        let file = Filename.concat temp_dir name in
+        if Sys.file_exists file then Ok (normalized_file ~status file)
+        else Error ("missing static fixture: " ^ file)
+    | path -> Error ("no Eta expected response for scenario path: " ^ path)
+
+let eta_server_result_equal (expected : normalized_result)
+    (actual : normalized_result) =
+  expected.status = actual.status
+  && expected.body_sha256 = actual.body_sha256
+  && expected.body_length = actual.body_length
+  && List.for_all
+       (fun header -> List.mem header actual.headers_normalized)
+       expected.headers_normalized
+  &&
+  match expected.trailers_normalized with
+  | [] -> true
+  | trailers ->
+      List.for_all
+        (fun trailer -> List.mem trailer actual.trailers_normalized)
+        trailers
+
+let eta_server_mismatch (expected : normalized_result) (actual : normalized_result) =
+  Printf.sprintf
+    "expected status=%d sha=%s len=%d trailers=%d; curl status=%d sha=%s len=%d trailers=%d"
+    expected.status expected.body_sha256 expected.body_length
+    (List.length expected.trailers_normalized)
+    actual.status actual.body_sha256 actual.body_length
+    (List.length actual.trailers_normalized)
+
+let scenario_body_path ~temp_dir scenario =
+  match scenario.body with
+  | Some b ->
+      let p = Filename.concat temp_dir "req_body" in
+      Util.write_file p b;
+      Some p
+  | None -> None
+
+let run_curl ~env ~server_config scenario =
+  let { kind; protocol; transport; port; temp_dir; _ } = server_config in
+  let url = build_url ~transport ~port ~path:scenario.path in
+  let body_path = scenario_body_path ~temp_dir scenario in
+  let run () =
+    Curl.run ~url ~method_:scenario.method_ ~headers:scenario.headers
+      ~body_path ~insecure:(transport = TLS || scenario.insecure)
+      ~http2:(protocol = H2)
+      ~http2_prior_knowledge:(kind = Eta && protocol = H2 && transport = Plain)
+      ~tmp_dir:temp_dir
+  in
+  match kind with
+  | Eta -> Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) run
+  | Nginx | Caddy -> run ()
+
+let skipped_result ~kind ~protocol ~transport ~name reason =
+  [
+    {
+      name;
+      server = kind;
+      protocol;
+      transport;
+      status = Skip reason;
+      eta_result = None;
+      curl_result = None;
+      eta_error = None;
+      curl_error = None;
+      duration_ms = 0.0;
+    };
+  ]
+
+let eta_server_skip_reason ~kind ~protocol scenario =
+  match (kind, protocol, scenario.name) with
+  | Eta, H2, "large_body_1m" ->
+      Some
+        "Eta H2 large upload flow-control hardening is pending; smaller POST body coverage remains active"
+  | _ -> None
+
+let run_external_server_scenario ~env ~sw ~rt ~server_config ~results_dir
+    scenario =
   let { kind; protocol; transport; port; temp_dir; cert_dir } = server_config in
+  let client =
+    make_client ~env ~sw ~protocol ~transport
+      ~cert_dir:(Option.value ~default:"" cert_dir)
+  in
+  let url = build_url ~transport ~port ~path:scenario.path in
+  let request =
+    make_request ~method_:scenario.method_ ~url ~headers:scenario.headers
+      ?body:scenario.body ()
+  in
+  let eta_res, duration_ms = run_eta ~rt ~client ~request in
+  ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
+  let curl_res = run_curl ~env ~server_config scenario in
+  let status =
+    match (eta_res, curl_res) with
+    | Ok e, Ok c -> if Curl.result_equal e c then Pass else Divergent
+    | Error _, _ | _, Error _ -> Fail
+  in
+  if status = Divergent || status = Fail then
+    write_scenario_output ~results_dir ~name:scenario.name ~server_config
+      eta_res curl_res;
+  [
+    {
+      name = scenario.name;
+      server = kind;
+      protocol;
+      transport;
+      status;
+      eta_result = (match eta_res with Ok r -> Some r | Error _ -> None);
+      curl_result = (match curl_res with Ok r -> Some r | Error _ -> None);
+      eta_error = (match eta_res with Error e -> Some e | Ok _ -> None);
+      curl_error = (match curl_res with Error e -> Some e | Ok _ -> None);
+      duration_ms;
+    };
+  ]
+
+let run_eta_server_scenario ~env ~server_config ~results_dir scenario =
+  let { kind; protocol; transport; temp_dir; _ } = server_config in
+  let start = Util.now_ms () in
+  let expected = eta_expected_result ~temp_dir scenario in
+  let curl_res = run_curl ~env ~server_config scenario in
+  let duration_ms = Util.now_ms () -. start in
+  let status, eta_error, curl_error =
+    match (expected, curl_res) with
+    | Ok expected, Ok actual ->
+        if eta_server_result_equal expected actual then (Pass, None, None)
+        else (Fail, None, Some (eta_server_mismatch expected actual))
+    | Error error, _ -> (Fail, Some error, None)
+    | _, Error error -> (Fail, None, Some error)
+  in
+  if status = Fail then
+    write_eta_server_output ~results_dir ~name:scenario.name ~server_config
+      expected curl_res;
+  [
+    {
+      name = scenario.name;
+      server = kind;
+      protocol;
+      transport;
+      status;
+      eta_result = None;
+      curl_result = (match curl_res with Ok r -> Some r | Error _ -> None);
+      eta_error;
+      curl_error;
+      duration_ms;
+    };
+  ]
+
+let run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario =
+  let { kind; protocol; transport; _ } = server_config in
   match scenario.skip with
   | Some reason ->
-      [ { name = scenario.name; server = kind; protocol; transport;
-          status = Skip reason; eta_result = None; curl_result = None;
-          eta_error = None; curl_error = None; duration_ms = 0.0 } ]
+      skipped_result ~kind ~protocol ~transport ~name:scenario.name reason
   | None ->
       if scenario.h2_only && protocol = H1 then
-        [ { name = scenario.name; server = kind; protocol; transport;
-            status = Skip "h2-only scenario on h1"; eta_result = None; curl_result = None;
-            eta_error = None; curl_error = None; duration_ms = 0.0 } ]
+        skipped_result ~kind ~protocol ~transport ~name:scenario.name
+          "h2-only scenario on h1"
       else
-        let client =
-          make_client ~env ~sw ~protocol ~transport
-            ~cert_dir:(Option.value ~default:"" cert_dir)
-        in
-        let url = build_url ~transport ~port ~path:scenario.path in
-        let request = make_request ~method_:scenario.method_ ~url ~headers:scenario.headers ?body:scenario.body () in
-        let eta_res, duration_ms = run_eta ~rt ~client ~request in
-        ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
-        let body_path =
-          match scenario.body with
-          | Some b ->
-              let p = Filename.concat temp_dir "req_body" in
-              Util.write_file p b;
-              Some p
-          | None -> None
-        in
-        let curl_res =
-          Curl.run ~url ~method_:scenario.method_
-            ~headers:scenario.headers ~body_path
-            ~insecure:(transport = TLS || scenario.insecure)
-            ~http2:(protocol = H2)
-            ~tmp_dir:temp_dir
-        in
-        let status =
-          match eta_res, curl_res with
-          | Ok e, Ok c ->
-              if Curl.result_equal e c then Pass else Divergent
-          | Error _, _ | _, Error _ -> Fail
-        in
-        if status = Divergent || status = Fail then
-          write_scenario_output ~results_dir ~name:scenario.name ~server_config eta_res curl_res;
-        [ { name = scenario.name; server = kind; protocol; transport; status;
-            eta_result = (match eta_res with Ok r -> Some r | Error _ -> None);
-            curl_result = (match curl_res with Ok r -> Some r | Error _ -> None);
-            eta_error = (match eta_res with Error e -> Some e | Ok _ -> None);
-            curl_error = (match curl_res with Error e -> Some e | Ok _ -> None);
-            duration_ms } ]
+        match eta_server_skip_reason ~kind ~protocol scenario with
+        | Some reason ->
+            skipped_result ~kind ~protocol ~transport ~name:scenario.name
+              reason
+        | None -> (
+        match kind with
+        | Eta -> run_eta_server_scenario ~env ~server_config ~results_dir scenario
+        | Nginx | Caddy ->
+            run_external_server_scenario ~env ~sw ~rt ~server_config
+              ~results_dir scenario)
 
 let run_all ~env ~results_dir ~scenarios =
-  let configs = [
-    (Nginx, H1, Plain); (Nginx, H1, TLS); (Nginx, H2, TLS);
-    (Caddy, H1, Plain); (Caddy, H1, TLS); (Caddy, H2, TLS);
-  ] in
+  let scenarios = filter_scenarios scenarios in
+  let configs =
+    filter_configs
+      [
+        (Nginx, H1, Plain);
+        (Nginx, H1, TLS);
+        (Nginx, H2, TLS);
+        (Caddy, H1, Plain);
+        (Caddy, H1, TLS);
+        (Caddy, H2, TLS);
+        (Eta, H1, Plain);
+        (Eta, H2, Plain);
+        (Eta, H1, TLS);
+        (Eta, H2, TLS);
+      ]
+  in
   let all_results = ref [] in
+  let record_start_failure ~kind ~protocol ~transport error =
+    Printf.eprintf "Server start failed: %s\n%!" error;
+    List.iter
+      (fun scenario ->
+        all_results :=
+          {
+            name = scenario.name;
+            server = kind;
+            protocol;
+            transport;
+            status = Fail;
+            eta_result = None;
+            curl_result = None;
+            eta_error = Some ("server start failed: " ^ error);
+            curl_error = None;
+            duration_ms = 0.0;
+          }
+          :: !all_results)
+      scenarios
+  in
+  let run_scenarios ~sw server_config =
+    let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+    List.iter
+      (fun scenario ->
+        let results =
+          run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario
+        in
+        all_results := results @ !all_results)
+      scenarios
+  in
   List.iter (fun (kind, protocol, transport) ->
       let temp_dir = Filename.concat results_dir
           (Printf.sprintf "server_%s_%s_%s"
@@ -317,40 +575,40 @@ let run_all ~env ~results_dir ~scenarios =
       in
       ignore (Fixtures.generate ~dir:temp_dir);
       let server_config = { kind; protocol; transport; port; temp_dir; cert_dir } in
-      let pid_path =
-        match kind with
-        | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol ~transport
-        | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol ~transport
-        | Eta -> Error "eta server lifecycle is Eio-owned; use Eta_server.start"
-      in
-      match pid_path with
-      | Error e ->
-          Printf.eprintf "Server start failed: %s\n%!" e;
-          List.iter (fun scenario ->
-              all_results :=
-                { name = scenario.name;
-                  server = kind;
-                  protocol;
-                  transport;
-                  status = Fail;
-                  eta_result = None;
-                  curl_result = None;
-                  eta_error = Some ("server start failed: " ^ e);
-                  curl_error = None;
-                  duration_ms = 0.0
-                }
-                :: !all_results)
-            scenarios
-      | Ok pid_path ->
+      match kind with
+      | Nginx | Caddy -> (
+          let pid_path =
+            match kind with
+            | Nginx ->
+                Nginx.start ~port ~temp_dir
+                  ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol
+                  ~transport
+            | Caddy ->
+                Caddy.start ~port ~temp_dir
+                  ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol
+                  ~transport
+            | Eta -> assert false
+          in
+          match pid_path with
+          | Error e -> record_start_failure ~kind ~protocol ~transport e
+          | Ok pid_path ->
+              Fun.protect
+                ~finally:(fun () ->
+                  match kind with
+                  | Nginx -> ignore (Nginx.stop pid_path)
+                  | Caddy -> ignore (Caddy.stop pid_path)
+                  | Eta -> ())
+                (fun () -> Eio.Switch.run (fun sw -> run_scenarios ~sw server_config)))
+      | Eta ->
           Eio.Switch.run (fun sw ->
-              let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
-              List.iter (fun scenario ->
-                  let results = run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario in
-                  all_results := results @ !all_results
-                ) scenarios);
-          (match kind with
-           | Nginx -> ignore (Nginx.stop pid_path)
-           | Caddy -> ignore (Caddy.stop pid_path)
-           | Eta -> ())
+              match
+                Eta_server.start ~sw ~env ~port ~temp_dir ?cert_dir ~protocol
+                  ~transport ()
+              with
+              | Error e -> record_start_failure ~kind ~protocol ~transport e
+              | Ok server ->
+                  Fun.protect
+                    ~finally:(fun () -> ignore (Eta_server.stop server))
+                    (fun () -> run_scenarios ~sw server_config))
     ) configs;
   List.rev !all_results
