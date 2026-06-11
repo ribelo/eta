@@ -1597,12 +1597,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_tls_chokepoint_policy () =
     let client = Eta_http.Tls.Config.default_client () in
     Alcotest.(check bool)
-      "TLS 1.2 only" true
-      (Eta_http.Tls.Config.policy_version = (`TLS_1_2, `TLS_1_2));
+      "TLS 1.2 minimum, TLS 1.3 maximum" true
+      (Eta_http.Tls.Config.policy_version = (`TLS_1_2, `TLS_1_3));
     Alcotest.(check (list string))
-      "exact policy ciphers"
+      "exact TLS 1.2 policy ciphers"
       Eta_http.Tls.Config.policy_ciphers
       Eta_http.Tls.Config.policy_ciphers;
+    Alcotest.(check (list string))
+      "exact TLS 1.3 policy ciphers"
+      [
+        "TLS_AES_128_GCM_SHA256";
+        "TLS_AES_256_GCM_SHA384";
+        "TLS_CHACHA20_POLY1305_SHA256";
+      ]
+      Eta_http.Tls.Config.policy_tls13_ciphers;
     Alcotest.(check (list string))
       "default ALPN" [ "h2"; "http/1.1" ]
       (Eta_http.Tls.Config.alpn_protocols client)

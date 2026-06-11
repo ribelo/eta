@@ -2,11 +2,16 @@
 
 (** ADR 0002 TLS client configuration chokepoint. *)
 
-val policy_version : [ `TLS_1_2 ] * [ `TLS_1_2 ]
-(** The v1 policy offers TLS 1.2 only on the OpenSSL substrate. *)
+val policy_version : [ `TLS_1_2 ] * [ `TLS_1_3 ]
+(** The v1 policy offers TLS 1.2 as the minimum and TLS 1.3 as the maximum on
+    the OpenSSL substrate. *)
 
 val policy_ciphers : string list
-(** OpenSSL cipher names for the allowed ECDHE RSA/ECDSA AEAD ciphers. *)
+(** OpenSSL cipher names for the allowed TLS 1.2 ECDHE RSA/ECDSA AEAD
+    ciphers. *)
+
+val policy_tls13_ciphers : string list
+(** OpenSSL cipher names for the allowed TLS 1.3 AEAD ciphers. *)
 
 val default_alpn : string list
 (** Client ALPN offer order: HTTP/2 first, HTTP/1.1 fallback. *)

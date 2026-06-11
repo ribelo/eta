@@ -15,8 +15,8 @@ type server_certificate
 (** Certificate entry selected by SNI on server handshakes. *)
 
 val create_ctx : unit -> ctx
-(** Create a client SSL_CTX with TLS 1.2-only policy ciphers, default
-    system trust store, and peer verification enabled. *)
+(** Create a client SSL_CTX with Eta's TLS 1.2/1.3 policy, default system
+    trust store, and peer verification enabled. *)
 
 val ctx_load_ca : ctx -> string -> unit
 (** [ctx_load_ca ctx path] adds [path] (a PEM CA file) to the trust
@@ -96,6 +96,9 @@ val ssl_pending : ssl -> int
 
 val get_alpn_selected : ssl -> string option
 (** The ALPN protocol selected by the server, if any. *)
+
+val get_version : ssl -> string
+(** The negotiated TLS protocol version, such as ["TLSv1.3"]. *)
 
 val get_servername : ssl -> string option
 (** The client SNI server name observed by a server SSL, if any. *)

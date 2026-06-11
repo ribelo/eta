@@ -255,6 +255,8 @@ let () =
             test_openssl_server_ctx_loads_cert_key_and_creates_ssl;
           Alcotest.test_case "OpenSSL server ALPN selects h2" `Quick
             test_openssl_server_alpn_selects_client_protocol;
+          Alcotest.test_case "OpenSSL negotiates TLS 1.3 by default" `Quick
+            test_openssl_negotiates_tls13_by_default;
           Alcotest.test_case "OpenSSL server resumes client session" `Quick
             test_openssl_server_resumes_client_session;
           Alcotest.test_case "OpenSSL server SNI selects cert" `Quick

@@ -26,6 +26,11 @@
   "ECDHE-ECDSA-AES256-GCM-SHA384:" \
   "ECDHE-ECDSA-CHACHA20-POLY1305"
 
+#define ETA_TLS13_CIPHER_LIST \
+  "TLS_AES_128_GCM_SHA256:" \
+  "TLS_AES_256_GCM_SHA384:" \
+  "TLS_CHACHA20_POLY1305_SHA256"
+
 static const unsigned char ETA_SESSION_ID_CONTEXT[] = "eta-http";
 
 /* ------------------------------------------------------------------ */
@@ -404,7 +409,7 @@ static SSL_CTX *eta_new_server_ctx(const char *cert, const char *key,
   }
 
   if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
-      !SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION)) {
+      !SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION)) {
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_set_proto_version failed");
   }
@@ -412,6 +417,10 @@ static SSL_CTX *eta_new_server_ctx(const char *cert, const char *key,
   if (SSL_CTX_set_cipher_list(ctx, ETA_CIPHER_LIST) != 1) {
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_set_cipher_list failed");
+  }
+  if (SSL_CTX_set_ciphersuites(ctx, ETA_TLS13_CIPHER_LIST) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_ciphersuites failed");
   }
 
   SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
@@ -486,9 +495,9 @@ CAMLprim value eta_openssl_ctx_create(value v_unit)
     caml_failwith("SSL_CTX_new failed");
   }
 
-  /* TLS 1.2 only. */
+  /* TLS 1.2 minimum; TLS 1.3 preferred when the peer supports it. */
   if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
-      !SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION)) {
+      !SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION)) {
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_set_proto_version failed");
   }
@@ -497,6 +506,10 @@ CAMLprim value eta_openssl_ctx_create(value v_unit)
   if (SSL_CTX_set_cipher_list(ctx, ETA_CIPHER_LIST) != 1) {
     SSL_CTX_free(ctx);
     caml_failwith("SSL_CTX_set_cipher_list failed");
+  }
+  if (SSL_CTX_set_ciphersuites(ctx, ETA_TLS13_CIPHER_LIST) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_ciphersuites failed");
   }
 
   SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
@@ -850,6 +863,13 @@ CAMLprim value eta_openssl_ssl_get_alpn_selected(value v_ssl)
   v_result = caml_alloc_string(len);
   memcpy((char *)String_val(v_result), data, len);
   CAMLreturn(caml_alloc_some(v_result));
+}
+
+CAMLprim value eta_openssl_ssl_get_version(value v_ssl)
+{
+  CAMLparam1(v_ssl);
+  SSL *ssl = eta_ssl_val(v_ssl);
+  CAMLreturn(caml_copy_string(SSL_get_version(ssl)));
 }
 
 CAMLprim value eta_openssl_ssl_get_servername(value v_ssl)

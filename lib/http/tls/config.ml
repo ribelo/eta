@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-let policy_version = (`TLS_1_2, `TLS_1_2)
+let policy_version = (`TLS_1_2, `TLS_1_3)
 
 let policy_ciphers =
   [
@@ -10,6 +10,13 @@ let policy_ciphers =
     "ECDHE-ECDSA-AES128-GCM-SHA256";
     "ECDHE-ECDSA-AES256-GCM-SHA384";
     "ECDHE-ECDSA-CHACHA20-POLY1305";
+  ]
+
+let policy_tls13_ciphers =
+  [
+    "TLS_AES_128_GCM_SHA256";
+    "TLS_AES_256_GCM_SHA384";
+    "TLS_CHACHA20_POLY1305_SHA256";
   ]
 
 let default_alpn = [ "h2"; "http/1.1" ]

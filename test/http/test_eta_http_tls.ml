@@ -166,6 +166,17 @@ let drive_tls_handshake client server =
   in
   loop 100 false false
 
+let drain_tls_post_handshake client server =
+  let scratch = Cstruct.to_bigarray (Cstruct.create 1) in
+  let rec loop remaining =
+    if remaining = 0 then ()
+    else (
+      ignore (pump_tls server client + pump_tls client server : int);
+      ignore (Eta_http__Openssl.read client scratch 0 1 : int);
+      loop (remaining - 1))
+  in
+  loop 20
+
 let drive_tls_handshake_failure client server =
   let rec loop remaining client_done server_done =
     if remaining = 0 then Alcotest.fail "TLS handshake unexpectedly converged"
@@ -304,6 +315,26 @@ let test_openssl_server_alpn_selects_client_protocol () =
   Alcotest.(check (option string))
     "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
 
+let test_openssl_negotiates_tls13_by_default () =
+  with_temp_tls_files @@ fun cert key ->
+  let server_ctx =
+    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "http/1.1" ]
+      ()
+  in
+  let client_ctx = Eta_http__Openssl.create_ctx () in
+  Eta_http__Openssl.ctx_load_ca client_ctx cert;
+  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client =
+    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+      ~ip:None ~alpn_protocols:[ "http/1.1" ]
+  in
+  drive_tls_handshake client server;
+  Alcotest.(check string) "client TLS version" "TLSv1.3"
+    (Eta_http__Openssl.get_version client);
+  Alcotest.(check string) "server TLS version" "TLSv1.3"
+    (Eta_http__Openssl.get_version server)
+
 let test_openssl_server_resumes_client_session () =
   with_temp_tls_files @@ fun cert key ->
   let server_ctx =
@@ -321,6 +352,7 @@ let test_openssl_server_resumes_client_session () =
     in
     Option.iter (Eta_http__Openssl.set_session client) session;
     drive_tls_handshake client server;
+    drain_tls_post_handshake client server;
     Alcotest.(check int) "client verify result" 0
       (Eta_http__Openssl.get_verify_result client);
     (client, server)
