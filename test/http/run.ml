@@ -281,6 +281,8 @@ let () =
             test_https_server_h2_alpn_request;
           Alcotest.test_case "HTTPS server handshake timeout stats" `Quick
             test_https_server_handshake_timeout_stats;
+          Alcotest.test_case "HTTPS server shutdown closes pending handshake"
+            `Quick test_https_server_shutdown_closes_pending_handshake;
           Alcotest.test_case "HTTPS server unsupported ALPN stats" `Quick
             test_https_server_unsupported_alpn_stats;
           Alcotest.test_case "HTTPS server strict SNI rejects unknown name" `Quick

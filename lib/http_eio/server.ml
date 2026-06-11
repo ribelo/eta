@@ -19,6 +19,13 @@ type connection =
   | H1 of H1_server_connection.t
   | H2 of H2_server_connection.t
 
+type raw_flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
+
+type pending_tls = {
+  id : int;
+  flow : raw_flow;
+}
+
 type https_connection_stats =
   | Https_h1 of H1_server_connection.stats
   | Https_h2 of H2_server_connection.stats
@@ -28,6 +35,7 @@ type t = {
   stop_resolver : unit Eio.Promise.u;
   mutex : Eio.Mutex.t;
   mutable connections : connection list;
+  mutable pending_tls : pending_tls list;
   stats : Server_stats.Listener.t;
 }
 
@@ -60,6 +68,10 @@ let h1_connection_id =
   fun () ->
     let id = Atomic.fetch_and_add next 1 + 1 in
     "h1-" ^ string_of_int id
+
+let pending_tls_id =
+  let next = Atomic.make 0 in
+  fun () -> Atomic.fetch_and_add next 1 + 1
 
 let h1_connection_info peer =
   {
@@ -101,6 +113,7 @@ let create () =
     stop_resolver;
     mutex = Eio.Mutex.create ();
     connections = [];
+    pending_tls = [];
     stats = Server_stats.Listener.create ();
   }
 
@@ -112,6 +125,26 @@ let register_connection t connection =
   with_lock t (fun () ->
       Server_stats.Listener.opened_connection t.stats;
       t.connections <- connection :: t.connections)
+
+let register_transitioned_connection t connection =
+  with_lock t (fun () -> t.connections <- connection :: t.connections)
+
+let register_pending_tls t flow =
+  let pending = { id = pending_tls_id (); flow } in
+  with_lock t (fun () ->
+      Server_stats.Listener.opened_connection t.stats;
+      t.pending_tls <- pending :: t.pending_tls);
+  pending
+
+let unregister_pending_tls ?(closed = true) t pending =
+  with_lock t (fun () ->
+      let before = List.length t.pending_tls in
+      t.pending_tls <-
+        List.filter
+          (fun current -> current.id <> pending.id)
+          t.pending_tls;
+      if closed && List.length t.pending_tls <> before then
+        Server_stats.Listener.closed_connection t.stats)
 
 let same_connection left right =
   match (left, right) with
@@ -130,6 +163,7 @@ let unregister_connection t connection =
         Server_stats.Listener.closed_connection t.stats)
 
 let connections t = with_lock t (fun () -> t.connections)
+let pending_tls t = with_lock t (fun () -> t.pending_tls)
 
 let record_tls_handshake t =
   with_lock t (fun () -> Server_stats.Listener.tls_handshake t.stats)
@@ -159,9 +193,36 @@ let tracked_listener_error t on_error exn =
 let stats t =
   with_lock t (fun () ->
       Server_stats.Listener.snapshot t.stats
-        ~active_connections:(List.length t.connections))
+        ~active_connections:
+          (List.length t.connections + List.length t.pending_tls))
+
+let close_pending_tls t =
+  List.iter
+    (fun pending ->
+      (try Eio.Flow.shutdown pending.flow `All with _ -> ());
+      try Eio.Flow.close pending.flow with _ -> ())
+    (pending_tls t)
+
+let with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
+    ?on_tls_pending_close flow f =
+  let raw_flow = (flow :> raw_flow) in
+  let pending = Option.map (fun start -> start raw_flow) on_tls_pending_start in
+  let pending_active = ref pending in
+  let finish_pending ~closed =
+    match !pending_active with
+    | None -> ()
+    | Some pending ->
+        pending_active := None;
+        if closed then
+          Option.iter (fun close -> close pending) on_tls_pending_close
+        else Option.iter (fun ready -> ready pending) on_tls_pending_ready
+  in
+  Fun.protect
+    ~finally:(fun () -> finish_pending ~closed:true)
+    (fun () -> f (fun () -> finish_pending ~closed:false))
 
 let shutdown t policy =
+  close_pending_tls t;
   List.iter
     (function
       | H1 connection -> H1_server_connection.shutdown connection policy
@@ -433,7 +494,8 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
 let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_error ?on_connection_start
     ?on_connection_close ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1
-    ?on_alpn_h2 ?on_alpn_rejected ~tls_context
+    ?on_alpn_h2 ?on_alpn_rejected ?on_tls_pending_start
+    ?on_tls_pending_ready ?on_tls_pending_close ~tls_context
     ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   ignore sw;
@@ -446,10 +508,19 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        run_https_connection ~conn_sw ~clock ~config ~runtime_factory
-          ?on_connection_start ?on_connection_close ?on_tls_handshake
-          ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-          ~tls_context handler flow peer)
+        with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
+          ?on_tls_pending_close flow
+          (fun finish_pending ->
+            let on_connection_start connection =
+              Option.iter
+                (fun on_connection_start -> on_connection_start connection)
+                on_connection_start;
+              finish_pending ()
+            in
+            run_https_connection ~conn_sw ~clock ~config ~runtime_factory
+              ~on_connection_start ?on_connection_close ?on_tls_handshake
+              ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+              ~tls_context handler flow peer))
   in
   ()
 
@@ -470,7 +541,8 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_start ?on_connection_close
     ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2
-    ?on_alpn_rejected ~tls_context ~addr handler =
+    ?on_alpn_rejected ?on_tls_pending_start ?on_tls_pending_ready
+    ?on_tls_pending_close ~tls_context ~addr handler =
   Config.validate config;
   validate_domain_policy domain_policy;
   let runtime_factory =
@@ -486,10 +558,19 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        run_https_connection ~conn_sw ~clock ~config ~runtime_factory
-          ?on_connection_start ?on_connection_close ?on_tls_handshake
-          ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-          ~tls_context handler flow peer)
+        with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
+          ?on_tls_pending_close flow
+          (fun finish_pending ->
+            let on_connection_start connection =
+              Option.iter
+                (fun on_connection_start -> on_connection_start connection)
+                on_connection_start;
+              finish_pending ()
+            in
+            run_https_connection ~conn_sw ~clock ~config ~runtime_factory
+              ~on_connection_start ?on_connection_close ?on_tls_handshake
+              ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
+              ~tls_context handler flow peer))
   in
   ()
 
@@ -586,13 +667,18 @@ let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
   Eio.Fiber.fork ~sw (fun () ->
       run_https_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
-        ~on_connection_start:(fun connection -> register_connection t connection)
+        ~on_connection_start:(fun connection ->
+          register_transitioned_connection t connection)
         ~on_connection_close:(tracked_https_on_close t on_connection_close)
         ~on_tls_handshake:(fun () -> record_tls_handshake t)
         ~on_tls_handshake_failure:(fun () -> record_tls_handshake_failure t)
         ~on_alpn_h1:(fun () -> record_alpn_h1 t)
         ~on_alpn_h2:(fun () -> record_alpn_h2 t)
         ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
+        ~on_tls_pending_start:(fun flow -> register_pending_tls t flow)
+        ~on_tls_pending_ready:(fun pending ->
+          unregister_pending_tls ~closed:false t pending)
+        ~on_tls_pending_close:(fun pending -> unregister_pending_tls t pending)
         ~tls_context ~socket handler);
   t
 
@@ -606,12 +692,17 @@ let start_https ~sw ~net ~clock ?domain_manager
   Eio.Fiber.fork ~sw (fun () ->
       run_https_impl ~sw ~net ~clock ?domain_manager ~domain_policy ~stop:t.stop
         ~config ?runtime_factory ~on_error:(tracked_listener_error t on_error)
-        ~on_connection_start:(fun connection -> register_connection t connection)
+        ~on_connection_start:(fun connection ->
+          register_transitioned_connection t connection)
         ~on_connection_close:(tracked_https_on_close t on_connection_close)
         ~on_tls_handshake:(fun () -> record_tls_handshake t)
         ~on_tls_handshake_failure:(fun () -> record_tls_handshake_failure t)
         ~on_alpn_h1:(fun () -> record_alpn_h1 t)
         ~on_alpn_h2:(fun () -> record_alpn_h2 t)
         ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
+        ~on_tls_pending_start:(fun flow -> register_pending_tls t flow)
+        ~on_tls_pending_ready:(fun pending ->
+          unregister_pending_tls ~closed:false t pending)
+        ~on_tls_pending_close:(fun pending -> unregister_pending_tls t pending)
         ~tls_context ~addr handler);
   t

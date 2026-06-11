@@ -845,6 +845,68 @@ let test_https_server_handshake_timeout_stats () =
   (try Eio.Flow.close raw with _ -> ());
   Eta_http_eio.Server.shutdown server Immediate
 
+let test_https_server_shutdown_closes_pending_handshake () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let config =
+    {
+      Eta_http_eio.Server.Config.default with
+      tls_handshake_timeout = Eta.Duration.seconds 5;
+    }
+  in
+  let handler_called = ref false in
+  let handler _request =
+    handler_called := true;
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~config ~tls_config
+      ~socket handler
+  in
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () -> try Eio.Flow.close raw with _ -> ())
+    (fun () ->
+      let active_stats =
+        wait_for_server_stats clock server (fun stats ->
+            stats.active_connections = 1 && stats.opened_connections = 1)
+      in
+      Alcotest.(check int)
+        "pending active connections" 1 active_stats.active_connections;
+      Alcotest.(check int)
+        "pending opened connections" 1 active_stats.opened_connections;
+      Alcotest.(check int)
+        "pending closed connections" 0 active_stats.closed_connections;
+      Alcotest.(check int) "pending tls handshakes" 0 active_stats.tls_handshakes;
+      Alcotest.(check int)
+        "pending tls failures" 0 active_stats.tls_handshake_failures;
+      Eta_http_eio.Server.shutdown server Immediate;
+      let closed_stats =
+        wait_for_server_stats clock server (fun stats ->
+            stats.active_connections = 0 && stats.closed_connections = 1)
+      in
+      Alcotest.(check int)
+        "closed active connections" 0 closed_stats.active_connections;
+      Alcotest.(check int)
+        "closed opened connections" 1 closed_stats.opened_connections;
+      Alcotest.(check int)
+        "closed closed connections" 1 closed_stats.closed_connections;
+      Alcotest.(check bool) "handler not called" false !handler_called)
+
 let test_https_server_unsupported_alpn_stats () =
   with_temp_tls_files @@ fun cert key ->
   run_eio @@ fun env ->
