@@ -6,6 +6,7 @@
   test_eta_http_h1_write
   test_eta_http_transport
   test_eta_http_h1_client
+  test_eta_http_h1_server
   test_eta_http_ws
   test_eta_http_tls
   test_eta_http_h2_writer

@@ -1,6 +1,7 @@
 open Test_eta_http_h1_write
 open Test_eta_http_transport
 open Test_eta_http_h1_client
+open Test_eta_http_h1_server
 open Test_eta_http_ws
 open Test_eta_http_tls
 open Test_eta_http_h2_writer
@@ -102,6 +103,13 @@ let () =
             `Quick test_h1_response_head_read_exception_is_typed_and_releases;
           Alcotest.test_case "body read exception is typed" `Quick
             test_h1_body_read_exception_is_typed;
+        ] );
+      ( "h1-server",
+        [
+          Alcotest.test_case "GET fixed response" `Quick
+            test_h1_server_connection_get_fixed_response;
+          Alcotest.test_case "POST reads fixed body" `Quick
+            test_h1_server_connection_post_reads_fixed_body;
         ] );
       ( "ws",
         [

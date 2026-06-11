@@ -110,6 +110,7 @@ end
 module H1 = struct
   module Client = H1_client
   module Parse = Eta_http.H1.Parse
+  module Server_connection = H1_server_connection
   module Write = Write
 end
 
