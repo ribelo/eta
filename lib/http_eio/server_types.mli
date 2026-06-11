@@ -34,7 +34,6 @@ module Config : sig
     command_queue_capacity : int;
     tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
-    shutdown : shutdown;
     h2_config : H2.Config.t option;
     h2_security_config : Eta_http.H2.Security.config option;
   }

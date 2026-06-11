@@ -34,7 +34,6 @@ module Config = struct
     command_queue_capacity : int;
     tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
-    shutdown : shutdown;
     h2_config : H2.Config.t option;
     h2_security_config : Eta_http.H2.Security.config option;
   }
@@ -48,7 +47,6 @@ module Config = struct
       command_queue_capacity = 1024;
       tls_handshake_timeout = Eta.Duration.seconds 10;
       server = Eta_http.Server.Config.default;
-      shutdown = Graceful (Eta.Duration.seconds 30);
       h2_config = None;
       h2_security_config = None;
     }
