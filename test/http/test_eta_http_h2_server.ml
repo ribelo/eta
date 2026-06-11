@@ -657,6 +657,69 @@ let test_h2c_server_request_body_timeout () =
     stats.request_bytes;
   Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
 
+let test_h2c_server_unread_body_drain_timeout () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let server_timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      request_body_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config =
+    {
+      Eta_http.Server.Config.default with
+      timeouts = server_timeouts;
+      unread_body_policy = Eta_http.Server.Config.Drain_up_to 64;
+    }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let request_seen, resolve_request_seen = Eio.Promise.create () in
+  let state, flow =
+    failing_server_flow
+      (Blocking_read
+         {
+           request_bytes =
+             h2_client_partial_request_bytes "/ignored" "partial";
+         })
+  in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/ignored" ->
+        Eta.Effect.sync (fun () ->
+            ignore (Eio.Promise.try_resolve resolve_request_seen ()))
+        |> Eta.Effect.map (fun () -> Eta_http.Server.Response.text "ignored\n")
+    | path -> Alcotest.failf "unexpected path %S" path
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.H2.Server_connection.run_h2c ~sw ~clock ~flow
+        ~peer:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 31337))
+        ~config ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+      Eio.Promise.await request_seen);
+  Eio.Time.sleep clock 0.1;
+  Eio.Flow.shutdown flow `All;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed streams" 1 stats.completed_streams;
+  Alcotest.(check int) "reset streams" 0 stats.reset_streams;
+  Alcotest.(check int) "active streams" 0 stats.active_streams;
+  Alcotest.(check int) "request bytes" (String.length "partial")
+    stats.request_bytes;
+  Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
+
 let test_h2c_server_request_header_timeout () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

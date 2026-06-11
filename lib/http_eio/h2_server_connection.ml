@@ -29,6 +29,7 @@ type command =
   | Ingress_failed of Server.Error.t
   | Request_body_read of int * request_body_read Eio.Promise.u
   | Request_body_timeout of int * request_body_read Eio.Promise.u
+  | Request_body_drain_timeout of int * unit Eio.Promise.u
   | Request_body_discard of int * bool * (unit, Server.Error.t) result Eio.Promise.u
   | Response_start of int * Server.Response.t * unit_result Eio.Promise.u
   | Response_chunk of int * bytes * unit_result Eio.Promise.u
@@ -45,6 +46,9 @@ type stream_state = {
   mutable request_done : bool;
   mutable request_discarding : bool;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
+  mutable request_discard_resolver :
+    (unit, Server.Error.t) result Eio.Promise.u option;
+  mutable request_discard_timeout_token : unit Eio.Promise.u option;
   mutable response_writer : H2.Body.Writer.t option;
   mutable response_write_resolver : unit_result Eio.Promise.u option;
   mutable response_done : bool;
@@ -460,6 +464,17 @@ let fail_pending_request_read state error =
     state.request_read_resolver;
   state.request_read_resolver <- None
 
+let clear_request_discard state =
+  state.request_discarding <- false;
+  state.request_discard_resolver <- None;
+  state.request_discard_timeout_token <- None
+
+let fail_pending_request_discard state error =
+  Option.iter
+    (fun resolver -> resolve resolver (Error error))
+    state.request_discard_resolver;
+  clear_request_discard state
+
 let fail_pending_response_write state error =
   Option.iter
     (fun resolver -> resolve resolver (Error error))
@@ -468,7 +483,7 @@ let fail_pending_response_write state error =
 
 let close_request_body state =
   state.request_done <- true;
-  state.request_discarding <- false;
+  clear_request_discard state;
   try
     if not (H2.Body.Reader.is_closed state.request_body) then
       H2.Body.Reader.close state.request_body
@@ -485,8 +500,14 @@ let forget_if_complete t ordinal state =
 let resolve_unit resolver =
   Option.iter (fun resolver -> resolve resolver (Ok ())) resolver
 
+let schedule_request_body_drain_timeout t ordinal token timeout =
+  Eio.Fiber.fork ~sw:t.sw (fun () ->
+      t.sleep (Eta.Duration.to_seconds_float timeout);
+      ignore (enqueue t (Request_body_drain_timeout (ordinal, token))))
+
 let rec drain_request_body t ordinal state remaining resolver =
   if state.request_done then (
+    clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else if remaining <= 0 then (
@@ -495,18 +516,26 @@ let rec drain_request_body t ordinal state remaining resolver =
     resolve_unit resolver)
   else if H2.Body.Reader.is_closed state.request_body then (
     state.request_done <- true;
-    state.request_discarding <- false;
+    clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else (
     state.request_discarding <- true;
+    state.request_discard_resolver <- resolver;
+    Option.iter
+      (fun timeout ->
+        let _promise, token = Eio.Promise.create () in
+        state.request_discard_timeout_token <- Some token;
+        schedule_request_body_drain_timeout t ordinal token timeout)
+      t.config.server.timeouts.request_body_timeout;
     H2.Body.Reader.schedule_read state.request_body
       ~on_eof:(fun () ->
         state.request_done <- true;
-        state.request_discarding <- false;
+        clear_request_discard state;
         forget_if_complete t ordinal state;
         resolve_unit resolver)
       ~on_read:(fun _bs ~off:_ ~len ->
+        state.request_discard_timeout_token <- None;
         Server_stats.H2.add_request_bytes t.stats len;
         Option.iter
           (fun metrics -> Server_metrics.request_body_bytes metrics len)
@@ -557,6 +586,7 @@ let fail_active_streams t request_error =
         state.metrics;
       finish_stream_metrics state;
       fail_pending_request_read state request_error;
+      fail_pending_request_discard state request_error;
       fail_pending_response_write state request_error;
       close_request_body state;
       close_response_writer_best_effort state;
@@ -619,6 +649,21 @@ let handle_request_body_timeout t ordinal resolver =
           in
           state.request_read_resolver <- None;
           resolve resolver (Error error);
+          close_request_body state;
+          forget_if_complete t ordinal state
+      | None | Some _ -> ())
+
+let handle_request_body_drain_timeout t ordinal token =
+  match Hashtbl.find_opt t.streams ordinal with
+  | None -> ()
+  | Some state -> (
+      match state.request_discard_timeout_token with
+      | Some active when active == token ->
+          let error =
+            request_timeout_error t t.config.server.timeouts.request_body_timeout
+          in
+          let resolver = state.request_discard_resolver in
+          Option.iter (fun resolver -> resolve resolver (Error error)) resolver;
           close_request_body state;
           forget_if_complete t ordinal state
       | None | Some _ -> ())
@@ -830,6 +875,9 @@ let handle_command t = function
       drain_writes t
   | Request_body_timeout (ordinal, resolver) ->
       handle_request_body_timeout t ordinal resolver;
+      drain_writes t
+  | Request_body_drain_timeout (ordinal, token) ->
+      handle_request_body_drain_timeout t ordinal token;
       drain_writes t
   | Request_body_discard (ordinal, drain, resolver) ->
       discard_request_body t ordinal drain resolver;
@@ -1065,6 +1113,8 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
                 request_done = false;
                 request_discarding = false;
                 request_read_resolver = None;
+                request_discard_resolver = None;
+                request_discard_timeout_token = None;
                 response_writer = None;
                 response_write_resolver = None;
                 response_done = false;
