@@ -72,7 +72,8 @@ let with_h1_connection ?(config = Eta_http_eio.Server.Config.default) handler
     ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () -> client_action clock flow closed_stats)
 
-let run_h1_connection_on_flow flow handler =
+let run_h1_connection_on_flow ?(config = Eta_http_eio.Server.Config.default) flow
+    handler =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock env in
@@ -91,7 +92,7 @@ let run_h1_connection_on_flow flow handler =
   let closed_stats = ref None in
   Eta_http_eio.H1.Server_connection.run ~sw ~clock
     ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
-    ~connection ~config:Eta_http_eio.Server.Config.default ~runtime_factory
+    ~connection ~config ~runtime_factory
     ~on_close:(fun stats -> closed_stats := Some stats)
     handler;
   match !closed_stats with
@@ -480,6 +481,28 @@ let test_h1_server_connection_releases_stream_on_write_failure () =
   let stats = run_h1_connection_on_flow flow handler in
   Alcotest.(check int) "released" 1 !released;
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_response_write_timeout_is_typed () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_write_timeout = Some (Eta.Duration.ms 1);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let flow = Eio_mock.Flow.make "eta-http-h1-server-write-timeout" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "GET /timeout HTTP/1.1\r\nHost: example.test\r\n\r\n" ];
+  Eio_mock.Flow.on_copy_bytes flow [ `Raise Eio.Time.Timeout ];
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text "slow-client\n")
+  in
+  let stats = run_h1_connection_on_flow ~config flow handler in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check int) "response bytes" 0 stats.response_bytes
 
 let path_response (request : Eta_http.Server.Request.t) =
   Eta.Effect.pure (Eta_http.Server.Response.text request.path)

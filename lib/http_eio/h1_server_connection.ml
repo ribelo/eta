@@ -96,10 +96,15 @@ let response_write_error t message =
 
 let write_response_string t wire =
   try
-    Eio.Flow.copy_string wire t.flow;
+    let write () = Eio.Flow.copy_string wire t.flow in
+    (match t.config.server.timeouts.response_write_timeout with
+    | None -> write ()
+    | Some timeout -> t.with_timeout timeout write);
     Server_stats.H1.add_response_bytes t.stats (String.length wire);
     Ok ()
   with
+  | Eio.Time.Timeout ->
+      Error (response_write_error t "response write timed out")
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn ->
       Error

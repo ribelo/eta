@@ -131,6 +131,8 @@ let () =
             test_h1_server_connection_streams_chunked_response_with_trailers;
           Alcotest.test_case "stream write failure releases body" `Quick
             test_h1_server_connection_releases_stream_on_write_failure;
+          Alcotest.test_case "response write timeout is typed" `Quick
+            test_h1_server_connection_response_write_timeout_is_typed;
           Alcotest.test_case "keep-alive sequential requests" `Quick
             test_h1_server_connection_keeps_alive_for_sequential_requests;
           Alcotest.test_case "keep-alive preserves pipelined bytes" `Quick
