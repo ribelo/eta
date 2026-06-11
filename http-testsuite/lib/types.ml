@@ -55,6 +55,7 @@ type bench_iteration = {
 type adversarial_result = {
   name : string;
   passed : bool;
+  skipped : string option;
   deadline_respected : bool;
   peak_rss_kb : int;
   error_variant : string option;

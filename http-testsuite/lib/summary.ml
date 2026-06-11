@@ -41,14 +41,30 @@ let render ~interop_results ~cve_results ~bench_iterations ~manifest ~path =
        Printf.fprintf oc "\n";
 
        (* CVE counts *)
-       let cve_pass = List.filter (fun r -> r.passed) cve_results |> List.length in
-       let cve_fail = List.length cve_results - cve_pass in
+       let cve_skip =
+         List.filter (fun r -> Option.is_some r.skipped) cve_results
+         |> List.length
+       in
+       let cve_pass =
+         List.filter
+           (fun r -> r.passed && Option.is_none r.skipped)
+           cve_results
+         |> List.length
+       in
+       let cve_fail =
+         List.length cve_results - cve_pass - cve_skip
+       in
        Printf.fprintf oc "## Adversarial / CVE Results\n\n";
-       Printf.fprintf oc "PASS: %d  FAIL: %d\n\n" cve_pass cve_fail;
+       Printf.fprintf oc "PASS: %d  FAIL: %d  SKIP: %d\n\n" cve_pass cve_fail cve_skip;
        List.iter (fun r ->
+           let status =
+             match r.skipped with
+             | Some reason -> "SKIP (" ^ reason ^ ")"
+             | None -> if r.passed then "PASS" else "FAIL"
+           in
            Printf.fprintf oc "- %s: %s (peak RSS: %d KB, error: %s)\n"
              r.name
-             (if r.passed then "PASS" else "FAIL")
+             status
              r.peak_rss_kb
              (Option.value ~default:"none" r.error_variant)
          ) cve_results;

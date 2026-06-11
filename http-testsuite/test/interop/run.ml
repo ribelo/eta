@@ -50,7 +50,10 @@ let () =
 
   let failed =
     List.exists
-      (fun (result : Types.scenario_result) -> result.status = Types.Fail)
+      (fun (result : Types.scenario_result) ->
+        match result.status with
+        | Types.Fail | Types.Divergent -> true
+        | Types.Pass | Types.Skip _ -> false)
       interop_results
   in
   Printf.printf "interop_runner done results_dir=%s\n%!" results_dir;

@@ -41,7 +41,9 @@ let () =
     ~path:(Filename.concat results_dir "summary.md");
 
   let failed =
-    List.exists (fun (result : Types.adversarial_result) -> not result.passed)
+    List.exists
+      (fun (result : Types.adversarial_result) ->
+        (not result.passed) && Option.is_none result.skipped)
       cve_results
   in
   Printf.printf "cve_runner done results_dir=%s\n%!" results_dir;

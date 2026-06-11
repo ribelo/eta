@@ -72,6 +72,7 @@ let yojson_of_adversarial_result (r : adversarial_result) =
   `Assoc [
     ("name", yojson_of_string r.name);
     ("passed", yojson_of_bool r.passed);
+    ("skipped", yojson_of_option yojson_of_string r.skipped);
     ("deadline_respected", yojson_of_bool r.deadline_respected);
     ("peak_rss_kb", yojson_of_int r.peak_rss_kb);
     ("error_variant", yojson_of_option yojson_of_string r.error_variant);

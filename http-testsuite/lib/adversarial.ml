@@ -19,10 +19,13 @@ let timeout_error ~url ~deadline_sec =
 let not_implemented name =
   { name;
     passed = false;
+    skipped =
+      Some
+        "adversarial fixture not implemented in this phase; tracked by hardening plan";
     deadline_respected = false;
     peak_rss_kb = 0;
     error_variant = Some "not_implemented";
-    eta_error = Some "TLS adversarial server requires OpenSSL server bindings (not yet implemented)";
+    eta_error = None;
     duration_ms = 0.0;
     fd_baseline = 0;
     fd_after = 0;
@@ -92,6 +95,7 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
       in
       { name;
         passed = (result <> `Completed);
+        skipped = None;
         deadline_respected = (result <> `Completed);
         peak_rss_kb = peak_rss;
         error_variant;
