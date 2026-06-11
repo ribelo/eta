@@ -35,10 +35,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       query;
       headers;
       body = Server.Body.empty ();
+      trailers = (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty);
       peer = { address = Some "127.0.0.1"; port = Some 43123 };
       tls = false;
       alpn_protocol = Some "h2c";
       stream_id;
+      connection_id = "conn-1";
     }
 
   let response_body_string response =
@@ -71,9 +73,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "redacted query" true
       (String.contains rendered '<');
     Alcotest.(check bool) "secret absent" false
-      (contains rendered "secret")
+      (contains rendered "secret");
+    let h1_error =
+      Server.Error.make ~protocol:H1 ~method_:"GET" ~target:"/bad"
+        (Bad_request { message = "bad request line" })
+    in
+    Alcotest.(check string) "h1 protocol" "h1"
+      (Server.Error.protocol_to_string h1_error.context.protocol);
+    Alcotest.(check string) "projected h1 protocol" "h1"
+      (Eta_http.Error.protocol_to_string
+         (Server.Error.to_http_error h1_error).context.protocol)
 
   let test_request_helpers_and_trace_context () =
+    B.with_runtime @@ fun _ctx rt ->
     let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736" in
     let span_id = "00f067aa0ba902b7" in
     let headers =
@@ -88,6 +100,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (option string)) "query" (Some "q=secret") req.query;
     Alcotest.(check (option string)) "header" (Some "1")
       (Server.Request.header "x-extra" req);
+    Alcotest.(check string) "connection id" "conn-1" req.connection_id;
+    Alcotest.(check (list (pair string string))) "trailers" []
+      (run_ok rt (Server.Request.trailers req));
     match Server.Request.trace_context req with
     | None -> Alcotest.fail "missing trace context"
     | Some ctx ->
@@ -159,6 +174,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let response = Server.Response.text ~status:201 "created\n" in
     Alcotest.(check int) "status" 201 (Server.Response.status response);
     Alcotest.(check string) "body" "created\n" (response_body_string response);
+    let stream =
+      Server.Response.Body.stream ~length:7 (fun () -> Eta.Effect.pure None)
+    in
+    (match stream with
+    | Server.Response.Body.Stream { length; _ } ->
+        Alcotest.(check (option int)) "stream length" (Some 7) length
+    | _ -> Alcotest.fail "expected stream response body");
+    Alcotest.check_raises "invalid stream length"
+      (Invalid_argument
+         "Eta_http.Server.Response.Body.stream: length must be >= 0")
+      (fun () ->
+        ignore
+          (Server.Response.Body.stream ~length:(-1) (fun () ->
+               Eta.Effect.pure None)
+            : Server.Response.Body.t));
     Alcotest.check_raises "invalid status" (Invalid_argument
       "Eta_http.Server.Response.make: status must be in the range 100..599")
       (fun () ->
@@ -194,7 +224,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "raw query absent" true
       (Option.is_none (attr "url.query" attrs));
     Alcotest.(check (option string)) "stream id" (Some "9")
-      (attr "eta_http.server.stream_id" attrs)
+      (attr "eta_http.server.stream_id" attrs);
+    Alcotest.(check (option string)) "connection id" (Some "conn-1")
+      (attr "eta_http.server.connection_id" attrs)
 
   let test_server_tracer_span_kind_attrs_and_parent () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->

@@ -1,6 +1,6 @@
 (** Typed eta-http server errors. *)
 
-type protocol = H2 | H2c | Unknown
+type protocol = H1 | H2 | H2c | Unknown
 
 type layer =
   | Accept

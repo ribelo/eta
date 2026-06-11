@@ -2,6 +2,7 @@
 
 module Body : sig
   type stream = {
+    length : int option;
     read : unit -> (bytes option, Server_error.t) Eta.Effect.t;
     release : unit -> (unit, Server_error.t) Eta.Effect.t;
   }
@@ -16,6 +17,7 @@ module Body : sig
   val string : string -> t
 
   val stream :
+    ?length:int ->
     ?release:(unit -> (unit, Server_error.t) Eta.Effect.t) ->
     (unit -> (bytes option, Server_error.t) Eta.Effect.t) ->
     t

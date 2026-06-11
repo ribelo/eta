@@ -33,6 +33,7 @@ let request_attrs ?(emit_url_full = false) request =
     ("network.protocol.name", "http");
     ("network.protocol.version", protocol_version request.version);
     ("eta_http.server.request_id", request.id);
+    ("eta_http.server.connection_id", request.connection_id);
   ]
   @ query_attrs
   |> cons_opt "server.address" request.authority

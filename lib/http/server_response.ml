@@ -4,6 +4,7 @@ module Error = Server_error
 
 module Body = struct
   type stream = {
+    length : int option;
     read : unit -> (bytes option, Error.t) Eta.Effect.t;
     release : unit -> (unit, Error.t) Eta.Effect.t;
   }
@@ -17,8 +18,12 @@ module Body = struct
   let fixed chunks = Fixed (List.map Bytes.copy chunks)
   let string value = fixed [ Bytes.of_string value ]
 
-  let stream ?(release = fun () -> Eta.Effect.unit) read =
-    Stream { read; release }
+  let stream ?length ?(release = fun () -> Eta.Effect.unit) read =
+    (match length with
+    | Some length when length < 0 ->
+        invalid_arg "Eta_http.Server.Response.Body.stream: length must be >= 0"
+    | None | Some _ -> ());
+    Stream { length; read; release }
 end
 
 type t = {

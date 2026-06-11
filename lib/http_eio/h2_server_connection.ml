@@ -205,10 +205,12 @@ let request_of_reqd ~connection ~ordinal ~body reqd =
     query;
     headers = Eta_http.Core.Header.unsafe_of_list headers;
     body;
+    trailers = (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty);
     peer = connection.peer;
     tls = connection.tls;
     alpn_protocol = connection.alpn_protocol;
     stream_id = None;
+    connection_id = connection.id;
   }
 
 let h2_response response =

@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-type protocol = H2 | H2c | Unknown
+type protocol = H1 | H2 | H2c | Unknown
 
 type layer =
   | Accept
@@ -40,6 +40,7 @@ let make ?(protocol = Unknown) ?stream_id ~method_ ~target kind =
   { context = { method_; target; protocol; stream_id }; kind }
 
 let protocol_to_string = function
+  | H1 -> "h1"
   | H2 -> "h2"
   | H2c -> "h2c"
   | Unknown -> "unknown"
@@ -99,6 +100,7 @@ let to_status t =
   | Stream_reset _ | Connection_closed _ | Protocol_error _ -> None
 
 let http_protocol = function
+  | H1 -> Error.H1
   | H2 | H2c -> Error.H2
   | Unknown -> Error.Unknown
 
