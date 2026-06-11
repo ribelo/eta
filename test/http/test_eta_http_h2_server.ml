@@ -189,7 +189,10 @@ let test_h2c_server_fixed_response_and_echo_body () =
            request.path,
            request.query,
            request.scheme,
-           request.authority ));
+           request.authority,
+           request.tls,
+           request.alpn_protocol,
+           request.connection_id ));
     match request.path with
     | "/echo" ->
         Eta_http.Server.Body.read_all request.body
@@ -247,7 +250,8 @@ let test_h2c_server_fixed_response_and_echo_body () =
           `GET "/healthz?token=secret"
       in
       let status, body = await_h2_response connection request in
-      let method_, path, query, scheme, authority =
+      let method_, path, query, scheme, authority, tls, alpn_protocol,
+          connection_id =
         Eio.Promise.await seen_request
       in
       Alcotest.(check int) "status" 200 status;
@@ -257,6 +261,11 @@ let test_h2c_server_fixed_response_and_echo_body () =
       Alcotest.(check (option string)) "query" (Some "token=secret") query;
       Alcotest.(check string) "scheme" "http" scheme;
       Alcotest.(check (option string)) "authority" (Some "127.0.0.1") authority;
+      Alcotest.(check bool) "tls" false tls;
+      Alcotest.(check (option string)) "alpn protocol" (Some "h2c")
+        alpn_protocol;
+      Alcotest.(check bool) "connection id prefix" true
+        (String.starts_with ~prefix:"h2c-" connection_id);
       let echo =
         H2.Request.create ~scheme:"http"
           ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
@@ -306,6 +315,93 @@ let test_h2c_server_fixed_response_and_echo_body () =
       Alcotest.(check int) "protocol errors" 0 stats.protocol_errors;
       Alcotest.(check bool) "response bytes recorded" true
         (stats.response_bytes > 0))
+
+let test_h2_server_connection_run_uses_connection_metadata () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let peer : Eta_http.Server.Request.peer =
+    { address = Some "tls-peer.test"; port = Some 443 }
+  in
+  let connection_info : Eta_http_eio.Server.Connection_info.t =
+    {
+      id = "generic-h2-connection";
+      peer;
+      protocol = Eta_http.Server.Error.H2;
+      tls = true;
+      alpn_protocol = Some "h2";
+    }
+  in
+  let seen_request, resolve_seen_request = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    ignore
+      (Eio.Promise.try_resolve resolve_seen_request
+         ( request.connection_id,
+           request.tls,
+           request.alpn_protocol,
+           request.peer.address,
+           request.peer.port,
+           Eta_http.Core.Version.to_string request.version ));
+    Eta.Effect.pure (Eta_http.Server.Response.text "generic-h2\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      Eta_http_eio.H2.Server_connection.run ~sw:conn_sw ~clock
+        ~flow:(flow :> Eta_http_eio.H2.Server_connection.flow)
+        ~connection:connection_info ~config:Eta_http_eio.Server.Config.default
+        ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"https"
+          ~headers:(H2.Headers.of_list [ ":authority", "example.test" ])
+          `GET "/metadata"
+      in
+      let status, body = await_h2_response connection request in
+      let connection_id, tls, alpn_protocol, peer_address, peer_port, version =
+        Eio.Promise.await seen_request
+      in
+      Alcotest.(check int) "status" 200 status;
+      Alcotest.(check string) "body" "generic-h2\n" body;
+      Alcotest.(check string) "connection id" "generic-h2-connection"
+        connection_id;
+      Alcotest.(check bool) "tls" true tls;
+      Alcotest.(check (option string)) "alpn protocol" (Some "h2")
+        alpn_protocol;
+      Alcotest.(check (option string)) "peer address" (Some "tls-peer.test")
+        peer_address;
+      Alcotest.(check (option int)) "peer port" (Some 443) peer_port;
+      Alcotest.(check string) "version" "h2" version;
+      Eta_http_eio.H2.Connection.shutdown connection;
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "opened streams" 1 stats.opened_streams;
+      Alcotest.(check int) "completed streams" 1 stats.completed_streams)
 
 let test_h2c_server_drain_up_to_discard_waits_for_body () =
   run_eio @@ fun env ->

@@ -217,6 +217,8 @@ let () =
         [
           Alcotest.test_case "h2c fixed, echo, unread body, stream, trailers" `Quick
             test_h2c_server_fixed_response_and_echo_body;
+          Alcotest.test_case "generic h2 runner carries connection metadata" `Quick
+            test_h2_server_connection_run_uses_connection_metadata;
           Alcotest.test_case "h2c bounded request body drain" `Quick
             test_h2c_server_drain_up_to_discard_waits_for_body;
           Alcotest.test_case "h2c connection close fails pending body read" `Quick

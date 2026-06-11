@@ -14,6 +14,18 @@ type stats = {
   protocol_errors : int;
 }
 
+val run :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  flow:flow ->
+  connection:Server_types.Connection_info.t ->
+  config:Server_types.Config.t ->
+  runtime_factory:Server_types.runtime_factory ->
+  ?on_start:(t -> unit) ->
+  ?on_close:(stats -> unit) ->
+  Eta_http.Server.handler ->
+  unit
+
 val run_h2c :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->

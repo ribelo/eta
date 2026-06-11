@@ -115,10 +115,10 @@ let method_to_string method_ = H2.Method.to_string method_
 let validate_config config =
   if config.Types.Config.read_buffer_size <= 0 then
     invalid_arg
-      "Eta_http_eio.H2.Server_connection.run_h2c: read_buffer_size must be > 0";
+      "Eta_http_eio.H2.Server_connection.run: read_buffer_size must be > 0";
   if config.command_queue_capacity <= 0 then
     invalid_arg
-      "Eta_http_eio.H2.Server_connection.run_h2c: command_queue_capacity must be > 0";
+      "Eta_http_eio.H2.Server_connection.run: command_queue_capacity must be > 0";
   Eta_http.Server.Config.validate config.server
 
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
@@ -131,55 +131,57 @@ let enqueue t command =
 
 let request_body_closed_error t ordinal =
   ignore ordinal;
-  Server.Error.make ~protocol:H2c ~method_:"*" ~target:"*"
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Connection_closed { during = Request_body })
 
-let connection_closed_error during =
-  Server.Error.make ~protocol:H2c ~method_:"*" ~target:"*"
+let connection_closed_error t during =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Connection_closed { during })
 
-let shutdown_error = connection_closed_error Shutdown
+let shutdown_error t = connection_closed_error t Shutdown
 
-let connection_read_error exn =
-  Server.Error.make ~protocol:H2c ~method_:"*" ~target:"*"
+let connection_read_error t exn =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Protocol_error
        {
          kind = "connection_read_failed";
          message = Printexc.to_string exn;
        })
 
-let response_write_error ?(message = "response stream is not writable") () =
-  Server.Error.make ~protocol:H2c ~method_:"*" ~target:"*"
+let response_write_error t ?(message = "response stream is not writable") () =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Response_write_failed { message })
 
-let connection_write_error exn =
-  response_write_error ~message:("connection write failed: " ^ Printexc.to_string exn) ()
+let connection_write_error t exn =
+  response_write_error t
+    ~message:("connection write failed: " ^ Printexc.to_string exn)
+    ()
 
-let response_failure_of_cause cause =
+let response_failure_of_cause t cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
-  response_write_error ~message ()
+  response_write_error t ~message ()
 
 let body_of_stream t ordinal =
   let read () =
     Eta.Effect.sync (fun () ->
-        if t.closed then Error (connection_closed_error Request_body)
+        if t.closed then Error (connection_closed_error t Request_body)
         else
           let promise, resolver = Eio.Promise.create () in
           if enqueue t (Request_body_read (ordinal, resolver)) then
             Eio.Promise.await promise
-          else Error (connection_closed_error Request_body))
+          else Error (connection_closed_error t Request_body))
     |> Eta.Effect.bind (function
          | Ok chunk -> Eta.Effect.pure chunk
          | Error error -> Eta.Effect.fail error)
   in
   let discard ~drain =
     Eta.Effect.sync (fun () ->
-        if t.closed then Error (connection_closed_error Request_body)
+        if t.closed then Error (connection_closed_error t Request_body)
         else
           let promise, resolver = Eio.Promise.create () in
           if enqueue t (Request_body_discard (ordinal, drain, resolver)) then
             Eio.Promise.await promise
-          else Error (connection_closed_error Request_body))
+          else Error (connection_closed_error t Request_body))
     |> Eta.Effect.bind (function
          | Ok () -> Eta.Effect.unit
          | Error error -> Eta.Effect.fail error)
@@ -231,14 +233,14 @@ let find_failure cause =
   in
   loop cause
 
-let fallback_error_response request cause =
+let fallback_error_response t request cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
   let error =
     match find_failure cause with
     | Some error -> error
     | None ->
-        Server.Error.make ~protocol:H2c ~method_:request.Server.Request.method_
-          ~target:request.target
+        Server.Error.make ~protocol:t.connection.protocol
+          ~method_:request.Server.Request.method_ ~target:request.target
           (Handler_failed { message })
   in
   Server.Handler.default_error_response error
@@ -411,10 +413,10 @@ let discard_request_body t ordinal _drain resolver =
 
 let start_response t ordinal response resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (response_write_error ()))
+  | None -> resolve resolver (Error (response_write_error t ()))
   | Some state when state.response_done ->
       resolve resolver
-        (Error (response_write_error ~message:"response already completed" ()))
+        (Error (response_write_error t ~message:"response already completed" ()))
   | Some state -> (
       match Server.Response.body response with
       | Empty | Fixed _ ->
@@ -437,16 +439,17 @@ let start_response t ordinal response resolver =
 
 let write_response_chunk t ordinal chunk resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (response_write_error ()))
+  | None -> resolve resolver (Error (response_write_error t ()))
   | Some { response_writer = None; _ } ->
       resolve resolver
         (Error
-           (response_write_error
+           (response_write_error t
               ~message:"response streaming writer has not been started" ()))
   | Some { response_writer = Some writer; _ } ->
       if H2.Body.Writer.is_closed writer then
         resolve resolver
-          (Error (response_write_error ~message:"response writer is closed" ()))
+          (Error
+             (response_write_error t ~message:"response writer is closed" ()))
       else (
         t.stats.response_bytes <- t.stats.response_bytes + Bytes.length chunk;
         H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk);
@@ -455,17 +458,18 @@ let write_response_chunk t ordinal chunk resolver =
           | `Closed ->
               resolve resolver
                 (Error
-                   (response_write_error ~message:"response flush closed" ()))))
+                   (response_write_error t ~message:"response flush closed" ()))))
 
 let schedule_response_trailers t ordinal trailers resolver =
   match Header.validate trailers with
   | Some _ ->
       resolve resolver
         (Error
-           (response_write_error ~message:"invalid response trailer header" ()))
+           (response_write_error t
+              ~message:"invalid response trailer header" ()))
   | None -> (
       match Hashtbl.find_opt t.streams ordinal with
-      | None -> resolve resolver (Error (response_write_error ()))
+      | None -> resolve resolver (Error (response_write_error t ()))
       | Some state -> (
           try
             if not (List.is_empty trailers) then
@@ -474,15 +478,15 @@ let schedule_response_trailers t ordinal trailers resolver =
           with exn ->
             resolve resolver
               (Error
-                 (response_write_error ~message:(Printexc.to_string exn) ()))))
+                 (response_write_error t ~message:(Printexc.to_string exn) ()))))
 
 let close_response_writer t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (response_write_error ()))
+  | None -> resolve resolver (Error (response_write_error t ()))
   | Some { response_writer = None; _ } ->
       resolve resolver
         (Error
-           (response_write_error
+           (response_write_error t
               ~message:"response streaming writer has not been started" ()))
   | Some state -> (
       match state.response_writer with
@@ -506,7 +510,7 @@ let fail_response t ordinal error =
 let begin_immediate_shutdown t =
   if not t.closed then (
     t.closed <- true;
-    fail_active_streams t shutdown_error;
+    fail_active_streams t (shutdown_error t);
     try Eio.Flow.shutdown t.flow `All with _ -> ())
 
 let start_shutdown_timer t timeout =
@@ -536,7 +540,7 @@ let handle_command t = function
           drain_writes t.flow t.h2)
   | Ingress_eof ->
       t.closed <- true;
-      fail_active_streams t (connection_closed_error Request_body);
+      fail_active_streams t (connection_closed_error t Request_body);
       read_eof t.h2;
       drain_writes t.flow t.h2
   | Ingress_failed error ->
@@ -591,7 +595,8 @@ let reader_loop t =
           loop ())
     | exception End_of_file -> ignore (enqueue t Ingress_eof)
     | exception Eio.Cancel.Cancelled _ -> ()
-    | exception exn -> ignore (enqueue t (Ingress_failed (connection_read_error exn)))
+    | exception exn ->
+        ignore (enqueue t (Ingress_failed (connection_read_error t exn)))
   in
   loop ()
 
@@ -603,20 +608,20 @@ let fail_owner_loop t error =
 let run_owner_loop t =
   try owner_loop t
   with
-  | Eio.Cancel.Cancelled _ -> fail_owner_loop t shutdown_error
-  | exn -> fail_owner_loop t (connection_write_error exn)
+  | Eio.Cancel.Cancelled _ -> fail_owner_loop t (shutdown_error t)
+  | exn -> fail_owner_loop t (connection_write_error t exn)
 
 let await_owner t make =
-  if t.closed then Error (connection_closed_error Response_body)
+  if t.closed then Error (connection_closed_error t Response_body)
   else
     let promise, resolver = Eio.Promise.create () in
     if enqueue t (make resolver) then Eio.Promise.await promise
-    else Error (connection_closed_error Response_body)
+    else Error (connection_closed_error t Response_body)
 
-let response_error_of_cause cause =
+let response_error_of_cause t cause =
   match find_failure cause with
   | Some error -> error
-  | None -> response_failure_of_cause cause
+  | None -> response_failure_of_cause t cause
 
 let release_response_stream rt stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
@@ -629,7 +634,7 @@ let fail_stream_response t rt ordinal stream error =
 let rec pump_response_stream t rt ordinal response stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.read ()) with
   | Eta.Exit.Error cause ->
-      fail_stream_response t rt ordinal stream (response_error_of_cause cause)
+      fail_stream_response t rt ordinal stream (response_error_of_cause t cause)
   | Eta.Exit.Ok (Some chunk) -> (
       match await_owner t (fun resolver -> Response_chunk (ordinal, chunk, resolver)) with
       | Ok () -> pump_response_stream t rt ordinal response stream
@@ -638,7 +643,7 @@ let rec pump_response_stream t rt ordinal response stream =
       let trailers =
         match Eta.Runtime.run rt ((Server.Response.trailers response) ()) with
         | Eta.Exit.Ok trailers -> Ok trailers
-        | Error cause -> Error (response_error_of_cause cause)
+        | Error cause -> Error (response_error_of_cause t cause)
       in
       match trailers with
       | Error error -> fail_stream_response t rt ordinal stream error
@@ -667,7 +672,7 @@ let run_handler t ordinal request handler =
       let response =
         match Eta.Runtime.run rt effect with
         | Eta.Exit.Ok response -> response
-        | Eta.Exit.Error cause -> fallback_error_response request cause
+        | Eta.Exit.Error cause -> fallback_error_response t request cause
       in
       match
         await_owner t (fun resolver -> Response_start (ordinal, response, resolver))
@@ -681,18 +686,9 @@ let run_handler t ordinal request handler =
 let shutdown t policy =
   if not t.closed then ignore (enqueue t (Shutdown policy))
 
-let run_h2c ~sw ~clock ~flow ~peer ~config ~runtime_factory ?on_start
+let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
-  let connection =
-    {
-      Types.Connection_info.id = connection_id ();
-      peer = peer_of_sockaddr peer;
-      protocol = Eta_http.Server.Error.H2c;
-      tls = false;
-      alpn_protocol = Some "h2c";
-    }
-  in
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
@@ -753,3 +749,17 @@ let run_h2c ~sw ~clock ~flow ~peer ~config ~runtime_factory ?on_start
     (fun () ->
       Eio.Fiber.fork ~sw (fun () -> reader_loop t);
       run_owner_loop t)
+
+let run_h2c ~sw ~clock ~flow ~peer ~config ~runtime_factory ?on_start
+    ?on_close handler =
+  let connection =
+    {
+      Types.Connection_info.id = connection_id ();
+      peer = peer_of_sockaddr peer;
+      protocol = Eta_http.Server.Error.H2c;
+      tls = false;
+      alpn_protocol = Some "h2c";
+    }
+  in
+  run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
+    ?on_close handler
