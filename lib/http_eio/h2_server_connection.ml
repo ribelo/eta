@@ -54,6 +54,8 @@ type t = {
   sleep : float -> unit;
   flow : flow;
   h2 : H2.Server_connection.t;
+  security : Eta_http.H2.Security.t;
+  mutable security_preface_remaining : int;
   commands : command Eio.Stream.t;
   streams : (int, stream_state) Hashtbl.t;
   connection : Types.Connection_info.t;
@@ -88,6 +90,11 @@ let connection_metrics ~sw ~config ~runtime_factory ~connection =
 
 let emit_connection_metric t f =
   Option.iter f t.connection_metrics
+
+let record_protocol_error t =
+  Server_stats.H2.protocol_error t.stats;
+  emit_connection_metric t (fun metrics ->
+      Server_metrics.protocol_errors metrics 1)
 
 let finish_stream_metrics state =
   if not state.metrics_finished then (
@@ -159,6 +166,36 @@ let connection_write_error t exn =
   response_write_error t
     ~message:("connection write failed: " ^ Printexc.to_string exn)
     ()
+
+let security_error t kind =
+  let http_error =
+    Eta_http.Error.make ~protocol:Eta_http.Error.H2 ~method_:"*" ~uri:"*" kind
+  in
+  match kind with
+  | Eta_http.Error.Header_invalid { reason } ->
+      Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+        (Header_invalid { reason })
+  | Eta_http.Error.Connection_closed _ -> connection_closed_error t Connection
+  | _ ->
+      Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+        (Protocol_error
+           {
+             kind = Eta_http.Error.kind_name kind;
+             message = Eta_http.Error.to_string http_error;
+           })
+
+let h2_client_connection_preface_length = 24
+
+let observe_ingress_security t bytes ~off ~len =
+  let off, len =
+    if t.security_preface_remaining = 0 then (off, len)
+    else
+      let skipped = min t.security_preface_remaining len in
+      t.security_preface_remaining <- t.security_preface_remaining - skipped;
+      (off + skipped, len - skipped)
+  in
+  if len = 0 then None
+  else Eta_http.H2.Security.observe t.security bytes ~off ~len
 
 let response_failure_of_cause t cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
@@ -436,6 +473,13 @@ let fail_active_streams t request_error =
       forget_stream t ordinal state)
     streams
 
+let handle_security_error t kind =
+  let error = security_error t kind in
+  record_protocol_error t;
+  t.closed <- true;
+  fail_active_streams t error;
+  try Eio.Flow.shutdown t.flow `All with _ -> ()
+
 let finish_graceful_shutdown_if_idle t =
   if t.graceful_shutdown && (not t.closed) && Hashtbl.length t.streams = 0 then (
     t.closed <- true;
@@ -631,8 +675,11 @@ let handle_command t = function
       Fun.protect
         ~finally:(fun () -> resolve ack ())
         (fun () ->
-          feed t.h2 bytes ~off ~len;
-          drain_writes t.flow t.h2)
+          match observe_ingress_security t bytes ~off ~len with
+          | Some kind -> handle_security_error t kind
+          | None ->
+              feed t.h2 bytes ~off ~len;
+              drain_writes t.flow t.h2)
   | Ingress_eof ->
       t.closed <- true;
       fail_active_streams t (connection_closed_error t Request_body);
@@ -792,12 +839,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
   let h2 =
     H2.Server_connection.create ?config:config.Types.Config.h2_config
       ~error_handler:(fun ?request:_ _ respond ->
-        Option.iter
-          (fun t ->
-            Server_stats.H2.protocol_error t.stats;
-            emit_connection_metric t (fun metrics ->
-                Server_metrics.protocol_errors metrics 1))
-          !holder;
+        Option.iter record_protocol_error !holder;
         let body = respond H2.Headers.empty in
         H2.Body.Writer.close body)
       (fun reqd ->
@@ -833,12 +875,18 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
               };
             run_handler t ordinal request handler)
   in
+  let security =
+    Eta_http.H2.Security.create
+      ?config:config.Types.Config.h2_security_config ()
+  in
   let t =
     {
       sw;
       sleep = Eio.Time.sleep clock;
       flow;
       h2;
+      security;
+      security_preface_remaining = h2_client_connection_preface_length;
       commands = Eio.Stream.create config.command_queue_capacity;
       streams = Hashtbl.create config.max_concurrent_streams;
       connection;

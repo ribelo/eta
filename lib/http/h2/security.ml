@@ -3,6 +3,8 @@ module Error = Error
 type config = {
   max_settings_per_connection : int;
   max_goaway_per_connection : int;
+  max_rst_stream_per_connection : int;
+  max_ping_per_connection : int;
   max_hpack_block_bytes : int;
   max_continuation_accumulator_bytes : int;
   max_response_headers_per_connection : int;
@@ -14,6 +16,8 @@ let default_config =
   {
     max_settings_per_connection = 10;
     max_goaway_per_connection = 1;
+    max_rst_stream_per_connection = 100;
+    max_ping_per_connection = 100;
     max_hpack_block_bytes = 256 * 1024;
     max_continuation_accumulator_bytes = 64 * 1024;
     max_response_headers_per_connection = 32;
@@ -28,6 +32,8 @@ type t = {
   mutable payload_remaining : int;
   mutable settings_seen : int;
   mutable goaway_seen : int;
+  mutable rst_stream_seen : int;
+  mutable ping_seen : int;
   response_headers_seen_by_stream : (int, int) Hashtbl.t;
   mutable header_block_bytes : int;
   mutable header_block_frames : int;
@@ -41,6 +47,8 @@ let create ?(config = default_config) () =
     payload_remaining = 0;
     settings_seen = 0;
     goaway_seen = 0;
+    rst_stream_seen = 0;
+    ping_seen = 0;
     response_headers_seen_by_stream = Hashtbl.create 32;
     header_block_bytes = 0;
     header_block_frames = 0;
@@ -67,6 +75,28 @@ let account_goaway t =
   t.goaway_seen <- t.goaway_seen + 1;
   if t.goaway_seen > t.config.max_goaway_per_connection then
     Some (Error.Connection_closed { during = Error.Http_response })
+  else None
+
+let account_rst_stream t =
+  t.rst_stream_seen <- t.rst_stream_seen + 1;
+  if t.rst_stream_seen > t.config.max_rst_stream_per_connection then
+    Some
+      (Error.Rst_rate_exceeded
+         {
+           observed_per_second = t.rst_stream_seen;
+           limit_per_second = t.config.max_rst_stream_per_connection;
+         })
+  else None
+
+let account_ping t =
+  t.ping_seen <- t.ping_seen + 1;
+  if t.ping_seen > t.config.max_ping_per_connection then
+    Some
+      (Error.Ping_rate_exceeded
+         {
+           observed_rate_hz = t.ping_seen;
+           limit_hz = t.config.max_ping_per_connection;
+         })
   else None
 
 let account_response_headers t stream_id =
@@ -146,6 +176,8 @@ let start_frame t =
   match frame_type with
   | 0x4 -> account_settings t
   | 0x7 -> account_goaway t
+  | 0x3 -> account_rst_stream t
+  | 0x6 -> account_ping t
   | 0x1 | 0x5 | 0x9 ->
       account_header_bytes t ~frame_type ~flags ~length ~stream_id
   | _ -> None

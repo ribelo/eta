@@ -16,6 +16,24 @@ let timeout_error ~url ~deadline_sec =
   Eta_http.Error.make ~method_:"GET" ~uri:url
     (Total_request_timeout { timeout_ms = Some timeout_ms })
 
+let cve_scenario_filter =
+  lazy
+    (match Sys.getenv_opt "ETA_HTTP_TESTSUITE_CVE_SCENARIOS" with
+    | None | Some "" -> None
+    | Some raw ->
+        Some
+          (raw |> String.split_on_char ','
+          |> List.map String.trim
+          |> List.filter (fun item -> not (String.equal item ""))))
+
+let cve_scenario_selected name =
+  match Lazy.force cve_scenario_filter with
+  | None -> true
+  | Some names -> List.exists (String.equal name) names
+
+let add_cve_result name run results =
+  if cve_scenario_selected name then run () :: results else results
+
 let not_implemented name =
   { name;
     passed = false;
@@ -262,6 +280,132 @@ let run_eta_h1_adversarial_client ~env ~name ?config ~expected_status
     major_words_during = major_words gc_after -. major_words gc_before;
   }
 
+let h2_client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+let h2_request_block ?(path = "/") () =
+  String.concat ""
+    [
+      Malicious_h2.hpack_literal ~name:":method" ~value:"GET";
+      Malicious_h2.hpack_literal ~name:":scheme" ~value:"http";
+      Malicious_h2.hpack_literal ~name:":path" ~value:path;
+      Malicious_h2.hpack_literal ~name:":authority" ~value:"example.test";
+    ]
+
+let h2_request_headers ?(end_headers = true) ?(end_stream = true) ~stream_id
+    ?path () =
+  let flags =
+    (if end_headers then 0x04 else 0x00)
+    lor (if end_stream then 0x01 else 0x00)
+  in
+  Malicious_h2.frame ~ty:0x01 ~flags ~stream_id (h2_request_block ?path ())
+
+let h2_frame_header ~length ~ty ~flags ~stream_id =
+  Eta_http.H2.Frame.header ~length ~frame_type:(Other ty) ~flags ~stream_id
+
+let h2_adversarial_config ?security_config () =
+  {
+    Eta_http_eio.Server.Config.default with
+    backlog = 1;
+    max_connections = 8;
+    h2_security_config = security_config;
+  }
+
+let h2_basic_handler _request =
+  Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+
+let read_h2_until_close ?(max_bytes = 64 * 1024) flow =
+  let buffer = Buffer.create 256 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop total =
+    if total >= max_bytes then `Data_limit (Buffer.contents buffer)
+    else
+      let len = min (Cstruct.length scratch) (max_bytes - total) in
+      match Eio.Flow.single_read flow (Cstruct.sub scratch 0 len) with
+      | 0 -> `Closed (Buffer.contents buffer)
+      | read ->
+          Buffer.add_string buffer
+            (Cstruct.to_string (Cstruct.sub scratch 0 read));
+          loop (total + read)
+      | exception End_of_file -> `Closed (Buffer.contents buffer)
+  in
+  loop 0
+
+let run_eta_h2c_adversarial_client ~env ~name ?config ~deadline_sec client_fn =
+  let fd_base = fd_count () in
+  let start = Util.now_ms () in
+  let gc_before = Util.gc_stat () in
+  let result =
+    try
+      Eio.Switch.run @@ fun sw ->
+      let net = Eio.Stdenv.net env in
+      let clock = Eio.Stdenv.clock env in
+      let socket =
+        Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+          (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+      in
+      let port = tcp_port (Eio.Net.listening_addr socket) in
+      let config =
+        Option.value config ~default:(h2_adversarial_config ())
+      in
+      Eio.Fiber.fork_daemon ~sw
+        (fun () ->
+          Eio.Switch.run @@ fun conn_sw ->
+          let flow, peer = Eio.Net.accept ~sw:conn_sw socket in
+          let runtime_factory ~sw ~connection:_ () =
+            Eta_eio.Runtime.create ~sw ~clock ()
+          in
+          Eta_http_eio.H2.Server_connection.run_h2c ~sw:conn_sw ~clock
+            ~flow:(flow :> Eta_http_eio.H2.Server_connection.flow)
+            ~peer ~config ~runtime_factory h2_basic_handler;
+          `Stop_daemon);
+      let flow =
+        Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+      in
+      Fun.protect
+        ~finally:(fun () ->
+          try Eio.Flow.shutdown flow `All with _ -> ())
+        (fun () ->
+          try
+            Eio.Time.with_timeout_exn clock deadline_sec (fun () ->
+                match (try client_fn flow; Ok () with exn -> Error exn) with
+                | Ok () -> read_h2_until_close flow
+                | Error _ -> `Closed "")
+          with
+          | Eio.Time.Timeout -> `Timeout
+          | exn -> `Error (Printexc.to_string exn))
+    with exn -> `Error (Printexc.to_string exn)
+  in
+  let duration_ms = Util.now_ms () -. start in
+  let peak_rss = rss_kb () in
+  let fd_after = fd_count () in
+  let gc_after = Util.gc_stat () in
+  let passed, deadline_respected, error_variant, eta_error =
+    match result with
+    | `Closed response ->
+        (true, true, Some "h2_connection_closed", Some (string_of_int (String.length response)))
+    | `Data_limit response ->
+        ( false,
+          true,
+          Some "h2_data_limit",
+          Some (string_of_int (String.length response)) )
+    | `Timeout -> (false, false, Some "deadline_exceeded", Some "timeout")
+    | `Error message -> (false, true, Some "exception", Some message)
+  in
+  {
+    name;
+    passed;
+    skipped = None;
+    deadline_respected;
+    peak_rss_kb = peak_rss;
+    error_variant;
+    eta_error;
+    duration_ms;
+    fd_baseline = fd_base;
+    fd_after;
+    minor_words_during = minor_words gc_after -. minor_words gc_before;
+    major_words_during = major_words gc_after -. major_words gc_before;
+  }
+
 (** TLS-wrapped malicious server runner for h2 attacks.
     eta-http auto-negotiates h2 over TLS via ALPN.
     NOTE: Requires OpenSSL server bindings (not yet implemented). *)
@@ -273,31 +417,74 @@ let run_malicious_h2_request ~env:_ ~name ~server_fn:_ ~url_builder:_
    1. CVE-2023-44487 — HTTP/2 Rapid Reset
    --------------------------------------------------------------------------- *)
 let cve_2023_44487 ~env =
-  ignore env;
-  not_implemented "cve_2023_44487_rapid_reset"
+  run_eta_h2c_adversarial_client ~env ~name:"cve_2023_44487_rapid_reset"
+    ~deadline_sec:2.0
+    (fun flow ->
+      let frames =
+        String.concat ""
+          (List.init 101 (fun index ->
+               let stream_id = (index * 2) + 1 in
+               h2_request_headers ~end_stream:false ~stream_id ()
+               ^ Malicious_h2.rst_stream_frame ~stream_id 8))
+      in
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame [] ^ frames)
+        flow)
 
 (* ---------------------------------------------------------------------------
    2. CVE-2024-27919 / CVE-2024-28182 — CONTINUATION flood
    --------------------------------------------------------------------------- *)
 let cve_2024_27919 ~env =
-  ignore env;
-  not_implemented "cve_2024_27919_continuation_flood"
+  run_eta_h2c_adversarial_client ~env
+    ~name:"cve_2024_27919_continuation_flood" ~deadline_sec:2.0
+    (fun flow ->
+      let continuations =
+        String.concat ""
+          (List.init 9 (fun _ ->
+               Malicious_h2.continuation_frame ~end_headers:false ~stream_id:1
+                 (String.make 8192 'x')))
+      in
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_request_headers ~end_headers:false ~stream_id:1 ()
+       ^ continuations)
+        flow)
 
 (* ---------------------------------------------------------------------------
    3. HPACK bomb
    --------------------------------------------------------------------------- *)
 let hpack_bomb ~env =
-  ignore env;
-  not_implemented "hpack_bomb"
+  run_eta_h2c_adversarial_client ~env ~name:"hpack_bomb" ~deadline_sec:2.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_frame_header ~length:(300 * 1024) ~ty:0x01 ~flags:0x04
+           ~stream_id:1)
+        flow)
 
 (* ---------------------------------------------------------------------------
    4. HTTP/2 DoS family CVE-2019-9511..9518
    --------------------------------------------------------------------------- *)
 let dos_family ~env =
-  ignore env;
   [
-    not_implemented "dos_ping_flood";
-    not_implemented "dos_settings_flood";
+    run_eta_h2c_adversarial_client ~env ~name:"dos_ping_flood"
+      ~deadline_sec:2.0
+      (fun flow ->
+        Eio.Flow.copy_string
+          (h2_client_preface ^ Malicious_h2.settings_frame []
+         ^ String.concat ""
+             (List.init 101 (fun _ ->
+                  Malicious_h2.ping_frame ~ack:false "pingflood")))
+          flow);
+    run_eta_h2c_adversarial_client ~env ~name:"dos_settings_flood"
+      ~deadline_sec:2.0
+      (fun flow ->
+        Eio.Flow.copy_string
+          (h2_client_preface ^ Malicious_h2.settings_frame []
+         ^ String.concat ""
+             (List.init 10 (fun _ ->
+                  Malicious_h2.settings_frame [ (0x3, 100); (0x4, 65535) ])))
+          flow);
     not_implemented "dos_empty_frames_flood";
   ]
 
@@ -460,8 +647,13 @@ let h1_oversized_trailers ~env =
    Server sends GOAWAY repeatedly while continuing to accept streams.
    --------------------------------------------------------------------------- *)
 let goaway_churn ~env =
-  ignore env;
-  not_implemented "goaway_churn"
+  run_eta_h2c_adversarial_client ~env ~name:"goaway_churn" ~deadline_sec:2.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ Malicious_h2.goaway_frame ~last_stream_id:0 ~error_code:0 ()
+       ^ Malicious_h2.goaway_frame ~last_stream_id:0 ~error_code:0 ())
+        flow)
 
 (* ---------------------------------------------------------------------------
    Orchestration
@@ -469,18 +661,72 @@ let goaway_churn ~env =
 
 let run_all ~env =
   let results = [] in
-  let results = cve_2023_44487 ~env :: results in
-  let results = cve_2024_27919 ~env :: results in
-  let results = hpack_bomb ~env :: results in
-  let results = dos_family ~env @ results in
-  let results = window_update ~env :: results in
-  let results = data_slowloris ~env :: results in
-  let results = decompression_bomb ~env :: results in
-  let results = h1_slowloris_headers ~env :: results in
-  let results = h1_slow_body ~env :: results in
-  let results = h1_invalid_chunk ~env :: results in
-  let results = h1_cl_te_smuggling ~env :: results in
-  let results = h1_header_flood ~env :: results in
-  let results = h1_oversized_trailers ~env :: results in
-  let results = goaway_churn ~env :: results in
+  let results =
+    add_cve_result "cve_2023_44487_rapid_reset"
+      (fun () -> cve_2023_44487 ~env)
+      results
+  in
+  let results =
+    add_cve_result "cve_2024_27919_continuation_flood"
+      (fun () -> cve_2024_27919 ~env)
+      results
+  in
+  let results =
+    add_cve_result "hpack_bomb" (fun () -> hpack_bomb ~env) results
+  in
+  let dos_names =
+    [ "dos_ping_flood"; "dos_settings_flood"; "dos_empty_frames_flood" ]
+  in
+  let dos_results =
+    if List.exists cve_scenario_selected dos_names then
+      dos_family ~env
+      |> List.filter (fun (result : adversarial_result) ->
+             cve_scenario_selected result.name)
+    else []
+  in
+  let results = dos_results @ results in
+  let results =
+    add_cve_result "window_update_accounting"
+      (fun () -> window_update ~env)
+      results
+  in
+  let results =
+    add_cve_result "data_slowloris_h1"
+      (fun () -> data_slowloris ~env)
+      results
+  in
+  let results =
+    add_cve_result "decompression_bomb"
+      (fun () -> decompression_bomb ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_slowloris_headers"
+      (fun () -> h1_slowloris_headers ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_slow_body" (fun () -> h1_slow_body ~env) results
+  in
+  let results =
+    add_cve_result "h1_invalid_chunk"
+      (fun () -> h1_invalid_chunk ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_cl_te_smuggling"
+      (fun () -> h1_cl_te_smuggling ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_header_flood" (fun () -> h1_header_flood ~env) results
+  in
+  let results =
+    add_cve_result "h1_oversized_trailers"
+      (fun () -> h1_oversized_trailers ~env)
+      results
+  in
+  let results =
+    add_cve_result "goaway_churn" (fun () -> goaway_churn ~env) results
+  in
   List.rev results

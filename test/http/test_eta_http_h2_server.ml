@@ -87,6 +87,19 @@ let tcp_port = function
   | `Tcp (_, port) -> port
   | `Unix _ -> Alcotest.fail "expected TCP listener"
 
+let read_raw_until_close flow =
+  let buffer = Buffer.create 128 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop () =
+    match Eio.Flow.single_read flow scratch with
+    | 0 -> Buffer.contents buffer
+    | len ->
+        Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
+        loop ()
+    | exception End_of_file -> Buffer.contents buffer
+  in
+  loop ()
+
 let pp_h2_client_error fmt = function
   | `Malformed_response message ->
       Format.fprintf fmt "malformed_response:%s" message
@@ -718,3 +731,45 @@ let test_h2c_server_handle_graceful_shutdown_waits_for_stream () =
         stats.opened_connections;
       Alcotest.(check int) "closed connections after shutdown" 1
         stats.closed_connections)
+
+let test_h2c_server_closes_on_ingress_security_error () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let handler _request =
+    Alcotest.fail "settings flood should close before request dispatch"
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock
+      ~on_connection_close:(fun stats ->
+        ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+      ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.Server.shutdown server Immediate;
+      try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      Eio.Flow.copy_string
+        ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+       ^ String.concat ""
+           (List.init 11 (fun _ -> Eta_http.H2.Frame.settings)))
+        flow;
+      ignore
+        (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+             read_raw_until_close flow));
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "protocol errors" 1 stats.protocol_errors)

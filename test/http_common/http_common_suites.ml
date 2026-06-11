@@ -1257,6 +1257,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.Error.kind_name kind)
     | None -> Alcotest.fail "settings churn was not detected"
 
+  let test_h2_security_rst_churn () =
+    let frame =
+      h2_frame_header ~length:4 ~frame_type:0x3 ~flags:0 ~stream_id:1
+      ^ h2_uint32 8
+    in
+    let data = String.concat "" (List.init 101 (fun _ -> frame)) in
+    match h2_observe_security data with
+    | Some
+        (Eta_http.Error.Rst_rate_exceeded
+          { observed_per_second; limit_per_second }) ->
+        Alcotest.(check int) "observed" 101 observed_per_second;
+        Alcotest.(check int) "limit" 100 limit_per_second
+    | Some kind ->
+        Alcotest.failf "unexpected security error: %s"
+          (Eta_http.Error.kind_name kind)
+    | None -> Alcotest.fail "RST churn was not detected"
+
+  let test_h2_security_ping_churn () =
+    let frame =
+      h2_frame_header ~length:8 ~frame_type:0x6 ~flags:0 ~stream_id:0
+      ^ String.make 8 '\000'
+    in
+    let data = String.concat "" (List.init 101 (fun _ -> frame)) in
+    match h2_observe_security data with
+    | Some
+        (Eta_http.Error.Ping_rate_exceeded { observed_rate_hz; limit_hz }) ->
+        Alcotest.(check int) "observed" 101 observed_rate_hz;
+        Alcotest.(check int) "limit" 100 limit_hz
+    | Some kind ->
+        Alcotest.failf "unexpected security error: %s"
+          (Eta_http.Error.kind_name kind)
+    | None -> Alcotest.fail "PING churn was not detected"
+
   let test_h2_security_header_churn () =
     let frame =
       h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
@@ -2763,6 +2796,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h2_security_goaway_churn;
           Alcotest.test_case "SETTINGS churn" `Quick
             test_h2_security_settings_churn;
+          Alcotest.test_case "RST churn" `Quick test_h2_security_rst_churn;
+          Alcotest.test_case "PING churn" `Quick test_h2_security_ping_churn;
           Alcotest.test_case "header churn" `Quick
             test_h2_security_header_churn;
           Alcotest.test_case "many normal response headers" `Quick

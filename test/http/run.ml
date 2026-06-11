@@ -291,6 +291,8 @@ let () =
             test_h2c_server_connection_close_fails_pending_body_read;
           Alcotest.test_case "h2c server handle graceful shutdown" `Quick
             test_h2c_server_handle_graceful_shutdown_waits_for_stream;
+          Alcotest.test_case "h2c ingress security closes" `Quick
+            test_h2c_server_closes_on_ingress_security_error;
           Alcotest.test_case "h2c read exception closes typed" `Quick
             test_h2c_server_read_exception_closes_typed;
           Alcotest.test_case "h2c write exception closes typed" `Quick

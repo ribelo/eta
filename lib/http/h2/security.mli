@@ -12,6 +12,8 @@
 type config = {
   max_settings_per_connection : int;
   max_goaway_per_connection : int;
+  max_rst_stream_per_connection : int;
+  max_ping_per_connection : int;
   max_hpack_block_bytes : int;
   max_continuation_accumulator_bytes : int;
   max_response_headers_per_connection : int;
