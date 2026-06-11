@@ -34,23 +34,6 @@ let cve_scenario_selected name =
 let add_cve_result name run results =
   if cve_scenario_selected name then run () :: results else results
 
-let not_implemented name =
-  { name;
-    passed = false;
-    skipped =
-      Some
-        "adversarial fixture not implemented in this phase; tracked by hardening plan";
-    deadline_respected = false;
-    peak_rss_kb = 0;
-    error_variant = Some "not_implemented";
-    eta_error = None;
-    duration_ms = 0.0;
-    fd_baseline = 0;
-    fd_after = 0;
-    minor_words_during = 0.0;
-    major_words_during = 0.0;
-  }
-
 (** Generic runner: spawns a malicious server, makes one eta-http request,
     and records metrics. *)
 let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
@@ -405,13 +388,6 @@ let run_eta_h2c_adversarial_client ~env ~name ?config ~deadline_sec client_fn =
     minor_words_during = minor_words gc_after -. minor_words gc_before;
     major_words_during = major_words gc_after -. major_words gc_before;
   }
-
-(** TLS-wrapped malicious server runner for h2 attacks.
-    eta-http auto-negotiates h2 over TLS via ALPN.
-    NOTE: Requires OpenSSL server bindings (not yet implemented). *)
-let run_malicious_h2_request ~env:_ ~name ~server_fn:_ ~url_builder:_
-    ~deadline_sec:_ =
-  not_implemented name
 
 (* ---------------------------------------------------------------------------
    1. CVE-2023-44487 — HTTP/2 Rapid Reset
