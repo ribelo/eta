@@ -43,6 +43,7 @@ type stream_state = {
   request_body : H2.Body.Reader.t;
   metrics : Server_metrics.t option;
   mutable metrics_finished : bool;
+  mutable request_body_bytes : int;
   mutable request_done : bool;
   mutable request_discarding : bool;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
@@ -180,6 +181,10 @@ let request_timeout_error t timeout =
   Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Request_timeout
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+
+let request_body_too_large_error t ~limit ~length =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+    (Request_body_too_large { limit; length })
 
 let shutdown_error t = connection_closed_error t Shutdown
 
@@ -500,10 +505,24 @@ let forget_if_complete t ordinal state =
 let resolve_unit resolver =
   Option.iter (fun resolver -> resolve resolver (Ok ())) resolver
 
+let record_request_body_bytes t state len =
+  let previous = state.request_body_bytes in
+  let length = if len > max_int - previous then max_int else previous + len in
+  state.request_body_bytes <- length;
+  Server_stats.H2.add_request_bytes t.stats len;
+  Option.iter
+    (fun metrics -> Server_metrics.request_body_bytes metrics len)
+    state.metrics;
+  match t.config.server.limits.max_request_body_bytes with
+  | Some limit when length > limit ->
+      Error (request_body_too_large_error t ~limit ~length)
+  | None | Some _ -> Ok ()
+
 let schedule_request_body_drain_timeout t ordinal token timeout =
-  Eio.Fiber.fork ~sw:t.sw (fun () ->
+  Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
       t.sleep (Eta.Duration.to_seconds_float timeout);
-      ignore (enqueue t (Request_body_drain_timeout (ordinal, token))))
+      ignore (enqueue t (Request_body_drain_timeout (ordinal, token)));
+      `Stop_daemon)
 
 let rec drain_request_body t ordinal state remaining resolver =
   if state.request_done then (
@@ -536,11 +555,14 @@ let rec drain_request_body t ordinal state remaining resolver =
         resolve_unit resolver)
       ~on_read:(fun _bs ~off:_ ~len ->
         state.request_discard_timeout_token <- None;
-        Server_stats.H2.add_request_bytes t.stats len;
-        Option.iter
-          (fun metrics -> Server_metrics.request_body_bytes metrics len)
-          state.metrics;
-        drain_request_body t ordinal state (remaining - len) resolver))
+        match record_request_body_bytes t state len with
+        | Ok () -> drain_request_body t ordinal state (remaining - len) resolver
+        | Error error ->
+            Option.iter
+              (fun resolver -> resolve resolver (Error error))
+              resolver;
+            close_request_body state;
+            forget_if_complete t ordinal state))
 
 let discard_request_body_with_policy ?resolver ~drain t ordinal state =
   if state.request_done || state.request_discarding then resolve_unit resolver
@@ -608,9 +630,10 @@ let finish_graceful_shutdown_if_idle t =
     try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let schedule_request_body_timeout t ordinal resolver timeout =
-  Eio.Fiber.fork ~sw:t.sw (fun () ->
+  Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
       t.sleep (Eta.Duration.to_seconds_float timeout);
-      ignore (enqueue t (Request_body_timeout (ordinal, resolver))))
+      ignore (enqueue t (Request_body_timeout (ordinal, resolver)));
+      `Stop_daemon)
 
 let arm_request_body_read t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
@@ -625,13 +648,15 @@ let arm_request_body_read t ordinal resolver =
       H2.Body.Reader.schedule_read state.request_body
         ~on_read:(fun bs ~off ~len ->
           state.request_read_resolver <- None;
-          Server_stats.H2.add_request_bytes t.stats len;
-          Option.iter
-            (fun metrics -> Server_metrics.request_body_bytes metrics len)
-            state.metrics;
-          let chunk = Bytes.create len in
-          Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
-          resolve resolver (Ok (Some chunk)))
+          match record_request_body_bytes t state len with
+          | Error error ->
+              close_request_body state;
+              forget_if_complete t ordinal state;
+              resolve resolver (Error error)
+          | Ok () ->
+              let chunk = Bytes.create len in
+              Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
+              resolve resolver (Ok (Some chunk)))
         ~on_eof:(fun () ->
           state.request_read_resolver <- None;
           state.request_done <- true;
@@ -823,9 +848,10 @@ let begin_immediate_shutdown t =
 let start_shutdown_timer t timeout =
   if not t.shutdown_timer_started then (
     t.shutdown_timer_started <- true;
-    Eio.Fiber.fork ~sw:t.sw (fun () ->
+    Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
         t.sleep (Eta.Duration.to_seconds_float timeout);
-        ignore (enqueue t (Shutdown Immediate))))
+        ignore (enqueue t (Shutdown Immediate));
+        `Stop_daemon))
 
 let begin_graceful_shutdown t timeout =
   if Eta.Duration.is_zero timeout then begin_immediate_shutdown t
@@ -1110,6 +1136,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
                 request_body = H2.Reqd.request_body reqd;
                 metrics;
                 metrics_finished = false;
+                request_body_bytes = 0;
                 request_done = false;
                 request_discarding = false;
                 request_read_resolver = None;

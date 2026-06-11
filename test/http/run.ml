@@ -303,6 +303,8 @@ let () =
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick
             test_h2c_server_request_body_timeout;
+          Alcotest.test_case "h2c request body too large" `Quick
+            test_h2c_server_request_body_too_large;
           Alcotest.test_case "h2c unread body drain timeout" `Quick
             test_h2c_server_unread_body_drain_timeout;
           Alcotest.test_case "h2c request header timeout" `Quick

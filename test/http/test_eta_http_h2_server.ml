@@ -657,6 +657,70 @@ let test_h2c_server_request_body_timeout () =
     stats.request_bytes;
   Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
 
+let test_h2c_server_request_body_too_large () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let server_limits =
+    {
+      Eta_http.Server.Config.default.limits with
+      max_request_body_bytes = Some 4;
+    }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let request_bytes =
+    h2_client_partial_request_bytes "/too-large" "12345"
+    ^ raw_h2_data ~end_stream:true ~stream_id:1 ""
+  in
+  let state, flow = failing_server_flow (Blocking_read { request_bytes }) in
+  let body_error, resolve_body_error = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/too-large" ->
+        Eta_http.Server.Body.read request.body
+        |> Eta.Effect.map (fun _ ->
+               Eta_http.Server.Response.text ~status:500 "unexpected body\n")
+        |> Eta.Effect.catch (fun error ->
+               Eta.Effect.sync (fun () ->
+                   ignore
+                     (Eio.Promise.try_resolve resolve_body_error
+                        ( Eta_http.Server.Error.error_class error,
+                          Eta_http.Server.Error.layer_to_string
+                            (Eta_http.Server.Error.layer error) )))
+               |> Eta.Effect.map (fun () ->
+                      Eta_http.Server.Response.text ~status:413 "too large\n"))
+    | path -> Alcotest.failf "unexpected path %S" path
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.H2.Server_connection.run_h2c ~sw ~clock ~flow
+        ~peer:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 31337))
+        ~config ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  let error_class, error_layer =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await body_error)
+  in
+  Alcotest.(check string) "error class" "request_body_too_large" error_class;
+  Alcotest.(check string) "error layer" "request_body" error_layer;
+  Eio.Flow.shutdown flow `All;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "request bytes" 5 stats.request_bytes;
+  Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
+
 let test_h2c_server_unread_body_drain_timeout () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
