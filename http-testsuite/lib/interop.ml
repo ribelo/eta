@@ -130,6 +130,10 @@ let default_scenarios = [
     expected_status = Some 200; h2_only = false; insecure = false; skip = None };
   { name = "post_echo"; method_ = "POST"; path = "/echo"; headers = [("Content-Type", "text/plain")];
     body = Some "hello world"; expected_status = Some 200; h2_only = false; insecure = false; skip = None };
+  { name = "expect_100_continue_upload"; method_ = "POST"; path = "/echo";
+    headers = [("Expect", "100-continue"); ("Content-Type", "text/plain")];
+    body = Some "continue body"; expected_status = Some 200; h2_only = false;
+    insecure = false; skip = None };
   { name = "put_echo"; method_ = "PUT"; path = "/echo"; headers = [("Content-Type", "text/plain")];
     body = Some "put body"; expected_status = Some 200; h2_only = false; insecure = false; skip = None };
   { name = "delete_ok"; method_ = "DELETE"; path = "/healthz"; headers = []; body = None;
@@ -195,7 +199,7 @@ let default_scenarios = [
   (* Deliberately skipped cells with notes *)
   { name = "status_100_continue"; method_ = "GET"; path = "/"; headers = []; body = None;
     expected_status = Some 100; h2_only = false; insecure = false;
-    skip = Some "eta-http h1 path skips 100-Continue internally; testing the skip itself is out of v1 scope" };
+    skip = Some "100 Continue is covered by expect_100_continue_upload; informational-only status has no final response body" };
   { name = "status_103_early_hints"; method_ = "GET"; path = "/"; headers = []; body = None;
     expected_status = Some 103; h2_only = false; insecure = false;
     skip = Some "103 Early Hints not exposed by eta-http public API in v1" };

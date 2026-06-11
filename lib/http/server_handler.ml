@@ -12,6 +12,7 @@ let default_reason = function
   | 400 -> "bad request\n"
   | 408 -> "request timeout\n"
   | 413 -> "request body too large\n"
+  | 417 -> "expectation failed\n"
   | 503 -> "service unavailable\n"
   | _ -> "internal server error\n"
 

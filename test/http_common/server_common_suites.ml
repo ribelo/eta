@@ -83,7 +83,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Server.Error.protocol_to_string h1_error.context.protocol);
     Alcotest.(check string) "projected h1 protocol" "h1"
       (Eta_http.Error.protocol_to_string
-         (Server.Error.to_http_error h1_error).context.protocol)
+         (Server.Error.to_http_error h1_error).context.protocol);
+    let expect_error =
+      Server.Error.make ~protocol:H1 ~method_:"POST" ~target:"/upload"
+        (Expectation_failed { expectation = "storage-quota" })
+    in
+    Alcotest.(check (option int)) "expect status" (Some 417)
+      (Server.Error.to_status expect_error);
+    Alcotest.(check string) "expect layer" "request_headers"
+      (Server.Error.layer_to_string (Server.Error.layer expect_error));
+    Alcotest.(check string) "expect class" "expectation_failed"
+      (Server.Error.error_class expect_error);
+    (match (Server.Error.to_http_error expect_error).kind with
+    | Connection_protocol_violation { kind; message } ->
+        Alcotest.(check string) "expect projected kind" "expectation_failed"
+          kind;
+        Alcotest.(check string) "expect projected message"
+          "unsupported Expect header: storage-quota" message
+    | _ -> Alcotest.fail "expected projected expectation protocol violation")
 
   let test_request_helpers_and_trace_context () =
     B.with_runtime @@ fun _ctx rt ->

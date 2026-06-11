@@ -178,6 +178,90 @@ let test_h1_server_connection_post_reads_fixed_body () =
   Alcotest.(check int) "request bytes" 11 stats.request_bytes;
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
+let test_h1_server_connection_expect_100_continue_reads_body () =
+  let seen_body, resolve_seen_body = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun body ->
+           ignore (Eio.Promise.try_resolve resolve_seen_body body);
+           Eta_http.Server.Response.make ~status:200
+             ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+             ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  let interim = "HTTP/1.1 100 Continue\r\n\r\n" in
+  Eio.Flow.copy_string
+    ("POST /continue HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+    flow;
+  Alcotest.(check string) "interim continue" interim
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+         read_exact_string flow (String.length interim)));
+  Eio.Flow.copy_string "hello" flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  let body = Eio.Promise.await seen_body in
+  Alcotest.(check string) "handler body" "hello" (Bytes.to_string body);
+  Alcotest.(check string) "response"
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "request bytes" 5 stats.request_bytes;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_expect_allows_early_final_response () =
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text ~status:413 "too large\n")
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /reject HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Expect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n"
+   ^ "Content-Length: 10\r\n\r\ntoo large\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "request bytes" 0 stats.request_bytes;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_rejects_unsupported_expectation () =
+  let handler_called = ref false in
+  let handler (_request : Eta_http.Server.Request.t) =
+    handler_called := true;
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /expect HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Expect: storage-quota\r\nContent-Length: 5\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\n"
+   ^ "Content-Length: 19\r\n\r\nexpectation failed\n")
+    response;
+  Alcotest.(check bool) "handler not called" false !handler_called;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 0 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
+
 let test_h1_server_connection_post_reads_chunked_body_and_trailers () =
   let seen, resolve_seen = Eio.Promise.create () in
   let handler (request : Eta_http.Server.Request.t) =

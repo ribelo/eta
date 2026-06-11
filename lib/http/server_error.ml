@@ -15,6 +15,7 @@ type layer =
 type kind =
   | Bad_request of { message : string }
   | Header_invalid of { reason : string }
+  | Expectation_failed of { expectation : string }
   | Request_body_too_large of { limit : int; length : int }
   | Request_timeout of { timeout_ms : int option }
   | Stream_admission_rejected of { limit : int }
@@ -58,6 +59,7 @@ let layer_to_string = function
 let kind_name = function
   | Bad_request _ -> "Bad_request"
   | Header_invalid _ -> "Header_invalid"
+  | Expectation_failed _ -> "Expectation_failed"
   | Request_body_too_large _ -> "Request_body_too_large"
   | Request_timeout _ -> "Request_timeout"
   | Stream_admission_rejected _ -> "Stream_admission_rejected"
@@ -69,7 +71,8 @@ let kind_name = function
 
 let layer t =
   match t.kind with
-  | Bad_request _ | Header_invalid _ | Stream_admission_rejected _ ->
+  | Bad_request _ | Header_invalid _ | Expectation_failed _
+  | Stream_admission_rejected _ ->
       Request_headers
   | Request_body_too_large _ | Request_timeout _ -> Request_body
   | Stream_reset _ | Protocol_error _ -> Connection
@@ -81,6 +84,7 @@ let error_class t =
   match t.kind with
   | Bad_request _ -> "bad_request"
   | Header_invalid _ -> "header_invalid"
+  | Expectation_failed _ -> "expectation_failed"
   | Request_body_too_large _ -> "request_body_too_large"
   | Request_timeout _ -> "request_timeout"
   | Stream_admission_rejected _ -> "stream_admission_rejected"
@@ -93,6 +97,7 @@ let error_class t =
 let to_status t =
   match t.kind with
   | Bad_request _ | Header_invalid _ -> Some 400
+  | Expectation_failed _ -> Some 417
   | Request_body_too_large _ -> Some 413
   | Request_timeout _ -> Some 408
   | Stream_admission_rejected _ -> Some 503
@@ -119,6 +124,13 @@ let to_http_error t =
   | Bad_request { message } ->
       make (Error.Connection_protocol_violation { kind = "bad_request"; message })
   | Header_invalid { reason } -> make (Error.Header_invalid { reason })
+  | Expectation_failed { expectation } ->
+      make
+        (Error.Connection_protocol_violation
+           {
+             kind = "expectation_failed";
+             message = "unsupported Expect header: " ^ expectation;
+           })
   | Request_body_too_large { limit; length } ->
       make (Error.Body_too_large { limit; length })
   | Request_timeout { timeout_ms } ->

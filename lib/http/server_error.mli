@@ -15,6 +15,7 @@ type layer =
 type kind =
   | Bad_request of { message : string }
   | Header_invalid of { reason : string }
+  | Expectation_failed of { expectation : string }
   | Request_body_too_large of { limit : int; length : int }
   | Request_timeout of { timeout_ms : int option }
   | Stream_admission_rejected of { limit : int }

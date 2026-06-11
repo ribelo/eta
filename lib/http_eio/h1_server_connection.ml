@@ -37,6 +37,8 @@ type request_head = {
   body_initial : bytes;
 }
 
+type continue_state = { mutable sent : bool }
+
 type body_source = {
   t : t;
   initial : bytes;
@@ -44,6 +46,7 @@ type body_source = {
   mutable remaining : int;
   mutable close_after_response : bool;
   mutable pending_returned : bool;
+  continue_state : continue_state option;
   scratch : Cstruct.t;
 }
 
@@ -90,6 +93,18 @@ let request_parse_error t parse_error =
 
 let response_write_error t message =
   error t (Response_write_failed { message })
+
+let write_response_string t wire =
+  try
+    Eio.Flow.copy_string wire t.flow;
+    Server_stats.H1.add_response_bytes t.stats (String.length wire);
+    Ok ()
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn ->
+      Error
+        (response_write_error t
+           ("connection write failed: " ^ Printexc.to_string exn))
 
 let emit_current t f =
   Option.iter f t.current_metrics
@@ -230,6 +245,16 @@ let read_request_head t =
 let source_pending source =
   Bytes.length source.initial - source.off
 
+let send_continue_if_needed source =
+  match source.continue_state with
+  | None -> Eta.Effect.unit
+  | Some state when state.sent -> Eta.Effect.unit
+  | Some state ->
+      state.sent <- true;
+      (match write_response_string source.t "HTTP/1.1 100 Continue\r\n\r\n" with
+      | Ok () -> Eta.Effect.unit
+      | Error error -> Eta.Effect.fail error)
+
 let finish_body_source source =
   if not source.pending_returned then (
     source.pending_returned <- true;
@@ -266,34 +291,40 @@ let source_read_some source max_len =
   if max_len <= 0 || source.remaining <= 0 then (
     finish_body_source source;
     Eta.Effect.pure None)
-  else if source_pending source > 0 then
-    let chunk = source_take_pending source (min max_len source.remaining) in
-    source.remaining <- source.remaining - Bytes.length chunk;
-    if source.remaining = 0 then finish_body_source source;
-    Server_stats.H1.add_request_bytes source.t.stats (Bytes.length chunk);
-    emit_current source.t (fun metrics ->
-        Server_metrics.request_body_bytes metrics (Bytes.length chunk));
-    Eta.Effect.pure (Some chunk)
   else
-    let len =
-      min max_len (min source.remaining (Cstruct.length source.scratch))
-    in
-    Eta.Effect.sync (fun () ->
-        read_body_flow source (Cstruct.sub source.scratch 0 len))
-    |> Eta.Effect.bind (function
-         | Error error -> Eta.Effect.fail error
-         | Ok 0 ->
-             Eta.Effect.fail
-               (connection_closed_error source.t Request_body)
-         | Ok read ->
-             let chunk = Bytes.create read in
-             Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
-             source.remaining <- source.remaining - read;
+    send_continue_if_needed source
+    |> Eta.Effect.bind (fun () ->
+           if source_pending source > 0 then
+             let chunk =
+               source_take_pending source (min max_len source.remaining)
+             in
+             source.remaining <- source.remaining - Bytes.length chunk;
              if source.remaining = 0 then finish_body_source source;
-             Server_stats.H1.add_request_bytes source.t.stats read;
+             Server_stats.H1.add_request_bytes source.t.stats
+               (Bytes.length chunk);
              emit_current source.t (fun metrics ->
-                 Server_metrics.request_body_bytes metrics read);
-             Eta.Effect.pure (Some chunk))
+                 Server_metrics.request_body_bytes metrics (Bytes.length chunk));
+             Eta.Effect.pure (Some chunk)
+           else
+             let len =
+               min max_len (min source.remaining (Cstruct.length source.scratch))
+             in
+             Eta.Effect.sync (fun () ->
+                 read_body_flow source (Cstruct.sub source.scratch 0 len))
+             |> Eta.Effect.bind (function
+                  | Error error -> Eta.Effect.fail error
+                  | Ok 0 ->
+                      Eta.Effect.fail
+                        (connection_closed_error source.t Request_body)
+                  | Ok read ->
+                      let chunk = Bytes.create read in
+                      Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
+                      source.remaining <- source.remaining - read;
+                      if source.remaining = 0 then finish_body_source source;
+                      Server_stats.H1.add_request_bytes source.t.stats read;
+                      emit_current source.t (fun metrics ->
+                          Server_metrics.request_body_bytes metrics read);
+                      Eta.Effect.pure (Some chunk)))
 
 let rec drain_fixed_body source =
   source_read_some source source.remaining
@@ -301,7 +332,7 @@ let rec drain_fixed_body source =
        | None -> Eta.Effect.unit
        | Some _ -> drain_fixed_body source)
 
-let fixed_body t initial length =
+let fixed_body t initial length continue_state =
   let source =
     {
       t;
@@ -310,6 +341,7 @@ let fixed_body t initial length =
       remaining = length;
       close_after_response = false;
       pending_returned = false;
+      continue_state;
       scratch = Cstruct.create t.config.read_buffer_size;
     }
   in
@@ -349,30 +381,33 @@ let chunked_transport_error source kind =
   Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:"*" kind
 
 let chunked_read_exact source len =
-  let out = Bytes.create len in
-  let rec fill off =
-    if off = len then Eta.Effect.pure out
-    else if source_pending source > 0 then (
-      let chunk = source_take_pending source (len - off) in
-      let chunk_len = Bytes.length chunk in
-      Bytes.blit chunk 0 out off chunk_len;
-      fill (off + chunk_len))
-    else
-      let read_len = min (len - off) (Cstruct.length source.scratch) in
-      Eta.Effect.sync (fun () ->
-          read_body_flow source (Cstruct.sub source.scratch 0 read_len))
-      |> Eta.Effect.bind (function
-           | Error error ->
-               Eta.Effect.fail (Server.Error.to_http_error error)
-           | Ok 0 ->
-               Eta.Effect.fail
-                 (chunked_transport_error source
-                    (Connection_closed { during = Body_decode }))
-           | Ok read ->
-               Cstruct.blit_to_bytes source.scratch 0 out off read;
-               fill (off + read))
-  in
-  fill 0
+  send_continue_if_needed source
+  |> Eta.Effect.map_error Server.Error.to_http_error
+  |> Eta.Effect.bind (fun () ->
+         let out = Bytes.create len in
+         let rec fill off =
+           if off = len then Eta.Effect.pure out
+           else if source_pending source > 0 then (
+             let chunk = source_take_pending source (len - off) in
+             let chunk_len = Bytes.length chunk in
+             Bytes.blit chunk 0 out off chunk_len;
+             fill (off + chunk_len))
+           else
+             let read_len = min (len - off) (Cstruct.length source.scratch) in
+             Eta.Effect.sync (fun () ->
+                 read_body_flow source (Cstruct.sub source.scratch 0 read_len))
+             |> Eta.Effect.bind (function
+                  | Error error ->
+                      Eta.Effect.fail (Server.Error.to_http_error error)
+                  | Ok 0 ->
+                      Eta.Effect.fail
+                        (chunked_transport_error source
+                           (Connection_closed { during = Body_decode }))
+                  | Ok read ->
+                      Cstruct.blit_to_bytes source.scratch 0 out off read;
+                      fill (off + read))
+         in
+         fill 0)
 
 let chunked_decode_error source message =
   Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:"*"
@@ -403,7 +438,7 @@ let chunked_read_line source ~limit =
   in
   loop 0 false
 
-let chunked_body t head =
+let chunked_body t head continue_state =
   let source =
     {
       t;
@@ -412,6 +447,7 @@ let chunked_body t head =
       remaining = max_int;
       close_after_response = false;
       pending_returned = false;
+      continue_state;
       scratch = Cstruct.create t.config.read_buffer_size;
     }
   in
@@ -468,7 +504,7 @@ let chunked_body t head =
   in
   (body, state)
 
-let request_body t head =
+let request_body t head continue_state =
   match Eta_http.H1.Request_body.of_headers head.headers with
   | Error body_error ->
       Error
@@ -487,13 +523,13 @@ let request_body t head =
       | Some limit when length > limit ->
           Error (error t (Request_body_too_large { limit; length }))
       | None | Some _ ->
-          let body, source = fixed_body t head.body_initial length in
+          let body, source = fixed_body t head.body_initial length continue_state in
           Ok
             ( body,
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty),
               Fixed_request_body source ))
   | Ok Chunked ->
-      let body, source = chunked_body t head in
+      let body, source = chunked_body t head continue_state in
       Ok
         ( body,
           (fun () ->
@@ -528,6 +564,36 @@ let header_contains_token headers name token =
   |> List.exists (fun value ->
          Eta.String_helpers.contains_token_ascii_ci value token)
 
+let expectation_tokens headers =
+  Eta_http.Core.Header.get_all "expect" headers
+  |> List.concat_map (String.split_on_char ',')
+  |> List.map Eta.String_helpers.trim
+  |> List.filter (fun token -> not (String.equal token ""))
+
+let expect_continue t head =
+  let values = Eta_http.Core.Header.get_all "expect" head.headers in
+  match values with
+  | [] -> Ok None
+  | _ ->
+      let tokens = expectation_tokens head.headers in
+      if
+        tokens <> []
+        && head.version = Eta_http.Core.Version.H1_1
+        && List.for_all
+             (fun token ->
+               Eta.String_helpers.trim_equal_ascii_ci token "100-continue")
+             tokens
+      then Ok (Some { sent = false })
+      else
+        let expectation =
+          match tokens with
+          | [] -> String.concat ", " values
+          | _ -> String.concat ", " tokens
+        in
+        Error
+          (error t ~method_:head.method_ ~target:head.target
+             (Expectation_failed { expectation }))
+
 let request_allows_keep_alive head =
   let close = header_contains_token head.headers "connection" "close" in
   let keep_alive =
@@ -545,6 +611,11 @@ let body_can_reuse_before_response t = function
       (not source.source.close_after_response) && source.done_
   | Fixed_request_body source ->
       if source.close_after_response then false
+      else if
+        match source.continue_state with
+        | Some state when not state.sent -> true
+        | None | Some _ -> false
+      then false
       else if source.remaining = 0 then true
       else
         match t.config.server.unread_body_policy with
@@ -580,18 +651,6 @@ type response_write_success = { connection_close : bool }
 
 let response_write_failure ?(response_started = false) error =
   Error { error; response_started }
-
-let write_response_string t wire =
-  try
-    Eio.Flow.copy_string wire t.flow;
-    Server_stats.H1.add_response_bytes t.stats (String.length wire);
-    Ok ()
-  with
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
-  | exn ->
-      Error
-        (response_write_error t
-           ("connection write failed: " ^ Printexc.to_string exn))
 
 let response_error_of_cause t cause =
   match find_failure cause with
@@ -839,7 +898,7 @@ let rec run_requests t ordinal handler =
   | `Read (Error Clean_eof) -> ()
   | `Read (Error (Request_head_error error)) -> handle_head_error t error
   | `Read (Ok head) -> (
-      match request_body t head with
+      match expect_continue t head with
       | Error error ->
           record_protocol_error t;
           let request =
@@ -847,38 +906,47 @@ let rec run_requests t ordinal handler =
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
           in
           write_default_error t request error
-      | Ok (body, trailers, body_control) ->
-          Server_stats.H1.request_started t.stats;
-          let request = request_of_head t head ordinal body trailers in
-          let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
-          let metrics = request_metrics t rt request in
-          t.current_metrics <- metrics;
-          Option.iter Server_metrics.request_started metrics;
-          let request_keep_alive = request_allows_keep_alive head in
-          let close_before_response =
-            (not request_keep_alive)
-            || not (body_can_reuse_before_response t body_control)
-          in
-          let response = run_handler t rt request handler in
-          let response_result =
-            write_response ~connection_close:close_before_response ~rt t
-              request response
-          in
-          let reusable =
-            match response_result with
-            | Ok { connection_close } ->
-                (not connection_close)
-                && request_keep_alive
-                && finish_request_body_for_reuse t rt body_control
-            | Error { error; response_started = false } ->
-                write_default_error t request error;
-                false
-            | Error { response_started = true; _ } -> false
-          in
-          Server_stats.H1.request_completed t.stats;
-          Option.iter Server_metrics.request_finished metrics;
-          t.current_metrics <- None;
-          if reusable then run_requests t (ordinal + 1) handler)
+      | Ok continue_state -> (
+          match request_body t head continue_state with
+          | Error error ->
+              record_protocol_error t;
+              let request =
+                request_of_head t head ordinal (Server.Body.empty ())
+                  (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
+              in
+              write_default_error t request error
+          | Ok (body, trailers, body_control) ->
+              Server_stats.H1.request_started t.stats;
+              let request = request_of_head t head ordinal body trailers in
+              let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
+              let metrics = request_metrics t rt request in
+              t.current_metrics <- metrics;
+              Option.iter Server_metrics.request_started metrics;
+              let request_keep_alive = request_allows_keep_alive head in
+              let close_before_response =
+                (not request_keep_alive)
+                || not (body_can_reuse_before_response t body_control)
+              in
+              let response = run_handler t rt request handler in
+              let response_result =
+                write_response ~connection_close:close_before_response ~rt t
+                  request response
+              in
+              let reusable =
+                match response_result with
+                | Ok { connection_close } ->
+                    (not connection_close)
+                    && request_keep_alive
+                    && finish_request_body_for_reuse t rt body_control
+                | Error { error; response_started = false } ->
+                    write_default_error t request error;
+                    false
+                | Error { response_started = true; _ } -> false
+              in
+              Server_stats.H1.request_completed t.stats;
+              Option.iter Server_metrics.request_finished metrics;
+              t.current_metrics <- None;
+              if reusable then run_requests t (ordinal + 1) handler))
 
 let shutdown t _policy =
   if not t.closed then (

@@ -111,6 +111,12 @@ let () =
             test_h1_server_connection_get_fixed_response;
           Alcotest.test_case "POST reads fixed body" `Quick
             test_h1_server_connection_post_reads_fixed_body;
+          Alcotest.test_case "Expect 100-continue reads body" `Quick
+            test_h1_server_connection_expect_100_continue_reads_body;
+          Alcotest.test_case "Expect early final response" `Quick
+            test_h1_server_connection_expect_allows_early_final_response;
+          Alcotest.test_case "rejects unsupported Expect" `Quick
+            test_h1_server_connection_rejects_unsupported_expectation;
           Alcotest.test_case "POST reads chunked body and trailers" `Quick
             test_h1_server_connection_post_reads_chunked_body_and_trailers;
           Alcotest.test_case "rejects invalid chunked body" `Quick

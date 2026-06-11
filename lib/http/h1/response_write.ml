@@ -77,6 +77,7 @@ let reason_phrase = function
   | 413 -> "Payload Too Large"
   | 414 -> "URI Too Long"
   | 415 -> "Unsupported Media Type"
+  | 417 -> "Expectation Failed"
   | 418 -> "I'm a Teapot"
   | 421 -> "Misdirected Request"
   | 422 -> "Unprocessable Content"
