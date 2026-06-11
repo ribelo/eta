@@ -51,7 +51,7 @@ let default_timeouts =
     response_write_timeout = Some (Eta.Duration.seconds 30);
     response_body_timeout = Some (Eta.Duration.seconds 30);
     idle_timeout = Some (Eta.Duration.seconds 60);
-    handler_timeout = None;
+    handler_timeout = Some (Eta.Duration.seconds 30);
   }
 
 let default =
@@ -64,10 +64,16 @@ let default =
   }
 
 let require_positive field value =
-  if value <= 0 then invalid_arg ("Eta_http.Server.Config." ^ field ^ " must be > 0")
+  if value <= 0 then
+    invalid_arg ("Eta_http.Server.Config." ^ field ^ " must be > 0")
 
 let require_non_negative field value =
-  if value < 0 then invalid_arg ("Eta_http.Server.Config." ^ field ^ " must be >= 0")
+  if value < 0 then
+    invalid_arg ("Eta_http.Server.Config." ^ field ^ " must be >= 0")
+
+let require_positive_duration field value =
+  if Eta.Duration.is_zero value then
+    invalid_arg ("Eta_http.Server.Config." ^ field ^ " must be > 0")
 
 let validate_limits limits =
   require_positive "max_request_line_bytes" limits.max_request_line_bytes;
@@ -85,6 +91,25 @@ let validate_unread_body_policy = function
   | Reset -> ()
   | Drain_up_to limit -> require_non_negative "Drain_up_to" limit
 
+let validate_timeouts timeouts =
+  Option.iter
+    (require_positive_duration "request_header_timeout")
+    timeouts.request_header_timeout;
+  Option.iter
+    (require_positive_duration "request_body_timeout")
+    timeouts.request_body_timeout;
+  Option.iter
+    (require_positive_duration "response_write_timeout")
+    timeouts.response_write_timeout;
+  Option.iter
+    (require_positive_duration "response_body_timeout")
+    timeouts.response_body_timeout;
+  Option.iter (require_positive_duration "idle_timeout")
+    timeouts.idle_timeout;
+  Option.iter (require_positive_duration "handler_timeout")
+    timeouts.handler_timeout
+
 let validate t =
   validate_limits t.limits;
-  validate_unread_body_policy t.unread_body_policy
+  validate_unread_body_policy t.unread_body_policy;
+  validate_timeouts t.timeouts

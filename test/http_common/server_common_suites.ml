@@ -251,6 +251,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (option int)) "response body timeout"
       (Some 30_000)
       (Option.map Eta.Duration.to_ms config.timeouts.response_body_timeout);
+    Alcotest.(check (option int)) "handler timeout"
+      (Some 30_000)
+      (Option.map Eta.Duration.to_ms config.timeouts.handler_timeout);
     Alcotest.(check int) "request header cap" (32 * 1024)
       config.limits.max_request_header_bytes;
     Alcotest.(check (option int)) "request body cap"
@@ -272,7 +275,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.check_raises "invalid header count"
       (Invalid_argument
          "Eta_http.Server.Config.max_request_headers must be > 0")
-      (fun () -> Server.Config.validate invalid_limits)
+      (fun () -> Server.Config.validate invalid_limits);
+    let invalid_timeout =
+      {
+        config with
+        timeouts =
+          { config.timeouts with handler_timeout = Some Eta.Duration.zero };
+      }
+    in
+    Alcotest.check_raises "invalid timeout"
+      (Invalid_argument "Eta_http.Server.Config.handler_timeout must be > 0")
+      (fun () -> Server.Config.validate invalid_timeout)
 
   let test_h2_request_header_limits () =
     let limits = Server.Config.default.limits in
