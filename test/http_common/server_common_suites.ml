@@ -100,7 +100,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           kind;
         Alcotest.(check string) "expect projected message"
           "unsupported Expect header: storage-quota" message
-    | _ -> Alcotest.fail "expected projected expectation protocol violation")
+    | _ -> Alcotest.fail "expected projected expectation protocol violation");
+    let handler_timeout =
+      Server.Error.make ~protocol:H2 ~stream_id:11 ~method_:"GET"
+        ~target:"/slow"
+        (Handler_timeout { timeout_ms = Some 20 })
+    in
+    Alcotest.(check (option int)) "handler timeout status" (Some 503)
+      (Server.Error.to_status handler_timeout);
+    Alcotest.(check string) "handler timeout layer" "handler"
+      (Server.Error.layer_to_string (Server.Error.layer handler_timeout));
+    Alcotest.(check string) "handler timeout class" "handler_timeout"
+      (Server.Error.error_class handler_timeout);
+    (match (Server.Error.to_http_error handler_timeout).kind with
+    | Total_request_timeout { timeout_ms } ->
+        Alcotest.(check (option int)) "handler timeout projection" (Some 20)
+          timeout_ms
+    | _ -> Alcotest.fail "expected projected handler timeout")
 
   let test_request_helpers_and_trace_context () =
     B.with_runtime @@ fun _ctx rt ->

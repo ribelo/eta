@@ -22,6 +22,7 @@ type kind =
   | Stream_reset of { code : string; message : string }
   | Connection_closed of { during : layer }
   | Protocol_error of { kind : string; message : string }
+  | Handler_timeout of { timeout_ms : int option }
   | Handler_failed of { message : string }
   | Response_write_failed of { message : string }
 

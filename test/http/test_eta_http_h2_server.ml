@@ -331,6 +331,62 @@ let test_h2c_server_response_write_timeout_is_typed () =
   Alcotest.(check int) "reset streams" 1 stats.reset_streams;
   Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
 
+let test_h2c_server_handler_timeout () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      handler_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let handler_calls = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.sync (fun () ->
+        Eio.Time.sleep clock 1.0;
+        Eta_http.Server.Response.text "late\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/slow-handler"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "status" 503 status;
+      Alcotest.(check string) "body" "service unavailable\n" body;
+      Alcotest.(check int) "handler calls" 1 !handler_calls)
+
 let test_h2c_server_fixed_response_and_echo_body () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

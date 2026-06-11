@@ -185,6 +185,12 @@ let request_timeout_error t timeout =
     (Request_timeout
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
+let handler_timeout_error t request timeout =
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+
 let request_body_too_large_error t ~limit ~length =
   Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
     (Request_body_too_large { limit; length })
@@ -1110,9 +1116,18 @@ let run_handler t ordinal request handler =
           handler request
       in
       let response =
-        match Eta.Runtime.run rt effect with
-        | Eta.Exit.Ok response -> response
-        | Eta.Exit.Error cause -> fallback_error_response t request cause
+        match t.config.server.timeouts.handler_timeout with
+        | Some timeout -> (
+            match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+            | Eta.Exit.Ok response -> response
+            | Eta.Exit.Error cause -> fallback_error_response t request cause
+            | exception Eio.Time.Timeout ->
+                Server.Handler.default_error_response
+                  (handler_timeout_error t request (Some timeout)))
+        | None -> (
+            match Eta.Runtime.run rt effect with
+            | Eta.Exit.Ok response -> response
+            | Eta.Exit.Error cause -> fallback_error_response t request cause)
       in
       let response =
         match validate_response_headers t response with

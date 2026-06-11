@@ -86,6 +86,12 @@ let request_timeout_error t timeout =
     (Request_timeout
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
+let handler_timeout_error t request timeout =
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+
 let request_parse_error t parse_error =
   let message =
     Eta_http.H1.Request_parse.parse_error_to_string parse_error
@@ -902,9 +908,19 @@ let run_handler t rt request handler =
       ~enabled:t.config.server.enable_otel
       ~emit_url_full:t.config.server.emit_url_full handler request
   in
-  match Eta.Runtime.run rt effect with
-  | Eta.Exit.Ok response -> response
-  | Eta.Exit.Error cause -> fallback_error_response t request cause
+  match t.config.server.timeouts.handler_timeout with
+  | Some timeout -> (
+      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+      | Eta.Exit.Ok response -> (response, false)
+      | Eta.Exit.Error cause -> (fallback_error_response t request cause, false)
+      | exception Eio.Time.Timeout ->
+          ( Server.Handler.default_error_response
+              (handler_timeout_error t request (Some timeout)),
+            true ))
+  | None -> (
+      match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok response -> (response, false)
+      | Eta.Exit.Error cause -> (fallback_error_response t request cause, false))
 
 let write_default_error ?(connection_close = true) t request error =
   match
@@ -999,9 +1015,12 @@ let rec run_requests t ordinal handler =
                         (not request_keep_alive)
                         || not (body_can_reuse_before_response t body_control)
                       in
-                      let response = run_handler t rt request handler in
+                      let response, force_close =
+                        run_handler t rt request handler
+                      in
                       let response_result =
-                        write_response ~connection_close:close_before_response
+                        write_response
+                          ~connection_close:(force_close || close_before_response)
                           ~rt t request response
                       in
                       let reusable =

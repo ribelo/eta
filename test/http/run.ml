@@ -143,6 +143,8 @@ let () =
             test_h1_server_connection_rejects_oversized_chunked_trailers;
           Alcotest.test_case "request body timeout" `Quick
             test_h1_server_connection_request_body_timeout;
+          Alcotest.test_case "handler timeout" `Quick
+            test_h1_server_connection_handler_timeout;
           Alcotest.test_case "streams fixed-length response" `Quick
             test_h1_server_connection_streams_fixed_length_response;
           Alcotest.test_case "streams chunked response with trailers" `Quick
@@ -333,6 +335,8 @@ let () =
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick
             test_h2c_server_request_body_timeout;
+          Alcotest.test_case "h2c handler timeout" `Quick
+            test_h2c_server_handler_timeout;
           Alcotest.test_case "h2c request body too large" `Quick
             test_h2c_server_request_body_too_large;
           Alcotest.test_case "h2c unread body drain timeout" `Quick

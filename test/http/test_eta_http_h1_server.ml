@@ -527,6 +527,43 @@ let test_h1_server_connection_request_body_timeout () =
   in
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
+let test_h1_server_connection_handler_timeout () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      handler_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let clock_ref = ref None in
+  let handler (_request : Eta_http.Server.Request.t) =
+    match !clock_ref with
+    | None -> Alcotest.fail "handler clock not initialized"
+    | Some clock ->
+        Eta.Effect.sync (fun () ->
+            Eio.Time.sleep clock 1.0;
+            Eta_http.Server.Response.text "late\n")
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  clock_ref := Some clock;
+  Eio.Flow.copy_string
+    "GET /slow-handler HTTP/1.1\r\nHost: example.test\r\n\r\n" flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n"
+   ^ "Content-Length: 20\r\n\r\nservice unavailable\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_streams_fixed_length_response () =
   let released = ref 0 in
   let handler (_request : Eta_http.Server.Request.t) =
