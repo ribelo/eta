@@ -22,12 +22,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     n_len = 0 || loop 0
 
   let request ?(headers = Eta_http.Core.Header.empty) ?(target = "/items?token=1")
+      ?(scheme = "http") ?(tls = false) ?(alpn_protocol = Some "h2c")
       ?stream_id () =
     let path, query = Server.Request.split_target target in
     {
       Server.Request.id = "req-1";
       version = Eta_http.Core.Version.H2;
-      scheme = "http";
+      scheme;
       authority = Some "example.test";
       method_ = "get";
       target;
@@ -37,8 +38,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       body = Server.Body.empty ();
       trailers = (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty);
       peer = { address = Some "127.0.0.1"; port = Some 43123 };
-      tls = false;
-      alpn_protocol = Some "h2c";
+      tls;
+      alpn_protocol;
       stream_id;
       connection_id = "conn-1";
     }
@@ -253,7 +254,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (option string)) "stream id" (Some "9")
       (attr "eta_http.server.stream_id" attrs);
     Alcotest.(check (option string)) "connection id" (Some "conn-1")
-      (attr "eta_http.server.connection_id" attrs)
+      (attr "eta_http.server.connection_id" attrs);
+    Alcotest.(check (option string)) "tls" (Some "false")
+      (attr "eta_http.server.tls" attrs);
+    Alcotest.(check (option string)) "alpn" (Some "h2c")
+      (attr "network.protocol.alpn" attrs);
+    let tls_attrs =
+      Eta_http.Observability.Server.Semconv.request_attrs
+        (request ~scheme:"https" ~tls:true ~alpn_protocol:(Some "h2")
+           ~target:"/secure" ())
+    in
+    Alcotest.(check (option string)) "tls true" (Some "true")
+      (attr "eta_http.server.tls" tls_attrs);
+    Alcotest.(check (option string)) "tls alpn" (Some "h2")
+      (attr "network.protocol.alpn" tls_attrs)
 
   let test_server_tracer_span_kind_attrs_and_parent () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
@@ -263,7 +277,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_http.Core.Header.unsafe_of_list
         [ ("traceparent", "00-" ^ trace_id ^ "-" ^ span_id ^ "-01") ]
     in
-    let req = request ~headers ~target:"/healthz?token=secret" () in
+    let req =
+      request ~headers ~target:"/healthz?token=secret" ~scheme:"https"
+        ~tls:true ~alpn_protocol:(Some "h2") ()
+    in
     let handler _request = Eta.Effect.pure (Server.Response.text "ok\n") in
     let response =
       run_ok rt (Eta_http.Observability.Server.Tracer.request handler req)
@@ -278,6 +295,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (attr "url.path" span.attrs);
         Alcotest.(check (option string)) "query redacted"
           (Some "<redacted>") (attr "url.query.redacted" span.attrs);
+        Alcotest.(check (option string)) "tls attr" (Some "true")
+          (attr "eta_http.server.tls" span.attrs);
+        Alcotest.(check (option string)) "alpn attr" (Some "h2")
+          (attr "network.protocol.alpn" span.attrs);
         (match span.external_parent with
         | None -> Alcotest.fail "missing external parent"
         | Some parent ->

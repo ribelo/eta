@@ -19,6 +19,9 @@ let cons_int_opt key value attrs =
   | None -> attrs
   | Some value -> (key, string_of_int value) :: attrs
 
+let cons_bool key value attrs =
+  (key, if value then "true" else "false") :: attrs
+
 let request_attrs ?(emit_url_full = false) request =
   let query_attrs =
     match (request.Request.query, emit_url_full) with
@@ -40,6 +43,8 @@ let request_attrs ?(emit_url_full = false) request =
   |> cons_opt "client.address" request.peer.address
   |> cons_int_opt "client.port" request.peer.port
   |> cons_int_opt "eta_http.server.stream_id" request.stream_id
+  |> cons_bool "eta_http.server.tls" request.tls
+  |> cons_opt "network.protocol.alpn" request.alpn_protocol
 
 let response_attrs response =
   [ ("http.response.status_code", string_of_int (Response.status response)) ]
