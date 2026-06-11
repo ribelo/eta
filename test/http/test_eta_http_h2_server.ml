@@ -355,6 +355,62 @@ let test_h2c_server_fixed_response_and_echo_body () =
       Alcotest.(check bool) "response bytes recorded" true
         (stats.response_bytes > 0))
 
+let test_h2c_server_fragmented_large_upload_echo () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let config =
+    { Eta_http_eio.Server.Config.default with read_buffer_size = 64 }
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun body ->
+           Eta_http.Server.Response.make ~status:200
+             ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+             ())
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let upload = String.make (32 * 1024) 'x' in
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:
+            (H2.Headers.of_list
+               [
+                 ":authority", "127.0.0.1";
+                 "content-length", string_of_int (String.length upload);
+               ])
+          `POST "/echo"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+            await_h2_response ~request_body:upload connection request)
+      in
+      Alcotest.(check int) "status" 200 status;
+      Alcotest.(check int) "body length" (String.length upload)
+        (String.length body);
+      Alcotest.(check string) "body" upload body)
+
 let test_h2_server_connection_run_uses_connection_metadata () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

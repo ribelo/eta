@@ -411,12 +411,7 @@ let skipped_result ~kind ~protocol ~transport ~name reason =
     };
   ]
 
-let eta_server_skip_reason ~kind ~protocol scenario =
-  match (kind, protocol, scenario.name) with
-  | Eta, H2, "large_body_1m" ->
-      Some
-        "Eta H2 large upload flow-control hardening is pending; smaller POST body coverage remains active"
-  | _ -> None
+let eta_server_skip_reason ~kind:_ ~protocol:_ _scenario = None
 
 let run_external_server_scenario ~env ~sw ~rt ~server_config ~results_dir
     scenario =

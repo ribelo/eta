@@ -56,6 +56,10 @@ type t = {
   h2 : H2.Server_connection.t;
   security : Eta_http.H2.Security.t;
   mutable security_preface_remaining : int;
+  ingress_buffer : Bigstringaf.t;
+  max_ingress_buffer_size : int;
+  mutable ingress_off : int;
+  mutable ingress_len : int;
   commands : command Eio.Stream.t;
   streams : (int, stream_state) Hashtbl.t;
   connection : Types.Connection_info.t;
@@ -350,19 +354,71 @@ let rec drain_writes flow h2 =
       H2.Server_connection.report_write_result h2 `Closed;
       (try Eio.Flow.shutdown flow `Send with _ -> ())
 
-let feed h2 buffer ~off ~len =
-  let rec loop off len =
-    if len > 0 then (
-      let consumed = H2.Server_connection.read h2 buffer ~off ~len in
-      if consumed <= 0 then
-        invalid_arg "Eta_http_eio.H2.Server_connection.feed: h2 consumed no bytes";
-      loop (off + consumed) (len - consumed))
-  in
-  loop off len
+let h2_read_buffer_size config =
+  match config.Types.Config.h2_config with
+  | Some config -> config.H2.Config.read_buffer_size
+  | None -> H2.Config.default.read_buffer_size
 
-let read_eof h2 =
-  let empty = Bigstringaf.create 0 in
-  ignore (H2.Server_connection.read_eof h2 empty ~off:0 ~len:0 : int)
+let max_ingress_buffer_size config =
+  config.Types.Config.read_buffer_size + h2_read_buffer_size config
+  + Eta_http.H2.Frame.header_size
+
+let compact_ingress t =
+  if t.ingress_off > 0 && t.ingress_len > 0 then (
+    Bigstringaf.blit t.ingress_buffer ~src_off:t.ingress_off t.ingress_buffer
+      ~dst_off:0 ~len:t.ingress_len;
+    t.ingress_off <- 0)
+  else if t.ingress_len = 0 then t.ingress_off <- 0
+
+let ingress_buffer_full_error t needed =
+  Server.Error.make ~protocol:t.connection.protocol ~method_:"*" ~target:"*"
+    (Protocol_error
+       {
+         kind = "h2_ingress_buffer_exhausted";
+         message =
+           Printf.sprintf
+             "h2 ingress buffer needs %d bytes, limit is %d bytes" needed
+             t.max_ingress_buffer_size;
+       })
+
+let append_ingress t bytes ~off ~len =
+  compact_ingress t;
+  let needed = t.ingress_len + len in
+  if needed > t.max_ingress_buffer_size then
+    Error (ingress_buffer_full_error t needed)
+  else (
+    Bigstringaf.blit bytes ~src_off:off t.ingress_buffer ~dst_off:t.ingress_len
+      ~len;
+    t.ingress_len <- needed;
+    Ok ())
+
+let feed_ingress t =
+  let rec loop () =
+    if t.ingress_len > 0 then (
+      let consumed =
+        H2.Server_connection.read t.h2 t.ingress_buffer ~off:t.ingress_off
+          ~len:t.ingress_len
+      in
+      if consumed < 0 || consumed > t.ingress_len then
+        invalid_arg
+          "Eta_http_eio.H2.Server_connection.feed_ingress: invalid h2 consumed \
+           count"
+      else if consumed > 0 then (
+        t.ingress_off <- t.ingress_off + consumed;
+        t.ingress_len <- t.ingress_len - consumed;
+        if t.ingress_len = 0 then t.ingress_off <- 0;
+        loop ()))
+  in
+  loop ()
+
+let read_eof t =
+  let consumed =
+    H2.Server_connection.read_eof t.h2 t.ingress_buffer ~off:t.ingress_off
+      ~len:t.ingress_len
+  in
+  t.ingress_off <- t.ingress_off + consumed;
+  t.ingress_len <- max 0 (t.ingress_len - consumed);
+  if t.ingress_len = 0 then t.ingress_off <- 0
 
 let fail_pending_request_read state error =
   Option.iter
@@ -677,13 +733,20 @@ let handle_command t = function
         (fun () ->
           match observe_ingress_security t bytes ~off ~len with
           | Some kind -> handle_security_error t kind
-          | None ->
-              feed t.h2 bytes ~off ~len;
-              drain_writes t.flow t.h2)
+          | None -> (
+              match append_ingress t bytes ~off ~len with
+              | Error error ->
+                  record_protocol_error t;
+                  t.closed <- true;
+                  fail_active_streams t error;
+                  (try Eio.Flow.shutdown t.flow `All with _ -> ())
+              | Ok () ->
+                  feed_ingress t;
+                  drain_writes t.flow t.h2))
   | Ingress_eof ->
       t.closed <- true;
       fail_active_streams t (connection_closed_error t Request_body);
-      read_eof t.h2;
+      read_eof t;
       drain_writes t.flow t.h2
   | Ingress_failed error ->
       t.closed <- true;
@@ -880,6 +943,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       ?config:config.Types.Config.h2_security_config ()
   in
   let t =
+    let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
       sw;
       sleep = Eio.Time.sleep clock;
@@ -887,6 +951,10 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       h2;
       security;
       security_preface_remaining = h2_client_connection_preface_length;
+      ingress_buffer = Bigstringaf.create max_ingress_buffer_size;
+      max_ingress_buffer_size;
+      ingress_off = 0;
+      ingress_len = 0;
       commands = Eio.Stream.create config.command_queue_capacity;
       streams = Hashtbl.create config.max_concurrent_streams;
       connection;
