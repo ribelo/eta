@@ -410,10 +410,9 @@ let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
 let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_start
     ?on_connection_close ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1
-    ?on_alpn_h2 ?on_alpn_rejected ~tls_config
+    ?on_alpn_h2 ?on_alpn_rejected ~tls_context
     ~(socket : _ Eio.Net.listening_socket) handler =
   ignore sw;
-  let tls_context = Tls_eio.server_context tls_config in
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
@@ -433,23 +432,23 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
 let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
     ?(config = Config.default) ?runtime_factory ?on_connection_close
     ~tls_config ~(socket : _ Eio.Net.listening_socket) handler =
+  let tls_context = Tls_eio.server_context tls_config in
   let on_connection_close =
     Option.map
       (fun on_connection_close _connection stats -> on_connection_close stats)
       on_connection_close
   in
   run_https_on_socket_impl ~sw ~clock ?stop ~config ?runtime_factory
-    ?on_connection_close ~tls_config ~socket handler
+    ?on_connection_close ~tls_context ~socket handler
 
 let run_https_impl ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_connection_start ?on_connection_close ?on_tls_handshake
     ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-    ~tls_config ~addr handler =
+    ~tls_context ~addr handler =
   let runtime_factory =
     Option.value runtime_factory ~default:(default_runtime_factory ~clock)
   in
-  let tls_context = Tls_eio.server_context tls_config in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
@@ -470,13 +469,14 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
 let run_https ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_connection_close ~tls_config ~addr handler =
+  let tls_context = Tls_eio.server_context tls_config in
   let on_connection_close =
     Option.map
       (fun on_connection_close _connection stats -> on_connection_close stats)
       on_connection_close
   in
   run_https_impl ~sw ~net ~clock ?domain_manager ~domain_policy ?stop ~config
-    ?runtime_factory ?on_connection_close ~tls_config ~addr handler
+    ?runtime_factory ?on_connection_close ~tls_context ~addr handler
 
 let tracked_h1_on_close t on_connection_close connection stats =
   unregister_connection t (H1 connection);
@@ -543,6 +543,7 @@ let start_h2c ~sw ~net ~clock ?domain_manager
 
 let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~tls_config ~socket handler =
+  let tls_context = Tls_eio.server_context tls_config in
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_https_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
@@ -553,12 +554,13 @@ let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
         ~on_alpn_h1:(fun () -> record_alpn_h1 t)
         ~on_alpn_h2:(fun () -> record_alpn_h2 t)
         ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
-        ~tls_config ~socket handler);
+        ~tls_context ~socket handler);
   t
 
 let start_https ~sw ~net ~clock ?domain_manager
     ?(domain_policy = Recommended) ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~tls_config ~addr handler =
+  let tls_context = Tls_eio.server_context tls_config in
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_https_impl ~sw ~net ~clock ?domain_manager ~domain_policy ~stop:t.stop
@@ -570,5 +572,5 @@ let start_https ~sw ~net ~clock ?domain_manager
         ~on_alpn_h1:(fun () -> record_alpn_h1 t)
         ~on_alpn_h2:(fun () -> record_alpn_h2 t)
         ~on_alpn_rejected:(fun () -> record_alpn_rejected t)
-        ~tls_config ~addr handler);
+        ~tls_context ~addr handler);
   t

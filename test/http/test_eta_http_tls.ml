@@ -877,6 +877,31 @@ let test_https_server_strict_sni_rejects_unknown_name () =
   (try Eio.Flow.close raw_flow with _ -> ());
   Eta_http_eio.Server.shutdown server Immediate
 
+let test_https_server_start_rejects_invalid_tls_material () =
+  with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:bad
+      ~private_key_file:bad ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  Alcotest.check_raises "invalid TLS material fails before server handle"
+    (Failure "SSL_CTX_use_certificate_chain_file failed")
+    (fun () ->
+      ignore
+        (Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~tls_config
+           ~socket handler
+          : Eta_http_eio.Server.t))
+
 let test_openssl_server_ctx_rejects_invalid_cert () =
   with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->
   Alcotest.check_raises "invalid cert"
