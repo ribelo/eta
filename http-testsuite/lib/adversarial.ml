@@ -265,31 +265,58 @@ let run_eta_h1_adversarial_client ~env ~name ?config ~expected_status
 
 let h2_client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 
-let h2_request_block ?(path = "/") () =
+let h2_request_block ?(method_ = "GET") ?(path = "/") () =
   String.concat ""
     [
-      Malicious_h2.hpack_literal ~name:":method" ~value:"GET";
+      Malicious_h2.hpack_literal ~name:":method" ~value:method_;
       Malicious_h2.hpack_literal ~name:":scheme" ~value:"http";
       Malicious_h2.hpack_literal ~name:":path" ~value:path;
       Malicious_h2.hpack_literal ~name:":authority" ~value:"example.test";
     ]
 
 let h2_request_headers ?(end_headers = true) ?(end_stream = true) ~stream_id
-    ?path () =
+    ?method_ ?path () =
   let flags =
     (if end_headers then 0x04 else 0x00)
     lor (if end_stream then 0x01 else 0x00)
   in
-  Malicious_h2.frame ~ty:0x01 ~flags ~stream_id (h2_request_block ?path ())
+  Malicious_h2.frame ~ty:0x01 ~flags ~stream_id
+    (h2_request_block ?method_ ?path ())
 
 let h2_frame_header ~length ~ty ~flags ~stream_id =
   Eta_http.H2.Frame.header ~length ~frame_type:(Other ty) ~flags ~stream_id
 
-let h2_adversarial_config ?security_config () =
+let h2_adversarial_config ?request_header_timeout ?request_body_timeout
+    ?idle_timeout ?unread_body_policy ?security_config () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      request_header_timeout =
+        Option.value request_header_timeout
+          ~default:
+            Eta_http.Server.Config.default.timeouts.request_header_timeout;
+      request_body_timeout =
+        Option.value request_body_timeout
+          ~default:Eta_http.Server.Config.default.timeouts.request_body_timeout;
+      idle_timeout =
+        Option.value idle_timeout
+          ~default:Eta_http.Server.Config.default.timeouts.idle_timeout;
+    }
+  in
+  let server =
+    {
+      Eta_http.Server.Config.default with
+      timeouts;
+      unread_body_policy =
+        Option.value unread_body_policy
+          ~default:Eta_http.Server.Config.default.unread_body_policy;
+    }
+  in
   {
     Eta_http_eio.Server.Config.default with
     backlog = 1;
     max_connections = 8;
+    server;
     h2_security_config = security_config;
   }
 
@@ -640,6 +667,47 @@ let h1_oversized_trailers ~env =
         flow;
       read_h1_response flow)
 
+let h2_slow_preface_timeout ~env =
+  let config =
+    h2_adversarial_config
+      ~request_header_timeout:(Some (Eta.Duration.ms 50))
+      ()
+  in
+  run_eta_h2c_adversarial_client ~env ~name:"h2_slow_preface_timeout"
+    ~config ~deadline_sec:1.0
+    (fun flow -> Eio.Flow.copy_string "PRI * " flow)
+
+let h2_slow_headers_timeout ~env =
+  let config =
+    h2_adversarial_config
+      ~request_header_timeout:(Some (Eta.Duration.ms 50))
+      ()
+  in
+  run_eta_h2c_adversarial_client ~env ~name:"h2_slow_headers_timeout"
+    ~config ~deadline_sec:1.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_frame_header ~length:64 ~ty:0x01 ~flags:0x04 ~stream_id:1)
+        flow)
+
+let h2_slow_body_timeout ~env =
+  let config =
+    h2_adversarial_config
+      ~request_body_timeout:(Some (Eta.Duration.ms 50))
+      ~idle_timeout:(Some (Eta.Duration.ms 50))
+      ~unread_body_policy:(Eta_http.Server.Config.Drain_up_to 64)
+      ()
+  in
+  run_eta_h2c_adversarial_client ~env ~name:"h2_slow_body_timeout" ~config
+    ~deadline_sec:1.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ h2_request_headers ~method_:"POST" ~end_stream:false ~stream_id:1 ()
+       ^ Malicious_h2.data_frame ~end_stream:false ~stream_id:1 "he")
+        flow)
+
 (* ---------------------------------------------------------------------------
    8. GOAWAY churn
    Server sends GOAWAY repeatedly while continuing to accept streams.
@@ -722,6 +790,21 @@ let run_all ~env =
   let results =
     add_cve_result "h1_oversized_trailers"
       (fun () -> h1_oversized_trailers ~env)
+      results
+  in
+  let results =
+    add_cve_result "h2_slow_preface_timeout"
+      (fun () -> h2_slow_preface_timeout ~env)
+      results
+  in
+  let results =
+    add_cve_result "h2_slow_headers_timeout"
+      (fun () -> h2_slow_headers_timeout ~env)
+      results
+  in
+  let results =
+    add_cve_result "h2_slow_body_timeout"
+      (fun () -> h2_slow_body_timeout ~env)
       results
   in
   let results =
