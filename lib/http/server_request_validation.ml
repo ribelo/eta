@@ -246,6 +246,21 @@ let validate_h2_header_value kind value =
   | Some _ -> Error ("invalid " ^ kind ^ " value")
   | None -> Ok ()
 
+let h2_forbidden_connection_header = function
+  | "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding"
+  | "upgrade" ->
+      true
+  | _ -> false
+
+let validate_h2_connection_header name value =
+  if h2_forbidden_connection_header name then
+    Error ("HTTP/2 connection-specific header " ^ name ^ " is forbidden")
+  else if
+    String.equal name "te"
+    && not (Eta.String_helpers.trim_equal_ascii_ci value "trailers")
+  then Error "HTTP/2 TE header may only contain trailers"
+  else Ok ()
+
 let validate_h2_request_header_values headers =
   let rec loop regular_seen method_seen scheme_seen authority_seen path_seen =
     function
@@ -284,8 +299,12 @@ let validate_h2_request_header_values headers =
           | Some _ -> Error "invalid request header"
           | None when has_uppercase name ->
               Error "uppercase HTTP/2 request header name"
-          | None ->
-              loop true method_seen scheme_seen authority_seen path_seen rest)
+          | None -> (
+              match validate_h2_connection_header name value with
+              | Error _ as error -> error
+              | Ok () ->
+                  loop true method_seen scheme_seen authority_seen path_seen
+                    rest))
   in
   loop false false false false false headers
 
@@ -305,3 +324,47 @@ let validate_h2_request_headers ~(limits : Server_config.limits) headers =
             (Printf.sprintf "request header section exceeds %d bytes"
                limits.max_request_header_bytes)
         else Ok ()
+
+let validate_h2_response_header_values ~kind headers =
+  let rec loop = function
+    | [] -> Ok ()
+    | (name, value) :: rest -> (
+        match Header.validate_header (name, value) with
+        | Some _ -> Error ("invalid " ^ kind ^ " header")
+        | None when is_h2_pseudo_header name ->
+            Error ("HTTP/2 " ^ kind ^ " pseudo-header is not user controlled")
+        | None -> (
+            match
+              validate_h2_connection_header
+                (Header.normalize_name name)
+                value
+            with
+            | Error _ as error -> error
+            | Ok () -> loop rest))
+  in
+  loop headers
+
+let validate_h2_response_header_block ~max_bytes ~max_headers ~kind headers =
+  let headers = Header.to_list headers in
+  match validate_h2_response_header_values ~kind headers with
+  | Error _ as error -> error
+  | Ok () ->
+      let count = List.length headers in
+      if count > max_headers then
+        Error
+          (Printf.sprintf "%s header count exceeds %d" kind max_headers)
+      else
+        let bytes = header_block_bytes headers in
+        if bytes > max_bytes then
+          Error
+            (Printf.sprintf "%s header section exceeds %d bytes" kind max_bytes)
+        else Ok ()
+
+let validate_h2_response_headers ~(limits : Server_config.limits) headers =
+  validate_h2_response_header_block
+    ~max_bytes:limits.max_response_header_bytes
+    ~max_headers:limits.max_response_headers ~kind:"response" headers
+
+let validate_h2_response_trailers ~(limits : Server_config.limits) trailers =
+  validate_h2_response_header_block ~max_bytes:limits.max_trailer_bytes
+    ~max_headers:limits.max_trailers ~kind:"response trailer" trailers

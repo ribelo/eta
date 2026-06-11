@@ -354,8 +354,17 @@ let () =
             test_h2c_server_rejects_request_header_limit;
           Alcotest.test_case "h2c rejects invalid request header" `Quick
             test_h2c_server_rejects_invalid_request_header;
+          Alcotest.test_case "h2c rejects connection-specific request headers"
+            `Quick
+            test_h2c_server_rejects_connection_specific_request_headers;
           Alcotest.test_case "h2c rejects response header limit" `Quick
             test_h2c_server_rejects_response_header_limit;
+          Alcotest.test_case "h2c rejects connection-specific response header"
+            `Quick
+            test_h2c_server_rejects_connection_specific_response_header;
+          Alcotest.test_case "h2c rejects connection-specific response trailer"
+            `Quick
+            test_h2c_server_rejects_connection_specific_response_trailer;
           Alcotest.test_case "h2c fragmented large upload echo" `Quick
             test_h2c_server_fragmented_large_upload_echo;
           Alcotest.test_case "h2c request body timeout" `Quick

@@ -989,6 +989,90 @@ let test_h2c_server_rejects_invalid_request_header () =
       in
       Alcotest.(check int) "protocol errors" 1 stats.protocol_errors)
 
+let test_h2c_server_rejects_connection_specific_request_headers () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler_calls = ref 0 in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.pure (Eta_http.Server.Response.text ("ok:" ^ request.path ^ "\n"))
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop
+        ~on_connection_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let invalid =
+        [
+          [ ":authority", "127.0.0.1"; "connection", "close" ];
+          [ ":authority", "127.0.0.1"; "te", "gzip" ];
+          [ ":authority", "127.0.0.1"; "transfer-encoding", "chunked" ];
+          [ ":authority", "127.0.0.1"; "upgrade", "websocket" ];
+        ]
+      in
+      List.iteri
+        (fun index headers ->
+          let request =
+            H2.Request.create ~scheme:"http"
+              ~headers:(H2.Headers.of_list headers)
+              `GET ("/invalid-h2-header-" ^ string_of_int index)
+          in
+          let outcome =
+            Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+                await_h2_response_outcome ~tag:(index + 1) connection request)
+          in
+          match outcome with
+          | `Eof (status, body) ->
+              Alcotest.(check int) "invalid status" 400 status;
+              Alcotest.(check string) "invalid body" "bad request\n" body
+          | `Error (status, _body, _error) ->
+              Alcotest.(check bool) "stream rejected" true
+                (status = 0 || status = 400))
+        invalid;
+      let valid =
+        H2.Request.create ~scheme:"http"
+          ~headers:
+            (H2.Headers.of_list
+               [ ":authority", "127.0.0.1"; "te", "trailers" ])
+          `GET "/valid-te"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response ~tag:5 connection valid)
+      in
+      Alcotest.(check int) "valid status" 200 status;
+      Alcotest.(check string) "valid body" "ok:/valid-te\n" body;
+      Alcotest.(check int) "handler calls" 1 !handler_calls;
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ());
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "protocol errors" 4 stats.protocol_errors)
+
 let test_h2c_server_rejects_response_header_limit () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -1045,6 +1129,111 @@ let test_h2c_server_rejects_response_header_limit () =
       Alcotest.(check int) "status" 500 status;
       Alcotest.(check string) "body" "internal server error\n" body;
       Alcotest.(check int) "handler calls" 1 !handler_calls)
+
+let test_h2c_server_rejects_connection_specific_response_header () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let handler_calls = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.pure
+      (Eta_http.Server.Response.text
+         ~headers:[ ("Connection", "close") ]
+         "invalid h2 header\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/bad-response-header"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "status" 500 status;
+      Alcotest.(check string) "body" "internal server error\n" body;
+      Alcotest.(check int) "handler calls" 1 !handler_calls)
+
+let test_h2c_server_rejects_connection_specific_response_trailer () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let sent = ref false in
+    let body =
+      Eta_http.Server.Response.Body.stream (fun () ->
+          if !sent then Eta.Effect.pure None
+          else (
+            sent := true;
+            Eta.Effect.pure (Some (Bytes.of_string "body"))))
+    in
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200 ~body
+         ~trailers:(fun () -> Eta.Effect.pure [ ("Connection", "close") ])
+         ())
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/bad-response-trailer"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome connection request)
+      in
+      match outcome with
+      | `Error (status, _body, _error) ->
+          Alcotest.(check int) "status before reset" 200 status
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected stream reset after invalid trailer, got EOF status=%d \
+             body=%S"
+            status body)
 
 let test_h2c_server_fragmented_large_upload_echo () =
   run_eio @@ fun env ->

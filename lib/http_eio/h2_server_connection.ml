@@ -337,7 +337,7 @@ let h2_response response =
 
 let validate_response_headers t response =
   match
-    Server.Validation.validate_response_headers
+    Server.Validation.validate_h2_response_headers
       ~limits:t.config.server.limits
       (Server.Response.headers response)
   with
@@ -817,7 +817,7 @@ let write_response_chunk t ordinal chunk resolver =
 
 let schedule_response_trailers t ordinal trailers resolver =
   match
-    Server.Validation.validate_response_trailers
+    Server.Validation.validate_h2_response_trailers
       ~limits:t.config.server.limits trailers
   with
   | Error message ->
