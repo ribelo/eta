@@ -551,7 +551,7 @@ let chunked_body t head continue_state =
   (body, state)
 
 let request_body t head continue_state =
-  match Eta_http.H1.Request_body.of_headers head.headers with
+  match Eta_http.H1.Request_body.of_headers ~version:head.version head.headers with
   | Error body_error ->
       Error
         (error t

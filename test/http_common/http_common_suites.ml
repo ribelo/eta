@@ -2228,8 +2228,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.H1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "invalid header unexpectedly parsed"
 
-  let expect_h1_request_framing label headers expected =
-    match Eta_http.H1.Request_body.of_headers headers with
+  let expect_h1_request_framing
+      ?(version = Eta_http.Core.Version.H1_1) label headers expected =
+    match Eta_http.H1.Request_body.of_headers ~version headers with
     | Error error ->
         Alcotest.failf "%s unexpected framing error: %s" label
           (Eta_http.H1.Request_body.error_to_string error)
@@ -2241,8 +2242,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         in
         Alcotest.(check string) label (to_string expected) (to_string framing)
 
-  let expect_h1_request_framing_error label headers expect =
-    match Eta_http.H1.Request_body.of_headers headers with
+  let expect_h1_request_framing_error
+      ?(version = Eta_http.Core.Version.H1_1) label headers expect =
+    match Eta_http.H1.Request_body.of_headers ~version headers with
     | Ok _ -> Alcotest.failf "%s expected framing error" label
     | Error error ->
         if not (expect error) then
@@ -2293,6 +2295,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | Eta_http.H1.Request_body.Unsupported_transfer_encoding
             [ "chunked"; "gzip" ] ->
             true
+        | _ -> false);
+    expect_h1_request_framing_error
+      ~version:Eta_http.Core.Version.H1_0 "http/1.0 transfer-encoding"
+      [ ("Transfer-Encoding", "chunked") ]
+      (function
+        | Eta_http.H1.Request_body.Transfer_encoding_requires_http_11 -> true
         | _ -> false)
 
   let test_h1_request_body_framing_chunked_trailers () =

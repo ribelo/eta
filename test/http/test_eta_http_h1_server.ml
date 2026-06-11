@@ -263,7 +263,8 @@ let test_h1_server_connection_rejects_unsupported_expectation () =
   Alcotest.(check int) "completed requests" 0 stats.completed_requests;
   Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
 
-let check_bad_request_rejected ~name wire =
+let check_bad_request_rejected ?(response_prefix = "HTTP/1.1 400 Bad Request")
+    ~name wire =
   let handler_called = ref false in
   let handler (_request : Eta_http.Server.Request.t) =
     handler_called := true;
@@ -277,7 +278,7 @@ let check_bad_request_rejected ~name wire =
   Alcotest.(check bool)
     (name ^ " response")
     true
-    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+    (String.starts_with ~prefix:response_prefix response);
   Alcotest.(check bool) (name ^ " handler not called") false !handler_called;
   let stats =
     Eio.Time.with_timeout_exn clock 1.0 (fun () ->
@@ -300,6 +301,13 @@ let test_h1_server_connection_rejects_duplicate_content_length () =
     ("POST /duplicate-cl HTTP/1.1\r\nHost: example.test\r\n"
    ^ "Content-Length: 5\r\nContent-Length: 5\r\nConnection: close\r\n\r\n"
    ^ "hello")
+
+let test_h1_server_connection_rejects_http10_transfer_encoding () =
+  check_bad_request_rejected
+    ~response_prefix:"HTTP/1.0 400 Bad Request"
+    ~name:"http10 transfer-encoding"
+    ("POST /h10-te HTTP/1.0\r\nTransfer-Encoding: chunked\r\n"
+   ^ "Connection: close\r\n\r\n0\r\n\r\n")
 
 let test_h1_server_connection_rejects_invalid_http11_host () =
   check_bad_request_rejected ~name:"invalid host"

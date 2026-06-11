@@ -9,6 +9,7 @@ type error =
   | Invalid_content_length of string
   | Duplicate_content_length of string list
   | Content_length_with_transfer_encoding
+  | Transfer_encoding_requires_http_11
   | Unsupported_transfer_encoding of string list
 
 let pp_error fmt = function
@@ -20,6 +21,9 @@ let pp_error fmt = function
   | Content_length_with_transfer_encoding ->
       Format.pp_print_string fmt
         "Content-Length cannot be combined with Transfer-Encoding"
+  | Transfer_encoding_requires_http_11 ->
+      Format.pp_print_string fmt
+        "Transfer-Encoding requires HTTP/1.1 request framing"
   | Unsupported_transfer_encoding tokens ->
       Format.fprintf fmt "unsupported Transfer-Encoding %S"
         (String.concat ", " tokens)
@@ -81,12 +85,14 @@ let parse_transfer_encoding = function
   | [ "chunked" ] -> Ok true
   | tokens -> Error (Unsupported_transfer_encoding tokens)
 
-let of_headers headers =
+let of_headers ~version headers =
   let transfer_encoding = transfer_encoding_tokens headers in
   match
     (parse_content_lengths (content_length_values headers), transfer_encoding)
   with
   | Error error, _ -> Error error
+  | Ok _, _ :: _ when not (version = Version.H1_1) ->
+      Error Transfer_encoding_requires_http_11
   | Ok (Some _), _ :: _ -> Error Content_length_with_transfer_encoding
   | Ok None, _ -> (
       match parse_transfer_encoding transfer_encoding with
