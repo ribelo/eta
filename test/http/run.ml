@@ -265,6 +265,8 @@ let () =
             test_openssl_server_sni_strict_rejects_unknown_name;
           Alcotest.test_case "Tls_eio server_of_flow epoch" `Quick
             test_tls_eio_server_of_flow_handshake_epoch;
+          Alcotest.test_case "Tls_eio shutdown all sends close notify" `Quick
+            test_tls_eio_shutdown_all_sends_close_notify;
           Alcotest.test_case "Tls_eio server context reuses certs" `Quick
             test_tls_eio_server_context_reuses_loaded_certificates;
           Alcotest.test_case "Tls_eio server SNI selects cert" `Quick

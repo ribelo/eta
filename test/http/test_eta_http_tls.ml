@@ -468,6 +468,50 @@ let test_tls_eio_server_of_flow_handshake_epoch () =
   Eio.Flow.close client_flow;
   Eio.Flow.close server_flow
 
+let test_tls_eio_shutdown_all_sends_close_notify () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let server_raw, client_raw = Eio_unix.Net.socketpair_stream ~sw () in
+  let server_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let server_result = ref None in
+  let client_result = ref None in
+  Eio.Fiber.both
+    (fun () ->
+      server_result :=
+        Some
+          (Eta_http_eio.Tls.Eio.server_of_flow server_config server_raw))
+    (fun () ->
+      client_result :=
+        Some (Eta_http_eio.Tls.Eio.client_of_flow client_config client_raw));
+  let server_flow, _server_epoch =
+    require_some "server TLS result" !server_result
+  in
+  let client_flow = require_some "client TLS result" !client_result in
+  Fun.protect
+    ~finally:(fun () ->
+      try Eio.Flow.close client_flow with _ -> ();
+      try Eio.Flow.close server_flow with _ -> ())
+    (fun () ->
+      Eio.Flow.shutdown server_flow `All;
+      let observed_eof =
+        Eio.Time.with_timeout_exn clock 0.2 (fun () ->
+            match Eio.Flow.single_read client_flow (Cstruct.create 1) with
+            | 0 -> true
+            | _ -> false
+            | exception End_of_file -> true)
+      in
+      Alcotest.(check bool) "peer observed TLS close_notify" true observed_eof)
+
 let test_tls_eio_server_context_reuses_loaded_certificates () =
   with_temp_tls_files @@ fun cert key ->
   with_temp_ca_bundle [ cert ] @@ fun ca_bundle ->

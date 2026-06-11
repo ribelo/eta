@@ -217,8 +217,8 @@ module Flow_impl = struct
 
   let shutdown t cmd =
     match cmd with
-    | `Send -> close t
-    | `Receive | `All -> ()
+    | `Send | `All -> close t
+    | `Receive -> ()
 end
 
 let ops =
