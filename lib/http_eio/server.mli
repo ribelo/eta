@@ -1,4 +1,4 @@
-(** Eio h2c server adapter for eta-http. *)
+(** Eio HTTP server adapter for eta-http. *)
 
 type shutdown = Server_types.shutdown =
   | Graceful of Eta.Duration.t
@@ -16,6 +16,54 @@ type t
 module Connection_info = Server_types.Connection_info
 module Config = Server_types.Config
 module Stats = Server_types.Stats
+
+val start_h1 :
+  sw:Eio.Switch.t ->
+  net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?domain_manager:_ Eio.Domain_manager.t ->
+  ?domain_policy:domain_policy ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(H1_server_connection.stats -> unit) ->
+  addr:Eio.Net.Sockaddr.stream ->
+  Eta_http.Server.handler ->
+  t
+
+val start_h1_on_socket :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(H1_server_connection.stats -> unit) ->
+  socket:_ Eio.Net.listening_socket ->
+  Eta_http.Server.handler ->
+  t
+
+val run_h1 :
+  sw:Eio.Switch.t ->
+  net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?domain_manager:_ Eio.Domain_manager.t ->
+  ?domain_policy:domain_policy ->
+  ?stop:unit Eio.Promise.t ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(H1_server_connection.stats -> unit) ->
+  addr:Eio.Net.Sockaddr.stream ->
+  Eta_http.Server.handler ->
+  unit
+
+val run_h1_on_socket :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?stop:unit Eio.Promise.t ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(H1_server_connection.stats -> unit) ->
+  socket:_ Eio.Net.listening_socket ->
+  Eta_http.Server.handler ->
+  unit
 
 val start_h2c :
   sw:Eio.Switch.t ->

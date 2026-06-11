@@ -385,3 +385,66 @@ let test_h1_server_connection_idle_timeout_closes_keep_alive () =
         Eio.Promise.await closed_stats)
   in
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_run_on_socket_plain_get () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let seen_request, resolve_seen_request = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close stats =
+    ignore (Eio.Promise.try_resolve resolve_closed_stats stats);
+    ignore (Eio.Promise.try_resolve resolve_stop ())
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    ignore
+      (Eio.Promise.try_resolve resolve_seen_request
+         ( request.path,
+           request.scheme,
+           request.tls,
+           request.alpn_protocol,
+           request.connection_id ));
+    Eta.Effect.pure (Eta_http.Server.Response.text "plain-h1\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h1_on_socket ~sw ~clock ~stop
+        ~on_connection_close ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      Eio.Flow.copy_string
+        ("GET /public HTTP/1.1\r\nHost: example.test\r\n"
+       ^ "Connection: close\r\n\r\n")
+        flow;
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            read_all_response flow)
+      in
+      Alcotest.(check string) "response"
+        ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+       ^ "Content-Length: 9\r\n\r\nplain-h1\n")
+        response;
+      let path, scheme, tls, alpn_protocol, connection_id =
+        Eio.Promise.await seen_request
+      in
+      Alcotest.(check string) "path" "/public" path;
+      Alcotest.(check string) "scheme" "http" scheme;
+      Alcotest.(check bool) "tls" false tls;
+      Alcotest.(check (option string)) "alpn" None alpn_protocol;
+      Alcotest.(check bool) "connection id prefix" true
+        (String.starts_with ~prefix:"h1-" connection_id);
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed requests" 1 stats.completed_requests)

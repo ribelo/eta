@@ -124,6 +124,8 @@ let () =
             test_h1_server_connection_drains_unread_body_for_reuse;
           Alcotest.test_case "idle timeout closes keep-alive" `Quick
             test_h1_server_connection_idle_timeout_closes_keep_alive;
+          Alcotest.test_case "run_h1_on_socket plain GET" `Quick
+            test_h1_server_run_on_socket_plain_get;
         ] );
       ( "ws",
         [
