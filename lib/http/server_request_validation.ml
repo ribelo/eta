@@ -223,3 +223,17 @@ let validate_response_headers ~(limits : Server_config.limits) headers =
 let validate_response_trailers ~(limits : Server_config.limits) trailers =
   validate_header_block ~max_bytes:limits.max_trailer_bytes
     ~max_headers:limits.max_trailers ~kind:"response trailer" trailers
+
+let validate_h2_request_headers ~(limits : Server_config.limits) headers =
+  let count = List.length headers in
+  if count > limits.max_request_headers then
+    Error
+      (Printf.sprintf "request header count exceeds %d"
+         limits.max_request_headers)
+  else
+    let bytes = header_block_bytes headers in
+    if bytes > limits.max_request_header_bytes then
+      Error
+        (Printf.sprintf "request header section exceeds %d bytes"
+           limits.max_request_header_bytes)
+    else Ok ()

@@ -326,17 +326,27 @@ let request_of_reqd ~connection ~ordinal ~body reqd =
 
 let validate_request_metadata t (request : Server.Request.t) =
   match
-    Server.Validation.validate_h2_request
-      ~connection_scheme:(connection_url_scheme t) ~method_:request.method_
-      ~scheme:request.scheme ~target:request.target
-      ~authority:request.authority
+    Server.Validation.validate_h2_request_headers
+      ~limits:t.config.server.limits request.headers
   with
-  | Ok () -> Ok ()
   | Error message ->
       Error
         (Server.Error.make ~protocol:t.connection.protocol
            ~method_:request.method_ ~target:request.target
            (Bad_request { message }))
+  | Ok () -> (
+      match
+        Server.Validation.validate_h2_request
+          ~connection_scheme:(connection_url_scheme t) ~method_:request.method_
+          ~scheme:request.scheme ~target:request.target
+          ~authority:request.authority
+      with
+      | Ok () -> Ok ()
+      | Error message ->
+          Error
+            (Server.Error.make ~protocol:t.connection.protocol
+               ~method_:request.method_ ~target:request.target
+               (Bad_request { message })))
 
 let h2_header_list headers =
   headers

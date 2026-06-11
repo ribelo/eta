@@ -274,6 +274,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          "Eta_http.Server.Config.max_request_headers must be > 0")
       (fun () -> Server.Config.validate invalid_limits)
 
+  let test_h2_request_header_limits () =
+    let limits = Server.Config.default.limits in
+    (match
+       Server.Validation.validate_h2_request_headers
+         ~limits:{ limits with max_request_headers = 1 }
+         [ ":method", "GET"; ":path", "/" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "count error"
+          "request header count exceeds 1" message
+    | Ok () -> Alcotest.fail "expected h2 request header count rejection");
+    (match
+       Server.Validation.validate_h2_request_headers
+         ~limits:{ limits with max_request_header_bytes = 8 }
+         [ ":method", "GET" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "bytes error"
+          "request header section exceeds 8 bytes" message
+    | Ok () -> Alcotest.fail "expected h2 request header byte rejection")
+
   let test_handler_helpers () =
     B.with_runtime @@ fun _ctx rt ->
     let error =
@@ -375,6 +396,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_response_helpers_validate_and_preserve_body;
           Alcotest.test_case "config defaults and validation" `Quick
             test_server_config_defaults_and_validation;
+          Alcotest.test_case "h2 request header limits" `Quick
+            test_h2_request_header_limits;
           Alcotest.test_case "handler helpers" `Quick test_handler_helpers;
           Alcotest.test_case "semconv redacts query" `Quick
             test_server_semconv_redacts_query_by_default;
