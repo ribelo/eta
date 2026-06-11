@@ -784,6 +784,63 @@ let test_https_server_unsupported_alpn_stats () =
   (try Eio.Flow.close tls_flow with _ -> ());
   Eta_http_eio.Server.shutdown server Immediate
 
+let test_https_server_strict_sni_rejects_unknown_name () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~require_sni_match:true
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let handler_called = ref false in
+  let handler _request =
+    handler_called := true;
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~tls_config ~socket
+      handler
+  in
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let unknown = Domain_name.(host_exn (of_string_exn "unknown.localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:unknown ~ca_file:cert
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let handshake_succeeded =
+    try
+      let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+      Eio.Flow.close tls_flow;
+      true
+    with _ -> false
+  in
+  Alcotest.(check bool) "client handshake failed" false handshake_succeeded;
+  let stats =
+    wait_for_server_stats clock server (fun stats ->
+        stats.tls_handshake_failures = 1)
+  in
+  Alcotest.(check int) "tls handshakes" 0 stats.tls_handshakes;
+  Alcotest.(check int) "tls handshake failures" 1 stats.tls_handshake_failures;
+  Alcotest.(check int) "alpn h1" 0 stats.alpn_h1;
+  Alcotest.(check int) "alpn h2" 0 stats.alpn_h2;
+  Alcotest.(check int) "alpn rejected" 0 stats.alpn_rejected;
+  Alcotest.(check bool) "handler not called" false !handler_called;
+  (try Eio.Flow.close raw_flow with _ -> ());
+  Eta_http_eio.Server.shutdown server Immediate
+
 let test_openssl_server_ctx_rejects_invalid_cert () =
   with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->
   Alcotest.check_raises "invalid cert"
