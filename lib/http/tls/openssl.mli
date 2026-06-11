@@ -17,6 +17,18 @@ val ctx_load_ca : ctx -> string -> unit
     store of [ctx]. The default system trust store remains in eff.
     Raises [Failure] if the file cannot be loaded. *)
 
+val create_server_ctx :
+  certificate_chain_file:string ->
+  private_key_file:string ->
+  alpn_protocols:string list ->
+  ctx
+(** Create a server SSL_CTX with Eta's TLS policy, certificate chain,
+    private key, and ALPN selection callback. Raises [Failure] when the
+    certificate or private key cannot be loaded or do not match. *)
+
+val create_server_ssl : ctx -> ssl
+(** Create a server SSL connection with memory BIOs in accept state. *)
+
 val create_ssl :
   ctx ->
   hostname:string option ->

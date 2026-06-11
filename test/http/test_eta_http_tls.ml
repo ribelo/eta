@@ -20,6 +20,115 @@ let contains haystack needle =
   | Some _ -> true
   | None -> false
 
+let tls_cert =
+  {|-----BEGIN CERTIFICATE-----
+MIIDITCCAgmgAwIBAgIUWxU09v58bOJEdBMtBjtQHC0VdVwwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MDYxMTE0NTczOFoYDzIxMjYw
+NTE4MTQ1NzM4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQC6YoCjrrYAmpWlnZ/GQ9BZqg7P5fVgZoxGn+e/OVP+
+J7OheQXad8rsW58cFHa0je+awg3KyImCrvIW1ZDeeiiGducnerkJB+5AcHdMD+Do
++ftYUL2wh+Q4CHvSKf3ahOrWPpXbItp8nekOprXYb0MMWSJ32rMO8/sSEcfzEiQT
+89nNDC83eH7Ey622q+Vel63cn5qKcWNc0R9c3/k+7gz39vjIMF3cCJt/WTZasi/q
+tyLNwavN1mV8qhM04TMYl0xYGFNV3hNVutGufMhtRabApkLlkx9OgQZUCCNt/2EX
+jmxpaMH11mxnXmgp/16TE32qfHWRu9tCEPY/S8Hpf0iHAgMBAAGjaTBnMB0GA1Ud
+DgQWBBQVosW39l8YvdPuhLDgWG+ZSXP6+zAfBgNVHSMEGDAWgBQVosW39l8YvdPu
+hLDgWG+ZSXP6+zAUBgNVHREEDTALgglsb2NhbGhvc3QwDwYDVR0TAQH/BAUwAwEB
+/zANBgkqhkiG9w0BAQsFAAOCAQEAoG/5dz3wosYf0xKi3rTZw2O1ZJKw+7Xbhbfe
+aicDH9yKfH+5FMgHzMWZtkWMyJk89qT/ZOjC8EF/gAsx+c6nmudUps+3SiqMScIp
+pmNhtviZONOIvThtJvWuy+EU8DohSAF0oTP/Hk6FiXgqk+pfQ0vsL+CuYyTA5xIA
+k/PzvyeEeYkASYcZLOsYRbfXc/ec4l0hsKBXhC8GLaUXik/KS00t26zrsXZH+Wqd
+R3TZ4mQgLBDPVxXR9ZbhUOgzkLylhMLfbVKvMrQOUfP6o48nrPfRmmTs8oGz68Z8
+7vFC9UrLy5fhJhYWRbcmvN4u4WNyYpYeJzf9A49TTSSsN9Jf3g==
+-----END CERTIFICATE-----
+|}
+
+let tls_key =
+  {|-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC6YoCjrrYAmpWl
+nZ/GQ9BZqg7P5fVgZoxGn+e/OVP+J7OheQXad8rsW58cFHa0je+awg3KyImCrvIW
+1ZDeeiiGducnerkJB+5AcHdMD+Do+ftYUL2wh+Q4CHvSKf3ahOrWPpXbItp8nekO
+prXYb0MMWSJ32rMO8/sSEcfzEiQT89nNDC83eH7Ey622q+Vel63cn5qKcWNc0R9c
+3/k+7gz39vjIMF3cCJt/WTZasi/qtyLNwavN1mV8qhM04TMYl0xYGFNV3hNVutGu
+fMhtRabApkLlkx9OgQZUCCNt/2EXjmxpaMH11mxnXmgp/16TE32qfHWRu9tCEPY/
+S8Hpf0iHAgMBAAECggEAHyJgMbd4EJ7B+7HaZDCkx62YHtNfi1Rl/1Ar0q4dYTm5
+kHIab7WOELB3YiXq9Fs3WKcszaB1E/7sUrMnKXrHdTq8f0RJT4BjJKGE1BBc9h34
+Bfcq0KfKkC+em2tHS+7jGZnHx5zJWYK5USi4/KgNT60+DD5cpdVMreaJe4mevDQ4
+zzILJdn0G4z2ZzQU13ENU5D7J8nb3UyJIcyGOKjlJSGQVMnyXcOUvg+4FsyoCmMy
+7/3cb166KyN5bcLCD3bx4B6Y6A+KTH9bLKcAblYuhnxdhMuzHUz/g8jEHEKpMtQZ
+QiRh/+zXf3NfxOjBcHhkHKxNRVWoDthLREUEYQe8xQKBgQD0fmaMX2+OpBw+tt2/
+wtcmWhbB24H4382+5HU6zlU/hufLFVa9sGhNcOmgYEmsm2e6yPACRWIWIyg+jart
+okDJCcZ9pBom7tb8k754DeUaT9tfgt4A9sjzresgRE0N2iJWIrSfZGsrPakohYpZ
+WOCOuLSlIlWcI3SA+arsvyusPQKBgQDDKAUAR0iUVRaDSAE3nSJc9ZcJGCQY6Ixj
+I9sF99xgSG+R0nWPexNhCogW0E+Kza9qMGl/mXluI2R4Vogb5zDMN39IFjzD6TsK
+ULjXDvSuDTl++y4QfMfTlh+iRO7YQxAFVx28QR7xCpYhb1bJu3i11qIhtEeXmxnj
+mQiV4t+AEwKBgQCbejYkVhxPDTWY/BkP9Qt0rB2Esd55MXlZR1b1SnkTqOqGTs+W
+WTQ66u7mudSgG0NfmKBoEU9K3JifDt//tgqUzc6X319yGrhEbn/VQKDMlrPejQ44
+drdbnuHC5yxI/sqPFArgwa8VFGUaC7HrF4XVvMfDq43deP6BdkOnwfo30QKBgFJf
+/xRqAmHSNKl/aDwgUJPqejE1hm8ZIcDrLpUrVVMy4B0uN78zlS998YmnrhuJzIRH
+IRDiKFZsDAmbhOI6SOe6eThlYorTVL966TqlrnQVUvKddYkyEmrmUD3/WM3iKM4I
+Qp3m4vedn1dHltuaDU675T3SyfFdX6UpQG18ERkPAoGBALgA9HwmdbNln/bmZEzX
+XDLp6/6Djkq3GeU5L3r/86qRm884FQpkNL714Gt9j6UO0uH2SJRQVTloagkHlCb9
+5VTlcp9DipKkX4Kel26jB/CD6g4zu1fQb4BN+x5pHXG5jDVhVhwJpONS51nIuIG9
+hwMSF/Svo8L7E5Iw+/BBhFx6
+-----END PRIVATE KEY-----
+|}
+
+let remove_noerr path =
+  try Sys.remove path with
+  | Sys_error _ -> ()
+
+let write_temp_file prefix contents =
+  let path = Filename.temp_file prefix ".pem" in
+  let output = open_out_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_out_noerr output)
+    (fun () -> output_string output contents);
+  path
+
+let with_temp_file prefix contents f =
+  let path = write_temp_file prefix contents in
+  Fun.protect ~finally:(fun () -> remove_noerr path) (fun () -> f path)
+
+let with_temp_tls_files f =
+  with_temp_file "eta-http-cert" tls_cert @@ fun cert ->
+  with_temp_file "eta-http-key" tls_key @@ fun key -> f cert key
+
+let pump_tls src dst =
+  let pending = Eta_http__Openssl.bio_write_pending src in
+  if pending = 0 then 0
+  else
+    let scratch = Cstruct.create pending in
+    let buffer = Cstruct.to_bigarray scratch in
+    let read = Eta_http__Openssl.bio_read src buffer 0 pending in
+    if read = 0 then 0
+    else
+      let written = Eta_http__Openssl.bio_write dst buffer 0 read in
+      Alcotest.(check int) "pumped TLS bytes" read written;
+      written
+
+let tls_handshake_state label ssl =
+  match Eta_http__Openssl.handshake ssl with
+  | Eta_http__Openssl.Handshake_ok -> `Done
+  | Eta_http__Openssl.Handshake_error (2 | 3) -> `Pending
+  | Eta_http__Openssl.Handshake_error code ->
+      Alcotest.failf "%s handshake failed with SSL_get_error=%d" label code
+
+let drive_tls_handshake client server =
+  let rec loop remaining client_done server_done =
+    if client_done && server_done then ()
+    else if remaining = 0 then Alcotest.fail "TLS handshake did not converge"
+    else
+      let client_done =
+        client_done || tls_handshake_state "client" client = `Done
+      in
+      let server_done =
+        server_done || tls_handshake_state "server" server = `Done
+      in
+      ignore (pump_tls client server + pump_tls server client : int);
+      loop (remaining - 1) client_done server_done
+  in
+  loop 100 false false
+
 let find_tls_eio_source () =
   let candidates =
     [
@@ -77,6 +186,67 @@ let test_openssl_ssl_finalizer_keeps_ctx_ownership_separate () =
   exercise_shared_ctx ();
   Gc.full_major ();
   Gc.full_major ()
+
+let test_openssl_server_ctx_loads_cert_key_and_creates_ssl () =
+  with_temp_tls_files @@ fun cert key ->
+  let ctx =
+    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
+  in
+  let ssl = Eta_http__Openssl.create_server_ssl ctx in
+  Alcotest.(check int)
+    "pending bytes before handshake" 0
+    (Eta_http__Openssl.bio_write_pending ssl)
+
+let test_openssl_server_alpn_selects_client_protocol () =
+  with_temp_tls_files @@ fun cert key ->
+  let server_ctx =
+    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
+  in
+  let client_ctx = Eta_http__Openssl.create_ctx () in
+  Eta_http__Openssl.ctx_load_ca client_ctx cert;
+  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client =
+    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+      ~ip:None ~alpn_protocols:[ "h2"; "http/1.1" ]
+  in
+  drive_tls_handshake client server;
+  Alcotest.(check (option string))
+    "client ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected client);
+  Alcotest.(check (option string))
+    "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
+
+let test_openssl_server_ctx_rejects_invalid_cert () =
+  with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->
+  Alcotest.check_raises "invalid cert"
+    (Failure "SSL_CTX_use_certificate_chain_file failed") (fun () ->
+      ignore
+        (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:bad
+           ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
+          : Eta_http__Openssl.ctx))
+
+let test_openssl_server_ctx_rejects_invalid_key () =
+  with_temp_file "eta-http-bad-key" "not a private key" @@ fun bad ->
+  with_temp_file "eta-http-cert" tls_cert @@ fun cert ->
+  Alcotest.check_raises "invalid key"
+    (Failure "SSL_CTX_use_PrivateKey_file failed") (fun () ->
+      ignore
+        (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+           ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
+          : Eta_http__Openssl.ctx))
+
+let test_tls_server_config_records_cert_key_and_alpn () =
+  let config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:"cert.pem"
+      ~private_key_file:"key.pem" ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  Alcotest.(check string)
+    "cert" "cert.pem" (Eta_http.Tls.Config.certificate_chain_file config);
+  Alcotest.(check string)
+    "key" "key.pem" (Eta_http.Tls.Config.private_key_file config);
+  Alcotest.(check (list string))
+    "alpn" [ "http/1.1" ] (Eta_http.Tls.Config.server_alpn_protocols config)
 
 let test_tls_handshake_enters_ssl_mutex_before_openssl () =
   let source = read_file (find_tls_eio_source ()) in

@@ -188,6 +188,16 @@ let () =
         [
           Alcotest.test_case "OpenSSL SSL finalizer ownership" `Quick
             test_openssl_ssl_finalizer_keeps_ctx_ownership_separate;
+          Alcotest.test_case "OpenSSL server ctx loads cert/key" `Quick
+            test_openssl_server_ctx_loads_cert_key_and_creates_ssl;
+          Alcotest.test_case "OpenSSL server ALPN selects h2" `Quick
+            test_openssl_server_alpn_selects_client_protocol;
+          Alcotest.test_case "OpenSSL server ctx rejects invalid cert" `Quick
+            test_openssl_server_ctx_rejects_invalid_cert;
+          Alcotest.test_case "OpenSSL server ctx rejects invalid key" `Quick
+            test_openssl_server_ctx_rejects_invalid_key;
+          Alcotest.test_case "server config records TLS material" `Quick
+            test_tls_server_config_records_cert_key_and_alpn;
           Alcotest.test_case "handshake enters SSL mutex" `Quick
             test_tls_handshake_enters_ssl_mutex_before_openssl;
           Alcotest.test_case "client uses IP peer identity" `Quick

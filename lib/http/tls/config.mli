@@ -14,6 +14,9 @@ val default_alpn : string list
 type t
 (** Opaque client TLS configuration. *)
 
+type server
+(** Opaque server TLS configuration. *)
+
 val default_client :
   ?peer_name:[ `host ] Domain_name.t ->
   ?ip:Ipaddr.t ->
@@ -31,3 +34,16 @@ val peer_name : t -> [ `host ] Domain_name.t option
 val ip : t -> Ipaddr.t option
 val alpn_protocols : t -> string list
 val ca_file : t -> string option
+
+val default_server :
+  ?alpn_protocols:string list ->
+  certificate_chain_file:string ->
+  private_key_file:string ->
+  unit ->
+  server
+(** Build the supported eta-http server TLS config. The certificate chain
+    and private key must be PEM files accepted by OpenSSL. *)
+
+val certificate_chain_file : server -> string
+val private_key_file : server -> string
+val server_alpn_protocols : server -> string list
