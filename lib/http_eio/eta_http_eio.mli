@@ -18,6 +18,7 @@ end
 
 module Transport : sig
   module Alpn = Eta_http.Transport.Alpn
+  module Alpn_server = Alpn_server
   module Connect = Connect
   module Dispatch = Eta_http.Transport.Dispatch
 end

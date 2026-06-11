@@ -19,6 +19,10 @@ type connection =
   | H1 of H1_server_connection.t
   | H2 of H2_server_connection.t
 
+type https_connection_stats =
+  | Https_h1 of H1_server_connection.stats
+  | Https_h2 of H2_server_connection.stats
+
 type t = {
   stop : unit Eio.Promise.t;
   stop_resolver : unit Eio.Promise.u;
@@ -60,6 +64,30 @@ let h1_connection_info peer =
     protocol = Eta_http.Server.Error.H1;
     tls = false;
     alpn_protocol = None;
+  }
+
+let h2_tls_connection_id =
+  let next = Atomic.make 0 in
+  fun () ->
+    let id = Atomic.fetch_and_add next 1 + 1 in
+    "h2-tls-" ^ string_of_int id
+
+let https_h1_connection_info peer (epoch : Tls_eio.epoch) =
+  {
+    Connection_info.id = h1_connection_id ();
+    peer = peer_of_sockaddr peer;
+    protocol = Eta_http.Server.Error.H1;
+    tls = true;
+    alpn_protocol = epoch.alpn_protocol;
+  }
+
+let https_h2_connection_info peer (epoch : Tls_eio.epoch) =
+  {
+    Connection_info.id = h2_tls_connection_id ();
+    peer = peer_of_sockaddr peer;
+    protocol = Eta_http.Server.Error.H2;
+    tls = true;
+    alpn_protocol = epoch.alpn_protocol;
   }
 
 let create () =
@@ -300,6 +328,113 @@ let run_h2c ~sw ~net ~clock ?domain_manager
   run_h2c_impl ~sw ~net ~clock ?domain_manager ~domain_policy ?stop ~config
     ?runtime_factory ?on_connection_close ~addr handler
 
+let run_https_connection ~conn_sw ~clock ~config ~runtime_factory
+    ?on_connection_start ?on_connection_close ~tls_config handler flow peer =
+  let raw_flow =
+    (flow :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow, epoch = Tls_eio.server_of_flow tls_config raw_flow in
+  let current = ref None in
+  let on_start connection =
+    current := Some connection;
+    Option.iter
+      (fun on_connection_start -> on_connection_start connection)
+      on_connection_start
+  in
+  let on_close stats =
+    match !current with
+    | None -> ()
+    | Some connection ->
+        Option.iter
+          (fun on_connection_close -> on_connection_close connection stats)
+          on_connection_close
+  in
+  let run_h1 () =
+    H1_server_connection.run ~sw:conn_sw ~clock
+      ~flow:(tls_flow :> H1_server_connection.flow)
+      ~connection:(https_h1_connection_info peer epoch)
+      ~config ~runtime_factory
+      ~on_start:(fun connection -> on_start (H1 connection))
+      ~on_close:(fun stats -> on_close (Https_h1 stats))
+      handler
+  in
+  let run_h2 () =
+    H2_server_connection.run ~sw:conn_sw ~clock
+      ~flow:(tls_flow :> H2_server_connection.flow)
+      ~connection:(https_h2_connection_info peer epoch)
+      ~config ~runtime_factory
+      ~on_start:(fun connection -> on_start (H2 connection))
+      ~on_close:(fun stats -> on_close (Https_h2 stats))
+      handler
+  in
+  ignore
+    (Alpn_server.dispatch ~close:(fun () -> Eio.Flow.close tls_flow)
+       ~use_h1:run_h1 ~use_h2:run_h2 epoch.alpn_protocol
+      : (unit, Alpn_server.unsupported) result)
+
+let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
+    ?(config = Config.default) ?runtime_factory ?on_connection_start
+    ?on_connection_close ~tls_config ~(socket : _ Eio.Net.listening_socket)
+    handler =
+  ignore sw;
+  let runtime_factory =
+    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
+  in
+  let (_ : unit) =
+    Eio.Net.run_server socket ?stop
+      ~max_connections:config.max_connections
+      ~on_error:(fun _exn -> ())
+      (fun flow peer ->
+        Eio.Switch.run @@ fun conn_sw ->
+        run_https_connection ~conn_sw ~clock ~config ~runtime_factory
+          ?on_connection_start ?on_connection_close ~tls_config handler flow peer)
+  in
+  ()
+
+let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?stop
+    ?(config = Config.default) ?runtime_factory ?on_connection_close
+    ~tls_config ~(socket : _ Eio.Net.listening_socket) handler =
+  let on_connection_close =
+    Option.map
+      (fun on_connection_close _connection stats -> on_connection_close stats)
+      on_connection_close
+  in
+  run_https_on_socket_impl ~sw ~clock ?stop ~config ?runtime_factory
+    ?on_connection_close ~tls_config ~socket handler
+
+let run_https_impl ~sw ~net ~clock ?domain_manager
+    ?(domain_policy = Recommended) ?stop ?(config = Config.default)
+    ?runtime_factory ?on_connection_start ?on_connection_close ~tls_config ~addr
+    handler =
+  let runtime_factory =
+    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
+  in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
+  in
+  let additional_domains = additional_domains domain_policy domain_manager in
+  let (_ : unit) =
+    Eio.Net.run_server socket ?stop ?additional_domains
+      ~max_connections:config.max_connections
+      ~on_error:(fun _exn -> ())
+      (fun flow peer ->
+        Eio.Switch.run @@ fun conn_sw ->
+        run_https_connection ~conn_sw ~clock ~config ~runtime_factory
+          ?on_connection_start ?on_connection_close ~tls_config handler flow peer)
+  in
+  ()
+
+let run_https ~sw ~net ~clock ?domain_manager
+    ?(domain_policy = Recommended) ?stop ?(config = Config.default)
+    ?runtime_factory ?on_connection_close ~tls_config ~addr handler =
+  let on_connection_close =
+    Option.map
+      (fun on_connection_close _connection stats -> on_connection_close stats)
+      on_connection_close
+  in
+  run_https_impl ~sw ~net ~clock ?domain_manager ~domain_policy ?stop ~config
+    ?runtime_factory ?on_connection_close ~tls_config ~addr handler
+
 let tracked_h1_on_close t on_connection_close connection stats =
   unregister_connection t (H1 connection);
   Option.iter (fun on_connection_close -> on_connection_close stats)
@@ -334,6 +469,11 @@ let tracked_h2_on_close t on_connection_close connection stats =
   Option.iter (fun on_connection_close -> on_connection_close stats)
     on_connection_close
 
+let tracked_https_on_close t on_connection_close connection stats =
+  unregister_connection t connection;
+  Option.iter (fun on_connection_close -> on_connection_close stats)
+    on_connection_close
+
 let start_h2c_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
     ?on_connection_close ~socket handler =
   let t = create () in
@@ -356,4 +496,26 @@ let start_h2c ~sw ~net ~clock ?domain_manager
           register_connection t (H2 connection))
         ~on_connection_close:(tracked_h2_on_close t on_connection_close)
         ~addr handler);
+  t
+
+let start_https_on_socket ~sw ~clock ?(config = Config.default) ?runtime_factory
+    ?on_connection_close ~tls_config ~socket handler =
+  let t = create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      run_https_on_socket_impl ~sw ~clock ~stop:t.stop ~config ?runtime_factory
+        ~on_connection_start:(fun connection -> register_connection t connection)
+        ~on_connection_close:(tracked_https_on_close t on_connection_close)
+        ~tls_config ~socket handler);
+  t
+
+let start_https ~sw ~net ~clock ?domain_manager
+    ?(domain_policy = Recommended) ?(config = Config.default) ?runtime_factory
+    ?on_connection_close ~tls_config ~addr handler =
+  let t = create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      run_https_impl ~sw ~net ~clock ?domain_manager ~domain_policy ~stop:t.stop
+        ~config ?runtime_factory
+        ~on_connection_start:(fun connection -> register_connection t connection)
+        ~on_connection_close:(tracked_https_on_close t on_connection_close)
+        ~tls_config ~addr handler);
   t

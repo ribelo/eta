@@ -194,6 +194,12 @@ let () =
             test_openssl_server_alpn_selects_client_protocol;
           Alcotest.test_case "Tls_eio server_of_flow epoch" `Quick
             test_tls_eio_server_of_flow_handshake_epoch;
+          Alcotest.test_case "ALPN server dispatch routes" `Quick
+            test_alpn_server_dispatch_routes_and_closes_unsupported;
+          Alcotest.test_case "HTTPS server H1 ALPN request" `Quick
+            test_https_server_h1_alpn_request;
+          Alcotest.test_case "HTTPS server H2 ALPN request" `Quick
+            test_https_server_h2_alpn_request;
           Alcotest.test_case "OpenSSL server ctx rejects invalid cert" `Quick
             test_openssl_server_ctx_rejects_invalid_cert;
           Alcotest.test_case "OpenSSL server ctx rejects invalid key" `Quick

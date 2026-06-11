@@ -11,6 +11,10 @@ type domain_policy = Server_types.domain_policy =
 
 type runtime_factory = Server_types.runtime_factory
 
+type https_connection_stats =
+  | Https_h1 of H1_server_connection.stats
+  | Https_h2 of H2_server_connection.stats
+
 type t
 
 module Connection_info = Server_types.Connection_info
@@ -109,6 +113,58 @@ val run_h2c_on_socket :
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
   ?on_connection_close:(H2_server_connection.stats -> unit) ->
+  socket:_ Eio.Net.listening_socket ->
+  Eta_http.Server.handler ->
+  unit
+
+val start_https :
+  sw:Eio.Switch.t ->
+  net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?domain_manager:_ Eio.Domain_manager.t ->
+  ?domain_policy:domain_policy ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(https_connection_stats -> unit) ->
+  tls_config:Eta_http.Tls.Config.server ->
+  addr:Eio.Net.Sockaddr.stream ->
+  Eta_http.Server.handler ->
+  t
+
+val start_https_on_socket :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(https_connection_stats -> unit) ->
+  tls_config:Eta_http.Tls.Config.server ->
+  socket:_ Eio.Net.listening_socket ->
+  Eta_http.Server.handler ->
+  t
+
+val run_https :
+  sw:Eio.Switch.t ->
+  net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?domain_manager:_ Eio.Domain_manager.t ->
+  ?domain_policy:domain_policy ->
+  ?stop:unit Eio.Promise.t ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(https_connection_stats -> unit) ->
+  tls_config:Eta_http.Tls.Config.server ->
+  addr:Eio.Net.Sockaddr.stream ->
+  Eta_http.Server.handler ->
+  unit
+
+val run_https_on_socket :
+  sw:Eio.Switch.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?stop:unit Eio.Promise.t ->
+  ?config:Config.t ->
+  ?runtime_factory:runtime_factory ->
+  ?on_connection_close:(https_connection_stats -> unit) ->
+  tls_config:Eta_http.Tls.Config.server ->
   socket:_ Eio.Net.listening_socket ->
   Eta_http.Server.handler ->
   unit

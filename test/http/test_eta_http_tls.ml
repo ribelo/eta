@@ -133,6 +133,23 @@ let require_some label = function
   | Some value -> value
   | None -> Alcotest.failf "%s missing" label
 
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> Alcotest.fail "expected TCP listener"
+
+let read_all_response flow =
+  let buffer = Buffer.create 128 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop () =
+    match Eio.Flow.single_read flow scratch with
+    | 0 -> Buffer.contents buffer
+    | len ->
+        Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
+        loop ()
+    | exception End_of_file -> Buffer.contents buffer
+  in
+  loop ()
+
 let find_tls_eio_source () =
   let candidates =
     [
@@ -268,6 +285,203 @@ let test_tls_eio_server_of_flow_handshake_epoch () =
    | Error () -> Alcotest.fail "missing client TLS epoch");
   Eio.Flow.close client_flow;
   Eio.Flow.close server_flow
+
+let test_alpn_server_dispatch_routes_and_closes_unsupported () =
+  let routes = ref [] in
+  let closed = ref 0 in
+  let close () = incr closed in
+  let use_h1 () = routes := "h1" :: !routes in
+  let use_h2 () = routes := "h2" :: !routes in
+  let run alpn =
+    Eta_http_eio.Transport.Alpn_server.dispatch ~close ~use_h1 ~use_h2 alpn
+  in
+  let expect_ok label = function
+    | Ok () -> ()
+    | Error { Eta_http_eio.Transport.Alpn_server.protocol } ->
+        Alcotest.failf "%s rejected %s" label protocol
+  in
+  expect_ok "none routes h1" (run None);
+  expect_ok "http/1.1 routes h1" (run (Some "http/1.1"));
+  expect_ok "h2 routes h2" (run (Some "h2"));
+  (match run (Some "spdy/3") with
+   | Error { Eta_http_eio.Transport.Alpn_server.protocol } ->
+       Alcotest.(check string) "unsupported protocol" "spdy/3" protocol
+   | Ok () -> Alcotest.fail "unsupported ALPN was accepted");
+  Alcotest.(check int) "closed unsupported" 1 !closed;
+  Alcotest.(check (list string))
+    "routes" [ "h2"; "h1"; "h1" ] !routes
+
+let test_https_server_h1_alpn_request () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let seen_request, resolve_seen_request = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close = function
+    | Eta_http_eio.Server.Https_h1 stats ->
+        ignore (Eio.Promise.try_resolve resolve_closed_stats stats);
+        ignore (Eio.Promise.try_resolve resolve_stop ())
+    | Eta_http_eio.Server.Https_h2 _ ->
+        Alcotest.fail "HTTPS H1 request routed to H2"
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    ignore
+      (Eio.Promise.try_resolve resolve_seen_request
+         ( request.path,
+           request.scheme,
+           request.tls,
+           request.alpn_protocol,
+           request.connection_id ));
+    Eta.Effect.pure (Eta_http.Server.Response.text "secure-h1\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_https_on_socket ~sw ~clock ~stop ~tls_config
+        ~on_connection_close ~socket handler);
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+  Fun.protect
+    ~finally:(fun () -> try Eio.Flow.close tls_flow with _ -> ())
+    (fun () ->
+      Eio.Flow.copy_string
+        ("GET /secure HTTP/1.1\r\nHost: localhost\r\n"
+       ^ "Connection: close\r\n\r\n")
+        tls_flow;
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            read_all_response tls_flow)
+      in
+      Alcotest.(check string) "response"
+        ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+       ^ "Content-Length: 10\r\n\r\nsecure-h1\n")
+        response;
+      let path, scheme, tls, alpn_protocol, connection_id =
+        Eio.Promise.await seen_request
+      in
+      Alcotest.(check string) "path" "/secure" path;
+      Alcotest.(check string) "scheme" "https" scheme;
+      Alcotest.(check bool) "tls" true tls;
+      Alcotest.(check (option string)) "alpn" (Some "http/1.1") alpn_protocol;
+      Alcotest.(check bool) "connection id prefix" true
+        (String.starts_with ~prefix:"h1-" connection_id);
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed requests" 1 stats.completed_requests)
+
+let test_https_server_h2_alpn_request () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let seen_request, resolve_seen_request = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close = function
+    | Eta_http_eio.Server.Https_h2 stats ->
+        ignore (Eio.Promise.try_resolve resolve_closed_stats stats);
+        ignore (Eio.Promise.try_resolve resolve_stop ())
+    | Eta_http_eio.Server.Https_h1 _ ->
+        Alcotest.fail "HTTPS H2 request routed to H1"
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    ignore
+      (Eio.Promise.try_resolve resolve_seen_request
+         ( request.method_,
+           request.path,
+           request.scheme,
+           request.authority,
+           request.tls,
+           request.alpn_protocol,
+           request.connection_id ));
+    Eta.Effect.pure (Eta_http.Server.Response.text "secure-h2\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_https_on_socket ~sw ~clock ~stop ~tls_config
+        ~on_connection_close ~socket handler);
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "h2" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+  Alcotest.(check (option string))
+    "client ALPN" (Some "h2")
+    (Eta_http_eio.Tls.Eio.alpn_protocol tls_flow);
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(tls_flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"https"
+          ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+          `GET "/secure-h2"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Test_eta_http_h2_server.await_h2_response connection request)
+      in
+      Alcotest.(check int) "status" 200 status;
+      Alcotest.(check string) "body" "secure-h2\n" body;
+      let method_, path, scheme, authority, tls, alpn_protocol, connection_id =
+        Eio.Promise.await seen_request
+      in
+      Alcotest.(check string) "method" "GET" method_;
+      Alcotest.(check string) "path" "/secure-h2" path;
+      Alcotest.(check string) "scheme" "https" scheme;
+      Alcotest.(check (option string)) "authority" (Some "localhost") authority;
+      Alcotest.(check bool) "tls" true tls;
+      Alcotest.(check (option string)) "alpn" (Some "h2") alpn_protocol;
+      Alcotest.(check bool) "connection id prefix" true
+        (String.starts_with ~prefix:"h2-tls-" connection_id);
+      Eta_http_eio.H2.Connection.shutdown connection;
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed streams" 1 stats.completed_streams)
 
 let test_openssl_server_ctx_rejects_invalid_cert () =
   with_temp_file "eta-http-bad-cert" "not a certificate" @@ fun bad ->
