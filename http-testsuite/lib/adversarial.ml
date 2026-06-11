@@ -643,6 +643,32 @@ let h1_cl_te_smuggling ~env =
         flow;
       read_h1_response flow)
 
+let h1_missing_host ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_missing_host"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string "GET / HTTP/1.1\r\nConnection: close\r\n\r\n" flow;
+      read_h1_response flow)
+
+let h1_duplicate_host ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_duplicate_host"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        ("GET / HTTP/1.1\r\nHost: example.test\r\nHost: shadow.test\r\n"
+       ^ "Connection: close\r\n\r\n")
+        flow;
+      read_h1_response flow)
+
+let h1_invalid_host ~env =
+  run_eta_h1_adversarial_client ~env ~name:"h1_invalid_host"
+    ~expected_status:400 ~deadline_sec:1.0
+    (fun ~clock:_ flow ->
+      Eio.Flow.copy_string
+        "GET / HTTP/1.1\r\nHost: bad/name\r\nConnection: close\r\n\r\n"
+        flow;
+      read_h1_response flow)
+
 let h1_header_flood ~env =
   let config = h1_adversarial_config ~max_request_header_bytes:64 () in
   let flood = String.make 256 'x' in
@@ -783,6 +809,17 @@ let run_all ~env =
     add_cve_result "h1_cl_te_smuggling"
       (fun () -> h1_cl_te_smuggling ~env)
       results
+  in
+  let results =
+    add_cve_result "h1_missing_host" (fun () -> h1_missing_host ~env) results
+  in
+  let results =
+    add_cve_result "h1_duplicate_host"
+      (fun () -> h1_duplicate_host ~env)
+      results
+  in
+  let results =
+    add_cve_result "h1_invalid_host" (fun () -> h1_invalid_host ~env) results
   in
   let results =
     add_cve_result "h1_header_flood" (fun () -> h1_header_flood ~env) results

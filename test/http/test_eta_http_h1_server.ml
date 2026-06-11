@@ -263,6 +263,61 @@ let test_h1_server_connection_rejects_unsupported_expectation () =
   Alcotest.(check int) "completed requests" 0 stats.completed_requests;
   Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
 
+let check_bad_host_rejected ~name wire =
+  let handler_called = ref false in
+  let handler (_request : Eta_http.Server.Request.t) =
+    handler_called := true;
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string wire flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool)
+    (name ^ " response")
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+  Alcotest.(check bool) (name ^ " handler not called") false !handler_called;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) (name ^ " completed requests") 0 stats.completed_requests;
+  Alcotest.(check int) (name ^ " protocol errors") 1 stats.protocol_errors
+
+let test_h1_server_connection_rejects_missing_http11_host () =
+  check_bad_host_rejected ~name:"missing host"
+    "GET /missing HTTP/1.1\r\nConnection: close\r\n\r\n"
+
+let test_h1_server_connection_rejects_duplicate_http11_host () =
+  check_bad_host_rejected ~name:"duplicate host"
+    ("GET /duplicate HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Host: shadow.test\r\nConnection: close\r\n\r\n")
+
+let test_h1_server_connection_rejects_invalid_http11_host () =
+  check_bad_host_rejected ~name:"invalid host"
+    "GET /invalid HTTP/1.1\r\nHost: bad/name\r\nConnection: close\r\n\r\n"
+
+let test_h1_server_connection_allows_http10_without_host () =
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text request.path)
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string "GET /h10 HTTP/1.0\r\n\r\n" flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\n/h10"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 0 stats.protocol_errors
+
 let test_h1_server_connection_post_reads_chunked_body_and_trailers () =
   let seen, resolve_seen = Eio.Promise.create () in
   let handler (request : Eta_http.Server.Request.t) =

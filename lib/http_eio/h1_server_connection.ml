@@ -599,6 +599,107 @@ let expect_continue t head =
           (error t ~method_:head.method_ ~target:head.target
              (Expectation_failed { expectation }))
 
+let is_hexdig = function
+  | '0' .. '9' | 'A' .. 'F' | 'a' .. 'f' -> true
+  | _ -> false
+
+let is_reg_name_char = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' | '!'
+  | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
+      true
+  | _ -> false
+
+let is_ip_literal_char = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | ':' | '.' | '-' | '_' | '~'
+  | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
+      true
+  | _ -> false
+
+let valid_port value start finish =
+  start < finish
+  &&
+  let rec loop index acc =
+    if index = finish then acc >= 1 && acc <= 65535
+    else
+      match String.unsafe_get value index with
+      | '0' .. '9' as c ->
+          let next = (acc * 10) + Char.code c - Char.code '0' in
+          next <= 65535 && loop (index + 1) next
+      | _ -> false
+  in
+  loop start 0
+
+let valid_reg_name value start finish =
+  start < finish
+  &&
+  let rec loop index =
+    if index = finish then true
+    else
+      match String.unsafe_get value index with
+      | '%' ->
+          index + 2 < finish
+          && is_hexdig (String.unsafe_get value (index + 1))
+          && is_hexdig (String.unsafe_get value (index + 2))
+          && loop (index + 3)
+      | c -> is_reg_name_char c && loop (index + 1)
+  in
+  loop start
+
+let valid_ip_literal value start finish =
+  start < finish
+  &&
+  let rec loop index =
+    if index = finish then true
+    else
+      is_ip_literal_char (String.unsafe_get value index) && loop (index + 1)
+  in
+  loop start
+
+let rec find_char_string value index finish char =
+  if index >= finish then None
+  else if Char.equal (String.unsafe_get value index) char then Some index
+  else find_char_string value (index + 1) finish char
+
+let valid_host_authority value =
+  let len = String.length value in
+  if len = 0 then false
+  else if Char.equal (String.unsafe_get value 0) '[' then
+    match find_char_string value 1 len ']' with
+    | None -> false
+    | Some close ->
+        valid_ip_literal value 1 close
+        &&
+        if close + 1 = len then true
+        else
+          close + 2 < len
+          && Char.equal (String.unsafe_get value (close + 1)) ':'
+          && valid_port value (close + 2) len
+  else
+    let host_finish =
+      Option.value ~default:len (find_char_string value 0 len ':')
+    in
+    valid_reg_name value 0 host_finish
+    &&
+    if host_finish = len then true
+    else valid_port value (host_finish + 1) len
+
+let validate_authority t head =
+  match Eta_http.Core.Header.get_all "host" head.headers with
+  | [] when head.version = Eta_http.Core.Version.H1_1 ->
+      Error
+        (error t ~method_:head.method_ ~target:head.target
+           (Bad_request { message = "HTTP/1.1 request is missing Host header" }))
+  | [] -> Ok ()
+  | [ host ] when valid_host_authority host -> Ok ()
+  | [ _ ] ->
+      Error
+        (error t ~method_:head.method_ ~target:head.target
+           (Bad_request { message = "invalid Host header" }))
+  | _ ->
+      Error
+        (error t ~method_:head.method_ ~target:head.target
+           (Bad_request { message = "multiple Host headers" }))
+
 let request_allows_keep_alive head =
   let close = header_contains_token head.headers "connection" "close" in
   let keep_alive =
@@ -894,6 +995,10 @@ let handle_head_error t error =
   record_protocol_error t;
   write_default_error t (request_error_stub t) error
 
+let request_from_head t head ordinal =
+  request_of_head t head ordinal (Server.Body.empty ())
+    (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
+
 let rec run_requests t ordinal handler =
   match read_request_head_with_timeout t ordinal with
   | `Timeout timeout ->
@@ -903,55 +1008,56 @@ let rec run_requests t ordinal handler =
   | `Read (Error Clean_eof) -> ()
   | `Read (Error (Request_head_error error)) -> handle_head_error t error
   | `Read (Ok head) -> (
-      match expect_continue t head with
+      match validate_authority t head with
       | Error error ->
           record_protocol_error t;
-          let request =
-            request_of_head t head ordinal (Server.Body.empty ())
-              (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
-          in
-          write_default_error t request error
-      | Ok continue_state -> (
-          match request_body t head continue_state with
+          write_default_error t (request_from_head t head ordinal) error
+      | Ok () -> (
+          match expect_continue t head with
           | Error error ->
               record_protocol_error t;
-              let request =
-                request_of_head t head ordinal (Server.Body.empty ())
-                  (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
-              in
+              let request = request_from_head t head ordinal in
               write_default_error t request error
-          | Ok (body, trailers, body_control) ->
-              Server_stats.H1.request_started t.stats;
-              let request = request_of_head t head ordinal body trailers in
-              let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
-              let metrics = request_metrics t rt request in
-              t.current_metrics <- metrics;
-              Option.iter Server_metrics.request_started metrics;
-              let request_keep_alive = request_allows_keep_alive head in
-              let close_before_response =
-                (not request_keep_alive)
-                || not (body_can_reuse_before_response t body_control)
-              in
-              let response = run_handler t rt request handler in
-              let response_result =
-                write_response ~connection_close:close_before_response ~rt t
-                  request response
-              in
-              let reusable =
-                match response_result with
-                | Ok { connection_close } ->
-                    (not connection_close)
-                    && request_keep_alive
-                    && finish_request_body_for_reuse t rt body_control
-                | Error { error; response_started = false } ->
-                    write_default_error t request error;
-                    false
-                | Error { response_started = true; _ } -> false
-              in
-              Server_stats.H1.request_completed t.stats;
-              Option.iter Server_metrics.request_finished metrics;
-              t.current_metrics <- None;
-              if reusable then run_requests t (ordinal + 1) handler))
+          | Ok continue_state -> (
+              match request_body t head continue_state with
+              | Error error ->
+                  record_protocol_error t;
+                  let request = request_from_head t head ordinal in
+                  write_default_error t request error
+              | Ok (body, trailers, body_control) ->
+                  Server_stats.H1.request_started t.stats;
+                  let request = request_of_head t head ordinal body trailers in
+                  let rt =
+                    t.runtime_factory ~sw:t.sw ~connection:t.connection ()
+                  in
+                  let metrics = request_metrics t rt request in
+                  t.current_metrics <- metrics;
+                  Option.iter Server_metrics.request_started metrics;
+                  let request_keep_alive = request_allows_keep_alive head in
+                  let close_before_response =
+                    (not request_keep_alive)
+                    || not (body_can_reuse_before_response t body_control)
+                  in
+                  let response = run_handler t rt request handler in
+                  let response_result =
+                    write_response ~connection_close:close_before_response ~rt t
+                      request response
+                  in
+                  let reusable =
+                    match response_result with
+                    | Ok { connection_close } ->
+                        (not connection_close)
+                        && request_keep_alive
+                        && finish_request_body_for_reuse t rt body_control
+                    | Error { error; response_started = false } ->
+                        write_default_error t request error;
+                        false
+                    | Error { response_started = true; _ } -> false
+                  in
+                  Server_stats.H1.request_completed t.stats;
+                  Option.iter Server_metrics.request_finished metrics;
+                  t.current_metrics <- None;
+                  if reusable then run_requests t (ordinal + 1) handler)))
 
 let shutdown t _policy =
   if not t.closed then (

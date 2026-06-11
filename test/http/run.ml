@@ -117,6 +117,14 @@ let () =
             test_h1_server_connection_expect_allows_early_final_response;
           Alcotest.test_case "rejects unsupported Expect" `Quick
             test_h1_server_connection_rejects_unsupported_expectation;
+          Alcotest.test_case "rejects missing HTTP/1.1 Host" `Quick
+            test_h1_server_connection_rejects_missing_http11_host;
+          Alcotest.test_case "rejects duplicate HTTP/1.1 Host" `Quick
+            test_h1_server_connection_rejects_duplicate_http11_host;
+          Alcotest.test_case "rejects invalid HTTP/1.1 Host" `Quick
+            test_h1_server_connection_rejects_invalid_http11_host;
+          Alcotest.test_case "allows HTTP/1.0 without Host" `Quick
+            test_h1_server_connection_allows_http10_without_host;
           Alcotest.test_case "POST reads chunked body and trailers" `Quick
             test_h1_server_connection_post_reads_chunked_body_and_trailers;
           Alcotest.test_case "rejects invalid chunked body" `Quick
