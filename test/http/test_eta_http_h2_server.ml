@@ -3,6 +3,10 @@ open Test_eta_http_support
 type failing_server_flow_mode =
   | Failing_read
   | Failing_write
+  | Timeout_write of {
+      request_bytes : string;
+      timeout_writes : bool ref;
+    }
 
 type failing_server_flow = {
   mode : failing_server_flow_mode;
@@ -28,7 +32,7 @@ module Failing_server_flow = struct
   let single_read t _dst =
     match t.mode with
     | Failing_read -> raise (Failure "server read boom")
-    | Failing_write -> (
+    | Failing_write | Timeout_write _ -> (
         match t.pending_read with
         | Some data ->
             t.pending_read <- None;
@@ -39,6 +43,8 @@ module Failing_server_flow = struct
     match t.mode with
     | Failing_read -> Cstruct.lenv bufs
     | Failing_write -> raise (Failure "server write boom")
+    | Timeout_write { timeout_writes; _ } ->
+        if !timeout_writes then raise Eio.Time.Timeout else Cstruct.lenv bufs
 
   let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
 
@@ -64,11 +70,11 @@ let failing_server_flow mode =
           | `Write iovecs -> Test_eta_http_h2_support.h2_iovecs_to_string iovecs
           | `Yield -> Alcotest.fail "client preface unexpectedly yielded"
           | `Close _ -> Alcotest.fail "client preface unexpectedly closed")
+    | Timeout_write { request_bytes; _ } -> Some request_bytes
   in
   let read_block, read_release =
     match mode with
-    | Failing_read -> (None, None)
-    | Failing_write -> (None, None)
+    | Failing_read | Failing_write | Timeout_write _ -> (None, None)
   in
   let state =
     { mode; shutdowns = 0; closes = 0; pending_read; read_block; read_release }
@@ -82,6 +88,37 @@ let failing_server_flow mode =
                (Eio.Flow.Pi.two_way (module Failing_server_flow))) )
   in
   (state, flow)
+
+let h2_client_request_bytes target =
+  let client =
+    H2.Client_connection.create
+      ~error_handler:(fun _ -> Alcotest.fail "unexpected client h2 error")
+      ()
+  in
+  let request =
+    H2.Request.create ~scheme:"http"
+      ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+      `GET target
+  in
+  let request_body =
+    H2.Client_connection.request client request
+      ~error_handler:(fun _ -> Alcotest.fail "unexpected stream h2 error")
+      ~response_handler:(fun _ _ -> ())
+  in
+  H2.Body.Writer.close request_body;
+  let rec drain acc =
+    match H2.Client_connection.next_write_operation client with
+    | `Write iovecs ->
+        let data = Test_eta_http_h2_support.h2_iovecs_to_string iovecs in
+        H2.Client_connection.report_write_result client
+          (`Ok (String.length data));
+        drain (data :: acc)
+    | `Yield -> String.concat "" (List.rev acc)
+    | `Close _ ->
+        H2.Client_connection.report_write_result client `Closed;
+        String.concat "" (List.rev acc)
+  in
+  drain []
 
 let tcp_port = function
   | `Tcp (_, port) -> port
@@ -182,6 +219,72 @@ let test_h2c_server_read_exception_closes_typed () =
 
 let test_h2c_server_write_exception_closes_typed () =
   run_h2c_with_failing_flow Failing_write
+
+let test_h2c_server_response_write_timeout_is_typed () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let timeout_writes = ref false in
+  let state, flow =
+    failing_server_flow
+      (Timeout_write
+         {
+           request_bytes = h2_client_request_bytes "/response-timeout";
+           timeout_writes;
+         })
+  in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let release_seen, resolve_release_seen = Eio.Promise.create () in
+  let released = ref 0 in
+  let server_timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_write_timeout = Some (Eta.Duration.ms 1);
+    }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with timeouts = server_timeouts }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Alcotest.(check string) "path" "/response-timeout" request.path;
+    let sent = ref false in
+    let body =
+      Eta_http.Server.Response.Body.stream
+        ~release:(fun () ->
+          Eta.Effect.sync (fun () ->
+              incr released;
+              ignore (Eio.Promise.try_resolve resolve_release_seen ())))
+        (fun () ->
+          if !sent then Eta.Effect.pure None
+          else (
+            sent := true;
+            timeout_writes := true;
+            Eta.Effect.pure (Some (Bytes.of_string "blocked"))))
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+      Eta_http_eio.H2.Server_connection.run_h2c ~sw ~clock ~flow
+        ~peer:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 31337))
+        ~config ~runtime_factory
+        ~on_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        handler);
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+      Eio.Promise.await release_seen);
+  let stats = Eio.Promise.await closed_stats in
+  Alcotest.(check bool) "timeout armed" true !timeout_writes;
+  Alcotest.(check int) "released stream" 1 !released;
+  Alcotest.(check int) "active streams" 0 stats.active_streams;
+  Alcotest.(check int) "completed streams" 0 stats.completed_streams;
+  Alcotest.(check int) "reset streams" 1 stats.reset_streams;
+  Alcotest.(check bool) "flow shutdown" true (state.shutdowns > 0)
 
 let test_h2c_server_fixed_response_and_echo_body () =
   run_eio @@ fun env ->

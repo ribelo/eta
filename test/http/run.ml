@@ -313,6 +313,8 @@ let () =
             test_h2c_server_read_exception_closes_typed;
           Alcotest.test_case "h2c write exception closes typed" `Quick
             test_h2c_server_write_exception_closes_typed;
+          Alcotest.test_case "h2c response write timeout is typed" `Quick
+            test_h2c_server_response_write_timeout_is_typed;
         ] );
       ( "h2-security",
         [

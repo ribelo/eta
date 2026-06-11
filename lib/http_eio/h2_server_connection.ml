@@ -52,6 +52,7 @@ type stream_state = {
 type t = {
   sw : Eio.Switch.t;
   sleep : float -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
   h2 : H2.Server_connection.t;
   security : Eta_http.H2.Security.t;
@@ -67,10 +68,17 @@ type t = {
   runtime_factory : Types.runtime_factory;
   stats : Server_stats.H2.t;
   connection_metrics : Server_metrics.t option;
+  closed_signal : unit Eio.Promise.t;
+  close_signal : unit Eio.Promise.u;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
   mutable closed : bool;
 }
+
+let mark_closed t =
+  if not t.closed then (
+    t.closed <- true;
+    ignore (Eio.Promise.try_resolve t.close_signal ()))
 
 let stats t =
   Server_stats.H2.snapshot t.stats
@@ -170,6 +178,9 @@ let connection_write_error t exn =
   response_write_error t
     ~message:("connection write failed: " ^ Printexc.to_string exn)
     ()
+
+let response_write_timeout_error t =
+  response_write_error t ~message:"response write timed out" ()
 
 let security_error t kind =
   let http_error =
@@ -339,20 +350,26 @@ let respond_fixed reqd response =
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
 
-let write_iovecs flow iovecs =
+let write_iovecs t iovecs =
   if H2.IOVec.lengthv iovecs = 0 then 0
-  else Eio.Flow.single_write flow (Writer.cstructs_of_iovecs iovecs)
+  else
+    let write () =
+      Eio.Flow.single_write t.flow (Writer.cstructs_of_iovecs iovecs)
+    in
+    match t.config.server.timeouts.response_write_timeout with
+    | None -> write ()
+    | Some timeout -> t.with_timeout timeout write
 
-let rec drain_writes flow h2 =
-  match H2.Server_connection.next_write_operation h2 with
+let rec drain_writes t =
+  match H2.Server_connection.next_write_operation t.h2 with
   | `Write iovecs ->
-      let written = write_iovecs flow iovecs in
-      H2.Server_connection.report_write_result h2 (`Ok written);
-      drain_writes flow h2
+      let written = write_iovecs t iovecs in
+      H2.Server_connection.report_write_result t.h2 (`Ok written);
+      drain_writes t
   | `Yield -> ()
   | `Close _ ->
-      H2.Server_connection.report_write_result h2 `Closed;
-      (try Eio.Flow.shutdown flow `Send with _ -> ())
+      H2.Server_connection.report_write_result t.h2 `Closed;
+      (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
   match config.Types.Config.h2_config with
@@ -532,14 +549,14 @@ let fail_active_streams t request_error =
 let handle_security_error t kind =
   let error = security_error t kind in
   record_protocol_error t;
-  t.closed <- true;
+  mark_closed t;
   fail_active_streams t error;
   try Eio.Flow.shutdown t.flow `All with _ -> ()
 
 let finish_graceful_shutdown_if_idle t =
   if t.graceful_shutdown && (not t.closed) && Hashtbl.length t.streams = 0 then (
-    t.closed <- true;
-    drain_writes t.flow t.h2;
+    mark_closed t;
+    drain_writes t;
     try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let arm_request_body_read t ordinal resolver =
@@ -574,10 +591,14 @@ let discard_request_body t ordinal _drain resolver =
 
 let start_response t ordinal response resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (response_write_error t ()))
+  | None ->
+      resolve resolver (Error (response_write_error t ()));
+      `Done
   | Some state when state.response_done ->
       resolve resolver
-        (Error (response_write_error t ~message:"response already completed" ()))
+        (Error
+           (response_write_error t ~message:"response already completed" ()));
+      `Done
   | Some state -> (
       match Server.Response.body response with
       | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
@@ -585,8 +606,9 @@ let start_response t ordinal response resolver =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
           state.response_writer <- Some writer;
+          state.response_write_resolver <- Some resolver;
           discard_request_body_with_policy ~drain:true t ordinal state;
-          resolve resolver (Ok ())
+          `Flush (state, resolver)
       | Empty | Fixed _ ->
           (match Server.Response.body response with
           | Empty -> ()
@@ -601,14 +623,16 @@ let start_response t ordinal response resolver =
           | Stream _ -> assert false);
           respond_fixed state.reqd response;
           finish_response t ordinal state;
-          resolve resolver (Ok ())
+          resolve resolver (Ok ());
+          `Done
       | Stream _ ->
           let writer =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
           state.response_writer <- Some writer;
+          state.response_write_resolver <- Some resolver;
           discard_request_body_with_policy ~drain:true t ordinal state;
-          resolve resolver (Ok ()))
+          `Flush (state, resolver))
 
 let write_response_chunk t ordinal chunk resolver =
   match Hashtbl.find_opt t.streams ordinal with
@@ -647,10 +671,13 @@ let schedule_response_trailers t ordinal trailers resolver =
       resolve resolver
         (Error
            (response_write_error t
-              ~message:"invalid response trailer header" ()))
+              ~message:"invalid response trailer header" ()));
+      `Done
   | None -> (
       match Hashtbl.find_opt t.streams ordinal with
-      | None -> resolve resolver (Error (response_write_error t ()))
+      | None ->
+          resolve resolver (Error (response_write_error t ()));
+          `Done
       | Some state -> (
           try
             if not (List.is_empty trailers) then
@@ -660,20 +687,25 @@ let schedule_response_trailers t ordinal trailers resolver =
                       (fun (name, value) ->
                         (Eta_http.Core.Header.normalize_name name, value))
                       trailers));
-            resolve resolver (Ok ())
+            state.response_write_resolver <- Some resolver;
+            `Flush (state, resolver)
           with exn ->
             resolve resolver
               (Error
-                 (response_write_error t ~message:(Printexc.to_string exn) ()))))
+                 (response_write_error t ~message:(Printexc.to_string exn) ()));
+            `Done))
 
 let close_response_writer t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (response_write_error t ()))
+  | None ->
+      resolve resolver (Error (response_write_error t ()));
+      `Done
   | Some { response_writer = None; _ } ->
       resolve resolver
         (Error
            (response_write_error t
-              ~message:"response streaming writer has not been started" ()))
+              ~message:"response streaming writer has not been started" ()));
+      `Done
   | Some state -> (
       match state.response_writer with
       | None -> assert false
@@ -682,8 +714,8 @@ let close_response_writer t ordinal resolver =
              if not (H2.Body.Writer.is_closed writer) then
                H2.Body.Writer.close writer
            with _ -> ());
-          finish_response t ordinal state;
-          resolve resolver (Ok ()))
+          state.response_write_resolver <- Some resolver;
+          `Flush (state, resolver))
 
 let fail_response t ordinal error =
   match Hashtbl.find_opt t.streams ordinal with
@@ -698,7 +730,7 @@ let fail_response t ordinal error =
 
 let begin_immediate_shutdown t =
   if not t.closed then (
-    t.closed <- true;
+    mark_closed t;
     fail_active_streams t (shutdown_error t);
     try Eio.Flow.shutdown t.flow `All with _ -> ())
 
@@ -737,49 +769,62 @@ let handle_command t = function
               match append_ingress t bytes ~off ~len with
               | Error error ->
                   record_protocol_error t;
-                  t.closed <- true;
+                  mark_closed t;
                   fail_active_streams t error;
                   (try Eio.Flow.shutdown t.flow `All with _ -> ())
               | Ok () ->
                   feed_ingress t;
-                  drain_writes t.flow t.h2))
+                  drain_writes t))
   | Ingress_eof ->
-      t.closed <- true;
+      mark_closed t;
       fail_active_streams t (connection_closed_error t Request_body);
       read_eof t;
-      drain_writes t.flow t.h2
+      drain_writes t
   | Ingress_failed error ->
-      t.closed <- true;
+      mark_closed t;
       fail_active_streams t error;
       (try Eio.Flow.shutdown t.flow `All with _ -> ())
   | Request_body_read (ordinal, resolver) ->
       arm_request_body_read t ordinal resolver;
-      drain_writes t.flow t.h2
+      drain_writes t
   | Request_body_discard (ordinal, drain, resolver) ->
       discard_request_body t ordinal drain resolver;
-      drain_writes t.flow t.h2
+      drain_writes t
   | Response_start (ordinal, response, resolver) ->
-      start_response t ordinal response resolver;
-      drain_writes t.flow t.h2
+      (match start_response t ordinal response resolver with
+      | `Done -> drain_writes t
+      | `Flush (state, resolver) ->
+          drain_writes t;
+          state.response_write_resolver <- None;
+          resolve resolver (Ok ()))
   | Response_chunk (ordinal, chunk, resolver) ->
       write_response_chunk t ordinal chunk resolver;
-      drain_writes t.flow t.h2
+      drain_writes t
   | Response_trailers (ordinal, trailers, resolver) ->
-      schedule_response_trailers t ordinal trailers resolver;
-      drain_writes t.flow t.h2
+      (match schedule_response_trailers t ordinal trailers resolver with
+      | `Done -> drain_writes t
+      | `Flush (state, resolver) ->
+          drain_writes t;
+          state.response_write_resolver <- None;
+          resolve resolver (Ok ()))
   | Response_close (ordinal, resolver) ->
-      close_response_writer t ordinal resolver;
-      drain_writes t.flow t.h2
+      (match close_response_writer t ordinal resolver with
+      | `Done -> drain_writes t
+      | `Flush (state, resolver) ->
+          drain_writes t;
+          state.response_write_resolver <- None;
+          finish_response t ordinal state;
+          resolve resolver (Ok ()))
   | Response_failed (ordinal, error) ->
       fail_response t ordinal error;
-      drain_writes t.flow t.h2
+      drain_writes t
   | Shutdown policy ->
       begin_shutdown t policy;
-      drain_writes t.flow t.h2
+      drain_writes t
 
 let rec owner_loop t =
   if (not t.closed) && not (H2.Server_connection.is_closed t.h2) then (
-    drain_writes t.flow t.h2;
+    drain_writes t;
     let command = Eio.Stream.take t.commands in
     handle_command t command;
     finish_graceful_shutdown_if_idle t;
@@ -806,7 +851,7 @@ let reader_loop t =
   loop ()
 
 let fail_owner_loop t error =
-  t.closed <- true;
+  mark_closed t;
   fail_active_streams t error;
   try Eio.Flow.shutdown t.flow `All with _ -> ()
 
@@ -814,13 +859,19 @@ let run_owner_loop t =
   try owner_loop t
   with
   | Eio.Cancel.Cancelled _ -> fail_owner_loop t (shutdown_error t)
+  | Eio.Time.Timeout -> fail_owner_loop t (response_write_timeout_error t)
   | exn -> fail_owner_loop t (connection_write_error t exn)
 
 let await_owner t make =
   if t.closed then Error (connection_closed_error t Response_body)
   else
     let promise, resolver = Eio.Promise.create () in
-    if enqueue t (make resolver) then Eio.Promise.await promise
+    if enqueue t (make resolver) then
+      Eio.Fiber.first
+        (fun () -> Eio.Promise.await promise)
+        (fun () ->
+          Eio.Promise.await t.closed_signal;
+          Error (connection_closed_error t Response_body))
     else Error (connection_closed_error t Response_body)
 
 let response_error_of_cause t cause =
@@ -832,19 +883,28 @@ let release_response_stream rt stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
   | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
 
+let read_response_stream t rt stream =
+  Eio.Fiber.first
+    (fun () ->
+      `Read (Eta.Runtime.run rt (stream.Server.Response.Body.read ())))
+    (fun () ->
+      Eio.Promise.await t.closed_signal;
+      `Closed)
+
 let fail_stream_response t rt ordinal stream error =
   ignore (enqueue t (Response_failed (ordinal, error)));
   release_response_stream rt stream
 
 let rec pump_response_stream t rt ordinal response stream =
-  match Eta.Runtime.run rt (stream.Server.Response.Body.read ()) with
-  | Eta.Exit.Error cause ->
+  match read_response_stream t rt stream with
+  | `Closed -> release_response_stream rt stream
+  | `Read (Eta.Exit.Error cause) ->
       fail_stream_response t rt ordinal stream (response_error_of_cause t cause)
-  | Eta.Exit.Ok (Some chunk) -> (
+  | `Read (Eta.Exit.Ok (Some chunk)) -> (
       match await_owner t (fun resolver -> Response_chunk (ordinal, chunk, resolver)) with
       | Ok () -> pump_response_stream t rt ordinal response stream
       | Error error -> fail_stream_response t rt ordinal stream error)
-  | Eta.Exit.Ok None -> (
+  | `Read (Eta.Exit.Ok None) -> (
       let trailers =
         match Eta.Runtime.run rt ((Server.Response.trailers response) ()) with
         | Eta.Exit.Ok trailers -> Ok trailers
@@ -942,11 +1002,17 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     Eta_http.H2.Security.create
       ?config:config.Types.Config.h2_security_config ()
   in
+  let closed_signal, close_signal = Eio.Promise.create () in
   let t =
     let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
       sw;
       sleep = Eio.Time.sleep clock;
+      with_timeout =
+        (fun timeout f ->
+          Eio.Time.with_timeout_exn clock
+            (Eta.Duration.to_seconds_float timeout)
+            f);
       flow;
       h2;
       security;
@@ -963,6 +1029,8 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       stats = Server_stats.H2.create ();
       connection_metrics =
         connection_metrics ~sw ~config ~runtime_factory ~connection;
+      closed_signal;
+      close_signal;
       graceful_shutdown = false;
       shutdown_timer_started = false;
       closed = false;
@@ -975,6 +1043,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
   Option.iter (fun on_start -> on_start t) on_start;
   Fun.protect
     ~finally:(fun () ->
+      mark_closed t;
       Option.iter
         (fun metrics -> Server_metrics.active_connections metrics 0)
         t.connection_metrics;
