@@ -3,13 +3,20 @@
 type ctx
 type ssl
 
+type server_certificate = {
+  server_name : string;
+  certificate_chain_file : string;
+  private_key_file : string;
+}
+
 type handshake_result =
   | Handshake_ok
   | Handshake_error of int
 
 external create_ctx : unit -> ctx = "eta_openssl_ctx_create"
 external ctx_load_ca : ctx -> string -> unit = "eta_openssl_ctx_load_ca"
-external create_server_ctx_raw : string -> string -> string list -> ctx
+external create_server_ctx_raw :
+  string -> string -> server_certificate list -> bool -> string list -> ctx
   = "eta_openssl_server_ctx_create"
 external create_server_ssl : ctx -> ssl = "eta_openssl_server_ssl_create"
 external create_ssl_raw : ctx -> string option -> string option -> string list -> ssl
@@ -23,6 +30,7 @@ external bio_write_raw : ssl -> Cstruct.buffer -> int -> int -> int = "eta_opens
 external bio_write_pending_raw : ssl -> int = "eta_openssl_bio_write_pending"
 external ssl_pending_raw : ssl -> int = "eta_openssl_ssl_pending"
 external get_alpn_selected_raw : ssl -> string option = "eta_openssl_ssl_get_alpn_selected"
+external get_servername_raw : ssl -> string option = "eta_openssl_ssl_get_servername"
 external get_verify_result_raw : ssl -> int = "eta_openssl_ssl_get_verify_result"
 external err_peek_error_raw : unit -> string option = "eta_openssl_err_peek_error"
 external err_clear_error_raw : unit -> unit = "eta_openssl_err_clear_error"
@@ -38,8 +46,13 @@ let random_bytes len =
 let create_ssl ctx ~hostname ~ip ~alpn_protocols =
   create_ssl_raw ctx hostname ip alpn_protocols
 
-let create_server_ctx ~certificate_chain_file ~private_key_file ~alpn_protocols =
-  create_server_ctx_raw certificate_chain_file private_key_file alpn_protocols
+let server_certificate ~server_name ~certificate_chain_file ~private_key_file =
+  { server_name; certificate_chain_file; private_key_file }
+
+let create_server_ctx ?(certificates = []) ?(require_sni_match = false)
+    ~certificate_chain_file ~private_key_file ~alpn_protocols () =
+  create_server_ctx_raw certificate_chain_file private_key_file certificates
+    require_sni_match alpn_protocols
 
 let handshake ssl =
   match handshake_raw ssl with
@@ -54,6 +67,7 @@ let bio_write ssl buf off len = bio_write_raw ssl buf off len
 let bio_write_pending ssl = bio_write_pending_raw ssl
 let ssl_pending ssl = ssl_pending_raw ssl
 let get_alpn_selected ssl = get_alpn_selected_raw ssl
+let get_servername ssl = get_servername_raw ssl
 let get_verify_result ssl = get_verify_result_raw ssl
 let err_peek_error () = err_peek_error_raw ()
 let err_clear_error () = err_clear_error_raw ()

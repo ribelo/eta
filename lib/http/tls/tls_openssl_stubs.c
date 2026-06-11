@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
@@ -34,10 +35,22 @@ typedef struct {
 } eta_alpn_config;
 
 typedef struct {
+  char *name;
+  SSL_CTX *ctx;
+} eta_sni_entry;
+
+typedef struct {
+  eta_sni_entry *entries;
+  size_t count;
+  int require_match;
+} eta_sni_config;
+
+typedef struct {
   SSL_CTX *ctx;
 } eta_ssl_ctx_box;
 
 static int eta_alpn_ex_index = -1;
+static int eta_sni_ex_index = -1;
 
 static void eta_alpn_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                              int idx, long argl, void *argp)
@@ -54,6 +67,27 @@ static void eta_alpn_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   }
 }
 
+static void eta_sni_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                            int idx, long argl, void *argp)
+{
+  (void)parent;
+  (void)ad;
+  (void)idx;
+  (void)argl;
+  (void)argp;
+  eta_sni_config *sni = (eta_sni_config *)ptr;
+  if (sni != NULL) {
+    for (size_t i = 0; i < sni->count; i++) {
+      free(sni->entries[i].name);
+      if (sni->entries[i].ctx != NULL) {
+        SSL_CTX_free(sni->entries[i].ctx);
+      }
+    }
+    free(sni->entries);
+    free(sni);
+  }
+}
+
 static int eta_alpn_ex_index_get(void)
 {
   if (eta_alpn_ex_index < 0) {
@@ -61,6 +95,15 @@ static int eta_alpn_ex_index_get(void)
         SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, eta_alpn_ex_free);
   }
   return eta_alpn_ex_index;
+}
+
+static int eta_sni_ex_index_get(void)
+{
+  if (eta_sni_ex_index < 0) {
+    eta_sni_ex_index =
+        SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, eta_sni_ex_free);
+  }
+  return eta_sni_ex_index;
 }
 
 static int eta_ssl_ctx_cmp(value v1, value v2)
@@ -276,6 +319,105 @@ static int eta_alpn_select_cb(SSL *ssl, const unsigned char **out,
   return SSL_TLSEXT_ERR_NOACK;
 }
 
+static int eta_install_alpn(SSL_CTX *ctx, const unsigned char *wire, size_t len)
+{
+  if (len == 0) {
+    return 1;
+  }
+  eta_alpn_config *alpn = malloc(sizeof(*alpn));
+  if (alpn == NULL) {
+    return 0;
+  }
+  alpn->wire = malloc(len);
+  if (alpn->wire == NULL) {
+    free(alpn);
+    return 0;
+  }
+  memcpy(alpn->wire, wire, len);
+  alpn->len = (unsigned int)len;
+  int idx = eta_alpn_ex_index_get();
+  if (idx < 0 || SSL_CTX_set_ex_data(ctx, idx, alpn) != 1) {
+    free(alpn->wire);
+    free(alpn);
+    return 0;
+  }
+  SSL_CTX_set_alpn_select_cb(ctx, eta_alpn_select_cb, alpn);
+  return 1;
+}
+
+static SSL_CTX *eta_new_server_ctx(const char *cert, const char *key,
+                                   const unsigned char *alpn_wire,
+                                   size_t alpn_len)
+{
+  const SSL_METHOD *method = TLS_server_method();
+  if (method == NULL) {
+    caml_failwith("TLS_server_method failed");
+  }
+  SSL_CTX *ctx = SSL_CTX_new(method);
+  if (ctx == NULL) {
+    caml_failwith("SSL_CTX_new failed");
+  }
+
+  if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
+      !SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION)) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_proto_version failed");
+  }
+
+  if (SSL_CTX_set_cipher_list(ctx, ETA_CIPHER_LIST) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_cipher_list failed");
+  }
+
+  if (SSL_CTX_use_certificate_chain_file(ctx, cert) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_use_certificate_chain_file failed");
+  }
+
+  if (SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_use_PrivateKey_file failed");
+  }
+
+  if (SSL_CTX_check_private_key(ctx) != 1) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_check_private_key failed");
+  }
+
+  if (!eta_install_alpn(ctx, alpn_wire, alpn_len)) {
+    SSL_CTX_free(ctx);
+    caml_failwith("SSL_CTX_set_ex_data failed");
+  }
+
+  return ctx;
+}
+
+static int eta_sni_select_cb(SSL *ssl, int *ad, void *arg)
+{
+  eta_sni_config *config = (eta_sni_config *)arg;
+  const char *name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (config == NULL || name == NULL || name[0] == '\0') {
+    if (config != NULL && config->require_match) {
+      *ad = SSL_AD_UNRECOGNIZED_NAME;
+      return SSL_TLSEXT_ERR_ALERT_FATAL;
+    }
+    return SSL_TLSEXT_ERR_NOACK;
+  }
+
+  for (size_t i = 0; i < config->count; i++) {
+    if (strcasecmp(config->entries[i].name, name) == 0) {
+      SSL_set_SSL_CTX(ssl, config->entries[i].ctx);
+      return SSL_TLSEXT_ERR_OK;
+    }
+  }
+
+  if (config->require_match) {
+    *ad = SSL_AD_UNRECOGNIZED_NAME;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+  }
+  return SSL_TLSEXT_ERR_NOACK;
+}
+
 /* ------------------------------------------------------------------ */
 /* OCaml externals                                                    */
 
@@ -331,74 +473,75 @@ CAMLprim value eta_openssl_ctx_load_ca(value v_ctx, value v_path)
 }
 
 CAMLprim value eta_openssl_server_ctx_create(value v_cert, value v_key,
+                                             value v_sni_certs,
+                                             value v_require_sni_match,
                                              value v_alpn)
 {
-  CAMLparam3(v_cert, v_key, v_alpn);
+  CAMLparam5(v_cert, v_key, v_sni_certs, v_require_sni_match, v_alpn);
+  CAMLlocal2(v_tail, v_entry);
   size_t alpn_len = 0;
   unsigned char *alpn_wire = eta_build_alpn_ocaml(v_alpn, &alpn_len);
-  eta_alpn_config *alpn = NULL;
+  SSL_CTX *ctx =
+      eta_new_server_ctx(String_val(v_cert), String_val(v_key), alpn_wire,
+                         alpn_len);
 
-  const SSL_METHOD *method = TLS_server_method();
-  if (method == NULL) {
-    free(alpn_wire);
-    caml_failwith("TLS_server_method failed");
-  }
-  SSL_CTX *ctx = SSL_CTX_new(method);
-  if (ctx == NULL) {
-    free(alpn_wire);
-    caml_failwith("SSL_CTX_new failed");
+  size_t count = 0;
+  v_tail = v_sni_certs;
+  while (Is_block(v_tail)) {
+    count++;
+    v_tail = Field(v_tail, 1);
   }
 
-  if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
-      !SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION)) {
-    free(alpn_wire);
-    SSL_CTX_free(ctx);
-    caml_failwith("SSL_CTX_set_proto_version failed");
-  }
-
-  if (SSL_CTX_set_cipher_list(ctx, ETA_CIPHER_LIST) != 1) {
-    free(alpn_wire);
-    SSL_CTX_free(ctx);
-    caml_failwith("SSL_CTX_set_cipher_list failed");
-  }
-
-  if (SSL_CTX_use_certificate_chain_file(ctx, String_val(v_cert)) != 1) {
-    free(alpn_wire);
-    SSL_CTX_free(ctx);
-    caml_failwith("SSL_CTX_use_certificate_chain_file failed");
-  }
-
-  if (SSL_CTX_use_PrivateKey_file(ctx, String_val(v_key), SSL_FILETYPE_PEM) != 1) {
-    free(alpn_wire);
-    SSL_CTX_free(ctx);
-    caml_failwith("SSL_CTX_use_PrivateKey_file failed");
-  }
-
-  if (SSL_CTX_check_private_key(ctx) != 1) {
-    free(alpn_wire);
-    SSL_CTX_free(ctx);
-    caml_failwith("SSL_CTX_check_private_key failed");
-  }
-
-  if (alpn_len > 0) {
-    alpn = malloc(sizeof(*alpn));
-    if (alpn == NULL) {
+  if (count > 0 || Bool_val(v_require_sni_match)) {
+    eta_sni_config *sni = calloc(1, sizeof(*sni));
+    if (sni == NULL) {
       free(alpn_wire);
       SSL_CTX_free(ctx);
-      caml_failwith("malloc failed");
+      caml_failwith("calloc failed");
     }
-    alpn->wire = alpn_wire;
-    alpn->len = (unsigned int)alpn_len;
-    int idx = eta_alpn_ex_index_get();
-    if (idx < 0 || SSL_CTX_set_ex_data(ctx, idx, alpn) != 1) {
-      free(alpn->wire);
-      free(alpn);
+    sni->count = count;
+    sni->require_match = Bool_val(v_require_sni_match);
+    if (count > 0) {
+      sni->entries = calloc(count, sizeof(*sni->entries));
+      if (sni->entries == NULL) {
+        free(sni);
+        free(alpn_wire);
+        SSL_CTX_free(ctx);
+        caml_failwith("calloc failed");
+      }
+    }
+
+    size_t i = 0;
+    v_tail = v_sni_certs;
+    while (Is_block(v_tail)) {
+      v_entry = Field(v_tail, 0);
+      const char *name = String_val(Field(v_entry, 0));
+      const char *cert = String_val(Field(v_entry, 1));
+      const char *key = String_val(Field(v_entry, 2));
+      sni->entries[i].name = strdup(name);
+      if (sni->entries[i].name == NULL) {
+        free(alpn_wire);
+        SSL_CTX_free(ctx);
+        eta_sni_ex_free(NULL, sni, NULL, 0, 0, NULL);
+        caml_failwith("strdup failed");
+      }
+      sni->entries[i].ctx = eta_new_server_ctx(cert, key, alpn_wire, alpn_len);
+      i++;
+      v_tail = Field(v_tail, 1);
+    }
+
+    int idx = eta_sni_ex_index_get();
+    if (idx < 0 || SSL_CTX_set_ex_data(ctx, idx, sni) != 1) {
+      free(alpn_wire);
       SSL_CTX_free(ctx);
+      eta_sni_ex_free(NULL, sni, NULL, 0, 0, NULL);
       caml_failwith("SSL_CTX_set_ex_data failed");
     }
-    SSL_CTX_set_alpn_select_cb(ctx, eta_alpn_select_cb, alpn);
+    SSL_CTX_set_tlsext_servername_callback(ctx, eta_sni_select_cb);
+    SSL_CTX_set_tlsext_servername_arg(ctx, sni);
   }
 
+  free(alpn_wire);
   CAMLreturn(eta_alloc_ssl_ctx(ctx));
 }
 
@@ -652,6 +795,17 @@ CAMLprim value eta_openssl_ssl_get_alpn_selected(value v_ssl)
   v_result = caml_alloc_string(len);
   memcpy((char *)String_val(v_result), data, len);
   CAMLreturn(caml_alloc_some(v_result));
+}
+
+CAMLprim value eta_openssl_ssl_get_servername(value v_ssl)
+{
+  CAMLparam1(v_ssl);
+  SSL *ssl = eta_ssl_val(v_ssl);
+  const char *name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (name == NULL || name[0] == '\0') {
+    CAMLreturn(Val_none);
+  }
+  CAMLreturn(caml_alloc_some(caml_copy_string(name)));
 }
 
 CAMLprim value eta_openssl_ssl_get_verify_result(value v_ssl)

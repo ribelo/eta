@@ -17,6 +17,9 @@ type t
 type server
 (** Opaque server TLS configuration. *)
 
+type server_certificate
+(** A certificate chain and private key selected by SNI server name. *)
+
 val default_client :
   ?peer_name:[ `host ] Domain_name.t ->
   ?ip:Ipaddr.t ->
@@ -37,13 +40,31 @@ val ca_file : t -> string option
 
 val default_server :
   ?alpn_protocols:string list ->
+  ?certificates:server_certificate list ->
+  ?require_sni_match:bool ->
   certificate_chain_file:string ->
   private_key_file:string ->
   unit ->
   server
 (** Build the supported eta-http server TLS config. The certificate chain
-    and private key must be PEM files accepted by OpenSSL. *)
+    and private key must be PEM files accepted by OpenSSL. [certificates] are
+    selected by TLS SNI. [require_sni_match] aborts handshakes that omit SNI or
+    send a name absent from [certificates]; leave it [false] when the default
+    certificate should act as fallback. *)
 
+val server_certificate :
+  server_name:string ->
+  certificate_chain_file:string ->
+  private_key_file:string ->
+  server_certificate
+(** Build an SNI certificate entry. [server_name] is matched
+    case-insensitively against the client's TLS SNI hostname. *)
+
+val server_certificate_name : server_certificate -> string
+val server_certificate_chain_file : server_certificate -> string
+val server_certificate_private_key_file : server_certificate -> string
 val certificate_chain_file : server -> string
 val private_key_file : server -> string
+val server_certificates : server -> server_certificate list
+val require_sni_match : server -> bool
 val server_alpn_protocols : server -> string list

@@ -241,7 +241,7 @@ let default_scenarios = [
     skip = Some "TLS resumption requires session ticket support in server config; out of scope for v1" };
   { name = "tls_sni_mismatch"; method_ = "GET"; path = "/healthz"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
-    skip = Some "SNI mismatch test requires multi-cert server config; out of scope for v1" };
+    skip = Some "strict SNI mismatch is covered in TLS unit tests; interop needs a hostname-routed TLS fixture" };
   { name = "slow_body_timeout"; method_ = "GET"; path = "/"; headers = []; body = None;
     expected_status = Some 200; h2_only = false; insecure = false;
     skip = Some "slow body timeout is an adversarial fixture; covered in @cve-regress" };

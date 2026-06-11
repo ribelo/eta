@@ -8,6 +8,9 @@ type ctx
 type ssl
 (** Opaque SSL wrapper with memory BIO pair. *)
 
+type server_certificate
+(** Certificate entry selected by SNI on server handshakes. *)
+
 val create_ctx : unit -> ctx
 (** Create a client SSL_CTX with TLS 1.2-only policy ciphers, default
     system trust store, and peer verification enabled. *)
@@ -18,13 +21,23 @@ val ctx_load_ca : ctx -> string -> unit
     Raises [Failure] if the file cannot be loaded. *)
 
 val create_server_ctx :
+  ?certificates:server_certificate list ->
+  ?require_sni_match:bool ->
   certificate_chain_file:string ->
   private_key_file:string ->
   alpn_protocols:string list ->
+  unit ->
   ctx
 (** Create a server SSL_CTX with Eta's TLS policy, certificate chain,
     private key, and ALPN selection callback. Raises [Failure] when the
     certificate or private key cannot be loaded or do not match. *)
+
+val server_certificate :
+  server_name:string ->
+  certificate_chain_file:string ->
+  private_key_file:string ->
+  server_certificate
+(** Build a certificate entry for [create_server_ctx ~certificates]. *)
 
 val create_server_ssl : ctx -> ssl
 (** Create a server SSL connection with memory BIOs in accept state. *)
@@ -79,6 +92,9 @@ val ssl_pending : ssl -> int
 
 val get_alpn_selected : ssl -> string option
 (** The ALPN protocol selected by the server, if any. *)
+
+val get_servername : ssl -> string option
+(** The client SNI server name observed by a server SSL, if any. *)
 
 val get_verify_result : ssl -> int
 (** [X509_V_OK] (0) on success, or an [X509_V_ERR_*] code. *)

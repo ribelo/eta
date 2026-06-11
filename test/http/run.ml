@@ -218,8 +218,14 @@ let () =
             test_openssl_server_ctx_loads_cert_key_and_creates_ssl;
           Alcotest.test_case "OpenSSL server ALPN selects h2" `Quick
             test_openssl_server_alpn_selects_client_protocol;
+          Alcotest.test_case "OpenSSL server SNI selects cert" `Quick
+            test_openssl_server_sni_selects_named_certificate;
+          Alcotest.test_case "OpenSSL strict SNI rejects unknown name" `Quick
+            test_openssl_server_sni_strict_rejects_unknown_name;
           Alcotest.test_case "Tls_eio server_of_flow epoch" `Quick
             test_tls_eio_server_of_flow_handshake_epoch;
+          Alcotest.test_case "Tls_eio server SNI selects cert" `Quick
+            test_tls_eio_server_of_flow_sni_selects_named_certificate;
           Alcotest.test_case "ALPN server dispatch routes" `Quick
             test_alpn_server_dispatch_routes_and_closes_unsupported;
           Alcotest.test_case "HTTPS server H1 ALPN request" `Quick

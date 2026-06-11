@@ -93,6 +93,37 @@ let with_temp_tls_files f =
   with_temp_file "eta-http-cert" tls_cert @@ fun cert ->
   with_temp_file "eta-http-key" tls_key @@ fun key -> f cert key
 
+let with_generated_tls_files host f =
+  let cert = Filename.temp_file "eta-http-generated-cert" ".pem" in
+  let key = Filename.temp_file "eta-http-generated-key" ".pem" in
+  let cmd =
+    String.concat " "
+      [
+        "openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1";
+        "-subj";
+        Filename.quote ("/CN=" ^ host);
+        "-addext";
+        Filename.quote ("subjectAltName=DNS:" ^ host);
+        "-keyout";
+        Filename.quote key;
+        "-out";
+        Filename.quote cert;
+        ">/dev/null 2>&1";
+      ]
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      remove_noerr cert;
+      remove_noerr key)
+    (fun () ->
+      if Sys.command cmd <> 0 then
+        Alcotest.failf "failed to generate TLS certificate for %s" host;
+      f cert key)
+
+let with_temp_ca_bundle certs f =
+  let contents = certs |> List.map read_file |> String.concat "" in
+  with_temp_file "eta-http-ca-bundle" contents f
+
 let pump_tls src dst =
   let pending = Eta_http__Openssl.bio_write_pending src in
   if pending = 0 then 0
@@ -113,6 +144,12 @@ let tls_handshake_state label ssl =
   | Eta_http__Openssl.Handshake_error code ->
       Alcotest.failf "%s handshake failed with SSL_get_error=%d" label code
 
+let tls_handshake_step ssl =
+  match Eta_http__Openssl.handshake ssl with
+  | Eta_http__Openssl.Handshake_ok -> `Done
+  | Eta_http__Openssl.Handshake_error (2 | 3) -> `Pending
+  | Eta_http__Openssl.Handshake_error code -> `Failed code
+
 let drive_tls_handshake client server =
   let rec loop remaining client_done server_done =
     if client_done && server_done then ()
@@ -126,6 +163,22 @@ let drive_tls_handshake client server =
       in
       ignore (pump_tls client server + pump_tls server client : int);
       loop (remaining - 1) client_done server_done
+  in
+  loop 100 false false
+
+let drive_tls_handshake_failure client server =
+  let rec loop remaining client_done server_done =
+    if remaining = 0 then Alcotest.fail "TLS handshake unexpectedly converged"
+    else
+      match (tls_handshake_step client, tls_handshake_step server) with
+      | `Failed _, _ | _, `Failed _ -> ()
+      | client_state, server_state ->
+          let client_done = client_done || client_state = `Done in
+          let server_done = server_done || server_state = `Done in
+          ignore (pump_tls client server + pump_tls server client : int);
+          if client_done && server_done then
+            Alcotest.fail "TLS handshake unexpectedly succeeded";
+          loop (remaining - 1) client_done server_done
   in
   loop 100 false false
 
@@ -224,6 +277,7 @@ let test_openssl_server_ctx_loads_cert_key_and_creates_ssl () =
   let ctx =
     Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
+      ()
   in
   let ssl = Eta_http__Openssl.create_server_ssl ctx in
   Alcotest.(check int)
@@ -235,6 +289,7 @@ let test_openssl_server_alpn_selects_client_protocol () =
   let server_ctx =
     Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
+      ()
   in
   let client_ctx = Eta_http__Openssl.create_ctx () in
   Eta_http__Openssl.ctx_load_ca client_ctx cert;
@@ -248,6 +303,54 @@ let test_openssl_server_alpn_selects_client_protocol () =
     "client ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected client);
   Alcotest.(check (option string))
     "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
+
+let test_openssl_server_sni_selects_named_certificate () =
+  with_temp_tls_files @@ fun default_cert default_key ->
+  with_generated_tls_files "alt.localhost" @@ fun alt_cert alt_key ->
+  with_temp_ca_bundle [ default_cert; alt_cert ] @@ fun ca_bundle ->
+  let certificate =
+    Eta_http__Openssl.server_certificate ~server_name:"alt.localhost"
+      ~certificate_chain_file:alt_cert ~private_key_file:alt_key
+  in
+  let server_ctx =
+    Eta_http__Openssl.create_server_ctx
+      ~certificate_chain_file:default_cert ~private_key_file:default_key
+      ~certificates:[ certificate ] ~alpn_protocols:[ "http/1.1" ]
+      ()
+  in
+  let client_ctx = Eta_http__Openssl.create_ctx () in
+  Eta_http__Openssl.ctx_load_ca client_ctx ca_bundle;
+  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client =
+    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "alt.localhost")
+      ~ip:None ~alpn_protocols:[ "http/1.1" ]
+  in
+  drive_tls_handshake client server;
+  Alcotest.(check int) "client verified selected cert" 0
+    (Eta_http__Openssl.get_verify_result client);
+  Alcotest.(check (option string))
+    "server SNI" (Some "alt.localhost")
+    (Eta_http__Openssl.get_servername server);
+  Alcotest.(check (option string))
+    "server ALPN" (Some "http/1.1")
+    (Eta_http__Openssl.get_alpn_selected server)
+
+let test_openssl_server_sni_strict_rejects_unknown_name () =
+  with_temp_tls_files @@ fun default_cert default_key ->
+  let server_ctx =
+    Eta_http__Openssl.create_server_ctx
+      ~certificate_chain_file:default_cert ~private_key_file:default_key
+      ~require_sni_match:true ~alpn_protocols:[ "http/1.1" ]
+      ()
+  in
+  let client_ctx = Eta_http__Openssl.create_ctx () in
+  Eta_http__Openssl.ctx_load_ca client_ctx default_cert;
+  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client =
+    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "unknown.localhost")
+      ~ip:None ~alpn_protocols:[ "http/1.1" ]
+  in
+  drive_tls_handshake_failure client server
 
 let test_tls_eio_server_of_flow_handshake_epoch () =
   with_temp_tls_files @@ fun cert key ->
@@ -277,7 +380,8 @@ let test_tls_eio_server_of_flow_handshake_epoch () =
   let client_flow = require_some "client TLS result" !client_result in
   Alcotest.(check (option string))
     "server epoch ALPN" (Some "h2") server_epoch.alpn_protocol;
-  Alcotest.(check (option string)) "server SNI" None server_epoch.sni;
+  Alcotest.(check (option string))
+    "server SNI" (Some "localhost") server_epoch.sni;
   Alcotest.(check bool)
     "server peer certificate verification" false
     server_epoch.peer_certificate_verified;
@@ -290,10 +394,50 @@ let test_tls_eio_server_of_flow_handshake_epoch () =
          "client epoch ALPN" (Some "h2") client_epoch.alpn_protocol;
        Alcotest.(check (option string))
          "client SNI" (Some "localhost") client_epoch.sni;
-       Alcotest.(check bool)
-         "client peer certificate verification" true
-         client_epoch.peer_certificate_verified
-   | Error () -> Alcotest.fail "missing client TLS epoch");
+	       Alcotest.(check bool)
+	         "client peer certificate verification" true
+	         client_epoch.peer_certificate_verified
+	   | Error () -> Alcotest.fail "missing client TLS epoch");
+  Eio.Flow.close client_flow;
+  Eio.Flow.close server_flow
+
+let test_tls_eio_server_of_flow_sni_selects_named_certificate () =
+  with_temp_tls_files @@ fun default_cert default_key ->
+  with_generated_tls_files "alt.localhost" @@ fun alt_cert alt_key ->
+  with_temp_ca_bundle [ default_cert; alt_cert ] @@ fun ca_bundle ->
+  run_eio @@ fun _stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let server_raw, client_raw = Eio_unix.Net.socketpair_stream ~sw () in
+  let certificate =
+    Eta_http.Tls.Config.server_certificate ~server_name:"alt.localhost"
+      ~certificate_chain_file:alt_cert ~private_key_file:alt_key
+  in
+  let server_config =
+    Eta_http.Tls.Config.default_server
+      ~certificate_chain_file:default_cert ~private_key_file:default_key
+      ~certificates:[ certificate ] ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let alt = Domain_name.(host_exn (of_string_exn "alt.localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:alt ~ca_file:ca_bundle
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let server_result = ref None in
+  let client_result = ref None in
+  Eio.Fiber.both
+    (fun () ->
+      server_result :=
+        Some
+          (Eta_http_eio.Tls.Eio.server_of_flow server_config server_raw))
+    (fun () ->
+      client_result :=
+        Some (Eta_http_eio.Tls.Eio.client_of_flow client_config client_raw));
+  let server_flow, server_epoch = require_some "server TLS result" !server_result in
+  let client_flow = require_some "client TLS result" !client_result in
+  Alcotest.(check (option string))
+    "server epoch SNI" (Some "alt.localhost") server_epoch.sni;
+  Alcotest.(check (option string))
+    "server epoch ALPN" (Some "http/1.1") server_epoch.alpn_protocol;
   Eio.Flow.close client_flow;
   Eio.Flow.close server_flow
 
@@ -612,6 +756,7 @@ let test_openssl_server_ctx_rejects_invalid_cert () =
       ignore
         (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:bad
            ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
+           ()
           : Eta_http__Openssl.ctx))
 
 let test_openssl_server_ctx_rejects_invalid_key () =
@@ -622,19 +767,39 @@ let test_openssl_server_ctx_rejects_invalid_key () =
       ignore
         (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
            ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
+           ()
           : Eta_http__Openssl.ctx))
 
 let test_tls_server_config_records_cert_key_and_alpn () =
+  let certificate =
+    Eta_http.Tls.Config.server_certificate ~server_name:"alt.localhost"
+      ~certificate_chain_file:"alt-cert.pem" ~private_key_file:"alt-key.pem"
+  in
   let config =
     Eta_http.Tls.Config.default_server ~certificate_chain_file:"cert.pem"
-      ~private_key_file:"key.pem" ~alpn_protocols:[ "http/1.1" ] ()
+      ~private_key_file:"key.pem" ~certificates:[ certificate ]
+      ~require_sni_match:true ~alpn_protocols:[ "http/1.1" ] ()
   in
   Alcotest.(check string)
     "cert" "cert.pem" (Eta_http.Tls.Config.certificate_chain_file config);
   Alcotest.(check string)
     "key" "key.pem" (Eta_http.Tls.Config.private_key_file config);
+  Alcotest.(check bool)
+    "require sni" true (Eta_http.Tls.Config.require_sni_match config);
   Alcotest.(check (list string))
-    "alpn" [ "http/1.1" ] (Eta_http.Tls.Config.server_alpn_protocols config)
+    "alpn" [ "http/1.1" ] (Eta_http.Tls.Config.server_alpn_protocols config);
+  (match Eta_http.Tls.Config.server_certificates config with
+  | [ actual ] ->
+      Alcotest.(check string)
+        "sni name" "alt.localhost"
+        (Eta_http.Tls.Config.server_certificate_name actual);
+      Alcotest.(check string)
+        "sni cert" "alt-cert.pem"
+        (Eta_http.Tls.Config.server_certificate_chain_file actual);
+      Alcotest.(check string)
+        "sni key" "alt-key.pem"
+        (Eta_http.Tls.Config.server_certificate_private_key_file actual)
+  | _ -> Alcotest.fail "expected one SNI certificate")
 
 let test_tls_handshake_enters_ssl_mutex_before_openssl () =
   let source = read_file (find_tls_eio_source ()) in

@@ -278,15 +278,29 @@ let client_of_flow ?host_eio (config : config) ?host
 let server_of_flow ?host_eio (config : server_config)
     (flow : [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t) :
     flow * epoch =
+  let certificates =
+    Config.server_certificates config
+    |> List.map (fun certificate ->
+           Openssl.server_certificate
+             ~server_name:(Config.server_certificate_name certificate)
+             ~certificate_chain_file:
+               (Config.server_certificate_chain_file certificate)
+             ~private_key_file:
+               (Config.server_certificate_private_key_file certificate))
+  in
   let ctx =
     Openssl.create_server_ctx
       ~certificate_chain_file:(Config.certificate_chain_file config)
       ~private_key_file:(Config.private_key_file config)
+      ~certificates
+      ~require_sni_match:(Config.require_sni_match config)
       ~alpn_protocols:(Config.server_alpn_protocols config)
+      ()
   in
   let ssl = Openssl.create_server_ssl ctx in
   let t = make_tls_state ?host_eio ssl flow in
   do_handshake t;
+  let t = { t with sni = Openssl.get_servername ssl } in
   let epoch = epoch_of_state t in
   ((Eio.Resource.T (t, ops) :> flow), epoch)
 
