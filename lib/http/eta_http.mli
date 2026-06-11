@@ -94,6 +94,7 @@ module H1 : sig
   module Request_body = Request_body
   module Parse = Parse
   module Request_parse = Request_parse
+  module Response_write = Response_write
   module Write = Write
 end
 (** HTTP/1.1 parser and serializer modules. *)

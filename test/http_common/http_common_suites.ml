@@ -2157,6 +2157,134 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Eta_http.Core.Header.get "x-checksum"
          (Eta_http.Body.Chunked.trailers decoder))
 
+  let expect_h1_response_string ?connection_close ~version ~request_method
+      response expected =
+    match
+      Eta_http.H1.Response_write.to_string ?connection_close ~version
+        ~request_method response
+    with
+    | Error error ->
+        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+    | Ok wire -> Alcotest.(check string) "wire" expected wire
+
+  let test_h1_response_writer_fixed_body () =
+    let response =
+      Eta_http.Server.Response.make ~status:200
+        ~headers:[ ("Content-Type", "text/plain") ]
+        ~body:(Eta_http.Server.Response.Body.fixed [ Bytes.of_string "hello" ])
+        ()
+    in
+    expect_h1_response_string ~version:Eta_http.Core.Version.H1_1
+      ~request_method:"GET" response
+      "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+
+  let test_h1_response_writer_head_and_no_body_status () =
+    let head_response =
+      Eta_http.Server.Response.make ~status:200
+        ~body:(Eta_http.Server.Response.Body.fixed [ Bytes.of_string "abc" ])
+        ()
+    in
+    expect_h1_response_string ~version:Eta_http.Core.Version.H1_1
+      ~request_method:"HEAD" head_response
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    let no_content =
+      Eta_http.Server.Response.text ~status:204 "ignored body"
+    in
+    expect_h1_response_string ~version:Eta_http.Core.Version.H1_1
+      ~request_method:"GET" no_content
+      "HTTP/1.1 204 No Content\r\n\r\n"
+
+  let test_h1_response_writer_stream_length () =
+    let body =
+      Eta_http.Server.Response.Body.stream ~length:5 (fun () ->
+          Eta.Effect.pure None)
+    in
+    let response = Eta_http.Server.Response.make ~status:200 ~body () in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error error ->
+        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+    | Ok prepared ->
+        Alcotest.(check string) "head"
+          "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"
+          prepared.head;
+        Alcotest.(check bool) "close" false prepared.close;
+        (match prepared.body with
+        | Eta_http.H1.Response_write.Stream_fixed stream ->
+            Alcotest.(check (option int)) "length" (Some 5) stream.length
+        | _ -> Alcotest.fail "expected fixed stream framing")
+
+  let test_h1_response_writer_chunked_stream_and_trailers () =
+    let body =
+      Eta_http.Server.Response.Body.stream (fun () -> Eta.Effect.pure None)
+    in
+    let response =
+      Eta_http.Server.Response.make ~status:200
+        ~headers:[ ("Trailer", "X-Done") ] ~body ()
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error error ->
+        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+    | Ok prepared ->
+        Alcotest.(check string) "head"
+          "HTTP/1.1 200 OK\r\nTrailer: X-Done\r\nTransfer-Encoding: chunked\r\n\r\n"
+          prepared.head;
+        (match prepared.body with
+        | Eta_http.H1.Response_write.Stream_chunked _ -> ()
+        | _ -> Alcotest.fail "expected chunked stream framing");
+        Alcotest.(check string) "chunk" "3\r\nabc\r\n"
+          (Bytes.to_string
+             (Bytes.concat Bytes.empty
+                (Eta_http.H1.Response_write.encode_chunk
+                   (Bytes.of_string "abc"))));
+        Alcotest.(check string) "last chunk"
+          "0\r\nX-Done: yes\r\n\r\n"
+          (Bytes.to_string
+             (Eta_http.H1.Response_write.encode_last_chunk
+                ~trailers:[ ("X-Done", "yes") ]
+                ()))
+
+  let test_h1_response_writer_http10_close_delimited_stream () =
+    let body =
+      Eta_http.Server.Response.Body.stream (fun () -> Eta.Effect.pure None)
+    in
+    let response = Eta_http.Server.Response.make ~status:200 ~body () in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_0
+        ~request_method:"GET" response
+    with
+    | Error error ->
+        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+    | Ok prepared ->
+        Alcotest.(check string) "head"
+          "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n"
+          prepared.head;
+        Alcotest.(check bool) "close" true prepared.close;
+        (match prepared.body with
+        | Eta_http.H1.Response_write.Stream_close_delimited _ -> ()
+        | _ -> Alcotest.fail "expected close-delimited stream framing")
+
+  let test_h1_response_writer_rejects_caller_framing_headers () =
+    let response =
+      Eta_http.Server.Response.text ~headers:[ ("Content-Length", "999") ]
+        "hello"
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error (Eta_http.H1.Response_write.Caller_framing_header "Content-Length") ->
+        ()
+    | Error error ->
+        Alcotest.failf "unexpected error: %s"
+          (Eta_http.H1.Response_write.error_to_string error)
+    | Ok _ -> Alcotest.fail "caller framing header unexpectedly accepted"
+
   let test_h1_writer_get_origin_form () =
     let url =
       Eta_http.Core.Url.of_string
@@ -2619,6 +2747,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_request_body_framing_rejects_transfer_encoding;
           Alcotest.test_case "chunked trailers" `Quick
             test_h1_request_body_framing_chunked_trailers;
+        ] );
+      ( "h1-response-write",
+        [
+          Alcotest.test_case "fixed body" `Quick
+            test_h1_response_writer_fixed_body;
+          Alcotest.test_case "HEAD and no-body status" `Quick
+            test_h1_response_writer_head_and_no_body_status;
+          Alcotest.test_case "stream length" `Quick
+            test_h1_response_writer_stream_length;
+          Alcotest.test_case "chunked stream and trailers" `Quick
+            test_h1_response_writer_chunked_stream_and_trailers;
+          Alcotest.test_case "HTTP/1.0 close-delimited stream" `Quick
+            test_h1_response_writer_http10_close_delimited_stream;
+          Alcotest.test_case "rejects caller framing headers" `Quick
+            test_h1_response_writer_rejects_caller_framing_headers;
         ] );
       ( "h1-write",
         [
