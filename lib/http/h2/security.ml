@@ -5,6 +5,8 @@ type config = {
   max_goaway_per_connection : int;
   max_rst_stream_per_connection : int;
   max_ping_per_connection : int;
+  max_empty_data_frames_per_connection : int;
+  max_window_update_per_connection : int;
   max_hpack_block_bytes : int;
   max_continuation_accumulator_bytes : int;
   max_response_headers_per_connection : int;
@@ -18,6 +20,8 @@ let default_config =
     max_goaway_per_connection = 1;
     max_rst_stream_per_connection = 100;
     max_ping_per_connection = 100;
+    max_empty_data_frames_per_connection = 100;
+    max_window_update_per_connection = 10_000;
     max_hpack_block_bytes = 256 * 1024;
     max_continuation_accumulator_bytes = 64 * 1024;
     max_response_headers_per_connection = 32;
@@ -34,10 +38,21 @@ type t = {
   mutable goaway_seen : int;
   mutable rst_stream_seen : int;
   mutable ping_seen : int;
+  mutable empty_data_seen : int;
+  mutable window_update_seen : int;
   response_headers_seen_by_stream : (int, int) Hashtbl.t;
   mutable header_block_bytes : int;
   mutable header_block_frames : int;
+  mutable payload_observer : payload_observer;
 }
+
+and payload_observer =
+  | Skip_payload
+  | Window_update_payload of {
+      stream_id : int;
+      payload : Bytes.t;
+      mutable payload_len : int;
+    }
 
 let create ?(config = default_config) () =
   {
@@ -49,9 +64,12 @@ let create ?(config = default_config) () =
     goaway_seen = 0;
     rst_stream_seen = 0;
     ping_seen = 0;
+    empty_data_seen = 0;
+    window_update_seen = 0;
     response_headers_seen_by_stream = Hashtbl.create 32;
     header_block_bytes = 0;
     header_block_frames = 0;
+    payload_observer = Skip_payload;
   }
 
 let end_headers flags = flags land 0x4 <> 0
@@ -96,6 +114,28 @@ let account_ping t =
          {
            observed_rate_hz = t.ping_seen;
            limit_hz = t.config.max_ping_per_connection;
+         })
+  else None
+
+let account_empty_data t =
+  t.empty_data_seen <- t.empty_data_seen + 1;
+  if t.empty_data_seen > t.config.max_empty_data_frames_per_connection then
+    Some
+      (Error.Empty_data_frame_rate_exceeded
+         {
+           observed_rate_hz = t.empty_data_seen;
+           limit_hz = t.config.max_empty_data_frames_per_connection;
+         })
+  else None
+
+let account_window_update t =
+  t.window_update_seen <- t.window_update_seen + 1;
+  if t.window_update_seen > t.config.max_window_update_per_connection then
+    Some
+      (Error.Window_update_rate_exceeded
+         {
+           observed_rate_hz = t.window_update_seen;
+           limit_hz = t.config.max_window_update_per_connection;
          })
   else None
 
@@ -163,6 +203,53 @@ let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
       else None
   | _ -> None
 
+let connection_protocol_violation ~kind ~message =
+  Error.Connection_protocol_violation { kind; message }
+
+let byte_at bytes index = Char.code (Bytes.unsafe_get bytes index)
+
+let window_update_increment payload =
+  ((byte_at payload 0 land 0x7f) lsl 24)
+  lor (byte_at payload 1 lsl 16)
+  lor (byte_at payload 2 lsl 8)
+  lor (byte_at payload 3)
+
+let validate_window_update_payload ~stream_id payload =
+  let increment = window_update_increment payload in
+  if increment = 0 then
+    Some
+      (connection_protocol_violation ~kind:"window_update_increment_zero"
+         ~message:
+           (Printf.sprintf
+              "WINDOW_UPDATE stream_id=%d has zero flow-control increment"
+              stream_id))
+  else None
+
+let observe_payload_byte t byte =
+  match t.payload_observer with
+  | Skip_payload -> None
+  | Window_update_payload state ->
+      Bytes.set state.payload state.payload_len byte;
+      state.payload_len <- state.payload_len + 1;
+      if state.payload_len = Bytes.length state.payload then (
+        t.payload_observer <- Skip_payload;
+        validate_window_update_payload ~stream_id:state.stream_id state.payload)
+      else None
+
+let observe_payload t bs ~off ~len =
+  match t.payload_observer with
+  | Skip_payload -> None
+  | Window_update_payload state ->
+      for index = 0 to len - 1 do
+        Bytes.set state.payload (state.payload_len + index)
+          (Bigstringaf.get bs (off + index))
+      done;
+      state.payload_len <- state.payload_len + len;
+      if state.payload_len = Bytes.length state.payload then (
+        t.payload_observer <- Skip_payload;
+        validate_window_update_payload ~stream_id:state.stream_id state.payload)
+      else None
+
 let complete_stream t stream_id =
   Hashtbl.remove t.response_headers_seen_by_stream stream_id
 
@@ -173,11 +260,28 @@ let start_frame t =
   in
   t.header_len <- 0;
   t.payload_remaining <- length;
+  t.payload_observer <- Skip_payload;
   match frame_type with
+  | 0x0 when length = 0 -> account_empty_data t
   | 0x4 -> account_settings t
   | 0x7 -> account_goaway t
   | 0x3 -> account_rst_stream t
   | 0x6 -> account_ping t
+  | 0x8 -> (
+      match account_window_update t with
+      | Some error -> Some error
+      | None when length <> 4 ->
+          Some
+            (connection_protocol_violation ~kind:"window_update_length"
+               ~message:
+                 (Printf.sprintf
+                    "WINDOW_UPDATE stream_id=%d payload length=%d, expected 4"
+                    stream_id length))
+      | None ->
+          t.payload_observer <-
+            Window_update_payload
+              { stream_id; payload = Bytes.create 4; payload_len = 0 };
+          None)
   | 0x1 | 0x5 | 0x9 ->
       account_header_bytes t ~frame_type ~flags ~length ~stream_id
   | _ -> None
@@ -185,7 +289,7 @@ let start_frame t =
 let observe_byte t byte =
   if t.payload_remaining > 0 then (
     t.payload_remaining <- t.payload_remaining - 1;
-    None)
+    observe_payload_byte t byte)
   else (
     Bytes.set t.header t.header_len byte;
     t.header_len <- t.header_len + 1;
@@ -198,7 +302,9 @@ let observe t bs ~off ~len =
     else if t.payload_remaining > 0 then (
       let skipped = min t.payload_remaining (stop - i) in
       t.payload_remaining <- t.payload_remaining - skipped;
-      loop (i + skipped))
+      match observe_payload t bs ~off:i ~len:skipped with
+      | Some error -> Some error
+      | None -> loop (i + skipped))
     else
       let needed = Frame.header_size - t.header_len in
       let take = min needed (stop - i) in

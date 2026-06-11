@@ -952,6 +952,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ~flags ~stream_id
 
   let h2_payload = Eta_http.H2.Frame.payload
+  let h2_uint32 = Eta_http.H2.Frame.uint32
   let h2_goaway_no_error = Eta_http.H2.Frame.goaway_no_error
   let h2_settings_frame = h2_frame_header ~length:0 ~frame_type:0x4 ~flags:0 ~stream_id:0
 
@@ -1289,6 +1290,85 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
     | None -> Alcotest.fail "PING churn was not detected"
+
+  let test_h2_security_empty_data_churn () =
+    let frame = h2_frame_header ~length:0 ~frame_type:0x0 ~flags:0 ~stream_id:1 in
+    let data = String.concat "" (List.init 101 (fun _ -> frame)) in
+    match h2_observe_security data with
+    | Some
+        (Eta_http.Error.Empty_data_frame_rate_exceeded
+          { observed_rate_hz; limit_hz }) ->
+        Alcotest.(check int) "observed" 101 observed_rate_hz;
+        Alcotest.(check int) "limit" 100 limit_hz
+    | Some kind ->
+        Alcotest.failf "unexpected security error: %s"
+          (Eta_http.Error.kind_name kind)
+    | None -> Alcotest.fail "empty DATA churn was not detected"
+
+  let test_h2_security_window_update_churn () =
+    let config =
+      {
+        Eta_http.H2.Security.default_config with
+        max_window_update_per_connection = 2;
+      }
+    in
+    let security = Eta_http.H2.Security.create ~config () in
+    let frame =
+      h2_frame_header ~length:4 ~frame_type:0x8 ~flags:0 ~stream_id:1
+      ^ h2_uint32 1
+    in
+    let data = String.concat "" (List.init 3 (fun _ -> frame)) in
+    let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
+    match
+      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
+    with
+    | Some
+        (Eta_http.Error.Window_update_rate_exceeded
+          { observed_rate_hz; limit_hz }) ->
+        Alcotest.(check int) "observed" 3 observed_rate_hz;
+        Alcotest.(check int) "limit" 2 limit_hz
+    | Some kind ->
+        Alcotest.failf "unexpected security error: %s"
+          (Eta_http.Error.kind_name kind)
+    | None -> Alcotest.fail "WINDOW_UPDATE churn was not detected"
+
+  let test_h2_security_rejects_zero_window_update_increment () =
+    let security = Eta_http.H2.Security.create () in
+    let frame =
+      h2_frame_header ~length:4 ~frame_type:0x8 ~flags:0 ~stream_id:1
+      ^ h2_uint32 0
+    in
+    let header = String.sub frame 0 Eta_http.H2.Frame.header_size in
+    let payload =
+      String.sub frame Eta_http.H2.Frame.header_size
+        (String.length frame - Eta_http.H2.Frame.header_size)
+    in
+    let header_bs =
+      Bigstringaf.of_string ~off:0 ~len:(String.length header) header
+    in
+    let payload_bs =
+      Bigstringaf.of_string ~off:0 ~len:(String.length payload) payload
+    in
+    (match
+       Eta_http.H2.Security.observe security header_bs ~off:0
+         ~len:(String.length header)
+     with
+    | None -> ()
+    | Some kind ->
+        Alcotest.failf "header returned early error: %s"
+          (Eta_http.Error.kind_name kind));
+    match
+      Eta_http.H2.Security.observe security payload_bs ~off:0
+        ~len:(String.length payload)
+    with
+    | Some
+        (Eta_http.Error.Connection_protocol_violation
+          { kind = "window_update_increment_zero"; _ }) ->
+        ()
+    | Some kind ->
+        Alcotest.failf "unexpected security error: %s"
+          (Eta_http.Error.kind_name kind)
+    | None -> Alcotest.fail "zero WINDOW_UPDATE increment was accepted"
 
   let test_h2_security_header_churn () =
     let frame =
@@ -2798,6 +2878,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h2_security_settings_churn;
           Alcotest.test_case "RST churn" `Quick test_h2_security_rst_churn;
           Alcotest.test_case "PING churn" `Quick test_h2_security_ping_churn;
+          Alcotest.test_case "empty DATA churn" `Quick
+            test_h2_security_empty_data_churn;
+          Alcotest.test_case "WINDOW_UPDATE churn" `Quick
+            test_h2_security_window_update_churn;
+          Alcotest.test_case "zero WINDOW_UPDATE increment" `Quick
+            test_h2_security_rejects_zero_window_update_increment;
           Alcotest.test_case "header churn" `Quick
             test_h2_security_header_churn;
           Alcotest.test_case "many normal response headers" `Quick

@@ -51,6 +51,14 @@ type kind =
   | Stream_admission_rejected of { limit : int }
   | Rst_rate_exceeded of { observed_per_second : int; limit_per_second : int }
   | Ping_rate_exceeded of { observed_rate_hz : int; limit_hz : int }
+  | Empty_data_frame_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
+  | Window_update_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
   | Settings_churn_rate_exceeded of {
       observed_rate_hz : int;
       limit_hz : int;

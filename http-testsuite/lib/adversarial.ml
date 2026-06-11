@@ -485,15 +485,37 @@ let dos_family ~env =
              (List.init 10 (fun _ ->
                   Malicious_h2.settings_frame [ (0x3, 100); (0x4, 65535) ])))
           flow);
-    not_implemented "dos_empty_frames_flood";
+    run_eta_h2c_adversarial_client ~env ~name:"dos_empty_frames_flood"
+      ~deadline_sec:2.0
+      (fun flow ->
+        Eio.Flow.copy_string
+          (h2_client_preface ^ Malicious_h2.settings_frame []
+         ^ h2_request_headers ~end_stream:false ~stream_id:1 ()
+         ^ String.concat ""
+             (List.init 101 (fun _ ->
+                  Malicious_h2.data_frame ~end_stream:false ~stream_id:1 "")))
+          flow);
   ]
 
 (* ---------------------------------------------------------------------------
    5. WINDOW_UPDATE accounting
    --------------------------------------------------------------------------- *)
 let window_update ~env =
-  ignore env;
-  not_implemented "window_update_accounting"
+  let security_config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_window_update_per_connection = 2;
+    }
+  in
+  run_eta_h2c_adversarial_client ~env ~name:"window_update_accounting"
+    ~config:(h2_adversarial_config ~security_config ()) ~deadline_sec:2.0
+    (fun flow ->
+      Eio.Flow.copy_string
+        (h2_client_preface ^ Malicious_h2.settings_frame []
+       ^ String.concat ""
+           (List.init 3 (fun _ ->
+                Malicious_h2.window_update_frame ~stream_id:0 1)))
+        flow)
 
 (* ---------------------------------------------------------------------------
    6. DATA slowloris (h1)

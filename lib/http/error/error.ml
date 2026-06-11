@@ -51,6 +51,14 @@ type kind =
   | Stream_admission_rejected of { limit : int }
   | Rst_rate_exceeded of { observed_per_second : int; limit_per_second : int }
   | Ping_rate_exceeded of { observed_rate_hz : int; limit_hz : int }
+  | Empty_data_frame_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
+  | Window_update_rate_exceeded of {
+      observed_rate_hz : int;
+      limit_hz : int;
+    }
   | Settings_churn_rate_exceeded of {
       observed_rate_hz : int;
       limit_hz : int;
@@ -116,6 +124,8 @@ let kind_name = function
   | Stream_admission_rejected _ -> "Stream_admission_rejected"
   | Rst_rate_exceeded _ -> "Rst_rate_exceeded"
   | Ping_rate_exceeded _ -> "Ping_rate_exceeded"
+  | Empty_data_frame_rate_exceeded _ -> "Empty_data_frame_rate_exceeded"
+  | Window_update_rate_exceeded _ -> "Window_update_rate_exceeded"
   | Settings_churn_rate_exceeded _ -> "Settings_churn_rate_exceeded"
   | Response_header_change_rate_exceeded _ ->
       "Response_header_change_rate_exceeded"
@@ -134,7 +144,8 @@ let layer t =
   | Decode_error _ | Body_too_large _ -> Body_decode
   | Connection_protocol_violation _ | Hpack_decode_overflow _
   | Continuation_flood _ | Stream_admission_rejected _ | Rst_rate_exceeded _
-  | Ping_rate_exceeded _ | Settings_churn_rate_exceeded _
+  | Ping_rate_exceeded _ | Empty_data_frame_rate_exceeded _
+  | Window_update_rate_exceeded _ | Settings_churn_rate_exceeded _
   | Response_header_change_rate_exceeded _ | Header_invalid _ ->
       Http_response
 
@@ -151,7 +162,8 @@ let retryability t =
   | HTTP_status _ -> Not_retryable
   | Connection_protocol_violation _ | Hpack_decode_overflow _
   | Continuation_flood _ | Stream_admission_rejected _ | Rst_rate_exceeded _
-  | Ping_rate_exceeded _ | Settings_churn_rate_exceeded _
+  | Ping_rate_exceeded _ | Empty_data_frame_rate_exceeded _
+  | Window_update_rate_exceeded _ | Settings_churn_rate_exceeded _
   | Response_header_change_rate_exceeded _ | Header_invalid _ ->
       Not_retryable
   | Pool_shutdown -> Not_retryable
@@ -196,6 +208,8 @@ let error_class t =
   | Stream_admission_rejected _ -> "stream_admission_rejected"
   | Rst_rate_exceeded _ -> "rst_rate_exceeded"
   | Ping_rate_exceeded _ -> "ping_rate_exceeded"
+  | Empty_data_frame_rate_exceeded _ -> "empty_data_frame_rate_exceeded"
+  | Window_update_rate_exceeded _ -> "window_update_rate_exceeded"
   | Settings_churn_rate_exceeded _ -> "settings_churn_rate_exceeded"
   | Response_header_change_rate_exceeded _ ->
       "response_header_change_rate_exceeded"
