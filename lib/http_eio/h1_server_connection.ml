@@ -101,6 +101,12 @@ let request_parse_error t parse_error =
 let response_write_error t message =
   error t (Response_write_failed { message })
 
+let response_body_timeout_error t request timeout =
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Response_body_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+
 let write_response_string t wire =
   try
     let write () = Eio.Flow.copy_string wire t.flow in
@@ -754,19 +760,29 @@ let with_released_response_stream rt stream f =
           release_once ();
           error)
 
-let read_response_stream t rt stream =
-  match Eta.Runtime.run rt (stream.Server.Response.Body.read ()) with
-  | Eta.Exit.Ok chunk -> Ok chunk
-  | Eta.Exit.Error cause ->
-      response_write_failure ~response_started:true
-        (response_error_of_cause t cause)
+let run_response_body_effect t request rt effect =
+  match t.config.server.timeouts.response_body_timeout with
+  | Some timeout -> (
+      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+      | Eta.Exit.Ok value -> Ok value
+      | Eta.Exit.Error cause ->
+          response_write_failure ~response_started:true
+            (response_error_of_cause t cause)
+      | exception Eio.Time.Timeout ->
+          response_write_failure ~response_started:true
+            (response_body_timeout_error t request (Some timeout)))
+  | None -> (
+      match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok value -> Ok value
+      | Eta.Exit.Error cause ->
+          response_write_failure ~response_started:true
+            (response_error_of_cause t cause))
 
-let response_trailers t rt response =
-  match Eta.Runtime.run rt ((Server.Response.trailers response) ()) with
-  | Eta.Exit.Ok trailers -> Ok trailers
-  | Eta.Exit.Error cause ->
-      response_write_failure ~response_started:true
-        (response_error_of_cause t cause)
+let read_response_stream t rt request stream =
+  run_response_body_effect t request rt (stream.Server.Response.Body.read ())
+
+let response_trailers t rt request response =
+  run_response_body_effect t request rt ((Server.Response.trailers response) ())
 
 let write_last_chunk t trailers =
   match
@@ -784,8 +800,8 @@ let write_last_chunk t trailers =
         response_write_failure ~response_started:true
           (response_write_error t message))
 
-let rec pump_fixed_response_stream t rt stream length written =
-  match read_response_stream t rt stream with
+let rec pump_fixed_response_stream t rt request stream length written =
+  match read_response_stream t rt request stream with
   | Error _ as error -> error
   | Ok None ->
       if written = length then Ok ()
@@ -803,19 +819,19 @@ let rec pump_fixed_response_stream t rt stream length written =
       else
         (match write_response_bytes t chunk with
         | Error _ as error -> error
-        | Ok () -> pump_fixed_response_stream t rt stream length next)
+        | Ok () -> pump_fixed_response_stream t rt request stream length next)
 
-let rec pump_raw_response_stream t rt stream =
-  match read_response_stream t rt stream with
+let rec pump_raw_response_stream t rt request stream =
+  match read_response_stream t rt request stream with
   | Error _ as error -> error
   | Ok None -> Ok ()
   | Ok (Some chunk) -> (
       match write_response_bytes t chunk with
       | Error _ as error -> error
-      | Ok () -> pump_raw_response_stream t rt stream)
+      | Ok () -> pump_raw_response_stream t rt request stream)
 
-let rec pump_chunked_response_stream t rt response stream =
-  match read_response_stream t rt stream with
+let rec pump_chunked_response_stream t rt request response stream =
+  match read_response_stream t rt request stream with
   | Error _ as error -> error
   | Ok (Some chunk) -> (
       match
@@ -823,23 +839,23 @@ let rec pump_chunked_response_stream t rt response stream =
           (Eta_http.H1.Response_write.encode_chunk chunk)
       with
       | Error _ as error -> error
-      | Ok () -> pump_chunked_response_stream t rt response stream)
+      | Ok () -> pump_chunked_response_stream t rt request response stream)
   | Ok None -> (
-      match response_trailers t rt response with
+      match response_trailers t rt request response with
       | Error _ as error -> error
       | Ok trailers -> write_last_chunk t trailers)
 
-let write_stream_response t rt response = function
+let write_stream_response t rt request response = function
   | Eta_http.H1.Response_write.Stream_fixed stream ->
       with_released_response_stream rt stream (fun () ->
           let length = Option.value stream.length ~default:0 in
-          pump_fixed_response_stream t rt stream length 0)
+          pump_fixed_response_stream t rt request stream length 0)
   | Eta_http.H1.Response_write.Stream_chunked stream ->
       with_released_response_stream rt stream (fun () ->
-          pump_chunked_response_stream t rt response stream)
+          pump_chunked_response_stream t rt request response stream)
   | Eta_http.H1.Response_write.Stream_close_delimited stream ->
       with_released_response_stream rt stream (fun () ->
-          pump_raw_response_stream t rt stream)
+          pump_raw_response_stream t rt request stream)
   | Eta_http.H1.Response_write.No_body | Eta_http.H1.Response_write.Fixed _ ->
       Ok ()
 
@@ -851,7 +867,7 @@ let release_ignored_response_stream rt response =
 let release_ignored_response ?rt response =
   Option.iter (fun rt -> release_ignored_response_stream rt response) rt
 
-let write_prepared_response ?rt t response
+let write_prepared_response ?rt t request response
     (prepared : Eta_http.H1.Response_write.prepared) =
   match write_response_string t prepared.head with
   | Error error ->
@@ -874,7 +890,7 @@ let write_prepared_response ?rt t response
                 (response_write_error t
                    "streaming response requires an Eta runtime")
           | Some rt ->
-              write_stream_response t rt response prepared.body
+              write_stream_response t rt request response prepared.body
               |> Result.map (fun () -> { connection_close = prepared.close })))
 
 let write_response ?(connection_close = false) ?rt t request response =
@@ -893,7 +909,7 @@ let write_response ?(connection_close = false) ?rt t request response =
           response_write_failure
             (response_write_error t
                (Eta_http.H1.Response_write.error_to_string error))
-      | Ok prepared -> write_prepared_response ?rt t response prepared)
+      | Ok prepared -> write_prepared_response ?rt t request response prepared)
 
 let request_metrics t rt request =
   if t.config.server.enable_otel then

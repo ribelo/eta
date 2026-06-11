@@ -24,6 +24,7 @@ type kind =
   | Protocol_error of { kind : string; message : string }
   | Handler_timeout of { timeout_ms : int option }
   | Handler_failed of { message : string }
+  | Response_body_timeout of { timeout_ms : int option }
   | Response_write_failed of { message : string }
 
 type context = {
@@ -69,6 +70,7 @@ let kind_name = function
   | Protocol_error _ -> "Protocol_error"
   | Handler_timeout _ -> "Handler_timeout"
   | Handler_failed _ -> "Handler_failed"
+  | Response_body_timeout _ -> "Response_body_timeout"
   | Response_write_failed _ -> "Response_write_failed"
 
 let layer t =
@@ -81,6 +83,7 @@ let layer t =
   | Connection_closed { during } -> during
   | Handler_timeout _ -> Handler
   | Handler_failed _ -> Handler
+  | Response_body_timeout _ -> Response_body
   | Response_write_failed _ -> Response_body
 
 let error_class t =
@@ -96,6 +99,7 @@ let error_class t =
   | Protocol_error _ -> "protocol_error"
   | Handler_timeout _ -> "handler_timeout"
   | Handler_failed _ -> "handler_failed"
+  | Response_body_timeout _ -> "response_body_timeout"
   | Response_write_failed _ -> "response_write_failed"
 
 let to_status t =
@@ -106,6 +110,7 @@ let to_status t =
   | Request_timeout _ -> Some 408
   | Stream_admission_rejected _ -> Some 503
   | Handler_timeout _ -> Some 503
+  | Response_body_timeout _ -> Some 503
   | Handler_failed _ | Response_write_failed _ -> Some 500
   | Stream_reset _ | Connection_closed _ | Protocol_error _ -> None
 
@@ -152,6 +157,8 @@ let to_http_error t =
       make (Error.Total_request_timeout { timeout_ms })
   | Handler_failed { message } ->
       make (Error.Decode_error { codec = "eta-http-server-handler"; message })
+  | Response_body_timeout { timeout_ms } ->
+      make (Error.Response_body_idle_timeout { timeout_ms })
   | Response_write_failed { message } ->
       make
         (Error.Connection_protocol_violation

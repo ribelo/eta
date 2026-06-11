@@ -19,6 +19,7 @@ type timeouts = {
   request_header_timeout : Eta.Duration.t option;
   request_body_timeout : Eta.Duration.t option;
   response_write_timeout : Eta.Duration.t option;
+  response_body_timeout : Eta.Duration.t option;
   idle_timeout : Eta.Duration.t option;
   handler_timeout : Eta.Duration.t option;
 }
@@ -48,6 +49,7 @@ let default_timeouts =
     request_header_timeout = Some (Eta.Duration.seconds 30);
     request_body_timeout = Some (Eta.Duration.seconds 30);
     response_write_timeout = Some (Eta.Duration.seconds 30);
+    response_body_timeout = Some (Eta.Duration.seconds 30);
     idle_timeout = Some (Eta.Duration.seconds 60);
     handler_timeout = None;
   }

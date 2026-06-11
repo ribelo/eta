@@ -676,6 +676,55 @@ let test_h1_server_connection_response_write_timeout_is_typed () =
   Alcotest.(check int) "completed requests" 1 stats.completed_requests;
   Alcotest.(check int) "response bytes" 0 stats.response_bytes
 
+let test_h1_server_connection_response_body_timeout_releases_stream () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_body_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let released = ref 0 in
+  let clock_ref = ref None in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      Eta_http.Server.Response.Body.stream
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        (fun () ->
+          match !clock_ref with
+          | None -> Alcotest.fail "handler clock not initialized"
+          | Some clock ->
+              Eta.Effect.sync (fun () ->
+                  Eio.Time.sleep clock 1.0;
+                  Some (Bytes.of_string "late")))
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  clock_ref := Some clock;
+  Eio.Flow.copy_string
+    ("GET /slow-response-body HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response head"
+    ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+   ^ "Transfer-Encoding: chunked\r\n\r\n")
+    response;
+  Alcotest.(check int) "released" 1 !released;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_rejects_response_header_limit () =
   let server_limits =
     { Eta_http.Server.Config.default.limits with max_response_headers = 1 }

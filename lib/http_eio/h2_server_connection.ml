@@ -217,6 +217,12 @@ let connection_write_error t exn =
 let response_write_timeout_error t =
   response_write_error t ~message:"response write timed out" ()
 
+let response_body_timeout_error t request timeout =
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Response_body_timeout
+       { timeout_ms = Option.map Eta.Duration.to_ms timeout })
+
 let security_error t kind =
   let http_error =
     Eta_http.Error.make ~protocol:Eta_http.Error.H2 ~method_:"*" ~uri:"*" kind
@@ -1064,10 +1070,35 @@ let release_response_stream rt stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
   | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
 
-let read_response_stream t rt stream =
+let run_response_body_effect t rt request effect =
+  match t.config.server.timeouts.response_body_timeout with
+  | Some timeout -> (
+      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+      | Eta.Exit.Ok value -> Ok value
+      | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
+      | exception Eio.Time.Timeout ->
+          Error (response_body_timeout_error t request (Some timeout)))
+  | None -> (
+      match Eta.Runtime.run rt effect with
+      | Eta.Exit.Ok value -> Ok value
+      | Eta.Exit.Error cause -> Error (response_error_of_cause t cause))
+
+let read_response_stream t rt request stream =
   Eio.Fiber.first
     (fun () ->
-      `Read (Eta.Runtime.run rt (stream.Server.Response.Body.read ())))
+      `Read
+        (run_response_body_effect t rt request
+           (stream.Server.Response.Body.read ())))
+    (fun () ->
+      Eio.Promise.await t.closed_signal;
+      `Closed)
+
+let response_trailers t rt request response =
+  Eio.Fiber.first
+    (fun () ->
+      `Trailers
+        (run_response_body_effect t rt request
+           ((Server.Response.trailers response) ())))
     (fun () ->
       Eio.Promise.await t.closed_signal;
       `Closed)
@@ -1076,24 +1107,19 @@ let fail_stream_response t rt ordinal stream error =
   ignore (enqueue t (Response_failed (ordinal, error)));
   release_response_stream rt stream
 
-let rec pump_response_stream t rt ordinal response stream =
-  match read_response_stream t rt stream with
+let rec pump_response_stream t rt ordinal request response stream =
+  match read_response_stream t rt request stream with
   | `Closed -> release_response_stream rt stream
-  | `Read (Eta.Exit.Error cause) ->
-      fail_stream_response t rt ordinal stream (response_error_of_cause t cause)
-  | `Read (Eta.Exit.Ok (Some chunk)) -> (
+  | `Read (Error error) -> fail_stream_response t rt ordinal stream error
+  | `Read (Ok (Some chunk)) -> (
       match await_owner t (fun resolver -> Response_chunk (ordinal, chunk, resolver)) with
-      | Ok () -> pump_response_stream t rt ordinal response stream
+      | Ok () -> pump_response_stream t rt ordinal request response stream
       | Error error -> fail_stream_response t rt ordinal stream error)
-  | `Read (Eta.Exit.Ok None) -> (
-      let trailers =
-        match Eta.Runtime.run rt ((Server.Response.trailers response) ()) with
-        | Eta.Exit.Ok trailers -> Ok trailers
-        | Error cause -> Error (response_error_of_cause t cause)
-      in
-      match trailers with
-      | Error error -> fail_stream_response t rt ordinal stream error
-      | Ok trailers -> (
+  | `Read (Ok None) -> (
+      match response_trailers t rt request response with
+      | `Closed -> release_response_stream rt stream
+      | `Trailers (Error error) -> fail_stream_response t rt ordinal stream error
+      | `Trailers (Ok trailers) -> (
           match
             await_owner t (fun resolver ->
                 Response_trailers (ordinal, trailers, resolver))
@@ -1141,10 +1167,11 @@ let run_handler t ordinal request handler =
       | Ok () -> (
           match Server.Response.body response with
           | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
-              pump_response_stream t rt ordinal response
+              pump_response_stream t rt ordinal request response
                 (fixed_response_stream chunks)
           | Empty | Fixed _ -> ()
-          | Stream stream -> pump_response_stream t rt ordinal response stream))
+          | Stream stream ->
+              pump_response_stream t rt ordinal request response stream))
 
 let shutdown t policy =
   if not t.closed then ignore (enqueue t (Shutdown policy))

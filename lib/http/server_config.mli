@@ -23,6 +23,7 @@ type timeouts = {
   request_header_timeout : Eta.Duration.t option;
   request_body_timeout : Eta.Duration.t option;
   response_write_timeout : Eta.Duration.t option;
+  response_body_timeout : Eta.Duration.t option;
   idle_timeout : Eta.Duration.t option;
   handler_timeout : Eta.Duration.t option;
 }

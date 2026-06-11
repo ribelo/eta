@@ -153,6 +153,8 @@ let () =
             test_h1_server_connection_releases_stream_on_write_failure;
           Alcotest.test_case "response write timeout is typed" `Quick
             test_h1_server_connection_response_write_timeout_is_typed;
+          Alcotest.test_case "response body timeout releases stream" `Quick
+            test_h1_server_connection_response_body_timeout_releases_stream;
           Alcotest.test_case "rejects response header limit" `Quick
             test_h1_server_connection_rejects_response_header_limit;
           Alcotest.test_case "keep-alive sequential requests" `Quick
@@ -337,6 +339,8 @@ let () =
             test_h2c_server_request_body_timeout;
           Alcotest.test_case "h2c handler timeout" `Quick
             test_h2c_server_handler_timeout;
+          Alcotest.test_case "h2c response body timeout resets stream" `Quick
+            test_h2c_server_response_body_timeout_resets_stream;
           Alcotest.test_case "h2c request body too large" `Quick
             test_h2c_server_request_body_too_large;
           Alcotest.test_case "h2c unread body drain timeout" `Quick

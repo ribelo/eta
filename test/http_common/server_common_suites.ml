@@ -116,7 +116,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Total_request_timeout { timeout_ms } ->
         Alcotest.(check (option int)) "handler timeout projection" (Some 20)
           timeout_ms
-    | _ -> Alcotest.fail "expected projected handler timeout")
+    | _ -> Alcotest.fail "expected projected handler timeout");
+    let response_body_timeout =
+      Server.Error.make ~protocol:H1 ~method_:"GET" ~target:"/stream"
+        (Response_body_timeout { timeout_ms = Some 30 })
+    in
+    Alcotest.(check (option int)) "response body timeout status" (Some 503)
+      (Server.Error.to_status response_body_timeout);
+    Alcotest.(check string) "response body timeout layer" "response_body"
+      (Server.Error.layer_to_string (Server.Error.layer response_body_timeout));
+    Alcotest.(check string) "response body timeout class"
+      "response_body_timeout"
+      (Server.Error.error_class response_body_timeout);
+    (match (Server.Error.to_http_error response_body_timeout).kind with
+    | Response_body_idle_timeout { timeout_ms } ->
+        Alcotest.(check (option int)) "response body timeout projection"
+          (Some 30) timeout_ms
+    | _ -> Alcotest.fail "expected projected response body timeout")
 
   let test_request_helpers_and_trace_context () =
     B.with_runtime @@ fun _ctx rt ->
@@ -232,6 +248,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let config = Server.Config.default in
     Alcotest.(check bool) "otel enabled" true config.enable_otel;
     Alcotest.(check bool) "url redaction default" false config.emit_url_full;
+    Alcotest.(check (option int)) "response body timeout"
+      (Some 30_000)
+      (Option.map Eta.Duration.to_ms config.timeouts.response_body_timeout);
     Alcotest.(check int) "request header cap" (32 * 1024)
       config.limits.max_request_header_bytes;
     Alcotest.(check (option int)) "request body cap"

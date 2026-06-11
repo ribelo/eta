@@ -236,6 +236,44 @@ let await_h2_response ?(tag = 1) ?request_body ?headers_ref ?trailers_ref
       Eio.Promise.await eof;
       (Option.value ~default:0 !status, Buffer.contents body)
 
+let await_h2_response_outcome ?(tag = 1) connection request =
+  let status = ref None in
+  let body = Buffer.create 32 in
+  let done_, resolve_done = Eio.Promise.create () in
+  let resolve_done_once outcome =
+    ignore (Eio.Promise.try_resolve resolve_done outcome)
+  in
+  let rec read_body response_body =
+    H2.Body.Reader.schedule_read response_body
+      ~on_eof:(fun () ->
+        resolve_done_once
+          (`Eof (Option.value ~default:0 !status, Buffer.contents body)))
+      ~on_read:(fun bs ~off ~len ->
+        Buffer.add_string body (Bigstringaf.substring bs ~off ~len);
+        read_body response_body)
+  in
+  match
+    Eta_http_eio.H2.Connection.request connection ~tag request
+      ~error_handler:(fun _stream error ->
+        resolve_done_once
+          (`Error
+             ( Option.value ~default:0 !status,
+               Buffer.contents body,
+               error )))
+      ~response_handler:(fun _stream response response_body ->
+        status := Some (H2.Status.to_code response.status);
+        read_body response_body)
+  with
+  | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected { limit }) ->
+      Alcotest.failf "request rejected by admission limit=%d" limit
+  | Error Eta_http_eio.H2.Multiplexer.Connection_closed ->
+      Alcotest.fail "connection closed before request"
+  | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
+      Alcotest.failf "request failed: %s" message
+  | Ok opened ->
+      H2.Body.Writer.close opened.request_body;
+      Eio.Promise.await done_
+
 let run_h2c_with_failing_flow mode =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -386,6 +424,91 @@ let test_h2c_server_handler_timeout () =
       Alcotest.(check int) "status" 503 status;
       Alcotest.(check string) "body" "service unavailable\n" body;
       Alcotest.(check int) "handler calls" 1 !handler_calls)
+
+let test_h2c_server_response_body_timeout_resets_stream () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_body_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let released, resolve_released = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/slow-response-body" ->
+        let body =
+          Eta_http.Server.Response.Body.stream
+            ~release:(fun () ->
+              Eta.Effect.sync (fun () ->
+                  ignore (Eio.Promise.try_resolve resolve_released ())))
+            (fun () ->
+              Eta.Effect.sync (fun () ->
+                  Eio.Time.sleep clock 1.0;
+                  Some (Bytes.of_string "late")))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let slow =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/slow-response-body"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome connection slow)
+      in
+      Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+          Eio.Promise.await released);
+      (match outcome with
+      | `Error (status, body, _error) ->
+          Alcotest.(check int) "partial status" 200 status;
+          Alcotest.(check string) "partial body" "" body
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected stream reset after response body timeout, got EOF \
+             status=%d body=%S"
+            status body);
+      let ok =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/ok"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response ~tag:2 connection ok)
+      in
+      Alcotest.(check int) "connection reusable status" 200 status;
+      Alcotest.(check string) "connection reusable body" "ok\n" body)
 
 let test_h2c_server_fixed_response_and_echo_body () =
   run_eio @@ fun env ->
