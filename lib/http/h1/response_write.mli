@@ -15,6 +15,10 @@ type prepared = {
 
 type error =
   | Caller_framing_header of string
+  | Caller_hop_by_hop_header of string
+  | Trailer_without_chunked_body
+  | Invalid_trailer_name of string
+  | Forbidden_trailer_name of string
   | Body_length_overflow
   | Streaming_body
 

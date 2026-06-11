@@ -2285,6 +2285,74 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.H1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "caller framing header unexpectedly accepted"
 
+  let test_h1_response_writer_rejects_hop_by_hop_headers () =
+    let response =
+      Eta_http.Server.Response.text ~headers:[ ("Connection", "keep-alive") ]
+        "hello"
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error (Eta_http.H1.Response_write.Caller_hop_by_hop_header "Connection") ->
+        ()
+    | Error error ->
+        Alcotest.failf "unexpected error: %s"
+          (Eta_http.H1.Response_write.error_to_string error)
+    | Ok _ -> Alcotest.fail "hop-by-hop header unexpectedly accepted"
+
+  let test_h1_response_writer_rejects_trailer_without_chunked_body () =
+    let response =
+      Eta_http.Server.Response.text ~headers:[ ("Trailer", "X-Done") ] "hello"
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error Eta_http.H1.Response_write.Trailer_without_chunked_body -> ()
+    | Error error ->
+        Alcotest.failf "unexpected error: %s"
+          (Eta_http.H1.Response_write.error_to_string error)
+    | Ok _ -> Alcotest.fail "fixed-body Trailer header unexpectedly accepted"
+
+  let test_h1_response_writer_rejects_invalid_trailer_names () =
+    let body =
+      Eta_http.Server.Response.Body.stream (fun () -> Eta.Effect.pure None)
+    in
+    let response =
+      Eta_http.Server.Response.make ~status:200
+        ~headers:[ ("Trailer", "Bad Name") ] ~body ()
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error (Eta_http.H1.Response_write.Invalid_trailer_name "Bad Name") -> ()
+    | Error error ->
+        Alcotest.failf "unexpected error: %s"
+          (Eta_http.H1.Response_write.error_to_string error)
+    | Ok _ -> Alcotest.fail "invalid Trailer name unexpectedly accepted"
+
+  let test_h1_response_writer_rejects_forbidden_trailer_names () =
+    let body =
+      Eta_http.Server.Response.Body.stream (fun () -> Eta.Effect.pure None)
+    in
+    let response =
+      Eta_http.Server.Response.make ~status:200
+        ~headers:[ ("Trailer", "X-Done, Content-Length") ] ~body ()
+    in
+    match
+      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+        ~request_method:"GET" response
+    with
+    | Error
+        (Eta_http.H1.Response_write.Forbidden_trailer_name "Content-Length") ->
+        ()
+    | Error error ->
+        Alcotest.failf "unexpected error: %s"
+          (Eta_http.H1.Response_write.error_to_string error)
+    | Ok _ -> Alcotest.fail "forbidden Trailer name unexpectedly accepted"
+
   let test_h1_writer_get_origin_form () =
     let url =
       Eta_http.Core.Url.of_string
@@ -2762,6 +2830,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_response_writer_http10_close_delimited_stream;
           Alcotest.test_case "rejects caller framing headers" `Quick
             test_h1_response_writer_rejects_caller_framing_headers;
+          Alcotest.test_case "rejects hop-by-hop headers" `Quick
+            test_h1_response_writer_rejects_hop_by_hop_headers;
+          Alcotest.test_case "rejects Trailer without chunked body" `Quick
+            test_h1_response_writer_rejects_trailer_without_chunked_body;
+          Alcotest.test_case "rejects invalid Trailer names" `Quick
+            test_h1_response_writer_rejects_invalid_trailer_names;
+          Alcotest.test_case "rejects forbidden Trailer names" `Quick
+            test_h1_response_writer_rejects_forbidden_trailer_names;
         ] );
       ( "h1-write",
         [

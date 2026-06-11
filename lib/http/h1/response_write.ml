@@ -15,12 +15,25 @@ type prepared = {
 
 type error =
   | Caller_framing_header of string
+  | Caller_hop_by_hop_header of string
+  | Trailer_without_chunked_body
+  | Invalid_trailer_name of string
+  | Forbidden_trailer_name of string
   | Body_length_overflow
   | Streaming_body
 
 let pp_error fmt = function
   | Caller_framing_header name ->
       Format.fprintf fmt "caller supplied response framing header %S" name
+  | Caller_hop_by_hop_header name ->
+      Format.fprintf fmt "caller supplied hop-by-hop response header %S" name
+  | Trailer_without_chunked_body ->
+      Format.pp_print_string fmt
+        "Trailer header requires HTTP/1.1 chunked response framing"
+  | Invalid_trailer_name name ->
+      Format.fprintf fmt "invalid response trailer name %S" name
+  | Forbidden_trailer_name name ->
+      Format.fprintf fmt "forbidden response trailer name %S" name
   | Body_length_overflow ->
       Format.pp_print_string fmt "response body length overflows int"
   | Streaming_body ->
@@ -93,6 +106,21 @@ let caller_framing_header headers =
   else if has_header "transfer-encoding" headers then Some "Transfer-Encoding"
   else None
 
+let caller_hop_by_hop_header headers =
+  let candidates =
+    [
+      ("connection", "Connection");
+      ("keep-alive", "Keep-Alive");
+      ("proxy-connection", "Proxy-Connection");
+      ("te", "TE");
+      ("upgrade", "Upgrade");
+    ]
+  in
+  List.find_map
+    (fun (name, canonical) ->
+      if has_header name headers then Some canonical else None)
+    candidates
+
 let bodyless_response ~request_method status =
   (match Method.of_string request_method with `HEAD -> true | _ -> false)
   || Status.is_informational status
@@ -137,34 +165,74 @@ let body_decision ~version ~request_method response =
       | H1_0 -> Ok (Stream_close_delimited stream, None, true)
       | H2 -> invalid_arg "Eta_http.H1.Response_write: HTTP/2 is not H1")
 
+let trailer_names headers =
+  Header.get_all "trailer" headers
+  |> List.concat_map (String.split_on_char ',')
+
+let validate_trailer_name name =
+  let name = Eta.String_helpers.trim name in
+  if Option.is_some (Header.validate_name name) then
+    Error (Invalid_trailer_name name)
+  else if Chunked.forbidden_trailer_name name then
+    Error (Forbidden_trailer_name name)
+  else Ok ()
+
+let validate_trailer_header headers body =
+  match trailer_names headers with
+  | [] -> Ok ()
+  | names -> (
+      match body with
+      | Stream_chunked _ ->
+          let rec loop = function
+            | [] -> Ok ()
+            | name :: rest -> (
+                match validate_trailer_name name with
+                | Ok () -> loop rest
+                | Error _ as error -> error)
+          in
+          loop names
+      | No_body | Fixed _ | Stream_fixed _ | Stream_close_delimited _ ->
+          Error Trailer_without_chunked_body)
+
 let prepare ?(connection_close = false) ~version ~request_method response =
   let headers = Server_response.headers response in
   match caller_framing_header headers with
   | Some name -> Error (Caller_framing_header name)
   | None -> (
-      match body_decision ~version ~request_method response with
-      | Error _ as error -> error
-      | Ok (body, content_length, close_for_body) ->
-          let close = connection_close || close_for_body in
-          let status = Server_response.status response in
-          let buffer = Buffer.create 256 in
-          Buffer.add_string buffer (wire_version version);
-          Buffer.add_char buffer ' ';
-          Buffer.add_string buffer (string_of_int status);
-          Buffer.add_char buffer ' ';
-          Buffer.add_string buffer (reason_phrase status);
-          Buffer.add_string buffer "\r\n";
-          List.iter (add_header_line buffer) headers;
-          if close then add_header_line buffer ("Connection", "close");
-          (match content_length with
-          | Some length -> add_header_line buffer ("Content-Length", string_of_int length)
-          | None -> (
-              match body with
-              | Stream_chunked _ ->
-                  add_header_line buffer ("Transfer-Encoding", "chunked")
-              | No_body | Fixed _ | Stream_fixed _ | Stream_close_delimited _ -> ()));
-          Buffer.add_string buffer "\r\n";
-          Ok { head = Buffer.contents buffer; body; close })
+      match caller_hop_by_hop_header headers with
+      | Some name -> Error (Caller_hop_by_hop_header name)
+      | None -> (
+          match body_decision ~version ~request_method response with
+          | Error _ as error -> error
+          | Ok (body, content_length, close_for_body) -> (
+              match validate_trailer_header headers body with
+              | Error _ as error -> error
+              | Ok () ->
+                  let close = connection_close || close_for_body in
+                  let status = Server_response.status response in
+                  let buffer = Buffer.create 256 in
+                  Buffer.add_string buffer (wire_version version);
+                  Buffer.add_char buffer ' ';
+                  Buffer.add_string buffer (string_of_int status);
+                  Buffer.add_char buffer ' ';
+                  Buffer.add_string buffer (reason_phrase status);
+                  Buffer.add_string buffer "\r\n";
+                  List.iter (add_header_line buffer) headers;
+                  if close then add_header_line buffer ("Connection", "close");
+                  (match content_length with
+                  | Some length ->
+                      add_header_line buffer
+                        ("Content-Length", string_of_int length)
+                  | None -> (
+                      match body with
+                      | Stream_chunked _ ->
+                          add_header_line buffer
+                            ("Transfer-Encoding", "chunked")
+                      | No_body | Fixed _ | Stream_fixed _
+                      | Stream_close_delimited _ ->
+                          ()));
+                  Buffer.add_string buffer "\r\n";
+                  Ok { head = Buffer.contents buffer; body; close })))
 
 let to_string ?connection_close ~version ~request_method response =
   match prepare ?connection_close ~version ~request_method response with

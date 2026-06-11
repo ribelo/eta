@@ -32,5 +32,7 @@ val create :
 val read : t -> (bytes option, Error.t) Eta.Effect.t
 val trailers : t -> Header.t
 
+val forbidden_trailer_name : string -> bool
+
 val encode_chunk : bytes -> bytes list
 val encode_last_chunk : ?trailers:Header.t -> unit -> bytes
