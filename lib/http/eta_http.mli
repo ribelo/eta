@@ -91,6 +91,7 @@ end
 (** Backend-neutral ALPN and protocol dispatch helpers. *)
 
 module H1 : sig
+  module Request_body = Request_body
   module Parse = Parse
   module Request_parse = Request_parse
   module Write = Write

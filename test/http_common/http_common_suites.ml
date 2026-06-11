@@ -2063,6 +2063,100 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.H1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "invalid header unexpectedly parsed"
 
+  let expect_h1_request_framing label headers expected =
+    match Eta_http.H1.Request_body.of_headers headers with
+    | Error error ->
+        Alcotest.failf "%s unexpected framing error: %s" label
+          (Eta_http.H1.Request_body.error_to_string error)
+    | Ok framing ->
+        let to_string = function
+          | Eta_http.H1.Request_body.No_body -> "no_body"
+          | Fixed length -> "fixed:" ^ string_of_int length
+          | Chunked -> "chunked"
+        in
+        Alcotest.(check string) label (to_string expected) (to_string framing)
+
+  let expect_h1_request_framing_error label headers expect =
+    match Eta_http.H1.Request_body.of_headers headers with
+    | Ok _ -> Alcotest.failf "%s expected framing error" label
+    | Error error ->
+        if not (expect error) then
+          Alcotest.failf "%s unexpected framing error: %s" label
+            (Eta_http.H1.Request_body.error_to_string error)
+
+  let test_h1_request_body_framing_no_body_and_fixed () =
+    expect_h1_request_framing "absent" [] Eta_http.H1.Request_body.No_body;
+    expect_h1_request_framing "fixed"
+      [ ("Content-Length", " 5 "); ("Content-Length", "005") ]
+      (Eta_http.H1.Request_body.Fixed 5)
+
+  let test_h1_request_body_framing_rejects_content_length () =
+    expect_h1_request_framing_error "bad content-length"
+      [ ("Content-Length", "nope") ]
+      (function
+        | Eta_http.H1.Request_body.Invalid_content_length "nope" -> true
+        | _ -> false);
+    expect_h1_request_framing_error "conflicting content-length"
+      [ ("Content-Length", "5"); ("Content-Length", "6") ]
+      (function
+        | Eta_http.H1.Request_body.Conflicting_content_length
+            { first = "5"; second = "6" } ->
+            true
+        | _ -> false)
+
+  let test_h1_request_body_framing_rejects_transfer_encoding () =
+    expect_h1_request_framing_error "cl te"
+      [ ("Content-Length", "4"); ("Transfer-Encoding", "chunked") ]
+      (function
+        | Eta_http.H1.Request_body.Content_length_with_transfer_encoding ->
+            true
+        | _ -> false);
+    expect_h1_request_framing_error "unsupported te"
+      [ ("Transfer-Encoding", "gzip") ]
+      (function
+        | Eta_http.H1.Request_body.Unsupported_transfer_encoding [ "gzip" ] ->
+            true
+        | _ -> false);
+    expect_h1_request_framing_error "non-final chunked"
+      [ ("Transfer-Encoding", "chunked, gzip") ]
+      (function
+        | Eta_http.H1.Request_body.Unsupported_transfer_encoding
+            [ "chunked"; "gzip" ] ->
+            true
+        | _ -> false)
+
+  let test_h1_request_body_framing_chunked_trailers () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    expect_h1_request_framing "chunked"
+      [ ("Transfer-Encoding", "chunked"); ("Trailer", "X-Checksum") ]
+      Eta_http.H1.Request_body.Chunked;
+    let context =
+      {
+        Eta_http.Body.Chunked.protocol = Eta_http.Error.H1;
+        method_ = "POST";
+        uri = "http://example.test/upload";
+      }
+    in
+    let reader =
+      chunked_reader_of_string context "3\r\nabc\r\n0\r\nX-Checksum: ok\r\n\r\n"
+    in
+    let decoder =
+      Eta_http.Body.Chunked.create ~context ~reader ()
+    in
+    let body =
+      let rec loop acc =
+        Eta_http.Body.Chunked.read decoder
+        |> Eta.Effect.bind (function
+             | None -> Eta.Effect.pure (Bytes.concat Bytes.empty (List.rev acc))
+             | Some chunk -> loop (chunk :: acc))
+      in
+      B.run rt (loop []) |> expect_ok
+    in
+    Alcotest.(check string) "body" "abc" (Bytes.to_string body);
+    Alcotest.(check (option string)) "trailer" (Some "ok")
+      (Eta_http.Core.Header.get "x-checksum"
+         (Eta_http.Body.Chunked.trailers decoder))
+
   let test_h1_writer_get_origin_form () =
     let url =
       Eta_http.Core.Url.of_string
@@ -2514,6 +2608,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_request_parser_rejects_limits;
           Alcotest.test_case "invalid request syntax" `Quick
             test_h1_request_parser_rejects_invalid_syntax;
+        ] );
+      ( "h1-request-body",
+        [
+          Alcotest.test_case "no body and fixed" `Quick
+            test_h1_request_body_framing_no_body_and_fixed;
+          Alcotest.test_case "rejects Content-Length errors" `Quick
+            test_h1_request_body_framing_rejects_content_length;
+          Alcotest.test_case "rejects Transfer-Encoding errors" `Quick
+            test_h1_request_body_framing_rejects_transfer_encoding;
+          Alcotest.test_case "chunked trailers" `Quick
+            test_h1_request_body_framing_chunked_trailers;
         ] );
       ( "h1-write",
         [

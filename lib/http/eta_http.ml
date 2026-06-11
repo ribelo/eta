@@ -54,6 +54,7 @@ module Transport = struct
 end
 
 module H1 = struct
+  module Request_body = Request_body
   module Parse = Parse
   module Request_parse = Request_parse
   module Write = Write
