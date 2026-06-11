@@ -5,20 +5,12 @@ module Types = Server_types
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
-type stats = {
+type stats = Server_stats.H1.snapshot = {
   active_requests : int;
   completed_requests : int;
   request_bytes : int;
   response_bytes : int;
   protocol_errors : int;
-}
-
-type stats_state = {
-  mutable active_requests : int;
-  mutable completed_requests : int;
-  mutable request_bytes : int;
-  mutable response_bytes : int;
-  mutable protocol_errors : int;
 }
 
 type t = {
@@ -28,7 +20,7 @@ type t = {
   connection : Types.Connection_info.t;
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
-  stats_state : stats_state;
+  stats : Server_stats.H1.t;
   mutable pending : bytes;
   mutable pending_off : int;
   mutable pending_len : int;
@@ -62,23 +54,7 @@ type request_head_error =
   | Clean_eof
   | Request_head_error of Server.Error.t
 
-let create_stats_state () =
-  {
-    active_requests = 0;
-    completed_requests = 0;
-    request_bytes = 0;
-    response_bytes = 0;
-    protocol_errors = 0;
-  }
-
-let stats t : stats =
-  {
-    active_requests = t.stats_state.active_requests;
-    completed_requests = t.stats_state.completed_requests;
-    request_bytes = t.stats_state.request_bytes;
-    response_bytes = t.stats_state.response_bytes;
-    protocol_errors = t.stats_state.protocol_errors;
-  }
+let stats t : stats = Server_stats.H1.snapshot t.stats
 
 let validate_config config =
   if config.Types.Config.read_buffer_size <= 0 then
@@ -249,8 +225,7 @@ let source_read_some source max_len =
     let chunk = source_take_pending source (min max_len source.remaining) in
     source.remaining <- source.remaining - Bytes.length chunk;
     if source.remaining = 0 then finish_body_source source;
-    source.t.stats_state.request_bytes <-
-      source.t.stats_state.request_bytes + Bytes.length chunk;
+    Server_stats.H1.add_request_bytes source.t.stats (Bytes.length chunk);
     Eta.Effect.pure (Some chunk)
   else
     let len =
@@ -274,8 +249,7 @@ let source_read_some source max_len =
              Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
              source.remaining <- source.remaining - read;
              if source.remaining = 0 then finish_body_source source;
-             source.t.stats_state.request_bytes <-
-               source.t.stats_state.request_bytes + read;
+             Server_stats.H1.add_request_bytes source.t.stats read;
              Eta.Effect.pure (Some chunk))
 
 let rec drain_fixed_body source =
@@ -428,8 +402,7 @@ let response_write_failure ?(response_started = false) error =
 let write_response_string t wire =
   try
     Eio.Flow.copy_string wire t.flow;
-    t.stats_state.response_bytes <-
-      t.stats_state.response_bytes + String.length wire;
+    Server_stats.H1.add_response_bytes t.stats (String.length wire);
     Ok ()
   with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
@@ -668,7 +641,7 @@ let read_request_head_with_timeout t ordinal =
       with Eio.Time.Timeout -> `Timeout duration)
 
 let handle_head_error t error =
-  t.stats_state.protocol_errors <- t.stats_state.protocol_errors + 1;
+  Server_stats.H1.protocol_error t.stats;
   write_default_error t (request_error_stub t) error
 
 let rec run_requests t ordinal handler =
@@ -682,14 +655,14 @@ let rec run_requests t ordinal handler =
   | `Read (Ok head) -> (
       match request_body t head with
       | Error error ->
-          t.stats_state.protocol_errors <- t.stats_state.protocol_errors + 1;
+          Server_stats.H1.protocol_error t.stats;
           let request =
             request_of_head t head ordinal (Server.Body.empty ())
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty)
           in
           write_default_error t request error
       | Ok (body, trailers, body_control) ->
-          t.stats_state.active_requests <- 1;
+          Server_stats.H1.request_started t.stats;
           let request = request_of_head t head ordinal body trailers in
           let request_keep_alive = request_allows_keep_alive head in
           let close_before_response =
@@ -712,9 +685,7 @@ let rec run_requests t ordinal handler =
                 false
             | Error { response_started = true; _ } -> false
           in
-          t.stats_state.active_requests <- 0;
-          t.stats_state.completed_requests <-
-            t.stats_state.completed_requests + 1;
+          Server_stats.H1.request_completed t.stats;
           if reusable then run_requests t (ordinal + 1) handler)
 
 let shutdown t _policy =
@@ -737,7 +708,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       connection;
       config;
       runtime_factory;
-      stats_state = create_stats_state ();
+      stats = Server_stats.H1.create ();
       pending = Bytes.empty;
       pending_off = 0;
       pending_len = 0;

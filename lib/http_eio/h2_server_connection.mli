@@ -4,7 +4,7 @@ type t
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
-type stats = {
+type stats = Server_stats.H2.snapshot = {
   active_streams : int;
   opened_streams : int;
   completed_streams : int;

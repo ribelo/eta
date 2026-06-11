@@ -2,6 +2,7 @@
 
 module Client = Client
 module Server = Server
+module Server_stats = Server_stats
 
 val runtime_service :
   sw:Eio.Switch.t ->

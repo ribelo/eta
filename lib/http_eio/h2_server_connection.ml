@@ -5,7 +5,7 @@ module Types = Server_types
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
-type stats = {
+type stats = Server_stats.H2.snapshot = {
   active_streams : int;
   opened_streams : int;
   completed_streams : int;
@@ -13,15 +13,6 @@ type stats = {
   request_bytes : int;
   response_bytes : int;
   protocol_errors : int;
-}
-
-type stats_state = {
-  mutable opened_streams : int;
-  mutable completed_streams : int;
-  mutable reset_streams : int;
-  mutable request_bytes : int;
-  mutable response_bytes : int;
-  mutable protocol_errors : int;
 }
 
 type request_body_read = (bytes option, Server.Error.t) result
@@ -65,32 +56,15 @@ type t = {
   connection : Types.Connection_info.t;
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
-  stats : stats_state;
+  stats : Server_stats.H2.t;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
   mutable closed : bool;
 }
 
-let create_stats_state () =
-  {
-    opened_streams = 0;
-    completed_streams = 0;
-    reset_streams = 0;
-    request_bytes = 0;
-    response_bytes = 0;
-    protocol_errors = 0;
-  }
-
 let stats t =
-  {
-    active_streams = Hashtbl.length t.streams;
-    opened_streams = t.stats.opened_streams;
-    completed_streams = t.stats.completed_streams;
-    reset_streams = t.stats.reset_streams;
-    request_bytes = t.stats.request_bytes;
-    response_bytes = t.stats.response_bytes;
-    protocol_errors = t.stats.protocol_errors;
-  }
+  Server_stats.H2.snapshot t.stats
+    ~active_streams:(Hashtbl.length t.streams)
 
 let peer_of_sockaddr = function
   | `Tcp (address, port) ->
@@ -330,7 +304,7 @@ let rec drain_request_body t ordinal state remaining resolver =
         forget_if_complete t ordinal state;
         resolve_unit resolver)
       ~on_read:(fun _bs ~off:_ ~len ->
-        t.stats.request_bytes <- t.stats.request_bytes + len;
+        Server_stats.H2.add_request_bytes t.stats len;
         drain_request_body t ordinal state (remaining - len) resolver))
 
 let discard_request_body_with_policy ?resolver ~drain t ordinal state =
@@ -345,8 +319,7 @@ let discard_request_body_with_policy ?resolver ~drain t ordinal state =
         resolve_unit resolver
 
 let finish_response t ordinal state =
-  if not state.response_done then
-    t.stats.completed_streams <- t.stats.completed_streams + 1;
+  if not state.response_done then Server_stats.H2.stream_completed t.stats;
   state.response_done <- true;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
@@ -368,7 +341,7 @@ let fail_active_streams t request_error =
   let streams =
     Hashtbl.fold (fun ordinal state acc -> (ordinal, state) :: acc) t.streams []
   in
-  t.stats.reset_streams <- t.stats.reset_streams + List.length streams;
+  Server_stats.H2.add_reset_streams t.stats (List.length streams);
   List.iter
     (fun (ordinal, state) ->
       fail_pending_request_read state request_error;
@@ -394,7 +367,7 @@ let arm_request_body_read t ordinal resolver =
       H2.Body.Reader.schedule_read state.request_body
         ~on_read:(fun bs ~off ~len ->
           state.request_read_resolver <- None;
-          t.stats.request_bytes <- t.stats.request_bytes + len;
+          Server_stats.H2.add_request_bytes t.stats len;
           let chunk = Bytes.create len in
           Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
           resolve resolver (Ok (Some chunk)))
@@ -423,8 +396,8 @@ let start_response t ordinal response resolver =
           (match Server.Response.body response with
           | Empty -> ()
           | Fixed chunks ->
-              t.stats.response_bytes <-
-                t.stats.response_bytes + fixed_body_length chunks
+              Server_stats.H2.add_response_bytes t.stats
+                (fixed_body_length chunks)
           | Stream _ -> assert false);
           respond_fixed state.reqd response;
           finish_response t ordinal state;
@@ -451,7 +424,7 @@ let write_response_chunk t ordinal chunk resolver =
           (Error
              (response_write_error t ~message:"response writer is closed" ()))
       else (
-        t.stats.response_bytes <- t.stats.response_bytes + Bytes.length chunk;
+        Server_stats.H2.add_response_bytes t.stats (Bytes.length chunk);
         H2.Body.Writer.write_string writer (Bytes.unsafe_to_string chunk);
         H2.Body.Writer.flush writer (function
           | `Written -> resolve resolver (Ok ())
@@ -503,7 +476,7 @@ let fail_response t ordinal error =
   match Hashtbl.find_opt t.streams ordinal with
   | None -> ()
   | Some state ->
-      t.stats.reset_streams <- t.stats.reset_streams + 1;
+      Server_stats.H2.stream_reset t.stats;
       H2.Reqd.report_exn state.reqd (Failure (Server.Error.to_string error));
       finish_reset_response t ordinal state
 
@@ -695,7 +668,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     H2.Server_connection.create ?config:config.Types.Config.h2_config
       ~error_handler:(fun ?request:_ _ respond ->
         Option.iter
-          (fun t -> t.stats.protocol_errors <- t.stats.protocol_errors + 1)
+          (fun t -> Server_stats.H2.protocol_error t.stats)
           !holder;
         let body = respond H2.Headers.empty in
         H2.Body.Writer.close body)
@@ -709,7 +682,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
             let ordinal = !request_ordinal in
             let body = body_of_stream t ordinal in
             let request = request_of_reqd ~connection ~ordinal ~body reqd in
-            t.stats.opened_streams <- t.stats.opened_streams + 1;
+            Server_stats.H2.stream_opened t.stats;
             Hashtbl.add t.streams ordinal
               {
                 reqd;
@@ -733,7 +706,7 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       connection;
       config;
       runtime_factory;
-      stats = create_stats_state ();
+      stats = Server_stats.H2.create ();
       graceful_shutdown = false;
       shutdown_timer_started = false;
       closed = false;

@@ -28,13 +28,7 @@ type t = {
   stop_resolver : unit Eio.Promise.u;
   mutex : Eio.Mutex.t;
   mutable connections : connection list;
-  mutable opened_connections : int;
-  mutable closed_connections : int;
-  mutable tls_handshakes : int;
-  mutable tls_handshake_failures : int;
-  mutable alpn_h1 : int;
-  mutable alpn_h2 : int;
-  mutable alpn_rejected : int;
+  stats : Server_stats.Listener.t;
 }
 
 let default_runtime_factory ~clock ~sw ~connection:_ () =
@@ -102,13 +96,7 @@ let create () =
     stop_resolver;
     mutex = Eio.Mutex.create ();
     connections = [];
-    opened_connections = 0;
-    closed_connections = 0;
-    tls_handshakes = 0;
-    tls_handshake_failures = 0;
-    alpn_h1 = 0;
-    alpn_h2 = 0;
-    alpn_rejected = 0;
+    stats = Server_stats.Listener.create ();
   }
 
 let with_lock t f =
@@ -117,7 +105,7 @@ let with_lock t f =
 
 let register_connection t connection =
   with_lock t (fun () ->
-      t.opened_connections <- t.opened_connections + 1;
+      Server_stats.Listener.opened_connection t.stats;
       t.connections <- connection :: t.connections)
 
 let same_connection left right =
@@ -134,35 +122,29 @@ let unregister_connection t connection =
           (fun current -> not (same_connection current connection))
           t.connections;
       if List.length t.connections <> before then
-        t.closed_connections <- t.closed_connections + 1)
+        Server_stats.Listener.closed_connection t.stats)
 
 let connections t = with_lock t (fun () -> t.connections)
 
 let record_tls_handshake t =
-  with_lock t (fun () -> t.tls_handshakes <- t.tls_handshakes + 1)
+  with_lock t (fun () -> Server_stats.Listener.tls_handshake t.stats)
 
 let record_tls_handshake_failure t =
-  with_lock t (fun () ->
-      t.tls_handshake_failures <- t.tls_handshake_failures + 1)
+  with_lock t (fun () -> Server_stats.Listener.tls_handshake_failure t.stats)
 
-let record_alpn_h1 t = with_lock t (fun () -> t.alpn_h1 <- t.alpn_h1 + 1)
-let record_alpn_h2 t = with_lock t (fun () -> t.alpn_h2 <- t.alpn_h2 + 1)
+let record_alpn_h1 t =
+  with_lock t (fun () -> Server_stats.Listener.alpn_h1 t.stats)
+
+let record_alpn_h2 t =
+  with_lock t (fun () -> Server_stats.Listener.alpn_h2 t.stats)
 
 let record_alpn_rejected t =
-  with_lock t (fun () -> t.alpn_rejected <- t.alpn_rejected + 1)
+  with_lock t (fun () -> Server_stats.Listener.alpn_rejected t.stats)
 
 let stats t =
   with_lock t (fun () ->
-      {
-        Stats.active_connections = List.length t.connections;
-        opened_connections = t.opened_connections;
-        closed_connections = t.closed_connections;
-        tls_handshakes = t.tls_handshakes;
-        tls_handshake_failures = t.tls_handshake_failures;
-        alpn_h1 = t.alpn_h1;
-        alpn_h2 = t.alpn_h2;
-        alpn_rejected = t.alpn_rejected;
-      })
+      Server_stats.Listener.snapshot t.stats
+        ~active_connections:(List.length t.connections))
 
 let shutdown t policy =
   List.iter

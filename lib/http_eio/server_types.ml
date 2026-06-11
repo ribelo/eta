@@ -53,7 +53,7 @@ module Config = struct
 end
 
 module Stats = struct
-  type t = {
+  type t = Server_stats.Listener.snapshot = {
     active_connections : int;
     opened_connections : int;
     closed_connections : int;

@@ -42,7 +42,7 @@ module Config : sig
 end
 
 module Stats : sig
-  type t = {
+  type t = Server_stats.Listener.snapshot = {
     active_connections : int;
     opened_connections : int;
     closed_connections : int;

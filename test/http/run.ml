@@ -2,6 +2,7 @@ open Test_eta_http_h1_write
 open Test_eta_http_transport
 open Test_eta_http_h1_client
 open Test_eta_http_h1_server
+open Test_eta_http_server_stats
 open Test_eta_http_ws
 open Test_eta_http_tls
 open Test_eta_http_h2_writer
@@ -126,6 +127,15 @@ let () =
             test_h1_server_connection_idle_timeout_closes_keep_alive;
           Alcotest.test_case "run_h1_on_socket plain GET" `Quick
             test_h1_server_run_on_socket_plain_get;
+        ] );
+      ( "server-stats",
+        [
+          Alcotest.test_case "listener snapshot" `Quick
+            test_server_stats_listener_snapshot;
+          Alcotest.test_case "h1 snapshot" `Quick
+            test_server_stats_h1_snapshot;
+          Alcotest.test_case "h2 snapshot" `Quick
+            test_server_stats_h2_snapshot;
         ] );
       ( "ws",
         [

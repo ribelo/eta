@@ -2,6 +2,7 @@
 
 module Client = Client
 module Server = Server
+module Server_stats = Server_stats
 
 let runtime_service ~sw ~net () =
   let clients = Hashtbl.create 4 in
