@@ -925,6 +925,63 @@ let test_h2c_server_rejects_request_header_limit () =
       in
       Alcotest.(check int) "protocol errors" 1 stats.protocol_errors)
 
+let test_h2c_server_rejects_invalid_request_header () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler_calls = ref 0 in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let handler (_request : Eta_http.Server.Request.t) =
+    incr handler_calls;
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop
+        ~on_connection_close:(fun stats ->
+          ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
+        ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:
+            (H2.Headers.of_list
+               [ ":authority", "127.0.0.1"; "bad name", "value" ])
+          `GET "/bad-header"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "status" 400 status;
+      Alcotest.(check string) "body" "bad request\n" body;
+      Alcotest.(check int) "handler calls" 0 !handler_calls;
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ());
+      let stats =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "protocol errors" 1 stats.protocol_errors)
+
 let test_h2c_server_rejects_response_header_limit () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->

@@ -340,6 +340,8 @@ let () =
             test_h2c_server_rejects_invalid_request_metadata;
           Alcotest.test_case "h2c rejects request header limit" `Quick
             test_h2c_server_rejects_request_header_limit;
+          Alcotest.test_case "h2c rejects invalid request header" `Quick
+            test_h2c_server_rejects_invalid_request_header;
           Alcotest.test_case "h2c rejects response header limit" `Quick
             test_h2c_server_rejects_response_header_limit;
           Alcotest.test_case "h2c fragmented large upload echo" `Quick

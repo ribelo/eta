@@ -277,6 +277,59 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_request_header_limits () =
     let limits = Server.Config.default.limits in
     (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [
+           ":method", "GET";
+           ":scheme", "https";
+           ":authority", "example.test";
+           ":path", "/";
+           "accept", "*/*";
+         ]
+     with
+    | Ok () -> ()
+    | Error message ->
+        Alcotest.failf "expected valid h2 request headers, got %s" message);
+    (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [ ":method", "GET"; "bad name", "value" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "invalid regular header"
+          "invalid request header" message
+    | Ok () -> Alcotest.fail "expected invalid regular header rejection");
+    (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [ ":method", "GET"; "X-Test", "value" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "uppercase regular header"
+          "uppercase HTTP/2 request header name" message
+    | Ok () -> Alcotest.fail "expected uppercase header rejection");
+    (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [ ":status", "200" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "invalid pseudo"
+          "invalid HTTP/2 pseudo-header" message
+    | Ok () -> Alcotest.fail "expected invalid pseudo-header rejection");
+    (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [ "accept", "*/*"; ":method", "GET" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "late pseudo"
+          "HTTP/2 pseudo-header appears after regular header" message
+    | Ok () -> Alcotest.fail "expected late pseudo-header rejection");
+    (match
+       Server.Validation.validate_h2_request_headers ~limits
+         [ ":method", "GET"; ":method", "POST" ]
+     with
+    | Error message ->
+        Alcotest.(check string) "duplicate pseudo"
+          "duplicate HTTP/2 :method pseudo-header" message
+    | Ok () -> Alcotest.fail "expected duplicate pseudo-header rejection");
+    (match
        Server.Validation.validate_h2_request_headers
          ~limits:{ limits with max_request_headers = 1 }
          [ ":method", "GET"; ":path", "/" ]

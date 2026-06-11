@@ -224,16 +224,84 @@ let validate_response_trailers ~(limits : Server_config.limits) trailers =
   validate_header_block ~max_bytes:limits.max_trailer_bytes
     ~max_headers:limits.max_trailers ~kind:"response trailer" trailers
 
+let has_uppercase value =
+  String.exists
+    (function
+      | 'A' .. 'Z' -> true
+      | _ -> false)
+    value
+
+let h2_pseudo_header = function
+  | ":method" -> Some `Method
+  | ":scheme" -> Some `Scheme
+  | ":authority" -> Some `Authority
+  | ":path" -> Some `Path
+  | _ -> None
+
+let is_h2_pseudo_header name =
+  String.length name > 0 && Char.equal (String.unsafe_get name 0) ':'
+
+let validate_h2_header_value kind value =
+  match Header.validate_value value with
+  | Some _ -> Error ("invalid " ^ kind ^ " value")
+  | None -> Ok ()
+
+let validate_h2_request_header_values headers =
+  let rec loop regular_seen method_seen scheme_seen authority_seen path_seen =
+    function
+    | [] -> Ok ()
+    | (name, value) :: rest -> (
+        if is_h2_pseudo_header name then
+          if regular_seen then
+            Error "HTTP/2 pseudo-header appears after regular header"
+          else
+            match h2_pseudo_header name with
+            | None -> Error "invalid HTTP/2 pseudo-header"
+            | Some kind ->
+                let duplicate =
+                  match kind with
+                  | `Method -> method_seen
+                  | `Scheme -> scheme_seen
+                  | `Authority -> authority_seen
+                  | `Path -> path_seen
+                in
+                if duplicate then
+                  Error ("duplicate HTTP/2 " ^ name ^ " pseudo-header")
+                else
+                  match validate_h2_header_value name value with
+                  | Error _ as error -> error
+                  | Ok () ->
+                      let method_seen = method_seen || kind = `Method in
+                      let scheme_seen = scheme_seen || kind = `Scheme in
+                      let authority_seen =
+                        authority_seen || kind = `Authority
+                      in
+                      let path_seen = path_seen || kind = `Path in
+                      loop regular_seen method_seen scheme_seen
+                        authority_seen path_seen rest
+        else
+          match Header.validate_header (name, value) with
+          | Some _ -> Error "invalid request header"
+          | None when has_uppercase name ->
+              Error "uppercase HTTP/2 request header name"
+          | None ->
+              loop true method_seen scheme_seen authority_seen path_seen rest)
+  in
+  loop false false false false false headers
+
 let validate_h2_request_headers ~(limits : Server_config.limits) headers =
-  let count = List.length headers in
-  if count > limits.max_request_headers then
-    Error
-      (Printf.sprintf "request header count exceeds %d"
-         limits.max_request_headers)
-  else
-    let bytes = header_block_bytes headers in
-    if bytes > limits.max_request_header_bytes then
-      Error
-        (Printf.sprintf "request header section exceeds %d bytes"
-           limits.max_request_header_bytes)
-    else Ok ()
+  match validate_h2_request_header_values headers with
+  | Error _ as error -> error
+  | Ok () ->
+      let count = List.length headers in
+      if count > limits.max_request_headers then
+        Error
+          (Printf.sprintf "request header count exceeds %d"
+             limits.max_request_headers)
+      else
+        let bytes = header_block_bytes headers in
+        if bytes > limits.max_request_header_bytes then
+          Error
+            (Printf.sprintf "request header section exceeds %d bytes"
+               limits.max_request_header_bytes)
+        else Ok ()
