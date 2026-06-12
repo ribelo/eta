@@ -140,9 +140,9 @@ git diff --check
   flow-control accounting (window_update_accounting), slow body timeout.
 - Covered by `test/http`: per-stream/per-connection reset metrics
   (`reset_streams = 1` is asserted on a reset path in
-  `test_eta_http_h2_server.ml`).
-- Remaining: slow-upload multiplexing across many concurrent streams
-  (no dedicated test yet).
+  `test_eta_http_h2_server.ml`), and slow-upload multiplexing across four
+  concurrent streams (`test_h2c_server_multiplexes_slow_uploads`).
+- Remaining: none known.
 
 ### HTTPS/TLS/ALPN
 
@@ -185,14 +185,17 @@ nix develop -c dune build @cve-regress
 nix develop -c bash bench/run.sh --quick
 ```
 
-- Remaining: capture a fresh `bench/run.sh --quick` snapshot and save the
-  result path; interop skips are already triaged as v1 policy above.
+- Remaining: none known. A fresh quick bench snapshot is recorded at
+  `bench/results/20260612T092938Z-a2e9ee6d9.json`; interop skips are triaged as
+  v1 policy above.
 
 ## Suggested Next Tasks
 
-H2 response framing, H1 smuggling locks, and the TLS/ALPN + resource-exhaustion
-audits are complete. Remaining edge-readiness work, in rough priority order:
+H2 response framing, H1 smuggling locks, the TLS/ALPN + resource-exhaustion
+audits, the H2 slow-upload multiplexing test, and a fresh `bench/run.sh --quick`
+snapshot are all complete. The previously enumerated edge-readiness surface has
+been verified or covered; no concrete remaining task is currently open.
 
-- Add a slow-upload multiplexing test across many concurrent H2 streams.
-- Run `bench/run.sh --quick` and save the result path.
+Latest quick bench snapshot:
+`bench/results/20260612T092938Z-a2e9ee6d9.json`.
 
