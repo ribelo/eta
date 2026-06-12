@@ -56,6 +56,36 @@ Notes:
 - Full `test/http_eio` had 142 passing tests at that point.
 - `dune build @cve-regress --force` timed out once through the alias, while the direct CVE runner completed successfully.
 
+Current counts after the handler-exception fix:
+
+- H2 server group: 37 tests.
+- Full `test/http`: 197 tests.
+- Full `test/http_eio`: 142 tests.
+- Interop: PASS 314, DIVERGENT 0, FAIL 0, SKIP 176.
+
+## Fixed: Synchronous handler exceptions left clients with stream resets
+
+Operational readiness bug fixed in `lib/http_eio/h1_server_connection.ml` and
+`lib/http_eio/h2_server_connection.ml`:
+
+- Symptom: `Eta.Runtime.run` catches exceptions raised *during* effect
+  interpretation and converts them to `Exit.Error`, which the server turns into
+  a 500 response. But `handler request` is evaluated *before* `Eta.Runtime.run`
+  is called (to build the effect). A handler function that raised synchronously
+  (`failwith`, match failure, etc.) therefore crashed the response fiber and
+  left the client with an H2 stream reset or H1 connection error instead of a
+  500. This is a real edge concern for Internet-facing servers where untrusted
+  input can trigger unexpected failures in user-provided handlers.
+- Fix: wrap the handler invocation (`Eta_http.Observability.Server.Tracer.request
+  ... handler request`) in a try/with that converts non-cancellation exceptions
+  into `Eta.Effect.fail (Handler_failed ...)`. Eio cancellation exceptions are
+  re-raised so switch cancellation still propagates.
+- Regression tests:
+  - `test_h1_server_handler_exception_returns_500`
+  - `test_h2c_server_handler_exception_returns_500`
+  Both assert the 500 response and that the connection remains usable for a
+  subsequent request.
+
 ## Fixed: H2 slow-read stream stall (response_write_timeout gap)
 
 Edge-DoS fixed in `lib/http_eio/h2_server_connection.ml`:
@@ -96,15 +126,22 @@ Tests live in `test/http/test_eta_http_h2_server.ml` (registered in
 - `test_h2c_server_rejects_handler_supplied_content_length` (`500` fallback).
 - `test_h2c_server_resets_short_stream_response` (under-length reset).
 - `test_h2c_server_resets_overflowing_stream_response` (over-length reset).
+- `test_h2c_server_resets_stalled_reader_stream` (slow-read write timeout).
+- `test_h2c_server_rejects_control_char_header_values` (HPACK header-value
+  anti-injection invariant).
+- `test_h2c_server_handler_exception_returns_500` (synchronous handler
+  exception converted to 500, connection stays usable).
+- `test_h2c_server_handler_timeout_returns_503`.
 
 Evidence (all passing on this work):
 
 ```sh
-nix --option eval-cache false develop -c dune exec test/http/run.exe -- test h2-server   # 31 tests
-nix --option eval-cache false develop -c dune runtest test/http --force                  # 186 tests
+nix --option eval-cache false develop -c dune exec test/http/run.exe -- test h2-server   # 37 tests
+nix --option eval-cache false develop -c dune runtest test/http --force                  # 197 tests
 nix --option eval-cache false develop -c dune runtest test/http_eio --force               # 142 tests
-nix --option eval-cache false develop -c timeout 300s dune build eta_http.install eta_http_eio.install --display=short
+timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
 timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
+nix --option eval-cache false develop -c timeout 300s dune build eta_http.install eta_http_eio.install --display=short
 git diff --check
 ```
 
@@ -185,8 +222,13 @@ Directly Internet-facing edge defect found via the interop matrix and fixed in
   flow-control accounting (window_update_accounting), slow body timeout.
 - Covered by `test/http`: per-stream/per-connection reset metrics
   (`reset_streams = 1` is asserted on a reset path in
-  `test_eta_http_h2_server.ml`), and slow-upload multiplexing across four
-  concurrent streams (`test_h2c_server_multiplexes_slow_uploads`).
+  `test_eta_http_h2_server.ml`), slow-upload multiplexing across four
+  concurrent streams (`test_h2c_server_multiplexes_slow_uploads`), slow-read
+  write-timeout (`test_h2c_server_resets_stalled_reader_stream`), control-char
+  header-value rejection
+  (`test_h2c_server_rejects_control_char_header_values`), and handler
+  exception/timeout paths (`test_h2c_server_handler_exception_returns_500`,
+  `test_h2c_server_handler_timeout_returns_503`).
 - Remaining: none known.
 
 ### HTTPS/TLS/ALPN
@@ -218,6 +260,10 @@ Directly Internet-facing edge defect found via the interop matrix and fixed in
   per-connection stats assertions in the H1/H2 server tests (active
   connections/streams, reset streams, protocol errors, request/response bytes,
   handshake outcomes, shutdown state).
+- Handler exception/timeout paths are regression-locked for both H1 and H2
+  (`test_h1_server_handler_exception_returns_500`,
+  `test_h2c_server_handler_exception_returns_500`,
+  `test_h2c_server_handler_timeout_returns_503`).
 - Remaining: none known.
 
 ### Interop, CVE, Benchmark, Soak
