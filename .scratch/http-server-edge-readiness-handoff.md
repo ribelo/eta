@@ -56,6 +56,24 @@ Notes:
 - Full `test/http_eio` had 142 passing tests at that point.
 - `dune build @cve-regress --force` timed out once through the alias, while the direct CVE runner completed successfully.
 
+## Fixed: H2 slow-read stream stall (response_write_timeout gap)
+
+Edge-DoS fixed in `lib/http_eio/h2_server_connection.ml`:
+
+- Symptom: an H2 client that keeps draining the socket but withholds stream
+  `WINDOW_UPDATE` (advertises a small window and never reads the body) pinned a
+  server stream open indefinitely. `response_write_timeout` only wrapped the
+  socket write in `write_iovecs`, so it caught a client that stops reading the
+  socket (write syscall blocks, like H1) but not a flow-control-blocked stream,
+  where the pump parked in `await_owner` waiting for a flush that never
+  completes. A few such streams could exhaust `max_concurrent_streams`.
+- Fix: `await_owner_write` bounds the response-write commands
+  (`Response_chunk` and trailing `Response_trailers`/`Response_close`) by
+  `response_write_timeout`; on timeout the stalled stream is reset.
+- Regression test: `test_h2c_server_resets_stalled_reader_stream` drives a
+  client advertising a 16 KiB window that never reads, and asserts the server
+  resets the stream.
+
 ## Completed: H2 Response Framing
 
 H2 response framing is now owned by Eta in `lib/http_eio/h2_server_connection.ml`:
@@ -232,5 +250,5 @@ H2-over-TLS large-transfer deadlock fix, TLS/ALPN, resource-exhaustion limits,
 operational defaults, and fully-green interop / CVE / bench evidence. No
 concrete server-side task is currently open. Continued value comes from deeper
 adversarial probing (each pass this far has surfaced a real defect), e.g.
-slow-reading-client write-timeout over TLS and H1 keep-alive over TLS.
+H1 keep-alive over TLS under repeated request/response cycles.
 
