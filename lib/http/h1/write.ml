@@ -2,6 +2,8 @@
 
 type body = Empty | Fixed of bytes list
 
+type stream_framing = Fixed_length of int | Chunked
+
 let buffer_too_small = -1
 let invalid_method = -2
 let invalid_header = -3
@@ -97,12 +99,14 @@ let[@zero_alloc] rec content_length_header_raw current = function
         else invalid_framing
       else content_length_header_raw current rest
 
-let[@zero_alloc] validate_framing_raw ~fixed_body ~body_length headers =
+let[@zero_alloc] validate_framing_raw ~allow_content_length ~body_length headers =
   let caller_content_length = content_length_header_raw (-1) headers in
   let transfer_encoding = has_header_raw "transfer-encoding" headers in
   if caller_content_length < -1 then invalid_framing
   else if caller_content_length >= 0 && transfer_encoding then invalid_framing
-  else if fixed_body && transfer_encoding then invalid_transfer_encoding
+  else if transfer_encoding then invalid_transfer_encoding
+  else if (not allow_content_length) && caller_content_length >= 0 then
+    invalid_framing
   else if body_length >= 0 && caller_content_length >= 0
           && caller_content_length <> body_length
   then invalid_framing
@@ -112,8 +116,8 @@ let[@zero_alloc] rec validate_method_loop method_ len index =
   if index = len then true
   else
     match String.unsafe_get method_ index with
-    | 'A' .. 'Z' | '0' .. '9' | '!' | '#' | '$' | '%' | '&' | '\'' | '*'
-    | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~' ->
+    | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '!' | '#' | '$' | '%' | '&'
+    | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~' ->
         validate_method_loop method_ len (index + 1)
     | _ -> false
 
@@ -168,8 +172,6 @@ let[@zero_alloc] framing_body_length_raw = function
   | Empty -> 0
   | Fixed chunks -> content_length_chunks 0 chunks
 
-let[@zero_alloc] fixed_body_raw = function Empty -> false | Fixed _ -> true
-
 let[@zero_alloc] blit_header_line dst pos name value =
   let pos = blit_literal dst pos name in
   let pos = blit_literal dst pos ": " in
@@ -193,7 +195,7 @@ let[@zero_alloc] write_to_bytes_raw dst ~pos ~method_ ~url ~headers ~body =
   else if not (Header.valid headers) then invalid_header
   else
     let framing =
-      validate_framing_raw ~fixed_body:(fixed_body_raw body)
+      validate_framing_raw ~allow_content_length:true
         ~body_length:(framing_body_length_raw body) headers
     in
     if framing < 0 then framing
@@ -258,12 +260,8 @@ let validate_headers ~method_ ~url headers =
            ~uri:(Url.to_string url)
            kind)
 
-let fixed_body = function Empty -> false | Fixed _ -> true
-
-let validate_request_framing ~body ~body_length ~method_ ~url ~headers =
-  match
-    validate_framing_raw ~fixed_body:(fixed_body body) ~body_length headers
-  with
+let validate_request_framing ~body_length ~method_ ~url ~headers =
+  match validate_framing_raw ~allow_content_length:true ~body_length headers with
   | 0 -> Ok ()
   | n when n = invalid_transfer_encoding ->
       Error
@@ -274,15 +272,17 @@ let validate_request_framing ~body ~body_length ~method_ ~url ~headers =
         (Error.make ~method_ ~uri:(Url.to_string url)
            (Header_invalid { reason = invalid_framing_reason }))
 
-let resolved_framing_body_length ?framing_body_length body =
-  match body with
-  | Fixed _ -> framing_body_length_raw body
-  | Empty -> (
-      match framing_body_length with
-      | None -> framing_body_length_raw body
-      | Some length -> length)
+let write_request_head buffer ~method_ ~url ~headers =
+  Buffer.add_string buffer method_;
+  Buffer.add_char buffer ' ';
+  Buffer.add_string buffer (Url.origin_form url);
+  Buffer.add_string buffer " HTTP/1.1\r\n";
+  if not (has_header "host" headers) then
+    add_header_line buffer ("Host", Url.authority url);
+  if not (has_header "connection" headers) then
+    add_header_line buffer ("Connection", "keep-alive")
 
-let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
+let write buffer ~method_ ~url ~headers ~body =
   if not (validate_method method_) then
     Error
       (Error.make ~method_ ~uri:(Url.to_string url)
@@ -293,20 +293,12 @@ let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
     | Ok () ->
         (match
            validate_request_framing
-             ~body
-             ~body_length:(resolved_framing_body_length ?framing_body_length body)
+             ~body_length:(framing_body_length_raw body)
              ~method_ ~url ~headers
          with
         | Error _ as error -> error
         | Ok () ->
-        Buffer.add_string buffer method_;
-        Buffer.add_char buffer ' ';
-        Buffer.add_string buffer (Url.origin_form url);
-        Buffer.add_string buffer " HTTP/1.1\r\n";
-        if not (has_header "host" headers) then
-          add_header_line buffer ("Host", Url.authority url);
-        if not (has_header "connection" headers) then
-          add_header_line buffer ("Connection", "keep-alive");
+        write_request_head buffer ~method_ ~url ~headers;
         (match content_length body with
         | None -> ()
         | Some length ->
@@ -318,6 +310,53 @@ let write ?framing_body_length buffer ~method_ ~url ~headers ~body =
         | Empty -> ()
         | Fixed chunks -> List.iter (fun chunk -> Buffer.add_bytes buffer chunk) chunks);
         Ok ())
+
+let stream_framing_length = function
+  | Fixed_length length -> length
+  | Chunked -> -1
+
+let validate_stream_framing ~framing ~method_ ~url ~headers =
+  let body_length = stream_framing_length framing in
+  if body_length < -1 then
+    Error
+      (Error.make ~method_ ~uri:(Url.to_string url)
+         (Header_invalid { reason = invalid_framing_reason }))
+  else
+    let allow_content_length =
+      match framing with Fixed_length _ -> true | Chunked -> false
+    in
+    match validate_framing_raw ~allow_content_length ~body_length headers with
+    | 0 -> Ok ()
+    | n when n = invalid_transfer_encoding ->
+        Error
+          (Error.make ~method_ ~uri:(Url.to_string url)
+             (Header_invalid { reason = invalid_transfer_encoding_reason }))
+    | _ ->
+        Error
+          (Error.make ~method_ ~uri:(Url.to_string url)
+             (Header_invalid { reason = invalid_framing_reason }))
+
+let write_stream_headers buffer ~method_ ~url ~headers ~framing =
+  if not (validate_method method_) then
+    Error
+      (Error.make ~method_ ~uri:(Url.to_string url)
+         (Header_invalid { reason = "invalid request method" }))
+  else
+    match validate_headers ~method_ ~url headers with
+    | Error _ as error -> error
+    | Ok () -> (
+        match validate_stream_framing ~framing ~method_ ~url ~headers with
+        | Error _ as error -> error
+        | Ok () ->
+            write_request_head buffer ~method_ ~url ~headers;
+            (match framing with
+            | Fixed_length length ->
+                if not (has_header "content-length" headers) then
+                  add_header_line buffer ("Content-Length", string_of_int length)
+            | Chunked -> add_header_line buffer ("Transfer-Encoding", "chunked"));
+            List.iter (add_header_line buffer) (List.rev headers);
+            Buffer.add_string buffer "\r\n";
+            Ok ())
 
 let to_string ~method_ ~url ~headers ~body =
   let buffer = Buffer.create 256 in

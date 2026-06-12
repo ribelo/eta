@@ -64,25 +64,76 @@ let test_h1_writer_rejects_transfer_encoding_for_fixed_body () =
       Alcotest.failf "flow serialized invalid request: %S"
         (Buffer.contents buffer)
 
-let test_h1_writer_stream_override_does_not_reframe_fixed_body () =
-  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
-  let buffer = Buffer.create 128 in
-  let flow = Eio.Flow.buffer_sink buffer in
+let test_h1_writer_rejects_transfer_encoding_for_empty_body () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/upload" in
   match
-    Eta_http_eio.H1.Write.write_to_flow ~framing_body_length:3 flow ~method_:"POST"
-      ~url ~headers:[ ("Content-Length", "3") ]
-      ~body:(Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ])
+    Eta_http.H1.Write.to_string ~method_:"POST" ~url
+      ~headers:[ ("Transfer-Encoding", "chunked") ]
+      ~body:Eta_http.H1.Write.Empty
   with
   | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
       Alcotest.(check bool)
-        "fixed override mentions Content-Length" true
-        (contains reason "Content-Length");
-      Alcotest.(check string) "fixed override emitted nothing" ""
+        "mentions Transfer-Encoding" true
+        (contains reason "Transfer-Encoding")
+  | Error error ->
+      Alcotest.failf "unexpected error: %s" (Eta_http.Error.to_string error)
+  | Ok wire ->
+      Alcotest.failf
+        "writer serialized Transfer-Encoding: chunked without a chunk \
+         terminator: %S"
+        wire
+
+let test_h1_writer_stream_headers_own_fixed_framing () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
+  let buffer = Buffer.create 128 in
+  match
+    Eta_http.H1.Write.write_stream_headers buffer ~method_:"POST" ~url
+      ~headers:[] ~framing:(Eta_http.H1.Write.Fixed_length 3)
+  with
+  | Ok () ->
+      Alcotest.(check string)
+        "stream header block"
+        "POST /echo HTTP/1.1\r\nHost: example.test\r\nConnection: \
+         keep-alive\r\nContent-Length: 3\r\n\r\n"
         (Buffer.contents buffer)
   | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
-  | Ok () ->
-      Alcotest.failf "fixed override serialized invalid request: %S"
-        (Buffer.contents buffer)
+
+let test_h1_response_write_refuses_suppressed_streaming_body_in_to_string () =
+  let body =
+    Eta_http.Server.Response.Body.stream (fun () -> Eta.Effect.pure None)
+  in
+  let response = Eta_http.Server.Response.make ~status:204 ~body () in
+  match
+    Eta_http.H1.Response_write.to_string
+      ~version:Eta_http.Core.Version.H1_1 ~request_method:"GET" response
+  with
+  | Error Eta_http.H1.Response_write.Streaming_body -> ()
+  | Error error ->
+      Alcotest.failf "unexpected response write error: %s"
+        (Eta_http.H1.Response_write.error_to_string error)
+  | Ok wire ->
+      Alcotest.failf
+        "streaming body was silently dropped by pure H1 serializer: %S" wire
+
+let test_h1_response_write_suppresses_205_body () =
+  let response = Eta_http.Server.Response.text ~status:205 "must-not-appear" in
+  match
+    Eta_http.H1.Response_write.to_string
+      ~version:Eta_http.Core.Version.H1_1 ~request_method:"GET" response
+  with
+  | Error error ->
+      Alcotest.failf "unexpected response write error: %s"
+        (Eta_http.H1.Response_write.error_to_string error)
+  | Ok wire ->
+      Alcotest.(check bool)
+        "status is 205" true
+        (contains wire "HTTP/1.1 205 Reset Content\r\n");
+      Alcotest.(check bool)
+        "body absent" false
+        (contains wire "must-not-appear");
+      Alcotest.(check bool)
+        "Content-Length is not payload length" false
+        (contains wire "Content-Length: 15")
 
 let test_h1_writer_flow_matches_string_writer () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
@@ -106,6 +157,20 @@ let test_h1_writer_flow_matches_string_writer () =
   | Ok expected, Ok actual ->
       Alcotest.(check string) "direct flow writer" expected actual
   | Error error, _ | _, Error error -> Alcotest.fail (Eta_http.Error.to_string error)
+
+let test_h1_writer_accepts_lowercase_extension_method () =
+  let url = Eta_http.Core.Url.of_string "http://example.test/resource" in
+  match
+    Eta_http.H1.Write.to_string ~method_:"propfind" ~url ~headers:[]
+      ~body:Eta_http.H1.Write.Empty
+  with
+  | Ok wire ->
+      Alcotest.(check bool)
+        "request line preserves method" true
+        (String.starts_with ~prefix:"propfind /resource HTTP/1.1\r\n" wire)
+  | Error error ->
+      Alcotest.failf "valid lowercase method was rejected: %s"
+        (Eta_http.Error.to_string error)
 
 let test_h1_writer_flow_write_failure_is_typed () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in

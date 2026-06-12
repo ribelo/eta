@@ -1,4 +1,6 @@
 open Test_eta_http_h1_write
+open Test_eta_http_error
+open Test_eta_http_url
 open Test_eta_http_transport
 open Test_eta_http_h1_client
 open Test_eta_http_retry
@@ -33,6 +35,30 @@ let () =
             `Quick test_retry_after_timeout_cancels_before_next_attempt;
           Alcotest.test_case "far-future Retry-After date is capped" `Quick
             test_retry_after_far_future_date_is_capped;
+          Alcotest.test_case "lowercase GET is not default retryable" `Quick
+            test_lowercase_get_is_not_default_retryable;
+        ] );
+      ( "error",
+        [
+          Alcotest.test_case "redacts proxy authentication headers" `Quick
+            test_error_redacts_proxy_authentication_headers;
+          Alcotest.test_case "redacts URI userinfo" `Quick
+            test_redaction_uri_redacts_userinfo;
+          Alcotest.test_case "redacts URI fragments" `Quick
+            test_redaction_uri_redacts_fragments;
+          Alcotest.test_case "redacts URI userinfo in outputs" `Quick
+            test_error_redacts_uri_userinfo_in_outputs;
+        ] );
+      ( "url",
+        [
+          Alcotest.test_case "rejects invalid reg-name hosts" `Quick
+            test_url_rejects_invalid_reg_name_hosts;
+          Alcotest.test_case "rejects invalid path/query escapes" `Quick
+            test_url_rejects_invalid_path_query_percent_encoding;
+          Alcotest.test_case "rejects invalid IP literals" `Quick
+            test_url_rejects_invalid_ip_literals;
+          Alcotest.test_case "accepts valid IP literals" `Quick
+            test_url_accepts_valid_ip_literals;
         ] );
       ( "h1-write",
         [
@@ -40,10 +66,19 @@ let () =
             test_h1_writer_rejects_invalid_content_length_framing;
           Alcotest.test_case "flow rejects Transfer-Encoding fixed body" `Quick
             test_h1_writer_rejects_transfer_encoding_for_fixed_body;
-          Alcotest.test_case "flow stream override does not reframe fixed body" `Quick
-            test_h1_writer_stream_override_does_not_reframe_fixed_body;
+          Alcotest.test_case "rejects Transfer-Encoding empty body" `Quick
+            test_h1_writer_rejects_transfer_encoding_for_empty_body;
+          Alcotest.test_case "stream headers own fixed framing" `Quick
+            test_h1_writer_stream_headers_own_fixed_framing;
+          Alcotest.test_case
+            "response to_string rejects suppressed streaming body" `Quick
+            test_h1_response_write_refuses_suppressed_streaming_body_in_to_string;
+          Alcotest.test_case "response to_string suppresses 205 body" `Quick
+            test_h1_response_write_suppresses_205_body;
           Alcotest.test_case "flow matches string writer" `Quick
             test_h1_writer_flow_matches_string_writer;
+          Alcotest.test_case "accepts lowercase extension method" `Quick
+            test_h1_writer_accepts_lowercase_extension_method;
           Alcotest.test_case "flow write failure is typed" `Quick
             test_h1_writer_flow_write_failure_is_typed;
           Alcotest.test_case "flow write cancellation propagates" `Quick
@@ -195,6 +230,10 @@ let () =
             test_h1_server_connection_streams_fixed_length_response;
           Alcotest.test_case "streams chunked response with trailers" `Quick
             test_h1_server_connection_streams_chunked_response_with_trailers;
+          Alcotest.test_case "204 releases suppressed stream" `Quick
+            test_h1_server_connection_no_content_releases_suppressed_stream;
+          Alcotest.test_case "205 releases suppressed stream" `Quick
+            test_h1_server_connection_reset_content_releases_suppressed_stream;
           Alcotest.test_case "stream write failure releases body" `Quick
             test_h1_server_connection_releases_stream_on_write_failure;
           Alcotest.test_case "response write timeout is typed" `Quick
@@ -402,6 +441,12 @@ let () =
             test_h2_informational_filter_passes_push_promise_continuation;
           Alcotest.test_case "informational filter passthrough is not global"
             `Quick test_h2_informational_filter_passthrough_is_not_global;
+          Alcotest.test_case "informational filter rejects 101" `Quick
+            test_h2_informational_filter_rejects_101_status;
+          Alcotest.test_case "informational filter rejects invalid status" `Quick
+            test_h2_informational_filter_rejects_invalid_status;
+          Alcotest.test_case "informational filter rejects second final status"
+            `Quick test_h2_informational_filter_rejects_second_final_status;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request preserves connection" `Quick
@@ -449,6 +494,22 @@ let () =
           Alcotest.test_case "h2c rejects connection-specific response header"
             `Quick
             test_h2c_server_rejects_connection_specific_response_header;
+          Alcotest.test_case "h2 request validation allows TE trailers" `Quick
+            test_h2_request_validation_allows_te_trailers;
+          Alcotest.test_case "h2 request validation rejects invalid metadata"
+            `Quick test_h2_request_rejects_invalid_method_and_path_values;
+          Alcotest.test_case "h2 request validation requires pseudo headers"
+            `Quick test_h2_request_headers_require_mandatory_pseudo_headers;
+          Alcotest.test_case "h2 request validation rejects host conflict"
+            `Quick test_h2_request_headers_reject_host_authority_conflict;
+          Alcotest.test_case "server authority rejects invalid IP literals"
+            `Quick test_server_authority_rejects_invalid_ip_literals;
+          Alcotest.test_case "h2 response validation rejects TE" `Quick
+            test_h2_response_validation_rejects_te_header;
+          Alcotest.test_case "h2 response validation rejects uppercase names"
+            `Quick test_h2_response_validation_rejects_uppercase_header_names;
+          Alcotest.test_case "h2 response trailers reject Content-Length"
+            `Quick test_h2_response_trailers_reject_content_length;
           Alcotest.test_case "h2c rejects connection-specific response trailer"
             `Quick
             test_h2c_server_rejects_connection_specific_response_trailer;
@@ -513,6 +574,20 @@ let () =
         [
           Alcotest.test_case "SETTINGS churn reader" `Quick
             test_h2_security_settings_churn_reader;
+          Alcotest.test_case "invalid control frame envelopes" `Quick
+            test_h2_security_rejects_invalid_control_frame_envelopes;
+          Alcotest.test_case "invalid stream frame envelopes" `Quick
+            test_h2_security_rejects_invalid_stream_frame_envelopes;
+          Alcotest.test_case "invalid CONTINUATION envelopes" `Quick
+            test_h2_security_rejects_invalid_continuation_envelopes;
+          Alcotest.test_case "valid split header block" `Quick
+            test_h2_security_accepts_valid_split_header_block;
+          Alcotest.test_case "invalid SETTINGS payload values" `Quick
+            test_h2_security_rejects_invalid_settings_payload_values;
+          Alcotest.test_case "graceful repeated GOAWAY" `Quick
+            test_h2_security_allows_graceful_repeated_goaway;
+          Alcotest.test_case "increasing GOAWAY last stream" `Quick
+            test_h2_security_rejects_increasing_goaway_last_stream_id;
         ] );
       ( "h2-multiplexer",
         [

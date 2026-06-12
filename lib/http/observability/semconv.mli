@@ -8,8 +8,9 @@ val request_attrs :
   protocol:Client.protocol ->
   Request.t ->
   (string * string) list
-(** Request span attributes. By default [url.full] redacts the query string;
-    pass [emit_url_full=true] only when traces are trusted to carry raw URLs. *)
+(** Request span attributes. By default [url.full] redacts query strings and
+    fragments; pass [emit_url_full=true] only when traces are trusted to carry
+    raw URLs. *)
 
 val response_attrs : Response.t -> (string * string) list
 val error_attrs : Error.t -> (string * string) list

@@ -3,6 +3,7 @@
 type body =
   | No_body
   | Fixed of bytes list
+  | Suppressed_stream of Server_response.Body.stream
   | Stream_fixed of Server_response.Body.stream
   | Stream_chunked of Server_response.Body.stream
   | Stream_close_delimited of Server_response.Body.stream

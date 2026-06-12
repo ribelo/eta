@@ -1,14 +1,15 @@
 (** Byte-level HTTP/2 security envelope checks.
 
     This scanner observes raw HTTP/2 frame bytes before they are handed to
-    [ocaml-h2]. It owns eta-http's cheap frame-envelope policy:
-    SETTINGS and GOAWAY are connection-lifetime counters because either frame is
-    rare on healthy client connections. Response HEADERS are counted per stream:
-    long-lived multiplexed connections may legitimately see hundreds of normal
-    responses, while repeated HEADERS transitions on the same stream remain a
-    churn signal. Empty DATA and WINDOW_UPDATE frames are counted as cheap DoS
-    envelopes. Header-block/CONTINUATION byte caps protect incomplete or
-    oversized HPACK envelopes; HPACK decoding remains owned by [ocaml-h2]. *)
+    [ocaml-h2]. It owns eta-http's cheap frame-envelope policy: SETTINGS is a
+    connection-lifetime counter, and GOAWAY is counted while allowing valid
+    graceful shutdown sequences with non-increasing [last_stream_id] values.
+    Response HEADERS are counted per stream: long-lived multiplexed connections
+    may legitimately see hundreds of normal responses, while repeated HEADERS
+    transitions on the same stream remain a churn signal. Empty DATA and
+    WINDOW_UPDATE frames are counted as cheap DoS envelopes.
+    Header-block/CONTINUATION byte caps protect incomplete or oversized HPACK
+    envelopes; HPACK decoding remains owned by [ocaml-h2]. *)
 
 type config = {
   max_settings_per_connection : int;

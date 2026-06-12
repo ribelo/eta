@@ -908,6 +908,9 @@ let rec pump_chunked_response_stream t rt request response stream =
       | Ok trailers -> write_last_chunk t trailers)
 
 let write_stream_response t rt request response = function
+  | Eta_http.H1.Response_write.Suppressed_stream stream ->
+      release_response_stream rt stream;
+      Ok ()
   | Eta_http.H1.Response_write.Stream_fixed stream ->
       with_released_response_stream rt stream (fun () ->
           let length = Option.value stream.length ~default:0 in
@@ -943,6 +946,7 @@ let write_prepared_response ?rt t request response
       | Eta_http.H1.Response_write.Fixed chunks ->
           write_response_bytes_list t chunks
           |> Result.map (fun () -> { connection_close = prepared.close })
+      | Eta_http.H1.Response_write.Suppressed_stream _
       | Eta_http.H1.Response_write.Stream_fixed _
       | Eta_http.H1.Response_write.Stream_chunked _
       | Eta_http.H1.Response_write.Stream_close_delimited _ -> (

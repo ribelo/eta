@@ -2,6 +2,8 @@
 
 type body = Empty | Fixed of bytes list
 
+type stream_framing = Fixed_length of int | Chunked
+
 val content_length : body -> int option
 
 val write_to_bytes_raw :
@@ -32,7 +34,6 @@ val write_to_bytes :
     Caller-provided headers are validated before any bytes are written. *)
 
 val write :
-  ?framing_body_length:int ->
   Buffer.t ->
   method_:string ->
   url:Url.t ->
@@ -43,9 +44,20 @@ val write :
 
     The request target is origin-form. [Host] is added when the caller did not
     provide one. Fixed bodies get a [Content-Length] header when absent.
-    Caller-provided headers are validated before any bytes are appended.
-    [framing_body_length] overrides body length validation only when [body] is
-    [Empty], for callers that write headers separately from a streamed body. *)
+    Caller-provided headers are validated before any bytes are appended. *)
+
+val write_stream_headers :
+  Buffer.t ->
+  method_:string ->
+  url:Url.t ->
+  headers:Header.t ->
+  framing:stream_framing ->
+  (unit, Error.t) result
+(** Append one HTTP/1.1 request head for a separately written stream body.
+
+    The streaming writer owns framing: [Fixed_length] writes or validates
+    [Content-Length], while [Chunked] writes [Transfer-Encoding: chunked].
+    Caller-provided [Transfer-Encoding] is rejected. *)
 
 val to_string :
   method_:string ->

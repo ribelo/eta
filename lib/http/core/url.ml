@@ -45,20 +45,124 @@ let lowercase_ascii_slice raw off len =
   done;
   Bytes.unsafe_to_string bytes
 
-let is_ctl_or_space c =
-  let code = Char.code c in
-  code <= 0x20 || code = 0x7f
+let is_hexdig = function
+  | '0' .. '9' | 'A' .. 'F' | 'a' .. 'f' -> true
+  | _ -> false
 
-let validate_component raw component start finish =
+let is_unreserved = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' -> true
+  | _ -> false
+
+let is_sub_delim = function
+  | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
+      true
+  | _ -> false
+
+let is_pchar = function
+  | ':' | '@' -> true
+  | char -> is_unreserved char || is_sub_delim char
+
+let is_reg_name_char = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' | '!'
+  | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
+      true
+  | _ -> false
+
+let is_ipvfuture_tail_char = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | ':' | '.' | '-' | '_' | '~'
+  | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
+      true
+  | _ -> false
+
+let invalid_character raw component index =
+  Error
+    (Invalid_character
+       { component; index; char = String.unsafe_get raw index })
+
+let validate_percent_encoded_component raw component start finish is_allowed =
   let rec loop index =
     if index >= finish then Ok ()
     else
-      let char = raw.[index] in
-      if is_ctl_or_space char then
-        Error (Invalid_character { component; index; char })
-      else loop (index + 1)
+      match String.unsafe_get raw index with
+      | '%' ->
+          if index + 2 >= finish then invalid_character raw component index
+          else
+            let first = String.unsafe_get raw (index + 1) in
+            let second = String.unsafe_get raw (index + 2) in
+            if is_hexdig first && is_hexdig second then loop (index + 3)
+            else invalid_character raw component index
+      | char ->
+          if is_allowed char then loop (index + 1)
+          else invalid_character raw component index
   in
   loop start
+
+let validate_path raw start finish =
+  validate_percent_encoded_component raw "path" start finish (function
+    | '/' -> true
+    | char -> is_pchar char)
+
+let validate_query_like component raw start finish =
+  validate_percent_encoded_component raw component start finish (function
+    | '/' | '?' -> true
+    | char -> is_pchar char)
+
+let validate_query raw start finish = validate_query_like "query" raw start finish
+let validate_fragment raw start finish =
+  validate_query_like "fragment" raw start finish
+
+let validate_reg_name raw component start finish =
+  let rec loop index =
+    if index >= finish then Ok ()
+    else
+      match String.unsafe_get raw index with
+      | '%' ->
+          if index + 2 >= finish then invalid_character raw component index
+          else
+            let first = String.unsafe_get raw (index + 1) in
+            let second = String.unsafe_get raw (index + 2) in
+            if is_hexdig first && is_hexdig second then loop (index + 3)
+            else invalid_character raw component index
+      | char ->
+          if is_reg_name_char char then loop (index + 1)
+          else invalid_character raw component index
+  in
+  loop start
+
+let validate_ipvfuture raw component start finish =
+  let rec version_loop index =
+    if index >= finish then invalid_character raw component start
+    else
+      match String.unsafe_get raw index with
+      | '.' when index = start + 1 -> invalid_character raw component index
+      | '.' -> tail_loop (index + 1)
+      | char ->
+          if is_hexdig char then version_loop (index + 1)
+          else invalid_character raw component index
+  and tail_loop index =
+    if index >= finish then invalid_character raw component (finish - 1)
+    else tail_chars_loop index
+  and tail_chars_loop index =
+    if index >= finish then Ok ()
+    else
+      let char = String.unsafe_get raw index in
+      if is_ipvfuture_tail_char char then tail_chars_loop (index + 1)
+      else invalid_character raw component index
+  in
+  version_loop (start + 1)
+
+let validate_ip_literal raw component start finish =
+  match String.unsafe_get raw start with
+  | 'v' | 'V' -> validate_ipvfuture raw component start finish
+  | _ -> (
+      match Ipaddr.V6.of_string (String.sub raw start (finish - start)) with
+      | Ok _ -> Ok ()
+      | Error _ -> invalid_character raw component start)
+
+let validate_host raw host_kind start finish =
+  match host_kind with
+  | Reg_name -> validate_reg_name raw "host" start finish
+  | Ip_literal -> validate_ip_literal raw "host" start finish
 
 let find_from raw start stop char =
   let rec loop index =
@@ -200,20 +304,19 @@ let parse raw =
           (match parse_authority raw authority_start authority_end with
           | Error _ as error -> error
           | Ok (host, host_kind, port) -> (
-              match validate_component raw "host" host.off (host.off + host.len) with
+              match validate_host raw host_kind host.off (host.off + host.len) with
               | Error _ as error -> error
               | Ok () ->
                   let path, query, fragment =
                     parse_path_query_fragment raw authority_end
                   in
-                  let validate_opt component = function
+                  let validate_opt validate = function
                     | None -> Ok ()
                     | Some span ->
-                        validate_component raw component span.off
-                          (span.off + span.len)
+                        validate raw span.off (span.off + span.len)
                   in
-                  Result.bind (validate_opt "path" path) (fun () ->
-                      Result.bind (validate_opt "query" query) (fun () ->
+                  Result.bind (validate_opt validate_path path) (fun () ->
+                      Result.bind (validate_opt validate_query query) (fun () ->
                           Result.map
                             (fun () ->
                               {
@@ -226,7 +329,7 @@ let parse raw =
                                 query;
                                 fragment;
                               })
-                            (validate_opt "fragment" fragment)))))
+                            (validate_opt validate_fragment fragment)))))
 
 let pp_parse_error fmt = function
   | Empty -> Format.pp_print_string fmt "empty URL"

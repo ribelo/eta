@@ -79,3 +79,26 @@ let test_retry_after_far_future_date_is_capped () =
       Alcotest.(check int) "cap"
         (Eta.Duration.to_ms Eta_http.Retry_policy.default_max_retry_after)
         (Eta.Duration.to_ms delay)
+
+let test_lowercase_get_is_not_default_retryable () =
+  Alcotest.(check bool)
+    "method classifier" false
+    (Eta_http.Idempotency.method_is_idempotent "get");
+  with_test_clock @@ fun _sw _clock rt ->
+  let attempts, client =
+    retry_client [| (fun () -> retry_response 503) |]
+  in
+  let policy =
+    Eta_http.Retry_policy.make ~max_attempts:2
+      ~schedule:(Eta.Schedule.fixed Eta.Duration.zero)
+      ~respect_retry_after:false ()
+  in
+  let request =
+    Eta_http.Request.make "get" "http://example.test/lowercase-get"
+  in
+  let response =
+    Eta_http.Client.request_with_retry ~policy client request
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 503 response.Eta_http.Response.status;
+  Alcotest.(check int) "attempts" 1 !attempts

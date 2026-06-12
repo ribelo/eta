@@ -502,11 +502,9 @@ let bodyless_response ~request_method status =
   (match Eta_http.Core.Method.of_string request_method with
   | `HEAD -> true
   | _ -> false)
-  || Eta_http.Core.Status.is_informational status
-  || status = 204 || status = 304
+  || Eta_http.Core.Status.forbids_response_body status
 
-let strict_no_body_status status =
-  Eta_http.Core.Status.is_informational status || status = 204 || status = 304
+let strict_no_body_status = Eta_http.Core.Status.forbids_response_body
 
 let add_content_length_header length headers =
   Eta_http.Core.Header.unsafe_add "content-length" (string_of_int length) headers

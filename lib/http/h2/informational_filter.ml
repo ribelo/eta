@@ -143,6 +143,17 @@ let status_code headers =
   in
   loop headers
 
+let has_status_header headers =
+  List.exists
+    (fun ({ Hpack.name; _ } : Hpack.header) -> String.equal name ":status")
+    headers
+
+let has_pseudo_header headers =
+  List.exists
+    (fun ({ Hpack.name; _ } : Hpack.header) ->
+      String.length name > 0 && Char.equal name.[0] ':')
+    headers
+
 let is_informational = function
   | Some status -> status >= 100 && status < 200 && status <> 101
   | None -> false
@@ -152,7 +163,19 @@ let complete_headers t { stream_id; end_stream; block } =
   match decode_headers t (Buffer.contents block) with
   | Error _ as error -> error
   | Ok headers ->
-      if (not already_final) && is_informational (status_code headers) then
+      let status = status_code headers in
+      if already_final && has_pseudo_header headers then
+        error "HTTP/2 trailers contained a pseudo-header"
+      else if has_status_header headers && Option.is_none status then
+        error "HTTP/2 response used invalid :status"
+      else if Option.equal Int.equal status (Some 101) then
+        error "HTTP/2 response used forbidden :status 101"
+      else if
+        match status with
+        | Some status -> status < 100 || status > 599
+        | None -> false
+      then error "HTTP/2 response used invalid :status"
+      else if (not already_final) && is_informational status then
         if end_stream then error "informational response carried END_STREAM"
         else Ok ()
       else (

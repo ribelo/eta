@@ -13,7 +13,7 @@ type t =
   | `Other of string ]
 
 let of_string method_ =
-  match String.uppercase_ascii (String.trim method_) with
+  match method_ with
   | "GET" -> `GET
   | "HEAD" -> `HEAD
   | "POST" -> `POST

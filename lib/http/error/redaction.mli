@@ -15,4 +15,5 @@ val headers : ?policy:t -> (string * string) list -> (string * string) list
 (** Replace sensitive header values with ["<redacted>"]. *)
 
 val uri : string -> string
-(** Replace a URL query string with [?<redacted>] while preserving fragments. *)
+(** Replace URL userinfo with [<redacted>] and query strings with
+    [?<redacted>] and fragments with [#<redacted>]. *)

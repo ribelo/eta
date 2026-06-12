@@ -13,6 +13,9 @@ let unsafe_of_int status =
 let to_int status = status
 let class_ status = string_of_int (status / 100) ^ "xx"
 let is_informational status = status >= 100 && status <= 199
+let forbids_response_body status =
+  is_informational status || status = 204 || status = 205 || status = 304
+
 let is_success status = status >= 200 && status <= 299
 let is_redirection status = status >= 300 && status <= 399
 let is_client_error status = status >= 400 && status <= 499

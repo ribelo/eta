@@ -3,6 +3,7 @@
 type body =
   | No_body
   | Fixed of bytes list
+  | Suppressed_stream of Server_response.Body.stream
   | Stream_fixed of Server_response.Body.stream
   | Stream_chunked of Server_response.Body.stream
   | Stream_close_delimited of Server_response.Body.stream
@@ -124,11 +125,9 @@ let caller_hop_by_hop_header headers =
 
 let bodyless_response ~request_method status =
   (match Method.of_string request_method with `HEAD -> true | _ -> false)
-  || Status.is_informational status
-  || status = 204 || status = 304
+  || Status.forbids_response_body status
 
-let strict_no_body_status status =
-  Status.is_informational status || status = 204 || status = 304
+let strict_no_body_status = Status.forbids_response_body
 
 let add_chunks_length total chunk =
   let len = Bytes.length chunk in
@@ -148,12 +147,14 @@ let body_decision ~version ~request_method response =
   let bodyless = bodyless_response ~request_method status in
   let strict_no_body = strict_no_body_status status in
   match (bodyless, strict_no_body, body) with
+  | true, true, Server_response.Body.Stream stream ->
+      Ok (Suppressed_stream stream, None, false)
   | true, true, _ -> Ok (No_body, None, false)
   | true, false, Server_response.Body.Empty -> Ok (No_body, Some 0, false)
   | true, false, Server_response.Body.Fixed chunks ->
       fixed_body_length chunks |> Result.map (fun length -> (No_body, Some length, false))
-  | true, false, Server_response.Body.Stream { length; _ } ->
-      Ok (No_body, length, false)
+  | true, false, Server_response.Body.Stream stream ->
+      Ok (Suppressed_stream stream, stream.length, false)
   | false, _, Server_response.Body.Empty -> Ok (No_body, Some 0, false)
   | false, _, Server_response.Body.Fixed chunks ->
       fixed_body_length chunks
@@ -192,7 +193,8 @@ let validate_trailer_header headers body =
                 | Error _ as error -> error)
           in
           loop names
-      | No_body | Fixed _ | Stream_fixed _ | Stream_close_delimited _ ->
+      | No_body | Fixed _ | Suppressed_stream _ | Stream_fixed _
+      | Stream_close_delimited _ ->
           Error Trailer_without_chunked_body)
 
 let prepare ?(connection_close = false) ~version ~request_method response =
@@ -230,7 +232,7 @@ let prepare ?(connection_close = false) ~version ~request_method response =
                           add_header_line buffer
                             ("Transfer-Encoding", "chunked")
                       | No_body | Fixed _ | Stream_fixed _
-                      | Stream_close_delimited _ ->
+                      | Suppressed_stream _ | Stream_close_delimited _ ->
                           ()));
                   Buffer.add_string buffer "\r\n";
                   Ok { head = Buffer.contents buffer; body; close })))
@@ -244,7 +246,13 @@ let to_string ?connection_close ~version ~request_method response =
       Buffer.add_string buffer head;
       List.iter (fun chunk -> Buffer.add_bytes buffer chunk) chunks;
       Ok (Buffer.contents buffer)
-  | Ok { body = Stream_fixed _ | Stream_chunked _ | Stream_close_delimited _; _ } ->
+  | Ok
+      {
+        body =
+          Suppressed_stream _ | Stream_fixed _ | Stream_chunked _
+          | Stream_close_delimited _;
+        _;
+      } ->
       Error Streaming_body
 
 let encode_chunk = Chunked.encode_chunk

@@ -17,7 +17,7 @@ type config = {
 let default_config =
   {
     max_settings_per_connection = 10;
-    max_goaway_per_connection = 1;
+    max_goaway_per_connection = 8;
     max_rst_stream_per_connection = 100;
     max_ping_per_connection = 100;
     max_empty_data_frames_per_connection = 100;
@@ -36,6 +36,7 @@ type t = {
   mutable payload_remaining : int;
   mutable settings_seen : int;
   mutable goaway_seen : int;
+  mutable last_goaway_stream_id : int option;
   mutable rst_stream_seen : int;
   mutable ping_seen : int;
   mutable empty_data_seen : int;
@@ -43,6 +44,7 @@ type t = {
   response_headers_seen_by_stream : (int, int) Hashtbl.t;
   mutable header_block_bytes : int;
   mutable header_block_frames : int;
+  mutable open_header_stream : int option;
   mutable payload_observer : payload_observer;
 }
 
@@ -50,6 +52,14 @@ and payload_observer =
   | Skip_payload
   | Window_update_payload of {
       stream_id : int;
+      payload : Bytes.t;
+      mutable payload_len : int;
+    }
+  | Settings_payload of {
+      payload : Bytes.t;
+      mutable payload_len : int;
+    }
+  | Goaway_payload of {
       payload : Bytes.t;
       mutable payload_len : int;
     }
@@ -62,6 +72,7 @@ let create ?(config = default_config) () =
     payload_remaining = 0;
     settings_seen = 0;
     goaway_seen = 0;
+    last_goaway_stream_id = None;
     rst_stream_seen = 0;
     ping_seen = 0;
     empty_data_seen = 0;
@@ -69,6 +80,7 @@ let create ?(config = default_config) () =
     response_headers_seen_by_stream = Hashtbl.create 32;
     header_block_bytes = 0;
     header_block_frames = 0;
+    open_header_stream = None;
     payload_observer = Skip_payload;
   }
 
@@ -76,7 +88,8 @@ let end_headers flags = flags land 0x4 <> 0
 
 let reset_header_block t =
   t.header_block_bytes <- 0;
-  t.header_block_frames <- 0
+  t.header_block_frames <- 0;
+  t.open_header_stream <- None
 
 let account_settings t =
   t.settings_seen <- t.settings_seen + 1;
@@ -171,6 +184,8 @@ let continuation_flood t =
 let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
   match frame_type with
   | 0x1 | 0x5 ->
+      t.open_header_stream <-
+        (if end_headers flags then None else Some stream_id);
       t.header_block_bytes <- length;
       t.header_block_frames <- 1;
       (match
@@ -206,6 +221,11 @@ let account_header_bytes t ~frame_type ~flags ~length ~stream_id =
 let connection_protocol_violation ~kind ~message =
   Error.Connection_protocol_violation { kind; message }
 
+let protocol_violationf ~kind format =
+  Printf.ksprintf
+    (fun message -> Some (connection_protocol_violation ~kind ~message))
+    format
+
 let byte_at bytes index = Char.code (Bytes.unsafe_get bytes index)
 
 let window_update_increment payload =
@@ -225,6 +245,126 @@ let validate_window_update_payload ~stream_id payload =
               stream_id))
   else None
 
+let uint16_at payload off =
+  (byte_at payload off lsl 8) lor (byte_at payload (off + 1))
+
+let uint32_at payload off =
+  (byte_at payload off lsl 24)
+  lor (byte_at payload (off + 1) lsl 16)
+  lor (byte_at payload (off + 2) lsl 8)
+  lor (byte_at payload (off + 3))
+
+let validate_settings_payload payload =
+  let id = uint16_at payload 0 in
+  let value = uint32_at payload 2 in
+  match id with
+  | 0x2 when value <> 0 && value <> 1 ->
+      protocol_violationf ~kind:"settings_enable_push"
+        "SETTINGS_ENABLE_PUSH value=%d, expected 0 or 1" value
+  | 0x4 when value > 0x7fff_ffff ->
+      protocol_violationf ~kind:"settings_initial_window_size"
+        "SETTINGS_INITIAL_WINDOW_SIZE value=%d exceeds 2^31-1" value
+  | 0x5 when value < 16_384 || value > 16_777_215 ->
+      protocol_violationf ~kind:"settings_max_frame_size"
+        "SETTINGS_MAX_FRAME_SIZE value=%d outside 16384..16777215" value
+  | _ -> None
+
+let goaway_last_stream_id payload = uint32_at payload 0 land 0x7fff_ffff
+
+let validate_goaway_payload t payload =
+  let last_stream_id = goaway_last_stream_id payload in
+  match t.last_goaway_stream_id with
+  | Some previous when last_stream_id > previous ->
+      protocol_violationf ~kind:"goaway_last_stream_id_increase"
+        "GOAWAY last_stream_id increased from %d to %d" previous last_stream_id
+  | _ ->
+      t.last_goaway_stream_id <- Some last_stream_id;
+      None
+
+let validate_settings_frame ~flags ~length ~stream_id =
+  if stream_id <> 0 then
+    protocol_violationf ~kind:"settings_stream_id"
+      "SETTINGS frame has stream_id=%d, expected 0" stream_id
+  else if flags land 0x1 <> 0 && length <> 0 then
+    protocol_violationf ~kind:"settings_ack_length"
+      "SETTINGS ACK payload length=%d, expected 0" length
+  else if flags land 0x1 = 0 && length mod 6 <> 0 then
+    protocol_violationf ~kind:"settings_length"
+      "SETTINGS payload length=%d is not a multiple of 6" length
+  else None
+
+let validate_ping_frame ~length ~stream_id =
+  if stream_id <> 0 || length <> 8 then
+    protocol_violationf ~kind:"ping_envelope"
+      "PING frame stream_id=%d payload length=%d, expected stream_id=0 and \
+       length=8"
+      stream_id length
+  else None
+
+let validate_rst_stream_frame ~length ~stream_id =
+  if stream_id = 0 || length <> 4 then
+    protocol_violationf ~kind:"rst_stream_envelope"
+      "RST_STREAM frame stream_id=%d payload length=%d, expected nonzero \
+       stream_id and length=4"
+      stream_id length
+  else None
+
+let validate_goaway_frame ~length ~stream_id =
+  if stream_id <> 0 || length < 8 then
+    protocol_violationf ~kind:"goaway_envelope"
+      "GOAWAY frame stream_id=%d payload length=%d, expected stream_id=0 and \
+       length>=8"
+      stream_id length
+  else None
+
+let validate_data_frame ~stream_id =
+  if stream_id = 0 then
+    protocol_violationf ~kind:"data_stream_id"
+      "DATA frame has stream_id=0, expected nonzero stream_id"
+  else None
+
+let validate_headers_frame ~stream_id =
+  if stream_id = 0 then
+    protocol_violationf ~kind:"headers_stream_id"
+      "HEADERS frame has stream_id=0, expected nonzero stream_id"
+  else None
+
+let validate_priority_frame ~length ~stream_id =
+  if stream_id = 0 || length <> 5 then
+    protocol_violationf ~kind:"priority_envelope"
+      "PRIORITY frame stream_id=%d payload length=%d, expected nonzero \
+       stream_id and length=5"
+      stream_id length
+  else None
+
+let validate_push_promise_frame ~length ~stream_id =
+  if stream_id = 0 || length < 4 then
+    protocol_violationf ~kind:"push_promise_envelope"
+      "PUSH_PROMISE frame stream_id=%d payload length=%d, expected nonzero \
+       stream_id and length>=4"
+      stream_id length
+  else None
+
+let validate_continuation_frame t ~stream_id =
+  match t.open_header_stream with
+  | None ->
+      protocol_violationf ~kind:"continuation_without_headers"
+        "CONTINUATION frame stream_id=%d has no open header block" stream_id
+  | Some expected when stream_id <> expected ->
+      protocol_violationf ~kind:"continuation_stream_mismatch"
+        "CONTINUATION frame stream_id=%d, expected stream_id=%d" stream_id
+        expected
+  | Some _ -> None
+
+let validate_header_block_order t ~frame_type ~stream_id =
+  match t.open_header_stream with
+  | Some expected when frame_type <> 0x9 ->
+      protocol_violationf ~kind:"continuation_expected"
+        "frame type=0x%02x stream_id=%d arrived while header block for \
+         stream_id=%d is open"
+        frame_type stream_id expected
+  | _ -> None
+
 let observe_payload_byte t byte =
   match t.payload_observer with
   | Skip_payload -> None
@@ -235,20 +375,36 @@ let observe_payload_byte t byte =
         t.payload_observer <- Skip_payload;
         validate_window_update_payload ~stream_id:state.stream_id state.payload)
       else None
+  | Settings_payload state ->
+      Bytes.set state.payload state.payload_len byte;
+      state.payload_len <- state.payload_len + 1;
+      if state.payload_len = Bytes.length state.payload then
+        match validate_settings_payload state.payload with
+        | Some error -> Some error
+        | None ->
+            state.payload_len <- 0;
+            None
+      else None
+  | Goaway_payload state ->
+      Bytes.set state.payload state.payload_len byte;
+      state.payload_len <- state.payload_len + 1;
+      if state.payload_len = Bytes.length state.payload then (
+        t.payload_observer <- Skip_payload;
+        validate_goaway_payload t state.payload)
+      else None
 
 let observe_payload t bs ~off ~len =
   match t.payload_observer with
   | Skip_payload -> None
-  | Window_update_payload state ->
-      for index = 0 to len - 1 do
-        Bytes.set state.payload (state.payload_len + index)
-          (Bigstringaf.get bs (off + index))
-      done;
-      state.payload_len <- state.payload_len + len;
-      if state.payload_len = Bytes.length state.payload then (
-        t.payload_observer <- Skip_payload;
-        validate_window_update_payload ~stream_id:state.stream_id state.payload)
-      else None
+  | Window_update_payload _ | Settings_payload _ | Goaway_payload _ ->
+      let rec loop index =
+        if index = len then None
+        else
+          match observe_payload_byte t (Bigstringaf.get bs (off + index)) with
+          | Some error -> Some error
+          | None -> loop (index + 1)
+      in
+      loop 0
 
 let complete_stream t stream_id =
   Hashtbl.remove t.response_headers_seen_by_stream stream_id
@@ -261,30 +417,78 @@ let start_frame t =
   t.header_len <- 0;
   t.payload_remaining <- length;
   t.payload_observer <- Skip_payload;
-  match frame_type with
-  | 0x0 when length = 0 -> account_empty_data t
-  | 0x4 -> account_settings t
-  | 0x7 -> account_goaway t
-  | 0x3 -> account_rst_stream t
-  | 0x6 -> account_ping t
-  | 0x8 -> (
-      match account_window_update t with
-      | Some error -> Some error
-      | None when length <> 4 ->
-          Some
-            (connection_protocol_violation ~kind:"window_update_length"
-               ~message:
-                 (Printf.sprintf
-                    "WINDOW_UPDATE stream_id=%d payload length=%d, expected 4"
-                    stream_id length))
-      | None ->
-          t.payload_observer <-
-            Window_update_payload
-              { stream_id; payload = Bytes.create 4; payload_len = 0 };
-          None)
-  | 0x1 | 0x5 | 0x9 ->
-      account_header_bytes t ~frame_type ~flags ~length ~stream_id
-  | _ -> None
+  match validate_header_block_order t ~frame_type ~stream_id with
+  | Some error -> Some error
+  | None -> (
+      match frame_type with
+      | 0x0 -> (
+          match validate_data_frame ~stream_id with
+          | Some error -> Some error
+          | None when length = 0 -> account_empty_data t
+          | None -> None)
+      | 0x1 -> (
+          match validate_headers_frame ~stream_id with
+          | Some error -> Some error
+          | None ->
+              account_header_bytes t ~frame_type ~flags ~length ~stream_id)
+      | 0x2 -> validate_priority_frame ~length ~stream_id
+      | 0x3 -> (
+          match validate_rst_stream_frame ~length ~stream_id with
+          | Some error -> Some error
+          | None -> account_rst_stream t)
+      | 0x4 -> (
+          match validate_settings_frame ~flags ~length ~stream_id with
+          | Some error -> Some error
+          | None -> (
+              match account_settings t with
+              | Some error -> Some error
+              | None ->
+                  if length > 0 && flags land 0x1 = 0 then
+                    t.payload_observer <-
+                      Settings_payload
+                        { payload = Bytes.create 6; payload_len = 0 };
+                  None))
+      | 0x5 -> (
+          match validate_push_promise_frame ~length ~stream_id with
+          | Some error -> Some error
+          | None ->
+              account_header_bytes t ~frame_type ~flags ~length ~stream_id)
+      | 0x6 -> (
+          match validate_ping_frame ~length ~stream_id with
+          | Some error -> Some error
+          | None -> account_ping t)
+      | 0x7 -> (
+          match validate_goaway_frame ~length ~stream_id with
+          | Some error -> Some error
+          | None -> (
+              match account_goaway t with
+              | Some error -> Some error
+              | None ->
+                  t.payload_observer <-
+                    Goaway_payload { payload = Bytes.create 4; payload_len = 0 };
+                  None))
+      | 0x8 -> (
+          if length <> 4 then
+            Some
+              (connection_protocol_violation ~kind:"window_update_length"
+                 ~message:
+                   (Printf.sprintf
+                      "WINDOW_UPDATE stream_id=%d payload length=%d, expected 4"
+                      stream_id length))
+          else
+            match account_window_update t with
+            | Some error -> Some error
+            | None ->
+                t.payload_observer <-
+                  Window_update_payload
+                    { stream_id; payload = Bytes.create 4; payload_len = 0 };
+                None)
+      | 0x9 -> (
+          match validate_continuation_frame t ~stream_id with
+          | Some error -> Some error
+          | None ->
+              account_header_bytes t ~frame_type ~flags ~length ~stream_id)
+      | _ -> None)
 
 let observe_byte t byte =
   if t.payload_remaining > 0 then (

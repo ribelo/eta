@@ -126,15 +126,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Error _ -> Alcotest.fail "HTAB header value rejected"
 
   let test_method_of_string_fast_path_semantics () =
-    Alcotest.(check string) "known lowercase trimmed" "GET"
+    Alcotest.(check string) "known lowercase remains custom" "get"
       (Eta_http.Core.Method.to_string
-         (Eta_http.Core.Method.of_string "  get\t"));
-    Alcotest.(check bool) "post not idempotent" false
+         (Eta_http.Core.Method.of_string "get"));
+    Alcotest.(check bool) "lowercase post not idempotent" false
       (Eta_http.Core.Method.is_idempotent
-         (Eta_http.Core.Method.of_string "\r\npost "));
-    Alcotest.(check string) "unknown uppercased trimmed" "BREW"
+         (Eta_http.Core.Method.of_string "post"));
+    Alcotest.(check string) "unknown method preserves token" "brew"
       (Eta_http.Core.Method.to_string
-         (Eta_http.Core.Method.of_string " brew "))
+         (Eta_http.Core.Method.of_string "brew"))
 
   let test_error_redaction_and_projection () =
     let uri = "https://api.example.test/v1/models?token=secret#frag" in
@@ -166,7 +166,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "json status" 503
       (Yojson.Safe.Util.member "status" parsed |> Yojson.Safe.Util.to_int);
     Alcotest.(check string) "json redacted uri"
-      "https://api.example.test/v1/models?<redacted>#frag"
+      "https://api.example.test/v1/models?<redacted>#<redacted>"
       (Yojson.Safe.Util.member "uri" parsed |> Yojson.Safe.Util.to_string);
     List.iter
       (fun output ->
@@ -601,8 +601,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> expect_ok
     in
     Alcotest.(check int) "status" 200 response.status;
-    let span = find_span "HTTP GET" tracer in
-    Alcotest.(check (option string)) "method" (Some "GET")
+    let span = find_span "HTTP get" tracer in
+    Alcotest.(check (option string)) "method" (Some "get")
       (span_attr "http.request.method" span);
     Alcotest.(check (option string)) "url"
       (Some "https://api.example.test:8443/a?<redacted>")
@@ -630,7 +630,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> expect_ok);
     let span = find_span "HTTP GET" tracer in
     Alcotest.(check (option string)) "redacted url"
-      (Some "https://api.example.test/private?<redacted>#frag")
+      (Some "https://api.example.test/private?<redacted>#<redacted>")
       (span_attr "url.full" span)
 
   let test_observability_can_emit_raw_url_full () =
@@ -1233,9 +1233,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | None -> Alcotest.fail "oversized PUSH_PROMISE fragment was accepted"
 
   let test_h2_security_goaway_churn () =
+    let count = Eta_http.H2.Security.default_config.max_goaway_per_connection + 1 in
     let data =
-      h2_goaway_no_error ~last_stream_id:1
-      ^ h2_goaway_no_error ~last_stream_id:1
+      String.concat ""
+        (List.init count (fun _ -> h2_goaway_no_error ~last_stream_id:1))
     in
     match h2_observe_security data with
     | Some
@@ -1820,7 +1821,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun _ctx _clock rt ->
     let reader =
       chunked_reader_of_string chunked_context
-        " 4 \r\nWiki\r\n 5 ;ext=1\r\npedia\r\n0\r\nX-Trailer: ok\r\n\r\n"
+        "4\r\nWiki\r\n5;ext=1\r\npedia\r\n0\r\nX-Trailer: ok\r\n\r\n"
     in
     let decoder =
       Eta_http.Body.Chunked.create ~context:chunked_context ~reader ()
@@ -1839,6 +1840,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "trailer" (Some "ok")
       (Eta_http.Core.Header.get "x-trailer"
          (Eta_http.Body.Chunked.trailers decoder))
+
+  let test_chunked_decoder_rejects_leading_whitespace_chunk_size () =
+    B.with_test_clock @@ fun _ctx _clock rt ->
+    let reader =
+      chunked_reader_of_string chunked_context " 5\r\nhello\r\n0\r\n\r\n"
+    in
+    let decoder =
+      Eta_http.Body.Chunked.create ~context:chunked_context ~reader ()
+    in
+    match B.run rt (Eta_http.Body.Chunked.read decoder) with
+    | Eta.Exit.Error
+        (Eta.Cause.Fail
+          { Eta_http.Error.kind = Decode_error { codec = "chunked"; _ }; _ }) ->
+        ()
+    | Eta.Exit.Ok _ ->
+        Alcotest.fail "chunk-size with leading whitespace was accepted"
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected failure: %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
 
   let test_chunked_decoder_rejects_invalid_trailer_header () =
     B.with_test_clock @@ fun _ctx _clock rt ->
@@ -2115,6 +2136,25 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           "error" "invalid Content-Length \"6\""
           (Eta_http.H1.Parse.parse_error_to_string error)
 
+  let test_h1_parser_ignores_content_length_when_transfer_encoding_present () =
+    let raw =
+      Bytes.of_string
+        ("HTTP/1.1 200 OK\r\n"
+        ^ "Content-Length: 0\r\n"
+        ^ "Transfer-Encoding: chunked\r\n"
+        ^ "\r\n"
+        ^ "5\r\nhello\r\n0\r\n\r\n")
+    in
+    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    | Error error ->
+        Alcotest.failf "valid raw Transfer-Encoding response rejected: %s"
+          (Eta_http.H1.Parse.parse_error_to_string error)
+    | Ok response ->
+        Alcotest.(check string)
+          "body"
+          "5\r\nhello\r\n0\r\n\r\n"
+          (Bytes.to_string (Eta_http.H1.Parse.body_to_bytes raw response))
+
   let test_h1_parser_rejects_invalid_header_value_controls () =
     let raw =
       Bytes.of_string "HTTP/1.1 200 OK\r\nX-Bad: ok\000bad\r\n\r\n"
@@ -2296,6 +2336,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             [ "chunked"; "gzip" ] ->
             true
         | _ -> false);
+    List.iter
+      (fun value ->
+        expect_h1_request_framing_error
+          ("empty transfer-encoding token " ^ value)
+          [ ("Transfer-Encoding", value) ]
+          (function
+            | Eta_http.H1.Request_body.Unsupported_transfer_encoding _ -> true
+            | _ -> false))
+      [ "chunked,"; "chunked, "; ",chunked"; " , chunked" ];
     expect_h1_request_framing_error
       ~version:Eta_http.Core.Version.H1_0 "http/1.0 transfer-encoding"
       [ ("Transfer-Encoding", "chunked") ]
@@ -2951,6 +3000,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_body_stream_read_all_caps_default;
           Alcotest.test_case "chunked trailers" `Quick
             test_chunked_decodes_trailers;
+          Alcotest.test_case "chunked rejects leading whitespace size" `Quick
+            test_chunked_decoder_rejects_leading_whitespace_chunk_size;
           Alcotest.test_case "chunked rejects invalid trailer header" `Quick
             test_chunked_decoder_rejects_invalid_trailer_header;
           Alcotest.test_case "chunked rejects oversized trailers" `Quick
@@ -2984,6 +3035,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_h1_parser_rejects_bad_content_length;
           Alcotest.test_case "conflicting content length" `Quick
             test_h1_parser_rejects_conflicting_content_length;
+          Alcotest.test_case "Transfer-Encoding ignores Content-Length" `Quick
+            test_h1_parser_ignores_content_length_when_transfer_encoding_present;
           Alcotest.test_case "invalid header value controls" `Quick
             test_h1_parser_rejects_invalid_header_value_controls;
           Alcotest.test_case "request head" `Quick

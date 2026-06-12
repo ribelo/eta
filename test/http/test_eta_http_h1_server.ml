@@ -1009,6 +1009,65 @@ let test_h1_server_connection_head_discards_body_preserves_content_length () =
   in
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
+let test_h1_server_connection_no_content_releases_suppressed_stream () =
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "must-not-write" ]
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:204 ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /no-content HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "released" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_reset_content_releases_suppressed_stream () =
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "must-not-write" ]
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:205 ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /reset-content HTTP/1.1\r\nHost: example.test\r\nConnection: \
+     close\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    "HTTP/1.1 205 Reset Content\r\nConnection: close\r\n\r\n"
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "released" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_head_matches_get_content_length () =
   let handler (_request : Eta_http.Server.Request.t) =
     Eta.Effect.pure

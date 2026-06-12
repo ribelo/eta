@@ -846,9 +846,9 @@ let test_h2c_server_fixed_response_and_echo_body () =
         in
         Eta.Effect.pure
           (Eta_http.Server.Response.make ~status:200
-             ~headers:[ ("Content-Type", "text/plain") ]
+             ~headers:[ ("content-type", "text/plain") ]
              ~trailers:(fun () ->
-               Eta.Effect.pure [ ("Grpc-Status", "0"); ("X-Done", "yes") ])
+               Eta.Effect.pure [ ("grpc-status", "0"); ("x-done", "yes") ])
              ~body ())
     | "/large-fixed" ->
         Eta.Effect.pure
@@ -857,6 +857,9 @@ let test_h2c_server_fixed_response_and_echo_body () =
                (Eta_http.Server.Response.Body.fixed
                   [ Bytes.make (64 * 1024) 'z' ])
              ())
+    | "/reset-content" ->
+        Eta.Effect.pure
+          (Eta_http.Server.Response.text ~status:205 "must-not-write")
     | _ ->
         Eta.Effect.pure
           (Eta_http.Server.Response.text ("ok:" ^ request.path ^ "\n"))
@@ -947,6 +950,16 @@ let test_h2c_server_fixed_response_and_echo_body () =
       Alcotest.(check int) "large fixed status" 200 large_status;
       Alcotest.(check int) "large fixed length" (64 * 1024)
         (String.length large_body);
+      let reset_content =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/reset-content"
+      in
+      let reset_status, reset_body =
+        await_h2_response ~tag:6 connection reset_content
+      in
+      Alcotest.(check int) "reset content status" 205 reset_status;
+      Alcotest.(check string) "reset content body" "" reset_body;
       Eta_http_eio.H2.Connection.shutdown connection;
       ignore (Eio.Promise.try_resolve resolve_stop ());
       let stats =
@@ -954,8 +967,8 @@ let test_h2c_server_fixed_response_and_echo_body () =
             Eio.Promise.await closed_stats)
       in
       Alcotest.(check int) "active streams" 0 stats.active_streams;
-      Alcotest.(check int) "opened streams" 5 stats.opened_streams;
-      Alcotest.(check int) "completed streams" 5 stats.completed_streams;
+      Alcotest.(check int) "opened streams" 6 stats.opened_streams;
+      Alcotest.(check int) "completed streams" 6 stats.completed_streams;
       Alcotest.(check int) "reset streams" 0 stats.reset_streams;
       Alcotest.(check int) "request bytes" 10 stats.request_bytes;
       Alcotest.(check int) "protocol errors" 0 stats.protocol_errors;
@@ -1516,6 +1529,150 @@ let test_h2c_server_rejects_connection_specific_response_header () =
       Alcotest.(check int) "status" 500 status;
       Alcotest.(check string) "body" "internal server error\n" body;
       Alcotest.(check int) "handler calls" 1 !handler_calls)
+
+let expect_validation_error label = function
+  | Error _ -> ()
+  | Ok () -> Alcotest.failf "%s: validation unexpectedly succeeded" label
+
+let expect_validation_ok label = function
+  | Ok () -> ()
+  | Error message -> Alcotest.failf "%s: validation failed: %s" label message
+
+let test_h2_request_validation_allows_te_trailers () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_ok "H2 request TE trailers"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "http");
+         (":authority", "127.0.0.1");
+         (":path", "/");
+         ("te", "trailers");
+       ])
+
+let test_h2_request_rejects_invalid_method_and_path_values () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_error "invalid :method in request metadata"
+    (Eta_http.Server.Validation.validate_h2_request
+       ~connection_scheme:Eta_http.Core.Url.Https ~method_:"BAD METHOD"
+       ~scheme:"https" ~target:"/" ~authority:(Some "example.test"));
+  expect_validation_error "space in :path request metadata"
+    (Eta_http.Server.Validation.validate_h2_request
+       ~connection_scheme:Eta_http.Core.Url.Https ~method_:"GET"
+       ~scheme:"https" ~target:"/bad path" ~authority:(Some "example.test"));
+  expect_validation_error "invalid :method in header block"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "BAD METHOD");
+         (":scheme", "https");
+         (":authority", "example.test");
+         (":path", "/");
+       ]);
+  expect_validation_error "space in :path header block"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "https");
+         (":authority", "example.test");
+         (":path", "/bad path");
+       ])
+
+let test_h2_request_headers_require_mandatory_pseudo_headers () =
+  let limits = Eta_http.Server.Config.default.limits in
+  let base =
+    [
+      (":method", "GET");
+      (":scheme", "https");
+      (":authority", "example.test");
+      (":path", "/");
+    ]
+  in
+  let cases =
+    [
+      ("missing :method", List.remove_assoc ":method" base);
+      ("missing :scheme", List.remove_assoc ":scheme" base);
+      ("missing :authority", List.remove_assoc ":authority" base);
+      ("missing :path", List.remove_assoc ":path" base);
+    ]
+  in
+  List.iter
+    (fun (label, headers) ->
+      expect_validation_error label
+        (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+           headers))
+    cases
+
+let test_h2_request_headers_reject_host_authority_conflict () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_error "conflicting host"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "https");
+         (":authority", "api.example.test");
+         (":path", "/");
+         ("host", "attacker.example.test");
+       ]);
+  expect_validation_ok "matching host"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "https");
+         (":authority", "api.example.test");
+         (":path", "/");
+         ("host", "api.example.test");
+       ]);
+  expect_validation_ok "matching host default port"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "https");
+         (":authority", "api.example.test");
+         (":path", "/");
+         ("host", "api.example.test:443");
+       ]);
+  expect_validation_error "duplicate host"
+    (Eta_http.Server.Validation.validate_h2_request_headers ~limits
+       [
+         (":method", "GET");
+         (":scheme", "https");
+         (":authority", "api.example.test");
+         (":path", "/");
+         ("host", "api.example.test");
+         ("host", "api.example.test");
+       ])
+
+let test_server_authority_rejects_invalid_ip_literals () =
+  expect_validation_error "H1 Host invalid IP literal"
+    (Eta_http.Server.Validation.validate_h1_authority
+       ~connection_scheme:Eta_http.Core.Url.Http
+       ~version:Eta_http.Core.Version.H1_1 ~method_:"GET" ~target:"/"
+       ~target_authority:None ~headers:[ ("Host", "[not-an-ip]") ]);
+  expect_validation_error "H2 :authority invalid IP literal"
+    (Eta_http.Server.Validation.validate_h2_request
+       ~connection_scheme:Eta_http.Core.Url.Https ~method_:"GET"
+       ~scheme:"https" ~target:"/" ~authority:(Some "[not-an-ip]"))
+
+let test_h2_response_validation_rejects_te_header () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_error "H2 response TE"
+    (Eta_http.Server.Validation.validate_h2_response_headers ~limits
+       (Eta_http.Core.Header.unsafe_of_list [ ("te", "trailers") ]))
+
+let test_h2_response_validation_rejects_uppercase_header_names () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_error "uppercase response header"
+    (Eta_http.Server.Validation.validate_h2_response_headers ~limits
+       (Eta_http.Core.Header.unsafe_of_list [ ("X-Foo", "bar") ]));
+  expect_validation_error "uppercase response trailer"
+    (Eta_http.Server.Validation.validate_h2_response_trailers ~limits
+       (Eta_http.Core.Header.unsafe_of_list [ ("X-Trailer", "bar") ]))
+
+let test_h2_response_trailers_reject_content_length () =
+  let limits = Eta_http.Server.Config.default.limits in
+  expect_validation_error "H2 response trailer Content-Length"
+    (Eta_http.Server.Validation.validate_h2_response_trailers ~limits
+       (Eta_http.Core.Header.unsafe_of_list [ ("content-length", "0") ]))
 
 let test_h2c_server_rejects_connection_specific_response_trailer () =
   run_eio @@ fun env ->

@@ -76,9 +76,7 @@ let parse_content_lengths values =
 let transfer_encoding_tokens headers =
   Header.get_all "transfer-encoding" headers
   |> List.concat_map (String.split_on_char ',')
-  |> List.filter_map (fun token ->
-         let token = Eta.String_helpers.lowercase_ascii_trim token in
-         if String.length token = 0 then None else Some token)
+  |> List.map Eta.String_helpers.lowercase_ascii_trim
 
 let parse_transfer_encoding = function
   | [] -> Ok false

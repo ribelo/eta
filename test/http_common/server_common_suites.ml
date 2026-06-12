@@ -182,6 +182,28 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "eof after release" true (Option.is_none eof);
     Alcotest.(check int) "release still once" 1 !released
 
+  let test_body_read_failure_releases () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref 0 in
+    let error =
+      Server.Error.make ~method_:"POST" ~target:"/"
+        (Connection_closed { during = Request_body })
+    in
+    let body =
+      Server.Body.of_reader
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        (fun () -> Eta.Effect.fail error)
+    in
+    (match B.run rt (Server.Body.read body) with
+    | Eta.Exit.Error _ -> ()
+    | Eta.Exit.Ok _ -> Alcotest.fail "expected body read failure");
+    Alcotest.(check int) "release called after read failure" 1 !released;
+    let eof = run_ok rt (Server.Body.read body) in
+    Alcotest.(check bool) "eof after failure release" true (Option.is_none eof);
+    Alcotest.(check int) "release still once" 1 !released
+
   let test_body_read_all_cap () =
     B.with_runtime @@ fun _ctx rt ->
     let body =
@@ -344,17 +366,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Ok () -> Alcotest.fail "expected duplicate pseudo-header rejection");
     (match
        Server.Validation.validate_h2_request_headers
-         ~limits:{ limits with max_request_headers = 1 }
-         [ ":method", "GET"; ":path", "/" ]
+         ~limits:{ limits with max_request_headers = 3 }
+         [
+           ":method", "GET";
+           ":scheme", "https";
+           ":authority", "example.test";
+           ":path", "/";
+         ]
      with
     | Error message ->
-        Alcotest.(check string) "count error"
-          "request header count exceeds 1" message
+       Alcotest.(check string) "count error"
+          "request header count exceeds 3" message
     | Ok () -> Alcotest.fail "expected h2 request header count rejection");
     (match
        Server.Validation.validate_h2_request_headers
          ~limits:{ limits with max_request_header_bytes = 8 }
-         [ ":method", "GET" ]
+         [
+           ":method", "GET";
+           ":scheme", "https";
+           ":authority", "example.test";
+           ":path", "/";
+         ]
      with
     | Error message ->
         Alcotest.(check string) "bytes error"
@@ -382,7 +414,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_http.Observability.Server.Semconv.request_attrs
         (request ~target:"/search?q=secret" ~stream_id:9 ())
     in
-    Alcotest.(check (option string)) "method" (Some "GET")
+    Alcotest.(check (option string)) "method" (Some "get")
       (attr "http.request.method" attrs);
     Alcotest.(check (option string)) "path" (Some "/search")
       (attr "url.path" attrs);
@@ -429,7 +461,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | [ span ] ->
         Alcotest.(check bool) "server kind" true
           (span.Eta.Tracer.kind = Eta.Tracer.Server);
-        Alcotest.(check string) "span name" "HTTP GET" span.name;
+        Alcotest.(check string) "span name" "HTTP get" span.name;
         Alcotest.(check (option string)) "path attr" (Some "/healthz")
           (attr "url.path" span.attrs);
         Alcotest.(check (option string)) "query redacted"
@@ -455,6 +487,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_request_helpers_and_trace_context;
           Alcotest.test_case "body read_all and release" `Quick
             test_body_read_all_and_release;
+          Alcotest.test_case "body read failure releases" `Quick
+            test_body_read_failure_releases;
           Alcotest.test_case "body read_all cap" `Quick test_body_read_all_cap;
           Alcotest.test_case "body discard drain policy" `Quick
             test_body_discard_passes_drain_policy;

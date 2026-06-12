@@ -3,6 +3,8 @@
  (modules
   run
   test_eta_http_support
+  test_eta_http_error
+  test_eta_http_url
   test_eta_http_h1_write
   test_eta_http_transport
   test_eta_http_retry

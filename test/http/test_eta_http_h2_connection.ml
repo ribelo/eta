@@ -475,6 +475,19 @@ let raw_data ?(end_stream = false) ~stream_id data =
     ~stream_id
   ^ data
 
+let expect_info_filter_error label bytes =
+  let filter = Eta_http.H2.Informational_filter.create () in
+  match
+    Eta_http.H2.Informational_filter.feed filter bytes ~off:0
+      ~len:(String.length bytes)
+  with
+  | Error (Connection_protocol_violation { kind = "h2_informational_filter"; _ }) ->
+      ()
+  | Error kind ->
+      Alcotest.failf "%s: unexpected error kind %s" label
+        (Eta_http.Error.kind_name kind)
+  | Ok () -> Alcotest.failf "%s: invalid response HEADERS passed filter" label
+
 let test_h2_informational_filter_passes_push_promise_continuation () =
   let filter = Eta_http.H2.Informational_filter.create () in
   let push_fragment = Eta_http.H2.Frame.uint32 2 ^ "push-a" in
@@ -519,6 +532,48 @@ let test_h2_informational_filter_passthrough_is_not_global () =
     "final response on stream 1 must not bypass filtering for stream 3"
     false
     (Eta_http.H2.Informational_filter.is_passthrough filter)
+
+let test_h2_informational_filter_rejects_101_status () =
+  let encoder = Hpack.Encoder.create 4096 in
+  let frame =
+    raw_headers encoder ~stream_id:1 [ hpack_header ":status" "101" ]
+  in
+  expect_info_filter_error "101 status" frame
+
+let test_h2_informational_filter_rejects_invalid_status () =
+  let encoder = Hpack.Encoder.create 4096 in
+  let frame =
+    raw_headers encoder ~stream_id:1 [ hpack_header ":status" "99" ]
+  in
+  expect_info_filter_error "invalid status" frame
+
+let test_h2_informational_filter_rejects_second_final_status () =
+  let encoder = Hpack.Encoder.create 4096 in
+  let filter = Eta_http.H2.Informational_filter.create () in
+  let first =
+    raw_headers encoder ~stream_id:1 [ hpack_header ":status" "200" ]
+  in
+  let second =
+    raw_headers encoder ~stream_id:1 [ hpack_header ":status" "204" ]
+  in
+  (match
+     Eta_http.H2.Informational_filter.feed filter first ~off:0
+       ~len:(String.length first)
+   with
+  | Ok () -> ()
+  | Error kind ->
+      Alcotest.failf "first final response failed: %s"
+        (Eta_http.Error.kind_name kind));
+  ignore (Eta_http.H2.Informational_filter.take filter : string);
+  match
+    Eta_http.H2.Informational_filter.feed filter second ~off:0
+      ~len:(String.length second)
+  with
+  | Error (Connection_protocol_violation { kind = "h2_informational_filter"; _ }) ->
+      ()
+  | Error kind ->
+      Alcotest.failf "unexpected error kind %s" (Eta_http.Error.kind_name kind)
+  | Ok () -> Alcotest.fail "second final :status was forwarded as trailers"
 
 let raw_informational_response_server flow =
   let encoder = Hpack.Encoder.create 4096 in

@@ -36,11 +36,6 @@ let write_bytes_effect ?host_eio request flow bytes =
           let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
           Flow.write flow [ Cstruct.of_bytes bytes ])
 
-let transfer_encoding_chunked headers =
-  match Header.get "transfer-encoding" headers with
-  | None -> false
-  | Some value -> String_helpers.contains_token_ascii_ci value "chunked"
-
 let write_raw_stream ?host_eio request flow body =
   let rec loop () =
     Body.read body
@@ -65,23 +60,10 @@ let write_chunked_stream ?host_eio request flow body =
   in
   loop ()
 
-let stream_headers (request : request) length =
-  let has_content_length = Option.is_some (Header.get "content-length" request.headers) in
-  let has_transfer_encoding =
-    Option.is_some (Header.get "transfer-encoding" request.headers)
-  in
-  match (length, has_content_length, has_transfer_encoding) with
-  | Some length, false, false ->
-      Header.unsafe_add "Content-Length" (string_of_int length) request.headers
-  | None, false, false ->
-      Header.unsafe_add "Transfer-Encoding" "chunked" request.headers
-  | _ -> request.headers
-
-let write_to_host_flow ?framing_body_length host_eio request flow ~headers ~body =
+let write_to_host_flow host_eio request flow ~headers ~body =
   let buffer = Buffer.create 256 in
   match
-    Write.write ?framing_body_length buffer ~method_:request.method_
-      ~url:request.url ~headers ~body
+    Write.write buffer ~method_:request.method_ ~url:request.url ~headers ~body
   with
   | Error _ as error -> error
   | Ok () -> (
@@ -93,16 +75,39 @@ let write_to_host_flow ?framing_body_length host_eio request flow ~headers ~body
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | _ -> Error (H1_client_errors.io_closed request Http_request))
 
-let write_headers_effect ?host_eio request flow ~headers ~framing_body_length =
+let write_stream_headers_to_host_flow host_eio request flow ~headers ~framing =
+  let buffer = Buffer.create 256 in
+  match
+    Write.write_stream_headers buffer ~method_:request.method_ ~url:request.url
+      ~headers ~framing
+  with
+  | Error _ as error -> error
+  | Ok () -> (
+      try
+        let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
+        Flow.write flow [ Cstruct.of_string (Buffer.contents buffer) ];
+        Ok ()
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> Error (H1_client_errors.io_closed request Http_request))
+
+let write_headers_effect ?host_eio request flow ~headers ~framing =
   Effect.sync (fun () ->
       try
         match host_eio with
         | None ->
-            Write.write_to_flow ~framing_body_length flow ~method_:request.method_
-              ~url:request.url ~headers ~body:Write.Empty
+            let buffer = Buffer.create 512 in
+            (match
+               Write.write_stream_headers buffer ~method_:request.method_
+                 ~url:request.url ~headers ~framing
+             with
+            | Error _ as error -> error
+            | Ok () ->
+                Eio.Flow.copy_string (Buffer.contents buffer) flow;
+                Ok ())
         | Some host_eio ->
-            write_to_host_flow ~framing_body_length host_eio request flow ~headers
-              ~body:Write.Empty
+            write_stream_headers_to_host_flow host_eio request flow ~headers
+              ~framing
       with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | _ -> Error (H1_client_errors.io_closed request Http_request))
@@ -128,13 +133,11 @@ let write_request ?host_eio flow (request : request) =
              | Error error -> Effect.fail error)
     | Some { length; stream } ->
         (* Validate framing for streamed bodies before writing any headers; the
-           owned stream is released by [with_owned_stream] on failure. An
-           unknown-length stream must be chunked: it cannot honor a
-           caller-supplied Content-Length, and the only transfer coding that
-           gives the peer a valid end-of-message is [chunked]. *)
+           owned stream is released by [with_owned_stream] on failure. *)
         let framing_error =
-          if Option.is_some length then None
-          else if Option.is_some (Header.get "content-length" request.headers)
+          if
+            Option.is_none length
+            && Option.is_some (Header.get "content-length" request.headers)
           then
             Some
               (Error.Header_invalid
@@ -143,27 +146,21 @@ let write_request ?host_eio flow (request : request) =
                      "Content-Length is not allowed with an unknown-length \
                       streamed request body";
                  })
-          else if
-            Option.is_some (Header.get "transfer-encoding" request.headers)
-            && not (transfer_encoding_chunked request.headers)
-          then
-            Some
-              (Error.Header_invalid
-                 {
-                   reason =
-                     "unsupported Transfer-Encoding for a streamed request \
-                      body (only chunked is supported)";
-                 })
           else None
         in
         (match framing_error with
         | Some kind -> Effect.fail (H1_client_errors.make_error request kind)
         | None ->
-            let headers = stream_headers request length in
-            let framing_body_length = Option.value length ~default:(-1) in
-            write_headers_effect ?host_eio request flow ~headers
-              ~framing_body_length
+            let framing =
+              match length with
+              | Some length -> Write.Fixed_length length
+              | None -> Write.Chunked
+            in
+            write_headers_effect ?host_eio request flow ~headers:request.headers
+              ~framing
             |> Effect.bind (fun () ->
-                   if transfer_encoding_chunked headers then
-                     write_chunked_stream ?host_eio request flow stream
-                   else write_raw_stream ?host_eio request flow stream)))
+                   match framing with
+                   | Write.Chunked ->
+                       write_chunked_stream ?host_eio request flow stream
+                   | Write.Fixed_length _ ->
+                       write_raw_stream ?host_eio request flow stream)))

@@ -71,50 +71,32 @@ let hex_value = function
   | 'A' .. 'F' as c -> 10 + Char.code c - Char.code 'A'
   | _ -> -1
 
-let[@zero_alloc] is_ows = function
-  | ' ' | '\t' | '\r' | '\n' -> true
-  | _ -> false
-
 let[@zero_alloc] chunk_size_stop line =
   match String.index_opt line ';' with
   | None -> String.length line
   | Some index -> index
-
-let[@zero_alloc] trim_left_bound line stop =
-  let index = ref 0 in
-  while !index < stop && is_ows (String.unsafe_get line !index) do
-    incr index
-  done;
-  !index
-
-let[@zero_alloc] trim_right_bound line start stop =
-  let index = ref stop in
-  while !index > start && is_ows (String.unsafe_get line (!index - 1)) do
-    decr index
-  done;
-  !index
 
 let invalid_chunk_size line start stop =
   Error ("invalid chunk size " ^ String.escaped (String.sub line start (stop - start)))
 
 let parse_size line =
   let raw_stop = chunk_size_stop line in
-  let start = trim_left_bound line raw_stop in
-  let stop = trim_right_bound line start raw_stop in
-  if start = stop then Error "empty chunk size"
+  if raw_stop = 0 then Error "empty chunk size"
+  else if not (is_hex (String.unsafe_get line 0)) then
+    invalid_chunk_size line 0 raw_stop
   else
     let rec loop index acc =
-      if index = stop then Ok acc
+      if index = raw_stop then Ok acc
       else
         let c = String.unsafe_get line index in
         if not (is_hex c) then
-          invalid_chunk_size line start stop
+          invalid_chunk_size line 0 raw_stop
         else
           let digit = hex_value c in
           if acc > (max_int - digit) / 16 then Error "chunk size overflow"
           else loop (index + 1) ((acc * 16) + digit)
     in
-    loop start 0
+    loop 0 0
 
 let parse_trailer line =
   match String.index_opt line ':' with

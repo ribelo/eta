@@ -75,6 +75,7 @@ type raw_response = {
   mutable content_length : int;
   mutable content_length_off : int;
   mutable content_length_len : int;
+  mutable transfer_encoding : bool;
   mutable error_off : int;
   mutable error_len : int;
   mutable error_expected : int;
@@ -102,6 +103,7 @@ let create_raw_response () =
     content_length = -1;
     content_length_off = 0;
     content_length_len = 0;
+    transfer_encoding = false;
     error_off = 0;
     error_len = 0;
     error_expected = 0;
@@ -119,6 +121,7 @@ let[@zero_alloc] reset_raw raw =
   raw.content_length <- -1;
   raw.content_length_off <- 0;
   raw.content_length_len <- 0;
+  raw.transfer_encoding <- false;
   raw.error_off <- 0;
   raw.error_len <- 0;
   raw.error_expected <- 0;
@@ -315,6 +318,12 @@ let[@zero_alloc] raw_parse_header buf headers raw count line_start line_end =
         if
           raw_header_name_eq_literal buf line_start name_len "content-length"
         then raw_parse_content_length buf raw value_start value_end
+        else if
+          raw_header_name_eq_literal buf line_start name_len
+            "transfer-encoding"
+        then (
+          raw.transfer_encoding <- true;
+          raw_ok)
         else raw_ok)
 
 let rec raw_headers_to_list_loop buf headers index acc =
@@ -369,7 +378,8 @@ let[@zero_alloc] rec parse_raw_headers buf len max_header_bytes headers raw
     let body_start = line_start + 2 in
     let available = len - body_start in
     let body_len =
-      if raw.content_length < 0 then available else raw.content_length
+      if raw.transfer_encoding || raw.content_length < 0 then available
+      else raw.content_length
     in
     raw.header_count <- count;
     raw.body_off <- body_start;

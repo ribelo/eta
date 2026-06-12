@@ -19,7 +19,7 @@ let is_reg_name_char = function
       true
   | _ -> false
 
-let is_ip_literal_char = function
+let is_ipvfuture_tail_char = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | ':' | '.' | '-' | '_' | '~'
   | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' ->
       true
@@ -55,15 +55,38 @@ let valid_reg_name value start finish =
   in
   loop start
 
+let valid_ipvfuture value start finish =
+  let rec version_loop index =
+    if index >= finish then false
+    else
+      match String.unsafe_get value index with
+      | '.' when index = start + 1 -> false
+      | '.' -> tail_loop (index + 1)
+      | char -> is_hexdig char && version_loop (index + 1)
+  and tail_loop index =
+    index < finish
+    &&
+    let rec tail_chars_loop index =
+      index = finish
+      ||
+      (is_ipvfuture_tail_char (String.unsafe_get value index)
+      && tail_chars_loop (index + 1))
+    in
+    tail_chars_loop index
+  in
+  start + 2 < finish
+  && (match String.unsafe_get value start with 'v' | 'V' -> true | _ -> false)
+  && version_loop (start + 1)
+
 let valid_ip_literal value start finish =
   start < finish
   &&
-  let rec loop index =
-    if index = finish then true
-    else
-      is_ip_literal_char (String.unsafe_get value index) && loop (index + 1)
-  in
-  loop start
+  match String.unsafe_get value start with
+  | 'v' | 'V' -> valid_ipvfuture value start finish
+  | _ -> (
+      match Ipaddr.V6.of_string (String.sub value start (finish - start)) with
+      | Ok _ -> true
+      | Error _ -> false)
 
 let rec find_char_string value index finish char =
   if index >= finish then None
@@ -169,6 +192,54 @@ let scheme_of_h2_string = function
   | "https" -> Some Url.Https
   | _ -> None
 
+let valid_method_token method_ =
+  let len = String.length method_ in
+  len > 0
+  &&
+  let rec loop index =
+    index = len
+    ||
+    match String.unsafe_get method_ index with
+    | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '!' | '#' | '$' | '%' | '&'
+    | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~' ->
+        loop (index + 1)
+    | _ -> false
+  in
+  loop 0
+
+let valid_origin_form_char = function
+  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~' | '!'
+  | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' | ':' | '@'
+  | '/' ->
+      true
+  | _ -> false
+
+let valid_query_char = function
+  | '?' -> true
+  | char -> valid_origin_form_char char
+
+let valid_pct_encoded value index finish =
+  index + 2 < finish
+  && is_hexdig (String.unsafe_get value (index + 1))
+  && is_hexdig (String.unsafe_get value (index + 2))
+
+let valid_h2_origin_form target =
+  let len = String.length target in
+  len > 0
+  && Char.equal (String.unsafe_get target 0) '/'
+  &&
+  let rec loop in_query index =
+    if index = len then true
+    else
+      match String.unsafe_get target index with
+      | '%' -> valid_pct_encoded target index len && loop in_query (index + 3)
+      | '?' -> loop true (index + 1)
+      | char ->
+          (if in_query then valid_query_char char else valid_origin_form_char char)
+          && loop in_query (index + 1)
+  in
+  loop false 1
+
 let validate_h2_path ~method_ ~target =
   if String.equal method_ "CONNECT" then
     Error "CONNECT is not supported by this server"
@@ -180,20 +251,23 @@ let validate_h2_path ~method_ ~target =
     Error "invalid HTTP/2 :path"
   else if target_has_fragment target then
     Error "request target must not include fragment"
+  else if not (valid_h2_origin_form target) then Error "invalid HTTP/2 :path"
   else Ok ()
 
 let validate_h2_request ~connection_scheme ~method_ ~scheme ~target ~authority =
-  match scheme_of_h2_string scheme with
-  | None -> Error "invalid HTTP/2 :scheme"
-  | Some scheme when scheme <> connection_scheme ->
-      Error "HTTP/2 :scheme does not match connection"
-  | Some scheme -> (
-      match authority with
-      | None -> Error "missing HTTP/2 :authority"
-      | Some authority -> (
-          match parse_authority ~scheme authority with
-          | None -> Error "invalid HTTP/2 :authority"
-          | Some _ -> validate_h2_path ~method_ ~target))
+  if not (valid_method_token method_) then Error "invalid HTTP/2 :method"
+  else
+    match scheme_of_h2_string scheme with
+    | None -> Error "invalid HTTP/2 :scheme"
+    | Some scheme when scheme <> connection_scheme ->
+        Error "HTTP/2 :scheme does not match connection"
+    | Some scheme -> (
+        match authority with
+        | None -> Error "missing HTTP/2 :authority"
+        | Some authority -> (
+            match parse_authority ~scheme authority with
+            | None -> Error "invalid HTTP/2 :authority"
+            | Some _ -> validate_h2_path ~method_ ~target))
 
 let header_block_bytes headers =
   List.fold_left
@@ -246,19 +320,37 @@ let validate_h2_header_value kind value =
   | Some _ -> Error ("invalid " ^ kind ^ " value")
   | None -> Ok ()
 
+let validate_h2_pseudo_header_value name kind value =
+  match validate_h2_header_value name value with
+  | Error _ as error -> error
+  | Ok () -> (
+      match kind with
+      | `Method ->
+          if valid_method_token value then Ok ()
+          else Error "invalid HTTP/2 :method"
+      | `Path ->
+          if valid_h2_origin_form value || String.equal value "*" then Ok ()
+          else Error "invalid HTTP/2 :path"
+      | `Scheme | `Authority -> Ok ())
+
 let h2_forbidden_connection_header = function
   | "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding"
   | "upgrade" ->
       true
   | _ -> false
 
-let validate_h2_connection_header name value =
+let validate_h2_request_connection_header name value =
   if h2_forbidden_connection_header name then
     Error ("HTTP/2 connection-specific header " ^ name ^ " is forbidden")
   else if
     String.equal name "te"
     && not (Eta.String_helpers.trim_equal_ascii_ci value "trailers")
   then Error "HTTP/2 TE header may only contain trailers"
+  else Ok ()
+
+let validate_h2_response_connection_header name =
+  if h2_forbidden_connection_header name || String.equal name "te" then
+    Error ("HTTP/2 response header " ^ name ^ " is forbidden")
   else Ok ()
 
 let digit = function
@@ -295,10 +387,38 @@ let h2_request_content_length headers =
   | [ value ] -> Result.map Option.some (parse_content_length value)
   | _ -> Error "multiple HTTP/2 content-length headers"
 
+let validate_h2_host_authority ~scheme authority host =
+  match scheme_of_h2_string scheme with
+  | None -> Error "invalid HTTP/2 :scheme"
+  | Some scheme -> (
+      match parse_authority ~scheme authority with
+      | None -> Error "invalid HTTP/2 :authority"
+      | Some authority -> (
+          match parse_authority ~scheme host with
+          | None -> Error "invalid HTTP/2 host header"
+          | Some host ->
+              if
+                String.equal host.host authority.host
+                && host.port = authority.port
+              then Ok ()
+              else Error "HTTP/2 host header conflicts with :authority"))
+
 let validate_h2_request_header_values headers =
-  let rec loop regular_seen method_seen scheme_seen authority_seen path_seen =
+  let rec loop regular_seen method_seen scheme authority path_seen host =
     function
-    | [] -> Ok ()
+    | [] ->
+        if not method_seen then Error "missing HTTP/2 :method pseudo-header"
+        else (
+          match (scheme, authority) with
+          | None, _ -> Error "missing HTTP/2 :scheme pseudo-header"
+          | Some _, None ->
+              Error "missing HTTP/2 :authority pseudo-header"
+          | Some scheme, Some authority ->
+              if not path_seen then Error "missing HTTP/2 :path pseudo-header"
+              else (
+                match host with
+                | None -> Ok ()
+                | Some host -> validate_h2_host_authority ~scheme authority host))
     | (name, value) :: rest -> (
         if is_h2_pseudo_header name then
           if regular_seen then
@@ -310,37 +430,47 @@ let validate_h2_request_header_values headers =
                 let duplicate =
                   match kind with
                   | `Method -> method_seen
-                  | `Scheme -> scheme_seen
-                  | `Authority -> authority_seen
+                  | `Scheme -> Option.is_some scheme
+                  | `Authority -> Option.is_some authority
                   | `Path -> path_seen
                 in
                 if duplicate then
                   Error ("duplicate HTTP/2 " ^ name ^ " pseudo-header")
                 else
-                  match validate_h2_header_value name value with
+                  match validate_h2_pseudo_header_value name kind value with
                   | Error _ as error -> error
                   | Ok () ->
                       let method_seen = method_seen || kind = `Method in
-                      let scheme_seen = scheme_seen || kind = `Scheme in
-                      let authority_seen =
-                        authority_seen || kind = `Authority
+                      let scheme =
+                        match kind with `Scheme -> Some value | _ -> scheme
+                      in
+                      let authority =
+                        match kind with
+                        | `Authority -> Some value
+                        | _ -> authority
                       in
                       let path_seen = path_seen || kind = `Path in
-                      loop regular_seen method_seen scheme_seen
-                        authority_seen path_seen rest
+                      loop regular_seen method_seen scheme authority path_seen
+                        host rest
         else
           match Header.validate_header (name, value) with
           | Some _ -> Error "invalid request header"
           | None when has_uppercase name ->
               Error "uppercase HTTP/2 request header name"
           | None -> (
-              match validate_h2_connection_header name value with
+              match validate_h2_request_connection_header name value with
               | Error _ as error -> error
               | Ok () ->
-                  loop true method_seen scheme_seen authority_seen path_seen
-                    rest))
+                  if String.equal name "host" then
+                    match host with
+                    | Some _ -> Error "multiple HTTP/2 host headers"
+                    | None ->
+                        loop true method_seen scheme authority path_seen
+                          (Some value) rest
+                  else
+                    loop true method_seen scheme authority path_seen host rest))
   in
-  loop false false false false false headers
+  loop false false None None false None headers
 
 let validate_h2_request_headers ~(limits : Server_config.limits) headers =
   match validate_h2_request_header_values headers with
@@ -362,7 +492,7 @@ let validate_h2_request_headers ~(limits : Server_config.limits) headers =
                    limits.max_request_header_bytes)
             else Ok ())
 
-let validate_h2_response_header_values ~kind headers =
+let validate_h2_response_header_values ?(trailers = false) ~kind headers =
   let rec loop = function
     | [] -> Ok ()
     | (name, value) :: rest -> (
@@ -370,20 +500,23 @@ let validate_h2_response_header_values ~kind headers =
         | Some _ -> Error ("invalid " ^ kind ^ " header")
         | None when is_h2_pseudo_header name ->
             Error ("HTTP/2 " ^ kind ^ " pseudo-header is not user controlled")
+        | None when has_uppercase name ->
+            Error ("uppercase HTTP/2 " ^ kind ^ " header name")
         | None -> (
-            match
-              validate_h2_connection_header
-                (Header.normalize_name name)
-                value
-            with
-            | Error _ as error -> error
-            | Ok () -> loop rest))
+            let name = Header.normalize_name name in
+            if trailers && Chunked.forbidden_trailer_name name then
+              Error ("forbidden HTTP/2 response trailer " ^ name)
+            else (
+              match validate_h2_response_connection_header name with
+              | Error _ as error -> error
+              | Ok () -> loop rest)))
   in
   loop headers
 
-let validate_h2_response_header_block ~max_bytes ~max_headers ~kind headers =
+let validate_h2_response_header_block ?(trailers = false) ~max_bytes
+    ~max_headers ~kind headers =
   let headers = Header.to_list headers in
-  match validate_h2_response_header_values ~kind headers with
+  match validate_h2_response_header_values ~trailers ~kind headers with
   | Error _ as error -> error
   | Ok () ->
       let count = List.length headers in
@@ -403,5 +536,6 @@ let validate_h2_response_headers ~(limits : Server_config.limits) headers =
     ~max_headers:limits.max_response_headers ~kind:"response" headers
 
 let validate_h2_response_trailers ~(limits : Server_config.limits) trailers =
-  validate_h2_response_header_block ~max_bytes:limits.max_trailer_bytes
+  validate_h2_response_header_block ~trailers:true
+    ~max_bytes:limits.max_trailer_bytes
     ~max_headers:limits.max_trailers ~kind:"response trailer" trailers

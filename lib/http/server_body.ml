@@ -54,10 +54,20 @@ let of_reader ?(release = fun () -> Effect.unit)
 let read_unlocked t =
   if t.released then Effect.pure None
   else
-    t.read_next ()
-    |> Effect.bind (function
-         | None -> release_once t |> Effect.map (fun () -> None)
-         | Some chunk -> Effect.pure (Some chunk))
+    Effect.sync (fun () -> ref true)
+    |> Effect.bind (fun release_needed ->
+           let release_if_needed =
+             Effect.sync (fun () -> !release_needed)
+             |> Effect.bind (fun needed ->
+                    if needed then release_once t else Effect.unit)
+           in
+           t.read_next ()
+           |> Effect.bind (function
+                | None -> Effect.pure None
+                | Some chunk ->
+                    release_needed := false;
+                    Effect.pure (Some chunk))
+           |> Effect.finally release_if_needed)
 
 let read t = with_operation t (read_unlocked t)
 
