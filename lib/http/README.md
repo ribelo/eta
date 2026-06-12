@@ -83,6 +83,8 @@ nix --option eval-cache false develop -c dune runtest test/http --force
 nix --option eval-cache false develop -c dune runtest test/http_eio --force
 timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
 timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
+timeout 300s nix --option eval-cache false develop -c dune exec http-testsuite/test/bench/run.exe
+nix --option eval-cache false develop -c dune build @http-bench --force
 nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
 nix --option eval-cache false develop -c bash bench/run.sh --quick
 ```
@@ -95,6 +97,7 @@ Current counts from the latest edge-readiness pass:
 | `test/http_eio` | 142 tests passing |
 | `http-testsuite` interop | PASS 314, DIVERGENT 0, FAIL 0, SKIP 176 |
 | `http-testsuite` CVE/adversarial | PASS 27, FAIL 0, SKIP 0 |
+| `http-testsuite` HTTP bench | 30 iterations across 6 scenario/client groups |
 
 Rerunnable research evidence lives under `.scratch/eta_http_research/`:
 
@@ -170,6 +173,8 @@ Edge-readiness checks:
 ```sh
 timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
 timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
+timeout 300s nix --option eval-cache false develop -c dune exec http-testsuite/test/bench/run.exe
+nix --option eval-cache false develop -c dune build @http-bench --force
 nix --option eval-cache false develop -c bash bench/run.sh --quick
 ```
 
