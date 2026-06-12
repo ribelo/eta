@@ -248,7 +248,9 @@ The enumerated edge-readiness surface is covered and verified: H2 response
 framing, H1 smuggling, H2 multiplexing (plain + concurrent large TLS), the
 H2-over-TLS large-transfer deadlock fix, TLS/ALPN, resource-exhaustion limits,
 operational defaults, and fully-green interop / CVE / bench evidence. No
-concrete server-side task is currently open. Continued value comes from deeper
-adversarial probing (each pass this far has surfaced a real defect), e.g.
-H1 keep-alive over TLS under repeated request/response cycles.
+concrete server-side task is currently open. Each deep adversarial pass so far
+has surfaced a real defect (H2-over-TLS deadlock, H2 slow-read stream stall),
+so further probing remains worthwhile. Covered regression locks now include
+concurrent large bidirectional H2-over-TLS transfers and H1 keep-alive over
+TLS.
 
