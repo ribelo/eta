@@ -2463,3 +2463,124 @@ let test_h2c_server_resets_overflowing_stream_response () =
             "expected reset for stream exceeding Content-Length, got EOF \
              status=%d body=%S"
             status body)
+
+let test_h2c_server_multiplexes_slow_uploads () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:8 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close stats =
+    ignore (Eio.Promise.try_resolve resolve_closed_stats stats)
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/echo" ->
+        Eta_http.Server.Body.read_all request.body
+        |> Eta.Effect.map (fun body ->
+               Eta_http.Server.Response.make ~status:200
+                 ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+                 ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~on_connection_close
+      ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  let fragments tag =
+    [
+      Printf.sprintf "s%d-a-" tag;
+      Printf.sprintf "s%d-b-" tag;
+      Printf.sprintf "s%d-c" tag;
+    ]
+  in
+  let open_stream tag =
+    let body_buf = Buffer.create 32 in
+    let status = ref 0 in
+    let eof, resolve_eof = Eio.Promise.create () in
+    let rec read_body response_body =
+      H2.Body.Reader.schedule_read response_body
+        ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
+        ~on_read:(fun bs ~off ~len ->
+          Buffer.add_string body_buf (Bigstringaf.substring bs ~off ~len);
+          read_body response_body)
+    in
+    let request =
+      H2.Request.create ~scheme:"http"
+        ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+        `POST "/echo"
+    in
+    match
+      Eta_http_eio.H2.Connection.request connection ~tag request
+        ~error_handler:(fun _stream error ->
+          Alcotest.failf "slow upload stream %d failed: %a" tag
+            pp_h2_client_error error)
+        ~response_handler:(fun _stream response response_body ->
+          status := H2.Status.to_code response.status;
+          read_body response_body)
+    with
+    | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected { limit }) ->
+        Alcotest.failf "slow upload %d rejected by admission limit=%d" tag limit
+    | Error Eta_http_eio.H2.Multiplexer.Connection_closed ->
+        Alcotest.failf "connection closed before slow upload %d" tag
+    | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
+        Alcotest.failf "slow upload %d failed: %s" tag message
+    | Ok (opened : Eta_http_eio.H2.Multiplexer.opened_request) ->
+        (tag, opened, body_buf, status, eof)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let tags = [ 1; 2; 3; 4 ] in
+      (* Open every stream first, then interleave their uploads round-robin so
+         the server is pumping four concurrent slow request bodies at once. *)
+      let streams = List.map open_stream tags in
+      let rounds = List.length (fragments 1) in
+      for round = 0 to rounds - 1 do
+        List.iter
+          (fun (tag, opened, _, _, _) ->
+            let fragment = List.nth (fragments tag) round in
+            H2.Body.Writer.write_string
+              opened.Eta_http_eio.H2.Multiplexer.request_body fragment)
+          streams;
+        Eio.Time.sleep clock 0.005
+      done;
+      List.iter
+        (fun (_, opened, _, _, _) ->
+          H2.Body.Writer.close
+            opened.Eta_http_eio.H2.Multiplexer.request_body)
+        streams;
+      List.iter
+        (fun (tag, _, body_buf, status, eof) ->
+          Eio.Time.with_timeout_exn clock 5.0 (fun () -> Eio.Promise.await eof);
+          Alcotest.(check int)
+            (Printf.sprintf "slow upload %d status" tag)
+            200 !status;
+          Alcotest.(check string)
+            (Printf.sprintf "slow upload %d echo" tag)
+            (String.concat "" (fragments tag))
+            (Buffer.contents body_buf))
+        streams;
+      Eta_http_eio.H2.Connection.shutdown connection;
+      let stats =
+        Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed streams" 4 stats.completed_streams;
+      Alcotest.(check int) "reset streams" 0 stats.reset_streams;
+      Alcotest.(check int) "active streams" 0 stats.active_streams)

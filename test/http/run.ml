@@ -414,6 +414,8 @@ let () =
             test_h2c_server_resets_short_stream_response;
           Alcotest.test_case "h2c resets overflowing stream response" `Quick
             test_h2c_server_resets_overflowing_stream_response;
+          Alcotest.test_case "h2c multiplexes slow uploads" `Quick
+            test_h2c_server_multiplexes_slow_uploads;
         ] );
       ( "h2-security",
         [
