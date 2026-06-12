@@ -62,7 +62,9 @@ let sha256_of_file path =
   read_file path |> sha256_of_string
 
 let body_to_string stream =
-  Eta_http.Body.Stream.read_all stream
+  (* Match the interop/bench client body cap (128 MiB) so large-body scenarios
+     such as static_100m are not rejected by the default 1 MiB read_all cap. *)
+  Eta_http.Body.Stream.read_all ~max_bytes:(128 * 1024 * 1024) stream
   |> Eta.Effect.map Bytes.unsafe_to_string
 
 let now_ms () =

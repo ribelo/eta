@@ -109,6 +109,10 @@ let run ~url ~method_ ~headers ~body_path ~insecure ~http2
         |> split_header_blocks
         |> List.map
              (List.filter (fun line -> not (String.starts_with ~prefix:"HTTP/" line)))
+        (* Drop interim 1xx response blocks (e.g. "100 Continue"): after the
+           status line is filtered out they are empty, and counting them would
+           push the final response headers into the trailer slot. *)
+        |> List.filter (fun block -> block <> [])
       in
       let headers_normalized =
         match blocks with
