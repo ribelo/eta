@@ -22,3 +22,14 @@
  (alias perf-compare)
  (deps (alias test/perf_compare/perf-compare))
  (action (progn)))
+
+(rule
+ (alias red-probes)
+ (deps
+  (alias test/red_probes/h1_smuggle/red-probes)
+  (alias test/red_probes/h1_pipeline/red-probes)
+  (alias test/red_probes/h2_frames/red-probes)
+  (alias test/red_probes/h2_flow/red-probes)
+  (alias test/red_probes/tls_frag/red-probes)
+  (alias test/red_probes/handler_fail/red-probes))
+ (action (progn)))
