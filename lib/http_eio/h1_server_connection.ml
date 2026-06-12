@@ -945,12 +945,24 @@ let request_metrics t rt request =
          ~emit_url_full:t.config.server.emit_url_full request)
   else None
 
-let run_handler t rt request handler =
-  let effect =
+let handler_failed_error t request exn =
+  let message = Printexc.to_string exn in
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_failed { message })
+
+let safe_handler_effect t request handler =
+  try
     Eta_http.Observability.Server.Tracer.request
       ~enabled:t.config.server.enable_otel
-      ~emit_url_full:t.config.server.emit_url_full handler request
-  in
+      ~emit_url_full:t.config.server.emit_url_full
+      handler request
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> Eta.Effect.fail (handler_failed_error t request exn)
+
+let run_handler t rt request handler =
+  let effect = safe_handler_effect t request handler in
   match t.config.server.timeouts.handler_timeout with
   | Some timeout -> (
       match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with

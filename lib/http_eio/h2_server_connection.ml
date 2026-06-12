@@ -1330,15 +1330,26 @@ let rec pump_response_stream t rt ordinal request response stream written =
                   | Error error ->
                       fail_stream_response t rt ordinal stream error))))
 
+let handler_failed_error t request exn =
+  let message = Printexc.to_string exn in
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_failed { message })
+
+let safe_handler_effect t request handler =
+  try
+    Eta_http.Observability.Server.Tracer.request
+      ~enabled:t.config.server.enable_otel
+      ~emit_url_full:t.config.server.emit_url_full
+      handler request
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> Eta.Effect.fail (handler_failed_error t request exn)
+
 let run_handler t ordinal request handler =
   Eio.Fiber.fork ~sw:t.sw (fun () ->
       let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
-      let effect =
-        Eta_http.Observability.Server.Tracer.request
-          ~enabled:t.config.server.enable_otel
-          ~emit_url_full:t.config.server.emit_url_full
-          handler request
-      in
+      let effect = safe_handler_effect t request handler in
       let response =
         match t.config.server.timeouts.handler_timeout with
         | Some timeout -> (

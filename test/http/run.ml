@@ -134,6 +134,8 @@ let () =
             test_h1_server_connection_rejects_invalid_request_targets;
           Alcotest.test_case "rejects header smuggling vectors" `Quick
             test_h1_server_connection_rejects_header_smuggling_vectors;
+          Alcotest.test_case "handler exception returns 500" `Quick
+            test_h1_server_handler_exception_returns_500;
           Alcotest.test_case "accepts OPTIONS asterisk target" `Quick
             test_h1_server_connection_accepts_options_asterisk_target;
           Alcotest.test_case "normalizes absolute-form target" `Quick
@@ -364,6 +366,10 @@ let () =
             test_h2c_server_rejects_invalid_request_header;
           Alcotest.test_case "h2c rejects control-char header values" `Quick
             test_h2c_server_rejects_control_char_header_values;
+          Alcotest.test_case "h2c handler exception returns 500" `Quick
+            test_h2c_server_handler_exception_returns_500;
+          Alcotest.test_case "h2c handler timeout returns 503" `Quick
+            test_h2c_server_handler_timeout_returns_503;
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;

@@ -2794,3 +2794,107 @@ let test_h2c_server_rejects_control_char_header_values () =
                 Alcotest.failf "control byte reached handler for %s" path)
             value)
         received)
+
+let test_h2c_server_handler_exception_returns_500 () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler (request : Eta_http.Server.Request.t) =
+    if request.path = "/boom" then failwith "handler boom"
+    else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/boom"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "handler exception status" 500 status;
+      Alcotest.(check string) "handler exception body" "internal server error\n" body;
+      let request2 =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/ok"
+      in
+      let status2, body2 =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request2)
+      in
+      Alcotest.(check int) "subsequent request status" 200 status2;
+      Alcotest.(check string) "subsequent request body" "ok\n" body2)
+
+
+let test_h2c_server_handler_timeout_returns_503 () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      handler_timeout = Some (Eta.Duration.ms 50);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config = { Eta_http_eio.Server.Config.default with server = server_config } in
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.delay (Eta.Duration.seconds 1)
+      (Eta.Effect.pure (Eta_http.Server.Response.text "slow\n"))
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~config ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/slow"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "handler timeout status" 503 status;
+      Alcotest.(check string) "handler timeout body" "service unavailable\n" body)

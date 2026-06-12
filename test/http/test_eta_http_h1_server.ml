@@ -1154,3 +1154,46 @@ let test_h1_server_connection_emits_meter_metrics () =
         (has_int_metric "eta_http.server.response.body.bytes" 9 meter);
       Alcotest.(check bool) "protocol error metric" true
         (has_int_metric "eta_http.server.protocol.errors" 1 meter))
+
+let read_h1_response flow =
+  let br = Eio.Buf_read.of_flow ~max_size:65536 flow in
+  let status_line = Eio.Buf_read.line br in
+  let rec headers content_length =
+    match Eio.Buf_read.line br with
+    | "" -> content_length
+    | line -> (
+        match String.split_on_char ':' line with
+        | name :: rest
+          when String.lowercase_ascii (String.trim name) = "content-length" ->
+            headers (int_of_string (String.trim (String.concat ":" rest)))
+        | _ -> headers content_length)
+  in
+  let content_length = headers 0 in
+  let body = Eio.Buf_read.take content_length br in
+  let status =
+    if String.length status_line >= 12 then String.sub status_line 9 3
+    else ""
+  in
+  (int_of_string status, body)
+
+let test_h1_server_handler_exception_returns_500 () =
+  let handler (request : Eta_http.Server.Request.t) =
+    if request.path = "/boom" then failwith "handler boom"
+    else Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  with_h1_connection handler (fun clock flow _closed_stats ->
+      Eio.Flow.copy_string
+        "GET /boom HTTP/1.1\r\nHost: example.test\r\n\r\nGET /ok \
+         HTTP/1.1\r\nHost: example.test\r\n\r\n"
+        flow;
+      let status1, body1 =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_h1_response flow)
+      in
+      Alcotest.(check int) "handler exception status" 500 status1;
+      Alcotest.(check string) "handler exception body"
+        "internal server error\n" body1;
+      let status2, body2 =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_h1_response flow)
+      in
+      Alcotest.(check int) "subsequent request status" 200 status2;
+      Alcotest.(check string) "subsequent request body" "ok\n" body2)
