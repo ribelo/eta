@@ -362,6 +362,8 @@ let () =
             test_h2c_server_rejects_request_header_limit;
           Alcotest.test_case "h2c rejects invalid request header" `Quick
             test_h2c_server_rejects_invalid_request_header;
+          Alcotest.test_case "h2c rejects control-char header values" `Quick
+            test_h2c_server_rejects_control_char_header_values;
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;

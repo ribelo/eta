@@ -2718,3 +2718,79 @@ let test_h2c_server_resets_stalled_reader_stream () =
          response_write_timeout. *)
       Eio.Time.with_timeout_exn clock 3.0 (fun () ->
           Eio.Promise.await reset))
+
+let test_h2c_server_rejects_control_char_header_values () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let received : (string, string) Hashtbl.t = Hashtbl.create 8 in
+  let stop, resolve_stop = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    (match Eta_http.Core.Header.get "x-evil" request.headers with
+    | Some value -> Hashtbl.replace received request.path value
+    | None -> ());
+    Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      (* HPACK permits arbitrary octets in header values. The invariant an edge
+         server must hold is that no CR/LF/NUL ever reaches the handler, so a
+         client cannot smuggle extra header lines or split a response when the
+         request is proxied to an HTTP/1.1 upstream. CR/LF are rejected outright
+         (400) by header validation; NUL is stripped by the HPACK transport
+         before it reaches Eta. *)
+      let line_injection_cases =
+        [ "crlf in value", "a\r\nInjected: 1";
+          "bare lf in value", "a\nb";
+          "bare cr in value", "a\rb" ]
+      in
+      let all_cases = line_injection_cases @ [ "nul in value", "a\x00b" ] in
+      List.iteri
+        (fun index (_name, evil_value) ->
+          let request =
+            H2.Request.create ~scheme:"http"
+              ~headers:
+                (H2.Headers.of_list
+                   [ ":authority", "127.0.0.1"; "x-evil", evil_value ])
+              `GET (Printf.sprintf "/evil-%d" index)
+          in
+          ignore
+            (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+                 await_h2_response_outcome ~tag:(index + 1) connection request)))
+        all_cases;
+      (* CR/LF requests must be rejected before dispatch. *)
+      List.iteri
+        (fun index (name, _) ->
+          Alcotest.(check bool)
+            (Printf.sprintf "%s rejected before handler" name)
+            false
+            (Hashtbl.mem received (Printf.sprintf "/evil-%d" index)))
+        line_injection_cases;
+      (* Whatever does reach the handler must contain no control bytes. *)
+      Hashtbl.iter
+        (fun path value ->
+          String.iter
+            (fun c ->
+              if c = '\r' || c = '\n' || c = '\000' then
+                Alcotest.failf "control byte reached handler for %s" path)
+            value)
+        received)
