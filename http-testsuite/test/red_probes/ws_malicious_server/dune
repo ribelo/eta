@@ -1,0 +1,9 @@
+(executable
+ (name run)
+ (libraries eta_http_testsuite eio_main)
+ (flags (:standard -w +a -warn-error +a)))
+
+(rule
+ (alias red-probes)
+ (deps (source_tree ../../../lib))
+ (action (run %{dep:run.exe})))
