@@ -870,6 +870,123 @@ let test_https_server_h2_streams_large_body_past_window () =
       Alcotest.(check int) "large tls stream body length" total
         (String.length body))
 
+let test_https_server_h2_concurrent_large_echo () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/echo" ->
+        Eta_http.Server.Body.read_all request.body
+        |> Eta.Effect.map (fun body ->
+               Eta_http.Server.Response.make ~status:200
+                 ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+                 ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~tls_config ~socket
+      handler
+  in
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "h2" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(tls_flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  (* Each stream uploads a distinct fill byte so any cross-stream corruption in
+     the concurrent TLS encrypt/decrypt path is detected. Payloads exceed the
+     flow-control window so the server pumps reads and writes concurrently. *)
+  let tags = [ 1; 2; 3 ] in
+  let chunk_size = 16 * 1024 in
+  let chunks_per_stream = 6 in
+  let payload tag = String.make (chunk_size * chunks_per_stream) (Char.chr (Char.code 'A' + tag)) in
+  let open_stream tag =
+    let body_buf = Buffer.create (chunk_size * chunks_per_stream) in
+    let status = ref 0 in
+    let eof, resolve_eof = Eio.Promise.create () in
+    let rec read_body response_body =
+      H2.Body.Reader.schedule_read response_body
+        ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
+        ~on_read:(fun bs ~off ~len ->
+          Buffer.add_string body_buf (Bigstringaf.substring bs ~off ~len);
+          read_body response_body)
+    in
+    let request =
+      H2.Request.create ~scheme:"https"
+        ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+        `POST "/echo"
+    in
+    match
+      Eta_http_eio.H2.Connection.request connection ~tag request
+        ~error_handler:(fun _stream error ->
+          Alcotest.failf "stream %d failed: %a" tag
+            Test_eta_http_h2_server.pp_h2_client_error error)
+        ~response_handler:(fun _stream response response_body ->
+          status := H2.Status.to_code response.status;
+          read_body response_body)
+    with
+    | Ok (opened : Eta_http_eio.H2.Multiplexer.opened_request) ->
+        (tag, opened, body_buf, status, eof)
+    | Error _ -> Alcotest.failf "stream %d not opened" tag
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let streams = List.map open_stream tags in
+      for round = 0 to chunks_per_stream - 1 do
+        List.iter
+          (fun (tag, opened, _, _, _) ->
+            let chunk =
+              String.sub (payload tag) (round * chunk_size) chunk_size
+            in
+            H2.Body.Writer.write_string
+              opened.Eta_http_eio.H2.Multiplexer.request_body chunk)
+          streams;
+        Eio.Time.sleep clock 0.002
+      done;
+      List.iter
+        (fun (_, opened, _, _, _) ->
+          H2.Body.Writer.close
+            opened.Eta_http_eio.H2.Multiplexer.request_body)
+        streams;
+      List.iter
+        (fun (tag, _, body_buf, status, eof) ->
+          Eio.Time.with_timeout_exn clock 10.0 (fun () ->
+              Eio.Promise.await eof);
+          Alcotest.(check int)
+            (Printf.sprintf "stream %d status" tag)
+            200 !status;
+          Alcotest.(check bool)
+            (Printf.sprintf "stream %d echo intact" tag)
+            true
+            (String.equal (Buffer.contents body_buf) (payload tag)))
+        streams)
+
 let test_https_server_handshake_timeout_stats () =
   with_temp_tls_files @@ fun cert key ->
   run_eio @@ fun env ->
