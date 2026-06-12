@@ -117,6 +117,29 @@ let () =
             `Quick test_h1_response_head_read_exception_is_typed_and_releases;
           Alcotest.test_case "body read exception is typed" `Quick
             test_h1_body_read_exception_is_typed;
+          Alcotest.test_case "connection failure to localhost:1" `Quick
+            test_h1_client_connection_failure;
+          Alcotest.test_case "broken server sends headers but no body" `Quick
+            test_h1_client_broken_server_headers_no_body;
+          Alcotest.test_case "pool does not exhaust with broken server" `Quick
+            test_h1_pool_broken_server_concurrent_requests_timeout;
+          Alcotest.test_case "streaming simple get" `Quick
+            test_h1_client_streaming_simple_get;
+          Alcotest.test_case "streaming get" `Quick test_h1_client_streaming_get;
+          Alcotest.test_case "streaming simple post" `Quick
+            test_h1_client_streaming_simple_post;
+          Alcotest.test_case "streaming echo" `Quick
+            test_h1_client_streaming_echo;
+          Alcotest.test_case "streaming failed stream" `Quick
+            test_h1_client_streaming_failed_stream;
+          Alcotest.test_case "streaming large content" `Quick
+            test_h1_client_streaming_large_content;
+          Alcotest.test_case "streaming multiple body read" `Quick
+            test_h1_client_streaming_multiple_body_read;
+          Alcotest.test_case "streaming proxy" `Quick
+            test_h1_client_streaming_proxy;
+          Alcotest.test_case "streaming concurrent load" `Quick
+            test_h1_client_streaming_concurrent_load;
         ] );
       ( "h1-server",
         [
@@ -198,6 +221,14 @@ let () =
             test_h1_server_handle_graceful_shutdown_waits_for_request;
           Alcotest.test_case "meter metrics" `Quick
             test_h1_server_connection_emits_meter_metrics;
+          Alcotest.test_case "stream response releases after body written" `Quick
+            test_h1_server_stream_response_releases_after_body_written;
+          Alcotest.test_case "stream scope releases on response completion" `Quick
+            test_h1_server_stream_scope_releases_on_response_completion;
+          Alcotest.test_case "client abort during response" `Quick
+            test_h1_server_client_abort_during_response;
+          Alcotest.test_case "bad middleware responds with 500" `Quick
+            test_h1_server_bad_middleware_responds_with_500;
         ] );
       ( "server-stats",
         [
@@ -215,6 +246,12 @@ let () =
           Alcotest.test_case "validation" `Quick test_server_config_validation;
           Alcotest.test_case "start validates before fork" `Quick
             test_start_h1_validates_config_before_fork;
+          Alcotest.test_case "desired port binding" `Quick
+            test_server_start_desired_port;
+          Alcotest.test_case "available port binding" `Quick
+            test_server_start_available_port;
+          Alcotest.test_case "shutdown before connections" `Quick
+            test_server_shutdown_before_connections;
         ] );
       ( "ws",
         [

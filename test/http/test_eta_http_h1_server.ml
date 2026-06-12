@@ -898,6 +898,37 @@ let test_h1_server_connection_keeps_alive_for_sequential_requests () =
   in
   Alcotest.(check int) "completed requests" 2 stats.completed_requests
 
+let test_h1_server_connection_http10_defaults_to_close () =
+  with_h1_connection path_response @@ fun clock flow closed_stats ->
+  let response =
+    "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\n/h10"
+  in
+  Eio.Flow.copy_string "GET /h10 HTTP/1.0\r\n\r\n" flow;
+  Alcotest.(check string) "response" response
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow));
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 0 stats.protocol_errors
+
+let test_h1_server_connection_explicit_close_header () =
+  with_h1_connection path_response @@ fun clock flow closed_stats ->
+  let response =
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\n/close"
+  in
+  Eio.Flow.copy_string
+    "GET /close HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  Alcotest.(check string) "response" response
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow));
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_keeps_pipelined_request_bytes () =
   with_h1_connection path_response @@ fun clock flow closed_stats ->
   Eio.Flow.copy_string
@@ -953,6 +984,163 @@ let test_h1_server_connection_drains_unread_body_for_reuse () =
   in
   Alcotest.(check int) "request bytes" 4 stats.request_bytes;
   Alcotest.(check int) "completed requests" 2 stats.completed_requests
+
+let test_h1_server_connection_head_discards_body_preserves_content_length () =
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~body:(Eta_http.Server.Response.Body.fixed [ Bytes.of_string "body-content" ])
+         ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "HEAD /head HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+   ^ "Content-Length: 12\r\n\r\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_head_matches_get_content_length () =
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~body:
+           (Eta_http.Server.Response.Body.fixed [ Bytes.of_string "response-body" ])
+         ())
+  in
+  (* Exercise HEAD and GET separately so the raw helper can read each response
+     to EOF. *)
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  let head_response =
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 13\r\n\r\n"
+  in
+  Eio.Flow.copy_string
+    "HEAD /head-get HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  Alcotest.(check string) "HEAD response" head_response
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow));
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  let get_response =
+    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 13\r\n\r\nresponse-body"
+  in
+  Eio.Flow.copy_string
+    "GET /head-get HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  Alcotest.(check string) "GET response" get_response
+    (Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow));
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_head_explicit_handler_wins () =
+  let handler (request : Eta_http.Server.Request.t) =
+    if String.equal request.method_ "HEAD" then
+      Eta.Effect.pure
+        (Eta_http.Server.Response.make ~status:200
+           ~headers:[ ("X-Explicit-Head", "true") ]
+           ~body:Eta_http.Server.Response.Body.empty ())
+    else
+      Eta.Effect.pure
+        (Eta_http.Server.Response.make ~status:200
+           ~body:(Eta_http.Server.Response.Body.fixed [ Bytes.of_string "get-body" ])
+           ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "HEAD /explicit-head HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nX-Explicit-Head: true\r\nConnection: close\r\n"
+   ^ "Content-Length: 0\r\n\r\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_request_line_too_large () =
+  (* Eta maps H1 parse-limit failures to 400 while still enforcing the request
+     line limit. *)
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server_limits =
+    { Eta_http.Server.Config.default.limits with max_request_line_bytes = 16 }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /long-request-target HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool) "response is 400"
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 0 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
+
+let test_h1_server_connection_header_section_too_large () =
+  (* Eta maps H1 parse-limit failures to 400 while still enforcing the header
+     section limit. *)
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server_limits =
+    { Eta_http.Server.Config.default.limits with max_request_header_bytes = 16 }
+  in
+  let server_config =
+    { Eta_http.Server.Config.default with limits = server_limits }
+  in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /big-headers HTTP/1.1\r\nHost: example.test\r\nX-Large: value\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check bool) "response is 400"
+    true
+    (String.starts_with ~prefix:"HTTP/1.1 400 Bad Request" response);
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 0 stats.completed_requests;
+  Alcotest.(check int) "protocol errors" 1 stats.protocol_errors
 
 let test_h1_server_connection_keeps_chunked_pipelined_bytes () =
   let handler (request : Eta_http.Server.Request.t) =
@@ -1362,3 +1550,127 @@ let test_h1_server_handler_exception_returns_500 () =
         ("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n"
        ^ "Content-Length: 22\r\n\r\ninternal server error\n")
         response)
+
+let test_h1_server_stream_response_releases_after_body_written () =
+  (* zio-http HttpApp.test.ts "stream" - response stream finalization. *)
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "chunk-a"; "chunk-b" ]
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET /stream-release HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+   ^ "Transfer-Encoding: chunked\r\n\r\n"
+   ^ "7\r\nchunk-a\r\n7\r\nchunk-b\r\n0\r\n\r\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "released after body written" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_stream_scope_releases_on_response_completion () =
+  (* zio-http HttpApp.test.ts "stream scope" - response stream scope is
+     finalized after the response completes. *)
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body ~length:6
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "stre"; "am" ]
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET /stream-scope HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+   ^ "Content-Length: 6\r\n\r\nstream")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "scope released after response completion" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_client_abort_during_response () =
+  (* Client disconnect during response: Eta releases the response stream and
+     records the already-handled request without synthesizing an HTTP response. *)
+  let flow = Eio_mock.Flow.make "eta-http-h1-server-client-abort" in
+  Eio_mock.Flow.on_read flow
+    [ `Return "GET /abort HTTP/1.1\r\nHost: example.test\r\n\r\n" ];
+  Eio_mock.Flow.on_copy_bytes flow
+    [
+      `Return 4096;
+      `Raise (Unix.Unix_error (Unix.EPIPE, "write", ""));
+    ];
+  let released = ref 0 in
+  let handler (_request : Eta_http.Server.Request.t) =
+    let body =
+      stream_body
+        ~release:(fun () ->
+          incr released;
+          Eta.Effect.unit)
+        [ "first"; "second" ]
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  let stats = run_h1_connection_on_flow flow handler in
+  Alcotest.(check int) "released on client abort" 1 !released;
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
+  Alcotest.(check bool) "no response emitted after abort" true
+    (stats.response_bytes < 10)
+
+let test_h1_server_bad_middleware_responds_with_500 () =
+  (* zio-http HttpServer.test.ts "bad middleware responds with 500" - an
+     unhandled failure in a wrapper around the handler becomes a 500. *)
+  let inner (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let bad_middleware next (request : Eta_http.Server.Request.t) =
+    if request.path = "/bad-middleware" then
+      failwith "middleware boom"
+    else next request
+  in
+  let handler = bad_middleware inner in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("GET /bad-middleware HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Connection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "bad middleware response"
+    ("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n"
+   ^ "Content-Length: 22\r\n\r\ninternal server error\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests

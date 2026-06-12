@@ -38,7 +38,7 @@ let default_max_response_body_bytes =
 
 let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?(release) ~flow request =
+    ?release ?release_on_error ~flow request =
   if max_response_body_bytes < 0 then
     invalid_arg
       "Eta_http_eio.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
@@ -46,20 +46,21 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     Option.value release
       ~default:(fun () -> H1_client_errors.close_flow request flow)
   in
-  let release_on_error error =
-    Effect.catch (fun _ -> Effect.unit) (release ())
+  let release_on_error = Option.value release_on_error ~default:release in
+  let cleanup_after_error error =
+    Effect.catch (fun _ -> Effect.unit) (release_on_error ())
     |> Effect.bind (fun () -> Effect.fail error)
   in
   H1_client_request_writer.write_request ?host_eio flow request
-  |> Effect.catch release_on_error
+  |> Effect.catch cleanup_after_error
   |> Effect.bind (fun () ->
          let rec read_final_response initial =
            Effect.sync (fun () ->
                H1_client_response_reader.read_response_head ?host_eio ~initial
                  flow request)
-           |> Effect.catch release_on_error
+           |> Effect.catch cleanup_after_error
            |> Effect.bind (function
-                | Error error -> release_on_error error
+                | Error error -> cleanup_after_error error
                 | Ok (head : H1_client_response_reader.response_head)
                   when head.status >= 100 && head.status < 200
                        && head.status <> 101 ->
@@ -69,7 +70,7 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
                       H1_client_response_reader.validate_transfer_encoding
                         request head.headers
                     with
-                    | Error error -> release_on_error error
+                    | Error error -> cleanup_after_error error
                     | Ok () ->
                         let body, trailers =
                           H1_client_response_reader.response_body ?host_eio
@@ -208,6 +209,8 @@ let request_owner pool request response_ch release_ch cancel_ch =
               conn.reusable <- false;
               Effect.unit)
             ~release:(fun () -> release_body release_ch)
+            ~release_on_error:(fun () ->
+              H1_client_errors.close_flow request conn.flow)
             ~max_response_body_bytes:pool.max_response_body_bytes
             ~flow:conn.flow request
           |> Effect.map (fun response -> `Response response)

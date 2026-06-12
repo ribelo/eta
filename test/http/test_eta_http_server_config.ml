@@ -88,3 +88,77 @@ let test_start_h1_validates_config_before_fork () =
         (Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~config ~socket
            handler
           : Eta_http_eio.Server.t))
+
+
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> Alcotest.fail "expected TCP listener"
+
+let test_server_start_desired_port () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let desired_port =
+    Eio.Switch.run @@ fun probe_sw ->
+    let probe =
+      Eio.Net.listen ~sw:probe_sw ~reuse_addr:true ~backlog:1 net
+        (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+    in
+    tcp_port (Eio.Net.listening_addr probe)
+  in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, desired_port))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Alcotest.(check int) "desired port bound" desired_port port;
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "ok")
+  in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~socket handler
+  in
+  Eta_http_eio.Server.shutdown server Immediate;
+  Alcotest.(check unit) "shutdown completes" () ()
+
+let test_server_start_available_port () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Alcotest.(check bool) "available port assigned" true (port <> 0);
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "ok")
+  in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~socket handler
+  in
+  Eta_http_eio.Server.shutdown server Immediate;
+  Alcotest.(check unit) "shutdown completes" () ()
+
+let test_server_shutdown_before_connections () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let handler _request =
+    Eta.Effect.pure (Eta_http.Server.Response.text "ok")
+  in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~socket handler
+  in
+  Eta_http_eio.Server.shutdown server Immediate;
+  (* zio-http allows providing a Server layer without starting it; Eta's
+     equivalent is calling shutdown immediately after start_h1_on_socket,
+     before any connection is accepted. *)
+  Alcotest.(check unit) "shutdown before connections completes" () ()

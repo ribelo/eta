@@ -34,6 +34,7 @@ val request_on_flow :
   ?on_unread_body:(unit -> (unit, Error.t) Eta.Effect.t) ->
   ?max_response_body_bytes:int ->
   ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
+  ?release_on_error:(unit -> (unit, Error.t) Eta.Effect.t) ->
   flow:[> Eio.Flow.two_way_ty | Eio.Resource.close_ty] Eio.Resource.t ->
   request ->
   (response, Error.t) Eta.Effect.t
@@ -42,9 +43,11 @@ val request_on_flow :
     [max_response_body_bytes] caps fixed-length, chunked, and
     close-delimited response bodies. [on_unread_body] runs before [release] if
     the response body is released before a protocol-clean end; pooled clients
-    use it to prevent HTTP/1.1 connection reuse after discard. [host_eio] routes
-    flow reads and writes through the host Eio instance for [dune utop]
-    workflows. *)
+    use it to prevent HTTP/1.1 connection reuse after discard. [release] runs
+    when a returned response body is released. [release_on_error] runs when the
+    request fails before a response is returned, and defaults to [release].
+    [host_eio] routes flow reads and writes through the host Eio instance for
+    [dune utop] workflows. *)
 
 val origin_key : Url.t -> string
 (** Stable pool key for the URL's scheme, host, and effective port. *)

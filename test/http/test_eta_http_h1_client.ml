@@ -1,5 +1,9 @@
 open Test_eta_http_support
 
+let tcp_port = function
+  | `Tcp (_, port) -> port
+  | `Unix _ -> Alcotest.fail "expected TCP listener"
+
 let read_file path =
   let input = open_in path in
   Fun.protect
@@ -1295,3 +1299,656 @@ let test_eio_runtime_service_h1_request () =
     |> Eta_test.Expect.expect_ok
   in
   Alcotest.(check string) "body" "service" (Bytes.to_string body)
+
+(* Helpers for the zio-http ClientStreamingSpec / RequestStreamingServerSpec /
+   RequestStreamingConcurrencySpec port below. *)
+
+let with_h1_server_client handler f =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:256 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~socket handler
+  in
+  let client = Eta_http_eio.Client.make_h1 ~sw ~net () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.Server.shutdown server Eta_http_eio.Server.Immediate)
+    (fun () -> f sw clock net rt client server port)
+
+let with_h1_server_client_and_runtime_service handler f =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:256 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let runtime_factory ~sw ~connection:_ () =
+    let http_service = Eta_http_eio.runtime_service ~sw ~net () in
+    Eta_eio.Runtime.create ~sw ~clock ~services:[ http_service ] ()
+  in
+  let server =
+    Eta_http_eio.Server.start_h1_on_socket ~sw ~clock ~socket ~runtime_factory
+      handler
+  in
+  let client = Eta_http_eio.Client.make_h1 ~sw ~net () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.Server.shutdown server Eta_http_eio.Server.Immediate)
+    (fun () -> f sw clock net rt client server port)
+
+let string_chunks ?(chunk_size = 3) text =
+  let rec split acc i =
+    if i >= String.length text then List.rev acc
+    else
+      let n = min chunk_size (String.length text - i) in
+      split (Bytes.of_string (String.sub text i n) :: acc) (i + n)
+  in
+  split [] 0
+
+let read_body_string rt body =
+  Eta_http.Body.Stream.read_all body
+  |> Eta.Runtime.run rt
+  |> Eta_test.Expect.expect_ok
+  |> Bytes.to_string
+
+let read_body_chunks rt body =
+  let rec loop acc =
+    match Eta_http.Body.Stream.read body |> Eta.Runtime.run rt with
+    | Eta.Exit.Ok None -> List.rev acc
+    | Eta.Exit.Ok (Some chunk) -> loop (Bytes.to_string chunk :: acc)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "read chunk failed: %a"
+          (Eta.Cause.pp Eta_http.Error.pp)
+          cause
+  in
+  loop []
+
+(* zio-http ClientStreamingSpec ports *)
+
+let test_h1_client_streaming_simple_get () =
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text "simple response")
+  in
+  with_h1_server_client handler @@ fun _sw _clock _net rt client _server port ->
+  let request =
+    Eta_http.Request.make "GET"
+      (Printf.sprintf "http://127.0.0.1:%d/simple-get" port)
+  in
+  let response =
+    Eta_http.request client request |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 200 response.status;
+  Alcotest.(check string) "body" "simple response"
+    (read_body_string rt response.body)
+
+let test_h1_client_streaming_get () =
+  let handler (_request : Eta_http.Server.Request.t) =
+    let chunks = string_chunks ~chunk_size:3 "streaming response" in
+    let remaining = ref chunks in
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~body:
+           (Eta_http.Server.Response.Body.stream (fun () ->
+                match !remaining with
+                | [] -> Eta.Effect.pure None
+                | chunk :: rest ->
+                    remaining := rest;
+                    Eta.Effect.pure (Some chunk)))
+         ())
+  in
+  with_h1_server_client handler @@ fun _sw _clock _net rt client _server port ->
+  let request =
+    Eta_http.Request.make "GET"
+      (Printf.sprintf "http://127.0.0.1:%d/streaming-get" port)
+  in
+  let response =
+    Eta_http.request client request |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 200 response.status;
+  let chunks = read_body_chunks rt response.body in
+  Alcotest.(check string) "concatenated body" "streaming response"
+    (String.concat "" chunks)
+
+(* Eta exposes decoded response chunks without a synthetic trailing empty chunk,
+   so this port checks the concatenated stream payload. *)
+
+let test_h1_client_streaming_simple_post () =
+  (* zio-http ClientStreamingSpec: client sends a chunked request body and the
+     server drains it before responding. *)
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.discard ~drain:true request.body
+    |> Eta.Effect.map (fun () ->
+           Eta_http.Server.Response.make ~status:200
+             ~body:Eta_http.Server.Response.Body.empty ())
+  in
+  with_h1_server_client handler @@ fun _sw clock _net rt client _server port ->
+  let body =
+    Eta_http.Body.Stream.of_bytes (string_chunks ~chunk_size:3 "streaming request")
+  in
+  let request =
+    Eta_http.Request.make ~body:(Stream body) "POST"
+      (Printf.sprintf "http://127.0.0.1:%d/simple-post" port)
+  in
+  match
+    Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+        Eta_http.request client request |> Eta.Runtime.run rt)
+  with
+  | Eta.Exit.Ok response ->
+      Alcotest.(check int) "status" 200 response.status;
+      Eta_http.Body.Stream.discard response.body
+      |> Eta.Runtime.run rt
+      |> Eta_test.Expect.expect_ok
+  | Eta.Exit.Error _ ->
+      Alcotest.fail "streaming simple post failed instead of completing"
+  | exception Eio.Time.Timeout ->
+      Alcotest.fail "streaming simple post timed out"
+
+let test_h1_client_streaming_echo () =
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~body:
+           (Eta_http.Server.Response.Body.stream (fun () ->
+                Eta_http.Server.Body.read request.body))
+         ())
+  in
+  with_h1_server_client handler @@ fun _sw _clock _net rt client _server port ->
+  let body =
+    Eta_http.Body.Stream.of_bytes (string_chunks ~chunk_size:3 "streaming request")
+  in
+  let request =
+    Eta_http.Request.make ~body:(Stream body) "POST"
+      (Printf.sprintf "http://127.0.0.1:%d/streaming-echo" port)
+  in
+  let response =
+    Eta_http.request client request |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 200 response.status;
+  let chunks = read_body_chunks rt response.body in
+  Alcotest.(check string) "concatenated body" "streaming request"
+    (String.concat "" chunks)
+
+(* zio-http multipart form tests are skipped: Eta does not yet implement
+   multipart/form-data parsing or generation. *)
+
+let test_h1_client_streaming_failed_stream () =
+  (* zio-http ClientStreamingSpec: a request body stream failure should
+     propagate to the request. *)
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.discard ~drain:true request.body
+    |> Eta.Effect.map (fun () ->
+           Eta_http.Server.Response.make ~status:200
+             ~body:Eta_http.Server.Response.Body.empty ())
+  in
+  with_h1_server_client handler @@ fun _sw clock _net rt client _server port ->
+  let body =
+    Eta_http.Body.Stream.of_reader (fun () ->
+        Eta.Effect.fail
+          (Eta_http.Error.make ~protocol:H1 ~method_:"POST"
+             ~uri:(Printf.sprintf "http://127.0.0.1:%d/simple-post" port)
+             (Decode_error { codec = "stream"; message = "Some error" })))
+  in
+  let request =
+    Eta_http.Request.make ~body:(Stream body) "POST"
+      (Printf.sprintf "http://127.0.0.1:%d/simple-post" port)
+  in
+  match
+    Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+        Eta_http.request client request |> Eta.Runtime.run rt)
+  with
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "failed stream request unexpectedly succeeded"
+  | Eta.Exit.Error _ -> ()
+  | exception Eio.Time.Timeout ->
+      Alcotest.fail "streaming failed stream timed out"
+
+(* zio-http RequestStreamingServerSpec ports *)
+
+let test_h1_client_streaming_large_content () =
+  let size = 1024 * 1024 in
+  let content = String.make size '?' in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all ~max_bytes:(2 * size) request.body
+    |> Eta.Effect.map (fun body ->
+           Eta_http.Server.Response.text (string_of_int (Bytes.length body)))
+  in
+  with_h1_server_client handler @@ fun _sw _clock _net rt client _server port ->
+  let request =
+    Eta_http.Request.make ~body:(Fixed [ Bytes.of_string content ]) "POST"
+      (Printf.sprintf "http://127.0.0.1:%d/large" port)
+  in
+  let response =
+    Eta_http.request client request |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  Alcotest.(check int) "status" 200 response.status;
+  Alcotest.(check string) "body" (string_of_int size)
+    (read_body_string rt response.body)
+
+let test_h1_client_streaming_multiple_body_read () =
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.bind (fun _first ->
+           Eta_http.Server.Body.read_all request.body
+           |> Eta.Effect.map (fun _second ->
+                  Eta_http.Server.Response.make ~status:200
+                    ~body:Eta_http.Server.Response.Body.empty ()))
+  in
+  with_h1_server_client handler @@ fun _sw _clock _net rt client _server port ->
+  let request =
+    Eta_http.Request.make "POST"
+      (Printf.sprintf "http://127.0.0.1:%d/multiple-read" port)
+  in
+  let response =
+    Eta_http.request client request |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  (* Eta treats reads after EOF as empty; this is the Eta-specific variant of
+     zio-http's multiple-read regression. *)
+  Alcotest.(check int) "status" 200 response.status
+
+let test_h1_client_streaming_proxy () =
+  let http_error_to_server_error err =
+    Eta_http.Server.Error.make ~protocol:H1 ~method_:"POST" ~target:"/1"
+      (Handler_failed { message = Eta_http.Error.to_string err })
+  in
+  let server_body_as_stream body =
+    let rec reader () =
+      Eta_http.Server.Body.read body
+      |> Eta.Effect.map_error Eta_http.Server.Error.to_http_error
+      |> Eta.Effect.map (function
+          | None -> Eta_http.Body.Stream.End
+          | Some bytes -> Eta_http.Body.Stream.Chunk bytes)
+    in
+    Eta_http.Body.Stream.of_reader reader
+  in
+  let proxy_handler (request : Eta_http.Server.Request.t) =
+    let host = Option.value request.authority ~default:"127.0.0.1" in
+    let url = Printf.sprintf "http://%s/2" host in
+    let client = Eta_http.Client.make_runtime ~protocol:H1 () in
+    let req =
+      Eta_http.Request.make
+        ~body:(Stream (server_body_as_stream request.body))
+        "POST" url
+    in
+    Eta_http.request client req
+    |> Eta.Effect.map_error http_error_to_server_error
+    |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+           Eta_http.Body.Stream.read_all response.body
+           |> Eta.Effect.map_error http_error_to_server_error
+           |> Eta.Effect.map (fun body ->
+                  Eta_http.Server.Response.make ~status:response.status
+                    ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+                    ()))
+  in
+  let length_handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all ~max_bytes:(2 * 1024 * 1024) request.body
+    |> Eta.Effect.map (fun body ->
+           Eta_http.Server.Response.text (string_of_int (Bytes.length body)))
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/1" -> proxy_handler request
+    | "/2" -> length_handler request
+    | _ ->
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:404
+             ~body:Eta_http.Server.Response.Body.empty ())
+  in
+  with_h1_server_client_and_runtime_service handler
+  @@ fun _sw _clock _net rt client _server port ->
+  let sizes = [ 0; 8192; 1024 * 1024 ] in
+  List.iter
+    (fun size ->
+      let payload = String.make size 'x' in
+      let request =
+        Eta_http.Request.make ~body:(Fixed [ Bytes.of_string payload ]) "POST"
+          (Printf.sprintf "http://127.0.0.1:%d/1" port)
+      in
+      let response =
+        Eta_http.request client request |> Eta.Runtime.run rt
+        |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int)
+        (Printf.sprintf "status for size %d" size) 200 response.status;
+      Alcotest.(check string)
+        (Printf.sprintf "body for size %d" size)
+        (string_of_int size) (read_body_string rt response.body))
+    sizes
+
+(* zio-http RequestStreamingConcurrencySpec port *)
+
+let test_h1_client_streaming_concurrent_load () =
+  let payload_size = 4096 in
+  (* zio-http runs this regression at 100 x 20 operations with a 120s timeout.
+     Keep the same concurrent store/fetch shape here, but scale it for the
+     regular Eta HTTP suite rather than turning the suite into a load test. *)
+  let parallelism = 32 in
+  let ops_per_fiber = 5 in
+  let store_mutex = Eio.Mutex.create () in
+  let store = Hashtbl.create 256 in
+  let store_counter = Atomic.make 0 in
+  let store_handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.bind (fun body ->
+           let id = string_of_int (Atomic.fetch_and_add store_counter 1) in
+           Eta.Effect.sync (fun () ->
+               Eio.Mutex.use_rw ~protect:true store_mutex (fun () ->
+                   Hashtbl.replace store id body))
+           |> Eta.Effect.map (fun () ->
+                  Eta_http.Server.Response.make ~status:201
+                    ~headers:
+                      (Eta_http.Core.Header.unsafe_of_list [ ("X-Id", id) ])
+                    ~body:Eta_http.Server.Response.Body.empty ()))
+  in
+  let fetch_handler id (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.discard request.body
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.sync (fun () ->
+               Eio.Mutex.use_rw ~protect:true store_mutex (fun () ->
+                   Hashtbl.find_opt store id))
+           |> Eta.Effect.map (function
+                | None ->
+                    Eta_http.Server.Response.make ~status:404
+                      ~body:Eta_http.Server.Response.Body.empty ()
+                | Some body ->
+                    Eta_http.Server.Response.make ~status:200
+                      ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+                      ()))
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/store" -> store_handler request
+    | path when String.starts_with ~prefix:"/fetch/" path ->
+        fetch_handler
+          (String.sub path 7 (String.length path - 7))
+          request
+    | _ ->
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:404
+             ~body:Eta_http.Server.Response.Body.empty ())
+  in
+  with_h1_server_client handler
+  @@ fun sw clock net rt _client _server port ->
+  let origin =
+    Eta_http.Core.Url.of_string
+      (Printf.sprintf "http://127.0.0.1:%d/" port)
+  in
+  let pool =
+    Eta_http_eio.H1.Client.make_pool ~max_size:parallelism ~sw ~net origin
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let payload = Bytes.of_string (String.make payload_size 'z') in
+  let test_failure message =
+    Eta_http.Error.make ~protocol:H1 ~method_:"*" ~uri:(Eta_http.Core.Url.to_string origin)
+      (Connection_protocol_violation { kind = "test"; message })
+  in
+  let store_payload () =
+    let request =
+      {
+        Eta_http_eio.H1.Client.method_ = "POST";
+        url =
+          Eta_http.Core.Url.of_string
+            (Printf.sprintf "http://127.0.0.1:%d/store" port);
+        headers = [];
+        body = Fixed [ payload ];
+      }
+    in
+    Eta_http_eio.H1.Client.request_with_pool pool request
+    |> Eta.Effect.bind (fun (response : Eta_http_eio.H1.Client.response) ->
+           if response.status <> 201 then
+             Eta.Effect.fail
+               (test_failure
+                  (Printf.sprintf "store status %d" response.status))
+           else
+             match Eta_http.Core.Header.get "x-id" response.headers with
+             | None -> Eta.Effect.fail (test_failure "missing X-Id header")
+             | Some id ->
+                 Eta_http.Body.Stream.discard response.body
+                 |> Eta.Effect.map (fun () -> id))
+  in
+  let fetch_payload id =
+    let request =
+      {
+        Eta_http_eio.H1.Client.method_ = "GET";
+        url =
+          Eta_http.Core.Url.of_string
+            (Printf.sprintf "http://127.0.0.1:%d/fetch/%s" port id);
+        headers = [];
+        body = Empty;
+      }
+    in
+    Eta_http_eio.H1.Client.request_with_pool pool request
+    |> Eta.Effect.bind (fun (response : Eta_http_eio.H1.Client.response) ->
+           if response.status <> 200 then
+             Eta.Effect.fail
+               (test_failure
+                  (Printf.sprintf "fetch status %d" response.status))
+           else Eta_http.Body.Stream.read_all response.body)
+  in
+  let fiber_exit =
+    try
+      Eio.Time.with_timeout_exn clock 5.0 (fun () ->
+        Eta.Effect.for_each_par
+          (List.init parallelism (fun _ -> ()))
+          (fun () ->
+            let rec loop n acc =
+              if n = 0 then Eta.Effect.pure (List.rev acc)
+              else
+                store_payload ()
+                |> Eta.Effect.bind (fun id ->
+                       fetch_payload id
+                       |> Eta.Effect.bind (fun fetched ->
+                              loop (n - 1)
+                                (( Bytes.length payload,
+                                   Bytes.length fetched )
+                                :: acc)))
+            in
+            loop ops_per_fiber [])
+        |> Eta.Runtime.run rt)
+    with Eio.Time.Timeout -> Alcotest.fail "streaming concurrent load timed out"
+  in
+  let fiber_results = Eta_test.Expect.expect_ok fiber_exit in
+  List.iter
+    (List.iter (fun (expected, actual) ->
+         Alcotest.(check int) "stored and fetched payload length" expected actual))
+    fiber_results
+
+
+(* zio-http ClientSpec connection-failure cases *)
+
+let test_h1_client_connection_failure () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
+  let url = Eta_http.Core.Url.of_string "http://127.0.0.1:1/" in
+  let request : Eta_http_eio.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http_eio.H1.Client.Empty }
+  in
+  match Eta.Runtime.run rt (Eta_http_eio.H1.Client.request ~sw ~net request) with
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "connection to localhost:1 unexpectedly succeeded"
+  | Eta.Exit.Error
+      (Eta.Cause.Fail { Eta_http.Error.kind = Eta_http.Error.Connect_error _; _ }) ->
+      (* Eta surfaces connection failure as a typed Connect_error. *)
+      ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp) cause
+
+let rec read_until_headers_end flow buffer =
+  let chunk = Cstruct.create 1024 in
+  match Eio.Flow.single_read flow chunk with
+  | 0 -> Buffer.contents buffer
+  | len ->
+      Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub chunk 0 len));
+      let so_far = Buffer.contents buffer in
+      if Option.is_some (find_sub so_far ~needle:"\r\n\r\n") then so_far
+      else read_until_headers_end flow buffer
+
+let with_raw_server ~on_request f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      Fun.protect
+        ~finally:(fun () -> try Eio.Flow.close flow with _ -> ())
+        (fun () ->
+          on_request flow;
+          (* Keep the connection open until the test finishes or a timeout. *)
+          Eio.Time.with_timeout_exn clock 5.0 (fun () ->
+              Eio.Promise.await (fst (Eio.Promise.create ())))));
+  f sw net clock port
+
+let broken_server_headers_only =
+  "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"
+
+let test_h1_client_broken_server_headers_no_body () =
+  (* zio-http ClientSpec: server advertises Content-Length: 2 but closes
+     without sending a body. The client should fail rather than hang forever.
+     Eta returns the response head successfully; consuming the body then
+     surfaces a typed connection-closed failure. *)
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+      Fun.protect
+        ~finally:(fun () -> try Eio.Flow.close flow with _ -> ())
+        (fun () -> Eio.Flow.copy_string broken_server_headers_only flow));
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
+  let uri = Printf.sprintf "http://127.0.0.1:%d/" port in
+  let url = Eta_http.Core.Url.of_string uri in
+  let request : Eta_http_eio.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http_eio.H1.Client.Empty }
+  in
+  let eff =
+    Eta_http_eio.H1.Client.request ~sw ~net request
+    |> Eta.Effect.bind (fun (response : Eta_http_eio.H1.Client.response) ->
+           Eta_http.Body.Stream.read_all response.body)
+  in
+  match Eta.Runtime.run rt eff with
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "broken server request unexpectedly succeeded"
+  | Eta.Exit.Error cause ->
+      let rec has_connection_closed = function
+        | Eta.Cause.Fail
+            { Eta_http.Error.kind = Eta_http.Error.Connection_closed { during = Eta_http.Error.Http_response }; _ }
+          ->
+            true
+        | Eta.Cause.Concurrent causes | Eta.Cause.Sequential causes ->
+            List.exists has_connection_closed causes
+        | Eta.Cause.Suppressed { primary; _ } -> has_connection_closed primary
+        | _ -> false
+      in
+      if not (has_connection_closed cause) then
+        Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp) cause
+
+let has_response_body_idle_timeout cause =
+  let rec loop = function
+    | Eta.Cause.Fail { Eta_http.Error.kind = Eta_http.Error.Response_body_idle_timeout _; _ }
+      ->
+        true
+    | Eta.Cause.Concurrent causes | Eta.Cause.Sequential causes ->
+        List.exists loop causes
+    | Eta.Cause.Suppressed { primary; _ } -> loop primary
+    | _ -> false
+  in
+  loop cause
+
+let test_h1_pool_broken_server_concurrent_requests_timeout () =
+  (* zio-http ClientSpec: a broken server that closes after the response head
+     should not exhaust a pool of size 1 when several requests race. Each
+     request acquires the single connection, reads the response head, then
+     fails while reading the missing body, releasing the slot for the next. *)
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net stdenv in
+  let clock = Eio.Stdenv.clock stdenv in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let accept_count = ref 0 in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      while !accept_count < 3 do
+        let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+        Fun.protect
+          ~finally:(fun () -> try Eio.Flow.close flow with _ -> ())
+          (fun () -> Eio.Flow.copy_string broken_server_headers_only flow);
+        incr accept_count
+      done);
+  let rt = Eta_eio.Runtime.create ~sw ~clock () in
+  let uri = Printf.sprintf "http://127.0.0.1:%d/" port in
+  let url = Eta_http.Core.Url.of_string uri in
+  let pool =
+    Eta_http_eio.H1.Client.make_pool ~max_size:1 ~sw ~net url
+    |> Eta.Runtime.run rt
+    |> Eta_test.Expect.expect_ok
+  in
+  let request : Eta_http_eio.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http_eio.H1.Client.Empty }
+  in
+  let one_request () =
+    Eta_http_eio.H1.Client.request_with_pool pool request
+    |> Eta.Effect.bind (fun (response : Eta_http_eio.H1.Client.response) ->
+           Eta_http.Body.Stream.read_all response.body)
+  in
+  let rec run_n n =
+    if n = 0 then ()
+    else
+      match Eta.Runtime.run rt (one_request ()) with
+      | Eta.Exit.Ok _ ->
+          Alcotest.fail "broken server pool request unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          let rec has_connection_closed = function
+            | Eta.Cause.Fail
+                { Eta_http.Error.kind = Eta_http.Error.Connection_closed { during = Eta_http.Error.Http_response }; _ }
+              ->
+                true
+            | Eta.Cause.Concurrent causes | Eta.Cause.Sequential causes ->
+                List.exists has_connection_closed causes
+            | Eta.Cause.Suppressed { primary; _ } -> has_connection_closed primary
+            | _ -> false
+          in
+          if not (has_connection_closed cause) then
+            Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp) cause;
+          run_n (n - 1)
+  in
+  run_n 3;
+  let stats = Eta_http_eio.H1.Client.pool_stats pool in
+  Alcotest.(check int) "pool active after failures" 0 stats.Eta.Pool.active
