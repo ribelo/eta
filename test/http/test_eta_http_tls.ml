@@ -987,6 +987,98 @@ let test_https_server_h2_concurrent_large_echo () =
             (String.equal (Buffer.contents body_buf) (payload tag)))
         streams)
 
+let test_https_server_h1_keep_alive_sequential_requests () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+  let on_connection_close = function
+    | Eta_http_eio.Server.Https_h1 stats ->
+        ignore (Eio.Promise.try_resolve resolve_closed_stats stats)
+    | Eta_http_eio.Server.Https_h2 _ -> Alcotest.fail "H1 routed to H2"
+  in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta.Effect.pure (Eta_http.Server.Response.text ("ok:" ^ request.path))
+  in
+  let server =
+    Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~tls_config
+      ~on_connection_close ~socket handler
+  in
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "http/1.1" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+  let br = Eio.Buf_read.of_flow ~max_size:65536 tls_flow in
+  let read_one_response () =
+    let status_line = Eio.Buf_read.line br in
+    let rec headers content_length =
+      match Eio.Buf_read.line br with
+      | "" -> content_length
+      | line -> (
+          match String.split_on_char ':' line with
+          | name :: rest
+            when String.lowercase_ascii (String.trim name) = "content-length"
+            ->
+              headers (int_of_string (String.trim (String.concat ":" rest)))
+          | _ -> headers content_length)
+    in
+    let content_length = headers 0 in
+    let body = Eio.Buf_read.take content_length br in
+    (status_line, body)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      (try Eio.Flow.close tls_flow with _ -> ());
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      (* Three keep-alive requests on a single TLS connection: this drives
+         repeated read->write->read cycles over the TLS flow. *)
+      List.iter
+        (fun i ->
+          let path = Printf.sprintf "/r%d" i in
+          Eio.Flow.copy_string
+            (Printf.sprintf "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n" path)
+            tls_flow;
+          let status_line, body =
+            Eio.Time.with_timeout_exn clock 2.0 (fun () -> read_one_response ())
+          in
+          Alcotest.(check bool)
+            (Printf.sprintf "request %d status 200" i)
+            true
+            (String.length status_line >= 12
+            && String.sub status_line 9 3 = "200");
+          Alcotest.(check string)
+            (Printf.sprintf "request %d body" i)
+            (Printf.sprintf "ok:/r%d" i)
+            body)
+        [ 1; 2; 3 ];
+      (try Eio.Flow.close tls_flow with _ -> ());
+      let stats =
+        Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+            Eio.Promise.await closed_stats)
+      in
+      Alcotest.(check int) "completed requests on one TLS connection" 3
+        stats.completed_requests)
+
 let test_https_server_handshake_timeout_stats () =
   with_temp_tls_files @@ fun cert key ->
   run_eio @@ fun env ->

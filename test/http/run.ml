@@ -285,6 +285,8 @@ let () =
             `Quick test_https_server_h2_streams_large_body_past_window;
           Alcotest.test_case "HTTPS server H2 concurrent large echo" `Quick
             test_https_server_h2_concurrent_large_echo;
+          Alcotest.test_case "HTTPS server H1 keep-alive sequential requests"
+            `Quick test_https_server_h1_keep_alive_sequential_requests;
           Alcotest.test_case "HTTPS server handshake timeout stats" `Quick
             test_https_server_handshake_timeout_stats;
           Alcotest.test_case "HTTPS server shutdown closes pending handshake"
