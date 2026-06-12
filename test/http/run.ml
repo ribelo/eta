@@ -152,6 +152,10 @@ let () =
             test_h1_server_connection_request_body_timeout;
           Alcotest.test_case "handler timeout" `Quick
             test_h1_server_connection_handler_timeout;
+          Alcotest.test_case "handler construction timeout" `Quick
+            test_h1_server_connection_handler_construction_timeout;
+          Alcotest.test_case "handler timeout uses injected time" `Quick
+            test_h1_server_connection_handler_timeout_uses_injected_time;
           Alcotest.test_case "streams fixed-length response" `Quick
             test_h1_server_connection_streams_fixed_length_response;
           Alcotest.test_case "streams chunked response with trailers" `Quick
@@ -170,6 +174,8 @@ let () =
             test_h1_server_connection_keeps_pipelined_request_bytes;
           Alcotest.test_case "drains unread body for reuse" `Quick
             test_h1_server_connection_drains_unread_body_for_reuse;
+          Alcotest.test_case "chunked preserves pipelined bytes" `Quick
+            test_h1_server_connection_keeps_chunked_pipelined_bytes;
           Alcotest.test_case "idle timeout closes keep-alive" `Quick
             test_h1_server_connection_idle_timeout_closes_keep_alive;
           Alcotest.test_case "run_h1_on_socket plain GET" `Quick
@@ -374,6 +380,10 @@ let () =
             test_h2c_server_handler_timeout_returns_503;
           Alcotest.test_case "h2c streaming response exception resets stream"
             `Quick test_h2c_server_streaming_response_exception_resets_stream;
+          Alcotest.test_case "h2c response body cancellation resets stream"
+            `Quick test_h2c_server_response_body_cancellation_resets_stream;
+          Alcotest.test_case "h2c ignores DATA after peer reset" `Quick
+            test_h2c_server_ignores_data_after_peer_reset;
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;
@@ -438,6 +448,10 @@ let () =
             test_h2c_server_streams_large_body_past_window;
           Alcotest.test_case "h2c resets stalled reader stream" `Quick
             test_h2c_server_resets_stalled_reader_stream;
+          Alcotest.test_case "h2c rapid reset limit closes connection" `Quick
+            test_h2c_server_closes_on_rapid_reset_limit;
+          Alcotest.test_case "h2c default rapid reset limit closes connection"
+            `Quick test_h2c_connection_closes_on_default_rapid_reset_limit;
         ] );
       ( "h2-security",
         [

@@ -11,6 +11,13 @@ type domain_policy = Server_types.domain_policy =
 
 type runtime_factory = Server_types.runtime_factory
 
+type time = Server_types.time = {
+  sleep : Eta.Duration.t -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
+}
+
+val live_time : [> float Eio.Time.clock_ty ] Eio.Std.r -> time
+
 type https_connection_stats =
   | Https_h1 of H1_server_connection.stats
   | Https_h2 of H2_server_connection.stats
@@ -25,6 +32,7 @@ val start_h1 :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
@@ -38,6 +46,7 @@ val start_h1 :
 val start_h1_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
   ?on_error:(exn -> unit) ->
@@ -50,6 +59,7 @@ val run_h1 :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?stop:unit Eio.Promise.t ->
@@ -64,6 +74,7 @@ val run_h1 :
 val run_h1_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
@@ -77,6 +88,7 @@ val start_h2c :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
@@ -90,6 +102,7 @@ val start_h2c :
 val start_h2c_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
   ?on_error:(exn -> unit) ->
@@ -102,6 +115,7 @@ val run_h2c :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?stop:unit Eio.Promise.t ->
@@ -116,6 +130,7 @@ val run_h2c :
 val run_h2c_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
@@ -129,6 +144,7 @@ val start_https :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?config:Config.t ->
@@ -143,6 +159,7 @@ val start_https :
 val start_https_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->
   ?on_error:(exn -> unit) ->
@@ -156,6 +173,7 @@ val run_https :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?domain_manager:_ Eio.Domain_manager.t ->
   ?domain_policy:domain_policy ->
   ?stop:unit Eio.Promise.t ->
@@ -171,6 +189,7 @@ val run_https :
 val run_https_on_socket :
   sw:Eio.Switch.t ->
   clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
+  ?time:time ->
   ?stop:unit Eio.Promise.t ->
   ?config:Config.t ->
   ?runtime_factory:runtime_factory ->

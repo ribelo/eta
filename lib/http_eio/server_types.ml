@@ -9,6 +9,23 @@ type domain_policy =
   | Recommended
   | Additional of int
 
+type time = {
+  sleep : Eta.Duration.t -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
+}
+
+let live_time clock =
+  {
+    sleep =
+      (fun duration ->
+        Eio.Time.sleep clock (Eta.Duration.to_seconds_float duration));
+    with_timeout =
+      (fun duration f ->
+        Eio.Time.with_timeout_exn clock
+          (Eta.Duration.to_seconds_float duration)
+          f);
+  }
+
 module Connection_info = struct
   type t = {
     id : string;

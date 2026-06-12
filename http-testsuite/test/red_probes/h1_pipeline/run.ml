@@ -48,16 +48,22 @@ let statuses_of data =
 let string_of_statuses statuses =
   "[" ^ String.concat ";" (List.map string_of_int statuses) ^ "]"
 
-let read_responses ~clock ~deadline_sec flow =
+let read_responses ?expected_count ~clock ~deadline_sec flow =
   let buf = Buffer.create 256 in
   let scratch = Cstruct.create 4096 in
+  let has_expected_count data =
+    match expected_count with
+    | None -> false
+    | Some expected -> List.length (statuses_of data) >= expected
+  in
   let rec read_loop () =
     match Eio.Flow.single_read flow scratch with
     | 0 -> Closed (Buffer.contents buf)
     | n ->
         Buffer.add_string buf
           (Cstruct.to_string (Cstruct.sub scratch 0 n));
-        read_loop ()
+        let data = Buffer.contents buf in
+        if has_expected_count data then Timed_out data else read_loop ()
     | exception End_of_file -> Closed (Buffer.contents buf)
     | exception Eio.Cancel.Cancelled _ -> Timed_out (Buffer.contents buf)
   in
@@ -109,7 +115,7 @@ let slow_handler clock request =
       Eta.Effect.pure (Eta_http.Server.Response.text "slow\n")
   | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
 
-let run_h1_client ?config ~env ~handler ~input ~deadline_sec () =
+let run_h1_client ?config ?expected_count ~env ~handler ~input ~deadline_sec () =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
@@ -131,7 +137,7 @@ let run_h1_client ?config ~env ~handler ~input ~deadline_sec () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       Eio.Flow.copy_string input flow;
-      match read_responses ~clock ~deadline_sec flow with
+      match read_responses ?expected_count ~clock ~deadline_sec flow with
       | Closed data -> { statuses = statuses_of data; closed = true }
       | Timed_out data -> { statuses = statuses_of data; closed = false })
 
@@ -145,7 +151,8 @@ let probe_pipeline_two_ok env =
     ^ "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n"
   in
   let outcome =
-    run_h1_client ~env ~handler:simple_handler ~input ~deadline_sec:1.0 ()
+    run_h1_client ~env ~handler:simple_handler ~input ~expected_count:2
+      ~deadline_sec:1.0 ()
   in
   match outcome with
   | { statuses = [ 200; 200 ]; closed = false } ->
@@ -193,7 +200,8 @@ let probe_unread_body_drain_small env =
     ^ "GET /ok HTTP/1.1\r\nHost: example.test\r\n\r\n"
   in
   let outcome =
-    run_h1_client ~env ~config ~handler:simple_handler ~input ~deadline_sec:1.5 ()
+    run_h1_client ~env ~config ~handler:simple_handler ~input
+      ~expected_count:2 ~deadline_sec:1.5 ()
   in
   match outcome with
   | { statuses = [ 200; 200 ]; closed = false } ->

@@ -152,6 +152,124 @@ let raw_h2_data ?(end_stream = false) ~stream_id data =
     ~stream_id
   ^ data
 
+let raw_h2_rst_stream ~stream_id error_code =
+  Eta_http.H2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
+    ~stream_id
+  ^ Eta_http.H2.Frame.uint32 error_code
+
+let hpack_literal_no_index ~name ~value =
+  let encode_int7 n =
+    if n < 128 then [ n ]
+    else
+      let rec loop n acc =
+        if n < 128 then n :: acc
+        else loop (n lsr 7) ((128 + (n land 127)) :: acc)
+      in
+      loop (n - 127) [ 127 ]
+  in
+  let name_bytes = Bytes.of_string name in
+  let value_bytes = Bytes.of_string value in
+  let name_len = encode_int7 (Bytes.length name_bytes) in
+  let value_len = encode_int7 (Bytes.length value_bytes) in
+  let total_len =
+    1 + List.length name_len + Bytes.length name_bytes
+    + List.length value_len + Bytes.length value_bytes
+  in
+  let buf = Bytes.create total_len in
+  Bytes.set buf 0 '\x00';
+  let offset = ref 1 in
+  List.iter
+    (fun b ->
+      Bytes.set buf !offset (Char.chr b);
+      incr offset)
+    name_len;
+  Bytes.blit name_bytes 0 buf !offset (Bytes.length name_bytes);
+  offset := !offset + Bytes.length name_bytes;
+  List.iter
+    (fun b ->
+      Bytes.set buf !offset (Char.chr b);
+      incr offset)
+    value_len;
+  Bytes.blit value_bytes 0 buf !offset (Bytes.length value_bytes);
+  Bytes.to_string buf
+
+let malicious_h2_request_headers ?(end_stream = true) ~stream_id () =
+  let block =
+    String.concat ""
+      [
+        hpack_literal_no_index ~name:":method" ~value:"GET";
+        hpack_literal_no_index ~name:":scheme" ~value:"http";
+        hpack_literal_no_index ~name:":path" ~value:"/";
+        hpack_literal_no_index ~name:":authority" ~value:"example.test";
+      ]
+  in
+  let flags = 0x4 lor (if end_stream then 0x1 else 0) in
+  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+    ~flags ~stream_id
+  ^ block
+
+let raw_h2_has_frame ?stream_id frame_type bytes =
+  let target = Eta_http.H2.Frame.frame_type_code frame_type in
+  let len = String.length bytes in
+  let rec loop off =
+    if off + Eta_http.H2.Frame.header_size > len then false
+    else
+      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
+      let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+      if next > len then false
+      else
+        (envelope.frame_type = target
+        &&
+        match stream_id with
+        | None -> true
+        | Some stream_id -> envelope.stream_id = stream_id)
+        || loop next
+  in
+  loop 0
+
+let read_raw_until_h2_frame ~frame_type ?stream_id flow =
+  let buffer = Buffer.create 128 in
+  let scratch = Cstruct.create 1024 in
+  let frame_summary bytes =
+    let len = String.length bytes in
+    let rec loop off acc =
+      if off + Eta_http.H2.Frame.header_size > len then List.rev acc
+      else
+        let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
+        let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+        if next > len then List.rev acc
+        else
+          loop next
+            (Printf.sprintf "type=%d stream=%d len=%d" envelope.frame_type
+               envelope.stream_id envelope.length
+            :: acc)
+    in
+    String.concat "; " (loop 0 [])
+  in
+  let rec loop () =
+    let bytes = Buffer.contents buffer in
+    if raw_h2_has_frame ?stream_id frame_type bytes then bytes
+    else
+      match Eio.Flow.single_read flow scratch with
+      | 0 ->
+          Alcotest.failf
+            "connection closed before HTTP/2 frame type %d; received %d bytes: \
+             %s"
+            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (String.length bytes) (frame_summary bytes)
+      | len ->
+          Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
+          loop ()
+      | exception End_of_file ->
+          let bytes = Buffer.contents buffer in
+          Alcotest.failf
+            "connection ended before HTTP/2 frame type %d; received %d bytes: \
+             %s"
+            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (String.length bytes) (frame_summary bytes)
+  in
+  loop ()
+
 let h2_client_partial_request_bytes target body =
   let encoder = Hpack.Encoder.create 4096 in
   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -2989,3 +3107,260 @@ let test_h2c_server_streaming_response_exception_resets_stream () =
       in
       Alcotest.(check int) "subsequent request status" 200 status2;
       Alcotest.(check string) "subsequent request body" "ok\n" body2)
+
+let test_h2c_server_response_body_cancellation_resets_stream () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let released, resolve_released = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/stream-cancel" ->
+        let body =
+          Eta_http.Server.Response.Body.stream
+            ~release:(fun () ->
+              Eta.Effect.sync (fun () ->
+                  ignore (Eio.Promise.try_resolve resolve_released ())))
+            (fun () ->
+              Eta.Effect.sync (fun () ->
+                  Eio.Cancel.sub (fun ctx ->
+                      Eio.Cancel.cancel ctx
+                        (Failure "response body cancellation");
+                      Eio.Cancel.check ctx;
+                      assert false)))
+        in
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/stream-cancel"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome ~tag:1 connection request)
+      in
+      Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+          Eio.Promise.await released);
+      (match outcome with
+      | `Error (status, body, _error) ->
+          Alcotest.(check bool) "stream reset after headers" true
+            (status = 0 || status = 200);
+          Alcotest.(check string) "no body after reset" "" body
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected stream reset after cancellation, got EOF status=%d body=%S"
+            status body);
+      let ok =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/ok"
+      in
+      let status2, body2 =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response ~tag:2 connection ok)
+      in
+      Alcotest.(check int) "subsequent request status" 200 status2;
+      Alcotest.(check string) "subsequent request body" "ok\n" body2)
+
+let test_h2c_server_ignores_data_after_peer_reset () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket
+      (fun _request -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n"))
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      (try Eio.Flow.shutdown flow `All with _ -> ());
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request_headers stream_id path ~end_stream =
+        let encoder = Hpack.Encoder.create 4096 in
+        raw_h2_headers encoder ~stream_id ~end_stream
+          [
+            hpack_header ":method" "GET";
+            hpack_header ":scheme" "http";
+            hpack_header ":path" path;
+            hpack_header ":authority" "127.0.0.1";
+          ]
+      in
+      Eio.Flow.copy_string
+        ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+        ^ Eta_http.H2.Frame.settings
+        ^ request_headers 1 "/reset" ~end_stream:false
+        ^ raw_h2_rst_stream ~stream_id:1 8
+        ^ raw_h2_data ~stream_id:1 "x"
+        ^ request_headers 3 "/ok" ~end_stream:true)
+        flow;
+      Eio.Flow.shutdown flow `Send;
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            read_raw_until_h2_frame ~frame_type:Headers ~stream_id:3 flow)
+      in
+      Alcotest.(check bool) "stream 3 received response headers" true
+        (raw_h2_has_frame ~stream_id:3 Headers response))
+
+let test_h2c_server_closes_on_rapid_reset_limit () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let h2_security_config =
+    {
+      Eta_http.H2.Security.default_config with
+      max_rst_stream_per_connection = 2;
+    }
+  in
+  let config =
+    {
+      Eta_http_eio.Server.Config.default with
+      h2_security_config = Some h2_security_config;
+    }
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket ~config
+      (fun _request -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n"))
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      (try Eio.Flow.shutdown flow `All with _ -> ());
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request_headers stream_id =
+        let encoder = Hpack.Encoder.create 4096 in
+        raw_h2_headers encoder ~stream_id ~end_stream:false
+          [
+            hpack_header ":method" "GET";
+            hpack_header ":scheme" "http";
+            hpack_header ":path" "/";
+            hpack_header ":authority" "127.0.0.1";
+          ]
+      in
+      let reset_stream index =
+        let stream_id = (index * 2) + 1 in
+        request_headers stream_id ^ raw_h2_rst_stream ~stream_id 8
+      in
+      Eio.Flow.copy_string
+        ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+        ^ Eta_http.H2.Frame.settings
+        ^ String.concat "" (List.init 3 reset_stream))
+        flow;
+      let closed =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            let scratch = Cstruct.create 1 in
+            match Eio.Flow.single_read flow scratch with
+            | 0 -> true
+            | _ -> false
+            | exception End_of_file -> true)
+      in
+      Alcotest.(check bool) "rapid reset limit closed connection" true closed)
+
+let test_h2c_connection_closes_on_default_rapid_reset_limit () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork_daemon ~sw
+    (fun () ->
+      Eio.Switch.run @@ fun conn_sw ->
+      let flow, peer = Eio.Net.accept ~sw:conn_sw socket in
+      let runtime_factory ~sw ~connection:_ () =
+        Eta_eio.Runtime.create ~sw ~clock ()
+      in
+      Eta_http_eio.H2.Server_connection.run_h2c ~sw:conn_sw ~clock
+        ~flow:(flow :> Eta_http_eio.H2.Server_connection.flow)
+        ~peer ~config:Eta_http_eio.Server.Config.default ~runtime_factory
+        (fun _request ->
+          Eta.Effect.pure (Eta_http.Server.Response.text "ok\n"));
+      `Stop_daemon);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      let reset_stream index =
+        let stream_id = (index * 2) + 1 in
+        malicious_h2_request_headers ~end_stream:false ~stream_id ()
+        ^ raw_h2_rst_stream ~stream_id 8
+      in
+      let payload =
+        Eta_http.H2.Frame.settings
+        ^ String.concat "" (List.init 101 reset_stream)
+      in
+      let scanner = Eta_http.H2.Security.create () in
+      let scanner_result =
+        Eta_http.H2.Security.observe scanner
+          (Bigstringaf.of_string ~off:0 ~len:(String.length payload) payload)
+          ~off:0 ~len:(String.length payload)
+      in
+      (match scanner_result with
+      | Some (Rst_rate_exceeded { observed_per_second = 101; limit_per_second = 100 }) ->
+          ()
+      | Some kind ->
+          Alcotest.failf "unexpected scanner error: %s"
+            (Eta_http.Error.kind_name kind)
+      | None -> Alcotest.fail "scanner missed rapid reset");
+      Eio.Flow.write flow
+        [ Cstruct.of_string ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" ^ payload) ];
+      let closed =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            let scratch = Cstruct.create 1024 in
+            let rec loop () =
+              match Eio.Flow.single_read flow scratch with
+              | 0 -> true
+              | _ -> loop ()
+              | exception End_of_file -> true
+            in
+            loop ())
+      in
+      Alcotest.(check bool) "default rapid reset limit closed connection" true
+        closed)

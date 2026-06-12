@@ -151,6 +151,24 @@ let h2_summary bytes =
   Printf.sprintf "len=%d headers=%b rst=%b" (String.length bytes)
     (h2_has_frame bytes 0x01) (h2_has_frame bytes 0x03)
 
+let read_h2_until ?(max_bytes = 64 * 1024) ~stop_when flow =
+  let buffer = Buffer.create 256 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop total =
+    let bytes = Buffer.contents buffer in
+    if stop_when bytes || total >= max_bytes then bytes
+    else
+      let len = min (Cstruct.length scratch) (max_bytes - total) in
+      match Eio.Flow.single_read flow (Cstruct.sub scratch 0 len) with
+      | 0 -> Buffer.contents buffer
+      | read ->
+          Buffer.add_string buffer
+            (Cstruct.to_string (Cstruct.sub scratch 0 read));
+          loop (total + read)
+      | exception End_of_file -> Buffer.contents buffer
+  in
+  loop 0
+
 let h2_judge_with_rst detail bytes =
   let has_headers = h2_has_frame bytes 0x01 in
   let has_rst = h2_has_frame bytes 0x03 in
@@ -173,7 +191,7 @@ let h2_judge_response detail bytes =
     (Policy_gap, Some ("unexpected rst_stream: " ^ detail ^ " (" ^ summary ^ ")"))
   else (Crash, Some ("no h2 frames received (" ^ summary ^ ")"))
 
-let run_h2c_probe ~env ~handler ~deadline_sec ~judge () =
+let run_h2c_probe ~env ~handler ~deadline_sec ~stop_when ~judge () =
   try
     Eio.Switch.run @@ fun sw ->
     let net = Eio.Stdenv.net env in
@@ -204,10 +222,9 @@ let run_h2c_probe ~env ~handler ~deadline_sec ~judge () =
             Eio.Time.with_timeout_exn clock deadline_sec (fun () ->
                 Eio.Flow.copy_string h2_request flow;
                 Eio.Flow.shutdown flow `Send;
-                Adversarial.read_h2_until_close flow)
+                read_h2_until ~stop_when flow)
           in
-          match result with
-          | `Closed bytes | `Data_limit bytes -> judge bytes
+          judge result
         with
         | Eio.Time.Timeout -> (Hang, Some "deadline exceeded")
         | exn -> (Crash, Some (Printexc.to_string exn)))
@@ -330,18 +347,23 @@ let () =
           ~judge:judge_h1_cancel );
       ( "h2_handler_raise_before_effect",
         run_h2c_probe ~env ~handler:handler_raise ~deadline_sec:2.0
+          ~stop_when:(fun bytes -> h2_has_frame bytes 0x01)
           ~judge:(h2_judge_response "expected 500 headers") );
       ( "h2_response_body_thunk_raise",
         run_h2c_probe ~env ~handler:handler_body_thunk_h2 ~deadline_sec:2.0
+          ~stop_when:(fun bytes -> h2_has_frame bytes 0x03)
           ~judge:(h2_judge_with_rst "body thunk raise") );
       ( "h2_stream_read_raise_after_partial",
         run_h2c_probe ~env ~handler:handler_stream_partial_h2 ~deadline_sec:2.0
+          ~stop_when:(fun bytes -> h2_has_frame bytes 0x03)
           ~judge:(h2_judge_with_rst "partial body then raise") );
       ( "h2_trailers_construction_raise",
         run_h2c_probe ~env ~handler:handler_trailers_h2 ~deadline_sec:2.0
+          ~stop_when:(fun bytes -> h2_has_frame bytes 0x03)
           ~judge:(h2_judge_with_rst "trailers raise") );
       ( "h2_cancellation_during_response",
         run_h2c_probe ~env ~handler:handler_cancel_h2 ~deadline_sec:2.0
+          ~stop_when:(fun bytes -> h2_has_frame bytes 0x03)
           ~judge:(h2_judge_with_rst "cancellation") );
     ]
   in

@@ -9,6 +9,16 @@ type domain_policy =
   | Recommended
   | Additional of int
 
+type time = {
+  sleep : Eta.Duration.t -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
+}
+(** Time operations used by server connection deadlines. Tests can provide a
+    controlled implementation; production entry points use {!live_time}. *)
+
+val live_time : [> float Eio.Time.clock_ty ] Eio.Std.r -> time
+(** [live_time clock] adapts an Eio clock to Eta HTTP server time. *)
+
 module Connection_info : sig
   type t = {
     id : string;

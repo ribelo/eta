@@ -332,6 +332,8 @@ let h2_adversarial_config ?request_header_timeout ?request_body_timeout
 let h2_basic_handler _request =
   Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
 
+let write_all_string flow s = Eio.Flow.write flow [ Cstruct.of_string s ]
+
 let read_h2_until_close ?(max_bytes = 64 * 1024) flow =
   let buffer = Buffer.create 256 in
   let scratch = Cstruct.create 1024 in
@@ -439,9 +441,8 @@ let cve_2023_44487 ~env =
                h2_request_headers ~end_stream:false ~stream_id ()
                ^ Malicious_h2.rst_stream_frame ~stream_id 8))
       in
-      Eio.Flow.copy_string
-        (h2_client_preface ^ Malicious_h2.settings_frame [] ^ frames)
-        flow)
+      write_all_string flow
+        (h2_client_preface ^ Malicious_h2.settings_frame [] ^ frames))
 
 (* ---------------------------------------------------------------------------
    2. CVE-2024-27919 / CVE-2024-28182 — CONTINUATION flood

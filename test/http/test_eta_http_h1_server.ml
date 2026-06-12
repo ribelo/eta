@@ -32,8 +32,8 @@ let read_exact_string flow length =
   in
   loop 0
 
-let with_h1_connection ?(config = Eta_http_eio.Server.Config.default) handler
-    client_action =
+let with_h1_connection ?time ?(config = Eta_http_eio.Server.Config.default)
+    handler client_action =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
@@ -60,7 +60,7 @@ let with_h1_connection ?(config = Eta_http_eio.Server.Config.default) handler
         }
       in
       Eta_http_eio.H1.Server_connection.run ~sw:conn_sw ~clock
-        ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
+        ?time ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
         ~connection ~config ~runtime_factory
         ~on_close:(fun stats ->
           ignore (Eio.Promise.try_resolve resolve_closed_stats stats))
@@ -595,6 +595,87 @@ let test_h1_server_connection_handler_timeout () =
   in
   Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
+let test_h1_server_connection_handler_construction_timeout () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      handler_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let clock_ref = ref None in
+  let handler (_request : Eta_http.Server.Request.t) =
+    match !clock_ref with
+    | None -> Alcotest.fail "handler clock not initialized"
+    | Some clock ->
+        Eio.Time.sleep clock 1.0;
+        Eta.Effect.pure (Eta_http.Server.Response.text "late\n")
+  in
+  with_h1_connection ~config handler @@ fun clock flow closed_stats ->
+  clock_ref := Some clock;
+  Eio.Flow.copy_string
+    ("GET /slow-handler HTTP/1.1\r\nHost: example.test\r\n\r\n"
+   ^ "GET /after HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n"
+   ^ "Content-Length: 20\r\n\r\nservice unavailable\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
+let test_h1_server_connection_handler_timeout_uses_injected_time () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      handler_timeout = Some (Eta.Duration.ms 20);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  let time : Eta_http_eio.Server.time =
+    {
+      sleep = (fun _duration -> ());
+      with_timeout =
+        (fun duration f ->
+          if Eta.Duration.to_ms duration = 20 then raise Eio.Time.Timeout
+          else f ());
+    }
+  in
+  let handler_called = ref false in
+  let handler (_request : Eta_http.Server.Request.t) =
+    handler_called := true;
+    Eta.Effect.pure (Eta_http.Server.Response.text "late\n")
+  in
+  with_h1_connection ~time ~config handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    "GET /controlled-handler-timeout HTTP/1.1\r\nHost: example.test\r\n\r\n"
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n"
+   ^ "Content-Length: 20\r\n\r\nservice unavailable\n")
+    response;
+  Alcotest.(check bool) "handler not constructed" false !handler_called;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
+
 let test_h1_server_connection_streams_fixed_length_response () =
   let released = ref 0 in
   let handler (_request : Eta_http.Server.Request.t) =
@@ -871,6 +952,37 @@ let test_h1_server_connection_drains_unread_body_for_reuse () =
         Eio.Promise.await closed_stats)
   in
   Alcotest.(check int) "request bytes" 4 stats.request_bytes;
+  Alcotest.(check int) "completed requests" 2 stats.completed_requests
+
+let test_h1_server_connection_keeps_chunked_pipelined_bytes () =
+  let handler (request : Eta_http.Server.Request.t) =
+    if String.equal request.path "/echo" then
+      Eta_http.Server.Body.read_all request.body
+      |> Eta.Effect.map (fun body ->
+             Eta_http.Server.Response.make ~status:200
+               ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+               ())
+    else Eta.Effect.pure (Eta_http.Server.Response.text "after\n")
+  in
+  with_h1_connection handler @@ fun clock flow closed_stats ->
+  Eio.Flow.copy_string
+    ("POST /echo HTTP/1.1\r\nHost: example.test\r\n"
+   ^ "Transfer-Encoding: chunked\r\n\r\n"
+   ^ "5\r\nhello\r\n0\r\n\r\n"
+   ^ "GET /after HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n")
+    flow;
+  let response =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
+  in
+  Alcotest.(check string) "response"
+    ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+   ^ "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\nafter\n")
+    response;
+  let stats =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+        Eio.Promise.await closed_stats)
+  in
+  Alcotest.(check int) "request bytes" 5 stats.request_bytes;
   Alcotest.(check int) "completed requests" 2 stats.completed_requests
 
 let test_h1_server_connection_idle_timeout_closes_keep_alive () =
@@ -1243,14 +1355,10 @@ let test_h1_server_handler_exception_returns_500 () =
         "GET /boom HTTP/1.1\r\nHost: example.test\r\n\r\nGET /ok \
          HTTP/1.1\r\nHost: example.test\r\n\r\n"
         flow;
-      let status1, body1 =
-        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_h1_response flow)
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_all_response flow)
       in
-      Alcotest.(check int) "handler exception status" 500 status1;
-      Alcotest.(check string) "handler exception body"
-        "internal server error\n" body1;
-      let status2, body2 =
-        Eio.Time.with_timeout_exn clock 1.0 (fun () -> read_h1_response flow)
-      in
-      Alcotest.(check int) "subsequent request status" 200 status2;
-      Alcotest.(check string) "subsequent request body" "ok\n" body2)
+      Alcotest.(check string) "handler exception response"
+        ("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n"
+       ^ "Content-Length: 22\r\n\r\ninternal server error\n")
+        response)

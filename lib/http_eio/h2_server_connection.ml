@@ -15,6 +15,11 @@ type stats = Server_stats.H2.snapshot = {
   protocol_errors : int;
 }
 
+type time = Types.time = {
+  sleep : Eta.Duration.t -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
+}
+
 type request_body_read = (bytes option, Server.Error.t) result
 type unit_result = (unit, Server.Error.t) result
 
@@ -69,7 +74,7 @@ type stream_state = {
 
 type t = {
   sw : Eio.Switch.t;
-  sleep : float -> unit;
+  sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
   h2 : H2.Server_connection.t;
@@ -79,6 +84,14 @@ type t = {
   max_ingress_buffer_size : int;
   mutable ingress_off : int;
   mutable ingress_len : int;
+  mutable filter_preface_remaining : int;
+  mutable filter_pending : string;
+  mutable observed_request_ordinal : int;
+  stream_ordinals : (int, int) Hashtbl.t;
+  remote_reset_streams : (int, unit) Hashtbl.t;
+  remote_reset_ordinals : (int, unit) Hashtbl.t;
+  mutable filter_rst_stream_seen : int;
+  mutable filter_error : Eta_http.Error.kind option;
   commands : command Eio.Stream.t;
   streams : (int, stream_state) Hashtbl.t;
   connection : Types.Connection_info.t;
@@ -108,6 +121,10 @@ let mark_closed t =
   if not t.closed then (
     t.closed <- true;
     ignore (Eio.Promise.try_resolve t.close_signal ()))
+
+let close_flow_all flow =
+  (try Eio.Flow.shutdown flow `All with _ -> ());
+  try Eio.Flow.close flow with _ -> ()
 
 let stats t =
   Server_stats.H2.snapshot t.stats
@@ -267,6 +284,107 @@ let observe_ingress_security t bytes ~off ~len =
   in
   if len = 0 then None
   else Eta_http.H2.Security.observe t.security bytes ~off ~len
+
+let frame_header_size = 9
+
+let frame_length s off =
+  (Char.code s.[off] lsl 16)
+  lor (Char.code s.[off + 1] lsl 8)
+  lor Char.code s.[off + 2]
+
+let frame_type s off = Char.code s.[off + 3]
+
+let frame_stream_id s off =
+  ((Char.code s.[off + 5] land 0x7f) lsl 24)
+  lor (Char.code s.[off + 6] lsl 16)
+  lor (Char.code s.[off + 7] lsl 8)
+  lor Char.code s.[off + 8]
+
+let client_request_stream_id stream_id = stream_id > 0 && stream_id land 1 = 1
+
+let h2_security_config t =
+  Option.value t.config.Types.Config.h2_security_config
+    ~default:Eta_http.H2.Security.default_config
+
+let note_headers_frame t stream_id =
+  if
+    client_request_stream_id stream_id
+    && not (Hashtbl.mem t.stream_ordinals stream_id)
+  then (
+    t.observed_request_ordinal <- t.observed_request_ordinal + 1;
+    Hashtbl.add t.stream_ordinals stream_id t.observed_request_ordinal)
+
+let note_remote_reset_frame t stream_id =
+  Hashtbl.replace t.remote_reset_streams stream_id ();
+  t.filter_rst_stream_seen <- t.filter_rst_stream_seen + 1;
+  let security_config = h2_security_config t in
+  if
+    t.filter_rst_stream_seen
+    > security_config.max_rst_stream_per_connection
+    && Option.is_none t.filter_error
+  then
+    t.filter_error <-
+      Some
+        (Eta_http.Error.Rst_rate_exceeded
+           {
+             observed_per_second = t.filter_rst_stream_seen;
+             limit_per_second =
+               security_config.max_rst_stream_per_connection;
+           });
+  match Hashtbl.find_opt t.stream_ordinals stream_id with
+  | None -> ()
+  | Some ordinal -> Hashtbl.replace t.remote_reset_ordinals ordinal ()
+
+let filter_ingress t bytes ~off ~len =
+  let raw = Bigstringaf.substring bytes ~off ~len in
+  let raw_len = String.length raw in
+  let output = Buffer.create raw_len in
+  let frame_off =
+    if t.filter_preface_remaining = 0 then 0
+    else
+      let prefix_len = min t.filter_preface_remaining raw_len in
+      Buffer.add_substring output raw 0 prefix_len;
+      t.filter_preface_remaining <- t.filter_preface_remaining - prefix_len;
+      prefix_len
+  in
+  let frames =
+    let frame_bytes = String.sub raw frame_off (raw_len - frame_off) in
+    if String.equal t.filter_pending "" then frame_bytes
+    else t.filter_pending ^ frame_bytes
+  in
+  t.filter_pending <- "";
+  let frames_len = String.length frames in
+  let rec loop off =
+    if off + frame_header_size > frames_len then
+      t.filter_pending <- String.sub frames off (frames_len - off)
+    else
+      let length = frame_length frames off in
+      let total = frame_header_size + length in
+      if off + total > frames_len then
+        t.filter_pending <- String.sub frames off (frames_len - off)
+      else (
+        let ty = frame_type frames off in
+        let stream_id = frame_stream_id frames off in
+        let drop =
+          ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id
+        in
+        if ty = 0x1 then note_headers_frame t stream_id
+        else if ty = 0x3 then note_remote_reset_frame t stream_id;
+        if not drop then Buffer.add_substring output frames off total;
+        loop (off + total))
+  in
+  loop 0;
+  match t.filter_error with
+  | Some kind -> Error kind
+  | None ->
+      let filtered = Buffer.contents output in
+      let filtered_len = String.length filtered in
+      if filtered_len = 0 then Ok None
+      else
+        Ok
+          (Some
+             ( Bigstringaf.of_string ~off:0 ~len:filtered_len filtered,
+               filtered_len ))
 
 let response_failure_of_cause t cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
@@ -700,7 +818,7 @@ let finish_request_body_eof t state =
 
 let schedule_request_body_drain_timeout t ordinal token timeout =
   Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-      t.sleep (Eta.Duration.to_seconds_float timeout);
+      t.sleep timeout;
       ignore (enqueue t (Request_body_drain_timeout (ordinal, token)));
       `Stop_daemon)
 
@@ -802,12 +920,51 @@ let fail_active_streams t request_error =
       forget_stream t ordinal state)
     streams
 
+let finish_remote_reset_stream t ordinal state =
+  Server_stats.H2.stream_reset t.stats;
+  Option.iter
+    (fun metrics -> Server_metrics.stream_resets metrics 1)
+    state.metrics;
+  finish_stream_metrics state;
+  let error = connection_closed_error t Request_body in
+  fail_pending_request_read state error;
+  fail_pending_request_discard state error;
+  fail_pending_response_write state error;
+  close_request_body state;
+  close_response_writer_best_effort state;
+  state.response_done <- true;
+  forget_stream t ordinal state
+
+let apply_remote_resets t =
+  let ordinals =
+    Hashtbl.fold
+      (fun ordinal () acc -> ordinal :: acc)
+      t.remote_reset_ordinals []
+  in
+  List.iter
+    (fun ordinal ->
+      Hashtbl.remove t.remote_reset_ordinals ordinal;
+      match Hashtbl.find_opt t.streams ordinal with
+      | None -> ()
+      | Some state -> finish_remote_reset_stream t ordinal state)
+    ordinals
+
+let request_body_open state =
+  (not state.request_done)
+  &&
+  try not (H2.Body.Reader.is_closed state.request_body) with _ -> false
+
+let has_open_request_bodies t =
+  Hashtbl.fold
+    (fun _ordinal state found -> found || request_body_open state)
+    t.streams false
+
 let handle_security_error t kind =
   let error = security_error t kind in
   record_protocol_error t;
   mark_closed t;
   fail_active_streams t error;
-  try Eio.Flow.shutdown t.flow `All with _ -> ()
+  close_flow_all t.flow
 
 let finish_graceful_shutdown_if_idle t =
   if t.graceful_shutdown && (not t.closed) && Hashtbl.length t.streams = 0 then (
@@ -817,7 +974,7 @@ let finish_graceful_shutdown_if_idle t =
 
 let schedule_request_body_timeout t ordinal resolver timeout =
   Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-      t.sleep (Eta.Duration.to_seconds_float timeout);
+      t.sleep timeout;
       ignore (enqueue t (Request_body_timeout (ordinal, resolver)));
       `Stop_daemon)
 
@@ -1036,13 +1193,13 @@ let begin_immediate_shutdown t =
   if not t.closed then (
     mark_closed t;
     fail_active_streams t (shutdown_error t);
-    try Eio.Flow.shutdown t.flow `All with _ -> ())
+    close_flow_all t.flow)
 
 let start_shutdown_timer t timeout =
   if not t.shutdown_timer_started then (
     t.shutdown_timer_started <- true;
     Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-        t.sleep (Eta.Duration.to_seconds_float timeout);
+        t.sleep timeout;
         ignore (enqueue t (Shutdown Immediate));
         `Stop_daemon))
 
@@ -1071,24 +1228,31 @@ let handle_command t = function
           match observe_ingress_security t bytes ~off ~len with
           | Some kind -> handle_security_error t kind
           | None -> (
-              match append_ingress t bytes ~off ~len with
-              | Error error ->
-                  record_protocol_error t;
-                  mark_closed t;
-                  fail_active_streams t error;
-                  (try Eio.Flow.shutdown t.flow `All with _ -> ())
-              | Ok () ->
-                  feed_ingress t;
-                  drain_writes t))
+              match filter_ingress t bytes ~off ~len with
+              | Error kind -> handle_security_error t kind
+              | Ok None -> drain_writes t
+              | Ok (Some (bytes, len)) -> (
+                  match append_ingress t bytes ~off:0 ~len with
+                  | Error error ->
+                      record_protocol_error t;
+                      mark_closed t;
+                      fail_active_streams t error;
+                      close_flow_all t.flow
+                  | Ok () ->
+                      feed_ingress t;
+                      apply_remote_resets t;
+                      drain_writes t)))
   | Ingress_eof ->
-      mark_closed t;
-      fail_active_streams t (connection_closed_error t Request_body);
       read_eof t;
+      if has_open_request_bodies t then (
+        mark_closed t;
+        fail_active_streams t (connection_closed_error t Request_body))
+      else if Hashtbl.length t.streams = 0 then mark_closed t;
       drain_writes t
   | Ingress_failed error ->
       mark_closed t;
       fail_active_streams t error;
-      (try Eio.Flow.shutdown t.flow `All with _ -> ())
+      close_flow_all t.flow
   | Request_body_read (ordinal, resolver) ->
       arm_request_body_read t ordinal resolver;
       drain_writes t
@@ -1192,7 +1356,7 @@ let reader_loop t =
 let fail_owner_loop t error =
   mark_closed t;
   fail_active_streams t error;
-  try Eio.Flow.shutdown t.flow `All with _ -> ()
+  close_flow_all t.flow
 
 let run_owner_loop t =
   try owner_loop t
@@ -1259,7 +1423,7 @@ let run_response_body_effect t rt request effect_thunk =
       | Eta.Exit.Ok value -> Ok value
       | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
     with
-    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | Eio.Cancel.Cancelled _ as exn -> Error (handler_failed_error t request exn)
     | exn -> Error (handler_failed_error t request exn)
   in
   match t.config.server.timeouts.response_body_timeout with
@@ -1401,9 +1565,10 @@ let run_handler t ordinal request handler =
 let shutdown t policy =
   if not t.closed then ignore (enqueue t (Shutdown policy))
 
-let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
+let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
+  let time = Option.value time ~default:(Types.live_time clock) in
   let h2_config = config.Types.Config.h2_config in
   let request_ordinal = ref 0 in
   let holder = ref None in
@@ -1477,12 +1642,8 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
     let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
       sw;
-      sleep = Eio.Time.sleep clock;
-      with_timeout =
-        (fun timeout f ->
-          Eio.Time.with_timeout_exn clock
-            (Eta.Duration.to_seconds_float timeout)
-            f);
+      sleep = time.sleep;
+      with_timeout = time.with_timeout;
       flow;
       h2;
       security;
@@ -1491,6 +1652,14 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
       max_ingress_buffer_size;
       ingress_off = 0;
       ingress_len = 0;
+      filter_preface_remaining = h2_client_connection_preface_length;
+      filter_pending = "";
+      observed_request_ordinal = 0;
+      stream_ordinals = Hashtbl.create 16;
+      remote_reset_streams = Hashtbl.create 16;
+      remote_reset_ordinals = Hashtbl.create 16;
+      filter_rst_stream_seen = 0;
+      filter_error = None;
       commands = Eio.Stream.create config.command_queue_capacity;
       streams =
         Hashtbl.create
@@ -1526,13 +1695,13 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
       H2.Server_connection.shutdown h2;
-      (try Eio.Flow.shutdown flow `All with _ -> ());
+      close_flow_all flow;
       Option.iter (fun on_close -> on_close (stats t)) on_close)
     (fun () ->
       Eio.Fiber.fork ~sw (fun () -> reader_loop t);
       run_owner_loop t)
 
-let run_h2c ~sw ~clock ~flow ~peer ~config ~runtime_factory ?on_start
+let run_h2c ~sw ~clock ?time ~flow ~peer ~config ~runtime_factory ?on_start
     ?on_close handler =
   let connection =
     {
@@ -1543,5 +1712,5 @@ let run_h2c ~sw ~clock ~flow ~peer ~config ~runtime_factory ?on_start
       alpn_protocol = Some "h2c";
     }
   in
-  run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
+  run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler

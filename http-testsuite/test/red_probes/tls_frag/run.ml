@@ -108,9 +108,17 @@ let read_h1_status ~clock flow =
 
 let read_h2_response ~clock flow =
   Eio.Time.with_timeout_exn clock 2.0 (fun () ->
-      match Adversarial.read_h2_until_close flow with
-      | `Closed s -> Printf.sprintf "closed bytes=%d" (String.length s)
-      | `Data_limit s -> Printf.sprintf "limit bytes=%d" (String.length s))
+      let rec loop bytes =
+        let len, ty, _flags, sid = Malicious_h2.read_frame_header flow in
+        Malicious_h2.skip_frame_payload flow len;
+        let bytes = bytes + 9 + len in
+        match ty with
+        | 0x01 -> Printf.sprintf "headers stream=%d bytes=%d" sid bytes
+        | 0x03 -> Printf.sprintf "rst_stream stream=%d bytes=%d" sid bytes
+        | 0x07 -> Printf.sprintf "goaway bytes=%d" bytes
+        | _ -> loop bytes
+      in
+      loop 0)
 
 let run_tls_client_probe ~env ~protocol ~alpn_protocols ~name ~deadline_sec
     client_fn =
@@ -260,7 +268,8 @@ let h1_body_byte_records ~env =
   run_tls_client_probe ~env ~protocol:H1 ~alpn_protocols:[ "http/1.1" ]
     ~name:"h1_body_byte_records" ~deadline_sec:5.0 (fun ~clock flow ->
       Eio.Flow.copy_string
-        "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\n"
+        "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\
+         Connection: close\r\n\r\n"
         flow;
       write_byte_by_byte ~clock flow "hello";
       read_h1_status ~clock flow)
@@ -269,7 +278,8 @@ let h1_body_ignored_byte_records ~env =
   run_tls_client_probe ~env ~protocol:H1 ~alpn_protocols:[ "http/1.1" ]
     ~name:"h1_body_ignored_byte_records" ~deadline_sec:5.0 (fun ~clock flow ->
       Eio.Flow.copy_string
-        "POST /healthz HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\n"
+        "POST /healthz HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\
+         Connection: close\r\n\r\n"
         flow;
       write_byte_by_byte ~clock flow "hello";
       read_h1_status ~clock flow)
@@ -293,7 +303,8 @@ let h2c_data_payload_byte ~env =
         write_byte_by_byte ~clock flow "hello";
         Eio.Flow.copy_string
           (Malicious_h2.data_frame ~end_stream:true ~stream_id:1 "")
-          flow)
+          flow;
+        Eio.Flow.shutdown flow `Send)
   in
   emit_probe "h2c_data_payload_byte"
     (if result.deadline_respected then `Pass else `Hang)

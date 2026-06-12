@@ -53,7 +53,25 @@ let goaway_error_code payload =
     lor (Char.code (String.get payload 6) lsl 8)
     lor Char.code (String.get payload 7)
 
+let rst_stream_error_code payload =
+  if String.length payload < 4 then 0
+  else
+    (Char.code (String.get payload 0) lsl 24)
+    lor (Char.code (String.get payload 1) lsl 16)
+    lor (Char.code (String.get payload 2) lsl 8)
+    lor Char.code (String.get payload 3)
+
 let settings_ack = Malicious_h2.settings_frame ~ack:true []
+
+let flow_stall_config () =
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_write_timeout = Some (Eta.Duration.ms 250);
+    }
+  in
+  let server = { Eta_http.Server.Config.default with timeouts } in
+  { (Adversarial.h2_adversarial_config ()) with server }
 
 let h2_handshake ?(settings = []) flow =
   write_string flow h2_preface;
@@ -105,6 +123,9 @@ let drain_until_close ?(max_bytes = 1024 * 1024) flow =
       if ty = 0x07 then
         let code = goaway_error_code payload in
         `Goaway (code, !total)
+      else if ty = 0x03 then
+        let code = rst_stream_error_code payload in
+        `Rst_stream (code, !total)
       else loop ()
   in
   try loop () with
@@ -117,6 +138,9 @@ let rec slow_drain ~clock flow =
   if ty = 0x07 then
     let code = goaway_error_code payload in
     `Goaway (code, 0)
+  else if ty = 0x03 then
+    let code = rst_stream_error_code payload in
+    `Rst_stream (code, 0)
   else (
     Eio.Time.sleep clock 0.5;
     write_string flow (Malicious_h2.window_update_frame ~stream_id:1 1);
@@ -125,6 +149,7 @@ let rec slow_drain ~clock flow =
 type outcome =
   [ `Closed of int
   | `Goaway of int * int
+  | `Rst_stream of int * int
   | `Data_limit of int
   | `Timeout
   | `Error of string
@@ -192,6 +217,10 @@ let status_of_outcome = function
   | `Goaway (code, _) when code = 3 || code = 1 -> "PASS"
     (* FLOW_CONTROL_ERROR or PROTOCOL_ERROR are acceptable reactions. *)
   | `Goaway (code, _) -> Printf.sprintf "FAIL goaway_code=%d" code
+  | `Rst_stream (code, _) when code = 3 || code = 1 || code = 2 -> "PASS"
+    (* FLOW_CONTROL_ERROR, PROTOCOL_ERROR, or INTERNAL_ERROR all bound the
+       affected stream without poisoning the connection. *)
+  | `Rst_stream (code, _) -> Printf.sprintf "FAIL rst_stream_code=%d" code
   | `Data_limit n -> Printf.sprintf "FAIL data_limit=%d" n
   | `Timeout -> "HANG"
   | `Error msg ->
@@ -201,6 +230,7 @@ let status_of_outcome = function
 let detail_of_outcome = function
   | `Closed n -> Printf.sprintf "closed bytes=%d" n
   | `Goaway (code, n) -> Printf.sprintf "goaway code=%d bytes=%d" code n
+  | `Rst_stream (code, n) -> Printf.sprintf "rst_stream code=%d bytes=%d" code n
   | `Data_limit n -> Printf.sprintf "read limit bytes=%d" n
   | `Timeout -> "deadline exceeded"
   | `Error msg -> msg
@@ -223,7 +253,8 @@ let probe_tiny_initial_window ~env =
   in
   let outcome, duration_ms =
     run_probe ~env ~name:"h2_flow_tiny_initial_window"
-      ~deadline_sec:3.0 ~handler:(large_handler (1024 * 1024)) client_logic
+      ~config:(flow_stall_config ()) ~deadline_sec:3.0
+      ~handler:(large_handler (1024 * 1024)) client_logic
   in
   ("h2_flow_tiny_initial_window", outcome, duration_ms)
 
@@ -240,7 +271,8 @@ let probe_withheld_window_update ~env =
   in
   let outcome, duration_ms =
     run_probe ~env ~name:"h2_flow_withheld_window_update"
-      ~deadline_sec:3.0 ~handler:(large_handler (1024 * 1024)) client_logic
+      ~config:(flow_stall_config ()) ~deadline_sec:3.0
+      ~handler:(large_handler (1024 * 1024)) client_logic
   in
   ("h2_flow_withheld_window_update", outcome, duration_ms)
 
@@ -260,7 +292,8 @@ let probe_window_update_overflow ~env =
   in
   let outcome, duration_ms =
     run_probe ~env ~name:"h2_flow_window_update_overflow"
-      ~deadline_sec:3.0 ~handler:(large_handler (1024 * 1024)) client_logic
+      ~config:(flow_stall_config ()) ~deadline_sec:3.0
+      ~handler:(large_handler (1024 * 1024)) client_logic
   in
   ("h2_flow_window_update_overflow", outcome, duration_ms)
 
@@ -270,7 +303,7 @@ let probe_window_update_overflow ~env =
    --------------------------------------------------------------------------- *)
 let probe_slow_client_read ~env =
   let client_logic ~clock flow =
-    ignore (h2_handshake flow : string);
+    ignore (h2_handshake ~settings:[ (4, 1) ] flow : string);
     write_string flow (Adversarial.h2_request_headers ~stream_id:1 ());
     match read_response_headers flow with
     | `Goaway (code, n) -> `Goaway (code, n)
@@ -278,7 +311,8 @@ let probe_slow_client_read ~env =
   in
   let outcome, duration_ms =
     run_probe ~env ~name:"h2_flow_slow_client_read"
-      ~deadline_sec:3.0 ~handler:(large_handler (1024 * 1024)) client_logic
+      ~config:(flow_stall_config ()) ~deadline_sec:3.0
+      ~handler:(large_handler (1024 * 1024)) client_logic
   in
   ("h2_flow_slow_client_read", outcome, duration_ms)
 
@@ -299,7 +333,8 @@ let probe_concurrent_stalled_streams ~env =
   in
   let outcome, duration_ms =
     run_probe ~env ~name:"h2_flow_concurrent_stalled_streams"
-      ~deadline_sec:5.0 ~handler:(large_handler (1024 * 1024)) client_logic
+      ~config:(flow_stall_config ()) ~deadline_sec:5.0
+      ~handler:(large_handler (1024 * 1024)) client_logic
   in
   ("h2_flow_concurrent_stalled_streams", outcome, duration_ms)
 

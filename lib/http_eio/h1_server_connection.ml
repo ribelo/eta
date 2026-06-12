@@ -13,9 +13,14 @@ type stats = Server_stats.H1.snapshot = {
   protocol_errors : int;
 }
 
+type time = Types.time = {
+  sleep : Eta.Duration.t -> unit;
+  with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
+}
+
 type t = {
   sw : Eio.Switch.t;
-  sleep : float -> unit;
+  sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
   connection : Types.Connection_info.t;
@@ -89,7 +94,7 @@ let start_shutdown_timer t timeout =
   if not t.shutdown_timer_started then (
     t.shutdown_timer_started <- true;
     Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-        t.sleep (Eta.Duration.to_seconds_float timeout);
+        t.sleep timeout;
         close_immediately t;
         `Stop_daemon))
 
@@ -305,6 +310,13 @@ let finish_body_source source =
   if not source.pending_returned then (
     source.pending_returned <- true;
     if (not source.close_after_response) && source.remaining = 0 then
+      push_pending source.t source.initial source.off (source_pending source);
+    source.off <- Bytes.length source.initial)
+
+let finish_chunked_body_source source =
+  if not source.pending_returned then (
+    source.pending_returned <- true;
+    if not source.close_after_response then
       push_pending source.t source.initial source.off (source_pending source);
     source.off <- Bytes.length source.initial)
 
@@ -525,6 +537,7 @@ let chunked_body t head continue_state =
     |> Eta.Effect.map (function
          | None ->
              state.done_ <- true;
+             finish_chunked_body_source source;
              None
          | Some chunk ->
              Server_stats.H1.add_request_bytes t.stats (Bytes.length chunk);
@@ -544,6 +557,8 @@ let chunked_body t head continue_state =
         if should_drain then drain ()
         else (
           source.close_after_response <- true;
+          source.pending_returned <- true;
+          source.off <- Bytes.length source.initial;
           state.done_ <- true;
           Eta.Effect.unit))
       read
@@ -969,20 +984,21 @@ let safe_handler_effect t request handler =
   | exn -> Eta.Effect.fail (handler_failed_error t request exn)
 
 let run_handler t rt request handler =
-  let effect = safe_handler_effect t request handler in
+  let run () =
+    let effect = safe_handler_effect t request handler in
+    match Eta.Runtime.run rt effect with
+    | Eta.Exit.Ok response -> (response, false)
+    | Eta.Exit.Error cause -> (fallback_error_response t request cause, true)
+  in
   match t.config.server.timeouts.handler_timeout with
   | Some timeout -> (
-      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
-      | Eta.Exit.Ok response -> (response, false)
-      | Eta.Exit.Error cause -> (fallback_error_response t request cause, false)
+      match t.with_timeout timeout run with
+      | response -> response
       | exception Eio.Time.Timeout ->
           ( Server.Handler.default_error_response
               (handler_timeout_error t request (Some timeout)),
             true ))
-  | None -> (
-      match Eta.Runtime.run rt effect with
-      | Eta.Exit.Ok response -> (response, false)
-      | Eta.Exit.Error cause -> (fallback_error_response t request cause, false))
+  | None -> run ()
 
 let write_default_error ?(connection_close = true) t request error =
   match
@@ -1074,12 +1090,12 @@ let rec run_requests t ordinal handler =
                       t.current_metrics <- metrics;
                       Option.iter Server_metrics.request_started metrics;
                       let request_keep_alive = request_allows_keep_alive head in
+                      let response, force_close =
+                        run_handler t rt request handler
+                      in
                       let reusable_before_response =
                         request_keep_alive
                         && body_can_reuse_before_response t body_control
-                      in
-                      let response, force_close =
-                        run_handler t rt request handler
                       in
                       let close_before_response =
                         t.draining || not reusable_before_response
@@ -1114,18 +1130,15 @@ let shutdown t policy =
     | Types.Immediate -> close_immediately t
     | Types.Graceful timeout -> begin_graceful_shutdown t timeout)
 
-let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
+let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
+  let time = Option.value time ~default:(Types.live_time clock) in
   let t =
     {
       sw;
-      sleep = Eio.Time.sleep clock;
-      with_timeout =
-        (fun duration f ->
-          Eio.Time.with_timeout_exn clock
-            (Eta.Duration.to_seconds_float duration)
-            f);
+      sleep = time.sleep;
+      with_timeout = time.with_timeout;
       flow;
       connection;
       config;

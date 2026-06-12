@@ -24,7 +24,9 @@ let with_test_clock f =
   let clock = Eta_test.Test_clock.create () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Eta_test.Test_clock.sleep clock) ()
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
   in
   f sw clock rt
 
@@ -36,6 +38,7 @@ let with_traced_test_clock f =
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer

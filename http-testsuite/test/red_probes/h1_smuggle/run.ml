@@ -23,10 +23,26 @@ let h1_pipeline_config () =
   in
   { base with server }
 
-let read_responses_until ~clock flow deadline_sec =
+let response_count response =
+  let prefix = "HTTP/1." in
+  let prefix_len = String.length prefix in
+  let rec loop count i =
+    if i + prefix_len > String.length response then count
+    else if String.starts_with ~prefix (String.sub response i prefix_len) then
+      loop (count + 1) (i + 1)
+    else loop count (i + 1)
+  in
+  loop 0 0
+
+let read_responses_until ?expected_count ~clock flow deadline_sec =
   let buffer = Buffer.create 512 in
   let scratch = Cstruct.create 4096 in
   let end_time = Unix.gettimeofday () +. deadline_sec in
+  let has_expected_count data =
+    match expected_count with
+    | None -> false
+    | Some expected -> response_count data >= expected
+  in
   let rec loop () =
     let remaining = end_time -. Unix.gettimeofday () in
     if remaining <= 0.0 then Buffer.contents buffer
@@ -38,8 +54,10 @@ let read_responses_until ~clock flow deadline_sec =
       | 0 -> Buffer.contents buffer
       | n ->
           Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 n));
-          loop ()
+          let data = Buffer.contents buffer in
+          if has_expected_count data then data else loop ()
       | exception End_of_file -> Buffer.contents buffer
+      | exception Eio.Time.Timeout -> Buffer.contents buffer
       | exception Eio.Cancel.Cancelled _ -> Buffer.contents buffer
   in
   loop ()
@@ -83,7 +101,8 @@ let string_of_outcome = function
   | Crash d -> "CRASH", d
   | Policy_gap d -> "POLICY_GAP", d
 
-let run_raw_h1 ~env ~name ?config ~deadline_sec ~input ~interpret () =
+let run_raw_h1 ~env ~name ?config ?expected_count ~deadline_sec ~input
+    ~interpret () =
   try
     Eio.Switch.run @@ fun sw ->
     let net = Eio.Stdenv.net env in
@@ -108,7 +127,9 @@ let run_raw_h1 ~env ~name ?config ~deadline_sec ~input ~interpret () =
       (fun () ->
         try
           Eio.Flow.copy_string input flow;
-          let raw = read_responses_until ~clock flow deadline_sec in
+          let raw =
+            read_responses_until ?expected_count ~clock flow deadline_sec
+          in
           interpret raw
         with
         | Eio.Time.Timeout -> Hang
@@ -116,7 +137,7 @@ let run_raw_h1 ~env ~name ?config ~deadline_sec ~input ~interpret () =
   with exn -> Crash (Printexc.to_string exn)
 
 let run_single_h1 ~env ~name ?config ~deadline_sec ~input ~expected_status () =
-  run_raw_h1 ~env ~name ?config ~deadline_sec ~input
+  run_raw_h1 ~env ~name ?config ~expected_count:1 ~deadline_sec ~input
     ~interpret:(fun raw ->
       match status_codes raw with
       | [ Some status ] ->
@@ -130,7 +151,7 @@ let run_single_h1 ~env ~name ?config ~deadline_sec ~input ~expected_status () =
 
 let run_pipelined_h1 ~env ~name ?config ~deadline_sec ~input ~expected_count
     ~allowed_statuses () =
-  run_raw_h1 ~env ~name ?config ~deadline_sec ~input
+  run_raw_h1 ~env ~name ?config ~expected_count ~deadline_sec ~input
     ~interpret:(fun raw ->
       let codes = status_codes raw in
       let got = List.length codes in
@@ -222,8 +243,8 @@ let probe_cl_only_pipeline ~env =
 
 (* 6. CL too short: the declared body is longer than the bytes sent before the
       next request appears. The server must not treat the trailing bytes as a
-      second request; with the pipeline policy it reads the missing body bytes
-      from the smuggled request and echoes them, producing a single response. *)
+      valid second request; consuming the declared bytes and then rejecting the
+      malformed remainder is also safe. *)
 let probe_cl_too_short ~env =
   let input =
     "POST /echo HTTP/1.1\r\nHost: example.test\r\n"
@@ -233,13 +254,12 @@ let probe_cl_too_short ~env =
     ~deadline_sec:2.0 ~input
     ~interpret:(fun raw ->
       let codes = status_codes raw in
-      let got = List.length codes in
-      if got > 1 then
-        Fail (Printf.sprintf "boundary confusion: %s" (response_summary raw))
-      else if got = 1 then Pass (response_summary raw)
-      else
-        (* No response within deadline: likely waiting for body bytes. *)
-        Hang)
+      match codes with
+      | [ Some 200 ] | [ Some 200; Some 400 ] -> Pass (response_summary raw)
+      | [] ->
+          (* No response within deadline: likely waiting for body bytes. *)
+          Hang
+      | _ -> Fail (Printf.sprintf "boundary confusion: %s" (response_summary raw)))
     ()
 
 (* 7. CL too long: the declared body is shorter than the bytes sent. The server
@@ -414,6 +434,7 @@ let probe_connection_close_smuggled ~env =
     ^ "Connection: close\r\nContent-Length: 5\r\n\r\nhello" ^ smuggled_get
   in
   run_raw_h1 ~env ~name:"connection_close_smuggled" ~deadline_sec:2.0 ~input
+    ~expected_count:1
     ~interpret:(fun raw ->
       let codes = status_codes raw in
       let got = List.length codes in
