@@ -36,7 +36,6 @@ type conn = {
   flow : flow;
   mutable used : bool;
   mutable reusable : bool;
-  mutable last_used_ms : int;
 }
 
 type pool_error =

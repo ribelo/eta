@@ -10,37 +10,15 @@ nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probe
 The runner always exits 0, even when probes fail or a probe hangs; each
 individual probe is capped at 30 seconds by a watchdog.
 
-## Confirmed / likely Eta bugs
+## Current status
 
-### `pool_dead_keepalive_connection` — dead keep-alive connection reused within the 5-second health-check window
+All bug-classified probes in this family pass.
 
-- **Probe:** `pool_dead_keepalive_connection`
-- **Command:**
-  ```sh
-  nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe | grep pool_dead_keepalive_connection
-  ```
-- **Expected:** The server sends a complete `Connection: keep-alive` response and
-  then closes the TCP socket. The H1 client pool should detect that the
-  connection is dead before handing it to the next request, so the second
-  request succeeds on a fresh connection (`opened=2`).
-- **Actual:** The pool reuses the dead connection (`opened=1`), and the second
-  request times out with `Total_request_timeout`.
-- **Protocol/backend:** HTTP/1.1, `eta_http_eio` H1 client pool
-  (`Eta_http_eio.Client.make_h1`).
-- **Minimized server response:**
-  ```text
-  HTTP/1.1 200 OK\r\n
-  Connection: keep-alive\r\n
-  Content-Length: 5\r\n\r\n
-  hello
-  ```
-  followed by an immediate `close(2)` from the server.
-- **Root cause (observed):** `Eta_http_eio.H1.Client.default_health_check`
-  skips the liveness probe when `now_ms - conn.last_used_ms < 5000`. A
-  response that consumed exactly its declared body marks the connection
-  `clean`, so it is returned to the pool; the next acquire within the 5-second
-  window reuses the closed flow without checking it.
-- **Classification:** likely Eta bug (pool-poisoning / reliability).
+Resolved finding:
+
+- `pool_dead_keepalive_connection`: the default H1 pool health check now probes
+  idle reusable connections before checkout, so a server-closed keep-alive
+  connection is discarded and the next request opens a fresh connection.
 
 ## Policy gaps / ambiguous behavior
 

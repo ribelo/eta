@@ -14,7 +14,7 @@ open Eta_http_testsuite
    --------------------------------------------------------------------------- *)
 
 let h2_preface = Adversarial.h2_client_preface
-let write_string flow s = Eio.Flow.copy_string s flow
+let write_string flow s = Eio.Flow.write flow [ Cstruct.of_string s ]
 
 let read_exact flow buf len =
   let rec loop off =

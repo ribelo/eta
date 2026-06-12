@@ -23,10 +23,13 @@ type t = {
   write_mutex : Eio.Mutex.t;
   close_sent : bool Atomic.t;
   selected_protocol : string option;
+  max_consecutive_pings : int;
+  mutable consecutive_pings : int;
 }
 
 let max_header_bytes = 32 * 1024
 let read_chunk_size = 4096
+let default_max_consecutive_pings = 128
 
 let close_flow flow = try Eio.Flow.close flow with _ -> ()
 
@@ -71,6 +74,7 @@ let find_header_end_buffer buffer start =
   loop (max 0 start)
 
 type response_head = {
+  version : string;
   status : int;
   headers : Header.t;
   initial : bytes;
@@ -82,8 +86,11 @@ let parse_status_line line =
   match first_space with
   | None -> Error (`Protocol "invalid HTTP response status line")
   | Some first_space ->
-      if not (Eta.String_helpers.starts_with_at line ~offset:0 "HTTP/") then
+      let version = String.sub line 0 first_space in
+      if not (Eta.String_helpers.starts_with_at version ~offset:0 "HTTP/") then
         Error (`Protocol "invalid HTTP response status line")
+      else if not (String.equal version "HTTP/1.1") then
+        Error (`Protocol "WebSocket upgrade response must use HTTP/1.1")
       else
         let status_start = first_space + 1 in
         let status_stop = ref status_start in
@@ -92,7 +99,7 @@ let parse_status_line line =
         done;
         let status = String.sub line status_start (!status_stop - status_start) in
         match int_of_string_opt status with
-        | Some status when status >= 100 && status <= 599 -> Ok status
+        | Some status when status >= 100 && status <= 599 -> Ok (version, status)
         | _ -> Error (`Protocol ("invalid HTTP status " ^ status))
 
 let parse_header_line line =
@@ -131,7 +138,7 @@ let parse_response_head raw initial =
     let status_line = String.sub raw 0 status_stop in
     match parse_status_line status_line with
     | Error _ as error -> error
-    | Ok status ->
+    | Ok (version, status) ->
         let rec collect acc start =
           if start >= String.length raw then Ok (List.rev acc)
           else
@@ -144,7 +151,8 @@ let parse_response_head raw initial =
               | Error _ as error -> error
         in
         Result.map
-          (fun headers -> { status; headers = Header.unsafe_of_list headers; initial })
+          (fun headers ->
+            { version; status; headers = Header.unsafe_of_list headers; initial })
           (collect [] (next_start raw status_stop))
 
 let read_response_head flow =
@@ -245,6 +253,11 @@ let default_max_frame_size = 1_048_576
 let check_max_frame_size max_frame_size =
   if max_frame_size < 0 then
     invalid_arg "Eta_http_eio.Ws.Client: max_frame_size must be >= 0"
+
+let check_max_consecutive_pings max_consecutive_pings =
+  if max_consecutive_pings <= 0 then
+    invalid_arg
+      "Eta_http_eio.Ws.Client: max_consecutive_pings must be > 0"
 
 let bytes_concat4 a b c d =
   let a_len = Bytes.length a in
@@ -467,8 +480,14 @@ and handle_frame t reader fragment frame =
   | Text | Binary -> handle_data_frame t reader fragment frame
   | Continuation -> handle_continuation t reader fragment frame
   | Ping ->
-      send_frame t { Codec.fin = true; opcode = Pong; payload = frame.payload }
-      |> Effect.bind (fun () -> reader_loop t reader fragment)
+      t.consecutive_pings <- t.consecutive_pings + 1;
+      if t.consecutive_pings > t.max_consecutive_pings then
+        fail_reader t (`Protocol "WebSocket ping flood")
+      else
+        send_frame t { Codec.fin = true; opcode = Pong; payload = frame.payload }
+        |> Effect.bind (fun () ->
+               Effect.sync Eio.Fiber.yield
+               |> Effect.bind (fun () -> reader_loop t reader fragment))
   | Pong -> reader_loop t reader fragment
   | Close -> (
       match parse_close_payload frame.payload with
@@ -480,6 +499,7 @@ and handle_frame t reader fragment frame =
           Effect.unit)
 
 and handle_data_frame t reader fragment frame =
+  t.consecutive_pings <- 0;
   match fragment with
   | Some _ -> fail_reader t (`Protocol "new data frame before final continuation")
   | None ->
@@ -494,6 +514,7 @@ and handle_data_frame t reader fragment frame =
         reader_loop t reader (Some { opcode = frame.opcode; buffer })
 
 and handle_continuation t reader fragment frame =
+  t.consecutive_pings <- 0;
   match fragment with
   | None -> fail_reader t (`Protocol "continuation without initial data frame")
   | Some fragment ->
@@ -506,7 +527,8 @@ and handle_continuation t reader fragment frame =
         | Ok (Some message) -> enqueue t message |> Effect.bind (fun () -> reader_loop t reader None)
       else reader_loop t reader (Some fragment)
 
-let make_connection ~flow ~selected_protocol ~max_frame_size initial =
+let make_connection ~flow ~selected_protocol ~max_frame_size
+    ~max_consecutive_pings initial =
   let t =
     {
       flow;
@@ -514,6 +536,8 @@ let make_connection ~flow ~selected_protocol ~max_frame_size initial =
       write_mutex = Eio.Mutex.create ();
       close_sent = Atomic.make false;
       selected_protocol;
+      max_consecutive_pings;
+      consecutive_pings = 0;
     }
   in
   let reader =
@@ -528,9 +552,10 @@ let make_connection ~flow ~selected_protocol ~max_frame_size initial =
   Effect.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
 let connect_on_flow ?(key = Codec.random_key ())
-    ?(max_frame_size = default_max_frame_size) ?headers ?protocols ~sw:_ ~flow
-    url =
+    ?(max_frame_size = default_max_frame_size) ?headers ?protocols
+    ?(max_consecutive_pings = default_max_consecutive_pings) ~sw:_ ~flow url =
   check_max_frame_size max_frame_size;
+  check_max_consecutive_pings max_consecutive_pings;
   let open Effect in
   let connect =
     sync (fun () -> write_upgrade_request flow ?headers ?protocols url key)
@@ -542,14 +567,15 @@ let connect_on_flow ?(key = Codec.random_key ())
            match validate_handshake ?protocols key head with
            | Ok selected_protocol ->
                make_connection ~flow ~selected_protocol ~max_frame_size
-                 head.initial
+                 ~max_consecutive_pings head.initial
            | Error error -> fail error)
   in
   connect
   |> catch (fun error ->
          sync (fun () -> close_flow flow) |> bind (fun () -> fail error))
 
-let connect ?ca_file ?key ?max_frame_size ?headers ?protocols ~sw ~net raw_url =
+let connect ?ca_file ?key ?max_frame_size ?headers ?protocols
+    ?max_consecutive_pings ~sw ~net raw_url =
   match parse_url raw_url with
   | Error error -> Effect.fail error
   | Ok url ->
@@ -560,14 +586,14 @@ let connect ?ca_file ?key ?max_frame_size ?headers ?protocols ~sw ~net raw_url =
              match Url.scheme url with
              | Http ->
                  connect_on_flow ?key ?max_frame_size ?headers ?protocols ~sw
-                   ~flow:tcp url
+                   ?max_consecutive_pings ~flow:tcp url
              | Https ->
                  Connect.connect_tls ~alpn_protocols:[ "http/1.1" ] ?ca_file
                    ~method_:"GET" target tcp
                  |> map_http_error
                  |> Effect.bind (fun (tls, _alpn) ->
                         connect_on_flow ?key ?max_frame_size ?headers
-                          ?protocols ~sw ~flow:tls url))
+                          ?protocols ?max_consecutive_pings ~sw ~flow:tls url))
 
 let incoming t = Eta_stream.Stream.from_queue t.incoming
 let selected_protocol t = t.selected_protocol

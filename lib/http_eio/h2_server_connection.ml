@@ -123,8 +123,8 @@ let mark_closed t =
     ignore (Eio.Promise.try_resolve t.close_signal ()))
 
 let close_flow_all flow =
-  (try Eio.Flow.shutdown flow `All with _ -> ());
-  try Eio.Flow.close flow with _ -> ()
+  (try Eio.Flow.close flow with _ -> ());
+  try Eio.Flow.shutdown flow `All with _ -> ()
 
 let stats t =
   Server_stats.H2.snapshot t.stats
@@ -673,15 +673,16 @@ let write_iovecs t iovecs =
     | Some timeout -> t.with_timeout timeout write
 
 let rec drain_writes t =
-  match H2.Server_connection.next_write_operation t.h2 with
-  | `Write iovecs ->
-      let written = write_iovecs t iovecs in
-      H2.Server_connection.report_write_result t.h2 (`Ok written);
-      drain_writes t
-  | `Yield -> ()
-  | `Close _ ->
-      H2.Server_connection.report_write_result t.h2 `Closed;
-      (try Eio.Flow.shutdown t.flow `Send with _ -> ())
+  if not t.closed then
+    match H2.Server_connection.next_write_operation t.h2 with
+    | `Write iovecs ->
+        let written = write_iovecs t iovecs in
+        H2.Server_connection.report_write_result t.h2 (`Ok written);
+        drain_writes t
+    | `Yield -> ()
+    | `Close _ ->
+        H2.Server_connection.report_write_result t.h2 `Closed;
+        (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
   config.Types.Config.h2_config.H2.Config.read_buffer_size
@@ -954,17 +955,37 @@ let request_body_open state =
   &&
   try not (H2.Body.Reader.is_closed state.request_body) with _ -> false
 
-let has_open_request_bodies t =
-  Hashtbl.fold
-    (fun _ordinal state found -> found || request_body_open state)
-    t.streams false
+let fail_open_request_bodies t =
+  let ordinals =
+    Hashtbl.fold
+      (fun ordinal state acc ->
+        if request_body_open state then ordinal :: acc else acc)
+      t.streams []
+  in
+  List.iter
+    (fun ordinal ->
+      match Hashtbl.find_opt t.streams ordinal with
+      | None -> ()
+      | Some state -> finish_remote_reset_stream t ordinal state)
+    ordinals
+
+let goaway_protocol_error =
+  Eta_http.H2.Frame.header ~length:8 ~frame_type:Goaway ~flags:0
+    ~stream_id:0
+  ^ Eta_http.H2.Frame.uint32 0
+  ^ Eta_http.H2.Frame.uint32 1
+
+let write_goaway_protocol_error t =
+  try Eio.Flow.write t.flow [ Cstruct.of_string goaway_protocol_error ] with _ -> ()
 
 let handle_security_error t kind =
   let error = security_error t kind in
   record_protocol_error t;
   mark_closed t;
   fail_active_streams t error;
-  close_flow_all t.flow
+  drain_writes t;
+  write_goaway_protocol_error t;
+  try Eio.Flow.shutdown t.flow `Send with _ -> ()
 
 let finish_graceful_shutdown_if_idle t =
   if t.graceful_shutdown && (not t.closed) && Hashtbl.length t.streams = 0 then (
@@ -1244,11 +1265,11 @@ let handle_command t = function
                       drain_writes t)))
   | Ingress_eof ->
       read_eof t;
-      if has_open_request_bodies t then (
+      fail_open_request_bodies t;
+      if Hashtbl.length t.streams = 0 then (
         mark_closed t;
-        fail_active_streams t (connection_closed_error t Request_body))
-      else if Hashtbl.length t.streams = 0 then mark_closed t;
-      drain_writes t
+        close_flow_all t.flow)
+      else drain_writes t
   | Ingress_failed error ->
       mark_closed t;
       fail_active_streams t error;
@@ -1326,12 +1347,18 @@ let reader_loop t =
                    Eio.Flow.single_read t.flow cstruct))
           with Eio.Time.Timeout -> `Timeout timeout)
     in
-    Eio.Fiber.first read (fun () ->
-        Eio.Promise.await wakeup;
-        `Retry)
+    Eio.Fiber.first
+      (fun () ->
+        Eio.Fiber.first read (fun () ->
+            Eio.Promise.await wakeup;
+            `Retry))
+      (fun () ->
+        Eio.Promise.await t.closed_signal;
+        `Closed)
   in
   let rec loop () =
     match single_read () with
+    | `Closed -> ()
     | `Retry ->
         reset_reader_wakeup t;
         loop ()
@@ -1344,7 +1371,9 @@ let reader_loop t =
         Bigstringaf.blit scratch ~src_off:0 owned ~dst_off:0 ~len;
         let promise, ack = Eio.Promise.create () in
         if enqueue t (Ingress { bytes = owned; off = 0; len; ack }) then (
-          Eio.Promise.await promise;
+          Eio.Fiber.first
+            (fun () -> Eio.Promise.await promise)
+            (fun () -> Eio.Promise.await t.closed_signal);
           loop ())
     | exception End_of_file -> ignore (enqueue t Ingress_eof)
     | exception Eio.Cancel.Cancelled _ -> ()
@@ -1515,55 +1544,62 @@ let safe_handler_effect t request handler =
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn -> Eta.Effect.fail (handler_failed_error t request exn)
 
+let run_handler_body t ordinal request handler =
+  let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
+  let effect = safe_handler_effect t request handler in
+  let response =
+    match t.config.server.timeouts.handler_timeout with
+    | Some timeout -> (
+        match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+        | Eta.Exit.Ok response -> response
+        | Eta.Exit.Error cause -> fallback_error_response t request cause
+        | exception Eio.Time.Timeout ->
+            Server.Handler.default_error_response
+              (handler_timeout_error t request (Some timeout)))
+    | None -> (
+        match Eta.Runtime.run rt effect with
+        | Eta.Exit.Ok response -> response
+        | Eta.Exit.Error cause -> fallback_error_response t request cause)
+  in
+  let response, prepared =
+    match prepare_h2_response t request response with
+    | Ok prepared -> (response, Ok prepared)
+    | Error error ->
+        release_ignored_response_stream rt response;
+        let response = Server.Handler.default_error_response error in
+        (response, prepare_h2_response t request response)
+  in
+  match prepared with
+  | Error error -> ignore (enqueue t (Response_failed (ordinal, error)))
+  | Ok prepared -> (
+      match
+        await_owner t (fun resolver -> Response_start (ordinal, prepared, resolver))
+      with
+      | Error error ->
+          release_prepared_response_body rt prepared;
+          ignore (enqueue t (Response_failed (ordinal, error)))
+      | Ok () -> (
+          match prepared.body with
+          | Response_fixed (chunks, length) when length > max_h2_data_chunk ->
+              pump_response_stream t rt ordinal request response
+                (fixed_response_stream chunks length) 0
+          | Response_no_body (Some stream) -> release_response_stream rt stream
+          | Response_no_body None | Response_fixed _ -> ()
+          | Response_stream stream ->
+              pump_response_stream t rt ordinal request response stream 0))
+
 let run_handler t ordinal request handler =
   Eio.Fiber.fork ~sw:t.sw (fun () ->
-      let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
-      let effect = safe_handler_effect t request handler in
-      let response =
-        match t.config.server.timeouts.handler_timeout with
-        | Some timeout -> (
-            match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
-            | Eta.Exit.Ok response -> response
-            | Eta.Exit.Error cause -> fallback_error_response t request cause
-            | exception Eio.Time.Timeout ->
-                Server.Handler.default_error_response
-                  (handler_timeout_error t request (Some timeout)))
-        | None -> (
-            match Eta.Runtime.run rt effect with
-            | Eta.Exit.Ok response -> response
-            | Eta.Exit.Error cause -> fallback_error_response t request cause)
-      in
-      let response, prepared =
-        match prepare_h2_response t request response with
-        | Ok prepared -> (response, Ok prepared)
-        | Error error ->
-            release_ignored_response_stream rt response;
-            let response = Server.Handler.default_error_response error in
-            (response, prepare_h2_response t request response)
-      in
-      match prepared with
-      | Error error -> ignore (enqueue t (Response_failed (ordinal, error)))
-      | Ok prepared -> (
-          match
-            await_owner t (fun resolver ->
-                Response_start (ordinal, prepared, resolver))
-          with
-          | Error error ->
-              release_prepared_response_body rt prepared;
-              ignore (enqueue t (Response_failed (ordinal, error)))
-          | Ok () -> (
-              match prepared.body with
-              | Response_fixed (chunks, length) when length > max_h2_data_chunk
-                ->
-                  pump_response_stream t rt ordinal request response
-                    (fixed_response_stream chunks length) 0
-              | Response_no_body (Some stream) -> release_response_stream rt stream
-              | Response_no_body None | Response_fixed _ -> ()
-              | Response_stream stream ->
-                  pump_response_stream t rt ordinal request response stream 0)))
+      Eio.Fiber.first
+        (fun () -> run_handler_body t ordinal request handler)
+        (fun () -> Eio.Promise.await t.closed_signal))
 
 let shutdown t policy =
-  if not t.closed then ignore (enqueue t (Shutdown policy))
+  if not t.closed then (
+    let queued = enqueue t (Shutdown policy) in
+    match policy with
+    | Types.Immediate when queued -> close_flow_all t.flow
+    | Immediate | Graceful _ -> ())
 
 let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =

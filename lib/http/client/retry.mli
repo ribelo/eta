@@ -18,17 +18,22 @@ type decision =
 type t
 
 val default_retry_status : int -> bool
+val default_max_retry_after : Eta.Duration.t
 
 val make :
   ?mode:mode ->
   ?max_attempts:int ->
   ?schedule:Eta.Schedule.t ->
   ?respect_retry_after:bool ->
+  ?max_retry_after:Eta.Duration.t ->
   ?retry_status:(int -> bool) ->
   unit ->
   t
 (** [make ~max_attempts ()] raises [Invalid_argument] when [max_attempts] is
-    less than 1. *)
+    less than 1.
+
+    [max_retry_after] caps peer-controlled Retry-After delays. The default is
+    {!default_max_retry_after}. *)
 
 val default : t
 val never : t
@@ -39,7 +44,8 @@ val always :
   unit ->
   t
 
-val retry_after : ?now_s:float -> string -> Eta.Duration.t option
+val retry_after :
+  ?max_delay:Eta.Duration.t -> ?now_s:float -> string -> Eta.Duration.t option
 
 val classify_error :
   ?now_s:float ->

@@ -35,6 +35,8 @@ type t = {
   mutable draining : bool;
   mutable shutdown_timer_started : bool;
   mutable active_request : bool;
+  closed_signal : unit Eio.Promise.t;
+  close_signal : unit Eio.Promise.u;
   mutable closed : bool;
 }
 
@@ -80,6 +82,11 @@ let stats t : stats = Server_stats.H1.snapshot t.stats
 
 let shutdown_all t = try Eio.Flow.shutdown t.flow `All with _ -> ()
 
+let mark_closed t =
+  if not t.closed then (
+    t.closed <- true;
+    ignore (Eio.Promise.try_resolve t.close_signal ()))
+
 let mark_shutdown_active t =
   Option.iter
     (fun metrics -> Server_metrics.shutdown_active metrics 1)
@@ -87,7 +94,7 @@ let mark_shutdown_active t =
 
 let close_immediately t =
   if not t.closed then (
-    t.closed <- true;
+    mark_closed t;
     shutdown_all t)
 
 let start_shutdown_timer t timeout =
@@ -990,15 +997,28 @@ let run_handler t rt request handler =
     | Eta.Exit.Ok response -> (response, false)
     | Eta.Exit.Error cause -> (fallback_error_response t request cause, true)
   in
-  match t.config.server.timeouts.handler_timeout with
-  | Some timeout -> (
-      match t.with_timeout timeout run with
-      | response -> response
-      | exception Eio.Time.Timeout ->
-          ( Server.Handler.default_error_response
-              (handler_timeout_error t request (Some timeout)),
-            true ))
-  | None -> run ()
+  let run_with_timeout () =
+    match t.config.server.timeouts.handler_timeout with
+    | Some timeout -> (
+        match t.with_timeout timeout run with
+        | response -> response
+        | exception Eio.Time.Timeout ->
+            ( Server.Handler.default_error_response
+                (handler_timeout_error t request (Some timeout)),
+              true ))
+    | None -> run ()
+  in
+  match
+    Eio.Fiber.first
+      (fun () -> `Response (run_with_timeout ()))
+      (fun () ->
+        Eio.Promise.await t.closed_signal;
+        `Closed)
+  with
+  | `Response response -> response
+  | `Closed ->
+      ( Server.Handler.default_error_response (connection_closed_error t Shutdown),
+        true )
 
 let write_default_error ?(connection_close = true) t request error =
   match
@@ -1134,6 +1154,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
   let time = Option.value time ~default:(Types.live_time clock) in
+  let closed_signal, close_signal = Eio.Promise.create () in
   let t =
     {
       sw;
@@ -1158,6 +1179,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       draining = false;
       shutdown_timer_started = false;
       active_request = false;
+      closed_signal;
+      close_signal;
       closed = false;
     }
   in
@@ -1173,7 +1196,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       Option.iter
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
-      t.closed <- true;
+      mark_closed t;
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Option.iter (fun on_close -> on_close (stats t)) on_close)
     (fun () -> run_requests t 1 handler)

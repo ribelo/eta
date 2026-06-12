@@ -526,6 +526,68 @@ let test_ws_ping_is_internal_and_pong_is_sent () =
     (List.map (function `Text text -> text | `Binary _ -> "<binary>") messages);
   expect_client_frame state Pong "hi"
 
+let test_ws_rejects_http10_upgrade_response () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let response =
+    "HTTP/1.0 101 Switching Protocols\r\n"
+    ^ "Upgrade: websocket\r\n"
+    ^ "Connection: Upgrade\r\n"
+    ^ "Sec-WebSocket-Accept: "
+    ^ Eta_http.Ws.Codec.accept_key key
+    ^ "\r\n\r\n"
+  in
+  let _state, flow = scripted_flow [ Return response ] in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  match
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~sw ~flow url
+    |> Eta.Runtime.run rt
+  with
+  | Eta.Exit.Error
+      (Eta.Cause.Fail (`Protocol "WebSocket upgrade response must use HTTP/1.1"))
+    ->
+      ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "HTTP/1.0 WebSocket upgrade was accepted"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected HTTP/1.0 upgrade failure: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+
+let test_ws_rejects_consecutive_ping_flood () =
+  let key = "dGhlIHNhbXBsZSBub25jZQ==" in
+  let ping =
+    Eta_http.Ws.Codec.encode
+      { fin = true; opcode = Ping; payload = Bytes.of_string "x" }
+    |> Bytes.to_string
+  in
+  let _state, flow =
+    scripted_flow [ Return (switching_response key ^ ping ^ ping ^ ping) ]
+  in
+  let url = Eta_http.Core.Url.of_string "http://example.test/realtime" in
+  with_test_clock @@ fun sw _clock rt ->
+  let conn =
+    Eta_http_eio.Ws.Client.connect_on_flow ~key ~max_consecutive_pings:2 ~sw
+      ~flow url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  match Eta.Runtime.run rt (Eta_stream.run_drain (Eta_http_eio.Ws.Client.incoming conn)) with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Protocol "WebSocket ping flood")) -> ()
+  | Eta.Exit.Ok () -> Alcotest.fail "consecutive ping flood was accepted"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected ping flood failure: %a"
+        (Eta.Cause.pp (fun fmt -> function
+          | `Closed (code, reason) -> Format.fprintf fmt "closed %d %s" code reason
+          | `Connect message -> Format.fprintf fmt "connect %s" message
+          | `Protocol message -> Format.fprintf fmt "protocol %s" message
+          | `Upgrade_failed status -> Format.fprintf fmt "upgrade %d" status
+          | `Timeout -> Format.pp_print_string fmt "timeout"))
+        cause
+
 let test_ws_close_1011_fails_inbound_stream () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let close =

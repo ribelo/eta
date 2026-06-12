@@ -60,6 +60,7 @@ let feed_bio t =
   let buf = Cstruct.create 32768 in
   Eio.Mutex.use_rw ~protect:false t.read_mutex (fun () ->
       let n = Flow.single_read t.flow buf in
+      if n = 0 then raise End_of_file;
       let rec write_all off len =
         if len > 0 then (
           let written =
@@ -119,12 +120,17 @@ let do_handshake t =
         in
         loop ())
 
-let close t =
+let shutdown_send t =
   if not t.closed then (
     let _ = with_ssl t (fun () -> Openssl.shutdown t.ssl) in
     drain_bio t;
-    t.closed <- true
-  )
+    t.closed <- true)
+
+let close_underlying t = try Eio.Flow.close t.flow with _ -> ()
+
+let close t =
+  t.closed <- true;
+  close_underlying t
 
 module Flow_impl = struct
   type nonrec t = t
@@ -148,7 +154,9 @@ module Flow_impl = struct
       if rc > 0 then (
         debug_io "read" storage ~storage_off:0 ~display_off ~len:rc;
         rc)
-      else if rc = 0 then raise End_of_file
+      else if rc = 0 then (
+        t.closed <- true;
+        raise End_of_file)
       else (
         let code = -rc in
         drain_bio t;
@@ -158,7 +166,9 @@ module Flow_impl = struct
         else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
           drain_bio t;
           loop ())
-        else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then raise End_of_file
+        else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then (
+          t.closed <- true;
+          raise End_of_file)
         else (
           match Openssl.err_peek_error () with
           | Some msg ->
@@ -217,7 +227,10 @@ module Flow_impl = struct
 
   let shutdown t cmd =
     match cmd with
-    | `Send | `All -> close t
+    | `Send -> shutdown_send t
+    | `All ->
+        Fun.protect ~finally:(fun () -> close_underlying t) (fun () ->
+            shutdown_send t)
     | `Receive -> ()
 end
 

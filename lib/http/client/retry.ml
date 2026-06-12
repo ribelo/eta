@@ -13,6 +13,7 @@ type t = {
   max_attempts : int;
   schedule : Eta.Schedule.t;
   respect_retry_after : bool;
+  max_retry_after : Eta.Duration.t;
   retry_status : (int -> bool);
 }
 
@@ -20,12 +21,15 @@ let default_retry_status = function
   | 408 | 429 | 502 | 503 | 504 -> true
   | _ -> false
 
+let default_max_retry_after = Eta.Duration.days 1
+
 let make ?(mode = Default) ?(max_attempts = 3)
     ?(schedule =
       Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 100)
       |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
       |> Eta.Schedule.jittered ~min:0.0 ~max:1.0)
-    ?(respect_retry_after = true) ?(retry_status = default_retry_status) () =
+    ?(respect_retry_after = true) ?(max_retry_after = default_max_retry_after)
+    ?(retry_status = default_retry_status) () =
   if max_attempts <= 0 then
     invalid_arg "Eta_http.Retry_policy.make: max_attempts must be > 0";
   {
@@ -33,6 +37,7 @@ let make ?(mode = Default) ?(max_attempts = 3)
     max_attempts;
     schedule;
     respect_retry_after;
+    max_retry_after;
     retry_status;
   }
 
@@ -45,15 +50,17 @@ let default_now_s () = Unix.gettimeofday ()
 let max_delta_seconds = max_int / 1_000
 let max_delay_ms_float = float_of_int max_int
 
-let duration_of_seconds seconds =
-  if seconds < 0 || seconds > max_delta_seconds then None
-  else Some (Eta.Duration.seconds seconds)
+let cap_retry_after ~max_delay delay = Eta.Duration.min delay max_delay
 
-let duration_of_delay_ms_float delay_ms =
+let duration_of_seconds ~max_delay seconds =
+  if seconds < 0 || seconds > max_delta_seconds then None
+  else Some (cap_retry_after ~max_delay (Eta.Duration.seconds seconds))
+
+let duration_of_delay_ms_float ~max_delay delay_ms =
   if Float.is_nan delay_ms then None
   else if delay_ms <= 0.0 then Some Eta.Duration.zero
   else if delay_ms >= max_delay_ms_float then None
-  else Some (Eta.Duration.ms (int_of_float delay_ms))
+  else Some (cap_retry_after ~max_delay (Eta.Duration.ms (int_of_float delay_ms)))
 
 let month_number = function
   | "Jan" -> Some 1
@@ -110,18 +117,19 @@ let parse_http_date value =
                    (((days * 24 + hour) * 60 + minute) * 60 + second)))
   with _ -> None
 
-let retry_after ?(now_s = 0.0) value =
+let retry_after ?(max_delay = default_max_retry_after) ?(now_s = 0.0) value =
   let value = String.trim value in
   match
     if Eta.String_helpers.starts_with value ~prefix:"+" then None
     else int_of_string_opt value
   with
-  | Some seconds -> duration_of_seconds seconds
+  | Some seconds -> duration_of_seconds ~max_delay seconds
   | _ -> (
       match parse_http_date value with
       | None -> None
       | Some epoch_s ->
-          duration_of_delay_ms_float (ceil ((epoch_s -. now_s) *. 1000.0)))
+          duration_of_delay_ms_float ~max_delay
+            (ceil ((epoch_s -. now_s) *. 1000.0)))
 
 let request_allowed t request =
   match t.mode with
@@ -132,17 +140,17 @@ let request_allowed t request =
 let schedule_delay t ~attempt =
   Eta.Schedule.next_delay t.schedule ~step:(attempt - 1)
 
-let retry_after_header ~now_s headers =
+let retry_after_header t ~now_s headers =
   match Header.get "retry-after" headers with
   | None -> None
-  | Some value -> retry_after ~now_s value
+  | Some value -> retry_after ~max_delay:t.max_retry_after ~now_s value
 
 let delay_for_error t ~now_s ~attempt error =
   if attempt >= t.max_attempts then None
   else
     match t.respect_retry_after, error.Error.kind with
     | true, HTTP_status { headers; _ } -> (
-        match retry_after_header ~now_s headers with
+        match retry_after_header t ~now_s headers with
         | Some delay -> Some delay
         | None -> schedule_delay t ~attempt)
     | _ -> schedule_delay t ~attempt
@@ -150,7 +158,7 @@ let delay_for_error t ~now_s ~attempt error =
 let delay_for_response t ~now_s ~attempt response =
   if attempt >= t.max_attempts then None
   else if t.retry_status response.Response.status then
-    match t.respect_retry_after, retry_after_header ~now_s response.headers with
+    match t.respect_retry_after, retry_after_header t ~now_s response.headers with
     | true, Some delay -> Some delay
     | _ -> schedule_delay t ~attempt
   else None
@@ -178,6 +186,37 @@ let decision_delay = function
   | Stop -> None
   | Retry_after delay -> Some delay
 
+let add_ms_capped a b =
+  if b <= 0 then a else if a > max_int - b then max_int else a + b
+
+let post_delay_check deadline_ms =
+  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.post-delay-check" (fun ctx ->
+      let contract = Eta.Effect.Expert.contract ctx in
+      try
+        contract.Eta.Runtime_contract.yield ();
+        contract.Eta.Runtime_contract.check ();
+        if contract.Eta.Runtime_contract.now_ms () < deadline_ms then
+          Eta.Exit.Error Eta.Cause.interrupt
+        else Eta.Exit.Ok ()
+      with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
+
+let delay_then delay eff =
+  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.delay" (fun ctx ->
+      let contract = Eta.Effect.Expert.contract ctx in
+      let deadline_ms =
+        add_ms_capped
+          (contract.Eta.Runtime_contract.now_ms ())
+          (Eta.Duration.to_ms delay)
+      in
+      Eta.Effect.delay delay
+        (post_delay_check deadline_ms |> Eta.Effect.bind (fun () -> eff))
+      |> Eta.Effect.Expert.eval ctx)
+
+let request_once_effect request_once request =
+  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.request-once" (fun ctx ->
+      try request_once request |> Eta.Effect.Expert.eval ctx
+      with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
+
 let run ?(policy = default) ?(now_s = default_now_s) request_once request =
   let rec loop attempt =
     Eta.Effect.catch
@@ -187,8 +226,8 @@ let run ?(policy = default) ?(now_s = default_now_s) request_once request =
           |> decision_delay
         with
         | None -> Eta.Effect.fail error
-        | Some delay -> Eta.Effect.delay delay (loop (attempt + 1)))
-      (request_once request
+        | Some delay -> delay_then delay (loop (attempt + 1)))
+      (request_once_effect request_once request
       |> Eta.Effect.bind (fun response ->
              match
                classify_response policy ~now_s:(now_s ()) ~request ~attempt
@@ -199,6 +238,6 @@ let run ?(policy = default) ?(now_s = default_now_s) request_once request =
              | Some delay ->
                  Body.discard response.body
                  |> Eta.Effect.bind (fun () ->
-                        Eta.Effect.delay delay (loop (attempt + 1)))))
+                        delay_then delay (loop (attempt + 1)))))
   in
   loop 1

@@ -133,32 +133,29 @@ let health_error (target : Connect.target) message =
     (Connection_protocol_violation { kind = "pool_health"; message })
 
 let default_health_check (target : Connect.target) conn =
-  let now_ms = int_of_float (Unix.gettimeofday () *. 1000.0) in
-  if now_ms - conn.last_used_ms < 5000 then Effect.unit
-  else
-    let probe =
-      Effect.sync (fun () ->
-          let reader =
-            Eio.Buf_read.of_flow ~initial_size:1 ~max_size:1 conn.flow
-          in
-          match Eio.Buf_read.peek_char reader with
-          | None -> `Closed
-          | Some _ -> `Unexpected_data)
-      |> Effect.bind (function
-           | `Closed ->
-               Effect.fail (`Http (health_error target "idle connection closed"))
-           | `Unexpected_data ->
-               Effect.fail
-                 (`Http (health_error target "idle connection had unread bytes")))
-    in
-    Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
-    |> Effect.catch (function
-         | `Health_probe_timeout -> Effect.unit
-         | `Http error -> Effect.fail (`Http error))
+  let probe =
+    Effect.sync (fun () ->
+        let reader =
+          Eio.Buf_read.of_flow ~initial_size:1 ~max_size:1 conn.flow
+        in
+        match Eio.Buf_read.peek_char reader with
+        | None -> `Closed
+        | Some _ -> `Unexpected_data)
+    |> Effect.bind (function
+         | `Closed ->
+             Effect.fail (`Http (health_error target "idle connection closed"))
+         | `Unexpected_data ->
+             Effect.fail
+               (`Http (health_error target "idle connection had unread bytes")))
+  in
+  Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
+  |> Effect.catch (function
+       | `Health_probe_timeout -> Effect.unit
+       | `Http error -> Effect.fail (`Http error))
 
 let open_conn ?ca_file ~sw ~net (target : Connect.target) =
   let wrap flow =
-    { flow; used = false; reusable = true; last_used_ms = 0 }
+    { flow; used = false; reusable = true }
   in
   Connect.connect_tcp ~sw ~net ~method_:"*" target
   |> Effect.bind (fun tcp ->
@@ -241,7 +238,6 @@ let request_owner pool request response_ch release_ch cancel_ch =
                             (H1_client_errors.io_closed request Cancellation)))
              | `Response (response : response) ->
                  conn.used <- true;
-                 conn.last_used_ms <- int_of_float (Unix.gettimeofday () *. 1000.0);
                  if H1_client_response_reader.connection_close_requested
                       response.headers
                  then conn.reusable <- false;

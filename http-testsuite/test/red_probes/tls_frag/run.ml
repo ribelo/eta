@@ -122,10 +122,10 @@ let read_h2_response ~clock flow =
 
 let run_tls_client_probe ~env ~protocol ~alpn_protocols ~name ~deadline_sec
     client_fn =
-  Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock env in
   match
     run_with_deadline ~clock ~deadline_sec (fun () ->
+        Eio.Switch.run @@ fun sw ->
         let server, port, cert_dir =
           start_https_server ~sw ~env ~protocol ()
         in
@@ -145,23 +145,24 @@ let run_tls_client_probe ~env ~protocol ~alpn_protocols ~name ~deadline_sec
 
 (* Raw-TCP probes: speak plaintext to the TLS port. *)
 let run_raw_tcp_probe ~env ~protocol ~name ~deadline_sec client_fn =
-  Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock env in
-  let server, port, _cert_dir =
-    start_https_server ~sw ~env ~protocol ()
-  in
   let result =
     run_with_deadline ~clock ~deadline_sec (fun () ->
+        Eio.Switch.run @@ fun sw ->
+        let server, port, _cert_dir =
+          start_https_server ~sw ~env ~protocol ()
+        in
         let net = Eio.Stdenv.net env in
         let flow =
           Eio.Net.connect ~sw net
             (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
         in
         Fun.protect
-          ~finally:(fun () -> close_flow flow)
+          ~finally:(fun () ->
+            close_flow flow;
+            close_server server)
           (fun () -> client_fn ~clock flow))
   in
-  close_server server;
   match result with
   | Ok msg -> emit_probe name `Pass msg
   | Hang -> emit_probe name `Hang "deadline_exceeded"
@@ -390,24 +391,30 @@ let alpn_h2_only ~env =
 
 let () =
   Printf.printf "tls_frag backend=%s\n%!" (backend_name ());
+  let selected =
+    Sys.argv |> Array.to_list |> function
+    | _ :: names -> names
+    | [] -> []
+  in
+  let selected name = selected = [] || List.mem name selected in
   Eio_main.run @@ fun env ->
   let probes =
     [
-      h1_byte_records;
-      h1_body_byte_records;
-      h1_body_ignored_byte_records;
-      h2_byte_frames;
-      h2_data_payload_byte;
-      h2_data_frame_byte;
-      h2_tiny_writes;
-      h2_slow_preface;
-      h2c_data_payload_byte;
-      shutdown_during_handshake;
-      shutdown_during_headers;
-      shutdown_during_data;
-      shutdown_during_trailers;
-      alpn_h2_only;
+      ("h1_byte_records", h1_byte_records);
+      ("h1_body_byte_records", h1_body_byte_records);
+      ("h1_body_ignored_byte_records", h1_body_ignored_byte_records);
+      ("h2_byte_frames", h2_byte_frames);
+      ("h2_data_payload_byte", h2_data_payload_byte);
+      ("h2_data_frame_byte", h2_data_frame_byte);
+      ("h2_tiny_writes", h2_tiny_writes);
+      ("h2_slow_preface", h2_slow_preface);
+      ("h2c_data_payload_byte", h2c_data_payload_byte);
+      ("shutdown_during_handshake", shutdown_during_handshake);
+      ("shutdown_during_headers", shutdown_during_headers);
+      ("shutdown_during_data", shutdown_during_data);
+      ("shutdown_during_trailers", shutdown_during_trailers);
+      ("alpn_h2_only", alpn_h2_only);
     ]
   in
-  List.iter (fun probe -> probe ~env) probes;
+  List.iter (fun (name, probe) -> if selected name then probe ~env) probes;
   Printf.printf "tls_frag done\n%!"

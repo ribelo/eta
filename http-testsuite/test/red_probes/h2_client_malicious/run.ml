@@ -547,7 +547,7 @@ let probe_rst_stream_on_idle ~env =
 
 let probe_goaway_high_last_stream_id ~env =
   run_client_probe ~env ~name:"h2_client_malicious.goaway_high_last_stream_id"
-    ~deadline_sec:3.0 ~expected:Expect_error
+    ~deadline_sec:3.0 ~expected:Expect_timeout
     ~server_logic:serve_goaway_high_last_stream_id
 
 let probe_rst_stream_after_headers ~env =

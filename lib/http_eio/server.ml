@@ -56,6 +56,8 @@ type t = {
   mutex : Eio.Mutex.t;
   mutable connections : connection list;
   mutable pending_tls : pending_tls list;
+  mutable close_listeners : (unit -> unit) list;
+  mutable shutdown_policy : shutdown option;
   stats : Server_stats.Listener.t;
 }
 
@@ -134,6 +136,8 @@ let create () =
     mutex = Eio.Mutex.create ();
     connections = [];
     pending_tls = [];
+    close_listeners = [];
+    shutdown_policy = None;
     stats = Server_stats.Listener.create ();
   }
 
@@ -141,19 +145,40 @@ let with_lock t f =
   Eio.Mutex.lock t.mutex;
   Fun.protect ~finally:(fun () -> Eio.Mutex.unlock t.mutex) f
 
+let shutdown_connection policy = function
+  | H1 connection -> H1_server_connection.shutdown connection policy
+  | H2 connection -> H2_server_connection.shutdown connection policy
+
 let register_connection t connection =
-  with_lock t (fun () ->
-      Server_stats.Listener.opened_connection t.stats;
-      t.connections <- connection :: t.connections)
+  let shutdown_policy =
+    with_lock t (fun () ->
+        Server_stats.Listener.opened_connection t.stats;
+        t.connections <- connection :: t.connections;
+        t.shutdown_policy)
+  in
+  Option.iter (fun policy -> shutdown_connection policy connection)
+    shutdown_policy
 
 let register_transitioned_connection t connection =
-  with_lock t (fun () -> t.connections <- connection :: t.connections)
+  let shutdown_policy =
+    with_lock t (fun () ->
+        t.connections <- connection :: t.connections;
+        t.shutdown_policy)
+  in
+  Option.iter (fun policy -> shutdown_connection policy connection)
+    shutdown_policy
 
 let register_pending_tls t flow =
   let pending = { id = pending_tls_id (); flow } in
-  with_lock t (fun () ->
-      Server_stats.Listener.opened_connection t.stats;
-      t.pending_tls <- pending :: t.pending_tls);
+  let shutdown_requested =
+    with_lock t (fun () ->
+        Server_stats.Listener.opened_connection t.stats;
+        t.pending_tls <- pending :: t.pending_tls;
+        Option.is_some t.shutdown_policy)
+  in
+  if shutdown_requested then (
+    (try Eio.Flow.shutdown flow `All with _ -> ());
+    try Eio.Flow.close flow with _ -> ());
   pending
 
 let unregister_pending_tls ?(closed = true) t pending =
@@ -184,6 +209,27 @@ let unregister_connection t connection =
 
 let connections t = with_lock t (fun () -> t.connections)
 let pending_tls t = with_lock t (fun () -> t.pending_tls)
+
+let register_listener t socket =
+  let close () = try Eio.Resource.close socket with _ -> () in
+  let shutdown_requested =
+    with_lock t (fun () ->
+        match t.shutdown_policy with
+        | None ->
+            t.close_listeners <- close :: t.close_listeners;
+            false
+        | Some _ -> true)
+  in
+  if shutdown_requested then close ()
+
+let close_listeners t =
+  let listeners =
+    with_lock t (fun () ->
+        let listeners = t.close_listeners in
+        t.close_listeners <- [];
+        listeners)
+  in
+  List.iter (fun close -> close ()) listeners
 
 let record_tls_handshake t =
   with_lock t (fun () -> Server_stats.Listener.tls_handshake t.stats)
@@ -242,13 +288,11 @@ let with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
     (fun () -> f (fun () -> finish_pending ~closed:false))
 
 let shutdown t policy =
+  ignore (Eio.Promise.try_resolve t.stop_resolver ());
+  with_lock t (fun () -> t.shutdown_policy <- Some policy);
+  close_listeners t;
   close_pending_tls t;
-  List.iter
-    (function
-      | H1 connection -> H1_server_connection.shutdown connection policy
-      | H2 connection -> H2_server_connection.shutdown connection policy)
-    (connections t);
-  ignore (Eio.Promise.try_resolve t.stop_resolver ())
+  List.iter (shutdown_connection policy) (connections t)
 
 let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?(config = Config.default) ?runtime_factory ?on_error ?on_connection_start
@@ -297,7 +341,7 @@ let run_h1_on_socket ~(sw : Eio.Switch.t) ~clock ?time ?stop
   run_h1_on_socket_impl ~sw ~clock ?time ?stop ~config ?runtime_factory ?on_error
     ?on_connection_close ~socket handler
 
-let run_h1_impl ~sw ~net ~clock ?time ?domain_manager
+let run_h1_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_start ?on_connection_close ~addr
     handler =
@@ -309,6 +353,8 @@ let run_h1_impl ~sw ~net ~clock ?time ?domain_manager
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
+  Option.iter (fun on_listener_start -> on_listener_start socket)
+    on_listener_start;
   let additional_domains = additional_domains domain_policy domain_manager in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop ?additional_domains
@@ -396,7 +442,7 @@ let run_h2c_on_socket ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?on_error
     ?on_connection_close ~socket handler
 
-let run_h2c_impl ~sw ~net ~clock ?time ?domain_manager
+let run_h2c_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_start ?on_connection_close ~addr
     handler =
@@ -408,6 +454,8 @@ let run_h2c_impl ~sw ~net ~clock ?time ?domain_manager
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
+  Option.iter (fun on_listener_start -> on_listener_start socket)
+    on_listener_start;
   let additional_domains = additional_domains domain_policy domain_manager in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop ?additional_domains
@@ -564,7 +612,7 @@ let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?time ?stop
   run_https_on_socket_impl ~sw ~clock ?time ?stop ~config ?runtime_factory
     ?on_error ?on_connection_close ~tls_context ~socket handler
 
-let run_https_impl ~sw ~net ~clock ?time ?domain_manager
+let run_https_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_start ?on_connection_close
     ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2
@@ -578,6 +626,8 @@ let run_https_impl ~sw ~net ~clock ?time ?domain_manager
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
+  Option.iter (fun on_listener_start -> on_listener_start socket)
+    on_listener_start;
   let additional_domains = additional_domains domain_policy domain_manager in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop ?additional_domains
@@ -626,6 +676,7 @@ let start_h1_on_socket ~sw ~clock ?time ?(config = Config.default) ?runtime_fact
     ?on_error ?on_connection_close ~socket handler =
   Config.validate config;
   let t = create () in
+  register_listener t socket;
   Eio.Fiber.fork ~sw (fun () ->
       run_h1_on_socket_impl ~sw ~clock ?time ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
@@ -645,6 +696,7 @@ let start_h1 ~sw ~net ~clock ?time ?domain_manager
       run_h1_impl ~sw ~net ~clock ?time ?domain_manager ~domain_policy
         ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
+        ~on_listener_start:(fun socket -> register_listener t socket)
         ~on_connection_start:(fun connection -> register_connection t (H1 connection))
         ~on_connection_close:(tracked_h1_on_close t on_connection_close)
         ~addr handler);
@@ -665,6 +717,7 @@ let start_h2c_on_socket ~sw ~clock ?time ?(config = Config.default)
     ?on_error ?on_connection_close ~socket handler =
   Config.validate config;
   let t = create () in
+  register_listener t socket;
   Eio.Fiber.fork ~sw (fun () ->
       run_h2c_on_socket_impl ~sw ~clock ?time ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
@@ -684,6 +737,7 @@ let start_h2c ~sw ~net ~clock ?time ?domain_manager
       run_h2c_impl ~sw ~net ~clock ?time ?domain_manager ~domain_policy
         ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
+        ~on_listener_start:(fun socket -> register_listener t socket)
         ~on_connection_start:(fun connection -> register_connection t (H2 connection))
         ~on_connection_close:(tracked_h2_on_close t on_connection_close)
         ~addr handler);
@@ -694,6 +748,7 @@ let start_https_on_socket ~sw ~clock ?time ?(config = Config.default)
   Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
   let t = create () in
+  register_listener t socket;
   Eio.Fiber.fork ~sw (fun () ->
       run_https_on_socket_impl ~sw ~clock ?time ~stop:t.stop ~config
         ?runtime_factory
@@ -724,6 +779,7 @@ let start_https ~sw ~net ~clock ?time ?domain_manager
       run_https_impl ~sw ~net ~clock ?time ?domain_manager ~domain_policy
         ~stop:t.stop ~config ?runtime_factory
         ~on_error:(tracked_listener_error t on_error)
+        ~on_listener_start:(fun socket -> register_listener t socket)
         ~on_connection_start:(fun connection ->
           register_transitioned_connection t connection)
         ~on_connection_close:(tracked_https_on_close t on_connection_close)

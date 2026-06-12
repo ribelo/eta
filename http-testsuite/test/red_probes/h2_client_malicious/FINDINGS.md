@@ -12,7 +12,7 @@ deadline.
 nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
 ```
 
-## Confirmed Eta bug
+## Reclassified generated probe
 
 ### `goaway_high_last_stream_id`
 
@@ -21,13 +21,11 @@ nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probe
   nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
   ```
 - **Expected behavior:**
-  The client MUST treat a GOAWAY frame whose `last_stream_id` is larger than any
-  stream identifier it has sent as a connection error of type PROTOCOL_ERROR
-  (RFC 9113 Section 5.4.1).  The request should fail immediately with a typed
-  `Connection_protocol_violation`.
-- **Actual behavior:**
-  The client does not reject the GOAWAY.  The request hangs until the configured
-  total-request timeout fires (~2.5 s inside the probe).
+  A clean GOAWAY frame whose `last_stream_id` is higher than the active stream
+  does not fail that stream by itself. If the peer never sends response HEADERS,
+  the request should end through the configured total-request timeout.
+- **Observed behavior:**
+  The request returns a typed `Total_request_timeout`.
 - **Protocol/backend involved:** HTTP/2 client (`eta_http_eio` H2 multiplexer /
   `ocaml-h2` client connection).
 - **Minimized input / frame sequence:**
@@ -35,9 +33,10 @@ nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probe
   2. Server SETTINGS
   3. Server `GOAWAY(last_stream_id=0x7FFFFFFF, error_code=0)`
   4. Server drains client frames so the hang is not a write-buffer stall
-  5. Client request never receives a response and times out
-- **Status:** `FAIL` (recorded as unexpected timeout by the runner)
-- **Classification:** confirmed Eta bug
+  5. Client request never receives a response and times out cleanly
+- **Status:** `PASS`
+- **Classification:** generated probe expectation was wrong; retained as
+  timeout regression coverage.
 
 ## Probes that passed (correctly handled) and are worth keeping
 

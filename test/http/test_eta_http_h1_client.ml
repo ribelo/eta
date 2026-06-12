@@ -1035,6 +1035,42 @@ let test_h1_pool_request_cancellation_releases_checkout () =
   Alcotest.(check int) "cancellation logged no daemon failure" 0
     (List.length daemon_failures)
 
+let test_h1_pool_dead_keep_alive_opens_new_connection () =
+  let net = Eio_mock.Net.make "eta-http-h1-dead-keepalive-net" in
+  let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
+  let first_flow = Eio_mock.Flow.make "eta-http-h1-dead-keepalive-first" in
+  let second_flow = Eio_mock.Flow.make "eta-http-h1-dead-keepalive-second" in
+  Eio_mock.Flow.on_read first_flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\none" ];
+  Eio_mock.Flow.on_read second_flow
+    [ `Return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntwo" ];
+  Eio_mock.Net.on_getaddrinfo net [ `Return [ addr ]; `Return [ addr ] ];
+  Eio_mock.Net.on_connect net [ `Return first_flow; `Return second_flow ];
+  let url = Eta_http.Core.Url.of_string "http://example.test/dead-keepalive" in
+  let request : Eta_http_eio.H1.Client.request =
+    { method_ = "GET"; url; headers = []; body = Eta_http_eio.H1.Client.Empty }
+  in
+  with_test_clock @@ fun sw _clock rt ->
+  let pool =
+    Eta_http_eio.H1.Client.make_pool ~max_size:1 ~sw ~net url
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+  in
+  let read_once () =
+    let response =
+      Eta_http_eio.H1.Client.request_with_pool pool request
+      |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+    in
+    Eta_http.Body.Stream.read_all response.body
+    |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+    |> Bytes.to_string
+  in
+  Alcotest.(check string) "first body" "one" (read_once ());
+  Alcotest.(check string) "second body" "two" (read_once ());
+  let stats = Eta_http_eio.H1.Client.pool_stats pool in
+  Alcotest.(check int) "two TCP opens" 2 stats.Eta.Pool.opened;
+  Alcotest.(check int) "dead idle connection rejected" 1 stats.health_rejected;
+  Alcotest.(check int) "dead idle connection closed" 1 stats.closed
+
 (* GREEN TEST: server sends Connection: close; the connection is marked
    non-reusable and the health check rejects it on next checkout,
    forcing a new TCP open. *)

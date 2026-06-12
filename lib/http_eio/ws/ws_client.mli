@@ -17,11 +17,17 @@ val default_max_frame_size : int
 (** Default maximum WebSocket frame payload bytes accepted by the client before
     allocation. *)
 
+val default_max_consecutive_pings : int
+(** Default maximum number of peer ping frames accepted without an intervening
+    data frame. This bounds malicious ping loops while allowing normal
+    keep-alive pings over long-lived connections. *)
+
 val connect_on_flow :
   ?key:string ->
   ?max_frame_size:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
+  ?max_consecutive_pings:int ->
   sw:Eio.Switch.t ->
   flow:flow ->
   Url.t ->
@@ -34,6 +40,7 @@ val connect :
   ?max_frame_size:int ->
   ?headers:Header.t ->
   ?protocols:string list ->
+  ?max_consecutive_pings:int ->
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
   string ->

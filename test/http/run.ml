@@ -1,6 +1,7 @@
 open Test_eta_http_h1_write
 open Test_eta_http_transport
 open Test_eta_http_h1_client
+open Test_eta_http_retry
 open Test_eta_http_h1_server
 open Test_eta_http_server_config
 open Test_eta_http_server_stats
@@ -23,6 +24,15 @@ let () =
             test_eio_runtime_service_h1_request;
           Alcotest.test_case "rejects cross-domain use" `Quick
             test_client_rejects_cross_domain_use;
+        ] );
+      ( "retry",
+        [
+          Alcotest.test_case "delay timeout cancels before next attempt" `Quick
+            test_retry_delay_timeout_cancels_before_next_attempt;
+          Alcotest.test_case "Retry-After timeout cancels before next attempt"
+            `Quick test_retry_after_timeout_cancels_before_next_attempt;
+          Alcotest.test_case "far-future Retry-After date is capped" `Quick
+            test_retry_after_far_future_date_is_capped;
         ] );
       ( "h1-write",
         [
@@ -97,6 +107,8 @@ let () =
             test_h1_pool_request_cancellation_releases_checkout;
           Alcotest.test_case "pool marks undelivered response unreusable" `Quick
             test_h1_pool_marks_undelivered_response_unreusable;
+          Alcotest.test_case "pool dead keep-alive opens new connection" `Quick
+            test_h1_pool_dead_keep_alive_opens_new_connection;
           Alcotest.test_case "pool connection close opens new connection" `Quick
             test_h1_pool_connection_close_opens_new_connection;
           Alcotest.test_case "read exception leaks release" `Quick
@@ -220,6 +232,10 @@ let () =
             test_ws_close_sent_uses_atomic_state;
           Alcotest.test_case "ping is internal and sends pong" `Quick
             test_ws_ping_is_internal_and_pong_is_sent;
+          Alcotest.test_case "rejects HTTP/1.0 upgrade response" `Quick
+            test_ws_rejects_http10_upgrade_response;
+          Alcotest.test_case "rejects consecutive ping flood" `Quick
+            test_ws_rejects_consecutive_ping_flood;
           Alcotest.test_case "1011 close fails inbound stream" `Quick
             test_ws_close_1011_fails_inbound_stream;
           Alcotest.test_case "invalid peer close code is protocol error" `Quick
@@ -444,6 +460,9 @@ let () =
             test_h2c_server_resets_overflowing_stream_response;
           Alcotest.test_case "h2c multiplexes slow uploads" `Quick
             test_h2c_server_multiplexes_slow_uploads;
+          Alcotest.test_case
+            "h2c half-close incomplete body does not block streams" `Quick
+            test_h2c_server_half_close_resets_incomplete_body_without_blocking;
           Alcotest.test_case "h2c streams large body past window" `Quick
             test_h2c_server_streams_large_body_past_window;
           Alcotest.test_case "h2c resets stalled reader stream" `Quick

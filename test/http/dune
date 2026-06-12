@@ -5,6 +5,7 @@
   test_eta_http_support
   test_eta_http_h1_write
   test_eta_http_transport
+  test_eta_http_retry
   test_eta_http_h1_client
   test_eta_http_h1_server
   test_eta_http_server_config

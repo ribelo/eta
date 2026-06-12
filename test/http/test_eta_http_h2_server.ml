@@ -227,6 +227,30 @@ let raw_h2_has_frame ?stream_id frame_type bytes =
   in
   loop 0
 
+let raw_h2_count_frames ?stream_id frame_type bytes =
+  let target = Eta_http.H2.Frame.frame_type_code frame_type in
+  let len = String.length bytes in
+  let rec loop off count =
+    if off + Eta_http.H2.Frame.header_size > len then count
+    else
+      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
+      let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+      if next > len then count
+      else
+        let count =
+          if
+            envelope.frame_type = target
+            &&
+            match stream_id with
+            | None -> true
+            | Some stream_id -> envelope.stream_id = stream_id
+          then count + 1
+          else count
+        in
+        loop next count
+  in
+  loop 0 0
+
 let read_raw_until_h2_frame ~frame_type ?stream_id flow =
   let buffer = Buffer.create 128 in
   let scratch = Cstruct.create 1024 in
@@ -267,6 +291,33 @@ let read_raw_until_h2_frame ~frame_type ?stream_id flow =
              %s"
             (Eta_http.H2.Frame.frame_type_code frame_type)
             (String.length bytes) (frame_summary bytes)
+  in
+  loop ()
+
+let read_raw_until_h2_frame_count ~frame_type ~count flow =
+  let buffer = Buffer.create 128 in
+  let scratch = Cstruct.create 1024 in
+  let rec loop () =
+    let bytes = Buffer.contents buffer in
+    if raw_h2_count_frames frame_type bytes >= count then bytes
+    else
+      match Eio.Flow.single_read flow scratch with
+      | 0 ->
+          Alcotest.failf
+            "connection closed before %d HTTP/2 frames of type %d; received %d"
+            count
+            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (String.length bytes)
+      | len ->
+          Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
+          loop ()
+      | exception End_of_file ->
+          let bytes = Buffer.contents buffer in
+          Alcotest.failf
+            "connection ended before %d HTTP/2 frames of type %d; received %d"
+            count
+            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (String.length bytes)
   in
   loop ()
 
@@ -2301,9 +2352,12 @@ let test_h2c_server_closes_on_ingress_security_error () =
        ^ String.concat ""
            (List.init 11 (fun _ -> Eta_http.H2.Frame.settings)))
         flow;
-      ignore
-        (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
-             read_raw_until_close flow));
+      let response =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            read_raw_until_close flow)
+      in
+      Alcotest.(check bool) "security failure sends GOAWAY" true
+        (raw_h2_has_frame Goaway response);
       let stats =
         Eio.Time.with_timeout_exn clock 1.0 (fun () ->
             Eio.Promise.await closed_stats)
@@ -2702,6 +2756,66 @@ let test_h2c_server_multiplexes_slow_uploads () =
       Alcotest.(check int) "completed streams" 4 stats.completed_streams;
       Alcotest.(check int) "reset streams" 0 stats.reset_streams;
       Alcotest.(check int) "active streams" 0 stats.active_streams)
+
+let test_h2c_server_half_close_resets_incomplete_body_without_blocking () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler (request : Eta_http.Server.Request.t) =
+    Eta_http.Server.Body.read_all request.body
+    |> Eta.Effect.map (fun body ->
+           Eta_http.Server.Response.make ~status:200
+             ~body:(Eta_http.Server.Response.Body.fixed [ body ])
+             ())
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let request_headers stream_id =
+    let encoder = Hpack.Encoder.create 4096 in
+    raw_h2_headers encoder ~stream_id ~end_stream:false
+      [
+        hpack_header ":method" "POST";
+        hpack_header ":scheme" "http";
+        hpack_header ":path" "/echo";
+        hpack_header ":authority" "127.0.0.1";
+      ]
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      (try Eio.Flow.shutdown flow `All with _ -> ());
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let complete_streams =
+        List.init 9 (fun i ->
+            let stream_id = ((i + 2) * 2) - 1 in
+            request_headers stream_id
+            ^ raw_h2_data ~end_stream:true ~stream_id "done")
+      in
+      Eio.Flow.write flow
+        [
+          Cstruct.of_string
+            ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+            ^ Eta_http.H2.Frame.settings
+            ^ request_headers 1
+            ^ String.concat "" complete_streams);
+        ];
+      Eio.Flow.shutdown flow `Send;
+      let response =
+        Eio.Time.with_timeout_exn clock 2.0 (fun () ->
+            read_raw_until_h2_frame_count ~frame_type:Headers ~count:9 flow)
+      in
+      Alcotest.(check int) "completed stream responses" 9
+        (raw_h2_count_frames Headers response))
 
 let test_h2c_server_streams_large_body_past_window () =
   run_eio @@ fun env ->
@@ -3288,15 +3402,12 @@ let test_h2c_server_closes_on_rapid_reset_limit () =
         ^ Eta_http.H2.Frame.settings
         ^ String.concat "" (List.init 3 reset_stream))
         flow;
-      let closed =
+      let response =
         Eio.Time.with_timeout_exn clock 1.0 (fun () ->
-            let scratch = Cstruct.create 1 in
-            match Eio.Flow.single_read flow scratch with
-            | 0 -> true
-            | _ -> false
-            | exception End_of_file -> true)
+            read_raw_until_h2_frame ~frame_type:Goaway flow)
       in
-      Alcotest.(check bool) "rapid reset limit closed connection" true closed)
+      Alcotest.(check bool) "rapid reset limit sends GOAWAY" true
+        (raw_h2_has_frame Goaway response))
 
 let test_h2c_connection_closes_on_default_rapid_reset_limit () =
   run_eio @@ fun env ->

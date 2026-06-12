@@ -217,12 +217,14 @@ let run_ws_probe ~env ~name:_ ~deadline_sec ~server_fn =
               ~finally:(fun () ->
                 ignore (Eio.Promise.try_resolve resolve_server_done ()))
               (fun () ->
-                Eio.Switch.run @@ fun conn_sw ->
-                let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
-                Fun.protect
-                  ~finally:(fun () ->
-                    try Eio.Flow.shutdown flow `All with _ -> ())
-                  (fun () -> server_fn ~env flow)));
+                try
+                  Eio.Switch.run @@ fun conn_sw ->
+                  let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+                  Fun.protect
+                    ~finally:(fun () ->
+                      try Eio.Flow.shutdown flow `All with _ -> ())
+                    (fun () -> server_fn ~env flow)
+                with _ -> ()));
         let rt = Eta_eio.Runtime.create ~sw ~clock () in
         let url = Printf.sprintf "ws://127.0.0.1:%d/ws" port in
         let timeout_ms = max 1 (int_of_float (deadline_sec *. 1000.0)) in
