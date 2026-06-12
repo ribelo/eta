@@ -2584,3 +2584,59 @@ let test_h2c_server_multiplexes_slow_uploads () =
       Alcotest.(check int) "completed streams" 4 stats.completed_streams;
       Alcotest.(check int) "reset streams" 0 stats.reset_streams;
       Alcotest.(check int) "active streams" 0 stats.active_streams)
+
+let test_h2c_server_streams_large_body_past_window () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let total = 512 * 1024 in
+  let chunk_size = 16 * 1024 in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/large" ->
+        let remaining = ref total in
+        let body =
+          Eta_http.Server.Response.Body.stream ~length:total (fun () ->
+              if !remaining = 0 then Eta.Effect.pure None
+              else
+                let n = min chunk_size !remaining in
+                remaining := !remaining - n;
+                Eta.Effect.pure (Some (Bytes.make n 'z')))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/large"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 10.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "large stream status" 200 status;
+      Alcotest.(check int) "large stream body length" total
+        (String.length body))

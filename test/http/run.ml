@@ -281,6 +281,8 @@ let () =
             test_https_server_h1_alpn_request;
           Alcotest.test_case "HTTPS server H2 ALPN request" `Quick
             test_https_server_h2_alpn_request;
+          Alcotest.test_case "HTTPS server H2 streams large body past window"
+            `Quick test_https_server_h2_streams_large_body_past_window;
           Alcotest.test_case "HTTPS server handshake timeout stats" `Quick
             test_https_server_handshake_timeout_stats;
           Alcotest.test_case "HTTPS server shutdown closes pending handshake"
@@ -416,6 +418,8 @@ let () =
             test_h2c_server_resets_overflowing_stream_response;
           Alcotest.test_case "h2c multiplexes slow uploads" `Quick
             test_h2c_server_multiplexes_slow_uploads;
+          Alcotest.test_case "h2c streams large body past window" `Quick
+            test_h2c_server_streams_large_body_past_window;
         ] );
       ( "h2-security",
         [

@@ -799,6 +799,77 @@ let test_https_server_h2_alpn_request () =
       Alcotest.(check int) "alpn rejected" 0 server_stats.alpn_rejected;
       Eta_http_eio.Server.shutdown server Immediate)
 
+let test_https_server_h2_streams_large_body_past_window () =
+  with_temp_tls_files @@ fun cert key ->
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let tls_config =
+    Eta_http.Tls.Config.default_server ~certificate_chain_file:cert
+      ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ] ()
+  in
+  let total = 512 * 1024 in
+  let chunk_size = 16 * 1024 in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/large" ->
+        let remaining = ref total in
+        let body =
+          Eta_http.Server.Response.Body.stream ~length:total (fun () ->
+              if !remaining = 0 then Eta.Effect.pure None
+              else
+                let n = min chunk_size !remaining in
+                remaining := !remaining - n;
+                Eta.Effect.pure (Some (Bytes.make n 'z')))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "unexpected\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_https_on_socket ~sw ~clock ~tls_config ~socket
+      handler
+  in
+  let raw =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let localhost = Domain_name.(host_exn (of_string_exn "localhost")) in
+  let client_config =
+    Eta_http.Tls.Config.default_client ~peer_name:localhost ~ca_file:cert
+      ~alpn_protocols:[ "h2" ] ()
+  in
+  let raw_flow =
+    (raw :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
+  in
+  let tls_flow = Eta_http_eio.Tls.Eio.client_of_flow client_config raw_flow in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(tls_flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"https"
+          ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+          `GET "/large"
+      in
+      let status, body =
+        Eio.Time.with_timeout_exn clock 10.0 (fun () ->
+            Test_eta_http_h2_server.await_h2_response connection request)
+      in
+      Alcotest.(check int) "large tls stream status" 200 status;
+      Alcotest.(check int) "large tls stream body length" total
+        (String.length body))
+
 let test_https_server_handshake_timeout_stats () =
   with_temp_tls_files @@ fun cert key ->
   run_eio @@ fun env ->
