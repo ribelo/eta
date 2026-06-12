@@ -14,7 +14,9 @@ surface:
 
 - typed error taxonomy, redaction, and JSON-style projection;
 - request/response model with streaming byte bodies;
-- ADR 0002 TLS 1.2 + ECDHE-AEAD config chokepoint;
+- OpenSSL-backed TLS 1.2/1.3 policy chokepoint with TLS 1.3 default
+  negotiation, ALPN, SNI certificate selection, strict-SNI mode, and session
+  resumption support;
 - RFC 3986 client-subset URL parser for absolute `http`/`https` URLs;
 - backend-neutral client service contract for runtime-provided HTTP clients;
 - HTTP/1.1 request serialization, response parsing, chunked trailers, and gzip;
@@ -24,12 +26,77 @@ surface:
 - OpenTelemetry semantic-convention observability helpers.
 
 The Eio transport adapter lives under `lib/http_eio/` and owns DNS, TCP, TLS,
-ALPN dispatch, HTTP/1.1 pooling, HTTP/2 connection ownership, and WebSocket
-client I/O.
+ALPN dispatch, HTTP/1.1 client pooling, HTTP/1.1/h2c/HTTPS server loops,
+HTTP/2 connection ownership, and WebSocket client I/O.
+
+## Edge Server Readiness
+
+`eta_http_eio.Server` is intended to be usable directly on the public Internet
+for general-purpose HTTP/1.1, h2c, and HTTPS H1/H2 service. The claim is backed
+by unit, interop, adversarial, and benchmark gates listed below.
+
+Default HTTP limits are deliberately bounded:
+
+| Setting | Default |
+| --- | --- |
+| Request line | 8 KiB |
+| Request headers | 32 KiB / 256 headers |
+| Request body | 1 MiB |
+| Response headers | 32 KiB / 256 headers |
+| Trailers | 8 KiB / 64 trailers |
+| Unread request body policy | `Reset` |
+
+Default HTTP timeouts:
+
+| Timeout | Default |
+| --- | --- |
+| Request headers | 30 s |
+| Request body | 30 s |
+| Response socket/write progress | 30 s |
+| Response body producer | 30 s |
+| Idle keep-alive | 60 s |
+| Handler runtime | 30 s |
+
+Default Eio transport limits:
+
+| Setting | Default |
+| --- | --- |
+| Listener backlog | 128 |
+| Max accepted connections | 1024 |
+| Read buffer | 64 KiB |
+| Command queue capacity | 1024 |
+| TLS handshake timeout | 10 s |
+| HTTP/2 max concurrent streams | 128 |
+
+The server rejects malformed H1 framing and smuggling vectors, enforces H2
+connection-specific header rules and content lengths, owns H2 response framing,
+resets flow-control-stalled H2 response streams, bounds pending TLS handshakes,
+and applies `TCP_NODELAY` to accepted TCP flows before handing them to H1, h2c,
+or HTTPS handlers.
 
 ## Evidence
 
-Rerunnable research evidence lives under `scratch/eta_http_research/`:
+Current shipped gates:
+
+```sh
+nix --option eval-cache false develop -c dune runtest test/http --force
+nix --option eval-cache false develop -c dune runtest test/http_eio --force
+timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
+timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
+nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
+nix --option eval-cache false develop -c bash bench/run.sh --quick
+```
+
+Current counts from the latest edge-readiness pass:
+
+| Gate | Result |
+| --- | --- |
+| `test/http` | 199 tests passing |
+| `test/http_eio` | 142 tests passing |
+| `http-testsuite` interop | PASS 314, DIVERGENT 0, FAIL 0, SKIP 176 |
+| `http-testsuite` CVE/adversarial | PASS 27, FAIL 0, SKIP 0 |
+
+Rerunnable research evidence lives under `.scratch/eta_http_research/`:
 
 - `h_q4a_interop_matrix/`: scripted curl/nghttp2/nghttpd/nginx/Caddy interop
   matrix.
@@ -37,14 +104,6 @@ Rerunnable research evidence lives under `scratch/eta_http_research/`:
 - `h_p1_product_semantics/`: product semantics ADR set.
 - `h_ops1_dependency_posture/`: dependency closure, build timing, CVE process,
   version pin policy, and LTS risk register.
-
-Current local checks:
-
-```sh
-nix develop .#mainline -c dune runtest test/http test/http_eio --force
-nix develop -c dune exec scratch/eta_http_research/h_g1_grpc_forward_compat/response_consumer.exe
-nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_matrix.sh
-```
 
 ## Public API TOC
 
@@ -101,16 +160,17 @@ before making call-site-specific claims.
 Focused eta-http checks:
 
 ```sh
-nix develop .#mainline -c dune build @install
-nix develop .#mainline -c dune runtest test/http test/http_eio --force
+nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
+nix --option eval-cache false develop -c dune runtest test/http test/http_eio --force
 nix develop -c bash lib/http/audit/run.sh
 ```
 
-Research evidence checks:
+Edge-readiness checks:
 
 ```sh
-nix develop -c dune exec scratch/eta_http_research/h_g1_grpc_forward_compat/response_consumer.exe
-nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_matrix.sh
+timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
+timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
+nix --option eval-cache false develop -c bash bench/run.sh --quick
 ```
 
 Full shipped Eta gate:
@@ -124,14 +184,15 @@ nix develop -c eta-oxcaml-test-shipped
 - Redirects are returned to callers; eta-http does not auto-follow or rewrite
   methods.
 - Cookies are header-explicit; eta-http has no cookie jar.
-- HTTP/1.1 pipelining is out of scope.
-- Public h2c prior-knowledge is not exposed by the Eio adapter; plain HTTP
-  routes to HTTP/1.1.
+- HTTP/1.1 server keep-alive and already-buffered pipelined request bytes are
+  covered. General client-side pipelining is outside the public client API.
+- Public client h2c prior-knowledge is not exposed by the Eio adapter; plain
+  client HTTP routes to HTTP/1.1. Server-side h2c is available through
+  `Eta_http_eio.Server.start_h2c` / `run_h2c`.
 - TLS certificate revocation checking through OCSP, CRL, or stapling is not
   performed by eta-http v1. Deployments that require revocation enforcement must
   provide it outside eta-http or through a future TLS policy surface.
-- HTTP/1.1 skips interim `100 Continue` and returns the final response, but
-  upload-drain recovery is not a product guarantee.
+- HTTP/1.1 clients skip interim `100 Continue` and return the final response.
 - HTTP/2 request I/O in `eta_http_eio` is owned by a dedicated reader/writer
   loop. The adapter filters interim 1xx response HEADERS, except
   `101 Switching Protocols`, before handing bytes to `ocaml-h2`; callers
@@ -140,8 +201,6 @@ nix develop -c eta-oxcaml-test-shipped
   drop-and-disconnect. The pinned `ocaml-h2` line does not expose received
   `last_stream_id`, so the adapter does not selectively retry streams above
   the GOAWAY cutoff in v1.
-- The real-server interop matrix is broad but not exhaustive; exact h2c support,
-  handcrafted TCP RST behavior, and pathological h2 stalled-window behavior
-  remain caveats in `h_q4a_interop_matrix/coverage_matrix.md`.
-- The pinned `tls.0.17.5` posture has known OSEC advisories documented in
-  `h_ops1_dependency_posture/cve_monitoring.md`.
+- The interop matrix is broad but not exhaustive. Explicit v1 skips are recorded
+  in `http-testsuite/lib/interop.ml`; field-level response subtractions are in
+  `http-testsuite/expected_divergences.md`.
