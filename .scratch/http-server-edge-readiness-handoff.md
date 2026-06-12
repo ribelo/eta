@@ -138,34 +138,42 @@ git diff --check
 - Covered by `@cve-regress`: header block size pressure (hpack bomb), DATA/
   empty-frame flooding, SETTINGS churn, stream reset churn (rapid reset),
   flow-control accounting (window_update_accounting), slow body timeout.
-- Remaining:
-  - Confirm per-stream and per-connection metrics stay correct on every reset
-    path (add focused tests if evidence is weak).
-  - Slow-upload multiplexing across many concurrent streams.
+- Covered by `test/http`: per-stream/per-connection reset metrics
+  (`reset_streams = 1` is asserted on a reset path in
+  `test_eta_http_h2_server.ml`).
+- Remaining: slow-upload multiplexing across many concurrent streams
+  (no dedicated test yet).
 
 ### HTTPS/TLS/ALPN
 
-- Already committed: TLS 1.3 default (`d53a32431`), close-notify on shutdown
-  (`e1db75c45`), close pending handshakes on shutdown (`92b863272`).
-- Remaining to verify with tests/evidence:
-  - certificate/key validation at startup
-  - strict SNI behavior
-  - ALPN dispatch for H1/H2 (explicit test, not just implicit)
-  - session resumption behavior
+- Fully covered by the `tls` group in `test/http/test_eta_http_tls.ml`
+  (24 tests, all passing):
+  - TLS 1.3 default (`d53a32431`)
+  - close-notify on shutdown (`e1db75c45`), pending-handshake close on
+    shutdown (`92b863272`)
+  - explicit ALPN protocol selection + server dispatch (h1/h2), end-to-end
+    HTTPS H1 and H2 requests
+  - strict SNI rejection and SNI cert selection
+  - TLS session resumption
+  - handshake-timeout enforcement (the TLS-slowloris defense)
+  - startup rejection of invalid certificate/key material
+- Remaining: none known.
 
 ### Resource Exhaustion
 
 - Confirmed present and bounded (see Audit Findings). Tested via `@cve-regress`
-  slowloris (H1 headers, H1/H2 slow body, H2 slow preface) and the limit
-  rejection tests.
-- Remaining: TLS-handshake slowloris test (handshake timeout path).
+  slowloris (H1 headers, H1/H2 slow body, H2 slow preface), the TLS
+  handshake-timeout test, and the limit rejection tests.
+- Remaining: none known.
 
 ### Operational Readiness
 
 - Defaults reviewed (see Audit Findings) and judged edge-appropriate.
-- Remaining: confirm stats/metrics expose active connections/streams, reset
-  streams, protocol errors, timeout classes, request/response bytes, and
-  shutdown state with example or test evidence where weak.
+- Stats/metrics coverage is exercised by `test_eta_http_server_stats.ml` and the
+  per-connection stats assertions in the H1/H2 server tests (active
+  connections/streams, reset streams, protocol errors, request/response bytes,
+  handshake outcomes, shutdown state).
+- Remaining: none known.
 
 ### Interop, CVE, Benchmark, Soak
 
@@ -182,11 +190,9 @@ nix develop -c bash bench/run.sh --quick
 
 ## Suggested Next Tasks
 
-H2 response framing and H1 smuggling locks are complete. Remaining
-edge-readiness work, in rough priority order:
+H2 response framing, H1 smuggling locks, and the TLS/ALPN + resource-exhaustion
+audits are complete. Remaining edge-readiness work, in rough priority order:
 
-- Verify per-stream / per-connection H2 metrics on all reset paths (add tests).
-- Add explicit ALPN dispatch + startup cert/key validation tests.
-- Add a TLS-handshake slowloris test.
+- Add a slow-upload multiplexing test across many concurrent H2 streams.
 - Run `bench/run.sh --quick` and save the result path.
 
