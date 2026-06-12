@@ -95,13 +95,16 @@ let filter_configs configs =
 
 let make_client ~env ~sw ~protocol ~transport ~cert_dir =
   let max_response_body_bytes = 128 * 1024 * 1024 in
+  let ca_file =
+    match transport with Plain -> None | TLS -> Some (Certs.ca_path cert_dir)
+  in
   match protocol with
   | H1 ->
       Eta_http_eio.Client.make_h1 ~sw ~net:(Eio.Stdenv.net env)
-        ~max_response_body_bytes ()
+        ~max_response_body_bytes ?ca_file ()
   | H2 ->
       Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env)
-        ~max_response_body_bytes ()
+        ~max_response_body_bytes ?ca_file ()
 
 type scenario = {
   name : string;
