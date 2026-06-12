@@ -2191,3 +2191,275 @@ let test_h2c_server_closes_on_ingress_security_error () =
             Eio.Promise.await closed_stats)
       in
       Alcotest.(check int) "protocol errors" 1 stats.protocol_errors)
+
+let test_h2c_server_owns_response_framing () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:8 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let head_stream_released = ref false in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/fixed" ->
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:200
+             ~body:
+               (Eta_http.Server.Response.Body.fixed
+                  [ Bytes.of_string "fixed-body" ])
+             ())
+    | "/stream-known" ->
+        let chunks = ref [ Bytes.of_string "abc"; Bytes.of_string "de" ] in
+        let body =
+          Eta_http.Server.Response.Body.stream ~length:5 (fun () ->
+              match !chunks with
+              | [] -> Eta.Effect.pure None
+              | chunk :: rest ->
+                  chunks := rest;
+                  Eta.Effect.pure (Some chunk))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | "/head" ->
+        let body =
+          Eta_http.Server.Response.Body.stream ~length:10
+            ~release:(fun () ->
+              Eta.Effect.sync (fun () -> head_stream_released := true))
+            (fun () -> Alcotest.fail "HEAD response body must not be read")
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | "/no-content" ->
+        Eta.Effect.pure (Eta_http.Server.Response.empty ~status:204 ())
+    | "/not-modified" ->
+        Eta.Effect.pure (Eta_http.Server.Response.empty ~status:304 ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  let make_request ?(meth = `GET) path =
+    H2.Request.create ~scheme:"http"
+      ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+      meth path
+  in
+  let content_length headers =
+    Option.bind !headers (List.assoc_opt "content-length")
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let fixed_headers = ref None in
+      let status, body =
+        await_h2_response ~tag:1 ~headers_ref:fixed_headers connection
+          (make_request "/fixed")
+      in
+      Alcotest.(check int) "fixed status" 200 status;
+      Alcotest.(check string) "fixed body" "fixed-body" body;
+      Alcotest.(check (option string)) "fixed content-length" (Some "10")
+        (content_length fixed_headers);
+      let stream_headers = ref None in
+      let s_status, s_body =
+        await_h2_response ~tag:2 ~headers_ref:stream_headers connection
+          (make_request "/stream-known")
+      in
+      Alcotest.(check int) "stream status" 200 s_status;
+      Alcotest.(check string) "stream body" "abcde" s_body;
+      Alcotest.(check (option string)) "stream content-length" (Some "5")
+        (content_length stream_headers);
+      let head_headers = ref None in
+      let h_status, h_body =
+        await_h2_response ~tag:3 ~headers_ref:head_headers connection
+          (make_request ~meth:`HEAD "/head")
+      in
+      Alcotest.(check int) "head status" 200 h_status;
+      Alcotest.(check string) "head body empty" "" h_body;
+      Alcotest.(check (option string)) "head content-length" (Some "10")
+        (content_length head_headers);
+      Alcotest.(check bool) "ignored head stream released" true
+        !head_stream_released;
+      let nc_headers = ref None in
+      let nc_status, nc_body =
+        await_h2_response ~tag:4 ~headers_ref:nc_headers connection
+          (make_request "/no-content")
+      in
+      Alcotest.(check int) "204 status" 204 nc_status;
+      Alcotest.(check string) "204 body empty" "" nc_body;
+      Alcotest.(check (option string)) "204 has no content-length" None
+        (content_length nc_headers);
+      let nm_status, nm_body =
+        await_h2_response ~tag:5 connection (make_request "/not-modified")
+      in
+      Alcotest.(check int) "304 status" 304 nm_status;
+      Alcotest.(check string) "304 body empty" "" nm_body)
+
+let test_h2c_server_rejects_handler_supplied_content_length () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler _request =
+    Eta.Effect.pure
+      (Eta_http.Server.Response.make ~status:200
+         ~headers:[ "content-length", "5" ]
+         ~body:(Eta_http.Server.Response.Body.fixed [ Bytes.of_string "hello" ])
+         ())
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/explicit-content-length"
+      in
+      let status, _body =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response connection request)
+      in
+      Alcotest.(check int) "handler content-length becomes 500" 500 status)
+
+let test_h2c_server_resets_short_stream_response () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler _request =
+    let sent = ref false in
+    let body =
+      Eta_http.Server.Response.Body.stream ~length:10 (fun () ->
+          if !sent then Eta.Effect.pure None
+          else (
+            sent := true;
+            Eta.Effect.pure (Some (Bytes.of_string "abc"))))
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/short-stream"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome connection request)
+      in
+      match outcome with
+      | `Error (status, _body, _error) ->
+          Alcotest.(check int) "short stream partial status" 200 status
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected reset for stream shorter than Content-Length, got EOF \
+             status=%d body=%S"
+            status body)
+
+let test_h2c_server_resets_overflowing_stream_response () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let handler _request =
+    let chunks =
+      ref [ Bytes.of_string "abc"; Bytes.of_string "defgh" ]
+    in
+    let body =
+      Eta_http.Server.Response.Body.stream ~length:4 (fun () ->
+          match !chunks with
+          | [] -> Eta.Effect.pure None
+          | chunk :: rest ->
+              chunks := rest;
+              Eta.Effect.pure (Some chunk))
+    in
+    Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/overflow-stream"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome connection request)
+      in
+      match outcome with
+      | `Error (status, body, _error) ->
+          Alcotest.(check int) "overflow stream partial status" 200 status;
+          Alcotest.(check bool) "overflow stream stops at declared length" true
+            (String.length body <= 4)
+      | `Eof (status, body) ->
+          Alcotest.failf
+            "expected reset for stream exceeding Content-Length, got EOF \
+             status=%d body=%S"
+            status body)

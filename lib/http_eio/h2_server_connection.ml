@@ -18,6 +18,17 @@ type stats = Server_stats.H2.snapshot = {
 type request_body_read = (bytes option, Server.Error.t) result
 type unit_result = (unit, Server.Error.t) result
 
+type response_body =
+  | Response_no_body of Server.Response.Body.stream option
+  | Response_fixed of bytes list * int
+  | Response_stream of Server.Response.Body.stream
+
+type prepared_response = {
+  status : int;
+  headers : Eta_http.Core.Header.t;
+  body : response_body;
+}
+
 type command =
   | Ingress of {
       bytes : Bigstringaf.t;
@@ -31,7 +42,7 @@ type command =
   | Request_body_timeout of int * request_body_read Eio.Promise.u
   | Request_body_drain_timeout of int * unit Eio.Promise.u
   | Request_body_discard of int * bool * (unit, Server.Error.t) result Eio.Promise.u
-  | Response_start of int * Server.Response.t * unit_result Eio.Promise.u
+  | Response_start of int * prepared_response * unit_result Eio.Promise.u
   | Response_chunk of int * bytes * unit_result Eio.Promise.u
   | Response_trailers of int * Eta_http.Core.Header.t * unit_result Eio.Promise.u
   | Response_close of int * unit_result Eio.Promise.u
@@ -343,8 +354,8 @@ let h2_header_list headers =
 
 let h2_response response =
   H2.Response.create
-    ~headers:(H2.Headers.of_list (h2_header_list (Server.Response.headers response)))
-    (H2.Status.of_code (Server.Response.status response))
+    ~headers:(H2.Headers.of_list (h2_header_list response.headers))
+    (H2.Status.of_code response.status)
 
 let validate_response_headers t response =
   match
@@ -355,8 +366,114 @@ let validate_response_headers t response =
   | Ok () -> Ok ()
   | Error message -> Error (response_write_error t ~message ())
 
-let fixed_body_length chunks =
-  List.fold_left (fun total chunk -> total + Bytes.length chunk) 0 chunks
+let fixed_body_length t chunks =
+  List.fold_left
+    (fun acc chunk ->
+      match acc with
+      | Error _ as error -> error
+      | Ok total ->
+          let length = Bytes.length chunk in
+          if total > max_int - length then
+            Error
+              (response_write_error t
+                 ~message:"response body length overflows int" ())
+          else Ok (total + length))
+    (Ok 0) chunks
+
+let bodyless_response ~request_method status =
+  (match Eta_http.Core.Method.of_string request_method with
+  | `HEAD -> true
+  | _ -> false)
+  || Eta_http.Core.Status.is_informational status
+  || status = 204 || status = 304
+
+let strict_no_body_status status =
+  Eta_http.Core.Status.is_informational status || status = 204 || status = 304
+
+let add_content_length_header length headers =
+  Eta_http.Core.Header.unsafe_add "content-length" (string_of_int length) headers
+
+let prepare_h2_response t request response =
+  match validate_response_headers t response with
+  | Error _ as error -> error
+  | Ok () -> (
+      let headers = Server.Response.headers response in
+      match Eta_http.Core.Header.get "content-length" headers with
+      | Some _ ->
+          Error
+            (response_write_error t
+               ~message:"caller supplied HTTP/2 response Content-Length" ())
+      | None -> (
+          let status = Server.Response.status response in
+          let body = Server.Response.body response in
+          let bodyless =
+            bodyless_response ~request_method:request.Server.Request.method_
+              status
+          in
+          let strict_no_body = strict_no_body_status status in
+          match (bodyless, strict_no_body, body) with
+          | true, true, Server.Response.Body.Stream stream ->
+              Ok
+                {
+                  status;
+                  headers;
+                  body = Response_no_body (Some stream);
+                }
+          | true, true, (Empty | Fixed _) ->
+              Ok { status; headers; body = Response_no_body None }
+          | true, false, Empty ->
+              Ok
+                {
+                  status;
+                  headers = add_content_length_header 0 headers;
+                  body = Response_no_body None;
+                }
+          | true, false, Fixed chunks -> (
+              match fixed_body_length t chunks with
+              | Error _ as error -> error
+              | Ok length ->
+                  Ok
+                    {
+                      status;
+                      headers = add_content_length_header length headers;
+                      body = Response_no_body None;
+                    })
+          | true, false, Stream ({ length; _ } as stream) ->
+              Ok
+                {
+                  status;
+                  headers =
+                    (match length with
+                    | None -> headers
+                    | Some length -> add_content_length_header length headers);
+                  body = Response_no_body (Some stream);
+                }
+          | false, _, Empty ->
+              Ok
+                {
+                  status;
+                  headers = add_content_length_header 0 headers;
+                  body = Response_no_body None;
+                }
+          | false, _, Fixed chunks -> (
+              match fixed_body_length t chunks with
+              | Error _ as error -> error
+              | Ok length ->
+                  Ok
+                    {
+                      status;
+                      headers = add_content_length_header length headers;
+                      body = Response_fixed (chunks, length);
+                    })
+          | false, _, Stream ({ length = Some length; _ } as stream) ->
+              Ok
+                {
+                  status;
+                  headers = add_content_length_header length headers;
+                  body = Response_stream stream;
+                }
+          | false, _, Stream stream ->
+              Ok { status; headers; body = Response_stream stream }))
 
 let max_h2_data_chunk = 16 * 1024
 
@@ -370,8 +487,7 @@ let write_fixed_chunk writer chunk =
   in
   loop 0
 
-let fixed_response_stream chunks =
-  let total = fixed_body_length chunks in
+let fixed_response_stream chunks length =
   let chunks = ref chunks in
   let current = ref None in
   let offset = ref 0 in
@@ -392,7 +508,7 @@ let fixed_response_stream chunks =
             read ())
   in
   {
-    Server.Response.Body.length = Some total;
+    Server.Response.Body.length = Some length;
     read;
     release = (fun () -> Eta.Effect.unit);
   }
@@ -419,12 +535,12 @@ let fallback_error_response t request cause =
   Server.Handler.default_error_response error
 
 let respond_fixed reqd response =
-  match Server.Response.body response with
-  | Empty -> H2.Reqd.respond_with_string reqd (h2_response response) ""
-  | Fixed chunks ->
+  match response.body with
+  | Response_no_body _ -> H2.Reqd.respond_with_string reqd (h2_response response) ""
+  | Response_fixed (chunks, _) ->
       H2.Reqd.respond_with_string reqd (h2_response response)
         (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
-  | Stream _ ->
+  | Response_stream _ ->
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
 
@@ -787,8 +903,8 @@ let start_response t ordinal response resolver =
            (response_write_error t ~message:"response already completed" ()));
       `Done
   | Some state -> (
-      match Server.Response.body response with
-      | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
+      match response.body with
+      | Response_fixed (_, length) when length > max_h2_data_chunk ->
           let writer =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
@@ -796,23 +912,21 @@ let start_response t ordinal response resolver =
           state.response_write_resolver <- Some resolver;
           discard_request_body_with_policy ~drain:true t ordinal state;
           `Flush (state, resolver)
-      | Empty | Fixed _ ->
-          (match Server.Response.body response with
-          | Empty -> ()
-          | Fixed chunks ->
-              Server_stats.H2.add_response_bytes t.stats
-                (fixed_body_length chunks);
+      | Response_no_body _ | Response_fixed _ ->
+          (match response.body with
+          | Response_no_body _ -> ()
+          | Response_fixed (_, length) ->
+              Server_stats.H2.add_response_bytes t.stats length;
               Option.iter
                 (fun metrics ->
-                  Server_metrics.response_body_bytes metrics
-                    (fixed_body_length chunks))
+                  Server_metrics.response_body_bytes metrics length)
                 state.metrics
-          | Stream _ -> assert false);
+          | Response_stream _ -> assert false);
           respond_fixed state.reqd response;
           finish_response t ordinal state;
           resolve resolver (Ok ());
           `Done
-      | Stream _ ->
+      | Response_stream _ ->
           let writer =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
@@ -1108,6 +1222,17 @@ let release_response_stream rt stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
   | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
 
+let release_ignored_response_stream rt response =
+  match Server.Response.body response with
+  | Server.Response.Body.Stream stream -> release_response_stream rt stream
+  | Empty | Fixed _ -> ()
+
+let release_prepared_response_body rt response =
+  match response.body with
+  | Response_no_body (Some stream) | Response_stream stream ->
+      release_response_stream rt stream
+  | Response_no_body None | Response_fixed _ -> ()
+
 let run_response_body_effect t rt request effect =
   match t.config.server.timeouts.response_body_timeout with
   | Some timeout -> (
@@ -1145,30 +1270,53 @@ let fail_stream_response t rt ordinal stream error =
   ignore (enqueue t (Response_failed (ordinal, error)));
   release_response_stream rt stream
 
-let rec pump_response_stream t rt ordinal request response stream =
+let response_content_length_error t message =
+  response_write_error t ~message ()
+
+let rec pump_response_stream t rt ordinal request response stream written =
   match read_response_stream t rt request stream with
   | `Closed -> release_response_stream rt stream
   | `Read (Error error) -> fail_stream_response t rt ordinal stream error
   | `Read (Ok (Some chunk)) -> (
-      match await_owner t (fun resolver -> Response_chunk (ordinal, chunk, resolver)) with
-      | Ok () -> pump_response_stream t rt ordinal request response stream
-      | Error error -> fail_stream_response t rt ordinal stream error)
-  | `Read (Ok None) -> (
-      match response_trailers t rt request response with
-      | `Closed -> release_response_stream rt stream
-      | `Trailers (Error error) -> fail_stream_response t rt ordinal stream error
-      | `Trailers (Ok trailers) -> (
+      let length = Bytes.length chunk in
+      let next = if length > max_int - written then max_int else written + length in
+      match stream.Server.Response.Body.length with
+      | Some expected when next > expected ->
+          fail_stream_response t rt ordinal stream
+            (response_content_length_error t
+               "stream exceeded declared Content-Length")
+      | None | Some _ -> (
           match
             await_owner t (fun resolver ->
-                Response_trailers (ordinal, trailers, resolver))
+                Response_chunk (ordinal, chunk, resolver))
           with
-          | Error error -> fail_stream_response t rt ordinal stream error
-          | Ok () -> (
+          | Ok () -> pump_response_stream t rt ordinal request response stream next
+          | Error error -> fail_stream_response t rt ordinal stream error))
+  | `Read (Ok None) -> (
+      match stream.Server.Response.Body.length with
+      | Some expected when written <> expected ->
+          fail_stream_response t rt ordinal stream
+            (response_content_length_error t
+               "stream ended before declared Content-Length")
+      | None | Some _ -> (
+          match response_trailers t rt request response with
+          | `Closed -> release_response_stream rt stream
+          | `Trailers (Error error) ->
+              fail_stream_response t rt ordinal stream error
+          | `Trailers (Ok trailers) -> (
               match
-                await_owner t (fun resolver -> Response_close (ordinal, resolver))
+                await_owner t (fun resolver ->
+                    Response_trailers (ordinal, trailers, resolver))
               with
-              | Ok () -> release_response_stream rt stream
-              | Error error -> fail_stream_response t rt ordinal stream error)))
+              | Error error -> fail_stream_response t rt ordinal stream error
+              | Ok () -> (
+                  match
+                    await_owner t (fun resolver ->
+                        Response_close (ordinal, resolver))
+                  with
+                  | Ok () -> release_response_stream rt stream
+                  | Error error ->
+                      fail_stream_response t rt ordinal stream error))))
 
 let run_handler t ordinal request handler =
   Eio.Fiber.fork ~sw:t.sw (fun () ->
@@ -1193,23 +1341,34 @@ let run_handler t ordinal request handler =
             | Eta.Exit.Ok response -> response
             | Eta.Exit.Error cause -> fallback_error_response t request cause)
       in
-      let response =
-        match validate_response_headers t response with
-        | Ok () -> response
-        | Error error -> Server.Handler.default_error_response error
+      let response, prepared =
+        match prepare_h2_response t request response with
+        | Ok prepared -> (response, Ok prepared)
+        | Error error ->
+            release_ignored_response_stream rt response;
+            let response = Server.Handler.default_error_response error in
+            (response, prepare_h2_response t request response)
       in
-      match
-        await_owner t (fun resolver -> Response_start (ordinal, response, resolver))
-      with
+      match prepared with
       | Error error -> ignore (enqueue t (Response_failed (ordinal, error)))
-      | Ok () -> (
-          match Server.Response.body response with
-          | Fixed chunks when fixed_body_length chunks > max_h2_data_chunk ->
-              pump_response_stream t rt ordinal request response
-                (fixed_response_stream chunks)
-          | Empty | Fixed _ -> ()
-          | Stream stream ->
-              pump_response_stream t rt ordinal request response stream))
+      | Ok prepared -> (
+          match
+            await_owner t (fun resolver ->
+                Response_start (ordinal, prepared, resolver))
+          with
+          | Error error ->
+              release_prepared_response_body rt prepared;
+              ignore (enqueue t (Response_failed (ordinal, error)))
+          | Ok () -> (
+              match prepared.body with
+              | Response_fixed (chunks, length) when length > max_h2_data_chunk
+                ->
+                  pump_response_stream t rt ordinal request response
+                    (fixed_response_stream chunks length) 0
+              | Response_no_body (Some stream) -> release_response_stream rt stream
+              | Response_no_body None | Response_fixed _ -> ()
+              | Response_stream stream ->
+                  pump_response_stream t rt ordinal request response stream 0)))
 
 let shutdown t policy =
   if not t.closed then ignore (enqueue t (Shutdown policy))
@@ -1273,10 +1432,12 @@ let run ~sw ~clock ~flow ~connection ~config ~runtime_factory ?on_start
             | Error error ->
                 record_protocol_error t;
                 let _promise, resolver = Eio.Promise.create () in
-                ignore
-                  (start_response t ordinal
-                     (Server.Handler.default_error_response error)
-                     resolver)))
+                let response = Server.Handler.default_error_response error in
+                (match prepare_h2_response t request response with
+                | Ok prepared ->
+                    ignore (start_response t ordinal prepared resolver)
+                | Error error ->
+                    ignore (enqueue t (Response_failed (ordinal, error))))))
   in
   let security =
     Eta_http.H2.Security.create

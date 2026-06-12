@@ -403,6 +403,15 @@ let () =
             test_h2c_server_write_exception_closes_typed;
           Alcotest.test_case "h2c response write timeout is typed" `Quick
             test_h2c_server_response_write_timeout_is_typed;
+          Alcotest.test_case "h2c owns response framing" `Quick
+            test_h2c_server_owns_response_framing;
+          Alcotest.test_case "h2c rejects handler-supplied content-length"
+            `Quick
+            test_h2c_server_rejects_handler_supplied_content_length;
+          Alcotest.test_case "h2c resets short stream response" `Quick
+            test_h2c_server_resets_short_stream_response;
+          Alcotest.test_case "h2c resets overflowing stream response" `Quick
+            test_h2c_server_resets_overflowing_stream_response;
         ] );
       ( "h2-security",
         [
