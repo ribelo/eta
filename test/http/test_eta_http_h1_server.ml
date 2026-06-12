@@ -348,6 +348,29 @@ let test_h1_server_connection_rejects_invalid_request_targets () =
   ]
   |> List.iter (fun (name, wire) -> check_bad_request_rejected ~name wire)
 
+let test_h1_server_connection_rejects_header_smuggling_vectors () =
+  [
+    ( "obs-fold continuation",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nX-Fold: a\r\n\tb\r\n"
+   ^ "Connection: close\r\n\r\n" );
+    ( "leading space before header name",
+      "GET / HTTP/1.1\r\nHost: example.test\r\n X-Bad: 1\r\n"
+   ^ "Connection: close\r\n\r\n" );
+    ( "space before colon in header name",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nX-Bad : 1\r\n"
+   ^ "Connection: close\r\n\r\n" );
+    ( "tab inside header name",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nX\tBad: 1\r\n"
+   ^ "Connection: close\r\n\r\n" );
+    ( "bare CR in header value",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nX-Bad: a\rb\r\n"
+   ^ "Connection: close\r\n\r\n" );
+    ( "NUL in header value",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nX-Bad: a\x00b\r\n"
+   ^ "Connection: close\r\n\r\n" );
+  ]
+  |> List.iter (fun (name, wire) -> check_bad_request_rejected ~name wire)
+
 let test_h1_server_connection_accepts_options_asterisk_target () =
   let handler (request : Eta_http.Server.Request.t) =
     Eta.Effect.pure (Eta_http.Server.Response.text request.target)

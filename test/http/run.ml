@@ -132,6 +132,8 @@ let () =
             test_h1_server_connection_allows_http10_without_host;
           Alcotest.test_case "rejects invalid request targets" `Quick
             test_h1_server_connection_rejects_invalid_request_targets;
+          Alcotest.test_case "rejects header smuggling vectors" `Quick
+            test_h1_server_connection_rejects_header_smuggling_vectors;
           Alcotest.test_case "accepts OPTIONS asterisk target" `Quick
             test_h1_server_connection_accepts_options_asterisk_target;
           Alcotest.test_case "normalizes absolute-form target" `Quick
