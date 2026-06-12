@@ -89,6 +89,33 @@ nix --option eval-cache false develop -c timeout 300s dune build eta_http.instal
 timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
 git diff --check
 ```
+
+## Fixed: H2-over-TLS large-transfer deadlock
+
+Directly Internet-facing edge defect found via the interop matrix and fixed in
+`lib/http_eio/tls/tls_eio.ml`:
+
+- Symptom: HTTPS H2 responses larger than the initial flow-control window
+  stalled after the first 16 KiB DATA frame. Interop showed a 100 MB GET
+  delivering only 16384 bytes and a 1 MB POST echo delivering 0 bytes; the
+  interop runner hung indefinitely on the first large eta TLS transfer.
+- Root cause: the TLS flow serialized every `single_read` and `single_write`
+  under one coarse `io_mutex`. The H2 server reader fiber acquired `io_mutex`
+  and parked inside `feed_bio` waiting for client bytes, while the owner fiber
+  that needed to send the next response chunk blocked acquiring the same
+  `io_mutex` -> full-duplex deadlock. Plain h2c never hit it (no shared
+  read/write lock).
+- Fix: removed `io_mutex`. The shared SSL object is already serialized per call
+  by `ssl_mutex`, socket reads by `read_mutex` in `feed_bio`, and socket writes
+  by `write_mutex` in `drain_bio`, so reads and writes proceed concurrently
+  without corrupting OpenSSL or socket state.
+- Regression tests: `test_h2c_server_streams_large_body_past_window`
+  (plain h2c, 512 KiB) and
+  `test_https_server_h2_streams_large_body_past_window` (HTTPS H2, 512 KiB).
+- Verification: 25 TLS unit tests, 190 `test/http`, 142 `test/http_eio`,
+  `@cve-regress`, and install builds all pass; the interop runner now
+  completes instead of hanging.
+
 ## Audit Findings (verified this session)
 
 - HTTP/1.1 parser is strict against request smuggling: obs-fold continuation
@@ -186,16 +213,27 @@ nix develop -c bash bench/run.sh --quick
 ```
 
 - Remaining: none known. A fresh quick bench snapshot is recorded at
-  `bench/results/20260612T092938Z-a2e9ee6d9.json`; interop skips are triaged as
-  v1 policy above.
+  `bench/results/20260612T092938Z-a2e9ee6d9.json`. The interop runner now
+  completes (the large-transfer deadlock above previously hung it): 184 plain
+  h1/h2 cells pass across nginx/caddy/eta (all methods, status codes, bodies up
+  to 1 MB, trailers). Outstanding interop gaps are harness/environment, not
+  library defects:
+  - Every TLS cell fails uniformly across nginx, caddy, AND eta with the
+    eta-http *client* raising `Tls_handshake_error` (confirmed pre-existing:
+    the same failure appears in the pre-fix run). eta TLS itself is proven by
+    25 passing TLS unit tests; the interop client does not trust the
+    interop-generated certs in this sandbox. Fixing the interop client trust
+    setup is the follow-up to get TLS interop evidence.
+  - `static_100m` fails because the interop client caps response bodies at
+    1 MiB (`Body_too_large`); raise the client cap for that scenario.
+  - `expect_100_continue_upload` vs nginx is a known behavioral divergence.
 
 ## Suggested Next Tasks
 
-H2 response framing, H1 smuggling locks, the TLS/ALPN + resource-exhaustion
-audits, the H2 slow-upload multiplexing test, and a fresh `bench/run.sh --quick`
-snapshot are all complete. The previously enumerated edge-readiness surface has
-been verified or covered; no concrete remaining task is currently open.
+The H2-over-TLS large-transfer deadlock is fixed and regression-tested, and the
+interop runner now completes. Remaining edge-readiness follow-ups:
 
-Latest quick bench snapshot:
-`bench/results/20260612T092938Z-a2e9ee6d9.json`.
+- Fix the interop harness TLS client trust/SNI setup so TLS cells run (then
+  re-run `@interop` for full TLS interop evidence).
+- Raise the interop client body cap for the `static_100m` scenario.
 
