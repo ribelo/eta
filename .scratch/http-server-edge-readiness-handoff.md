@@ -89,67 +89,83 @@ nix --option eval-cache false develop -c timeout 300s dune build eta_http.instal
 timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
 git diff --check
 ```
+## Audit Findings (verified this session)
+
+- HTTP/1.1 parser is strict against request smuggling: obs-fold continuation
+  lines, leading whitespace before header names, whitespace before the
+  header-name colon, tabs inside header names, and bare CR / NUL in header
+  values are all rejected (`400`, `protocol_errors = 1`, handler not called).
+  Locked by `test_h1_server_connection_rejects_header_smuggling_vectors`
+  (`test/http/test_eta_http_h1_server.ml`).
+- `@cve-regress` (`http-testsuite/lib/adversarial.ml`) covers a broad
+  adversarial set: rapid reset (CVE-2023-44487), continuation flood
+  (CVE-2024-27919), hpack bomb, ping/settings/empty-frame floods, window-update
+  accounting, H1 slowloris headers + slow body, invalid chunk, CL/TE smuggling,
+  duplicate content-length, missing/duplicate/invalid host, invalid request
+  target, absolute-form host conflict, header flood, oversized trailers, H2
+  slow preface/headers/body timeouts, H2 invalid target, H2 missing authority,
+  goaway churn. The interop "covered in @cve-regress" skip notes
+  (`goaway_mid_flight`, `rst_stream_mid_flight`, `slow_body_timeout`) hold.
+- Interop skips that remain are explicit v1 non-features, not edge blockers:
+  103 Early Hints, gzip/deflate, explicit chunked POST, redirect cap, cookie
+  scoping. Keep as policy.
+- Operational defaults are edge-appropriate, not local-dev:
+  - `Server.Config.default`: request line 8 KiB, headers 32 KiB / 256 count,
+    request body cap 1 MiB, response headers 32 KiB / 256, trailers 8 KiB / 64;
+    all six timeouts set (header/body/write/response-body 30s, idle 60s,
+    handler 30s); unread body policy `Reset`.
+  - `Eta_http_eio.Server.Config.default`: `max_connections = 1024`,
+    `backlog = 128`, `read_buffer_size = 64 KiB`, H2
+    `max_concurrent_streams = 128`, `tls_handshake_timeout = 10s`.
+  - `h2_security_config = None` is safe: `H2.Security.create` applies
+    `default_config` (settings 10, rst_stream 100, ping 100, hpack 256 KiB,
+    continuation 64 KiB) when unset.
 
 ## Larger Remaining Work
 
 ### HTTP/1.1 Edge Behavior
 
-- Re-run adversarial HTTP/1.1 cases after the H2 response framing commit.
-- Inspect parser behavior for ambiguous request smuggling cases:
-  - duplicate or conflicting `content-length`
-  - `transfer-encoding` combinations
-  - whitespace and obs-fold injection
-  - absolute-form authority conflicts
-  - pipelined request boundaries
-- Keep H1 and H2 response ownership semantics aligned.
+- Done: smuggling vectors above are inspected and regression-locked. Duplicate
+  / conflicting `content-length`, `transfer-encoding` combinations,
+  absolute-form authority conflicts, and pipelined request boundaries already
+  have server-level tests in `test/http/test_eta_http_h1_server.ml` and
+  `@cve-regress`.
+- Remaining: none known; keep H1 and H2 response ownership semantics aligned
+  when either side changes.
 
 ### HTTP/2 Edge Behavior
 
-- Review H2 interop skips and convert missing coverage into tests or explicit policy.
-- Add adversarial cases for:
-  - header block size pressure
-  - DATA frame flooding
-  - SETTINGS churn
-  - stream reset churn
-  - slow upload multiplexing
-  - flow-control stalls
-- Check that per-stream and per-connection metrics remain correct on all reset paths.
+- Covered by `@cve-regress`: header block size pressure (hpack bomb), DATA/
+  empty-frame flooding, SETTINGS churn, stream reset churn (rapid reset),
+  flow-control accounting (window_update_accounting), slow body timeout.
+- Remaining:
+  - Confirm per-stream and per-connection metrics stay correct on every reset
+    path (add focused tests if evidence is weak).
+  - Slow-upload multiplexing across many concurrent streams.
 
 ### HTTPS/TLS/ALPN
 
-- Confirm TLS defaults match edge-server expectations:
-  - TLS 1.3 default
-  - strict SNI behavior
-  - ALPN dispatch for H1/H2
+- Already committed: TLS 1.3 default (`d53a32431`), close-notify on shutdown
+  (`e1db75c45`), close pending handshakes on shutdown (`92b863272`).
+- Remaining to verify with tests/evidence:
   - certificate/key validation at startup
+  - strict SNI behavior
+  - ALPN dispatch for H1/H2 (explicit test, not just implicit)
   - session resumption behavior
-  - graceful TLS close-notify behavior
-- Add tests for certificate reload/lifecycle only if Eta owns that lifecycle.
 
 ### Resource Exhaustion
 
-- Confirm hard limits exist and are tested for:
-  - max request header bytes
-  - max response header bytes
-  - max trailer bytes
-  - max request body bytes
-  - max concurrent connections
-  - max concurrent H2 streams
-  - idle/request header/request body/response body/write/handler timeouts
-- Add slowloris-style tests for H1, H2, and TLS handshake paths.
+- Confirmed present and bounded (see Audit Findings). Tested via `@cve-regress`
+  slowloris (H1 headers, H1/H2 slow body, H2 slow preface) and the limit
+  rejection tests.
+- Remaining: TLS-handshake slowloris test (handshake timeout path).
 
 ### Operational Readiness
 
-- Review default `Server.Config` values as public-Internet defaults, not local-dev defaults.
-- Confirm stats/metrics expose enough for:
-  - active connections
-  - active streams
-  - reset streams
-  - protocol errors
-  - timeout classes
-  - request/response bytes
-  - shutdown state
-- Add examples or tests for metrics callbacks where evidence is weak.
+- Defaults reviewed (see Audit Findings) and judged edge-appropriate.
+- Remaining: confirm stats/metrics expose active connections/streams, reset
+  streams, protocol errors, timeout classes, request/response bytes, and
+  shutdown state with example or test evidence where weak.
 
 ### Interop, CVE, Benchmark, Soak
 
@@ -161,19 +177,16 @@ nix develop -c dune build @cve-regress
 nix develop -c bash bench/run.sh --quick
 ```
 
-- Convert skips into one of:
-  - passing coverage
-  - explicit Eta edge-server policy
-  - tracked missing work item with a failing/adversarial repro
+- Remaining: capture a fresh `bench/run.sh --quick` snapshot and save the
+  result path; interop skips are already triaged as v1 policy above.
 
 ## Suggested Next Tasks
 
-The H2 response framing work is complete. Remaining edge-readiness work, in
-rough priority order:
+H2 response framing and H1 smuggling locks are complete. Remaining
+edge-readiness work, in rough priority order:
 
-- Inspect `http-testsuite/` skips and produce a concrete list of missing edge cases.
-- Run H1 adversarial cases and record exact failures.
-- Review `Server.Config.default` against edge-server defaults.
+- Verify per-stream / per-connection H2 metrics on all reset paths (add tests).
+- Add explicit ALPN dispatch + startup cert/key validation tests.
+- Add a TLS-handshake slowloris test.
 - Run `bench/run.sh --quick` and save the result path.
-- Continue with the next protocol gap from interop/CVE evidence.
 
