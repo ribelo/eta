@@ -370,6 +370,8 @@ let () =
             test_h2c_server_handler_exception_returns_500;
           Alcotest.test_case "h2c handler timeout returns 503" `Quick
             test_h2c_server_handler_timeout_returns_503;
+          Alcotest.test_case "h2c streaming response exception resets stream"
+            `Quick test_h2c_server_streaming_response_exception_resets_stream;
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;

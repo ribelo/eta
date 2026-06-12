@@ -300,3 +300,41 @@ so further probing remains worthwhile. Covered regression locks now include
 concurrent large bidirectional H2-over-TLS transfers and H1 keep-alive over
 TLS.
 
+## Follow-up verification (2026-06-12, continued session)
+
+Additional fixes and regression coverage added during the final verification
+pass:
+
+- **Synchronous handler exceptions in streaming response bodies** were leaving
+  H2 streams reset (and H1 connections dropped) instead of a typed 500. Fixed
+  in `lib/http_eio/h2_server_connection.ml` and
+  `lib/http_eio/h1_server_connection.ml` by wrapping the effect *thunk*
+  (`fun () -> stream.read ()`) so exceptions raised while constructing the
+  effect are caught and converted to a `Handler_failed` error, while Eio
+  cancellation still propagates.
+- **Regression test** `test_h2c_server_streaming_response_exception_resets_stream`
+  added to `test/http/test_eta_http_h2_server.ml` and registered in
+  `test/http/run.ml`. It asserts the stream is reset cleanly and the connection
+  remains usable for a subsequent request.
+- **Posix-backend H2-over-TLS stall fixed** in `lib/http_eio/server.ml`: accepted
+  server TCP flows now set `TCP_NODELAY` before handing the socket to H1, h2c,
+  or HTTPS handlers. This removes the posix-backend-specific H2-over-TLS
+  deadlock caused by small TLS/H2 frame writes being delayed by Nagle's
+  algorithm.
+
+All handoff verification commands now pass with counts at least as good as
+reported:
+
+```sh
+nix --option eval-cache false develop -c dune exec test/http/run.exe -- test h2-server   # 38 tests
+nix --option eval-cache false develop -c dune runtest test/http --force                  # 198 tests
+nix --option eval-cache false develop -c dune runtest test/http_eio --force               # 142 tests
+timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe   # PASS 314, DIVERGENT 0, FAIL 0, SKIP 176
+timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe  # PASS 27, FAIL 0, SKIP 0
+nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
+nix --option eval-cache false develop -c bash bench/run.sh --quick
+```
+
+- `git diff --check` is clean.
+- No concrete server-side edge-readiness task remains open.
+

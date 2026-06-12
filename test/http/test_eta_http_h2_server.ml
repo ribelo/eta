@@ -2898,3 +2898,94 @@ let test_h2c_server_handler_timeout_returns_503 () =
       in
       Alcotest.(check int) "handler timeout status" 503 status;
       Alcotest.(check string) "handler timeout body" "service unavailable\n" body)
+
+let test_h2c_server_streaming_response_exception_resets_stream () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let released, resolve_released = Eio.Promise.create () in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/stream-boom" ->
+        let sent = ref false in
+        let body =
+          Eta_http.Server.Response.Body.stream
+            ~release:(fun () ->
+              Eta.Effect.sync (fun () ->
+                  ignore (Eio.Promise.try_resolve resolve_released ())))
+            (fun () ->
+              if !sent then Eta.Effect.pure None
+              else (
+                sent := true;
+                Eta.Effect.pure (Some (Bytes.of_string "chunk"))))
+        in
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:200 ~body ())
+    | "/stream-boom-on-read" ->
+        let body =
+          Eta_http.Server.Response.Body.stream
+            ~release:(fun () ->
+              Eta.Effect.sync (fun () ->
+                  ignore (Eio.Promise.try_resolve resolve_released ())))
+            (fun () -> failwith "stream read boom")
+        in
+        Eta.Effect.pure
+          (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let stop, resolve_stop = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_http_eio.Server.run_h2c_on_socket ~sw ~clock ~stop ~socket handler);
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      ignore (Eio.Promise.try_resolve resolve_stop ()))
+    (fun () ->
+      (* First request: headers go out, then the body read raises. *)
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/stream-boom-on-read"
+      in
+      let outcome =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response_outcome ~tag:1 connection request)
+      in
+      Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+          Eio.Promise.await released);
+      (match outcome with
+      | `Error (status, body, _error) ->
+          (* Headers may have been sent before the exception. *)
+          Alcotest.(check bool) "stream reset after headers" true
+            (status = 0 || status = 200);
+          Alcotest.(check string) "no body after reset" "" body
+      | `Eof (status, body) ->
+          Alcotest.(check bool) "stream reset after headers" true
+            (status = 0 || status = 200);
+          Alcotest.(check string) "no body after reset" "" body);
+      (* Connection must remain usable. *)
+      let ok =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/ok"
+      in
+      let status2, body2 =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            await_h2_response ~tag:2 connection ok)
+      in
+      Alcotest.(check int) "subsequent request status" 200 status2;
+      Alcotest.(check string) "subsequent request body" "ok\n" body2)

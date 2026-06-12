@@ -1245,25 +1245,36 @@ let release_prepared_response_body rt response =
       release_response_stream rt stream
   | Response_no_body None | Response_fixed _ -> ()
 
-let run_response_body_effect t rt request effect =
-  match t.config.server.timeouts.response_body_timeout with
-  | Some timeout -> (
-      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
-      | Eta.Exit.Ok value -> Ok value
-      | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
-      | exception Eio.Time.Timeout ->
-          Error (response_body_timeout_error t request (Some timeout)))
-  | None -> (
+let handler_failed_error t request exn =
+  let message = Printexc.to_string exn in
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_failed { message })
+
+let run_response_body_effect t rt request effect_thunk =
+  let run () =
+    try
+      let effect = effect_thunk () in
       match Eta.Runtime.run rt effect with
       | Eta.Exit.Ok value -> Ok value
-      | Eta.Exit.Error cause -> Error (response_error_of_cause t cause))
+      | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
+    with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | exn -> Error (handler_failed_error t request exn)
+  in
+  match t.config.server.timeouts.response_body_timeout with
+  | Some timeout -> (
+      try t.with_timeout timeout run
+      with Eio.Time.Timeout ->
+        Error (response_body_timeout_error t request (Some timeout)))
+  | None -> run ()
 
 let read_response_stream t rt request stream =
   Eio.Fiber.first
     (fun () ->
       `Read
-        (run_response_body_effect t rt request
-           (stream.Server.Response.Body.read ())))
+        (run_response_body_effect t rt request (fun () ->
+             stream.Server.Response.Body.read ())))
     (fun () ->
       Eio.Promise.await t.closed_signal;
       `Closed)
@@ -1272,8 +1283,8 @@ let response_trailers t rt request response =
   Eio.Fiber.first
     (fun () ->
       `Trailers
-        (run_response_body_effect t rt request
-           ((Server.Response.trailers response) ())))
+        (run_response_body_effect t rt request (fun () ->
+             (Server.Response.trailers response) ())))
     (fun () ->
       Eio.Promise.await t.closed_signal;
       `Closed)
@@ -1329,12 +1340,6 @@ let rec pump_response_stream t rt ordinal request response stream written =
                   | Ok () -> release_response_stream rt stream
                   | Error error ->
                       fail_stream_response t rt ordinal stream error))))
-
-let handler_failed_error t request exn =
-  let message = Printexc.to_string exn in
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_failed { message })
 
 let safe_handler_effect t request handler =
   try

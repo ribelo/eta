@@ -787,29 +787,42 @@ let with_released_response_stream rt stream f =
           release_once ();
           error)
 
-let run_response_body_effect t request rt effect =
-  match t.config.server.timeouts.response_body_timeout with
-  | Some timeout -> (
-      match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
-      | Eta.Exit.Ok value -> Ok value
-      | Eta.Exit.Error cause ->
-          response_write_failure ~response_started:true
-            (response_error_of_cause t cause)
-      | exception Eio.Time.Timeout ->
-          response_write_failure ~response_started:true
-            (response_body_timeout_error t request (Some timeout)))
-  | None -> (
+let handler_failed_error t request exn =
+  let message = Printexc.to_string exn in
+  Server.Error.make ~protocol:t.connection.protocol
+    ~method_:request.Server.Request.method_ ~target:request.target
+    (Handler_failed { message })
+
+let run_response_body_effect t request rt effect_thunk =
+  let run () =
+    try
+      let effect = effect_thunk () in
       match Eta.Runtime.run rt effect with
       | Eta.Exit.Ok value -> Ok value
       | Eta.Exit.Error cause ->
           response_write_failure ~response_started:true
-            (response_error_of_cause t cause))
+            (response_error_of_cause t cause)
+    with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | exn ->
+        response_write_failure ~response_started:true
+          (handler_failed_error t request exn)
+  in
+  match t.config.server.timeouts.response_body_timeout with
+  | Some timeout -> (
+      try t.with_timeout timeout run
+      with Eio.Time.Timeout ->
+        response_write_failure ~response_started:true
+          (response_body_timeout_error t request (Some timeout)))
+  | None -> run ()
 
 let read_response_stream t rt request stream =
-  run_response_body_effect t request rt (stream.Server.Response.Body.read ())
+  run_response_body_effect t request rt (fun () ->
+      stream.Server.Response.Body.read ())
 
 let response_trailers t rt request response =
-  run_response_body_effect t request rt ((Server.Response.trailers response) ())
+  run_response_body_effect t request rt (fun () ->
+      (Server.Response.trailers response) ())
 
 let write_last_chunk t trailers =
   match
@@ -944,12 +957,6 @@ let request_metrics t rt request =
       (Server_metrics.request ~runtime:rt ~connection:t.connection
          ~emit_url_full:t.config.server.emit_url_full request)
   else None
-
-let handler_failed_error t request exn =
-  let message = Printexc.to_string exn in
-  Server.Error.make ~protocol:t.connection.protocol
-    ~method_:request.Server.Request.method_ ~target:request.target
-    (Handler_failed { message })
 
 let safe_handler_effect t request handler =
   try
