@@ -422,6 +422,8 @@ let () =
             test_h2c_server_multiplexes_slow_uploads;
           Alcotest.test_case "h2c streams large body past window" `Quick
             test_h2c_server_streams_large_body_past_window;
+          Alcotest.test_case "h2c resets stalled reader stream" `Quick
+            test_h2c_server_resets_stalled_reader_stream;
         ] );
       ( "h2-security",
         [

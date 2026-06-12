@@ -1213,6 +1213,18 @@ let await_owner t make =
           Error (connection_closed_error t Response_body))
     else Error (connection_closed_error t Response_body)
 
+(* Response-write commands resolve only once their data is flushed to the
+   transport. When a stream is flow-control blocked (the peer withholds
+   WINDOW_UPDATE / never reads the body), that flush never completes, so bound
+   the wait by [response_write_timeout]. Otherwise a non-reading client could
+   pin a stream open indefinitely. *)
+let await_owner_write t make =
+  match t.config.server.timeouts.response_write_timeout with
+  | None -> await_owner t make
+  | Some timeout -> (
+      try t.with_timeout timeout (fun () -> await_owner t make)
+      with Eio.Time.Timeout -> Error (response_write_timeout_error t))
+
 let response_error_of_cause t cause =
   match find_failure cause with
   | Some error -> error
@@ -1287,7 +1299,7 @@ let rec pump_response_stream t rt ordinal request response stream written =
                "stream exceeded declared Content-Length")
       | None | Some _ -> (
           match
-            await_owner t (fun resolver ->
+            await_owner_write t (fun resolver ->
                 Response_chunk (ordinal, chunk, resolver))
           with
           | Ok () -> pump_response_stream t rt ordinal request response stream next
@@ -1305,13 +1317,13 @@ let rec pump_response_stream t rt ordinal request response stream written =
               fail_stream_response t rt ordinal stream error
           | `Trailers (Ok trailers) -> (
               match
-                await_owner t (fun resolver ->
+                await_owner_write t (fun resolver ->
                     Response_trailers (ordinal, trailers, resolver))
               with
               | Error error -> fail_stream_response t rt ordinal stream error
               | Ok () -> (
                   match
-                    await_owner t (fun resolver ->
+                    await_owner_write t (fun resolver ->
                         Response_close (ordinal, resolver))
                   with
                   | Ok () -> release_response_stream rt stream

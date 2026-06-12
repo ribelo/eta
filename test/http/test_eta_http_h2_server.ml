@@ -2640,3 +2640,81 @@ let test_h2c_server_streams_large_body_past_window () =
       Alcotest.(check int) "large stream status" 200 status;
       Alcotest.(check int) "large stream body length" total
         (String.length body))
+
+let test_h2c_server_resets_stalled_reader_stream () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let timeouts =
+    {
+      Eta_http.Server.Config.default.timeouts with
+      response_write_timeout = Some (Eta.Duration.ms 100);
+    }
+  in
+  let server_config = { Eta_http.Server.Config.default with timeouts } in
+  let config =
+    { Eta_http_eio.Server.Config.default with server = server_config }
+  in
+  (* Body well past the default 65535 flow-control window so the server must
+     keep writing past the initial window. *)
+  let total = 256 * 1024 in
+  let handler (request : Eta_http.Server.Request.t) =
+    match request.path with
+    | "/big" ->
+        let remaining = ref total in
+        let body =
+          Eta_http.Server.Response.Body.stream ~length:total (fun () ->
+              if !remaining = 0 then Eta.Effect.pure None
+              else
+                let n = min (16 * 1024) !remaining in
+                remaining := !remaining - n;
+                Eta.Effect.pure (Some (Bytes.make n 'z')))
+        in
+        Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
+    | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
+  in
+  let server =
+    Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
+  in
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw
+      ~config:{ H2.Config.default with initial_window_size = 16384l }
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eta_http_eio.H2.Connection.shutdown connection;
+      Eta_http_eio.Server.shutdown server Immediate)
+    (fun () ->
+      let reset, resolve_reset = Eio.Promise.create () in
+      let request =
+        H2.Request.create ~scheme:"http"
+          ~headers:(H2.Headers.of_list [ ":authority", "127.0.0.1" ])
+          `GET "/big"
+      in
+      (* Deliberately never schedule a body read, so the client never emits
+         WINDOW_UPDATE and the server's response stalls once the initial
+         flow-control window is exhausted. *)
+      (match
+         Eta_http_eio.H2.Connection.request connection ~tag:1 request
+           ~error_handler:(fun _stream _error ->
+             ignore (Eio.Promise.try_resolve resolve_reset ()))
+           ~response_handler:(fun _stream _response _response_body -> ())
+       with
+      | Ok opened -> H2.Body.Writer.close opened.request_body
+      | Error _ -> Alcotest.fail "stalled-reader request not opened");
+      (* The server must not let a non-reading client pin the stream open: it
+         should reset the stream once it cannot make write progress within
+         response_write_timeout. *)
+      Eio.Time.with_timeout_exn clock 3.0 (fun () ->
+          Eio.Promise.await reset))
