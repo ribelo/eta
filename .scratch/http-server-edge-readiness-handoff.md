@@ -212,28 +212,28 @@ nix develop -c dune build @cve-regress
 nix develop -c bash bench/run.sh --quick
 ```
 
-- Remaining: none known. A fresh quick bench snapshot is recorded at
+- Remaining: none known for the server. A fresh quick bench snapshot is at
   `bench/results/20260612T092938Z-a2e9ee6d9.json`. The interop runner now
-  completes (the large-transfer deadlock above previously hung it): 184 plain
-  h1/h2 cells pass across nginx/caddy/eta (all methods, status codes, bodies up
-  to 1 MB, trailers). Outstanding interop gaps are harness/environment, not
-  library defects:
-  - Every TLS cell fails uniformly across nginx, caddy, AND eta with the
-    eta-http *client* raising `Tls_handshake_error` (confirmed pre-existing:
-    the same failure appears in the pre-fix run). eta TLS itself is proven by
-    25 passing TLS unit tests; the interop client does not trust the
-    interop-generated certs in this sandbox. Fixing the interop client trust
-    setup is the follow-up to get TLS interop evidence.
-  - `static_100m` fails because the interop client caps response bodies at
-    1 MiB (`Body_too_large`); raise the client cap for that scenario.
-  - `expect_100_continue_upload` vs nginx is a known behavioral divergence.
+  completes and the eta-http client trusts the generated test CA
+  (`?ca_file`), so TLS cells run: overall PASS 303, with the eta server
+  passing every interop cell across h1/h2 and plain/tls. Remaining non-passing
+  cells are not eta-server defects:
+  - `static_100m` against nginx/caddy: the eta *client* chunked-body decoder
+    caps at `Stream.default_max_bytes` (1 MiB) regardless of
+    `max_response_body_bytes`, so it rejects their chunked 100 MB responses.
+    eta-server `static_100m` passes on all four transports (it sends
+    content-length, not chunked). Client follow-up: honor
+    `max_response_body_bytes` on the chunked decode path.
+  - `expect_100_continue_upload` divergence vs nginx/caddy is a client-side
+    100-continue behavioral difference.
 
 ## Suggested Next Tasks
 
 The H2-over-TLS large-transfer deadlock is fixed and regression-tested, and the
-interop runner now completes. Remaining edge-readiness follow-ups:
+interop runner now completes with the eta server passing every cell. Remaining
+follow-ups are client-side, not edge-server defects:
 
-- Fix the interop harness TLS client trust/SNI setup so TLS cells run (then
-  re-run `@interop` for full TLS interop evidence).
-- Raise the interop client body cap for the `static_100m` scenario.
+- Honor `max_response_body_bytes` on the eta-http client chunked decode path so
+  large chunked responses are not capped at 1 MiB.
+- Reconcile the eta-http client 100-continue behavior with nginx/caddy.
 
