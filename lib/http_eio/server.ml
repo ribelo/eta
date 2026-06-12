@@ -29,9 +29,9 @@ let set_tcp_nodelay flow =
         (fun unix_fd -> Unix.setsockopt unix_fd Unix.TCP_NODELAY true)
         ~if_closed:(fun () -> ())
 
-let accepted_flow flow =
+let accepted_flow ~peer flow =
   let flow = (flow :> raw_flow) in
-  set_tcp_nodelay flow;
+  (match peer with `Tcp _ -> set_tcp_nodelay flow | `Unix _ -> ());
   flow
 
 type pending_tls = {
@@ -257,7 +257,7 @@ let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         let connection = ref None in
         let on_start current =
           connection := Some current;
@@ -309,7 +309,7 @@ let run_h1_impl ~sw ~net ~clock ?domain_manager
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         let connection = ref None in
         let on_start current =
           connection := Some current;
@@ -356,7 +356,7 @@ let run_h2c_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         let connection = ref None in
         let on_start current =
           connection := Some current;
@@ -407,7 +407,7 @@ let run_h2c_impl ~sw ~net ~clock ?domain_manager
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         let connection = ref None in
         let on_start current =
           connection := Some current;
@@ -525,7 +525,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?stop
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
           ?on_tls_pending_close flow
           (fun finish_pending ->
@@ -576,7 +576,7 @@ let run_https_impl ~sw ~net ~clock ?domain_manager
       ~on_error:(listener_error_callback on_error)
       (fun flow peer ->
         Eio.Switch.run @@ fun conn_sw ->
-        let flow = accepted_flow flow in
+        let flow = accepted_flow ~peer flow in
         with_pending_tls ?on_tls_pending_start ?on_tls_pending_ready
           ?on_tls_pending_close flow
           (fun finish_pending ->

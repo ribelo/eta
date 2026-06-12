@@ -970,6 +970,63 @@ let test_h1_server_run_on_socket_plain_get () =
       in
       Alcotest.(check int) "completed requests" 1 stats.completed_requests)
 
+let test_h1_server_run_on_unix_socket_plain_get () =
+  let path = Filename.temp_file "eta-http-h1-unix" ".sock" in
+  Sys.remove path;
+  Fun.protect
+    ~finally:(fun () -> if Sys.file_exists path then Sys.remove path)
+    (fun () ->
+      run_eio @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      let net = Eio.Stdenv.net env in
+      let clock = Eio.Stdenv.clock env in
+      let socket = Eio.Net.listen ~sw ~backlog:1 net (`Unix path) in
+      let stop, resolve_stop = Eio.Promise.create () in
+      let seen_request, resolve_seen_request = Eio.Promise.create () in
+      let closed_stats, resolve_closed_stats = Eio.Promise.create () in
+      let on_connection_close stats =
+        ignore (Eio.Promise.try_resolve resolve_closed_stats stats);
+        ignore (Eio.Promise.try_resolve resolve_stop ())
+      in
+      let handler (request : Eta_http.Server.Request.t) =
+        ignore
+          (Eio.Promise.try_resolve resolve_seen_request
+             (request.peer.address, request.peer.port, request.connection_id));
+        Eta.Effect.pure (Eta_http.Server.Response.text "unix-h1\n")
+      in
+      Eio.Fiber.fork ~sw (fun () ->
+          Eta_http_eio.Server.run_h1_on_socket ~sw ~clock ~stop
+            ~on_connection_close ~socket handler);
+      let flow = Eio.Net.connect ~sw net (`Unix path) in
+      Fun.protect
+        ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
+        (fun () ->
+          Eio.Flow.copy_string
+            ("GET /unix HTTP/1.1\r\nHost: unix.test\r\n"
+           ^ "Connection: close\r\n\r\n")
+            flow;
+          let response =
+            Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+                read_all_response flow)
+          in
+          Alcotest.(check string) "response"
+            ("HTTP/1.1 200 OK\r\nConnection: close\r\n"
+           ^ "Content-Length: 8\r\n\r\nunix-h1\n")
+            response;
+          let peer_address, peer_port, connection_id =
+            Eio.Promise.await seen_request
+          in
+          Alcotest.(check bool) "peer address recorded" true
+            (Option.is_some peer_address);
+          Alcotest.(check (option int)) "peer port" None peer_port;
+          Alcotest.(check bool) "connection id prefix" true
+            (String.starts_with ~prefix:"h1-" connection_id);
+          let stats =
+            Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+                Eio.Promise.await closed_stats)
+          in
+          Alcotest.(check int) "completed requests" 1 stats.completed_requests))
+
 let test_h1_server_handle_graceful_shutdown_waits_for_request () =
   run_eio @@ fun env ->
   Eio.Switch.run @@ fun sw ->
