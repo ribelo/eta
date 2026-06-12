@@ -214,26 +214,23 @@ nix develop -c bash bench/run.sh --quick
 
 - Remaining: none known for the server. A fresh quick bench snapshot is at
   `bench/results/20260612T092938Z-a2e9ee6d9.json`. The interop runner now
-  completes and the eta-http client trusts the generated test CA
-  (`?ca_file`), so TLS cells run: overall PASS 303, with the eta server
-  passing every interop cell across h1/h2 and plain/tls. Remaining non-passing
-  cells are not eta-server defects:
-  - `static_100m` against nginx/caddy: the eta *client* chunked-body decoder
-    caps at `Stream.default_max_bytes` (1 MiB) regardless of
-    `max_response_body_bytes`, so it rejects their chunked 100 MB responses.
-    eta-server `static_100m` passes on all four transports (it sends
-    content-length, not chunked). Client follow-up: honor
-    `max_response_body_bytes` on the chunked decode path.
-  - `expect_100_continue_upload` divergence vs nginx/caddy is a client-side
-    100-continue behavioral difference.
+  completes and is fully green: **PASS 314, DIVERGENT 0, FAIL 0** (176 cells
+  are explicit v1-policy skips). The eta server passes every interop cell
+  across nginx/caddy/eta x h1/h2 x plain/tls, including `static_100m`
+  (100 MB) and `expect_100_continue_upload`.
+  - Two issues found while closing interop were differential-harness bugs, not
+    eta defects, and are fixed: `Util.body_to_string` read responses with the
+    default 1 MiB `read_all` cap (raised to 128 MiB), and the curl `-D` parser
+    counted interim `100 Continue` blocks (now dropped) which had pushed the
+    final headers into the trailer slot.
 
 ## Suggested Next Tasks
 
-The H2-over-TLS large-transfer deadlock is fixed and regression-tested, and the
-interop runner now completes with the eta server passing every cell. Remaining
-follow-ups are client-side, not edge-server defects:
-
-- Honor `max_response_body_bytes` on the eta-http client chunked decode path so
-  large chunked responses are not capped at 1 MiB.
-- Reconcile the eta-http client 100-continue behavior with nginx/caddy.
+The enumerated edge-readiness surface is covered and verified: H2 response
+framing, H1 smuggling, H2 multiplexing (plain + concurrent large TLS), the
+H2-over-TLS large-transfer deadlock fix, TLS/ALPN, resource-exhaustion limits,
+operational defaults, and fully-green interop / CVE / bench evidence. No
+concrete server-side task is currently open. Continued value comes from deeper
+adversarial probing (each pass this far has surfaced a real defect), e.g.
+slow-reading-client write-timeout over TLS and H1 keep-alive over TLS.
 
