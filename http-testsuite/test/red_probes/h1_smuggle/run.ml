@@ -417,12 +417,14 @@ let probe_te_chunked_whitespace ~env =
 (* 19. Bare CR request line: line terminator is CR only, no LF. The parser
        should not advance past it as a valid request. *)
 let probe_bare_cr_request_line ~env =
-  let input = "GET / HTTP/1.1\r" in
+  let input = "GET / HTTP/1.1\rHost: example.test\r\n\r\n" in
   run_raw_h1 ~env ~name:"bare_cr_request_line" ~deadline_sec:2.0 ~input
     ~interpret:(fun raw ->
       let codes = status_codes raw in
-      if List.length codes > 0 then Pass (response_summary raw)
-      else Hang)
+      match codes with
+      | [ Some 400 ] -> Pass (response_summary raw)
+      | [] -> Hang
+      | _ -> Fail (response_summary raw))
     ()
 
 (* 20. Connection: close with a Content-Length body that contains a second

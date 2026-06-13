@@ -5,6 +5,7 @@ type t
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
 type time = Server_types.time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }

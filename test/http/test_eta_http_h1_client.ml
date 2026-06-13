@@ -92,7 +92,8 @@ let test_client_rejects_cross_domain_use () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let client =
-    Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net stdenv) ()
+    Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net stdenv)
+      ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let rejected =
     ((Domain.spawn
@@ -548,6 +549,40 @@ let test_h1_client_rejects_non_final_chunked_transfer_encoding () =
   | Eta.Exit.Ok response ->
       Eta.Runtime.run rt (Eta_http.Body.Stream.read_all response.body)
       |> expect_h1_transfer_encoding_failure "response body"
+
+let test_h1_client_rejects_empty_transfer_encoding_tokens () =
+  let cases = [ "chunked,"; "chunked, "; ",chunked"; " , chunked" ] in
+  List.iter
+    (fun value ->
+      let flow =
+        Eio_mock.Flow.make
+          ("eta-http-h1-response-empty-te-token-" ^ string_of_int (String.length value))
+      in
+      Eio_mock.Flow.on_read flow
+        [
+          `Return
+            ("HTTP/1.1 200 OK\r\nTransfer-Encoding: " ^ value
+           ^ "\r\n\r\n0\r\n\r\n");
+        ];
+      let url = Eta_http.Core.Url.of_string "http://example.test/te" in
+      let request : Eta_http_eio.H1.Client.request =
+        {
+          method_ = "GET";
+          url;
+          headers = [];
+          body = Eta_http_eio.H1.Client.Empty;
+        }
+      in
+      with_test_clock @@ fun _sw _clock rt ->
+      match
+        Eta.Runtime.run rt (Eta_http_eio.H1.Client.request_on_flow ~flow request)
+      with
+      | Eta.Exit.Error _ as exit ->
+          expect_h1_transfer_encoding_failure value exit
+      | Eta.Exit.Ok response ->
+          Eta.Runtime.run rt (Eta_http.Body.Stream.read_all response.body)
+          |> expect_h1_transfer_encoding_failure value)
+    cases
 
 let test_h1_client_custom_release_on_write_failure () =
   let flow = Eio_mock.Flow.make "eta-http-h1-write-release-flow" in
@@ -1282,9 +1317,10 @@ let test_eio_runtime_service_h1_request () =
   Eio_mock.Net.on_connect net [ `Return flow ];
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let services = [ Eta_http_eio.runtime_service ~sw ~net () ] in
+  let clock = Eio.Stdenv.clock stdenv in
+  let services = [ Eta_http_eio.runtime_service ~sw ~net ~clock () ] in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~services ()
+    Eta_eio.Runtime.create ~sw ~clock ~services ()
   in
   let client = Eta_http.Client.make_runtime ~protocol:H1 () in
   let request = Eta_http.Request.make "GET" "http://example.test/service" in
@@ -1334,7 +1370,7 @@ let with_h1_server_client_and_runtime_service handler f =
   in
   let port = tcp_port (Eio.Net.listening_addr socket) in
   let runtime_factory ~sw ~connection:_ () =
-    let http_service = Eta_http_eio.runtime_service ~sw ~net () in
+    let http_service = Eta_http_eio.runtime_service ~sw ~net ~clock () in
     Eta_eio.Runtime.create ~sw ~clock ~services:[ http_service ] ()
   in
   let server =

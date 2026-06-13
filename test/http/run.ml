@@ -113,6 +113,8 @@ let () =
             test_h1_client_rejects_unknown_stream_unsupported_transfer_encoding;
           Alcotest.test_case "rejects non-final chunked Transfer-Encoding" `Quick
             test_h1_client_rejects_non_final_chunked_transfer_encoding;
+          Alcotest.test_case "rejects empty Transfer-Encoding tokens" `Quick
+            test_h1_client_rejects_empty_transfer_encoding_tokens;
           Alcotest.test_case "custom release on write failure" `Quick
             test_h1_client_custom_release_on_write_failure;
           Alcotest.test_case "custom release on response header failure" `Quick
@@ -198,6 +200,8 @@ let () =
             test_h1_server_connection_rejects_http10_transfer_encoding;
           Alcotest.test_case "rejects invalid HTTP/1.1 Host" `Quick
             test_h1_server_connection_rejects_invalid_http11_host;
+          Alcotest.test_case "rejects bare CR request line" `Quick
+            test_h1_server_connection_rejects_bare_cr_request_line;
           Alcotest.test_case "allows HTTP/1.0 without Host" `Quick
             test_h1_server_connection_allows_http10_without_host;
           Alcotest.test_case "rejects invalid request targets" `Quick
@@ -283,6 +287,8 @@ let () =
       ( "server-config",
         [
           Alcotest.test_case "validation" `Quick test_server_config_validation;
+          Alcotest.test_case "default h2 concurrency bounded" `Quick
+            test_server_config_default_h2_max_concurrent_streams_is_bounded;
           Alcotest.test_case "start validates before fork" `Quick
             test_start_h1_validates_config_before_fork;
           Alcotest.test_case "desired port binding" `Quick
@@ -352,6 +358,8 @@ let () =
             test_transport_dispatch_unsupported_alpn_closes_flow;
           Alcotest.test_case "supported ALPN keeps TLS flow open" `Quick
             test_transport_dispatch_supported_alpn_keeps_flow_open;
+          Alcotest.test_case "missing ALPN rejected without H1" `Quick
+            test_transport_dispatch_rejects_missing_alpn_without_h1;
         ] );
       ( "tls",
         [
@@ -381,12 +389,48 @@ let () =
             test_alpn_server_dispatch_routes_and_closes_unsupported;
           Alcotest.test_case "HTTPS server H1 ALPN request" `Quick
             test_https_server_h1_alpn_request;
+          Alcotest.test_case "HTTPS mixed server accepts missing ALPN as H1"
+            `Quick test_https_server_mixed_accepts_missing_alpn_as_h1;
+          Alcotest.test_case "HTTPS H2-only server rejects H1 without ALPN"
+            `Quick test_https_server_h2_only_rejects_http1_without_alpn;
           Alcotest.test_case "HTTPS server H2 ALPN request" `Quick
             test_https_server_h2_alpn_request;
           Alcotest.test_case "HTTPS server H2 streams large body past window"
             `Quick test_https_server_h2_streams_large_body_past_window;
           Alcotest.test_case "HTTPS server H2 concurrent large echo" `Quick
             test_https_server_h2_concurrent_large_echo;
+          Alcotest.test_case "HTTPS server H2 split preface/settings/headers"
+            `Quick test_https_server_h2_split_preface_settings_headers;
+          Alcotest.test_case "HTTPS server H2 tiny writes" `Quick
+            test_https_server_h2_tiny_writes;
+          Alcotest.test_case "HTTPS server H2 ping churn closes connection"
+            `Quick test_https_server_h2_ping_churn_closes_connection;
+          Alcotest.test_case "HTTPS server H2 idle timeout sends close notify"
+            `Quick test_https_server_h2_idle_timeout_sends_close_notify;
+          Alcotest.test_case
+            "HTTPS server shutdown during handshake keeps listener healthy"
+            `Quick
+            test_https_server_shutdown_during_handshake_keeps_listener_healthy;
+          Alcotest.test_case
+            "HTTPS server shutdown during headers keeps listener healthy"
+            `Quick
+            test_https_server_shutdown_during_headers_keeps_listener_healthy;
+          Alcotest.test_case
+            "HTTPS server shutdown during data keeps listener healthy" `Quick
+            test_https_server_shutdown_during_data_keeps_listener_healthy;
+          Alcotest.test_case "HTTPS server H2 late trailers fresh connection"
+            `Quick
+            test_https_server_h2_late_trailers_do_not_poison_accept_loop;
+          Alcotest.test_case "HTTPS server H2 parallel GETs one TLS connection"
+            `Quick test_https_server_h2_parallel_gets_one_tls_connection;
+          Alcotest.test_case "HTTPS server H2 timeout then fresh handshake"
+            `Quick
+            test_https_server_h2_timeout_does_not_poison_later_handshake;
+          Alcotest.test_case "HTTPS server H2 repeated connect/request/close"
+            `Quick test_https_server_h2_repeated_connect_request_close;
+          Alcotest.test_case "HTTPS server H2 GOAWAY/PING close fresh connection"
+            `Quick
+            test_https_server_h2_goaway_ping_close_does_not_poison_accept_loop;
           Alcotest.test_case "HTTPS server H1 keep-alive sequential requests"
             `Quick test_https_server_h1_keep_alive_sequential_requests;
           Alcotest.test_case "HTTPS server handshake timeout stats" `Quick
@@ -405,10 +449,22 @@ let () =
             test_openssl_server_ctx_rejects_invalid_key;
           Alcotest.test_case "server config records TLS material" `Quick
             test_tls_server_config_records_cert_key_and_alpn;
+          Alcotest.test_case "single_read respects Cstruct offset" `Quick
+            test_tls_eio_single_read_respects_cstruct_offset;
+          Alcotest.test_case "single_write respects Cstruct offset" `Quick
+            test_tls_eio_single_write_respects_cstruct_offset;
+          Alcotest.test_case "single_read drains pending plaintext" `Quick
+            test_tls_eio_single_read_drains_pending_plaintext_before_raw_read;
           Alcotest.test_case "handshake enters SSL mutex" `Quick
             test_tls_handshake_enters_ssl_mutex_before_openssl;
           Alcotest.test_case "client uses IP peer identity" `Quick
             test_tls_client_of_flow_uses_ip_identity;
+          Alcotest.test_case "single_write feeds BIO on WANT_READ" `Quick
+            test_tls_eio_single_write_feeds_rbio_on_want_read;
+          Alcotest.test_case "single_write races raw feed with TLS progress"
+            `Quick test_tls_eio_single_write_races_raw_feed_with_tls_progress;
+          Alcotest.test_case "single_read feeds BIO on WANT_READ" `Quick
+            test_tls_eio_single_read_checks_pending_before_raw_read;
         ] );
       ( "h2-writer",
         [
@@ -445,6 +501,9 @@ let () =
             test_h2_informational_filter_rejects_101_status;
           Alcotest.test_case "informational filter rejects invalid status" `Quick
             test_h2_informational_filter_rejects_invalid_status;
+          Alcotest.test_case "informational filter rejects empty header name"
+            `Quick
+            test_h2_informational_filter_rejects_empty_header_name;
           Alcotest.test_case "informational filter rejects second final status"
             `Quick test_h2_informational_filter_rejects_second_final_status;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
@@ -464,10 +523,42 @@ let () =
         [
           Alcotest.test_case "h2c fixed, echo, unread body, stream, trailers" `Quick
             test_h2c_server_fixed_response_and_echo_body;
+          Alcotest.test_case "h2c CONNECT valid shape reaches handler" `Quick
+            test_h2c_connect_valid_shape_reaches_handler;
+          Alcotest.test_case
+            "h2c malformed CONNECT shapes do not reach handler" `Quick
+            test_h2c_connect_malformed_shapes_do_not_reach_handler;
+          Alcotest.test_case "h2c exposes request trailers" `Quick
+            test_h2c_server_exposes_request_trailers;
+          Alcotest.test_case "h2c exposes split request trailers" `Quick
+            test_h2c_server_exposes_split_request_trailers;
+          Alcotest.test_case "h2c request trailers wait before body EOF" `Quick
+            test_h2c_server_trailers_wait_before_body_eof;
+          Alcotest.test_case "h2c empty request trailers resolve after EOF"
+            `Quick test_h2c_server_empty_request_trailers_resolve_after_eof;
+          Alcotest.test_case "h2c rejects forbidden request trailers" `Quick
+            test_h2c_server_rejects_forbidden_request_trailers;
+          Alcotest.test_case "h2c rejects split forbidden request trailers"
+            `Quick test_h2c_server_rejects_split_forbidden_request_trailers;
+          Alcotest.test_case "h2c rejects DATA after request trailers" `Quick
+            test_h2c_server_rejects_data_after_request_trailers;
+          Alcotest.test_case "h2c request trailers fail after RST_STREAM" `Quick
+            test_h2c_request_trailers_fail_after_rst_stream;
+          Alcotest.test_case
+            "h2c early response drains unread body with trailers" `Quick
+            test_h2c_early_response_drains_unread_body_with_trailers;
+          Alcotest.test_case "h2c rejects non-final request trailers" `Quick
+            test_h2c_rejects_second_headers_without_end_stream;
           Alcotest.test_case "h2c rejects invalid request metadata" `Quick
             test_h2c_server_rejects_invalid_request_metadata;
           Alcotest.test_case "h2c rejects request header limit" `Quick
             test_h2c_server_rejects_request_header_limit;
+          Alcotest.test_case "h2c rejects HPACK-expanded header bytes" `Quick
+            test_h2c_server_rejects_hpack_expanded_header_bytes_before_handler;
+          Alcotest.test_case "h2c rejects HPACK-expanded header count" `Quick
+            test_h2c_server_rejects_hpack_expanded_header_count_before_handler;
+          Alcotest.test_case "h2c rejects empty request header name" `Quick
+            test_h2c_server_rejects_empty_request_header_name;
           Alcotest.test_case "h2c rejects invalid request header" `Quick
             test_h2c_server_rejects_invalid_request_header;
           Alcotest.test_case "h2c rejects control-char header values" `Quick
@@ -480,8 +571,18 @@ let () =
             `Quick test_h2c_server_streaming_response_exception_resets_stream;
           Alcotest.test_case "h2c response body cancellation resets stream"
             `Quick test_h2c_server_response_body_cancellation_resets_stream;
-          Alcotest.test_case "h2c ignores DATA after peer reset" `Quick
-            test_h2c_server_ignores_data_after_peer_reset;
+          Alcotest.test_case "h2c rejects DATA after peer reset" `Quick
+            test_h2c_server_rejects_data_after_peer_reset;
+          Alcotest.test_case
+            "h2c stream-scoped security error preserves active stream" `Quick
+            test_h2c_server_stream_scoped_security_error_preserves_active_stream;
+          Alcotest.test_case "h2c rejects oversized incomplete frame" `Quick
+            test_h2c_server_rejects_oversized_incomplete_frame;
+          Alcotest.test_case "h2c receive cap ignores peer frame-size increase"
+            `Quick
+            test_h2c_server_receive_cap_ignores_peer_max_frame_size_increase;
+          Alcotest.test_case "h2c incomplete HEADERS EOF sends GOAWAY" `Quick
+            test_h2c_server_goaway_on_incomplete_headers_eof;
           Alcotest.test_case "h2c rejects connection-specific request headers"
             `Quick
             test_h2c_server_rejects_connection_specific_request_headers;
@@ -489,19 +590,42 @@ let () =
             test_h2c_server_rejects_invalid_content_length_header;
           Alcotest.test_case "h2c rejects content-length mismatch" `Quick
             test_h2c_server_rejects_content_length_mismatch;
+          Alcotest.test_case "h2c accepts DATA at connection window" `Quick
+            test_h2c_server_accepts_data_exactly_at_connection_window;
+          Alcotest.test_case "h2c accepts DATA at stream window" `Quick
+            test_h2c_server_accepts_data_exactly_at_stream_window;
+          Alcotest.test_case "h2c rejects DATA over stream window" `Quick
+            test_h2c_server_rejects_data_over_stream_window;
+          Alcotest.test_case "h2c rejects DATA over connection window" `Quick
+            test_h2c_server_rejects_data_over_connection_window;
+          Alcotest.test_case "h2c counts padded DATA against flow window" `Quick
+            test_h2c_server_counts_padded_data_against_flow_window;
           Alcotest.test_case "h2c rejects response header limit" `Quick
             test_h2c_server_rejects_response_header_limit;
           Alcotest.test_case "h2c rejects connection-specific response header"
             `Quick
             test_h2c_server_rejects_connection_specific_response_header;
+          Alcotest.test_case
+            "h2c rejects informational final response statuses" `Quick
+            test_h2c_server_rejects_informational_final_response_statuses;
           Alcotest.test_case "h2 request validation allows TE trailers" `Quick
             test_h2_request_validation_allows_te_trailers;
           Alcotest.test_case "h2 request validation rejects invalid metadata"
             `Quick test_h2_request_rejects_invalid_method_and_path_values;
           Alcotest.test_case "h2 request validation requires pseudo headers"
             `Quick test_h2_request_headers_require_mandatory_pseudo_headers;
+          Alcotest.test_case "h2 CONNECT request shape validation" `Quick
+            test_h2_connect_request_shape_validation;
           Alcotest.test_case "h2 request validation rejects host conflict"
             `Quick test_h2_request_headers_reject_host_authority_conflict;
+          Alcotest.test_case "h2 request validation rejects empty names" `Quick
+            test_h2_request_validation_rejects_empty_header_names;
+          Alcotest.test_case "h2 request trailers reject forbidden fields"
+            `Quick test_h2_request_trailers_reject_forbidden_fields;
+          Alcotest.test_case "h2 request trailers reject pseudo and uppercase"
+            `Quick test_h2_request_trailers_reject_pseudo_and_uppercase_names;
+          Alcotest.test_case "h2 request trailers enforce limits" `Quick
+            test_h2_request_trailers_enforce_limits;
           Alcotest.test_case "server authority rejects invalid IP literals"
             `Quick test_server_authority_rejects_invalid_ip_literals;
           Alcotest.test_case "h2 response validation rejects TE" `Quick
@@ -539,14 +663,31 @@ let () =
             test_h2c_server_connection_close_fails_pending_body_read;
           Alcotest.test_case "h2c server handle graceful shutdown" `Quick
             test_h2c_server_handle_graceful_shutdown_waits_for_stream;
+          Alcotest.test_case "h2c graceful shutdown rejects new streams" `Quick
+            test_h2c_graceful_shutdown_sends_goaway_and_rejects_new_streams;
+          Alcotest.test_case "h2c graceful shutdown timer forces close" `Quick
+            test_h2c_graceful_shutdown_timer_forces_close;
           Alcotest.test_case "h2c ingress security closes" `Quick
             test_h2c_server_closes_on_ingress_security_error;
+          Alcotest.test_case "h2c GOAWAY reports processed stream id" `Quick
+            test_h2c_goaway_last_stream_id_after_processed_stream;
+          Alcotest.test_case
+            "h2c SETTINGS initial window overflow is FLOW_CONTROL_ERROR" `Quick
+            test_h2c_settings_initial_window_overflow_sends_flow_control_error;
           Alcotest.test_case "h2c read exception closes typed" `Quick
             test_h2c_server_read_exception_closes_typed;
           Alcotest.test_case "h2c write exception closes typed" `Quick
             test_h2c_server_write_exception_closes_typed;
+          Alcotest.test_case "h2c shutdown while transport write blocked"
+            `Quick test_h2c_server_shutdown_while_transport_write_blocked;
           Alcotest.test_case "h2c response write timeout is typed" `Quick
             test_h2c_server_response_write_timeout_is_typed;
+          Alcotest.test_case "h2c ping churn closes connection" `Quick
+            test_h2c_server_closes_on_ping_churn;
+          Alcotest.test_case "h2c empty DATA churn closes connection" `Quick
+            test_h2c_server_closes_on_empty_data_churn;
+          Alcotest.test_case "h2c WINDOW_UPDATE overflow resets stream" `Quick
+            test_h2c_server_rejects_window_update_overflow;
           Alcotest.test_case "h2c owns response framing" `Quick
             test_h2c_server_owns_response_framing;
           Alcotest.test_case "h2c rejects handler-supplied content-length"
@@ -558,6 +699,10 @@ let () =
             test_h2c_server_resets_overflowing_stream_response;
           Alcotest.test_case "h2c multiplexes slow uploads" `Quick
             test_h2c_server_multiplexes_slow_uploads;
+          Alcotest.test_case "h2c many completed streams stay healthy" `Quick
+            test_h2c_server_many_completed_streams_keep_connection_healthy;
+          Alcotest.test_case "h2c many remote resets stay healthy" `Quick
+            test_h2c_server_many_remote_resets_keep_connection_healthy;
           Alcotest.test_case
             "h2c half-close incomplete body does not block streams" `Quick
             test_h2c_server_half_close_resets_incomplete_body_without_blocking;
@@ -574,6 +719,18 @@ let () =
         [
           Alcotest.test_case "SETTINGS churn reader" `Quick
             test_h2_security_settings_churn_reader;
+          Alcotest.test_case "churn flood limits" `Quick
+            test_h2_security_rejects_churn_floods;
+          Alcotest.test_case "long-lived PING keepalive survives" `Quick
+            test_h2_security_allows_long_lived_ping_keepalive;
+          Alcotest.test_case "PING burst rejected" `Quick
+            test_h2_security_rejects_ping_burst;
+          Alcotest.test_case "SETTINGS burst rejected" `Quick
+            test_h2_security_rejects_settings_burst;
+          Alcotest.test_case "large WINDOW_UPDATE sequence survives" `Quick
+            test_h2_security_allows_large_window_update_sequence;
+          Alcotest.test_case "stream-scoped error classification" `Quick
+            test_h2_security_classifies_stream_scoped_errors;
           Alcotest.test_case "invalid control frame envelopes" `Quick
             test_h2_security_rejects_invalid_control_frame_envelopes;
           Alcotest.test_case "invalid stream frame envelopes" `Quick
@@ -588,6 +745,8 @@ let () =
             test_h2_security_allows_graceful_repeated_goaway;
           Alcotest.test_case "increasing GOAWAY last stream" `Quick
             test_h2_security_rejects_increasing_goaway_last_stream_id;
+          Alcotest.test_case "complete stream bounds header state" `Quick
+            test_h2_security_complete_stream_bounds_header_state;
         ] );
       ( "h2-multiplexer",
         [

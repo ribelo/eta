@@ -22,7 +22,7 @@ let probe_health ~env ~sw ~port ~protocol ~transport ?cert_dir () =
             Eta_http_eio.Client.make_h1 ~sw ~net ?ca_file
               ~max_response_body_bytes:1024 ()
         | H2 ->
-            Eta_http_eio.Client.make ~sw ~net ?ca_file
+            Eta_http_eio.Client.make ~sw ~net ~clock ?ca_file
               ~max_response_body_bytes:1024 ()
       in
       let rt = Eta_eio.Runtime.create ~sw ~clock () in

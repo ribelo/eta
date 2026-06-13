@@ -15,6 +15,7 @@ Runs all three suites (interop, CVE regress, quick bench). Use `--no-interop`, `
 ```bash
 dune build @interop      # interop + differential vs curl
 dune build @cve-regress  # adversarial / CVE replay
+dune build @h2spec       # HTTP/2 conformance via h2spec, h2c + h2/TLS
 dune build @http-bench   # quick latency / allocation / RSS benchmarks
 ```
 
@@ -25,6 +26,7 @@ Each run writes to `http-testsuite/results/<utc-timestamp>-<short-git-sha>/`:
 - `manifest.json` — tool versions, host info, git sha
 - `interop.json` — flat array of all interop scenario results
 - `cve.json` — adversarial scenario results
+- `h2spec.json` / `h2spec.md` — HTTP/2 conformance command results and raw artifact paths
 - `bench.json` — benchmark iterations
 - `summary.md` — human-readable rollup
 - `<scenario>_<server>_<protocol>_<transport>/` — per-scenario raw eta + curl outputs when divergent or failed
@@ -46,6 +48,7 @@ The easiest way is to edit `Interop.default_scenarios` to contain only the scena
 - `lib/` — OCaml library: server lifecycle, scenario definitions, differential curl testing, report generation
 - `test/interop/` — `dune build @interop` entry point
 - `test/cve_regress/` — `dune build @cve-regress` entry point
+- `test/h2spec/` — `dune build @h2spec` entry point
 - `test/bench/` — `dune build @http-bench` entry point
 - `expected_divergences.md` — documented fields subtracted before pass/fail
 

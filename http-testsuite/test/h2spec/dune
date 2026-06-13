@@ -1,0 +1,11 @@
+(executable
+ (name run)
+ (libraries eta_http_testsuite eta_http_eio eio_main yojson unix))
+
+(rule
+ (alias h2spec)
+ (deps
+  (source_tree ../../lib)
+  run.exe)
+ (action
+  (run %{dep:run.exe})))

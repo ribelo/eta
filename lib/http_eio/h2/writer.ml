@@ -12,9 +12,22 @@ let cstruct_of_iovec ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) 
 
 let cstructs_of_iovecs iovecs = List.map cstruct_of_iovec iovecs
 
+let cstruct_of_iovecs iovecs =
+  let len = H2.IOVec.lengthv iovecs in
+  let bytes = Bytes.create len in
+  let dst_off = ref 0 in
+  List.iter
+    (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
+      Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
+        ~len;
+      dst_off := !dst_off + len)
+    iovecs;
+  Cstruct.of_bytes bytes
+
 let write_iovecs ~flow iovecs =
-  if H2.IOVec.lengthv iovecs = 0 then 0
-  else Eio.Flow.single_write flow (cstructs_of_iovecs iovecs)
+  let len = H2.IOVec.lengthv iovecs in
+  if len > 0 then Eio.Flow.write flow [ cstruct_of_iovecs iovecs ];
+  len
 
 let rec drain_client_loop ~flow client written =
   match H2.Client_connection.next_write_operation client with

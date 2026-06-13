@@ -1,6 +1,8 @@
 open Test_eta_http_support
 open Test_eta_http_h2_support
 
+let test_now_ms () = 0L
+
 let hpack_header name value = { Hpack.name; value; sensitive = false }
 
 let hpack_block encoder headers =
@@ -54,7 +56,10 @@ let test_h2_multiplexer_reads_server_response () =
   let source =
     Eio.Flow.cstruct_source (h2_cstruct_chunks ~chunk_size:7 response_bytes)
   in
-  let reader = Eta_http_eio.H2.Multiplexer.create_client_reader ~buffer_size:128 client in
+  let reader =
+    Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
+      ~buffer_size:128 client
+  in
   let rec loop reads =
     if reads > 100 then Alcotest.fail "h2 reader did not deliver response"
     else if result.eof then ()
@@ -75,7 +80,10 @@ let test_h2_multiplexer_reads_server_response () =
 
 let test_h2_multiplexer_read_exception_is_typed_result () =
   let client = H2.Client_connection.create ~error_handler:(fun _ -> ()) () in
-  let reader = Eta_http_eio.H2.Multiplexer.create_client_reader client in
+  let reader =
+    Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
+      client
+  in
   let flow = Eio_mock.Flow.make "eta-http-h2-read-raises" in
   Eio_mock.Flow.on_read flow [ `Raise (Failure "h2 socket boom") ];
   match Eta_http_eio.H2.Multiplexer.read_client_once ~flow reader with
@@ -129,7 +137,10 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
     Eio.Flow.cstruct_source
       (h2_cstruct_chunks ~chunk_size:(String.length response_bytes) response_bytes)
   in
-  let reader = Eta_http_eio.H2.Multiplexer.create_client_reader client in
+  let reader =
+    Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
+      client
+  in
   let rec loop reads =
     if reads > 100 then Alcotest.fail "h2 reader did not deliver max DATA frame"
     else if result.eof then ()
@@ -151,7 +162,9 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
 
 let test_h2_multiplexer_release_forgets_informational_filter_stream () =
   let mux = Eta_http_eio.H2.Multiplexer.create () in
-  let reader = Eta_http_eio.H2.Multiplexer.create_reader mux in
+  let reader =
+    Eta_http_eio.H2.Multiplexer.create_reader ~now_ms:test_now_ms mux
+  in
   let status = ref None in
   let request =
     H2.Request.create ~scheme:"https"

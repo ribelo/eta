@@ -215,4 +215,12 @@ let h2_payload = Eta_http.H2.Frame.payload
 let h2_observe_security data =
   let security = Eta_http.H2.Security.create () in
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
-  Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
+  match
+    Eta_http.H2.Security.observe_result security bs ~off:0
+      ~len:(String.length data) ~now_ms:0L
+  with
+  | Eta_http.H2.Security.Pass -> None
+  | Eta_http.H2.Security.Connection_error { kind; _ }
+  | Eta_http.H2.Security.Stream_error { kind; _ }
+  | Eta_http.H2.Security.Policy_close { kind; _ } ->
+      Some kind

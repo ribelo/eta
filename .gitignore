@@ -7,6 +7,8 @@ _opam/
 .reference/
 .backlog/
 backlog/
+.scratch/h2-0.13.0/
+.scratch/opam-pins/
 journal.md
 .motel-data/
 bench/fixtures/cache/*.bin

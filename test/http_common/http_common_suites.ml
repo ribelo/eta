@@ -956,10 +956,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let h2_goaway_no_error = Eta_http.H2.Frame.goaway_no_error
   let h2_settings_frame = h2_frame_header ~length:0 ~frame_type:0x4 ~flags:0 ~stream_id:0
 
+  let h2_security_observation_kind = function
+    | Eta_http.H2.Security.Pass -> None
+    | Eta_http.H2.Security.Connection_error { kind; _ }
+    | Eta_http.H2.Security.Stream_error { kind; _ }
+    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+        Some kind
+
+  let h2_security_observe security bs ~off ~len =
+    Eta_http.H2.Security.observe_result security bs ~off ~len ~now_ms:0L
+    |> h2_security_observation_kind
+
   let h2_observe_security data =
     let security = Eta_http.H2.Security.create () in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
-    Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
+    h2_security_observe security bs ~off:0 ~len:(String.length data)
 
   let h2_permit label = function
     | Ok permit -> permit
@@ -1193,7 +1204,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
     match
-      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+      h2_security_observe security bs ~off:0 ~len:(String.length frame)
     with
     | Some
         (Eta_http.Error.Continuation_flood
@@ -1222,7 +1233,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
     match
-      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+      h2_security_observe security bs ~off:0 ~len:(String.length frame)
     with
     | Some
         (Eta_http.Error.Hpack_decode_overflow { decoded_bytes; limit_bytes }) ->
@@ -1251,9 +1262,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_settings_churn () =
     let data = String.concat "" (List.init 11 (fun _ -> h2_settings_frame)) in
     match h2_observe_security data with
-    | Some (Eta_http.Error.Settings_churn_rate_exceeded { observed_rate_hz; limit_hz }) ->
-        Alcotest.(check int) "observed" 11 observed_rate_hz;
-        Alcotest.(check int) "limit" 10 limit_hz
+    | Some
+        (Eta_http.Error.Settings_count_exceeded { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 11 observed_count;
+        Alcotest.(check int) "limit" 10 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1267,10 +1279,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = String.concat "" (List.init 101 (fun _ -> frame)) in
     match h2_observe_security data with
     | Some
-        (Eta_http.Error.Rst_rate_exceeded
-          { observed_per_second; limit_per_second }) ->
-        Alcotest.(check int) "observed" 101 observed_per_second;
-        Alcotest.(check int) "limit" 100 limit_per_second
+        (Eta_http.Error.Rst_count_exceeded { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 101 observed_count;
+        Alcotest.(check int) "limit" 100 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1284,9 +1295,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = String.concat "" (List.init 101 (fun _ -> frame)) in
     match h2_observe_security data with
     | Some
-        (Eta_http.Error.Ping_rate_exceeded { observed_rate_hz; limit_hz }) ->
-        Alcotest.(check int) "observed" 101 observed_rate_hz;
-        Alcotest.(check int) "limit" 100 limit_hz
+        (Eta_http.Error.Ping_count_exceeded { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 101 observed_count;
+        Alcotest.(check int) "limit" 100 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1297,10 +1308,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = String.concat "" (List.init 101 (fun _ -> frame)) in
     match h2_observe_security data with
     | Some
-        (Eta_http.Error.Empty_data_frame_rate_exceeded
-          { observed_rate_hz; limit_hz }) ->
-        Alcotest.(check int) "observed" 101 observed_rate_hz;
-        Alcotest.(check int) "limit" 100 limit_hz
+        (Eta_http.Error.Empty_data_frame_count_exceeded
+          { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 101 observed_count;
+        Alcotest.(check int) "limit" 100 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1310,7 +1321,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let config =
       {
         Eta_http.H2.Security.default_config with
-        max_window_update_per_connection = 2;
+        window_update_rate =
+          {
+            Eta_http.H2.Security.burst = 2;
+            window_ms = 1_000;
+            max_per_connection = None;
+          };
       }
     in
     let security = Eta_http.H2.Security.create ~config () in
@@ -1321,13 +1337,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = String.concat "" (List.init 3 (fun _ -> frame)) in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
     match
-      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length data)
+      h2_security_observe security bs ~off:0 ~len:(String.length data)
     with
     | Some
-        (Eta_http.Error.Window_update_rate_exceeded
-          { observed_rate_hz; limit_hz }) ->
-        Alcotest.(check int) "observed" 3 observed_rate_hz;
-        Alcotest.(check int) "limit" 2 limit_hz
+        (Eta_http.Error.Window_update_count_exceeded
+          { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 3 observed_count;
+        Alcotest.(check int) "limit" 2 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1351,7 +1367,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Bigstringaf.of_string ~off:0 ~len:(String.length payload) payload
     in
     (match
-       Eta_http.H2.Security.observe security header_bs ~off:0
+       h2_security_observe security header_bs ~off:0
          ~len:(String.length header)
      with
     | None -> ()
@@ -1359,7 +1375,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "header returned early error: %s"
           (Eta_http.Error.kind_name kind));
     match
-      Eta_http.H2.Security.observe security payload_bs ~off:0
+      h2_security_observe security payload_bs ~off:0
         ~len:(String.length payload)
     with
     | Some
@@ -1378,10 +1394,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = String.concat "" (List.init 33 (fun _ -> frame)) in
     match h2_observe_security data with
     | Some
-        (Eta_http.Error.Response_header_change_rate_exceeded
-          { observed_rate_hz; limit_hz }) ->
-        Alcotest.(check int) "observed" 33 observed_rate_hz;
-        Alcotest.(check int) "limit" 32 limit_hz
+        (Eta_http.Error.Response_header_count_exceeded
+          { observed_count; limit }) ->
+        Alcotest.(check int) "observed" 33 observed_count;
+        Alcotest.(check int) "limit" 32 limit
     | Some kind ->
         Alcotest.failf "unexpected security error: %s"
           (Eta_http.Error.kind_name kind)
@@ -1404,7 +1420,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let config =
       {
         Eta_http.H2.Security.default_config with
-        max_response_headers_per_connection = 1;
+        max_response_headers_per_stream = 1;
       }
     in
     let security = Eta_http.H2.Security.create ~config () in
@@ -1413,7 +1429,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let observe () =
       let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
-      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+      h2_security_observe security bs ~off:0 ~len:(String.length frame)
     in
     (match observe () with
     | None -> ()
@@ -1431,7 +1447,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let config =
       {
         Eta_http.H2.Security.default_config with
-        max_response_headers_per_connection = 1;
+        max_response_headers_per_stream = 1;
       }
     in
     let security = Eta_http.H2.Security.create ~config () in
@@ -1461,7 +1477,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let observe () =
       let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
-      Eta_http.H2.Security.observe security bs ~off:0 ~len:(String.length frame)
+      h2_security_observe security bs ~off:0 ~len:(String.length frame)
     in
     (match observe () with
     | None -> ()
@@ -1569,7 +1585,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Result.map (( = ) A.H2) (A.protocol_of_alpn (Some "h2")));
     Alcotest.(check (result bool string)) "decode h1" (Ok true)
       (Result.map (( = ) A.H1) (A.protocol_of_alpn (Some "http/1.1")));
-    Alcotest.(check (result bool string)) "missing ALPN falls back h1" (Ok true)
+    Alcotest.(check (result bool string)) "missing ALPN is not a protocol"
+      (Error "missing ALPN protocol")
       (Result.map (( = ) A.H1) (A.protocol_of_alpn None));
     Alcotest.(check (result bool string)) "unknown ALPN rejected"
       (Error "spdy/3")
@@ -1577,23 +1594,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_dispatch_decides_alpn_route () =
     let module D = Eta_http.Transport.Dispatch in
-    (match D.decide_alpn (Some "h2") with
+    let mixed = D.mixed_protocols in
+    let h2_only = D.enabled_protocols ~h1:false ~h2:true in
+    (match D.decide_alpn ~enabled_protocols:mixed (Some "h2") with
     | Ok D.Use_h2 -> ()
     | Ok D.Use_h1 -> Alcotest.fail "h2 ALPN routed to h1"
-    | Error protocol -> Alcotest.failf "h2 ALPN rejected: %s" protocol);
-    (match D.decide_alpn (Some "http/1.1") with
+    | Error error ->
+        Alcotest.failf "h2 ALPN rejected: %s" (D.alpn_error_to_string error));
+    (match D.decide_alpn ~enabled_protocols:mixed (Some "http/1.1") with
     | Ok D.Use_h1 -> ()
     | Ok D.Use_h2 -> Alcotest.fail "http/1.1 ALPN routed to h2"
-    | Error protocol -> Alcotest.failf "http/1.1 ALPN rejected: %s" protocol);
-    (match D.decide_alpn None with
+    | Error error ->
+        Alcotest.failf "http/1.1 ALPN rejected: %s"
+          (D.alpn_error_to_string error));
+    (match D.decide_alpn ~enabled_protocols:mixed None with
     | Ok D.Use_h1 -> ()
     | Ok D.Use_h2 -> Alcotest.fail "missing ALPN routed to h2"
-    | Error protocol -> Alcotest.failf "missing ALPN rejected: %s" protocol);
+    | Error error ->
+        Alcotest.failf "missing ALPN rejected: %s"
+          (D.alpn_error_to_string error));
+    (match D.decide_alpn ~enabled_protocols:h2_only None with
+    | Error D.Missing_alpn -> ()
+    | Ok _ -> Alcotest.fail "H2-only dispatch accepted missing ALPN"
+    | Error error ->
+        Alcotest.failf "unexpected missing-ALPN error: %s"
+          (D.alpn_error_to_string error));
     Alcotest.(check (result string string)) "unknown ALPN" (Error "spdy/3")
       (Result.map
          (fun decision ->
            D.protocol_to_string (D.decision_protocol decision))
-         (D.decide_alpn (Some "spdy/3")))
+         (Result.map_error D.alpn_error_to_string
+            (D.decide_alpn ~enabled_protocols:mixed (Some "spdy/3"))))
 
   let test_tls_chokepoint_policy () =
     let client = Eta_http.Tls.Config.default_client () in

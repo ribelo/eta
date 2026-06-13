@@ -143,6 +143,7 @@ type client_reader = {
   client : H2.Client_connection.t;
   security : Security.t;
   filter : Informational_filter.t;
+  now_ms : unit -> int64;
   buffer : Bigstringaf.t;
   mutable filtered : string;
   mutable filtered_off : int;
@@ -161,8 +162,8 @@ type body_event =
   | Body_chunk of bytes
   | Body_eof
 
-let create_client_reader_with_filter ?(buffer_size = 64 * 1024) ?security
-    ?security_config ~filter client =
+let create_client_reader_with_filter ~now_ms ?(buffer_size = 64 * 1024)
+    ?security ?security_config ~filter client =
   if buffer_size <= 0 then
     invalid_arg "Eta_http_eio.H2.Multiplexer.create_client_reader: buffer_size must be > 0";
   let security =
@@ -178,6 +179,7 @@ let create_client_reader_with_filter ?(buffer_size = 64 * 1024) ?security
     client;
     security;
     filter;
+    now_ms;
     buffer;
     filtered = "";
     filtered_off = 0;
@@ -186,14 +188,15 @@ let create_client_reader_with_filter ?(buffer_size = 64 * 1024) ?security
     eof = false;
   }
 
-let create_client_reader ?buffer_size ?security ?security_config client =
-  create_client_reader_with_filter ?buffer_size ?security ?security_config
-    ~filter:(Informational_filter.create ()) client
+let create_client_reader ~now_ms ?buffer_size ?security ?security_config
+    client =
+  create_client_reader_with_filter ~now_ms ?buffer_size ?security
+    ?security_config ~filter:(Informational_filter.create ()) client
 
-let create_reader ?buffer_size ?security_config (t : t) =
+let create_reader ~now_ms ?buffer_size ?security_config (t : t) =
   let security = t.security in
-  create_client_reader_with_filter ?buffer_size ?security ?security_config
-    ~filter:t.filter t.client
+  create_client_reader_with_filter ~now_ms ?buffer_size ?security
+    ?security_config ~filter:t.filter t.client
 
 let client reader = reader.client
 let reader_is_passthrough reader = Informational_filter.is_passthrough reader.filter
@@ -241,6 +244,13 @@ let copy_filtered reader =
       reader.filtered_off <- 0);
     copied
 
+let security_observation_kind = function
+  | Security.Pass -> None
+  | Security.Connection_error { kind; _ }
+  | Security.Stream_error { kind; _ }
+  | Security.Policy_close { kind; _ } ->
+      Some kind
+
 let read_more ~flow reader =
   compact reader;
   match copy_filtered reader with
@@ -251,7 +261,11 @@ let read_more ~flow reader =
       let view = Cstruct.of_bigarray reader.buffer ~off:reader.len ~len:free_space in
       try
         let read = Eio.Flow.single_read flow view in
-        (match Security.observe reader.security reader.buffer ~off:reader.len ~len:read with
+        (match
+           Security.observe_result reader.security reader.buffer ~off:reader.len
+             ~len:read ~now_ms:(reader.now_ms ())
+           |> security_observation_kind
+         with
         | Some error -> `Security_error error
         | None ->
             if Informational_filter.is_passthrough reader.filter then (

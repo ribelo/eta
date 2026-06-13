@@ -14,12 +14,14 @@ type stats = Server_stats.H1.snapshot = {
 }
 
 type time = Types.time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
 
 type t = {
   sw : Eio.Switch.t;
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
@@ -1162,6 +1164,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   let t =
     {
       sw;
+      now_ms = time.now_ms;
       sleep = time.sleep;
       with_timeout = time.with_timeout;
       flow;

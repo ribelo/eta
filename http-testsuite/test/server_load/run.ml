@@ -37,9 +37,17 @@ type run_shape = {
   requests : int option;
   timeout : string;
   concurrencies : int list;
+  h2_matrix : (int * int) list;
   repeats : int;
   endpoints : endpoint list;
   modes : mode list;
+}
+
+type load_case = {
+  total_concurrency : int;
+  connections : int;
+  streams_per_connection : int;
+  scenario : string;
 }
 
 let quote = Filename.quote
@@ -237,6 +245,7 @@ let shape config =
         requests = Some 20;
         timeout = "5s";
         concurrencies = [ 1 ];
+        h2_matrix = [ (1, 1) ];
         repeats = 1;
         endpoints = [ root ];
         modes;
@@ -247,6 +256,7 @@ let shape config =
         requests = Some 1000;
         timeout = "5s";
         concurrencies = [ 1; 16 ];
+        h2_matrix = [ (1, 1); (1, 16); (4, 4); (16, 1) ];
         repeats = 1;
         endpoints = [ root; user_id; post_user; static_1k; echo_1k ];
         modes;
@@ -257,6 +267,14 @@ let shape config =
         requests = Some 10000;
         timeout = "10s";
         concurrencies = [ 1; 16; 64; 256 ];
+        h2_matrix =
+          List.concat_map
+            (fun connections ->
+              List.map
+                (fun streams_per_connection ->
+                  (connections, streams_per_connection))
+                [ 1; 16; 64; 128 ])
+            [ 1; 4; 16; 64 ];
         repeats = 3;
         endpoints =
           [ root; user_id; post_user; static_1k; static_1m; echo_1k; echo_1m ];
@@ -420,7 +438,30 @@ let oha_protocol_flags mode =
   | Types.H1 -> [ "--http-version"; "1.1" ]
   | H2 -> [ "--http-version"; "2" ]
 
-let oha_command ~temp_dir ~shape ~mode ~endpoint ~concurrency ~repeat ~url =
+let h1_load_case concurrency =
+  {
+    total_concurrency = concurrency;
+    connections = concurrency;
+    streams_per_connection = 1;
+    scenario = "h1_multi_connection";
+  }
+
+let h2_load_case (connections, streams_per_connection) =
+  {
+    total_concurrency = connections * streams_per_connection;
+    connections;
+    streams_per_connection;
+    scenario =
+      (if connections = 1 then "h2_single_connection_multiplex"
+       else "h2_multi_connection_multiplex");
+  }
+
+let load_cases_for_mode shape mode =
+  match mode.protocol with
+  | Types.H1 -> List.map h1_load_case shape.concurrencies
+  | H2 -> List.map h2_load_case shape.h2_matrix
+
+let oha_command ~temp_dir ~shape ~mode ~endpoint ~load_case ~repeat ~url =
   ensure_body_file ~temp_dir endpoint;
   let base =
     [
@@ -436,8 +477,13 @@ let oha_command ~temp_dir ~shape ~mode ~endpoint ~concurrency ~repeat ~url =
       "-t";
       shape.timeout;
       "-c";
-      string_of_int concurrency;
+      string_of_int load_case.connections;
     ]
+  in
+  let h2_parallel =
+    match mode.protocol with
+    | Types.H1 -> []
+    | H2 -> [ "-p"; string_of_int load_case.streams_per_connection ]
   in
   let count =
     match (shape.requests, shape.duration) with
@@ -458,12 +504,13 @@ let oha_command ~temp_dir ~shape ~mode ~endpoint ~concurrency ~repeat ~url =
         [ "-m"; "POST"; "-T"; "text/plain" ] @ body
   in
   let tokens =
-    base @ count @ oha_protocol_flags mode @ tls @ method_flags @ [ url ]
+    base @ h2_parallel @ count @ oha_protocol_flags mode @ tls @ method_flags
+    @ [ url ]
   in
   let command = String.concat " " (List.map quote tokens) ^ " 2>&1" in
   (command, repeat)
 
-let result_identity_json ~mode ~endpoint ~concurrency ~repeat =
+let result_identity_json ~mode ~endpoint ~load_case ~repeat =
   [
     ("server", json_of_server mode.server);
     ("protocol", json_of_protocol mode.protocol);
@@ -472,12 +519,15 @@ let result_identity_json ~mode ~endpoint ~concurrency ~repeat =
     ("path", json_string endpoint.path);
     ("endpoint", json_string endpoint.name);
     ("body_bytes", json_int endpoint.body_bytes);
-    ("concurrency", json_int concurrency);
-    ("http2_parallel", json_int 1);
+    ("concurrency", json_int load_case.total_concurrency);
+    ("connections", json_int load_case.connections);
+    ("streams_per_connection", json_int load_case.streams_per_connection);
+    ("http2_parallel", json_int load_case.streams_per_connection);
+    ("load_scenario", json_string load_case.scenario);
     ("repeat", json_int repeat);
   ]
 
-let pass_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url ~preflight
+let pass_result ~mode ~endpoint ~shape ~load_case ~repeat ~url ~preflight
     ~command ~raw =
   let summary = Option.value ~default:`Null (assoc_find "summary" raw) in
   let latency = Option.value ~default:`Null (assoc_find "latencyPercentiles" raw) in
@@ -492,7 +542,7 @@ let pass_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url ~preflight
     | _ -> "fail"
   in
   `Assoc
-    (result_identity_json ~mode ~endpoint ~concurrency ~repeat
+    (result_identity_json ~mode ~endpoint ~load_case ~repeat
      @ [
          ("status", `String status);
          ("url", json_string url);
@@ -529,10 +579,10 @@ let pass_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url ~preflight
          ("raw_oha", raw);
        ])
 
-let fail_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url ?preflight
+let fail_result ~mode ~endpoint ~shape ~load_case ~repeat ~url ?preflight
     ~command error =
   `Assoc
-    (result_identity_json ~mode ~endpoint ~concurrency ~repeat
+    (result_identity_json ~mode ~endpoint ~load_case ~repeat
      @ [
          ("status", `String "fail");
          ("url", json_string url);
@@ -543,9 +593,9 @@ let fail_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url ?preflight
          ("error", json_string error);
        ])
 
-let skip_result ~mode ~endpoint ~shape ~concurrency ~repeat reason =
+let skip_result ~mode ~endpoint ~shape ~load_case ~repeat reason =
   `Assoc
-    (result_identity_json ~mode ~endpoint ~concurrency ~repeat
+    (result_identity_json ~mode ~endpoint ~load_case ~repeat
      @ [
          ("status", `String "skip");
          ("duration", json_option json_string shape.duration);
@@ -553,8 +603,8 @@ let skip_result ~mode ~endpoint ~shape ~concurrency ~repeat reason =
          ("reason", json_string reason);
        ])
 
-let run_oha ~shape ~temp_dir ~mode ~endpoint ~concurrency ~repeat ~url =
-  let command, repeat = oha_command ~temp_dir ~shape ~mode ~endpoint ~concurrency
+let run_oha ~shape ~temp_dir ~mode ~endpoint ~load_case ~repeat ~url =
+  let command, repeat = oha_command ~temp_dir ~shape ~mode ~endpoint ~load_case
       ~repeat ~url
   in
   let preflight =
@@ -564,7 +614,7 @@ let run_oha ~shape ~temp_dir ~mode ~endpoint ~concurrency ~repeat ~url =
   in
   match preflight with
   | Error error ->
-      fail_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url
+      fail_result ~mode ~endpoint ~shape ~load_case ~repeat ~url
         ~command error
   | Ok preflight -> (
       match
@@ -572,16 +622,16 @@ let run_oha ~shape ~temp_dir ~mode ~endpoint ~concurrency ~repeat ~url =
             Util.run_cmd_out ~env:[ ("NO_COLOR", "false") ] command)
       with
       | Error error ->
-          fail_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url
+          fail_result ~mode ~endpoint ~shape ~load_case ~repeat ~url
             ~preflight ~command error
       | Ok lines -> (
           let output = String.concat "\n" lines in
           match Yojson.from_string output with
           | raw ->
-              pass_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url
+              pass_result ~mode ~endpoint ~shape ~load_case ~repeat ~url
                 ~preflight ~command ~raw
           | exception exn ->
-              fail_result ~mode ~endpoint ~shape ~concurrency ~repeat ~url
+              fail_result ~mode ~endpoint ~shape ~load_case ~repeat ~url
                 ~preflight ~command
                 (Printf.sprintf "oha JSON parse failed: %s\n%s"
                    (Printexc.to_string exn) output)))
@@ -810,14 +860,14 @@ let all_combinations shape mode =
   |> List.concat_map
     (fun endpoint ->
       List.concat_map
-        (fun concurrency ->
-          List.init shape.repeats (fun index -> (endpoint, concurrency, index + 1)))
-        shape.concurrencies)
+        (fun load_case ->
+          List.init shape.repeats (fun index -> (endpoint, load_case, index + 1)))
+        (load_cases_for_mode shape mode))
 
 let skipped_mode_results shape mode reason =
   all_combinations shape mode
-  |> List.map (fun (endpoint, concurrency, repeat) ->
-         skip_result ~mode ~endpoint ~shape ~concurrency ~repeat reason)
+  |> List.map (fun (endpoint, load_case, repeat) ->
+         skip_result ~mode ~endpoint ~shape ~load_case ~repeat reason)
 
 let run_started_mode ~shape ~temp_dir ~mode ~port =
   endpoints_for_mode shape mode
@@ -826,16 +876,18 @@ let run_started_mode ~shape ~temp_dir ~mode ~port =
   |> List.concat_map
     (fun endpoint ->
       List.concat_map
-        (fun concurrency ->
+        (fun load_case ->
           List.init shape.repeats (fun index ->
               let repeat = index + 1 in
               let url = url ~port mode endpoint in
-              Printf.printf "  %-18s %-8s %-4s c=%-4d %s repeat=%d\n%!"
+              Printf.printf
+                "  %-18s %-8s %-4s c=%-4d conn=%-4d streams=%-4d %s repeat=%d\n%!"
                 (mode_id mode) endpoint.name (method_name endpoint.method_)
-                concurrency endpoint.path repeat;
-              run_oha ~shape ~temp_dir ~mode ~endpoint ~concurrency ~repeat
+                load_case.total_concurrency load_case.connections
+                load_case.streams_per_connection endpoint.path repeat;
+              run_oha ~shape ~temp_dir ~mode ~endpoint ~load_case ~repeat
                 ~url))
-        shape.concurrencies)
+        (load_cases_for_mode shape mode))
 
 let run_mode ~env ~clock ~results_dir shape mode =
   let temp_dir = Filename.concat results_dir (mode_id mode) in
@@ -874,6 +926,18 @@ let config_json shape =
       ("requests", json_option json_int shape.requests);
       ("timeout", json_string shape.timeout);
       ("concurrencies", `List (List.map json_int shape.concurrencies));
+      ( "h2_matrix",
+        `List
+          (List.map
+             (fun (connections, streams_per_connection) ->
+               `Assoc
+                 [
+                   ("connections", json_int connections);
+                   ("streams_per_connection", json_int streams_per_connection);
+                   ( "total_concurrency",
+                     json_int (connections * streams_per_connection) );
+                 ])
+             shape.h2_matrix) );
       ("repeats", json_int shape.repeats);
       ( "endpoints",
         `List

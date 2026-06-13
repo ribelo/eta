@@ -109,6 +109,7 @@ let make_client ~env ~sw ~protocol ~transport ~cert_dir =
         ~max_response_body_bytes ?ca_file ()
   | H2 ->
       Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env)
+        ~clock:(Eio.Stdenv.clock env)
         ~max_response_body_bytes ?ca_file ()
 
 type scenario = {

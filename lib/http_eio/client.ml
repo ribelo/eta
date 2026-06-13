@@ -219,6 +219,7 @@ type alpn_gate = {
 
 type 'net auto_state = {
   sw : Eio.Switch.t;
+  now_ms : unit -> int64;
   net : 'net;
   ca_file : string option;
   max_response_body_bytes : int;
@@ -341,7 +342,8 @@ let h2_on_connection state connection request url =
 let h2_connection_on_tls state key tls =
   let connection =
     Connection.create ~sw:state.sw ~flow:(tls :> Connect.tcp_flow)
-      ~config:h2_default_config ~reader_buffer_size:(512 * 1024)
+      ~now_ms:state.now_ms ~config:h2_default_config
+      ~reader_buffer_size:(512 * 1024)
       ~on_close:(fun () ->
         incr state.released;
         Hashtbl.remove state.h2_connections key;
@@ -358,6 +360,7 @@ let h2_on_tls state target tls request url =
 
 let dispatch_tls state target (tls, alpn) request url =
   Dispatch.dispatch_alpn
+    ~enabled_protocols:Dispatch.mixed_protocols
     ~close:(fun () -> close_counted state (tls :> Connect.tcp_flow))
     ~use_h1:(fun () ->
       state.last_protocol := H1;
@@ -383,9 +386,12 @@ let cancel_alpn_effect state key pending error =
   |> Eta.Effect.bind (fun () -> Eta.Effect.fail error)
 
 let dispatch_tls_leader state key pending target (tls, alpn) request url =
-  match Dispatch.decide_alpn alpn with
+  match Dispatch.decide_alpn ~enabled_protocols:Dispatch.mixed_protocols alpn with
   | Error protocol ->
-      let error = unsupported_alpn_error request protocol in
+      let error =
+        unsupported_alpn_error request
+          (Dispatch.alpn_error_to_string protocol)
+      in
       close_counted state (tls :> Connect.tcp_flow)
       |> Eta.Effect.bind (fun () ->
              cancel_alpn_effect state key pending error)
@@ -499,13 +505,14 @@ let auto_shutdown_impl state () =
       Hashtbl.clear state.h2_connections;
       with_alpn_lock state (fun () -> Hashtbl.clear state.alpn_gates))
 
-let make ~sw ~net
+let make ~sw ~net ~clock
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http_eio.Client.make: max_response_body_bytes must be >= 0";
   let state =
     {
       sw;
+      now_ms = (fun () -> Int64.of_float (Eio.Time.now clock *. 1000.));
       net;
       ca_file;
       max_response_body_bytes;

@@ -49,23 +49,20 @@ type kind =
       frames : int;
     }
   | Stream_admission_rejected of { limit : int }
-  | Rst_rate_exceeded of { observed_per_second : int; limit_per_second : int }
-  | Ping_rate_exceeded of { observed_rate_hz : int; limit_hz : int }
-  | Empty_data_frame_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Rst_count_exceeded of { observed_count : int; limit : int }
+  | Ping_count_exceeded of { observed_count : int; limit : int }
+  | Empty_data_frame_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
-  | Window_update_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Window_update_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
-  | Settings_churn_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
-    }
-  | Response_header_change_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Settings_count_exceeded of { observed_count : int; limit : int }
+  | Response_header_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
   | Header_invalid of { reason : string }
 
@@ -122,13 +119,12 @@ let kind_name = function
   | Hpack_decode_overflow _ -> "Hpack_decode_overflow"
   | Continuation_flood _ -> "Continuation_flood"
   | Stream_admission_rejected _ -> "Stream_admission_rejected"
-  | Rst_rate_exceeded _ -> "Rst_rate_exceeded"
-  | Ping_rate_exceeded _ -> "Ping_rate_exceeded"
-  | Empty_data_frame_rate_exceeded _ -> "Empty_data_frame_rate_exceeded"
-  | Window_update_rate_exceeded _ -> "Window_update_rate_exceeded"
-  | Settings_churn_rate_exceeded _ -> "Settings_churn_rate_exceeded"
-  | Response_header_change_rate_exceeded _ ->
-      "Response_header_change_rate_exceeded"
+  | Rst_count_exceeded _ -> "Rst_count_exceeded"
+  | Ping_count_exceeded _ -> "Ping_count_exceeded"
+  | Empty_data_frame_count_exceeded _ -> "Empty_data_frame_count_exceeded"
+  | Window_update_count_exceeded _ -> "Window_update_count_exceeded"
+  | Settings_count_exceeded _ -> "Settings_count_exceeded"
+  | Response_header_count_exceeded _ -> "Response_header_count_exceeded"
   | Header_invalid _ -> "Header_invalid"
 
 let layer t =
@@ -143,10 +139,10 @@ let layer t =
   | Response_body_idle_timeout _ | HTTP_status _ -> Http_response
   | Decode_error _ | Body_too_large _ -> Body_decode
   | Connection_protocol_violation _ | Hpack_decode_overflow _
-  | Continuation_flood _ | Stream_admission_rejected _ | Rst_rate_exceeded _
-  | Ping_rate_exceeded _ | Empty_data_frame_rate_exceeded _
-  | Window_update_rate_exceeded _ | Settings_churn_rate_exceeded _
-  | Response_header_change_rate_exceeded _ | Header_invalid _ ->
+  | Continuation_flood _ | Stream_admission_rejected _ | Rst_count_exceeded _
+  | Ping_count_exceeded _ | Empty_data_frame_count_exceeded _
+  | Window_update_count_exceeded _ | Settings_count_exceeded _
+  | Response_header_count_exceeded _ | Header_invalid _ ->
       Http_response
 
 let retryability t =
@@ -161,10 +157,10 @@ let retryability t =
       Retryable_if_body_replayable
   | HTTP_status _ -> Not_retryable
   | Connection_protocol_violation _ | Hpack_decode_overflow _
-  | Continuation_flood _ | Stream_admission_rejected _ | Rst_rate_exceeded _
-  | Ping_rate_exceeded _ | Empty_data_frame_rate_exceeded _
-  | Window_update_rate_exceeded _ | Settings_churn_rate_exceeded _
-  | Response_header_change_rate_exceeded _ | Header_invalid _ ->
+  | Continuation_flood _ | Stream_admission_rejected _ | Rst_count_exceeded _
+  | Ping_count_exceeded _ | Empty_data_frame_count_exceeded _
+  | Window_update_count_exceeded _ | Settings_count_exceeded _
+  | Response_header_count_exceeded _ | Header_invalid _ ->
       Not_retryable
   | Pool_shutdown -> Not_retryable
   | Dns_error _ | Connect_error _ | Connect_timeout _ | Pool_acquire_timeout _
@@ -206,13 +202,12 @@ let error_class t =
   | Hpack_decode_overflow _ -> "hpack_decode_overflow"
   | Continuation_flood _ -> "continuation_flood"
   | Stream_admission_rejected _ -> "stream_admission_rejected"
-  | Rst_rate_exceeded _ -> "rst_rate_exceeded"
-  | Ping_rate_exceeded _ -> "ping_rate_exceeded"
-  | Empty_data_frame_rate_exceeded _ -> "empty_data_frame_rate_exceeded"
-  | Window_update_rate_exceeded _ -> "window_update_rate_exceeded"
-  | Settings_churn_rate_exceeded _ -> "settings_churn_rate_exceeded"
-  | Response_header_change_rate_exceeded _ ->
-      "response_header_change_rate_exceeded"
+  | Rst_count_exceeded _ -> "rst_count_exceeded"
+  | Ping_count_exceeded _ -> "ping_count_exceeded"
+  | Empty_data_frame_count_exceeded _ -> "empty_data_frame_count_exceeded"
+  | Window_update_count_exceeded _ -> "window_update_count_exceeded"
+  | Settings_count_exceeded _ -> "settings_count_exceeded"
+  | Response_header_count_exceeded _ -> "response_header_count_exceeded"
   | Header_invalid _ -> "header_invalid"
 
 let headers t =

@@ -49,23 +49,20 @@ type kind =
       frames : int;
     }
   | Stream_admission_rejected of { limit : int }
-  | Rst_rate_exceeded of { observed_per_second : int; limit_per_second : int }
-  | Ping_rate_exceeded of { observed_rate_hz : int; limit_hz : int }
-  | Empty_data_frame_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Rst_count_exceeded of { observed_count : int; limit : int }
+  | Ping_count_exceeded of { observed_count : int; limit : int }
+  | Empty_data_frame_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
-  | Window_update_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Window_update_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
-  | Settings_churn_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
-    }
-  | Response_header_change_rate_exceeded of {
-      observed_rate_hz : int;
-      limit_hz : int;
+  | Settings_count_exceeded of { observed_count : int; limit : int }
+  | Response_header_count_exceeded of {
+      observed_count : int;
+      limit : int;
     }
   | Header_invalid of { reason : string }
 

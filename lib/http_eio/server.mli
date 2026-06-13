@@ -12,6 +12,7 @@ type domain_policy = Server_types.domain_policy =
 type runtime_factory = Server_types.runtime_factory
 
 type time = Server_types.time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }

@@ -83,8 +83,7 @@ let fail_connection t kind =
   shutdown t
 
 let write_iovecs flow iovecs =
-  if H2.IOVec.lengthv iovecs = 0 then 0
-  else Eio.Flow.single_write flow (Writer.cstructs_of_iovecs iovecs)
+  Writer.write_iovecs ~flow iovecs
 
 let rec writer_loop t =
   if not (is_closed t) then
@@ -132,9 +131,10 @@ let run_owner_loop ?(on_error = fun _ -> ()) loop t =
       on_error kind;
       fail_connection t kind
 
-let create ~sw ~flow ?max_concurrent ?config ?push_handler
-    ?(error_handler = fun _ -> ()) ?(security_error_handler = fun _ -> ())
-    ?(on_close = fun () -> ()) ?(reader_buffer_size = 64 * 1024) () =
+let create ~sw ~flow ~now_ms ?max_concurrent ?config ?push_handler
+    ?(error_handler = fun _ -> ())
+    ?(security_error_handler = fun _ -> ()) ?(on_close = fun () -> ())
+    ?(reader_buffer_size = 64 * 1024) () =
   let holder = ref None in
   let security = Security.create () in
   let mux =
@@ -159,7 +159,7 @@ let create ~sw ~flow ?max_concurrent ?config ?push_handler
       mux;
       client;
       reader =
-        Multiplexer.create_reader ~buffer_size:reader_buffer_size mux;
+        Multiplexer.create_reader ~now_ms ~buffer_size:reader_buffer_size mux;
       flow;
       mutex = Eio.Mutex.create ();
       closed = false;

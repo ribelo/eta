@@ -87,7 +87,8 @@ let cancel t pending =
 
 let protocol_of_alpn = function
   | Some "h2" -> Ok H2
-  | Some "http/1.1" | None -> Ok H1
+  | Some "http/1.1" -> Ok H1
+  | None -> Error "missing ALPN protocol"
   | Some protocol -> Error protocol
 
 let stats t =

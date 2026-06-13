@@ -348,7 +348,7 @@ let probe_priority_self_dependency ~env () =
          ~end_headers:true ());
     (* PRIORITY frame making stream 3 depend exclusively on itself. This is a
        protocol violation and should be rejected on stream 3. *)
-    let priority_payload = "\x80\x00\x00\x00\x03\x10" in
+    let priority_payload = "\x80\x00\x00\x03\x10" in
     write_string flow
       (Malicious_h2.frame ~ty:0x02 ~flags:0x00 ~stream_id:3 priority_payload);
     write_string flow

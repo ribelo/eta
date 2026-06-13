@@ -14,8 +14,9 @@ coordination primitives and before the full h1/h2 dispatcher lands?
   rule.
 - `resolve` installs the negotiated `H1` or `H2` route only for the current
   pending id. Stale pending completions are ignored.
-- `protocol_of_alpn` maps `Some "h2"` to h2, `Some "http/1.1"` and
-  `None` to h1 fallback, and rejects unknown ALPN names.
+- `protocol_of_alpn` maps `Some "h2"` to h2 and `Some "http/1.1"` to h1.
+  `None` is not a protocol; h1 fallback is an explicit dispatch policy.
+  Unknown ALPN names are rejected.
 
 ## Evidence
 

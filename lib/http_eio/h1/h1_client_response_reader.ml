@@ -21,9 +21,7 @@ let validate_transfer_encoding request headers =
   let tokens =
     Header.get_all "transfer-encoding" headers
     |> List.concat_map (String.split_on_char ',')
-    |> List.filter_map (fun tok ->
-           let t = String_helpers.lowercase_ascii_trim tok in
-           if String.length t = 0 then None else Some t)
+    |> List.map String_helpers.lowercase_ascii_trim
   in
   match tokens with
   | [] | [ "chunked" ] -> Ok ()

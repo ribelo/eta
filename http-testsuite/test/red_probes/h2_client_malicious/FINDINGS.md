@@ -66,8 +66,8 @@ produced safe, typed outcomes:
 - `slow_body` — server dribbles DATA slowly; client returns
   `Total_request_timeout`.
 - `settings_flood` — many SETTINGS frames; client returns
-  `Settings_churn_rate_exceeded`.
-- `ping_flood` — many PING frames; client returns `Ping_rate_exceeded`.
+  `Settings_count_exceeded`.
+- `ping_flood` — many PING frames; client returns `Ping_count_exceeded`.
 - `headers_on_stream_zero` — HEADERS on stream 0; client returns
   `Connection_protocol_violation`.
 - `priority_after_headers` — PRIORITY after response HEADERS; client ignores it

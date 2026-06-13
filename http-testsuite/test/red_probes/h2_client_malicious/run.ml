@@ -42,8 +42,8 @@ let is_timeout_error msg = String.starts_with ~prefix:"Fail(eta-http error=Total
 let is_protocol_error msg =
   String.starts_with ~prefix:"Fail(eta-http error=Connection_protocol_violation" msg
   || String.starts_with ~prefix:"Fail(eta-http error=Continuation_flood" msg
-  || String.starts_with ~prefix:"Fail(eta-http error=Settings_churn_rate_exceeded" msg
-  || String.starts_with ~prefix:"Fail(eta-http error=Ping_rate_exceeded" msg
+  || String.starts_with ~prefix:"Fail(eta-http error=Settings_count_exceeded" msg
+  || String.starts_with ~prefix:"Fail(eta-http error=Ping_count_exceeded" msg
 
 let assess name outcome expected =
   match outcome, expected with
@@ -183,7 +183,7 @@ let run_client_probe ~env ~name ~deadline_sec ~expected ~server_logic =
           try
             Eio.Time.with_timeout_exn clock deadline_sec (fun () ->
                 let conn =
-                  Eta_http_eio.H2.Connection.create ~sw
+                  Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
                     ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
                     ()
                 in

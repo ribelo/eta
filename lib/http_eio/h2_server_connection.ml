@@ -16,6 +16,7 @@ type stats = Server_stats.H2.snapshot = {
 }
 
 type time = Types.time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
@@ -28,11 +29,44 @@ type response_body =
   | Response_fixed of bytes list * int
   | Response_stream of Server.Response.Body.stream
 
+type request_header_block = {
+  stream_id : int;
+  ordinal : int;
+  trailers : bool;
+  normalize : bool;
+  end_stream : bool;
+  block : Buffer.t;
+}
+
+type ingress_frame_action =
+  | Pass_frame
+  | Drop_frame
+  | Emit_frame of string
+
 type prepared_response = {
   status : int;
   headers : Eta_http.Core.Header.t;
   body : response_body;
 }
+
+type write_job = {
+  data : Cstruct.t;
+  len : int;
+}
+
+type response_drain = {
+  resolver : unit_result Eio.Promise.u;
+  finish_on_complete : bool;
+}
+
+type request_trailers = {
+  promise : (Eta_http.Core.Header.t, Server.Error.t) result Eio.Promise.t;
+  resolver : (Eta_http.Core.Header.t, Server.Error.t) result Eio.Promise.u;
+}
+
+type deferred_close =
+  | Close_all
+  | Shutdown_send
 
 type command =
   | Ingress of {
@@ -43,6 +77,7 @@ type command =
     }
   | Ingress_eof
   | Ingress_failed of Server.Error.t
+  | Idle_timeout of unit Eio.Promise.u
   | Request_body_read of int * request_body_read Eio.Promise.u
   | Request_body_timeout of int * request_body_read Eio.Promise.u
   | Request_body_drain_timeout of int * unit Eio.Promise.u
@@ -52,9 +87,11 @@ type command =
   | Response_trailers of int * Eta_http.Core.Header.t * unit_result Eio.Promise.u
   | Response_close of int * unit_result Eio.Promise.u
   | Response_failed of int * Server.Error.t
+  | Write_completed of (int, Server.Error.t) result
   | Shutdown of Types.shutdown
 
 type stream_state = {
+  stream_id : int;
   reqd : H2.Reqd.t;
   request_body : H2.Body.Reader.t;
   request_content_length : int option;
@@ -63,17 +100,20 @@ type stream_state = {
   mutable request_body_bytes : int;
   mutable request_done : bool;
   mutable request_discarding : bool;
+  request_trailers : request_trailers;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
   mutable request_discard_resolver :
     (unit, Server.Error.t) result Eio.Promise.u option;
   mutable request_discard_timeout_token : unit Eio.Promise.u option;
   mutable response_writer : H2.Body.Writer.t option;
   mutable response_write_resolver : unit_result Eio.Promise.u option;
+  mutable response_drain : response_drain option;
   mutable response_done : bool;
 }
 
 type t = {
   sw : Eio.Switch.t;
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
@@ -86,13 +126,23 @@ type t = {
   mutable ingress_len : int;
   mutable filter_preface_remaining : int;
   mutable filter_pending : string;
+  request_header_decoder : Hpack.Decoder.t;
+  mutable normalize_request_headers : bool;
+  mutable request_header_block : request_header_block option;
   mutable observed_request_ordinal : int;
+  mutable highest_processed_stream_id : int;
+  mutable graceful_shutdown_last_stream_id : int option;
+  mutable graceful_shutdown_goaway_sent : bool;
+  mutable graceful_rejected_header_stream : int option;
   stream_ordinals : (int, int) Hashtbl.t;
+  stream_ids_by_ordinal : (int, int) Hashtbl.t;
+  graceful_rejected_streams : (int, unit) Hashtbl.t;
+  pending_request_trailers : (int, Eta_http.Core.Header.t) Hashtbl.t;
   remote_reset_streams : (int, unit) Hashtbl.t;
   remote_reset_ordinals : (int, unit) Hashtbl.t;
-  mutable filter_rst_stream_seen : int;
-  mutable filter_error : Eta_http.Error.kind option;
+  mutable pending_control_frames : string list;
   commands : command Eio.Stream.t;
+  write_jobs : write_job Eio.Stream.t;
   streams : (int, stream_state) Hashtbl.t;
   connection : Types.Connection_info.t;
   config : Types.Config.t;
@@ -101,30 +151,25 @@ type t = {
   connection_metrics : Server_metrics.t option;
   closed_signal : unit Eio.Promise.t;
   close_signal : unit Eio.Promise.u;
-  mutable reader_wakeup : unit Eio.Promise.t;
-  mutable reader_wakeup_resolver : unit Eio.Promise.u;
+  mutable idle_timeout_token : unit Eio.Promise.u option;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
   mutable accepted_request : bool;
+  mutable deferred_close : deferred_close option;
+  mutable write_pending : bool;
   mutable closed : bool;
 }
-
-let reset_reader_wakeup t =
-  let promise, resolver = Eio.Promise.create () in
-  t.reader_wakeup <- promise;
-  t.reader_wakeup_resolver <- resolver
-
-let wake_reader t =
-  ignore (Eio.Promise.try_resolve t.reader_wakeup_resolver ())
 
 let mark_closed t =
   if not t.closed then (
     t.closed <- true;
     ignore (Eio.Promise.try_resolve t.close_signal ()))
 
-let close_flow_all flow =
-  (try Eio.Flow.close flow with _ -> ());
-  try Eio.Flow.shutdown flow `All with _ -> ()
+let graceful_close_flow_all flow =
+  (try Eio.Flow.shutdown flow `All with _ -> ());
+  try Eio.Flow.close flow with _ -> ()
+
+let abortive_close_flow flow = try Eio.Flow.close flow with _ -> ()
 
 let stats t =
   Server_stats.H2.snapshot t.stats
@@ -186,6 +231,19 @@ let connection_url_scheme t =
 let validate_config = Types.Config.validate
 
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
+
+let create_request_trailers () =
+  let promise, resolver = Eio.Promise.create () in
+  { promise; resolver }
+
+let resolve_request_trailers state trailers =
+  resolve state.request_trailers.resolver (Ok trailers)
+
+let resolve_request_trailers_empty state =
+  resolve_request_trailers state Eta_http.Core.Header.empty
+
+let fail_request_trailers state error =
+  resolve state.request_trailers.resolver (Error error)
 
 let enqueue t command =
   if t.closed then false
@@ -272,7 +330,9 @@ let security_error t kind =
              message = Eta_http.Error.to_string http_error;
            })
 
-let h2_client_connection_preface_length = 24
+let h2_client_connection_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+let h2_client_connection_preface_length =
+  String.length h2_client_connection_preface
 
 let observe_ingress_security t bytes ~off ~len =
   let off, len =
@@ -282,8 +342,10 @@ let observe_ingress_security t bytes ~off ~len =
       t.security_preface_remaining <- t.security_preface_remaining - skipped;
       (off + skipped, len - skipped)
   in
-  if len = 0 then None
-  else Eta_http.H2.Security.observe t.security bytes ~off ~len
+  if len = 0 then Eta_http.H2.Security.Pass
+  else
+    Eta_http.H2.Security.observe_result t.security bytes ~off ~len
+      ~now_ms:(t.now_ms ())
 
 let frame_header_size = 9
 
@@ -293,6 +355,7 @@ let frame_length s off =
   lor Char.code s.[off + 2]
 
 let frame_type s off = Char.code s.[off + 3]
+let frame_flags s off = Char.code s.[off + 4]
 
 let frame_stream_id s off =
   ((Char.code s.[off + 5] land 0x7f) lsl 24)
@@ -302,9 +365,62 @@ let frame_stream_id s off =
 
 let client_request_stream_id stream_id = stream_id > 0 && stream_id land 1 = 1
 
-let h2_security_config t =
-  Option.value t.config.Types.Config.h2_security_config
-    ~default:Eta_http.H2.Security.default_config
+let note_processed_stream_id t stream_id =
+  if stream_id > t.highest_processed_stream_id then
+    t.highest_processed_stream_id <- stream_id
+
+let graceful_shutdown_cutoff t =
+  Option.value t.graceful_shutdown_last_stream_id
+    ~default:t.highest_processed_stream_id
+
+let flag_end_stream = 0x1
+let flag_end_headers = 0x4
+let flag_padded = 0x8
+let flag_priority = 0x20
+
+let configured_max_frame_size t =
+  t.config.Types.Config.h2_config.H2.Config.read_buffer_size
+
+let h2_filter_protocol_violation ~kind ~message =
+  Eta_http.Error.Connection_protocol_violation { kind; message }
+
+let invalid_preface_error =
+  h2_filter_protocol_violation ~kind:"h2_preface"
+    ~message:"invalid HTTP/2 client connection preface"
+
+let stream_closed_frame_error stream_id =
+  h2_filter_protocol_violation ~kind:"stream_closed"
+    ~message:
+      (Printf.sprintf
+         "HTTP/2 DATA frame received on reset stream %d" stream_id)
+
+let frame_size_error t length =
+  h2_filter_protocol_violation ~kind:"h2_frame_size"
+    ~message:
+      (Printf.sprintf
+         "HTTP/2 frame payload length %d exceeds configured max frame size %d"
+         length (configured_max_frame_size t))
+
+let filter_pending_error t needed =
+  h2_filter_protocol_violation ~kind:"h2_filter_buffer_exhausted"
+    ~message:
+      (Printf.sprintf
+         "h2 ingress filter needs %d bytes, limit is %d bytes" needed
+         (frame_header_size + configured_max_frame_size t))
+
+let request_trailer_error message =
+  h2_filter_protocol_violation ~kind:"h2_request_trailers" ~message
+
+let request_header_error message =
+  h2_filter_protocol_violation ~kind:"h2_request_headers" ~message
+
+let connection_filter_error ?(code = 1) kind =
+  Eta_http.H2.Security.Connection_error { code; kind }
+
+let stream_filter_error ?(code = 1) ~stream_id kind =
+  Eta_http.H2.Security.Stream_error { stream_id; code; kind }
+
+let code s i = Char.code (String.unsafe_get s i)
 
 let note_headers_frame t stream_id =
   if
@@ -312,79 +428,337 @@ let note_headers_frame t stream_id =
     && not (Hashtbl.mem t.stream_ordinals stream_id)
   then (
     t.observed_request_ordinal <- t.observed_request_ordinal + 1;
-    Hashtbl.add t.stream_ordinals stream_id t.observed_request_ordinal)
+    Hashtbl.add t.stream_ordinals stream_id t.observed_request_ordinal;
+    Hashtbl.add t.stream_ids_by_ordinal t.observed_request_ordinal stream_id)
+
+let request_header_fragment flags payload =
+  let len = String.length payload in
+  let pos = ref 0 in
+  let pad_len =
+    if flags land flag_padded = 0 then 0
+    else if len = 0 then -1
+    else (
+      pos := 1;
+      code payload 0)
+  in
+  if pad_len < 0 then
+    Error
+      (connection_filter_error
+         (request_trailer_error "PADDED HEADERS frame is missing Pad Length"))
+  else (
+    if flags land flag_priority <> 0 then pos := !pos + 5;
+    if !pos > len || !pos + pad_len > len then
+      Error
+        (connection_filter_error
+           (request_trailer_error
+              "HEADERS padding/priority fields exceed payload"))
+    else Ok (String.sub payload !pos (len - !pos - pad_len)))
+
+let decode_request_header_block t block =
+  match
+    Angstrom.parse_string ~consume:Angstrom.Consume.All
+      (Hpack.Decoder.decode_headers t.request_header_decoder)
+      block
+  with
+  | Ok (Ok headers) -> Ok headers
+  | Ok (Error Hpack.Decoding_error) ->
+      Error (request_trailer_error "HPACK decoding error")
+  | Error message -> Error (request_trailer_error ("HPACK parser error: " ^ message))
+
+let encode_request_header_block t headers =
+  ignore t;
+  let faraday = Faraday.create 0x1000 in
+  let encoder = Hpack.Encoder.create 4096 in
+  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
+  Faraday.serialize_to_string faraday
+
+let emit_header_block ~stream_id ~end_stream block =
+  let max_payload = 16 * 1024 in
+  let total = String.length block in
+  let output = Buffer.create (total + 32) in
+  let rec loop off first =
+    let remaining = total - off in
+    if remaining <= max_payload then (
+      let flags =
+        flag_end_headers
+        lor (if first && end_stream then flag_end_stream else 0)
+      in
+      let frame_type =
+        if first then Eta_http.H2.Frame.Headers
+        else Eta_http.H2.Frame.Continuation
+      in
+      Buffer.add_string output
+        (Eta_http.H2.Frame.header ~length:remaining ~frame_type ~flags
+           ~stream_id);
+      Buffer.add_substring output block off remaining)
+    else (
+      let flags = if first && end_stream then flag_end_stream else 0 in
+      let frame_type =
+        if first then Eta_http.H2.Frame.Headers
+        else Eta_http.H2.Frame.Continuation
+      in
+      Buffer.add_string output
+        (Eta_http.H2.Frame.header ~length:max_payload ~frame_type ~flags
+           ~stream_id);
+      Buffer.add_substring output block off max_payload;
+      loop (off + max_payload) false)
+  in
+  loop 0 true;
+  Buffer.contents output
+
+let end_stream_data_frame stream_id =
+  Eta_http.H2.Frame.header ~length:0 ~frame_type:Data ~flags:flag_end_stream
+    ~stream_id
+
+let rst_stream_frame ~stream_id error_code =
+  Eta_http.H2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
+    ~stream_id
+  ^ Eta_http.H2.Frame.uint32 error_code
+
+let validate_request_trailers t trailers =
+  let limits = t.config.server.limits in
+  match Server.Validation.validate_h2_request_trailers ~limits trailers with
+  | Error message -> Error (connection_filter_error (request_trailer_error message))
+  | Ok () -> (
+      match Eta_http.Core.Header.of_list trailers with
+      | Ok trailers -> Ok trailers
+      | Error kind ->
+          Error
+            (connection_filter_error
+               (request_trailer_error
+                  ("invalid request trailer header: "
+                 ^ Eta_http.Error.kind_name kind))))
+
+let validate_decoded_request_header_names block headers =
+  let has_empty_name =
+    List.exists
+      (fun ({ Hpack.name; _ } : Hpack.header) -> String.equal name "")
+      headers
+  in
+  if not has_empty_name then Ok ()
+  else if block.trailers then
+    Error
+      (connection_filter_error
+         (request_trailer_error "empty HTTP/2 request trailer header name"))
+  else
+    Error
+      (connection_filter_error
+         (request_header_error "empty HTTP/2 request header name"))
+
+let store_request_trailers t ordinal trailers =
+  match Hashtbl.find_opt t.streams ordinal with
+  | Some state -> resolve_request_trailers state trailers
+  | None -> Hashtbl.replace t.pending_request_trailers ordinal trailers
+
+let complete_request_header_block t block =
+  if block.trailers && not block.end_stream then (
+    t.request_header_block <- None;
+    Error
+      (connection_filter_error
+         (request_trailer_error
+            "request trailer HEADERS frame is missing END_STREAM")))
+  else
+  match decode_request_header_block t (Buffer.contents block.block) with
+  | Error error -> Error (connection_filter_error error)
+  | Ok headers ->
+      (match validate_decoded_request_header_names block headers with
+      | Error _ as error -> error
+      | Ok () ->
+          t.request_header_block <- None;
+          if (not block.trailers) && not block.normalize then Ok Pass_frame
+          else if not block.trailers then
+            Ok
+              (Emit_frame
+                 (emit_header_block ~stream_id:block.stream_id
+                    ~end_stream:block.end_stream
+                    (encode_request_header_block t headers)))
+          else
+            let trailers =
+              List.map
+                (fun ({ Hpack.name; value; _ } : Hpack.header) -> (name, value))
+                headers
+            in
+            (match validate_request_trailers t trailers with
+            | Error _ as error -> error
+            | Ok trailers ->
+                store_request_trailers t block.ordinal trailers;
+                t.normalize_request_headers <- true;
+                Ok (Emit_frame (end_stream_data_frame block.stream_id))))
+
+let observe_request_headers_frame t frames off length flags stream_id =
+  if not (client_request_stream_id stream_id) then Ok Pass_frame
+  else
+    let first = not (Hashtbl.mem t.stream_ordinals stream_id) in
+    if first then note_headers_frame t stream_id;
+    if not first then t.normalize_request_headers <- true;
+    let ordinal = Hashtbl.find t.stream_ordinals stream_id in
+    let payload =
+      String.sub frames (off + frame_header_size) length
+    in
+    match request_header_fragment flags payload with
+    | Error _ as error -> error
+    | Ok fragment ->
+        let block =
+          {
+            stream_id;
+            ordinal;
+            trailers = not first;
+            normalize = (not first) || t.normalize_request_headers;
+            end_stream = flags land flag_end_stream <> 0;
+            block = Buffer.create (String.length fragment);
+          }
+        in
+        Buffer.add_string block.block fragment;
+        if flags land flag_end_headers <> 0 then complete_request_header_block t block
+        else (
+          t.request_header_block <- Some block;
+          if block.normalize then Ok Drop_frame else Ok Pass_frame)
+
+let observe_request_continuation_frame t frames off length flags stream_id =
+  match t.request_header_block with
+  | None -> Ok Pass_frame
+  | Some block when block.stream_id <> stream_id -> Ok Pass_frame
+  | Some block ->
+      Buffer.add_substring block.block frames (off + frame_header_size) length;
+      if flags land flag_end_headers <> 0 then complete_request_header_block t block
+      else if block.normalize then Ok Drop_frame
+      else Ok Pass_frame
+
+let h2_refused_stream = 7
+
+let enqueue_control_frame t frame =
+  t.pending_control_frames <- frame :: t.pending_control_frames
+
+let reject_graceful_shutdown_stream t stream_id flags =
+  Hashtbl.replace t.graceful_rejected_streams stream_id ();
+  if flags land flag_end_headers = 0 then
+    t.graceful_rejected_header_stream <- Some stream_id;
+  enqueue_control_frame t (rst_stream_frame ~stream_id h2_refused_stream);
+  Drop_frame
+
+let should_reject_graceful_shutdown_stream t stream_id =
+  t.graceful_shutdown && client_request_stream_id stream_id
+  && stream_id > graceful_shutdown_cutoff t
+  && not (Hashtbl.mem t.stream_ordinals stream_id)
+
+let observe_graceful_rejected_frame t frame_type flags stream_id =
+  if Option.equal Int.equal t.graceful_rejected_header_stream (Some stream_id)
+     && frame_type = 0x9
+  then (
+    if flags land flag_end_headers <> 0 then
+      t.graceful_rejected_header_stream <- None;
+    Some Drop_frame)
+  else if Hashtbl.mem t.graceful_rejected_streams stream_id then (
+    if frame_type = 0x3 then Hashtbl.remove t.graceful_rejected_streams stream_id;
+    Some Drop_frame)
+  else if frame_type = 0x1 && should_reject_graceful_shutdown_stream t stream_id
+  then Some (reject_graceful_shutdown_stream t stream_id flags)
+  else None
 
 let note_remote_reset_frame t stream_id =
-  Hashtbl.replace t.remote_reset_streams stream_id ();
-  t.filter_rst_stream_seen <- t.filter_rst_stream_seen + 1;
-  let security_config = h2_security_config t in
-  if
-    t.filter_rst_stream_seen
-    > security_config.max_rst_stream_per_connection
-    && Option.is_none t.filter_error
-  then
-    t.filter_error <-
-      Some
-        (Eta_http.Error.Rst_rate_exceeded
-           {
-             observed_per_second = t.filter_rst_stream_seen;
-             limit_per_second =
-               security_config.max_rst_stream_per_connection;
-           });
   match Hashtbl.find_opt t.stream_ordinals stream_id with
   | None -> ()
-  | Some ordinal -> Hashtbl.replace t.remote_reset_ordinals ordinal ()
+  | Some ordinal ->
+      Hashtbl.replace t.remote_reset_streams stream_id ();
+      Hashtbl.replace t.remote_reset_ordinals ordinal ()
 
 let filter_ingress t bytes ~off ~len =
   let raw = Bigstringaf.substring bytes ~off ~len in
   let raw_len = String.length raw in
   let output = Buffer.create raw_len in
   let frame_off =
-    if t.filter_preface_remaining = 0 then 0
+    if t.filter_preface_remaining = 0 then Ok 0
     else
+      let consumed =
+        h2_client_connection_preface_length - t.filter_preface_remaining
+      in
       let prefix_len = min t.filter_preface_remaining raw_len in
-      Buffer.add_substring output raw 0 prefix_len;
-      t.filter_preface_remaining <- t.filter_preface_remaining - prefix_len;
-      prefix_len
+      let rec validate index =
+        if index = prefix_len then Ok ()
+        else
+          let expected =
+            String.unsafe_get h2_client_connection_preface (consumed + index)
+          in
+          if Char.equal (String.unsafe_get raw index) expected then
+            validate (index + 1)
+          else Error invalid_preface_error
+      in
+      match validate 0 with
+      | Error kind -> Error (connection_filter_error kind)
+      | Ok () ->
+          Buffer.add_substring output raw 0 prefix_len;
+          t.filter_preface_remaining <- t.filter_preface_remaining - prefix_len;
+          Ok prefix_len
   in
-  let frames =
-    let frame_bytes = String.sub raw frame_off (raw_len - frame_off) in
-    if String.equal t.filter_pending "" then frame_bytes
-    else t.filter_pending ^ frame_bytes
-  in
-  t.filter_pending <- "";
-  let frames_len = String.length frames in
-  let rec loop off =
-    if off + frame_header_size > frames_len then
-      t.filter_pending <- String.sub frames off (frames_len - off)
-    else
-      let length = frame_length frames off in
-      let total = frame_header_size + length in
-      if off + total > frames_len then
-        t.filter_pending <- String.sub frames off (frames_len - off)
-      else (
-        let ty = frame_type frames off in
-        let stream_id = frame_stream_id frames off in
-        let drop =
-          ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id
-        in
-        if ty = 0x1 then note_headers_frame t stream_id
-        else if ty = 0x3 then note_remote_reset_frame t stream_id;
-        if not drop then Buffer.add_substring output frames off total;
-        loop (off + total))
-  in
-  loop 0;
-  match t.filter_error with
-  | Some kind -> Error kind
-  | None ->
-      let filtered = Buffer.contents output in
-      let filtered_len = String.length filtered in
-      if filtered_len = 0 then Ok None
-      else
-        Ok
-          (Some
-             ( Bigstringaf.of_string ~off:0 ~len:filtered_len filtered,
-               filtered_len ))
+  match frame_off with
+  | Error kind -> Error kind
+  | Ok frame_off ->
+      let frames =
+        let frame_bytes = String.sub raw frame_off (raw_len - frame_off) in
+        if String.equal t.filter_pending "" then frame_bytes
+        else t.filter_pending ^ frame_bytes
+      in
+      t.filter_pending <- "";
+      let frames_len = String.length frames in
+      let set_pending off =
+        let pending_len = frames_len - off in
+        let pending_limit = frame_header_size + configured_max_frame_size t in
+        if pending_len > pending_limit then
+          Error (connection_filter_error (filter_pending_error t pending_len))
+        else (
+          t.filter_pending <- String.sub frames off pending_len;
+          Ok ())
+      in
+      let rec loop off =
+        if off + frame_header_size > frames_len then set_pending off
+        else
+          let length = frame_length frames off in
+          let total = frame_header_size + length in
+          if length > configured_max_frame_size t then
+            Error (connection_filter_error ~code:6 (frame_size_error t length))
+          else if off + total > frames_len then set_pending off
+          else (
+            let ty = frame_type frames off in
+            let flags = frame_flags frames off in
+            let stream_id = frame_stream_id frames off in
+            if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id then
+              Error
+                (stream_filter_error ~code:5 ~stream_id
+                   (stream_closed_frame_error stream_id))
+            else (
+              let observed =
+                match observe_graceful_rejected_frame t ty flags stream_id with
+                | Some action -> Ok action
+                | None ->
+                    if ty = 0x1 then
+                      observe_request_headers_frame t frames off length flags
+                        stream_id
+                    else if ty = 0x9 then
+                      observe_request_continuation_frame t frames off length
+                        flags stream_id
+                    else Ok Pass_frame
+              in
+              match observed with
+              | Error _ as error -> error
+              | Ok action ->
+                  if ty = 0x3 then note_remote_reset_frame t stream_id;
+                  (match action with
+                  | Pass_frame -> Buffer.add_substring output frames off total
+                  | Drop_frame -> ()
+                  | Emit_frame bytes -> Buffer.add_string output bytes);
+                  loop (off + total)))
+      in
+      match loop 0 with
+      | Error kind -> Error kind
+      | Ok () ->
+          let filtered = Buffer.contents output in
+          let filtered_len = String.length filtered in
+          if filtered_len = 0 then Ok None
+          else
+            Ok
+              (Some
+                 ( Bigstringaf.of_string ~off:0 ~len:filtered_len filtered,
+                   filtered_len ))
 
 let response_failure_of_cause t cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
@@ -417,7 +791,7 @@ let body_of_stream t ordinal =
   in
   Server.Body.of_reader ~discard read
 
-let request_of_reqd ~connection ~ordinal ~body reqd =
+let request_of_reqd ~connection ~ordinal ~stream_id ~body ~trailers reqd =
   let request = H2.Reqd.request reqd in
   let path, query = Server.Request.split_target request.target in
   let headers = H2.Headers.to_list request.headers in
@@ -432,11 +806,16 @@ let request_of_reqd ~connection ~ordinal ~body reqd =
     query;
     headers = Eta_http.Core.Header.unsafe_of_list headers;
     body;
-    trailers = (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty);
+    trailers =
+      (fun () ->
+        Eta.Effect.sync (fun () -> Eio.Promise.await trailers.promise)
+        |> Eta.Effect.bind (function
+             | Ok trailers -> Eta.Effect.pure trailers
+             | Error error -> Eta.Effect.fail error));
     peer = connection.peer;
     tls = connection.tls;
     alpn_protocol = connection.alpn_protocol;
-    stream_id = None;
+    stream_id = Some stream_id;
     connection_id = connection.id;
   }
 
@@ -484,6 +863,17 @@ let validate_response_headers t response =
   | Ok () -> Ok ()
   | Error message -> Error (response_write_error t ~message ())
 
+let validate_final_response_status t status =
+  if status = 101 then
+    Error
+      (response_write_error t
+         ~message:"HTTP/2 final response status 101 is forbidden" ())
+  else if Eta_http.Core.Status.is_informational status then
+    Error
+      (response_write_error t
+         ~message:"HTTP/2 informational status cannot be a final response" ())
+  else Ok ()
+
 let fixed_body_length t chunks =
   List.fold_left
     (fun acc chunk ->
@@ -513,83 +903,87 @@ let prepare_h2_response t request response =
   match validate_response_headers t response with
   | Error _ as error -> error
   | Ok () -> (
-      let headers = Server.Response.headers response in
-      match Eta_http.Core.Header.get "content-length" headers with
-      | Some _ ->
-          Error
-            (response_write_error t
-               ~message:"caller supplied HTTP/2 response Content-Length" ())
-      | None -> (
-          let status = Server.Response.status response in
-          let body = Server.Response.body response in
-          let bodyless =
-            bodyless_response ~request_method:request.Server.Request.method_
-              status
-          in
-          let strict_no_body = strict_no_body_status status in
-          match (bodyless, strict_no_body, body) with
-          | true, true, Server.Response.Body.Stream stream ->
-              Ok
-                {
-                  status;
-                  headers;
-                  body = Response_no_body (Some stream);
-                }
-          | true, true, (Empty | Fixed _) ->
-              Ok { status; headers; body = Response_no_body None }
-          | true, false, Empty ->
-              Ok
-                {
-                  status;
-                  headers = add_content_length_header 0 headers;
-                  body = Response_no_body None;
-                }
-          | true, false, Fixed chunks -> (
-              match fixed_body_length t chunks with
-              | Error _ as error -> error
-              | Ok length ->
+      let status = Server.Response.status response in
+      match validate_final_response_status t status with
+      | Error _ as error -> error
+      | Ok () -> (
+          let headers = Server.Response.headers response in
+          match Eta_http.Core.Header.get "content-length" headers with
+          | Some _ ->
+              Error
+                (response_write_error t
+                   ~message:"caller supplied HTTP/2 response Content-Length" ())
+          | None -> (
+              let body = Server.Response.body response in
+              let bodyless =
+                bodyless_response ~request_method:request.Server.Request.method_
+                  status
+              in
+              let strict_no_body = strict_no_body_status status in
+              match (bodyless, strict_no_body, body) with
+              | true, true, Server.Response.Body.Stream stream ->
                   Ok
                     {
                       status;
-                      headers = add_content_length_header length headers;
+                      headers;
+                      body = Response_no_body (Some stream);
+                    }
+              | true, true, (Empty | Fixed _) ->
+                  Ok { status; headers; body = Response_no_body None }
+              | true, false, Empty ->
+                  Ok
+                    {
+                      status;
+                      headers = add_content_length_header 0 headers;
                       body = Response_no_body None;
-                    })
-          | true, false, Stream ({ length; _ } as stream) ->
-              Ok
-                {
-                  status;
-                  headers =
-                    (match length with
-                    | None -> headers
-                    | Some length -> add_content_length_header length headers);
-                  body = Response_no_body (Some stream);
-                }
-          | false, _, Empty ->
-              Ok
-                {
-                  status;
-                  headers = add_content_length_header 0 headers;
-                  body = Response_no_body None;
-                }
-          | false, _, Fixed chunks -> (
-              match fixed_body_length t chunks with
-              | Error _ as error -> error
-              | Ok length ->
+                    }
+              | true, false, Fixed chunks -> (
+                  match fixed_body_length t chunks with
+                  | Error _ as error -> error
+                  | Ok length ->
+                      Ok
+                        {
+                          status;
+                          headers = add_content_length_header length headers;
+                          body = Response_no_body None;
+                        })
+              | true, false, Stream ({ length; _ } as stream) ->
+                  Ok
+                    {
+                      status;
+                      headers =
+                        (match length with
+                        | None -> headers
+                        | Some length ->
+                            add_content_length_header length headers);
+                      body = Response_no_body (Some stream);
+                    }
+              | false, _, Empty ->
+                  Ok
+                    {
+                      status;
+                      headers = add_content_length_header 0 headers;
+                      body = Response_no_body None;
+                    }
+              | false, _, Fixed chunks -> (
+                  match fixed_body_length t chunks with
+                  | Error _ as error -> error
+                  | Ok length ->
+                      Ok
+                        {
+                          status;
+                          headers = add_content_length_header length headers;
+                          body = Response_fixed (chunks, length);
+                        })
+              | false, _, Stream ({ length = Some length; _ } as stream) ->
                   Ok
                     {
                       status;
                       headers = add_content_length_header length headers;
-                      body = Response_fixed (chunks, length);
-                    })
-          | false, _, Stream ({ length = Some length; _ } as stream) ->
-              Ok
-                {
-                  status;
-                  headers = add_content_length_header length headers;
-                  body = Response_stream stream;
-                }
-          | false, _, Stream stream ->
-              Ok { status; headers; body = Response_stream stream }))
+                      body = Response_stream stream;
+                    }
+              | false, _, Stream stream ->
+                  Ok { status; headers; body = Response_stream stream })))
 
 let max_h2_data_chunk = 16 * 1024
 
@@ -660,26 +1054,44 @@ let respond_fixed reqd response =
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
 
-let write_iovecs t iovecs =
-  if H2.IOVec.lengthv iovecs = 0 then 0
-  else
-    let write () =
-      Eio.Flow.single_write t.flow (Writer.cstructs_of_iovecs iovecs)
-    in
-    match t.config.server.timeouts.response_write_timeout with
-    | None -> write ()
-    | Some timeout -> t.with_timeout timeout write
+let copy_write_job iovecs =
+  let len = H2.IOVec.lengthv iovecs in
+  let bytes = Bytes.create len in
+  let dst_off = ref 0 in
+  List.iter
+    (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
+      Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
+        ~len;
+      dst_off := !dst_off + len)
+    iovecs;
+  { data = Cstruct.of_bytes bytes; len }
 
-let rec drain_writes t =
-  if not t.closed then
+let schedule_write_iovecs t iovecs =
+  let len = H2.IOVec.lengthv iovecs in
+  if len = 0 then (
+    H2.Server_connection.report_write_result t.h2 (`Ok 0);
+    true)
+  else if t.write_pending then false
+  else (
+    t.write_pending <- true;
+    Eio.Stream.add t.write_jobs (copy_write_job iovecs);
+    false)
+
+let h2_write_batch_budget = 32
+
+let rec drain_writes ?(budget = h2_write_batch_budget) t =
+  if (not t.closed) && not t.write_pending then
     match H2.Server_connection.next_write_operation t.h2 with
     | `Write iovecs ->
-        let written = write_iovecs t iovecs in
-        H2.Server_connection.report_write_result t.h2 (`Ok written);
-        drain_writes t
+        if schedule_write_iovecs t iovecs then
+          if budget <= 1 then (
+            Eio.Fiber.yield ();
+            ())
+          else drain_writes ~budget:(budget - 1) t
     | `Yield -> ()
     | `Close _ ->
         H2.Server_connection.report_write_result t.h2 `Closed;
+        mark_closed t;
         (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
@@ -688,6 +1100,24 @@ let h2_read_buffer_size config =
 let max_ingress_buffer_size config =
   config.Types.Config.read_buffer_size + h2_read_buffer_size config
   + Eta_http.H2.Frame.header_size
+
+let stream_table_initial_capacity (h2_config : H2.Config.t) =
+  min (Int32.to_int h2_config.H2.Config.max_concurrent_streams) 256
+
+let limited_h2_config (config : Types.Config.t) =
+  let limits = config.server.limits in
+  let h2_config = config.h2_config in
+  let cap limit = function
+    | None -> Some limit
+    | Some configured -> Some (min configured limit)
+  in
+  {
+    h2_config with
+    H2.Config.max_header_count =
+      cap limits.max_request_headers h2_config.max_header_count;
+    max_header_list_size =
+      cap limits.max_request_header_bytes h2_config.max_header_list_size;
+  }
 
 let compact_ingress t =
   if t.ingress_off > 0 && t.ingress_len > 0 then (
@@ -767,7 +1197,11 @@ let fail_pending_response_write state error =
   Option.iter
     (fun resolver -> resolve resolver (Error error))
     state.response_write_resolver;
-  state.response_write_resolver <- None
+  state.response_write_resolver <- None;
+  Option.iter
+    (fun ({ resolver; _ } : response_drain) -> resolve resolver (Error error))
+    state.response_drain;
+  state.response_drain <- None
 
 let close_request_body state =
   state.request_done <- true;
@@ -779,8 +1213,14 @@ let close_request_body state =
 
 let forget_stream t ordinal state =
   state.response_writer <- None;
-  Hashtbl.remove t.streams ordinal;
-  wake_reader t
+  Eta_http.H2.Security.complete_stream t.security state.stream_id;
+  Hashtbl.remove t.stream_ordinals state.stream_id;
+  Hashtbl.remove t.stream_ids_by_ordinal ordinal;
+  Hashtbl.remove t.remote_reset_streams state.stream_id;
+  Hashtbl.remove t.remote_reset_ordinals ordinal;
+  Hashtbl.remove t.pending_request_trailers ordinal;
+  Hashtbl.remove t.graceful_rejected_streams state.stream_id;
+  Hashtbl.remove t.streams ordinal
 
 let forget_if_complete t ordinal state =
   if state.request_done && state.response_done then forget_stream t ordinal state
@@ -827,11 +1267,13 @@ let rec drain_request_body t ordinal state remaining resolver =
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else if remaining <= 0 then (
+    fail_request_trailers state (request_body_closed_error t ordinal);
     close_request_body state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else if H2.Body.Reader.is_closed state.request_body then (
     state.request_done <- true;
+    resolve_request_trailers_empty state;
     clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
@@ -849,11 +1291,13 @@ let rec drain_request_body t ordinal state remaining resolver =
         match finish_request_body_eof t state with
         | Ok () ->
             state.request_done <- true;
+            resolve_request_trailers_empty state;
             clear_request_discard state;
             forget_if_complete t ordinal state;
             resolve_unit resolver
         | Error error ->
             Option.iter (fun resolver -> resolve resolver (Error error)) resolver;
+            fail_request_trailers state error;
             close_request_body state;
             forget_if_complete t ordinal state)
       ~on_read:(fun _bs ~off:_ ~len ->
@@ -864,6 +1308,7 @@ let rec drain_request_body t ordinal state remaining resolver =
             Option.iter
               (fun resolver -> resolve resolver (Error error))
               resolver;
+            fail_request_trailers state error;
             close_request_body state;
             forget_if_complete t ordinal state))
 
@@ -874,6 +1319,7 @@ let discard_request_body_with_policy ?resolver ~drain t ordinal state =
     | true, Eta_http.Server.Config.Drain_up_to limit ->
         drain_request_body t ordinal state limit resolver
     | true, Eta_http.Server.Config.Reset | false, _ ->
+        fail_request_trailers state (request_body_closed_error t ordinal);
         close_request_body state;
         forget_if_complete t ordinal state;
         resolve_unit resolver
@@ -882,8 +1328,61 @@ let finish_response t ordinal state =
   if not state.response_done then Server_stats.H2.stream_completed t.stats;
   finish_stream_metrics state;
   state.response_done <- true;
+  state.response_drain <- None;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
+
+let complete_response_drains t =
+  if not t.write_pending then
+    let drains =
+      Hashtbl.fold
+        (fun ordinal state acc ->
+          match state.response_drain with
+          | None -> acc
+          | Some drain -> (ordinal, state, drain) :: acc)
+        t.streams []
+    in
+    List.iter
+      (fun (ordinal, state, { resolver; finish_on_complete }) ->
+        state.response_drain <- None;
+        if finish_on_complete then finish_response t ordinal state;
+        resolve resolver (Ok ()))
+      drains
+
+let flush_writes t =
+  drain_writes t;
+  complete_response_drains t
+
+let flush_control_frames t =
+  if (not t.closed) && (not t.write_pending) && t.pending_control_frames <> []
+  then (
+    let frames = List.rev t.pending_control_frames in
+    t.pending_control_frames <- [];
+    try
+      List.iter
+        (fun frame -> Eio.Flow.write t.flow [ Cstruct.of_string frame ])
+        frames
+    with _ -> mark_closed t)
+
+let finish_deferred_close t =
+  match t.deferred_close with
+  | Some mode
+    when (not t.closed)
+         && Hashtbl.length t.streams = 0 && not t.write_pending
+         && t.pending_control_frames = [] ->
+      t.deferred_close <- None;
+      mark_closed t;
+      (match mode with
+      | Close_all -> graceful_close_flow_all t.flow
+      | Shutdown_send -> (try Eio.Flow.shutdown t.flow `Send with _ -> ()))
+  | None | Some _ -> ()
+
+let defer_close t mode =
+  if not t.closed then (
+    t.deferred_close <- Some mode;
+    flush_writes t;
+    flush_control_frames t;
+    finish_deferred_close t)
 
 let finish_reset_response t ordinal state =
   finish_stream_metrics state;
@@ -913,6 +1412,7 @@ let fail_active_streams t request_error =
       fail_pending_request_read state request_error;
       fail_pending_request_discard state request_error;
       fail_pending_response_write state request_error;
+      fail_request_trailers state request_error;
       close_request_body state;
       close_response_writer_best_effort state;
       state.response_done <- true;
@@ -929,6 +1429,7 @@ let finish_remote_reset_stream t ordinal state =
   fail_pending_request_read state error;
   fail_pending_request_discard state error;
   fail_pending_response_write state error;
+  fail_request_trailers state error;
   close_request_body state;
   close_response_writer_best_effort state;
   state.response_done <- true;
@@ -967,29 +1468,119 @@ let fail_open_request_bodies t =
       | Some state -> finish_remote_reset_stream t ordinal state)
     ordinals
 
-let goaway_protocol_error =
+let h2_no_error = 0
+let h2_protocol_error = 1
+let h2_flow_control_error = 3
+let h2_stream_closed = 5
+let h2_frame_size_error = 6
+let h2_compression_error = 9
+let h2_enhance_your_calm = 11
+
+let goaway_error_frame ~last_stream_id error_code =
   Eta_http.H2.Frame.header ~length:8 ~frame_type:Goaway ~flags:0
     ~stream_id:0
-  ^ Eta_http.H2.Frame.uint32 0
-  ^ Eta_http.H2.Frame.uint32 1
+  ^ Eta_http.H2.Frame.uint32 last_stream_id
+  ^ Eta_http.H2.Frame.uint32 error_code
 
-let write_goaway_protocol_error t =
-  try Eio.Flow.write t.flow [ Cstruct.of_string goaway_protocol_error ] with _ -> ()
+let h2_error_code_of_kind = function
+  | Eta_http.Error.Connection_protocol_violation { kind = "stream_closed"; _ } ->
+      h2_stream_closed
+  | Eta_http.Error.Connection_protocol_violation
+      {
+        kind =
+          ( "h2_frame_size" | "settings_ack_length" | "settings_length"
+          | "ping_length" | "rst_stream_length" | "goaway_length"
+          | "priority_length" | "push_promise_length" | "window_update_length" );
+        _;
+      } ->
+      h2_frame_size_error
+  | Eta_http.Error.Connection_protocol_violation
+      { kind = "settings_initial_window_size"; _ } ->
+      h2_flow_control_error
+  | Eta_http.Error.Hpack_decode_overflow _ | Eta_http.Error.Header_invalid _ ->
+      h2_compression_error
+  | Eta_http.Error.Continuation_flood _ | Eta_http.Error.Rst_count_exceeded _
+  | Eta_http.Error.Ping_count_exceeded _
+  | Eta_http.Error.Empty_data_frame_count_exceeded _
+  | Eta_http.Error.Window_update_count_exceeded _
+  | Eta_http.Error.Settings_count_exceeded _
+  | Eta_http.Error.Response_header_count_exceeded _ ->
+      h2_enhance_your_calm
+  | Eta_http.Error.Connection_closed _ -> h2_no_error
+  | _ -> h2_protocol_error
 
-let handle_security_error t kind =
+let write_goaway_error t ~code _kind =
+  let frame =
+    goaway_error_frame
+      ~last_stream_id:t.highest_processed_stream_id
+      code
+  in
+  try Eio.Flow.write t.flow [ Cstruct.of_string frame ] with _ -> ()
+
+let cleanup_stream_sidecars t ordinal stream_id =
+  Eta_http.H2.Security.complete_stream t.security stream_id;
+  Hashtbl.remove t.stream_ordinals stream_id;
+  Hashtbl.remove t.stream_ids_by_ordinal ordinal;
+  Hashtbl.remove t.remote_reset_streams stream_id;
+  Hashtbl.remove t.remote_reset_ordinals ordinal;
+  Hashtbl.remove t.pending_request_trailers ordinal;
+  Hashtbl.remove t.graceful_rejected_streams stream_id
+
+let cleanup_stream_sidecars_by_stream_id t stream_id =
+  match Hashtbl.find_opt t.stream_ordinals stream_id with
+  | None ->
+      Eta_http.H2.Security.complete_stream t.security stream_id;
+      Hashtbl.remove t.remote_reset_streams stream_id;
+      Hashtbl.remove t.graceful_rejected_streams stream_id
+  | Some ordinal -> cleanup_stream_sidecars t ordinal stream_id
+
+let maybe_write_graceful_goaway t =
+  if t.graceful_shutdown && not t.graceful_shutdown_goaway_sent then (
+    t.graceful_shutdown_goaway_sent <- true;
+    enqueue_control_frame t
+      (Eta_http.H2.Frame.goaway_no_error
+         ~last_stream_id:(graceful_shutdown_cutoff t)));
+  flush_control_frames t
+
+let handle_security_error t ~code kind =
   let error = security_error t kind in
   record_protocol_error t;
   mark_closed t;
   fail_active_streams t error;
-  drain_writes t;
-  write_goaway_protocol_error t;
+  flush_writes t;
+  write_goaway_error t ~code kind;
   try Eio.Flow.shutdown t.flow `Send with _ -> ()
 
+let handle_security_stream_error t ~stream_id ~code kind =
+  record_protocol_error t;
+  enqueue_control_frame t (rst_stream_frame ~stream_id code);
+  (match Hashtbl.find_opt t.stream_ordinals stream_id with
+  | Some ordinal -> (
+      match Hashtbl.find_opt t.streams ordinal with
+      | Some state -> finish_remote_reset_stream t ordinal state
+      | None -> cleanup_stream_sidecars t ordinal stream_id)
+  | None -> cleanup_stream_sidecars_by_stream_id t stream_id);
+  flush_writes t;
+  flush_control_frames t
+
+let handle_security_observation t = function
+  | Eta_http.H2.Security.Pass -> false
+  | Eta_http.H2.Security.Connection_error { code; kind }
+  | Eta_http.H2.Security.Policy_close { code; kind } ->
+      handle_security_error t ~code kind;
+      true
+  | Eta_http.H2.Security.Stream_error { stream_id; code; kind } ->
+      handle_security_stream_error t ~stream_id ~code kind;
+      true
+
 let finish_graceful_shutdown_if_idle t =
-  if t.graceful_shutdown && (not t.closed) && Hashtbl.length t.streams = 0 then (
-    mark_closed t;
-    drain_writes t;
-    try Eio.Flow.shutdown t.flow `Send with _ -> ())
+  if t.graceful_shutdown && not t.closed then (
+    maybe_write_graceful_goaway t;
+    if
+      t.graceful_shutdown_goaway_sent
+      && Hashtbl.length t.streams = 0
+      && not t.write_pending && t.pending_control_frames = []
+    then defer_close t Shutdown_send)
 
 let schedule_request_body_timeout t ordinal resolver timeout =
   Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
@@ -1012,6 +1603,7 @@ let arm_request_body_read t ordinal resolver =
           state.request_read_resolver <- None;
           match record_request_body_bytes t state len with
           | Error error ->
+              fail_request_trailers state error;
               close_request_body state;
               forget_if_complete t ordinal state;
               resolve resolver (Error error)
@@ -1024,9 +1616,11 @@ let arm_request_body_read t ordinal resolver =
           match finish_request_body_eof t state with
           | Ok () ->
               state.request_done <- true;
+              resolve_request_trailers_empty state;
               forget_if_complete t ordinal state;
               resolve resolver (Ok None)
           | Error error ->
+              fail_request_trailers state error;
               close_request_body state;
               forget_if_complete t ordinal state;
               resolve resolver (Error error))
@@ -1042,6 +1636,7 @@ let handle_request_body_timeout t ordinal resolver =
           in
           state.request_read_resolver <- None;
           resolve resolver (Error error);
+          fail_request_trailers state error;
           close_request_body state;
           forget_if_complete t ordinal state
       | None | Some _ -> ())
@@ -1057,6 +1652,7 @@ let handle_request_body_drain_timeout t ordinal token =
           in
           let resolver = state.request_discard_resolver in
           Option.iter (fun resolver -> resolve resolver (Error error)) resolver;
+          fail_request_trailers state error;
           close_request_body state;
           forget_if_complete t ordinal state
       | None | Some _ -> ())
@@ -1085,7 +1681,7 @@ let start_response t ordinal response resolver =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
           state.response_writer <- Some writer;
-          state.response_write_resolver <- Some resolver;
+          state.response_drain <- Some { resolver; finish_on_complete = false };
           discard_request_body_with_policy ~drain:true t ordinal state;
           `Flush (state, resolver)
       | Response_no_body _ | Response_fixed _ ->
@@ -1107,7 +1703,7 @@ let start_response t ordinal response resolver =
             H2.Reqd.respond_with_streaming state.reqd (h2_response response)
           in
           state.response_writer <- Some writer;
-          state.response_write_resolver <- Some resolver;
+          state.response_drain <- Some { resolver; finish_on_complete = false };
           discard_request_body_with_policy ~drain:true t ordinal state;
           `Flush (state, resolver))
 
@@ -1167,7 +1763,7 @@ let schedule_response_trailers t ordinal trailers resolver =
                       (fun (name, value) ->
                         (Eta_http.Core.Header.normalize_name name, value))
                       trailers));
-            state.response_write_resolver <- Some resolver;
+            state.response_drain <- Some { resolver; finish_on_complete = false };
             `Flush (state, resolver)
           with exn ->
             resolve resolver
@@ -1194,7 +1790,7 @@ let close_response_writer t ordinal resolver =
              if not (H2.Body.Writer.is_closed writer) then
                H2.Body.Writer.close writer
            with _ -> ());
-          state.response_write_resolver <- Some resolver;
+          state.response_drain <- Some { resolver; finish_on_complete = true };
           `Flush (state, resolver))
 
 let fail_response t ordinal error =
@@ -1210,9 +1806,10 @@ let fail_response t ordinal error =
 
 let begin_immediate_shutdown t =
   if not t.closed then (
+    t.deferred_close <- None;
     mark_closed t;
     fail_active_streams t (shutdown_error t);
-    close_flow_all t.flow)
+    abortive_close_flow t.flow)
 
 let start_shutdown_timer t timeout =
   if not t.shutdown_timer_started then (
@@ -1222,11 +1819,46 @@ let start_shutdown_timer t timeout =
         ignore (enqueue t (Shutdown Immediate));
         `Stop_daemon))
 
+let cancel_idle_timeout t = t.idle_timeout_token <- None
+
+let schedule_idle_timeout_if_idle t =
+  if
+    (not t.closed)
+    && t.accepted_request && Hashtbl.length t.streams = 0
+    && Option.is_none t.idle_timeout_token
+  then
+    match t.config.server.timeouts.idle_timeout with
+    | None -> ()
+    | Some timeout ->
+        let _promise, token = Eio.Promise.create () in
+        t.idle_timeout_token <- Some token;
+        Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
+            t.sleep timeout;
+            ignore (enqueue t (Idle_timeout token));
+            `Stop_daemon)
+
+let handle_idle_timeout t token =
+  match t.idle_timeout_token with
+  | Some active when active == token && Hashtbl.length t.streams = 0 ->
+      t.idle_timeout_token <- None;
+      mark_closed t;
+      fail_active_streams t
+        (request_timeout_error t t.config.server.timeouts.idle_timeout);
+      graceful_close_flow_all t.flow
+  | None | Some _ -> ()
+
+let incomplete_header_block_eof_error =
+  h2_filter_protocol_violation ~kind:"h2_incomplete_header_block"
+    ~message:"HTTP/2 connection closed with an incomplete header block"
+
 let begin_graceful_shutdown t timeout =
   if Eta.Duration.is_zero timeout then begin_immediate_shutdown t
   else if not t.closed then (
     t.graceful_shutdown <- true;
+    if Option.is_none t.graceful_shutdown_last_stream_id then
+      t.graceful_shutdown_last_stream_id <- Some t.highest_processed_stream_id;
     start_shutdown_timer t timeout;
+    maybe_write_graceful_goaway t;
     finish_graceful_shutdown_if_idle t)
 
 let begin_shutdown t = function
@@ -1241,87 +1873,99 @@ let begin_shutdown t = function
 
 let handle_command t = function
   | Ingress { bytes; off; len; ack } ->
+      cancel_idle_timeout t;
       Fun.protect
-        ~finally:(fun () -> resolve ack ())
-        (fun () ->
-          match observe_ingress_security t bytes ~off ~len with
-          | Some kind -> handle_security_error t kind
-          | None -> (
+    ~finally:(fun () -> resolve ack ())
+    (fun () ->
+          let observation = observe_ingress_security t bytes ~off ~len in
+          if handle_security_observation t observation then ()
+          else
               match filter_ingress t bytes ~off ~len with
-              | Error kind -> handle_security_error t kind
-              | Ok None -> drain_writes t
+              | Error observation ->
+                  ignore (handle_security_observation t observation)
+              | Ok None -> flush_writes t
               | Ok (Some (bytes, len)) -> (
                   match append_ingress t bytes ~off:0 ~len with
                   | Error error ->
                       record_protocol_error t;
                       mark_closed t;
                       fail_active_streams t error;
-                      close_flow_all t.flow
+                      graceful_close_flow_all t.flow
                   | Ok () ->
                       feed_ingress t;
                       apply_remote_resets t;
-                      drain_writes t)))
+                      flush_writes t))
   | Ingress_eof ->
-      read_eof t;
-      fail_open_request_bodies t;
-      if Hashtbl.length t.streams = 0 then (
-        mark_closed t;
-        close_flow_all t.flow)
-      else drain_writes t
+      if Eta_http.H2.Security.has_open_header_block t.security then
+        handle_security_error t
+          ~code:(h2_error_code_of_kind incomplete_header_block_eof_error)
+          incomplete_header_block_eof_error
+      else (
+        read_eof t;
+        fail_open_request_bodies t;
+        flush_writes t;
+        defer_close t Close_all)
   | Ingress_failed error ->
       mark_closed t;
       fail_active_streams t error;
-      close_flow_all t.flow
+      graceful_close_flow_all t.flow
+  | Idle_timeout token -> handle_idle_timeout t token
   | Request_body_read (ordinal, resolver) ->
       arm_request_body_read t ordinal resolver;
-      drain_writes t
+      flush_writes t
   | Request_body_timeout (ordinal, resolver) ->
       handle_request_body_timeout t ordinal resolver;
-      drain_writes t
+      flush_writes t
   | Request_body_drain_timeout (ordinal, token) ->
       handle_request_body_drain_timeout t ordinal token;
-      drain_writes t
+      flush_writes t
   | Request_body_discard (ordinal, drain, resolver) ->
       discard_request_body t ordinal drain resolver;
-      drain_writes t
+      flush_writes t
   | Response_start (ordinal, response, resolver) ->
       (match start_response t ordinal response resolver with
-      | `Done -> drain_writes t
-      | `Flush (state, resolver) ->
-          drain_writes t;
-          state.response_write_resolver <- None;
-          resolve resolver (Ok ()))
+      | `Done -> flush_writes t
+      | `Flush _ -> flush_writes t)
   | Response_chunk (ordinal, chunk, resolver) ->
       write_response_chunk t ordinal chunk resolver;
-      drain_writes t
+      flush_writes t
   | Response_trailers (ordinal, trailers, resolver) ->
       (match schedule_response_trailers t ordinal trailers resolver with
-      | `Done -> drain_writes t
-      | `Flush (state, resolver) ->
-          drain_writes t;
-          state.response_write_resolver <- None;
-          resolve resolver (Ok ()))
+      | `Done -> flush_writes t
+      | `Flush _ -> flush_writes t)
   | Response_close (ordinal, resolver) ->
       (match close_response_writer t ordinal resolver with
-      | `Done -> drain_writes t
-      | `Flush (state, resolver) ->
-          drain_writes t;
-          state.response_write_resolver <- None;
-          finish_response t ordinal state;
-          resolve resolver (Ok ()))
+      | `Done -> flush_writes t
+      | `Flush _ -> flush_writes t)
   | Response_failed (ordinal, error) ->
       fail_response t ordinal error;
-      drain_writes t
+      flush_writes t
+  | Write_completed (Ok written) ->
+      if t.write_pending then (
+        t.write_pending <- false;
+        H2.Server_connection.report_write_result t.h2 (`Ok written);
+        flush_writes t;
+        flush_control_frames t)
+  | Write_completed (Error error) ->
+      if t.write_pending then t.write_pending <- false;
+      (try H2.Server_connection.report_write_result t.h2 `Closed with _ -> ());
+      mark_closed t;
+      fail_active_streams t error;
+      graceful_close_flow_all t.flow
   | Shutdown policy ->
       begin_shutdown t policy;
-      drain_writes t
+      flush_writes t;
+      flush_control_frames t
 
 let rec owner_loop t =
   if (not t.closed) && not (H2.Server_connection.is_closed t.h2) then (
-    drain_writes t;
+    flush_writes t;
+    flush_control_frames t;
     let command = Eio.Stream.take t.commands in
     handle_command t command;
     finish_graceful_shutdown_if_idle t;
+    finish_deferred_close t;
+    schedule_idle_timeout_if_idle t;
     owner_loop t)
 
 let reader_loop t =
@@ -1334,7 +1978,6 @@ let reader_loop t =
     else None
   in
   let single_read () =
-    let wakeup = t.reader_wakeup in
     let read () =
       match ingress_timeout () with
       | None -> `Read (Eio.Flow.single_read t.flow cstruct)
@@ -1346,10 +1989,7 @@ let reader_loop t =
           with Eio.Time.Timeout -> `Timeout timeout)
     in
     Eio.Fiber.first
-      (fun () ->
-        Eio.Fiber.first read (fun () ->
-            Eio.Promise.await wakeup;
-            `Retry))
+      read
       (fun () ->
         Eio.Promise.await t.closed_signal;
         `Closed)
@@ -1357,9 +1997,6 @@ let reader_loop t =
   let rec loop () =
     match single_read () with
     | `Closed -> ()
-    | `Retry ->
-        reset_reader_wakeup t;
-        loop ()
     | `Timeout timeout ->
         ignore
           (enqueue t (Ingress_failed (request_timeout_error t (Some timeout))))
@@ -1380,10 +2017,50 @@ let reader_loop t =
   in
   loop ()
 
+let write_job t job =
+  let write () =
+    Eio.Fiber.first
+      (fun () ->
+        Eio.Flow.write t.flow [ job.data ];
+        job.len)
+      (fun () ->
+        Eio.Promise.await t.closed_signal;
+        graceful_close_flow_all t.flow;
+        raise End_of_file)
+  in
+  match t.config.server.timeouts.response_write_timeout with
+  | None -> write ()
+  | Some timeout -> t.with_timeout timeout write
+
+let writer_loop t =
+  let take_job () =
+    Eio.Fiber.first
+      (fun () -> `Job (Eio.Stream.take t.write_jobs))
+      (fun () ->
+        Eio.Promise.await t.closed_signal;
+        `Closed)
+  in
+  let rec loop () =
+    if not t.closed then
+      match take_job () with
+      | `Closed -> ()
+      | `Job job ->
+          if t.closed then ()
+          else (
+            let result =
+              try Ok (write_job t job) with
+              | Eio.Cancel.Cancelled _ as exn -> raise exn
+              | Eio.Time.Timeout -> Error (response_write_timeout_error t)
+              | exn -> Error (connection_write_error t exn)
+            in
+            if enqueue t (Write_completed result) then loop ())
+  in
+  try loop () with Eio.Cancel.Cancelled _ -> ()
+
 let fail_owner_loop t error =
   mark_closed t;
   fail_active_streams t error;
-  close_flow_all t.flow
+  graceful_close_flow_all t.flow
 
 let run_owner_loop t =
   try owner_loop t
@@ -1596,14 +2273,14 @@ let shutdown t policy =
   if not t.closed then (
     let queued = enqueue t (Shutdown policy) in
     match policy with
-    | Types.Immediate when queued -> close_flow_all t.flow
+    | Types.Immediate when queued -> abortive_close_flow t.flow
     | Immediate | Graceful _ -> ())
 
 let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
   let time = Option.value time ~default:(Types.live_time clock) in
-  let h2_config = config.Types.Config.h2_config in
+  let h2_config = limited_h2_config config in
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
@@ -1621,61 +2298,81 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
             t.accepted_request <- true;
             incr request_ordinal;
             let ordinal = !request_ordinal in
-            let body = body_of_stream t ordinal in
-            let request = request_of_reqd ~connection ~ordinal ~body reqd in
-            let metrics =
-              request_metrics ~sw:t.sw ~config:t.config
-                ~runtime_factory:t.runtime_factory ~connection:t.connection
-                request
-            in
-            Option.iter Server_metrics.request_started metrics;
-            Option.iter Server_metrics.stream_started metrics;
-            Server_stats.H2.stream_opened t.stats;
-            Hashtbl.add t.streams ordinal
-              {
-                reqd;
-                request_body = H2.Reqd.request_body reqd;
-                request_content_length =
-                  (match
-                     Server.Validation.h2_request_content_length
-                       (Eta_http.Core.Header.to_list request.headers)
-                   with
-                  | Ok content_length -> content_length
-                  | Error _ -> None);
-                metrics;
-                metrics_finished = false;
-                request_body_bytes = 0;
-                request_done = false;
-                request_discarding = false;
-                request_read_resolver = None;
-                request_discard_resolver = None;
-                request_discard_timeout_token = None;
-                response_writer = None;
-                response_write_resolver = None;
-                response_done = false;
-              };
-            (match validate_request_metadata t request with
-            | Ok () -> run_handler t ordinal request handler
-            | Error error ->
-                record_protocol_error t;
-                let _promise, resolver = Eio.Promise.create () in
-                let response = Server.Handler.default_error_response error in
-                (match prepare_h2_response t request response with
-                | Ok prepared ->
-                    ignore (start_response t ordinal prepared resolver)
+            (match Hashtbl.find_opt t.stream_ids_by_ordinal ordinal with
+            | None ->
+                H2.Reqd.report_exn reqd
+                  (Failure
+                     "Eta_http_eio.H2.Server_connection missing observed H2 \
+                      stream id")
+            | Some stream_id ->
+                note_processed_stream_id t stream_id;
+                let body = body_of_stream t ordinal in
+                let request_trailers = create_request_trailers () in
+                (match Hashtbl.find_opt t.pending_request_trailers ordinal with
+                | None -> ()
+                | Some trailers ->
+                    Hashtbl.remove t.pending_request_trailers ordinal;
+                    resolve request_trailers.resolver (Ok trailers));
+                let request =
+                  request_of_reqd ~connection ~ordinal ~stream_id ~body
+                    ~trailers:request_trailers reqd
+                in
+                let metrics =
+                  request_metrics ~sw:t.sw ~config:t.config
+                    ~runtime_factory:t.runtime_factory ~connection:t.connection
+                    request
+                in
+                Option.iter Server_metrics.request_started metrics;
+                Option.iter Server_metrics.stream_started metrics;
+                Server_stats.H2.stream_opened t.stats;
+                Hashtbl.add t.streams ordinal
+                  {
+                    stream_id;
+                    reqd;
+                    request_body = H2.Reqd.request_body reqd;
+                    request_content_length =
+                      (match
+                         Server.Validation.h2_request_content_length
+                           (Eta_http.Core.Header.to_list request.headers)
+                       with
+                      | Ok content_length -> content_length
+                      | Error _ -> None);
+                    metrics;
+                    metrics_finished = false;
+                    request_body_bytes = 0;
+                    request_done = false;
+                    request_discarding = false;
+                    request_trailers;
+                    request_read_resolver = None;
+                    request_discard_resolver = None;
+                    request_discard_timeout_token = None;
+                    response_writer = None;
+                    response_write_resolver = None;
+                    response_drain = None;
+                    response_done = false;
+                  };
+                (match validate_request_metadata t request with
+                | Ok () -> run_handler t ordinal request handler
                 | Error error ->
-                    ignore (enqueue t (Response_failed (ordinal, error))))))
+                    record_protocol_error t;
+                    let _promise, resolver = Eio.Promise.create () in
+                    let response = Server.Handler.default_error_response error in
+                    (match prepare_h2_response t request response with
+                    | Ok prepared ->
+                        ignore (start_response t ordinal prepared resolver)
+                    | Error error ->
+                        ignore (enqueue t (Response_failed (ordinal, error)))))))
   in
   let security =
     Eta_http.H2.Security.create
       ?config:config.Types.Config.h2_security_config ()
   in
   let closed_signal, close_signal = Eio.Promise.create () in
-  let reader_wakeup, reader_wakeup_resolver = Eio.Promise.create () in
   let t =
     let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
       sw;
+      now_ms = time.now_ms;
       sleep = time.sleep;
       with_timeout = time.with_timeout;
       flow;
@@ -1688,16 +2385,24 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       ingress_len = 0;
       filter_preface_remaining = h2_client_connection_preface_length;
       filter_pending = "";
+      request_header_decoder = Hpack.Decoder.create 4096;
+      normalize_request_headers = false;
+      request_header_block = None;
       observed_request_ordinal = 0;
+      highest_processed_stream_id = 0;
+      graceful_shutdown_last_stream_id = None;
+      graceful_shutdown_goaway_sent = false;
+      graceful_rejected_header_stream = None;
       stream_ordinals = Hashtbl.create 16;
+      stream_ids_by_ordinal = Hashtbl.create 16;
+      graceful_rejected_streams = Hashtbl.create 16;
+      pending_request_trailers = Hashtbl.create 16;
       remote_reset_streams = Hashtbl.create 16;
       remote_reset_ordinals = Hashtbl.create 16;
-      filter_rst_stream_seen = 0;
-      filter_error = None;
+      pending_control_frames = [];
       commands = Eio.Stream.create config.command_queue_capacity;
-      streams =
-        Hashtbl.create
-          (Int32.to_int h2_config.H2.Config.max_concurrent_streams);
+      write_jobs = Eio.Stream.create 1;
+      streams = Hashtbl.create (stream_table_initial_capacity h2_config);
       connection;
       config;
       runtime_factory;
@@ -1706,11 +2411,12 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
         connection_metrics ~sw ~config ~runtime_factory ~connection;
       closed_signal;
       close_signal;
-      reader_wakeup;
-      reader_wakeup_resolver;
+      idle_timeout_token = None;
       graceful_shutdown = false;
       shutdown_timer_started = false;
       accepted_request = false;
+      deferred_close = None;
+      write_pending = false;
       closed = false;
     }
   in
@@ -1722,6 +2428,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   Fun.protect
     ~finally:(fun () ->
       mark_closed t;
+      fail_active_streams t (shutdown_error t);
       Option.iter
         (fun metrics -> Server_metrics.active_connections metrics 0)
         t.connection_metrics;
@@ -1729,11 +2436,12 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
       H2.Server_connection.shutdown h2;
-      close_flow_all flow;
+      graceful_close_flow_all flow;
       Option.iter (fun on_close -> on_close (stats t)) on_close)
-    (fun () ->
-      Eio.Fiber.fork ~sw (fun () -> reader_loop t);
-      run_owner_loop t)
+	    (fun () ->
+	      Eio.Fiber.fork ~sw (fun () -> writer_loop t);
+	      Eio.Fiber.fork ~sw (fun () -> reader_loop t);
+	      run_owner_loop t)
 
 let run_h2c ~sw ~clock ?time ~flow ~peer ~config ~runtime_factory ?on_start
     ?on_close handler =

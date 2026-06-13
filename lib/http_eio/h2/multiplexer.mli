@@ -48,6 +48,7 @@ val request :
   (opened_request, request_error) result
 
 val create_client_reader :
+  now_ms:(unit -> int64) ->
   ?buffer_size:int ->
   ?security:Security.t ->
   ?security_config:Security.config ->
@@ -55,6 +56,7 @@ val create_client_reader :
   client_reader
 
 val create_reader :
+  now_ms:(unit -> int64) ->
   ?buffer_size:int ->
   ?security_config:Security.config ->
   t ->

@@ -45,6 +45,9 @@ val validate_response_trailers :
 val validate_h2_request_headers :
   limits:Server_config.limits -> (string * string) list -> (unit, string) result
 
+val validate_h2_request_trailers :
+  limits:Server_config.limits -> (string * string) list -> (unit, string) result
+
 val h2_request_content_length :
   (string * string) list -> (int option, string) result
 

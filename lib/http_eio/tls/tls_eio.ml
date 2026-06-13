@@ -25,10 +25,13 @@ type 'a t_rec = {
   handshake_mutex : Eio.Mutex.t;
   read_mutex : Eio.Mutex.t;
   write_mutex : Eio.Mutex.t;
+  progress_mutex : Eio.Mutex.t;
+  progress_condition : Eio.Condition.t;
   sni : string option;
   mutable peer_certificate_verified : bool;
   mutable handshake_done : bool;
   mutable closed : bool;
+  mutable progress_epoch : int;
 }
 
 type t = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t t_rec
@@ -38,6 +41,29 @@ type tls_state = St : t -> tls_state
 type (_, _, _) Eio.Resource.pi += Tls_state : ('a, 'a -> tls_state, [> `Eta_tls ]) Eio.Resource.pi
 
 let with_ssl t f = Eio.Mutex.use_rw ~protect:false t.ssl_mutex f
+let with_flow_read t f = Eio.Mutex.use_ro t.read_mutex f
+let with_flow_write t f = Eio.Mutex.use_ro t.write_mutex f
+
+(* Post-handshake TLS ownership invariants:
+   - ciphertext reads from the raw flow are serialized by [read_mutex];
+   - [single_write] may feed rbio when SSL_write wants input, so it never
+     depends on an external reader fiber to make TLS progress;
+   - [single_read] drains pending plaintext before blocking on raw input;
+   - read-side OpenSSL progress wakes writers that are retrying WANT_READ. *)
+
+let notify_tls_progress t =
+  Eio.Mutex.use_rw ~protect:false t.progress_mutex (fun () ->
+      t.progress_epoch <- t.progress_epoch + 1;
+      Eio.Condition.broadcast t.progress_condition)
+
+let tls_progress_epoch t =
+  Eio.Mutex.use_ro t.progress_mutex (fun () -> t.progress_epoch)
+
+let wait_for_tls_progress t epoch =
+  Eio.Mutex.use_rw ~protect:false t.progress_mutex (fun () ->
+      while (not t.closed) && t.progress_epoch = epoch do
+        Eio.Condition.await t.progress_condition t.progress_mutex
+      done)
 
 let debug_io direction storage ~storage_off ~display_off ~len =
   match Sys.getenv_opt "ETA_TLS_DEBUG" with
@@ -54,28 +80,44 @@ let debug_io direction storage ~storage_off ~display_off ~len =
       Printf.eprintf "[tls] %s rc=%d off=%d head: %s\n%!" direction len
         display_off (Buffer.contents hex)
 
-(* Helper: read encrypted data from underlying flow into OpenSSL's read BIO. *)
-let feed_bio t =
+let feed_bio_unlocked t =
   let module Flow = (val t.eio_flow : EIO_FLOW) in
   let buf = Cstruct.create 32768 in
-  Eio.Mutex.use_rw ~protect:false t.read_mutex (fun () ->
-      let n = Flow.single_read t.flow buf in
-      if n = 0 then raise End_of_file;
-      let rec write_all off len =
-        if len > 0 then (
-          let written =
-            with_ssl t (fun () ->
-                Openssl.bio_write t.ssl (Cstruct.to_bigarray buf) off len)
-          in
-          if written <= 0 then failwith "TLS BIO write failed";
-          write_all (off + written) (len - written))
+  let n = Flow.single_read t.flow buf in
+  if n = 0 then (
+    t.closed <- true;
+    notify_tls_progress t;
+    raise End_of_file);
+  let rec write_all off len =
+    if len > 0 then (
+      let written =
+        with_ssl t (fun () ->
+            Openssl.bio_write t.ssl (Cstruct.to_bigarray buf) off len)
       in
-      write_all 0 n)
+      if written <= 0 then failwith "TLS BIO write failed";
+      write_all (off + written) (len - written))
+  in
+  write_all 0 n;
+  notify_tls_progress t
+
+(* Helper: read encrypted data from underlying flow into OpenSSL's read BIO. *)
+let feed_bio t = with_flow_read t (fun () -> feed_bio_unlocked t)
+
+let feed_bio_if_needed t epoch =
+  with_flow_read t (fun () ->
+      if t.progress_epoch = epoch then feed_bio_unlocked t)
+
+let drive_want_read t epoch =
+  Eio.Fiber.first
+    (fun () -> feed_bio_if_needed t epoch)
+    (fun () -> wait_for_tls_progress t epoch);
+  if t.closed then raise End_of_file
 
 (* Helper: drain OpenSSL's write BIO to the underlying flow. *)
 let drain_bio t =
   let module Flow = (val t.eio_flow : EIO_FLOW) in
-  Eio.Mutex.use_rw ~protect:false t.write_mutex (fun () ->
+  with_flow_write t (fun () ->
+      let drained = ref false in
       let rec loop () =
         let pending = with_ssl t (fun () -> Openssl.bio_write_pending t.ssl) in
         if pending > 0 then (
@@ -85,10 +127,12 @@ let drain_bio t =
                 Openssl.bio_read t.ssl (Cstruct.to_bigarray buf) 0 pending)
           in
           if n > 0 then (
+            drained := true;
             Flow.write t.flow [ Cstruct.sub buf 0 n ];
             loop ()))
       in
-      loop ())
+      loop ();
+      !drained)
 
 (* Drive the TLS handshake to completion. *)
 let do_handshake t =
@@ -98,15 +142,16 @@ let do_handshake t =
           let rc = with_ssl t (fun () -> Openssl.handshake t.ssl) in
           match rc with
           | Openssl.Handshake_ok ->
-              drain_bio t;
+              ignore (drain_bio t);
+              notify_tls_progress t;
               t.handshake_done <- true
           | Openssl.Handshake_error code -> (
-              drain_bio t;
+              ignore (drain_bio t);
               if code = 2 (* SSL_ERROR_WANT_READ *) then (
                 feed_bio t;
                 loop ())
               else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-                drain_bio t;
+                if not (drain_bio t) then Eio.Fiber.yield ();
                 loop ())
               else (
                 match Openssl.err_peek_error () with
@@ -123,13 +168,15 @@ let do_handshake t =
 let shutdown_send t =
   if not t.closed then (
     let _ = with_ssl t (fun () -> Openssl.shutdown t.ssl) in
-    drain_bio t;
-    t.closed <- true)
+    ignore (drain_bio t);
+    t.closed <- true;
+    notify_tls_progress t)
 
 let close_underlying t = try Eio.Flow.close t.flow with _ -> ()
 
 let close t =
   t.closed <- true;
+  notify_tls_progress t;
   close_underlying t
 
 module Flow_impl = struct
@@ -153,21 +200,24 @@ module Flow_impl = struct
       let rc = with_ssl t (fun () -> Openssl.read t.ssl storage 0 len) in
       if rc > 0 then (
         debug_io "read" storage ~storage_off:0 ~display_off ~len:rc;
+        notify_tls_progress t;
         rc)
       else if rc = 0 then (
         t.closed <- true;
+        notify_tls_progress t;
         raise End_of_file)
       else (
         let code = -rc in
-        drain_bio t;
+        ignore (drain_bio t);
         if code = 2 (* SSL_ERROR_WANT_READ *) then (
           feed_bio t;
           loop ())
         else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-          drain_bio t;
+          if not (drain_bio t) then Eio.Fiber.yield ();
           loop ())
         else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then (
           t.closed <- true;
+          notify_tls_progress t;
           raise End_of_file)
         else (
           match Openssl.err_peek_error () with
@@ -189,7 +239,9 @@ module Flow_impl = struct
           let { Cstruct.off = display_off; len } = buf in
           let storage = Cstruct.to_bigarray buf in
           let rec write_buf offset length =
+            if t.closed then raise End_of_file;
             if length > 0 then (
+              let epoch = tls_progress_epoch t in
               let rc =
                 with_ssl t (fun () -> Openssl.write t.ssl storage offset length)
               in
@@ -197,16 +249,16 @@ module Flow_impl = struct
                 debug_io "write" storage ~storage_off:offset
                   ~display_off:(display_off + offset) ~len:rc;
                 total := !total + rc;
-                drain_bio t;
+                ignore (drain_bio t);
                 if rc < length then write_buf (offset + rc) (length - rc))
               else (
                 let code = -rc in
-                drain_bio t;
+                ignore (drain_bio t);
                 if code = 2 (* SSL_ERROR_WANT_READ *) then (
-                  feed_bio t;
+                  drive_want_read t epoch;
                   write_buf offset length)
                 else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
-                  drain_bio t;
+                  if not (drain_bio t) then Eio.Fiber.yield ();
                   write_buf offset length)
                 else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then
                   raise End_of_file
@@ -256,10 +308,13 @@ let make_tls_state ?host_eio ?sni ?(peer_certificate_verified = false) ssl flow 
     handshake_mutex = Eio.Mutex.create ();
     read_mutex = Eio.Mutex.create ();
     write_mutex = Eio.Mutex.create ();
+    progress_mutex = Eio.Mutex.create ();
+    progress_condition = Eio.Condition.create ();
     sni;
     peer_certificate_verified;
     handshake_done = false;
     closed = false;
+    progress_epoch = 0;
   }
 
 let epoch_of_state t =

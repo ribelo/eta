@@ -59,7 +59,10 @@ let run_malicious_request ?consume_response ~env ~name ~server_fn ~url_builder
                 (fun () -> try server_fn ~env flow with _ -> ()));
           `Stop_daemon);
       let url = url_builder port in
-      let client = Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env) () in
+      let client =
+        Eta_http_eio.Client.make ~sw ~net:(Eio.Stdenv.net env)
+          ~clock:(Eio.Stdenv.clock env) ()
+      in
       let request = Eta_http.Request.make "GET" url in
       let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
       let consume_response =
@@ -517,7 +520,12 @@ let window_update ~env =
   let security_config =
     {
       Eta_http.H2.Security.default_config with
-      max_window_update_per_connection = 2;
+      window_update_rate =
+        {
+          Eta_http.H2.Security.burst = 2;
+          window_ms = 1_000;
+          max_per_connection = None;
+        };
     }
   in
   run_eta_h2c_adversarial_client ~env ~name:"window_update_accounting"

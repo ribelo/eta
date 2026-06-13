@@ -79,7 +79,7 @@ let with_h2_server ?max_concurrent handler client_action =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let connection =
-    Eta_http_eio.H2.Connection.create ~sw ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L) ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ?max_concurrent ()
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock () in
@@ -105,7 +105,7 @@ let with_raw_h2_server server client_action =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let connection =
-    Eta_http_eio.H2.Connection.create ~sw ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L) ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ()
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock () in
@@ -299,7 +299,7 @@ let test_h2_connection_stream_upload_observes_flow_control () =
   Eio_mock.Flow.on_read flow [ `Await read_never ];
   with_test_clock @@ fun sw clock rt ->
   let connection =
-    Eta_http_eio.H2.Connection.create ~sw
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
       ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ()
   in
@@ -429,7 +429,7 @@ let test_h2_connection_completed_error_response_does_not_hold_switch () =
               (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
           in
           let connection =
-            Eta_http_eio.H2.Connection.create ~sw:client_sw
+            Eta_http_eio.H2.Connection.create ~sw:client_sw ~now_ms:(fun () -> 0L)
               ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
               ()
           in
@@ -546,6 +546,14 @@ let test_h2_informational_filter_rejects_invalid_status () =
     raw_headers encoder ~stream_id:1 [ hpack_header ":status" "99" ]
   in
   expect_info_filter_error "invalid status" frame
+
+let test_h2_informational_filter_rejects_empty_header_name () =
+  let encoder = Hpack.Encoder.create 4096 in
+  let frame =
+    raw_headers encoder ~stream_id:1
+      [ hpack_header ":status" "200"; hpack_header "" "x" ]
+  in
+  expect_info_filter_error "empty header name" frame
 
 let test_h2_informational_filter_rejects_second_final_status () =
   let encoder = Hpack.Encoder.create 4096 in
@@ -738,7 +746,7 @@ let test_h2_connection_switch_close_does_not_fire_security_error () =
           (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
       in
       let connection =
-        Eta_http_eio.H2.Connection.create ~sw:client_sw
+        Eta_http_eio.H2.Connection.create ~sw:client_sw ~now_ms:(fun () -> 0L)
           ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
           ~security_error_handler:(fun kind ->
             security_errors := kind :: !security_errors)
@@ -786,7 +794,7 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
           (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
       in
       let connection =
-        Eta_http_eio.H2.Connection.create ~sw:client_sw
+        Eta_http_eio.H2.Connection.create ~sw:client_sw ~now_ms:(fun () -> 0L)
           ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
           ()
       in
@@ -832,7 +840,7 @@ let test_h2_connection_failure_handler_exception_skips_others () =
   let handler1_called = ref false in
   let handler2_called = ref false in
   let connection =
-    Eta_http_eio.H2.Connection.create ~sw
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
       ~flow:(flow_r :> Eta_http_eio.H2.Connection.flow)
       ()
   in
@@ -882,7 +890,7 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
               (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
           in
           let connection =
-            Eta_http_eio.H2.Connection.create ~sw:client_sw
+            Eta_http_eio.H2.Connection.create ~sw:client_sw ~now_ms:(fun () -> 0L)
               ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
               ()
           in

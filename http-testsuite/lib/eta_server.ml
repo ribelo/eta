@@ -72,7 +72,8 @@ let user_id_response path =
 let echo_response request =
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
   |> Eta.Effect.map (fun body ->
-         fixed ~headers:[ ("Content-Type", "text/plain") ] (Bytes.to_string body))
+         fixed ~headers:[ ("content-type", "text/plain") ] (Bytes.to_string body))
+  |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (empty 500))
 
 let empty_after_body request =
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
@@ -81,9 +82,9 @@ let empty_after_body request =
 let trailer_response () =
   Eta.Effect.pure
     (Eta_http.Server.Response.make ~status:200
-       ~headers:(header_list [ ("Trailer", "X-Trailer") ])
+       ~headers:(header_list [ ("trailer", "x-trailer") ])
        ~trailers:(fun () ->
-         Eta.Effect.pure (header_list [ ("X-Trailer", "eta-trailer") ]))
+         Eta.Effect.pure (header_list [ ("x-trailer", "eta-trailer") ]))
        ~body:
          (Eta_http.Server.Response.Body.string "body-with-trailer")
        ())
@@ -123,7 +124,15 @@ let config =
         };
     }
   in
-  { Eta_http_eio.Server.Config.default with server }
+  {
+    Eta_http_eio.Server.Config.default with
+    server;
+    h2_config =
+      {
+        Eta_http_eio.Server.Config.default.h2_config with
+        max_concurrent_streams = 4096l;
+      };
+  }
 
 let tls_config cert_dir protocol =
   let alpn_protocols =

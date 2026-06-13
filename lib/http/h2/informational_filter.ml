@@ -154,6 +154,11 @@ let has_pseudo_header headers =
       String.length name > 0 && Char.equal name.[0] ':')
     headers
 
+let has_empty_header_name headers =
+  List.exists
+    (fun ({ Hpack.name; _ } : Hpack.header) -> String.equal name "")
+    headers
+
 let is_informational = function
   | Some status -> status >= 100 && status < 200 && status <> 101
   | None -> false
@@ -164,7 +169,9 @@ let complete_headers t { stream_id; end_stream; block } =
   | Error _ as error -> error
   | Ok headers ->
       let status = status_code headers in
-      if already_final && has_pseudo_header headers then
+      if has_empty_header_name headers then
+        error "HTTP/2 response used empty header name"
+      else if already_final && has_pseudo_header headers then
         error "HTTP/2 trailers contained a pseudo-header"
       else if has_status_header headers && Option.is_none status then
         error "HTTP/2 response used invalid :status"

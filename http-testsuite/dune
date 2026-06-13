@@ -19,6 +19,11 @@
  (action (progn)))
 
 (rule
+ (alias h2spec)
+ (deps (alias test/h2spec/h2spec))
+ (action (progn)))
+
+(rule
  (alias perf-compare)
  (deps (alias test/perf_compare/perf-compare))
  (action (progn)))

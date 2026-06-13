@@ -7,11 +7,11 @@ ocaml-h2 adapter boundary before hostile frame shapes enter the substrate?
 
 ## Evidence
 
-- `Eta_http.H2.Security.observe` scans raw server-to-client frame bytes in the
+- `Eta_http.H2.Security.observe_result` scans raw server-to-client frame bytes in the
   h2 read adapter before calling `H2.Client_connection.read`.
 - SETTINGS churn is detected through real `Multiplexer.read_client_once` and
-  returns `Settings_churn_rate_exceeded`.
-- Response-header churn returns `Response_header_change_rate_exceeded`.
+  returns `Settings_count_exceeded`.
+- Response-header churn returns `Response_header_count_exceeded`.
 - Oversized single HEADERS blocks return `Hpack_decode_overflow`; this is the
   fallback for HPACK/Huffman CPU amplification while the pinned ocaml-h2 API
   lacks a per-symbol CPU-budget hook.

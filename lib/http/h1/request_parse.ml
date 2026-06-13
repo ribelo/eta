@@ -70,6 +70,15 @@ let rec find_crlf buf index limit =
   then index
   else find_crlf buf (index + 1) limit
 
+let rec find_bare_cr buf index limit =
+  if index >= limit then -1
+  else if Char.equal (Bytes.unsafe_get buf index) '\r' then
+    if index + 1 >= limit then -1
+    else if Char.equal (Bytes.unsafe_get buf (index + 1)) '\n' then
+      find_bare_cr buf (index + 2) limit
+    else index
+  else find_bare_cr buf (index + 1) limit
+
 let rec find_char buf index limit char =
   if index >= limit then -1
   else if Char.equal (Bytes.unsafe_get buf index) char then index
@@ -181,7 +190,8 @@ let parse ?(max_request_line_bytes = 8 * 1024)
   ensure_positive "max_headers must be > 0" max_headers;
   let line_end = find_crlf buf 0 len in
   if line_end < 0 then
-    if len > max_request_line_bytes then
+    if find_bare_cr buf 0 len >= 0 then Error Invalid_request_line
+    else if len > max_request_line_bytes then
       Error (Request_line_too_large { limit = max_request_line_bytes })
     else Error Partial
   else if line_end + 2 > max_request_line_bytes then
@@ -218,7 +228,11 @@ let parse ?(max_request_line_bytes = 8 * 1024)
           else
             let header_end = find_crlf buf line_start len in
             if header_end < 0 then
-              if len - headers_start > max_header_bytes then
+              if find_bare_cr buf line_start len >= 0 then
+                Error
+                  (Invalid_header
+                     (Bytes.sub_string buf line_start (len - line_start)))
+              else if len - headers_start > max_header_bytes then
                 Error (Header_section_too_large { limit = max_header_bytes })
               else Error Partial
             else if header_end + 2 - headers_start > max_header_bytes then

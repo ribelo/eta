@@ -10,12 +10,15 @@ type domain_policy =
   | Additional of int
 
 type time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
 
 let live_time clock =
+  let now_ms () = Int64.of_float (Eio.Time.now clock *. 1000.) in
   {
+    now_ms;
     sleep =
       (fun duration ->
         Eio.Time.sleep clock (Eta.Duration.to_seconds_float duration));
@@ -83,6 +86,15 @@ module Config = struct
     if Int32.compare value 0l < 0 then
       invalid_arg (field name ^ " must be >= 0")
 
+  let max_h2_concurrent_streams = 4096l
+
+  let validate_h2_max_concurrent_streams name value =
+    require_positive_int32 name value;
+    if Int32.compare value max_h2_concurrent_streams > 0 then
+      invalid_arg
+        (field name ^ " must be <= "
+        ^ Int32.to_string max_h2_concurrent_streams)
+
   let validate_h2_frame_size name value =
     if value < 0x4000 || value > 0xffffff then
       invalid_arg (field name ^ " must be between 16384 and 16777215")
@@ -94,31 +106,43 @@ module Config = struct
       config.request_body_buffer_size;
     require_positive "h2_config.response_body_buffer_size"
       config.response_body_buffer_size;
-    require_positive_int32 "h2_config.max_concurrent_streams"
+    validate_h2_max_concurrent_streams "h2_config.max_concurrent_streams"
       config.max_concurrent_streams;
     require_non_negative_int32 "h2_config.initial_window_size"
-      config.initial_window_size
+      config.initial_window_size;
+    Option.iter
+      (require_positive "h2_config.max_header_list_size")
+      config.max_header_list_size;
+    Option.iter
+      (require_positive "h2_config.max_header_count")
+      config.max_header_count
 
   let validate_h2_security_config
       (config : Eta_http.H2.Security.config) =
-    require_positive "h2_security_config.max_settings_per_connection"
-      config.max_settings_per_connection;
+    let require_rate_limit name (limit : Eta_http.H2.Security.rate_limit) =
+      require_positive (name ^ ".burst") limit.burst;
+      require_positive (name ^ ".window_ms") limit.window_ms;
+      Option.iter
+        (require_positive (name ^ ".max_per_connection"))
+        limit.max_per_connection
+    in
+    require_rate_limit "h2_security_config.settings_rate"
+      config.settings_rate;
     require_positive "h2_security_config.max_goaway_per_connection"
       config.max_goaway_per_connection;
-    require_positive "h2_security_config.max_rst_stream_per_connection"
-      config.max_rst_stream_per_connection;
-    require_positive "h2_security_config.max_ping_per_connection"
-      config.max_ping_per_connection;
-    require_positive "h2_security_config.max_empty_data_frames_per_connection"
-      config.max_empty_data_frames_per_connection;
-    require_positive "h2_security_config.max_window_update_per_connection"
-      config.max_window_update_per_connection;
+    require_rate_limit "h2_security_config.rst_stream_rate"
+      config.rst_stream_rate;
+    require_rate_limit "h2_security_config.ping_rate" config.ping_rate;
+    require_rate_limit "h2_security_config.empty_data_rate"
+      config.empty_data_rate;
+    require_rate_limit "h2_security_config.window_update_rate"
+      config.window_update_rate;
     require_positive "h2_security_config.max_hpack_block_bytes"
       config.max_hpack_block_bytes;
     require_positive "h2_security_config.max_continuation_accumulator_bytes"
       config.max_continuation_accumulator_bytes;
-    require_positive "h2_security_config.max_response_headers_per_connection"
-      config.max_response_headers_per_connection;
+    require_positive "h2_security_config.max_response_headers_per_stream"
+      config.max_response_headers_per_stream;
     require_positive "h2_security_config.max_header_name_bytes"
       config.max_header_name_bytes;
     require_positive "h2_security_config.max_header_value_bytes"

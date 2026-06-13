@@ -12,6 +12,7 @@ type domain_policy = Server_types.domain_policy =
 type runtime_factory = Server_types.runtime_factory
 
 type time = Server_types.time = {
+  now_ms : unit -> int64;
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
@@ -499,7 +500,7 @@ let run_h2c ~sw ~net ~clock ?time ?domain_manager
 let run_https_connection ~conn_sw ~clock ?time ~config ~runtime_factory
     ?on_connection_start ?on_connection_close ?on_tls_handshake
     ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-    ~tls_context handler flow peer =
+    ~tls_context ~enabled_protocols handler flow peer =
   let raw_flow =
     (flow :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
   in
@@ -559,6 +560,7 @@ let run_https_connection ~conn_sw ~clock ?time ~config ~runtime_factory
   in
   ignore
     (Alpn_server.dispatch
+       ~enabled_protocols
        ~close:(fun () ->
          Option.iter (fun f -> f ()) on_alpn_rejected;
          Eio.Flow.close tls_flow)
@@ -569,7 +571,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?(config = Config.default) ?runtime_factory ?on_error ?on_connection_start
     ?on_connection_close ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1
     ?on_alpn_h2 ?on_alpn_rejected ?on_tls_pending_start
-    ?on_tls_pending_ready ?on_tls_pending_close ~tls_context
+    ?on_tls_pending_ready ?on_tls_pending_close ~tls_context ~enabled_protocols
     ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   ignore sw;
@@ -595,7 +597,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
             run_https_connection ~conn_sw ~clock ?time ~config ~runtime_factory
               ~on_connection_start ?on_connection_close ?on_tls_handshake
               ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-              ~tls_context handler flow peer))
+              ~tls_context ~enabled_protocols handler flow peer))
   in
   ()
 
@@ -604,20 +606,25 @@ let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ~tls_config ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
+  let enabled_protocols =
+    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+      (Eta_http.Tls.Config.server_alpn_protocols tls_config)
+  in
   let on_connection_close =
     Option.map
       (fun on_connection_close _connection stats -> on_connection_close stats)
       on_connection_close
   in
   run_https_on_socket_impl ~sw ~clock ?time ?stop ~config ?runtime_factory
-    ?on_error ?on_connection_close ~tls_context ~socket handler
+    ?on_error ?on_connection_close ~tls_context ~enabled_protocols ~socket
+    handler
 
 let run_https_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     ?(domain_policy = Recommended) ?stop ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_start ?on_connection_close
     ?on_tls_handshake ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2
     ?on_alpn_rejected ?on_tls_pending_start ?on_tls_pending_ready
-    ?on_tls_pending_close ~tls_context ~addr handler =
+    ?on_tls_pending_close ~tls_context ~enabled_protocols ~addr handler =
   Config.validate config;
   validate_domain_policy domain_policy;
   let runtime_factory =
@@ -648,7 +655,7 @@ let run_https_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
             run_https_connection ~conn_sw ~clock ?time ~config ~runtime_factory
               ~on_connection_start ?on_connection_close ?on_tls_handshake
               ?on_tls_handshake_failure ?on_alpn_h1 ?on_alpn_h2 ?on_alpn_rejected
-              ~tls_context handler flow peer))
+              ~tls_context ~enabled_protocols handler flow peer))
   in
   ()
 
@@ -658,6 +665,10 @@ let run_https ~sw ~net ~clock ?time ?domain_manager
   Config.validate config;
   validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
+  let enabled_protocols =
+    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+      (Eta_http.Tls.Config.server_alpn_protocols tls_config)
+  in
   let on_connection_close =
     Option.map
       (fun on_connection_close _connection stats -> on_connection_close stats)
@@ -665,7 +676,7 @@ let run_https ~sw ~net ~clock ?time ?domain_manager
   in
   run_https_impl ~sw ~net ~clock ?time ?domain_manager ~domain_policy ?stop
     ~config ?runtime_factory ?on_error ?on_connection_close ~tls_context ~addr
-    handler
+    ~enabled_protocols handler
 
 let tracked_h1_on_close t on_connection_close connection stats =
   unregister_connection t (H1 connection);
@@ -747,6 +758,10 @@ let start_https_on_socket ~sw ~clock ?time ?(config = Config.default)
     ?runtime_factory ?on_error ?on_connection_close ~tls_config ~socket handler =
   Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
+  let enabled_protocols =
+    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+      (Eta_http.Tls.Config.server_alpn_protocols tls_config)
+  in
   let t = create () in
   register_listener t socket;
   Eio.Fiber.fork ~sw (fun () ->
@@ -765,7 +780,7 @@ let start_https_on_socket ~sw ~clock ?time ?(config = Config.default)
         ~on_tls_pending_ready:(fun pending ->
           unregister_pending_tls ~closed:false t pending)
         ~on_tls_pending_close:(fun pending -> unregister_pending_tls t pending)
-        ~tls_context ~socket handler);
+        ~tls_context ~enabled_protocols ~socket handler);
   t
 
 let start_https ~sw ~net ~clock ?time ?domain_manager
@@ -774,6 +789,10 @@ let start_https ~sw ~net ~clock ?time ?domain_manager
   Config.validate config;
   validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
+  let enabled_protocols =
+    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+      (Eta_http.Tls.Config.server_alpn_protocols tls_config)
+  in
   let t = create () in
   Eio.Fiber.fork ~sw (fun () ->
       run_https_impl ~sw ~net ~clock ?time ?domain_manager ~domain_policy
@@ -792,5 +811,5 @@ let start_https ~sw ~net ~clock ?time ?domain_manager
         ~on_tls_pending_ready:(fun pending ->
           unregister_pending_tls ~closed:false t pending)
         ~on_tls_pending_close:(fun pending -> unregister_pending_tls t pending)
-        ~tls_context ~addr handler);
+        ~tls_context ~enabled_protocols ~addr handler);
   t

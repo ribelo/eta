@@ -7,6 +7,7 @@ module Server_stats = Server_stats
 val runtime_service :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   unit ->
   Eta.Runtime_contract.service
 (** Eio HTTP client service for {!Eta_http.Client.make_runtime}. Attach this to

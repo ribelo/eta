@@ -83,7 +83,7 @@ let run_client_request ~env ~server_fn ?(max_response_body_bytes = 128 * 1024 * 
             try server_fn flow with exn -> ignore (Printexc.to_string exn));
         `Stop_daemon);
     let url = Printf.sprintf "http://127.0.0.1:%d/" port in
-    let client = Eta_http_eio.Client.make ~sw ~net () in
+    let client = Eta_http_eio.Client.make ~sw ~net ~clock () in
     let rt = Eta_eio.Runtime.create ~sw ~clock () in
     let request = Eta_http.Request.make "GET" url in
     let eff =

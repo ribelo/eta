@@ -95,6 +95,7 @@ val run_host_h1 :
 val make :
   sw:Eio.Switch.t ->
   net:_ Eio.Net.t ->
+  clock:[> float Eio.Time.clock_ty ] Eio.Std.r ->
   ?max_response_body_bytes:int ->
   ?ca_file:string ->
   unit ->

@@ -116,6 +116,22 @@ let valid_authority value =
     if host_finish = len then true
     else valid_port value (host_finish + 1) len
 
+let valid_connect_authority value =
+  let len = String.length value in
+  valid_authority value
+  &&
+  if len > 0 && Char.equal (String.unsafe_get value 0) '[' then
+    match find_char_string value 1 len ']' with
+    | None -> false
+    | Some close ->
+        close + 2 < len
+        && Char.equal (String.unsafe_get value (close + 1)) ':'
+        && valid_port value (close + 2) len
+  else
+    match find_char_string value 0 len ':' with
+    | None -> false
+    | Some colon -> valid_port value (colon + 1) len
+
 let parse_authority ~scheme value =
   if not (valid_authority value) then None
   else
@@ -256,6 +272,17 @@ let validate_h2_path ~method_ ~target =
 
 let validate_h2_request ~connection_scheme ~method_ ~scheme ~target ~authority =
   if not (valid_method_token method_) then Error "invalid HTTP/2 :method"
+  else if String.equal method_ "CONNECT" then
+    match authority with
+    | None -> Error "missing HTTP/2 :authority"
+    | Some authority ->
+        if not (String.equal scheme "") then
+          Error "HTTP/2 CONNECT must omit :scheme"
+        else if not (String.equal target "") then
+          Error "HTTP/2 CONNECT must omit :path"
+        else if not (valid_connect_authority authority) then
+          Error "invalid HTTP/2 :authority"
+        else Ok ()
   else
     match scheme_of_h2_string scheme with
     | None -> Error "invalid HTTP/2 :scheme"
@@ -404,11 +431,27 @@ let validate_h2_host_authority ~scheme authority host =
               else Error "HTTP/2 host header conflicts with :authority"))
 
 let validate_h2_request_header_values headers =
-  let rec loop regular_seen method_seen scheme authority path_seen host =
+  let rec loop regular_seen method_value scheme authority path_seen host =
     function
     | [] ->
-        if not method_seen then Error "missing HTTP/2 :method pseudo-header"
-        else (
+        (match method_value with
+        | None -> Error "missing HTTP/2 :method pseudo-header"
+        | Some "CONNECT" -> (
+            match authority with
+            | None -> Error "missing HTTP/2 :authority pseudo-header"
+            | Some authority ->
+                if Option.is_some scheme then
+                  Error "HTTP/2 CONNECT must omit :scheme pseudo-header"
+                else if path_seen then
+                  Error "HTTP/2 CONNECT must omit :path pseudo-header"
+                else if not (valid_connect_authority authority) then
+                  Error "invalid HTTP/2 :authority"
+                else (
+                  match host with
+                  | Some host when not (String.equal host authority) ->
+                      Error "HTTP/2 host header conflicts with :authority"
+                  | None | Some _ -> Ok ()))
+        | Some _ -> (
           match (scheme, authority) with
           | None, _ -> Error "missing HTTP/2 :scheme pseudo-header"
           | Some _, None ->
@@ -418,7 +461,7 @@ let validate_h2_request_header_values headers =
               else (
                 match host with
                 | None -> Ok ()
-                | Some host -> validate_h2_host_authority ~scheme authority host))
+                | Some host -> validate_h2_host_authority ~scheme authority host)))
     | (name, value) :: rest -> (
         if is_h2_pseudo_header name then
           if regular_seen then
@@ -429,7 +472,7 @@ let validate_h2_request_header_values headers =
             | Some kind ->
                 let duplicate =
                   match kind with
-                  | `Method -> method_seen
+                  | `Method -> Option.is_some method_value
                   | `Scheme -> Option.is_some scheme
                   | `Authority -> Option.is_some authority
                   | `Path -> path_seen
@@ -440,7 +483,11 @@ let validate_h2_request_header_values headers =
                   match validate_h2_pseudo_header_value name kind value with
                   | Error _ as error -> error
                   | Ok () ->
-                      let method_seen = method_seen || kind = `Method in
+                      let method_value =
+                        match kind with
+                        | `Method -> Some value
+                        | _ -> method_value
+                      in
                       let scheme =
                         match kind with `Scheme -> Some value | _ -> scheme
                       in
@@ -450,8 +497,10 @@ let validate_h2_request_header_values headers =
                         | _ -> authority
                       in
                       let path_seen = path_seen || kind = `Path in
-                      loop regular_seen method_seen scheme authority path_seen
+                      loop regular_seen method_value scheme authority path_seen
                         host rest
+        else if String.equal name "" then
+          Error "empty HTTP/2 request header name"
         else
           match Header.validate_header (name, value) with
           | Some _ -> Error "invalid request header"
@@ -465,12 +514,12 @@ let validate_h2_request_header_values headers =
                     match host with
                     | Some _ -> Error "multiple HTTP/2 host headers"
                     | None ->
-                        loop true method_seen scheme authority path_seen
+                        loop true method_value scheme authority path_seen
                           (Some value) rest
                   else
-                    loop true method_seen scheme authority path_seen host rest))
+                    loop true method_value scheme authority path_seen host rest))
   in
-  loop false false None None false None headers
+  loop false None None None false None headers
 
 let validate_h2_request_headers ~(limits : Server_config.limits) headers =
   match validate_h2_request_header_values headers with
@@ -492,24 +541,65 @@ let validate_h2_request_headers ~(limits : Server_config.limits) headers =
                    limits.max_request_header_bytes)
             else Ok ())
 
+let validate_h2_request_trailer_values trailers =
+  let rec loop = function
+    | [] -> Ok ()
+    | (name, value) :: rest -> (
+        if String.equal name "" then
+          Error "empty HTTP/2 request trailer header name"
+        else
+          match Header.validate_header (name, value) with
+          | Some _ -> Error "invalid request trailer header"
+          | None when is_h2_pseudo_header name ->
+              Error "HTTP/2 request trailer pseudo-header is forbidden"
+          | None when has_uppercase name ->
+              Error "uppercase HTTP/2 request trailer header name"
+          | None ->
+              let name = Header.normalize_name name in
+              if Chunked.forbidden_trailer_name name then
+                Error ("forbidden HTTP/2 request trailer " ^ name)
+              else loop rest)
+  in
+  loop trailers
+
+let validate_h2_request_trailers ~(limits : Server_config.limits) trailers =
+  match validate_h2_request_trailer_values trailers with
+  | Error _ as error -> error
+  | Ok () ->
+      let count = List.length trailers in
+      if count > limits.max_trailers then
+        Error
+          (Printf.sprintf "request trailer count exceeds %d"
+             limits.max_trailers)
+      else
+        let bytes = header_block_bytes trailers in
+        if bytes > limits.max_trailer_bytes then
+          Error
+            (Printf.sprintf "request trailer section exceeds %d bytes"
+               limits.max_trailer_bytes)
+        else Ok ()
+
 let validate_h2_response_header_values ?(trailers = false) ~kind headers =
   let rec loop = function
     | [] -> Ok ()
     | (name, value) :: rest -> (
-        match Header.validate_header (name, value) with
-        | Some _ -> Error ("invalid " ^ kind ^ " header")
-        | None when is_h2_pseudo_header name ->
-            Error ("HTTP/2 " ^ kind ^ " pseudo-header is not user controlled")
-        | None when has_uppercase name ->
-            Error ("uppercase HTTP/2 " ^ kind ^ " header name")
-        | None -> (
-            let name = Header.normalize_name name in
-            if trailers && Chunked.forbidden_trailer_name name then
-              Error ("forbidden HTTP/2 response trailer " ^ name)
-            else (
-              match validate_h2_response_connection_header name with
-              | Error _ as error -> error
-              | Ok () -> loop rest)))
+        if String.equal name "" then
+          Error ("empty HTTP/2 " ^ kind ^ " header name")
+        else
+          match Header.validate_header (name, value) with
+          | Some _ -> Error ("invalid " ^ kind ^ " header")
+          | None when is_h2_pseudo_header name ->
+              Error ("HTTP/2 " ^ kind ^ " pseudo-header is not user controlled")
+          | None when has_uppercase name ->
+              Error ("uppercase HTTP/2 " ^ kind ^ " header name")
+          | None -> (
+              let name = Header.normalize_name name in
+              if trailers && Chunked.forbidden_trailer_name name then
+                Error ("forbidden HTTP/2 response trailer " ^ name)
+              else (
+                match validate_h2_response_connection_header name with
+                | Error _ as error -> error
+                | Ok () -> loop rest)))
   in
   loop headers
 

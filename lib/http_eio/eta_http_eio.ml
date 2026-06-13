@@ -4,7 +4,7 @@ module Client = Client
 module Server = Server
 module Server_stats = Server_stats
 
-let runtime_service ~sw ~net () =
+let runtime_service ~sw ~net ~clock () =
   let clients = Hashtbl.create 4 in
   let mutex = Eio.Mutex.create () in
   let with_lock f =
@@ -37,7 +37,7 @@ let runtime_service ~sw ~net () =
         Some
           (Client.make_h1 ~sw ~net ~max_response_body_bytes ?ca_file ())
     | Auto ->
-        Some (Client.make ~sw ~net ~max_response_body_bytes ?ca_file ())
+        Some (Client.make ~sw ~net ~clock ~max_response_body_bytes ?ca_file ())
     | H2 -> None
   in
   let client_for options request =

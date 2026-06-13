@@ -200,6 +200,7 @@ let test_transport_dispatch_unsupported_alpn_closes_flow () =
   with_test_clock @@ fun _sw _clock rt ->
   match
     Eta_http.Transport.Dispatch.dispatch_alpn
+      ~enabled_protocols:Eta_http.Transport.Dispatch.mixed_protocols
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -229,6 +230,7 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   with_test_clock @@ fun _sw _clock rt ->
   let result =
     Eta_http.Transport.Dispatch.dispatch_alpn
+      ~enabled_protocols:Eta_http.Transport.Dispatch.mixed_protocols
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -238,3 +240,36 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   Alcotest.(check bool) "h2 selected" true
     (match result with `H2 -> true | `H1 -> false);
   Alcotest.(check int) "flow still owned" 0 !closed
+
+let test_transport_dispatch_rejects_missing_alpn_without_h1 () =
+  let request = Eta_http.Request.make "GET" "https://example.test/path" in
+  let closed = ref 0 in
+  let flow = counted_tls_flow closed in
+  let enabled_protocols =
+    Eta_http.Transport.Dispatch.enabled_protocols ~h1:false ~h2:true
+  in
+  with_test_clock @@ fun _sw _clock rt ->
+  match
+    Eta_http.Transport.Dispatch.dispatch_alpn ~enabled_protocols
+      ~close:(fun () -> close_effect flow)
+      ~use_h1:(fun () -> Eta.Effect.pure `H1)
+      ~use_h2:(fun () -> Eta.Effect.pure `H2)
+      request None
+    |> Eta.Runtime.run rt
+  with
+  | Eta.Exit.Ok _ -> Alcotest.fail "missing ALPN unexpectedly succeeded"
+  | Eta.Exit.Error
+      (Eta.Cause.Fail
+        {
+          Eta_http.Error.kind =
+            Tls_handshake_error
+              { stage = Alpn_negotiation; message };
+          _;
+        }) ->
+      Alcotest.(check bool) "message" true
+        (contains message "missing ALPN protocol");
+      Alcotest.(check int) "flow closed" 1 !closed
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "unexpected ALPN failure shape: %a"
+        (Eta.Cause.pp Eta_http.Error.pp)
+        cause

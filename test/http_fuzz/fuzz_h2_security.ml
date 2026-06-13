@@ -62,8 +62,9 @@ let () =
       let len = String.length chunk in
       let bytes = Bigstringaf.of_string ~off:0 ~len chunk in
       ignore
-        (Eta_http.H2.Security.observe security bytes ~off:0 ~len
-          : Eta_http.Error.kind option));
+        (Eta_http.H2.Security.observe_result security bytes ~off:0 ~len
+           ~now_ms:0L
+          : Eta_http.H2.Security.observation));
 
   Crowbar.add_test ~name:"h2 header validation arbitrary pair does not escape"
     [ header_gen ] (fun header ->

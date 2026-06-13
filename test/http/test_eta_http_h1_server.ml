@@ -313,6 +313,10 @@ let test_h1_server_connection_rejects_invalid_http11_host () =
   check_bad_request_rejected ~name:"invalid host"
     "GET /invalid HTTP/1.1\r\nHost: bad/name\r\nConnection: close\r\n\r\n"
 
+let test_h1_server_connection_rejects_bare_cr_request_line () =
+  check_bad_request_rejected ~name:"bare cr request line"
+    "GET / HTTP/1.1\rHost: example.test\r\nConnection: close\r\n\r\n"
+
 let test_h1_server_connection_allows_http10_without_host () =
   let handler (request : Eta_http.Server.Request.t) =
     Eta.Effect.pure (Eta_http.Server.Response.text request.path)
@@ -646,6 +650,7 @@ let test_h1_server_connection_handler_timeout_uses_injected_time () =
   in
   let time : Eta_http_eio.Server.time =
     {
+      now_ms = (fun () -> 0L);
       sleep = (fun _duration -> ());
       with_timeout =
         (fun duration f ->

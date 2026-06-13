@@ -35,4 +35,8 @@ val begin_request : t -> begin_result
 val resolve : t -> pending -> protocol -> resolve_result
 val cancel : t -> pending -> unit
 val protocol_of_alpn : string option -> (protocol, string) result
+(** Decode a negotiated ALPN protocol value.
+
+    [None] is not itself a protocol. Fallback behavior for clients or mixed
+    servers belongs in the dispatch policy. *)
 val stats : t -> stats
