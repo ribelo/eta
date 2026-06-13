@@ -32,7 +32,7 @@ type t = {
   stats : Server_stats.H1.t;
   connection_metrics : Server_metrics.t option;
   mutable current_metrics : Server_metrics.t option;
-  mutable pending : bytes;
+  pending_buffer : bytes;
   mutable pending_off : int;
   mutable pending_len : int;
   head_buffer : bytes;
@@ -203,31 +203,31 @@ let fallback_error_response t request cause =
 let min_positive left right =
   if left <= 0 then right else if right <= 0 then left else min left right
 
+(* [pending_buffer] is a fixed per-connection scratch buffer; [pending_off]/
+   [pending_len] describe the live window. Reusing it avoids a [Bytes.sub] /
+   [Bytes.create] per request for pipelined keep-alive leftovers. The buffer is
+   sized to hold at most one unconsumed leftover ([<= head capacity]) plus one
+   new leftover ([<= head capacity]). *)
 let push_pending t bytes off len =
   if len <= 0 then ()
-  else
-    let fresh = Bytes.sub bytes off len in
-    if t.pending_len = 0 then (
-      t.pending <- fresh;
-      t.pending_off <- 0;
-      t.pending_len <- len)
-    else
-      let combined = Bytes.create (len + t.pending_len) in
-      Bytes.blit fresh 0 combined 0 len;
-      Bytes.blit t.pending t.pending_off combined len t.pending_len;
-      t.pending <- combined;
-      t.pending_off <- 0;
-      t.pending_len <- Bytes.length combined
+  else begin
+    (* Compact the live window to the front if it is offset, freeing tail room. *)
+    if t.pending_off > 0 then begin
+      if t.pending_len > 0 then
+        Bytes.blit t.pending_buffer t.pending_off t.pending_buffer 0 t.pending_len;
+      t.pending_off <- 0
+    end;
+    Bytes.blit bytes off t.pending_buffer t.pending_len len;
+    t.pending_len <- t.pending_len + len
+  end
 
 let read_pending t dst dst_off len =
   let read = min len t.pending_len in
-  if read > 0 then (
-    Bytes.blit t.pending t.pending_off dst dst_off read;
+  if read > 0 then begin
+    Bytes.blit t.pending_buffer t.pending_off dst dst_off read;
     t.pending_off <- t.pending_off + read;
-    t.pending_len <- t.pending_len - read;
-    if t.pending_len = 0 then (
-      t.pending <- Bytes.empty;
-      t.pending_off <- 0));
+    t.pending_len <- t.pending_len - read
+  end;
   read
 
 let read_flow_into_bytes t dst dst_off len =
@@ -1178,7 +1178,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
            Some (Server_metrics.connection ~runtime ~connection)
          else None);
       current_metrics = None;
-      pending = Bytes.empty;
+      pending_buffer = Bytes.create (2 * request_head_capacity config);
       pending_off = 0;
       pending_len = 0;
       head_buffer = Bytes.create (request_head_capacity config);
