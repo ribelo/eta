@@ -217,10 +217,14 @@ let service runtime key =
   | Some service -> Runtime_contract.Backend.service_value key service
 
 let run_finalizers ~runtime ~fail_key finalizers =
-  runtime.contract.Runtime_contract.protect @@ fun () ->
   match !finalizers with
   | [] -> None
   | fs ->
+      (* [protect] prevents cancellation while finalizers run. When there are no
+         finalizers (the common path for pure effects), skip it entirely — this
+         avoids the cancel-context [Hashtbl] iteration that [protect] performs on
+         every call, which is a top hotspot under per-request effect dispatch. *)
+      runtime.contract.Runtime_contract.protect @@ fun () ->
       finalizers := [];
       fs
       |> List.filter_map (fun f ->
