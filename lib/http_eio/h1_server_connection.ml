@@ -50,7 +50,8 @@ type request_head = {
   target_authority : Server.Validation.authority option;
   version : Eta_http.Core.Version.t;
   headers : Eta_http.Core.Header.t;
-  body_initial : bytes;
+  body_off : int;
+  body_len : int;
 }
 
 type continue_state = { mutable sent : bool }
@@ -265,10 +266,8 @@ let read_request_head t =
         ~max_headers:limits.max_request_headers
     with
     | Ok request ->
-        let body_len = used - request.body_off in
-        let body_initial = Bytes.create body_len in
-        if body_len > 0 then
-          Bytes.blit buffer request.body_off body_initial 0 body_len;
+        let body_off = request.body_off in
+        let body_len = used - body_off in
         let headers =
           Eta_http.Core.Header.unsafe_of_list
             (Eta_http.H1.Request_parse.headers_to_list buffer request.headers)
@@ -280,7 +279,8 @@ let read_request_head t =
             target_authority = None;
             version = request.version;
             headers;
-            body_initial;
+            body_off;
+            body_len;
           }
     | Error Eta_http.H1.Request_parse.Partial ->
         if used >= capacity then
@@ -507,11 +507,11 @@ let chunked_read_line source ~limit =
   in
   loop 0 false
 
-let chunked_body t head continue_state =
+let chunked_body t ~head ~initial continue_state =
   let source =
     {
       t;
-      initial = head.body_initial;
+      initial;
       off = 0;
       remaining = max_int;
       close_after_response = false;
@@ -584,7 +584,7 @@ let request_body t head continue_state =
            (Header_invalid
               { reason = Eta_http.H1.Request_body.error_to_string body_error }))
   | Ok No_body ->
-      push_pending t head.body_initial 0 (Bytes.length head.body_initial);
+      push_pending t t.head_buffer head.body_off head.body_len;
       Ok
         ( Server.Body.empty (),
           (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty),
@@ -595,13 +595,19 @@ let request_body t head continue_state =
       | Some limit when length > limit ->
           Error (error t (Request_body_too_large { limit; length }))
       | None | Some _ ->
-          let body, source = fixed_body t head.body_initial length continue_state in
+          let initial = Bytes.create head.body_len in
+          if head.body_len > 0 then
+            Bytes.blit t.head_buffer head.body_off initial 0 head.body_len;
+          let body, source = fixed_body t initial length continue_state in
           Ok
             ( body,
               (fun () -> Eta.Effect.pure Eta_http.Core.Header.empty),
               Fixed_request_body source ))
   | Ok Chunked ->
-      let body, source = chunked_body t head continue_state in
+      let initial = Bytes.create head.body_len in
+      if head.body_len > 0 then
+        Bytes.blit t.head_buffer head.body_off initial 0 head.body_len;
+      let body, source = chunked_body t ~head ~initial continue_state in
       Ok
         ( body,
           (fun () ->
