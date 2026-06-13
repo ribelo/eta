@@ -36,6 +36,7 @@ type t = {
   mutable pending_off : int;
   mutable pending_len : int;
   head_buffer : bytes;
+  mutable write_buffer : Cstruct.t;
   mutable draining : bool;
   mutable shutdown_timer_started : bool;
   mutable active_request : bool;
@@ -151,13 +152,25 @@ let response_body_timeout_error t request timeout =
     (Response_body_timeout
        { timeout_ms = Option.map Eta.Duration.to_ms timeout })
 
-let write_response_string t wire =
+let write_response_wire t ~blit ~len =
   try
-    let write () = Eio.Flow.copy_string wire t.flow in
+    let write () =
+      (* Reuse a growable per-connection Cstruct write buffer instead of
+         allocating a fresh Bigarray (Cstruct.of_string) per response chunk, and
+         write it directly with Eio.Flow.write rather than going through the
+         slower Eio.Flow.copy_string generic-copy machinery. H1 writes are
+         sequential and synchronous (write returns only after the flow has
+         consumed the data), so the buffer is never aliased by an in-progress
+         write. *)
+      if len > Cstruct.length t.write_buffer then
+        t.write_buffer <- Cstruct.create len;
+      blit t.write_buffer;
+      Eio.Flow.write t.flow [ Cstruct.sub t.write_buffer 0 len ]
+    in
     (match t.config.server.timeouts.response_write_timeout with
     | None -> write ()
     | Some timeout -> t.with_timeout timeout write);
-    Server_stats.H1.add_response_bytes t.stats (String.length wire);
+    Server_stats.H1.add_response_bytes t.stats len;
     Ok ()
   with
   | Eio.Time.Timeout ->
@@ -167,6 +180,12 @@ let write_response_string t wire =
       Error
         (response_write_error t
            ("connection write failed: " ^ Printexc.to_string exn))
+
+let write_response_string t wire =
+  let len = String.length wire in
+  write_response_wire t
+    ~blit:(fun buf -> Cstruct.blit_from_string wire 0 buf 0 len)
+    ~len
 
 let emit_current t f =
   Option.iter f t.current_metrics
@@ -782,10 +801,15 @@ let validate_response_headers t response =
   | Error message -> response_write_failure (response_write_error t message)
 
 let write_response_bytes t bytes =
-  match write_response_string t (Bytes.to_string bytes) with
+  let len = Bytes.length bytes in
+  match
+    write_response_wire t
+      ~blit:(fun buf -> Cstruct.blit_from_bytes bytes 0 buf 0 len)
+      ~len
+  with
   | Ok () ->
       emit_current t (fun metrics ->
-          Server_metrics.response_body_bytes metrics (Bytes.length bytes));
+          Server_metrics.response_body_bytes metrics len);
       Ok ()
   | Error error -> response_write_failure ~response_started:true error
 
@@ -1188,6 +1212,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       pending_off = 0;
       pending_len = 0;
       head_buffer = Bytes.create (request_head_capacity config);
+      write_buffer = Cstruct.create config.read_buffer_size;
       draining = false;
       shutdown_timer_started = false;
       active_request = false;

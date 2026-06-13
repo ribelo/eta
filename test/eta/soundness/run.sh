@@ -4,7 +4,9 @@ set -u
 cmxa="$1"
 fixture_dir="$(dirname "$0")"
 obj_dir="$(dirname "$cmxa")/.eta.objs/native"
+cmi_dir="$(dirname "$cmxa")/.eta.objs/public_cmi"
 par_obj_dir="$(dirname "$cmxa")/../par/.eta_par.objs/native"
+par_cmi_dir="$(dirname "$cmxa")/../par/.eta_par.objs/public_cmi"
 tmp_dir="${TMPDIR:-/tmp}/eta-soundness-negative-$$"
 mkdir -p "$tmp_dir"
 
@@ -17,10 +19,11 @@ for src in "$fixture_dir"/*_negative.ml; do
 
   if ocamlfind ocamlopt -extension-universe alpha \
       -package "eio,eio_main,portable,unix,threads" \
-      -I "$par_obj_dir" -I "$obj_dir" -c "$src" -o "$obj" >"$log" 2>&1; then
+      -I "$cmi_dir" -I "$obj_dir" -I "$par_cmi_dir" -I "$par_obj_dir" \
+      -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
-  elif ! grep -Eiq "portable|shareable|contended|local|mode|nonportable|immutable|global|uniqueness|unbound" "$log"; then
+  elif ! grep -Eiq "portable|shareable|contended|local|mode|nonportable|immutable|global|uniqueness" "$log"; then
     echo "fixture failed for the wrong reason: $name"
     sed -n '1,120p' "$log"
     status=1

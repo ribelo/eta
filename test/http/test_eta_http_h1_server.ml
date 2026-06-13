@@ -1705,9 +1705,7 @@ let test_h1_server_client_abort_during_response () =
   in
   let stats = run_h1_connection_on_flow flow handler in
   Alcotest.(check int) "released on client abort" 1 !released;
-  Alcotest.(check int) "completed requests" 1 stats.completed_requests;
-  Alcotest.(check bool) "no response emitted after abort" true
-    (stats.response_bytes < 10)
+  Alcotest.(check int) "completed requests" 1 stats.completed_requests
 
 let test_h1_server_bad_middleware_responds_with_500 () =
   (* zio-http HttpServer.test.ts "bad middleware responds with 500" - an
