@@ -34,6 +34,7 @@ type t = {
   mutable pending : bytes;
   mutable pending_off : int;
   mutable pending_len : int;
+  head_buffer : bytes;
   mutable draining : bool;
   mutable shutdown_timer_started : bool;
   mutable active_request : bool;
@@ -252,8 +253,8 @@ let request_head_capacity config =
 
 let read_request_head t =
   let limits = t.config.server.limits in
-  let capacity = request_head_capacity t.config in
-  let buffer = Bytes.create capacity in
+  let buffer = t.head_buffer in
+  let capacity = Bytes.length buffer in
   let scratch_len = min_positive t.config.read_buffer_size capacity in
   let rec loop used =
     match
@@ -1183,6 +1184,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       pending = Bytes.empty;
       pending_off = 0;
       pending_len = 0;
+      head_buffer = Bytes.create (request_head_capacity config);
       draining = false;
       shutdown_timer_started = false;
       active_request = false;
