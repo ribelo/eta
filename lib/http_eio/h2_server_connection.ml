@@ -158,6 +158,7 @@ type t = {
   mutable accepted_request : bool;
   mutable deferred_close : deferred_close option;
   mutable write_pending : bool;
+  mutable write_buffer : Cstruct.t;
   mutable closed : bool;
 }
 
@@ -1051,17 +1052,25 @@ let respond_fixed reqd response =
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
 
-let copy_write_job iovecs =
+let copy_write_job t iovecs =
   let len = H2.IOVec.lengthv iovecs in
-  let bytes = Bytes.create len in
+  (* Reuse a per-connection write buffer instead of allocating Bytes.create +
+     Cstruct.of_bytes (a fresh Bigarray) per write job. Safe because the
+     write_pending guard keeps at most one write job in flight: the previous
+     job's Flow.write has fully completed (Write_completed clears write_pending)
+     before the next copy_write_job runs, so the shared buffer is never aliased
+     by an in-progress write. Blit the Bigstringaf iovecs straight into the
+     Cstruct buffer (bigarray -> bigarray, no Bytes intermediate). *)
+  if len > Cstruct.length t.write_buffer then
+    t.write_buffer <- Cstruct.create len;
   let dst_off = ref 0 in
   List.iter
     (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
-      Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
-        ~len;
+      let src = Cstruct.of_bigarray ~off ~len buffer in
+      Cstruct.blit src 0 t.write_buffer !dst_off len;
       dst_off := !dst_off + len)
     iovecs;
-  { data = Cstruct.of_bytes bytes; len }
+  { data = Cstruct.sub t.write_buffer 0 len; len }
 
 let schedule_write_iovecs t iovecs =
   let len = H2.IOVec.lengthv iovecs in
@@ -1071,7 +1080,7 @@ let schedule_write_iovecs t iovecs =
   else if t.write_pending then false
   else (
     t.write_pending <- true;
-    Eio.Stream.add t.write_jobs (copy_write_job iovecs);
+    Eio.Stream.add t.write_jobs (copy_write_job t iovecs);
     false)
 
 let h2_write_batch_budget = 32
@@ -2415,6 +2424,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       accepted_request = false;
       deferred_close = None;
       write_pending = false;
+      write_buffer = Cstruct.create max_h2_data_chunk;
       closed = false;
     }
   in
