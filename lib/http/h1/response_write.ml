@@ -47,6 +47,13 @@ let wire_version = function
   | H1_1 -> "HTTP/1.1"
   | H2 -> invalid_arg "Eta_http.H1.Response_write: HTTP/2 is not H1"
 
+(* Write a non-negative int as decimal digits straight into the buffer, avoiding
+   [string_of_int]'s sprintf (caml_format_int) and the intermediate string
+   allocation on every response (status code + Content-Length). *)
+let rec add_decimal buffer n =
+  if n >= 10 then add_decimal buffer (n / 10);
+  Buffer.add_char buffer (Char.unsafe_chr (Char.code '0' + (n mod 10)))
+
 let reason_phrase = function
   | 100 -> "Continue"
   | 101 -> "Switching Protocols"
@@ -216,7 +223,7 @@ let prepare ?(connection_close = false) ~version ~request_method response =
                   let buffer = Buffer.create 256 in
                   Buffer.add_string buffer (wire_version version);
                   Buffer.add_char buffer ' ';
-                  Buffer.add_string buffer (string_of_int status);
+                  add_decimal buffer status;
                   Buffer.add_char buffer ' ';
                   Buffer.add_string buffer (reason_phrase status);
                   Buffer.add_string buffer "\r\n";
@@ -224,8 +231,9 @@ let prepare ?(connection_close = false) ~version ~request_method response =
                   if close then add_header_line buffer ("Connection", "close");
                   (match content_length with
                   | Some length ->
-                      add_header_line buffer
-                        ("Content-Length", string_of_int length)
+                      Buffer.add_string buffer "Content-Length: ";
+                      add_decimal buffer length;
+                      Buffer.add_string buffer "\r\n"
                   | None -> (
                       match body with
                       | Stream_chunked _ ->
