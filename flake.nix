@@ -241,10 +241,13 @@
               pkgs.curl
               pkgs.duckdb
               pkgs.git
+              pkgs.go
               pkgs.gnumake
               pkgs.ladybugdb.lib
               pkgs.m4
               pkgs.nghttp2
+              pkgs.nodejs_24
+              pkgs.oha
               pkgs.opam
               pkgs.patch
               pkgs.pkg-config

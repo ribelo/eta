@@ -62,10 +62,21 @@ let redirect_response = function
   | "/redirect308" -> Some (redirect 308)
   | _ -> None
 
+let user_id_response path =
+  let prefix = "/user/" in
+  if String.starts_with ~prefix path then
+    Some (text (String.sub path (String.length prefix)
+                  (String.length path - String.length prefix)))
+  else None
+
 let echo_response request =
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
   |> Eta.Effect.map (fun body ->
          fixed ~headers:[ ("Content-Type", "text/plain") ] (Bytes.to_string body))
+
+let empty_after_body request =
+  Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
+  |> Eta.Effect.map (fun _body -> empty 200)
 
 let trailer_response () =
   Eta.Effect.pure
@@ -79,19 +90,25 @@ let trailer_response () =
 
 let handler ~temp_dir request =
   match request.Eta_http.Server.Request.path with
+  | "/" -> Eta.Effect.pure (empty 200)
+  | "/user" when String.equal request.Eta_http.Server.Request.method_ "POST" ->
+      empty_after_body request
   | "/healthz" -> Eta.Effect.pure (text "ok\n")
   | "/echo" | "/reflect" -> echo_response request
   | "/trailer" -> trailer_response ()
   | path -> (
-      match static_response ~temp_dir path with
+      match user_id_response path with
       | Some response -> Eta.Effect.pure response
       | None -> (
-          match redirect_response path with
+          match static_response ~temp_dir path with
           | Some response -> Eta.Effect.pure response
           | None -> (
-              match status_response path with
+              match redirect_response path with
               | Some response -> Eta.Effect.pure response
-              | None -> Eta.Effect.pure (empty 404))))
+              | None -> (
+                  match status_response path with
+                  | Some response -> Eta.Effect.pure response
+                  | None -> Eta.Effect.pure (empty 404)))))
 
 let config =
   let body_limit = 128 * 1024 * 1024 in

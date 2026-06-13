@@ -37,6 +37,9 @@ http {
     server_name localhost;
 %s
     root %s;
+    location = / { return 200 ""; }
+    location = /user/123 { return 200 "123"; }
+    location = /user { return 200 ""; }
     location /healthz { return 200 "ok\n"; }
     location /echo {
       add_header Content-Type text/plain;

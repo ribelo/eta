@@ -25,6 +25,8 @@ let yojson_of_server_kind = function
   | Nginx -> `String "nginx"
   | Caddy -> `String "caddy"
   | Eta -> `String "eta"
+  | Node -> `String "node"
+  | Go -> `String "go"
 
 let yojson_of_scenario_status = function
   | Pass -> `String "PASS"

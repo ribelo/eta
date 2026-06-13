@@ -12,7 +12,12 @@ let render_scenario_result r =
   in
   Printf.sprintf "| %s | %s | %s | %s | %s | %.2f |"
     r.name
-    (match r.server with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+    (match r.server with
+    | Nginx -> "nginx"
+    | Caddy -> "caddy"
+    | Eta -> "eta"
+    | Node -> "node"
+    | Go -> "go")
     (match r.protocol with H1 -> "h1" | H2 -> "h2")
     (match r.transport with Plain -> "plain" | TLS -> "tls")
     status_str

@@ -74,7 +74,12 @@ let build_url ~transport ~port ~path =
   let scheme = match transport with Plain -> "http" | TLS -> "https" in
   Printf.sprintf "%s://127.0.0.1:%d%s" scheme port path
 
-let server_kind_slug = function Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta"
+let server_kind_slug = function
+  | Nginx -> "nginx"
+  | Caddy -> "caddy"
+  | Eta -> "eta"
+  | Node -> "node"
+  | Go -> "go"
 let protocol_slug = function H1 -> "h1" | H2 -> "h2"
 let transport_slug = function Plain -> "plain" | TLS -> "tls"
 
@@ -258,7 +263,7 @@ let write_scenario_output ~results_dir ~name ~server_config eta_res curl_res =
   let dir = Filename.concat results_dir
       (Printf.sprintf "%s_%s_%s_%s"
          name
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+         (server_kind_slug kind)
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p dir;
@@ -280,7 +285,7 @@ let write_eta_server_output ~results_dir ~name ~server_config expected curl_res 
   let dir =
     Filename.concat results_dir
       (Printf.sprintf "%s_%s_%s_%s" name
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+         (server_kind_slug kind)
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls"))
   in
@@ -400,7 +405,7 @@ let run_curl ~env ~server_config scenario =
   in
   match kind with
   | Eta -> Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) run
-  | Nginx | Caddy -> run ()
+  | Nginx | Caddy | Node | Go -> run ()
 
 let skipped_result ~kind ~protocol ~transport ~name reason =
   [
@@ -505,11 +510,15 @@ let run_one_scenario ~env ~sw ~rt ~server_config ~results_dir scenario =
             skipped_result ~kind ~protocol ~transport ~name:scenario.name
               reason
         | None -> (
-        match kind with
-        | Eta -> run_eta_server_scenario ~env ~server_config ~results_dir scenario
-        | Nginx | Caddy ->
-            run_external_server_scenario ~env ~sw ~rt ~server_config
-              ~results_dir scenario)
+            match kind with
+            | Eta ->
+                run_eta_server_scenario ~env ~server_config ~results_dir scenario
+            | Nginx | Caddy ->
+                run_external_server_scenario ~env ~sw ~rt ~server_config
+                  ~results_dir scenario
+            | Node | Go ->
+                skipped_result ~kind ~protocol ~transport ~name:scenario.name
+                  "server kind is only used by server-load benchmarks")
 
 let run_all ~env ~results_dir ~scenarios =
   let scenarios = filter_scenarios scenarios in
@@ -562,7 +571,7 @@ let run_all ~env ~results_dir ~scenarios =
   List.iter (fun (kind, protocol, transport) ->
       let temp_dir = Filename.concat results_dir
           (Printf.sprintf "server_%s_%s_%s"
-             (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+             (server_kind_slug kind)
              (match protocol with H1 -> "h1" | H2 -> "h2")
              (match transport with Plain -> "plain" | TLS -> "tls")) in
       Util.mkdir_p temp_dir;
@@ -589,7 +598,7 @@ let run_all ~env ~results_dir ~scenarios =
                 Caddy.start ~port ~temp_dir
                   ~cert_dir:(Option.value ~default:"" cert_dir) ~protocol
                   ~transport
-            | Eta -> assert false
+            | Eta | Node | Go -> assert false
           in
           match pid_path with
           | Error e -> record_start_failure ~kind ~protocol ~transport e
@@ -599,7 +608,7 @@ let run_all ~env ~results_dir ~scenarios =
                   match kind with
                   | Nginx -> ignore (Nginx.stop pid_path)
                   | Caddy -> ignore (Caddy.stop pid_path)
-                  | Eta -> ())
+                  | Eta | Node | Go -> ())
                 (fun () -> Eio.Switch.run (fun sw -> run_scenarios ~sw server_config)))
       | Eta ->
           Eio.Switch.run (fun sw ->
@@ -612,5 +621,8 @@ let run_all ~env ~results_dir ~scenarios =
                   Fun.protect
                     ~finally:(fun () -> ignore (Eta_server.stop server))
                     (fun () -> run_scenarios ~sw server_config))
+      | Node | Go ->
+          record_start_failure ~kind ~protocol ~transport
+            "server kind is only used by server-load benchmarks"
     ) configs;
   List.rev !all_results

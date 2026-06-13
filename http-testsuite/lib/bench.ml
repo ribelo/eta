@@ -216,7 +216,12 @@ let run_concurrent_scenario ~env ~name ~protocol ~transport ~port ~cert_dir ~con
 let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
   let temp_dir = Filename.concat results_dir
       (Printf.sprintf "bench_%s_%s_%s"
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+         (match kind with
+         | Nginx -> "nginx"
+         | Caddy -> "caddy"
+         | Eta -> "eta"
+         | Node -> "node"
+         | Go -> "go")
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p temp_dir;
@@ -236,6 +241,7 @@ let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
     | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Eta -> Error "eta server benchmark lifecycle is not wired yet"
+    | Node | Go -> Error "server kind is only used by server-load benchmarks"
   in
   match pid_path with
   | Error e ->
@@ -253,7 +259,7 @@ let bench_against_server ~env ~kind ~protocol ~transport ~results_dir =
        (match kind with
        | Nginx -> ignore (Nginx.stop pid_path)
        | Caddy -> ignore (Caddy.stop pid_path)
-       | Eta -> ());
+       | Eta | Node | Go -> ());
       !all
 
 let bench_post_against_caddy ~env ~protocol ~transport ~results_dir =
@@ -294,7 +300,12 @@ let bench_post_against_caddy ~env ~protocol ~transport ~results_dir =
 let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir =
   let temp_dir = Filename.concat results_dir
       (Printf.sprintf "bench_concurrent_%s_%s_%s"
-         (match kind with Nginx -> "nginx" | Caddy -> "caddy" | Eta -> "eta")
+         (match kind with
+         | Nginx -> "nginx"
+         | Caddy -> "caddy"
+         | Eta -> "eta"
+         | Node -> "node"
+         | Go -> "go")
          (match protocol with H1 -> "h1" | H2 -> "h2")
          (match transport with Plain -> "plain" | TLS -> "tls")) in
   Util.mkdir_p temp_dir;
@@ -314,6 +325,7 @@ let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir
     | Nginx -> Nginx.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Caddy -> Caddy.start ~port ~temp_dir ~cert_dir:cert_dir_str ~protocol ~transport
     | Eta -> Error "eta server benchmark lifecycle is not wired yet"
+    | Node | Go -> Error "server kind is only used by server-load benchmarks"
   in
   match pid_path with
   | Error e ->
@@ -329,7 +341,7 @@ let bench_concurrent_against_server ~env ~kind ~protocol ~transport ~results_dir
        (match kind with
        | Nginx -> ignore (Nginx.stop pid_path)
        | Caddy -> ignore (Caddy.stop pid_path)
-       | Eta -> ());
+       | Eta | Node | Go -> ());
       !all
 
 let run_all ~env ~results_dir =

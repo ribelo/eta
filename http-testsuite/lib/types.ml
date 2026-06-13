@@ -2,7 +2,7 @@
 
 type protocol = H1 | H2
 type transport = Plain | TLS
-type server_kind = Nginx | Caddy | Eta
+type server_kind = Nginx | Caddy | Eta | Node | Go
 
 type server_config = {
   kind : server_kind;

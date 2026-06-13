@@ -1,0 +1,12 @@
+(executables
+ (names run compare)
+ (libraries eta_http_testsuite eta_http_eio eta_eio eio_main eio_linux yojson unix))
+
+(rule
+ (alias server-load)
+ (deps
+  (source_tree ../../lib)
+  run.exe)
+ (action
+  (run %{dep:run.exe} --smoke --out
+   %{workspace_root}/http-testsuite/results/dune-server-load-smoke)))

@@ -10,6 +10,15 @@ let config_plain_h1 ~port ~temp_dir =
 :%d {
   root * %s
   file_server
+  route / {
+    respond "" 200
+  }
+  route /user/123 {
+    respond "123" 200
+  }
+  route /user {
+    respond "" 200
+  }
   route /healthz {
     respond "ok\n" 200
   }
@@ -88,6 +97,15 @@ let config_plain_h2 ~port ~temp_dir =
 :%d {
   root * %s
   file_server
+  route / {
+    respond "" 200
+  }
+  route /user/123 {
+    respond "123" 200
+  }
+  route /user {
+    respond "" 200
+  }
   route /healthz {
     respond "ok\n" 200
   }
@@ -164,6 +182,15 @@ let config_tls ~port ~temp_dir ~cert_dir =
   tls %s %s
   root * %s
   file_server
+  route / {
+    respond "" 200
+  }
+  route /user/123 {
+    respond "123" 200
+  }
+  route /user {
+    respond "" 200
+  }
   route /healthz {
     respond "ok\n" 200
   }

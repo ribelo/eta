@@ -30,6 +30,11 @@
  (action (progn)))
 
 (rule
+ (alias server-load)
+ (deps (alias http-testsuite/server-load))
+ (action (progn)))
+
+(rule
  (alias fuzz-smoke)
  (deps (alias test/http_fuzz/fuzz-smoke))
  (action (progn)))

@@ -24,6 +24,11 @@
  (action (progn)))
 
 (rule
+ (alias server-load)
+ (deps (alias test/server_load/server-load))
+ (action (progn)))
+
+(rule
  (alias red-probes)
  (deps
   (alias test/red_probes/h1_smuggle/red-probes)
