@@ -147,6 +147,7 @@ type t = {
   connection : Types.Connection_info.t;
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
+  runtime : Eta_http.Server.Error.t Eta.Runtime.t;
   stats : Server_stats.H2.t;
   connection_metrics : Server_metrics.t option;
   closed_signal : unit Eio.Promise.t;
@@ -175,20 +176,16 @@ let stats t =
   Server_stats.H2.snapshot t.stats
     ~active_streams:(Hashtbl.length t.streams)
 
-let request_metrics ~sw ~config ~runtime_factory ~connection request =
+let request_metrics ~config ~runtime ~connection request =
   if config.Types.Config.server.enable_otel then
-    let runtime = runtime_factory ~sw ~connection () in
     Some
       (Server_metrics.request ~runtime ~connection
          ~emit_url_full:config.server.emit_url_full request)
   else None
 
-let connection_metrics ~sw ~config ~runtime_factory ~connection =
+let connection_metrics ~config ~runtime ~connection =
   if config.Types.Config.server.enable_otel then
-    Some
-      (Server_metrics.connection
-         ~runtime:(runtime_factory ~sw ~connection ())
-         ~connection)
+    Some (Server_metrics.connection ~runtime ~connection)
   else None
 
 let emit_connection_metric t f =
@@ -2220,7 +2217,7 @@ let safe_handler_effect t request handler =
   | exn -> Eta.Effect.fail (handler_failed_error t request exn)
 
 let run_handler_body t ordinal request handler =
-  let rt = t.runtime_factory ~sw:t.sw ~connection:t.connection () in
+  let rt = t.runtime in
   let effect = safe_handler_effect t request handler in
   let response =
     match t.config.server.timeouts.handler_timeout with
@@ -2281,6 +2278,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   validate_config config;
   let time = Option.value time ~default:(Types.live_time clock) in
   let h2_config = limited_h2_config config in
+  let runtime = runtime_factory ~sw ~connection () in
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
@@ -2318,9 +2316,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                     ~trailers:request_trailers reqd
                 in
                 let metrics =
-                  request_metrics ~sw:t.sw ~config:t.config
-                    ~runtime_factory:t.runtime_factory ~connection:t.connection
-                    request
+                  request_metrics ~config:t.config ~runtime:t.runtime
+                    ~connection:t.connection request
                 in
                 Option.iter Server_metrics.request_started metrics;
                 Option.iter Server_metrics.stream_started metrics;
@@ -2406,9 +2403,10 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       connection;
       config;
       runtime_factory;
+      runtime;
       stats = Server_stats.H2.create ();
       connection_metrics =
-        connection_metrics ~sw ~config ~runtime_factory ~connection;
+        connection_metrics ~config ~runtime ~connection;
       closed_signal;
       close_signal;
       idle_timeout_token = None;

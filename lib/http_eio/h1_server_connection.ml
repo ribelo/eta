@@ -28,6 +28,7 @@ type t = {
   connection : Types.Connection_info.t;
   config : Types.Config.t;
   runtime_factory : Types.runtime_factory;
+  runtime : Eta_http.Server.Error.t Eta.Runtime.t;
   stats : Server_stats.H1.t;
   connection_metrics : Server_metrics.t option;
   mutable current_metrics : Server_metrics.t option;
@@ -1110,15 +1111,12 @@ let rec run_requests t ordinal handler =
                       t.active_request <- true;
                       Server_stats.H1.request_started t.stats;
                       let request = request_of_head t head ordinal body trailers in
-                      let rt =
-                        t.runtime_factory ~sw:t.sw ~connection:t.connection ()
-                      in
-                      let metrics = request_metrics t rt request in
+                      let metrics = request_metrics t t.runtime request in
                       t.current_metrics <- metrics;
                       Option.iter Server_metrics.request_started metrics;
                       let request_keep_alive = request_allows_keep_alive head in
                       let response, force_close =
-                        run_handler t rt request handler
+                        run_handler t t.runtime request handler
                       in
                       let reusable_before_response =
                         request_keep_alive
@@ -1130,14 +1128,14 @@ let rec run_requests t ordinal handler =
                       let response_result =
                         write_response
                           ~connection_close:(force_close || close_before_response)
-                          ~rt t request response
+                          ~rt:t.runtime t request response
                       in
                       let reusable =
                         match response_result with
                         | Ok { connection_close } ->
                             (not connection_close)
                             && request_keep_alive
-                            && finish_request_body_for_reuse t rt body_control
+                            && finish_request_body_for_reuse t t.runtime body_control
                         | Error { error; response_started = false } ->
                             write_default_error t request error;
                             false
@@ -1162,6 +1160,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   validate_config config;
   let time = Option.value time ~default:(Types.live_time clock) in
   let closed_signal, close_signal = Eio.Promise.create () in
+  let runtime = runtime_factory ~sw ~connection () in
   let t =
     {
       sw;
@@ -1172,13 +1171,11 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       connection;
       config;
       runtime_factory;
+      runtime;
       stats = Server_stats.H1.create ();
       connection_metrics =
         (if config.server.enable_otel then
-           Some
-             (Server_metrics.connection
-                ~runtime:(runtime_factory ~sw ~connection ())
-                ~connection)
+           Some (Server_metrics.connection ~runtime ~connection)
          else None);
       current_metrics = None;
       pending = Bytes.empty;
