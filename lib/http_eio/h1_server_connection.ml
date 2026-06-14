@@ -19,6 +19,16 @@ type time = Types.time = {
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
 
+(* Tracks the in-flight handler for the timeout watchdog + close cancellation:
+   a deadline (ms since epoch) and the handler's cancellation context. The
+   watchdog cancels it on deadline; mark_closed cancels it on connection close.
+   Replaces a per-request Eio.Fiber.first (fork + cancel ctx + promise) AND a
+   per-request Eio.Time.with_timeout (sleeper fiber + Zzz node). *)
+type handler_watch = {
+  hw_deadline : int;
+  hw_cancel : Eio.Cancel.t;
+}
+
 type t = {
   sw : Eio.Switch.t;
   now_ms : unit -> int64;
@@ -44,6 +54,7 @@ type t = {
   closed_signal : unit Eio.Promise.t;
   close_signal : unit Eio.Promise.u;
   mutable closed : bool;
+  mutable handler_watch : handler_watch option;
 }
 
 type request_head = {
@@ -92,6 +103,11 @@ let shutdown_all t = try Eio.Flow.shutdown t.flow `All with _ -> ()
 let mark_closed t =
   if not t.closed then (
     t.closed <- true;
+    (* Abort an in-flight handler on connection close (replaces the per-request
+       Fiber.first race against closed_signal). *)
+    (match t.handler_watch with
+    | Some w -> Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout
+    | None -> ());
     ignore (Eio.Promise.try_resolve t.close_signal ()))
 
 let mark_shutdown_active t =
@@ -1032,6 +1048,28 @@ let safe_handler_effect t request handler =
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn -> Eta.Effect.fail (handler_failed_error t request exn)
 
+(* Per-connection handler-timeout watchdog. The in-flight handler registers a
+   deadline + its cancel context in [t.handler_watch]; this single daemon polls
+   and cancels it if the deadline passes. Replaces the per-request
+   Eio.Time.with_timeout (sleeper fiber + Zzz timer node per request) with O(1)
+   arming. Poll cadence scales with the timeout so short test timeouts fire
+   promptly. *)
+let watchdog_loop t =
+  match t.config.server.timeouts.handler_timeout with
+  | None -> ()
+  | Some timeout ->
+      let poll = Eta.Duration.ms (max 1 (Eta.Duration.to_ms timeout / 8)) in
+      let rec loop () =
+        if not t.closed then (
+          t.sleep poll;
+          (match t.handler_watch with
+          | Some w when Int64.to_int (t.now_ms ()) > w.hw_deadline ->
+              Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout
+          | _ -> ());
+          loop ())
+      in
+      loop ()
+
 let run_handler t rt request handler =
   let run () =
     let effect = safe_handler_effect t request handler in
@@ -1039,28 +1077,40 @@ let run_handler t rt request handler =
     | Eta.Exit.Ok response -> (response, false)
     | Eta.Exit.Error cause -> (fallback_error_response t request cause, true)
   in
-  let run_with_timeout () =
+  (* Run the handler under a single cancellation context registered in
+     [t.handler_watch]. The per-connection watchdog cancels it on handler-timeout
+     deadline; [mark_closed] cancels it on connection close. This replaces the
+     per-request Eio.Fiber.first (fork + cancel ctx + promise) racing
+     closed_signal AND the per-request Eio.Time.with_timeout (sleeper + Zzz). *)
+  let deadline =
     match t.config.server.timeouts.handler_timeout with
-    | Some timeout -> (
-        match t.with_timeout timeout run with
-        | response -> response
-        | exception Eio.Time.Timeout ->
-            ( Server.Handler.default_error_response
-                (handler_timeout_error t request (Some timeout)),
-              true ))
-    | None -> run ()
+    | Some timeout -> Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout
+    | None -> max_int
   in
   match
-    Eio.Fiber.first
-      (fun () -> `Response (run_with_timeout ()))
-      (fun () ->
-        Eio.Promise.await t.closed_signal;
-        `Closed)
+    Eio.Cancel.sub (fun cc ->
+        t.handler_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
+        match run () with
+        | result ->
+            t.handler_watch <- None;
+            result
+        | exception exn ->
+            t.handler_watch <- None;
+            raise exn)
   with
-  | `Response response -> response
-  | `Closed ->
-      ( Server.Handler.default_error_response (connection_closed_error t Shutdown),
-        true )
+  | response -> response
+  | exception Eio.Cancel.Cancelled _ ->
+      (* Distinguish close from timeout by the connection state: mark_closed
+         sets [t.closed] before cancelling. *)
+      if t.closed then
+        ( Server.Handler.default_error_response
+            (connection_closed_error t Shutdown),
+          true )
+      else
+        ( Server.Handler.default_error_response
+            (handler_timeout_error t request
+               t.config.server.timeouts.handler_timeout),
+          true )
 
 let write_default_error ?(connection_close = true) t request error =
   match
@@ -1224,12 +1274,14 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       closed_signal;
       close_signal;
       closed = false;
+      handler_watch = None;
     }
   in
   Option.iter
     (fun metrics -> Server_metrics.active_connections metrics 1)
     t.connection_metrics;
   Option.iter (fun on_start -> on_start t) on_start;
+  Eio.Fiber.fork_daemon ~sw (fun () -> watchdog_loop t; `Stop_daemon);
   Fun.protect
     ~finally:(fun () ->
       Option.iter
