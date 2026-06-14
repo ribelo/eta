@@ -991,13 +991,23 @@ let validate_request_metadata t (request : Server.Request.t) =
                ~method_:request.method_ ~target:request.target
                (Bad_request { message })))
 
+(* Normalize header names, sharing structure when nothing changes. HTTP/2
+   response header names are already lowercase in the common case, so
+   normalize_name returns the same string (no alloc) and this returns the
+   original list reference — zero allocation per response. Only when a name
+   actually needs lowercasing/trimming do we allocate the changed suffix. *)
+let rec normalize_header_names lst =
+  match lst with
+  | [] -> []
+  | ((name, value) as hd) :: tl ->
+      let tl' = normalize_header_names tl in
+      let n = Eta_http.Core.Header.normalize_name name in
+      if n == name && tl' == tl then lst else (n, value) :: tl'
+
 let h2_response response =
   {
     H2.Connection.Server.status = response.status;
-    headers =
-      List.map
-        (fun (name, value) -> (Eta_http.Core.Header.normalize_name name, value))
-        (Eta_http.Core.Header.to_list response.headers);
+    headers = normalize_header_names (Eta_http.Core.Header.to_list response.headers);
     body =
       (match response.body with
       | Response_no_body _ -> `Empty
