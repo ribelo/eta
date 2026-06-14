@@ -69,27 +69,62 @@ stale probe binary causes false "PROBE_FAILED / server not responding".**
 
 ## What's Been Tried
 
-### This session (latency) — key results
-- Baseline p99 geomean 4639µs. Now **2907µs (-37.3%)**, RSS -60%, rps_geomean +18%.
-- **THE big lever: removing per-op Eio timeout forks.** Each `Eio.Time.with_timeout`
-  / `Fiber.fork_daemon`+sleep forks a fiber + Zzz timer node + promise for a
-  timeout that almost never fires (the op completes immediately). Removing them:
-  - #4 request_body_timeout: arm only if read didn't complete synchronously
-    (schedule_read delivers buffered DATA inline) — echo p99 -38%, RSS -33%.
-  - #5 response_write_timeout: replace per-write with_timeout with the
-    per-connection watchdog + Cancel.sub (t.write_watch single slot). Hits ALL
-    endpoints (every response writes) — p99 geomean -22%, RSS -39%, rps +10%.
-  - (handler_timeout was already converted to the watchdog in the throughput session.)
-- #2 single-chunk fixed-body fast path (skip Bytes.concat copy). #3 share-on-
-  unchanged header-name normalization (zero alloc when names already lowercase).
-- request_header_timeout/idle_timeout only arm when streams=0 (not under load).
-  request_body_drain only fires for unread bodies (not the benchmark). So no more
-  per-op forks remain on the hot path.
-- **Metric noise lesson**: per-endpoint p99 is noisy; a big single-endpoint win
-  can be masked in the geomean by noise on other endpoints. Cross-check the
-  targeted endpoint + RSS (clean allocation signal), and re-run to confirm.
-- **Next targets** (hit all endpoints): await_owner promise+command roundtrip per
-  response; HPACK decode string alloc (read side); Eta.Runtime.run interpreter.
+### This session (latency) — key results (13 experiments, 11 kept)
+- Baseline p99 geomean 4639µs. Best: **2540µs (−45.3%)** — #11 (decimal content-length writer).
+- Cumulative gains: p50 geomean −34%, rps geomean +45%, RSS −61%.
+
+**THE big levers (in order of impact):**
+
+1. **Removing per-op Eio timeout forks** (#4, #5) — the single biggest lever.
+   Each `Eio.Time.with_timeout` / `Fiber.fork_daemon`+sleep forked a fiber +
+   Zzz timer node + promise for a timeout that almost never fires. Removing
+   them cut p99 by ~22-38% per targeted endpoint and RSS by ~33-39%.
+   - #4 request_body_timeout: arm only after `schedule_read` if not already
+     delivered (buffered DATA is synchronous). echo p99 −38%, RSS −33%.
+   - #5 response_write_timeout: per-write `with_timeout` on ALL endpoints
+     replaced with per-connection watchdog + Cancel.sub (t.write_watch slot).
+     p99 geomean −22%, RSS −39%, rps +10%.
+   - (handler_timeout was already watchdogged in the throughput session.)
+
+2. **Deferred OTEL attribute/materialization** (#7, #8, #9) — second biggest.
+   The server tracer eagerly built Semconv.request_attrs/response_attrs
+   (string_of_int→snprintf, 6.5% CPU) + server metrics attrs PER REQUEST
+   even though the probe runtime has no tracer/meter installed (tracing_enabled
+   = metrics_enabled = false).
+   - #7: `Effect.annotate_all_lazy` — only materialize span attrs when
+     tracing_enabled. p50 −10.5%, rps +9%.
+   - #8: Gate `request_metrics` on `Eta.Runtime.metrics_enabled` (requires
+     adding the accessor). p50 −7.5%, rps +4%.
+   - #9: Skip the whole span wrapper (named_kind/bind/catch) via
+     `Effect.is_tracing_enabled` gate — when no tracer, run handler bare.
+     rps +9%, p50 −8%.
+
+3. **Per-response micro-optimizations** (real but smaller):
+   - #2: Single-chunk fixed-body fast path (skip Bytes.concat copy per body).
+   - #3: Share-on-unchanged header normalization (zero alloc when names
+     already lowercase — the HTTP/2 common case).
+   - #11: No-snprintf decimal writer for add_content_length_header (avoids
+     per-response caml_format_int→sprintf chain for 0-4 digit lengths).
+     p99 −6%, p50 −2%.
+
+**Discarded experiments** (#6, #10, #12, #13):
+   - #6: Diagnostic — disable OTEL to quantify cost. OTEL costs ~15% p99,
+     ~24% rps. Discarded (workload change/cheating).
+   - #10: Precompute content-length 0-9 strings. Discarded (within noise).
+   - #12: Precompute 0-9999 content-length. Discarded (within noise).
+   - #13: Larger minor GC heap. Discarded (neutral, probe tuning).
+
+**Metric noise lesson**: The p99 primary is noise-limited (~150-250µs geomean
+noise) for micro-optimizations. Body-endpoint p99 (static_1k, echo_1k) swings
+wildly (3500-7000µs run-to-run). Smaller wins need p50 or rps as secondary
+confirmations. When one endpoint is an extreme outlier vs its p50, re-run.
+
+**Remaining untried targets** (deferred to ideas.md):
+- Stream Hashtbl consolidation (hash_exn 2.6% + compare 2.2%).
+- await_owner promise+command roundtrip (fiber context switch per response).
+- HPACK decode string pooling.
+- Eta.Runtime sync-handler fast path.
+- Response body copy elimination in respond (Bigstringaf.of_string).
 
 ### Throughput-session learnings that inform tail work:
 
