@@ -600,4 +600,120 @@ let decode_headers (t : t) bytes =
     done;
     Ok (List.rev !result)
   with Exit -> Error Decode_error
+
+let decode_headers_string t s =
+  decode_headers t (Bytes.of_string s)
+
+(* ── Encoder ─────────────────────────────────────────────────────────── *)
+
+(* Token helpers for encoder *)
+let lookup_token_index name = match name with
+  | ":authority" -> 0 | ":method" -> 1 | ":path" -> 3 | ":scheme" -> 5
+  | ":status" -> 7 | "authorization" -> 22 | "cookie" -> 31
+  | "content-length" -> 27 | "content-type" -> 30 | "cache-control" -> 23
+  | "accept" -> 18 | "accept-encoding" -> 15 | "accept-language" -> 16
+  | "accept-ranges" -> 17 | "access-control-allow-origin" -> 19
+  | "age" -> 20 | "allow" -> 21 | "content-disposition" -> 24
+  | "content-encoding" -> 25 | "content-language" -> 26
+  | "content-location" -> 28 | "content-range" -> 29
+  | "date" -> 32 | "etag" -> 33 | "expect" -> 34 | "expires" -> 35
+  | "from" -> 36 | "host" -> 37 | "if-match" -> 38
+  | "if-modified-since" -> 39 | "if-none-match" -> 40 | "if-range" -> 41
+  | "if-unmodified-since" -> 42 | "last-modified" -> 43 | "link" -> 44
+  | "location" -> 45 | "max-forwards" -> 46 | "proxy-authenticate" -> 47
+  | "proxy-authorization" -> 48 | "range" -> 49 | "referer" -> 50
+  | "refresh" -> 51 | "retry-after" -> 52 | "server" -> 53
+  | "set-cookie" -> 54 | "strict-transport-security" -> 55
+  | "transfer-encoding" -> 56 | "user-agent" -> 57 | "vary" -> 58
+  | "via" -> 59 | "www-authenticate" -> 60
+  | _ -> -1
+
+let authorization_token = 22
+let cookie_token = 31
+
+let never_indexed_token t = match t with
+  | 3 | 20 | 27 | 33 | 39 | 40 | 45 | 54 -> true | _ -> false
+
+type encoder = {
+  dec_tbl : t;
+  mutable next_seq : int;
+}
+
+let encoder_create capacity =
+  { dec_tbl = create capacity; next_seq = 0 }
+
+(* Write integer with N-bit prefix (§5.1) into a pre-allocated bytes buffer. *)
+let encoder_write_int buf pos_ref prefix n i =
+  let max_prefix = (1 lsl n) - 1 in
+  if i < max_prefix then begin
+    Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (prefix lor i));
+    incr pos_ref
+  end else begin
+    Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (prefix lor max_prefix));
+    incr pos_ref;
+    let mutable rem = i - max_prefix in
+    while rem >= 128 do
+      Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (rem land 127 lor 128));
+      incr pos_ref;
+      rem <- rem lsr 7
+    done;
+    Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr rem);
+    incr pos_ref
+  end
+
+(* Write a string literal (§5.2). Always uses raw encoding for simplicity. *)
+let encoder_write_string buf pos_ref s =
+  let slen = String.length s in
+  encoder_write_int buf pos_ref 0 7 slen;
+  for i = 0 to slen - 1 do
+    Bytes.unsafe_set buf !pos_ref (String.unsafe_get s i);
+    incr pos_ref
+  done
+
+(* Encode one header. *)
+let encode_single_header enc buf pos_ref (h : header) =
+  let name = h.name and value = h.value in
+  let token = lookup_token_index name in
+  (match token with
+   | -1 ->
+       (* Name not in static table — literal with indexing *)
+       encoder_write_int buf pos_ref 0x40 6 0;
+       encoder_write_string buf pos_ref name;
+       encoder_write_string buf pos_ref value;
+       dynamic_table_add enc.dec_tbl name value;
+       enc.next_seq <- enc.next_seq + 1
+   | t ->
+       (* Check for exact static table match first *)
+       let rec find_exact i =
+         if i >= static_table_size then None
+         else
+           let n, v = static_table.(i) in
+           if n = name && v = value then Some (i + 1)
+           else find_exact (i + 1)
+       in
+       (match find_exact t with
+        | Some idx ->
+            (* Fully indexed! *)
+            encoder_write_int buf pos_ref 0x80 7 idx
+        | None ->
+            if h.sensitive || never_indexed_token t
+               || (t = authorization_token && true)
+               || (t = cookie_token && String.length value < 20)
+            then
+              (* Never indexed, name from static table *)
+              let _ = encoder_write_int buf pos_ref 0x10 4 (t + 1) in
+              encoder_write_string buf pos_ref value
+            else
+              (* Literal with incremental indexing, name from static table *)
+              let _ = encoder_write_int buf pos_ref 0x40 6 (t + 1) in
+              encoder_write_string buf pos_ref value;
+              dynamic_table_add enc.dec_tbl name value;
+              enc.next_seq <- enc.next_seq + 1))
+
+(* Encode a list of headers into a fresh bytes buffer. *)
+let encode_headers enc headers =
+  let buf = Bytes.create 4096 in
+  let pos_ref = ref 0 in
+  List.iter (fun h -> encode_single_header enc buf pos_ref h) headers;
+  Bytes.sub_string buf 0 !pos_ref
 let decode_headers_string t s = decode_headers t (Bytes.of_string s)

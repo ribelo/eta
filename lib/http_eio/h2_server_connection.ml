@@ -127,6 +127,8 @@ type t = {
   mutable filter_preface_remaining : int;
   mutable filter_pending : string;
   request_header_decoder : Eta_http.Hpack_ox.t;
+  request_header_encoder : Eta_http.Hpack_ox.encoder;
+  mutable encoder_buffer : Bytes.t;
   mutable normalize_request_headers : bool;
   mutable request_header_block : request_header_block option;
   mutable observed_request_ordinal : int;
@@ -160,6 +162,7 @@ type t = {
   mutable write_pending : bool;
   mutable write_buffer : Cstruct.t;
   mutable emit_buffer : Buffer.t;
+  read_owned : Bigstringaf.t;
   mutable closed : bool;
 }
 
@@ -463,11 +466,13 @@ let decode_request_header_block t block =
       Error (request_trailer_error "HPACK decoding error")
 
 let encode_request_header_block t headers =
-  ignore t;
-  let faraday = Faraday.create 0x1000 in
-  let encoder = Hpack.Encoder.create 4096 in
-  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
-  Faraday.serialize_to_string faraday
+  let buf = t.encoder_buffer in
+  let pos_ref = ref 0 in
+  List.iter (fun (h : Hpack.header) ->
+      Eta_http.Hpack_ox.encode_single_header t.request_header_encoder buf pos_ref
+        { Eta_http.Hpack_ox.name = h.name; value = h.value; sensitive = h.sensitive })
+    headers;
+  Bytes.sub_string buf 0 !pos_ref
 
 let emit_header_block t ~stream_id ~end_stream block =
   let max_payload = 16 * 1024 in
@@ -2006,10 +2011,9 @@ let reader_loop t =
           (enqueue t (Ingress_failed (request_timeout_error t (Some timeout))))
     | `Read 0 -> ignore (enqueue t Ingress_eof)
     | `Read len ->
-        let owned = Bigstringaf.create len in
-        Bigstringaf.blit scratch ~src_off:0 owned ~dst_off:0 ~len;
+        Bigstringaf.blit scratch ~src_off:0 t.read_owned ~dst_off:0 ~len;
         let promise, ack = Eio.Promise.create () in
-        if enqueue t (Ingress { bytes = owned; off = 0; len; ack }) then (
+        if enqueue t (Ingress { bytes = t.read_owned; off = 0; len; ack }) then (
           Eio.Fiber.first
             (fun () -> Eio.Promise.await promise)
             (fun () -> Eio.Promise.await t.closed_signal);
@@ -2390,6 +2394,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       filter_preface_remaining = h2_client_connection_preface_length;
       filter_pending = "";
       request_header_decoder = Eta_http.Hpack_ox.create 4096;
+      request_header_encoder = Eta_http.Hpack_ox.encoder_create 4096;
+      encoder_buffer = Bytes.create 4096;
       normalize_request_headers = false;
       request_header_block = None;
       observed_request_ordinal = 0;
@@ -2424,6 +2430,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       write_pending = false;
       write_buffer = Cstruct.create max_h2_data_chunk;
       emit_buffer = Buffer.create 256;
+      read_owned = Bigstringaf.create config.read_buffer_size;
       closed = false;
     }
   in
