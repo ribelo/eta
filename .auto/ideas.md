@@ -1,48 +1,43 @@
-# H1 TLS handshake latency — ideas backlog (ordered by expected impact)
+# H1 TLS handshake — ideas backlog & findings
 
-Diagnosis: the p99 outlier is TLS handshake cost (~1.4ms RSA-2048 sign per full
-handshake; serialized across c=16 on one core). Reduce per-handshake cost
-and/or parallelize handshakes.
+## Status: key wins captured; benchmark at an environmental ceiling
 
-## 1. TLS session resumption / session tickets (potential big win)
-A resumed handshake (TLS 1.3 PSK / 1.2 session ticket) skips the RSA signature
-— the dominant cost. Check whether ocaml-tls/Tls_eio server context advertises
-& accepts tickets, and whether the server already supports resumption. Verify
-what oha does on a new TCP connection: does it present a cached ticket (1-RTT
-resumption) or always full handshake? If oha never resumes, this won't move the
-benchmark even if correct — measure before investing.
+### Kept (committed)
+- **Multi-domain HTTPS** (`ETA_SERVER_DOMAINS`, eta_server → start_https): the
+  direct fix for the broad-suite single-domain ~15ms p99. ka_p99 45ms→~14ms.
+- **#11 buffer-reuse** (tls_eio feed/drain): RSS −23%, p50 down (noisy).
+- **#12 session-cache-OFF** (`SSL_SESS_CACHE_OFF`): drops the global per-handshake
+  session-cache write-lock; hs_p99 −11%, rps +4%. Resumption still via tickets.
 
-## 2. Remove the per-handshake with_timeout fork (server.ml)
-`run_https_connection` wraps `Tls_eio.server_of_flow_with_context` in
-`time.with_timeout config.tls_handshake_timeout` — a sleeper fiber + Zzz timer
-node per handshake. Same anti-pattern removed from the H1 plain path (read/
-handler/write) for −45% p99. Replace with a watchdog/deadline that doesn't fork
-per handshake, or arm only if the handshake doesn't complete synchronously.
+### Tried & discarded / dead ends
+- **#14 caml_enter/leave_blocking_section around SSL_do_handshake**: correct
+  multicore change (long C call should release the runtime) but NEUTRAL at the
+  measured workload; only marginal at c=96/16-domains. Reverted. Worth landing
+  as a standalone correctness fix outside this benchmark.
+- **RSA blinding lock**: NOT the serializer — ECDSA cert scales the same (~1.7×
+  for 16 domains).
 
-## 3. Parallelize CPU-bound handshakes across domains
-The single-domain server serializes 16 concurrent RSA signs. The handshake is
-CPU-bound and independent per connection. A handshake-offload domain pool (or
-`domain_policy`/`additional_domains` on the HTTPS listener) would let multiple
-cores chew handshakes in parallel — directly attacks the c=16 serialization
-that turns a 1.4ms sign into a 2.66ms p50 / multi-ms tail. Mind Eta's
-mode/portability fences and that request handling stays correct.
+### The ceiling (why further throughput work is unproductive here)
+Handshake throughput hard-caps at **~10,500 handshakes/s** and *degrades* with
+concurrency (c=48/96 lower than c=16), independent of oha cores (8→12), domain
+count (8→16), or runtime-release. So the cap is **environmental** — kernel
+loopback / single listening-socket accept queue / oha client-side handshake
+cost — not an Eta library bottleneck. Per-handshake server CPU (~0.17ms) is
+already competitive. Latency p50 (~1.4ms at c=16) is round-trip/scheduling
+bound.
 
-## 4. TLS 1.3-only fast path / group ordering
-Ensure TLS 1.3 + X25519 ECDHE is the negotiated path (fastest key exchange).
-Check `policy_version`/cipher ordering in config.ml; avoid any FFDHE fallback.
-Probably small (we're already ECDHE) but verify no slow group is reachable.
+### Untried (likely low value here, may matter elsewhere)
+- `SSL_CTX_set_num_tickets(ctx, 1)` — server issues 2 NewSessionTickets per
+  handshake (post-handshake CPU + a write); 1 is enough for most clients. Real
+  per-handshake work cut, but post-handshake so won't move handshake latency,
+  and won't lift the environmental throughput ceiling. Touches resumption.
+- Per-domain SSL_CTX — would help only if a shared-CTX lock were the bottleneck;
+  ECDSA result suggests it isn't.
+- Lift the benchmark ceiling (a faster/native multi-process TLS client, or
+  measure server CPU per handshake directly) to expose any remaining scaling.
 
-## 5. mirage-crypto RSA backend
-Confirm the accelerated bignum path is linked (the RSA-2048 sign dominates).
-If pure-OCaml fallback is in use, that explains ~1.4ms; the fix may be a
-build/dependency adjustment rather than Eta code.
-
-## 6. Handshake-flight write coalescing (tls_eio.ml)
-Fewer/larger socket writes for the multi-flight handshake. TCP_NODELAY is
-already on, so this is about syscall count, not Nagle — likely small.
-
-## Notes / dead ends
-- TCP_NODELAY already set on accepted flows (server.ml) — not the cause.
-- Tls_eio server context built once per listener — not per-connection rebuild.
-- Steady-state H1 TLS latency is already fine (~0.2ms p50) — do NOT optimize the
-  request path; the entire win is in the handshake.
+### Recommendation
+The user's goal (H1 TLS p99 competitive) is addressed by multi-domain + the two
+library opts. Consider finalizing this session and, if desired, opening a new
+session for **H2 TLS p99 / steady-state echo_1k** (the other reported weak spot),
+which is a different code path (h2 multiplexer) not subject to this ceiling.
