@@ -47,13 +47,13 @@ if command -v taskset >/dev/null 2>&1; then
 fi
 
 C=16
-HS_N="${ETA_TLS_HS_REQUESTS:-3000}"   # handshake run: fresh handshake per request
+HS_N="${ETA_TLS_HS_REQUESTS:-2000}"   # handshake run: fresh handshake per request
 KA_N="${ETA_TLS_KA_REQUESTS:-1000}"   # keep-alive run: matches broad-suite Quick
 REPS="${ETA_TLS_REPS:-3}"
 
 run_bench() {
   nix develop -c bash -c '
-    set -euo pipefail
+    set -uo pipefail
     export EIO_BACKEND="'"$EIO_BACKEND"'"
     PORT=$(shuf -i 20000-60000 -n1)
     TMP=$(mktemp -d)
@@ -85,6 +85,7 @@ run_bench() {
         hwm=$(awk "/VmHWM/{print \$2}" "/proc/$PID/status")
         [ -n "$hwm" ] && [ "$hwm" -gt "$PEAK_RSS" ] && PEAK_RSS=$hwm
       fi
+      return 0
     }
 
     # Warmup (prime server + RSA path + oha).
@@ -94,8 +95,8 @@ run_bench() {
     hs_rps=(); hs_p99=(); hs_p50=(); ok=1
     for _ in $(seq 1 '"$REPS"'); do
       read -r r p99 p50 sr <<<"$(sample --disable-keepalive -c '"$C"' -n '"$HS_N"')"
-      hs_rps+=("$r"); hs_p99+=("$p99"); hs_p50+=("$p50")
-      awk "BEGIN{exit !($sr < 0.999)}" && ok=0
+      hs_rps+=("${r:-0}"); hs_p99+=("${p99:-0}"); hs_p50+=("${p50:-0}")
+      if [ -z "${sr:-}" ] || awk "BEGIN{exit !(${sr:-0} < 0.999)}"; then ok=0; fi
       note_rss
     done
     echo "RESULT_HS rps=$(median "${hs_rps[@]}") p99=$(median "${hs_p99[@]}") p50=$(median "${hs_p50[@]}") ok=$ok"
@@ -104,8 +105,8 @@ run_bench() {
     ka_p99=(); ok2=1
     for _ in $(seq 1 '"$REPS"'); do
       read -r r p99 p50 sr <<<"$(sample -c '"$C"' -n '"$KA_N"')"
-      ka_p99+=("$p99")
-      awk "BEGIN{exit !($sr < 0.999)}" && ok2=0
+      ka_p99+=("${p99:-0}")
+      if [ -z "${sr:-}" ] || awk "BEGIN{exit !(${sr:-0} < 0.999)}"; then ok2=0; fi
       note_rss
     done
     echo "RESULT_KA p99=$(median "${ka_p99[@]}") ok=$ok2"
@@ -113,7 +114,7 @@ run_bench() {
   '
 }
 
-OUT=$(run_bench)
+OUT=$(run_bench || true)
 echo "$OUT" | grep -vE "^RESULT" || true
 
 HS_RPS=0; HS_P99=0; HS_P50=0; KA_P99=0; RSS_KB=0; ALL_OK=1
@@ -136,7 +137,7 @@ while read -r line; do
 done <<<"$(echo "$OUT" | grep -E '^RESULT')"
 
 # Guard against a failed/empty run producing a fake "improvement".
-if [ "$ALL_OK" != "1" ] || [ "$HS_P50" = "0" ] || [ "$HS_P99" = "0" ]; then
+if [ "$ALL_OK" != "1" ] || [ -z "$HS_P50" ] || [ "$HS_P50" = "0" ] || [ -z "$HS_P99" ] || [ "$HS_P99" = "0" ]; then
   echo "METRIC h1_tls_hs_p50_us=0"
   echo "METRIC h1_tls_hs_p99_us=0"
   echo "METRIC h1_tls_hs_rps=0"

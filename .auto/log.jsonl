@@ -1,0 +1,1 @@
+{"type":"config","name":"Eta H1-over-TLS handshake latency under concurrent load","metricName":"h1_tls_hs_p50_us","metricUnit":"us","bestDirection":"lower"}

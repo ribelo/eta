@@ -259,7 +259,7 @@ let shape config =
         timeout = "5s";
         concurrencies = [ 1; 16 ];
         h2_matrix = [ (1, 1); (1, 16); (4, 4); (16, 1) ];
-        repeats = 1;
+        repeats = 3;
         endpoints = [ root; user_id; post_user; static_1k; echo_1k ];
         modes;
       }
@@ -331,6 +331,37 @@ let command_first_line cmd =
   | Ok (line :: _) -> String.trim line
   | _ -> "unknown"
 
+let env_flag name default =
+  match Sys.getenv_opt name with
+  | None | Some "" -> default
+  | Some value -> (
+      match String.lowercase_ascii (String.trim value) with
+      | "0" | "false" | "no" | "off" -> false
+      | "1" | "true" | "yes" | "on" -> true
+      | _ -> default)
+
+let env_string name default =
+  match Sys.getenv_opt name with
+  | None | Some "" -> default
+  | Some value -> String.trim value
+
+let pinning_enabled () =
+  env_flag "ETA_SERVER_LOAD_PIN" true && command_available "taskset"
+
+let server_core () = env_string "ETA_SERVER_LOAD_SERVER_CORE" "2"
+let load_core () = env_string "ETA_SERVER_LOAD_LOAD_CORE" "3"
+
+let taskset_prefix core =
+  if pinning_enabled () then Printf.sprintf "taskset -c %s " (quote core) else ""
+
+let pin_current_process_to_server_core () =
+  if pinning_enabled () then
+    let cmd =
+      Printf.sprintf "taskset -pc %s %d >/dev/null 2>&1" (quote (server_core ()))
+        (Unix.getpid ())
+    in
+    ignore (Util.run_cmd cmd)
+
 let git_dirty () =
   match Util.run_cmd_out "git status --porcelain --untracked-files=no" with
   | Ok [] -> false
@@ -380,6 +411,13 @@ let metadata_json config =
       ("ocaml_version", json_string (command_first_line "ocamlc -version"));
       ("dune_version", json_string (command_first_line "dune --version"));
       ("eio_backend", json_string (Option.value ~default:"" (Sys.getenv_opt "EIO_BACKEND")));
+      ( "pinning",
+        `Assoc
+          [
+            ("enabled", json_bool (pinning_enabled ()));
+            ("server_core", json_string (server_core ()));
+            ("load_core", json_string (load_core ()));
+          ] );
     ]
 
 let run_blocking label f = Eio_unix.run_in_systhread ~label f
@@ -509,7 +547,10 @@ let oha_command ~temp_dir ~shape ~mode ~endpoint ~load_case ~repeat ~url =
     base @ h2_parallel @ count @ oha_protocol_flags mode @ tls @ method_flags
     @ [ url ]
   in
-  let command = String.concat " " (List.map quote tokens) ^ " 2>&1" in
+  let command =
+    taskset_prefix (load_core ()) ^ String.concat " " (List.map quote tokens)
+    ^ " 2>&1"
+  in
   (command, repeat)
 
 let result_identity_json ~mode ~endpoint ~load_case ~repeat =
@@ -1157,6 +1198,7 @@ let report_json config shape results =
 
 let () =
   let config = parse_args Sys.argv in
+  pin_current_process_to_server_core ();
   let shape = shape config in
   let results_dir = results_dir config in
   Util.mkdir_p results_dir;
