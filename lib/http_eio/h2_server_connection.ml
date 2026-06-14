@@ -1072,7 +1072,36 @@ let bodyless_response ~request_method status =
 let strict_no_body_status = Eta_http.Core.Status.forbids_response_body
 
 let add_content_length_header length headers =
-  Eta_http.Core.Header.unsafe_add "content-length" (string_of_int length) headers
+  (* No-alloc decimal→string: fill a small Bytes buffer with digit chars and
+     convert in place. Avoids string_of_int's format-string parsing + snprintf
+     + intermediate-alloc on every response (all endpoints, every request). *)
+  let s =
+    if length < 0 then string_of_int length
+    else if length < 10 then
+      let b = Bytes.create 1 in
+      Bytes.unsafe_set b 0 (Char.unsafe_chr (Char.code '0' + length));
+      Bytes.unsafe_to_string b
+    else if length < 100 then
+      let b = Bytes.create 2 in
+      Bytes.unsafe_set b 0 (Char.unsafe_chr (Char.code '0' + (length / 10)));
+      Bytes.unsafe_set b 1 (Char.unsafe_chr (Char.code '0' + (length mod 10)));
+      Bytes.unsafe_to_string b
+    else if length < 1000 then
+      let b = Bytes.create 3 in
+      Bytes.unsafe_set b 0 (Char.unsafe_chr (Char.code '0' + (length / 100)));
+      Bytes.unsafe_set b 1 (Char.unsafe_chr (Char.code '0' + ((length / 10) mod 10)));
+      Bytes.unsafe_set b 2 (Char.unsafe_chr (Char.code '0' + (length mod 10)));
+      Bytes.unsafe_to_string b
+    else if length < 10000 then
+      let b = Bytes.create 4 in
+      Bytes.unsafe_set b 0 (Char.unsafe_chr (Char.code '0' + (length / 1000)));
+      Bytes.unsafe_set b 1 (Char.unsafe_chr (Char.code '0' + ((length / 100) mod 10)));
+      Bytes.unsafe_set b 2 (Char.unsafe_chr (Char.code '0' + ((length / 10) mod 10)));
+      Bytes.unsafe_set b 3 (Char.unsafe_chr (Char.code '0' + (length mod 10)));
+      Bytes.unsafe_to_string b
+    else string_of_int length
+  in
+  Eta_http.Core.Header.unsafe_add "content-length" s headers
 
 let prepare_h2_response t request response =
   match validate_response_headers t response with
