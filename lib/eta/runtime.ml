@@ -70,6 +70,9 @@ let run_exn t eff =
 
 let drain t = Runtime_core.wait_active_zero t
 
+let metrics_enabled (t : 'err Runtime_core.t) = t.Runtime_core.metrics_enabled
+let tracing_enabled (t : 'err Runtime_core.t) = t.Runtime_core.tracing_enabled
+
 module Make (R : Runtime_contract.RUNTIME) = struct
   let backend = (module R : Runtime_contract.RUNTIME)
 

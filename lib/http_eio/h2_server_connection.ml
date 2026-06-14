@@ -213,15 +213,16 @@ let stats t =
     ~active_streams:(Hashtbl.length t.streams)
 
 let request_metrics ~config ~runtime ~connection request =
-  if config.Types.Config.server.enable_otel then
+  if config.Types.Config.server.enable_otel && Eta.Runtime.metrics_enabled runtime
+  then
     Some
       (Server_metrics.request ~runtime ~connection
          ~emit_url_full:config.server.emit_url_full request)
   else None
 
 let connection_metrics ~config ~runtime ~connection =
-  if config.Types.Config.server.enable_otel then
-    Some (Server_metrics.connection ~runtime ~connection)
+  if config.Types.Config.server.enable_otel && Eta.Runtime.metrics_enabled runtime
+  then Some (Server_metrics.connection ~runtime ~connection)
   else None
 
 let emit_connection_metric t f =

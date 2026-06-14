@@ -66,3 +66,12 @@ val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
 
 val drain : 'err t -> unit
 (** Wait until currently runtime-owned finite background fibers complete. *)
+
+val metrics_enabled : _ t -> bool
+(** Whether a meter is installed (i.e. metrics will actually be recorded).
+    Hot-path code can use this to skip building metric label attributes when no
+    meter is present; a noop meter records nothing, so this changes no observable
+    behavior. *)
+
+val tracing_enabled : _ t -> bool
+(** Whether a tracer is installed (i.e. spans will actually be recorded). *)
