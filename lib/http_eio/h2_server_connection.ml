@@ -457,20 +457,14 @@ let request_header_fragment flags payload =
     else Ok (String.sub payload !pos (len - !pos - pad_len)))
 
 let decode_request_header_block t block =
-  match Eta_http.Hpack_ox.decode_headers_string t.request_header_decoder block with
-  | Ok headers ->
-      Ok (List.map (fun (h : Eta_http.Hpack_ox.header) ->
-          ({ Hpack.name = h.name; value = h.value; sensitive = h.sensitive }
-            : Hpack.header)) headers)
-  | Error _ ->
-      Error (request_trailer_error "HPACK decoding error")
+  Eta_http.Hpack_ox.decode_headers_string t.request_header_decoder block
+  |> Result.map_error (fun _ -> request_trailer_error "HPACK decoding error")
 
-let encode_request_header_block t headers =
+let encode_request_header_block t (headers : Eta_http.Hpack_ox.header list) =
   let buf = t.encoder_buffer in
   let pos_ref = ref 0 in
-  List.iter (fun (h : Hpack.header) ->
-      Eta_http.Hpack_ox.encode_single_header t.request_header_encoder buf pos_ref
-        { Eta_http.Hpack_ox.name = h.name; value = h.value; sensitive = h.sensitive })
+  List.iter
+    (Eta_http.Hpack_ox.encode_single_header t.request_header_encoder buf pos_ref)
     headers;
   Bytes.sub_string buf 0 !pos_ref
 
@@ -535,7 +529,8 @@ let validate_request_trailers t trailers =
 let validate_decoded_request_header_names block headers =
   let has_empty_name =
     List.exists
-      (fun ({ Hpack.name; _ } : Hpack.header) -> String.equal name "")
+      (fun ({ Eta_http.Hpack_ox.name; _ } : Eta_http.Hpack_ox.header) ->
+         String.equal name "")
       headers
   in
   if not has_empty_name then Ok ()
@@ -578,7 +573,7 @@ let complete_request_header_block t block =
           else
             let trailers =
               List.map
-                (fun ({ Hpack.name; value; _ } : Hpack.header) -> (name, value))
+                (fun ({ Eta_http.Hpack_ox.name; value; _ } : Eta_http.Hpack_ox.header) -> (name, value))
                 headers
             in
             (match validate_request_trailers t trailers with
