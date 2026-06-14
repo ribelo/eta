@@ -1055,10 +1055,18 @@ let safe_handler_effect t request handler =
    arming. Poll cadence scales with the timeout so short test timeouts fire
    promptly. *)
 let watchdog_loop t =
-  match t.config.server.timeouts.handler_timeout with
-  | None -> ()
-  | Some timeout ->
-      let poll = Eta.Duration.ms (max 1 (Eta.Duration.to_ms timeout / 8)) in
+  let ts = t.config.server.timeouts in
+  let candidates =
+    List.filter_map Fun.id
+      [ ts.handler_timeout; ts.request_header_timeout; ts.idle_timeout ]
+  in
+  match candidates with
+  | [] -> ()
+  | _ ->
+      let base =
+        List.fold_left (fun m d -> min m (Eta.Duration.to_ms d)) max_int candidates
+      in
+      let poll = Eta.Duration.ms (max 1 (base / 8)) in
       let rec loop () =
         if not t.closed then (
           t.sleep poll;
@@ -1148,10 +1156,24 @@ let read_request_head_with_timeout t ordinal =
   match timeout with
   | None -> `Read (read_request_head t)
   | Some duration -> (
-      try
-        `Read
-          (t.with_timeout duration (fun () -> read_request_head t))
-      with Eio.Time.Timeout -> `Timeout duration)
+      (* Bound the head read via the per-connection watchdog (deadline +
+         Cancel.sub registered in handler_watch — read and handler never overlap
+         in this sequential loop) instead of a per-request Eio.Time.with_timeout
+         (sleeper fiber + Zzz node) on every kept-alive request. *)
+      let deadline = Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms duration in
+      match
+        Eio.Cancel.sub (fun cc ->
+            t.handler_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
+            match read_request_head t with
+            | r ->
+                t.handler_watch <- None;
+                r
+            | exception exn ->
+                t.handler_watch <- None;
+                raise exn)
+      with
+      | r -> `Read r
+      | exception Eio.Cancel.Cancelled _ -> `Timeout duration)
 
 let handle_head_error t error =
   record_protocol_error t;
