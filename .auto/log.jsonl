@@ -1,1 +1,1 @@
-{"type":"config","name":"Eta HTTP/2 server tail latency over real sockets","metricName":"h2_p99_us_geomean","metricUnit":"us","bestDirection":"lower"}
+{"type":"config","name":"Eta HTTP/2 server tail latency over real sockets","metricName":"h2_p99_us_geomean","metricUnit":"µs","bestDirection":"lower"}
