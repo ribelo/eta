@@ -839,15 +839,13 @@ let validate_request_metadata t (request : Server.Request.t) =
                ~method_:request.method_ ~target:request.target
                (Bad_request { message })))
 
-let h2_header_list headers =
-  headers
-  |> Eta_http.Core.Header.to_list
-  |> List.map (fun (name, value) ->
-         (Eta_http.Core.Header.normalize_name name, value))
-
 let h2_response response =
   H2.Response.create
-    ~headers:(H2.Headers.of_list (h2_header_list response.headers))
+    ~headers:
+      (H2.Headers.of_rev_list
+         (List.rev_map
+            (fun (name, value) -> (Eta_http.Core.Header.normalize_name name, value))
+            (Eta_http.Core.Header.to_list response.headers)))
     (H2.Status.of_code response.status)
 
 let validate_response_headers t response =
