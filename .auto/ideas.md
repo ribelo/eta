@@ -1,77 +1,49 @@
-# Deferred / remaining ideas (H2 tail latency)
+# H1 latency ideas backlog (ordered by expected impact)
 
-## Tried this session (all kept)
-- [x] Single-chunk fixed-body fast path (#2) — kept, small win
-- [x] Share-on-unchanged header normalization (#3) — kept, moderate win
-- [x] Body-read timeout sync-skip (#4) — kept, big echo win
-- [x] Response-write timeout watchdog (#5) — kept, broad win (all endpoints)
-- [x] OTEL span-attr lazy (#7) — kept, rps/p50 win
-- [x] OTEL metric-attr gate (#8) — kept, rps/p50 win
-- [x] Span wrapper skip when tracing off (#9) — kept, rps/p50 win
-- [x] Decimal content-length writer (#11) — kept, small p99/p50 win
+Proven playbook from the H2 latency session. Apply the same patterns to H1.
 
-## Discarded (within noise or probe tuning)
-- [~] OTEL-off diagnostic (#6) — quantified cost, intentionally discarded
-- [~] Content-length 0-9 precompute (#10) — below p99 noise
-- [~] Content-length 0-9999 precompute (#12) — below p99 noise
-- [~] Larger minor GC heap (#13) — neutral, probe tuning
+## 1. Remove per-op timeout forks (THE big lever — H2 gave −22 to −38% p99)
+H1 `h1_server_connection.ml` arms `Eio.Time.with_timeout` / `fork_daemon`+sleep
+per operation, each forking a fiber + Zzz timer + promise for a timeout that
+almost never fires. Targets:
+- **request-head read timeout** (`read_request_head_with_timeout` ~1093, plus a
+  per-request `Fiber.first` at ~1054) — likely the biggest H1 win, analogous to
+  the H2 handler-switch + per-request Fiber.first removal.
+- **handler timeout** (~873, ~1042-1055) — convert to per-connection watchdog +
+  `Cancel.sub` deadline slot (mirror the H2 handler watchdog).
+- **write timeout** (~173) — per-connection watchdog + write_watch slot (mirror
+  H2 #5; gave −22% p99 / −39% RSS / +10% rps across all endpoints).
+- **body read timeout** (~369) — sync-skip: arm only if the read didn't complete
+  synchronously (mirror H2 #4; gave echo −38% p99 / −33% RSS).
 
-## High-value, higher-effort (not yet tried)
+Note: H1's connection model differs from H2 (no owner-loop command queue; the
+handler runs more directly). Study the actual H1 fiber structure before porting
+the watchdog — it may be simpler (a single request-at-a-time keep-alive loop).
 
-### Stream Hashtbl consolidation
-Consolidate remote_end_streams, remote_reset_streams, graceful_rejected_streams,
-remote_reset_ordinals, pending_request_trailers Hashtbls into stream_state
-mutable fields. retire_stream does 8 Hashtbl.remove calls per stream retirement
-(each involving hash_exn + compare). Consolidation reduces this to 3 removes
-(stream_ordinals, stream_ids_by_ordinal, streams). The stream_id-keyed boolean
-Hashtbls have pre-stream/post-stream uses that make consolidation tricky;
-ordinal-keyed ones (remote_reset_ordinals, pending_request_trailers) are safe.
-caml_hash_exn 2.6% + caml_compare 2.2% in profile.
+## 2. Gate request_metrics on metrics_enabled (H2 #8)
+`request_metrics` (~1018) gated only on `enable_otel`. Add
+`&& Eta.Runtime.metrics_enabled rt` (accessor already on master). Skips
+per-request Semconv metric-attr building (string_of_int + list alloc) when no
+meter installed.
 
-### await_owner promise+command roundtrip
-Every response (all endpoints) goes through `await_owner t (fun resolver ->
-Response_start (ordinal, prepared, resolver))`: creates Eio.Promise + enqueues
-command + handler fiber suspends/resumes. This is a fiber context switch +
-allocation per response. For small fixed responses (all benchmark endpoints),
-the handler doesn't need to wait — the full response is already prepared.
-A fire-and-forget `enqueue_response` variant could skip the promise + await.
-Risk: loses error feedback (connection write failures not reported to handler).
+## 3. Confirm/extend shared tracer gating
+The shared `server_tracer.ml` `is_tracing_enabled` skip (#9) and
+`annotate_all_lazy` (#7) already help H1. Verify the H1 path actually routes
+through `server_tracer.request` and benefits; if it has its own span wiring,
+apply the same gate.
 
-### HPACK decode string pooling
-Decoder allocates fresh name/value strings per header per request (main string
-allocator, caml_alloc_string 2.4% in profile). Static-table indexed headers
-already reuse shared strings (#2); only literal headers pay. Could pool a
-per-connection decode buffer or intern common literals.
+## 4. Per-response allocation (H2 #2, #3, #11)
+- Single-chunk fixed-body fast path (skip Bytes.concat copy).
+- Share-on-unchanged header normalization.
+- No-snprintf decimal writer for Content-Length / status (H1 response_write.ml
+  already had add_decimal from the throughput session — verify it's used).
 
-### Eta.Runtime sync-handler fast path
-Handler runs through Eta.Runtime.run effect interpreter (eval/perform/resume).
-For handlers that return plain values (Eta.Effect.pure) — which is the common
-case for root/user_id — the interpreter overhead is a single `match Pure -> Ok`.
-But for effectful handlers (echo reads body), the interpreter processes
-multiple Effect nodes. A "sync handler detection" that bypasses unnecessary
-interpreter wrapping could help. Requires understanding of which Effect ops
-the handler uses.
-
-### Response body copy elimination
-`respond` in connection.ml copies the body string into a Bigstringaf
-(`Bigstringaf.of_string`) before queuing DATA frames. For 1KB bodies (static_1k,
-echo), this is a per-response memory copy. Could be avoided if the H2 write
-path accepted strings directly instead of Bigstringaf.
-
-### response_write_timeout on streaming path
-Streaming response handlers still pay per-write with_timeout (#5 only fixed
-the writer-loop's per-write timeout). For benchmark (fixed responses), not on
-the hot path, but streaming servers benefit from the same watchdog approach.
-
-### HPACK encode response header caching
-`encode_response_headers` runs per response. For common responses (e.g., root
-empty 200), the encoded header block is always identical. A simple
-(status, headers) → encoded_block cache could skip encoding for repeated
-responses. The HPACK dynamic table changes between connections, but within a
-connection, common responses repeat.
+## 5. H1-specific: keep-alive request loop
+H1 reuses a connection for many sequential requests. Check the per-request
+setup/teardown in the keep-alive loop (buffer resets, request record alloc,
+pending-buffer handling) for per-request overhead that the H2 per-stream path
+doesn't have.
 
 ## Noise limitations
-p99 geomean is now limited to ~150-250µs noise from body-endpoint tail variance.
-Micro-optimizations below ~3-5% p99 improvement may be undetectable. Increasing
-ETA_H2_REPS in measure.sh from 3 to 5-7 would reduce noise and make smaller wins
-detectable, at the cost of doubling experiment duration.
+p99 geomean is noise-limited (~150-250µs from body-endpoint variance). Use p50 +
+rps + RSS as corroborating signals. Re-run when one endpoint p99 is an outlier.
