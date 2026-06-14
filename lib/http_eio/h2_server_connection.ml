@@ -124,6 +124,14 @@ type stream_state = {
   mutable response_state : response_state;
 }
 
+(* Tracks one in-flight handler for the timeout watchdog: a deadline (ms since
+   epoch, plain int to avoid int64 boxing) and the handler fiber's cancellation
+   context, which the watchdog cancels if the deadline passes. *)
+type handler_watch = {
+  hw_deadline : int;
+  hw_cancel : Eio.Cancel.t;
+}
+
 type t = {
   sw : Eio.Switch.t;
   now_ms : unit -> int64;
@@ -169,6 +177,8 @@ type t = {
   connection_metrics : Server_metrics.t option;
   closed_signal : unit Eio.Promise.t;
   close_signal : unit Eio.Promise.u;
+  mutable handler_sw : Eio.Switch.t option;
+  handler_watches : (int, handler_watch) Hashtbl.t;
   mutable idle_timeout_token : unit Eio.Promise.u option;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
@@ -635,12 +645,7 @@ let validate_request_trailers t trailers =
                  ^ Eta_http.Error.kind_name kind))))
 
 let validate_decoded_request_header_names block headers =
-  let has_empty_name =
-    List.exists
-      (fun ({ Eta_http.Hpack.name; _ } : Eta_http.Hpack.header) ->
-         String.equal name "")
-      headers
-  in
+  let has_empty_name = List.exists (fun (name, _) -> String.equal name "") headers in
   if not has_empty_name then Ok ()
   else if block.trailers then
     Error
@@ -653,8 +658,7 @@ let validate_decoded_request_header_names block headers =
 
 let decoded_header_block_bytes headers =
   List.fold_left
-    (fun total ({ Eta_http.Hpack.name; value; _ } : Eta_http.Hpack.header) ->
-      total + String.length name + String.length value + 32)
+    (fun total (name, value) -> total + String.length name + String.length value + 32)
     0 headers
 
 let validate_decoded_request_header_limits t headers =
@@ -710,14 +714,13 @@ let complete_request_header_block t block =
               (Emit_frame
                  (emit_header_block t ~stream_id:block.stream_id
                     ~end_stream:block.end_stream
-                    (encode_request_header_block t headers))))
+                    (encode_request_header_block t
+                       (List.map
+                          (fun (name, value) ->
+                            { Eta_http.Hpack.name; value; sensitive = false })
+                          headers)))))
           else
-            let trailers =
-              List.map
-                (fun ({ Eta_http.Hpack.name; value; _ } : Eta_http.Hpack.header) -> (name, value))
-                headers
-            in
-            (match validate_request_trailers t trailers with
+            (match validate_request_trailers t headers with
             | Error _ as error -> error
             | Ok trailers ->
                 store_request_trailers t block.ordinal trailers;
@@ -941,7 +944,7 @@ let request_of_reqd ~connection ~ordinal ~stream_id ~body ~trailers reqd =
   let request = H2.Connection.Server.Reqd.request reqd in
   let path, query = Server.Request.split_target request.path in
   {
-    Server.Request.id = request_id connection.Types.Connection_info.id ordinal;
+    Server.Request.id = lazy (request_id connection.Types.Connection_info.id ordinal);
     version = Eta_http.Core.Version.H2;
     scheme = request.scheme;
     authority = request.authority;
@@ -2172,15 +2175,13 @@ let reader_loop t =
                    Eio.Flow.single_read t.flow cstruct))
           with Eio.Time.Timeout -> `Timeout timeout)
     in
-    Eio.Fiber.first
-      read
-      (fun () ->
-        Eio.Promise.await t.closed_signal;
-        `Closed)
+    (* Close is delivered via cancellation of the handler switch (which this
+       fiber runs under) rather than a per-read [Fiber.first] race against
+       [closed_signal], avoiding a fiber + cancel context per read. *)
+    read ()
   in
   let rec loop () =
     match single_read () with
-    | `Closed -> ()
     | `Timeout timeout ->
         ignore
           (enqueue t (Ingress_failed (request_timeout_error t (Some timeout))))
@@ -2189,9 +2190,9 @@ let reader_loop t =
         Bigstringaf.blit scratch ~src_off:0 t.read_owned ~dst_off:0 ~len;
         let promise, ack = Eio.Promise.create () in
         if enqueue t (Ingress { bytes = t.read_owned; off = 0; len; ack }) then (
-          Eio.Fiber.first
-            (fun () -> Eio.Promise.await promise)
-            (fun () -> Eio.Promise.await t.closed_signal);
+          (* Ack/close delivered via handler-switch cancellation, not a
+             per-ingress Fiber.first race. *)
+          Eio.Promise.await promise;
           loop ())
     | exception End_of_file -> ignore (enqueue t Ingress_eof)
     | exception Eio.Cancel.Cancelled _ -> ()
@@ -2202,31 +2203,20 @@ let reader_loop t =
 
 let write_job t job =
   let write () =
-    Eio.Fiber.first
-      (fun () ->
-        Eio.Flow.write t.flow [ job.data ];
-        job.len)
-      (fun () ->
-        Eio.Promise.await t.closed_signal;
-        graceful_close_flow_all t.flow;
-        raise End_of_file)
+    (* Close is delivered via handler-switch cancellation; the outer finally
+       still does graceful_close_flow_all, so the flow is closed on teardown. *)
+    Eio.Flow.write t.flow [ job.data ];
+    job.len
   in
   match t.config.server.timeouts.response_write_timeout with
   | None -> write ()
   | Some timeout -> t.with_timeout timeout write
 
 let writer_loop t =
-  let take_job () =
-    Eio.Fiber.first
-      (fun () -> `Job (Eio.Stream.take t.write_jobs))
-      (fun () ->
-        Eio.Promise.await t.closed_signal;
-        `Closed)
-  in
+  let take_job () = `Job (Eio.Stream.take t.write_jobs) in
   let rec loop () =
     if not t.closed then
       match take_job () with
-      | `Closed -> ()
       | `Job job ->
           if t.closed then ()
           else (
@@ -2239,6 +2229,34 @@ let writer_loop t =
             if enqueue t (Write_completed result) then loop ())
   in
   try loop () with Eio.Cancel.Cancelled _ -> ()
+
+(* Per-connection handler-timeout watchdog. Each in-flight handler registers a
+   deadline + its cancel context in [t.handler_watches]; this single daemon
+   polls and cancels any handler whose deadline has passed. This replaces the
+   per-request Eio.Time.with_timeout (sleeper fiber + Zzz timer node per
+   request) with O(1) zero-alloc arming. Poll cadence scales with the timeout
+   so short test timeouts still fire promptly. *)
+let watchdog_loop t =
+  match t.config.server.timeouts.handler_timeout with
+  | None -> ()
+  | Some timeout ->
+      let poll = Eta.Duration.ms (max 1 (Eta.Duration.to_ms timeout / 8)) in
+      let rec loop () =
+        if not t.closed then (
+          t.sleep poll;
+          (if (not t.closed) && Hashtbl.length t.handler_watches > 0 then
+             let now = Int64.to_int (t.now_ms ()) in
+             let expired =
+               Hashtbl.fold
+                 (fun _ w acc -> if now > w.hw_deadline then w :: acc else acc)
+                 t.handler_watches []
+             in
+             List.iter
+               (fun w -> Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout)
+               expired);
+          loop ())
+      in
+      loop ()
 
 let fail_owner_loop t error =
   mark_closed t;
@@ -2257,11 +2275,9 @@ let await_owner t make =
   else
     let promise, resolver = Eio.Promise.create () in
     if enqueue t (make resolver) then
-      Eio.Fiber.first
-        (fun () -> Eio.Promise.await promise)
-        (fun () ->
-          Eio.Promise.await t.closed_signal;
-          Error (connection_closed_error t Response_body))
+      (* Close is delivered by cancellation of the handler switch (handlers run
+         under [t.handler_sw]) rather than a per-call [Fiber.first] race. *)
+      Eio.Promise.await promise
     else Error (connection_closed_error t Response_body)
 
 (* Response-write commands resolve only once their data is flushed to the
@@ -2408,10 +2424,30 @@ let run_handler_body t ordinal request handler =
   let response =
     match t.config.server.timeouts.handler_timeout with
     | Some timeout -> (
-        match t.with_timeout timeout (fun () -> Eta.Runtime.run rt effect) with
+        (* Cheap handler timeout: register a deadline + this fiber's cancel
+           context for the watchdog, instead of arming a per-request Eio timer
+           (which forks a sleeper fiber + Zzz node). The watchdog cancels the
+           context if the deadline passes; cancellation surfaces as Cancelled
+           and is mapped to the handler-timeout response. *)
+        let deadline =
+          Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout
+        in
+        let run () =
+          Eio.Cancel.sub (fun cc ->
+              Hashtbl.replace t.handler_watches ordinal
+                { hw_deadline = deadline; hw_cancel = cc };
+              match Eta.Runtime.run rt effect with
+              | result ->
+                  Hashtbl.remove t.handler_watches ordinal;
+                  result
+              | exception exn ->
+                  Hashtbl.remove t.handler_watches ordinal;
+                  raise exn)
+        in
+        match run () with
         | Eta.Exit.Ok response -> response
         | Eta.Exit.Error cause -> fallback_error_response t request cause
-        | exception Eio.Time.Timeout ->
+        | exception Eio.Cancel.Cancelled _ ->
             Server.Handler.default_error_response
               (handler_timeout_error t request (Some timeout)))
     | None -> (
@@ -2446,11 +2482,20 @@ let run_handler_body t ordinal request handler =
           | Response_stream stream ->
               pump_response_stream t rt ordinal request response stream 0))
 
+(* Sentinel used to cancel all in-flight handler fibers at connection close
+   without propagating a real error out of the handler switch. *)
+exception Handlers_cancelled
+
+(* Handler fibers run on a dedicated per-connection switch [t.handler_sw] so a
+   single [Switch.fail] on close cancels every in-flight handler at once. This
+   replaces the old per-request [Eio.Fiber.first] race against [closed_signal],
+   which forked an extra fiber + cancellation context on every request. *)
 let run_handler t ordinal request handler =
-  Eio.Fiber.fork ~sw:t.sw (fun () ->
-      Eio.Fiber.first
-        (fun () -> run_handler_body t ordinal request handler)
-        (fun () -> Eio.Promise.await t.closed_signal))
+  match t.handler_sw with
+  | Some sw when not t.closed ->
+      Eio.Fiber.fork ~sw (fun () ->
+          run_handler_body t ordinal request handler)
+  | _ -> ()
 
 let shutdown t policy =
   if not t.closed then (
@@ -2600,6 +2645,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
         connection_metrics ~config ~runtime ~connection;
       closed_signal;
       close_signal;
+      handler_sw = None;
+      handler_watches = Hashtbl.create 16;
       idle_timeout_token = None;
       graceful_shutdown = false;
       shutdown_timer_started = false;
@@ -2631,9 +2678,18 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       graceful_close_flow_all flow;
       Option.iter (fun on_close -> on_close (stats t)) on_close)
 	    (fun () ->
-	      Eio.Fiber.fork ~sw (fun () -> writer_loop t);
-	      Eio.Fiber.fork ~sw (fun () -> reader_loop t);
-	      run_owner_loop t)
+	      try
+	        Eio.Switch.run (fun handler_sw ->
+	            t.handler_sw <- Some handler_sw;
+	            Eio.Fiber.fork_daemon ~sw (fun () -> watchdog_loop t; `Stop_daemon);
+	            Eio.Fiber.fork ~sw:handler_sw (fun () -> writer_loop t);
+	            Eio.Fiber.fork ~sw:handler_sw (fun () -> reader_loop t);
+	            run_owner_loop t;
+	            (* Connection closing: stop accepting new handler forks, then
+	               cancel any in-flight handler fibers in one shot. *)
+	            t.handler_sw <- None;
+	            Eio.Switch.fail handler_sw Handlers_cancelled)
+	      with Handlers_cancelled -> ())
 
 let run_h2c ~sw ~clock ?time ~flow ~peer ~config ~runtime_factory ?on_start
     ?on_close handler =

@@ -161,6 +161,13 @@ let append_string b s =
       ~len:slen;
     b.len <- b.len + slen)
 
+let append_substring b s ~src_off ~len =
+  if len > 0 then (
+    ensure_capacity b len;
+    Bigstringaf.blit_from_string s ~src_off b.data ~dst_off:(b.off + b.len)
+      ~len;
+    b.len <- b.len + len)
+
 let append_bigstring b src ~src_off ~len =
   if len > 0 then (
     ensure_capacity b len;
@@ -187,6 +194,25 @@ let append_bigstring_limited b ~limit src ~src_off ~len =
     b.len <- b.len + len)
 
 let[@zero_alloc] byte n = Char.chr (n land 0xff)
+
+(* Write a 9-byte HTTP/2 frame header directly into the bigstring write buffer,
+   avoiding the [String.init]-allocated header that [Frame.header] returns. *)
+let append_frame_header b ~length ~frame_type ~flags ~stream_id =
+  ensure_capacity b 9;
+  let data = b.data in
+  let base = b.off + b.len in
+  let set i c = Bigstringaf.unsafe_set data (base + i) c in
+  let ft = Frame.frame_type_code frame_type in
+  set 0 (byte (length lsr 16));
+  set 1 (byte (length lsr 8));
+  set 2 (byte length);
+  set 3 (byte ft);
+  set 4 (byte flags);
+  set 5 (byte (stream_id lsr 24));
+  set 6 (byte (stream_id lsr 16));
+  set 7 (byte (stream_id lsr 8));
+  set 8 (byte stream_id);
+  b.len <- b.len + 9
 
 (* -------------------------------------------------------------------------- *)
 (* Constructors *)
@@ -234,6 +260,31 @@ let wake_writer t =
 let send_raw t s =
   if t.state <> Closed then (
     append_string t.write_buf s;
+    wake_writer t)
+
+(* Append a frame header string followed by a bigstring payload directly into
+   the write buffer, avoiding the per-frame [Bigstringaf.substring] body copy
+   and the [header ^ body] concatenation. *)
+(* Append a frame header followed by a bigstring payload directly into the
+   write buffer, with no per-frame header string or payload-copy allocation. *)
+let send_frame_with_bigstring t ~length ~frame_type ~flags ~stream_id buf ~off =
+  if t.state <> Closed then (
+    append_frame_header t.write_buf ~length ~frame_type ~flags ~stream_id;
+    append_bigstring t.write_buf buf ~src_off:off ~len:length;
+    wake_writer t)
+
+(* Append a frame header followed by a slice of a string payload directly into
+   the write buffer (HEADERS/CONTINUATION path). *)
+let send_frame_with_substring t ~length ~frame_type ~flags ~stream_id s ~off =
+  if t.state <> Closed then (
+    append_frame_header t.write_buf ~length ~frame_type ~flags ~stream_id;
+    append_substring t.write_buf s ~src_off:off ~len:length;
+    wake_writer t)
+
+(* Append a payload-less frame header directly into the write buffer. *)
+let send_frame_header_only t ~length ~frame_type ~flags ~stream_id =
+  if t.state <> Closed then (
+    append_frame_header t.write_buf ~length ~frame_type ~flags ~stream_id;
     wake_writer t)
 
 let send_window_update_frame t stream_id increment =
@@ -363,11 +414,7 @@ let encode_header_list t headers =
     (List.map (fun (n, v) -> hpack_header n v) headers)
 
 let encode_headers t headers status =
-  let hpack_headers =
-    hpack_header ":status" (string_of_int status)
-    :: List.map (fun (n, v) -> hpack_header n v) headers
-  in
-  Hpack.encode_headers t.hpack_encoder hpack_headers
+  Hpack.encode_response_headers t.hpack_encoder ~status headers
 
 let encode_trailers t headers = encode_header_list t headers
 
@@ -382,19 +429,15 @@ let send_header_block t ~stream_id ~end_stream header_block =
         lor (if first && end_stream then Frame.Flags.end_stream else 0)
       in
       let frame_type = if first then Frame.Headers else Frame.Continuation in
-      let header =
-        Frame.header ~length:remaining ~frame_type ~flags ~stream_id
-      in
-      send_raw t (header ^ String.sub header_block off remaining)
+      send_frame_with_substring t ~length:remaining ~frame_type ~flags
+        ~stream_id header_block ~off
     else
       let flags =
         if first && end_stream then Frame.Flags.end_stream else 0
       in
       let frame_type = if first then Frame.Headers else Frame.Continuation in
-      let header =
-        Frame.header ~length:max_frame_size ~frame_type ~flags ~stream_id
-      in
-      send_raw t (header ^ String.sub header_block off max_frame_size);
+      send_frame_with_substring t ~length:max_frame_size ~frame_type ~flags
+        ~stream_id header_block ~off;
       loop (off + max_frame_size) false
   in
   loop 0 true
@@ -546,10 +589,7 @@ let handle_server_headers t ~flags ~stream_id payload =
       (match Hpack.decode_headers_string t.hpack_decoder payload with
       | Error _ ->
           reset_stream t stream_id Error_code.Compression_error
-      | Ok hpack_headers ->
-          let headers =
-            List.map (fun h -> (h.Hpack.name, h.Hpack.value)) hpack_headers
-          in
+      | Ok headers ->
           let meth = List.assoc_opt ":method" headers in
           let scheme = List.assoc_opt ":scheme" headers in
           let authority = List.assoc_opt ":authority" headers in
@@ -642,10 +682,7 @@ let handle_client_headers t c ~flags ~stream_id payload =
     | Error _ ->
         client_stream_error t stream_id Error_code.Compression_error
           "response HPACK decode error"
-    | Ok hpack_headers -> (
-        let headers =
-          List.map (fun h -> (h.Hpack.name, h.Hpack.value)) hpack_headers
-        in
+    | Ok headers -> (
         match (stream, client_stream) with
         | None, _ ->
             (* Closed streams can still carry frames already in flight. Keep the
@@ -1034,11 +1071,8 @@ let emit_final_stream_frame t stream =
       send_header_block t ~stream_id:(Stream.id stream) ~end_stream:true
         header_block
   | None ->
-      let header =
-        Frame.header ~length:0 ~frame_type:Frame.Data
-          ~flags:Frame.Flags.end_stream ~stream_id:(Stream.id stream)
-      in
-      send_raw t header);
+      send_frame_header_only t ~length:0 ~frame_type:Frame.Data
+        ~flags:Frame.Flags.end_stream ~stream_id:(Stream.id stream));
   Stream.mark_sent_end_stream stream;
   maybe_retire_stream t stream
 
@@ -1081,11 +1115,8 @@ let emit_stream_data t stream ref =
                 if end_stream_now then Frame.Flags.end_stream
                 else Frame.Flags.empty
               in
-              let header =
-                Frame.header ~length:len ~frame_type:Frame.Data ~flags
-                  ~stream_id:(Stream.id stream)
-              in
-              send_raw t (header ^ Bigstringaf.substring buf ~off ~len);
+              send_frame_with_bigstring t ~length:len ~frame_type:Frame.Data
+                ~flags ~stream_id:(Stream.id stream) buf ~off;
               Stream.notify_drained stream;
               if end_stream_now then (
                 Stream.mark_sent_end_stream stream;

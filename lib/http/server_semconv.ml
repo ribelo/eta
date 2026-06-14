@@ -35,7 +35,7 @@ let request_attrs ?(emit_url_full = false) request =
     ("url.path", request.path);
     ("network.protocol.name", "http");
     ("network.protocol.version", protocol_version request.version);
-    ("eta_http.server.request_id", request.id);
+    ("eta_http.server.request_id", Lazy.force request.id);
     ("eta_http.server.connection_id", request.connection_id);
   ]
   @ query_attrs

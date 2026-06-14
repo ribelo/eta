@@ -1,6 +1,6 @@
 (executables
- (names run compare)
- (libraries eta_http_testsuite eta_http_eio eta_eio eio_main eio_linux yojson unix))
+ (names run compare h2_probe)
+ (libraries eta_http_testsuite eta_http_eio eta_eio eio_main eio_linux yojson unix memtrace))
 
 (rule
  (alias server-load)

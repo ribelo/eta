@@ -36,6 +36,7 @@ type t = {
   mutable pending_off : int;
   mutable pending_len : int;
   head_buffer : bytes;
+  read_scratch : Cstruct.t;
   mutable write_buffer : Cstruct.t;
   mutable draining : bool;
   mutable shutdown_timer_started : bool;
@@ -254,7 +255,10 @@ let read_flow_into_bytes t dst dst_off len =
   let pending = read_pending t dst dst_off len in
   if pending > 0 then pending
   else
-    let scratch = Cstruct.create len in
+    (* Reuse the per-connection scratch Cstruct (sized to read_buffer_size, which
+       is >= any [len] passed here). Sub to [len] so [single_read] does not
+       over-read past what the caller wants. *)
+    let scratch = Cstruct.sub t.read_scratch 0 len in
     let read =
       try Eio.Flow.single_read t.flow scratch with
       | End_of_file -> 0
@@ -643,7 +647,7 @@ let request_of_head t head ordinal body trailers =
     | None -> Eta_http.Core.Header.get "host" head.headers
   in
   {
-    Server.Request.id = t.connection.id ^ "/request-" ^ string_of_int ordinal;
+    Server.Request.id = lazy (t.connection.id ^ "/request-" ^ string_of_int ordinal);
     version = head.version;
     scheme = if t.connection.tls then "https" else "http";
     authority;
@@ -1068,7 +1072,7 @@ let write_default_error ?(connection_close = true) t request error =
 
 let request_error_stub t =
   {
-    Server.Request.id = t.connection.id ^ "/request-error";
+    Server.Request.id = lazy (t.connection.id ^ "/request-error");
     version = Eta_http.Core.Version.H1_1;
     scheme = if t.connection.tls then "https" else "http";
     authority = None;
@@ -1212,6 +1216,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       pending_off = 0;
       pending_len = 0;
       head_buffer = Bytes.create (request_head_capacity config);
+      read_scratch = Cstruct.create config.read_buffer_size;
       write_buffer = Cstruct.create config.read_buffer_size;
       draining = false;
       shutdown_timer_started = false;

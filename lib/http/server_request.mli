@@ -6,7 +6,7 @@ type peer = {
 }
 
 type t = {
-  id : string;
+  id : string Lazy.t;
   version : Version.t;
   scheme : string;
   authority : string option;

@@ -26,7 +26,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ?stream_id () =
     let path, query = Server.Request.split_target target in
     {
-      Server.Request.id = "req-1";
+      Server.Request.id = lazy "req-1";
       version = Eta_http.Core.Version.H2;
       scheme;
       authority = Some "example.test";

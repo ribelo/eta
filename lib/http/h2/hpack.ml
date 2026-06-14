@@ -354,40 +354,103 @@ let huffman_codes : huffman_code array =
   ;  { code = 0x3ffffee; len = 26; value = 255 }
   |]
 
-(* ── Huffman Decode (simple code-scanner) ───────────────────────────── *)
+(* ── Huffman Decode (4-bit FSM, nghttp2/h2o algorithm) ──────────────────── *)
 
-(** Decode Huffman-encoded bytes. For each bit, check if the accumulated
-    prefix matches any Huffman code. Simple but correct and doesn't require
-    a large precomputed table. *)
+(* The decoder consumes the input one nibble (4 bits) at a time using a
+   precomputed finite-state-machine table, instead of scanning all 256 codes
+   per bit. The table is generated once at module load from [huffman_codes]
+   (no copied table, correct by construction).
+
+   A "state" is a node in the binary code trie reached at a nibble boundary
+   (i.e. an accumulated code prefix that has not yet matched a complete code).
+   Because the shortest HPACK Huffman code is 5 bits, a single 4-bit step can
+   complete at most one symbol, so each table entry carries at most one output.
+
+   [huffman_table.(state * 16 + nibble)] packs the transition:
+     -1                                  -> invalid bit sequence (decode error)
+     (next_state lsl 9) lor (sym_present lsl 8) lor sym
+   [huffman_accept.(state)] is true when [state] is a valid end-of-input state:
+   the path from the root is all 1-bits and at most 7 bits long (RFC 7541 §5.2
+   EOS padding), which includes the root itself. *)
+
+let huffman_table, huffman_accept =
+  let max_nodes = 1024 in
+  let c0 = Array.make max_nodes (-1) in
+  let c1 = Array.make max_nodes (-1) in
+  let leaf = Array.make max_nodes (-1) in
+  (* depth and all-ones-path are used to compute the accept flag. *)
+  let depth = Array.make max_nodes 0 in
+  let all_ones = Array.make max_nodes true in
+  let n_nodes = ref 1 (* node 0 = root *) in
+  let new_child parent bit =
+    let id = !n_nodes in
+    incr n_nodes;
+    depth.(id) <- depth.(parent) + 1;
+    all_ones.(id) <- all_ones.(parent) && bit = 1;
+    id
+  in
+  (* Build the trie from the canonical codes (MSB-first). *)
+  Array.iter
+    (fun { code; len; value } ->
+      let node = ref 0 in
+      for bit = len - 1 downto 0 do
+        let b = (code lsr bit) land 1 in
+        let child = if b = 0 then c0 else c1 in
+        if child.(!node) = -1 then child.(!node) <- new_child !node b;
+        node := child.(!node)
+      done;
+      leaf.(!node) <- value)
+    huffman_codes;
+  let n = !n_nodes in
+  let table = Array.make (n * 16) (-1) in
+  let accept = Array.make n false in
+  for s = 0 to n - 1 do
+    (* A state is only ever a non-leaf trie node (leaves emit and reset). *)
+    accept.(s) <- all_ones.(s) && depth.(s) <= 7;
+    for nib = 0 to 15 do
+      (* Walk the 4 bits of [nib] from state [s]. *)
+      let node = ref s in
+      let sym = ref (-1) in
+      let failed = ref false in
+      for bit = 3 downto 0 do
+        if not !failed then begin
+          let b = (nib lsr bit) land 1 in
+          let next = if b = 0 then c0.(!node) else c1.(!node) in
+          if next = -1 then failed := true
+          else if leaf.(next) >= 0 then begin
+            (* Completed a symbol: emit it and return to the root. *)
+            sym := leaf.(next);
+            node := 0
+          end
+          else node := next
+        end
+      done;
+      if not !failed then
+        table.((s * 16) + nib) <-
+          (!node lsl 9) lor (if !sym >= 0 then 0x100 lor !sym else 0)
+    done
+  done;
+  (table, accept)
+
 let huffman_decode bytes pos_ref ~len ~out =
-  let mutable acc = 0 in
-  let mutable acc_len = 0 in
   let end_pos = !pos_ref + len in
+  let state = ref 0 in
   while !pos_ref < end_pos do
     let b = Char.code (Bytes.unsafe_get bytes !pos_ref) in
     incr pos_ref;
-    for bit = 7 downto 0 do
-      acc <- (acc lsl 1) lor ((b lsr bit) land 1);
-      acc_len <- acc_len + 1;
-      (* Check all 256 codes for a match. Linear search is fine for headers. *)
-      let mutable found = false in
-      let mutable i = 0 in
-      while (not found) && i < 256 do
-        let { code; len; value } = huffman_codes.(i) in
-        if len = acc_len && code = acc then begin
-          if value < 256 then Buffer.add_char out (Char.unsafe_chr value);
-          acc <- 0;
-          acc_len <- 0;
-          found <- true
-        end;
-        i <- i + 1
-      done
-    done
+    (* High nibble. *)
+    let v = Array.unsafe_get huffman_table ((!state lsl 4) lor (b lsr 4)) in
+    if v < 0 then raise Exit;
+    if v land 0x100 <> 0 then Buffer.add_char out (Char.unsafe_chr (v land 0xff));
+    state := v lsr 9;
+    (* Low nibble. *)
+    let v = Array.unsafe_get huffman_table ((!state lsl 4) lor (b land 0xf)) in
+    if v < 0 then raise Exit;
+    if v land 0x100 <> 0 then Buffer.add_char out (Char.unsafe_chr (v land 0xff));
+    state := v lsr 9
   done;
-  (* EOS padding: remaining bits should be all 1s (EOS prefix) *)
-  if acc_len > 0 && acc = (1 lsl acc_len) - 1 then Buffer.length out
-  else if acc_len = 0 then Buffer.length out
-  else raise Exit
+  if not (Array.unsafe_get huffman_accept !state) then raise Exit;
+  Buffer.length out
 
 (* ── Dynamic Table ─────────────────────────────────────────────────────── *)
 (* Ring buffer with FIFO eviction when capacity exceeded. *)
@@ -565,7 +628,9 @@ let decode_headers (t : t) bytes =
   let pos_ref = ref 0 in
   let len = Bytes.length bytes in
 
-  (* Pre-allocate result accumulator. Most requests have < 20 headers. *)
+  (* Accumulate plain (name, value) tuples directly. This avoids allocating a
+     [header] record per decoded header only to have callers immediately map it
+     to a tuple. *)
   let result = ref [] in
 
   let saw_first_header = ref false in
@@ -579,7 +644,7 @@ let decode_headers (t : t) bytes =
         incr pos_ref;
         let index = decode_int_prefix b 7 bytes pos_ref in
         let name, value = get_indexed_field t index in
-        result := ({ name; value; sensitive = false } : header) :: !result;
+        result := (name, value) :: !result;
         saw_first_header := true
       end
       (* Literal with Incremental Indexing (§6.2.1): 01xxxxxx *)
@@ -597,7 +662,7 @@ let decode_headers (t : t) bytes =
             (name, value)
         in
         dynamic_table_add t name value;
-        result := ({ name; value; sensitive = false } : header) :: !result;
+        result := (name, value) :: !result;
         saw_first_header := true
       end
       (* Literal without Indexing (§6.2.2): 0000xxxx *)
@@ -614,7 +679,7 @@ let decode_headers (t : t) bytes =
             let value = decode_string_literal bytes pos_ref in
             (name, value)
         in
-        result := ({ name; value; sensitive = false } : header) :: !result;
+        result := (name, value) :: !result;
         saw_first_header := true
       end
       (* Literal Never Indexed (§6.2.3): 0001xxxx *)
@@ -631,7 +696,7 @@ let decode_headers (t : t) bytes =
             let value = decode_string_literal bytes pos_ref in
             (name, value)
         in
-        result := ({ name; value; sensitive = true } : header) :: !result;
+        result := (name, value) :: !result;
         saw_first_header := true
       end
       (* Dynamic Table Size Update (§6.3): 001xxxxx *)
@@ -767,12 +832,11 @@ let encoded_headers_bound enc headers =
     (32 + table_update_bound) headers
 
 (* Encode one header. *)
-let encode_single_header enc buf pos_ref (h : header) =
-  let name = h.name and value = h.value in
+let encode_name_value enc buf pos_ref ~name ~value ~sensitive =
   let token = lookup_token_index name in
   (match token with
    | -1 ->
-       if h.sensitive then
+       if sensitive then
          encoder_write_literal_never_indexed buf pos_ref ~name_index:0 ~name
            ~value
        else if encoder_can_index enc name value then
@@ -796,7 +860,7 @@ let encode_single_header enc buf pos_ref (h : header) =
             encoder_write_int buf pos_ref 0x80 7 idx
         | None ->
             let name_index = t + 1 in
-            if h.sensitive || never_indexed_token t
+            if sensitive || never_indexed_token t
                || (t = authorization_token && true)
                || (t = cookie_token && String.length value < 20)
             then
@@ -810,12 +874,60 @@ let encode_single_header enc buf pos_ref (h : header) =
               encoder_write_literal_without_indexing buf pos_ref ~name_index
                 ~name ~value))
 
+let encode_single_header enc buf pos_ref (h : header) =
+  encode_name_value enc buf pos_ref ~name:h.name ~value:h.value
+    ~sensitive:h.sensitive
+
+(* Precomputed decimal strings for HTTP status codes, to avoid a string_of_int
+   allocation (caml_format_int / sprintf) on every response. *)
+let status_strings = Array.init 600 string_of_int
+
+let status_to_string code =
+  if code >= 0 && code < 600 then Array.unsafe_get status_strings code
+  else string_of_int code
+
+(* HPACK static-table index (1-based) for a fully-indexed :status value, or -1.
+   These map to RFC 7541 Appendix A entries 8..14. *)
+let status_full_index = function
+  | 200 -> 8 | 204 -> 9 | 206 -> 10 | 304 -> 11
+  | 400 -> 12 | 404 -> 13 | 500 -> 14 | _ -> -1
+
 (* Encode a list of headers into a fresh bytes buffer. *)
 let encode_headers enc headers =
   let buf = Bytes.create (encoded_headers_bound enc headers) in
   let pos_ref = ref 0 in
   encoder_write_pending_table_size_updates enc buf pos_ref;
   List.iter (fun h -> encode_single_header enc buf pos_ref h) headers;
+  Bytes.sub_string buf 0 !pos_ref
+
+(* Response fast path: encode [:status] then plain (name, value) pairs (all
+   non-sensitive), without wrapping each pair in a [header] record or building
+   the [:status] string for common codes. Avoids the per-response List.map +
+   record allocations and the string_of_int for the status line. *)
+let encode_response_headers enc ~status headers =
+  let table_update_bound =
+    match (enc.pending_min_table_size, enc.pending_table_size) with
+    | None, None -> 0
+    | Some min_size, Some final_size when min_size <> final_size -> 10
+    | Some _, _ | None, Some _ -> 5
+  in
+  let bound =
+    List.fold_left
+      (fun total (n, v) -> total + String.length n + String.length v + 16)
+      (48 + table_update_bound) headers
+  in
+  let buf = Bytes.create bound in
+  let pos_ref = ref 0 in
+  encoder_write_pending_table_size_updates enc buf pos_ref;
+  (let idx = status_full_index status in
+   if idx >= 0 then encoder_write_int buf pos_ref 0x80 7 idx
+   else
+     encode_name_value enc buf pos_ref ~name:":status"
+       ~value:(status_to_string status) ~sensitive:false);
+  List.iter
+    (fun (n, v) -> encode_name_value enc buf pos_ref ~name:n ~value:v
+        ~sensitive:false)
+    headers;
   Bytes.sub_string buf 0 !pos_ref
 
 let encoder_set_max_table_size enc size =
