@@ -179,6 +179,12 @@ type t = {
   close_signal : unit Eio.Promise.u;
   mutable handler_sw : Eio.Switch.t option;
   handler_watches : (int, handler_watch) Hashtbl.t;
+  (* Single in-flight write watch: the writer fiber processes one job at a time,
+     so the response-write deadline needs only one slot, not a table. The
+     watchdog cancels its cancel context if the write blocks past the deadline
+     (peer withholds WINDOW_UPDATE). Replaces a per-write Eio.Time.with_timeout
+     (sleeper fiber + Zzz node + promise) with an O(1) deadline register. *)
+  mutable write_watch : handler_watch option;
   mutable idle_timeout_token : unit Eio.Promise.u option;
   mutable graceful_shutdown : bool;
   mutable shutdown_timer_started : bool;
@@ -2230,7 +2236,22 @@ let write_job t job =
   in
   match t.config.server.timeouts.response_write_timeout with
   | None -> write ()
-  | Some timeout -> t.with_timeout timeout write
+  | Some timeout ->
+      (* Cheap response-write timeout: register a deadline + this write's cancel
+         context for the watchdog, instead of arming a per-write Eio.Time
+         .with_timeout (sleeper fiber + Zzz node + promise). The watchdog cancels
+         the context (with Eio.Time.Timeout) if the write blocks past the
+         deadline; the writer maps that to a response-write-timeout error. *)
+      let deadline = Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout in
+      Eio.Cancel.sub (fun cc ->
+          t.write_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
+          match write () with
+          | n ->
+              t.write_watch <- None;
+              n
+          | exception exn ->
+              t.write_watch <- None;
+              raise exn)
 
 let writer_loop t =
   let take_job () = `Job (Eio.Stream.take t.write_jobs) in
@@ -2242,6 +2263,8 @@ let writer_loop t =
           else (
             let result =
               try Ok (write_job t job) with
+              | Eio.Cancel.Cancelled Eio.Time.Timeout ->
+                  Error (response_write_timeout_error t)
               | Eio.Cancel.Cancelled _ as exn -> raise exn
               | Eio.Time.Timeout -> Error (response_write_timeout_error t)
               | exn -> Error (connection_write_error t exn)
@@ -2257,23 +2280,36 @@ let writer_loop t =
    request) with O(1) zero-alloc arming. Poll cadence scales with the timeout
    so short test timeouts still fire promptly. *)
 let watchdog_loop t =
-  match t.config.server.timeouts.handler_timeout with
+  let handler_timeout = t.config.server.timeouts.handler_timeout in
+  let write_timeout = t.config.server.timeouts.response_write_timeout in
+  let base_ms =
+    match (handler_timeout, write_timeout) with
+    | Some a, Some b -> Some (min (Eta.Duration.to_ms a) (Eta.Duration.to_ms b))
+    | Some a, None | None, Some a -> Some (Eta.Duration.to_ms a)
+    | None, None -> None
+  in
+  match base_ms with
   | None -> ()
-  | Some timeout ->
-      let poll = Eta.Duration.ms (max 1 (Eta.Duration.to_ms timeout / 8)) in
+  | Some base_ms ->
+      let poll = Eta.Duration.ms (max 1 (base_ms / 8)) in
       let rec loop () =
         if not t.closed then (
           t.sleep poll;
-          (if (not t.closed) && Hashtbl.length t.handler_watches > 0 then
+          (if not t.closed then
              let now = Int64.to_int (t.now_ms ()) in
-             let expired =
-               Hashtbl.fold
-                 (fun _ w acc -> if now > w.hw_deadline then w :: acc else acc)
-                 t.handler_watches []
-             in
-             List.iter
-               (fun w -> Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout)
-               expired);
+             (if Hashtbl.length t.handler_watches > 0 then
+                let expired =
+                  Hashtbl.fold
+                    (fun _ w acc -> if now > w.hw_deadline then w :: acc else acc)
+                    t.handler_watches []
+                in
+                List.iter
+                  (fun w -> Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout)
+                  expired);
+             match t.write_watch with
+             | Some w when now > w.hw_deadline ->
+                 Eio.Cancel.cancel w.hw_cancel Eio.Time.Timeout
+             | _ -> ());
           loop ())
       in
       loop ()
@@ -2667,6 +2703,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       close_signal;
       handler_sw = None;
       handler_watches = Hashtbl.create 16;
+      write_watch = None;
       idle_timeout_token = None;
       graceful_shutdown = false;
       shutdown_timer_started = false;
