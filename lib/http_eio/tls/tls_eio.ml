@@ -230,7 +230,7 @@ module Flow_impl = struct
     loop ()
 
   let single_write t bufs =
-    if t.closed then 0
+    if t.closed then raise End_of_file
     else (
       if not t.handshake_done then do_handshake t;
       let total = ref 0 in

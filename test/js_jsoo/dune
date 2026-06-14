@@ -1,5 +1,7 @@
 (executable
  (name test_eta_jsoo)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (modes js)
  (libraries eta eta_jsoo js_of_ocaml)
  (js_of_ocaml
@@ -7,6 +9,8 @@
 
 (executable
  (name test_eta_js_jsoo)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (modes js)
  (libraries eta_js js_of_ocaml)
  (js_of_ocaml
@@ -14,6 +18,8 @@
 
 (rule
  (alias runtest)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (deps
   test_eta_jsoo.bc.js
   test_eta_js_jsoo.bc.js)

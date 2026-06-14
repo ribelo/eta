@@ -10,7 +10,7 @@ type request_error =
 
 type opened_request = {
   stream : stream;
-  request_body : H2.Body.Writer.t;
+  request_body : Eta_http.H2.Body.Writer.t;
 }
 
 type client_reader
@@ -23,15 +23,13 @@ type read_result =
 
 val create :
   ?max_concurrent:int ->
-  ?config:H2.Config.t ->
-  ?push_handler:
-    (H2.Request.t -> (H2.Client_connection.response_handler, unit) result) ->
+  ?config:Eta_http.H2.Config.t ->
   ?security:Security.t ->
-  ?error_handler:(H2.Client_connection.error -> unit) ->
+  ?error_handler:(Eta_http.H2.Connection.error -> unit) ->
   unit ->
   t
 
-val client_connection : t -> H2.Client_connection.t
+val client_connection : t -> Eta_http.H2.Connection.t
 val stats : t -> Stream_state.stats
 val mark_complete : t -> stream -> unit
 val mark_remote_reset : t -> int -> unit
@@ -41,10 +39,14 @@ val shutdown : t -> unit
 val request :
   t ->
   tag:int ->
-  ?trailers_handler:(H2.Headers.t -> unit) ->
-  H2.Request.t ->
-  error_handler:(stream -> H2.Client_connection.error -> unit) ->
-  response_handler:(stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  ?trailers_handler:(Eta_http.H2.Headers.t -> unit) ->
+  Eta_http.H2.Connection.Client.request ->
+  error_handler:(stream -> Eta_http.H2.Connection.error -> unit) ->
+  response_handler:
+    (stream ->
+    Eta_http.H2.Connection.Client.response ->
+    Eta_http.H2.Body.Reader.t ->
+    unit) ->
   (opened_request, request_error) result
 
 val create_client_reader :
@@ -52,7 +54,7 @@ val create_client_reader :
   ?buffer_size:int ->
   ?security:Security.t ->
   ?security_config:Security.config ->
-  H2.Client_connection.t ->
+  Eta_http.H2.Connection.t ->
   client_reader
 
 val create_reader :
@@ -61,23 +63,18 @@ val create_reader :
   ?security_config:Security.config ->
   t ->
   client_reader
-(** Create a reader bound to [t]'s informational-response filter. Readers built
-    this way are notified when {!release} locally resets a stream, so per-stream
-    filter markers do not outlive cancelled streams. *)
+(** Create a reader bound to [t]'s connection state machine. *)
 
-val client : client_reader -> H2.Client_connection.t
-
-val reader_is_passthrough : client_reader -> bool
-(** Always false while the informational filter must inspect response HEADERS. *)
+val client : client_reader -> Eta_http.H2.Connection.t
 
 val read_client_once :
   flow:[> Eio.Flow.source_ty] Eio.Resource.t ->
   client_reader ->
   read_result
-(** Feed one HTTP/2 client-read step from [flow]. If buffered network bytes fill
-    the adapter buffer without parser progress, returns
-    [Security_error (Connection_protocol_violation { kind =
-    "h2_read_buffer_exhausted"; _ })] instead of raising. *)
+(** Feed one HTTP/2 client-read step from [flow]. Raw frame bytes are observed by
+    the security scanner before they are passed into the in-house connection
+    state machine. Flow read failures are returned as typed security errors
+    instead of being raised. *)
 
 val body_stream :
   ?poll_error:(unit -> Error.t option) ->
@@ -88,7 +85,7 @@ val body_stream :
   pump:(unit -> (read_result, Error.t) Eta.Effect.t) ->
   t ->
   stream ->
-  H2.Body.Reader.t ->
+  Eta_http.H2.Body.Reader.t ->
   Stream.t
 
 val body_stream_async :
@@ -99,14 +96,14 @@ val body_stream_async :
   closed_error:Error.t ->
   t ->
   stream ->
-  H2.Body.Reader.t ->
+  Eta_http.H2.Body.Reader.t ->
   Stream.t * (unit -> unit)
 (** Like {!body_stream}, but waits for callbacks delivered by a background
     owner reader instead of reading the socket itself. The second result wakes a
     blocked reader when external state such as [poll_error] changes.
 
     Pull-based with backpressure: each consumer demand arms at most one upstream
-    [H2.Body.Reader.schedule_read], so the internal buffer never runs more than
-    one chunk ahead of the consumer even when h2 delivers synchronously from a
-    large pre-buffered frame. The full body is delivered without loss, including
-    data still buffered after the h2 body is closed. *)
+    [Eta_http.H2.Body.Reader.schedule_read], so the internal buffer never runs
+    more than one chunk ahead of the consumer even when the state machine
+    delivers synchronously from a large pre-buffered frame. The full body is
+    delivered without loss, including data still buffered after EOF. *)

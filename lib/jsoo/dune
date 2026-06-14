@@ -1,5 +1,7 @@
 (library
  (name eta_jsoo)
  (public_name eta_jsoo)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (synopsis "js_of_ocaml-native runtime backend for Eta")
  (libraries eta js_of_ocaml))

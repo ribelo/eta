@@ -44,19 +44,19 @@ let test_server_config_validation () =
     "Eta_http_eio.Server.Config.h2_config.request_body_buffer_size must be > 0"
     { config with h2_config };
   let h2_config =
-    { config.h2_config with max_concurrent_streams = 0l }
+    { config.h2_config with max_concurrent_streams = 0 }
   in
   check_invalid "h2 concurrent streams"
     "Eta_http_eio.Server.Config.h2_config.max_concurrent_streams must be > 0"
     { config with h2_config };
   let h2_config =
-    { config.h2_config with max_concurrent_streams = 4097l }
+    { config.h2_config with max_concurrent_streams = 4097 }
   in
   check_invalid "h2 concurrent streams upper bound"
     "Eta_http_eio.Server.Config.h2_config.max_concurrent_streams must be <= 4096"
     { config with h2_config };
   let h2_config =
-    { config.h2_config with initial_window_size = -1l }
+    { config.h2_config with initial_window_size = -1 }
   in
   check_invalid "h2 initial window"
     "Eta_http_eio.Server.Config.h2_config.initial_window_size must be >= 0"
@@ -78,9 +78,9 @@ let test_server_config_validation () =
 
 let test_server_config_default_h2_max_concurrent_streams_is_bounded () =
   let config = Eta_http_eio.Server.Config.default in
-  Alcotest.(check int32)
-    "default h2 max concurrent streams" 128l
-    config.h2_config.H2.Config.max_concurrent_streams
+  Alcotest.(check int)
+    "default h2 max concurrent streams" 128
+    config.h2_config.max_concurrent_streams
 
 let test_start_h1_validates_config_before_fork () =
   run_eio @@ fun env ->

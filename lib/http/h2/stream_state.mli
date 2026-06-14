@@ -1,7 +1,7 @@
 (** HTTP/2 per-stream lifecycle state.
 
     This layer owns eta-http's public stream lifetime around the lower-level
-    ocaml-h2 state machine. Remotely reset streams continue to occupy
+    HTTP/2 connection state machine. Remotely reset streams continue to occupy
     admission until the caller releases the response body. *)
 
 type status = Active | Remote_reset | Complete | Released

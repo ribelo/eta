@@ -4,11 +4,12 @@ module Error = Error
 module Multiplexer = Multiplexer
 module Writer = Writer
 
+module H2 = Eta_http.H2
+
 (* Connection owns socket lifetime, writes, and failure fan-out. Multiplexer
-   owns H2 stream admission and body-reader bookkeeping. The read loop crosses
-   that boundary because ocaml-h2 exposes a single mutable Client_connection
-   state machine; keep all direct flow I/O in this module and all per-stream
-   table updates in Multiplexer. *)
+   owns H2 stream admission and body-reader bookkeeping. The core H2 state
+   machine owns frame parsing and serialization; this module only moves bytes
+   between that state machine and the Eio flow. *)
 
 type flow = Connect.tcp_flow
 
@@ -20,7 +21,7 @@ type failure_waiter = {
 type t = {
   sw : Eio.Switch.t;
   mux : Multiplexer.t;
-  client : H2.Client_connection.t;
+  client : H2.Connection.t;
   reader : Multiplexer.client_reader;
   flow : flow;
   mutex : Eio.Mutex.t;
@@ -33,12 +34,9 @@ type t = {
 
 let close_kind = Error.Connection_closed { during = Error.Http_response }
 
-let pp_client_error = function
-  | `Malformed_response message -> "malformed_response:" ^ message
-  | `Invalid_response_body_length _ -> "invalid_response_body_length"
-  | `Protocol_error (code, message) ->
-      Format.asprintf "protocol_error:%a:%s" H2.Error_code.pp_hum code message
-  | `Exn exn -> "exn:" ^ Printexc.to_string exn
+let pp_client_error (error : H2.Connection.error) =
+  Format.asprintf "protocol_error:%a:%s" H2.Error_code.pp_hum error.error_code
+    error.message
 
 let with_lock t (f) =
   Eio.Mutex.lock t.mutex;
@@ -85,29 +83,35 @@ let fail_connection t kind =
 let write_iovecs flow iovecs =
   Writer.write_iovecs ~flow iovecs
 
+let transport_closed t =
+  with_lock t (fun () -> t.closed || H2.Connection.is_closed t.client)
+
 let rec writer_loop t =
-  if not (is_closed t) then
-    match H2.Client_connection.next_write_operation t.client with
-    | `Write iovecs ->
-        let written = write_iovecs t.flow iovecs in
-        H2.Client_connection.report_write_result t.client (`Ok written);
-        writer_loop t
-    | `Yield ->
-        let promise, resolver = Eio.Promise.create () in
-        with_lock t (fun () ->
-            t.wake_writer <-
-              Some (fun () -> ignore (Eio.Promise.try_resolve resolver ())));
-        H2.Client_connection.yield_writer t.client (fun () ->
-            ignore (Eio.Promise.try_resolve resolver ()));
-        Eio.Promise.await promise;
-        with_lock t (fun () -> t.wake_writer <- None);
-        writer_loop t
-    | `Close _ ->
-        H2.Client_connection.report_write_result t.client `Closed;
-        shutdown t
+  try
+    if not (transport_closed t) then
+      match H2.Connection.next_write_operation t.client with
+      | Write iovecs ->
+          let written = write_iovecs t.flow iovecs in
+          H2.Connection.report_write_result t.client (`Ok written);
+          writer_loop t
+      | Yield ->
+          let promise, resolver = Eio.Promise.create () in
+          with_lock t (fun () ->
+              t.wake_writer <-
+                Some (fun () -> ignore (Eio.Promise.try_resolve resolver ())));
+          H2.Connection.yield_writer t.client (fun () ->
+              ignore (Eio.Promise.try_resolve resolver ()));
+          Eio.Promise.await promise;
+          with_lock t (fun () -> t.wake_writer <- None);
+          writer_loop t
+      | Close _ ->
+          H2.Connection.report_write_result t.client `Closed;
+          shutdown t
+  with exn ->
+    shutdown t
 
 and reader_loop ~security_error_handler t =
-  if not (is_closed t) then
+  if not (transport_closed t) then
     match Multiplexer.read_client_once ~flow:t.flow t.reader with
     | Read _ -> reader_loop ~security_error_handler t
     | Security_error kind ->
@@ -116,7 +120,7 @@ and reader_loop ~security_error_handler t =
     | Eof _ | Close -> shutdown t
 
 and is_closed t =
-  with_lock t (fun () -> t.closed || H2.Client_connection.is_closed t.client)
+  with_lock t (fun () -> t.closed || not (H2.Connection.accepts_new_streams t.client))
 
 let run_owner_loop ?(on_error = fun _ -> ()) loop t =
   try loop t
@@ -131,14 +135,14 @@ let run_owner_loop ?(on_error = fun _ -> ()) loop t =
       on_error kind;
       fail_connection t kind
 
-let create ~sw ~flow ~now_ms ?max_concurrent ?config ?push_handler
+let create ~sw ~flow ~now_ms ?max_concurrent ?config
     ?(error_handler = fun _ -> ())
     ?(security_error_handler = fun _ -> ()) ?(on_close = fun () -> ())
     ?(reader_buffer_size = 64 * 1024) () =
   let holder = ref None in
   let security = Security.create () in
   let mux =
-    Multiplexer.create ?max_concurrent ?config ?push_handler
+    Multiplexer.create ?max_concurrent ?config
       ~security ~error_handler:(fun error ->
         error_handler error;
         match !holder with

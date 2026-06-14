@@ -14,6 +14,7 @@
 
 (package
  (name eta_js)
+ (allow_empty)
  (synopsis "js_of_ocaml Eta facade")
  (description
   "eta_js provides a js_of_ocaml-first Eta facade backed by the eta_jsoo runtime host.")
@@ -26,6 +27,7 @@
 
 (package
  (name eta_jsoo)
+ (allow_empty)
  (synopsis "js_of_ocaml-native runtime backend for Eta")
  (description
   "eta_jsoo implements Eta's runtime contract directly on JavaScript timers and microtasks for js_of_ocaml targets.")
@@ -37,6 +39,7 @@
 
 (package
  (name eta_js_test)
+ (allow_empty)
  (synopsis "Testing helpers for eta_js")
  (description
   "eta_js_test provides js_of_ocaml Node test helpers for eta_js.")
@@ -48,6 +51,7 @@
 
 (package
  (name eta_js_stream)
+ (allow_empty)
  (synopsis "JavaScript streams for eta_js")
  (description
   "eta_js_stream provides pull-based streams for eta_js without Eio or Cstruct dependencies.")
@@ -116,6 +120,20 @@
   (cstruct (>= 6.0.0))))
 
 (package
+ (name eta_http_h2)
+ (synopsis "HTTP/2 protocol implementation for Eta")
+ (description
+  "eta_http_h2 provides an H2O-inspired HTTP/2 frame, settings, stream, and connection state machine for Eta.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  (bigstringaf (>= 0.9.0))
+  (cstruct (>= 6.0.0))
+  (angstrom (>= 0.16.0))
+  (faraday (>= 0.8.0))))
+
+(package
  (name eta_http)
  (synopsis "Backend-neutral HTTP protocol and client contract for Eta")
  (description
@@ -125,9 +143,8 @@
   (dune (>= 3.0))
   eta
   eta_stream
+  eta_http_h2
   (cstruct (>= 6.0.0))
-  (h2 (>= 0.12.0))
-  (hpack (>= 0.12.0))
   (faraday (>= 0.8.0))
   (angstrom (>= 0.16.0))
   (yojson (>= 2.0))
@@ -155,8 +172,6 @@
   eta_stream
   (eio (>= 1.0))
   (cstruct (>= 6.0.0))
-  (h2 (>= 0.12.0))
-  (hpack (>= 0.12.0))
   (faraday (>= 0.8.0))
   (angstrom (>= 0.16.0))
   (yojson (>= 2.0))

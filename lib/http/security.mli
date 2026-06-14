@@ -1,16 +1,16 @@
 (** Byte-level HTTP/2 security envelope checks.
 
-    This scanner observes raw HTTP/2 frame bytes before they are handed to
-    [ocaml-h2]. It owns eta-http's cheap frame-envelope policy: SETTINGS, PING,
-    RST_STREAM, empty DATA, and WINDOW_UPDATE frames are rate-limited by a
-    sliding monotonic-time window with high emergency lifetime ceilings. GOAWAY
-    is counted while allowing valid graceful shutdown sequences with
-    non-increasing [last_stream_id] values.
+    This scanner observes raw HTTP/2 frame bytes before the in-house state
+    machine consumes them. It owns eta-http's cheap frame-envelope policy:
+    SETTINGS, PING, RST_STREAM, empty DATA, and WINDOW_UPDATE frames are
+    rate-limited by a sliding monotonic-time window with high emergency lifetime
+    ceilings. GOAWAY is counted while allowing valid graceful shutdown sequences
+    with non-increasing [last_stream_id] values.
     Response HEADERS are counted per stream: long-lived multiplexed connections
     may legitimately see hundreds of normal responses, while repeated HEADERS
     transitions on the same stream remain a churn signal.
     Header-block/CONTINUATION byte caps protect incomplete or oversized HPACK
-    envelopes; HPACK decoding remains owned by [ocaml-h2]. *)
+    envelopes; HPACK decoding is owned by [eta_http_h2]. *)
 
 type rate_limit = {
   burst : int;

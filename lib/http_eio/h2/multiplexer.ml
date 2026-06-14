@@ -2,11 +2,13 @@
 
 module Stream_state = Stream_state
 module Security = Security
+module H2 = Eta_http.H2
 
-(* Multiplexer is intentionally socket-free. It adapts ocaml-h2's mutable
-   Client_connection callbacks into Eta stream state, while Connection owns the
-   actual flow reads/writes and shutdown. Do not add Eio.Flow operations here;
-   that keeps connection lifetime and per-stream lifetime auditable separately. *)
+(* Multiplexer is intentionally socket-free. It adapts the in-house HTTP/2
+   client state-machine callbacks into Eta stream state, while Connection owns
+   the actual flow reads/writes and shutdown. Do not add Eio.Flow operations
+   here; that keeps connection lifetime and per-stream lifetime auditable
+   separately. *)
 
 type stream = Stream_state.stream
 
@@ -21,28 +23,29 @@ type opened_request = {
 }
 
 type h2_request =
-  H2.Client_connection.t ->
+  H2.Connection.t ->
+  stream_id:int ->
   ?trailers_handler:(H2.Headers.t -> unit) ->
-  H2.Request.t ->
-  error_handler:(H2.Client_connection.error -> unit) ->
-  response_handler:(H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  H2.Connection.Client.request ->
+  error_handler:(int -> H2.Connection.error -> unit) ->
+  response_handler:(int -> H2.Connection.Client.response -> unit) ->
   H2.Body.Writer.t
 
 type t = {
-  client : H2.Client_connection.t;
+  client : H2.Connection.t;
   streams : Stream_state.t;
   request_bodies : (int, H2.Body.Writer.t) Hashtbl.t;
   response_bodies : (int, H2.Body.Reader.t) Hashtbl.t;
-  filter : Informational_filter.t;
   security : Security.t option;
   mutable closed : bool;
 }
 
-let create ?(max_concurrent = 128) ?config ?push_handler
+let create ?(max_concurrent = 128) ?config
     ?security ?(error_handler = fun _ -> ()) () =
   let holder = ref None in
+  let config = Option.map H2.Config.to_settings config in
   let client =
-    H2.Client_connection.create ?config ?push_handler
+    H2.Connection.Client.create ?config
       ~error_handler:(fun error ->
         (match !holder with Some t -> t.closed <- true | None -> ());
         error_handler error)
@@ -54,7 +57,6 @@ let create ?(max_concurrent = 128) ?config ?push_handler
       streams = Stream_state.create ~max_concurrent;
       request_bodies = Hashtbl.create max_concurrent;
       response_bodies = Hashtbl.create max_concurrent;
-      filter = Informational_filter.create ();
       security;
       closed = false;
     }
@@ -93,14 +95,13 @@ let release t stream =
       if not (H2.Body.Reader.is_closed body) then H2.Body.Reader.close body;
       Hashtbl.remove t.response_bodies stream_id
   | None -> ());
-  Informational_filter.forget_stream t.filter stream_id;
   complete_security_stream t stream_id;
   decision
 
 let shutdown t =
   if not t.closed then (
     t.closed <- true;
-    H2.Client_connection.shutdown t.client;
+    H2.Connection.shutdown t.client;
     Stream_state.close t.streams;
     Hashtbl.iter (fun _ body -> close_request_body body) t.request_bodies;
     Hashtbl.clear t.request_bodies;
@@ -108,7 +109,7 @@ let shutdown t =
 
 let request_with_h2_request h2_request t ~tag ?trailers_handler request
     ~error_handler ~response_handler =
-  if t.closed || H2.Client_connection.is_closed t.client then
+  if t.closed || not (H2.Connection.accepts_new_streams t.client) then
     Error Connection_closed
   else
     match Stream_state.open_stream t.streams ~tag with
@@ -119,11 +120,20 @@ let request_with_h2_request h2_request t ~tag ?trailers_handler request
         let stream_id = Stream_state.id stream in
         try
           let request_body =
-            h2_request t.client ?trailers_handler request
-              ~error_handler:(fun error ->
+            h2_request t.client ~stream_id ?trailers_handler request
+              ~error_handler:(fun h2_stream_id error ->
+                if h2_stream_id <> stream_id then
+                  invalid_arg
+                    "Eta_http_eio.H2.Multiplexer.request: core stream id \
+                     mismatch";
                 Stream_state.mark_remote_reset t.streams stream_id;
                 error_handler stream error)
-              ~response_handler:(fun response body ->
+              ~response_handler:(fun h2_stream_id response ->
+                if h2_stream_id <> stream_id then
+                  invalid_arg
+                    "Eta_http_eio.H2.Multiplexer.request: core response stream \
+                     id mismatch";
+                let body = response.H2.Connection.Client.body in
                 Hashtbl.replace t.response_bodies stream_id body;
                 response_handler stream response body)
           in
@@ -134,19 +144,16 @@ let request_with_h2_request h2_request t ~tag ?trailers_handler request
           Error (Request_failed (Printexc.to_string exn))
 
 let request =
-  request_with_h2_request (fun client ?trailers_handler request ~error_handler
-                              ~response_handler ->
-      H2.Client_connection.request client request ?trailers_handler ~error_handler
-        ~response_handler)
+  request_with_h2_request (fun client ~stream_id ?trailers_handler request
+                              ~error_handler ~response_handler ->
+      H2.Connection.Client.request client ~stream_id request ?trailers_handler
+        ~error_handler ~response_handler)
 
 type client_reader = {
-  client : H2.Client_connection.t;
+  client : H2.Connection.t;
   security : Security.t;
-  filter : Informational_filter.t;
   now_ms : unit -> int64;
   buffer : Bigstringaf.t;
-  mutable filtered : string;
-  mutable filtered_off : int;
   mutable off : int;
   mutable len : int;
   mutable eof : bool;
@@ -162,8 +169,8 @@ type body_event =
   | Body_chunk of bytes
   | Body_eof
 
-let create_client_reader_with_filter ~now_ms ?(buffer_size = 64 * 1024)
-    ?security ?security_config ~filter client =
+let create_client_reader ~now_ms ?(buffer_size = 64 * 1024)
+    ?security ?security_config client =
   if buffer_size <= 0 then
     invalid_arg "Eta_http_eio.H2.Multiplexer.create_client_reader: buffer_size must be > 0";
   let security =
@@ -178,28 +185,18 @@ let create_client_reader_with_filter ~now_ms ?(buffer_size = 64 * 1024)
   {
     client;
     security;
-    filter;
     now_ms;
     buffer;
-    filtered = "";
-    filtered_off = 0;
     off = 0;
     len = 0;
     eof = false;
   }
 
-let create_client_reader ~now_ms ?buffer_size ?security ?security_config
-    client =
-  create_client_reader_with_filter ~now_ms ?buffer_size ?security
-    ?security_config ~filter:(Informational_filter.create ()) client
-
 let create_reader ~now_ms ?buffer_size ?security_config (t : t) =
   let security = t.security in
-  create_client_reader_with_filter ~now_ms ?buffer_size ?security
-    ?security_config ~filter:t.filter t.client
+  create_client_reader ~now_ms ?buffer_size ?security ?security_config t.client
 
 let client reader = reader.client
-let reader_is_passthrough reader = Informational_filter.is_passthrough reader.filter
 let capacity reader = Bigstringaf.length reader.buffer
 
 let compact reader =
@@ -211,7 +208,7 @@ let compact reader =
 
 let feed_pending reader =
   let consumed =
-    H2.Client_connection.read reader.client reader.buffer ~off:reader.off
+    H2.Connection.read reader.client reader.buffer ~off:reader.off
       ~len:reader.len
   in
   reader.off <- reader.off + consumed;
@@ -223,26 +220,12 @@ let feed_eof reader =
   else (
     reader.eof <- true;
     let consumed =
-      H2.Client_connection.read_eof reader.client reader.buffer ~off:reader.off
+      H2.Connection.read_eof reader.client reader.buffer ~off:reader.off
         ~len:reader.len
     in
     reader.off <- reader.off + consumed;
     reader.len <- reader.len - consumed;
     Eof consumed)
-
-let copy_filtered reader =
-  let available = String.length reader.filtered - reader.filtered_off in
-  if available <= 0 then 0
-  else
-    let copied = min available (capacity reader - reader.len) in
-    Bigstringaf.blit_from_string reader.filtered ~src_off:reader.filtered_off
-      reader.buffer ~dst_off:reader.len ~len:copied;
-    reader.filtered_off <- reader.filtered_off + copied;
-    reader.len <- reader.len + copied;
-    if reader.filtered_off >= String.length reader.filtered then (
-      reader.filtered <- "";
-      reader.filtered_off <- 0);
-    copied
 
 let security_observation_kind = function
   | Security.Pass -> None
@@ -253,10 +236,8 @@ let security_observation_kind = function
 
 let read_more ~flow reader =
   compact reader;
-  match copy_filtered reader with
-  | copied when copied > 0 -> `Read_more copied
-  | _ when reader.len >= capacity reader -> `Buffer_full
-  | _ ->
+  if reader.len >= capacity reader then `Buffer_full
+  else
       let free_space = capacity reader - reader.len in
       let view = Cstruct.of_bigarray reader.buffer ~off:reader.len ~len:free_space in
       try
@@ -268,22 +249,8 @@ let read_more ~flow reader =
          with
         | Some error -> `Security_error error
         | None ->
-            if Informational_filter.is_passthrough reader.filter then (
-              reader.len <- reader.len + read;
-              `Read_more read)
-            else (
-              let raw = Bigstringaf.substring reader.buffer ~off:reader.len ~len:read in
-              match Informational_filter.feed reader.filter raw ~off:0 ~len:read with
-              | Error error -> `Security_error error
-              | Ok () ->
-                  reader.filtered <- Informational_filter.take reader.filter;
-                  reader.filtered_off <- 0;
-                  let copied = copy_filtered reader in
-                  if copied = 0
-                     && Informational_filter.buffered_bytes reader.filter
-                        >= capacity reader
-                  then `Buffer_full
-                  else `Read_more copied))
+            reader.len <- reader.len + read;
+            `Read_more read)
       with
       | Eio.Cancel.Cancelled _ as exn -> raise exn
       | End_of_file -> `Eof
@@ -305,31 +272,22 @@ let buffer_exhausted reader =
              (capacity reader);
        })
 
-let has_filtered reader =
-  String.length reader.filtered > reader.filtered_off
-
 let rec read_client_once ~flow reader =
   if reader.len > 0 then
     match feed_pending reader with
     | consumed when consumed > 0 -> Read consumed
     | _ -> read_client_next ~flow reader
-  else if has_filtered reader then
-    match copy_filtered reader with
-    | copied when copied > 0 -> read_client_once ~flow reader
-    | _ -> read_client_next ~flow reader
   else read_client_next ~flow reader
 
 and read_client_next ~flow reader =
-  match H2.Client_connection.next_read_operation reader.client with
-  | `Close -> Close
-  | `Read -> (
-      if reader.eof then Eof 0
-      else
-        match read_more ~flow reader with
-        | `Read_more _ -> read_client_once ~flow reader
-        | `Security_error error -> Security_error error
-        | `Eof -> feed_eof reader
-        | `Buffer_full -> buffer_exhausted reader)
+  if H2.Connection.is_closed reader.client then Close
+  else if reader.eof then Eof 0
+  else
+    match read_more ~flow reader with
+    | `Read_more _ -> read_client_once ~flow reader
+    | `Security_error error -> Security_error error
+    | `Eof -> feed_eof reader
+    | `Buffer_full -> buffer_exhausted reader
 
 let body_stream ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     ?(on_release = fun _ -> Eta.Effect.unit) ~closed_error ~pump t stream body =
@@ -438,18 +396,13 @@ let body_stream_async ?(poll_error = fun () -> None) ?(on_eof = fun () -> ())
     notify ()
   in
   let schedule_read () =
-    (* Arm exactly one upstream read per call. ocaml-h2 may invoke [on_read]
-       synchronously when a frame is already buffered; we must NOT re-arm in a
-       loop on synchronous delivery, or a large pre-buffered body would be
-       drained in full into the unbounded [events] queue, circumventing
-       backpressure. Subsequent reads are driven by the consumer pulling the
-       stream (await_event -> schedule_read), so at most one chunk is buffered
-       ahead of demand.
-
-       We deliberately do NOT gate on [is_closed body]: a closed h2 body can
-       still hold buffered DATA, and [H2.Body.Reader.schedule_read] drains it
-       (delivering [on_read] for buffered bytes, or [on_eof] only once truly
-       empty). Gating on closed here would drop the tail of the body. *)
+    (* Arm exactly one upstream read per call. The body reader may invoke
+       [on_read] synchronously when a frame is already buffered; we must not
+       re-arm in a loop on synchronous delivery, or a large pre-buffered body
+       would be drained in full into the unbounded [events] queue,
+       circumventing backpressure. Subsequent reads are driven by the consumer
+       pulling the stream (await_event -> schedule_read), so at most one chunk
+       is buffered ahead of demand. *)
     let should_schedule =
       with_lock (fun () -> (not state.scheduled) && not state.eof)
     in

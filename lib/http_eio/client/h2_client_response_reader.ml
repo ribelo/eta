@@ -1,10 +1,10 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 module Body = Stream
-module H2_proto = H2
+module H2_proto = Eta_http.H2
 
 let response_headers response =
-  H2_proto.Headers.to_list response.H2_proto.Response.headers
+  response.H2_proto.Connection.Client.headers
   |> List.filter (fun (name, _) ->
          String.length name = 0 || not (Char.equal name.[0] ':'))
 

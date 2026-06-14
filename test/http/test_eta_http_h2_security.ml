@@ -76,11 +76,11 @@ let expect_h2_security_connection_error label frame =
       Alcotest.failf "%s: expected connection error, got policy close %s" label
         (Eta_http.Error.kind_name kind)
 
-let test_h2_multiplexer_buffer_full_is_security_error () =
+let test_h2_multiplexer_partial_frame_eof_is_protocol_error () =
+  let errors = ref [] in
   let client =
-    H2.Client_connection.create
-      ~error_handler:(fun _ -> Alcotest.fail "unexpected h2 client error")
-      ()
+    Eta_http.H2.Connection.Client.create
+      ~error_handler:(fun error -> errors := error :: !errors) ()
   in
   let reader =
     Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
@@ -94,19 +94,63 @@ let test_h2_multiplexer_buffer_full_is_security_error () =
   let source =
     Eio.Flow.cstruct_source (h2_cstruct_chunks ~chunk_size:8 partial_headers)
   in
-  match Eta_http_eio.H2.Multiplexer.read_client_once ~flow:source reader with
-  | Security_error
-      (Connection_protocol_violation
-        { kind = "h2_read_buffer_exhausted"; message = _ }) -> ()
+  (match Eta_http_eio.H2.Multiplexer.read_client_once ~flow:source reader with
+  | Read 8 -> ()
+  | Read n -> Alcotest.failf "expected first read to consume 8 bytes, got %d" n
   | Security_error kind ->
-      Alcotest.failf "unexpected security error: %s"
+      Alcotest.failf "partial frame produced security error before EOF: %s"
         (Eta_http.Error.kind_name kind)
-  | Read _ | Eof _ | Close ->
-      Alcotest.fail "buffer-full read did not surface a typed security error"
+  | Eof _ | Close -> Alcotest.fail "partial frame closed before EOF was read");
+  (match Eta_http_eio.H2.Multiplexer.read_client_once ~flow:source reader with
+  | Eof 0 -> ()
+  | Eof n -> Alcotest.failf "expected EOF to consume 0 bytes, got %d" n
+  | Read n -> Alcotest.failf "unexpected read after partial frame: %d" n
+  | Security_error kind ->
+      Alcotest.failf "EOF protocol error should come from h2 core, got %s"
+        (Eta_http.Error.kind_name kind)
+  | Close -> Alcotest.fail "partial frame closed without EOF");
+  match !errors with
+  | [ { Eta_http.H2.Connection.error_code = Eta_http.H2.Error_code.Protocol_error;
+        message;
+      } ]
+    when String.equal message "transport EOF with incomplete HTTP/2 frame" ->
+      ()
+  | [ error ] ->
+      Alcotest.failf "unexpected h2 client error: %a %s"
+        Eta_http.H2.Error_code.pp_hum error.error_code error.message
+  | [] -> Alcotest.fail "partial frame EOF did not report a protocol error"
+  | _ :: _ :: _ -> Alcotest.fail "partial frame EOF reported multiple errors"
+
+let test_h2_connection_rejects_oversized_frame () =
+  let errors = ref [] in
+  let client =
+    Eta_http.H2.Connection.Client.create
+      ~error_handler:(fun error -> errors := error :: !errors) ()
+  in
+  let frame =
+    h2_frame_header
+      ~length:(Eta_http.H2.Settings.default.max_frame_size + 1)
+      ~frame_type:0x0 ~flags:0 ~stream_id:1
+  in
+  let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
+  let consumed =
+    Eta_http.H2.Connection.read client bs ~off:0 ~len:(String.length frame)
+  in
+  Alcotest.(check int) "oversized frame header consumed" 9 consumed;
+  match !errors with
+  | [ { Eta_http.H2.Connection.error_code = Eta_http.H2.Error_code.Frame_size_error;
+        message = _;
+      } ] ->
+      ()
+  | [ error ] ->
+      Alcotest.failf "unexpected oversized-frame error: %a %s"
+        Eta_http.H2.Error_code.pp_hum error.error_code error.message
+  | [] -> Alcotest.fail "oversized frame did not report a frame-size error"
+  | _ :: _ :: _ -> Alcotest.fail "oversized frame reported multiple errors"
 
 let test_h2_security_settings_churn_reader () =
   let client =
-    H2.Client_connection.create
+    Eta_http.H2.Connection.Client.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected h2 client error")
       ()
   in

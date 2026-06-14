@@ -13,7 +13,7 @@ HTTP backend adapter.
 
 Allowed shared protocol dependencies include:
 
-- `cstruct`, `bigstringaf`, `faraday`, `h2`, and `hpack` for HTTP/2 and
+- `cstruct`, `bigstringaf`, `faraday`, and `eta_http_h2` for HTTP/2 and
   serializer substrate values.
 - `angstrom`, `decompress`, `domain-name`, `ipaddr`, `base64`, `yojson`,
   `unix`, and the local OpenSSL stubs for backend-neutral parsing, compression,

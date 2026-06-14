@@ -100,11 +100,96 @@ end
 (** HTTP/1.1 parser and serializer modules. *)
 
 module H2 : sig
-  module Admission = Admission
-  module Frame = Frame
-  module Informational_filter = Informational_filter
+  module Admission = Eta_http_h2.Admission
+  module Body = Eta_http_h2.Body
+  module Config : sig
+    type t = {
+      read_buffer_size : int;
+      request_body_buffer_size : int;
+      response_body_buffer_size : int;
+      max_concurrent_streams : int;
+      initial_window_size : int;
+      max_header_list_size : int option;
+      max_header_count : int;
+    }
+
+    val default : t
+    val to_settings : t -> Eta_http_h2.Settings.t
+  end
+
+  module Connection = Eta_http_h2.Connection
+  module Error_code = Eta_http_h2.Error_code
+  module Frame = Eta_http_h2.Frame
+  module Hpack = Eta_http_h2.Hpack
+
+  module Headers : sig
+    type t = (string * string) list
+
+    val empty : t
+    val to_list : t -> (string * string) list
+    val of_list : (string * string) list -> t
+    val of_rev_list : (string * string) list -> t
+    val get : t -> string -> string option
+    val add : t -> string -> string -> t
+  end
+
+  module IOVec : sig
+    type 'a t = 'a Eta_http_h2.Connection.iovec = {
+      buffer : 'a;
+      off : int;
+      len : int;
+    }
+
+    val buffer : 'a t -> 'a
+    val off : 'a t -> int
+    val len : 'a t -> int
+    val lengthv : 'a t list -> int
+  end
+
+  module Method : sig
+    type t = string
+
+    val to_string : t -> string
+    val of_string : string -> t
+  end
+
+  module Request : sig
+    type t = {
+      meth : string;
+      scheme : string;
+      authority : string option;
+      path : string;
+      headers : Headers.t;
+    }
+
+    val create : ?scheme:string -> ?headers:Headers.t -> string -> string -> t
+  end
+
+  module Response : sig
+    type body = [ `Empty | `String of string | `Reader of Body.Reader.t ]
+
+    type t = {
+      status : int;
+      headers : Headers.t;
+      body : body;
+      trailers : Headers.t Lazy.t;
+    }
+
+    val create : ?headers:Headers.t -> status:int -> body -> t
+  end
+
   module Security = Security
-  module Stream_state = Stream_state
+  module Settings = Eta_http_h2.Settings
+  module Status : sig
+    type t = int
+
+    val of_code : int -> t
+    val to_code : t -> int
+  end
+
+  module Stream = Eta_http_h2.Stream
+  module Stream_state = Eta_http_h2.Stream_state
+  module Window = Eta_http_h2.Window
 end
 (** HTTP/2 protocol helpers that do not own sockets or scheduler state. *)
 
@@ -112,4 +197,6 @@ module Ws : sig
   module Codec = Codec
 end
 (** RFC 6455 codec. *)
-  module Hpack_ox = Hpack_ox
+
+module Hpack = Eta_http_h2.Hpack
+(** HPACK codec used by the in-house HTTP/2 implementation. *)

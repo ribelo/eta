@@ -53,7 +53,7 @@ module Config = struct
     command_queue_capacity : int;
     tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
-    h2_config : H2.Config.t;
+    h2_config : Eta_http.H2.Config.t;
     h2_security_config : Eta_http.H2.Security.config option;
   }
 
@@ -65,7 +65,7 @@ module Config = struct
       command_queue_capacity = 1024;
       tls_handshake_timeout = Eta.Duration.seconds 10;
       server = Eta_http.Server.Config.default;
-      h2_config = { H2.Config.default with max_concurrent_streams = 128l };
+      h2_config = { Eta_http.H2.Config.default with max_concurrent_streams = 128 };
       h2_security_config = None;
     }
 
@@ -82,40 +82,41 @@ module Config = struct
     if Int32.compare value 0l <= 0 then
       invalid_arg (field name ^ " must be > 0")
 
+  let require_non_negative name value =
+    if value < 0 then invalid_arg (field name ^ " must be >= 0")
+
   let require_non_negative_int32 name value =
     if Int32.compare value 0l < 0 then
       invalid_arg (field name ^ " must be >= 0")
 
-  let max_h2_concurrent_streams = 4096l
+  let max_h2_concurrent_streams = 4096
 
   let validate_h2_max_concurrent_streams name value =
-    require_positive_int32 name value;
-    if Int32.compare value max_h2_concurrent_streams > 0 then
+    require_positive name value;
+    if value > max_h2_concurrent_streams then
       invalid_arg
         (field name ^ " must be <= "
-        ^ Int32.to_string max_h2_concurrent_streams)
+        ^ string_of_int max_h2_concurrent_streams)
 
   let validate_h2_frame_size name value =
     if value < 0x4000 || value > 0xffffff then
       invalid_arg (field name ^ " must be between 16384 and 16777215")
 
-  let validate_h2_config (config : H2.Config.t) =
+  let validate_h2_config (config : Eta_http.H2.Config.t) =
     validate_h2_frame_size "h2_config.read_buffer_size"
-      config.H2.Config.read_buffer_size;
+      config.Eta_http.H2.Config.read_buffer_size;
     require_positive "h2_config.request_body_buffer_size"
       config.request_body_buffer_size;
     require_positive "h2_config.response_body_buffer_size"
       config.response_body_buffer_size;
     validate_h2_max_concurrent_streams "h2_config.max_concurrent_streams"
       config.max_concurrent_streams;
-    require_non_negative_int32 "h2_config.initial_window_size"
+    require_non_negative "h2_config.initial_window_size"
       config.initial_window_size;
     Option.iter
       (require_positive "h2_config.max_header_list_size")
       config.max_header_list_size;
-    Option.iter
-      (require_positive "h2_config.max_header_count")
-      config.max_header_count
+    require_positive "h2_config.max_header_count" config.max_header_count
 
   let validate_h2_security_config
       (config : Eta_http.H2.Security.config) =

@@ -1,7 +1,7 @@
-(** OxCaml-optimized HPACK decoder.
+(** HPACK codec.
 
-    Replaces the upstream hpack library's Angstrom-based parser with a direct
-    buffer iteration loop, eliminating per-byte combinator allocation.
+    Direct buffer iteration loop for RFC 7541 header compression, used by the
+    in-house HTTP/2 state machine.
 
     Conforms to RFC 7541 (HPACK: Header Compression for HTTP/2). *)
 
@@ -16,7 +16,8 @@ type t = {
   mutable dynamic_count : int;
   mutable dynamic_insert_pos : int;
   mutable max_capacity : int;
-  mutable current_capacity : int;
+  mutable dynamic_capacity : int;
+  mutable dynamic_size : int;
 }
 
 and dynamic_cell = { dc_name : string; dc_value : string; dc_size : int }
@@ -358,8 +359,7 @@ let huffman_codes : huffman_code array =
 (** Decode Huffman-encoded bytes. For each bit, check if the accumulated
     prefix matches any Huffman code. Simple but correct and doesn't require
     a large precomputed table. *)
-let huffman_decode bytes pos_ref ~len ~out ~out_off =
-  let mutable out_pos = out_off in
+let huffman_decode bytes pos_ref ~len ~out =
   let mutable acc = 0 in
   let mutable acc_len = 0 in
   let end_pos = !pos_ref + len in
@@ -369,16 +369,13 @@ let huffman_decode bytes pos_ref ~len ~out ~out_off =
     for bit = 7 downto 0 do
       acc <- (acc lsl 1) lor ((b lsr bit) land 1);
       acc_len <- acc_len + 1;
-      (* Check all 256 codes for a match *)
+      (* Check all 256 codes for a match. Linear search is fine for headers. *)
       let mutable found = false in
       let mutable i = 0 in
       while (not found) && i < 256 do
         let { code; len; value } = huffman_codes.(i) in
         if len = acc_len && code = acc then begin
-          let ch = Char.unsafe_chr value in
-          if ch <> '\x00' then (
-            Bytes.unsafe_set out out_pos ch;
-            out_pos <- out_pos + 1);
+          if value < 256 then Buffer.add_char out (Char.unsafe_chr value);
           acc <- 0;
           acc_len <- 0;
           found <- true
@@ -388,8 +385,8 @@ let huffman_decode bytes pos_ref ~len ~out ~out_off =
     done
   done;
   (* EOS padding: remaining bits should be all 1s (EOS prefix) *)
-  if acc_len > 0 && acc = (1 lsl acc_len) - 1 then out_pos - out_off
-  else if acc_len = 0 then out_pos - out_off
+  if acc_len > 0 && acc = (1 lsl acc_len) - 1 then Buffer.length out
+  else if acc_len = 0 then Buffer.length out
   else raise Exit
 
 (* ── Dynamic Table ─────────────────────────────────────────────────────── *)
@@ -397,15 +394,60 @@ let huffman_decode bytes pos_ref ~len ~out ~out_off =
 
 let cell_size name value = String.length name + String.length value + 32
 
+let max_cells_for_capacity capacity =
+  if capacity <= 0 then 0 else max 1 ((capacity + 31) / 32)
+
+let initial_cells_for_capacity capacity =
+  min 128 (max_cells_for_capacity capacity)
+
+let empty_cell = { dc_name = ""; dc_value = ""; dc_size = 0 }
+
+let positive_mod n m =
+  let r = n mod m in
+  if r < 0 then r + m else r
+
 let create max_capacity =
-  (* Pre-allocate at a reasonable size; ring buffer grows as needed *)
-  let initial_cells = min max_capacity 128 in
-  { dynamic_table = Array.make initial_cells { dc_name = ""; dc_value = ""; dc_size = 0 }
+  if max_capacity < 0 then
+    invalid_arg "Eta_http.H2.Hpack.create: negative capacity";
+  (* Pre-allocate enough cells for the minimum HPACK entry size. *)
+  let initial_cells = initial_cells_for_capacity max_capacity in
+  { dynamic_table = Array.make initial_cells empty_cell
   ; dynamic_count = 0
   ; dynamic_insert_pos = 0
   ; max_capacity
-  ; current_capacity = 0
+  ; dynamic_capacity = max_capacity
+  ; dynamic_size = 0
   }
+
+let evict_oldest t =
+  let len = Array.length t.dynamic_table in
+  if len = 0 || t.dynamic_count = 0 then ()
+  else
+    let evict_pos = positive_mod (t.dynamic_insert_pos - t.dynamic_count) len in
+    let evicted = t.dynamic_table.(evict_pos) in
+    t.dynamic_table.(evict_pos) <- empty_cell;
+    t.dynamic_size <- t.dynamic_size - evicted.dc_size;
+    t.dynamic_count <- t.dynamic_count - 1
+
+let evict_to_dynamic_capacity t =
+  while t.dynamic_count > 0 && t.dynamic_size > t.dynamic_capacity do
+    evict_oldest t
+  done
+
+let set_max_table_size t size =
+  if size < 0 then
+    invalid_arg "Eta_http.H2.Hpack.set_max_table_size: negative capacity";
+  t.max_capacity <- size;
+  if t.dynamic_capacity > size then t.dynamic_capacity <- size;
+  evict_to_dynamic_capacity t
+
+let set_dynamic_table_capacity t capacity =
+  if capacity < 0 then
+    invalid_arg
+      "Eta_http.H2.Hpack.set_dynamic_table_capacity: negative capacity";
+  if capacity > t.max_capacity then raise Exit;
+  t.dynamic_capacity <- capacity;
+  evict_to_dynamic_capacity t
 
 let dynamic_table_get t index =
   (* Index 0 is the most recently inserted entry *)
@@ -413,49 +455,53 @@ let dynamic_table_get t index =
   if index < 0 || index >= count then
     invalid_arg "dynamic_table_get: index out of bounds"
   else
-    let pos = (t.dynamic_insert_pos - 1 - index) mod count in
-    let pos = if pos < 0 then pos + count else pos in
+    let pos =
+      positive_mod (t.dynamic_insert_pos - 1 - index)
+        (Array.length t.dynamic_table)
+    in
     let cell = t.dynamic_table.(pos) in
     (cell.dc_name, cell.dc_value)
+
+let ensure_storage t =
+  let len = Array.length t.dynamic_table in
+  if len = 0 then begin
+    let new_len = min 16 (max_cells_for_capacity t.dynamic_capacity) in
+    if new_len > 0 then t.dynamic_table <- Array.make new_len empty_cell
+  end
+  else if t.dynamic_count = len then begin
+    let max_cells = max_cells_for_capacity t.dynamic_capacity in
+    let new_len = min max_cells (len * 2) in
+    if new_len > len then begin
+      let new_table = Array.make new_len empty_cell in
+      for i = 0 to t.dynamic_count - 1 do
+        let src = positive_mod (t.dynamic_insert_pos - t.dynamic_count + i) len in
+        new_table.(i) <- t.dynamic_table.(src)
+      done;
+      t.dynamic_insert_pos <- t.dynamic_count;
+      t.dynamic_table <- new_table
+    end
+  end
 
 let dynamic_table_add t name value =
   let size = cell_size name value in
   (* Evict entries from the back until we have room *)
-  while t.current_capacity + size > t.max_capacity && t.dynamic_count > 0 do
-    let evict_pos =
-      (t.dynamic_insert_pos - t.dynamic_count) mod (Array.length t.dynamic_table)
-    in
-    let evict_pos = if evict_pos < 0 then evict_pos + Array.length t.dynamic_table else evict_pos in
-    let evicted = t.dynamic_table.(evict_pos) in
-    t.current_capacity <- t.current_capacity - evicted.dc_size;
-    t.dynamic_count <- t.dynamic_count - 1
+  while t.dynamic_size + size > t.dynamic_capacity && t.dynamic_count > 0 do
+    evict_oldest t
   done;
   (* If no room at all (capacity too small for the entry), drop it *)
-  if size > t.max_capacity then ()
+  if size > t.dynamic_capacity then ()
   else begin
-    (* Grow array if full *)
+    ensure_storage t;
     let len = Array.length t.dynamic_table in
-    if t.dynamic_count = len then begin
-      let new_len = min (len * 2) t.max_capacity in
-      if new_len <= len then () (* can't grow *)
-      else begin
-        let new_table = Array.make new_len { dc_name = ""; dc_value = ""; dc_size = 0 } in
-        for i = 0 to t.dynamic_count - 1 do
-          let src =
-            (t.dynamic_insert_pos - t.dynamic_count + i) mod len
-          in
-          let src = if src < 0 then src + len else src in
-          new_table.(i) <- t.dynamic_table.(src)
-        done;
-        t.dynamic_insert_pos <- t.dynamic_count;
-        t.dynamic_table <- new_table
-      end
-    end;
-    let pos = t.dynamic_insert_pos mod (Array.length t.dynamic_table) in
-    t.dynamic_table.(pos) <- { dc_name = name; dc_value = value; dc_size = size };
-    t.dynamic_insert_pos <- (t.dynamic_insert_pos + 1) mod (Array.length t.dynamic_table);
-    t.dynamic_count <- t.dynamic_count + 1;
-    t.current_capacity <- t.current_capacity + size
+    if len = 0 then ()
+    else begin
+      let pos = t.dynamic_insert_pos mod len in
+      t.dynamic_table.(pos) <-
+        { dc_name = name; dc_value = value; dc_size = size };
+      t.dynamic_insert_pos <- (t.dynamic_insert_pos + 1) mod len;
+      t.dynamic_count <- t.dynamic_count + 1;
+      t.dynamic_size <- t.dynamic_size + size
+    end
   end
 
 let dynamic_table_size t = t.dynamic_count
@@ -486,19 +532,19 @@ let[@zero_alloc] [@inline always] decode_int_prefix prefix prefix_bits bytes pos
 
 (** Decode a string literal (RFC 7541 §5.2). *)
 let decode_string_literal bytes pos_ref =
+  if !pos_ref >= Bytes.length bytes then raise Exit;
   let h = Char.code (Bytes.unsafe_get bytes !pos_ref) in
   incr pos_ref;
   let str_len = decode_int_prefix h 7 bytes pos_ref in
   let huffman = h land 128 <> 0 in
+  if str_len < 0 || !pos_ref + str_len > Bytes.length bytes then raise Exit;
   if huffman then (
-    (* Allocate worst-case output (str_len bytes → at most str_len chars) *)
-    let out = Bytes.create str_len in
+    let out = Buffer.create str_len in
     let decoded_len =
-      try huffman_decode bytes pos_ref ~len:str_len ~out ~out_off:0
+      try huffman_decode bytes pos_ref ~len:str_len ~out
       with Exit -> -1
     in
-    if decoded_len < 0 then raise Exit
-    else Bytes.sub_string out 0 decoded_len)
+    if decoded_len < 0 then raise Exit else Buffer.contents out)
   else
     let s = Bytes.sub_string bytes !pos_ref str_len in
     pos_ref := !pos_ref + str_len;
@@ -593,16 +639,14 @@ let decode_headers (t : t) bytes =
         if !saw_first_header then raise Exit;
         incr pos_ref;
         let capacity = decode_int_prefix b 5 bytes pos_ref in
-        if capacity > t.max_capacity then raise Exit
-        else t.current_capacity <- min t.current_capacity capacity
+        set_dynamic_table_capacity t capacity
       end
       else raise Exit
     done;
     Ok (List.rev !result)
   with Exit -> Error Decode_error
 
-let decode_headers_string t s =
-  decode_headers t (Bytes.of_string s)
+let decode_headers_string t s = decode_headers t (Bytes.of_string s)
 
 (* ── Encoder ─────────────────────────────────────────────────────────── *)
 
@@ -637,10 +681,17 @@ let never_indexed_token t = match t with
 type encoder = {
   dec_tbl : t;
   mutable next_seq : int;
+  mutable pending_min_table_size : int option;
+  mutable pending_table_size : int option;
 }
 
 let encoder_create capacity =
-  { dec_tbl = create capacity; next_seq = 0 }
+  {
+    dec_tbl = create capacity;
+    next_seq = 0;
+    pending_min_table_size = None;
+    pending_table_size = None;
+  }
 
 (* Write integer with N-bit prefix (§5.1) into a pre-allocated bytes buffer. *)
 let encoder_write_int buf pos_ref prefix n i =
@@ -670,18 +721,66 @@ let encoder_write_string buf pos_ref s =
     incr pos_ref
   done
 
+let encoder_can_index enc name value =
+  cell_size name value <= enc.dec_tbl.dynamic_capacity
+
+let encoder_write_pending_table_size_updates enc buf pos_ref =
+  (match (enc.pending_min_table_size, enc.pending_table_size) with
+  | None, None -> ()
+  | Some min_size, Some final_size when min_size <> final_size ->
+      encoder_write_int buf pos_ref 0x20 5 min_size;
+      encoder_write_int buf pos_ref 0x20 5 final_size
+  | Some size, _ | None, Some size ->
+      encoder_write_int buf pos_ref 0x20 5 size);
+  enc.pending_min_table_size <- None;
+  enc.pending_table_size <- None
+
+let encoder_write_literal_without_indexing buf pos_ref ~name_index ~name ~value =
+  encoder_write_int buf pos_ref 0x00 4 name_index;
+  if name_index = 0 then encoder_write_string buf pos_ref name;
+  encoder_write_string buf pos_ref value
+
+let encoder_write_literal_never_indexed buf pos_ref ~name_index ~name ~value =
+  encoder_write_int buf pos_ref 0x10 4 name_index;
+  if name_index = 0 then encoder_write_string buf pos_ref name;
+  encoder_write_string buf pos_ref value
+
+let encoder_write_literal_with_indexing enc buf pos_ref ~name_index ~name ~value =
+  encoder_write_int buf pos_ref 0x40 6 name_index;
+  if name_index = 0 then encoder_write_string buf pos_ref name;
+  encoder_write_string buf pos_ref value;
+  dynamic_table_add enc.dec_tbl name value;
+  enc.next_seq <- enc.next_seq + 1
+
+let encoded_header_bound (h : header) =
+  String.length h.name + String.length h.value + 16
+
+let encoded_headers_bound enc headers =
+  let table_update_bound =
+    match (enc.pending_min_table_size, enc.pending_table_size) with
+    | None, None -> 0
+    | Some min_size, Some final_size when min_size <> final_size -> 10
+    | Some _, _ | None, Some _ -> 5
+  in
+  List.fold_left
+    (fun total header -> total + encoded_header_bound header)
+    (32 + table_update_bound) headers
+
 (* Encode one header. *)
 let encode_single_header enc buf pos_ref (h : header) =
   let name = h.name and value = h.value in
   let token = lookup_token_index name in
   (match token with
    | -1 ->
-       (* Name not in static table — literal with indexing *)
-       encoder_write_int buf pos_ref 0x40 6 0;
-       encoder_write_string buf pos_ref name;
-       encoder_write_string buf pos_ref value;
-       dynamic_table_add enc.dec_tbl name value;
-       enc.next_seq <- enc.next_seq + 1
+       if h.sensitive then
+         encoder_write_literal_never_indexed buf pos_ref ~name_index:0 ~name
+           ~value
+       else if encoder_can_index enc name value then
+         encoder_write_literal_with_indexing enc buf pos_ref ~name_index:0
+           ~name ~value
+       else
+         encoder_write_literal_without_indexing buf pos_ref ~name_index:0
+           ~name ~value
    | t ->
        (* Check for exact static table match first *)
        let rec find_exact i =
@@ -696,24 +795,40 @@ let encode_single_header enc buf pos_ref (h : header) =
             (* Fully indexed! *)
             encoder_write_int buf pos_ref 0x80 7 idx
         | None ->
+            let name_index = t + 1 in
             if h.sensitive || never_indexed_token t
                || (t = authorization_token && true)
                || (t = cookie_token && String.length value < 20)
             then
               (* Never indexed, name from static table *)
-              let _ = encoder_write_int buf pos_ref 0x10 4 (t + 1) in
-              encoder_write_string buf pos_ref value
+              encoder_write_literal_never_indexed buf pos_ref ~name_index
+                ~name ~value
+            else if encoder_can_index enc name value then
+              encoder_write_literal_with_indexing enc buf pos_ref ~name_index
+                ~name ~value
             else
-              (* Literal with incremental indexing, name from static table *)
-              let _ = encoder_write_int buf pos_ref 0x40 6 (t + 1) in
-              encoder_write_string buf pos_ref value;
-              dynamic_table_add enc.dec_tbl name value;
-              enc.next_seq <- enc.next_seq + 1))
+              encoder_write_literal_without_indexing buf pos_ref ~name_index
+                ~name ~value))
 
 (* Encode a list of headers into a fresh bytes buffer. *)
 let encode_headers enc headers =
-  let buf = Bytes.create 4096 in
+  let buf = Bytes.create (encoded_headers_bound enc headers) in
   let pos_ref = ref 0 in
+  encoder_write_pending_table_size_updates enc buf pos_ref;
   List.iter (fun h -> encode_single_header enc buf pos_ref h) headers;
   Bytes.sub_string buf 0 !pos_ref
-let decode_headers_string t s = decode_headers t (Bytes.of_string s)
+
+let encoder_set_max_table_size enc size =
+  let old_size = enc.dec_tbl.dynamic_capacity in
+  set_max_table_size enc.dec_tbl size;
+  enc.dec_tbl.dynamic_capacity <- size;
+  evict_to_dynamic_capacity enc.dec_tbl;
+  if size <> old_size then begin
+    if size < old_size then
+      enc.pending_min_table_size <-
+        Some
+          (match enc.pending_min_table_size with
+          | None -> size
+          | Some pending -> min pending size);
+    enc.pending_table_size <- Some size
+  end

@@ -14,6 +14,7 @@
   test_eta_http_server_stats
   test_eta_http_ws
   test_eta_http_tls
+  test_eta_http_h2_hpack
   test_eta_http_h2_writer
   test_eta_http_h2_support
   test_eta_http_h2_connection
@@ -29,8 +30,6 @@
   eio_main
   eio_linux
   eio.mock
-  h2
-  hpack
   faraday
   yojson
   unix)

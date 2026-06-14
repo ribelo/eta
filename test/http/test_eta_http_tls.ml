@@ -20,6 +20,8 @@ let contains haystack needle =
   | Some _ -> true
   | None -> false
 
+let h2_request = Test_eta_http_h2_server.h2_request
+
 let tls_cert =
   {|-----BEGIN CERTIFICATE-----
 MIIDITCCAgmgAwIBAgIUWxU09v58bOJEdBMtBjtQHC0VdVwwDQYJKoZIhvcNAQEL
@@ -535,8 +537,8 @@ let assert_fresh_https_h2_request ~sw ~net ~clock ~cert port =
     ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
     (fun () ->
       let request =
-        H2.Request.create ~scheme:"https"
-          ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+        h2_request ~scheme:"https"
+          ~headers:( [ ":authority", "localhost" ])
           `GET "/fresh"
       in
       let status, body =
@@ -1318,8 +1320,8 @@ let test_https_server_h2_alpn_request () =
     ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
     (fun () ->
       let request =
-        H2.Request.create ~scheme:"https"
-          ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+        h2_request ~scheme:"https"
+          ~headers:( [ ":authority", "localhost" ])
           `GET "/secure-h2"
       in
       let status, body =
@@ -1413,8 +1415,8 @@ let test_https_server_h2_streams_large_body_past_window () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       let request =
-        H2.Request.create ~scheme:"https"
-          ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+        h2_request ~scheme:"https"
+          ~headers:( [ ":authority", "localhost" ])
           `GET "/large"
       in
       let status, body =
@@ -1483,16 +1485,20 @@ let test_https_server_h2_concurrent_large_echo () =
     let status = ref 0 in
     let eof, resolve_eof = Eio.Promise.create () in
     let rec read_body response_body =
-      H2.Body.Reader.schedule_read response_body
+      Eta_http.H2.Body.Reader.schedule_read response_body
         ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string body_buf (Bigstringaf.substring bs ~off ~len);
           read_body response_body)
     in
-    let request =
-      H2.Request.create ~scheme:"https"
-        ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
-        `POST "/echo"
+    let request : Eta_http.H2.Connection.Client.request =
+      {
+        meth = "POST";
+        scheme = Some "https";
+        authority = Some "localhost";
+        path = "/echo";
+        headers = [];
+      }
     in
     match
       Eta_http_eio.H2.Connection.request connection ~tag request
@@ -1500,7 +1506,7 @@ let test_https_server_h2_concurrent_large_echo () =
           Alcotest.failf "stream %d failed: %a" tag
             Test_eta_http_h2_server.pp_h2_client_error error)
         ~response_handler:(fun _stream response response_body ->
-          status := H2.Status.to_code response.status;
+          status := response.status;
           read_body response_body)
     with
     | Ok (opened : Eta_http_eio.H2.Multiplexer.opened_request) ->
@@ -1519,14 +1525,15 @@ let test_https_server_h2_concurrent_large_echo () =
             let chunk =
               String.sub (payload tag) (round * chunk_size) chunk_size
             in
-            H2.Body.Writer.write_string
-              opened.Eta_http_eio.H2.Multiplexer.request_body chunk)
+            ignore
+              (Eta_http.H2.Body.Writer.write_string
+                 opened.Eta_http_eio.H2.Multiplexer.request_body chunk))
           streams;
         Eio.Time.sleep clock 0.002
       done;
       List.iter
         (fun (_, opened, _, _, _) ->
-          H2.Body.Writer.close
+          Eta_http.H2.Body.Writer.close
             opened.Eta_http_eio.H2.Multiplexer.request_body)
         streams;
       List.iter
@@ -1571,7 +1578,7 @@ let test_https_server_h2_split_preface_settings_headers () =
              Test_eta_http_h2_server.read_raw_until_h2_frame
                ~frame_type:Settings tls_flow)
           : string);
-      let encoder = Hpack.Encoder.create 4096 in
+      let encoder = Eta_http.Hpack.encoder_create 4096 in
       let headers =
         Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:true
           ~stream_id:1
@@ -1613,7 +1620,7 @@ let test_https_server_h2_tiny_writes () =
       (try Eio.Flow.close tls_flow with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Hpack.Encoder.create 4096 in
+      let encoder = Eta_http.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
         ^ Eta_http.H2.Frame.settings
@@ -1733,7 +1740,7 @@ let test_https_server_h2_idle_timeout_sends_close_notify () =
        ^ Eta_http.H2.Frame.settings);
       ignore
         (read_openssl_h2_until_frame ~clock ssl raw_flow Settings : string);
-      let encoder = Hpack.Encoder.create 4096 in
+      let encoder = Eta_http.Hpack.encoder_create 4096 in
       let request =
         h2_settings_ack
         ^ Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:true
@@ -1808,7 +1815,7 @@ let test_https_server_shutdown_during_headers_keeps_listener_healthy () =
                ^ Eta_http.H2.Frame.settings
                ^ h2_settings_ack)
                 tls_flow;
-              let encoder = Hpack.Encoder.create 4096 in
+              let encoder = Eta_http.Hpack.encoder_create 4096 in
               let headers =
                 Test_eta_http_h2_server.raw_h2_headers encoder ~stream_id:1
                   [
@@ -1845,7 +1852,7 @@ let test_https_server_shutdown_during_data_keeps_listener_healthy () =
           Fun.protect
             ~finally:(fun () -> try Eio.Flow.close tls_flow with _ -> ())
             (fun () ->
-              let encoder = Hpack.Encoder.create 4096 in
+              let encoder = Eta_http.Hpack.encoder_create 4096 in
               Eio.Flow.copy_string
                 ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
                 ^ Eta_http.H2.Frame.settings
@@ -1893,7 +1900,7 @@ let test_https_server_h2_late_trailers_do_not_poison_accept_loop () =
                Test_eta_http_h2_server.read_raw_until_h2_frame
                  ~frame_type:Settings tls_flow)
             : string);
-        let encoder = Hpack.Encoder.create 4096 in
+        let encoder = Eta_http.Hpack.encoder_create 4096 in
         let headers =
           Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:false
             ~stream_id:1
@@ -1932,8 +1939,8 @@ let test_https_server_h2_late_trailers_do_not_poison_accept_loop () =
       ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
       (fun () ->
         let request =
-          H2.Request.create ~scheme:"https"
-            ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+          h2_request ~scheme:"https"
+            ~headers:( [ ":authority", "localhost" ])
             `GET "/fresh"
         in
         Test_eta_http_h2_server.await_h2_response connection request)
@@ -1962,17 +1969,21 @@ let test_https_server_h2_parallel_gets_one_tls_connection () =
     let body = Buffer.create 16 in
     let eof, resolve_eof = Eio.Promise.create () in
     let rec read_body response_body =
-      H2.Body.Reader.schedule_read response_body
+      Eta_http.H2.Body.Reader.schedule_read response_body
         ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string body (Bigstringaf.substring bs ~off ~len);
           read_body response_body)
     in
     let target = Printf.sprintf "/p%d" tag in
-    let request =
-      H2.Request.create ~scheme:"https"
-        ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
-        `GET target
+    let request : Eta_http.H2.Connection.Client.request =
+      {
+        meth = "GET";
+        scheme = Some "https";
+        authority = Some "localhost";
+        path = target;
+        headers = [];
+      }
     in
     match
       Eta_http_eio.H2.Connection.request connection ~tag request
@@ -1980,11 +1991,11 @@ let test_https_server_h2_parallel_gets_one_tls_connection () =
           Alcotest.failf "stream %d failed: %a" tag
             Test_eta_http_h2_server.pp_h2_client_error error)
         ~response_handler:(fun _stream response response_body ->
-          status := Some (H2.Status.to_code response.status);
+          status := Some response.status;
           read_body response_body)
     with
     | Ok opened ->
-        H2.Body.Writer.close
+        Eta_http.H2.Body.Writer.close
           opened.Eta_http_eio.H2.Multiplexer.request_body;
         (tag, status, body, eof)
     | Error _ -> Alcotest.failf "stream %d not opened" tag
@@ -2040,8 +2051,8 @@ let test_https_server_h2_timeout_does_not_poison_later_handshake () =
       ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
       (fun () ->
         let request =
-          H2.Request.create ~scheme:"https"
-            ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+          h2_request ~scheme:"https"
+            ~headers:( [ ":authority", "localhost" ])
             `GET target
         in
         Eio.Time.with_timeout_exn clock 2.0 (fun () ->
@@ -2086,8 +2097,8 @@ let test_https_server_h2_repeated_connect_request_close () =
               (fun () ->
                 let target = Printf.sprintf "/round-%d" index in
                 let request =
-                  H2.Request.create ~scheme:"https"
-                    ~headers:(H2.Headers.of_list [ ":authority", "localhost" ])
+                  h2_request ~scheme:"https"
+                    ~headers:( [ ":authority", "localhost" ])
                     `GET target
                 in
                 let status, body =
@@ -2559,6 +2570,16 @@ let test_tls_eio_single_write_feeds_rbio_on_want_read () =
       | None ->
           Alcotest.fail "WANT_READ does not retry the write after progress")
   | _ -> Alcotest.fail "single_write missing WANT_READ/drive/retry invariant"
+
+let test_tls_eio_single_write_closed_flow_raises () =
+  let source = read_file (find_tls_eio_source ()) in
+  let body = single_write_source source in
+  Alcotest.(check bool)
+    "closed single_write raises" true
+    (contains body "if t.closed then raise End_of_file");
+  Alcotest.(check bool)
+    "closed single_write does not report zero bytes" false
+    (contains body "if t.closed then 0")
 
 let test_tls_eio_single_write_races_raw_feed_with_tls_progress () =
   let source = read_file (find_tls_eio_source ()) in

@@ -1,4 +1,5 @@
 module Error = Error
+module Frame = Eta_http_h2.Frame
 
 type rate_limit = {
   burst : int;

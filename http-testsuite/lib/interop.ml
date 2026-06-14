@@ -343,7 +343,7 @@ let eta_expected_result ~temp_dir scenario =
     | "/trailer" ->
         Ok
           (normalized_string ~status "body-with-trailer"
-             ~headers:[ ("trailer", "X-Trailer") ])
+             ~headers:[ ("trailer", "x-trailer") ])
     | "/status206" -> Ok (normalized_string ~status "partial")
     | "/status400" | "/status401" | "/status413" | "/status429"
     | "/status500" | "/status502" | "/status503" | "/status504"

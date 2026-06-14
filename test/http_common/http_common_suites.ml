@@ -1148,7 +1148,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_h2_writer_preserves_iovec_slices () =
     let buffer = Bigstringaf.of_string ~off:0 ~len:10 "0123456789" in
-    let iovecs = [ { H2.IOVec.buffer; off = 2; len = 4 } ] in
+    let iovecs = [ { Eta_http.H2.IOVec.buffer; off = 2; len = 4 } ] in
     match Eta_http_eio.H2.Writer.cstructs_of_iovecs iovecs with
     | [ slice ] ->
         Alcotest.(check int) "slice len" 4 (Cstruct.length slice);
@@ -1453,9 +1453,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let security = Eta_http.H2.Security.create ~config () in
     let mux = Eta_http_eio.H2.Multiplexer.create ~security () in
     let request =
-      H2.Request.create ~scheme:"https"
-        ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-        `GET "/release"
+      {
+        Eta_http.H2.Connection.Client.meth = "GET";
+        scheme = Some "https";
+        authority = Some "api.example.test";
+        path = "/release";
+        headers = [];
+      }
     in
     let opened =
       match
@@ -1471,7 +1475,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "request failed: %s" message
     in
-    H2.Body.Writer.close opened.request_body;
+    Eta_http.H2.Body.Writer.close opened.request_body;
     let frame =
       h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
     in

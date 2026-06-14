@@ -1,6 +1,8 @@
 (library
  (name eta_js_stream)
  (public_name eta_js_stream)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (modules eta_js_stream)
  (libraries eta_js)
  (synopsis "JavaScript streams for eta_js"))

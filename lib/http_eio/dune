@@ -14,8 +14,6 @@
   cstruct
   domain-name
   ipaddr
-  h2
-  hpack
   faraday
   yojson))
 

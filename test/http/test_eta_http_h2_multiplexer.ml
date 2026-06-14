@@ -3,12 +3,9 @@ open Test_eta_http_h2_support
 
 let test_now_ms () = 0L
 
-let hpack_header name value = { Hpack.name; value; sensitive = false }
+let hpack_header name value = { Eta_http.Hpack.name; value; sensitive = false }
 
-let hpack_block encoder headers =
-  let faraday = Faraday.create 0x1000 in
-  List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
-  Faraday.serialize_to_string faraday
+let hpack_block encoder headers = Eta_http.Hpack.encode_headers encoder headers
 
 let raw_headers encoder ?(end_stream = false) ~stream_id headers =
   let block = hpack_block encoder headers in
@@ -20,32 +17,26 @@ let raw_headers encoder ?(end_stream = false) ~stream_id headers =
 let test_h2_multiplexer_reads_server_response () =
   let result = h2_read_result () in
   let server =
-    H2.Server_connection.create
-      ~error_handler:(fun ?request:_ _ respond ->
-        result.stream_errors <- result.stream_errors + 1;
-        let body = respond H2.Headers.empty in
-        H2.Body.Writer.close body)
-      (fun reqd ->
-        H2.Reqd.respond_with_string reqd (H2.Response.create `OK) "hello-read")
+    h2_create_server (fun reqd ->
+        Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          (h2_server_response ~body:(`String "hello-read") 200)
+          "hello-read")
   in
   let client =
-    H2.Client_connection.create
+    Eta_http.H2.Connection.Client.create
       ~error_handler:(fun _ -> result.client_errors <- result.client_errors + 1)
       ()
   in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/reader"
-  in
+  let request = h2_core_request ~target:"/reader" () in
   let request_body =
-    H2.Client_connection.request client request
-      ~error_handler:(fun _ -> result.stream_errors <- result.stream_errors + 1)
-      ~response_handler:(fun response body ->
-        result.status <- Some (H2.Status.to_code response.status);
-        h2_schedule_body result body)
+    Eta_http.H2.Connection.Client.request client ~stream_id:1 request
+      ~error_handler:(fun _ _ ->
+        result.stream_errors <- result.stream_errors + 1)
+      ~response_handler:(fun _ response ->
+        result.status <- Some response.status;
+        h2_schedule_eta_body result response.body)
   in
-  H2.Body.Writer.close request_body;
+  Eta_http.H2.Body.Writer.close request_body;
   let request_bytes = Buffer.create 256 in
   let request_flow = Eio.Flow.buffer_sink request_bytes in
   (match Eta_http_eio.H2.Writer.drain_client ~flow:request_flow client with
@@ -79,7 +70,9 @@ let test_h2_multiplexer_reads_server_response () =
   Alcotest.(check int) "stream errors" 0 result.stream_errors
 
 let test_h2_multiplexer_read_exception_is_typed_result () =
-  let client = H2.Client_connection.create ~error_handler:(fun _ -> ()) () in
+  let client =
+    Eta_http.H2.Connection.Client.create ~error_handler:(fun _ -> ()) ()
+  in
   let reader =
     Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
       client
@@ -105,27 +98,26 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
   let payload = String.make (16 * 1024) 'x' in
   let result = h2_read_result () in
   let server =
-    H2.Server_connection.create (fun reqd ->
-        H2.Reqd.respond_with_string reqd (H2.Response.create `OK) payload)
+    h2_create_server (fun reqd ->
+        Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          (h2_server_response ~body:(`String payload) 200)
+          payload)
   in
   let client =
-    H2.Client_connection.create
+    Eta_http.H2.Connection.Client.create
       ~error_handler:(fun _ -> result.client_errors <- result.client_errors + 1)
       ()
   in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/max-data"
-  in
+  let request = h2_core_request ~target:"/max-data" () in
   let request_body =
-    H2.Client_connection.request client request
-      ~error_handler:(fun _ -> result.stream_errors <- result.stream_errors + 1)
-      ~response_handler:(fun response body ->
-        result.status <- Some (H2.Status.to_code response.status);
-        h2_schedule_body result body)
+    Eta_http.H2.Connection.Client.request client ~stream_id:1 request
+      ~error_handler:(fun _ _ ->
+        result.stream_errors <- result.stream_errors + 1)
+      ~response_handler:(fun _ response ->
+        result.status <- Some response.status;
+        h2_schedule_eta_body result response.body)
   in
-  H2.Body.Writer.close request_body;
+  Eta_http.H2.Body.Writer.close request_body;
   let request_bytes = Buffer.create 256 in
   let request_flow = Eio.Flow.buffer_sink request_bytes in
   (match Eta_http_eio.H2.Writer.drain_client ~flow:request_flow client with
@@ -160,23 +152,19 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
   Alcotest.(check int) "client errors" 0 result.client_errors;
   Alcotest.(check int) "stream errors" 0 result.stream_errors
 
-let test_h2_multiplexer_release_forgets_informational_filter_stream () =
+let test_h2_multiplexer_release_after_final_response () =
   let mux = Eta_http_eio.H2.Multiplexer.create () in
   let reader =
     Eta_http_eio.H2.Multiplexer.create_reader ~now_ms:test_now_ms mux
   in
   let status = ref None in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/filtered-release"
-  in
+  let request = h2_core_request ~target:"/release" () in
   let opened =
     match
       Eta_http_eio.H2.Multiplexer.request mux ~tag:1 request
         ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream error")
         ~response_handler:(fun _stream response _body ->
-          status := Some (H2.Status.to_code response.status))
+          status := Some response.status)
     with
     | Ok opened -> opened
     | Error (Eta_http_eio.H2.Multiplexer.Admission_rejected _) ->
@@ -186,9 +174,9 @@ let test_h2_multiplexer_release_forgets_informational_filter_stream () =
     | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
         Alcotest.failf "unexpected request failure: %s" message
   in
-  H2.Body.Writer.close opened.request_body;
+  Eta_http.H2.Body.Writer.close opened.request_body;
   let stream_id = Eta_http.H2.Stream_state.id opened.stream in
-  let encoder = Hpack.Encoder.create 4096 in
+  let encoder = Eta_http.Hpack.encoder_create 4096 in
   let source =
     Eio.Flow.cstruct_source
       (h2_cstruct_chunks ~chunk_size:13
@@ -208,13 +196,8 @@ let test_h2_multiplexer_release_forgets_informational_filter_stream () =
             (Eta_http.Error.kind_name kind)
   in
   read_until_response 16;
-  Alcotest.(check bool)
-    "final response marker does not enable global passthrough" false
-    (Eta_http_eio.H2.Multiplexer.reader_is_passthrough reader);
   ignore (Eta_http_eio.H2.Multiplexer.release mux opened.stream);
-  Alcotest.(check bool)
-    "local release keeps filter active" false
-    (Eta_http_eio.H2.Multiplexer.reader_is_passthrough reader)
+  Alcotest.(check (option int)) "status" (Some 200) !status
 
 let h2_body_closed_error =
   Eta_http.Error.make ~protocol:Eta_http.Error.H2 ~method_:"GET"
@@ -225,27 +208,28 @@ let test_h2_body_stream_async_bounded_recursion () =
   let num_chunks = 2000 in
   let chunk_data = String.make 1024 'x' in
   let total_size = num_chunks * String.length chunk_data in
-  let h2_config =
+  let mux_config =
     {
-      H2.Config.default with
+      Eta_http.H2.Config.default with
       response_body_buffer_size = total_size;
-      initial_window_size = Int32.of_int (total_size * 2);
+      initial_window_size = total_size * 2;
     }
+  in
+  let server_settings =
+    Eta_http.H2.Settings.create ~initial_window_size:(total_size * 2) ()
   in
   let held_writer = ref None in
   let server =
-    H2.Server_connection.create ~config:h2_config (fun reqd ->
+    h2_create_server ~config:server_settings (fun reqd ->
         held_writer :=
-          Some (H2.Reqd.respond_with_streaming reqd (H2.Response.create `OK)))
+          Some
+            (Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+               (h2_server_response 200)))
   in
-  let mux = h2_mux_create ~config:h2_config (h2_mux_result ()) () in
+  let mux = h2_mux_create ~config:mux_config (h2_mux_result ()) () in
   let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
   let body_stream_ref = ref None in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/large-buffered"
-  in
+  let request = h2_core_request ~target:"/large-buffered" () in
   let opened =
     Eta_http_eio.H2.Multiplexer.request mux ~tag:1 request
       ~error_handler:(fun _stream _error -> ())
@@ -261,18 +245,18 @@ let test_h2_body_stream_async_bounded_recursion () =
     | Ok opened -> opened
     | Error _ -> Alcotest.fail "request setup failed"
   in
-  H2.Body.Writer.close opened.request_body;
-  h2_pump_pair client server;
+  Eta_http.H2.Body.Writer.close opened.request_body;
+  h2_pump_eta_client_server client server;
   let writer =
     match !held_writer with
     | Some w -> w
     | None -> Alcotest.fail "server did not install streaming writer"
   in
   for _ = 1 to num_chunks do
-    H2.Body.Writer.write_string writer chunk_data
+    ignore (Eta_http.H2.Body.Writer.write_string writer chunk_data)
   done;
-  H2.Body.Writer.close writer;
-  h2_pump_pair client server;
+  Eta_http.H2.Body.Writer.close writer;
+  h2_pump_eta_client_server client server;
   match !body_stream_ref with
   | None ->
       Alcotest.fail
@@ -283,7 +267,7 @@ let test_h2_body_stream_async_bounded_recursion () =
       let done_reading = ref false in
       Eio.Fiber.fork ~sw (fun () ->
           while not !done_reading do
-            h2_pump_pair client server;
+            h2_pump_eta_client_server client server;
             Eio.Fiber.yield ()
           done);
       let total_bytes = ref 0 in

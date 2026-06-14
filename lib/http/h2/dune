@@ -1,0 +1,13 @@
+(include_subdirs no)
+
+(library
+ (name eta_http_h2)
+ (public_name eta_http_h2)
+ (libraries
+  eta
+  bigstringaf
+  cstruct
+  angstrom
+  faraday)
+ (instrumentation
+  (backend bisect_ppx)))

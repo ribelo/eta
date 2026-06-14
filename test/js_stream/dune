@@ -1,5 +1,7 @@
 (executable
  (name run_js_stream_tests)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (modes js)
  (libraries eta_js eta_js_stream eta_js_test js_of_ocaml)
  (js_of_ocaml
@@ -7,5 +9,7 @@
 
 (rule
  (alias runtest)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (deps run_js_stream_tests.bc.js)
  (action (run node run_js_stream_tests.bc.js)))

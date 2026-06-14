@@ -32,7 +32,7 @@ modules: `(libraries eta_http)` in your `dune` file imports `Eta_http.*`.
 | `eta_schema`           | `Eta_schema`           | —                                                                                   |
 | `eta_sql`              | `Eta_sql`              | sqlite3 (C library, via pkg-config)                                                 |
 | `eta_turso`            | `Eta_turso`            | `eta_sql` chain; loads `libturso_sqlite3` at runtime                                |
-| `eta_http`             | `Eta_http`             | h2, hpack, faraday, angstrom, decompress, bigstringaf, domain-name, ipaddr, openssl |
+| `eta_http`             | `Eta_http`             | eta_http_h2, faraday, angstrom, decompress, bigstringaf, domain-name, ipaddr, openssl |
 | `eta_otel`             | `Eta_otel`             | yojson, eta_http chain                                                              |
 | `eta_ai`               | `Eta_ai`               | yojson, eta_http chain                                                              |
 | `eta_ai_openai`        | `Eta_ai_openai`        | eta_ai_openai_codec, eta_stream                                                     |
@@ -114,7 +114,7 @@ Adds: cstruct.
 ```dune
 (executable (name app) (libraries eta eta_http eta_otel))
 ```
-Adds: h2, hpack, faraday, angstrom, decompress, bigstringaf, domain-name,
+Adds: eta_http_h2, faraday, angstrom, decompress, bigstringaf, domain-name,
 ipaddr, openssl, yojson.
 
 ### LLM chat using OpenAI

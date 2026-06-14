@@ -2,7 +2,7 @@
 
 module Body = Stream
 module Body_source = Source
-module H2_proto = H2
+module H2_proto = Eta_http.H2
 
 let skip_header name =
   match Header.normalize_name name with
@@ -11,7 +11,7 @@ let skip_header name =
       true
   | normalized -> String.length normalized > 0 && Char.equal normalized.[0] ':'
 
-let headers request url =
+let headers request =
   match Header.validate request.Request.headers with
   | Some kind -> Error (H2_client_errors.error request kind)
   | None ->
@@ -47,39 +47,41 @@ let headers request url =
         | None -> user_headers
         | Some length -> ("content-length", string_of_int length) :: user_headers
       in
-      Ok (H2_proto.Headers.of_list ((":authority", Url.authority url) :: user_headers))
+      Ok user_headers
 
 let method_ = function
-  | `GET -> `GET
-  | `HEAD -> `HEAD
-  | `POST -> `POST
-  | `PUT -> `PUT
-  | `DELETE -> `DELETE
-  | `CONNECT -> `CONNECT
-  | `OPTIONS -> `OPTIONS
-  | `TRACE -> `TRACE
-  | `PATCH -> `Other "PATCH"
-  | `Other method_ -> `Other method_
+  | `GET -> "GET"
+  | `HEAD -> "HEAD"
+  | `POST -> "POST"
+  | `PUT -> "PUT"
+  | `DELETE -> "DELETE"
+  | `CONNECT -> "CONNECT"
+  | `OPTIONS -> "OPTIONS"
+  | `TRACE -> "TRACE"
+  | `PATCH -> "PATCH"
+  | `Other method_ -> method_
 
 let request_of_request request url =
-  match headers request url with
+  match headers request with
   | Error _ as error -> error
   | Ok headers ->
       Ok
-        (H2_proto.Request.create
-           ~scheme:(Url.scheme_to_string (Url.scheme url))
-           ~headers
-           (method_ (Request.method_value request))
-           (Url.origin_form url))
+        {
+          H2_proto.Connection.Client.meth = method_ (Request.method_value request);
+          scheme = Some (Url.scheme_to_string (Url.scheme url));
+          authority = Some (Url.authority url);
+          path = Url.origin_form url;
+          headers;
+        }
 
 let flush_body_writer writer =
   let promise, resolver = Eio.Promise.create () in
-  H2_proto.Body.Writer.flush writer (fun result ->
-      ignore (Eio.Promise.try_resolve resolver result));
+  H2_proto.Body.Writer.flush writer (fun () ->
+      ignore (Eio.Promise.try_resolve resolver ()));
   Eio.Promise.await promise
 
-(* Streaming uploads must await ocaml-h2's flush callback before pulling the next
-   chunk; it is the body writer's only transport-progress/backpressure signal. *)
+(* Streaming uploads must await the body writer's flush callback before pulling
+   the next chunk; it is the transport-progress/backpressure signal. *)
 let write_chunk_result writer chunk =
   let chunk = Bytes.to_string chunk in
   let rec loop off =
@@ -87,8 +89,12 @@ let write_chunk_result writer chunk =
     else
       let len = min 16_384 (String.length chunk - off) in
       Eta.Effect.sync (fun () ->
-          H2_proto.Body.Writer.write_string writer chunk ~off ~len;
-          flush_body_writer writer)
+          let bytes = Bytes.of_string (String.sub chunk off len) in
+          match H2_proto.Body.Writer.write_bytes writer bytes ~off:0 ~len with
+          | Error _ -> `Closed
+          | Ok () ->
+              flush_body_writer writer;
+              `Written)
       |> Eta.Effect.bind (function
            | `Written -> loop (off + len)
            | `Closed -> Eta.Effect.pure `Closed)
@@ -110,10 +116,12 @@ let write_fixed_body_sync writer chunks =
     let rec loop off =
       if off < len then (
         let write_len = min 65_536 (len - off) in
-        H2_proto.Body.Writer.write_string writer s ~off ~len:write_len;
-        match flush_body_writer writer with
-        | `Written -> loop (off + write_len)
-        | `Closed -> ())
+        let bytes = Bytes.of_string (String.sub s off write_len) in
+        match H2_proto.Body.Writer.write_bytes writer bytes ~off:0 ~len:write_len with
+        | Error _ -> ()
+        | Ok () ->
+            flush_body_writer writer;
+            loop (off + write_len))
     in
     loop 0
   in

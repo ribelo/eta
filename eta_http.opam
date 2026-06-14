@@ -8,9 +8,8 @@ depends: [
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
   "eta_stream"
+  "eta_http_h2"
   "cstruct" {>= "6.0.0"}
-  "h2" {>= "0.12.0"}
-  "hpack" {>= "0.12.0"}
   "faraday" {>= "0.8.0"}
   "angstrom" {>= "0.16.0"}
   "yojson" {>= "2.0"}

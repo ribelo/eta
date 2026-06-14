@@ -93,8 +93,8 @@ Current counts from the latest edge-readiness pass:
 
 | Gate | Result |
 | --- | --- |
-| `test/http` | 199 tests passing |
-| `test/http_eio` | 142 tests passing |
+| `test/http` | 339 tests passing |
+| `test/http_eio` | 145 tests passing |
 | `http-testsuite` interop | PASS 314, DIVERGENT 0, FAIL 0, SKIP 176 |
 | `http-testsuite` CVE/adversarial | PASS 27, FAIL 0, SKIP 0 |
 | `http-testsuite` HTTP bench | 30 iterations across 6 scenario/client groups |
@@ -121,7 +121,7 @@ Rerunnable research evidence lives under `.scratch/eta_http_research/`:
 | `Eta_http.Tls` | TLS policy chokepoint. |
 | `Eta_http.Transport` | Backend-neutral ALPN and protocol dispatch helpers. |
 | `Eta_http.H1` | HTTP/1.1 parser and serializer modules. |
-| `Eta_http.H2` | HTTP/2 frame, admission, security, informational-response, and stream-state helpers. |
+| `Eta_http.H2` | HTTP/2 frame, HPACK, admission, security, scheduler, stream, and connection helpers. |
 | `Eta_http.Ws` | RFC 6455 codec. |
 | `Eta_http_eio` | Eio-backed HTTP/1.1, HTTP/2, TLS, and WebSocket transport adapter. |
 
@@ -133,7 +133,7 @@ Rerunnable research evidence lives under `.scratch/eta_http_research/`:
   backend adapter libraries.
 - Applications own state. eta-http owns effect description, client protocol
   interpretation, and resource lifecycle.
-- `cstruct`, `h2`, `hpack`, `faraday`, and `bigstringaf` remain shared
+- `eta_http_h2`, `cstruct`, `faraday`, and `bigstringaf` remain shared
   protocol dependencies where the shared HTTP/2 helpers expose those substrate
   shapes.
 - `digestif`, `tls-eio`, `x509`, `ca-certs`, and Mirage Crypto are not
@@ -199,13 +199,12 @@ nix develop -c eta-oxcaml-test-shipped
   provide it outside eta-http or through a future TLS policy surface.
 - HTTP/1.1 clients skip interim `100 Continue` and return the final response.
 - HTTP/2 request I/O in `eta_http_eio` is owned by a dedicated reader/writer
-  loop. The adapter filters interim 1xx response HEADERS, except
-  `101 Switching Protocols`, before handing bytes to `ocaml-h2`; callers
-  receive the final non-1xx response.
+  loop over the in-house state machine. Interim 1xx response HEADERS, except
+  `101 Switching Protocols`, are handled before callers receive the final
+  non-1xx response.
 - HTTP/2 GOAWAY handling in `eta_http_eio` remains conservative
-  drop-and-disconnect. The pinned `ocaml-h2` line does not expose received
-  `last_stream_id`, so the adapter does not selectively retry streams above
-  the GOAWAY cutoff in v1.
+  drop-and-disconnect. Selective retry above a received `last_stream_id` is not
+  exposed in v1.
 - The interop matrix is broad but not exhaustive. Explicit v1 skips are recorded
   in `http-testsuite/lib/interop.ml`; field-level response subtractions are in
   `http-testsuite/expected_divergences.md`.

@@ -2,7 +2,7 @@
 
 module Body = Stream
 module Body_source = Source
-module H2_proto = H2
+module H2_proto = Eta_http.H2
 
 module Errors = H2_client_errors
 module Request_writer = H2_client_request_writer
@@ -45,7 +45,7 @@ let request_on_connection connection request url =
   in
   let open_request h2_request =
     Connection.request connection ~tag:0 h2_request
-      ~trailers_handler:(fun headers -> resolve_trailers (H2_proto.Headers.to_list headers))
+      ~trailers_handler:(fun headers -> resolve_trailers headers)
       ~error_handler:(fun stream error ->
         Multiplexer.mark_remote_reset mux
           (Stream_state.id stream);
@@ -55,7 +55,7 @@ let request_on_connection connection request url =
         in
         if !response_started then set_body_error error else resolve_error error)
       ~response_handler:(fun stream response body ->
-        let status = H2_proto.Status.to_code response.H2_proto.Response.status in
+        let status = response.H2_proto.Connection.Client.status in
         let headers = Response_reader.response_headers response in
         match Security.validate_headers headers with
         | Some kind ->

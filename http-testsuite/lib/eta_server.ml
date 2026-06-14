@@ -21,7 +21,7 @@ let fixed ?(status = 200) ?(headers = []) body =
     ()
 
 let redirect status =
-  empty ~headers:[ ("Location", "/healthz") ] status
+  empty ~headers:[ ("location", "/healthz") ] status
 
 let read_file path =
   let input = open_in_bin path in
@@ -130,7 +130,7 @@ let config =
     h2_config =
       {
         Eta_http_eio.Server.Config.default.h2_config with
-        max_concurrent_streams = 4096l;
+        max_concurrent_streams = 4096;
       };
   }
 

@@ -120,7 +120,6 @@ module H2 = struct
   module Admission = Eta_http.H2.Admission
   module Connection = Connection
   module Frame = Eta_http.H2.Frame
-  module Informational_filter = Eta_http.H2.Informational_filter
   module Multiplexer = Multiplexer
   module Server_connection = H2_server_connection
   module Security = Eta_http.H2.Security

@@ -30,8 +30,9 @@ dependencies there.
 Examples:
 
 - SQLite code belongs in `eta_sql`, along with `conf-sqlite3`.
-- HTTP code belongs in `eta_http`, along with `h2`, `hpack`, `faraday`,
-  `angstrom`, `decompress`, and related network dependencies.
+- HTTP code belongs in `eta_http` and sibling HTTP packages such as
+  `eta_http_h2`, along with `faraday`, `angstrom`, `decompress`, and related
+  network dependencies.
 - AI providers belong in `eta_ai` or `eta_ai_<provider>`, along with provider
   codecs and JSON dependencies.
 - Test helpers belong in `eta_test` or `eta_schema_test`, along with

@@ -8,6 +8,5 @@
   alcotest
   bigstringaf
   cstruct
-  h2
   yojson
   unix))

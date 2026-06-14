@@ -1,22 +1,28 @@
 open Test_eta_http_support
 
+module H2_core = Eta_http.H2
+
+let h2_request path : H2_core.Connection.Client.request =
+  {
+    meth = "GET";
+    scheme = Some "https";
+    authority = Some "api.example.test";
+    path;
+    headers = [];
+  }
+
 let test_h2_writer_drains_client_preface_and_request () =
   let client =
-    H2.Client_connection.create
+    H2_core.Connection.Client.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected client h2 error")
       ()
   in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/writer"
-  in
   let request_body =
-    H2.Client_connection.request client request
-      ~error_handler:(fun _ -> Alcotest.fail "unexpected stream h2 error")
+    H2_core.Connection.Client.request client ~stream_id:1 (h2_request "/writer")
+      ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream h2 error")
       ~response_handler:(fun _ _ -> ())
   in
-  H2.Body.Writer.close request_body;
+  H2_core.Body.Writer.close request_body;
   let buffer = Buffer.create 256 in
   let flow = Eio.Flow.buffer_sink buffer in
   (match Eta_http_eio.H2.Writer.drain_client ~flow client with
@@ -35,21 +41,17 @@ let test_h2_writer_drains_client_preface_and_request () =
 let test_h2_writer_blocked_write_teardown () =
   with_test_clock @@ fun _sw _clock rt ->
   let client =
-    H2.Client_connection.create
+    H2_core.Connection.Client.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected client h2 error")
       ()
   in
-  let request =
-    H2.Request.create ~scheme:"https"
-      ~headers:(H2.Headers.of_list [ ":authority", "api.example.test" ])
-      `GET "/blocked-writer"
-  in
   let request_body =
-    H2.Client_connection.request client request
-      ~error_handler:(fun _ -> Alcotest.fail "unexpected stream h2 error")
+    H2_core.Connection.Client.request client ~stream_id:1
+      (h2_request "/blocked-writer")
+      ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream h2 error")
       ~response_handler:(fun _ _ -> ())
   in
-  H2.Body.Writer.close request_body;
+  H2_core.Body.Writer.close request_body;
   let started = Eta.Channel.create ~capacity:1 () in
   let blocked = Eta.Channel.create ~capacity:1 () in
   let write_started = ref false in

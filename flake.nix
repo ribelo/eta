@@ -110,16 +110,6 @@
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
               opam install 'uring=0.9' --assume-depexts --yes
-              h2_pin_dir=".scratch/opam-pins/h2-0.13.0"
-              opam pin remove hpack --no-action --yes 2>/dev/null || true
-              opam pin remove h2 --no-action --yes 2>/dev/null || true
-              rm -rf "$h2_pin_dir"
-              mkdir -p "$(dirname "$h2_pin_dir")"
-              opam source h2.0.13.0 --dir "$h2_pin_dir"
-              patch -d "$h2_pin_dir" -p1 < patches/h2-0.13.0-server-inflow-before-deduct.patch
-              patch -d "$h2_pin_dir" -p1 < patches/h2-0.13.0-hpack-decoded-header-limits.patch
-              opam pin add hpack "$h2_pin_dir" --assume-depexts --yes
-              opam pin add h2 "$h2_pin_dir" --assume-depexts --yes
               opam install . --deps-only --with-test --assume-depexts --yes
               opam install \
                 'dune=3.22.2+ox' \
@@ -168,7 +158,6 @@
               opam list --installed --short merlin | grep -Fxq merlin
               opam list --installed --short ocaml-lsp-server | grep -Fxq ocaml-lsp-server
               opam list --installed --short utop | grep -Fxq utop
-
               mode_probe="tools/oxcaml_toolchain_probe/mode_syntax.ml"
               dune build ./tools/oxcaml_toolchain_probe/mode_syntax.exe
               ocamlformat --enable-outside-detected-project --check "$mode_probe"
@@ -390,8 +379,6 @@
               ocamlPackages.domain-name
               ocamlPackages.utop
               ocamlPackages.faraday
-              ocamlPackages.h2
-              ocamlPackages.hpack
               ocamlPackages.ipaddr
               ocamlPackages.yojson
               ocamlPackages.ppxlib

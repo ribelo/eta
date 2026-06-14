@@ -215,7 +215,9 @@ let reference_modes =
     { server = Nginx; protocol = H2; transport = TLS };
     { server = Caddy; protocol = H2; transport = TLS };
     { server = Node; protocol = H1; transport = Plain };
+    { server = Node; protocol = H2; transport = Plain };
     { server = Go; protocol = H1; transport = Plain };
+    { server = Go; protocol = H2; transport = TLS };
   ]
 
 let endpoint_supported mode endpoint =
@@ -655,6 +657,25 @@ let wait_http_ready ~port ~deadline_ms =
   in
   poll ()
 
+let wait_https_ready ~port ~deadline_ms =
+  let start = Util.now_ms () in
+  let rec poll () =
+    let now = Util.now_ms () in
+    if now -. start > deadline_ms then Error "server readiness poll timed out"
+    else
+      match
+        Util.run_cmd_out
+          (Printf.sprintf
+             "curl -sk -o /dev/null -w %%{http_code} https://127.0.0.1:%d/healthz"
+             port)
+      with
+      | Ok [ "200" ] -> Ok ()
+      | _ ->
+          Unix.sleepf 0.05;
+          poll ()
+  in
+  poll ()
+
 let node_server_source =
   {|const http = require("http");
 const fs = require("fs");
@@ -707,6 +728,64 @@ const server = http.createServer((req, res) => {
   }
 });
 
+server.listen(port, "127.0.0.1");
+|}
+
+let node_h2_server_source =
+  {|const http2 = require("http2");
+const fs = require("fs");
+const path = require("path");
+
+const port = Number(process.argv[2]);
+const root = process.argv[3];
+
+function collect(stream, cb) {
+  const chunks = [];
+  stream.on("data", chunk => chunks.push(chunk));
+  stream.on("end", () => cb(Buffer.concat(chunks)));
+}
+
+function handle(stream, headers) {
+  const method = headers[":method"];
+  const url = new URL(headers[":path"], "http://127.0.0.1");
+  if (method === "GET" && url.pathname === "/") {
+    stream.respond({ ":status": 200 });
+    stream.end();
+  } else if (method === "GET" && url.pathname === "/healthz") {
+    stream.respond({ ":status": 200, "content-type": "text/plain" });
+    stream.end("ok\n");
+  } else if (method === "GET" && url.pathname.startsWith("/user/")) {
+    stream.respond({ ":status": 200, "content-type": "text/plain" });
+    stream.end(url.pathname.slice("/user/".length));
+  } else if (method === "POST" && url.pathname === "/user") {
+    collect(stream, () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+  } else if (method === "POST" && url.pathname === "/echo") {
+    collect(stream, body => {
+      stream.respond({ ":status": 200, "content-type": "text/plain" });
+      stream.end(body);
+    });
+  } else if (method === "GET" && url.pathname.startsWith("/static/")) {
+    const file = path.join(root, url.pathname.slice("/static/".length));
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        stream.respond({ ":status": 404 });
+        stream.end();
+      } else {
+        stream.respond({ ":status": 200 });
+        stream.end(data);
+      }
+    });
+  } else {
+    stream.respond({ ":status": 404 });
+    stream.end();
+  }
+}
+
+const server = http2.createServer({ allowHTTP1: true });
+server.on("stream", handle);
 server.listen(port, "127.0.0.1");
 |}
 
@@ -763,6 +842,66 @@ func main() {
 }
 |}
 
+let go_h2_server_source =
+  {|package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	port, err := strconv.Atoi(os.Args[1])
+	if err != nil {
+		panic(err)
+	}
+	root := os.Args[2]
+	certFile := os.Args[3]
+	keyFile := os.Args[4]
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case r.Method == "GET" && path == "/":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "GET" && path == "/healthz":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("ok\n"))
+		case r.Method == "GET" && strings.HasPrefix(path, "/user/"):
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(strings.TrimPrefix(path, "/user/")))
+		case r.Method == "POST" && path == "/user":
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "POST" && path == "/echo":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write(body)
+		case r.Method == "GET" && strings.HasPrefix(path, "/static/"):
+			http.ServeFile(w, r, filepath.Join(root, strings.TrimPrefix(path, "/static/")))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	panic(server.ListenAndServeTLS(certFile, keyFile))
+}
+|}
+
 let start_pid_command ~command ~pid_path ~log_path =
   Util.run_cmd
     (Printf.sprintf "%s >%s 2>&1 & echo $! >%s" command (quote log_path)
@@ -782,9 +921,21 @@ let start_node_server ~port ~temp_dir ~protocol ~transport =
       let* () = start_pid_command ~command ~pid_path ~log_path in
       let* () = wait_http_ready ~port ~deadline_ms:5000.0 in
       Ok pid_path
-  | _ -> Error "node reference supports only HTTP/1.1 plain"
+  | Types.H2, Plain ->
+      let source_path = Filename.concat temp_dir "node_h2_server.js" in
+      let pid_path = Filename.concat temp_dir "node.pid" in
+      let log_path = Filename.concat temp_dir "node.log" in
+      Util.write_file source_path node_h2_server_source;
+      let command =
+        Printf.sprintf "node %s %d %s" (quote source_path) port
+          (quote (Util.absolute_path temp_dir))
+      in
+      let* () = start_pid_command ~command ~pid_path ~log_path in
+      Unix.sleepf 1.0;
+      Ok pid_path
+  | _ -> Error "node reference supports only HTTP/1.1 and h2c plain"
 
-let start_go_server ~port ~temp_dir ~protocol ~transport =
+let start_go_server ~port ~temp_dir ~cert_dir ~protocol ~transport =
   match (protocol, transport) with
   | Types.H1, Plain ->
       let source_path = Filename.concat temp_dir "go_h1_server.go" in
@@ -804,7 +955,28 @@ let start_go_server ~port ~temp_dir ~protocol ~transport =
       let* () = start_pid_command ~command ~pid_path ~log_path in
       let* () = wait_http_ready ~port ~deadline_ms:5000.0 in
       Ok pid_path
-  | _ -> Error "go reference supports only HTTP/1.1 plain"
+  | Types.H2, TLS ->
+      let source_path = Filename.concat temp_dir "go_h2_server.go" in
+      let bin_path = Filename.concat temp_dir "go_h2_server" in
+      let pid_path = Filename.concat temp_dir "go.pid" in
+      let log_path = Filename.concat temp_dir "go.log" in
+      let cert_file = Filename.concat cert_dir "server.pem" in
+      let key_file = Filename.concat cert_dir "server.key" in
+      Util.write_file source_path go_h2_server_source;
+      let* () =
+        Util.run_cmd
+          (Printf.sprintf "go build -o %s %s" (quote bin_path)
+             (quote source_path))
+      in
+      let command =
+        Printf.sprintf "%s %d %s %s %s" (quote bin_path) port
+          (quote (Util.absolute_path temp_dir))
+          (quote cert_file) (quote key_file)
+      in
+      let* () = start_pid_command ~command ~pid_path ~log_path in
+      let* () = wait_https_ready ~port ~deadline_ms:8000.0 in
+      Ok pid_path
+  | _ -> Error "go reference supports only HTTP/1.1 plain and H2 TLS"
 
 let stop_pid_file pid_path =
   if Sys.file_exists pid_path then
@@ -836,7 +1008,7 @@ let start_external_server mode ~port ~temp_dir ~cert_dir =
       start_node_server ~port ~temp_dir ~protocol:mode.protocol
         ~transport:mode.transport
   | Go ->
-      start_go_server ~port ~temp_dir ~protocol:mode.protocol
+      start_go_server ~port ~temp_dir ~cert_dir ~protocol:mode.protocol
         ~transport:mode.transport
   | Eta -> Error "internal error: Eta is not an external server"
 

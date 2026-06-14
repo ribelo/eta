@@ -1,6 +1,8 @@
 (library
  (name eta_js_test)
  (public_name eta_js_test)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
  (modules eta_js_test)
  (libraries eta_js js_of_ocaml)
  (synopsis "Testing helpers for eta_js"))

@@ -13,10 +13,8 @@ val create :
   flow:flow ->
   now_ms:(unit -> int64) ->
   ?max_concurrent:int ->
-  ?config:H2.Config.t ->
-  ?push_handler:
-    (H2.Request.t -> (H2.Client_connection.response_handler, unit) result) ->
-  ?error_handler:(H2.Client_connection.error -> unit) ->
+  ?config:Eta_http.H2.Config.t ->
+  ?error_handler:(Eta_http.H2.Connection.error -> unit) ->
   ?security_error_handler:(Error.kind -> unit) ->
   ?on_close:(unit -> unit) ->
   ?reader_buffer_size:int ->
@@ -26,17 +24,21 @@ val create :
 val request :
   t ->
   tag:int ->
-  ?trailers_handler:(H2.Headers.t -> unit) ->
-  H2.Request.t ->
-  error_handler:(Multiplexer.stream -> H2.Client_connection.error -> unit) ->
-  response_handler:(Multiplexer.stream -> H2.Response.t -> H2.Body.Reader.t -> unit) ->
+  ?trailers_handler:(Eta_http.H2.Headers.t -> unit) ->
+  Eta_http.H2.Connection.Client.request ->
+  error_handler:(Multiplexer.stream -> Eta_http.H2.Connection.error -> unit) ->
+  response_handler:
+    (Multiplexer.stream ->
+    Eta_http.H2.Connection.Client.response ->
+    Eta_http.H2.Body.Reader.t ->
+    unit) ->
   (Multiplexer.opened_request, Multiplexer.request_error) result
 
 val register_failure_handler :
   t -> (Error.kind -> unit) -> (unit -> unit)
 
 val mux : t -> Multiplexer.t
-val client : t -> H2.Client_connection.t
+val client : t -> Eta_http.H2.Connection.t
 val stats : t -> Stream_state.stats
 val fork_daemon : t -> (unit -> unit) -> unit
 val is_closed : t -> bool

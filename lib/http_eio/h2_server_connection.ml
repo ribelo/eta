@@ -2,6 +2,7 @@
 
 module Server = Eta_http.Server
 module Types = Server_types
+module H2 = Eta_http.H2
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
@@ -59,6 +60,19 @@ type response_drain = {
   finish_on_complete : bool;
 }
 
+type request_body_state =
+  | Request_body_open
+  | Request_body_draining
+  | Request_body_ignored
+  | Request_body_peer_closed
+  | Request_body_reset
+
+type response_state =
+  | Response_idle
+  | Response_streaming
+  | Response_closed
+  | Response_reset
+
 type request_trailers = {
   promise : (Eta_http.Core.Header.t, Server.Error.t) result Eio.Promise.t;
   resolver : (Eta_http.Core.Header.t, Server.Error.t) result Eio.Promise.u;
@@ -92,14 +106,13 @@ type command =
 
 type stream_state = {
   stream_id : int;
-  reqd : H2.Reqd.t;
+  reqd : H2.Connection.Server.Reqd.t;
   request_body : H2.Body.Reader.t;
   request_content_length : int option;
   metrics : Server_metrics.t option;
   mutable metrics_finished : bool;
   mutable request_body_bytes : int;
-  mutable request_done : bool;
-  mutable request_discarding : bool;
+  mutable request_body_state : request_body_state;
   request_trailers : request_trailers;
   mutable request_read_resolver : request_body_read Eio.Promise.u option;
   mutable request_discard_resolver :
@@ -108,7 +121,7 @@ type stream_state = {
   mutable response_writer : H2.Body.Writer.t option;
   mutable response_write_resolver : unit_result Eio.Promise.u option;
   mutable response_drain : response_drain option;
-  mutable response_done : bool;
+  mutable response_state : response_state;
 }
 
 type t = {
@@ -117,7 +130,7 @@ type t = {
   sleep : Eta.Duration.t -> unit;
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
-  h2 : H2.Server_connection.t;
+  h2 : H2.Connection.t;
   security : Eta_http.H2.Security.t;
   mutable security_preface_remaining : int;
   ingress_buffer : Bigstringaf.t;
@@ -126,12 +139,13 @@ type t = {
   mutable ingress_len : int;
   mutable filter_preface_remaining : int;
   mutable filter_pending : string;
-  request_header_decoder : Eta_http.Hpack_ox.t;
-  request_header_encoder : Eta_http.Hpack_ox.encoder;
+  request_header_decoder : Eta_http.Hpack.t;
+  request_header_encoder : Eta_http.Hpack.encoder;
   mutable encoder_buffer : Bytes.t;
   mutable normalize_request_headers : bool;
   mutable request_header_block : request_header_block option;
   mutable observed_request_ordinal : int;
+  mutable highest_observed_client_stream_id : int;
   mutable highest_processed_stream_id : int;
   mutable graceful_shutdown_last_stream_id : int option;
   mutable graceful_shutdown_goaway_sent : bool;
@@ -140,6 +154,7 @@ type t = {
   stream_ids_by_ordinal : (int, int) Hashtbl.t;
   graceful_rejected_streams : (int, unit) Hashtbl.t;
   pending_request_trailers : (int, Eta_http.Core.Header.t) Hashtbl.t;
+  remote_end_streams : (int, unit) Hashtbl.t;
   remote_reset_streams : (int, unit) Hashtbl.t;
   remote_reset_ordinals : (int, unit) Hashtbl.t;
   mutable pending_control_frames : string list;
@@ -246,6 +261,64 @@ let resolve_request_trailers_empty state =
 
 let fail_request_trailers state error =
   resolve state.request_trailers.resolver (Error error)
+
+let request_body_accepts_peer_frame = function
+  | Request_body_open | Request_body_draining | Request_body_ignored -> true
+  | Request_body_peer_closed | Request_body_reset -> false
+
+let request_body_terminal = function
+  | Request_body_peer_closed | Request_body_reset -> true
+  | Request_body_open | Request_body_draining | Request_body_ignored -> false
+
+let request_body_available_to_app = function
+  | Request_body_open | Request_body_peer_closed -> true
+  | Request_body_draining | Request_body_ignored | Request_body_reset -> false
+
+let response_terminal = function
+  | Response_closed | Response_reset -> true
+  | Response_idle | Response_streaming -> false
+
+let request_body_peer_closed state =
+  match state.request_body_state with
+  | Request_body_peer_closed | Request_body_reset -> ()
+  | Request_body_open | Request_body_draining | Request_body_ignored ->
+      state.request_body_state <- Request_body_peer_closed
+
+let request_body_draining state =
+  match state.request_body_state with
+  | Request_body_open | Request_body_ignored ->
+      state.request_body_state <- Request_body_draining
+  | Request_body_draining | Request_body_peer_closed | Request_body_reset -> ()
+
+let close_request_body_reader state =
+  try
+    if not (H2.Body.Reader.is_closed state.request_body) then
+      H2.Body.Reader.close state.request_body
+  with _ -> ()
+
+let ignore_request_body state =
+  (match state.request_body_state with
+  | Request_body_peer_closed | Request_body_reset -> ()
+  | Request_body_open | Request_body_draining | Request_body_ignored ->
+      state.request_body_state <- Request_body_ignored);
+  close_request_body_reader state
+
+let reset_request_body state =
+  state.request_body_state <- Request_body_reset;
+  close_request_body_reader state
+
+let response_streaming state =
+  match state.response_state with
+  | Response_idle -> state.response_state <- Response_streaming
+  | Response_streaming | Response_closed | Response_reset -> ()
+
+let response_closed state =
+  match state.response_state with
+  | Response_reset -> ()
+  | Response_idle | Response_streaming | Response_closed ->
+      state.response_state <- Response_closed
+
+let response_reset state = state.response_state <- Response_reset
 
 let enqueue t command =
   if t.closed then false
@@ -380,8 +453,16 @@ let flag_end_headers = 0x4
 let flag_padded = 0x8
 let flag_priority = 0x20
 
+let h2_no_error = 0
+let h2_protocol_error = 1
+let h2_flow_control_error = 3
+let h2_stream_closed = 5
+let h2_frame_size_error = 6
+let h2_compression_error = 9
+let h2_enhance_your_calm = 11
+
 let configured_max_frame_size t =
-  t.config.Types.Config.h2_config.H2.Config.read_buffer_size
+  t.config.Types.Config.h2_config.Eta_http.H2.Config.read_buffer_size
 
 let h2_filter_protocol_violation ~kind ~message =
   Eta_http.Error.Connection_protocol_violation { kind; message }
@@ -394,7 +475,7 @@ let stream_closed_frame_error stream_id =
   h2_filter_protocol_violation ~kind:"stream_closed"
     ~message:
       (Printf.sprintf
-         "HTTP/2 DATA frame received on reset stream %d" stream_id)
+         "HTTP/2 request body frame received on closed stream %d" stream_id)
 
 let frame_size_error t length =
   h2_filter_protocol_violation ~kind:"h2_frame_size"
@@ -429,9 +510,35 @@ let note_headers_frame t stream_id =
     client_request_stream_id stream_id
     && not (Hashtbl.mem t.stream_ordinals stream_id)
   then (
+    if stream_id > t.highest_observed_client_stream_id then
+      t.highest_observed_client_stream_id <- stream_id;
     t.observed_request_ordinal <- t.observed_request_ordinal + 1;
     Hashtbl.add t.stream_ordinals stream_id t.observed_request_ordinal;
     Hashtbl.add t.stream_ids_by_ordinal t.observed_request_ordinal stream_id)
+
+let stream_state_by_stream_id t stream_id =
+  match Hashtbl.find_opt t.stream_ordinals stream_id with
+  | None -> None
+  | Some ordinal -> Hashtbl.find_opt t.streams ordinal
+
+let mark_remote_end_stream t stream_id =
+  if client_request_stream_id stream_id then (
+    Hashtbl.replace t.remote_end_streams stream_id ();
+    match stream_state_by_stream_id t stream_id with
+    | None -> ()
+    | Some state -> request_body_peer_closed state)
+
+let request_body_frame_type = function
+  | 0x0 | 0x1 | 0x9 -> true
+  | _ -> false
+
+let request_body_frame_on_closed_stream t frame_type stream_id =
+  client_request_stream_id stream_id
+  && request_body_frame_type frame_type
+  &&
+  match stream_state_by_stream_id t stream_id with
+  | Some state -> not (request_body_accepts_peer_frame state.request_body_state)
+  | None -> Hashtbl.mem t.remote_end_streams stream_id
 
 let request_header_fragment flags payload =
   let len = String.length payload in
@@ -457,14 +564,15 @@ let request_header_fragment flags payload =
     else Ok (String.sub payload !pos (len - !pos - pad_len)))
 
 let decode_request_header_block t block =
-  Eta_http.Hpack_ox.decode_headers_string t.request_header_decoder block
+  let result = Eta_http.Hpack.decode_headers_string t.request_header_decoder block in
+  result
   |> Result.map_error (fun _ -> request_trailer_error "HPACK decoding error")
 
-let encode_request_header_block t (headers : Eta_http.Hpack_ox.header list) =
+let encode_request_header_block t (headers : Eta_http.Hpack.header list) =
   let buf = t.encoder_buffer in
   let pos_ref = ref 0 in
   List.iter
-    (Eta_http.Hpack_ox.encode_single_header t.request_header_encoder buf pos_ref)
+    (Eta_http.Hpack.encode_single_header t.request_header_encoder buf pos_ref)
     headers;
   Bytes.sub_string buf 0 !pos_ref
 
@@ -529,7 +637,7 @@ let validate_request_trailers t trailers =
 let validate_decoded_request_header_names block headers =
   let has_empty_name =
     List.exists
-      (fun ({ Eta_http.Hpack_ox.name; _ } : Eta_http.Hpack_ox.header) ->
+      (fun ({ Eta_http.Hpack.name; _ } : Eta_http.Hpack.header) ->
          String.equal name "")
       headers
   in
@@ -542,6 +650,31 @@ let validate_decoded_request_header_names block headers =
     Error
       (connection_filter_error
          (request_header_error "empty HTTP/2 request header name"))
+
+let decoded_header_block_bytes headers =
+  List.fold_left
+    (fun total ({ Eta_http.Hpack.name; value; _ } : Eta_http.Hpack.header) ->
+      total + String.length name + String.length value + 32)
+    0 headers
+
+let validate_decoded_request_header_limits t headers =
+  let limits = t.config.server.limits in
+  let count = List.length headers in
+  if count > limits.max_request_headers then
+    Error
+      (connection_filter_error ~code:h2_compression_error
+         (request_header_error
+            (Printf.sprintf "request header count exceeds %d"
+               limits.max_request_headers)))
+  else
+    let bytes = decoded_header_block_bytes headers in
+    if bytes > limits.max_request_header_bytes then
+      Error
+        (connection_filter_error ~code:h2_compression_error
+           (request_header_error
+              (Printf.sprintf "request header section exceeds %d bytes"
+                 limits.max_request_header_bytes)))
+    else Ok ()
 
 let store_request_trailers t ordinal trailers =
   match Hashtbl.find_opt t.streams ordinal with
@@ -562,18 +695,26 @@ let complete_request_header_block t block =
       (match validate_decoded_request_header_names block headers with
       | Error _ as error -> error
       | Ok () ->
+          (match
+             if block.trailers then Ok ()
+             else validate_decoded_request_header_limits t headers
+           with
+          | Error _ as error -> error
+          | Ok () ->
           t.request_header_block <- None;
+          if block.end_stream then
+            mark_remote_end_stream t block.stream_id;
           if (not block.trailers) && not block.normalize then Ok Pass_frame
-          else if not block.trailers then
+          else if not block.trailers then (
             Ok
               (Emit_frame
                  (emit_header_block t ~stream_id:block.stream_id
                     ~end_stream:block.end_stream
-                    (encode_request_header_block t headers)))
+                    (encode_request_header_block t headers))))
           else
             let trailers =
               List.map
-                (fun ({ Eta_http.Hpack_ox.name; value; _ } : Eta_http.Hpack_ox.header) -> (name, value))
+                (fun ({ Eta_http.Hpack.name; value; _ } : Eta_http.Hpack.header) -> (name, value))
                 headers
             in
             (match validate_request_trailers t trailers with
@@ -581,7 +722,7 @@ let complete_request_header_block t block =
             | Ok trailers ->
                 store_request_trailers t block.ordinal trailers;
                 t.normalize_request_headers <- true;
-                Ok (Emit_frame (end_stream_data_frame block.stream_id))))
+                Ok (Emit_frame (end_stream_data_frame block.stream_id)))))
 
 let observe_request_headers_frame t frames off length flags stream_id =
   if not (client_request_stream_id stream_id) then Ok Pass_frame
@@ -607,7 +748,8 @@ let observe_request_headers_frame t frames off length flags stream_id =
           }
         in
         Buffer.add_string block.block fragment;
-        if flags land flag_end_headers <> 0 then complete_request_header_block t block
+        if flags land flag_end_headers <> 0 then (
+          complete_request_header_block t block)
         else (
           t.request_header_block <- Some block;
           if block.normalize then Ok Drop_frame else Ok Pass_frame)
@@ -719,7 +861,11 @@ let filter_ingress t bytes ~off ~len =
             let ty = frame_type frames off in
             let flags = frame_flags frames off in
             let stream_id = frame_stream_id frames off in
-            if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id then
+            if request_body_frame_on_closed_stream t ty stream_id then
+              Error
+                (stream_filter_error ~code:5 ~stream_id
+                   (stream_closed_frame_error stream_id))
+            else if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id then
               Error
                 (stream_filter_error ~code:5 ~stream_id
                    (stream_closed_frame_error stream_id))
@@ -744,6 +890,8 @@ let filter_ingress t bytes ~off ~len =
                   | Pass_frame -> Buffer.add_substring output frames off total
                   | Drop_frame -> ()
                   | Emit_frame bytes -> Buffer.add_string output bytes);
+                  if ty = 0x0 && flags land flag_end_stream <> 0 then
+                    mark_remote_end_stream t stream_id;
                   loop (off + total)))
       in
       match loop 0 with
@@ -790,19 +938,18 @@ let body_of_stream t ordinal =
   Server.Body.of_reader ~discard read
 
 let request_of_reqd ~connection ~ordinal ~stream_id ~body ~trailers reqd =
-  let request = H2.Reqd.request reqd in
-  let path, query = Server.Request.split_target request.target in
-  let headers = H2.Headers.to_list request.headers in
+  let request = H2.Connection.Server.Reqd.request reqd in
+  let path, query = Server.Request.split_target request.path in
   {
     Server.Request.id = request_id connection.Types.Connection_info.id ordinal;
     version = Eta_http.Core.Version.H2;
     scheme = request.scheme;
-    authority = H2.Headers.get request.headers ":authority";
+    authority = request.authority;
     method_ = method_to_string request.meth;
-    target = request.target;
+    target = request.path;
     path;
     query;
-    headers = Eta_http.Core.Header.unsafe_of_list headers;
+    headers = Eta_http.Core.Header.unsafe_of_list request.headers;
     body;
     trailers =
       (fun () ->
@@ -842,13 +989,20 @@ let validate_request_metadata t (request : Server.Request.t) =
                (Bad_request { message })))
 
 let h2_response response =
-  H2.Response.create
-    ~headers:
-      (H2.Headers.of_rev_list
-         (List.rev_map
-            (fun (name, value) -> (Eta_http.Core.Header.normalize_name name, value))
-            (Eta_http.Core.Header.to_list response.headers)))
-    (H2.Status.of_code response.status)
+  {
+    H2.Connection.Server.status = response.status;
+    headers =
+      List.map
+        (fun (name, value) -> (Eta_http.Core.Header.normalize_name name, value))
+        (Eta_http.Core.Header.to_list response.headers);
+    body =
+      (match response.body with
+      | Response_no_body _ -> `Empty
+      | Response_fixed (chunks, _) ->
+          `String (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
+      | Response_stream _ -> `Reader (H2.Body.Reader.create ()));
+    trailers = Lazy.from_val [];
+  }
 
 let validate_response_headers t response =
   match
@@ -988,8 +1142,12 @@ let write_fixed_chunk writer chunk =
   let rec loop off =
     if off < len then (
       let chunk_len = min max_h2_data_chunk (len - off) in
-      H2.Body.Writer.write_string writer (Bytes.sub_string chunk off chunk_len);
-      loop (off + chunk_len))
+      match
+        H2.Body.Writer.write_string writer (Bytes.sub_string chunk off chunk_len)
+      with
+      | Ok () -> loop (off + chunk_len)
+      | Error _ -> Error "response write failed")
+    else Ok ()
   in
   loop 0
 
@@ -1042,9 +1200,10 @@ let fallback_error_response t request cause =
 
 let respond_fixed reqd response =
   match response.body with
-  | Response_no_body _ -> H2.Reqd.respond_with_string reqd (h2_response response) ""
+  | Response_no_body _ ->
+      H2.Connection.Server.Reqd.respond_with_string reqd (h2_response response) ""
   | Response_fixed (chunks, _) ->
-      H2.Reqd.respond_with_string reqd (h2_response response)
+      H2.Connection.Server.Reqd.respond_with_string reqd (h2_response response)
         (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
   | Response_stream _ ->
       invalid_arg
@@ -1068,12 +1227,13 @@ let copy_write_job t iovecs =
       Cstruct.blit src 0 t.write_buffer !dst_off len;
       dst_off := !dst_off + len)
     iovecs;
-  { data = Cstruct.sub t.write_buffer 0 len; len }
+  let data = Cstruct.sub t.write_buffer 0 len in
+  { data; len }
 
 let schedule_write_iovecs t iovecs =
   let len = H2.IOVec.lengthv iovecs in
   if len = 0 then (
-    H2.Server_connection.report_write_result t.h2 (`Ok 0);
+    H2.Connection.report_write_result t.h2 (`Ok 0);
     true)
   else if t.write_pending then false
   else (
@@ -1085,28 +1245,28 @@ let h2_write_batch_budget = 32
 
 let rec drain_writes ?(budget = h2_write_batch_budget) t =
   if (not t.closed) && not t.write_pending then
-    match H2.Server_connection.next_write_operation t.h2 with
-    | `Write iovecs ->
+    match H2.Connection.next_write_operation t.h2 with
+    | H2.Connection.Write iovecs ->
         if schedule_write_iovecs t iovecs then
           if budget <= 1 then (
             Eio.Fiber.yield ();
             ())
           else drain_writes ~budget:(budget - 1) t
-    | `Yield -> ()
-    | `Close _ ->
-        H2.Server_connection.report_write_result t.h2 `Closed;
+    | Yield -> ()
+    | Close _ ->
+        H2.Connection.report_write_result t.h2 `Closed;
         mark_closed t;
         (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
-  config.Types.Config.h2_config.H2.Config.read_buffer_size
+  config.Types.Config.h2_config.Eta_http.H2.Config.read_buffer_size
 
 let max_ingress_buffer_size config =
   config.Types.Config.read_buffer_size + h2_read_buffer_size config
   + Eta_http.H2.Frame.header_size
 
-let stream_table_initial_capacity (h2_config : H2.Config.t) =
-  min (Int32.to_int h2_config.H2.Config.max_concurrent_streams) 256
+let stream_table_initial_capacity (h2_config : Eta_http.H2.Config.t) =
+  min h2_config.Eta_http.H2.Config.max_concurrent_streams 256
 
 let limited_h2_config (config : Types.Config.t) =
   let limits = config.server.limits in
@@ -1117,8 +1277,8 @@ let limited_h2_config (config : Types.Config.t) =
   in
   {
     h2_config with
-    H2.Config.max_header_count =
-      cap limits.max_request_headers h2_config.max_header_count;
+    Eta_http.H2.Config.max_header_count =
+      min limits.max_request_headers h2_config.max_header_count;
     max_header_list_size =
       cap limits.max_request_header_bytes h2_config.max_header_list_size;
   }
@@ -1156,7 +1316,7 @@ let feed_ingress t =
   let rec loop () =
     if t.ingress_len > 0 then (
       let consumed =
-        H2.Server_connection.read t.h2 t.ingress_buffer ~off:t.ingress_off
+        H2.Connection.read t.h2 t.ingress_buffer ~off:t.ingress_off
           ~len:t.ingress_len
       in
       if consumed < 0 || consumed > t.ingress_len then
@@ -1173,7 +1333,7 @@ let feed_ingress t =
 
 let read_eof t =
   let consumed =
-    H2.Server_connection.read_eof t.h2 t.ingress_buffer ~off:t.ingress_off
+    H2.Connection.read_eof t.h2 t.ingress_buffer ~off:t.ingress_off
       ~len:t.ingress_len
   in
   t.ingress_off <- t.ingress_off + consumed;
@@ -1187,7 +1347,6 @@ let fail_pending_request_read state error =
   state.request_read_resolver <- None
 
 let clear_request_discard state =
-  state.request_discarding <- false;
   state.request_discard_resolver <- None;
   state.request_discard_timeout_token <- None
 
@@ -1208,18 +1367,15 @@ let fail_pending_response_write state error =
   state.response_drain <- None
 
 let close_request_body state =
-  state.request_done <- true;
   clear_request_discard state;
-  try
-    if not (H2.Body.Reader.is_closed state.request_body) then
-      H2.Body.Reader.close state.request_body
-  with _ -> ()
+  reset_request_body state
 
 let forget_stream t ordinal state =
   state.response_writer <- None;
   Eta_http.H2.Security.complete_stream t.security state.stream_id;
   Hashtbl.remove t.stream_ordinals state.stream_id;
   Hashtbl.remove t.stream_ids_by_ordinal ordinal;
+  Hashtbl.remove t.remote_end_streams state.stream_id;
   Hashtbl.remove t.remote_reset_streams state.stream_id;
   Hashtbl.remove t.remote_reset_ordinals ordinal;
   Hashtbl.remove t.pending_request_trailers ordinal;
@@ -1227,7 +1383,27 @@ let forget_stream t ordinal state =
   Hashtbl.remove t.streams ordinal
 
 let forget_if_complete t ordinal state =
-  if state.request_done && state.response_done then forget_stream t ordinal state
+  if
+    request_body_terminal state.request_body_state
+    && response_terminal state.response_state
+  then forget_stream t ordinal state
+
+let apply_remote_end_streams t =
+  let stream_ids =
+    Hashtbl.fold (fun stream_id () acc -> stream_id :: acc) t.remote_end_streams
+      []
+  in
+  List.iter
+    (fun stream_id ->
+      match Hashtbl.find_opt t.stream_ordinals stream_id with
+      | None -> ()
+      | Some ordinal -> (
+          match Hashtbl.find_opt t.streams ordinal with
+          | None -> ()
+          | Some state ->
+              request_body_peer_closed state;
+              forget_if_complete t ordinal state))
+    stream_ids
 
 let resolve_unit resolver =
   Option.iter (fun resolver -> resolve resolver (Ok ())) resolver
@@ -1266,23 +1442,24 @@ let schedule_request_body_drain_timeout t ordinal token timeout =
       `Stop_daemon)
 
 let rec drain_request_body t ordinal state remaining resolver =
-  if state.request_done then (
+  if request_body_terminal state.request_body_state then (
     clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else if remaining <= 0 then (
     fail_request_trailers state (request_body_closed_error t ordinal);
-    close_request_body state;
+    ignore_request_body state;
+    clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else if H2.Body.Reader.is_closed state.request_body then (
-    state.request_done <- true;
+    request_body_peer_closed state;
     resolve_request_trailers_empty state;
     clear_request_discard state;
     forget_if_complete t ordinal state;
     resolve_unit resolver)
   else (
-    state.request_discarding <- true;
+    request_body_draining state;
     state.request_discard_resolver <- resolver;
     Option.iter
       (fun timeout ->
@@ -1294,7 +1471,7 @@ let rec drain_request_body t ordinal state remaining resolver =
       ~on_eof:(fun () ->
         match finish_request_body_eof t state with
         | Ok () ->
-            state.request_done <- true;
+            request_body_peer_closed state;
             resolve_request_trailers_empty state;
             clear_request_discard state;
             forget_if_complete t ordinal state;
@@ -1317,27 +1494,33 @@ let rec drain_request_body t ordinal state remaining resolver =
             forget_if_complete t ordinal state))
 
 let discard_request_body_with_policy ?resolver ~drain t ordinal state =
-  if state.request_done || state.request_discarding then resolve_unit resolver
+  if
+    request_body_terminal state.request_body_state
+    || state.request_body_state = Request_body_draining
+    || state.request_body_state = Request_body_ignored
+  then resolve_unit resolver
   else
     match (drain, t.config.server.unread_body_policy) with
     | true, Eta_http.Server.Config.Drain_up_to limit ->
         drain_request_body t ordinal state limit resolver
     | true, Eta_http.Server.Config.Reset | false, _ ->
         fail_request_trailers state (request_body_closed_error t ordinal);
-        close_request_body state;
+        ignore_request_body state;
+        clear_request_discard state;
         forget_if_complete t ordinal state;
         resolve_unit resolver
 
 let finish_response t ordinal state =
-  if not state.response_done then Server_stats.H2.stream_completed t.stats;
+  if not (response_terminal state.response_state) then
+    Server_stats.H2.stream_completed t.stats;
   finish_stream_metrics state;
-  state.response_done <- true;
+  response_closed state;
   state.response_drain <- None;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
 
 let complete_response_drains t =
-  if not t.write_pending then
+  if not t.write_pending then (
     let drains =
       Hashtbl.fold
         (fun ordinal state acc ->
@@ -1351,7 +1534,7 @@ let complete_response_drains t =
         state.response_drain <- None;
         if finish_on_complete then finish_response t ordinal state;
         resolve resolver (Ok ()))
-      drains
+      drains)
 
 let flush_writes t =
   drain_writes t;
@@ -1364,7 +1547,8 @@ let flush_control_frames t =
     t.pending_control_frames <- [];
     try
       List.iter
-        (fun frame -> Eio.Flow.write t.flow [ Cstruct.of_string frame ])
+        (fun frame ->
+          Eio.Flow.write t.flow [ Cstruct.of_string frame ])
         frames
     with _ -> mark_closed t)
 
@@ -1390,7 +1574,7 @@ let defer_close t mode =
 
 let finish_reset_response t ordinal state =
   finish_stream_metrics state;
-  state.response_done <- true;
+  response_reset state;
   discard_request_body_with_policy ~drain:true t ordinal state;
   forget_if_complete t ordinal state
 
@@ -1419,7 +1603,7 @@ let fail_active_streams t request_error =
       fail_request_trailers state request_error;
       close_request_body state;
       close_response_writer_best_effort state;
-      state.response_done <- true;
+      response_reset state;
       forget_stream t ordinal state)
     streams
 
@@ -1436,7 +1620,7 @@ let finish_remote_reset_stream t ordinal state =
   fail_request_trailers state error;
   close_request_body state;
   close_response_writer_best_effort state;
-  state.response_done <- true;
+  response_reset state;
   forget_stream t ordinal state
 
 let apply_remote_resets t =
@@ -1454,9 +1638,7 @@ let apply_remote_resets t =
     ordinals
 
 let request_body_open state =
-  (not state.request_done)
-  &&
-  try not (H2.Body.Reader.is_closed state.request_body) with _ -> false
+  not (request_body_terminal state.request_body_state)
 
 let fail_open_request_bodies t =
   let ordinals =
@@ -1471,14 +1653,6 @@ let fail_open_request_bodies t =
       | None -> ()
       | Some state -> finish_remote_reset_stream t ordinal state)
     ordinals
-
-let h2_no_error = 0
-let h2_protocol_error = 1
-let h2_flow_control_error = 3
-let h2_stream_closed = 5
-let h2_frame_size_error = 6
-let h2_compression_error = 9
-let h2_enhance_your_calm = 11
 
 let goaway_error_frame ~last_stream_id error_code =
   Eta_http.H2.Frame.header ~length:8 ~frame_type:Goaway ~flags:0
@@ -1525,6 +1699,7 @@ let cleanup_stream_sidecars t ordinal stream_id =
   Eta_http.H2.Security.complete_stream t.security stream_id;
   Hashtbl.remove t.stream_ordinals stream_id;
   Hashtbl.remove t.stream_ids_by_ordinal ordinal;
+  Hashtbl.remove t.remote_end_streams stream_id;
   Hashtbl.remove t.remote_reset_streams stream_id;
   Hashtbl.remove t.remote_reset_ordinals ordinal;
   Hashtbl.remove t.pending_request_trailers ordinal;
@@ -1534,6 +1709,7 @@ let cleanup_stream_sidecars_by_stream_id t stream_id =
   match Hashtbl.find_opt t.stream_ordinals stream_id with
   | None ->
       Eta_http.H2.Security.complete_stream t.security stream_id;
+      Hashtbl.remove t.remote_end_streams stream_id;
       Hashtbl.remove t.remote_reset_streams stream_id;
       Hashtbl.remove t.graceful_rejected_streams stream_id
   | Some ordinal -> cleanup_stream_sidecars t ordinal stream_id
@@ -1595,7 +1771,8 @@ let schedule_request_body_timeout t ordinal resolver timeout =
 let arm_request_body_read t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
   | None -> resolve resolver (Error (request_body_closed_error t ordinal))
-  | Some state when state.request_done || state.request_discarding ->
+  | Some state
+    when not (request_body_available_to_app state.request_body_state) ->
       resolve resolver (Ok None)
   | Some state ->
       state.request_read_resolver <- Some resolver;
@@ -1619,7 +1796,7 @@ let arm_request_body_read t ordinal resolver =
           state.request_read_resolver <- None;
           match finish_request_body_eof t state with
           | Ok () ->
-              state.request_done <- true;
+              request_body_peer_closed state;
               resolve_request_trailers_empty state;
               forget_if_complete t ordinal state;
               resolve resolver (Ok None)
@@ -1673,7 +1850,7 @@ let start_response t ordinal response resolver =
   | None ->
       resolve resolver (Error (response_write_error t ()));
       `Done
-  | Some state when state.response_done ->
+  | Some state when response_terminal state.response_state ->
       resolve resolver
         (Error
            (response_write_error t ~message:"response already completed" ()));
@@ -1682,8 +1859,10 @@ let start_response t ordinal response resolver =
       match response.body with
       | Response_fixed (_, length) when length > max_h2_data_chunk ->
           let writer =
-            H2.Reqd.respond_with_streaming state.reqd (h2_response response)
+            H2.Connection.Server.Reqd.respond_with_streaming state.reqd
+              (h2_response response)
           in
+          response_streaming state;
           state.response_writer <- Some writer;
           state.response_drain <- Some { resolver; finish_on_complete = false };
           discard_request_body_with_policy ~drain:true t ordinal state;
@@ -1704,43 +1883,39 @@ let start_response t ordinal response resolver =
           `Done
       | Response_stream _ ->
           let writer =
-            H2.Reqd.respond_with_streaming state.reqd (h2_response response)
+            H2.Connection.Server.Reqd.respond_with_streaming state.reqd
+              (h2_response response)
           in
+          response_streaming state;
           state.response_writer <- Some writer;
           state.response_drain <- Some { resolver; finish_on_complete = false };
           discard_request_body_with_policy ~drain:true t ordinal state;
           `Flush (state, resolver))
 
 let write_response_chunk t ordinal chunk resolver =
+  let fail message = resolve resolver (Error (response_write_error t ~message ())) in
   match Hashtbl.find_opt t.streams ordinal with
   | None -> resolve resolver (Error (response_write_error t ()))
   | Some { response_writer = None; _ } ->
-      resolve resolver
-        (Error
-           (response_write_error t
-              ~message:"response streaming writer has not been started" ()))
+      fail "response streaming writer has not been started"
   | Some ({ response_writer = Some writer; _ } as state) ->
       if H2.Body.Writer.is_closed writer then
-        resolve resolver
-          (Error
-             (response_write_error t ~message:"response writer is closed" ()))
-      else (
-        Server_stats.H2.add_response_bytes t.stats (Bytes.length chunk);
-        Option.iter
-          (fun metrics ->
-            Server_metrics.response_body_bytes metrics (Bytes.length chunk))
-          state.metrics;
-        write_fixed_chunk writer chunk;
-        state.response_write_resolver <- Some resolver;
-        H2.Body.Writer.flush writer (function
-          | `Written ->
-              state.response_write_resolver <- None;
-              resolve resolver (Ok ())
-          | `Closed ->
-              state.response_write_resolver <- None;
-              resolve resolver
-                (Error
-                   (response_write_error t ~message:"response flush closed" ()))))
+        fail "response writer is closed"
+      else
+        match write_fixed_chunk writer chunk with
+        | Error message -> fail message
+        | Ok () ->
+            Server_stats.H2.add_response_bytes t.stats (Bytes.length chunk);
+            Option.iter
+              (fun metrics ->
+                Server_metrics.response_body_bytes metrics (Bytes.length chunk))
+              state.metrics;
+            state.response_write_resolver <- Some resolver;
+            H2.Body.Writer.flush writer (fun () ->
+                state.response_write_resolver <- None;
+                if H2.Body.Writer.is_closed writer then
+                  fail "response flush closed"
+                else resolve resolver (Ok ()))
 
 let schedule_response_trailers t ordinal trailers resolver =
   match
@@ -1761,12 +1936,11 @@ let schedule_response_trailers t ordinal trailers resolver =
       | Some state -> (
           try
             if not (List.is_empty trailers) then
-              H2.Reqd.schedule_trailers state.reqd
-                (H2.Headers.of_list
-                   (List.map
-                      (fun (name, value) ->
-                        (Eta_http.Core.Header.normalize_name name, value))
-                      trailers));
+              H2.Connection.Server.Reqd.schedule_trailers state.reqd
+                (List.map
+                   (fun (name, value) ->
+                     (Eta_http.Core.Header.normalize_name name, value))
+                   trailers);
             state.response_drain <- Some { resolver; finish_on_complete = false };
             `Flush (state, resolver)
           with exn ->
@@ -1805,7 +1979,8 @@ let fail_response t ordinal error =
       Option.iter
         (fun metrics -> Server_metrics.stream_resets metrics 1)
         state.metrics;
-      H2.Reqd.report_exn state.reqd (Failure (Server.Error.to_string error));
+      H2.Connection.Server.Reqd.report_exn state.reqd
+        (Failure (Server.Error.to_string error));
       finish_reset_response t ordinal state
 
 let begin_immediate_shutdown t =
@@ -1883,11 +2058,12 @@ let handle_command t = function
     (fun () ->
           let observation = observe_ingress_security t bytes ~off ~len in
           if handle_security_observation t observation then ()
-          else
+          else (
               match filter_ingress t bytes ~off ~len with
               | Error observation ->
                   ignore (handle_security_observation t observation)
-              | Ok None -> flush_writes t
+              | Ok None ->
+                  flush_writes t
               | Ok (Some (bytes, len)) -> (
                   match append_ingress t bytes ~off:0 ~len with
                   | Error error ->
@@ -1897,8 +2073,9 @@ let handle_command t = function
                       graceful_close_flow_all t.flow
                   | Ok () ->
                       feed_ingress t;
+                      apply_remote_end_streams t;
                       apply_remote_resets t;
-                      flush_writes t))
+                      flush_writes t)))
   | Ingress_eof ->
       if Eta_http.H2.Security.has_open_header_block t.security then
         handle_security_error t
@@ -1906,6 +2083,8 @@ let handle_command t = function
           incomplete_header_block_eof_error
       else (
         read_eof t;
+        apply_remote_end_streams t;
+        apply_remote_resets t;
         fail_open_request_bodies t;
         flush_writes t;
         defer_close t Close_all)
@@ -1913,7 +2092,8 @@ let handle_command t = function
       mark_closed t;
       fail_active_streams t error;
       graceful_close_flow_all t.flow
-  | Idle_timeout token -> handle_idle_timeout t token
+  | Idle_timeout token ->
+      handle_idle_timeout t token
   | Request_body_read (ordinal, resolver) ->
       arm_request_body_read t ordinal resolver;
       flush_writes t
@@ -1947,12 +2127,12 @@ let handle_command t = function
   | Write_completed (Ok written) ->
       if t.write_pending then (
         t.write_pending <- false;
-        H2.Server_connection.report_write_result t.h2 (`Ok written);
+        H2.Connection.report_write_result t.h2 (`Ok written);
         flush_writes t;
         flush_control_frames t)
   | Write_completed (Error error) ->
       if t.write_pending then t.write_pending <- false;
-      (try H2.Server_connection.report_write_result t.h2 `Closed with _ -> ());
+      (try H2.Connection.report_write_result t.h2 `Closed with _ -> ());
       mark_closed t;
       fail_active_streams t error;
       graceful_close_flow_all t.flow
@@ -1962,7 +2142,7 @@ let handle_command t = function
       flush_control_frames t
 
 let rec owner_loop t =
-  if (not t.closed) && not (H2.Server_connection.is_closed t.h2) then (
+  if (not t.closed) && not (H2.Connection.is_closed t.h2) then (
     flush_writes t;
     flush_control_frames t;
     let command = Eio.Stream.take t.commands in
@@ -2288,15 +2468,12 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   let request_ordinal = ref 0 in
   let holder = ref None in
   let h2 =
-    H2.Server_connection.create ~config:h2_config
-      ~error_handler:(fun ?request:_ _ respond ->
-        Option.iter record_protocol_error !holder;
-        let body = respond H2.Headers.empty in
-        H2.Body.Writer.close body)
-      (fun reqd ->
+    H2.Connection.Server.create ~config:(H2.Config.to_settings h2_config)
+      ~error_handler:(fun _error -> Option.iter record_protocol_error !holder)
+      ~request_handler:(fun reqd ->
         match !holder with
         | None ->
-            H2.Reqd.report_exn reqd
+            H2.Connection.Server.Reqd.report_exn reqd
               (Failure "Eta_http_eio.H2.Server_connection owner not initialized")
         | Some t ->
             t.accepted_request <- true;
@@ -2304,7 +2481,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
             let ordinal = !request_ordinal in
             (match Hashtbl.find_opt t.stream_ids_by_ordinal ordinal with
             | None ->
-                H2.Reqd.report_exn reqd
+                H2.Connection.Server.Reqd.report_exn reqd
                   (Failure
                      "Eta_http_eio.H2.Server_connection missing observed H2 \
                       stream id")
@@ -2332,7 +2509,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                   {
                     stream_id;
                     reqd;
-                    request_body = H2.Reqd.request_body reqd;
+                    request_body = H2.Connection.Server.Reqd.request_body reqd;
                     request_content_length =
                       (match
                          Server.Validation.h2_request_content_length
@@ -2343,8 +2520,10 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                     metrics;
                     metrics_finished = false;
                     request_body_bytes = 0;
-                    request_done = false;
-                    request_discarding = false;
+                    request_body_state =
+                      (if Hashtbl.mem t.remote_end_streams stream_id then
+                         Request_body_peer_closed
+                       else Request_body_open);
                     request_trailers;
                     request_read_resolver = None;
                     request_discard_resolver = None;
@@ -2352,7 +2531,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                     response_writer = None;
                     response_write_resolver = None;
                     response_drain = None;
-                    response_done = false;
+                    response_state = Response_idle;
                   };
                 (match validate_request_metadata t request with
                 | Ok () -> run_handler t ordinal request handler
@@ -2364,7 +2543,9 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                     | Ok prepared ->
                         ignore (start_response t ordinal prepared resolver)
                     | Error error ->
-                        ignore (enqueue t (Response_failed (ordinal, error)))))))
+                        ignore (enqueue t (Response_failed (ordinal, error))))))
+      )
+  ()
   in
   let security =
     Eta_http.H2.Security.create
@@ -2388,12 +2569,13 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       ingress_len = 0;
       filter_preface_remaining = h2_client_connection_preface_length;
       filter_pending = "";
-      request_header_decoder = Eta_http.Hpack_ox.create 4096;
-      request_header_encoder = Eta_http.Hpack_ox.encoder_create 4096;
+      request_header_decoder = Eta_http.Hpack.create 4096;
+      request_header_encoder = Eta_http.Hpack.encoder_create 4096;
       encoder_buffer = Bytes.create 4096;
       normalize_request_headers = false;
       request_header_block = None;
       observed_request_ordinal = 0;
+      highest_observed_client_stream_id = 0;
       highest_processed_stream_id = 0;
       graceful_shutdown_last_stream_id = None;
       graceful_shutdown_goaway_sent = false;
@@ -2402,6 +2584,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       stream_ids_by_ordinal = Hashtbl.create (stream_table_initial_capacity h2_config);
       graceful_rejected_streams = Hashtbl.create 16;
       pending_request_trailers = Hashtbl.create 16;
+      remote_end_streams = Hashtbl.create 16;
       remote_reset_streams = Hashtbl.create 16;
       remote_reset_ordinals = Hashtbl.create 16;
       pending_control_frames = [];
@@ -2444,7 +2627,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       Option.iter
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
-      H2.Server_connection.shutdown h2;
+      H2.Connection.shutdown h2;
       graceful_close_flow_all flow;
       Option.iter (fun on_close -> on_close (stats t)) on_close)
 	    (fun () ->

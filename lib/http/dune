@@ -5,6 +5,7 @@
  (libraries
   eta
   eta_stream
+  eta_http_h2
   unix
   bigstringaf
   cstruct
@@ -14,8 +15,6 @@
   decompress.gz
   angstrom
   faraday
-  h2
-  hpack
   yojson)
  (foreign_stubs
   (language c)

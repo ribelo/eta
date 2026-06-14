@@ -9,6 +9,7 @@ open Test_eta_http_server_config
 open Test_eta_http_server_stats
 open Test_eta_http_ws
 open Test_eta_http_tls
+open Test_eta_http_h2_hpack
 open Test_eta_http_h2_writer
 open Test_eta_http_h2_connection
 open Test_eta_http_h2_multiplexer
@@ -461,10 +462,25 @@ let () =
             test_tls_client_of_flow_uses_ip_identity;
           Alcotest.test_case "single_write feeds BIO on WANT_READ" `Quick
             test_tls_eio_single_write_feeds_rbio_on_want_read;
+          Alcotest.test_case "single_write closed flow raises" `Quick
+            test_tls_eio_single_write_closed_flow_raises;
           Alcotest.test_case "single_write races raw feed with TLS progress"
             `Quick test_tls_eio_single_write_races_raw_feed_with_tls_progress;
           Alcotest.test_case "single_read feeds BIO on WANT_READ" `Quick
             test_tls_eio_single_read_checks_pending_before_raw_read;
+        ] );
+      ( "h2-hpack",
+        [
+          Alcotest.test_case "dynamic table indexes after eviction" `Quick
+            test_hpack_dynamic_table_indexes_after_eviction;
+          Alcotest.test_case "dynamic table size update evicts entries" `Quick
+            test_hpack_dynamic_table_size_update_evicts_entries;
+          Alcotest.test_case "encoder respects zero peer table size" `Quick
+            test_hpack_encoder_respects_zero_peer_table_size;
+          Alcotest.test_case "truncated string is decode error" `Quick
+            test_hpack_decode_truncated_string_returns_error;
+          Alcotest.test_case "encoder handles large header block" `Quick
+            test_hpack_encoder_handles_large_header_block;
         ] );
       ( "h2-writer",
         [
@@ -475,6 +491,8 @@ let () =
         ] );
       ( "h2-connection",
         [
+          Alcotest.test_case "body reader drains buffered chunks before EOF"
+            `Quick test_h2_body_reader_drains_buffered_chunks_before_eof;
           Alcotest.test_case "concurrent streams share owner" `Quick
             test_h2_connection_concurrent_streams;
           Alcotest.test_case "admission error reports configured limit" `Quick
@@ -493,19 +511,6 @@ let () =
             test_h2_connection_completed_error_response_does_not_hold_switch;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
-          Alcotest.test_case "filter passes PUSH_PROMISE continuation" `Quick
-            test_h2_informational_filter_passes_push_promise_continuation;
-          Alcotest.test_case "informational filter passthrough is not global"
-            `Quick test_h2_informational_filter_passthrough_is_not_global;
-          Alcotest.test_case "informational filter rejects 101" `Quick
-            test_h2_informational_filter_rejects_101_status;
-          Alcotest.test_case "informational filter rejects invalid status" `Quick
-            test_h2_informational_filter_rejects_invalid_status;
-          Alcotest.test_case "informational filter rejects empty header name"
-            `Quick
-            test_h2_informational_filter_rejects_empty_header_name;
-          Alcotest.test_case "informational filter rejects second final status"
-            `Quick test_h2_informational_filter_rejects_second_final_status;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request preserves connection" `Quick
@@ -596,8 +601,9 @@ let () =
             test_h2c_server_accepts_data_exactly_at_stream_window;
           Alcotest.test_case "h2c rejects DATA over stream window" `Quick
             test_h2c_server_rejects_data_over_stream_window;
-          Alcotest.test_case "h2c rejects DATA over connection window" `Quick
-            test_h2c_server_rejects_data_over_connection_window;
+          Alcotest.test_case
+            "h2c accepts DATA inside advertised connection window" `Quick
+            test_h2c_server_accepts_data_with_advertised_connection_window;
           Alcotest.test_case "h2c counts padded DATA against flow window" `Quick
             test_h2c_server_counts_padded_data_against_flow_window;
           Alcotest.test_case "h2c rejects response header limit" `Quick
@@ -747,6 +753,8 @@ let () =
             test_h2_security_rejects_increasing_goaway_last_stream_id;
           Alcotest.test_case "complete stream bounds header state" `Quick
             test_h2_security_complete_stream_bounds_header_state;
+          Alcotest.test_case "core rejects oversized frame" `Quick
+            test_h2_connection_rejects_oversized_frame;
         ] );
       ( "h2-multiplexer",
         [
@@ -756,10 +764,10 @@ let () =
             test_h2_multiplexer_read_exception_is_typed_result;
           Alcotest.test_case "default reader accepts max DATA frame" `Quick
             test_h2_default_reader_accepts_max_sized_data_frame;
-          Alcotest.test_case "release forgets stream headers" `Quick
-            test_h2_multiplexer_release_forgets_informational_filter_stream;
-          Alcotest.test_case "buffer-full returns security error" `Quick
-            test_h2_multiplexer_buffer_full_is_security_error;
+          Alcotest.test_case "release after final response" `Quick
+            test_h2_multiplexer_release_after_final_response;
+          Alcotest.test_case "partial frame EOF is protocol error" `Quick
+            test_h2_multiplexer_partial_frame_eof_is_protocol_error;
           Alcotest.test_case "body_stream_async bounded recursion" `Quick
             test_h2_body_stream_async_bounded_recursion;
         ] );

@@ -9,7 +9,7 @@ module Response = Response
 module Retry = Retry
 module Shared = Eta_http.Client
 module Url = Url
-module H2_proto = H2
+module H2_proto = Eta_http.H2
 
 type protocol = Shared.protocol = H1 | H2 | Auto
 type stats = Shared.stats = {
