@@ -1794,9 +1794,6 @@ let arm_request_body_read t ordinal resolver =
       resolve resolver (Ok None)
   | Some state ->
       state.request_read_resolver <- Some resolver;
-      Option.iter
-        (schedule_request_body_timeout t ordinal resolver)
-        t.config.server.timeouts.request_body_timeout;
       H2.Body.Reader.schedule_read state.request_body
         ~on_read:(fun bs ~off ~len ->
           state.request_read_resolver <- None;
@@ -1822,7 +1819,15 @@ let arm_request_body_read t ordinal resolver =
               fail_request_trailers state error;
               close_request_body state;
               forget_if_complete t ordinal state;
-              resolve resolver (Error error))
+              resolve resolver (Error error));
+      (* Only arm a body-read timeout if the read did not complete synchronously.
+         schedule_read delivers already-buffered DATA inline (clearing the
+         resolver), which is the common case for small request bodies. Skipping
+         the arm avoids a per-read fork_daemon + Zzz sleeper on the hot path. *)
+      if Option.is_some state.request_read_resolver then
+        Option.iter
+          (schedule_request_body_timeout t ordinal resolver)
+          t.config.server.timeouts.request_body_timeout
 
 let handle_request_body_timeout t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
