@@ -1006,7 +1006,7 @@ let validate_request_metadata t (request : Server.Request.t) =
 let rec normalize_header_names lst =
   match lst with
   | [] -> []
-  | ((name, value) as hd) :: tl ->
+  | (name, value) :: tl ->
       let tl' = normalize_header_names tl in
       let n = Eta_http.Core.Header.normalize_name name in
       if n == name && tl' == tl then lst else (n, value) :: tl'
