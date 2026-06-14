@@ -54,8 +54,12 @@ domains) fails with ENOMEM; use a modest `Additional n` (8 is the sweet spot).
 
 `./.auto/measure.sh` — outputs `METRIC name=number` lines. Builds release
 `h1_tls_probe.exe`, starts it with `ETA_SERVER_DOMAINS` domains on isolated
-cores (taskset 4-19), then runs oha (HTTPS, c=16) REPS=3 for the handshake
-(`--disable-keepalive`) and keep-alive shapes, reporting medians.
+cores (taskset 4-19), then runs oha on a separate core SET (taskset 20-27, so
+oha is NOT the bottleneck) at c=16 n=6000 (`--disable-keepalive`, fresh
+handshake per request) plus a keep-alive shape, REPS=3 medians.
+
+**Noise**: with oha on one core the p50 was noisy (~±25%); with oha on 8 cores
+it is tight (p50 ~±2%, rps ~±1%). hs_rps and hs_p99 are the most stable signals.
 
 **CRITICAL: rebuild after lib changes** (measure.sh does this).
 

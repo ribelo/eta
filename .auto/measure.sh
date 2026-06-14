@@ -44,12 +44,12 @@ SRV_PIN=""
 OHA_PIN=""
 if command -v taskset >/dev/null 2>&1; then
   SRV_PIN="taskset -c 4-19"
-  OHA_PIN="taskset -c 3"
+  OHA_PIN="taskset -c 20-27"
 fi
 
 C=16
 DOMAINS="${ETA_TLS_DOMAINS:-8}"        # HTTPS accept/handshake domains (cores)
-HS_N="${ETA_TLS_HS_REQUESTS:-2000}"   # handshake run: fresh handshake per request
+HS_N="${ETA_TLS_HS_REQUESTS:-6000}"   # handshake run: fresh handshake per request
 KA_N="${ETA_TLS_KA_REQUESTS:-1000}"   # keep-alive run: matches broad-suite Quick
 REPS="${ETA_TLS_REPS:-3}"
 
