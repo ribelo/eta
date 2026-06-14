@@ -159,8 +159,17 @@ let start ~sw ~env ~port ~temp_dir ?cert_dir ~protocol ~transport () =
       | None -> Error "eta TLS server requires cert_dir"
       | Some cert_dir ->
           let tls_config = tls_config cert_dir protocol in
+          let domain_policy =
+            match Sys.getenv_opt "ETA_SERVER_DOMAINS" with
+            | Some s -> (
+                match int_of_string_opt (String.trim s) with
+                | Some n when n > 0 -> Eta_http_eio.Server.Additional n
+                | _ -> Eta_http_eio.Server.Single_domain)
+            | None -> Eta_http_eio.Server.Single_domain
+          in
           Ok
             (Eta_http_eio.Server.start_https ~sw ~net ~clock ~config
+               ~domain_manager:(Eio.Stdenv.domain_mgr env) ~domain_policy
                ~tls_config ~addr handler))
 
 let stop t =

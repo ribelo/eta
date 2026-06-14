@@ -38,15 +38,17 @@ EXE=_build/default/http-testsuite/test/server_load/h1_tls_probe.exe
 nix develop -c dune build --profile release \
   http-testsuite/test/server_load/h1_tls_probe.exe 2>&1 | tail -20
 
-# CPU pinning to cut scheduler/migration noise: server on core 2, load gen core 3.
+# CPU pinning to cut scheduler/migration noise: server gets an isolated core SET
+# (multi-domain handshake parallelism), load gen on its own core.
 SRV_PIN=""
 OHA_PIN=""
 if command -v taskset >/dev/null 2>&1; then
-  SRV_PIN="taskset -c 2"
+  SRV_PIN="taskset -c 4-19"
   OHA_PIN="taskset -c 3"
 fi
 
 C=16
+DOMAINS="${ETA_TLS_DOMAINS:-8}"        # HTTPS accept/handshake domains (cores)
 HS_N="${ETA_TLS_HS_REQUESTS:-2000}"   # handshake run: fresh handshake per request
 KA_N="${ETA_TLS_KA_REQUESTS:-1000}"   # keep-alive run: matches broad-suite Quick
 REPS="${ETA_TLS_REPS:-3}"
@@ -55,6 +57,7 @@ run_bench() {
   nix develop -c bash -c '
     set -uo pipefail
     export EIO_BACKEND="'"$EIO_BACKEND"'"
+    export ETA_SERVER_DOMAINS="'"$DOMAINS"'"
     PORT=$(shuf -i 20000-60000 -n1)
     TMP=$(mktemp -d)
     LOG=$(mktemp)
