@@ -186,10 +186,25 @@ let write_response_wire t ~blit ~len =
     in
     (match t.config.server.timeouts.response_write_timeout with
     | None -> write ()
-    | Some timeout -> t.with_timeout timeout write);
+    | Some timeout ->
+        (* Bound the write via the per-connection watchdog (deadline +
+           Cancel.sub in handler_watch — writes are sequential and run after the
+           handler, so the slot is free) instead of a per-write Eio.Time
+           .with_timeout (sleeper fiber + Zzz node) on every head/body write. *)
+        let deadline = Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout in
+        Eio.Cancel.sub (fun cc ->
+            t.handler_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
+            match write () with
+            | () -> t.handler_watch <- None
+            | exception exn ->
+                t.handler_watch <- None;
+                raise exn));
     Server_stats.H1.add_response_bytes t.stats len;
     Ok ()
   with
+  | Eio.Cancel.Cancelled Eio.Time.Timeout when not t.closed ->
+      Error (response_write_error t "response write timed out")
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
   | Eio.Time.Timeout ->
       Error (response_write_error t "response write timed out")
   | Eio.Cancel.Cancelled _ as exn -> raise exn
