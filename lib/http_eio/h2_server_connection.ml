@@ -2399,8 +2399,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       graceful_shutdown_last_stream_id = None;
       graceful_shutdown_goaway_sent = false;
       graceful_rejected_header_stream = None;
-      stream_ordinals = Hashtbl.create 16;
-      stream_ids_by_ordinal = Hashtbl.create 16;
+      stream_ordinals = Hashtbl.create (stream_table_initial_capacity h2_config);
+      stream_ids_by_ordinal = Hashtbl.create (stream_table_initial_capacity h2_config);
       graceful_rejected_streams = Hashtbl.create 16;
       pending_request_trailers = Hashtbl.create 16;
       remote_reset_streams = Hashtbl.create 16;
