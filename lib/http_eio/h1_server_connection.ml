@@ -1032,7 +1032,7 @@ let write_response ?(connection_close = false) ?rt t request response =
       | Ok prepared -> write_prepared_response ?rt t request response prepared)
 
 let request_metrics t rt request =
-  if t.config.server.enable_otel then
+  if t.config.server.enable_otel && Eta.Runtime.metrics_enabled rt then
     Some
       (Server_metrics.request ~runtime:rt ~connection:t.connection
          ~emit_url_full:t.config.server.emit_url_full request)
@@ -1258,8 +1258,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       runtime;
       stats = Server_stats.H1.create ();
       connection_metrics =
-        (if config.server.enable_otel then
-           Some (Server_metrics.connection ~runtime ~connection)
+        (if config.server.enable_otel && Eta.Runtime.metrics_enabled runtime
+         then Some (Server_metrics.connection ~runtime ~connection)
          else None);
       current_metrics = None;
       pending_buffer = Bytes.create (2 * request_head_capacity config);
