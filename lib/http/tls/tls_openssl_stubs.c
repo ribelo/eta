@@ -423,7 +423,13 @@ static SSL_CTX *eta_new_server_ctx(const char *cert, const char *key,
     caml_failwith("SSL_CTX_set_ciphersuites failed");
   }
 
-  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
+  /* Disable the internal server session cache (SSL_SESS_CACHE_SERVER). It takes
+     a global ctx->lock write-lock on every full handshake to store the new
+     session, which serializes handshakes across Eio domains. TLS 1.3 (and 1.2)
+     resumption uses stateless session tickets, which do not depend on this
+     in-process cache, so disabling it preserves resumption for real clients
+     while removing the cross-domain contention point. */
+  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
   if (SSL_CTX_set_session_id_context(
           ctx, ETA_SESSION_ID_CONTEXT,
           (unsigned int)(sizeof(ETA_SESSION_ID_CONTEXT) - 1)) != 1) {
