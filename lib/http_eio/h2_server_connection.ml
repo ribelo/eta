@@ -159,6 +159,7 @@ type t = {
   mutable deferred_close : deferred_close option;
   mutable write_pending : bool;
   mutable write_buffer : Cstruct.t;
+  mutable emit_buffer : Buffer.t;
   mutable closed : bool;
 }
 
@@ -468,10 +469,11 @@ let encode_request_header_block t headers =
   List.iter (Hpack.Encoder.encode_header encoder faraday) headers;
   Faraday.serialize_to_string faraday
 
-let emit_header_block ~stream_id ~end_stream block =
+let emit_header_block t ~stream_id ~end_stream block =
   let max_payload = 16 * 1024 in
   let total = String.length block in
-  let output = Buffer.create (total + 32) in
+  let output = t.emit_buffer in
+  Buffer.clear output;
   let rec loop off first =
     let remaining = total - off in
     if remaining <= max_payload then (
@@ -565,7 +567,7 @@ let complete_request_header_block t block =
           else if not block.trailers then
             Ok
               (Emit_frame
-                 (emit_header_block ~stream_id:block.stream_id
+                 (emit_header_block t ~stream_id:block.stream_id
                     ~end_stream:block.end_stream
                     (encode_request_header_block t headers)))
           else
@@ -2421,6 +2423,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       deferred_close = None;
       write_pending = false;
       write_buffer = Cstruct.create max_h2_data_chunk;
+      emit_buffer = Buffer.create 256;
       closed = false;
     }
   in
