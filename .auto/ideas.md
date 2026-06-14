@@ -36,6 +36,19 @@ bound.
 - Lift the benchmark ceiling (a faster/native multi-process TLS client, or
   measure server CPU per handshake directly) to expose any remaining scaling.
 
+### h2o reference (.reference/h2o) findings
+- Confirms our config: h2o uses `SSL_SESS_CACHE_OFF` (src/ssl.c:134) and lock-free
+  resumption via ticket-key callbacks (`SSL_CTX_set_tlsext_ticket_key_cb`,
+  src/ssl.c:1124) rather than the locked per-process session cache. Matches #12.
+- h2o's perf lever = a **custom `BIO_METHOD`** (socket.c:391, `SSL_set_bio`):
+  read_bio/write_bio operate directly on h2o's own in-memory buffers, saving one
+  memcpy each way vs our mem-BIO + manual `BIO_write`/`BIO_read` pump. NOT worth
+  porting here: the saved copies are ~KB/µs per handshake, but our latency is
+  round-trip-bound (~1.4ms) and throughput is environment-ceilinged (~10.5k/s),
+  so the copies are not the bottleneck. Also a large/risky C↔Eio integration.
+- h2o uses **picotls** for TLS 1.3 (faster than OpenSSL 1.3) — separate library,
+  out of scope.
+
 ### Recommendation
 The user's goal (H1 TLS p99 competitive) is addressed by multi-domain + the two
 library opts. Consider finalizing this session and, if desired, opening a new
