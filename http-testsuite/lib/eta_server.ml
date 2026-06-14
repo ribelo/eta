@@ -159,6 +159,10 @@ let start ~sw ~env ~port ~temp_dir ?cert_dir ~protocol ~transport () =
       | None -> Error "eta TLS server requires cert_dir"
       | Some cert_dir ->
           let tls_config = tls_config cert_dir protocol in
+          (* ETA_SERVER_DOMAINS=n runs the HTTPS listener across n Eio accept/
+             handshake domains so CPU-bound TLS handshakes parallelize across
+             cores (see http-testsuite/README.md). Unset/<=0 keeps a single
+             domain. Capped by io_uring memlock; do not use Recommended here. *)
           let domain_policy =
             match Sys.getenv_opt "ETA_SERVER_DOMAINS" with
             | Some s -> (

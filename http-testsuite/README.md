@@ -56,6 +56,30 @@ The easiest way is to edit `Interop.default_scenarios` to contain only the scena
 
 Both nginx and Caddy are started fresh per scenario batch on ephemeral loopback ports. Configs are templated per-run; no fixed ports or paths are hard-coded. TLS uses per-run local CA certificates generated with openssl.
 
+## Server-load probes & environment knobs
+
+`test/server_load/` hosts the load/latency harness and standalone server probes
+used for performance work (driven by `oha`):
+
+- `run.exe` — the broad server-load suite (Eta vs Node/Go/nginx/Caddy).
+- `h1_probe.exe PORT TEMP_DIR` — standalone Eta HTTP/1.1 (plaintext) server.
+- `h1_tls_probe.exe PORT TEMP_DIR` — standalone Eta HTTPS (HTTP/1.1 over TLS)
+  server; generates a local RSA-2048 cert via `Certs.prepare`.
+- `h2_probe.exe`, `mtop.exe` (memtrace CTF top) — H2 probe and alloc profiler.
+
+Environment variables honored by the testsuite Eta server (`lib/eta_server.ml`)
+and probes:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `ETA_SERVER_DOMAINS` | unset → single domain | For the **TLS** server, number of Eio accept/handshake domains (`start_https ~domain_policy:(Additional n)`). Spreads CPU-bound TLS handshakes across `n` cores. Unset/`0` → `Single_domain` (one core). Keep modest: io_uring memlock (`ulimit -l`, ~8 MB here) caps usable domains (~16); `Recommended` (all cores) can fail with `io_uring_queue_init ENOMEM`. |
+| `MEMTRACE` | unset | Path for a memtrace CTF dump (probes call `Memtrace.trace_if_requested`). |
+| `EIO_BACKEND` | `posix` in harness | Eio backend selection. |
+
+The autoresearch latency harness (`.auto/measure.sh`) also reads `ETA_TLS_DOMAINS`
+(→ `ETA_SERVER_DOMAINS`), `ETA_TLS_HS_REQUESTS`, `ETA_TLS_KA_REQUESTS`, and
+`ETA_TLS_REPS` to size its runs.
+
 ## Differential testing
 
 Every interop scenario runs through both `eta-http` and `curl`. Results are normalized (status, body SHA-256, sorted headers/trailers with stochastic fields stripped) and compared. Divergence is recorded as `DIVERGENT`, not `FAIL`. Expected field-level subtractions are documented in `expected_divergences.md`.
