@@ -32,6 +32,12 @@ type 'a t_rec = {
   mutable handshake_done : bool;
   mutable closed : bool;
   mutable progress_epoch : int;
+  (* Reused per-connection scratch buffers for the OpenSSL BIO pump. feed_buf
+     is serialized by read_mutex, drain_buf by write_mutex, so reuse is safe and
+     avoids a fresh bigarray malloc on every feed_bio/drain_bio call (several
+     per handshake, which under multi-domain load contends in the allocator). *)
+  mutable feed_buf : Cstruct.t;
+  mutable drain_buf : Cstruct.t;
 }
 
 type t = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t t_rec
@@ -82,7 +88,7 @@ let debug_io direction storage ~storage_off ~display_off ~len =
 
 let feed_bio_unlocked t =
   let module Flow = (val t.eio_flow : EIO_FLOW) in
-  let buf = Cstruct.create 32768 in
+  let buf = t.feed_buf in
   let n = Flow.single_read t.flow buf in
   if n = 0 then (
     t.closed <- true;
@@ -121,7 +127,9 @@ let drain_bio t =
       let rec loop () =
         let pending = with_ssl t (fun () -> Openssl.bio_write_pending t.ssl) in
         if pending > 0 then (
-          let buf = Cstruct.create pending in
+          if pending > Cstruct.length t.drain_buf then
+            t.drain_buf <- Cstruct.create pending;
+          let buf = t.drain_buf in
           let n =
             with_ssl t (fun () ->
                 Openssl.bio_read t.ssl (Cstruct.to_bigarray buf) 0 pending)
@@ -315,6 +323,8 @@ let make_tls_state ?host_eio ?sni ?(peer_certificate_verified = false) ssl flow 
     handshake_done = false;
     closed = false;
     progress_epoch = 0;
+    feed_buf = Cstruct.create 32768;
+    drain_buf = Cstruct.create 16384;
   }
 
 let epoch_of_state t =
