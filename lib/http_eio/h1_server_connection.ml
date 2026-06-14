@@ -207,7 +207,6 @@ let write_response_wire t ~blit ~len =
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | Eio.Time.Timeout ->
       Error (response_write_error t "response write timed out")
-  | Eio.Cancel.Cancelled _ as exn -> raise exn
   | exn ->
       Error
         (response_write_error t
@@ -858,6 +857,31 @@ let write_response_bytes_list t chunks =
   in
   loop chunks
 
+(* Write the response head + all fixed body chunks in a SINGLE writev (one
+   Eio.Flow.write, one watchdog arming) instead of a separate write per head and
+   per body chunk. Halves write syscalls + Cancel.sub arming for fixed responses
+   (the common case: head + one body chunk). *)
+let write_response_head_and_body t head chunks =
+  let head_len = String.length head in
+  let body_len = List.fold_left (fun acc c -> acc + Bytes.length c) 0 chunks in
+  let len = head_len + body_len in
+  match
+    write_response_wire t ~len ~blit:(fun buf ->
+        Cstruct.blit_from_string head 0 buf 0 head_len;
+        let off = ref head_len in
+        List.iter
+          (fun c ->
+            let cl = Bytes.length c in
+            Cstruct.blit_from_bytes c 0 buf !off cl;
+            off := !off + cl)
+          chunks)
+  with
+  | Ok () ->
+      emit_current t (fun metrics ->
+          Server_metrics.response_body_bytes metrics body_len);
+      Ok ()
+  | Error error -> response_write_failure ~response_started:true error
+
 let release_response_stream rt stream =
   match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
   | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
@@ -1003,22 +1027,26 @@ let release_ignored_response ?rt response =
 
 let write_prepared_response ?rt t request response
     (prepared : Eta_http.H1.Response_write.prepared) =
-  match write_response_string t prepared.head with
-  | Error error ->
+  match prepared.body with
+  | Eta_http.H1.Response_write.No_body -> (
+      let result = write_response_string t prepared.head in
       release_ignored_response ?rt response;
-      response_write_failure ~response_started:true error
-  | Ok () -> (
-      match prepared.body with
-      | Eta_http.H1.Response_write.No_body ->
+      match result with
+      | Ok () -> Ok { connection_close = prepared.close }
+      | Error error -> response_write_failure ~response_started:true error)
+  | Eta_http.H1.Response_write.Fixed chunks ->
+      (* Single writev for head + body. *)
+      write_response_head_and_body t prepared.head chunks
+      |> Result.map (fun () -> { connection_close = prepared.close })
+  | Eta_http.H1.Response_write.Suppressed_stream _
+  | Eta_http.H1.Response_write.Stream_fixed _
+  | Eta_http.H1.Response_write.Stream_chunked _
+  | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
+      match write_response_string t prepared.head with
+      | Error error ->
           release_ignored_response ?rt response;
-          Ok { connection_close = prepared.close }
-      | Eta_http.H1.Response_write.Fixed chunks ->
-          write_response_bytes_list t chunks
-          |> Result.map (fun () -> { connection_close = prepared.close })
-      | Eta_http.H1.Response_write.Suppressed_stream _
-      | Eta_http.H1.Response_write.Stream_fixed _
-      | Eta_http.H1.Response_write.Stream_chunked _
-      | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
+          response_write_failure ~response_started:true error
+      | Ok () -> (
           match rt with
           | None ->
               response_write_failure ~response_started:true
