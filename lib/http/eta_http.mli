@@ -112,3 +112,4 @@ module Ws : sig
   module Codec = Codec
 end
 (** RFC 6455 codec. *)
+  module Hpack_ox = Hpack_ox

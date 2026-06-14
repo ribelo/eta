@@ -72,3 +72,4 @@ end
 module Ws = struct
   module Codec = Codec
 end
+module Hpack_ox = Hpack_ox

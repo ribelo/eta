@@ -126,7 +126,7 @@ type t = {
   mutable ingress_len : int;
   mutable filter_preface_remaining : int;
   mutable filter_pending : string;
-  request_header_decoder : Hpack.Decoder.t;
+  request_header_decoder : Eta_http.Hpack_ox.t;
   mutable normalize_request_headers : bool;
   mutable request_header_block : request_header_block option;
   mutable observed_request_ordinal : int;
@@ -453,15 +453,13 @@ let request_header_fragment flags payload =
     else Ok (String.sub payload !pos (len - !pos - pad_len)))
 
 let decode_request_header_block t block =
-  match
-    Angstrom.parse_string ~consume:Angstrom.Consume.All
-      (Hpack.Decoder.decode_headers t.request_header_decoder)
-      block
-  with
-  | Ok (Ok headers) -> Ok headers
-  | Ok (Error Hpack.Decoding_error) ->
+  match Eta_http.Hpack_ox.decode_headers_string t.request_header_decoder block with
+  | Ok headers ->
+      Ok (List.map (fun (h : Eta_http.Hpack_ox.header) ->
+          ({ Hpack.name = h.name; value = h.value; sensitive = h.sensitive }
+            : Hpack.header)) headers)
+  | Error _ ->
       Error (request_trailer_error "HPACK decoding error")
-  | Error message -> Error (request_trailer_error ("HPACK parser error: " ^ message))
 
 let encode_request_header_block t headers =
   ignore t;
@@ -2391,7 +2389,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       ingress_len = 0;
       filter_preface_remaining = h2_client_connection_preface_length;
       filter_pending = "";
-      request_header_decoder = Hpack.Decoder.create 4096;
+      request_header_decoder = Eta_http.Hpack_ox.create 4096;
       normalize_request_headers = false;
       request_header_block = None;
       observed_request_ordinal = 0;
