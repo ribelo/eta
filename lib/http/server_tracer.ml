@@ -27,6 +27,13 @@ let with_span ?(emit_url_full = false) request eff =
   | Some context -> Eta.Effect.with_context context span
 
 let request ?(enabled = true) ?(emit_url_full = false) handler request =
-  let eff = handler request in
-  if enabled then with_span ~emit_url_full request eff
-  else Eta.Effect.suppress_observability eff
+  if not enabled then Eta.Effect.suppress_observability (handler request)
+  else
+    (* Only pay the span-wrapper Effect overhead (bind/catch/named_kind +
+       die-context bindings) when a tracer is actually installed. With no
+       tracer the span would never be recorded, so run the handler bare — but
+       leave logging/metrics untouched (unlike suppress_observability). *)
+    Eta.Effect.is_tracing_enabled
+    |> Eta.Effect.bind (fun tracing ->
+           let eff = handler request in
+           if tracing then with_span ~emit_url_full request eff else eff)

@@ -179,6 +179,8 @@ let with_external_parent ~trace_id ~span_id eff =
   | Some ctx -> with_context ctx eff
   | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
 
+let is_tracing_enabled = make @@ fun frame -> ok frame.runtime.tracing_enabled
+
 let current_span =
   make @@ fun frame ->
   if not frame.runtime.tracing_enabled then ok None

@@ -353,6 +353,10 @@ val annotate_all_lazy :
     attributes (e.g. formatting numbers/URLs per request) is wasted when no
     tracer is installed. When tracing is disabled the thunk is never called. *)
 
+val is_tracing_enabled : (bool, 'err) t
+(** Resolves to whether a tracer is installed in the active runtime. Use to skip
+    building span wrappers on hot paths when no tracer will record them. *)
+
 val event : ?attrs:(string * string) list -> string -> (unit, 'err) t
 (** Add an event to the currently active span. If tracing is disabled or no span
     is active, this is a no-op. Use this for structured progress markers inside
