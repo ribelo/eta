@@ -69,7 +69,29 @@ stale probe binary causes false "PROBE_FAILED / server not responding".**
 
 ## What's Been Tried
 
-(Fresh session — latency focus. Throughput-session learnings that inform tail work:)
+### This session (latency) — key results
+- Baseline p99 geomean 4639µs. Now **2907µs (-37.3%)**, RSS -60%, rps_geomean +18%.
+- **THE big lever: removing per-op Eio timeout forks.** Each `Eio.Time.with_timeout`
+  / `Fiber.fork_daemon`+sleep forks a fiber + Zzz timer node + promise for a
+  timeout that almost never fires (the op completes immediately). Removing them:
+  - #4 request_body_timeout: arm only if read didn't complete synchronously
+    (schedule_read delivers buffered DATA inline) — echo p99 -38%, RSS -33%.
+  - #5 response_write_timeout: replace per-write with_timeout with the
+    per-connection watchdog + Cancel.sub (t.write_watch single slot). Hits ALL
+    endpoints (every response writes) — p99 geomean -22%, RSS -39%, rps +10%.
+  - (handler_timeout was already converted to the watchdog in the throughput session.)
+- #2 single-chunk fixed-body fast path (skip Bytes.concat copy). #3 share-on-
+  unchanged header-name normalization (zero alloc when names already lowercase).
+- request_header_timeout/idle_timeout only arm when streams=0 (not under load).
+  request_body_drain only fires for unread bodies (not the benchmark). So no more
+  per-op forks remain on the hot path.
+- **Metric noise lesson**: per-endpoint p99 is noisy; a big single-endpoint win
+  can be masked in the geomean by noise on other endpoints. Cross-check the
+  targeted endpoint + RSS (clean allocation signal), and re-run to confirm.
+- **Next targets** (hit all endpoints): await_owner promise+command roundtrip per
+  response; HPACK decode string alloc (read side); Eta.Runtime.run interpreter.
+
+### Throughput-session learnings that inform tail work:
 
 - **GC is the prime suspect for p99.** Previous session cut root H2
   minor_words/req 2695 → 2209 and GC CPU ~40% → ~18%, but allocation per request

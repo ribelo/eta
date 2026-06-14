@@ -7,16 +7,17 @@ let method_name method_ = Method.(method_ |> of_string |> to_string)
 let span_name request = "HTTP " ^ method_name request.Request.method_
 
 let with_span ?(emit_url_full = false) request eff =
-  let request_attrs = Semconv.request_attrs ~emit_url_full request in
   let body =
     eff
     |> Eta.Effect.bind (fun response ->
            Eta.Effect.pure response
-           |> Eta.Effect.annotate_all (Semconv.response_attrs response))
+           |> Eta.Effect.annotate_all_lazy (fun () ->
+                  Semconv.response_attrs response))
     |> Eta.Effect.catch (fun error ->
            Eta.Effect.fail error
-           |> Eta.Effect.annotate_all (Semconv.error_attrs error))
-    |> Eta.Effect.annotate_all request_attrs
+           |> Eta.Effect.annotate_all_lazy (fun () -> Semconv.error_attrs error))
+    |> Eta.Effect.annotate_all_lazy (fun () ->
+           Semconv.request_attrs ~emit_url_full request)
   in
   let span =
     body |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Server (span_name request)

@@ -346,6 +346,13 @@ val annotate_all : (string * string) list -> ('a, 'err) t -> ('a, 'err) t
 (** Attach several span attributes with the same semantics as {!annotate}. The
     list order is preserved. *)
 
+val annotate_all_lazy :
+  (unit -> (string * string) list) -> ('a, 'err) t -> ('a, 'err) t
+(** Like {!annotate_all}, but the attribute list is only built when tracing is
+    enabled in the active runtime. Use for hot paths where computing the
+    attributes (e.g. formatting numbers/URLs per request) is wasted when no
+    tracer is installed. When tracing is disabled the thunk is never called. *)
+
 val event : ?attrs:(string * string) list -> string -> (unit, 'err) t
 (** Add an event to the currently active span. If tracing is disabled or no span
     is active, this is a no-op. Use this for structured progress markers inside

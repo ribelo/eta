@@ -78,6 +78,29 @@ let annotate_all attrs eff =
       RObs.with_die_annotations frame.runtime.contract attrs @@ fun () ->
       eval frame eff
 
+let annotate_all_lazy make_attrs eff =
+  preserve eff @@ fun frame ->
+  if not frame.runtime.tracing_enabled then eval frame eff
+  else
+    match make_attrs () with
+    | [] -> eval frame eff
+    | attrs ->
+        (match local_get frame RObs.active_span_key with
+         | Some span_id ->
+             List.iter
+               (fun (key, value) ->
+                 frame.runtime.tracer#add_attr_to frame.runtime.contract
+                   ~span_id ~key ~value)
+               attrs
+         | None ->
+             List.iter
+               (fun (key, value) ->
+                 frame.runtime.tracer#add_attr frame.runtime.contract ~key
+                   ~value)
+               attrs);
+        RObs.with_die_annotations frame.runtime.contract attrs @@ fun () ->
+        eval frame eff
+
 let add_attrs_to_active_span frame attrs =
   if frame.runtime.tracing_enabled then
     match local_get frame RObs.active_span_key with
