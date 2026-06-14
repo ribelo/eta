@@ -1001,6 +1001,11 @@ let h2_response response =
     body =
       (match response.body with
       | Response_no_body _ -> `Empty
+      (* Single-chunk fast path: the chunk is a freshly produced, unaliased
+         response body, so reinterpret it as a string in place. Avoids a
+         redundant full-body copy (Bytes.concat allocates a fresh buffer even
+         for one element) on every fixed response — the hot body-endpoint path. *)
+      | Response_fixed ([ chunk ], _) -> `String (Bytes.unsafe_to_string chunk)
       | Response_fixed (chunks, _) ->
           `String (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
       | Response_stream _ -> `Reader (H2.Body.Reader.create ()));
