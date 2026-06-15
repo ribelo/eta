@@ -1,6 +1,6 @@
-# eta-http Testsuite
+# eta_http Testsuite
 
-Real-server interop, adversarial CVE replay, and quick benchmarks for `eta-http`.
+Real-server interop, adversarial CVE replay, and quick benchmarks for `eta_http`.
 
 ## Quick start
 
@@ -82,7 +82,7 @@ The autoresearch latency harness (`.auto/measure.sh`) also reads `ETA_TLS_DOMAIN
 
 ## Differential testing
 
-Every interop scenario runs through both `eta-http` and `curl`. Results are normalized (status, body SHA-256, sorted headers/trailers with stochastic fields stripped) and compared. Divergence is recorded as `DIVERGENT`, not `FAIL`. Expected field-level subtractions are documented in `expected_divergences.md`.
+Every interop scenario runs through both `eta_http` and `curl`. Results are normalized (status, body SHA-256, sorted headers/trailers with stochastic fields stripped) and compared. Divergence is recorded as `DIVERGENT`, not `FAIL`. Expected field-level subtractions are documented in `expected_divergences.md`.
 
 ## Adversarial fixtures
 
@@ -97,13 +97,13 @@ Eight CVE/attack classes are implemented:
 7. **Decompression bomb** — gzip body expanding to 50MB
 8. **GOAWAY churn** — repeated GOAWAY frames
 
-h2 adversarial fixtures use TLS with ALPN `h2` negotiation so that `eta-http` exercises the actual h2 client path.
+h2 adversarial fixtures use TLS with ALPN `h2` negotiation so that `eta_http` exercises the actual h2 client path.
 
 ## Notes
 
 - The suite is opt-in; `dune runtest` is unchanged.
 - Divergent interop scenarios are recorded in `results/` for inspection.
 - `@http-bench` is intentionally quick: it covers small/medium GET and POST body paths. The 100 MiB download correctness case remains in `@interop`; concurrent h2 stress is not part of the default bench alias.
-- Stock nginx does not include the `echo` module, so `/echo` and `/reflect` endpoints return an empty body with status 200. Both `eta-http` and `curl` receive the same empty response, so differential testing still passes, but true body echo is only verified against Caddy.
+- Stock nginx does not include the `echo` module, so `/echo` and `/reflect` endpoints return an empty body with status 200. Both `eta_http` and `curl` receive the same empty response, so differential testing still passes, but true body echo is only verified against Caddy.
 - Server configs are embedded as OCaml strings in `lib/nginx.ml` and `lib/caddy.ml` and rendered to a per-run temp directory. No checked-in template files are used.
 - `config/` exists as a directory for future expansion but is empty in v1.

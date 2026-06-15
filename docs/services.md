@@ -90,7 +90,7 @@ let () =
   Eio.Switch.run @@ fun sw ->
   let eio_clock = Eio.Stdenv.clock stdenv in
   let clock = { now = fun () -> Eio.Time.now eio_clock } in
-  let rt = Runtime.create ~sw ~clock:eio_clock () in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:eio_clock () in
   ignore (Runtime.run rt (boot clock))
 ```
 

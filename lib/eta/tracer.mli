@@ -1,3 +1,10 @@
+(** Built-in tracer implementations for tests and disabled tracing.
+
+    [Eta.Tracer.noop] is the default when no tracer is installed: it records
+    nothing and has negligible overhead. [in_memory] collects spans in memory
+    for assertions in tests. Production exporters such as OpenTelemetry live in
+    optional packages like [eta_otel]. *)
+
 type status = Capabilities.span_status = Ok | Error of string | Cancelled
 type kind = Capabilities.span_kind = Internal | Server | Client | Producer | Consumer
 

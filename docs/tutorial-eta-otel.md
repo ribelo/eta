@@ -1,6 +1,6 @@
 # Eta OTel Tutorial
 
-`eta-otel` exports Eta traces, logs, and metrics to an OTLP/HTTP JSON collector.
+`eta_otel` exports Eta traces, logs, and metrics to an OTLP/HTTP JSON collector.
 Applications still own state and dependency wiring. Eta owns effect
 description, interpretation, and the observability capabilities.
 
@@ -32,7 +32,7 @@ let () =
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock
+    Eta_eio.Runtime.create ~sw ~clock
       ~tracer:(Eta_otel.tracer exporter)
       ~logger:(Eta_otel.logger exporter)
       ~meter:(Eta_otel.meter exporter)
@@ -82,12 +82,12 @@ Stream.merge traces (Stream.merge logs metrics)
 |> Eta_stream.run_drain
 ```
 
-This is why eta-otel has one runtime-owned daemon but still preserves separate
+This is why eta_otel has one runtime-owned daemon but still preserves separate
 trace, log, and metric endpoints and batch sizes.
 
 ## OTLP/HTTP Transport
 
-Each batch is encoded as OTLP/JSON and posted through eta-http:
+Each batch is encoded as OTLP/JSON and posted through eta_http:
 
 ```ocaml
 Eta_http.Observability.Tracer.request_with_retry
@@ -97,8 +97,8 @@ Eta_http.Observability.Tracer.request_with_retry
 ```
 
 The `~enabled:false` boundary suppresses tracer, logger, meter, and automatic
-instrumentation for the exporter transport subtree. eta-http can still own
-connection pooling, response-body draining, retry, and shutdown; eta-otel does
+instrumentation for the exporter transport subtree. eta_http can still own
+connection pooling, response-body draining, retry, and shutdown; eta_otel does
 not need raw Eio TCP.
 
 The OTLP retry policy retries `429`, `502`, `503`, and `504`. It does not retry
@@ -140,9 +140,9 @@ branch uses the Eta clock capability produced by `Capabilities.clock_of_eio`.
 
 ## Error Handling
 
-Export failures are non-fatal. eta-http classifies transport failures and
+Export failures are non-fatal. eta_http classifies transport failures and
 status codes, drains response bodies, and retries according to the OTLP retry
-policy. eta-otel wraps the POST in a six-second `Effect.timeout_as` and reports
+policy. eta_otel wraps the POST in a six-second `Effect.timeout_as` and reports
 the final failure through `~on_error`.
 
 ```ocaml
@@ -161,7 +161,7 @@ Exporter internals use a private in-memory tracer. Those spans are available to
 tests through `Eta_otel.Internal.self_spans`, but they are not sent to the OTLP
 sink.
 
-eta-otel also exports its own health metrics through the configured metrics
+eta_otel also exports its own health metrics through the configured metrics
 endpoint:
 
 | name | kind | attrs | meaning |
@@ -179,14 +179,14 @@ schedule another metrics export.
 
 ## Limits
 
-- Transport is OTLP/HTTP through eta-http's h1 client.
+- Transport is OTLP/HTTP through eta_http's h1 client.
 - `Eta_otel.create` currently builds `http://host:port/path`; HTTPS/custom TLS
-  is not exposed on eta-otel's constructor.
+  is not exposed on eta_otel's constructor.
 - Wire format is OTLP/JSON, not protobuf.
 - Mailbox overflow drops telemetry by design.
 - `Eta_par.Island.run` is not used because the encoder benchmark did not prove a
   CPU-offload benefit.
-- `Eta_blocking` is not used because eta-http already exposes an Eta effect
+- `Eta_blocking` is not used because eta_http already exposes an Eta effect
   for transport.
 - Historical scratch files may contain old dependency-row experiments. Current
   benchmark code and results use explicit dependency naming.

@@ -1,29 +1,41 @@
-# eta-otel
+# eta_otel
 
 OTLP/JSON exporter for [Eta](../eta)'s tracer, logger, and meter
 capabilities.
 
 OpenTelemetry Protocol implementation with hand-written JSON encoders and
-eta-http transport. Batching, stream merging, timeout, retry, backpressure,
+eta_http transport. Batching, stream merging, timeout, retry, backpressure,
 cached exporter configuration, and daemon lifecycle are expressed as Eta
 effects and Eta streams.
 **No protobuf, no `cohttp`, no ambient dependency context.** The direct
-dependency closure is `eta`, `eta-stream`, `eta-http`, `eio`, and
-`yojson`; TLS dependencies stay behind eta-http.
+opam dependencies are `eta`, `eta_stream`, `eta_http`, and `yojson`. `eio`
+arrives transitively through `eta_stream`; TLS dependencies stay behind
+`eta_http`.
+
+## Package boundary
+
+- `eta_otel` is an exporter, not a runtime.
+- It depends on `eta`, `eta_stream`, `eta_http`, and `yojson`.
+- A runnable program also needs a runtime factory (usually `Eta_eio.Runtime.create`)
+  and a transport client (usually `Eta_http_eio.Client`).
+- It does not depend on `eio_main` or `eta_http_eio` directly.
 
 ## Why a separate package?
 
 Core `eta` ships with `Tracer.in_memory` (for tests) and `Tracer.noop`
 (default). Sending spans over the wire pulls in a network stack and a wire
-format, which is a packaging concern, not a language concern. `eta-otel`
+format, which is a packaging concern, not a language concern. `eta_otel`
 implements Eta's observability capabilities against OTLP/JSON so apps that
 want real export can opt in without bloating the core library.
 
 ## Install
 
 ```sh
-opam install eta-otel
+opam install eta_otel
 ```
+
+Nix users can enter the development shell with `nix develop` and run the
+gates below; first-time setup runs `eta-oxcaml-init`.
 
 ## Minimal example
 
@@ -35,15 +47,20 @@ let () =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
+  let runtime_factory tracer =
+    Eta_eio.Runtime.create ~sw ~clock ~tracer ()
+  in
+  let http_client = Eta_http_eio.Client.make_h1 ~sw ~net () in
   let exporter =
-    Eta_otel.create ~sw ~net ~clock
+    Eta_otel.create ~runtime_factory ~http_client
+      ~clock:(Eta_eio.clock clock)
       ~host:"127.0.0.1" ~port:4318
       ~service_name:"my-app"
       ~service_version:"0.1.0"
       ()
   in
   let rt =
-    Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
+    Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
   in
   let work =
     Effect.fn __POS__ __FUNCTION__
@@ -59,6 +76,14 @@ let () =
 That program emits one parent span with two children. `Effect.fn __POS__
 __FUNCTION__` records the current source location as a `loc` attribute and
 names the span after the enclosing OCaml binding.
+
+A runnable `dune` file for that program needs:
+
+```dune
+(executable
+ (name app)
+ (libraries eta eta_eio eta_http_eio eta_otel eio_main))
+```
 
 Typed failures render as `"<typed failure>"` unless the effect supplies a typed
 renderer before the runtime emits the span status:
@@ -104,6 +129,10 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 
 | label             | default          | meaning                                      |
 | ----------------- | ---------------- | -------------------------------------------- |
+| `~runtime_factory`| required         | `Eta.Capabilities.tracer -> unit Eta.Runtime.t` |
+| `~http_client`    | runtime client   | `Eta_http.Client.t` for OTLP POSTs           |
+| `~clock`          | optional         | `Eta.Capabilities.clock` for timestamps      |
+| `~now_ms`         | optional         | wall-clock source in milliseconds            |
 | `~host`           | `"127.0.0.1"`    | OTLP collector host                          |
 | `~port`           | `4318`           | OTLP/HTTP port                               |
 | `~traces_path`    | `"/v1/traces"`   | OTLP traces endpoint                         |
@@ -120,12 +149,13 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 | `~on_error`       | prints to stderr | callback for non-fatal export errors         |
 | `~on_send`        | no-op            | test hook called before each HTTP POST       |
 
-The exporter starts one Eta runtime daemon on the supplied switch. That daemon
-loads cached exporter configuration through `Eta.Resource`, consumes bounded
-`Eta_stream.Mailbox` sources, merges signal streams with `Eta_stream.merge`,
-exports batches with bounded parallelism, and decrements in-flight counters
-through Eta finalizers. Export POSTs go through eta-http with observability
-suppressed so exporter-internal pool and transport spans are not re-exported.
+The exporter starts one Eta runtime daemon through `runtime_factory`. That
+daemon loads cached exporter configuration through `Eta.Resource`, consumes
+bounded `Eta_stream.Mailbox` sources, merges signal streams with
+`Eta_stream.merge`, exports batches with bounded parallelism, and decrements
+in-flight counters through Eta finalizers. Export POSTs go through eta_http
+with observability suppressed so exporter-internal pool and transport spans
+are not re-exported.
 Flush waits on `Eta_stream.Drain_counter.await_zero` instead of fixed-interval
 polling.
 
@@ -137,7 +167,7 @@ already accepted telemetry, and drops signals submitted after shutdown.
 
 ## Self Metrics
 
-eta-otel emits exporter self-metrics to `~self_metrics_path`, which defaults to
+eta_otel emits exporter self-metrics to `~self_metrics_path`, which defaults to
 the application `~metrics_path`. Trace, log, and application metric exports
 enqueue one self-metrics batch after the export attempt. Self-metric exports do
 not enqueue another self-metric batch, so the exporter does not recursively
@@ -145,7 +175,7 @@ schedule itself forever.
 
 Use `~disable_self_metrics:true` when a collector accepts traces/logs but does
 not implement `/v1/metrics`. This does not disable the application meter; it
-only stops eta-otel from exporting its own health metrics. Use
+only stops eta_otel from exporting its own health metrics. Use
 `~self_metrics_path:"/some/path"` when self-metrics must go to a different OTLP
 metrics route.
 
@@ -170,7 +200,7 @@ The current self-metrics are:
 
 ## Pointing at a collector
 
-`eta-otel` sends OTLP/HTTP JSON with `Content-Type: application/json`.
+`eta_otel` sends OTLP/HTTP JSON with `Content-Type: application/json`.
 Any OTLP/HTTP-JSON-capable collector works:
 
 - [otelcol](https://opentelemetry.io/docs/collector/) with a `otlp/http`
@@ -184,14 +214,30 @@ Any OTLP/HTTP-JSON-capable collector works:
 - **Sampler decisions.** Sampling is made by `Runtime.create ?sampler`; the
   exporter receives only spans the runtime decided to record.
 - **Custom TLS policy.** The current constructor exposes host, port, and path
-  settings for OTLP/HTTP. TLS policy remains inside eta-http and is not yet
-  configurable through eta-otel.
+  settings for OTLP/HTTP. TLS policy remains inside eta_http and is not yet
+  configurable through eta_otel.
 - **Protobuf.** OTLP/JSON only.
 
 If you need a different transport, write an alternate adapter against Eta's
 observability capabilities using
 [`ocaml-opentelemetry`](https://github.com/ocaml-tracing/ocaml-opentelemetry).
 The trait stays the same; only the backend swaps.
+
+## Development
+
+Run the package tests:
+
+```sh
+nix develop -c dune runtest test/otel --force
+```
+
+Run the full gate:
+
+```sh
+nix develop -c dune runtest --force
+```
+
+Without Nix, after `opam install . --deps-only --with-test`, use `dune runtest test/otel --force`.
 
 ## License
 

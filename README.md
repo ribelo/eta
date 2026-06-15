@@ -1,36 +1,50 @@
 # Eta
 
-Eta is an OCaml effect library shaped by TypeScript Effect and Scala ZIO.
-It keeps the useful axes: typed failures and success values.
+Eta is a small OCaml 5 effect/runtime library. It exposes a typed
+`('a, 'err) Effect.t` for describing pure values, failures, concurrency,
+resource scopes, and observability, plus backend-neutral interpreters.
 
-It is not an Elm Architecture framework. There is no message loop, inbox,
-subscription reconciler, or state container. Applications own their
-state; Eta owns effect description and interpretation.
-
-## Core Type
-
-```ocaml
-('a, 'err) Effect.t
-```
-
-- `'a` is the success value.
-- `'err` is the typed failure channel. Polymorphic variants give precise,
-  inferred error rows.
-
-Dependencies are ordinary OCaml values. Pass records, modules, closures, or
-handles to functions that build effects; Eta does not provide a ZIO-style
-environment or layer graph.
-
-Eta is influenced by TypeScript Effect and Scala ZIO, but it is not a
+Eta is shaped by TypeScript Effect and Scala ZIO, but it is not a
 compatibility layer for their full API surface. Deliberate differences are
 documented in [ZIO / Effect Boundaries](docs/zio-boundaries.md).
 
-## Example
+Core principle: **applications own state; Eta owns effect description and
+interpretation.** There is no global environment, layer graph, service
+locator, or state container. Pass dependencies as ordinary OCaml values.
+
+Optional capabilities live in separate `eta_<feature>` opam packages. The
+root `eta` package contains only the core effect model and interpreter
+contract. Add `eta_eio` for an Eio backend, `eta_http` for HTTP, `eta_sql`
+for SQLite, `eta_otel` for OpenTelemetry, and so on. See
+[docs/packages.md](docs/packages.md) for the full map.
+
+## Quick start
+
+Install dependencies and build with Nix (recommended):
+
+```sh
+nix develop -c dune build @install
+```
+
+Or with opam:
+
+```sh
+opam install . --deps-only --with-test
+dune build @install
+```
+
+A minimal executable uses `(libraries eta eta_eio eio_main)`:
+
+```dune
+(executable
+ (name hello)
+ (libraries eta eta_eio eio_main))
+```
 
 ```ocaml
 open Eta
 
-let program =
+let program () =
   let open Syntax in
   let* n = Effect.pure 1 |> Effect.map (fun n -> n + 1) in
   (if n < 3 then Effect.fail `Too_small else Effect.pure n)
@@ -39,21 +53,24 @@ let program =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt =
-    Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
-  in
-  match Runtime.run rt program with
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  match Eta.Runtime.run rt (program ()) with
   | Exit.Ok n -> Format.printf "%d@." n
-  | Exit.Error (Cause.Fail `Too_small) -> assert false
   | Exit.Error _ -> assert false
 ```
 
+`Eta.Runtime` is the backend-neutral interpreter; `Eta_eio.Runtime.create`
+is the Eio-backed constructor. The root `eta` package does not include a
+runtime backend.
+
 ## Features
+
+Core effect model and runtime boundaries:
 
 | Module | Purpose |
 | --- | --- |
 | `Effect` | Abstract description for pure values, typed failure, sync leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
-| `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `and*`, and `and+`. |
+| `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `let@`, `and*`, and `and+`. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |
@@ -62,8 +79,46 @@ let () =
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
 | `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
 | `Capabilities` | Small object-type traits for runtime services and explicit dependencies. |
-| `Redacted` | Opaque wrapper for sensitive values that redacts string and JSON output. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
+
+Concurrency, observability, and data primitives in the root package:
+
+| Module | Purpose |
+| --- | --- |
+| `Tracer` | In-memory and noop tracer implementations for tests and disabled tracing. |
+| `Logger` | In-memory and noop logger implementations. |
+| `Meter` | In-memory and noop meter implementations. |
+| `Sampler` | Trace sampling policies: always-on, always-off, ratio, parent-based. |
+| `Log_level` | Severity levels for log records. |
+| `Random` | Deterministic random helpers over `Capabilities.random`. |
+| `Queue` | Same-domain unbounded FIFO with close/error fences. |
+| `Channel` | Same-domain bounded channel with backpressure. |
+| `Pubsub` | Same-domain scoped broadcast hub with explicit overflow policy. |
+| `Pool` | Same-domain bounded resource pool with lifecycle and health checks. |
+| `Semaphore` | Cancellation-safe counting semaphore. |
+| `Mutable_ref` | Named shared mutable cell backed by `Atomic.t`. |
+
+Sensitive-value redaction lives in the optional `eta_redacted` package, not in
+`eta` core.
+
+## API surface footguns
+
+- `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
+  failures. Catch expected errors by returning `result` and lifting with
+  `Effect.from_result`.
+- `Effect.catch` handles typed failures only; it does not catch defects,
+  interruption, or finalizer failures.
+- `Effect.par`, `all`, `race`, and `for_each_par` run child effects as fibers on
+  the current runtime substrate, not on CPU worker domains. Use `eta_par` for
+  CPU parallelism.
+- `Effect.uninterruptible` defers cancellation; it does not turn interruption
+  into a typed failure.
+- `Queue`, `Channel`, `Pubsub`, and `Pool` are same-runtime primitives. Do not
+  pass them across `eta_par` domain boundaries.
+- `Supervisor.scoped` children cannot escape their nursery; handles are
+  rank-2 scoped to the body.
+- `Runtime.run_exn` raises `Failure` for typed failures and interruption. Use
+  `Runtime.run` when you need to inspect the cause.
 
 ## Native Parallelism
 
@@ -289,9 +344,10 @@ concurrency-data wrapper.
 
 ## Redacted Values
 
-`Redacted.t` wraps sensitive values so that formatting and JSON output show
-`<redacted>` instead of the underlying data. Equality and hash use the
-original value, so redacted strings can still be used as map keys.
+The optional `eta_redacted` package provides `Redacted.t`, which wraps
+sensitive values so that formatting and JSON output show `<redacted>`
+instead of the underlying data. Equality and hash use the original value,
+so redacted strings can still be used as map keys.
 
 ```ocaml
 let token = Redacted.make ~label:"api_key" "secret-token"
@@ -309,16 +365,26 @@ wrap secrets in `Redacted.t` at the source and call `Redacted.value` or
 
 ## Trace Propagation
 
-Tracing is configured on the runtime:
+Tracing is configured on the runtime. The root `eta` package ships built-in
+noop and in-memory tracers:
+
+```ocaml
+let tracer = Eta.Tracer.in_memory ()
+
+let rt =
+  Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()
+```
+
+Production exporters such as OpenTelemetry live in optional packages:
 
 ```ocaml
 let rt =
-  Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
+  Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
 ```
 
 Observability is pay-as-you-go. A runtime created without tracer, logger, or
 meter capabilities uses Eta's noop sinks and cuts off tracing/logging/metrics
-inside the core interpreter before records enter eta-otel queues or OTLP/JSON
+inside the core interpreter before records enter eta_otel queues or OTLP/JSON
 encoding. `Effect.named` still keeps Eta diagnostics such as defect span names
 and annotations, so use it where that context is useful rather than as a
 per-element marker in the hottest loops.
@@ -379,7 +445,7 @@ let handle headers =
   | Some ctx -> Effect.with_context ctx body
 ```
 
-For eta-http request values, use the request helper instead of reaching into
+For eta_http request values, use the request helper instead of reaching into
 the header list:
 
 ```ocaml
@@ -406,28 +472,59 @@ when only a trace ID and parent span ID are available.
 
 ## Development
 
-Use the Nix shell when available:
+Eta uses a Nix-managed OxCaml 5.2.0+ox toolchain. Enter the shell with:
+
+```sh
+nix develop
+```
+
+First-time setup creates the local opam switch:
+
+```sh
+eta-oxcaml-init
+```
+
+The handoff gate is:
 
 ```sh
 nix develop -c dune runtest --force
 ```
 
-Performance and compile-time history lives in the opt-in bench suite:
+Build all installable packages without running tests:
 
 ```sh
-nix develop -c bash bench/run.sh --quick
+nix develop -c dune build @install
+```
+
+Benchmarks are opt-in and are not run by `dune runtest`:
+
+```sh
+nix develop -c bash bench/run.sh --quick   # quick snapshot
+nix develop -c dune build @bench           # build runtime benchmark executables
 ```
 
 See [bench/README.md](bench/README.md) for the JSON format, comparison tool,
-and bisect workflow. `dune runtest` does not run benchmarks; `dune build
-@bench` runs the runtime benchmark executables only.
+and bisect workflow.
 
-Without Nix:
+Without Nix, use an OCaml 5.2.0+ox switch, install dependencies, then run the
+same Dune gates:
 
 ```sh
 opam install . --deps-only --with-test
+dune build @install
 dune runtest --force
 ```
+
+Footguns:
+
+- `dune build` without an alias also builds tests, benchmarks, and research
+  suites. Use `dune build @install` when you only need installable packages.
+- `nix develop .#mainline` is an upstream-OCaml comparison shell, not the
+  primary development shell.
+- The full `dune runtest --force` gate currently fails on `test/http` because
+  of a pre-existing type mismatch in `test_eta_http_h2_server.ml`. Run
+  `test/http_eio` for the green HTTP transport gate. Plain `dune build` also
+  fails on the `http-testsuite/perf_compare` research suite.
 
 The research journal is intentionally ignored by Git. It records the full
 project history and local design reasoning, but it is not part of the

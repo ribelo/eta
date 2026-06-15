@@ -1,19 +1,27 @@
-# eta-ai-openai-compat
+# eta_ai_openai_compat
 
-OpenAI-compatible provider package for eta-ai.
+OpenAI-compatible provider package for eta_ai.
 
-This package constructs configurable eta-ai provider values for services that
+This package constructs configurable eta_ai provider values for services that
 speak the OpenAI Chat Completions wire shape but require a provider-specific
 base URL, path, auth header, or extra headers.
 
-It owns a small local OpenAI-compatible codec and eta-http runners. It has no
+It owns a small local OpenAI-compatible codec and eta_http runners. It has no
 dependency on sibling provider packages, provider SDKs, generated clients, or
 tokenizer libraries. Offline fixtures prove wrapper behavior only;
 live provider reach is a release gate for each target provider.
 
+## Package boundary
+
+- `eta_ai_openai_compat` depends on `eta`, `eta_ai`, `eta_ai_openai_codec`,
+  `eta_redacted`, `eta_http`, and `yojson`.
+- It does not depend on OpenAI or the target provider SDKs.
+- It does not pull `eta_http_eio`; bring your own transport adapter if you need
+  one.
+
 ## Configuration
 
-Use eta-ai redacted keys and pass eta-http clients explicitly:
+Use eta_ai redacted keys and pass eta_http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "TOGETHER_API_KEY" with
@@ -52,11 +60,11 @@ Use raw-header auth only for providers that do not use bearer auth:
 
 - This package assumes the provider accepts OpenAI Chat Completions JSON.
 - Provider-specific model names, limits, tool support, and structured-output
-  support remain provider behavior, not eta-ai guarantees.
+  support remain provider behavior, not eta_ai guarantees.
 - OpenRouter is intentionally not represented here because AP4 owns routing and
   OpenRouter-specific headers/errors.
 
 Run:
 
     bash lib/ai/openai_compat/audit/run.sh
-    nix develop -c dune runtest lib/ai/openai_compat --force
+    nix develop -c dune runtest test/ai/openai_compat --force

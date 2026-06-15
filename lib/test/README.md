@@ -1,6 +1,13 @@
-# eta-test
+# eta_test
 
-eta-test provides small testing helpers for Eta programs.
+eta_test provides small testing helpers for Eta programs.
+
+## Package boundary
+
+- `eta_test` depends on `eta`, `eta_eio`, `eio`, `eio_main`, and `alcotest`.
+- It is test-only: do not link it into production binaries.
+- It pulls `eta_eio` so tests can build a runtime without adding another
+  package.
 
 ## Scope
 
@@ -26,8 +33,16 @@ v2.
 
 Run the package tests with:
 
-    nix develop -c dune runtest lib/test --force
+```sh
+nix develop -c dune runtest test/test --force
+```
+
+`lib/test` is the library; runnable tests live in `test/test`.
 
 Run the full gate with:
 
-    nix develop -c dune runtest --force
+```sh
+nix develop -c dune runtest --force
+```
+
+Without Nix, after `opam install . --deps-only --with-test`, use `dune runtest test/test --force`.

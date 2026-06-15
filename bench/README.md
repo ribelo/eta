@@ -16,7 +16,7 @@ Package-level optimization status is tracked separately in
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
-| Streams | `eta_stream.*` | Representative `eta-stream` pipelines and file reads. |
+| Streams | `eta_stream.*` | Representative `eta_stream` pipelines and file reads. |
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |

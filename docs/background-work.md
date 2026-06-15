@@ -67,3 +67,9 @@ let with_monitor ~sw ~net use =
 
 Use `Effect.Private.daemon` only for runtime-owned infrastructure whose lifetime
 is intentionally tied to the runtime rather than to a caller's lexical body.
+
+## Development note
+
+The patterns above use `Eta.Effect` from the `eta` package and assume an
+Eio-backed runtime from `eta_eio`. Set up the toolchain and run the test gate
+as described in [README.md](../README.md#development).

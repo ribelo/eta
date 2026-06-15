@@ -1,7 +1,15 @@
-# eta-stream
+# eta_stream
 
-`eta-stream` adds pull-shaped streams and fold-shaped sinks on top of
+`eta_stream` adds pull-shaped streams and fold-shaped sinks on top of
 Eta's `('a, 'err) Effect.t`.
+
+## Package boundary
+
+- `eta_stream` depends on `eta`, `eio`, and `cstruct`.
+- It is not part of `eta`; add it only when you need streams, mailboxes, or
+  bounded queues.
+- The examples below use `Eta_eio.Runtime.create`; they need `eta_eio` in
+  addition to `eta_stream`.
 
 Streams keep Eta's two channels:
 
@@ -27,7 +35,7 @@ Run the returned effect with an Eta runtime:
 Eio_main.run @@ fun env ->
 Eio.Switch.run @@ fun sw ->
 let rt =
-  Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+  Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
 in
 Runtime.run rt program
 ```
@@ -86,11 +94,15 @@ queued depth before consuming the mailbox with `to_stream` or
 Run the stream package tests:
 
 ```sh
-nix develop -c dune runtest lib/stream --force
+nix develop -c dune runtest test/stream --force
 ```
+
+`lib/stream` is the library; runnable tests live in `test/stream`.
 
 Run the full gate:
 
 ```sh
 nix develop -c dune runtest --force
 ```
+
+Without Nix, after `opam install . --deps-only --with-test`, use `dune runtest test/stream --force`.

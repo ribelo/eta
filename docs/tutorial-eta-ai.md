@@ -1,10 +1,10 @@
-# eta-ai Core Tutorial
+# eta_ai Core Tutorial
 
-eta-ai core defines the common AI vocabulary and effect wrappers used by
+eta_ai core defines the common AI vocabulary and effect wrappers used by
 provider packages. It does not own application state and it does not ship a
 provider implementation by itself.
 
-Provider packages such as eta-ai-openai and eta-ai-anthropic will construct
+Provider packages such as eta_ai_openai and eta_ai_anthropic will construct
 provider values. Applications pass dependencies and state in ordinary OCaml.
 
 ## What Core Provides
@@ -13,15 +13,15 @@ provider values. Applications pass dependencies and state in ordinary OCaml.
 - text, image, audio, video, embedding, speech, transcription, rerank, and
   video-generation vocabulary;
 - provider records with endpoint data and provider-local codecs;
-- raw JSON tool schemas until eta-schema can export JSON Schema;
-- SSE pull parsing over eta-http response bodies;
+- raw JSON tool schemas until eta_schema can export JSON Schema;
+- SSE pull parsing over eta_http response bodies;
 - GenAI telemetry wrappers using Eta.Tracer;
 - redacted API-key handling.
 
 Core does not provide:
 
 - preflight token counting;
-- eta-schema-generated provider schemas;
+- eta_schema-generated provider schemas;
 - public Eta_stream.Stream streaming;
 - live OpenAI, Anthropic, OpenRouter, or OpenAI-compatible clients.
 
@@ -106,11 +106,11 @@ provider-local functions.
       }
 
 The provider does not hold an HTTP client, runtime, switch, or application
-state. Those remain outside eta-ai core.
+state. Those remain outside eta_ai core.
 
 ## Redacted Keys
 
-Use eta-ai's constructor for provider keys:
+Use eta_ai's constructor for provider keys:
 
     let key = Eta_ai.api_key "sk-live-..."
 
@@ -137,11 +137,11 @@ Tool schemas are raw JSON Schema text in v1.
       | Ok tool -> Eta_ai.add_tool tool Eta_ai.empty_toolkit
 
 The registry preserves registration order and rejects duplicate tool names.
-It does not validate JSON Schema. That waits for eta-schema JSON Schema export.
+It does not validate JSON Schema. That waits for eta_schema JSON Schema export.
 
 ## Chat
 
-eta-ai core represents a chat request, then provider packages decide how to
+eta_ai core represents a chat request, then provider packages decide how to
 encode and submit it.
 
     let request =
@@ -166,13 +166,13 @@ encode and submit it.
       Eta_ai.with_chat_span provider request chat_effect
 
 Provider packages will replace the fixture encode/decode shortcut with an
-eta-http request. The provider transport subtree should be wrapped in
+eta_http request. The provider transport subtree should be wrapped in
 Eta_ai.suppress_provider_transport_observability by default.
 
 ## OpenAI Provider Example
 
-eta-ai-openai turns the same core request into an eta-http call. The API key is
-redacted at the eta-ai boundary, while the eta-http client remains an ordinary
+eta_ai_openai turns the same core request into an eta_http call. The API key is
+redacted at the eta_ai boundary, while the eta_http client remains an ordinary
 application dependency.
 
     let run_openai ~client =
@@ -207,7 +207,7 @@ For streaming Responses, request a stream and then pull provider events:
 
 ## OpenAI-Compatible Provider Example
 
-eta-ai-openai-compat owns a local OpenAI-compatible codec and eta-http runners
+eta_ai_openai_compat owns a local OpenAI-compatible codec and eta_http runners
 for providers that speak the OpenAI Chat Completions wire shape but use a
 different base URL or auth header.
 
@@ -247,7 +247,7 @@ For providers that do not use bearer auth, choose a raw API-key header:
 
 ## OpenRouter Provider Example
 
-eta-ai-openrouter uses the OpenAI-style Responses API envelope, plus
+eta_ai_openrouter uses the OpenAI-style Responses API envelope, plus
 OpenRouter routing, attribution headers, fallback chains, and top-level or
 mid-stream provider errors.
 
@@ -288,7 +288,7 @@ mid-stream provider errors.
 
 ## Anthropic Provider Example
 
-eta-ai-anthropic uses the same Eta_ai.chat_request vocabulary, but encodes it
+eta_ai_anthropic uses the same Eta_ai.chat_request vocabulary, but encodes it
 as an Anthropic Messages API request with top-level system text, content
 blocks, x-api-key authentication, anthropic-version, and max_tokens.
 
@@ -319,7 +319,7 @@ Prompt caching is request-local:
       Eta_ai_anthropic.messages ~prompt_cache client ~api_key request
 
 Streaming Anthropic Messages uses named SSE events internally but returns the
-same eta-ai stream events:
+same eta_ai stream events:
 
     let read_anthropic_stream ~client ~api_key request =
       Eta_ai_anthropic.stream_messages client ~api_key request
@@ -327,7 +327,7 @@ same eta-ai stream events:
 
 ## Streaming
 
-AC3 exposes an eta-http-backed pull parser. It is intentionally not an
+AC3 exposes an eta_http-backed pull parser. It is intentionally not an
 Eta_stream.Stream yet.
 
     let body =
@@ -343,12 +343,12 @@ Eta_stream.Stream yet.
       Eta_ai.read_stream_events stream
       |> Eta_ai.with_stream_span provider { request with stream = true }
 
-The parser owns SSE framing and eta-http body discard. Provider-specific JSON
+The parser owns SSE framing and eta_http body discard. Provider-specific JSON
 events stay inside provider.decode_stream_event.
 
 ## Tool Execution
 
-Tool execution is application code. eta-ai only provides the common span shape.
+Tool execution is application code. eta_ai only provides the common span shape.
 
     let run_weather _args =
       Eta.Effect.pure "{"temperature":21}"
@@ -360,30 +360,30 @@ Tool arguments and results are not recorded by default.
 
 ## Gates
 
-Run the package gate after changing eta-ai core:
+Run the package gate after changing eta_ai core:
 
     bash lib/ai/audit/run.sh
-    nix develop -c dune runtest lib/ai --force
+    nix develop -c dune runtest test/ai/core --force
     nix develop -c dune build
     nix develop -c eta-oxcaml-test-shipped
 
-Run the OpenAI provider gate after changing eta-ai-openai:
+Run the OpenAI provider gate after changing eta_ai_openai:
 
     bash lib/ai/openai/audit/run.sh
-    nix develop -c dune runtest lib/ai/openai --force
+    nix develop -c dune runtest test/ai/openai --force
 
-Run the Anthropic provider gate after changing eta-ai-anthropic:
+Run the Anthropic provider gate after changing eta_ai_anthropic:
 
     bash lib/ai/anthropic/audit/run.sh
-    nix develop -c dune runtest lib/ai/anthropic --force
+    nix develop -c dune runtest test/ai/anthropic --force
 
 Run the OpenAI-compatible provider gate after changing
-eta-ai-openai-compat:
+eta_ai_openai_compat:
 
     bash lib/ai/openai_compat/audit/run.sh
-    nix develop -c dune runtest lib/ai/openai_compat --force
+    nix develop -c dune runtest test/ai/openai_compat --force
 
-Run the OpenRouter provider gate after changing eta-ai-openrouter:
+Run the OpenRouter provider gate after changing eta_ai_openrouter:
 
     bash lib/ai/openrouter/audit/run.sh
-    nix develop -c dune runtest lib/ai/openrouter --force
+    nix develop -c dune runtest test/ai/openrouter --force

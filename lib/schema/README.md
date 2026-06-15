@@ -1,7 +1,14 @@
-# eta-schema
+# eta_schema
 
-`eta-schema` is a companion package for Eta applications that need a
+`eta_schema` is a companion package for Eta applications that need a
 contract layer similar to Effect Eta_schema, shaped for OCaml.
+
+## Package boundary
+
+- `eta_schema` depends on `eta` only.
+- It does not depend on Yojson, Ezjsonm, or any concrete JSON library.
+- Concrete JSON adapters plug in through `JSON_ADAPTER` and `Make`.
+- `eta_schema_test` is a separate test-only package.
 
 The core value is pure:
 
@@ -131,3 +138,19 @@ Limits:
 - This package no longer exposes placeholder `Eta_schema.json_schema`. JSON Eta_schema
   generation should be a separate module with a chosen draft, real `$ref`
   handling, and validator tests.
+
+## Development
+
+Run the package tests:
+
+```sh
+nix develop -c dune runtest test/schema_eio --force
+```
+
+Run the full gate:
+
+```sh
+nix develop -c dune runtest --force
+```
+
+Without Nix, after `opam install . --deps-only --with-test`, use `dune runtest test/schema_eio --force`.

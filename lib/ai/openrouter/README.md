@@ -1,8 +1,8 @@
-# eta-ai-openrouter
+# eta_ai_openrouter
 
-OpenRouter provider package for eta-ai.
+OpenRouter provider package for eta_ai.
 
-This package constructs eta-ai provider values and eta-http request runners for
+This package constructs eta_ai provider values and eta_http request runners for
 OpenRouter Responses API, Embeddings API, rerank, speech, transcription, video
 generation, routing controls, fallback chains, attribution headers, and
 provider-specific errors.
@@ -13,9 +13,17 @@ embedding input and vector codecs, and mid-stream/top-level error decoding. It
 has no dependency on sibling provider packages, provider SDKs, generated
 clients, or tokenizer libraries.
 
+## Package boundary
+
+- `eta_ai_openrouter` depends on `eta`, `eta_ai`, `eta_ai_openai_codec`,
+  `eta_redacted`, `eta_http`, `base64`, and `yojson`.
+- It does not depend on sibling provider packages or any OpenRouter SDK.
+- It does not pull `eta_http_eio`; bring your own transport adapter if you need
+  one.
+
 ## Configuration
 
-Use eta-ai redacted keys and pass eta-http clients explicitly:
+Use eta_ai redacted keys and pass eta_http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "OPENROUTER_API_KEY" with
@@ -86,11 +94,11 @@ Use eta-ai redacted keys and pass eta-http clients explicitly:
   downloads through `/api/v1/videos`.
 - OpenRouter may emit mid-stream errors as ordinary data frames with a top-level
   `error` object; these become `Eta_ai.Stream_error` events.
-- Offline fixtures prove codec and eta-http integration behavior. They do not
+- Offline fixtures prove codec and eta_http integration behavior. They do not
   prove current OpenRouter service behavior; run the release reach probe when an
   API key is available.
 
 Run:
 
     bash lib/ai/openrouter/audit/run.sh
-    nix develop -c dune runtest lib/ai/openrouter --force
+    nix develop -c dune runtest test/ai/openrouter --force

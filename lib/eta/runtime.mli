@@ -62,7 +62,14 @@ val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
 
 val run_exn : 'err t -> ('a, 'err) Effect.t -> 'a
 (** Run an eff and raise on non-success. Prefer {!run} when
-    inspecting failures. *)
+    inspecting failures.
+
+    - [Cause.Die] defects are re-raised with their captured backtrace.
+    - Typed failures, interruption, and composite causes raise [Failure]
+      with a rendered cause string.
+
+    This is a convenience exit for tests and top-level programs that cannot
+    recover; do not use it inside effectful recovery logic. *)
 
 val drain : 'err t -> unit
 (** Wait until currently runtime-owned finite background fibers complete. *)

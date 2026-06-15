@@ -6,6 +6,13 @@ work-stealing scheduler.
 > Status: v1, single-domain entry, no nested `Pool.run`, no cancellation.
 > Public API is stable enough to use; internals will keep moving.
 
+## Package boundary
+
+- `eta_par` is the optional native CPU-parallelism package.
+- Direct opam dependencies: `eta`, `eta_blocking`.
+- It is not part of `eta`. Add it only when you need fork-join or island
+  offload.
+
 ## Quick start
 
 ```ocaml
@@ -105,8 +112,11 @@ entry point so offloaded callbacks keep their worker-domain semantics.
 ## Correctness
 
 ```bash
-nix develop .#mainline -c dune runtest test/par --force
+nix develop -c dune runtest test/par --force
 ```
+
+Use the default OxCaml shell (`nix develop`). `nix develop .#mainline` is an
+upstream-OCaml comparison shell, not the primary development target.
 
 The test suite covers pool lifecycle, fork-join, nested joins, exception
 propagation, par_for/par_map/par_reduce/par_sort, heartbeat fanout, and iterator

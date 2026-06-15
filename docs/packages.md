@@ -1,8 +1,33 @@
 # Eta Package Map
 
-Eta ships as multiple opam packages in one repository. Pick only the ones you
-need; OCaml's link-time dead-code elimination drops modules you never reach, and
-opam keeps optional dependency cost honest at the package boundary.
+Eta ships as a monorepo of opam packages. Each package publishes exactly one
+public Dune library with a matching OCaml top-level module. Pick only the
+packages you need.
+
+- opam enforces installation at *package* granularity.
+- OCaml's native linker drops unreachable `.cmx` modules, so unused modules do
+  not bloat the binary.
+- Transitive opam dependencies must still be installed, even if your code never
+  calls them.
+
+## Core boundary
+
+`eta` is the effect description layer: `Effect`, `Runtime`, `Cause`, `Exit`,
+schedules, resources, supervisors, channels, queues, and the runtime contract.
+It depends only on OCaml and Dune.
+
+`eta` describes effects; it does not run them. A runnable program needs a
+runtime backend:
+
+| target | package | it adds |
+| --- | --- | --- |
+| native / Eio | `eta_eio` | `eio`, `cstruct` |
+| browser / js_of_ocaml | `eta_jsoo`, `eta_js` | `js_of_ocaml` |
+| native CPU parallelism | `eta_par` | `eta_blocking` |
+
+> Footgun: an executable that depends only on `eta` has no concrete
+> `Runtime.create` and no way to interpret effects. Add `eta_eio` (or
+> `eta_jsoo`) before writing `Eio_main.run` or `Eta_eio.Runtime.create`.
 
 ## Discoverability
 
@@ -12,133 +37,227 @@ ocamlfind query eta_http -recursive
 ocamlfind query eta_http -format "%d/%a"
 ```
 
-Every package below has a one-line `description` recorded in its META, so
+Every package records a one-line `description` in its META, so
 `ocamlfind list` is self-explanatory.
 
-## Packages and their cost
+## Package index
 
-The right column is the *additional* opam dependencies a package brings beyond
-what its parents already required. Package names link directly to library
-modules: `(libraries eta_http)` in your `dune` file imports `Eta_http.*`.
+The `extra deps` column lists direct opam dependencies beyond `eta`, OCaml, and
+Dune. `—` means the package depends only on `eta` (or on nothing, for the
+pure DSL/PPX packages).
 
-| ocamlfind name        | toplevel module       | extra deps it pulls in                                                              |
-| --------------------- | --------------------- | ----------------------------------------------------------------------------------- |
-| `eta`                  | `Eta`                  | —                                                                                   |
-| `eta_blocking`         | `Eta_blocking`         | —                                                                                   |
-| `eta_eio`              | `Eta_eio`              | eio, cstruct                                                                        |
-| `eta_par`              | `Eta_par`              | native domains/threads only                                                         |
-| `eta_stream`           | `Eta_stream`           | cstruct                                                                             |
-| `eta_redacted`         | `Eta_redacted`         | —                                                                                   |
-| `eta_schema`           | `Eta_schema`           | —                                                                                   |
-| `eta_sql`              | `Eta_sql`              | sqlite3 (C library, via pkg-config)                                                 |
-| `eta_turso`            | `Eta_turso`            | `eta_sql` chain; loads `libturso_sqlite3` at runtime                                |
-| `eta_http`             | `Eta_http`             | eta_http_h2, faraday, angstrom, decompress, bigstringaf, domain-name, ipaddr, openssl |
-| `eta_otel`             | `Eta_otel`             | yojson, eta_http chain                                                              |
-| `eta_ai`               | `Eta_ai`               | yojson, eta_http chain                                                              |
-| `eta_ai_openai`        | `Eta_ai_openai`        | eta_ai_openai_codec, eta_stream                                                     |
-| `eta_ai_anthropic`     | `Eta_ai_anthropic`     | (subset of eta_ai)                                                                  |
-| `eta_ai_openrouter`    | `Eta_ai_openrouter`    | eta_ai_openai_codec                                                                 |
-| `eta_ai_openai_compat` | `Eta_ai_openai_compat` | eta_ai_openai_codec                                                                 |
-| `eta_ai_openai_codec`  | `Eta_ai_openai_codec`  | eta_ai                                                                              |
-| `eta_test`             | `Eta_test`             | alcotest, eio_main                                                                  |
-| `eta_schema_test`      | `Eta_schema_test`      | alcotest, eta_schema                                                                |
+### Core and runtimes
 
-## How OCaml's "tree-shaking" actually works
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta` | `Eta` | effect description, runtime contract, channels, queues, supervisors, schedules | — |
+| `eta_blocking` | `Eta_blocking` | bounded OS-thread worker pools | — |
+| `eta_eio` | `Eta_eio` | Eio runtime host and Eio bridges | `eta_blocking`, `eio`, `cstruct` |
+| `eta_par` | `Eta_par` | native fork-join and typed island offload | `eta_blocking` |
+| `eta_utop` | `Eta_utop` | UTop convenience helpers | `eta_blocking`, `eta_eio`, `eio_main` |
 
-OCaml has dead-code elimination, but it's coarser than what JavaScript bundlers
-do. Two levels matter:
+### Data and schema
 
-1. **Within a library.** The native linker drops `.cmx` modules that aren't
-   reachable from `main`. If `eta_http` contains forty modules and your binary
-   only touches five, only those five (plus their transitive callees) are in
-   the final executable.
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_stream` | `Eta_stream` | pull streams, mailboxes, bounded queues | `eio`, `cstruct` |
+| `eta_redacted` | `Eta_redacted` | secret-wrapping types | — |
+| `eta_schema` | `Eta_schema` | lightweight schemas and JSON codecs | — |
+| `eta_schema_test` | `Eta_schema_test` | Alcotest helpers for schema tests | `eta_schema`, `alcotest` |
+
+### HTTP
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_http_h2` | `Eta_http_h2` | HTTP/2 protocol state machine | `bigstringaf`, `cstruct`, `angstrom`, `faraday` |
+| `eta_http` | `Eta_http` | backend-neutral HTTP client contract, URL/TLS policy, body streams, retry helpers | `eta_stream`, `eta_http_h2`, `cstruct`, `faraday`, `angstrom`, `yojson`, `decompress`, `bigstringaf`, `domain-name`, `ipaddr`, `base64`, `conf-pkg-config`, `conf-openssl` |
+| `eta_http_eio` | `Eta_http_eio` | Eio transport adapter: DNS, TCP, TLS, HTTP/1.1, HTTP/2, WebSocket | `eta_blocking`, `eta_eio`, `eta_http`, `eta_stream`, `eio`, `bigstringaf`, `cstruct`, `domain-name`, `ipaddr`, `faraday`, `yojson` |
+
+`eta_http` is deliberately backend-neutral: it cannot make a network request
+without `eta_http_eio` or another adapter.
+
+### SQL and connectors
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_sql_dsl` | `Eta_sql_dsl` | backend-agnostic typed SQL builder | — |
+| `eta_sql_driver` | `Eta_sql_driver` | shared blocking-pool and cancellation helpers | `eta_blocking` |
+| `eta_sql` | `Eta_sql` | SQLite connector with typed effect surface | `eta_blocking`, `eta_sql_driver`, `eta_sql_dsl`, `conf-pkg-config`, `conf-sqlite3` |
+| `eta_turso` | `Eta_turso` | Turso SQLite-compatible connector | `eta_blocking`, `eta_sql_driver`, `eta_sql`, `eta_sql_dsl` |
+| `eta_duckdb` | `Eta_duckdb` | DuckDB connector | `eta_blocking`, `eta_sql_driver`, `eta_sql_dsl` |
+| `eta_ladybug` | `Eta_ladybug` | LadybugDB graph connector | `eta_blocking` |
+
+`eta_sql` and `eta_turso` keep separate C stubs because their foreign loading
+contracts differ. `eta_sql` links against system SQLite via `pkg-config`;
+`eta_turso` loads `libturso_sqlite3` at runtime with `RTLD_DEEPBIND` isolation
+where supported.
+
+### AI providers
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_ai` | `Eta_ai` | provider-agnostic chat/streaming vocabulary, SSE parser, telemetry wrappers | `eta_redacted`, `eta_http`, `yojson` |
+| `eta_ai_openai_codec` | `Eta_ai_openai_codec` | shared OpenAI wire codecs | `eta_ai`, `base64` |
+| `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `eta_http_eio`, `eta_stream`, `eio`, `base64`, `yojson` |
+| `eta_ai_anthropic` | `Eta_ai_anthropic` | Anthropic Messages provider | `eta_ai`, `eta_redacted`, `eta_http`, `yojson` |
+| `eta_ai_openrouter` | `Eta_ai_openrouter` | OpenRouter provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
+| `eta_ai_openai_compat` | `Eta_ai_openai_compat` | OpenAI-compatible adapter (Together, Groq, Fireworks, ...) | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `yojson` |
+
+Provider packages depend on `eta_ai` and `eta_http`. `eta_ai_openai` also pulls
+`eta_http_eio` for its default transport.
+
+### Observability
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_otel` | `Eta_otel` | OTLP/JSON exporter for tracer, logger, and meter | `eta_stream`, `eta_http`, `yojson` |
+
+`eta_otel` is an exporter, not a runtime. It needs a `runtime_factory` (usually
+from `eta_eio`) and usually an `eta_http_eio` client to send data.
+
+### Testing and UX
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_eio`, `eio`, `eio_main`, `alcotest` |
+| `ppx_eta` | `Ppx_eta` | syntax helpers and SQL table declaration sugar | `ppxlib` |
+
+### js_of_ocaml
+
+| opam package | OCaml module | what it adds | extra deps |
+| --- | --- | --- | --- |
+| `eta_jsoo` | `Eta_jsoo` | js_of_ocaml runtime backend | `js_of_ocaml` |
+| `eta_js` | `Eta_js` | js_of_ocaml facade | `eta_jsoo`, `js_of_ocaml` |
+| `eta_js_stream` | `Eta_js_stream` | pull streams for js_of_ocaml targets | `eta_js` |
+| `eta_js_test` | `Eta_js_test` | test helpers for `eta_js` | `eta_js`, `js_of_ocaml` |
+
+> Footgun: the JS packages are disabled in the `5.2.0+ox` switch used by the
+> Nix shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build them with a
+> plain OCaml 5.2.0 switch plus `js_of_ocaml`.
+
+## How OCaml's tree-shaking actually works
+
+OCaml has dead-code elimination, but it is coarser than JavaScript bundlers.
+Two levels matter:
+
+1. **Within a library.** The native linker drops `.cmx` modules that are not
+   reachable from `main`. If `eta_http` contains many modules and your binary
+   only touches five, only those five (plus their transitive callees) end up in
+   the executable.
 
 2. **Across libraries.** The granularity is the *ocamlfind package*. The moment
    you add `(libraries eta_http)` to your `dune` file, every package listed in
-   `eta_http`'s `requires` line above must be installed on the system. Unused
-   ones still won't bloat the binary (level 1 still applies), but they have to
-   be present.
+   `eta_http`'s `requires` must be installed on the system. Unused ones still
+   will not bloat the binary (level 1 still applies), but they have to be
+   present.
 
 The practical rule:
 
-> Heavy dependencies belong in their own ocamlfind package. Don't depend on
+> Heavy dependencies belong in their own ocamlfind package. Do not depend on
 > `eta_http` if you only need `eta_stream`.
 
 Eta is structured so this rule is easy to follow. A small CLI uses
-`(libraries eta)` and pays for the core runtime only. Add `eta_http` only when
-you need the network. Add `eta_sql` only when you need SQLite. And so on.
-
-## SQLite-Compatible Connectors
-
-`eta_sql` and `eta_turso` intentionally keep separate C stubs even where they
-call the same `sqlite3_*` API names.
-
-The invariant is the foreign loading contract, not only the C ABI shape:
-
-- `eta_sql` is the system-SQLite package. It compiles against `<sqlite3.h>`,
-  links via `pkg-config sqlite3`, and exposes native SQLite operations such as
-  backup, restore, extension loading, expanded SQL, and low-level statement
-  inspection.
-- `eta_turso` is a Turso connector. It loads `libturso_sqlite3` at runtime,
-  reports `Library_unavailable` when the engine is absent, and uses
-  `RTLD_DEEPBIND` isolation when supported so Turso's SQLite-compatible symbols
-  do not collide with the process SQLite.
-
-Shared behavior belongs above that foreign seam: SQL values and rows live in
-`Eta_sql`, backend-agnostic query construction lives in `eta_sql_dsl`,
-bounded-worker blocking lives in `eta_blocking`, and connector cancellation
-policy lives in `eta_sql_driver`. Do not collapse the C stubs into one generic
-extension unless the design preserves both foreign contracts explicitly.
+`(libraries eta)` for the core effect model, then adds `eta_eio` to run it. Add
+`eta_http` only when you need the network; add `eta_sql` only when you need
+SQLite; and so on.
 
 ## Recipes
 
-### Effect core only
+### Effect core only (not runnable alone)
+
 ```dune
 (executable (name app) (libraries eta))
 ```
-Cost: no runtime backend or native worker dependency.
+
+Cost: no runtime backend.
+
+### Native Eio runtime
+
+```dune
+(executable (name app) (libraries eta eta_eio))
+```
+
+Adds: Eio runtime host.
 
 ### Native blocking calls
+
 ```dune
 (executable (name app) (libraries eta eta_blocking eta_eio))
 ```
-Adds: Eio when using the Eio-backed worker runner.
+
+Adds: blocking worker pool plus Eio-backed runner installed by `eta_eio`.
 
 ### Effect core + streams
+
 ```dune
-(executable (name app) (libraries eta eta_stream))
+(executable (name app) (libraries eta eta_stream eta_eio))
 ```
-Adds: cstruct.
+
+Adds: `cstruct` and Eio.
+
+### HTTP client
+
+```dune
+(executable (name app) (libraries eta eta_http eta_http_eio))
+```
+
+`eta_http` gives the protocol; `eta_http_eio` gives the transport. Depending on
+`eta_http` alone will not make a request.
 
 ### HTTP client with retries and tracing
+
 ```dune
-(executable (name app) (libraries eta eta_http eta_otel))
+(executable (name app) (libraries eta eta_http eta_http_eio eta_otel))
 ```
-Adds: eta_http_h2, faraday, angstrom, decompress, bigstringaf, domain-name,
-ipaddr, openssl, yojson.
+
+`eta_otel` needs a runtime factory and an HTTP client; see `lib/otel/README.md`.
+
+### SQLite
+
+```dune
+(executable (name app) (libraries eta eta_blocking eta_eio eta_sql))
+```
+
+`eta_sql` needs a blocking pool; `eta_eio` provides the runtime host.
 
 ### LLM chat using OpenAI
+
 ```dune
 (executable (name app) (libraries eta eta_ai eta_ai_openai))
 ```
-Adds: everything in `eta_http` plus yojson.
+
+Adds: everything in the `eta_http`/`eta_http_eio` chain, `eta_stream`, `eio`,
+`yojson`, and `base64`.
 
 ### Tests with the virtual clock and cause-aware assertions
+
 ```dune
 (test (name run) (libraries eta eta_test alcotest))
 ```
 
-## Notes for AI agents reading this repo
+`eta_test` already depends on `eta_eio` and `eio_main`.
 
-- Every public library lives under `lib/`. Each `lib/X/dune` declares an
-  underscore public name such as `(public_name eta_http)`. There is no hidden
-  internal namespace; if you can see it via `ocamlfind list`, you can use it
-  directly.
-- The toplevel module name is the Dune `(name ...)`. Use `Eta_http` in OCaml
-  source and `eta_http` in `(libraries ...)`.
-- `eta_http` is one library with `(include_subdirs unqualified)`. Its public
-  surface is curated in `lib/http/eta_http.{ml,mli}` (`Eta_http.Core`,
-  `Eta_http.H1`, `Eta_http.Tls`, etc.). Internal modules under `lib/http/*/`
-  are flat siblings, not separate libraries.
-- Drivers under `drivers/` are *not* part of the `eta` opam package and are
-  invisible to ocamlfind. They depend on Eta, never the other way around.
+## Drivers
+
+Optional external-engine integrations live under `drivers/`. They are *not*
+opam packages and are invisible to `ocamlfind`. They depend on Eta; Eta core
+libraries under `lib/` must never depend on them.
+
+## Limits and footguns
+
+- **Package granularity is the opam package.** Adding `eta_http` forces every
+  transitive dependency in the HTTP row to be installed, even if you only use
+  one module.
+- **`eta` alone does not run.** You must pair it with `eta_eio`, `eta_jsoo`,
+  or another runtime backend.
+- **`eta_http` is protocol-only.** Real network I/O needs `eta_http_eio` or a
+  custom adapter.
+- **`eta_otel` is an exporter, not a runtime.** It needs a `runtime_factory`
+  (typically `Eta_eio.Runtime.create`) and usually an `eta_http_eio` client.
+- **C-stub packages need system libraries.** `eta_sql`, `eta_turso`,
+  `eta_duckdb`, `eta_ladybug`, and `eta_http` require `pkg-config` and the
+  matching native library (SQLite, OpenSSL, DuckDB, LadybugDB, or Turso).
+- **JS packages are disabled under +ox.** They are skipped in the pinned
+  `5.2.0+ox` Nix shell.
+- **`ppx_eta` is compile-time only.** It adds `ppxlib` to the build and no
+  runtime dependency to the binary.

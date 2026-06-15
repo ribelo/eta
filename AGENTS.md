@@ -6,9 +6,12 @@ Eta is a small OCaml 5 library built with Dune. Core public code lives in
 `lib/eta/`; each exported module has a paired implementation and interface,
 for example `effect.ml` and `effect.mli`. The core modules are `Effect`,
 `Runtime`, `Cause`, `Exit`, `Duration`, `Schedule`, `Resource`,
-`Capabilities`, and `Tracer`. Optional public surfaces live in sibling
-`lib/<feature>/` directories and publish underscore-named packages/libraries
-such as `eta_http`, `eta_sql`, `eta_ai`, and `eta_test`.
+`Capabilities`, and `Tracer`. Supporting core modules include `Syntax`,
+`Supervisor`, `Channel`, `Queue`, `Pubsub`, `Pool`, `Semaphore`, `Sampler`,
+`Logger`, `Meter`, `Log_level`, `Mutable_ref`, `Random`, and `Trace_context`.
+Optional public surfaces live in sibling `lib/<feature>/` directories and
+publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
+`eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
 experiments live under `.scratch/`; keep them out of Dune discovery and out of
@@ -42,9 +45,9 @@ Examples:
 Do not add optional, provider-specific, C-stub, system-library, codec, protocol,
 or testing dependencies to `eta`. If a feature cannot be separated because the
 core runtime genuinely uses it, keep that dependency small, explicit, and
-documented instead of pretending it is optional. `Eta.Par` is the current
-runtime substrate for core island execution; it lives in the `eta` package
-while that relationship remains true.
+documented instead of pretending it is optional. `Eta.Par` lives in the
+optional `eta_par` package; the root `eta` package contains only the effect
+description and interpretation core.
 
 Least astonishment rule: the opam package name, Dune public library name, and
 OCaml top-level module should line up. Prefer `eta_sql` -> `Eta_sql`,
@@ -63,17 +66,53 @@ applications own state; Eta owns effect description and interpretation.
 
 ## Build, Test, and Development Commands
 
-- `nix develop -c dune build`: build the library using the pinned Nix shell.
-- `nix develop -c dune runtest --force`: run the full test suite.
-- `opam install . --deps-only --with-test`: install dependencies without Nix.
-- `dune build` / `dune runtest --force`: local equivalents when the OCaml
-  environment is already configured.
+Enter the Nix shell and create the OxCaml 5.2.0+ox switch once:
 
-The core `eta` package requires OCaml `5.2.0+ox`, Dune, Eio, `portable`, and
-`cstruct`. It also ships `Eta.Par` because the core runtime uses that scheduler
-for island execution. Optional packages declare their own dependencies; for
-example `eta_sql` declares SQLite and `eta_http` declares HTTP protocol
-libraries.
+```sh
+nix develop
+eta-oxcaml-init
+```
+
+Build and test gates:
+
+```sh
+nix develop -c dune build @install         # all installable packages
+nix develop -c dune runtest --force        # full test suite
+nix develop -c eta-oxcaml-test-shipped     # shipped-package subset gate
+```
+
+Without Nix, use an OCaml 5.2.0+ox switch, install dependencies, then run the
+same Dune targets:
+
+```sh
+opam install . --deps-only --with-test
+dune build @install
+dune runtest --force
+```
+
+HTTP-specific suites live under `http-testsuite/`:
+
+```sh
+dune build @interop
+dune build @cve-regress
+dune build @http-bench
+```
+
+Benchmarks are opt-in repo infrastructure under `bench/`:
+
+```sh
+nix develop -c bash bench/run.sh --quick
+nix develop -c bash bench/run.sh
+nix develop -c dune build @bench
+```
+
+`dune runtest` does not run benchmarks.
+
+The core `eta` package requires OCaml `5.2.0+ox` and Dune. Optional packages
+declare their own dependencies; for example `eta_eio` adds Eio and `cstruct`,
+`eta_sql` declares SQLite, and `eta_http` declares HTTP protocol libraries.
+`eta_par` is an optional native-parallelism package, not part of the root
+`eta` package.
 
 ## Coding Style & Naming Conventions
 

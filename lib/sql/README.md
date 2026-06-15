@@ -11,6 +11,18 @@ Eta SQL is Eta's SQL package. It contains:
 This package is not an ORM. Applications own their data model and state; Eta SQL
 owns rendering, binding, execution, decoding, pooling, and migration mechanics.
 
+## Package boundary
+
+- Public opam package: `eta_sql`. Public OCaml module: `Eta_sql`.
+- Direct opam dependencies: `eta`, `eta_blocking`, `eta_sql_driver`,
+  `eta_sql_dsl`, `conf-pkg-config`, `conf-sqlite3`.
+- `eta_sql_dsl` is the backend-agnostic typed SQL builder; `eta_sql_driver` is
+  the shared blocking-pool/cancellation helper.
+- `eta_turso`, `eta_duckdb`, and other connectors reuse the DSL/driver but keep
+  their own C stubs.
+- Do not depend on `eta_sql` if you only need the typed builder; use
+  `eta_sql_dsl` instead.
+
 ## SQLite Execution Model
 
 SQLite is synchronous embedded I/O. Eta applications should use `Eta_sql.Pool`
@@ -18,7 +30,7 @@ so database work runs through `Eta_blocking` instead of pinning the Eio
 calling domain.
 
 The substrate decision is recorded in
-`scratch/eta_research/sqlite_eta_effect/`:
+`.scratch/eta_research/sqlite_eta_effect/`:
 
 - same-domain SQLite can starve Eio co-fibers under lock contention;
 - per-call `Eta_blocking.run` is within the preliminary floor budget versus a
@@ -256,9 +268,18 @@ Focused gate:
 nix develop -c dune runtest lib/sql test/sql test/ppx --force
 ```
 
+The same command works without Nix once dependencies are installed:
+
+```sh
+opam install . --deps-only --with-test
+dune runtest lib/sql test/sql test/ppx --force
+```
+
 Release/install gates:
 
 ```sh
 nix develop -c dune build @install
 nix develop -c dune runtest --force
 ```
+
+`lib/sql` is a library; runnable tests live in `test/sql`.

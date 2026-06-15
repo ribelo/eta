@@ -1,8 +1,8 @@
-# eta-ai-openai
+# eta_ai_openai
 
-OpenAI provider package for eta-ai.
+OpenAI provider package for eta_ai.
 
-This package constructs eta-ai provider values and eta-http request runners for
+This package constructs eta_ai provider values and eta_http request runners for
 OpenAI Responses API requests, explicit legacy Chat Completions compatibility,
 embeddings, image generation, speech, transcription, function tools, structured
 output schemas, and SSE streaming.
@@ -12,9 +12,17 @@ libraries. Provider-specific JSON is encoded and decoded against
 recorded offline fixtures. Live provider reach is a release gate, not a
 per-commit test, because it requires an API key.
 
+## Package boundary
+
+- `eta_ai_openai` depends on `eta`, `eta_ai`, `eta_ai_openai_codec`,
+  `eta_redacted`, `eta_http`, `eta_http_eio`, `eta_stream`, `eio`, `base64`, and
+  `yojson`.
+- It does not depend on sibling provider packages or the OpenAI SDK.
+- It pulls `eta_http_eio` for the default Eio transport.
+
 ## Configuration
 
-Use eta-ai redacted keys and pass eta-http clients explicitly:
+Use eta_ai redacted keys and pass eta_http clients explicitly:
 
     let api_key =
       match Sys.getenv_opt "OPENAI_API_KEY" with
@@ -42,7 +50,7 @@ Completions wire shape:
         ~base_url:"https://api.openai.example"
         ()
 
-Prefer eta-ai-openai-compat for non-OpenAI services with configurable auth or
+Prefer eta_ai_openai_compat for non-OpenAI services with configurable auth or
 base-path behavior.
 
 ## API Coverage
@@ -63,20 +71,20 @@ base-path behavior.
 
 ## Quirks
 
-- Tool schemas and structured-output schemas are raw JSON text until eta-schema
+- Tool schemas and structured-output schemas are raw JSON text until eta_schema
   exposes JSON Eta_schema export.
 - Token counting is intentionally absent. Use provider usage fields from
   responses.
 - The default provider uses the Responses endpoint. The legacy Chat
   Completions encoder uses max_tokens when called explicitly.
 - Provider HTTP calls are wrapped in
-  Eta_ai.suppress_provider_transport_observability by default so eta-http spans
+  Eta_ai.suppress_provider_transport_observability by default so eta_http spans
   do not nest under GenAI spans unless an application deliberately adds them.
-- Offline fixtures prove codec and eta-http integration behavior. They do not
+- Offline fixtures prove codec and eta_http integration behavior. They do not
   prove current OpenAI service behavior; run the release reach probe when an API
   key is available.
 
 Run:
 
     bash lib/ai/openai/audit/run.sh
-    nix develop -c dune runtest lib/ai/openai --force
+    nix develop -c dune runtest test/ai/openai --force

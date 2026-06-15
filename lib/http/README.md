@@ -1,11 +1,21 @@
-# eta-http
+# eta_http
 
 Backend-neutral HTTP protocol and client contract for Eta.
 
-eta-http owns the request/response model, typed errors, body streams, retry
+eta_http owns the request/response model, typed errors, body streams, retry
 policy handling, trace-context propagation, TLS policy data, and pure protocol
 helpers. Backend-specific I/O lives in adapter packages such as
 `eta_http_eio`.
+
+## Package boundary
+
+- `eta_http` is protocol-only: request/response model, typed errors, body
+  streams, retry policy, TLS policy data, and pure protocol helpers.
+- Backend-specific I/O lives in `eta_http_eio` (Eio transport) or in a custom
+  adapter.
+- `eta_http_h2` is the shared HTTP/2 state machine; both `eta_http` and
+  `eta_http_eio` depend on it.
+- `eta_http` does not depend on `eio`, `eta_eio`, or `eta_blocking`.
 
 ## Status
 
@@ -31,9 +41,11 @@ HTTP/2 connection ownership, and WebSocket client I/O.
 
 ## Edge Server Readiness
 
-`eta_http_eio.Server` is intended to be usable directly on the public Internet
-for general-purpose HTTP/1.1, h2c, and HTTPS H1/H2 service. The claim is backed
-by unit, interop, adversarial, and benchmark gates listed below.
+`eta_http_eio.Server` is intended for edge service. The evidence below shows
+which gates currently pass, but Eta is still pre-1.0 and not universally
+production-ready. See `docs/http-server-production-readiness-audit.md` for the
+explicit missing pieces (HTTPS ALPN server, TLS server, WebSocket server, and
+operational hardening) before exposing a server directly on the public Internet.
 
 Default HTTP limits are deliberately bounded:
 
@@ -76,18 +88,20 @@ or HTTPS handlers.
 
 ## Evidence
 
-Current shipped gates:
+Current green gates:
 
 ```sh
-nix --option eval-cache false develop -c dune runtest test/http --force
-nix --option eval-cache false develop -c dune runtest test/http_eio --force
-timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
-timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
-timeout 300s nix --option eval-cache false develop -c dune exec http-testsuite/test/bench/run.exe
-nix --option eval-cache false develop -c dune build @http-bench --force
-nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
-nix --option eval-cache false develop -c bash bench/run.sh --quick
+nix develop -c dune runtest test/http_eio --force
+timeout 600s nix develop -c dune exec http-testsuite/test/interop/run.exe
+timeout 180s nix develop -c dune exec http-testsuite/test/cve_regress/run.exe
+timeout 300s nix develop -c dune exec http-testsuite/test/bench/run.exe
+nix develop -c dune build @http-bench --force
+nix develop -c dune build eta_http.install eta_http_eio.install
+nix develop -c bash bench/run.sh --quick
 ```
+
+`test/http` is currently excluded from the green gate because it fails to
+build (`test_eta_http_h2_server.ml` has a type mismatch against `Hpack.header`).
 
 Current counts from the latest edge-readiness pass:
 
@@ -115,7 +129,7 @@ Rerunnable research evidence lives under `.scratch/eta_http_research/`:
 | `Eta_http.Client` | Backend-neutral client API and runtime-service contract. |
 | `Eta_http.Request` | Request model. |
 | `Eta_http.Response` | Response model. |
-| `Eta_http.Error` | Typed eta-http failures and projections. |
+| `Eta_http.Error` | Typed eta_http failures and projections. |
 | `Eta_http.Core` | URL, method, version, header, status, and span helpers. |
 | `Eta_http.Body` | Request and response body surfaces. |
 | `Eta_http.Tls` | TLS policy chokepoint. |
@@ -131,13 +145,13 @@ Rerunnable research evidence lives under `.scratch/eta_http_research/`:
   objective. Reference libraries are design input only.
 - The shared package must not depend on `eta_eio`, `eio`, `eio.unix`, or
   backend adapter libraries.
-- Applications own state. eta-http owns effect description, client protocol
+- Applications own state. eta_http owns effect description, client protocol
   interpretation, and resource lifecycle.
 - `eta_http_h2`, `cstruct`, `faraday`, and `bigstringaf` remain shared
   protocol dependencies where the shared HTTP/2 helpers expose those substrate
   shapes.
 - `digestif`, `tls-eio`, `x509`, `ca-certs`, and Mirage Crypto are not
-  eta-http dependencies. TLS policy data and the protocol-required WebSocket
+  eta_http dependencies. TLS policy data and the protocol-required WebSocket
   SHA-1 digest are owned by the local OpenSSL binding; backend TLS I/O belongs
   in adapter packages.
 
@@ -160,22 +174,24 @@ before making call-site-specific claims.
 
 ## Development
 
-Focused eta-http checks:
+Focused eta_http checks:
 
 ```sh
-nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install
-nix --option eval-cache false develop -c dune runtest test/http test/http_eio --force
+nix develop -c dune build eta_http.install eta_http_eio.install
+nix develop -c dune runtest test/http_eio --force
 nix develop -c bash lib/http/audit/run.sh
 ```
+
+`test/http` is currently not part of the green gate (see Evidence above).
 
 Edge-readiness checks:
 
 ```sh
-timeout 600s nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe
-timeout 180s nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe
-timeout 300s nix --option eval-cache false develop -c dune exec http-testsuite/test/bench/run.exe
-nix --option eval-cache false develop -c dune build @http-bench --force
-nix --option eval-cache false develop -c bash bench/run.sh --quick
+timeout 600s nix develop -c dune exec http-testsuite/test/interop/run.exe
+timeout 180s nix develop -c dune exec http-testsuite/test/cve_regress/run.exe
+timeout 300s nix develop -c dune exec http-testsuite/test/bench/run.exe
+nix develop -c dune build @http-bench --force
+nix develop -c bash bench/run.sh --quick
 ```
 
 Full shipped Eta gate:
@@ -184,19 +200,22 @@ Full shipped Eta gate:
 nix develop -c eta-oxcaml-test-shipped
 ```
 
+This helper builds and tests the shipped subset defined in `flake.nix`; keep
+its package list in sync with real directory names or it will fail.
+
 ## Limits
 
-- Redirects are returned to callers; eta-http does not auto-follow or rewrite
+- Redirects are returned to callers; eta_http does not auto-follow or rewrite
   methods.
-- Cookies are header-explicit; eta-http has no cookie jar.
+- Cookies are header-explicit; eta_http has no cookie jar.
 - HTTP/1.1 server keep-alive and already-buffered pipelined request bytes are
   covered. General client-side pipelining is outside the public client API.
 - Public client h2c prior-knowledge is not exposed by the Eio adapter; plain
   client HTTP routes to HTTP/1.1. Server-side h2c is available through
   `Eta_http_eio.Server.start_h2c` / `run_h2c`.
 - TLS certificate revocation checking through OCSP, CRL, or stapling is not
-  performed by eta-http v1. Deployments that require revocation enforcement must
-  provide it outside eta-http or through a future TLS policy surface.
+  performed by eta_http v1. Deployments that require revocation enforcement must
+  provide it outside eta_http or through a future TLS policy surface.
 - HTTP/1.1 clients skip interim `100 Continue` and return the final response.
 - HTTP/2 request I/O in `eta_http_eio` is owned by a dedicated reader/writer
   loop over the in-house state machine. Interim 1xx response HEADERS, except

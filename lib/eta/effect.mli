@@ -190,6 +190,15 @@ val acquire_use_release :
     scoped {!acquire_release}. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
+(** Open a resource scope around an effect.
+
+    Resources registered with {!acquire_release} inside [scoped] are released
+    when the scope exits, in reverse acquisition order. Finalizers run on
+    success, typed failure, unchecked defect, and cancellation.
+
+    Scopes compose: nested [scoped] blocks release their own resources before
+    the outer scope continues. Use this for resource lifetimes that should not
+    extend to the runtime boundary. *)
 
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
