@@ -1,5 +1,5 @@
 (executables
- (names run compare h2_probe h1_probe h1_tls_probe mtop)
+ (names run compare h2_probe h2_tls_probe h1_probe h1_tls_probe mtop)
  (libraries eta_http_testsuite eta_http_eio eta_eio eio_main eio_linux yojson unix memtrace))
 
 (rule
