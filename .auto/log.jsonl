@@ -1,0 +1,2 @@
+{"type":"config","name":"Eta H2-over-TLS steady-state tail latency","metricName":"h2_tls_echo_p99_us","metricUnit":"us","bestDirection":"lower"}
+{"type":"config","name":"Eta H2-over-TLS steady-state tail latency","metricName":"h2_tls_echo_1k_p99_us","metricUnit":"us","bestDirection":"lower"}
