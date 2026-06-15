@@ -9,8 +9,8 @@ helpers. Backend-specific I/O lives in adapter packages such as
 
 ## Package boundary
 
-- `eta_http` is protocol-only: request/response model, typed errors, body
-  streams, retry policy, TLS policy data, and pure protocol helpers.
+- `eta_http` is backend-neutral: request/response model, typed errors, body
+  streams, retry policy, TLS policy data, and protocol helpers.
 - Backend-specific I/O lives in `eta_http_eio` (Eio transport) or in a custom
   adapter.
 - `eta_http_h2` is the shared HTTP/2 state machine; both `eta_http` and
@@ -44,8 +44,9 @@ HTTP/2 connection ownership, and WebSocket client I/O.
 `eta_http_eio.Server` is intended for edge service. The evidence below shows
 which gates currently pass, but Eta is still pre-1.0 and not universally
 production-ready. See `docs/http-server-production-readiness-audit.md` for the
-explicit missing pieces (HTTPS ALPN server, TLS server, WebSocket server, and
-operational hardening) before exposing a server directly on the public Internet.
+current readiness caveats (server WebSocket upgrade support, operational
+recipes, advanced TLS/deployment features, and broader adversarial/soak
+coverage) before exposing a server directly on the public Internet.
 
 Default HTTP limits are deliberately bounded:
 
@@ -91,6 +92,7 @@ or HTTPS handlers.
 Current green gates:
 
 ```sh
+nix develop -c dune runtest test/http --force
 nix develop -c dune runtest test/http_eio --force
 timeout 600s nix develop -c dune exec http-testsuite/test/interop/run.exe
 timeout 180s nix develop -c dune exec http-testsuite/test/cve_regress/run.exe
@@ -100,14 +102,14 @@ nix develop -c dune build eta_http.install eta_http_eio.install
 nix develop -c bash bench/run.sh --quick
 ```
 
-`test/http` is currently excluded from the green gate because it fails to
-build (`test_eta_http_h2_server.ml` has a type mismatch against `Hpack.header`).
+`test/http` is the low-level protocol gate. Its TLS negative-compile fixtures
+are expected to print `PASS expected compile failure`.
 
 Current counts from the latest edge-readiness pass:
 
 | Gate | Result |
 | --- | --- |
-| `test/http` | 339 tests passing |
+| `test/http` | 340 tests passing |
 | `test/http_eio` | 145 tests passing |
 | `http-testsuite` interop | PASS 314, DIVERGENT 0, FAIL 0, SKIP 176 |
 | `http-testsuite` CVE/adversarial | PASS 27, FAIL 0, SKIP 0 |

@@ -14,9 +14,14 @@ publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
 `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
-experiments live under `.scratch/`; keep them out of Dune discovery and out of
-the published library unless they are deliberately promoted into real project
-code under `lib/`, `test/`, or `tools/`. Generated artifacts belong in `_build/`
+experiments live under `.scratch/`; keep `.scratch/` out of the main Dune
+workspace and out of the published library unless an experiment is deliberately
+promoted into real project code under `lib/`, `test/`, or `tools/`.
+
+If scratch code needs Dune, make `.scratch/` a separate Dune project and build
+specific experiments explicitly, for example `dune build --root .scratch
+path/to/target.exe`. Do not treat `dune build --root .scratch` as a freshness
+gate for every historical experiment. Generated artifacts belong in `_build/`
 and local switches in `_opam/`.
 
 Optional external-engine integrations live under `drivers/`. Driver packages may

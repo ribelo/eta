@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/otel/audit/run.sh
-Last updated: 2026-05-24T01:17:10Z
-Current sites: 33
+Last updated: 2026-06-15T22:49:12Z
+Current sites: 0
 
 ## What Is NOT An Escape
 
@@ -20,7 +20,8 @@ ceremony without semantics.
 
 Every site under the regex is named by the generated match list and classified
 as Replaceable, Structural, or Debt. Zero production escapes is a valid state.
-Non-zero test escapes are valid when classified.
+Non-zero test escapes are valid when the search scope includes tests and the
+sites are classified.
 
 Search:
 
@@ -28,16 +29,11 @@ Search:
 
 ## Replaceable
 
-| Pattern | Sites | Replacement |
-| --- | --- | --- |
-| Eio.Switch.run in tests | package test files | eta-test could grow a shared switch/net/clock fixture that covers eta-otel's live and loopback harnesses. |
-| Eio.Promise in backpressure test | test/run.ml | eta-test could expose a small gate/latch helper. |
+No replaceable escapes in the audited package.
 
 ## Structural
 
-| Pattern | Sites | Why it stays |
-| --- | --- | --- |
-| Eio.Fiber.fork_daemon | test/run.ml loopback servers | Local response servers are test infrastructure, not package runtime behavior. They need daemon fibers scoped to the test switch. |
+No structural escapes in the audited package.
 
 ## Debt
 
@@ -46,37 +42,4 @@ No production debt escapes are present.
 ## Current Matches
 
 <!-- BEGIN ESCAPE_MATCHES -->
-- test/otel/test_logger.ml:18:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_logger.ml:29:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_logger.ml:90:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_logger.ml:106:    Eio.Switch.run @@ fun sw ->
-- test/otel/test_logger.ml:119:    Eio.Switch.run @@ fun sw ->
-- test/otel/test_tracer.ml:12:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_tracer.ml:23:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_tracer.ml:243:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_tracer.ml:263:    Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:37:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:88:  Eio.Fiber.fork_daemon ~sw (fun () ->
-- test/otel/run.ml:91:             Eio.Switch.run @@ fun conn_sw ->
-- test/otel/run.ml:115:      Eio.Fiber.fork_daemon ~sw (fun () ->
-- test/otel/run.ml:118:               Eio.Switch.run @@ fun conn_sw ->
-- test/otel/run.ml:140:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:187:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:223:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:242:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:263:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:292:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:319:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:340:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:341:  let gate, release = Eio.Promise.create () in
-- test/otel/run.ml:351:      ~on_send:(fun ~path:_ ~body:_ -> Eio.Promise.await gate)
-- test/otel/run.ml:361:  Eio.Promise.resolve release ();
-- test/otel/run.ml:367:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:392:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:422:  Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:464:    Eio.Switch.run @@ fun sw ->
-- test/otel/run.ml:472:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_metrics.ml:21:  Eio.Switch.run @@ fun sw ->
-- test/otel/test_metrics.ml:143:    Eio.Switch.run @@ fun sw ->
-- test/otel/test_metrics.ml:156:    Eio.Switch.run @@ fun sw ->
 <!-- END ESCAPE_MATCHES -->

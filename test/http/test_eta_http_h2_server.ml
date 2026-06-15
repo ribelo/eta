@@ -346,11 +346,6 @@ let raw_h2_response_status ~stream_id bytes =
       match Hpack.decode_headers_string decoder payload with
       | Error _ -> Alcotest.fail "failed to decode response HEADERS"
       | Ok headers -> (
-          let headers =
-            List.map
-              (fun (header : Hpack.header) -> (header.name, header.value))
-              headers
-          in
           match List.assoc_opt ":status" headers with
           | Some status -> (
               match int_of_string_opt status with

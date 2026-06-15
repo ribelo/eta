@@ -28,9 +28,7 @@ let decode_ok decoder block =
   | Error _ -> Alcotest.fail "HPACK decode failed"
 
 let header_pairs headers =
-  List.map
-    (fun (header : Eta_http.Hpack.header) -> (header.name, header.value))
-    headers
+  headers
 
 let check_headers label expected headers =
   Alcotest.(check (list (pair string string)))
@@ -40,10 +38,10 @@ let test_hpack_dynamic_table_indexes_after_eviction () =
   let decoder = Eta_http.Hpack.create 80 in
   ignore
     (decode_ok decoder (literal_with_indexing ~name:"x-a" ~value:"one")
-      : Eta_http.Hpack.header list);
+      : (string * string) list);
   ignore
     (decode_ok decoder (literal_with_indexing ~name:"x-b" ~value:"two")
-      : Eta_http.Hpack.header list);
+      : (string * string) list);
   check_headers "third literal"
     [ ("x-c", "three") ]
     (decode_ok decoder (literal_with_indexing ~name:"x-c" ~value:"three"));
@@ -58,7 +56,7 @@ let test_hpack_dynamic_table_size_update_evicts_entries () =
   let decoder = Eta_http.Hpack.create 4096 in
   ignore
     (decode_ok decoder (literal_with_indexing ~name:"x-a" ~value:"one")
-      : Eta_http.Hpack.header list);
+      : (string * string) list);
   check_headers "indexed before resize"
     [ ("x-a", "one") ]
     (decode_ok decoder (indexed 62));

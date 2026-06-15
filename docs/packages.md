@@ -43,8 +43,8 @@ Every package records a one-line `description` in its META, so
 ## Package index
 
 The `extra deps` column lists direct opam dependencies beyond `eta`, OCaml, and
-Dune. `—` means the package depends only on `eta` (or on nothing, for the
-pure DSL/PPX packages).
+Dune, excluding `with-test` and `with-doc` dependencies. `—` means the package
+depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 
 ### Core and runtimes
 
@@ -71,10 +71,11 @@ pure DSL/PPX packages).
 | --- | --- | --- | --- |
 | `eta_http_h2` | `Eta_http_h2` | HTTP/2 protocol state machine | `bigstringaf`, `cstruct`, `angstrom`, `faraday` |
 | `eta_http` | `Eta_http` | backend-neutral HTTP client contract, URL/TLS policy, body streams, retry helpers | `eta_stream`, `eta_http_h2`, `cstruct`, `faraday`, `angstrom`, `yojson`, `decompress`, `bigstringaf`, `domain-name`, `ipaddr`, `base64`, `conf-pkg-config`, `conf-openssl` |
-| `eta_http_eio` | `Eta_http_eio` | Eio transport adapter: DNS, TCP, TLS, HTTP/1.1, HTTP/2, WebSocket | `eta_blocking`, `eta_eio`, `eta_http`, `eta_stream`, `eio`, `bigstringaf`, `cstruct`, `domain-name`, `ipaddr`, `faraday`, `yojson` |
+| `eta_http_eio` | `Eta_http_eio` | Eio transport adapter: DNS, TCP, TLS, HTTP/1.1, HTTP/2, WebSocket | `eta_blocking`, `eta_eio`, `eta_http`, `eta_stream`, `eio`, `bigstringaf`, `cstruct`, `domain-name`, `ipaddr`, `faraday`, `angstrom`, `yojson` |
 
-`eta_http` is deliberately backend-neutral: it cannot make a network request
-without `eta_http_eio` or another adapter.
+`eta_http` is deliberately backend-neutral: it defines the shared HTTP model,
+client contract, protocol helpers, and TLS policy surface, but it cannot open a
+socket or make a network request without `eta_http_eio` or another adapter.
 
 ### SQL and connectors
 
@@ -158,8 +159,9 @@ The practical rule:
 
 Eta is structured so this rule is easy to follow. A small CLI uses
 `(libraries eta)` for the core effect model, then adds `eta_eio` to run it. Add
-`eta_http` only when you need the network; add `eta_sql` only when you need
-SQLite; and so on.
+`eta_http` when you need the HTTP model, client contract, or protocol helpers;
+add `eta_http_eio` when you need Eio network I/O; add `eta_sql` only when you
+need SQLite; and so on.
 
 ## Recipes
 
@@ -201,8 +203,9 @@ Adds: `cstruct` and Eio.
 (executable (name app) (libraries eta eta_http eta_http_eio))
 ```
 
-`eta_http` gives the protocol; `eta_http_eio` gives the transport. Depending on
-`eta_http` alone will not make a request.
+`eta_http` gives the shared API and protocol layer; `eta_http_eio` gives the
+transport. Depending on `eta_http` alone will not open a socket or make a
+request.
 
 ### HTTP client with retries and tracing
 
@@ -246,18 +249,23 @@ libraries under `lib/` must never depend on them.
 ## Limits and footguns
 
 - **Package granularity is the opam package.** Adding `eta_http` forces every
-  transitive dependency in the HTTP row to be installed, even if you only use
-  one module.
+  dependency declared by `eta_http` and its transitive opam packages to be
+  installed, even if your program only reaches one OCaml module.
 - **`eta` alone does not run.** You must pair it with `eta_eio`, `eta_jsoo`,
-  or another runtime backend.
-- **`eta_http` is protocol-only.** Real network I/O needs `eta_http_eio` or a
-  custom adapter.
+  or another implementation of `Eta.Runtime_contract.RUNTIME`.
+- **`eta_http` is backend-neutral, not dependency-free.** It has no Eio/socket
+  ownership, but it currently carries protocol codec dependencies and OpenSSL
+  C stubs for the shared TLS policy surface. Real network I/O needs
+  `eta_http_eio` or a custom adapter.
 - **`eta_otel` is an exporter, not a runtime.** It needs a `runtime_factory`
   (typically `Eta_eio.Runtime.create`) and usually an `eta_http_eio` client.
-- **C-stub packages need system libraries.** `eta_sql`, `eta_turso`,
-  `eta_duckdb`, `eta_ladybug`, and `eta_http` require `pkg-config` and the
-  matching native library (SQLite, OpenSSL, DuckDB, LadybugDB, or Turso).
+- **Native C-stub packages split build-time and runtime requirements.**
+  `eta_sql` and `eta_http` use `pkg-config` at build time for SQLite and
+  OpenSSL. `eta_turso`, `eta_duckdb`, and `eta_ladybug` have C stubs that load
+  their native database libraries at runtime instead of through opam `conf-*`
+  packages.
 - **JS packages are disabled under +ox.** They are skipped in the pinned
   `5.2.0+ox` Nix shell.
-- **`ppx_eta` is compile-time only.** It adds `ppxlib` to the build and no
-  runtime dependency to the binary.
+- **`ppx_eta` is compile-time tooling.** It adds `ppxlib` to the build; the
+  generated code may still reference the normal runtime libraries used by the
+  source being rewritten.

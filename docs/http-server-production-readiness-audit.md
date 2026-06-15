@@ -1,8 +1,16 @@
 # HTTP Server Production Readiness Audit
 
-Date: 2026-06-11
+Original date: 2026-06-11
 
-Audited commit: `7367a63a2`
+Original audited commit: `7367a63a2`
+
+Current-state update: 2026-06-16, checked against `master` at `1214cb407`.
+The original audit is historical. H1, h2c, server-side TLS, HTTPS ALPN
+dispatch, and H2 GOAWAY-driven graceful shutdown have since landed. The
+remaining production-readiness work is narrower: server-side WebSocket upgrade
+support, broader adversarial/soak coverage, operator-facing examples, and
+advanced TLS/deployment features such as mTLS, certificate reload, and proxy
+header policy.
 
 Scope: Eta's HTTP server substrate in `lib/http/` and `lib/http_eio/`. Client
 features are mentioned only when they expose server asymmetry. This audit treats
@@ -11,21 +19,20 @@ reverse-proxy upstream that accepts ordinary HTTP clients, bounds resources,
 survives malformed traffic, shuts down safely, and exposes enough operational
 signals to run under load.
 
-Eta's HTTP server is not production-ready today.
+Eta's HTTP server is pre-1.0. It now has production-relevant protocol coverage,
+but the project should still avoid a blanket "production-ready" claim until the
+remaining gates in this document are refreshed and rerun.
 
-The current server surface is an h2c prior-knowledge Eio adapter. The shared
-`Eta_http.Server` handler/request/response model exists, and the h2c path has a
-reasonable first set of lifecycle, request-body, streaming-response, trailer,
-shutdown, and stats tests. The production blockers are still structural:
-HTTP/1.1 server support is missing, server-side TLS is missing, HTTPS ALPN
-dispatch is missing, HTTP/2 graceful drain does not send GOAWAY, and adversarial
-server-side coverage is incomplete.
+The current server surface includes explicit H1, h2c, and HTTPS Eio adapters.
+The shared `Eta_http.Server` handler/request/response model exists, and the
+server paths have lifecycle, body, streaming-response, trailer, shutdown, TLS,
+ALPN, and stats coverage. Server-side adversarial and long-run operational
+coverage is still incomplete.
 
-A reverse proxy does not fully solve the gap. Most proxies speak HTTP/1.1 to
-upstreams by default, and Eta currently has no HTTP/1.1 server. A proxy that can
-talk h2c prior knowledge upstream can make a controlled internal deployment
-possible, but TLS, HTTP/1.1, and ALPN correctness would belong to the proxy, not
-Eta.
+A reverse proxy remains a useful deployment option, but it is no longer required
+just to provide HTTP/1.1 or TLS termination. Eta now exposes H1 and HTTPS entry
+points directly; proxy policy, trusted forwarded headers, and operational
+hardening still belong in application/deployment documentation.
 
 ## References
 
@@ -41,35 +48,32 @@ Eta.
 | Area | Current state | Evidence |
 | --- | --- | --- |
 | Shared server API | Present. `Eta_http.Server` defines backend-neutral request, response, body, handler, error, tracing, and semantic-convention helpers. | `lib/http/server*.ml`, `lib/http/server*.mli`, `test/http_common/server_common_suites.ml` |
-| Public Eio server adapter | h2c only. Public entry points are `start_h2c`, `start_h2c_on_socket`, `run_h2c`, and `run_h2c_on_socket`. | `lib/http_eio/server.mli` |
+| Public Eio server adapter | Present for plaintext H1, h2c prior knowledge, and HTTPS ALPN dispatch. Public entry points include `start_h1`, `run_h1`, `start_h2c`, `run_h2c`, `start_https`, and `run_https`, plus `_on_socket` variants. | `lib/http_eio/server.mli` |
 | HTTP/2 cleartext | Present as h2c prior knowledge. Requests are handled through `H2.Server_connection`, with streaming bodies and response trailers. | `lib/http_eio/h2_server_connection.ml`, `test/http/test_eta_http_h2_server.ml` |
-| HTTP/1.1 server | Missing. Existing h1 code is client-oriented parser/writer/pool code; there is no `run_h1`, `start_h1`, or h1 server connection owner. | `lib/http/h1/`, `lib/http_eio/h1/`, `rg run_h1` |
-| TLS server | Missing. OpenSSL/Eio TLS adapter exposes `client_of_flow`; there is no `server_of_flow`, certificate/key configuration, SNI callback, or server handshake path. | `lib/http_eio/tls/tls_eio.mli`, `lib/http/tls/` |
-| HTTPS ALPN server dispatch | Missing. Backend-neutral ALPN helpers and client dispatch exist, but no server listener negotiates `h2` vs `http/1.1`. | `lib/http/transport/dispatch.mli`, `lib/http_eio/client.ml`, no server TLS entry point |
-| HTTP/2 graceful shutdown | Partial. Eta drains active streams before closing, but does not send a graceful HTTP/2 GOAWAY admission signal. | `lib/http_eio/h2_server_connection.ml` |
-| Observability | Partial. Request tracing helpers exist and server stats count active/opened/closed connections. Listener errors are currently ignored by `on_error:(fun _exn -> ())`, and there is no access log or exported metrics surface. | `lib/http_eio/server.ml`, `lib/http_eio/server_types.mli` |
-| Adversarial coverage | Incomplete. h2 adversarial/CVE fixtures are placeholders because TLS server bindings are not implemented. | `http-testsuite/lib/adversarial.ml` |
+| HTTP/1.1 server | Present. Public `start_h1` / `run_h1` APIs and an H1 server connection owner exist. | `lib/http_eio/server.mli`, `lib/http_eio/h1_server_connection.ml`, `test/http/test_eta_http_h1_server.ml` |
+| TLS server | Present. The OpenSSL/Eio TLS adapter exposes `server_context`, `server_of_flow`, `server_of_flow_with_context`, SNI certificate selection, ALPN policy, and strict-SNI mode. | `lib/http_eio/tls/tls_eio.mli`, `lib/http/tls/config.mli`, `test/http/test_eta_http_tls.ml` |
+| HTTPS ALPN server dispatch | Present. HTTPS listeners dispatch negotiated ALPN to H2 or H1 and count H1/H2/rejected ALPN outcomes. | `lib/http_eio/server.mli`, `lib/http_eio/alpn_server.mli`, `lib/http_eio/server_stats.mli`, `test/http/test_eta_http_tls.ml` |
+| HTTP/2 graceful shutdown | Present for server shutdown: Eta emits GOAWAY, rejects new streams beyond the cutoff, and closes after the configured deadline. | `lib/http_eio/h2_server_connection.ml`, `test/http/test_eta_http_h2_server.ml` |
+| Observability | Partial. Request tracing helpers, server metrics, listener stats, ALPN counters, and connection/request metadata exist. A full access-log recipe and operator-facing metrics guide are still missing. | `lib/http_eio/server.ml`, `lib/http_eio/server_types.mli`, `lib/http/server_meter.ml`, `lib/http/server_tracer.ml` |
+| Adversarial coverage | Incomplete. H1/H2/TLS adversarial fixtures exist, but long-run soak coverage and full internet-facing hardening coverage are not yet documented as a release gate. | `http-testsuite/test/cve_regress/`, `http-testsuite/test/red_probes/` |
 | WebSocket server | Missing. WebSocket client transport and frame codec exist, but there is no server-side upgrade path. | `lib/http_eio/ws/ws_client.mli`, `lib/http/ws/codec.mli` |
 
-## P0 Production Blockers
+## Remaining Production Work
 
-These must be fixed before Eta can honestly claim production HTTP server
-readiness.
+These must be refreshed before Eta can honestly make a broad production HTTP
+server readiness claim.
 
 | Gap | Production impact | Required work |
 | --- | --- | --- |
-| HTTP/1.1 server transport | HTTP/1.1 remains the common baseline for clients, load balancers, health checks, and proxy upstreams. Without it, Eta is not a general HTTP server. | Add an h1 server connection owner, public `start_h1`/`run_h1` APIs or a unified protocol API, strict request parsing, keep-alive, connection close handling, chunked bodies, fixed-length bodies, `Expect: 100-continue`, request trailers policy, and response serialization from `Eta_http.Server.Response`. |
-| Server-side TLS | No HTTPS listener can be run by Eta. This blocks direct internet exposure, h2 over TLS, ALPN, certificate identity, and most realistic interop/adversarial h2 testing. | Add OpenSSL server context bindings and Eio flow wrapper: certificate chain, private key, trust store for optional mTLS, TLS versions/cipher policy, ALPN selection, SNI selection, handshake errors, close-notify behavior, and reloadable certificate material. |
-| HTTPS ALPN dispatch | HTTP/2 over TLS is negotiated by ALPN, and HTTP/1.1 must remain the fallback when ALPN is absent or selects `http/1.1`. | Add a server dispatch layer that maps negotiated ALPN to h2 or h1, rejects unknown protocols clearly, records the negotiated protocol in `Server.Request`, and shares lifecycle/error/accounting code across h1 and h2. |
-| True HTTP/2 graceful shutdown | Closing after active streams drain is useful, but clients are not warned to stop creating new streams. During deploys this can cause avoidable resets and tail failures. | Send GOAWAY with a valid last stream id, reject new streams after graceful shutdown starts, allow covered streams to complete, and close after the configured deadline. If the upstream h2 API cannot expose this cleanly, wrap or patch that layer rather than silently approximating graceful shutdown. |
-| Resource limits and timeouts | Slowloris, oversized headers, huge bodies, stalled uploads, stalled response writes, and excessive stream churn can consume memory, fibers, file descriptors, or scheduler time. | Add explicit server config for header byte limits, header count limits, request body size limits, per-request total timeout, header read timeout, body read idle timeout, response write timeout, connection idle timeout, and h2 stream idle timeout. Defaults should be finite and documented. |
-| Server error reporting | Listener and connection failures currently have paths that are swallowed or only observable by local stats. Operators cannot distinguish normal closes from parser errors, TLS failures, overload, or handler failures. | Replace ignored `on_error` callbacks with typed error hooks, structured log events, counters, and request/connection ids. Handler exceptions should be contained and mapped to explicit 500/stream reset behavior according to protocol state. |
-| Server-side security test matrix | The existing adversarial suite cannot exercise h2 TLS cases, and there is no h1 server to fuzz or attack. | Add h1 parser fuzzing, h1 malformed-request fixtures, h2 rapid-reset/CONTINUATION/HPACK/PING/SETTINGS tests against Eta's server, TLS handshake failure tests, resource-bound assertions, and deadline assertions. |
+| WebSocket server upgrade | The client and codec surfaces exist, but applications cannot accept WebSocket upgrades through Eta's server. | Add HTTP/1.1 upgrade validation, `Sec-WebSocket-Accept`, subprotocol negotiation, bidirectional frame ownership, close handshake, ping/pong, masking enforcement, and frame-size limits. |
+| Operator-facing readiness docs | Operators need exact deployment recipes, limits, stats, logs, metrics, and shutdown behavior before exposing a server directly. | Document direct HTTPS, H1 reverse-proxy upstream, h2c reverse-proxy upstream, graceful shutdown, stats/metrics, timeout tuning, and error hooks. |
+| Advanced TLS/deployment features | Direct internet deployment often needs mTLS, certificate reload, trusted proxy policy, and clear SNI/certificate rotation guidance. | Add or explicitly document mTLS, certificate reload strategy, trusted `Forwarded` / `X-Forwarded-*` policy, and process/socket activation patterns. |
+| Server-side security and soak matrix | Feature tests exist, but production claims need adversarial, resource-bound, and long-run evidence tied to release gates. | Keep H1/H2/TLS malformed-input tests current; add soak tests for bounded memory, file descriptors, deadline-respecting shutdown, no fiber leaks, and stable metrics. |
 
-## HTTP/1.1 Missing Detail
+## HTTP/1.1 Server Detail
 
-The HTTP/1.1 server should be treated as a first-class protocol engine, not as a
-thin line reader. Required behavior includes:
+The HTTP/1.1 server is now present. Keep treating it as a first-class protocol
+engine, not as a thin line reader. The behavior to keep covered includes:
 
 - Request line parsing for origin-form, absolute-form where accepted, authority-form for `CONNECT`, and asterisk-form for `OPTIONS *`.
 - Mandatory `Host` handling for HTTP/1.1 and clear rejection of invalid or duplicated authority state.
@@ -83,13 +87,12 @@ thin line reader. Required behavior includes:
 - Header validation that prevents response splitting and rejects invalid request field names or unsafe control characters.
 - Upgrade handling policy for WebSocket and h2c. If not implemented initially, return clear protocol responses instead of passing malformed state to handlers.
 
-Implementation should reuse a mature HTTP/1.1 parser/engine if it fits Eta's
-ownership model. If Eta promotes the current h1 parser/writer into a server
-engine, add conformance and fuzz tests before exposing it publicly.
+Eta currently owns the H1 server connection path. Keep conformance and fuzz
+tests current before widening production claims.
 
-## TLS Missing Detail
+## TLS Server Detail
 
-The TLS server layer needs its own production contract:
+The TLS server layer now exists. The remaining production contract should cover:
 
 - Certificate chain and private key loading with clear startup errors.
 - SNI-based certificate selection.
@@ -108,22 +111,19 @@ The TLS server layer needs its own production contract:
 The package boundary should stay clear: server TLS belongs in `eta_http_eio` or
 a similarly optional HTTP transport package, not in the core `eta` runtime.
 
-## HTTP/2 Missing Detail
+## HTTP/2 Remaining Detail
 
-The h2c server is useful, but production HTTP/2 needs more than the current
-cleartext path:
+The h2c and HTTPS/H2 paths are useful, but production HTTP/2 still needs
+current evidence for:
 
-- HTTPS h2 through ALPN.
-- GOAWAY-driven graceful drain.
 - Explicit defaults for h2 settings, including max concurrent streams, initial
   window sizes, header list size, and frame size policy.
 - Admission control for stream churn and reset storms.
 - Defense tests for rapid reset, CONTINUATION floods, HPACK bombs, PING floods,
   SETTINGS floods, empty-frame floods, and WINDOW_UPDATE accounting.
 - Per-stream idle timeout and request body timeout.
-- Wire stream id exposure or correlation in request metadata. The current shared
-  request shape can carry `stream_id`, but the h2 server path does not expose
-  the h2 stream id to handlers.
+- Wire stream id exposure and correlation in request metadata should remain
+  covered by tests and docs.
 - Clear behavior for h2 request trailers and unsupported extended CONNECT.
 
 ## Observability And Operations
@@ -200,13 +200,13 @@ document the recipe and include heartbeat/backpressure examples.
 Eta should document and test the intended deployment shapes:
 
 - Direct HTTPS origin: Eta terminates TLS, negotiates ALPN, and serves h1/h2.
-- Reverse proxy upstream over h1: requires HTTP/1.1 server.
+- Reverse proxy upstream over h1: supported by the HTTP/1.1 server.
 - Reverse proxy upstream over h2c: possible only with proxies that support h2c
   upstream prior knowledge.
 - Internal cleartext h2c: acceptable for controlled service meshes, not a public
   internet story.
 
-Missing deployment features to consider after the P0s:
+Deployment features still to consider:
 
 - IPv4/IPv6 examples and dual-stack behavior.
 - `SO_REUSEPORT` or multi-process accept strategy if needed.
@@ -218,11 +218,10 @@ Missing deployment features to consider after the P0s:
 
 ## API Recommendation
 
-Because API breakage is allowed, avoid compatibility shims around the h2c-only
-surface. Keep h2c explicit, but add a protocol-oriented server API that makes the
-production modes obvious.
+The protocol-oriented server API now exists. Keep the explicit entry points
+instead of adding compatibility shims around older h2c-only assumptions.
 
-Recommended shape:
+Current shape:
 
 - `Eta_http_eio.Server.start_h1` and `run_h1` for explicit plaintext HTTP/1.1.
 - `Eta_http_eio.Server.start_h2c` and `run_h2c` for explicit h2c prior
@@ -261,22 +260,23 @@ Eta should not mark the HTTP server production-ready until all of these pass:
 
 ## Suggested Roadmap
 
-1. Build HTTP/1.1 server support.
-   - Deliver `H1.Server_connection`, `start_h1`/`run_h1`, strict parser limits,
+1. Maintain HTTP/1.1 server support.
+   - Keep `H1.Server_connection`, `start_h1`/`run_h1`, strict parser limits,
      keep-alive, chunked/fixed bodies, response writer semantics, and focused
-     tests.
+     tests current.
 
-2. Build TLS server support.
-   - Deliver `Tls_eio.server_of_flow`, TLS server config, certificate/SNI/ALPN
-     handling, handshake timeout, typed handshake errors, and TLS tests.
+2. Maintain TLS server support.
+   - Keep `Tls_eio.server_of_flow`, TLS server config, certificate/SNI/ALPN
+     handling, handshake timeout, typed handshake errors, and TLS tests current.
 
-3. Add HTTPS ALPN dispatch.
-   - Route `h2` to the existing h2 server engine and `http/1.1` or no ALPN to
-     the h1 engine. Reject unknown ALPN. Share stats, tracing, and shutdown.
+3. Maintain HTTPS ALPN dispatch.
+   - Keep routing `h2` to the h2 server engine and `http/1.1` or no ALPN to
+     the h1 engine. Keep unknown ALPN rejection, stats, tracing, and shutdown
+     coverage current.
 
 4. Finish HTTP/2 production semantics.
-   - Add GOAWAY graceful drain, h2 limits, stream-id metadata, and adversarial
-     defenses.
+   - Keep GOAWAY graceful drain covered, document h2 limits, and expand
+     adversarial defenses.
 
 5. Add operational hardening.
    - Add structured logs, metrics hooks, readiness/draining state, finite
@@ -295,4 +295,3 @@ business-state management, and application-specific middleware remain
 application-owned. Eta should own protocol interpretation, resource safety,
 typed failure preservation, cancellation cleanup, scoped lifecycle, close
 fences, backpressure, and runtime observability.
-

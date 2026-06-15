@@ -13,8 +13,8 @@ eta_test provides small testing helpers for Eta programs.
 
 The v1 surface contains:
 
-- Test_clock, a virtual-time clock for runtimes created with Runtime.create
-  ~sleep.
+- Test_clock, a virtual-time clock for runtimes created with
+  `Eta_eio.Runtime.create ~sleep`.
 - Test_random, deterministic seeded Capabilities.random tokens for scheduler
   and runtime tests.
 - Expect, cause-aware Alcotest assertions for Exit.Ok, typed failures,

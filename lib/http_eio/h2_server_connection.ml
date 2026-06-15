@@ -2379,8 +2379,10 @@ let finish_deferred_close t =
   match t.deferred_close with
   | Some mode
     when (not t.closed)
+         && not t.defer_write_flush
          && Hashtbl.length t.streams = 0 && not t.write_pending
-         && t.pending_control_frames = [] ->
+         && t.pending_control_frames = []
+         && not (H2.Connection.has_pending_write t.h2) ->
       t.deferred_close <- None;
       mark_closed t;
       (match mode with
@@ -2582,7 +2584,9 @@ let finish_graceful_shutdown_if_idle t =
     if
       t.graceful_shutdown_goaway_sent
       && Hashtbl.length t.streams = 0
-      && not t.write_pending && t.pending_control_frames = []
+      && (not t.write_pending)
+      && t.pending_control_frames = []
+      && not (H2.Connection.has_pending_write t.h2)
     then defer_close t Shutdown_send)
 
 let schedule_request_body_timeout t ordinal resolver timeout =
@@ -3145,8 +3149,12 @@ let writer_loop t =
               | Eio.Time.Timeout -> Error (response_write_timeout_error t)
               | exn -> Error (connection_write_error t exn)
             in
-            if enqueue t (Write_completed (result, job.trace_stream_ids)) then
-              loop ())
+            let delivered =
+              enqueue t (Write_completed (result, job.trace_stream_ids))
+            in
+            match result with
+            | Ok _ when delivered && not t.closed -> loop ()
+            | Ok _ | Error _ -> ())
   in
   try loop () with Eio.Cancel.Cancelled _ -> ()
 
@@ -3231,8 +3239,9 @@ let response_error_of_cause t cause =
   | None -> response_failure_of_cause t cause
 
 let release_response_stream rt stream =
-  match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
-  | Eta.Exit.Ok () | Eta.Exit.Error _ -> ()
+  Eio.Cancel.protect (fun () ->
+      match Eta.Runtime.run rt (stream.Server.Response.Body.release ()) with
+      | Eta.Exit.Ok () | Eta.Exit.Error _ -> ())
 
 let release_ignored_response_stream rt response =
   match Server.Response.body response with
@@ -3436,12 +3445,20 @@ let run_handler_body t ordinal request handler =
                 (fixed_response_stream chunks length) 0
           | Response_no_body (Some stream) -> release_response_stream rt stream
           | Response_no_body None | Response_fixed _ -> ()
-          | Response_stream stream ->
-              pump_response_stream t rt ordinal request response stream 0))
+          | Response_stream stream -> (
+              match pump_response_stream t rt ordinal request response stream 0 with
+              | () -> ()
+              | exception exn ->
+                  release_response_stream rt stream;
+                  raise exn)))
 
 (* Sentinel used to cancel all in-flight handler fibers at connection close
    without propagating a real error out of the handler switch. *)
 exception Handlers_cancelled
+
+let is_handlers_cancelled = function
+  | Handlers_cancelled -> true
+  | _ -> false
 
 (* Handler fibers run on a dedicated per-connection switch [t.handler_sw] so a
    single [Switch.fail] on close cancels every in-flight handler at once. This
@@ -3456,6 +3473,9 @@ let run_handler t ordinal request handler =
 	          match run_handler_body t ordinal request handler with
 	          | () ->
 	              runtime_probe_handler_completed t started_us;
+	              flush_runtime_probe_if_due t
+	          | exception Eio.Cancel.Cancelled exn when is_handlers_cancelled exn ->
+	              runtime_probe_handler_failed t started_us;
 	              flush_runtime_probe_if_due t
 	          | exception exn ->
 	              runtime_probe_handler_failed t started_us;
@@ -3513,12 +3533,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                   | Error _ -> None
                 in
                 let body =
-                  if
-                    request_body_already_closed
-                    &&
-                    match request_content_length with
-                    | None | Some 0 -> true
-                    | Some _ -> false
+                  if request_body_already_closed && request_content_length = Some 0
                   then Server.Body.empty ()
                   else body_of_stream t ordinal
                 in

@@ -1,8 +1,8 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/audit/run.sh
-Last updated: 2026-05-28T23:30:40Z
-Current sites: 291
+Last updated: 2026-06-15T22:49:45Z
+Current sites: 304
 
 Every eta-ai call site for an allowed external dependency is listed here. The
 catalog is not a gate; it is the truth-of-record.
@@ -28,301 +28,314 @@ Search:
 | eta_ai.ml / eta_ai.mli | eta / eta-http | AC3 pull stream uses Eta effects over eta-http body streams. | structural | medium; this is the current A2-approved streaming substrate. |
 | eta_ai.ml / eta_ai.mli | eta / eta-http | AC5 GenAI telemetry wraps Eta effects, parses provider base URLs, and suppresses provider transport observability. | structural | medium; this is the common telemetry shape provider packages use. |
 | eta_ai.ml / eta_ai.mli | eta-redacted | AC6 API keys use Eta_redacted.t with the eta-ai API-key label. | structural | low; this is the required redaction boundary for provider keys. |
-| test/test_eta_ai.ml | eta-redacted / eta-http | Prove provider auth builders can consume Eta_redacted.t and produce eta-http headers. | replaceable | low; test-only fixture. |
-| test/test_eta_ai.ml | Eio / eta / eta-http | Run eta-http body-stream, tracer, and logger effects under local Eta runtimes. | replaceable | low; eta-test could provide a shared runtime fixture. |
+| bench/bench_ai.ml | eta-redacted / eta-http | Build representative provider-auth headers for package benchmarks. | replaceable | low; benchmark harness only. |
+| sse.ml | eta / eta-http | Pull SSE events from eta-http body streams through Eta effects. | structural | medium; this is the shared streaming substrate. |
 
 ## Current Matches
 
 <!-- BEGIN DEP_MATCHES -->
-- lib/ai/bench/bench_ai.ml:31:        Eta_http.Core.Header.unsafe_of_list
-- lib/ai/bench/bench_ai.ml:32:          [ ("authorization", "Bearer " ^ Eta_redacted.value key) ]);
-- lib/ai/openai/eta_ai_openai.ml:3:module E = Eta.Effect
-- lib/ai/openai/eta_ai_openai.ml:185:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/eta_ai_openai.ml:187:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/anthropic/eta_ai_anthropic.mli:37:    (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:42:    Eta_http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:45:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/anthropic/eta_ai_anthropic.mli:50:    Eta_http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:53:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/anthropic/eta_ai_anthropic.mli:74:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/anthropic/eta_ai_anthropic.mli:79:  Eta_http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:82:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/anthropic/eta_ai_anthropic.mli:87:  Eta_http.Client.t ->
-- lib/ai/anthropic/eta_ai_anthropic.mli:90:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/bench/bench_ai.ml:44:        Eta_http.Core.Header.unsafe_of_list
+- lib/ai/bench/bench_ai.ml:45:          [ ("authorization", "Bearer " ^ Eta_redacted.value key) ]);
+- lib/ai/anthropic/eta_ai_anthropic.mli:38:    (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:43:    Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:46:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.mli:51:    Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:54:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.mli:75:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/anthropic/eta_ai_anthropic.mli:80:  Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:83:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.mli:88:  Eta_http.Client.t ->
+- lib/ai/anthropic/eta_ai_anthropic.mli:91:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/anthropic/eta_ai_anthropic.ml:2:module E = Eta.Effect
-- lib/ai/anthropic/eta_ai_anthropic.ml:416:       ("x-api-key", Eta_redacted.value api_key);
+- lib/ai/anthropic/eta_ai_anthropic.ml:488:       ("x-api-key", Eta_redacted.value api_key);
+- lib/ai/transport.ml:35:  Eta_http.Request.make ~headers
+- lib/ai/transport.ml:36:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string raw ])
+- lib/ai/transport.ml:41:  Eta_http.Request.make ~headers "GET" (join_url provider.base_url path)
+- lib/ai/transport.ml:80:  Eta_http.Body.Stream.read_all ?max_bytes body
+- lib/ai/transport.ml:81:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+- lib/ai/transport.ml:84:  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.unsafe_to_string
+- lib/ai/transport.ml:87:  | Stdlib.Ok value -> Eta.Effect.pure value
+- lib/ai/transport.ml:88:  | Stdlib.Error error -> Eta.Effect.fail error
+- lib/ai/transport.ml:92:  | Stdlib.Error error -> Eta.Effect.fail error
+- lib/ai/transport.ml:96:  Eta_http.request client request
+- lib/ai/transport.ml:97:  |> Eta.Effect.suppress_observability
+- lib/ai/transport.ml:98:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+- lib/ai/transport.ml:102:  |> Eta.Effect.bind (fun response ->
+- lib/ai/transport.ml:104:           response.Eta_http.Response.status >= 200
+- lib/ai/transport.ml:109:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:110:                  Eta.Effect.fail
+- lib/ai/transport.ml:116:  |> Eta.Effect.bind (fun response ->
+- lib/ai/transport.ml:118:           response.Eta_http.Response.status >= 200
+- lib/ai/transport.ml:122:           |> Eta.Effect.map (fun body -> (body, response.headers))
+- lib/ai/transport.ml:125:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:126:                  Eta.Effect.fail
+- lib/ai/transport.ml:132:  |> Eta.Effect.bind (fun response ->
+- lib/ai/transport.ml:134:           response.Eta_http.Response.status >= 200
+- lib/ai/transport.ml:138:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:142:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:143:                  Eta.Effect.fail
+- lib/ai/transport.ml:149:  |> Eta.Effect.bind (fun response ->
+- lib/ai/transport.ml:151:           response.Eta_http.Response.status >= 200
+- lib/ai/transport.ml:155:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:159:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:160:                  Eta.Effect.fail
+- lib/ai/transport.ml:167:  |> Eta.Effect.bind (fun response ->
+- lib/ai/transport.ml:169:           response.Eta_http.Response.status >= 200
+- lib/ai/transport.ml:171:         then Eta.Effect.pure (Sse.stream_of_body provider response.body)
+- lib/ai/transport.ml:174:           |> Eta.Effect.bind (fun raw ->
+- lib/ai/transport.ml:175:                  Eta.Effect.fail
+- lib/ai/transport.ml:196:  | Stdlib.Ok response -> Eta.Effect.pure response
+- lib/ai/transport.ml:197:  | Stdlib.Error error -> Eta.Effect.fail error
+- lib/ai/transport.ml:202:      |> Eta.Effect.bind (decode_effect decode))
+- lib/ai/transport.ml:207:      |> Eta.Effect.map decode)
+- lib/ai/openai/eta_ai_openai.mli:45:    (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:50:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:53:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:58:    Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:61:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:105:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:112:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:118:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:124:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:130:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:136:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai/eta_ai_openai.mli:141:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:144:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:149:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:152:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:156:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:159:  (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:163:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:166:  (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:170:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:173:  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:177:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:180:  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:185:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:188:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/eta_ai_openai.mli:193:  Eta_http.Client.t ->
+- lib/ai/openai/eta_ai_openai.mli:196:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/sse.ml:5:  body : Eta_http.Body.Stream.t;
+- lib/ai/sse.ml:42:    Eta.Effect.fail (concurrent_use stream)
+- lib/ai/sse.ml:45:    |> Eta.Effect.finally
+- lib/ai/sse.ml:46:         (Eta.Effect.sync (fun () -> Atomic.set stream.active false)))
+- lib/ai/sse.ml:112:  if stream.released then Eta.Effect.unit
+- lib/ai/sse.ml:115:    Eta_http.Body.Stream.discard stream.body
+- lib/ai/sse.ml:116:    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
+- lib/ai/sse.ml:126:  Eta.Effect.scoped
+- lib/ai/sse.ml:127:    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+- lib/ai/sse.ml:129:    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
+- lib/ai/sse.ml:235:    | [] -> Eta.Effect.pure (List.rev acc)
+- lib/ai/sse.ml:247:      Eta.Effect.pure (Some event)
+- lib/ai/sse.ml:248:  | [] when stream.eof -> Eta.Effect.pure None
+- lib/ai/sse.ml:250:      Eta_http.Body.Stream.read stream.body
+- lib/ai/sse.ml:251:      |> Eta.Effect.catch (fun error ->
+- lib/ai/sse.ml:253:      |> Eta.Effect.bind (function
+- lib/ai/sse.ml:260:                   |> Eta.Effect.bind (fun events ->
+- lib/ai/sse.ml:263:                          |> Eta.Effect.bind (fun () -> read_stream_event_unlocked stream)))
+- lib/ai/sse.ml:269:                   |> Eta.Effect.bind (fun events ->
+- lib/ai/sse.ml:284:        close_stream_unlocked stream |> Eta.Effect.bind (fun () ->
+- lib/ai/sse.ml:285:            Eta.Effect.pure (List.rev acc))
+- lib/ai/sse.ml:287:        read_stream_event_unlocked stream |> Eta.Effect.bind (function
+- lib/ai/sse.ml:288:          | None -> Eta.Effect.pure (List.rev acc)
+- lib/ai/openai/common.ml:49:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/common.ml:51:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/realtime.ml:3:module E = Eta.Effect
+- lib/ai/openai/realtime.ml:98:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/realtime.ml:100:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/realtime.ml:109:  Eta_http.Request.make ~headers:(auth_headers api_key)
+- lib/ai/openai/realtime.ml:110:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
+- lib/ai/openai/realtime.ml:115:  Eta_http.Body.Stream.read_all body
+- lib/ai/openai/realtime.ml:138:  Eta_http.request client request
+- lib/ai/openai/realtime.ml:141:  |> E.bind (fun (response : Eta_http.Response.t) ->
+- lib/ai/openai/realtime.ml:142:         read_response_body response.Eta_http.Response.body
+- lib/ai/openai/realtime.ml:272:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/realtime.ml:273:    (("Authorization", "Bearer " ^ Eta_redacted.value api_key)
+- lib/ai/openai/realtime.ml:288:  |> Eta_stream.Stream.map (function
+- lib/ai/eta_ai.mli:32:type headers = Eta_http.Core.Header.t
+- lib/ai/eta_ai.mli:33:type api_key = string Eta_redacted.t
+- lib/ai/eta_ai.mli:295:  | Eta_http_error of Eta_http.Error.t
+- lib/ai/eta_ai.mli:414:  provider -> api_key -> raw_json -> Eta_http.Request.t
+- lib/ai/eta_ai.mli:424:  provider -> path:string -> api_key -> raw_json -> Eta_http.Request.t
+- lib/ai/eta_ai.mli:428:  provider -> path:string -> api_key -> Eta_http.Request.t
+- lib/ai/eta_ai.mli:432:  provider -> api_key -> raw_json -> (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:439:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:448:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:455:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:462:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:470:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:478:  (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:483:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:484:  (Eta_http.Request.t -> ('a, ai_error) Eta.Effect.t) ->
+- lib/ai/eta_ai.mli:485:  ('a, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:491:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:492:  Eta_http.Request.t ->
+- lib/ai/eta_ai.mli:493:  (response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:498:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:499:  Eta_http.Request.t ->
+- lib/ai/eta_ai.mli:500:  (Embedding.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:506:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:507:  Eta_http.Request.t ->
+- lib/ai/eta_ai.mli:508:  (raw_json, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:514:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:515:  Eta_http.Request.t ->
+- lib/ai/eta_ai.mli:516:  (bytes * headers, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:532:  ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
+- lib/ai/eta_ai.mli:538:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:539:  Eta_http.Request.t ->
+- lib/ai/eta_ai.mli:540:  (stream, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:546:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:548:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:549:  (response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:554:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:556:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:557:  (stream, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:562:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:564:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:565:  (Embedding.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:570:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:571:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:573:  ('a, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:579:  Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:580:  (Eta_http.Request.t, ai_error) result ->
+- lib/ai/eta_ai.mli:582:  ('a, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:585:val read_stream_event : stream -> (stream_event option, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:589:  ?max_events:int -> stream -> (stream_event list, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:593:val close_stream : stream -> (unit, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:599:  (response, ai_error) Eta.Effect.t ->
+- lib/ai/eta_ai.mli:600:  (response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:608:  ('a, ai_error) Eta.Effect.t ->
+- lib/ai/eta_ai.mli:609:  ('a, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:615:  (Embedding.response, ai_error) Eta.Effect.t ->
+- lib/ai/eta_ai.mli:616:  (Embedding.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:623:  ('a, ai_error) Eta.Effect.t ->
+- lib/ai/eta_ai.mli:624:  ('a, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:629:  ('a, 'err) Eta.Effect.t -> ('a, 'err) Eta.Effect.t
+- lib/ai/eta_ai.mli:643:      (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:647:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:650:      (response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:654:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:657:      (stream, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:670:      (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.mli:674:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:677:      (Embedding.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:683:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:686:      (Image.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:692:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:695:      (Speech.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:701:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:704:      (Transcription.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:710:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:713:      (Rerank.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:719:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:722:      (Video.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:726:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:729:      (Video.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.mli:733:      Eta_http.Client.t ->
+- lib/ai/eta_ai.mli:736:      (Video.content, ai_error) Eta.Effect.t
+- lib/ai/types.ml:3:type headers = Eta_http.Core.Header.t
+- lib/ai/types.ml:4:type api_key = string Eta_redacted.t
+- lib/ai/types.ml:5:let api_key value = Eta_redacted.make ~label:"api_key" value
+- lib/ai/types.ml:260:  | Eta_http_error of Eta_http.Error.t
 - lib/ai/openai_compat/eta_ai_openai_compat.ml:3:module E = Eta.Effect
 - lib/ai/openai_compat/eta_ai_openai_compat.ml:35:  Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:53:    (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:58:    Eta_http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:61:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:66:    Eta_http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:69:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:92:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:97:  Eta_http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:100:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:105:  Eta_http.Client.t ->
-- lib/ai/openai_compat/eta_ai_openai_compat.mli:108:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:42:    (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:47:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:50:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:55:    Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:58:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:102:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:109:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:115:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:121:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:127:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:133:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openai/eta_ai_openai.mli:138:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:141:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:146:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:149:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:153:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:156:  (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:160:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:163:  (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:167:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:170:  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:174:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:177:  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:182:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:185:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/eta_ai_openai.mli:190:  Eta_http.Client.t ->
-- lib/ai/openai/eta_ai_openai.mli:193:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/realtime.ml:2:module E = Eta.Effect
-- lib/ai/openai/realtime.ml:100:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/realtime.ml:102:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/realtime.ml:111:  Eta_http.Request.make ~headers:(auth_headers api_key)
-- lib/ai/openai/realtime.ml:112:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
-- lib/ai/openai/realtime.ml:117:  Eta_http.Body.Stream.read_all body
-- lib/ai/openai/realtime.ml:140:  Eta_http.request client request
-- lib/ai/openai/realtime.ml:143:  |> E.bind (fun (response : Eta_http.Response.t) ->
-- lib/ai/openai/realtime.ml:144:         read_response_body response.Eta_http.Response.body
-- lib/ai/openai/realtime.ml:178:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
-- lib/ai/openai/realtime.ml:180:let widen_ws_error (error : Eta_http_eio.Ws.Client.ws_error) : realtime_error =
-- lib/ai/openai/realtime.ml:266:type t = { ws : Eta_http_eio.Ws.Client.t }
-- lib/ai/openai/realtime.ml:293:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/realtime.ml:294:    (("Authorization", "Bearer " ^ Eta_redacted.value api_key)
-- lib/ai/openai/realtime.ml:300:  Eta_http_eio.Ws.Client.connect ~headers:(websocket_headers ?safety_identifier api_key)
-- lib/ai/openai/realtime.ml:308:      Eta_http_eio.Ws.Client.send_text t.ws raw
-- lib/ai/openai/realtime.ml:312:  Eta_http_eio.Ws.Client.incoming t.ws
-- lib/ai/openai/realtime.ml:313:  |> Eta_stream.Stream.map (function
-- lib/ai/openai/realtime.ml:319:let close t = Eta_http_eio.Ws.Client.close t.ws
 - lib/ai/openai/realtime.mli:42:  ?base_url:string -> api_key:Eta_ai.api_key -> session -> Eta_http.Request.t
 - lib/ai/openai/realtime.mli:46:  Eta_http.Client.t ->
 - lib/ai/openai/realtime.mli:49:  (client_secret, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:74:type realtime_error = [ Eta_http_eio.Ws.Client.ws_error | `Encode of string ]
 - lib/ai/openai/realtime.mli:85:  sw:Eio.Switch.t ->
 - lib/ai/openai/realtime.mli:86:  net:_ Eio.Net.t ->
 - lib/ai/openai/realtime.mli:90:  (t, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/openai/realtime.mli:92:val send_event : t -> client_event -> (unit, realtime_error) Eta.Effect.t
 - lib/ai/openai/realtime.mli:93:val events : t -> (server_event, Eta_http_eio.Ws.Client.ws_error) Eta_stream.Stream.t
 - lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:31:type headers = Eta_http.Core.Header.t
-- lib/ai/eta_ai.mli:32:type api_key = string Eta_redacted.t
-- lib/ai/eta_ai.mli:282:  | Eta_http_error of Eta_http.Error.t
-- lib/ai/eta_ai.mli:383:  provider -> api_key -> raw_json -> Eta_http.Request.t
-- lib/ai/eta_ai.mli:387:  provider -> path:string -> api_key -> raw_json -> Eta_http.Request.t
-- lib/ai/eta_ai.mli:391:  provider -> path:string -> api_key -> Eta_http.Request.t
-- lib/ai/eta_ai.mli:395:  provider -> api_key -> raw_json -> (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.mli:402:  (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.mli:407:  Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:408:  Eta_http.Request.t ->
-- lib/ai/eta_ai.mli:409:  (response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:414:  Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:415:  Eta_http.Request.t ->
-- lib/ai/eta_ai.mli:416:  (Embedding.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:422:  Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:423:  Eta_http.Request.t ->
-- lib/ai/eta_ai.mli:424:  (raw_json, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:430:  Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:431:  Eta_http.Request.t ->
-- lib/ai/eta_ai.mli:432:  (bytes * headers, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:444:  ?max_buffer_bytes:int -> provider -> Eta_http.Body.Stream.t -> stream
-- lib/ai/eta_ai.mli:450:  Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:451:  Eta_http.Request.t ->
-- lib/ai/eta_ai.mli:452:  (stream, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:456:val read_stream_event : stream -> (stream_event option, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:460:  ?max_events:int -> stream -> (stream_event list, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:464:val close_stream : stream -> (unit, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:470:  (response, ai_error) Eta.Effect.t ->
-- lib/ai/eta_ai.mli:471:  (response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:479:  ('a, ai_error) Eta.Effect.t ->
-- lib/ai/eta_ai.mli:480:  ('a, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:486:  (Embedding.response, ai_error) Eta.Effect.t ->
-- lib/ai/eta_ai.mli:487:  (Embedding.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:494:  ('a, ai_error) Eta.Effect.t ->
-- lib/ai/eta_ai.mli:495:  ('a, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:500:  ('a, 'err) Eta.Effect.t -> ('a, 'err) Eta.Effect.t
-- lib/ai/eta_ai.mli:514:      (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.mli:518:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:521:      (response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:525:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:528:      (stream, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:541:      (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.mli:545:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:548:      (Embedding.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:554:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:557:      (Image.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:563:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:566:      (Speech.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:572:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:575:      (Transcription.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:581:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:584:      (Rerank.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:590:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:593:      (Video.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:597:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:600:      (Video.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.mli:604:      Eta_http.Client.t ->
-- lib/ai/eta_ai.mli:607:      (Video.content, ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.ml:3:module E = Eta.Effect
-- lib/ai/openrouter/eta_ai_openrouter.ml:328:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/eta_ai.ml:59:type headers = Eta_http.Core.Header.t
-- lib/ai/eta_ai.ml:60:type api_key = string Eta_redacted.t
-- lib/ai/eta_ai.ml:61:let api_key value = Eta_redacted.make ~label:"api_key" value
-- lib/ai/eta_ai.ml:304:  | Eta_http_error of Eta_http.Error.t
-- lib/ai/eta_ai.ml:447:  Eta_http.Request.make ~headers
-- lib/ai/eta_ai.ml:448:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string raw ])
-- lib/ai/eta_ai.ml:453:  Eta_http.Request.make ~headers "GET" (join_url provider.base_url path)
-- lib/ai/eta_ai.ml:469:  Eta_http.Body.Stream.read_all ?max_bytes body
-- lib/ai/eta_ai.ml:470:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
-- lib/ai/eta_ai.ml:473:  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.to_string
-- lib/ai/eta_ai.ml:476:  | Stdlib.Ok value -> Eta.Effect.pure value
-- lib/ai/eta_ai.ml:477:  | Stdlib.Error error -> Eta.Effect.fail error
-- lib/ai/eta_ai.ml:480:  Eta_http.request client request
-- lib/ai/eta_ai.ml:481:  |> Eta.Effect.suppress_observability
-- lib/ai/eta_ai.ml:482:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
-- lib/ai/eta_ai.ml:486:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:488:           response.Eta_http.Response.status >= 200
-- lib/ai/eta_ai.ml:493:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:494:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:500:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:502:           response.Eta_http.Response.status >= 200
-- lib/ai/eta_ai.ml:506:           |> Eta.Effect.map (fun body -> (body, response.headers))
-- lib/ai/eta_ai.ml:509:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:510:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:516:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:518:           response.Eta_http.Response.status >= 200
-- lib/ai/eta_ai.ml:522:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:526:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:527:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:533:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:535:           response.Eta_http.Response.status >= 200
-- lib/ai/eta_ai.ml:539:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:543:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:544:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:550:  body : Eta_http.Body.Stream.t;
-- lib/ai/eta_ai.ml:575:  |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:577:           response.Eta_http.Response.status >= 200
-- lib/ai/eta_ai.ml:579:         then Eta.Effect.pure (stream_of_body provider response.body)
-- lib/ai/eta_ai.ml:582:           |> Eta.Effect.bind (fun raw ->
-- lib/ai/eta_ai.ml:583:                  Eta.Effect.fail
-- lib/ai/eta_ai.ml:629:  if stream.released then Eta.Effect.unit
-- lib/ai/eta_ai.ml:632:    Eta_http.Body.Stream.discard stream.body
-- lib/ai/eta_ai.ml:633:    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
-- lib/ai/eta_ai.ml:642:  Eta.Effect.scoped
-- lib/ai/eta_ai.ml:643:    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
-- lib/ai/eta_ai.ml:645:    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
-- lib/ai/eta_ai.ml:696:    | [] -> Eta.Effect.pure (List.rev acc)
-- lib/ai/eta_ai.ml:708:      Eta.Effect.pure (Some event)
-- lib/ai/eta_ai.ml:709:  | [] when stream.eof -> Eta.Effect.pure None
-- lib/ai/eta_ai.ml:711:      Eta_http.Body.Stream.read stream.body
-- lib/ai/eta_ai.ml:712:      |> Eta.Effect.catch (fun error ->
-- lib/ai/eta_ai.ml:714:	      |> Eta.Effect.bind (function
-- lib/ai/eta_ai.ml:721:	                   |> Eta.Effect.bind (fun events ->
-- lib/ai/eta_ai.ml:724:	                          |> Eta.Effect.bind (fun () -> read_stream_event stream)))
-- lib/ai/eta_ai.ml:730:	                   |> Eta.Effect.bind (fun events ->
-- lib/ai/eta_ai.ml:742:        close_stream stream |> Eta.Effect.bind (fun () ->
-- lib/ai/eta_ai.ml:743:            Eta.Effect.pure (List.rev acc))
-- lib/ai/eta_ai.ml:745:        read_stream_event stream |> Eta.Effect.bind (function
-- lib/ai/eta_ai.ml:746:          | None -> Eta.Effect.pure (List.rev acc)
-- lib/ai/eta_ai.ml:795:  match Eta_http.Core.Url.parse provider.base_url with
-- lib/ai/eta_ai.ml:798:        ("server.address", Eta_http.Core.Url.host url);
-- lib/ai/eta_ai.ml:799:        ("server.port", string_of_int (Eta_http.Core.Url.effective_port url));
-- lib/ai/eta_ai.ml:820:  | Eta_http_error error -> Eta_http.Error.to_string error
-- lib/ai/eta_ai.ml:829:  |> Eta.Effect.catch (fun error ->
-- lib/ai/eta_ai.ml:830:         Eta.Effect.fail error
-- lib/ai/eta_ai.ml:831:         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
-- lib/ai/eta_ai.ml:834:  effect |> with_error_type |> Eta.Effect.annotate_all attrs
-- lib/ai/eta_ai.ml:835:  |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
-- lib/ai/eta_ai.ml:840:    |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:841:           Eta.Effect.pure response
-- lib/ai/eta_ai.ml:842:           |> Eta.Effect.annotate_all (response_attrs response))
-- lib/ai/eta_ai.ml:848:  with_span ~kind:Eta.Capabilities.Client
-- lib/ai/eta_ai.ml:860:  with_span ~kind:Eta.Capabilities.Client
-- lib/ai/eta_ai.ml:879:    |> Eta.Effect.bind (fun response ->
-- lib/ai/eta_ai.ml:880:           Eta.Effect.pure response
-- lib/ai/eta_ai.ml:881:           |> Eta.Effect.annotate_all (embedding_response_attrs response))
-- lib/ai/eta_ai.ml:888:  with_span ~kind:Eta.Capabilities.Client
-- lib/ai/eta_ai.ml:901:  with_span ~kind:Eta.Capabilities.Internal
-- lib/ai/eta_ai.ml:906:  Eta.Effect.suppress_observability
-- lib/ai/eta_ai.ml:917:      (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.ml:921:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:924:      (response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:928:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:931:      (stream, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:944:      (Eta_http.Request.t, ai_error) result
-- lib/ai/eta_ai.ml:948:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:951:      (Embedding.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:957:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:960:      (Image.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:966:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:969:      (Speech.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:975:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:978:      (Transcription.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:984:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:987:      (Rerank.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:993:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:996:      (Video.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:1000:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:1003:      (Video.response, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:1007:      Eta_http.Client.t ->
-- lib/ai/eta_ai.ml:1010:      (Video.content, ai_error) Eta.Effect.t
-- lib/ai/eta_ai.ml:1024:      | Stdlib.Error error -> Eta.Effect.fail error
-- lib/ai/eta_ai.ml:1032:      | Stdlib.Error error -> Eta.Effect.fail error
-- lib/ai/eta_ai.ml:1047:      | Stdlib.Error error -> Eta.Effect.fail error
-- lib/ai/openrouter/eta_ai_openrouter.mli:77:    (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:83:    Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:86:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:92:    Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:95:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:113:    (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:119:    Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:122:      (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:185:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:193:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:202:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:208:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:214:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:220:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:226:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:232:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:239:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:245:  (Eta_http.Request.t, Eta_ai.ai_error) result
-- lib/ai/openrouter/eta_ai_openrouter.mli:251:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:254:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:260:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:263:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:54:    (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:59:    Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:62:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:67:    Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:70:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:93:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:98:  Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:101:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:106:  Eta_http.Client.t ->
+- lib/ai/openai_compat/eta_ai_openai_compat.mli:109:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:72:      (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.ml:76:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:79:      (response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:83:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:86:      (stream, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:99:      (Eta_http.Request.t, ai_error) result
+- lib/ai/eta_ai.ml:103:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:106:      (Embedding.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:112:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:115:      (Image.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:121:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:124:      (Speech.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:130:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:133:      (Transcription.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:139:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:142:      (Rerank.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:148:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:151:      (Video.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:155:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:158:      (Video.response, ai_error) Eta.Effect.t
+- lib/ai/eta_ai.ml:162:      Eta_http.Client.t ->
+- lib/ai/eta_ai.ml:165:      (Video.content, ai_error) Eta.Effect.t
+- lib/ai/observability.ml:43:  match Eta_http.Core.Url.parse provider.base_url with
+- lib/ai/observability.ml:46:        ("server.address", Eta_http.Core.Url.host url);
+- lib/ai/observability.ml:47:        ("server.port", string_of_int (Eta_http.Core.Url.effective_port url));
+- lib/ai/observability.ml:68:  | Eta_http_error error -> Eta_http.Error.to_string error
+- lib/ai/observability.ml:77:  |> Eta.Effect.catch (fun error ->
+- lib/ai/observability.ml:78:         Eta.Effect.fail error
+- lib/ai/observability.ml:79:         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
+- lib/ai/observability.ml:82:  eff |> with_error_type |> Eta.Effect.annotate_all attrs
+- lib/ai/observability.ml:83:  |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
+- lib/ai/observability.ml:88:    |> Eta.Effect.bind (fun response ->
+- lib/ai/observability.ml:89:           Eta.Effect.pure response
+- lib/ai/observability.ml:90:           |> Eta.Effect.annotate_all (response_attrs response))
+- lib/ai/observability.ml:96:  with_span ~kind:Eta.Capabilities.Client
+- lib/ai/observability.ml:108:  with_span ~kind:Eta.Capabilities.Client
+- lib/ai/observability.ml:127:    |> Eta.Effect.bind (fun response ->
+- lib/ai/observability.ml:128:           Eta.Effect.pure response
+- lib/ai/observability.ml:129:           |> Eta.Effect.annotate_all (embedding_response_attrs response))
+- lib/ai/observability.ml:136:  with_span ~kind:Eta.Capabilities.Client
+- lib/ai/observability.ml:149:  with_span ~kind:Eta.Capabilities.Internal
+- lib/ai/observability.ml:154:  Eta.Effect.suppress_observability
+- lib/ai/openrouter/common.ml:204:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openrouter/eta_ai_openrouter.mli:91:    (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:98:    Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:101:    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:108:    Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:111:    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:129:    (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:135:    Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:138:      (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:196:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:204:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:210:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:216:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:222:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:228:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:234:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:241:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:247:  (Eta_http.Request.t, Eta_ai.ai_error) result
+- lib/ai/openrouter/eta_ai_openrouter.mli:254:  Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:257:  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:263:  Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:266:  (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:270:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:273:  (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:273:  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:277:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:280:  (Eta_ai.Speech.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:280:  (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:284:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:287:  (Eta_ai.Image.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:287:  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:291:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:294:  (Eta_ai.Transcription.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:294:  (Eta_ai.Rerank.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:298:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:301:  (Eta_ai.Rerank.response, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:301:  (Eta_ai.Video.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:305:  Eta_http.Client.t ->
 - lib/ai/openrouter/eta_ai_openrouter.mli:308:  (Eta_ai.Video.response, Eta_ai.ai_error) Eta.Effect.t
 - lib/ai/openrouter/eta_ai_openrouter.mli:312:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:315:  (Eta_ai.Video.response, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:319:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:322:  (Eta_ai.Video.content, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:328:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:331:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/eta_ai_openrouter.mli:337:  Eta_http.Client.t ->
-- lib/ai/openrouter/eta_ai_openrouter.mli:340:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:315:  (Eta_ai.Video.content, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openrouter/eta_ai_openrouter.mli:322:  Eta_http.Client.t ->
+- lib/ai/openrouter/eta_ai_openrouter.mli:325:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 <!-- END DEP_MATCHES -->

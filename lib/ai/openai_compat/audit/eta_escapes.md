@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/ai/openai_compat/audit/run.sh
-Last updated: 2026-05-24T08:46:44Z
-Current sites: 2
+Last updated: 2026-06-15T22:49:12Z
+Current sites: 0
 
 Sites where eta-ai-openai-compat reaches into raw Eio fiber/switch/promise/
 mutex/condition primitives or raw Atomic.t are listed here.
@@ -17,9 +17,8 @@ No replaceable escapes yet.
 
 ## Structural
 
-- test/test_eta_ai_openai_compat.ml uses Eio.Switch.run only to create Eta
-  runtimes under Eio_main for effect tests. Production eta-ai-openai-compat
-  does not own Eio switches, fibers, promises, mutexes, conditions, or atomics.
+No structural escapes in the audited provider package. Eio-backed tests live
+under top-level test directories and are outside this package audit.
 
 ## Debt
 
@@ -28,6 +27,4 @@ No debt escapes yet.
 ## Current Matches
 
 <!-- BEGIN ESCAPE_MATCHES -->
-- test/ai/openai_compat/test_eta_ai_openai_compat.ml:78:  Eio.Switch.run @@ fun sw ->
-- test/ai/openai_compat/test_eta_ai_openai_compat.ml:84:  Eio.Switch.run @@ fun sw ->
 <!-- END ESCAPE_MATCHES -->

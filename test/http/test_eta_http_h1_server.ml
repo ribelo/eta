@@ -648,20 +648,24 @@ let test_h1_server_connection_handler_timeout_uses_injected_time () =
   let config =
     { Eta_http_eio.Server.Config.default with server = server_config }
   in
+  let now_ms = ref 0L in
   let time : Eta_http_eio.Server.time =
     {
-      now_ms = (fun () -> 0L);
-      sleep = (fun _duration -> ());
-      with_timeout =
-        (fun duration f ->
-          if Eta.Duration.to_ms duration = 20 then raise Eio.Time.Timeout
-          else f ());
+      now_ms = (fun () -> !now_ms);
+      sleep =
+        (fun duration ->
+          now_ms := Int64.add !now_ms (Int64.of_int (Eta.Duration.to_ms duration));
+          Eio.Fiber.yield ());
+      with_timeout = (fun _duration f -> f ());
     }
   in
   let handler_called = ref false in
+  let never, _resolve_never = Eio.Promise.create () in
   let handler (_request : Eta_http.Server.Request.t) =
     handler_called := true;
-    Eta.Effect.pure (Eta_http.Server.Response.text "late\n")
+    Eta.Effect.sync (fun () ->
+        Eio.Promise.await never;
+        Eta_http.Server.Response.text "late\n")
   in
   with_h1_connection ~time ~config handler @@ fun clock flow closed_stats ->
   Eio.Flow.copy_string
@@ -674,7 +678,7 @@ let test_h1_server_connection_handler_timeout_uses_injected_time () =
     ("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n"
    ^ "Content-Length: 20\r\n\r\nservice unavailable\n")
     response;
-  Alcotest.(check bool) "handler not constructed" false !handler_called;
+  Alcotest.(check bool) "handler called" true !handler_called;
   let stats =
     Eio.Time.with_timeout_exn clock 1.0 (fun () ->
         Eio.Promise.await closed_stats)

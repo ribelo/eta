@@ -521,10 +521,8 @@ Footguns:
   suites. Use `dune build @install` when you only need installable packages.
 - `nix develop .#mainline` is an upstream-OCaml comparison shell, not the
   primary development shell.
-- The full `dune runtest --force` gate currently fails on `test/http` because
-  of a pre-existing type mismatch in `test_eta_http_h2_server.ml`. Run
-  `test/http_eio` for the green HTTP transport gate. Plain `dune build` also
-  fails on the `http-testsuite/perf_compare` research suite.
+- `test/http` is the low-level protocol test target. `test/http_eio` is the
+  green Eio transport gate.
 
 The research journal is intentionally ignored by Git. It records the full
 project history and local design reasoning, but it is not part of the

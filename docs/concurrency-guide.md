@@ -22,7 +22,7 @@ do I use?**
                          ┌────────────┼────────────┐
                          │ Yes                     │ No
                          ▼                         ▼
-               Eta_blocking.submit      ┌─────────────────────────┐
+               Eta_blocking.run         ┌─────────────────────────┐
                (OS thread pool)         │ Is the work CPU-heavy   │
                                         │ AND you want structured │
                                         │ parallelism?            │
@@ -51,7 +51,7 @@ Every box in the diagram:
 | `Effect.par` / `Effect.for_each_par` | Runs child effects as Eio fibers on the current runtime | None | Concurrent effect workflows: overlapping sleeps, async I/O, queues, resources | Not CPU parallelism; heavy sync work still blocks the domain |
 | `Eta_par.Island.run` | Runs a single callback on a worker domain | Explicit domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback crosses a native domain boundary and must return on its own |
 | `Eta_par.Island.map` | Runs N callbacks in parallel batch | Explicit domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; started callbacks are not preempted by Eta cancellation |
-| `Eta_blocking.submit` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |
+| `Eta_blocking.run` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |
 | `Eta_par.join` | Forks two tasks; heartbeat scheduler distributes at runtime | Domain pool (heartbeat) | Recursive parallel algorithms, tree walks | Must be called from inside `Eta_par.run` or `Eta_par.Pool.run` |
 | `Eta_par.par_for` / `.par_map` | Data-parallel combinators over arrays | Domain pool (heartbeat) | Structured CPU parallelism: parallel sort, parallel reduce, parallel map | Shapes are fixed; no per-element async decisions |
 | `Eta_par.Iter` | Lazy iterator chains (map/filter/reduce/collect) | Domain pool (heartbeat) | Rayon-style pipelines over arrays | Indexed sources only; consumer wraps the chain |
@@ -145,7 +145,7 @@ etc.) is called.
 ### "I need to call a blocking C library"
 
 ```ocaml
-Eta_blocking.submit ~name:"legacy_parse" (fun () ->
+Eta_blocking.run ~name:"legacy_parse" (fun () ->
   C_lib.parse_binary buf)
 ```
 
@@ -166,7 +166,7 @@ Compose them:
 
 ```ocaml
 let process path =
-  let* raw = Eta_blocking.submit ~name:"read" (fun () -> read_file path) in
+  let* raw = Eta_blocking.run ~name:"read" (fun () -> read_file path) in
   let* parsed =
     Eta_par.Island.run ~name:"parse" ~pool:island_pool
       (fun () -> parse_json raw) in
@@ -205,7 +205,7 @@ intentional sharing API.
 | Run normal OCaml code without blocking the fiber | `Effect.sync` | `eta` (the base effect library) |
 | Run CPU-heavy callback on a separate domain | `Eta_par.Island.run` | `eta_par` |
 | Run batch callbacks in parallel, get results in order | `Eta_par.Island.map` | `eta_par` |
-| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Eta_blocking.submit` | `eta_blocking` |
+| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Eta_blocking.run` | `eta_blocking` |
 | Fork-join two recursive subproblems | `Eta_par.join` | `eta_par` |
 | Parallel map/reduce/sort over arrays | `Eta_par.par_map` / `par_reduce` / `par_sort` | `eta_par` |
 | Lazy iterator chains (map/filter/reduce/collect) | `Eta_par.Iter` | `eta_par` |
