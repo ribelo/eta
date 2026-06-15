@@ -486,6 +486,8 @@ let () =
         [
           Alcotest.test_case "drains client preface and request" `Quick
             test_h2_writer_drains_client_preface_and_request;
+          Alcotest.test_case "empty request uses headers end-stream" `Quick
+            test_h2_writer_sends_end_stream_on_empty_request_headers;
           Alcotest.test_case "blocked write teardown" `Quick
             test_h2_writer_blocked_write_teardown;
         ] );

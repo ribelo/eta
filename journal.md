@@ -17123,3 +17123,81 @@ remain narrower than the first summary stated.
 - Do not silently preserve SQLite WAL defaults when Turso concurrent mode is
   requested; concurrent mode chooses and verifies MVCC.
 - Do not expose LadybugDB as `eta_sql`; Cypher is not SQL.
+
+## V-Handled-Effect-R — Jane Street handled_effect reopening
+
+### Why this entry exists
+
+The earlier R-channel and native-effects entries rejected raw OCaml native
+effects because missing handlers were runtime `Effect.Unhandled` failures, then
+rejected typed request DSLs because the static evidence leaked witnesses,
+tokens, or handler order into user signatures. Jane Street's `handled_effect`
+directly targets the first problem by representing handlers as `local` values,
+so the R-D branch deserved a fair re-test.
+
+### Lab
+
+Created `.scratch/evidence/handled_effect_r_channel/`.
+
+The lab tests:
+
+- a combined service effect with Db and Log operations;
+- a separate-effect-per-service shape using `Handled_effect.run_with`;
+- the old object-row env baseline;
+- negative fixtures for zero-argument auto-DI, handler escape, missing
+  forwarded handlers, and Eio child-fiber capture.
+
+Run:
+
+```sh
+nix develop .#oxcaml -c bash .scratch/evidence/handled_effect_r_channel/run.sh
+```
+
+Observed:
+
+```text
+handled_effect R-channel smoke passed
+zero_arg_auto_di PASS
+escape_handler PASS
+continue_missing_forward_handler PASS
+eio_fiber_capture PASS
+handled_effect R-channel evidence passed
+```
+
+### Decision Diary
+
+#### V-HE1 - handled_effect fixes raw handler absence locally
+
+Decision: accepted for scoped local control effects. A service operation cannot
+be performed without a handler value, and the handler cannot escape its
+installed scope. This is materially safer than raw `Effect.perform`.
+
+#### V-HE2 - handled_effect is not an Eta R-channel replacement
+
+Decision: rejected as a replacement for the object-row `'env` channel. The
+strongest separate-service shape gives:
+
+```ocaml
+val a : Db_eff.Handler.t @ local -> Log_eff.Handler.t @ local -> string -> int
+```
+
+That fails V-R10's core success bar: `a`'s argument list must mention zero
+services or service machinery while its inferred type carries transitive
+requirements. `handled_effect` wins safety by making the handler evidence
+explicit.
+
+#### V-HE3 - handled_effect changes the Eio locality failure into a static boundary
+
+Decision: partial. Capturing a `local` handled-effect handler into
+`Eio.Fiber.both` child closures is rejected because the child closures are
+global. That is safer than raw runtime `Unhandled`, but it does not revive a
+root-installed generic service substrate. Cross-fiber use still needs an
+explicit wrapper/re-run strategy at the fork boundary.
+
+### Verdict
+
+Keep Eta's object-row R-channel. Treat `handled_effect` as strong prior art for
+local scoped algebraic effects, not as the current Eta service/R substrate.
+
+Full evidence and deferred work are in
+`.scratch/evidence/handled_effect_r_channel/verdict.md`.

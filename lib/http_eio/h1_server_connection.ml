@@ -55,6 +55,9 @@ type t = {
   close_signal : unit Eio.Promise.u;
   mutable closed : bool;
   mutable handler_watch : handler_watch option;
+  mutable trace_current_ordinal : int option;
+  phase_trace_path : string option;
+  phase_trace_buffer : Buffer.t option;
 }
 
 type request_head = {
@@ -77,7 +80,7 @@ type body_source = {
   mutable close_after_response : bool;
   mutable pending_returned : bool;
   continue_state : continue_state option;
-  scratch : Cstruct.t;
+  mutable scratch : Cstruct.t option;
 }
 
 type chunked_body_source = {
@@ -97,6 +100,95 @@ type request_head_error =
   | Request_head_error of Server.Error.t
 
 let stats t : stats = Server_stats.H1.snapshot t.stats
+
+let phase_trace_path = lazy (Sys.getenv_opt "ETA_H1_PHASE_TRACE_PATH")
+
+let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)
+
+let peer_port t = Option.value t.connection.peer.port ~default:(-1)
+
+let phase_trace_line t line =
+  match t.phase_trace_buffer with
+  | None -> ()
+  | Some buffer ->
+      Buffer.add_string buffer line;
+      Buffer.add_char buffer '\n'
+
+let flush_phase_trace t =
+  match (t.phase_trace_path, t.phase_trace_buffer) with
+  | Some path, Some buffer when Buffer.length buffer > 0 ->
+      let out =
+        open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path
+      in
+      Fun.protect
+        ~finally:(fun () -> close_out_noerr out)
+        (fun () -> Buffer.output_buffer out buffer)
+  | _ -> ()
+
+let trace_request_head t ordinal head ~started_us ~completed_us =
+  phase_trace_line t
+    (Printf.sprintf
+       "h1_phase_request_head connection_id=%s peer_port=%d ordinal=%d \
+        method=%s target=%s body_initial_bytes=%d started_us=%d completed_us=%d \
+        read_us=%d"
+       t.connection.id (peer_port t) ordinal head.method_ head.target head.body_len
+       started_us completed_us (completed_us - started_us))
+
+let trace_request_accepted t ordinal =
+  phase_trace_line t
+    (Printf.sprintf
+       "h1_phase_request_accepted connection_id=%s peer_port=%d ordinal=%d \
+        accepted_us=%d"
+       t.connection.id (peer_port t) ordinal (now_us ()))
+
+let trace_handler_start t ordinal =
+  let started_us = now_us () in
+  phase_trace_line t
+    (Printf.sprintf
+       "h1_phase_handler_start connection_id=%s peer_port=%d ordinal=%d \
+        started_us=%d"
+       t.connection.id (peer_port t) ordinal started_us);
+  started_us
+
+let trace_handler_done t ordinal ~started_us =
+  let completed_us = now_us () in
+  phase_trace_line t
+    (Printf.sprintf
+       "h1_phase_handler_done connection_id=%s peer_port=%d ordinal=%d \
+        completed_us=%d handler_us=%d"
+       t.connection.id (peer_port t) ordinal completed_us
+       (completed_us - started_us))
+
+let trace_response_write_start t ~len =
+  match t.trace_current_ordinal with
+  | None -> None
+  | Some ordinal ->
+      let started_us = now_us () in
+      phase_trace_line t
+        (Printf.sprintf
+           "h1_phase_response_write_start connection_id=%s peer_port=%d \
+            ordinal=%d bytes=%d started_us=%d"
+           t.connection.id (peer_port t) ordinal len started_us);
+      Some (ordinal, started_us)
+
+let trace_response_write_complete t trace ~len =
+  match trace with
+  | None -> ()
+  | Some (ordinal, started_us) ->
+      let completed_us = now_us () in
+      phase_trace_line t
+        (Printf.sprintf
+           "h1_phase_response_write_complete connection_id=%s peer_port=%d \
+            ordinal=%d bytes=%d completed_us=%d write_us=%d"
+           t.connection.id (peer_port t) ordinal len completed_us
+           (completed_us - started_us))
+
+let trace_request_complete t ordinal =
+  phase_trace_line t
+    (Printf.sprintf
+       "h1_phase_request_complete connection_id=%s peer_port=%d ordinal=%d \
+        completed_us=%d"
+       t.connection.id (peer_port t) ordinal (now_us ()))
 
 let shutdown_all t = try Eio.Flow.shutdown t.flow `All with _ -> ()
 
@@ -182,7 +274,9 @@ let write_response_wire t ~blit ~len =
       if len > Cstruct.length t.write_buffer then
         t.write_buffer <- Cstruct.create len;
       blit t.write_buffer;
-      Eio.Flow.write t.flow [ Cstruct.sub t.write_buffer 0 len ]
+      let trace = trace_response_write_start t ~len in
+      Eio.Flow.write t.flow [ Cstruct.sub t.write_buffer 0 len ];
+      trace_response_write_complete t trace ~len
     in
     (match t.config.server.timeouts.response_write_timeout with
     | None -> write ()
@@ -386,9 +480,25 @@ let finish_chunked_body_source source =
 
 let source_take_pending source n =
   let take = min n (source_pending source) in
-  let chunk = Bytes.sub source.initial source.off take in
+  let chunk =
+    if source.off = 0 && take = Bytes.length source.initial then source.initial
+    else Bytes.sub source.initial source.off take
+  in
   source.off <- source.off + take;
   chunk
+
+let source_scratch source =
+  match source.scratch with
+  | Some scratch -> scratch
+  | None ->
+      let scratch = Cstruct.create source.t.config.read_buffer_size in
+      source.scratch <- Some scratch;
+      scratch
+
+let record_request_body_bytes source len =
+  Server_stats.H1.add_request_bytes source.t.stats len;
+  emit_current source.t (fun metrics ->
+      Server_metrics.request_body_bytes metrics len)
 
 let read_body_flow source dst =
   try
@@ -422,17 +532,15 @@ let source_read_some source max_len =
              in
              source.remaining <- source.remaining - Bytes.length chunk;
              if source.remaining = 0 then finish_body_source source;
-             Server_stats.H1.add_request_bytes source.t.stats
-               (Bytes.length chunk);
-             emit_current source.t (fun metrics ->
-                 Server_metrics.request_body_bytes metrics (Bytes.length chunk));
+             record_request_body_bytes source (Bytes.length chunk);
              Eta.Effect.pure (Some chunk)
            else
+             let scratch = source_scratch source in
              let len =
-               min max_len (min source.remaining (Cstruct.length source.scratch))
+               min max_len (min source.remaining (Cstruct.length scratch))
              in
              Eta.Effect.sync (fun () ->
-                 read_body_flow source (Cstruct.sub source.scratch 0 len))
+                 read_body_flow source (Cstruct.sub scratch 0 len))
              |> Eta.Effect.bind (function
                   | Error error -> Eta.Effect.fail error
                   | Ok 0 ->
@@ -440,13 +548,63 @@ let source_read_some source max_len =
                         (connection_closed_error source.t Request_body)
                   | Ok read ->
                       let chunk = Bytes.create read in
-                      Cstruct.blit_to_bytes source.scratch 0 chunk 0 read;
+                      Cstruct.blit_to_bytes scratch 0 chunk 0 read;
                       source.remaining <- source.remaining - read;
                       if source.remaining = 0 then finish_body_source source;
-                      Server_stats.H1.add_request_bytes source.t.stats read;
-                      emit_current source.t (fun metrics ->
-                          Server_metrics.request_body_bytes metrics read);
+                      record_request_body_bytes source read;
                       Eta.Effect.pure (Some chunk)))
+
+let source_read_all source ~max_bytes =
+  if source.remaining > max_bytes then
+    Eta.Effect.fail
+      (error source.t
+         (Request_body_too_large { limit = max_bytes; length = source.remaining }))
+  else
+    send_continue_if_needed source
+    |> Eta.Effect.bind (fun () ->
+           let total = source.remaining in
+           if total = 0 then (
+             finish_body_source source;
+             Eta.Effect.pure Bytes.empty)
+           else if source.off = 0 && total = Bytes.length source.initial then (
+             let chunk = source.initial in
+             source.off <- Bytes.length source.initial;
+             source.remaining <- 0;
+             finish_body_source source;
+             record_request_body_bytes source total;
+             Eta.Effect.pure chunk)
+           else
+             let out = Bytes.create total in
+             let rec fill off =
+               if off = total then Eta.Effect.pure out
+               else if source_pending source > 0 then (
+                 let chunk = source_take_pending source (total - off) in
+                 let len = Bytes.length chunk in
+                 Bytes.blit chunk 0 out off len;
+                 source.remaining <- source.remaining - len;
+                 if source.remaining = 0 then finish_body_source source;
+                 record_request_body_bytes source len;
+                 fill (off + len))
+               else
+                 let scratch = source_scratch source in
+                 let read_len =
+                   min (total - off) (min source.remaining (Cstruct.length scratch))
+                 in
+                 Eta.Effect.sync (fun () ->
+                     read_body_flow source (Cstruct.sub scratch 0 read_len))
+                 |> Eta.Effect.bind (function
+                      | Error error -> Eta.Effect.fail error
+                      | Ok 0 ->
+                          Eta.Effect.fail
+                            (connection_closed_error source.t Request_body)
+                      | Ok read ->
+                          Cstruct.blit_to_bytes scratch 0 out off read;
+                          source.remaining <- source.remaining - read;
+                          if source.remaining = 0 then finish_body_source source;
+                          record_request_body_bytes source read;
+                          fill (off + read))
+             in
+             fill 0)
 
 let rec drain_fixed_body source =
   source_read_some source source.remaining
@@ -464,11 +622,12 @@ let fixed_body t initial length continue_state =
       close_after_response = false;
       pending_returned = false;
       continue_state;
-      scratch = Cstruct.create t.config.read_buffer_size;
+      scratch = None;
     }
   in
   let body =
     Server.Body.of_reader
+      ~read_all:(source_read_all source)
       ~discard:(fun ~drain ->
         if drain then drain_fixed_body source
         else (
@@ -515,9 +674,10 @@ let chunked_read_exact source len =
              Bytes.blit chunk 0 out off chunk_len;
              fill (off + chunk_len))
            else
-             let read_len = min (len - off) (Cstruct.length source.scratch) in
+             let scratch = source_scratch source in
+             let read_len = min (len - off) (Cstruct.length scratch) in
              Eta.Effect.sync (fun () ->
-                 read_body_flow source (Cstruct.sub source.scratch 0 read_len))
+                 read_body_flow source (Cstruct.sub scratch 0 read_len))
              |> Eta.Effect.bind (function
                   | Error error ->
                       Eta.Effect.fail (Server.Error.to_http_error error)
@@ -526,7 +686,7 @@ let chunked_read_exact source len =
                         (chunked_transport_error source
                            (Connection_closed { during = Body_decode }))
                   | Ok read ->
-                      Cstruct.blit_to_bytes source.scratch 0 out off read;
+                      Cstruct.blit_to_bytes scratch 0 out off read;
                       fill (off + read))
          in
          fill 0)
@@ -570,7 +730,7 @@ let chunked_body t ~head ~initial continue_state =
       close_after_response = false;
       pending_returned = false;
       continue_state;
-      scratch = Cstruct.create t.config.read_buffer_size;
+      scratch = None;
     }
   in
   let max_decoded_bytes =
@@ -1196,8 +1356,15 @@ let read_request_head_with_timeout t ordinal =
     if ordinal = 1 then t.config.server.timeouts.request_header_timeout
     else t.config.server.timeouts.idle_timeout
   in
+  let started_us = now_us () in
+  let trace_result = function
+    | Ok head as result ->
+        trace_request_head t ordinal head ~started_us ~completed_us:(now_us ());
+        result
+    | Error _ as result -> result
+  in
   match timeout with
-  | None -> `Read (read_request_head t)
+  | None -> `Read (trace_result (read_request_head t))
   | Some duration -> (
       (* Bound the head read via the per-connection watchdog (deadline +
          Cancel.sub registered in handler_watch — read and handler never overlap
@@ -1210,7 +1377,7 @@ let read_request_head_with_timeout t ordinal =
             match read_request_head t with
             | r ->
                 t.handler_watch <- None;
-                r
+                trace_result r
             | exception exn ->
                 t.handler_watch <- None;
                 raise exn)
@@ -1258,15 +1425,19 @@ let rec run_requests t ordinal handler =
                       write_default_error t request error
                   | Ok (body, trailers, body_control) ->
                       t.active_request <- true;
+                      t.trace_current_ordinal <- Some ordinal;
+                      trace_request_accepted t ordinal;
                       Server_stats.H1.request_started t.stats;
                       let request = request_of_head t head ordinal body trailers in
                       let metrics = request_metrics t t.runtime request in
                       t.current_metrics <- metrics;
                       Option.iter Server_metrics.request_started metrics;
                       let request_keep_alive = request_allows_keep_alive head in
+                      let handler_started_us = trace_handler_start t ordinal in
                       let response, force_close =
                         run_handler t t.runtime request handler
                       in
+                      trace_handler_done t ordinal ~started_us:handler_started_us;
                       let reusable_before_response =
                         request_keep_alive
                         && body_can_reuse_before_response t body_control
@@ -1291,9 +1462,11 @@ let rec run_requests t ordinal handler =
                         | Error { response_started = true; _ } -> false
                       in
                       Server_stats.H1.request_completed t.stats;
+                      trace_request_complete t ordinal;
                       Option.iter Server_metrics.request_finished metrics;
                       t.current_metrics <- None;
                       t.active_request <- false;
+                      t.trace_current_ordinal <- None;
                       if reusable && (not t.draining) && not t.closed then
                         run_requests t (ordinal + 1) handler))))
 
@@ -1340,6 +1513,10 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       close_signal;
       closed = false;
       handler_watch = None;
+      trace_current_ordinal = None;
+      phase_trace_path = Lazy.force phase_trace_path;
+      phase_trace_buffer =
+        Option.map (fun _ -> Buffer.create 4096) (Lazy.force phase_trace_path);
     }
   in
   Option.iter
@@ -1356,6 +1533,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
       mark_closed t;
+      flush_phase_trace t;
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Option.iter (fun on_close -> on_close (stats t)) on_close)
     (fun () -> run_requests t 1 handler)

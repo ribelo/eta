@@ -132,20 +132,69 @@ let valid_connect_authority value =
     | None -> false
     | Some colon -> valid_port value (colon + 1) len
 
+let parse_port value start finish =
+  let rec loop index acc =
+    if index = finish then acc
+    else
+      loop (index + 1)
+        ((acc * 10) + Char.code (String.unsafe_get value index) - Char.code '0')
+  in
+  loop start 0
+
+let lowercase_ascii_slice value start finish =
+  let len = finish - start in
+  let bytes = Bytes.create len in
+  for index = 0 to len - 1 do
+    let c = String.unsafe_get value (start + index) in
+    let c =
+      match c with
+      | 'A' .. 'Z' -> Char.unsafe_chr (Char.code c + 32)
+      | _ -> c
+    in
+    Bytes.unsafe_set bytes index c
+  done;
+  Bytes.unsafe_to_string bytes
+
 let parse_authority ~scheme value =
   if not (valid_authority value) then None
   else
-    let raw = Url.scheme_to_string scheme ^ "://" ^ value in
-    match Url.parse raw with
-    | Error _ -> None
-    | Ok url ->
-        Some
-          {
-            value = Url.authority url;
-            scheme;
-            host = Url.host url;
-            port = Url.effective_port url;
-          }
+    let len = String.length value in
+    let host_start, host_finish, port =
+      if Char.equal (String.unsafe_get value 0) '[' then
+        match find_char_string value 1 len ']' with
+        | None -> assert false
+        | Some close ->
+            let port =
+              if close + 1 = len then None
+              else Some (parse_port value (close + 2) len)
+            in
+            (1, close, port)
+      else
+        let host_finish =
+          Option.value ~default:len (find_char_string value 0 len ':')
+        in
+        let port =
+          if host_finish = len then None
+          else Some (parse_port value (host_finish + 1) len)
+        in
+        (0, host_finish, port)
+    in
+    let host = lowercase_ascii_slice value host_start host_finish in
+    let normalized_value =
+      if host_start = 1 then "[" ^ host ^ "]" else host
+    in
+    let normalized_value =
+      match port with
+      | None -> normalized_value
+      | Some port -> normalized_value ^ ":" ^ string_of_int port
+    in
+    Some
+      {
+        value = normalized_value;
+        scheme;
+        host;
+        port = Option.value ~default:(Url.default_port scheme) port;
+      }
 
 let target_has_fragment target = Option.is_some (String.index_opt target '#')
 
@@ -291,10 +340,9 @@ let validate_h2_request ~connection_scheme ~method_ ~scheme ~target ~authority =
     | Some scheme -> (
         match authority with
         | None -> Error "missing HTTP/2 :authority"
-        | Some authority -> (
-            match parse_authority ~scheme authority with
-            | None -> Error "invalid HTTP/2 :authority"
-            | Some _ -> validate_h2_path ~method_ ~target))
+        | Some authority ->
+            if valid_authority authority then validate_h2_path ~method_ ~target
+            else Error "invalid HTTP/2 :authority")
 
 let header_block_bytes headers =
   List.fold_left

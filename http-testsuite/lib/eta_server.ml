@@ -4,6 +4,26 @@ open Types
 
 type t = Eta_http_eio.Server.t
 
+let echo_trace_path =
+  lazy
+    (match Sys.getenv_opt "ETA_HTTP_ECHO_TRACE_PATH" with
+    | Some _ as path -> path
+    | None -> Sys.getenv_opt "ETA_H2_ECHO_TRACE_PATH")
+let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)
+
+let trace_echo_line line =
+  match Lazy.force echo_trace_path with
+  | None -> ()
+  | Some path ->
+      let out =
+        open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path
+      in
+      Fun.protect
+        ~finally:(fun () -> close_out_noerr out)
+        (fun () ->
+          output_string out line;
+          output_char out '\n')
+
 let header_list entries =
   match Eta_http.Core.Header.of_list entries with
   | Ok headers -> headers
@@ -70,9 +90,56 @@ let user_id_response path =
   else None
 
 let echo_response request =
+  let started_us = now_us () in
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
   |> Eta.Effect.map (fun body ->
-         fixed ~headers:[ ("content-type", "text/plain") ] (Bytes.to_string body))
+         let body_available_us = now_us () in
+         let body_us = body_available_us - started_us in
+         let body_len = Bytes.length body in
+         let response = Bytes.to_string body in
+         let response_len = String.length response in
+         let request_id = Lazy.force request.Eta_http.Server.Request.id in
+         let stream_id =
+           Option.value request.Eta_http.Server.Request.stream_id ~default:(-1)
+         in
+         trace_echo_line
+           (Printf.sprintf
+              "echo_handler request_id=%s connection_id=%s stream_id=%d \
+               handler_started_us=%d body_available_us=%d \
+               request_body_read_us=%d body_bytes=%d response_bytes=%d \
+               handler_copy_bytes=%d"
+              request_id request.connection_id stream_id started_us
+              body_available_us body_us body_len response_len (body_len * 2));
+         fixed ~headers:[ ("content-type", "text/plain") ] response)
+  |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (empty 500))
+
+let echo_once_response request =
+  let started_us = now_us () in
+  Eta_http.Server.Body.read request.Eta_http.Server.Request.body
+  |> Eta.Effect.map (fun body ->
+         let body_available_us = now_us () in
+         let body_us = body_available_us - started_us in
+         let body =
+           match body with
+           | None -> Bytes.empty
+           | Some chunk -> chunk
+         in
+         let body_len = Bytes.length body in
+         let response = Bytes.to_string body in
+         let response_len = String.length response in
+         let request_id = Lazy.force request.Eta_http.Server.Request.id in
+         let stream_id =
+           Option.value request.Eta_http.Server.Request.stream_id ~default:(-1)
+         in
+         trace_echo_line
+           (Printf.sprintf
+              "echo_once_handler request_id=%s connection_id=%s stream_id=%d \
+               handler_started_us=%d body_available_us=%d \
+               request_body_read_us=%d body_bytes=%d response_bytes=%d \
+               handler_copy_bytes=%d"
+              request_id request.connection_id stream_id started_us
+              body_available_us body_us body_len response_len (body_len * 2));
+         fixed ~headers:[ ("content-type", "text/plain") ] response)
   |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (empty 500))
 
 let empty_after_body request =
@@ -96,6 +163,7 @@ let handler ~temp_dir request =
       empty_after_body request
   | "/healthz" -> Eta.Effect.pure (text "ok\n")
   | "/echo" | "/reflect" -> echo_response request
+  | "/echo_once" -> echo_once_response request
   | "/trailer" -> trailer_response ()
   | path -> (
       match user_id_response path with

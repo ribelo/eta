@@ -6,6 +6,7 @@ module Error = Server_error
 
 type t = {
   read_next : unit -> (bytes option, Error.t) Effect.t;
+  read_all_direct : (max_bytes:int -> (bytes, Error.t) Effect.t) option;
   release : unit -> (unit, Error.t) Effect.t;
   discard_unread : drain:bool -> (unit, Error.t) Effect.t;
   mutable released : bool;
@@ -35,16 +36,18 @@ let release_once t =
 let empty () =
   {
     read_next = (fun () -> Effect.pure None);
+    read_all_direct = Some (fun ~max_bytes:_ -> Effect.pure Bytes.empty);
     release = (fun () -> Effect.unit);
     discard_unread = (fun ~drain:_ -> Effect.unit);
     released = false;
     active = Atomic.make false;
   }
 
-let of_reader ?(release = fun () -> Effect.unit)
+let of_reader ?read_all ?(release = fun () -> Effect.unit)
     ?(discard = fun ~drain:_ -> Effect.unit) read_next =
   {
     read_next;
+    read_all_direct = read_all;
     release;
     discard_unread = discard;
     released = false;
@@ -82,16 +85,19 @@ let read_all ?(max_bytes = Stream.default_max_bytes) t =
     read_unlocked t
     |> Effect.bind (function
          | None ->
-             let out = Bytes.create total in
-             let _ =
-               List.fold_left
-                 (fun off chunk ->
-                   let len = Bytes.length chunk in
-                   Bytes.blit chunk 0 out off len;
-                   off + len)
-                 0 (List.rev acc)
-             in
-             Effect.pure out
+             (match acc with
+             | [ chunk ] -> Effect.pure chunk
+             | _ ->
+                 let out = Bytes.create total in
+                 let _ =
+                   List.fold_left
+                     (fun off chunk ->
+                       let len = Bytes.length chunk in
+                       Bytes.blit chunk 0 out off len;
+                       off + len)
+                     0 (List.rev acc)
+                 in
+                 Effect.pure out)
          | Some chunk ->
              let length = total + Bytes.length chunk in
              if length < total || length > max_bytes then
@@ -102,7 +108,10 @@ let read_all ?(max_bytes = Stream.default_max_bytes) t =
     (Effect.scoped
        (Effect.acquire_release ~acquire:Effect.unit
           ~release:(fun () -> release_once t)
-       |> Effect.bind (fun () -> loop [] 0)))
+       |> Effect.bind (fun () ->
+              match t.read_all_direct with
+              | Some read_all -> read_all ~max_bytes
+              | None -> loop [] 0)))
 
 let discard ?(drain = false) t =
   with_operation t

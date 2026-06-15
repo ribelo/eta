@@ -22,8 +22,12 @@ type time = Types.time = {
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
 }
 
-type request_body_read = (bytes option, Server.Error.t) result
 type unit_result = (unit, Server.Error.t) result
+type request_body_chunk = {
+  data : bytes;
+  eof_after : unit_result option;
+}
+type request_body_read = (request_body_chunk option, Server.Error.t) result
 
 type response_body =
   | Response_no_body of Server.Response.Body.stream option
@@ -53,6 +57,8 @@ type prepared_response = {
 type write_job = {
   data : Cstruct.t;
   len : int;
+  trace_stream_ids : int list;
+  enqueued_us : int;
 }
 
 type response_drain = {
@@ -87,6 +93,8 @@ type command =
       bytes : Bigstringaf.t;
       off : int;
       len : int;
+      read_returned_us : int;
+      enqueued_us : int;
       ack : unit Eio.Promise.u;
     }
   | Ingress_eof
@@ -101,7 +109,7 @@ type command =
   | Response_trailers of int * Eta_http.Core.Header.t * unit_result Eio.Promise.u
   | Response_close of int * unit_result Eio.Promise.u
   | Response_failed of int * Server.Error.t
-  | Write_completed of (int, Server.Error.t) result
+  | Write_completed of (int, Server.Error.t) result * int list
   | Shutdown of Types.shutdown
 
 type stream_state = {
@@ -130,6 +138,23 @@ type stream_state = {
 type handler_watch = {
   hw_deadline : int;
   hw_cancel : Eio.Cancel.t;
+}
+
+type runtime_probe = {
+  path : string;
+  gc_start : Gc.stat;
+  mutable requests : int;
+  mutable handler_forked : int;
+  mutable handler_started : int;
+  mutable handler_completed : int;
+  mutable handler_failed : int;
+  mutable flush_seq : int;
+  mutable last_flushed_handler_completed : int;
+  mutable handler_queue_us : int list;
+  mutable handler_runtime_us : int list;
+  mutable handler_prepare_us : int list;
+  mutable response_owner_wait_us : int list;
+  mutable handler_total_us : int list;
 }
 
 type t = {
@@ -179,6 +204,13 @@ type t = {
   close_signal : unit Eio.Promise.u;
   mutable handler_sw : Eio.Switch.t option;
   handler_watches : (int, handler_watch) Hashtbl.t;
+  trace_path : string option;
+  phase_trace_path : string option;
+  phase_trace_buffer : Buffer.t option;
+  slow_write_trace_path : string option;
+  slow_write_trace_threshold_us : int;
+  runtime_probe : runtime_probe option;
+  trace_response_starts_us : (int, int) Hashtbl.t;
   (* Single in-flight write watch: the writer fiber processes one job at a time,
      so the response-write deadline needs only one slot, not a table. The
      watchdog cancels its cancel context if the write blocks past the deadline
@@ -191,6 +223,7 @@ type t = {
   mutable accepted_request : bool;
   mutable deferred_close : deferred_close option;
   mutable write_pending : bool;
+  mutable defer_write_flush : bool;
   mutable write_buffer : Cstruct.t;
   mutable emit_buffer : Buffer.t;
   read_owned : Bigstringaf.t;
@@ -265,6 +298,310 @@ let connection_url_scheme t =
 let validate_config = Types.Config.validate
 
 let resolve resolver value = ignore (Eio.Promise.try_resolve resolver value)
+
+let trace_path = lazy (Sys.getenv_opt "ETA_H2_ECHO_TRACE_PATH")
+let phase_trace_path = lazy (Sys.getenv_opt "ETA_H2_PHASE_TRACE_PATH")
+let slow_write_trace_path = lazy (Sys.getenv_opt "ETA_H2_SLOW_WRITE_TRACE_PATH")
+let runtime_probe_path = lazy (Sys.getenv_opt "ETA_H2_RUNTIME_TRACE_PATH")
+
+let slow_write_trace_threshold_us =
+  lazy
+    (match Sys.getenv_opt "ETA_H2_SLOW_WRITE_TRACE_THRESHOLD_US" with
+    | None | Some "" -> 500
+    | Some value -> (
+        match int_of_string_opt (String.trim value) with
+        | Some threshold when threshold >= 0 -> threshold
+        | _ -> 500))
+
+let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)
+
+let trace_line t line =
+  match t.trace_path with
+  | None -> ()
+  | Some path ->
+      let out =
+        open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path
+      in
+      Fun.protect
+        ~finally:(fun () -> close_out_noerr out)
+        (fun () ->
+          output_string out line;
+          output_char out '\n')
+
+let append_trace_line path line =
+  let out = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
+  Fun.protect
+    ~finally:(fun () -> close_out_noerr out)
+    (fun () ->
+      output_string out line;
+      output_char out '\n')
+
+let create_runtime_probe = function
+  | None | Some "" -> None
+  | Some path ->
+      Some
+        {
+          path;
+          gc_start = Gc.quick_stat ();
+          requests = 0;
+          handler_forked = 0;
+          handler_started = 0;
+          handler_completed = 0;
+          handler_failed = 0;
+          flush_seq = 0;
+          last_flushed_handler_completed = 0;
+          handler_queue_us = [];
+          handler_runtime_us = [];
+          handler_prepare_us = [];
+          response_owner_wait_us = [];
+          handler_total_us = [];
+        }
+
+let runtime_probe_record t f =
+  match t.runtime_probe with
+  | None -> ()
+  | Some probe -> f probe
+
+let runtime_probe_now t =
+  match t.runtime_probe with
+  | None -> 0
+  | Some _ -> now_us ()
+
+let runtime_probe_record_duration t started_us f =
+  if started_us > 0 then
+    let duration_us = now_us () - started_us in
+    runtime_probe_record t (fun probe -> f probe duration_us)
+
+let runtime_probe_request_accepted t =
+  runtime_probe_record t (fun probe -> probe.requests <- probe.requests + 1)
+
+let runtime_probe_handler_forked t =
+  match t.runtime_probe with
+  | None -> 0
+  | Some probe ->
+      probe.handler_forked <- probe.handler_forked + 1;
+      now_us ()
+
+let runtime_probe_handler_started t forked_us =
+  match t.runtime_probe with
+  | None -> 0
+  | Some probe ->
+      let started_us = now_us () in
+      probe.handler_started <- probe.handler_started + 1;
+      probe.handler_queue_us <- (started_us - forked_us) :: probe.handler_queue_us;
+      started_us
+
+let runtime_probe_handler_completed t started_us =
+  match t.runtime_probe with
+  | None -> ()
+  | Some probe ->
+      probe.handler_completed <- probe.handler_completed + 1;
+      if started_us > 0 then
+        probe.handler_total_us <- (now_us () - started_us) :: probe.handler_total_us
+
+let runtime_probe_handler_failed t started_us =
+  match t.runtime_probe with
+  | None -> ()
+  | Some probe ->
+      probe.handler_failed <- probe.handler_failed + 1;
+      if started_us > 0 then
+        probe.handler_total_us <- (now_us () - started_us) :: probe.handler_total_us
+
+let runtime_probe_handler_runtime t started_us =
+  runtime_probe_record_duration t started_us (fun probe duration_us ->
+      probe.handler_runtime_us <- duration_us :: probe.handler_runtime_us)
+
+let runtime_probe_handler_prepare t started_us =
+  runtime_probe_record_duration t started_us (fun probe duration_us ->
+      probe.handler_prepare_us <- duration_us :: probe.handler_prepare_us)
+
+let runtime_probe_response_owner_wait t started_us =
+  runtime_probe_record_duration t started_us (fun probe duration_us ->
+      probe.response_owner_wait_us <-
+        duration_us :: probe.response_owner_wait_us)
+
+let sample_percentile samples percentile =
+  match samples with
+  | [] -> 0
+  | _ ->
+      let ordered = List.sort compare samples in
+      let n = List.length ordered in
+      let index =
+        int_of_float
+          (ceil
+             ((float_of_int percentile /. 100.0) *. float_of_int n))
+        - 1
+      in
+      List.nth ordered (max 0 (min (n - 1) index))
+
+let sample_max = function
+  | [] -> 0
+  | x :: xs -> List.fold_left max x xs
+
+let sample_fields name samples =
+  Printf.sprintf "%s_n=%d %s_p50_us=%d %s_p95_us=%d %s_p99_us=%d %s_max_us=%d"
+    name (List.length samples) name (sample_percentile samples 50) name
+    (sample_percentile samples 95) name (sample_percentile samples 99) name
+    (sample_max samples)
+
+let flush_runtime_probe t =
+  match t.runtime_probe with
+  | None -> ()
+  | Some probe when probe.handler_completed = probe.last_flushed_handler_completed
+    ->
+      ()
+  | Some probe ->
+      let gc_end = Gc.quick_stat () in
+      probe.flush_seq <- probe.flush_seq + 1;
+      probe.last_flushed_handler_completed <- probe.handler_completed;
+      append_trace_line probe.path
+        (String.concat " "
+           [
+             Printf.sprintf
+               "h2_runtime_probe connection_id=%s peer_port=%d flush_seq=%d \
+                requests=%d handler_forked=%d handler_started=%d \
+                handler_completed=%d handler_failed=%d"
+               t.connection.id
+               (Option.value t.connection.peer.port ~default:(-1))
+               probe.flush_seq probe.requests probe.handler_forked
+               probe.handler_started probe.handler_completed probe.handler_failed;
+             sample_fields "handler_queue" probe.handler_queue_us;
+             sample_fields "handler_runtime" probe.handler_runtime_us;
+             sample_fields "handler_prepare" probe.handler_prepare_us;
+             sample_fields "response_owner_wait" probe.response_owner_wait_us;
+             sample_fields "handler_total" probe.handler_total_us;
+             Printf.sprintf
+               "minor_words_delta=%.0f promoted_words_delta=%.0f \
+                major_words_delta=%.0f minor_collections_delta=%d \
+                major_collections_delta=%d compactions_delta=%d"
+               (gc_end.minor_words -. probe.gc_start.minor_words)
+               (gc_end.promoted_words -. probe.gc_start.promoted_words)
+               (gc_end.major_words -. probe.gc_start.major_words)
+               (gc_end.minor_collections - probe.gc_start.minor_collections)
+               (gc_end.major_collections - probe.gc_start.major_collections)
+               (gc_end.compactions - probe.gc_start.compactions);
+           ])
+
+let flush_runtime_probe_if_due t =
+  match t.runtime_probe with
+  | Some probe
+    when probe.handler_completed - probe.last_flushed_handler_completed >= 128
+    ->
+      flush_runtime_probe t
+  | None | Some _ -> ()
+
+let tracing_enabled t =
+  Option.is_some t.trace_path || Option.is_some t.phase_trace_path
+
+let peer_port t = Option.value t.connection.peer.port ~default:(-1)
+
+let phase_trace_line t line =
+  match t.phase_trace_buffer with
+  | None -> ()
+  | Some buffer ->
+      Buffer.add_string buffer line;
+      Buffer.add_char buffer '\n'
+
+let flush_phase_trace t =
+  match (t.phase_trace_path, t.phase_trace_buffer) with
+  | Some path, Some buffer when Buffer.length buffer > 0 ->
+      let out =
+        open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path
+      in
+      Fun.protect
+        ~finally:(fun () -> close_out_noerr out)
+        (fun () -> Buffer.output_buffer out buffer)
+  | _ -> ()
+
+let trace_slow_write t job ~started_us ~completed_us =
+  match t.slow_write_trace_path with
+  | None -> ()
+  | Some path ->
+      let duration_us = completed_us - started_us in
+      if duration_us >= t.slow_write_trace_threshold_us then
+        append_trace_line path
+          (Printf.sprintf
+             "h2_slow_write connection_id=%s bytes=%d duration_us=%d \
+              threshold_us=%d stream_count=%d completed_us=%d"
+             t.connection.id job.len duration_us t.slow_write_trace_threshold_us
+             (List.length job.trace_stream_ids)
+             completed_us)
+
+let trace_stream_id_for_ordinal t ordinal =
+  Hashtbl.find_opt t.stream_ids_by_ordinal ordinal
+
+let trace_request_body_data_frame t stream_id payload_len flags =
+  match t.trace_path with
+  | None -> ()
+  | Some _ when stream_id <= 0 -> ()
+  | Some _ ->
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_data_frame stream_id=%d data_arrived_us=%d \
+            frame_payload_bytes=%d end_stream=%d"
+           stream_id (now_us ()) payload_len
+           (if flags land 0x1 <> 0 then 1 else 0))
+
+let trace_request_body_read_call t ordinal called_us =
+  match (t.trace_path, trace_stream_id_for_ordinal t ordinal) with
+  | None, _ | _, None -> ()
+  | Some _, Some stream_id ->
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_read_call stream_id=%d read_call_us=%d" stream_id
+           called_us)
+
+let trace_request_body_read_return t ordinal called_us
+    (result : request_body_read) =
+  match (t.trace_path, trace_stream_id_for_ordinal t ordinal) with
+  | None, _ | _, None -> ()
+  | Some _, Some stream_id ->
+      let returned_us = now_us () in
+      let result_name, bytes, final =
+        match result with
+        | Ok (Some chunk) ->
+            ("chunk", Bytes.length chunk.data,
+             if Option.is_some chunk.eof_after then 1 else 0)
+        | Ok None -> ("eof", 0, 0)
+        | Error _ -> ("error", 0, 0)
+      in
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_read_return stream_id=%d read_return_us=%d \
+            read_wait_us=%d result=%s bytes=%d final=%d"
+           stream_id returned_us (returned_us - called_us) result_name bytes
+           final)
+
+let trace_request_body_read_armed t state armed_us =
+  match t.trace_path with
+  | None -> ()
+  | Some _ ->
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_read_armed stream_id=%d read_armed_us=%d"
+           state.stream_id armed_us)
+
+let trace_request_body_chunk t state ~armed_us ~callback_us ~resolved_us ~copy_us
+    len =
+  match t.trace_path with
+  | None -> ()
+  | Some _ ->
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_chunk stream_id=%d read_armed_us=%d callback_us=%d \
+            resolved_us=%d reader_wait_us=%d copy_us=%d bytes=%d"
+           state.stream_id armed_us callback_us resolved_us
+           (callback_us - armed_us) copy_us len)
+
+let trace_request_body_eof t state ~armed_us ~eof_us =
+  match t.trace_path with
+  | None -> ()
+  | Some _ ->
+      trace_line t
+        (Printf.sprintf
+           "h2_request_body_eof stream_id=%d read_armed_us=%d eof_us=%d \
+            eof_wait_us=%d"
+           state.stream_id armed_us eof_us (eof_us - armed_us))
 
 let create_request_trailers () =
   let promise, resolver = Eio.Promise.create () in
@@ -812,125 +1149,236 @@ let note_remote_reset_frame t stream_id =
       Hashtbl.replace t.remote_reset_streams stream_id ();
       Hashtbl.replace t.remote_reset_ordinals ordinal ()
 
-let filter_ingress t bytes ~off ~len =
-  let raw = Bigstringaf.substring bytes ~off ~len in
-  let raw_len = String.length raw in
-  let output = Buffer.create raw_len in
-  let frame_off =
-    if t.filter_preface_remaining = 0 then Ok 0
+let bigstring_code bytes index = Char.code (Bigstringaf.get bytes index)
+
+let bigstring_frame_length bytes off =
+  (bigstring_code bytes off lsl 16)
+  lor (bigstring_code bytes (off + 1) lsl 8)
+  lor bigstring_code bytes (off + 2)
+
+let bigstring_frame_type bytes off = bigstring_code bytes (off + 3)
+let bigstring_frame_flags bytes off = bigstring_code bytes (off + 4)
+
+let bigstring_frame_stream_id bytes off =
+  ((bigstring_code bytes (off + 5) land 0x7f) lsl 24)
+  lor (bigstring_code bytes (off + 6) lsl 16)
+  lor (bigstring_code bytes (off + 7) lsl 8)
+  lor bigstring_code bytes (off + 8)
+
+let can_directly_pass_ingress t =
+  (not t.graceful_shutdown)
+  && Option.is_none t.graceful_rejected_header_stream
+  && Hashtbl.length t.graceful_rejected_streams = 0
+
+let direct_filter_ingress t bytes ~len =
+  let rec loop off end_streams reset_streams =
+    if off = len then Ok (`Pass (end_streams, reset_streams))
+    else if off + frame_header_size > len then Ok `Slow
     else
-      let consumed =
-        h2_client_connection_preface_length - t.filter_preface_remaining
-      in
-      let prefix_len = min t.filter_preface_remaining raw_len in
-      let rec validate index =
-        if index = prefix_len then Ok ()
-        else
-          let expected =
-            String.unsafe_get h2_client_connection_preface (consumed + index)
-          in
-          if Char.equal (String.unsafe_get raw index) expected then
-            validate (index + 1)
-          else Error invalid_preface_error
-      in
-      match validate 0 with
-      | Error kind -> Error (connection_filter_error kind)
-      | Ok () ->
-          Buffer.add_substring output raw 0 prefix_len;
-          t.filter_preface_remaining <- t.filter_preface_remaining - prefix_len;
-          Ok prefix_len
-  in
-  match frame_off with
-  | Error kind -> Error kind
-  | Ok frame_off ->
-      let frames =
-        let frame_bytes = String.sub raw frame_off (raw_len - frame_off) in
-        if String.equal t.filter_pending "" then frame_bytes
-        else t.filter_pending ^ frame_bytes
-      in
-      t.filter_pending <- "";
-      let frames_len = String.length frames in
-      let set_pending off =
-        let pending_len = frames_len - off in
-        let pending_limit = frame_header_size + configured_max_frame_size t in
-        if pending_len > pending_limit then
-          Error (connection_filter_error (filter_pending_error t pending_len))
+      let length = bigstring_frame_length bytes off in
+      let total = frame_header_size + length in
+      if length > configured_max_frame_size t then
+        Error (connection_filter_error ~code:6 (frame_size_error t length))
+      else if off + total > len then Ok `Slow
+      else
+        let ty = bigstring_frame_type bytes off in
+        let flags = bigstring_frame_flags bytes off in
+        let stream_id = bigstring_frame_stream_id bytes off in
+        if request_body_frame_on_closed_stream t ty stream_id then
+          Error
+            (stream_filter_error ~code:5 ~stream_id
+               (stream_closed_frame_error stream_id))
+        else if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id then
+          Error
+            (stream_filter_error ~code:5 ~stream_id
+               (stream_closed_frame_error stream_id))
+        else if ty = 0x1 || ty = 0x9 then Ok `Slow
         else (
-          t.filter_pending <- String.sub frames off pending_len;
-          Ok ())
+          (if ty = 0x0 then
+             trace_request_body_data_frame t stream_id length flags);
+          let reset_streams =
+            if ty = 0x3 then stream_id :: reset_streams else reset_streams
+          in
+          let end_streams =
+            if ty = 0x0 && flags land flag_end_stream <> 0 then
+              stream_id :: end_streams
+            else end_streams
+          in
+          loop (off + total) end_streams reset_streams)
+  in
+  if not (can_directly_pass_ingress t) then Ok `Slow
+  else loop 0 [] []
+
+let filter_ingress t bytes ~off ~len =
+  let passthrough_candidate =
+    off = 0 && String.equal t.filter_pending ""
+    && t.filter_preface_remaining = 0
+  in
+  match
+    if passthrough_candidate then direct_filter_ingress t bytes ~len
+    else Ok `Slow
+  with
+  | Error _ as error -> error
+  | Ok (`Pass (end_streams, reset_streams)) ->
+      List.iter (note_remote_reset_frame t) reset_streams;
+      List.iter (mark_remote_end_stream t) end_streams;
+      Ok (Some (bytes, len))
+  | Ok `Slow ->
+      let raw = Bigstringaf.substring bytes ~off ~len in
+      let raw_len = String.length raw in
+      let output = Buffer.create raw_len in
+      let modified = ref false in
+      let ensure_modified frames frame_off =
+        if passthrough_candidate && not !modified then (
+          Buffer.add_substring output frames 0 frame_off;
+          modified := true)
+        else modified := true
       in
-      let rec loop off =
-        if off + frame_header_size > frames_len then set_pending off
+      let add_pass frames frame_off total =
+        if (not passthrough_candidate) || !modified then
+          Buffer.add_substring output frames frame_off total
+      in
+      let frame_off =
+        if t.filter_preface_remaining = 0 then Ok 0
         else
-          let length = frame_length frames off in
-          let total = frame_header_size + length in
-          if length > configured_max_frame_size t then
-            Error (connection_filter_error ~code:6 (frame_size_error t length))
-          else if off + total > frames_len then set_pending off
-          else (
-            let ty = frame_type frames off in
-            let flags = frame_flags frames off in
-            let stream_id = frame_stream_id frames off in
-            if request_body_frame_on_closed_stream t ty stream_id then
-              Error
-                (stream_filter_error ~code:5 ~stream_id
-                   (stream_closed_frame_error stream_id))
-            else if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id then
-              Error
-                (stream_filter_error ~code:5 ~stream_id
-                   (stream_closed_frame_error stream_id))
-            else (
-              let observed =
-                match observe_graceful_rejected_frame t ty flags stream_id with
-                | Some action -> Ok action
-                | None ->
-                    if ty = 0x1 then
-                      observe_request_headers_frame t frames off length flags
-                        stream_id
-                    else if ty = 0x9 then
-                      observe_request_continuation_frame t frames off length
-                        flags stream_id
-                    else Ok Pass_frame
+          let consumed =
+            h2_client_connection_preface_length - t.filter_preface_remaining
+          in
+          let prefix_len = min t.filter_preface_remaining raw_len in
+          let rec validate index =
+            if index = prefix_len then Ok ()
+            else
+              let expected =
+                String.unsafe_get h2_client_connection_preface (consumed + index)
               in
-              match observed with
-              | Error _ as error -> error
-              | Ok action ->
-                  if ty = 0x3 then note_remote_reset_frame t stream_id;
-                  (match action with
-                  | Pass_frame -> Buffer.add_substring output frames off total
-                  | Drop_frame -> ()
-                  | Emit_frame bytes -> Buffer.add_string output bytes);
-                  if ty = 0x0 && flags land flag_end_stream <> 0 then
-                    mark_remote_end_stream t stream_id;
-                  loop (off + total)))
+              if Char.equal (String.unsafe_get raw index) expected then
+                validate (index + 1)
+              else Error invalid_preface_error
+          in
+          match validate 0 with
+          | Error kind -> Error (connection_filter_error kind)
+          | Ok () ->
+              modified := true;
+              Buffer.add_substring output raw 0 prefix_len;
+              t.filter_preface_remaining <-
+                t.filter_preface_remaining - prefix_len;
+              Ok prefix_len
       in
-      match loop 0 with
+      (match frame_off with
       | Error kind -> Error kind
-      | Ok () ->
-          let filtered = Buffer.contents output in
-          let filtered_len = String.length filtered in
-          if filtered_len = 0 then Ok None
-          else
-            Ok
-              (Some
-                 ( Bigstringaf.of_string ~off:0 ~len:filtered_len filtered,
-                   filtered_len ))
+      | Ok frame_off ->
+          let frames =
+            let frame_bytes = String.sub raw frame_off (raw_len - frame_off) in
+            if String.equal t.filter_pending "" then frame_bytes
+            else t.filter_pending ^ frame_bytes
+          in
+          t.filter_pending <- "";
+          let frames_len = String.length frames in
+          let set_pending off =
+            let pending_len = frames_len - off in
+            let pending_limit = frame_header_size + configured_max_frame_size t in
+            if pending_len > pending_limit then
+              Error (connection_filter_error (filter_pending_error t pending_len))
+            else (
+              if pending_len > 0 then ensure_modified frames off;
+              t.filter_pending <- String.sub frames off pending_len;
+              Ok ())
+          in
+          let rec loop off =
+            if off + frame_header_size > frames_len then set_pending off
+            else
+              let length = frame_length frames off in
+              let total = frame_header_size + length in
+              if length > configured_max_frame_size t then
+                Error (connection_filter_error ~code:6 (frame_size_error t length))
+              else if off + total > frames_len then set_pending off
+              else (
+                let ty = frame_type frames off in
+                let flags = frame_flags frames off in
+                let stream_id = frame_stream_id frames off in
+                if request_body_frame_on_closed_stream t ty stream_id then
+                  Error
+                    (stream_filter_error ~code:5 ~stream_id
+                       (stream_closed_frame_error stream_id))
+                else if ty = 0x0 && Hashtbl.mem t.remote_reset_streams stream_id
+                then
+                  Error
+                    (stream_filter_error ~code:5 ~stream_id
+                       (stream_closed_frame_error stream_id))
+                else (
+                  if ty = 0x0 then
+                    trace_request_body_data_frame t stream_id length flags;
+                  let observed =
+                    match observe_graceful_rejected_frame t ty flags stream_id with
+                    | Some action -> Ok action
+                    | None ->
+                        if ty = 0x1 then
+                          observe_request_headers_frame t frames off length flags
+                            stream_id
+                        else if ty = 0x9 then
+                          observe_request_continuation_frame t frames off length
+                            flags stream_id
+                        else Ok Pass_frame
+                  in
+                  match observed with
+                  | Error _ as error -> error
+                  | Ok action ->
+                      if ty = 0x3 then note_remote_reset_frame t stream_id;
+                      (match action with
+                      | Pass_frame -> add_pass frames off total
+                      | Drop_frame -> ensure_modified frames off
+                      | Emit_frame bytes ->
+                          ensure_modified frames off;
+                          Buffer.add_string output bytes);
+                      if ty = 0x0 && flags land flag_end_stream <> 0 then
+                        mark_remote_end_stream t stream_id;
+                      loop (off + total)))
+          in
+          match loop 0 with
+          | Error kind -> Error kind
+          | Ok () ->
+              if passthrough_candidate && not !modified then Ok (Some (bytes, len))
+              else
+                let filtered = Buffer.contents output in
+                let filtered_len = String.length filtered in
+                if filtered_len = 0 then Ok None
+                else
+                  Ok
+                    (Some
+                       ( Bigstringaf.of_string ~off:0 ~len:filtered_len filtered,
+                         filtered_len )))
 
 let response_failure_of_cause t cause =
   let message = Format.asprintf "%a" (Eta.Cause.pp Server.Error.pp) cause in
   response_write_error t ~message ()
 
 let body_of_stream t ordinal =
+  let cached_eof = ref None in
   let read () =
     Eta.Effect.sync (fun () ->
-        if t.closed then Error (connection_closed_error t Request_body)
-        else
-          let promise, resolver = Eio.Promise.create () in
-          if enqueue t (Request_body_read (ordinal, resolver)) then
-            Eio.Promise.await promise
-          else Error (connection_closed_error t Request_body))
+        let called_us = now_us () in
+        trace_request_body_read_call t ordinal called_us;
+        let result =
+          match !cached_eof with
+          | Some eof ->
+              cached_eof := None;
+              (match eof with
+              | Ok () -> Ok None
+              | Error error -> Error error)
+          | None when t.closed -> Error (connection_closed_error t Request_body)
+          | None ->
+              let promise, resolver = Eio.Promise.create () in
+              if enqueue t (Request_body_read (ordinal, resolver)) then
+                Eio.Promise.await promise
+              else Error (connection_closed_error t Request_body)
+        in
+        trace_request_body_read_return t ordinal called_us result;
+        result)
     |> Eta.Effect.bind (function
-         | Ok chunk -> Eta.Effect.pure chunk
+         | Ok None -> Eta.Effect.pure None
+         | Ok (Some chunk) ->
+             cached_eof := chunk.eof_after;
+             Eta.Effect.pure (Some chunk.data)
          | Error error -> Eta.Effect.fail error)
   in
   let discard ~drain =
@@ -1256,12 +1704,272 @@ let respond_fixed reqd response =
   match response.body with
   | Response_no_body _ ->
       H2.Connection.Server.Reqd.respond_with_string reqd (h2_response response) ""
+  | Response_fixed ([ chunk ], _) ->
+      H2.Connection.Server.Reqd.respond_with_string reqd (h2_response response)
+        (Bytes.unsafe_to_string chunk)
   | Response_fixed (chunks, _) ->
       H2.Connection.Server.Reqd.respond_with_string reqd (h2_response response)
         (Bytes.unsafe_to_string (Bytes.concat Bytes.empty chunks))
   | Response_stream _ ->
       invalid_arg
         "Eta_http_eio.H2.Server_connection.respond_fixed: streaming body"
+
+let trace_response_start t state length =
+  if tracing_enabled t then (
+      let started_us = now_us () in
+      Hashtbl.replace t.trace_response_starts_us state.stream_id started_us;
+      Option.iter
+        (fun _ ->
+          trace_line t
+            (Printf.sprintf
+               "h2_response_start stream_id=%d response_bytes=%d started_us=%d"
+               state.stream_id length started_us))
+        t.trace_path;
+      phase_trace_line t
+        (Printf.sprintf
+           "h2_phase_response_start connection_id=%s peer_port=%d stream_id=%d \
+            response_bytes=%d started_us=%d"
+           t.connection.id (peer_port t) state.stream_id length started_us))
+
+let trace_request_body_copy t state len =
+  if len > 0 then
+    trace_line t
+      (Printf.sprintf "h2_request_body_copy stream_id=%d bytes=%d"
+         state.stream_id len)
+
+let trace_request_accepted t stream_id =
+  if tracing_enabled t then (
+    let accepted_us = now_us () in
+    Option.iter
+      (fun _ ->
+        trace_line t
+          (Printf.sprintf "h2_request_accepted stream_id=%d accepted_us=%d"
+             stream_id accepted_us))
+      t.trace_path;
+    phase_trace_line t
+      (Printf.sprintf
+         "h2_phase_request_accepted connection_id=%s peer_port=%d stream_id=%d \
+          accepted_us=%d"
+         t.connection.id (peer_port t) stream_id accepted_us))
+
+let trace_response_fixed_copy t state len =
+  if len > 0 then
+    trace_line t
+      (Printf.sprintf "h2_response_fixed_copy stream_id=%d bytes=%d"
+         state.stream_id len)
+
+let cstruct_code data index = Cstruct.get_uint8 data index
+
+let cstruct_frame_length data off =
+  (cstruct_code data off lsl 16)
+  lor (cstruct_code data (off + 1) lsl 8)
+  lor cstruct_code data (off + 2)
+
+let cstruct_frame_type data off = cstruct_code data (off + 3)
+
+let cstruct_frame_stream_id data off =
+  ((cstruct_code data (off + 5) land 0x7f) lsl 24)
+  lor (cstruct_code data (off + 6) lsl 16)
+  lor (cstruct_code data (off + 7) lsl 8)
+  lor cstruct_code data (off + 8)
+
+let trace_stream_ids_in_write_job t data len =
+  if not (tracing_enabled t) then []
+  else
+      let ready_us = now_us () in
+      let rec loop off seen =
+        if off + frame_header_size > len then seen
+        else
+          let payload_len = cstruct_frame_length data off in
+          let total = frame_header_size + payload_len in
+          if total < frame_header_size || off + total > len then seen
+          else
+            let stream_id = cstruct_frame_stream_id data off in
+            let seen =
+              if
+                stream_id > 0
+                && Hashtbl.mem t.trace_response_starts_us stream_id
+                && not (List.mem stream_id seen)
+              then (
+                let started_us =
+                  Hashtbl.find t.trace_response_starts_us stream_id
+                in
+                Option.iter
+                  (fun _ ->
+                    trace_line t
+                      (Printf.sprintf
+                         "h2_write_ready stream_id=%d wait_us=%d frame_type=%d \
+                          frame_payload_bytes=%d ready_us=%d"
+                         stream_id (ready_us - started_us)
+                         (cstruct_frame_type data off)
+                         payload_len ready_us))
+                  t.trace_path;
+                phase_trace_line t
+                  (Printf.sprintf
+                     "h2_phase_write_ready connection_id=%s peer_port=%d \
+                      stream_id=%d wait_us=%d frame_type=%d \
+                      frame_payload_bytes=%d ready_us=%d"
+                     t.connection.id (peer_port t) stream_id
+                     (ready_us - started_us)
+                     (cstruct_frame_type data off)
+                     payload_len ready_us);
+                stream_id :: seen)
+              else seen
+            in
+            loop (off + total) seen
+      in
+      loop 0 []
+
+let trace_write_complete t stream_ids =
+  if tracing_enabled t then
+      let completed_us = now_us () in
+      List.iter
+        (fun stream_id ->
+          match Hashtbl.find_opt t.trace_response_starts_us stream_id with
+          | None -> ()
+          | Some started_us ->
+              Option.iter
+                (fun _ ->
+                  trace_line t
+                    (Printf.sprintf
+                       "h2_write_complete stream_id=%d response_write_us=%d \
+                       completed_us=%d"
+                       stream_id (completed_us - started_us) completed_us))
+                t.trace_path;
+              phase_trace_line t
+                (Printf.sprintf
+                   "h2_phase_write_complete connection_id=%s peer_port=%d \
+                    stream_id=%d response_write_us=%d completed_us=%d"
+                   t.connection.id (peer_port t) stream_id
+                   (completed_us - started_us) completed_us);
+              Hashtbl.remove t.trace_response_starts_us stream_id)
+        stream_ids
+
+let trace_write_job_start t job =
+  if not (tracing_enabled t) then None
+  else
+      let started_us = now_us () in
+      let job_wait_us =
+        if job.enqueued_us = 0 then 0 else started_us - job.enqueued_us
+      in
+      Option.iter
+        (fun _ ->
+          match job.trace_stream_ids with
+          | [] ->
+              trace_line t
+                (Printf.sprintf
+                   "h2_write_job_start bytes=%d job_wait_us=%d started_us=%d"
+                   job.len job_wait_us started_us)
+          | stream_ids ->
+              List.iter
+                (fun stream_id ->
+                  trace_line t
+                    (Printf.sprintf
+                       "h2_write_job_start stream_id=%d bytes=%d job_wait_us=%d \
+                        started_us=%d"
+                       stream_id job.len job_wait_us started_us))
+                stream_ids)
+        t.trace_path;
+      (match job.trace_stream_ids with
+      | [] -> ()
+      | stream_ids ->
+          List.iter
+            (fun stream_id ->
+              phase_trace_line t
+                (Printf.sprintf
+                   "h2_phase_write_job_start connection_id=%s peer_port=%d \
+                    stream_id=%d bytes=%d job_wait_us=%d started_us=%d"
+                   t.connection.id (peer_port t) stream_id job.len job_wait_us
+                   started_us))
+            stream_ids);
+      Some started_us
+
+let trace_write_job_finish t job ~started_us ~completed_us =
+  if tracing_enabled t then
+      let flow_write_us = completed_us - started_us in
+      Option.iter
+        (fun _ ->
+      match job.trace_stream_ids with
+      | [] ->
+          trace_line t
+            (Printf.sprintf
+               "h2_write_flow_complete bytes=%d flow_write_us=%d \
+                completed_us=%d"
+               job.len flow_write_us completed_us)
+      | stream_ids ->
+          List.iter
+            (fun stream_id ->
+              trace_line t
+                (Printf.sprintf
+                   "h2_write_flow_complete stream_id=%d bytes=%d \
+                    flow_write_us=%d completed_us=%d"
+                   stream_id job.len flow_write_us completed_us))
+            stream_ids
+        )
+        t.trace_path;
+      (match job.trace_stream_ids with
+      | [] -> ()
+      | stream_ids ->
+          let completed_us = now_us () in
+          List.iter
+            (fun stream_id ->
+              phase_trace_line t
+                (Printf.sprintf
+                   "h2_phase_write_flow_complete connection_id=%s peer_port=%d \
+                    stream_id=%d bytes=%d flow_write_us=%d completed_us=%d"
+                   t.connection.id (peer_port t) stream_id job.len flow_write_us
+                   completed_us))
+            stream_ids)
+
+let first_request_stream_id_in_ingress t bytes ~len =
+  let rec loop off =
+    if off + frame_header_size > len then None
+    else
+      let payload_len = bigstring_frame_length bytes off in
+      let total = frame_header_size + payload_len in
+      if total < frame_header_size || off + total > len then None
+      else
+        let frame_type = bigstring_frame_type bytes off in
+        let stream_id = bigstring_frame_stream_id bytes off in
+        if stream_id > 0 && (frame_type = 0x0 || frame_type = 0x1) then
+          Some stream_id
+        else loop (off + total)
+  in
+  loop (min t.filter_preface_remaining len)
+
+let trace_ingress_plain_read t bytes ~started_us ~len =
+  if not (tracing_enabled t) then 0
+  else
+    let returned_us = now_us () in
+    Option.iter
+      (fun _ ->
+      trace_line t
+        (Printf.sprintf
+           "h2_ingress_plain_read bytes=%d started_us=%d returned_us=%d \
+            wait_us=%d"
+           len started_us returned_us (returned_us - started_us)))
+      t.trace_path;
+    let stream_id =
+      Option.value (first_request_stream_id_in_ingress t bytes ~len)
+        ~default:(-1)
+    in
+    phase_trace_line t
+      (Printf.sprintf
+         "h2_phase_ingress_read connection_id=%s peer_port=%d stream_id=%d \
+          bytes=%d started_us=%d returned_us=%d wait_us=%d"
+         t.connection.id (peer_port t) stream_id len started_us returned_us
+         (returned_us - started_us));
+    returned_us
+
+let trace_ingress_owner_done t ~read_returned_us ~len =
+  match t.trace_path with
+  | None -> ()
+  | Some _ ->
+      let ack_us = now_us () in
+      trace_line t
+        (Printf.sprintf
+           "h2_ingress_owner_done bytes=%d read_to_ack_us=%d ack_us=%d"
+           len (ack_us - read_returned_us) ack_us)
 
 let copy_write_job t iovecs =
   let len = H2.IOVec.lengthv iovecs in
@@ -1282,7 +1990,53 @@ let copy_write_job t iovecs =
       dst_off := !dst_off + len)
     iovecs;
   let data = Cstruct.sub t.write_buffer 0 len in
-  { data; len }
+  if len > 0 then
+    trace_line t (Printf.sprintf "h2_write_job_copy bytes=%d" len);
+  let trace_stream_ids = trace_stream_ids_in_write_job t data len in
+  let enqueued_us =
+    if tracing_enabled t then now_us () else 0
+  in
+  { data; len; trace_stream_ids; enqueued_us }
+
+let write_job t job =
+  let write () =
+    (* Close is delivered via handler-switch cancellation; the outer finally
+       still does graceful_close_flow_all, so the flow is closed on teardown. *)
+    ignore (trace_write_job_start t job);
+    let trace_write_duration =
+      tracing_enabled t || Option.is_some t.slow_write_trace_path
+    in
+    let flow_started_us = if trace_write_duration then now_us () else 0 in
+    Eio.Flow.write t.flow [ job.data ];
+    let flow_completed_us = if trace_write_duration then now_us () else 0 in
+    if tracing_enabled t then
+      trace_write_job_finish t job ~started_us:flow_started_us
+        ~completed_us:flow_completed_us;
+    (match t.slow_write_trace_path with
+    | None -> ()
+    | Some _ ->
+        trace_slow_write t job ~started_us:flow_started_us
+          ~completed_us:flow_completed_us);
+    job.len
+  in
+  match t.config.server.timeouts.response_write_timeout with
+  | None -> write ()
+  | Some timeout ->
+      (* Cheap response-write timeout: register a deadline + this write's cancel
+         context for the watchdog, instead of arming a per-write Eio.Time
+         .with_timeout (sleeper fiber + Zzz node + promise). The watchdog cancels
+         the context (with Eio.Time.Timeout) if the write blocks past the
+         deadline; the writer maps that to a response-write-timeout error. *)
+      let deadline = Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout in
+      Eio.Cancel.sub (fun cc ->
+          t.write_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
+          match write () with
+          | n ->
+              t.write_watch <- None;
+              n
+          | exception exn ->
+              t.write_watch <- None;
+              raise exn)
 
 let schedule_write_iovecs t iovecs =
   let len = H2.IOVec.lengthv iovecs in
@@ -1489,6 +2243,19 @@ let finish_request_body_eof t state =
            ~actual:state.request_body_bytes)
   | None | Some _ -> Ok ()
 
+let complete_request_body_eof t ordinal state =
+  match finish_request_body_eof t state with
+  | Ok () ->
+      request_body_peer_closed state;
+      resolve_request_trailers_empty state;
+      forget_if_complete t ordinal state;
+      Ok ()
+  | Error error ->
+      fail_request_trailers state error;
+      close_request_body state;
+      forget_if_complete t ordinal state;
+      Error error
+
 let schedule_request_body_drain_timeout t ordinal token timeout =
   Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
       t.sleep timeout;
@@ -1590,9 +2357,11 @@ let complete_response_drains t =
         resolve resolver (Ok ()))
       drains)
 
-let flush_writes t =
+let flush_writes_now t =
   drain_writes t;
   complete_response_drains t
+
+let flush_writes t = if not t.defer_write_flush then flush_writes_now t
 
 let flush_control_frames t =
   if (not t.closed) && (not t.write_pending) && t.pending_control_frames <> []
@@ -1824,14 +2593,22 @@ let schedule_request_body_timeout t ordinal resolver timeout =
 
 let arm_request_body_read t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
-  | None -> resolve resolver (Error (request_body_closed_error t ordinal))
+  | None ->
+      resolve resolver (Error (request_body_closed_error t ordinal));
+      false
   | Some state
     when not (request_body_available_to_app state.request_body_state) ->
-      resolve resolver (Ok None)
+      resolve resolver (Ok None);
+      false
   | Some state ->
+      let read_inline = ref false in
       state.request_read_resolver <- Some resolver;
+      let armed_us = now_us () in
+      trace_request_body_read_armed t state armed_us;
       H2.Body.Reader.schedule_read state.request_body
         ~on_read:(fun bs ~off ~len ->
+          let callback_us = now_us () in
+          read_inline := true;
           state.request_read_resolver <- None;
           match record_request_body_bytes t state len with
           | Error error ->
@@ -1840,21 +2617,27 @@ let arm_request_body_read t ordinal resolver =
               forget_if_complete t ordinal state;
               resolve resolver (Error error)
           | Ok () ->
+              trace_request_body_copy t state len;
+              let copy_started_us = now_us () in
               let chunk = Bytes.create len in
               Bigstringaf.blit_to_bytes bs ~src_off:off chunk ~dst_off:0 ~len;
-              resolve resolver (Ok (Some chunk)))
+              let resolved_us = now_us () in
+              trace_request_body_chunk t state ~armed_us ~callback_us
+                ~resolved_us ~copy_us:(resolved_us - copy_started_us) len;
+              let eof_after =
+                if H2.Body.Reader.is_closed state.request_body then
+                  Some (complete_request_body_eof t ordinal state)
+                else None
+              in
+              resolve resolver (Ok (Some { data = chunk; eof_after })))
         ~on_eof:(fun () ->
+          let eof_us = now_us () in
           state.request_read_resolver <- None;
-          match finish_request_body_eof t state with
+          match complete_request_body_eof t ordinal state with
           | Ok () ->
-              request_body_peer_closed state;
-              resolve_request_trailers_empty state;
-              forget_if_complete t ordinal state;
+              trace_request_body_eof t state ~armed_us ~eof_us;
               resolve resolver (Ok None)
           | Error error ->
-              fail_request_trailers state error;
-              close_request_body state;
-              forget_if_complete t ordinal state;
               resolve resolver (Error error));
       (* Only arm a body-read timeout if the read did not complete synchronously.
          schedule_read delivers already-buffered DATA inline (clearing the
@@ -1863,7 +2646,8 @@ let arm_request_body_read t ordinal resolver =
       if Option.is_some state.request_read_resolver then
         Option.iter
           (schedule_request_body_timeout t ordinal resolver)
-          t.config.server.timeouts.request_body_timeout
+          t.config.server.timeouts.request_body_timeout;
+      !read_inline
 
 let handle_request_body_timeout t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
@@ -1936,6 +2720,16 @@ let start_response t ordinal response resolver =
                   Server_metrics.response_body_bytes metrics length)
                 state.metrics
           | Response_stream _ -> assert false);
+          (match response.body with
+          | Response_fixed (_ :: _ :: _, length) ->
+              trace_response_fixed_copy t state length
+          | Response_fixed ([], _) | Response_fixed ([ _ ], _)
+          | Response_no_body _ | Response_stream _ ->
+              ());
+          trace_response_start t state
+            (match response.body with
+            | Response_fixed (_, length) -> length
+            | Response_no_body _ | Response_stream _ -> 0);
           respond_fixed state.reqd response;
           finish_response t ordinal state;
           resolve resolver (Ok ());
@@ -2109,12 +2903,32 @@ let begin_shutdown t = function
           Server_metrics.shutdown_active metrics 1);
       begin_graceful_shutdown t timeout
 
+let trace_ingress_handle_start t bytes ~len ~read_returned_us ~enqueued_us =
+  match t.phase_trace_buffer with
+  | None -> ()
+  | Some _ -> (
+      match first_request_stream_id_in_ingress t bytes ~len with
+      | None -> ()
+      | Some stream_id ->
+          let started_us = now_us () in
+          phase_trace_line t
+            (Printf.sprintf
+               "h2_phase_ingress_handle_start connection_id=%s peer_port=%d \
+                stream_id=%d read_returned_us=%d enqueued_us=%d started_us=%d \
+                queue_wait_us=%d"
+               t.connection.id (peer_port t) stream_id read_returned_us
+               enqueued_us started_us
+               (if enqueued_us = 0 then 0 else started_us - enqueued_us)))
+
 let handle_command t = function
-  | Ingress { bytes; off; len; ack } ->
+  | Ingress { bytes; off; len; read_returned_us; enqueued_us; ack } ->
       cancel_idle_timeout t;
+      trace_ingress_handle_start t bytes ~len ~read_returned_us ~enqueued_us;
       Fun.protect
-    ~finally:(fun () -> resolve ack ())
-    (fun () ->
+        ~finally:(fun () ->
+          trace_ingress_owner_done t ~read_returned_us ~len;
+          resolve ack ())
+        (fun () ->
           let observation = observe_ingress_security t bytes ~off ~len in
           if handle_security_observation t observation then ()
           else (
@@ -2154,8 +2968,9 @@ let handle_command t = function
   | Idle_timeout token ->
       handle_idle_timeout t token
   | Request_body_read (ordinal, resolver) ->
-      arm_request_body_read t ordinal resolver;
-      flush_writes t
+      let read_completed = arm_request_body_read t ordinal resolver in
+      if read_completed && H2.Connection.has_pending_write t.h2 then
+        flush_writes t
   | Request_body_timeout (ordinal, resolver) ->
       handle_request_body_timeout t ordinal resolver;
       flush_writes t
@@ -2183,13 +2998,18 @@ let handle_command t = function
   | Response_failed (ordinal, error) ->
       fail_response t ordinal error;
       flush_writes t
-  | Write_completed (Ok written) ->
+  | Write_completed (Ok written, trace_stream_ids) ->
       if t.write_pending then (
+        trace_write_complete t trace_stream_ids;
         t.write_pending <- false;
         H2.Connection.report_write_result t.h2 (`Ok written);
         flush_writes t;
         flush_control_frames t)
-  | Write_completed (Error error) ->
+  | Write_completed (Error error, trace_stream_ids) ->
+      List.iter
+        (fun stream_id ->
+          Hashtbl.remove t.trace_response_starts_us stream_id)
+        trace_stream_ids;
       if t.write_pending then t.write_pending <- false;
       (try H2.Connection.report_write_result t.h2 `Closed with _ -> ());
       mark_closed t;
@@ -2200,12 +3020,36 @@ let handle_command t = function
       flush_writes t;
       flush_control_frames t
 
+let h2_owner_command_batch_budget = 8
+
+let rec handle_ready_commands ?(budget = h2_owner_command_batch_budget) t =
+  if budget > 0 && (not t.closed) && not (H2.Connection.is_closed t.h2) then
+    match Eio.Stream.take_nonblocking t.commands with
+    | None -> ()
+    | Some command ->
+        handle_command t command;
+        finish_graceful_shutdown_if_idle t;
+        finish_deferred_close t;
+        handle_ready_commands ~budget:(budget - 1) t
+
+let handle_command_batch t first_command =
+  t.defer_write_flush <- true;
+  Fun.protect
+    ~finally:(fun () ->
+      t.defer_write_flush <- false;
+      flush_writes_now t)
+    (fun () ->
+      handle_command t first_command;
+      finish_graceful_shutdown_if_idle t;
+      finish_deferred_close t;
+      handle_ready_commands ~budget:(h2_owner_command_batch_budget - 1) t)
+
 let rec owner_loop t =
   if (not t.closed) && not (H2.Connection.is_closed t.h2) then (
     flush_writes t;
     flush_control_frames t;
     let command = Eio.Stream.take t.commands in
-    handle_command t command;
+    handle_command_batch t command;
     finish_graceful_shutdown_if_idle t;
     finish_deferred_close t;
     schedule_idle_timeout_if_idle t;
@@ -2214,6 +3058,18 @@ let rec owner_loop t =
 let reader_loop t =
   let scratch = Bigstringaf.create t.config.read_buffer_size in
   let cstruct = Cstruct.of_bigarray scratch in
+  let ingress_buffers =
+    [| t.read_owned; Bigstringaf.create t.config.read_buffer_size |]
+  in
+  let ingress_buffer_acks = [| None; None |] in
+  let next_ingress_buffer = ref 0 in
+  let acquire_ingress_buffer () =
+    let index = !next_ingress_buffer in
+    Option.iter Eio.Promise.await ingress_buffer_acks.(index);
+    ingress_buffer_acks.(index) <- None;
+    next_ingress_buffer := (index + 1) land 1;
+    (index, ingress_buffers.(index))
+  in
   let ingress_timeout () =
     if Hashtbl.length t.streams = 0 then
       if t.accepted_request then t.config.server.timeouts.idle_timeout
@@ -2237,51 +3093,41 @@ let reader_loop t =
     read ()
   in
   let rec loop () =
+    let read_started_us =
+      if tracing_enabled t then now_us () else 0
+    in
     match single_read () with
     | `Timeout timeout ->
         ignore
           (enqueue t (Ingress_failed (request_timeout_error t (Some timeout))))
     | `Read 0 -> ignore (enqueue t Ingress_eof)
     | `Read len ->
-        Bigstringaf.blit scratch ~src_off:0 t.read_owned ~dst_off:0 ~len;
+        let read_returned_us =
+          trace_ingress_plain_read t scratch ~started_us:read_started_us ~len
+        in
+        let index, read_owned = acquire_ingress_buffer () in
+        Bigstringaf.blit scratch ~src_off:0 read_owned ~dst_off:0 ~len;
         let promise, ack = Eio.Promise.create () in
-        if enqueue t (Ingress { bytes = t.read_owned; off = 0; len; ack }) then (
-          (* Ack/close delivered via handler-switch cancellation, not a
-             per-ingress Fiber.first race. *)
-          Eio.Promise.await promise;
-          loop ())
+        ingress_buffer_acks.(index) <- Some promise;
+        let enqueued_us = if tracing_enabled t then now_us () else 0 in
+        if
+          enqueue t
+            (Ingress
+               {
+                 bytes = read_owned;
+                 off = 0;
+                 len;
+                 read_returned_us;
+                 enqueued_us;
+                 ack;
+               })
+        then loop ()
     | exception End_of_file -> ignore (enqueue t Ingress_eof)
     | exception Eio.Cancel.Cancelled _ -> ()
     | exception exn ->
         ignore (enqueue t (Ingress_failed (connection_read_error t exn)))
   in
   loop ()
-
-let write_job t job =
-  let write () =
-    (* Close is delivered via handler-switch cancellation; the outer finally
-       still does graceful_close_flow_all, so the flow is closed on teardown. *)
-    Eio.Flow.write t.flow [ job.data ];
-    job.len
-  in
-  match t.config.server.timeouts.response_write_timeout with
-  | None -> write ()
-  | Some timeout ->
-      (* Cheap response-write timeout: register a deadline + this write's cancel
-         context for the watchdog, instead of arming a per-write Eio.Time
-         .with_timeout (sleeper fiber + Zzz node + promise). The watchdog cancels
-         the context (with Eio.Time.Timeout) if the write blocks past the
-         deadline; the writer maps that to a response-write-timeout error. *)
-      let deadline = Int64.to_int (t.now_ms ()) + Eta.Duration.to_ms timeout in
-      Eio.Cancel.sub (fun cc ->
-          t.write_watch <- Some { hw_deadline = deadline; hw_cancel = cc };
-          match write () with
-          | n ->
-              t.write_watch <- None;
-              n
-          | exception exn ->
-              t.write_watch <- None;
-              raise exn)
 
 let writer_loop t =
   let take_job () = `Job (Eio.Stream.take t.write_jobs) in
@@ -2299,7 +3145,8 @@ let writer_loop t =
               | Eio.Time.Timeout -> Error (response_write_timeout_error t)
               | exn -> Error (connection_write_error t exn)
             in
-            if enqueue t (Write_completed result) then loop ())
+            if enqueue t (Write_completed (result, job.trace_stream_ids)) then
+              loop ())
   in
   try loop () with Eio.Cancel.Cancelled _ -> ()
 
@@ -2507,6 +3354,16 @@ let safe_handler_effect t request handler =
 let run_handler_body t ordinal request handler =
   let rt = t.runtime in
   let effect = safe_handler_effect t request handler in
+  let run_runtime () =
+    let started_us = runtime_probe_now t in
+    match Eta.Runtime.run rt effect with
+    | result ->
+        runtime_probe_handler_runtime t started_us;
+        result
+    | exception exn ->
+        runtime_probe_handler_runtime t started_us;
+        raise exn
+  in
   let response =
     match t.config.server.timeouts.handler_timeout with
     | Some timeout -> (
@@ -2522,7 +3379,7 @@ let run_handler_body t ordinal request handler =
           Eio.Cancel.sub (fun cc ->
               Hashtbl.replace t.handler_watches ordinal
                 { hw_deadline = deadline; hw_cancel = cc };
-              match Eta.Runtime.run rt effect with
+              match run_runtime () with
               | result ->
                   Hashtbl.remove t.handler_watches ordinal;
                   result
@@ -2537,10 +3394,11 @@ let run_handler_body t ordinal request handler =
             Server.Handler.default_error_response
               (handler_timeout_error t request (Some timeout)))
     | None -> (
-        match Eta.Runtime.run rt effect with
+        match run_runtime () with
         | Eta.Exit.Ok response -> response
         | Eta.Exit.Error cause -> fallback_error_response t request cause)
   in
+  let prepare_started_us = runtime_probe_now t in
   let response, prepared =
     match prepare_h2_response t request response with
     | Ok prepared -> (response, Ok prepared)
@@ -2549,11 +3407,24 @@ let run_handler_body t ordinal request handler =
         let response = Server.Handler.default_error_response error in
         (response, prepare_h2_response t request response)
   in
+  runtime_probe_handler_prepare t prepare_started_us;
   match prepared with
   | Error error -> ignore (enqueue t (Response_failed (ordinal, error)))
   | Ok prepared -> (
+      let response_start_started_us = runtime_probe_now t in
+      let response_start_result =
+        match
+          await_owner t (fun resolver -> Response_start (ordinal, prepared, resolver))
+        with
+        | result ->
+            runtime_probe_response_owner_wait t response_start_started_us;
+            result
+        | exception exn ->
+            runtime_probe_response_owner_wait t response_start_started_us;
+            raise exn
+      in
       match
-        await_owner t (fun resolver -> Response_start (ordinal, prepared, resolver))
+        response_start_result
       with
       | Error error ->
           release_prepared_response_body rt prepared;
@@ -2579,8 +3450,17 @@ exception Handlers_cancelled
 let run_handler t ordinal request handler =
   match t.handler_sw with
   | Some sw when not t.closed ->
-      Eio.Fiber.fork ~sw (fun () ->
-          run_handler_body t ordinal request handler)
+      let forked_us = runtime_probe_handler_forked t in
+	      Eio.Fiber.fork ~sw (fun () ->
+	          let started_us = runtime_probe_handler_started t forked_us in
+	          match run_handler_body t ordinal request handler with
+	          | () ->
+	              runtime_probe_handler_completed t started_us;
+	              flush_runtime_probe_if_due t
+	          | exception exn ->
+	              runtime_probe_handler_failed t started_us;
+	              flush_runtime_probe_if_due t;
+	              raise exn)
   | _ -> ()
 
 let shutdown t policy =
@@ -2616,9 +3496,32 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                   (Failure
                      "Eta_http_eio.H2.Server_connection missing observed H2 \
                       stream id")
-            | Some stream_id ->
-                note_processed_stream_id t stream_id;
-                let body = body_of_stream t ordinal in
+	            | Some stream_id ->
+	                note_processed_stream_id t stream_id;
+	                runtime_probe_request_accepted t;
+	                trace_request_accepted t stream_id;
+	                let request_body_already_closed =
+	                  Hashtbl.mem t.remote_end_streams stream_id
+                in
+                let reqd_request = H2.Connection.Server.Reqd.request reqd in
+                let request_content_length =
+                  match
+                    Server.Validation.h2_request_content_length
+                      reqd_request.headers
+                  with
+                  | Ok content_length -> content_length
+                  | Error _ -> None
+                in
+                let body =
+                  if
+                    request_body_already_closed
+                    &&
+                    match request_content_length with
+                    | None | Some 0 -> true
+                    | Some _ -> false
+                  then Server.Body.empty ()
+                  else body_of_stream t ordinal
+                in
                 let request_trailers = create_request_trailers () in
                 (match Hashtbl.find_opt t.pending_request_trailers ordinal with
                 | None -> ()
@@ -2641,19 +3544,12 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
                     stream_id;
                     reqd;
                     request_body = H2.Connection.Server.Reqd.request_body reqd;
-                    request_content_length =
-                      (match
-                         Server.Validation.h2_request_content_length
-                           (Eta_http.Core.Header.to_list request.headers)
-                       with
-                      | Ok content_length -> content_length
-                      | Error _ -> None);
+                    request_content_length;
                     metrics;
                     metrics_finished = false;
                     request_body_bytes = 0;
                     request_body_state =
-                      (if Hashtbl.mem t.remote_end_streams stream_id then
-                         Request_body_peer_closed
+                      (if request_body_already_closed then Request_body_peer_closed
                        else Request_body_open);
                     request_trailers;
                     request_read_resolver = None;
@@ -2683,6 +3579,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       ?config:config.Types.Config.h2_security_config ()
   in
   let closed_signal, close_signal = Eio.Promise.create () in
+  let phase_trace_path_value = Lazy.force phase_trace_path in
   let t =
     let max_ingress_buffer_size = max_ingress_buffer_size config in
     {
@@ -2733,6 +3630,14 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       close_signal;
       handler_sw = None;
       handler_watches = Hashtbl.create 16;
+      trace_path = Lazy.force trace_path;
+	      phase_trace_path = phase_trace_path_value;
+	      phase_trace_buffer =
+	        Option.map (fun _ -> Buffer.create 4096) phase_trace_path_value;
+	      slow_write_trace_path = Lazy.force slow_write_trace_path;
+	      slow_write_trace_threshold_us = Lazy.force slow_write_trace_threshold_us;
+	      runtime_probe = create_runtime_probe (Lazy.force runtime_probe_path);
+	      trace_response_starts_us = Hashtbl.create 16;
       write_watch = None;
       idle_timeout_token = None;
       graceful_shutdown = false;
@@ -2740,6 +3645,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       accepted_request = false;
       deferred_close = None;
       write_pending = false;
+      defer_write_flush = false;
       write_buffer = Cstruct.create max_h2_data_chunk;
       emit_buffer = Buffer.create 256;
       read_owned = Bigstringaf.create config.read_buffer_size;
@@ -2761,8 +3667,10 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       Option.iter
         (fun metrics -> Server_metrics.shutdown_active metrics 0)
         t.connection_metrics;
-      H2.Connection.shutdown h2;
-      graceful_close_flow_all flow;
+	      H2.Connection.shutdown h2;
+	      flush_phase_trace t;
+	      flush_runtime_probe t;
+	      graceful_close_flow_all flow;
       Option.iter (fun on_close -> on_close (stats t)) on_close)
 	    (fun () ->
 	      try

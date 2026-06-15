@@ -37,6 +37,10 @@ val read_eof : t -> Bigstringaf.t -> off:int -> len:int -> int
     returned iovecs and then call [report_write_result]. *)
 val next_write_operation : t -> write_operation
 
+(** True when the connection already has serialized bytes waiting to be written
+    to the transport. This does not run the stream scheduler. *)
+val has_pending_write : t -> bool
+
 (** Report the result of the last [Write] or [Close] operation. *)
 val report_write_result : t -> [ `Ok of int | `Closed ] -> unit
 
@@ -90,6 +94,7 @@ module Client : sig
   val request :
     connection ->
     stream_id:Stream.id ->
+    ?end_stream:bool ->
     ?trailers_handler:trailers_handler ->
     request ->
     error_handler:(Stream.id -> error -> unit) ->

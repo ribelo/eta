@@ -16,7 +16,7 @@ module Body = struct
 
   let empty = Empty
   let fixed chunks = Fixed (List.map Bytes.copy chunks)
-  let string value = fixed [ Bytes.of_string value ]
+  let string value = Fixed [ Bytes.of_string value ]
 
   let stream ?length ?(release = fun () -> Eta.Effect.unit) read =
     (match length with

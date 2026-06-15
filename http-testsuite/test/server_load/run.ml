@@ -310,8 +310,18 @@ let json_int_value = function
   | `Float value -> Some (int_of_float value)
   | _ -> None
 
+let json_string_value = function `String value -> Some value | _ -> None
+
 let member_number name json =
   match assoc_find name json with None -> None | Some value -> json_number value
+
+let member_int name json =
+  match assoc_find name json with None -> None | Some value -> json_int_value value
+
+let member_string name json =
+  match assoc_find name json with
+  | None -> None
+  | Some value -> json_string_value value
 
 let distribution_total = function
   | Some (`Assoc fields) ->
@@ -344,6 +354,18 @@ let env_string name default =
   match Sys.getenv_opt name with
   | None | Some "" -> default
   | Some value -> String.trim value
+
+(* Keep fixed-count keep-alive runs from reporting connection setup as p99.
+   With c=16,n=1000, the first TLS handshakes are 1.6% of samples, so they land
+   directly in p99. A 200x request/connection floor keeps setup under 0.5%. *)
+let min_requests_per_connection_for_p99 = 200
+
+let fixed_requests_for_load_case shape load_case =
+  match shape.requests with
+  | Some n when n >= 1000 ->
+      Some (max n (load_case.connections * min_requests_per_connection_for_p99))
+  | Some n -> Some n
+  | None -> None
 
 let pinning_enabled () =
   env_flag "ETA_SERVER_LOAD_PIN" true && command_available "taskset"
@@ -526,7 +548,7 @@ let oha_command ~temp_dir ~shape ~mode ~endpoint ~load_case ~repeat ~url =
     | H2 -> [ "-p"; string_of_int load_case.streams_per_connection ]
   in
   let count =
-    match (shape.requests, shape.duration) with
+    match (fixed_requests_for_load_case shape load_case, shape.duration) with
     | Some n, _ -> [ "-n"; string_of_int n ]
     | None, Some duration -> [ "-z"; duration; "-w" ]
     | None, None -> [ "-n"; "20" ]
@@ -590,7 +612,8 @@ let pass_result ~mode ~endpoint ~shape ~load_case ~repeat ~url ~preflight
          ("status", `String status);
          ("url", json_string url);
          ("duration", json_option json_string shape.duration);
-         ("requests", json_option json_int shape.requests);
+         ( "requests",
+           json_option json_int (fixed_requests_for_load_case shape load_case) );
          ("preflight", preflight);
          ("command", json_string command);
          ( "error",
@@ -630,7 +653,8 @@ let fail_result ~mode ~endpoint ~shape ~load_case ~repeat ~url ?preflight
          ("status", `String "fail");
          ("url", json_string url);
          ("duration", json_option json_string shape.duration);
-         ("requests", json_option json_int shape.requests);
+         ( "requests",
+           json_option json_int (fixed_requests_for_load_case shape load_case) );
          ("preflight", Option.value ~default:`Null preflight);
          ("command", json_string command);
          ("error", json_string error);
@@ -642,9 +666,223 @@ let skip_result ~mode ~endpoint ~shape ~load_case ~repeat reason =
      @ [
          ("status", `String "skip");
          ("duration", json_option json_string shape.duration);
-         ("requests", json_option json_int shape.requests);
+         ( "requests",
+           json_option json_int (fixed_requests_for_load_case shape load_case) );
          ("reason", json_string reason);
        ])
+
+let median_float values =
+  match List.sort Float.compare values with
+  | [] -> None
+  | sorted ->
+      let n = List.length sorted in
+      if n mod 2 = 1 then Some (List.nth sorted (n / 2))
+      else
+        let hi = List.nth sorted (n / 2) in
+        let lo = List.nth sorted ((n / 2) - 1) in
+        Some ((lo +. hi) /. 2.0)
+
+let rec take n values =
+  if n <= 0 then []
+  else
+    match values with
+    | [] -> []
+    | value :: rest -> value :: take (n - 1) rest
+
+let h2_16x1_p99_analysis results =
+  let rows =
+    List.filter_map
+      (fun result ->
+        match result with
+        | `Assoc _ -> (
+            match
+              ( member_string "status" result,
+                member_string "server" result,
+                member_string "protocol" result,
+                member_string "transport" result,
+                member_string "endpoint" result,
+                member_int "concurrency" result,
+                member_int "connections" result,
+                member_int "streams_per_connection" result,
+                assoc_find "latency_seconds" result )
+            with
+            | ( Some "pass",
+                Some server,
+                Some "h2",
+                Some transport,
+                Some endpoint,
+                Some 16,
+                Some 16,
+                Some 1,
+                Some latency ) -> (
+                match member_number "p99" latency with
+                | Some p99 -> Some ((server, transport, endpoint), p99 *. 1_000_000.0)
+                | None -> None)
+            | _ -> None)
+        | _ -> None)
+      results
+  in
+  let keys =
+    rows |> List.map fst |> List.sort_uniq compare
+  in
+  let cases =
+    List.filter_map
+      (fun key ->
+        let values =
+          rows
+          |> List.filter_map (fun (row_key, value) ->
+                 if row_key = key then Some value else None)
+        in
+        match median_float values with
+        | None -> None
+        | Some median ->
+            let server, transport, endpoint = key in
+            Some (median, server, transport, endpoint, values))
+      keys
+    |> List.sort (fun (left, _, _, _, _) (right, _, _, _, _) ->
+           Float.compare right left)
+  in
+  let case_json (median, server, transport, endpoint, values) =
+    `Assoc
+      [
+        ("server", json_string server);
+        ("protocol", json_string "h2");
+        ("transport", json_string transport);
+        ("endpoint", json_string endpoint);
+        ("concurrency", json_int 16);
+        ("connections", json_int 16);
+        ("streams_per_connection", json_int 1);
+        ("median_p99_us", json_float median);
+        ( "repeat_p99_us",
+          `List (List.map (fun value -> json_float value) values) );
+      ]
+  in
+  `Assoc
+    [
+      ( "note",
+        json_string
+          "H2 16x1 p99 is known to be sensitive to client/load CPU pinning and \
+           socket scheduling; inspect metadata.pinning before treating it as \
+           handler latency." );
+      ("case_count", json_int (List.length cases));
+      ("top", `List (cases |> take 10 |> List.map case_json));
+    ]
+
+let eta_actionable_p99_analysis results =
+  let rows =
+    List.filter_map
+      (fun result ->
+        match result with
+        | `Assoc _ -> (
+            match
+              ( member_string "status" result,
+                member_string "server" result,
+                member_string "protocol" result,
+                member_string "transport" result,
+                member_string "endpoint" result,
+                member_int "concurrency" result,
+                member_int "connections" result,
+                member_int "streams_per_connection" result,
+                assoc_find "latency_seconds" result )
+            with
+            | ( Some "pass",
+                Some "eta",
+                Some protocol,
+                Some transport,
+                Some endpoint,
+                Some concurrency,
+                Some connections,
+                Some streams_per_connection,
+                Some latency ) ->
+                let known_scheduling_sensitive =
+                  String.equal protocol "h2"
+                  && concurrency = 16 && connections = 16
+                  && streams_per_connection = 1
+                in
+                if known_scheduling_sensitive then None
+                else
+                  (match member_number "p99" latency with
+                  | Some p99 ->
+                      Some
+                        ( ( protocol,
+                            transport,
+                            endpoint,
+                            concurrency,
+                            connections,
+                            streams_per_connection ),
+                          p99 *. 1_000_000.0 )
+                  | None -> None)
+            | _ -> None)
+        | _ -> None)
+      results
+  in
+  let keys = rows |> List.map fst |> List.sort_uniq compare in
+  let cases =
+    List.filter_map
+      (fun key ->
+        let values =
+          rows
+          |> List.filter_map (fun (row_key, value) ->
+                 if row_key = key then Some value else None)
+        in
+        match median_float values with
+        | None -> None
+        | Some median ->
+            let ( protocol,
+                  transport,
+                  endpoint,
+                  concurrency,
+                  connections,
+                  streams_per_connection ) =
+              key
+            in
+            Some
+              ( median,
+                protocol,
+                transport,
+                endpoint,
+                concurrency,
+                connections,
+                streams_per_connection,
+                values ))
+      keys
+    |> List.sort
+         (fun (left, _, _, _, _, _, _, _) (right, _, _, _, _, _, _, _) ->
+           Float.compare right left)
+  in
+  let case_json
+      ( median,
+        protocol,
+        transport,
+        endpoint,
+        concurrency,
+        connections,
+        streams_per_connection,
+        values ) =
+    `Assoc
+      [
+        ("server", json_string "eta");
+        ("protocol", json_string protocol);
+        ("transport", json_string transport);
+        ("endpoint", json_string endpoint);
+        ("concurrency", json_int concurrency);
+        ("connections", json_int connections);
+        ("streams_per_connection", json_int streams_per_connection);
+        ("median_p99_us", json_float median);
+        ( "repeat_p99_us",
+          `List (List.map (fun value -> json_float value) values) );
+      ]
+  in
+  `Assoc
+    [
+      ( "note",
+        json_string
+          "Top Eta p99 cases after excluding the known H2 16x1 \
+           scheduling-sensitive shape." );
+      ("excluded", json_string "eta h2 c=16 connections=16 streams=1");
+      ("case_count", json_int (List.length cases));
+      ("top", `List (cases |> take 15 |> List.map case_json));
+    ]
 
 let run_oha ~shape ~temp_dir ~mode ~endpoint ~load_case ~repeat ~url =
   let command, repeat = oha_command ~temp_dir ~shape ~mode ~endpoint ~load_case
@@ -1137,6 +1375,8 @@ let config_json shape =
     [
       ("duration", json_option json_string shape.duration);
       ("requests", json_option json_int shape.requests);
+      ( "min_requests_per_connection_for_p99",
+        json_int min_requests_per_connection_for_p99 );
       ("timeout", json_string shape.timeout);
       ("concurrencies", `List (List.map json_int shape.concurrencies));
       ( "h2_matrix",
@@ -1193,6 +1433,12 @@ let report_json config shape results =
       ("metadata", metadata_json config);
       ("capabilities", capabilities_json ());
       ("config", config_json shape);
+      ( "analysis",
+        `Assoc
+          [
+            ("h2_16x1_p99", h2_16x1_p99_analysis results);
+            ("eta_actionable_p99", eta_actionable_p99_analysis results);
+          ] );
       ("results", `List results);
     ]
 

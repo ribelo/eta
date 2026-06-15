@@ -1158,6 +1158,8 @@ let next_write_operation t =
           Close 0
       | _ -> Yield)
 
+let has_pending_write t = t.write_buf.len > 0
+
 let report_write_result t = function
   | `Ok n ->
       shift t.write_buf n;
@@ -1271,8 +1273,8 @@ module Client = struct
           [ (":method", request.meth); (":scheme", scheme) ]
           @ authority @ [ (":path", request.path) ] @ request.headers)
 
-  let request t ~stream_id ?trailers_handler (request : request) ~error_handler
-      ~response_handler =
+  let request t ~stream_id ?(end_stream = false) ?trailers_handler
+      (request : request) ~error_handler ~response_handler =
     match t.role with
     | Server _ ->
         invalid_arg
@@ -1304,19 +1306,24 @@ module Client = struct
             response_started = false;
           };
         let header_block = encode_header_list t (request_headers request) in
-        send_header_block t ~stream_id ~end_stream:false header_block;
-        Body.Writer.set_write_fn writer (fun buf ~off ~len ->
-            match Stream.queue_data stream buf ~off ~len with
-            | Ok () -> wake_schedulable_stream t stream
-            | Error Stream.Stream_closed -> ()
-            | Error (Protocol_violation message)
-            | Error (Flow_control_violation message) ->
-                client_stream_error t stream_id Error_code.Protocol_error
-                  message);
-        Body.Writer.set_flush_fn writer (fun fn -> Stream.on_drained stream fn);
-        Body.Writer.set_close_callback writer (fun () ->
+        send_header_block t ~stream_id header_block ~end_stream;
+        if end_stream then (
             Stream.mark_send_end_stream stream;
-            wake_schedulable_stream t stream);
+            Stream.mark_sent_end_stream stream;
+            Body.Writer.close writer)
+        else (
+          Body.Writer.set_write_fn writer (fun buf ~off ~len ->
+              match Stream.queue_data stream buf ~off ~len with
+              | Ok () -> wake_schedulable_stream t stream
+              | Error Stream.Stream_closed -> ()
+              | Error (Protocol_violation message)
+              | Error (Flow_control_violation message) ->
+                  client_stream_error t stream_id Error_code.Protocol_error
+                    message);
+          Body.Writer.set_flush_fn writer (fun fn -> Stream.on_drained stream fn);
+          Body.Writer.set_close_callback writer (fun () ->
+              Stream.mark_send_end_stream stream;
+              wake_schedulable_stream t stream));
         wake_writer t;
         writer
 end
