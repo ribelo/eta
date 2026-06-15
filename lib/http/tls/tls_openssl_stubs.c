@@ -745,7 +745,15 @@ CAMLprim value eta_openssl_ssl_handshake(value v_ssl)
 {
   CAMLparam1(v_ssl);
   SSL *ssl = eta_ssl_val(v_ssl);
+  /* SSL_do_handshake runs the CPU-heavy crypto (key exchange, server signature)
+     entirely in C against in-memory BIOs; the ALPN/SNI callbacks it may invoke
+     are pure C (no OCaml access). Release the OCaml runtime around it so other
+     domains are not blocked from reaching GC safepoints while this domain
+     signs the handshake -- important for multi-domain handshake parallelism on
+     OCaml 5. */
+  caml_enter_blocking_section();
   int rc = SSL_do_handshake(ssl);
+  caml_leave_blocking_section();
   if (rc == 1) {
     CAMLreturn(Val_int(0)); /* Ok */
   }
