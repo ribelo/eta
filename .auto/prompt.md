@@ -1,114 +1,94 @@
-# Autoresearch: Eta HTTPS (HTTP/1.1 over TLS) handshake throughput
+# Autoresearch: Eta H2-over-TLS steady-state tail latency
 
 ## Objective
 
-Reduce Eta's **TLS handshake latency under concurrent load** on the HTTPS H1
-server, by making CPU-bound handshakes scale across domains (cores). Measured
-over real sockets with `oha --disable-keepalive` driving the standalone
-`h1_tls_probe.exe` server (fresh handshake per request), server spread across
-multiple Eio domains.
-
-This is the top remaining outlier in the broad server-load suite: Eta H1 TLS
-~15-16ms p99 (vs Go/Node ~1-2ms).
+Reduce Eta's **H2-over-TLS steady-state tail latency**, measured keep-alive
+over real sockets (oha HTTP/2, multi-domain server). The remaining weak spot
+after the H1 TLS handshake session: isolated, Eta H2 TLS echo_1k p99 ~1.2-2.2ms
+vs Go ~0.74ms (1.6-3×). The gap is roughly uniform across non-file endpoints
+(root/user/echo all ~2ms p99 at c=16 p=16), so it is the **shared H2+TLS
+steady-state request path**, NOT a handshake artifact (keep-alive isolates it)
+and NOT the static_1k outlier (that's handler file-I/O, off-limits).
 
 ## The diagnosis (already established — do NOT re-litigate)
 
-The p99 outlier is NOT steady-state request handling (that's ~0.2ms p50) and NOT
-per-handshake CPU (OpenSSL RSA-2048 sign is ~0.17ms — already fast). It is
-**handshake serialization**:
-
-- The probe server originally ran SINGLE-domain → 16 concurrent handshakes
-  queue on one core (p50 2.66ms, p99 8.7ms, the broad-suite n=1000 p99 ~15ms).
-- Enabling multi-domain accept (`ETA_SERVER_DOMAINS`, wired through
-  `eta_server.start` → `start_https ~domain_manager ~domain_policy:Additional n`)
-  drops p99 to ~2.2ms and rps +65% at 8 domains — BUT p50 only falls to ~1.7ms,
-  ~10× the 0.17ms per-handshake CPU. **Handshakes do not scale linearly.**
-
-The non-scaling = shared-state contention across domains. Prime suspects:
-1. Per-connection bookkeeping under the global `server.ml` `t.mutex`:
-   `register_pending_tls`, `register_transitioned_connection`,
-   `record_tls_handshake`/`record_alpn_*`, `unregister_*` — ~5 lock ops per
-   connection on ONE `Eio.Mutex` shared across all domains.
-2. `tls_eio.ml` allocates `Cstruct.create 32768` per `feed_bio` and
-   `Cstruct.create pending` per `drain_bio` (multiple per handshake) → bigarray
-   malloc/free churn that contends across domains. Reuse per-connection buffers.
-3. OpenSSL global locks / RNG; per-handshake `create_server_ssl`.
-
-Confirmed already-correct: TCP_NODELAY is set on accepted flows; Tls_eio context
-built once per listener. io_uring memlock is only 8MB → `Recommended` (31
-domains) fails with ENOMEM; use a modest `Additional n` (8 is the sweet spot).
+- Steady-state, not handshake: keep-alive runs (single conn, p=128) show echo
+  p99 ~1.05ms; the gap vs Go grows with stream concurrency. Handshake cost is
+  amortized away here.
+- Uniform across endpoints → the lever is the h2 server path + TLS record
+  read/write shared by all requests, not any one handler.
+- static_1k is handler-bound (`read_file` = `open_in_bin`+`really_input`+close
+  per request in the testsuite handler) → off-limits; do NOT tune it and do NOT
+  treat its p99 as the primary signal.
+- Already in place from the H1 TLS session (benefit H2 TLS too):
+  `SSL_SESS_CACHE_OFF`, tls_eio feed/drain buffer reuse, multi-domain HTTPS
+  (`ETA_SERVER_DOMAINS`), `caml_enter_blocking_section` around SSL_do_handshake.
 
 ## Metrics
 
-- **Primary**: `h1_tls_hs_p50_us` (microseconds, **LOWER is better**) — median
-  per-request latency, fresh handshake per request (`--disable-keepalive`),
-  c=16, server across ETA_TLS_DOMAINS (default 8) domains.
+- **Primary**: `h2_tls_echo_p99_us` (µs, **LOWER** is better) — echo_1k p99
+  (full body read+write path; the user's cited gap endpoint).
 - **Secondary monitors** (log ALL every iteration):
-  - `h1_tls_hs_p99_us` — handshake tail latency.
-  - `h1_tls_hs_rps` — handshake throughput (higher better; must NOT regress).
-  - `h1_tls_ka_p99_us` — keep-alive p99 at c=16 n=1000 (broad-run symptom).
-  - `h1_tls_peak_rss_kb` — server peak RSS (more domains = more RSS; watch it).
+  - `h2_tls_<ep>_p99_us` / `h2_tls_<ep>_p50_us` / `h2_tls_<ep>_rps` for
+    echo_1k, root, user, static_1k.
+  - `h2_tls_p50_us_geomean`, `h2_tls_rps_geomean` (throughput guard).
+  - `h2_tls_peak_rss_kb`.
   - `success` — 1 only if every oha run kept successRate ≥ 0.999.
 
 ## How to Run
 
-`./.auto/measure.sh` — outputs `METRIC name=number` lines. Builds release
-`h1_tls_probe.exe`, starts it with `ETA_SERVER_DOMAINS` domains on isolated
-cores (taskset 4-19), then runs oha on a separate core SET (taskset 20-27, so
-oha is NOT the bottleneck) at c=16 n=6000 (`--disable-keepalive`, fresh
-handshake per request) plus a keep-alive shape, REPS=3 medians.
-
-**Noise**: with oha on one core the p50 was noisy (~±25%); with oha on 8 cores
-it is tight (p50 ~±2%, rps ~±1%). hs_rps and hs_p99 are the most stable signals.
+`./.auto/measure.sh` — builds release `h2_tls_probe.exe`, starts it with
+`ETA_SERVER_DOMAINS` (default 8) on isolated cores (taskset 4-19), runs oha
+HTTP/2 keep-alive (taskset 20-27, c=16 p=16 n=20000) REPS=3 per endpoint,
+reports medians. Low-noise (oha on 8 cores, not the bottleneck).
 
 **CRITICAL: rebuild after lib changes** (measure.sh does this).
 
 ## Files in Scope
 
-- `lib/http_eio/server.ml` — accept loop, `run_https_connection`, the global
-  `t.mutex` + per-connection bookkeeping (`register_*`/`unregister_*`/
-  `record_*`). PRIMARY target for cross-domain contention: make stats/registry
-  per-domain or lock-free so handshakes scale. Mind `portable` when state
-  crosses domains.
-- `lib/http_eio/tls/tls_eio.ml` — OpenSSL Eio wrapper. `feed_bio`/`drain_bio`
-  allocate fresh Cstructs per call; reuse per-connection buffers. Handshake I/O
-  loop, `create_server_ssl` per connection.
-- `lib/http/tls/openssl.ml` — OpenSSL ctx/ssl bindings; check for global locks,
-  RNG setup, session-cache options.
-- `lib/http_eio/server.ml` domain plumbing (`additional_domains`,
-  `domain_policy`) — already supports `Additional n`.
-- `http-testsuite/lib/eta_server.ml` — wires `ETA_SERVER_DOMAINS` →
-  `start_https ~domain_manager ~domain_policy`. Harness config.
-- `http-testsuite/test/server_load/h1_tls_probe.ml` — the probe (harness).
-- Eta parallelism substrate (`Eta.Par`) and Eio domain/executor primitives —
-  prefer these over hand-rolled threading; honor mode/portability fences.
+- `lib/http_eio/h2_server_connection.ml` — H2 Eio server: stream demux, HEADERS/
+  DATA frame handling, flow control, response write path. PRIMARY target.
+- `lib/http/h2/*.ml` — H2 framing: HPACK decode/encode, DATA write, flow-control
+  accounting.
+- `lib/http_eio/tls/tls_eio.ml` — steady-state TLS record read/write path
+  (`single_read`/`single_write`), the per-request encrypt/decrypt overhead.
+- `lib/http_eio/server.ml` — HTTPS accept / ALPN h2 dispatch / connection
+  tracking (per-connection bookkeeping under the global mutex).
+- `lib/http_eio/server_request.ml`, `server_tracer.ml`, `server_semconv.ml` —
+  shared request plumbing/observability (check for per-request allocs/gates).
+- Eta parallelism substrate (`Eta.Par`) and Eio domain/executor primitives;
+  honor `portable`/mode fences for state crossing domains.
 
 ## Off Limits
 
-- Do not special-case benchmark paths/headers, or cheat oha.
-- Do not weaken TLS security: no downgrading ciphers/versions, disabling cert
-  validation, static/zero ephemeral keys, weak RNG, or skipping the server
-  signature. Faster must stay correct AND secure.
-- Do not break ALPN (h2/http1.1), SNI, connection tracking/shutdown semantics,
-  or the TLS interop suite.
-- Do not tune `h1_tls_probe.ml` handlers to shortcut work.
+- Do NOT tune the testsuite handlers (esp. `read_file` in static_1k) — that is
+  application code, not Eta. The static_1k p99 reflects handler file-I/O.
+- Do NOT special-case benchmark paths/headers or cheat oha.
+- Do NOT weaken TLS/H2 security or correctness: framing, flow-control, stream
+  lifecycle, ALPN, cancellation, or the interop/cve-regress suites.
+- Do NOT weaken keep-alive or chunked/streaming semantics.
 
 ## Constraints
 
 - Release profile only.
-- `.auto/checks.sh` (H1 server/client + shared HTTP unit suites) must pass every
-  kept iteration.
+- `.auto/checks.sh` (H1/H2 server/client + shared HTTP unit suites) must pass
+  every kept iteration.
 - Heavier conformance/interop suites (`dune build @interop @cve-regress`) must
   pass before any merge (run at finalize).
-- io_uring memlock is 8MB → keep domain count modest (≤ ~16).
+- io_uring memlock ~8MB → keep domain count modest (≤ ~16).
 - `log_experiment` must include ALL secondary metrics every call.
 
-## What's Been Tried
+## What's Been Tried / Inherited
 
-- Baseline #1 (single-domain, 1-core pin): p50 2.69ms — archived; target changed
-  to multi-domain throughput.
-- Multi-domain enablement (config, not a counted opt): 8 domains → p99 8.7→2.2ms,
-  rps +65%, but p50 stuck ~1.7ms (non-linear scaling = contention).
-- NEXT (ideas.md): (1) reuse per-connection feed/drain buffers in tls_eio.ml;
-  (2) cut/replace the global `t.mutex` per-connection bookkeeping with per-domain
-  state; (3) check OpenSSL RNG/global-lock contention.
+- Inherited from H1 TLS session (helps H2 TLS too): `SSL_SESS_CACHE_OFF`,
+  tls_eio buffer reuse, multi-domain HTTPS, `caml_enter_blocking_section`.
+- Candidate levers (see ideas.md): per-request TLS record write coalescing /
+  batching across streams; HPACK encode/decode alloc reuse; h2 response write
+  path (single writev for HEADERS+DATA where flow-control allows); shared-mutex
+  per-connection bookkeeping contention under many concurrent streams; Eio
+  scheduling hops per frame.
+
+## Noise
+
+echo_1k p99 is moderately noisy at low n; c=16 p=16 n=20000 REPS=3 median is
+stable (±a few %). rps_geomean and p50 are cleaner corroboration.

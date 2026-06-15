@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Correctness gate for the H1-latency autoresearch loop. Runs the eta-http
-# H1 server/client unit suites + shared HTTP suites in the release profile, so
-# any latency optimization that breaks H1 framing, keep-alive, chunked encoding,
-# or request/response handling fails and the candidate is reverted.
+# Correctness gate for the H2-TLS-latency autoresearch loop. Runs the eta-http
+# H1+H2 server/client unit suites + shared HTTP suites in the release profile
+# (test/http_eio includes the h2-multiplexer + hpack suites), so any latency
+# optimization that breaks H1/H2 framing, keep-alive, chunked encoding, flow
+# control, or request/response handling fails and the candidate is reverted.
 #
 # Heavier conformance/interop suites are NOT run per iteration - run them at
 # finalize / before merge.

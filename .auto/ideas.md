@@ -1,56 +1,45 @@
-# H1 TLS handshake — ideas backlog & findings
+# H2 TLS steady-state latency — ideas backlog
 
-## Status: key wins captured; benchmark at an environmental ceiling
+The gap is the shared H2+TLS request path (~2ms p99 at c=16 p=16 vs Go 0.74ms).
+Per-request cost lives in: TLS record read/decrypt, h2 frame parse + HPACK,
+stream demux, handler, h2 frame encode + HPACK, TLS record encrypt/write. Pick
+the per-request CPU/alloc/scheduling hops that don't scale.
 
-### Kept (committed)
-- **Multi-domain HTTPS** (`ETA_SERVER_DOMAINS`, eta_server → start_https): the
-  direct fix for the broad-suite single-domain ~15ms p99. ka_p99 45ms→~14ms.
-- **#11 buffer-reuse** (tls_eio feed/drain): RSS −23%, p50 down (noisy).
-- **#12 session-cache-OFF** (`SSL_SESS_CACHE_OFF`): drops the global per-handshake
-  session-cache write-lock; hs_p99 −11%, rps +4%. Resumption still via tickets.
+## 1. TLS record write coalescing / batching across streams
+Many concurrent streams each issue a TLS record write (encrypt + writev) for
+their HEADERS/DATA. Under p=16, that's many small TLS records per event-loop
+turn. tls_eio `single_write` is per-call. Batching/coalescing pending stream
+writes into fewer, larger TLS records (and fewer writev syscalls) could cut
+both per-record encrypt cost and syscalls — likely the biggest lever for
+multi-stream tail. Look at how h2_server_connection schedules writes and
+whether tls_eio has a write queue.
 
-### Tried & discarded / dead ends
-- **#14 caml_enter/leave_blocking_section around SSL_do_handshake**: correct
-  multicore change (long C call should release the runtime) but NEUTRAL at the
-  measured workload; only marginal at c=96/16-domains. Reverted. Worth landing
-  as a standalone correctness fix outside this benchmark.
-- **RSA blinding lock**: NOT the serializer — ECDSA cert scales the same (~1.7×
-  for 16 domains).
+## 2. HPACK encode/decode allocation reuse
+HPACK per-frame alloc (dynamic table indexing, header string allocs). Check
+lib/http/h2 hpack for per-request buffers; reuse across requests on a connection.
 
-### The ceiling (why further throughput work is unproductive here)
-Handshake throughput hard-caps at **~10,500 handshakes/s** and *degrades* with
-concurrency (c=48/96 lower than c=16), independent of oha cores (8→12), domain
-count (8→16), or runtime-release. So the cap is **environmental** — kernel
-loopback / single listening-socket accept queue / oha client-side handshake
-cost — not an Eta library bottleneck. Per-handshake server CPU (~0.17ms) is
-already competitive. Latency p50 (~1.4ms at c=16) is round-trip/scheduling
-bound.
+## 3. H2 response write path: HEADERS+DATA single writev
+Mirror the H1 plain win (write head+body in one writev). For a fixed echo
+response, HEADERS + DATA could be one write through the TLS record path (one
+encrypt + one writev), not two. Watch flow-control (DATA must respect window).
 
-### Untried (likely low value here, may matter elsewhere)
-- `SSL_CTX_set_num_tickets(ctx, 1)` — server issues 2 NewSessionTickets per
-  handshake (post-handshake CPU + a write); 1 is enough for most clients. Real
-  per-handshake work cut, but post-handshake so won't move handshake latency,
-  and won't lift the environmental throughput ceiling. Touches resumption.
-- Per-domain SSL_CTX — would help only if a shared-CTX lock were the bottleneck;
-  ECDSA result suggests it isn't.
-- Lift the benchmark ceiling (a faster/native multi-process TLS client, or
-  measure server CPU per handshake directly) to expose any remaining scaling.
+## 4. Per-connection bookkeeping contention (server.ml global mutex)
+Many concurrent streams register/deregister; under p=16 that's more per-conn
+lock ops. If the h2 path takes the global mutex per stream, contention could
+add tail. Make stats/registry per-domain or skip under no-otel.
 
-### h2o reference (.reference/h2o) findings
-- Confirms our config: h2o uses `SSL_SESS_CACHE_OFF` (src/ssl.c:134) and lock-free
-  resumption via ticket-key callbacks (`SSL_CTX_set_tlsext_ticket_key_cb`,
-  src/ssl.c:1124) rather than the locked per-process session cache. Matches #12.
-- h2o's perf lever = a **custom `BIO_METHOD`** (socket.c:391, `SSL_set_bio`):
-  read_bio/write_bio operate directly on h2o's own in-memory buffers, saving one
-  memcpy each way vs our mem-BIO + manual `BIO_write`/`BIO_read` pump. NOT worth
-  porting here: the saved copies are ~KB/µs per handshake, but our latency is
-  round-trip-bound (~1.4ms) and throughput is environment-ceilinged (~10.5k/s),
-  so the copies are not the bottleneck. Also a large/risky C↔Eio integration.
-- h2o uses **picotls** for TLS 1.3 (faster than OpenSSL 1.3) — separate library,
-  out of scope.
+## 5. Eio scheduling hops per frame
+Each frame read/write is a fiber scheduling round. Under many streams, the
+event-loop churn adds tail. Look for unnecessary Fiber.yield / forks per frame
+in the h2 read/write loops.
 
-### Recommendation
-The user's goal (H1 TLS p99 competitive) is addressed by multi-domain + the two
-library opts. Consider finalizing this session and, if desired, opening a new
-session for **H2 TLS p99 / steady-state echo_1k** (the other reported weak spot),
-which is a different code path (h2 multiplexer) not subject to this ceiling.
+## 6. Steady-state TLS single_read/single_write overhead
+tls_eio single_read does feed_bio (under read_mutex) + SSL_read (under ssl_mutex)
+per call. Per-request this is several mutex ops. Mostly uncontended (per-conn)
+so likely small, but verify under stream burst.
+
+## Off the table (don't chase)
+- static_1k handler file-I/O (off-limits).
+- Handshake cost (amortized away in keep-alive steady-state).
+- oha/client ceiling (oha on 8 cores, server multi-domain; steady-state, not
+  handshake-bound, so the env ceiling is much higher than the H1 TLS session).
