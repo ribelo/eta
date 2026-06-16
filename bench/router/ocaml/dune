@@ -1,0 +1,13 @@
+(executable
+ (name bench_router)
+ (libraries eta_router bench_lib memtrace))
+
+(executable
+ (name trace_summary)
+ (libraries memtrace))
+
+(rule
+ (alias bench)
+ (deps ../routes.txt ../paths.txt)
+ (action
+  (run ./bench_router.exe --quick)))

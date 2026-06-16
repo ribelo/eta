@@ -1,0 +1,4 @@
+(library
+ (name eta_router)
+ (public_name eta_router)
+ (synopsis "High-performance zero-copy URL path router"))

@@ -4,6 +4,7 @@
   (alias ../lib/eta/bench/bench)
   (alias ../lib/stream/bench/bench)
   (alias ../lib/schema/bench/bench)
+  (alias ../bench/router/ocaml/bench)
   (alias ../lib/otel/bench/bench)
   (alias ../lib/par/bench/bench)
   (alias ../lib/http_bench/bench)

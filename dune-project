@@ -261,6 +261,15 @@
   (dune (>= 3.0))))
 
 (package
+ (name eta_router)
+ (synopsis "High-performance zero-copy URL path router")
+ (description
+  "eta_router provides a radix-trie URL path router with named and catch-all parameters, designed for low allocation and idiomatic OxCaml code.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))))
+
+(package
  (name eta_schema)
  (synopsis "Schema definitions and JSON codecs for Eta")
  (description
