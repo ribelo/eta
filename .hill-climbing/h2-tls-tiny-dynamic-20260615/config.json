@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-06-15T10:20:05Z",
+  "direction": "lower",
+  "id": "h2-tls-tiny-dynamic-20260615",
+  "metric_name": "h2_tls_root_p99_us",
+  "metric_unit": "us"
+}

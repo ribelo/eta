@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-06-15T09:49:40Z",
+  "direction": "lower",
+  "id": "h2-echo-once-collapse-20260615",
+  "metric_name": "h2_echo_once_body_p99_ratio",
+  "metric_unit": "ratio"
+}

@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-06-15T08:57:45Z",
+  "direction": "lower",
+  "id": "h2-gap-attribution-20260615",
+  "metric_name": "custom_h2c_echo_1x16_t0_t3_p99_ms",
+  "metric_unit": "ms"
+}

@@ -30,3 +30,16 @@ autoresearch.ideas.md
 autoresearch.jsonl
 .scratch/hpack_ox/
 .scratch/h2_ox/
+
+# Local automation state
+.auto/
+
+# Hill-climbing source files are tracked; generated payloads are not.
+.hill-climbing/**/results/
+.hill-climbing/**/*-results/
+.hill-climbing/**/__pycache__/
+.hill-climbing/**/_build/
+.hill-climbing/**/_opam/
+.hill-climbing/**/.opam/
+.hill-climbing/**/*.bin
+.hill-climbing/**/*.exe

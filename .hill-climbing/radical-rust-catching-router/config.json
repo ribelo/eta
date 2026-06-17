@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-06-16T09:23:50Z",
+  "direction": "lower",
+  "id": "radical-rust-catching-router",
+  "metric_name": "ocaml_ns_per_lookup",
+  "metric_unit": "ns"
+}

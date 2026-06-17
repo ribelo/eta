@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-06-15T00:17:45Z",
+  "direction": "lower",
+  "id": "stubborn-crimson-latency",
+  "metric_name": "h1_tls_static_1k_p99_ms",
+  "metric_unit": "ms"
+}
