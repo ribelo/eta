@@ -15,12 +15,13 @@ let render_error = function
 
 let load source =
   Effect.named "config.load"
-    (Effect.sync_result (fun () ->
+    (Effect.sync (fun () ->
          match !source with
          | [] -> Ok { version = 999; endpoint = "fallback" }
          | result :: rest ->
              source := rest;
-             result))
+             result)
+     |> Effect.flatten_result)
 
 let schedule =
   Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.ms 20))

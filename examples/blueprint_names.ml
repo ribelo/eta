@@ -9,13 +9,16 @@ let parse_id raw =
   if String.equal raw "" then Error (`Bad_id "empty id") else Ok raw
 
 let load_config : (string, error) Effect.t =
-  Effect.named "config.load" (Effect.sync_result (fun () -> Ok "primary"))
+  Effect.named "config.load"
+    (Effect.sync (fun () -> Ok "primary")
+     |> Effect.flatten_result)
 
 let load_user id : (string, error) Effect.t =
   Effect.named "user.load"
-    (Effect.sync_result (fun () ->
+    (Effect.sync (fun () ->
          if String.equal id "missing" then Error (`Not_found id)
-         else Ok ("user:" ^ id)))
+         else Ok ("user:" ^ id))
+     |> Effect.flatten_result)
 
 let program raw =
   let open Syntax in

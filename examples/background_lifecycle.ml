@@ -23,9 +23,10 @@ let wait_started started =
       loop 1_000)
 
 let load_user id =
-  Effect.sync_result (fun () ->
+  Effect.sync (fun () ->
       if String.equal id "" then Error (`Missing_user id)
       else Ok ("user:" ^ id))
+  |> Effect.flatten_result
 
 let program started stopped =
   let open Syntax in

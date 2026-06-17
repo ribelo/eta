@@ -26,10 +26,17 @@ let pp_error fmt = function
 
 let program id =
   let open Syntax in
-  let acquire = Effect.sync_result acquire_db in
-  let release db = Effect.sync_result (fun () -> release_db db) in
+  let acquire =
+    Effect.sync acquire_db
+    |> Effect.flatten_result
+  in
+  let release db =
+    Effect.sync (fun () -> release_db db)
+    |> Effect.flatten_result
+  in
   let@ db = Effect.with_resource ~acquire ~release in
-  Effect.sync_result (fun () -> load_user db id)
+  Effect.sync (fun () -> load_user db id)
+  |> Effect.flatten_result
   |> Effect.retry (Schedule.recurs 3) (function
        | `Db_unavailable -> true
        | `Db_closed -> false)

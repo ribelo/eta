@@ -3,9 +3,10 @@ open Eta
 type error = [ `Missing_user of string ]
 
 let load_user id =
-  Effect.sync_result (fun () ->
+  Effect.sync (fun () ->
       if String.equal id "" then Error (`Missing_user id)
       else Ok ("user:" ^ id))
+  |> Effect.flatten_result
 
 let program id =
   let open Syntax in

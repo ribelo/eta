@@ -9,9 +9,10 @@ type error = [ `Mirror_down of string ]
 
 let request mirror path =
   Effect.named ("mirror." ^ mirror.name)
-    (Effect.sync_result (fun () ->
+    (Effect.sync (fun () ->
          if mirror.available then Ok (mirror.name ^ ":" ^ path)
-         else Error (`Mirror_down mirror.name)))
+         else Error (`Mirror_down mirror.name))
+     |> Effect.flatten_result)
 
 let program path =
   Effect.race

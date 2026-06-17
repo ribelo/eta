@@ -40,7 +40,10 @@ module Http = struct
   module Handler = struct
     let of_effect handler = handler
     let of_sync handler request = Effect.sync (fun () -> handler request)
-    let of_result handler request = Effect.sync_result (fun () -> handler request)
+
+    let of_result handler request =
+      Effect.sync (fun () -> handler request)
+      |> Effect.flatten_result
 
     let route_not_found _request =
       Effect.pure (Response.text ~status:404 "not found\n")
@@ -107,7 +110,7 @@ let update_shared_stats current batch =
   }
 
 let effect_of_result_thunk f =
-  Effect.sync f |> Effect.bind Effect.from_result
+  Effect.sync f |> Effect.flatten_result
 
 let acquire_current =
   effect_of_result_thunk Domain.open_db
@@ -126,15 +129,16 @@ let load_user_proposed id =
   let@ db =
     Effect.with_resource ~acquire:acquire_current ~release:release_current
   in
-  Effect.sync_result (fun () -> Domain.load_user db id)
+  Effect.sync (fun () -> Domain.load_user db id)
+  |> Effect.flatten_result
 
 let scoped_resource_current left right =
   Effect.scoped
     (Effect.acquire_release ~acquire:acquire_current ~release:release_current
     |> Effect.bind (fun db ->
            Effect.par
-             (Effect.sync_result (fun () -> Domain.load_user db left))
-             (Effect.sync_result (fun () -> Domain.load_user db right))))
+             (effect_of_result_thunk (fun () -> Domain.load_user db left))
+             (effect_of_result_thunk (fun () -> Domain.load_user db right))))
 
 let scoped_resource_proposed left right =
   let open Syntax in
@@ -143,8 +147,12 @@ let scoped_resource_proposed left right =
        Effect.acquire_release ~acquire:acquire_current
          ~release:release_current
      in
-     let* left = Effect.sync_result (fun () -> Domain.load_user db left)
-     and* right = Effect.sync_result (fun () -> Domain.load_user db right) in
+     let load id =
+       Effect.sync (fun () -> Domain.load_user db id)
+       |> Effect.flatten_result
+     in
+     let* left = load left
+     and* right = load right in
      Effect.pure (left, right))
 
 type service_value =
@@ -154,13 +162,14 @@ type service_value =
 let service_current env id =
   match (List.assoc_opt "clock" env, List.assoc_opt "db" env) with
   | Some (Clock clock), Some (Db db) ->
-      Effect.sync_result (fun () -> Domain.load_user_at clock db id)
+      effect_of_result_thunk (fun () -> Domain.load_user_at clock db id)
   | Some _, Some _ -> Effect.fail (`Bad_args "service type mismatch")
   | Some _, None | None, Some _ | None, None ->
       Effect.fail (`Bad_args "missing service")
 
 let service_proposed clock db id =
-  Effect.sync_result (fun () -> Domain.load_user_at clock db id)
+  Effect.sync (fun () -> Domain.load_user_at clock db id)
+  |> Effect.flatten_result
 
 let catch_recovery_current body_as_result fallback =
   body_as_result
@@ -192,13 +201,13 @@ let typed_failure_result_proposed body =
   body |> Effect.result
 
 let validation_boundary_current parse raw =
-  Effect.sync_result (fun () -> parse raw)
+  effect_of_result_thunk (fun () -> parse raw)
 
 let validation_boundary_proposed parse raw =
   Effect.from_result (parse raw)
 
 let sync_defect_current read_config =
-  Effect.sync_result (fun () ->
+  effect_of_result_thunk (fun () ->
       try Ok (read_config ()) with Failure message -> Error (`Bug message))
 
 let sync_defect_proposed read_config =
@@ -211,7 +220,8 @@ let retrying_call_current path =
        | _ -> false)
 
 let retrying_call_proposed path =
-  Effect.sync_result (fun () -> Domain.external_call path)
+  Effect.sync (fun () -> Domain.external_call path)
+  |> Effect.flatten_result
   |> Effect.retry (Eta.Schedule.recurs 3) (function
        | `Network -> true
        | _ -> false)
@@ -246,7 +256,9 @@ let schedule_retry_current next_delay retryable call =
   loop 3
 
 let schedule_retry_proposed policy retryable call =
-  Effect.sync_result call |> Effect.retry policy retryable
+  Effect.sync call
+  |> Effect.flatten_result
+  |> Effect.retry policy retryable
 
 let repeat_heartbeat_current policy tick =
   let rec loop driver =
@@ -269,7 +281,8 @@ let stream_current chunks =
 let stream_proposed chunks =
   chunks
   |> Stream.map_effect (fun bytes ->
-         Effect.sync_result (fun () -> Domain.decode_bytes bytes))
+         Effect.sync (fun () -> Domain.decode_bytes bytes)
+         |> Effect.flatten_result)
 
 let http_handler_current (request : Http.Request.t) =
   match request.path with
@@ -519,7 +532,8 @@ let all_collect_proposed checks =
   Effect.all checks
 
 let mirror_fetch path =
-  Effect.sync_result (fun () -> Domain.external_call path)
+  Effect.sync (fun () -> Domain.external_call path)
+  |> Effect.flatten_result
 
 let first_success outcomes =
   List.find_map
@@ -1156,11 +1170,13 @@ let tap_success_current audit body =
 let tap_success_proposed audit body =
   body |> Effect.tap audit
 
-let tap_sync_observer_current observe body =
-  body |> Effect.tap (fun value -> Effect.sync (fun () -> observe value))
+let sync_observer_current observe body =
+  body |> Effect.bind (fun value ->
+      Effect.sync (fun () -> observe value)
+      |> Effect.map (fun () -> value))
 
-let tap_sync_observer_proposed observe body =
-  body |> Effect.tap_sync observe
+let sync_observer_proposed observe body =
+  body |> Effect.tap (fun value -> Effect.sync (fun () -> observe value))
 
 let success_map_current project body =
   body |> Effect.bind (fun value -> Effect.pure (project value))
@@ -1203,7 +1219,8 @@ let snippets =
       code =
         {|let open Eta.Syntax in
 let@ db = Effect.with_resource ~acquire ~release in
-Effect.sync_result (fun () -> load_user db id)|};
+Effect.sync (fun () -> load_user db id)
+|> Effect.flatten_result|};
     };
     {
       area = "cached_resource";
@@ -1303,7 +1320,8 @@ Effect.scoped
       code =
         {|match (List.assoc_opt "clock" env, List.assoc_opt "db" env) with
 | Some (Clock clock), Some (Db db) ->
-    Effect.sync_result (fun () -> load_user_at clock db id)
+    Effect.sync (fun () -> load_user_at clock db id)
+    |> Effect.bind Effect.from_result
 | Some _, Some _ -> Effect.fail (`Bad_args "service type mismatch")
 | Some _, None | None, Some _ | None, None ->
     Effect.fail (`Bad_args "missing service")|};
@@ -1312,7 +1330,8 @@ Effect.scoped
       area = "service";
       variant = "proposed";
       code =
-        {|Effect.sync_result (fun () -> load_user_at clock db id)|};
+        {|Effect.sync (fun () -> load_user_at clock db id)
+|> Effect.flatten_result|};
     };
     {
       area = "catch_recovery";
@@ -1369,7 +1388,9 @@ Effect.scoped
     {
       area = "validation_boundary";
       variant = "current";
-      code = {|Effect.sync_result (fun () -> parse_id raw)|};
+      code =
+        {|Effect.sync (fun () -> parse_id raw)
+|> Effect.bind Effect.from_result|};
     };
     {
       area = "validation_boundary";
@@ -1380,9 +1401,10 @@ Effect.scoped
       area = "sync_defect";
       variant = "current";
       code =
-        {|Effect.sync_result (fun () ->
+        {|Effect.sync (fun () ->
   try Ok (read_config ())
-  with Failure message -> Error (`Bug message))|};
+  with Failure message -> Error (`Bug message))
+|> Effect.bind Effect.from_result|};
     };
     {
       area = "sync_defect";
@@ -1429,16 +1451,20 @@ Effect.named name
       code = {|load_user id |> Effect.tap audit|};
     };
     {
-      area = "tap_sync_observer";
+      area = "sync_observer";
       variant = "current";
       code =
         {|load_user id
-|> Effect.tap (fun user -> Effect.sync (fun () -> audit user))|};
+|> Effect.bind (fun user ->
+     Effect.sync (fun () -> audit user)
+     |> Effect.map (fun () -> user))|};
     };
     {
-      area = "tap_sync_observer";
+      area = "sync_observer";
       variant = "proposed";
-      code = {|load_user id |> Effect.tap_sync audit|};
+      code =
+        {|load_user id
+|> Effect.tap (fun user -> Effect.sync (fun () -> audit user))|};
     };
     {
       area = "success_map";
@@ -1517,7 +1543,8 @@ render_user user|};
       area = "retry";
       variant = "proposed";
       code =
-        {|Effect.sync_result (fun () -> external_call path)
+        {|Effect.sync (fun () -> external_call path)
+|> Effect.flatten_result
 |> Effect.retry policy retryable|};
     };
     {
@@ -1543,7 +1570,9 @@ loop 3|};
     both (recurs 3) (exponential ~factor:2.0 (Duration.ms 10))
     |> jittered ~min:1.0 ~max:2.0)
 in
-Effect.sync_result call |> Effect.retry policy retryable|};
+Effect.sync call
+|> Effect.flatten_result
+|> Effect.retry policy retryable|};
     };
     {
       area = "repeat_heartbeat";
@@ -1578,7 +1607,8 @@ loop (Schedule.start policy)|};
       code =
         {|stream
 |> Stream.map_effect (fun bytes ->
-     Effect.sync_result (fun () -> decode bytes))|};
+     Effect.sync (fun () -> decode bytes)
+     |> Effect.flatten_result)|};
     };
     {
       area = "batch";
@@ -2518,9 +2548,12 @@ let assert_no_explicit_bind snippet =
 
 let assert_expected_shape snippet =
   match (snippet.area, snippet.variant, metric snippet) with
-  | "resource", "proposed", (_, _, _, _, _, let_at, from_result) ->
-      if let_at <> 1 || from_result <> 0 then
-        failwith "resource proposed example should use let@ and sync_result"
+  | "resource", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
+      if bind <> 0 || let_star <> 0 || let_at <> 1 || from_result <> 0 then
+        failwith
+          "resource proposed example should use let@ plus sync/flatten_result";
+      if count_sub snippet.code "Effect.flatten_result" <> 1 then
+        failwith "resource proposed example should flatten a sync result"
   | "cached_resource", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
       if bind <> 0 || let_star <> 1 || let_at <> 0 || from_result <> 0 then
@@ -2574,9 +2607,11 @@ let assert_expected_shape snippet =
           "scoped_resource proposed example should prove acquire_release plus scoped"
   | "service", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
-        failwith "service proposed example should be an explicit dependency leaf";
+        failwith
+          "service proposed example should be explicit dependency plus sync/flatten_result leaf";
       if
         count_sub snippet.code "load_user_at clock db id" <> 1
+        || count_sub snippet.code "Effect.flatten_result" <> 1
         || count_sub snippet.code "List.assoc_opt" <> 0
         || count_sub snippet.code "Clock" <> 0
         || count_sub snippet.code "Db" <> 0
@@ -2640,17 +2675,15 @@ let assert_expected_shape snippet =
           "validation_boundary proposed example should directly lift one result";
       if
         count_sub snippet.code "Effect.from_result" <> 1
-        || count_sub snippet.code "Effect.sync_result" <> 0
         || count_sub snippet.code "fun ()" <> 0
       then
         failwith
-          "validation_boundary proposed example should use from_result instead of sync_result for an already-computed result"
+          "validation_boundary proposed example should use from_result for an already-computed result"
   | "sync_defect", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "sync_defect proposed example should be a direct sync leaf";
       if
         count_sub snippet.code "Effect.sync " <> 1
-        || count_sub snippet.code "Effect.sync_result" <> 0
         || count_sub snippet.code "try " <> 0
         || count_sub snippet.code "Error " <> 0
       then
@@ -2695,19 +2728,19 @@ let assert_expected_shape snippet =
       then
         failwith
           "tap_success proposed example should use Effect.tap instead of observe-and-return bind"
-  | ( "tap_sync_observer",
+  | ( "sync_observer",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith
-          "tap_sync_observer proposed example should be one sync observer";
+          "sync_observer proposed example should be one effectful tap observer";
       if
-        count_sub snippet.code "Effect.tap_sync" <> 1
-        || count_sub snippet.code "Effect.sync" <> 0
-        || count_sub snippet.code "Effect.tap " <> 0
+        count_sub snippet.code "Effect.tap " <> 1
+        || count_sub snippet.code "Effect.sync" <> 1
+        || count_sub snippet.code "Effect.bind" <> 0
       then
         failwith
-          "tap_sync_observer proposed example should use Effect.tap_sync instead of wrapping an observer in Effect.sync"
+          "sync_observer proposed example should use Effect.tap with explicit sync observer"
   | "success_map", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
@@ -2768,26 +2801,33 @@ let assert_expected_shape snippet =
         failwith
           "cooperative_yield proposed example should use Effect.yield instead of backend-specific sync yield"
   | (("retry" | "stream"), "proposed", (_, _, _, _, let_star, let_at, from_result))
-  | ( "blocking",
-      "proposed",
-      (_, _, _, _, let_star, let_at, from_result) ) ->
+    ->
       if let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith
           (Printf.sprintf
-             "%s proposed example should be a direct result-lifting pipeline"
+             "%s proposed example should use sync/flatten_result without bind"
+             snippet.area);
+      if count_sub snippet.code "Effect.flatten_result" <> 1 then
+        failwith
+          (Printf.sprintf "%s proposed example should flatten a sync result"
              snippet.area)
+  | "blocking", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
+      if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
+        failwith
+          "blocking proposed example should use Eta_blocking.run_result directly"
   | "schedule_retry", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith
-          "schedule_retry proposed example should use Schedule plus sync_result";
+          "schedule_retry proposed example should use Schedule plus sync/flatten_result";
       if
         count_sub snippet.code "Schedule." <> 1
         || count_sub snippet.code "recurs" <> 1
         || count_sub snippet.code "exponential" <> 1
         || count_sub snippet.code "jittered" <> 1
         || count_sub snippet.code "Effect.retry" <> 1
-        || count_sub snippet.code "Effect.sync_result" <> 1
+        || count_sub snippet.code "Effect.sync" <> 1
+        || count_sub snippet.code "Effect.flatten_result" <> 1
       then
         failwith
           "schedule_retry proposed example should prove composed Schedule retry"

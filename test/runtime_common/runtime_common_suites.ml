@@ -160,17 +160,21 @@ module Make (B : Runtime_backend.S) = struct
     check_ok Alcotest.int "value" 5 (B.run rt eff);
     Alcotest.(check (list int)) "tap saw pre-map value" [ 4 ] !observed
 
-  let test_tap_sync_runtime () =
+  let test_tap_observer_runtime () =
     B.with_runtime @@ fun _ctx rt ->
     let observed = ref [] in
     let eff =
       E.pure 10
-      |> E.tap_sync (fun n -> observed := n :: !observed)
+      |> E.tap (fun n ->
+             E.sync (fun () ->
+                 observed := n :: !observed;
+                 "ignored"))
       |> E.map (( + ) 1)
     in
     check_ok Alcotest.int "value" 11 (B.run rt eff);
     Alcotest.(check (list int)) "observer saw original value" [ 10 ] !observed;
-    B.run rt (E.pure 1 |> E.tap_sync (fun _ -> failwith "tap-sync crash"))
+    B.run rt
+      (E.pure 1 |> E.tap (fun _ -> E.sync (fun () -> failwith "tap crash")))
     |> expect_die
 
   let test_map_error () =
@@ -912,7 +916,8 @@ module Make (B : Runtime_backend.S) = struct
             test_from_result_and_exit_to_result;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_map_bind_tap_runtime;
-          Alcotest.test_case "tap_sync runtime" `Quick test_tap_sync_runtime;
+          Alcotest.test_case "tap observer runtime" `Quick
+            test_tap_observer_runtime;
           Alcotest.test_case "map_error" `Quick test_map_error;
           Alcotest.test_case "map_error maps full cause" `Quick
             test_map_error_maps_full_cause;

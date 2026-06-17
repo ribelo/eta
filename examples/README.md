@@ -2,8 +2,9 @@
 
 These examples are executable API evidence for the recommended Eta style. They
 prefer ordinary OCaml functions at the edges, lift expected typed failures with
-`Effect.sync_result`, use `let@` for resource lifetimes, and keep explicit
-bind calls out of user-facing code. They keep `Eta_eio.Runtime.create`
+`Effect.sync` followed by `Effect.flatten_result`, use `let@` for resource
+lifetimes, and keep explicit bind calls out of user-facing code. They keep
+`Eta_eio.Runtime.create`
 explicit so runtime capabilities and shutdown/drain ownership remain visible.
 
 Build all examples:

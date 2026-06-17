@@ -194,9 +194,8 @@ let bind (k) eff =
   Bind { inner = eff; k }
 
 let ( >>= ) eff (k) = bind k eff
-let sync_result f = sync f |> bind from_result
-let tap (k) eff = bind (fun value -> map (fun () -> value) (k value)) eff
-let tap_sync (observe) eff = tap (fun value -> sync (fun () -> observe value)) eff
+let flatten_result eff = bind from_result eff
+let tap (k) eff = bind (fun value -> map (fun _ -> value) (k value)) eff
 let seq next self = bind (fun () -> next) self
 
 let concat effects =

@@ -10,7 +10,8 @@ let load_user =
 
 let program seen =
   load_user
-  |> Effect.tap_sync (fun user -> seen := ("loaded:" ^ user.id) :: !seen)
+  |> Effect.tap (fun user ->
+         Effect.sync (fun () -> seen := ("loaded:" ^ user.id) :: !seen))
   |> Effect.tap (fun user ->
          Effect.event ~attrs:[ ("user.id", user.id) ] "user.loaded")
   |> Effect.map (fun user -> user.name)

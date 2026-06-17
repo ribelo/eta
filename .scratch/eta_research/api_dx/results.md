@@ -1,11 +1,29 @@
 # Eta API DX bucket 1 results
 
+## Supersession note: 2026-06-17
+
+The earlier additive recommendation for `Effect.sync_result` and
+`Effect.tap_sync` was reversed after checking the local ZIO and Effect-smol
+reference sources. Both ecosystems expose effectful `tap`, and neither exposes
+a public `sync_result` / `tap_sync`-style helper. Eta now removes those two
+derived helpers from the public surface.
+
+Current rule:
+
+- Use `Effect.sync` for the synchronous defect boundary.
+- Use `Effect.from_result` to lift an already-computed OCaml `result` into the
+  typed error channel.
+- Use `Effect.flatten_result` to flatten an effect that succeeds with `result`.
+- If a synchronous leaf returns `result`, spell both boundaries explicitly:
+  `Effect.sync f |> Effect.flatten_result`.
+- Use `Effect.tap` for success-side observation; wrap plain synchronous
+  observers with `Effect.sync`.
+
 ## Status
 
 Accepted small additive API changes:
 
-- `Effect.sync_result`
-- `Effect.tap_sync`
+- `Effect.flatten_result`
 - `Effect.recover`
 - `Effect.ignore_errors`
 - `Effect.result`
@@ -26,8 +44,10 @@ Accepted small additive API changes:
 - `Eta.Pubsub.close_effect`
 - `Eta.Pubsub.close_with_error_effect`
 
-No deletion was evaluated as accepted in this bucket. Reduction remains a later
-evidence question after better examples and API shape are established.
+Deleted after follow-up evidence:
+
+- `Effect.sync_result`
+- `Effect.tap_sync`
 
 ## Evidence
 

@@ -303,7 +303,7 @@ let add_subscription t =
           t.next_subscriber_id <- t.next_subscriber_id + 1;
           t.subscribers <- sub :: t.subscribers;
           Ok sub)
-  |> Effect.bind Effect.from_result
+  |> Effect.flatten_result
 
 let release_subscription sub =
   let t = sub.hub in

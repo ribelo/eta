@@ -1,8 +1,7 @@
 # Eta API Style
 
 This guide records the API shape supported by the current examples and DX gate.
-It is not a deletion plan. Existing APIs stay until a later evidence pass proves
-that a public path is both dominated and unnecessary.
+It is evidence-backed API guidance for application-facing Eta code.
 
 ## Preferred User Shape
 
@@ -14,13 +13,12 @@ Use ordinary OCaml at the boundary and lift into Eta deliberately:
   leaf.
 - `Effect.sync` for synchronous leaves where raised exceptions should be Eta
   defects.
-- `Effect.sync_result` for synchronous leaves with expected typed failures.
+- `Effect.flatten_result` after `Effect.sync` when a synchronous leaf returns
+  expected typed failures as `result`.
 - `Effect.yield` when an Eta workflow should cooperatively yield to the active
   runtime backend.
 - `Effect.tap` for success-side observers that should preserve the original
-  value.
-- `Effect.tap_sync` for synchronous success-side observers that should preserve
-  the original value without a local `Effect.sync` wrapper.
+  value. Wrap plain synchronous observers with `Effect.sync`.
 - `Effect.catch` for effectful typed failure recovery inside the Eta blueprint.
 - `Effect.recover` for pure typed failure recovery that should produce a
   success value without a local `Effect.pure` wrapper.
@@ -232,9 +230,10 @@ success-observation site. Use it when an effectful observer should run on
 success and the original success value should continue unchanged. Use `let*`
 when later work actually depends on the observer's result.
 
-`Effect.tap_sync` is not a replacement for `Effect.tap`. Use `tap_sync` for
-ordinary synchronous observers; use `tap` when the observer itself is an Eta
-effect.
+`Effect.tap` is effectful by design. The observer's success value is ignored,
+but its typed failure, defect, interruption, resource lifecycle, and
+observability still matter. For a plain synchronous observer, wrap it explicitly:
+`Effect.tap (fun value -> Effect.sync (fun () -> observe value))`.
 
 `Eta.Syntax.(let+)` is not replaced by spelling `bind` plus `pure` for ordinary
 success-value projection. Use `let+` when the continuation is pure; use `let*`
@@ -279,18 +278,20 @@ effect. Use `with_resource` when cleanup depends on a newly acquired resource,
 and `acquire_release` / `scoped` when a resource should live until a wider
 scope boundary.
 
-`Effect.sync` is not replaced by `Effect.sync_result`. Use `sync` when
-exceptions should be unchecked defects. Use `sync_result` only when the leaf
-operation returns expected typed failures as `result`; the sync-defect example
-keeps unexpected exceptions in `Cause.Die`.
+`Effect.sync` is the synchronous defect boundary. Use it when exceptions should
+be unchecked defects. When the leaf operation returns expected typed failures
+as `result`, keep the pipe-first boundary explicit:
+`Effect.sync f |> Effect.flatten_result`. The sync-defect example keeps
+unexpected exceptions in `Cause.Die`.
 
 `Effect.yield` is not replaced by `Effect.sync Eio.Fiber.yield`. Use `yield`
 when a blueprint needs a cooperative scheduling point; it delegates to the
 active runtime backend instead of hard-coding Eio in user workflow code.
 
-`Effect.from_result` is not replaced by `Effect.sync_result`. Use `from_result`
-for pure validation or parsing results already computed outside a synchronous
-leaf; the validation-boundary example keeps that distinction visible.
+`Effect.from_result` is the typed-failure lifting boundary. Use it directly for
+pure validation or parsing results already computed outside a synchronous leaf;
+after `Effect.sync`, use `Effect.flatten_result` to lift a synchronous leaf's
+returned `result`.
 
 Eta does not add `Layer`, `Context`, `Tag`, `Effect.provide`, or an environment
 type for application services. The service-composition example shows ordinary
@@ -493,7 +494,7 @@ such as pools.
 
 `Eta_blocking.result` and `Eta_blocking.result_timeout` remain short aliases.
 New examples prefer `Eta_blocking.run_result` and `run_result_timeout` because
-those names match `Effect.sync_result` and make the blocking boundary explicit.
+those names make the blocking boundary explicit.
 
 `Supervisor.scoped { run = ... }` remains the preferred nursery entry shape when
 code needs child handles. The body record is not just syntax noise: it carries a
@@ -520,7 +521,7 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `sync`, `sync_result`, `yield`, `tap`, `tap_sync`, `catch`, `recover`, `ignore_errors`, `result`, `retry`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `all`, `with_resource`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.send`, `Eta.Queue.recv`, `Eta.Queue.try_send`, `Eta.Queue.try_recv`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `named_kind`, `fn`, `with_error_renderer`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
+| Preferred application API | `pure`, `fail`, `from_result`, `flatten_result`, `sync`, `yield`, `tap`, `catch`, `recover`, `ignore_errors`, `result`, `retry`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `all`, `with_resource`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.send`, `Eta.Queue.recv`, `Eta.Queue.try_send`, `Eta.Queue.try_recv`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `named_kind`, `fn`, `with_error_renderer`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
 | Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `for_each_par`, `for_each_par_bounded`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_renderer`, `?error_renderer` on `named` / `named_kind` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), unbounded handoff (`Queue.create`, `Queue.send`, `Queue.recv`, `Queue.try_send`, `Queue.try_recv`, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`scoped`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Diagnostic/preflight surface | `name`, `collect_names` |
 | Low-level or advanced surface | `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
@@ -557,9 +558,9 @@ What the migration proved:
 
 - `Eta.Syntax.(let*)` and `let+` are enough for normal dependent sequencing and
   projection in CLI glue, daemon RPCs, STT flows, stream sessions, and tests.
-- `Effect.sync_result` is the right spelling for synchronous leaves that
-  already compute expected failures as `result`. It replaced repeated
-  `sync |> map Result.map_error |> bind from_result` shapes.
+- Synchronous leaves that already compute expected failures as `result` should
+  use `Effect.sync f |> Effect.flatten_result`. This keeps the defect boundary
+  and typed-error lifting boundary visible without exposing `bind`.
 - `Effect.with_resource` is the right first-contact lifecycle spelling for
   body-bounded acquisition/release. It made Pulse clients, record streams, and
   keyboard monitors read as scoped resource use rather than exposed primitive
@@ -577,7 +578,8 @@ The migration also found semantic bugs, not just cosmetic noise:
 
 - Pulse connection failures were raised with `failwith`, which surfaced as
   unchecked defects instead of typed `Pulse_error` values. Rewriting connection
-  acquisition around `sync_result` preserved the expected typed channel.
+  acquisition to return `result` under `Effect.sync` and then lift it with
+  `Effect.flatten_result` preserved the expected typed channel.
 - Graphical session detection for text injection used `failwith` when no
   display was detected. Rewriting it as an Eta effect preserved the typed
   `Injection_error` channel.
@@ -627,9 +629,9 @@ What the migration proved:
   that already return typed `result`s. Exergy had many local storage helpers
   where manual `Ok`/`Error` unwrapping disappeared once result-returning
   blocking helpers were used directly.
-- `Effect.sync_result` is useful at synchronous parser boundaries that may
-  raise while decoding JSON but should report expected parse failures as typed
-  provider errors.
+- Synchronous parser boundaries that may raise while decoding JSON should keep
+  exceptions as defects with `Effect.sync`, then lift expected parse failures
+  with `Effect.flatten_result`.
 - `Effect.from_result` is the right spelling for already-computed parse,
   validation, and storage results inside a workflow. It replaced repeated
   `match result with Ok -> pure | Error -> fail` branches without hiding the

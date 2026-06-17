@@ -24,9 +24,10 @@ let load_user id =
   Effect.fn ~kind:Tracer.Client
     ~attrs:[ ("component", "accounts"); ("operation", span_name) ]
     __POS__ span_name
-    (Effect.sync_result (fun () ->
+    (Effect.sync (fun () ->
          if String.equal id "" then Error (`Invalid_user "empty id")
-         else Ok (span_name, "user:" ^ id)))
+         else Ok (span_name, "user:" ^ id))
+     |> Effect.flatten_result)
 
 let program =
   let open Syntax in

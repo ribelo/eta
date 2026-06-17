@@ -138,29 +138,32 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "value" 5 (run_ok rt eff);
     Alcotest.(check (list int)) "tap saw pre-map value" [ 4 ] !observed
 
-  let test_effect_tap_sync_runtime () =
+  let test_effect_tap_observer_runtime () =
     B.with_runtime @@ fun _ctx rt ->
     let observed = ref [] in
     let eff =
       Effect.pure 10
-      |> Effect.tap_sync (fun n -> observed := n :: !observed)
+      |> Effect.tap (fun n ->
+             Effect.sync (fun () ->
+                 observed := n :: !observed;
+                 "ignored"))
       |> Effect.map (( + ) 1)
     in
     Alcotest.(check int) "value" 11 (run_ok rt eff);
     Alcotest.(check (list int)) "observed" [ 10 ] !observed;
     let defect =
       Effect.pure 1
-      |> Effect.tap_sync (fun _ -> failwith "tap-sync crash")
+      |> Effect.tap (fun _ -> Effect.sync (fun () -> failwith "tap crash"))
     in
     match B.run rt defect with
     | Exit.Error (Cause.Die { exn; _ }) ->
         Alcotest.(check string)
-          "observer defect" "Failure(\"tap-sync crash\")"
+          "observer defect" "Failure(\"tap crash\")"
           (Printexc.to_string exn)
     | Exit.Error cause ->
         Alcotest.failf "expected Die, got %a"
           (Cause.pp pp_hidden) cause
-    | Exit.Ok _ -> Alcotest.fail "expected tap_sync defect"
+    | Exit.Ok _ -> Alcotest.fail "expected tap defect"
 
   let test_effect_catch_success_and_failure () =
     B.with_runtime @@ fun _ctx rt ->
@@ -267,13 +270,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.run rt (Effect.from_result (Error "bad")))
       "bad"
 
-  let test_effect_sync_result () =
+  let test_effect_flatten_result () =
     B.with_runtime @@ fun _ctx rt ->
-    Alcotest.(check int) "ok" 7 (run_ok rt (Effect.sync_result (fun () -> Ok 7)));
+    let lift f = Effect.sync f |> Effect.flatten_result in
+    Alcotest.(check int) "ok" 7 (run_ok rt (lift (fun () -> Ok 7)));
     expect_typed_failure_eq Alcotest.string
-      (B.run rt (Effect.sync_result (fun () -> Error "bad")))
+      (B.run rt (lift (fun () -> Error "bad")))
       "bad";
-    match B.run rt (Effect.sync_result (fun () -> failwith "boom")) with
+    match B.run rt (lift (fun () -> failwith "boom")) with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
@@ -1778,8 +1782,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
-          Alcotest.test_case "tap_sync runtime" `Quick
-            test_effect_tap_sync_runtime;
+          Alcotest.test_case "tap observer runtime" `Quick
+            test_effect_tap_observer_runtime;
           Alcotest.test_case "catch success and failure" `Quick
             test_effect_catch_success_and_failure;
           Alcotest.test_case "recover" `Quick test_effect_recover;
@@ -1789,7 +1793,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
-          Alcotest.test_case "sync_result" `Quick test_effect_sync_result;
+          Alcotest.test_case "flatten_result" `Quick
+            test_effect_flatten_result;
           Alcotest.test_case "exit to_result faithful subset" `Quick
             test_exit_to_result_only_converts_success_and_single_typed_failure;
           Alcotest.test_case "map_error maps full cause" `Quick

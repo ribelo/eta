@@ -37,9 +37,18 @@ val unit : (unit, 'err) t
 val from_result : ('a, 'err) result -> ('a, 'err) t
 (** Lift an already-computed OCaml [result] into Eta.
 
-    Use this for pure validation/parsing results. For a synchronous leaf that
-    computes a [result], prefer {!sync_result} so the leaf still runs under
-    Eta's defect and cancellation boundary. *)
+    Use this for pure validation/parsing results. *)
+
+val flatten_result : (('a, 'err) result, 'err) t -> ('a, 'err) t
+(** Flatten an effect that succeeds with an OCaml [result].
+
+    This is the pipe-friendly companion to {!from_result}. Use it after
+    {!sync} when a synchronous leaf returns expected typed failures as
+    [result]:
+
+    {[
+      Effect.sync f |> Effect.flatten_result
+    ]} *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an eff. Use {!Effect.named} to
@@ -47,17 +56,10 @@ val sync : (unit -> 'a) -> ('a, 'err) t
 
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
     as {!Cause.Die}. They are not converted into the typed error channel and
-    are not caught by {!catch}. Return an explicit [result] and use
-    {!sync_result} when a synchronous leaf operation has an expected typed
-    failure.
+    are not caught by {!catch}. If a synchronous leaf operation has an expected
+    typed failure, return an explicit [result] and use {!flatten_result} after
+    this boundary.
     Runtime cancellation exceptions remain interruption. *)
-
-val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
-(** [sync_result f] lifts a synchronous leaf that returns an OCaml [result].
-    [Ok value] becomes success and [Error err] becomes a typed failure.
-
-    Exceptions raised by [f] remain unchecked defects, exactly like {!sync};
-    this helper is only shorthand for expected typed leaf failures. *)
 
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.
@@ -83,14 +85,12 @@ val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
     and documentation should usually use the sequencing operator from
     {!Syntax}. *)
 
-val tap : ('a -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
-(** Run an effectful observer on success and keep the original success value. *)
+val tap : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effectful observer on success and keep the original success value.
 
-val tap_sync : ('a -> unit) -> ('a, 'err) t -> ('a, 'err) t
-(** Run a synchronous observer on success and keep the original success value.
-
-    Exceptions raised by the observer are unchecked defects, matching {!sync}.
-    Use {!tap} when the observer itself is an Eta effect. *)
+    The observer's success value is ignored, but its typed failure, defect,
+    interruption, resource lifecycle, and runtime observability still matter.
+    Wrap a plain synchronous observer with {!sync}. *)
 
 val seq : (unit, 'err) t -> (unit, 'err) t -> (unit, 'err) t
 val concat : (unit, 'err) t list -> (unit, 'err) t

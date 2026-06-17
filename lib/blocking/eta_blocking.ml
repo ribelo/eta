@@ -129,7 +129,7 @@ let run ?pool ?(name = "blocking") ?on_cancel f =
   with exn -> Expert.exit_of_exn context exn
 
 let run_result ?pool ?name ?on_cancel f =
-  run ?pool ?name ?on_cancel f |> Eta.Effect.bind Eta.Effect.from_result
+  run ?pool ?name ?on_cancel f |> Eta.Effect.flatten_result
 
 let result = run_result
 

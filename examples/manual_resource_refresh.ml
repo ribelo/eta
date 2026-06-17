@@ -15,12 +15,13 @@ let render_error = function
 
 let load source =
   Effect.named "manual.config.load"
-    (Effect.sync_result (fun () ->
+    (Effect.sync (fun () ->
          match !source with
          | [] -> Error (`Reload_failed "empty source")
          | result :: rest ->
              source := rest;
-             result))
+             result)
+     |> Effect.flatten_result)
 
 let refresh_catching resource =
   Resource.refresh resource

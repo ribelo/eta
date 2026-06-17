@@ -48,7 +48,10 @@ open Eta
 
 let program () =
   let open Syntax in
-  (let* n = Effect.sync_result (fun () -> Ok (1 + 1)) in
+  (let* n =
+     Effect.sync (fun () -> Ok (1 + 1))
+     |> Effect.flatten_result
+   in
    if n < 3 then Effect.fail `Too_small else Effect.pure n)
   |> Effect.recover (fun `Too_small -> 3)
 
@@ -106,9 +109,8 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 ## API surface footguns
 
 - `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
-  failures. Catch expected errors by returning `result` and lifting with
-  `Effect.sync_result`. Use `Effect.from_result` only when the `result` has
-  already been computed outside the synchronous leaf.
+  failures. Catch expected errors by returning `result` from the synchronous
+  leaf, then use `Effect.sync f |> Effect.flatten_result`.
 - `Effect.catch` handles typed failures only; it does not catch defects,
   interruption, or finalizer failures.
 - `Effect.ignore_errors` is only for best-effort unit effects. It suppresses
@@ -241,7 +243,8 @@ Use `let@` from `Eta.Syntax` to keep callback-shaped lifecycle code flat:
 let load_user id =
   let open Eta.Syntax in
   let@ db = with_db in
-  Effect.sync_result (fun () -> Db.load_user db id)
+  Effect.sync (fun () -> Db.load_user db id)
+  |> Effect.flatten_result
 ```
 
 Use `Effect.acquire_release` directly when a resource should live until an
@@ -365,10 +368,10 @@ subscribers.
 
 Wrap Eio operations in `Effect.sync` at the leaf when they need Eta tracing
 names or defect diagnostics. If a synchronous leaf has expected failures, return
-an ordinary OCaml `result` and lift it with `Effect.sync_result`; exceptions
-remain unchecked defects. If a protocol is reusable and owns lifecycle
-semantics, prefer a focused module such as `Resource` or `Pubsub` rather than a
-generic concurrency-data wrapper.
+an ordinary OCaml `result`, then flatten it with `Effect.flatten_result`;
+exceptions remain unchecked defects. If a protocol is reusable and owns
+lifecycle semantics, prefer a focused module such as `Resource` or `Pubsub`
+rather than a generic concurrency-data wrapper.
 
 ## Redacted Values
 

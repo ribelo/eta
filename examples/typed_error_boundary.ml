@@ -17,7 +17,8 @@ let load_user = function
 let domain_program raw =
   let open Syntax in
   let* id = Effect.from_result (parse_id raw) in
-  Effect.sync_result (fun () -> load_user id)
+  Effect.sync (fun () -> load_user id)
+  |> Effect.flatten_result
 
 let render_domain_error = function
   | `Invalid_id reason -> "invalid:" ^ reason

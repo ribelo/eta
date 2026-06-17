@@ -10,10 +10,11 @@ let parse_id = function
 
 let user_request id =
   let attempts = ref 0 in
-  Effect.sync_result (fun () ->
+  Effect.sync (fun () ->
       incr attempts;
       if !attempts = 1 then Error `Network
       else Ok (Printf.sprintf "user:%s" id))
+  |> Effect.flatten_result
 
 let program args =
   let open Syntax in

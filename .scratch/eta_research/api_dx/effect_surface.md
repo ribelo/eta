@@ -1,9 +1,13 @@
 # Effect surface audit
 
 This audit is derived from `lib/eta/effect.mli` as of the current API-DX pass.
-The interface exposes 74 `val` entries. The current evidence does not prove any
-public value removable. It does support a smaller recommended user style and a
-clearer split between preferred, semantic, and low-level surfaces.
+The interface exposes 73 `val` entries. A later reference pass against local ZIO
+and Effect-smol sources proved that the previous `sync_result` and `tap_sync`
+helpers were dominated aliases, not primitives. They were removed from the
+public surface. The OCaml pipe-first replacement is `flatten_result`, which
+keeps the `sync` boundary visible without exposing `bind`. The remaining
+evidence supports a smaller recommended user style and a clearer split between
+preferred, semantic, and low-level surfaces.
 
 ## Preferred user surface
 
@@ -12,9 +16,9 @@ the promoted examples or directly support the same style.
 
 | Group | Values | Evidence |
 | --- | --- | --- |
-| Constructors and typed leaves | `pure`, `fail`, `unit`, `from_result`, `sync`, `sync_result` | Examples use `pure`, `fail`, `from_result`, and `sync_result`; validation-boundary proves `from_result` for pure validation; sync-defect proves `sync` for defect-capturing leaves. |
+| Constructors and typed leaves | `pure`, `fail`, `unit`, `from_result`, `flatten_result`, `sync` | Examples use `pure`, `fail`, `from_result`, `flatten_result`, and `sync`; validation-boundary proves `from_result` for pure validation; sync-defect proves `sync` for defect-capturing leaves; synchronous leaves that return `result` now compose `sync` with `flatten_result` explicitly. |
 | Runtime scheduling | `yield` | The cooperative-yield bucket proves blueprint-level scheduling yield should use the runtime contract instead of hard-coding `Eio.Fiber.yield` in user workflow code. |
-| Syntax-backed sequencing | `map`, `tap`, `tap_sync` | Public primitives remain, but user docs prefer `Eta.Syntax.(let+)` / `let*` for ordinary sequencing; the map-projection example uses `let+` for pure projection, the tap-success example uses `tap` for effectful success-side observation, and the tap-sync-observer example uses `tap_sync` for synchronous observation without a local `Effect.sync` wrapper. Direct `bind` is not needed in examples. |
+| Syntax-backed sequencing | `map`, `tap` | Public primitives remain, but user docs prefer `Eta.Syntax.(let+)` / `let*` for ordinary sequencing; the map-projection example uses `let+` for pure projection, and the tap-success/sync-observer examples use `tap` for success-side observation while preserving the original value. Direct `bind` is not needed in examples. |
 | Typed recovery and materialization | `catch`, `recover`, `ignore_errors`, `result`, `map_error`, `tap_error` | API-DX evidence keeps `catch` for effectful recovery, `recover` for pure recovery, `ignore_errors` for best-effort unit effects, and `result` for keeping success/failure as data inside the workflow; error mapping/observation is a distinct typed-error capability. |
 | Time and retry | `retry`, `delay`, `timeout`, `timeout_as`, `repeat` | Resource/CLI/test examples use `retry`, `delay`, and `timeout_as`; the repeat-heartbeat example uses `repeat`; `timeout` is the same semantic family. |
 | Interruption control | `uninterruptible` | The critical-commit example proves cancellation can be deferred around a small branch without changing the typed error channel. |
@@ -50,18 +54,20 @@ otherwise.
 
 The minimum user-facing Eta style is smaller than the raw `Effect` signature:
 
-- build leaves with `pure`, `fail`, `from_result`, `sync`, and `sync_result`;
+- build leaves with `pure`, `fail`, `from_result`, `flatten_result`, and
+  `sync`;
 - use `Effect.sync` when raised exceptions should remain unchecked defects;
+- when a synchronous leaf returns expected typed failures as `result`, use
+  `Effect.sync f |> Effect.flatten_result`;
 - use `Effect.yield` when a blueprint should cooperatively yield to the active
   runtime backend;
 - use `Effect.from_result` for already-computed validation/parsing results
-  instead of wrapping them in `Effect.sync_result`;
+  instead of wrapping them in a synchronous leaf;
 - sequence with `Eta.Syntax` rather than direct `bind`;
 - use `Eta.Syntax.(let+)` for pure success-value projection instead of `bind`
   plus `pure`;
-- use `Effect.tap` for effectful success-side observers and
-  `Effect.tap_sync` for synchronous success-side observers that should preserve
-  the original value;
+- use `Effect.tap` for success-side observers that should preserve the original
+  value; wrap plain synchronous observers with `Effect.sync`;
 - use `Effect.catch` for effectful typed failure recovery and
   `Effect.recover` for pure typed failure recovery inside an Eta blueprint
   instead of moving expected failures into successful `result` values;
@@ -104,9 +110,10 @@ description, bounded recurrence, deterministic runtime jitter, and interpreter
 driver state that recursive retry loops and ad hoc sleeps would otherwise force
 users to reimplement. The validation-boundary bucket keeps `Effect.from_result`
 visible because pure validation/parsing results that are already computed
-should be lifted directly, not wrapped in a synchronous leaf. Use
-`Effect.sync_result` when the leaf itself computes a result under Eta's defect
-and cancellation boundary. The sync-defect bucket keeps `Effect.sync` visible
+should be lifted directly, not wrapped in a synchronous leaf. When the leaf
+itself computes a result under Eta's defect and cancellation boundary, compose
+`Effect.sync` with `Effect.flatten_result` explicitly. The sync-defect bucket keeps
+`Effect.sync` visible
 because unexpected exceptions from synchronous leaves should surface as
 `Cause.Die`, not be converted to typed domain failures with ad hoc `try` /
 `Error` wrappers. The cooperative-yield bucket keeps `Effect.yield` visible
@@ -114,13 +121,13 @@ because workflow scheduling points should use Eta's runtime contract, not a
 backend-specific `Effect.sync Eio.Fiber.yield` leaf. The map-projection bucket keeps `Eta.Syntax.(let+)`
 visible because pure success-value projection should not require spelling
 `bind` plus `pure`. Use `let*` when the continuation returns another effect;
-use `let+` when it is pure. The tap-success bucket keeps `Effect.tap` visible because
-effectful success-side observation should not require spelling the primitive
+use `let+` when it is pure. The tap-success bucket keeps `Effect.tap` visible
+because success-side observation should not require spelling the primitive
 `bind` plus `map` pattern every time an observer preserves the original value.
-The tap-sync-observer bucket keeps `Effect.tap_sync` visible because ordinary
-synchronous observers should not require wrapping the observer body in
-`Effect.sync`. Use `let*` when later work depends on the observer's result; use
-`tap` for effectful observation and `tap_sync` for synchronous observation.
+The sync-observer bucket proves that plain synchronous observers are still
+expressible with `Effect.tap (fun value -> Effect.sync (fun () -> observe
+value))`. Use `let*` when later work depends on the observer's result; use
+`tap` when the observer is part of the Eta workflow.
 The catch-recovery bucket keeps `Effect.catch` visible because expected domain
 failures should remain in Eta's typed error channel, not be encoded as
 successful `result` values just to branch with `bind`. The same example also

@@ -9,7 +9,8 @@ let parse_id = function
   | id -> Ok id
 
 let lookup_user id =
-  Effect.sync_result (fun () -> Ok ("user:" ^ id))
+  Effect.sync (fun () -> Ok ("user:" ^ id))
+  |> Effect.flatten_result
 
 let program raw =
   let open Syntax in

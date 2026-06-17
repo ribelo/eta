@@ -8,7 +8,10 @@ type t = Request.t -> (Response.t, Error.t) Eta.Effect.t
 
 let of_effect handler = handler
 let of_sync handler request = Eta.Effect.sync (fun () -> handler request)
-let of_result handler request = Eta.Effect.sync_result (fun () -> handler request)
+let of_result handler request =
+  Eta.Effect.sync (fun () -> handler request)
+  |> Eta.Effect.flatten_result
+
 let map_error f handler request = handler request |> Eta.Effect.map_error f
 
 let default_reason = function
