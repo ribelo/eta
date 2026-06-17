@@ -1,0 +1,34 @@
+(library
+ (name handled_effect_r_channel)
+ (wrapped true)
+ (modules services env_row_baseline handled_combined handled_separate)
+ (libraries handled_effect))
+
+(executable
+ (name runtime_smoke)
+ (modules runtime_smoke)
+ (libraries handled_effect_r_channel))
+
+(executable
+ (name neg_zero_arg_auto_di)
+ (modules neg_zero_arg_auto_di)
+ (libraries handled_effect_r_channel)
+ (enabled_if (= %{env:HANDLED_EFFECT_NEG=} zero_arg_auto_di)))
+
+(executable
+ (name neg_escape_handler)
+ (modules neg_escape_handler)
+ (libraries handled_effect_r_channel)
+ (enabled_if (= %{env:HANDLED_EFFECT_NEG=} escape_handler)))
+
+(executable
+ (name neg_continue_missing_forward_handler)
+ (modules neg_continue_missing_forward_handler)
+ (libraries handled_effect_r_channel)
+ (enabled_if (= %{env:HANDLED_EFFECT_NEG=} continue_missing_forward_handler)))
+
+(executable
+ (name neg_eio_fiber_capture)
+ (modules neg_eio_fiber_capture)
+ (libraries handled_effect_r_channel eio_main eio)
+ (enabled_if (= %{env:HANDLED_EFFECT_NEG=} eio_fiber_capture)))
