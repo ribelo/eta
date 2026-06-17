@@ -442,8 +442,7 @@ let close_mailboxes t =
 let shutdown_http_client t =
   ignore
     (Eta.Runtime.run t.flush_rt
-       (Eta_http.Client.shutdown t.http_client
-       |> Eta.Effect.catch (fun _ -> Eta.Effect.unit))
+       (Eta_http.Client.shutdown t.http_client |> Eta.Effect.ignore_errors)
       : (unit, unit) Eta.Exit.t)
 
 let duration_of_timeout_s timeout_s =

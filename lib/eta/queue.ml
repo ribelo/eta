@@ -188,6 +188,10 @@ let close_with reason t =
 let close t = close_with Clean t
 let close_with_error t error = close_with (Error error) t
 
+let close_effect t = Effect.sync (fun () -> close t)
+let close_with_error_effect t error =
+  Effect.sync (fun () -> close_with_error t error)
+
 let stats t =
   Sync_lock.use t.mutex @@ fun () ->
   {

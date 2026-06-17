@@ -55,7 +55,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let workers =
       List.init 20 (fun _ ->
           Pool.with_resource pool (fun _conn -> Effect.unit)
-          |> Effect.catch (fun _ -> Effect.unit))
+          |> Effect.ignore_errors)
     in
     (match B.run rt (Effect.all workers) with
     | Exit.Ok _ -> ()

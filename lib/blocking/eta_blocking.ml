@@ -128,10 +128,12 @@ let run ?pool ?(name = "blocking") ?on_cancel f =
        else body ())
   with exn -> Expert.exit_of_exn context exn
 
-let result ?pool ?name ?on_cancel f =
+let run_result ?pool ?name ?on_cancel f =
   run ?pool ?name ?on_cancel f |> Eta.Effect.bind Eta.Effect.from_result
 
-let result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
+let result = run_result
+
+let run_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
   let name = Option.value ~default:"blocking" name in
   let cancel_hook_called = Atomic.make false in
   let on_cancel_once =
@@ -235,3 +237,5 @@ let result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
     ignore (call_cancel_hook_if_started ());
     cancel_background ();
     raise exn
+
+let result_timeout = run_result_timeout

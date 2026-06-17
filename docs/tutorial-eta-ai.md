@@ -202,8 +202,9 @@ value, but it is not the default OpenAI provider path:
 For streaming Responses, request a stream and then pull provider events:
 
     let read_openai_stream ~client ~api_key request =
-      Eta_ai_openai.stream_responses client ~api_key request
-      |> Eta.Effect.bind Eta_ai.read_stream_events
+      let open Eta.Syntax in
+      let* stream = Eta_ai_openai.stream_responses client ~api_key request in
+      Eta_ai.read_stream_events stream
 
 ## OpenAI-Compatible Provider Example
 
@@ -322,8 +323,9 @@ Streaming Anthropic Messages uses named SSE events internally but returns the
 same eta_ai stream events:
 
     let read_anthropic_stream ~client ~api_key request =
-      Eta_ai_anthropic.stream_messages client ~api_key request
-      |> Eta.Effect.bind Eta_ai.read_stream_events
+      let open Eta.Syntax in
+      let* stream = Eta_ai_anthropic.stream_messages client ~api_key request in
+      Eta_ai.read_stream_events stream
 
 ## Streaming
 

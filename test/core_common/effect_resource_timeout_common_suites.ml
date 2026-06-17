@@ -377,6 +377,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>"))
       (B.run rt eff)
 
+  let test_with_resource_let_at_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let trail = ref [] in
+    let eff =
+      let open Syntax in
+      let@ resource =
+        E.with_resource
+          ~acquire:(mark trail "acquired" |> E.map (fun () -> 1))
+          ~release:(fun resource ->
+            mark trail ("released:" ^ string_of_int resource))
+      in
+      mark trail ("body:" ^ string_of_int resource)
+      |> E.map (fun () -> resource + 1)
+    in
+    Alcotest.(check int) "body result" 2 (run_ok rt eff);
+    Alcotest.(check (list string))
+      "ordering"
+      [ "acquired"; "body:1"; "released:1" ]
+      (List.rev !trail)
+
   let test_acquire_release_finalizers_run_lifo_sequentially () =
     B.with_runtime @@ fun _ctx rt ->
     let a_started = Atomic.make false in
@@ -661,6 +681,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case
             "acquire_use_release release failure after success" `Quick
             test_acquire_use_release_release_failure_after_success;
+          Alcotest.test_case "with_resource let@ success" `Quick
+            test_with_resource_let_at_success;
           Alcotest.test_case "acquire release finalizers lifo sequential"
             `Quick test_acquire_release_finalizers_run_lifo_sequentially;
           Alcotest.test_case "acquire release finalizer failure keeps running"

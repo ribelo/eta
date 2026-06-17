@@ -10,6 +10,10 @@ module Response = Server_response
 type handler = Request.t -> (Response.t, Error.t) Eta.Effect.t
 
 module Handler : sig
+  val of_effect : handler -> handler
+  val of_sync : (Request.t -> Response.t) -> handler
+  val of_result : (Request.t -> (Response.t, Error.t) result) -> handler
+
   val map_error :
     ('err -> Error.t) ->
     (Request.t -> (Response.t, 'err) Eta.Effect.t) ->

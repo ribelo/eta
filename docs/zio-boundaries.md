@@ -26,7 +26,7 @@ See [Services Without Layer](services.md) for the project convention.
 ## Errors and Defects
 
 Typed failures are values produced by `Effect.fail`, `Effect.from_result`, or
-helpers such as `Eta_blocking.result`. Ordinary OCaml exceptions raised
+helpers such as `Eta_blocking.run_result`. Ordinary OCaml exceptions raised
 inside `Effect.sync`, `Eta_blocking.run`, or a blocking callback are unchecked
 defects and surface as `Cause.Die`.
 

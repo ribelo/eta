@@ -6,6 +6,9 @@ module Response = Server_response
 
 type t = Request.t -> (Response.t, Error.t) Eta.Effect.t
 
+let of_effect handler = handler
+let of_sync handler request = Eta.Effect.sync (fun () -> handler request)
+let of_result handler request = Eta.Effect.sync_result (fun () -> handler request)
 let map_error f handler request = handler request |> Eta.Effect.map_error f
 
 let default_reason = function
@@ -21,7 +24,6 @@ let default_error_response error =
   Response.text ~status (default_reason status)
 
 let with_default_error_response ?(renderer = default_error_response) handler request =
-  handler request
-  |> Eta.Effect.catch (fun error -> Eta.Effect.pure (renderer error))
+  handler request |> Eta.Effect.recover renderer
 
 let route_not_found _request = Eta.Effect.pure (Response.text ~status:404 "not found\n")

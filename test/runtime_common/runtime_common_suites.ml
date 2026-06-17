@@ -73,6 +73,45 @@ module Make (B : Runtime_backend.S) = struct
     in
     check_ok Alcotest.int "value" 42 (B.run rt eff)
 
+  let test_recover () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (E.fail `Bad |> E.recover (function `Bad -> 42))
+    |> check_ok Alcotest.int "typed failure recovered" 42;
+    B.run rt (E.sync (fun () -> failwith "boom") |> E.recover (fun _ -> 0))
+    |> expect_die;
+    B.run rt
+      (E.fail `Bad
+      |> E.recover (function `Bad -> failwith "recover handler crash"))
+    |> expect_die
+
+  let test_ignore_errors () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (E.unit |> E.ignore_errors)
+    |> check_ok Alcotest.unit "success preserved as unit" ();
+    B.run rt (E.fail `Bad |> E.ignore_errors)
+    |> check_ok Alcotest.unit "typed failure suppressed" ();
+    B.run rt (E.sync (fun () -> failwith "boom") |> E.ignore_errors)
+    |> expect_die
+
+  let test_result () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (E.pure 7 |> E.result)
+    |> check_ok Alcotest.(result int string) "success" (Ok 7);
+    B.run rt (E.fail "bad" |> E.result)
+    |> check_ok Alcotest.(result int string) "typed failure" (Error "bad");
+    B.run rt (E.sync (fun () -> failwith "boom") |> E.result) |> expect_die;
+    match B.run rt (E.finally (E.fail "cleanup") E.unit |> E.result) with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer failure"
+
+  let test_yield () =
+    B.with_runtime @@ fun _ctx rt ->
+    B.run rt (E.yield |> E.map (fun () -> 42))
+    |> check_ok Alcotest.int "yield returns" 42
+
   let test_collect_names () =
     let eff =
       E.concat
@@ -120,6 +159,19 @@ module Make (B : Runtime_backend.S) = struct
     in
     check_ok Alcotest.int "value" 5 (B.run rt eff);
     Alcotest.(check (list int)) "tap saw pre-map value" [ 4 ] !observed
+
+  let test_tap_sync_runtime () =
+    B.with_runtime @@ fun _ctx rt ->
+    let observed = ref [] in
+    let eff =
+      E.pure 10
+      |> E.tap_sync (fun n -> observed := n :: !observed)
+      |> E.map (( + ) 1)
+    in
+    check_ok Alcotest.int "value" 11 (B.run rt eff);
+    Alcotest.(check (list int)) "observer saw original value" [ 10 ] !observed;
+    B.run rt (E.pure 1 |> E.tap_sync (fun _ -> failwith "tap-sync crash"))
+    |> expect_die
 
   let test_map_error () =
     B.with_runtime @@ fun _ctx rt ->
@@ -568,6 +620,37 @@ module Make (B : Runtime_backend.S) = struct
       (function `Closed_with_error `Boom -> true | _ -> false)
       (B.run rt eff)
 
+  let test_handoff_close_effect_helpers () =
+    B.with_runtime @@ fun _ctx rt ->
+    let queue = Queue.create () in
+    check_ok Alcotest.unit "queue clean close effect" ()
+      (B.run rt (Queue.close_effect queue));
+    expect_fail (( = ) `Closed) (B.run rt (Queue.recv queue));
+
+    let channel = Channel.create ~capacity:1 () in
+    check_ok Alcotest.unit "channel error close effect" ()
+      (B.run rt (Channel.close_with_error_effect channel `Boom));
+    expect_fail
+      (function `Closed_with_error `Boom -> true | _ -> false)
+      (B.run rt (Channel.recv channel));
+
+    let clean_hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+    let clean_pubsub =
+      Pubsub.subscribe clean_hub (fun sub ->
+          Pubsub.close_effect clean_hub |> E.bind (fun () -> Pubsub.recv sub))
+    in
+    expect_fail (( = ) `Closed) (B.run rt clean_pubsub);
+
+    let error_hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
+    let error_pubsub =
+      Pubsub.subscribe error_hub (fun sub ->
+          Pubsub.close_with_error_effect error_hub `Boom
+          |> E.bind (fun () -> Pubsub.recv sub))
+    in
+    expect_fail
+      (function `Closed_with_error `Boom -> true | _ -> false)
+      (B.run rt error_pubsub)
+
   let test_semaphore_validation_and_with_permits_cleanup () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.check_raises "zero permits"
@@ -820,11 +903,16 @@ module Make (B : Runtime_backend.S) = struct
       ( "Effect core",
         [
           Alcotest.test_case "pure bind catch" `Quick test_pure_bind_catch;
+          Alcotest.test_case "recover" `Quick test_recover;
+          Alcotest.test_case "ignore_errors" `Quick test_ignore_errors;
+          Alcotest.test_case "result" `Quick test_result;
+          Alcotest.test_case "yield" `Quick test_yield;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "from_result and exit to_result" `Quick
             test_from_result_and_exit_to_result;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_map_bind_tap_runtime;
+          Alcotest.test_case "tap_sync runtime" `Quick test_tap_sync_runtime;
           Alcotest.test_case "map_error" `Quick test_map_error;
           Alcotest.test_case "map_error maps full cause" `Quick
             test_map_error_maps_full_cause;
@@ -890,6 +978,8 @@ module Make (B : Runtime_backend.S) = struct
             test_channel_close_and_close_with_error_drain;
           Alcotest.test_case "pubsub close_with_error drains subscription"
             `Quick test_pubsub_close_with_error_drains_subscription;
+          Alcotest.test_case "handoff close effect helpers" `Quick
+            test_handoff_close_effect_helpers;
           Alcotest.test_case "semaphore validation and cleanup" `Quick
             test_semaphore_validation_and_with_permits_cleanup;
           Alcotest.test_case "pool basic reuse" `Quick test_pool_basic_reuse;

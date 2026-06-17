@@ -227,27 +227,43 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
       { Capabilities.level; body; ts_ms = frame.runtime.now_ms (); attrs; trace_id; span_id });
   ok ()
 
-let metric_update ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind value =
+type metric = {
+  name : string;
+  description : string;
+  unit_ : string;
+  attrs : (string * string) list;
+  kind : Capabilities.metric_kind;
+  value : Capabilities.metric_value;
+}
+
+let metric ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind value =
+  { name; description; unit_; attrs; kind; value }
+
+let record_metric frame ~ts_ms { name; description; unit_; attrs; kind; value } =
+  frame.runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
+    ~ts_ms
+
+let metric_update ?description ?unit_ ?attrs ~name ~kind value =
   make @@ fun frame ->
   (if frame.runtime.metrics_enabled then
-    frame.runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
-      ~ts_ms:(frame.runtime.now_ms ()));
+     let update = metric ?description ?unit_ ?attrs ~name ~kind value in
+     record_metric frame ~ts_ms:(frame.runtime.now_ms ()) update);
   ok ()
 
 let metric_updates updates =
   make @@ fun frame ->
   (if frame.runtime.metrics_enabled then
     let ts_ms = frame.runtime.now_ms () in
-    List.iter
-      (fun (name, description, unit_, kind, attrs, value) ->
-        frame.runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms)
-      updates);
+    List.iter (record_metric frame ~ts_ms) updates);
   ok ()
 
 let metric_updates_lazy make_updates =
   make @@ fun frame ->
   if frame.runtime.metrics_enabled then
-    eval frame (metric_updates (make_updates ()))
+    try eval frame (metric_updates (make_updates ())) with
+    | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+        raise exn
+    | exn -> exit_of_exn frame exn
   else ok ()
 
 let here_attr (file, line, col_start, col_end) eff =

@@ -57,12 +57,41 @@ val run :
   (unit -> 'a) ->
   ('a, 'err) Eta.Effect.t
 
+val run_result :
+  ?pool:Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  (unit -> ('a, 'err) result) ->
+  ('a, 'err) Eta.Effect.t
+(** Run a blocking leaf that returns an OCaml [result].
+
+    [Ok value] becomes success and [Error err] becomes a typed failure.
+    Exceptions raised by the callback remain unchecked defects, exactly like
+    {!run}. *)
+
 val result :
   ?pool:Pool.t ->
   ?name:string ->
   ?on_cancel:(unit -> unit) ->
   (unit -> ('a, 'err) result) ->
   ('a, 'err) Eta.Effect.t
+(** Short alias for {!run_result}.
+
+    New examples and docs prefer {!run_result} because it makes the boundary
+    from OCaml [result] into Eta's typed error channel explicit. *)
+
+val run_result_timeout :
+  ?pool:Pool.t ->
+  ?name:string ->
+  ?on_cancel:(unit -> unit) ->
+  timeout:Eta.Duration.t ->
+  on_timeout:'err ->
+  (unit -> ('a, 'err) result) ->
+  ('a, 'err) Eta.Effect.t
+(** Like {!run_result}, but bound the caller's wait with [timeout].
+
+    If the worker has not completed before the timeout, the effect fails with
+    [on_timeout]. [on_cancel] is called at most once for started work. *)
 
 val result_timeout :
   ?pool:Pool.t ->
@@ -72,3 +101,7 @@ val result_timeout :
   on_timeout:'err ->
   (unit -> ('a, 'err) result) ->
   ('a, 'err) Eta.Effect.t
+(** Short alias for {!run_result_timeout}.
+
+    New examples and docs prefer {!run_result_timeout} for the same reason as
+    {!run_result}. *)

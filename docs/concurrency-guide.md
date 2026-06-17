@@ -153,6 +153,14 @@ OS thread pool.  The thread blocks on C code; your Eta fiber is suspended and
 resumed when the result is ready.  Use a separate pool per resource class (DB,
 filesystem, third-party SDK) so saturation in one doesn't starve the others.
 
+When the blocking callback returns expected typed failures, use
+`Eta_blocking.run_result`:
+
+```ocaml
+Eta_blocking.run_result ~name:"legacy_parse" (fun () ->
+  C_lib.parse_binary_result buf)
+```
+
 ```ocaml
 let db_pool = Eta_blocking.Pool.create ~name:"db" {
   max_threads = 32; max_queued = 64;
@@ -205,7 +213,7 @@ intentional sharing API.
 | Run normal OCaml code without blocking the fiber | `Effect.sync` | `eta` (the base effect library) |
 | Run CPU-heavy callback on a separate domain | `Eta_par.Island.run` | `eta_par` |
 | Run batch callbacks in parallel, get results in order | `Eta_par.Island.map` | `eta_par` |
-| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Eta_blocking.run` | `eta_blocking` |
+| Call a blocking C/OS function (DB, syscall, third-party SDK) | `Eta_blocking.run` / `run_result` | `eta_blocking` |
 | Fork-join two recursive subproblems | `Eta_par.join` | `eta_par` |
 | Parallel map/reduce/sort over arrays | `Eta_par.par_map` / `par_reduce` / `par_sort` | `eta_par` |
 | Lazy iterator chains (map/filter/reduce/collect) | `Eta_par.Iter` | `eta_par` |

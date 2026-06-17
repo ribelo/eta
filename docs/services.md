@@ -7,8 +7,11 @@ values and functions.
 The rule is simple:
 
 - a service handle is an ordinary module-owned type;
-- a service factory is a function returning `Effect.t`;
-- lifetimes are managed with `Effect.acquire_release` inside `Effect.scoped`;
+- a service constructor is a function returning `Effect.t`;
+- a `with_*` helper owns acquire/use/release when the service has a bounded
+  lifetime;
+- body-bounded lifetimes are managed with `Effect.with_resource`;
+- wider lifetimes use `Effect.acquire_release` inside `Effect.scoped`;
 - dependencies are function arguments, records, modules, or closures;
 - runtime services such as clock, tracing, logging, metrics, random, and Eio
   switch are interpreter configuration, not application dependency rows.
@@ -23,7 +26,8 @@ OCaml gives Eta:
 
 - module-owned types for nominal service handles;
 - functions and records for dependency injection;
-- `Effect.scoped` and `Effect.acquire_release` for resource lifetime;
+- `Effect.with_resource`, `Effect.scoped`, and `Effect.acquire_release` for
+  resource lifetime;
 - normal lexical captures for leaf effects.
 
 The Layer research lab in `.scratch/layer_research/` found that a restricted
@@ -64,8 +68,8 @@ end
 Make dependencies explicit at the factory boundary.
 
 ```ocaml
-let db_factory clock =
-  Effect.acquire_release
+let with_db clock =
+  Effect.with_resource
     ~acquire:(Db.open_ clock)
     ~release:Db.close
 
@@ -73,13 +77,14 @@ let program ~db =
   Db.query db "select current_user"
 ```
 
-Compose factories with `bind` inside one `Effect.scoped`.
+Compose factories with `let@` so the resource lifetime remains visible without
+manual `bind`.
 
 ```ocaml
 let boot clock =
-  Effect.scoped
-    (db_factory clock
-    |> Effect.bind (fun db -> program ~db))
+  let open Eta.Syntax in
+  let@ db = with_db clock in
+  program ~db
 ```
 
 Run the final program with runtime services configured on the interpreter.
@@ -126,8 +131,9 @@ let _ = boot
 The compiler reports a partial application because `clock` was not supplied.
 
 A service handle that escapes its intended scope is an application bug. Keep
-acquire/release pairs inside `Effect.scoped` and pass handles only to the
-program that runs inside that scope.
+body-bounded acquire/release pairs inside `Effect.with_resource`, use
+`Effect.scoped` plus `Effect.acquire_release` for wider lifetimes, and pass
+handles only to the program that runs inside that scope.
 
 Duplicate services should be solved by names and module boundaries. Do not
 build anonymous bags of services with repeated keys. If two handles have the
@@ -142,7 +148,8 @@ environment module.
 The durable public style is:
 
 - functions for service dependency injection;
-- `Effect.scoped` for service lifetime;
+- `Effect.with_resource` for body-bounded service lifetime;
+- `Effect.scoped` plus `Effect.acquire_release` for wider service lifetime;
 - runtime-owned interpreter services for clock/tracing/logging/metrics/random;
 - explicit portable inputs and callbacks at island boundaries;
 - no mid-tree dynamic environment replacement.

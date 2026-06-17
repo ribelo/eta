@@ -2,6 +2,10 @@
 
 type t = Server_request.t -> (Server_response.t, Server_error.t) Eta.Effect.t
 
+val of_effect : t -> t
+val of_sync : (Server_request.t -> Server_response.t) -> t
+val of_result : (Server_request.t -> (Server_response.t, Server_error.t) result) -> t
+
 val map_error :
   ('err -> Server_error.t) ->
   (Server_request.t -> (Server_response.t, 'err) Eta.Effect.t) ->

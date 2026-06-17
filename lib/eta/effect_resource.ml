@@ -38,3 +38,6 @@ let scoped eff =
 
 let acquire_use_release ~acquire ~(release) (body) =
   scoped (acquire_release ~acquire ~release |> bind body)
+
+let with_resource ~acquire ~release body =
+  acquire_use_release ~acquire ~release body

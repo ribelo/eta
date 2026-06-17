@@ -22,11 +22,15 @@ module Scope : sig
     ('a -> ('s, 'b, 'err) t) ->
     ('s, 'a, 'err) t ->
     ('s, 'b, 'err) t
+  (** Primitive sequencing for supervisor-scope programs. Prefer [let*] in
+      nursery bodies; [bind] exists for combinators and generated code. *)
 
   val ( let* ) :
     ('s, 'a, 'err) t ->
     ('a -> ('s, 'b, 'err) t) ->
     ('s, 'b, 'err) t
+  (** Sequence dependent supervisor-scope work without exposing the underlying
+      primitive [bind]. *)
 
   val start :
     ('s, 'err) supervisor ->

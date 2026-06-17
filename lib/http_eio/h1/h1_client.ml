@@ -48,7 +48,7 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
   in
   let release_on_error = Option.value release_on_error ~default:release in
   let cleanup_after_error error =
-    Effect.catch (fun _ -> Effect.unit) (release_on_error ())
+    Effect.ignore_errors (release_on_error ())
     |> Effect.bind (fun () -> Effect.fail error)
   in
   H1_client_request_writer.write_request ?host_eio flow request
@@ -230,7 +230,7 @@ let request_owner pool request response_ch release_ch cancel_ch =
              | `Cancelled ->
                  conn.reusable <- false;
                  H1_client_errors.close_flow request conn.flow
-                 |> Effect.catch (fun _ -> Effect.unit)
+                 |> Effect.ignore_errors
                  |> Effect.bind (fun () ->
                         (* Expected caller cancellation is reported through
                            [response_ch]. The catch below consumes this typed

@@ -426,6 +426,10 @@ let close (t : ('a, 'err) t) = with_lock t @@ fun () -> close_locked t Clean
 let close_with_error (t : ('a, 'err) t) error =
   with_lock t @@ fun () -> close_locked t (Error error)
 
+let close_effect t = Effect.sync (fun () -> close t)
+let close_with_error_effect t error =
+  Effect.sync (fun () -> close_with_error t error)
+
 let stats (t : ('a, 'err) t) =
   Sync_lock.use t.mutex @@ fun () ->
   {

@@ -13,11 +13,13 @@ open Eta
 
 let work =
   Effect.named "http.request"
-    (Effect.log "handling request"
-    |> Effect.bind (fun () ->
-           Effect.metric_update ~name:"requests.total"
-             ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1))
-    |> Effect.bind (fun () -> Effect.pure "ok"))
+    (let open Syntax in
+     let* () = Effect.log "handling request" in
+     let* () =
+       Effect.metric_update ~name:"requests.total"
+         ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1)
+     in
+     Effect.pure "ok")
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -50,22 +50,24 @@ let serve listener use =
 
 ~~~ocaml
 let with_monitor ~sw ~net use =
-  Effect.scoped
-    (Effect.acquire_release
-       ~acquire:(Effect.sync (fun () ->
-         let state = Monitor.create () in
-         let flow = Monitor.connect ~sw ~net in
-         state, flow))
-       ~release:(fun (_state, flow) ->
-         Effect.sync (fun () -> Monitor.close flow))
-    |> Effect.bind (fun (state, flow) ->
-         Effect.with_background
-           ~name:"monitor.reader"
-           (Effect.sync (fun () -> Monitor.read_loop flow state))
-           (fun () -> use state)))
+  let open Eta.Syntax in
+  let acquire =
+    Effect.sync (fun () ->
+      let state = Monitor.create () in
+      let flow = Monitor.connect ~sw ~net in
+      state, flow)
+  in
+  let release (_state, flow) =
+    Effect.sync (fun () -> Monitor.close flow)
+  in
+  let@ (state, flow) = Effect.with_resource ~acquire ~release in
+  Effect.with_background
+    ~name:"monitor.reader"
+    (Effect.sync (fun () -> Monitor.read_loop flow state))
+    (fun () -> use state)
 ~~~
 
-Use `Effect.Private.daemon` only for runtime-owned infrastructure whose lifetime
+Use `Effect.daemon` only for runtime-owned infrastructure whose lifetime
 is intentionally tied to the runtime rather than to a caller's lexical body.
 
 ## Development note

@@ -169,7 +169,7 @@ module Pool : sig
     config ->
     (t, error) Eta.Effect.t
   (** Create a DuckDB pool. Per-operation [timeout] values bound the Eta
-      caller's wait through {!Eta_blocking.result_timeout} and call
+      caller's wait through {!Eta_blocking.run_result_timeout} and call
       DuckDB interrupt on cancellation. This is cooperative database
       cancellation, not OS-level preemption of arbitrary C work.
       [Detach_started] blocking pools are rejected for pooled operations because a

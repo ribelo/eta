@@ -60,11 +60,20 @@ val try_recv : ('a, 'err) t -> (('a, 'err) recv_result, 'never) Effect.t
 (** Try to receive without waiting. *)
 
 val close : ('a, 'err) t -> unit
-(** Close the channel and wake blocked senders and receivers. Idempotent. *)
+(** Close the channel and wake blocked senders and receivers. Idempotent.
+    Use {!close_effect} when the close belongs inside an Eta workflow. *)
 
 val close_with_error : ('a, 'err) t -> 'err -> unit
 (** Close the channel with a typed error and wake blocked senders and receivers.
-    Idempotent; the first close reason wins. *)
+    Idempotent; the first close reason wins. Use {!close_with_error_effect}
+    when the close belongs inside an Eta workflow. *)
+
+val close_effect : ('a, 'err) t -> (unit, 'never) Effect.t
+(** Effectful wrapper for {!close}. *)
+
+val close_with_error_effect :
+  ('a, 'err) t -> 'err -> (unit, 'never) Effect.t
+(** Effectful wrapper for {!close_with_error}. *)
 
 val stats : ('a, 'err) t -> stats
 (** Snapshot channel counters. *)

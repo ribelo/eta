@@ -7,6 +7,8 @@ resource scopes, and observability, plus backend-neutral interpreters.
 Eta is shaped by TypeScript Effect and Scala ZIO, but it is not a
 compatibility layer for their full API surface. Deliberate differences are
 documented in [ZIO / Effect Boundaries](docs/zio-boundaries.md).
+The recommended application style is documented in
+[Eta API Style](docs/api-dx.md).
 
 Core principle: **applications own state; Eta owns effect description and
 interpretation.** There is no global environment, layer graph, service
@@ -46,9 +48,9 @@ open Eta
 
 let program () =
   let open Syntax in
-  let* n = Effect.pure 1 |> Effect.map (fun n -> n + 1) in
-  (if n < 3 then Effect.fail `Too_small else Effect.pure n)
-  |> Effect.catch (fun `Too_small -> Effect.pure 3)
+  (let* n = Effect.sync_result (fun () -> Ok (1 + 1)) in
+   if n < 3 then Effect.fail `Too_small else Effect.pure n)
+  |> Effect.recover (fun `Too_small -> 3)
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -69,7 +71,7 @@ Core effect model and runtime boundaries:
 
 | Module | Purpose |
 | --- | --- |
-| `Effect` | Abstract description for pure values, typed failure, sync leaves, bind/map/tap, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
+| `Effect` | Abstract description for pure values, typed failure, sync leaves, mapping/sequencing primitives, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
 | `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `let@`, `and*`, and `and+`. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
@@ -105,9 +107,16 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 
 - `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
   failures. Catch expected errors by returning `result` and lifting with
-  `Effect.from_result`.
+  `Effect.sync_result`. Use `Effect.from_result` only when the `result` has
+  already been computed outside the synchronous leaf.
 - `Effect.catch` handles typed failures only; it does not catch defects,
   interruption, or finalizer failures.
+- `Effect.ignore_errors` is only for best-effort unit effects. It suppresses
+  typed failures, but defects, interruption, and finalizer failures still
+  surface.
+- `Effect.result` turns the typed failure channel into an ordinary OCaml
+  `result` value inside the workflow. It does not catch defects, interruption,
+  or finalizer failures.
 - `Effect.par`, `all`, `race`, and `for_each_par` run child effects as fibers on
   the current runtime substrate, not on CPU worker domains. Use `eta_par` for
   CPU parallelism.
@@ -150,6 +159,10 @@ The optional `eta_blocking` package contains bounded OS-thread worker pools for
 synchronous native calls such as database engines, syscalls, and blocking C
 libraries. Runtime packages provide the worker substrate; for example
 `eta_eio` installs an Eio `run_in_systhread` runner by default.
+
+Use `Eta_blocking.run` when the callback returns an ordinary value, and
+`Eta_blocking.run_result` when the callback returns expected typed failures as
+`result`.
 
 ## PPX Helpers
 
@@ -210,18 +223,29 @@ conversion.
 
 ## Resource Scopes
 
-`Effect.acquire_release` registers finalizers with the surrounding
-`Effect.scoped`. Finalizers run on success, typed failure, and cancellation.
+Use `Effect.with_resource` for body-bounded resource lifetimes. Finalizers run
+on success, typed failure, unchecked defect, and cancellation.
 
 ```ocaml
-let with_db k =
+let with_db =
   let acquire = Effect.named "db.open" (Effect.sync (fun () -> Db.open_)) in
   let release handle =
     Effect.named "db.close" (Effect.sync (fun () -> Db.close handle))
   in
-  Effect.scoped
-    (Effect.acquire_release ~acquire ~release |> Effect.bind k)
+  Effect.with_resource ~acquire ~release
 ```
+
+Use `let@` from `Eta.Syntax` to keep callback-shaped lifecycle code flat:
+
+```ocaml
+let load_user id =
+  let open Eta.Syntax in
+  let@ db = with_db in
+  Effect.sync_result (fun () -> Db.load_user db id)
+```
+
+Use `Effect.acquire_release` directly when a resource should live until an
+enclosing runtime or `Effect.scoped` boundary rather than just one callback body.
 
 For one-shot cleanup around a single effect, use `Effect.finally`:
 
@@ -249,6 +273,9 @@ failure modes.
 
 Use `Supervisor.scoped` when a parent needs handles for child effects without
 letting those handles escape their owning scope.
+
+The `{ run = ... }` body is intentional: it gives OCaml a rank-2 scope token, so
+the type checker rejects returning a child handle after the nursery closes.
 
 ~~~ocaml
 let supervised =
@@ -321,10 +348,11 @@ let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 64 }) ()
 
 let use_events =
   Pubsub.subscribe hub @@ fun sub ->
+  let open Syntax in
   let rec loop () =
-    Pubsub.recv sub
-    |> Effect.bind (fun event ->
-           handle event |> Effect.bind loop)
+    let* event = Pubsub.recv sub in
+    let* () = handle event in
+    loop ()
   in
   loop ()
 ```
@@ -336,11 +364,11 @@ publisher cancellation while waiting cannot partially publish to some
 subscribers.
 
 Wrap Eio operations in `Effect.sync` at the leaf when they need Eta tracing
-names or defect diagnostics. Expected failures should be returned as ordinary
-OCaml `result` values and lifted with `Effect.from_result`; exceptions remain
-unchecked defects. If a protocol is reusable and owns lifecycle semantics,
-prefer a focused module such as `Resource` or `Pubsub` rather than a generic
-concurrency-data wrapper.
+names or defect diagnostics. If a synchronous leaf has expected failures, return
+an ordinary OCaml `result` and lift it with `Effect.sync_result`; exceptions
+remain unchecked defects. If a protocol is reusable and owns lifecycle
+semantics, prefer a focused module such as `Resource` or `Pubsub` rather than a
+generic concurrency-data wrapper.
 
 ## Redacted Values
 

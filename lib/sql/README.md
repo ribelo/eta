@@ -91,14 +91,14 @@ let program =
   let select_items =
     Q.Select.(from Items.table Q.Projection.(one Items.id) |> compile)
   in
-  Q.Pool.create ~blocking_pool ~default_timeout:(Eta.Duration.ms 250)
-    ~max_size:4 (S.default_config "app.db")
-  |> Eta.Effect.bind (fun pool ->
-         Q.Pool.Typed.run_schema pool create_items
-         |> Eta.Effect.bind (fun () ->
-                Q.Pool.Typed.execute_compiled pool insert_item)
-         |> Eta.Effect.bind (fun _ ->
-                Q.Pool.Typed.select pool select_items))
+  let open Eta.Syntax in
+  let* pool =
+    Q.Pool.create ~blocking_pool ~default_timeout:(Eta.Duration.ms 250)
+      ~max_size:4 (S.default_config "app.db")
+  in
+  let* () = Q.Pool.Typed.run_schema pool create_items in
+  let* _ = Q.Pool.Typed.execute_compiled pool insert_item in
+  Q.Pool.Typed.select pool select_items
 ```
 
 `Eta_sql.Pool` is the public execution surface. `Connection` and the old
@@ -139,8 +139,9 @@ Transactions use the same verbs as pool execution:
 
 ```ocaml
 Q.Pool.with_transaction pool (fun tx ->
-  Q.Pool.Typed.execute_compiled tx insert_item
-  |> Eta.Effect.bind (fun _ -> Q.Pool.Typed.select tx select_items))
+  let open Eta.Syntax in
+  let* _ = Q.Pool.Typed.execute_compiled tx insert_item in
+  Q.Pool.Typed.select tx select_items)
 ```
 
 The transaction callback receives a `Pool.tx Pool.runner`; the pool

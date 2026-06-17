@@ -1,0 +1,8 @@
+(test
+ (name api_dx_examples)
+ (modules api_dx_examples)
+ (libraries eta eta_blocking))
+
+(test
+ (name api_dx_surface)
+ (modules api_dx_surface))

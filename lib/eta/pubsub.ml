@@ -410,6 +410,10 @@ let close t = with_lock t @@ fun () -> close_locked t Clean
 let close_with_error t err =
   with_lock t @@ fun () -> close_locked t (Failed err)
 
+let close_effect t = Effect.sync (fun () -> close t)
+let close_with_error_effect t err =
+  Effect.sync (fun () -> close_with_error t err)
+
 let stats t =
   Sync_lock.use t.mutex @@ fun () ->
   {

@@ -138,6 +138,30 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "value" 5 (run_ok rt eff);
     Alcotest.(check (list int)) "tap saw pre-map value" [ 4 ] !observed
 
+  let test_effect_tap_sync_runtime () =
+    B.with_runtime @@ fun _ctx rt ->
+    let observed = ref [] in
+    let eff =
+      Effect.pure 10
+      |> Effect.tap_sync (fun n -> observed := n :: !observed)
+      |> Effect.map (( + ) 1)
+    in
+    Alcotest.(check int) "value" 11 (run_ok rt eff);
+    Alcotest.(check (list int)) "observed" [ 10 ] !observed;
+    let defect =
+      Effect.pure 1
+      |> Effect.tap_sync (fun _ -> failwith "tap-sync crash")
+    in
+    match B.run rt defect with
+    | Exit.Error (Cause.Die { exn; _ }) ->
+        Alcotest.(check string)
+          "observer defect" "Failure(\"tap-sync crash\")"
+          (Printexc.to_string exn)
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected tap_sync defect"
+
   let test_effect_catch_success_and_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let success =
@@ -152,6 +176,75 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check int) "success bypasses catch" 1 (run_ok rt success);
     Alcotest.(check string) "failure recovers" "recovered" (run_ok rt failure)
+
+  let test_effect_recover () =
+    B.with_runtime @@ fun _ctx rt ->
+    let recovered = Effect.fail `Bad |> Effect.recover (function `Bad -> 42) in
+    Alcotest.(check int) "typed failure recovered" 42 (run_ok rt recovered);
+    (match
+       B.run rt
+         (Effect.sync (fun () -> failwith "boom")
+         |> Effect.recover (fun _ -> 0))
+     with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    match
+      B.run rt
+        (Effect.fail `Bad
+        |> Effect.recover (function `Bad -> failwith "recover handler crash"))
+    with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected handler defect, got %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected handler defect"
+
+  let test_effect_ignore_errors () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check unit)
+      "success preserved as unit" () (run_ok rt (Effect.unit |> Effect.ignore_errors));
+    Alcotest.(check unit)
+      "typed failure suppressed" ()
+      (run_ok rt (Effect.fail `Bad |> Effect.ignore_errors));
+    match
+      B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.ignore_errors)
+    with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect"
+
+  let test_effect_result () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check (result int string))
+      "success" (Ok 7) (run_ok rt (Effect.pure 7 |> Effect.result));
+    Alcotest.(check (result int string))
+      "typed failure"
+      (Error "bad")
+      (run_ok rt (Effect.fail "bad" |> Effect.result));
+    (match
+       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.result)
+     with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    match
+      B.run rt
+        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.result)
+    with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer failure"
+
+  let test_effect_yield () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff = Effect.yield |> Effect.map (fun () -> 42) in
+    Alcotest.(check int) "yield returns" 42 (run_ok rt eff)
 
   let test_effect_catch_handler_failure_uses_outer_key () =
     B.with_runtime @@ fun _ctx rt ->
@@ -173,6 +266,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     expect_typed_failure_eq Alcotest.string
       (B.run rt (Effect.from_result (Error "bad")))
       "bad"
+
+  let test_effect_sync_result () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check int) "ok" 7 (run_ok rt (Effect.sync_result (fun () -> Ok 7)));
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (Effect.sync_result (fun () -> Error "bad")))
+      "bad";
+    match B.run rt (Effect.sync_result (fun () -> failwith "boom")) with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect"
 
   let test_exit_to_result_only_converts_success_and_single_typed_failure () =
     Alcotest.(check (option (result int string)))
@@ -1673,11 +1778,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
+          Alcotest.test_case "tap_sync runtime" `Quick
+            test_effect_tap_sync_runtime;
           Alcotest.test_case "catch success and failure" `Quick
             test_effect_catch_success_and_failure;
+          Alcotest.test_case "recover" `Quick test_effect_recover;
+          Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
+          Alcotest.test_case "result" `Quick test_effect_result;
+          Alcotest.test_case "yield" `Quick test_effect_yield;
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
+          Alcotest.test_case "sync_result" `Quick test_effect_sync_result;
           Alcotest.test_case "exit to_result faithful subset" `Quick
             test_exit_to_result_only_converts_success_and_single_typed_failure;
           Alcotest.test_case "map_error maps full cause" `Quick

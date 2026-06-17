@@ -1,4 +1,8 @@
-(** Binding operators for {!Effect.t}. *)
+(** Binding operators for {!Effect.t}.
+
+    Prefer opening this module locally at Eta workflow boundaries, for example
+    [let open Eta.Syntax in ...], instead of spelling primitive
+    {!Effect.bind} in user code. *)
 
 val ( let* ) :
   ('a, 'err) Effect.t ->

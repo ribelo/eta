@@ -79,19 +79,31 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_blocking_result_lifts_result_value () =
     B.with_runtime @@ fun _ctx rt ->
-    let ok = Eta_blocking.result ~name:"blocking.result.ok" (fun () -> Ok 7) in
+    let ok =
+      Eta_blocking.run_result ~name:"blocking.result.ok" (fun () -> Ok 7)
+    in
     let err =
-      Eta_blocking.result ~name:"blocking.result.err" (fun () -> Error `Bad)
+      Eta_blocking.run_result ~name:"blocking.result.err" (fun () -> Error `Bad)
     in
     Alcotest.(check int) "ok" 7 (run_ok rt ok);
     B.run rt err |> check_typed_failure "err" (( = ) `Bad)
+
+  let test_blocking_result_short_aliases () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check int) "result alias" 7
+      (run_ok rt
+         (Eta_blocking.result ~name:"blocking.result.alias" (fun () -> Ok 7)));
+    Alcotest.(check int) "result_timeout alias" 8
+      (run_ok rt
+         (Eta_blocking.result_timeout ~name:"blocking.result-timeout.alias"
+            ~timeout:(Duration.ms 100) ~on_timeout:`Timeout (fun () -> Ok 8)))
 
   let test_blocking_result_exception_is_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let pool = BP.create ~name:"blocking-result-defect" (blocking_config ()) in
     let defect = Failure "blocking result defect" in
     let eff =
-      Eta_blocking.result ~pool ~name:"blocking.result.defect" (fun () ->
+      Eta_blocking.run_result ~pool ~name:"blocking.result.defect" (fun () ->
           (raise defect : (int, [ `Expected ]) result))
     in
     match B.run rt eff with
@@ -106,7 +118,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let interrupted = Atomic.make false in
     let eff =
-      Eta_blocking.result_timeout ~name:"blocking.result.timeout"
+      Eta_blocking.run_result_timeout ~name:"blocking.result.timeout"
         ~on_cancel:(fun () -> Atomic.set interrupted true)
         ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
           Unix.sleepf 0.030;
@@ -124,7 +136,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let hook_calls = Atomic.make 0 in
     let finished = Atomic.make false in
     let eff =
-      Eta_blocking.result_timeout ~pool ~name:"blocking.result.timeout-once"
+      Eta_blocking.run_result_timeout ~pool ~name:"blocking.result.timeout-once"
         ~on_cancel:(fun () -> Atomic.incr hook_calls)
         ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
           Unix.sleepf 0.030;
@@ -145,7 +157,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let elapsed, exit =
       elapsed_us (fun () ->
           B.run rt
-            (Eta_blocking.result_timeout ~pool
+            (Eta_blocking.run_result_timeout ~pool
                ~name:"blocking.result.timeout-started-drain"
                ~timeout:(Duration.ms 10) ~on_timeout:`Timeout (fun () ->
                  Unix.sleepf 0.25;
@@ -176,7 +188,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until (fun () -> (BP.stats pool).active = 1);
     let exit =
       B.run rt
-        (Eta_blocking.result_timeout ~pool ~name:"blocking.result.timeout-queued"
+        (Eta_blocking.run_result_timeout ~pool ~name:"blocking.result.timeout-queued"
            ~timeout:(Duration.ms 5) ~on_timeout:`Timeout (fun () ->
              Atomic.set queued_ran true;
              Ok ()))
@@ -309,6 +321,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_blocking_run_and_stats;
           Alcotest.test_case "result lifts result" `Quick
             test_blocking_result_lifts_result_value;
+          Alcotest.test_case "result short aliases" `Quick
+            test_blocking_result_short_aliases;
           Alcotest.test_case "result exception is defect" `Quick
             test_blocking_result_exception_is_defect;
           Alcotest.test_case "result_timeout interrupts" `Quick

@@ -35,6 +35,11 @@ val pure : 'a -> ('a, 'err) t
 val fail : 'err -> ('a, 'err) t
 val unit : (unit, 'err) t
 val from_result : ('a, 'err) result -> ('a, 'err) t
+(** Lift an already-computed OCaml [result] into Eta.
+
+    Use this for pure validation/parsing results. For a synchronous leaf that
+    computes a [result], prefer {!sync_result} so the leaf still runs under
+    Eta's defect and cancellation boundary. *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an eff. Use {!Effect.named} to
@@ -43,14 +48,49 @@ val sync : (unit -> 'a) -> ('a, 'err) t
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
     as {!Cause.Die}. They are not converted into the typed error channel and
     are not caught by {!catch}. Return an explicit [result] and use
-    {!from_result} when a leaf operation has an expected typed failure.
+    {!sync_result} when a synchronous leaf operation has an expected typed
+    failure.
     Runtime cancellation exceptions remain interruption. *)
 
+val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
+(** [sync_result f] lifts a synchronous leaf that returns an OCaml [result].
+    [Ok value] becomes success and [Error err] becomes a typed failure.
+
+    Exceptions raised by [f] remain unchecked defects, exactly like {!sync};
+    this helper is only shorthand for expected typed leaf failures. *)
+
+val yield : (unit, 'err) t
+(** Cooperatively yield the current Eta fiber to the active runtime backend.
+
+    This is the backend-neutral spelling for an Eta blueprint that needs a
+    scheduling yield. It delegates to the runtime contract rather than calling a
+    backend primitive such as [Eio.Fiber.yield] from user code. *)
+
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
+(** Transform the success value of an effect. In application code, the mapping
+    operator from {!Syntax} is usually the more readable spelling. *)
+
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
+(** Primitive dependent sequencing.
+
+    This is the operation behind the sequencing operator from {!Syntax}. Prefer
+    syntax operators in
+    user-facing workflows; use [bind] directly for combinators, generated code,
+    or code where pipeline style is materially clearer. *)
+
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
+(** Infix spelling of {!bind}. It is kept for advanced/library code; examples
+    and documentation should usually use the sequencing operator from
+    {!Syntax}. *)
 
 val tap : ('a -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effectful observer on success and keep the original success value. *)
+
+val tap_sync : ('a -> unit) -> ('a, 'err) t -> ('a, 'err) t
+(** Run a synchronous observer on success and keep the original success value.
+
+    Exceptions raised by the observer are unchecked defects, matching {!sync}.
+    Use {!tap} when the observer itself is an Eta effect. *)
 
 val seq : (unit, 'err) t -> (unit, 'err) t -> (unit, 'err) t
 val concat : (unit, 'err) t list -> (unit, 'err) t
@@ -129,6 +169,31 @@ val catch :
     values when every branch outcome matters. Recover or ignore cleanup failure
     inside the cleanup eff itself. *)
 
+val recover : ('err1 -> 'a) -> ('a, 'err1) t -> ('a, 'err2) t
+(** Pure typed-failure recovery.
+
+    [recover f eff] is shorthand for [catch (fun err -> pure (f err)) eff].
+    Use {!catch} when recovery itself is effectful. Defects, interruption, and
+    finalizer diagnostics are not recovered, matching {!catch}. If [f] raises,
+    the exception is an unchecked defect. *)
+
+val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
+(** Suppress typed failures from a best-effort unit effect.
+
+    [ignore_errors eff] is shorthand for [catch (fun _ -> unit) eff]. It only
+    recovers typed failures; defects, interruption, and finalizer diagnostics
+    remain visible. Use it for best-effort cleanup, refresh, or notification
+    effects whose success value is already [unit]. *)
+
+val result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
+(** Materialize the typed failure channel into an ordinary OCaml [result].
+
+    [result eff] succeeds with [Ok value] when [eff] succeeds and with
+    [Error err] when [eff] fails with a typed failure. Defects, interruption,
+    and finalizer diagnostics are not captured; they remain failed Eta causes.
+    Use this when a workflow should keep going and handle success/failure as
+    data without leaving Eta's runtime boundary. *)
+
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
     and the surrounding cause structure. [Cause.Fail] values in the primary
@@ -163,8 +228,9 @@ val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
     suppressed finalizer failure under the primary cause, matching
     {!acquire_release} finalizer reporting.
 
-    This is for one-shot cleanup around an eff. Use {!acquire_release} and
-    {!scoped} for resource lifetimes. *)
+    This is for one-shot cleanup around an eff. Use {!with_resource} for
+    body-bounded resource lifetimes, or {!acquire_release} and {!scoped} when
+    the resource should live until an enclosing runtime or scope boundary. *)
 
 val acquire_release :
   acquire:('a, 'err) t ->
@@ -188,6 +254,23 @@ val acquire_use_release :
     resources until the surrounding runtime boundary exits. Release ordering,
     cancellation protection, and suppressed finalizer failure reporting match
     scoped {!acquire_release}. *)
+
+val with_resource :
+  acquire:('a, 'err) t ->
+  release:('a -> (unit, 'release_err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+(** Friendly name for {!acquire_use_release}. This is the preferred shape for
+    body-bounded resource use, especially with {!Syntax.(let@)}:
+
+    {[
+      let open Eta.Syntax in
+      let@ conn = Effect.with_resource ~acquire ~release in
+      body conn
+    ]}
+
+    Use {!acquire_release} directly when a resource should live until an
+    enclosing runtime or {!scoped} boundary rather than just the callback body. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 (** Open a resource scope around an effect.
@@ -446,6 +529,30 @@ val metric_update :
   (unit, 'err) t
 (** Records a runtime observation, not part of the eff's success value or
     typed error channel. Runtimes without a meter may ignore it. *)
+
+type metric
+(** Description of one metric observation before the runtime timestamp is
+    attached. Use {!metric} to construct values for {!metric_updates} and
+    {!metric_updates_lazy}. *)
+
+val metric :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  kind:Capabilities.metric_kind ->
+  Capabilities.metric_value ->
+  metric
+(** Build one metric observation for batched metric emission. *)
+
+val metric_updates : metric list -> (unit, 'err) t
+(** Record several metric observations with one runtime timestamp. Runtimes
+    without a meter ignore the batch. *)
+
+val metric_updates_lazy : (unit -> metric list) -> (unit, 'err) t
+(** Like {!metric_updates}, but the list is built only when the active runtime
+    has a meter. Use this for hot paths where collecting stats or allocating
+    metric attributes is wasted when metrics are disabled. *)
 
 val here_attr : string * int * int * int -> ('a, 'err) t -> ('a, 'err) t
 (** Intended for wrappers that pass [__POS__] through unchanged; synthesized

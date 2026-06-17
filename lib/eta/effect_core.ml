@@ -181,6 +181,7 @@ let sync_frame f =
       | exn -> exit_of_exn frame exn)
 
 let sync f = sync_frame (fun _frame -> f ())
+let yield = sync_frame (fun frame -> fiber_yield frame)
 
 (* ---------------------------------------------------------------- *)
 (* Combinators                                                       *)
@@ -193,7 +194,9 @@ let bind (k) eff =
   Bind { inner = eff; k }
 
 let ( >>= ) eff (k) = bind k eff
+let sync_result f = sync f |> bind from_result
 let tap (k) eff = bind (fun value -> map (fun () -> value) (k value)) eff
+let tap_sync (observe) eff = tap (fun value -> sync (fun () -> observe value)) eff
 let seq next self = bind (fun () -> next) self
 
 let concat effects =
@@ -251,6 +254,10 @@ let catch :
               match first_typed_failure cause with
               | Some err -> eval frame (handler err)
               | None -> invalid_arg "Effect.catch: empty composite cause"))
+
+let recover (handler) eff = catch (fun err -> pure (handler err)) eff
+let ignore_errors eff = catch (fun _ -> unit) eff
+let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
 
 let map_cause_error = Cause.map
 

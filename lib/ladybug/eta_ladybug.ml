@@ -618,7 +618,7 @@ module Connection = struct
     exec_with_operation "query" ?params conn cypher
 
   let timed_blocking_result ?blocking_pool ~timeout ~conn ~name f =
-    Eta_blocking.result_timeout ?pool:blocking_pool ~name
+    Eta_blocking.run_result_timeout ?pool:blocking_pool ~name
       ~on_cancel:(fun () -> interrupt conn)
       ~timeout ~on_timeout:`Timeout (fun () ->
         match f () with
@@ -717,12 +717,11 @@ module Pool = struct
 
   let public eff = Eta.Effect.map_error to_public_error eff
 
-  let lift_result = function
-    | Ok value -> Eta.Effect.pure value
-    | Result.Error err -> Eta.Effect.fail (`Ladybug err)
-
   let blocking_result ?blocking_pool ?name f =
-    Eta_blocking.run ?pool:blocking_pool ?name f |> Eta.Effect.bind lift_result
+    Eta_blocking.run_result ?pool:blocking_pool ?name (fun () ->
+        match f () with
+        | Ok value -> Ok value
+        | Result.Error err -> Error (`Ladybug err))
 
   let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
       ?max_lifetime database =

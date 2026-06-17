@@ -201,7 +201,7 @@
                 lib/turso \
                 lib/stream \
                 lib/ppx \
-                test/redacted \
+                test/redacted_eio \
                 test/eta \
                 test/ai/core \
                 test/ai/anthropic \

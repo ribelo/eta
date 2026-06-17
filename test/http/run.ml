@@ -5,6 +5,7 @@ open Test_eta_http_transport
 open Test_eta_http_h1_client
 open Test_eta_http_retry
 open Test_eta_http_h1_server
+open Test_eta_http_server_handler
 open Test_eta_http_server_config
 open Test_eta_http_server_stats
 open Test_eta_http_ws
@@ -38,6 +39,13 @@ let () =
             test_retry_after_far_future_date_is_capped;
           Alcotest.test_case "lowercase GET is not default retryable" `Quick
             test_lowercase_get_is_not_default_retryable;
+        ] );
+      ( "server-handler",
+        [
+          Alcotest.test_case "of_sync" `Quick test_handler_of_sync;
+          Alcotest.test_case "of_result failure" `Quick
+            test_handler_of_result_failure;
+          Alcotest.test_case "of_effect" `Quick test_handler_of_effect;
         ] );
       ( "error",
         [

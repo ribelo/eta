@@ -20,13 +20,12 @@ Streams keep Eta's two channels:
 
 ```ocaml
 open Eta
-open Eta_stream
 
 let program =
-  Eta_stream.from_iterable [ 1; 2; 3; 4; 5; 6 ]
-  |> Eta_stream.map (( * ) 2)
-  |> Eta_stream.take 5
-  |> fun stream -> run stream (Sink.fold ( + ) 0)
+  Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 5; 6 ]
+  |> Eta_stream.Stream.map (( * ) 2)
+  |> Eta_stream.Stream.take 5
+  |> fun stream -> Eta_stream.run stream (Eta_stream.Sink.fold ( + ) 0)
 ```
 
 Run the returned effect with an Eta runtime:

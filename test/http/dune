@@ -10,6 +10,7 @@
   test_eta_http_retry
   test_eta_http_h1_client
   test_eta_http_h1_server
+  test_eta_http_server_handler
   test_eta_http_server_config
   test_eta_http_server_stats
   test_eta_http_ws
