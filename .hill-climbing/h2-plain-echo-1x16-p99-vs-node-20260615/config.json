@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T17:00:00Z",
-  "direction": "lower",
-  "id": "h2-plain-echo-1x16-p99-vs-node-20260615",
-  "metric_name": "h2_plain_echo_1x16_eta_node_p99_ratio",
-  "metric_unit": "ratio"
-}

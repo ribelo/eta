@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T08:41:51Z",
-  "direction": "lower",
-  "id": "angular-cyan-prism",
-  "metric_name": "h2_plain_echo_1k_1x16_p99_ms",
-  "metric_unit": "ms"
-}

@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T12:51:43Z",
-  "direction": "lower",
-  "id": "h1-tls-echo-1k-tail-20260615",
-  "metric_name": "h1_tls_echo_1k_p99_us",
-  "metric_unit": "us"
-}

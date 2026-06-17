@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T16:37:00Z",
-  "direction": "higher",
-  "id": "h1-plain-echo-remaining-throughput-20260615",
-  "metric_name": "h1_plain_echo_1k_eta_go_rps_ratio",
-  "metric_unit": "ratio"
-}

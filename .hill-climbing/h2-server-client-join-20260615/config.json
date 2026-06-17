@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T09:25:05Z",
-  "direction": "lower",
-  "id": "h2-server-client-join-20260615",
-  "metric_name": "h2c_join_write_complete_to_rx_headers_p99_us",
-  "metric_unit": "us"
-}

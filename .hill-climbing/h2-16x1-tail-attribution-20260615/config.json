@@ -1,7 +1,0 @@
-{
-  "created_at": "2026-06-15T16:26:47Z",
-  "direction": "lower",
-  "id": "h2-16x1-tail-attribution-20260615",
-  "metric_name": "h2_16x1_eta_ref_p99_ratio_geomean",
-  "metric_unit": "ratio"
-}
