@@ -2,6 +2,11 @@
 opam-version: "2.0"
 synopsis: "Testing helpers for eta_js"
 description: "eta_js_test provides js_of_ocaml Node test helpers for eta_js."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.21"}

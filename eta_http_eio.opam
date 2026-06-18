@@ -3,6 +3,11 @@ opam-version: "2.0"
 synopsis: "Eio transport adapter for eta-http"
 description:
   "eta_http_eio provides Eio-backed HTTP/1.1, HTTP/2, TLS, and WebSocket transport adapters for eta-http."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}

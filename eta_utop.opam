@@ -3,6 +3,11 @@ opam-version: "2.0"
 synopsis: "UTop convenience helpers for Eta effects"
 description:
   "eta_utop provides small Eio-backed helpers for running Eta effects from dune utop sessions."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}

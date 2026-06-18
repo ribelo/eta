@@ -1,0 +1,15 @@
+(test
+ (name test_eta_http_service_eio)
+ (libraries
+  eta
+  eta_eio
+  eta_http
+  eta_http_eio
+  eta_http_service_eio
+  alcotest
+  eio
+  eio_main
+  unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

@@ -3,6 +3,11 @@ opam-version: "2.0"
 synopsis: "Backend-neutral HTTP protocol and client contract for Eta"
 description:
   "eta_http provides the shared HTTP request/response model, runtime client contract, typed errors, retry handling, body streams, and pure protocol helpers."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}

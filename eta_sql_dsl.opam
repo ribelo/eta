@@ -3,6 +3,11 @@ opam-version: "2.0"
 synopsis: "Shared SQL DSL for Eta connectors"
 description:
   "eta_sql_dsl provides the backend-agnostic typed SQL builder shared by Eta SQL connector packages."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}

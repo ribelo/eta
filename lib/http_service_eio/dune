@@ -1,0 +1,5 @@
+(library
+ (name eta_http_service_eio)
+ (public_name eta_http_service_eio)
+ (synopsis "Eio serving helpers for eta-http-service")
+ (libraries eta eta_http eta_http_eio eta_http_service eio eio.unix))

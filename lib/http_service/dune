@@ -1,0 +1,5 @@
+(library
+ (name eta_http_service)
+ (public_name eta_http_service)
+ (synopsis "Composable HTTP service helpers for Eta")
+ (libraries eta eta_http eta_router yojson))

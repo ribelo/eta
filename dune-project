@@ -2,6 +2,11 @@
 (generate_opam_files true)
 
 (name eta)
+(authors "Rafal Krzywaznia")
+(maintainers "Rafal Krzywaznia <r.krzywaznia@gmail.com>")
+(license MIT)
+(homepage "https://github.com/ribelo/eta")
+(bug_reports "https://github.com/ribelo/eta/issues")
 
 (package
  (name eta)
@@ -15,7 +20,7 @@
 (package
  (name eta_js)
  (allow_empty)
- (synopsis "js_of_ocaml Eta facade")
+ (synopsis "Js_of_ocaml Eta facade")
  (description
   "eta_js provides a js_of_ocaml-first Eta facade backed by the eta_jsoo runtime host.")
  (depends
@@ -28,7 +33,7 @@
 (package
  (name eta_jsoo)
  (allow_empty)
- (synopsis "js_of_ocaml-native runtime backend for Eta")
+ (synopsis "Js_of_ocaml-native runtime backend for Eta")
  (description
   "eta_jsoo implements Eta's runtime contract directly on JavaScript timers and microtasks for js_of_ocaml targets.")
  (depends
@@ -178,6 +183,33 @@
   domain-name
   ipaddr
   bigstringaf))
+
+(package
+ (name eta_http_service)
+ (synopsis "Composable HTTP service helpers for Eta")
+ (description
+  "eta_http_service provides small routing, extractor, JSON response, and middleware helpers over Eta_http.Server.handler.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_http
+  eta_router
+  (yojson (>= 2.0))))
+
+(package
+ (name eta_http_service_eio)
+ (synopsis "Eio serving helpers for eta-http-service")
+ (description
+  "eta_http_service_eio provides readiness and graceful-drain serving helpers over eta_http_eio.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_http
+  eta_http_eio
+  eta_http_service
+  (eio (>= 1.0))))
 
 (package
  (name eta_sql_dsl)

@@ -3,6 +3,11 @@ opam-version: "2.0"
 synopsis: "Native blocking worker pools for Eta"
 description:
   "eta_blocking provides bounded blocking worker-pool helpers for Eta native runtime packages and synchronous connector bindings."
+maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
+authors: ["Rafal Krzywaznia"]
+license: "MIT"
+homepage: "https://github.com/ribelo/eta"
+bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
