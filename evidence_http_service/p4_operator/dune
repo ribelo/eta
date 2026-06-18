@@ -1,0 +1,2 @@
+(executable (name operator) (libraries eta eta_http eta_http_eio eta_eio eio_main))
+(executable (name operator_socket) (libraries eta eta_http eta_http_eio eta_eio eio_main))
