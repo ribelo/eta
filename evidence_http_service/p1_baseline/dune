@@ -1,0 +1,3 @@
+(executable (name health_service) (libraries eta_http eta_http_eio eta_eio eio_main))
+(executable (name json_service) (libraries eta_http eta_http_eio eta_eio eta_schema eio_main yojson))
+(executable (name middleware_service) (libraries eta_http eta_http_eio eta_eio eio_main))

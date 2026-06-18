@@ -1,356 +1,365 @@
-# Scoped Sessions Ergonomics — Lab
+# eta_http_service API Research Lab
 
-Worktree: `../Eta-scoped-sessions`, branch `research-scoped-sessions`.
-Scratch lab: `scratch/eta_research/scoped_sessions/`.
-This file is the single planning entry point for the experimenter agent.
+Worktree: `../Eta-http-service-api`
+Branch: `research/eta-http-service-api`
+Role: researcher/orchestrator for an evidence-based-coding agent.
 
-This is a **small lab**. The question is constrained, the cost of being
-wrong is bounded, and the boring baseline is a likely answer. Three
-probes, same hard rules as the Ladybug / Graph-Query / Turso labs,
-scoped down.
+This worktree exists to answer one question:
 
----
+> What is the smallest, best public API Eta should add so ordinary OCaml
+> microservices can be built on `eta_http` without turning Eta into Rails,
+> Django, or an application framework?
 
-## Goal
+The expected output is a researched API recommendation backed by local code,
+tests, examples, and cited repo evidence. Do not ship a speculative framework.
+The main job is discovery: find what the interface should look like, what fits
+Eta's design best, and what feels convenient and obvious to an Eta user.
 
-Decide whether Eta should add a public ergonomics layer for the
-"long-lived child fiber + handle escape into a callback" pattern, or
-whether existing primitives (`Supervisor.scoped`, `Scope.start`,
-`Scope.await`, `Effect.acquire_release`) plus documentation are
-sufficient.
+## Ground Rules
 
-The motivating consumer: camelpie's PTT streaming session. The agent
-working on it reached for `Effect.Private.daemon` because the existing
-structured-concurrency primitives required reshaping camelpie's API
-shape, and that reshape felt heavy. The question is whether the
-reshape is *genuinely* heavy enough to justify a new helper, or
-whether it's a one-time camelpie cost that doesn't generalize.
+- Use evidence-based coding: local source reads, runnable prototypes, focused
+  tests, API sketches compiled by Dune, and explicit falsification.
+- Do not assume the answer is `eta_http_service`. That name is a candidate,
+  not a verdict. The lab may conclude that the best interface belongs in
+  `eta_http`, in a smaller package, or only in docs.
+- Prefer existing Eta contracts. The current low-level handler type is:
+  `Eta_http.Server.Request.t -> (Eta_http.Server.Response.t,
+  Eta_http.Server.Error.t) Eta.Effect.t`.
+- Preserve Eta's core boundary: applications own state; Eta owns effect
+  description, interpretation, lifecycle protocols, and HTTP transport
+  invariants.
+- Do not add Layer, Context, Tag, service locator, controller classes, ORM,
+  template engine, session framework, asset pipeline, or admin framework.
+- No compatibility shims. If an API shape is wrong, reject it and document why.
+- Keep experiments in `.scratch/eta_http_service_api/` or another clearly
+  marked lab area unless a small production change is required to prove a
+  point.
+- If a public package is recommended, use the naming policy:
+  `eta_http_service` opam package, `eta_http_service` public library,
+  `Eta_http_service` top-level module.
 
-This is a **library-or-recipe survival lab** in the V-Pool / V-Channel
-/ V-Rs / V-Latch shape. The decision criterion is the same: a helper
-earns its place if it centralizes a real protocol; a helper that only
-renames existing primitives is rejected.
+## What "Best API" Means
 
----
+Judge every candidate on three axes. Do not collapse them into one vague DX
+score.
 
-## Accepted prior art (do not reopen)
+### Fit For Eta
 
-- **Structured concurrency is non-negotiable.** Eta does not ship a
-  public unsupervised-spawn primitive. `Effect.Private.daemon` stays
-  Private. (Decided by Eta's identity and reaffirmed by V-Effect-Services.)
-- **`Effect.acquire_release` is the resource pattern.** Already shipped.
-- **`Supervisor.scoped` + `Scope.start` + `Scope.await`** is the
-  existing scoped-child pattern. Already shipped.
-- **`Pool.with_resource`** centralizes one specific case (bounded
-  acquire/release with eviction) and is shipped.
-- **H-W4 wrap policy applies.** A helper earns its place when it
-  preserves an Eta-owned invariant — typed failure preservation,
-  cancellation cleanup, scoped lifecycle, close fences, backpressure
-  ownership, mode/portability fences, observability. Otherwise the
-  consumer should use the existing primitives directly.
+An interface fits Eta when:
 
----
+- dependencies are ordinary OCaml values, records, modules, or closures;
+- the result compiles down to `Eta_http.Server.handler` without hiding the
+  existing server contract;
+- typed failures, cancellation, body streaming, response stream release, and
+  observability remain explicit enough to reason about;
+- optional dependencies stay in optional packages;
+- the interface removes repeated protocol glue rather than owning application
+  state.
 
-## Hypothesis space
+### Convenient
 
-Four branches. All must be tested against the consumer survey. Do not
-silently reject before P-Scoped-1 runs.
+An interface is convenient when common microservice handlers need little
+ceremony:
 
-### Branch A — public `Supervisor.with_child` helper
+- a health endpoint is one or two lines;
+- a JSON endpoint can read, validate, and respond without repeated boilerplate;
+- middleware composition has an obvious order and type;
+- route params and query params are easy to access and easy to validate;
+- tests can run handlers without opening sockets;
+- the same handler can still be mounted on H1, h2c, or HTTPS through
+  `Eta_http_eio.Server`.
 
-```ocaml
-val Supervisor.with_child :
-  ('child_result, 'err) Effect.t ->
-  (('child_result, 'err) child -> ('a, 'err) Effect.t) ->
-  ('a, 'err) Effect.t
+Measure convenience with code, not taste: call-site LOC, required type
+annotations, imports, repeated helper code, and number of places a user can
+forget cleanup, redaction, body limits, or error mapping.
+
+### Obvious
+
+An interface is obvious when a user who knows Eta can predict it:
+
+- names line up with existing modules: `Handler`, `Route`, `Router`,
+  `Middleware`, `Request`, `Response`, `Json`, `Error`;
+- no hidden environment or global app object appears;
+- small examples read top-to-bottom in ordinary OCaml;
+- escape hatches return to `Eta_http.Server.handler`, not to private internals;
+- invalid states fail at construction or compile time where practical.
+
+Test obviousness by writing examples before docs. If the example needs a long
+paragraph to explain why it works, the interface is probably wrong.
+
+## Local Evidence To Read First
+
+Read these before designing APIs:
+
+- `AGENTS.md`
+- `README.md`
+- `docs/api-dx.md`
+- `docs/services.md`
+- `docs/packages.md`
+- `lib/http/README.md`
+- `docs/http-server-production-readiness-audit.md`
+- `docs/porting-http-test-candidates.md`
+- `lib/http/server.mli`
+- `lib/http/server_request.mli`
+- `lib/http/server_response.mli`
+- `lib/http/server_body.mli`
+- `lib/http/server_config.mli`
+- `lib/http_eio/server.mli`
+- `lib/http_eio/server_types.mli`
+- `lib/router/eta_router.mli`
+- `lib/router/router.mli`
+- `lib/schema/eta_schema.mli`
+- `test/http/test_eta_http_h1_server.ml`
+- `test/http/test_eta_http_h2_server.ml`
+- `test/http_common/server_common_suites.ml`
+- `examples/http_handlers.ml`
+
+Reference code is allowed as prior art, not dependency:
+
+- `.reference/effect-smol` for Effect-style HTTP/server API ideas when present.
+- `.reference/oxmono` for OCaml library style.
+- `.reference/riot` for larger OCaml application/server conventions.
+- `.reference/zio-http` and `.reference/effect` only if present locally.
+
+## Questions To Answer
+
+Answer all of these with evidence. Each answer should cite files, prototypes,
+or tests.
+
+1. Should this be a new package `eta_http_service`, additions to `eta_http`, or
+   only docs/examples?
+2. What is the minimal API surface for microservices: router, middleware,
+   codecs, server runner, or all of these?
+3. Should the exported handler type be exactly `Eta_http.Server.handler`, or
+   should routes receive an enriched request context with params and route
+   pattern metadata?
+4. What router API is best: mutable build/freeze, functional builder, list of
+   route declarations, or a thin adapter over `Eta_router.Router.t`?
+5. How should method routing work, including `HEAD`, `OPTIONS`, `404`, and
+   `405`?
+6. How should route params, query params, and schema validation compose without
+   adding an environment channel?
+7. What is the smallest useful middleware type? Confirm ordering, typed failure
+   propagation, defect handling, cancellation, and response finalization.
+8. Which middleware helpers should ship first: request id, access log, tracing,
+   CORS, auth hook, per-route timeout, per-route body limit, and concurrency
+   admission?
+9. How should JSON request/response helpers use `eta_schema` and `yojson`
+   without forcing application-wide schema style?
+10. Should URL-encoded forms, multipart, cookies, redirects, content
+    negotiation, static files, SSE, and WebSocket server upgrade be in the
+    first package, later optional modules, or out of scope?
+11. What response/error API should map domain errors to HTTP responses without
+    hiding `Eta_http.Server.Error.t`?
+12. How should route pattern names appear in spans, metrics, and access logs
+    while preserving Eta's default redaction behavior?
+13. What operator runner belongs in this package, if any: bind config,
+    graceful shutdown, health/readiness/draining endpoints, signal handling,
+    OTel wiring, and HTTPS config?
+14. How do per-route limits and timeouts compose with existing global
+    `Eta_http.Server.Config.t`?
+15. What examples prove the API: health/readiness, JSON CRUD-ish endpoint,
+    outbound HTTP client call, DB-like dependency capture, streaming response,
+    and middleware failure?
+16. What does a user test look like without sockets? What does one Eio
+    integration test look like with sockets?
+17. Which existing `docs/porting-http-test-candidates.md` gaps are stale
+    because tests have since landed, and which still require new public API?
+18. What should explicitly not be built now?
+
+## Candidate API Branches
+
+Test these seriously. Add a fourth branch only if evidence forces it.
+The point is not to defend these exact branches; it is to force several
+substantially different interface shapes before deciding.
+
+### Branch A: Minimal Service Adapter
+
+New package with:
+
+- route declarations compiled to `Eta_http.Server.handler`;
+- method/path routing using `Eta_router`;
+- params on request context;
+- `not_found` and `method_not_allowed`;
+- plain function middleware;
+- JSON/schema helpers;
+- access-log/tracing helpers;
+- no process-level server runner.
+
+This branch wins if most friction is handler composition and body/error helper
+boilerplate, not server startup.
+
+### Branch B: Microservice Runtime Kit
+
+Branch A plus an explicit runner:
+
+- bind H1/h2c/HTTPS through `Eta_http_eio.Server`;
+- config from ordinary values, not global env;
+- graceful shutdown and readiness/draining state;
+- request id, access logs, basic metrics/OTel hooks;
+- health/ready endpoint helpers.
+
+This branch wins only if evidence shows every realistic service repeats the
+same boot/shutdown/observability code and Eta can centralize it without owning
+application state.
+
+### Branch C: Typed Endpoint Builder
+
+Higher-level API:
+
+- method/path/schema/body/response/error declared together;
+- automatic request decode and response encode;
+- route params and query schemas;
+- typed error-to-response mapping.
+
+This branch must prove it is not too large or framework-shaped. It loses if
+it forces a single schema style, grows an application model, or makes simple
+handlers harder to read.
+
+### Branch D: No New API
+
+Docs and examples only:
+
+- show `Eta_router` plus `Eta_http.Server.handler`;
+- provide recipes for JSON, middleware, access logs, readiness, and testing;
+- no new public package.
+
+This branch wins if prototypes are already simple with existing primitives and
+the missing piece is discoverability.
+
+## Required Probes
+
+### P0: Current-State Inventory
+
+Refresh the audit against this checkout.
+
+Deliverables:
+
+- `.scratch/eta_http_service_api/p0_inventory.md`
+- List what is already present.
+- List stale claims in `docs/porting-http-test-candidates.md`.
+- Record exact commands run and results.
+
+Minimum gates:
+
+```sh
+nix develop -c dune runtest test/http --force
+nix develop -c dune runtest test/http_eio --force
 ```
 
-Strongest reading: the start-child / use-handle / cancel-or-await
-sequence is genuinely a protocol that several consumers replicate
-identically. The helper centralizes typed failure flow from child to
-parent, cancellation on callback exit, observability seam.
+### P1: Baseline Without New API
 
-Plausible falsifier: only camelpie hits this pattern. The "protocol"
-is one-shot. The helper renames `Supervisor.scoped + Scope.start +
-Scope.await` without centralizing anything.
+Write 3 small services using only existing public APIs:
 
-### Branch B — public `Resource.with_session` (or similar name)
+1. health/readiness plus graceful shutdown handle;
+2. JSON request/response endpoint with schema decode and domain error mapping;
+3. middleware stack with request id, auth hook, access log, and per-route
+   timeout or concurrency limit.
 
-A session-specific resource pattern. Streaming WebSocket is
-conceptually a resource: open → use → finish/cancel → close. A helper
-that names that lifetime and ensures it composes with `Effect.timeout`
-and parent `Switch` cancellation.
+They may live under `.scratch/eta_http_service_api/p1_baseline/`.
 
-Strongest reading: stream sessions are common across camelpie,
-OpenAI Realtime, eta-otel batching, and probably future agent-loop
-consumers. They share more than just "fork-and-await" — they have
-finish-vs-cancel asymmetry, drain semantics, and an observability
-shape distinct from generic supervised children.
+Measure:
 
-Plausible falsifier: this is just `Effect.acquire_release` with a
-nicer name. If the consumer survey shows the existing primitive
-already expresses every case cleanly, B is dominated by C.
+- call-site LOC;
+- repeated helper code;
+- testability without sockets;
+- Eio integration complexity;
+- where mistakes are easy.
 
-### Branch C — recipe in docs, no new public API
+If this is already clean, Branch D is strong evidence.
 
-Write the canonical recipe using existing primitives. Land one or two
-worked examples. No API change.
+### P2: Prototype Candidate APIs
 
-Strongest reading: every consumer surveyed can be expressed with
-`Supervisor.scoped + Scope.start + Scope.await + Effect.acquire_release`
-in roughly the same LOC as a helper would produce, with no protocol
-that a helper would centralize. The friction is *discoverability*, not
-*expressivity*.
+Implement enough of Branches A, B, and C to compile the same 3 services from
+P1. These can be local modules in scratch; do not need polished production
+code.
 
-This is the boring baseline. It always wins when nothing earns its
-place above it. Do not eliminate it.
+Each candidate must include:
 
-### Branch D — refactor camelpie alone, no Eta change
+- public-looking `.mli` sketch;
+- usage examples;
+- at least one handler-only test;
+- at least one Eio socket test or a clear reason it is unnecessary.
+- a "first 15 minutes" example showing what a new Eta user writes;
+- a short note explaining why this interface is deep rather than pass-through.
 
-Strongest reading: the friction is camelpie-shaped. PTT streaming has
-an unusual `start_stream_session : ... -> handle` API that returns a
-free handle from a function, which is the actual problem. Other
-consumers don't replicate this; their session APIs are already
-callback-shaped. Fix camelpie, leave Eta untouched.
+Capture:
 
-Plausible falsifier: when the consumer survey runs, three or more
-candidates have the same `start → handle → use → finish/cancel`
-shape camelpie has. Then it's a pattern, not a camelpie quirk.
+- `.scratch/eta_http_service_api/p2_candidates/branch_a/`
+- `.scratch/eta_http_service_api/p2_candidates/branch_b/`
+- `.scratch/eta_http_service_api/p2_candidates/branch_c/`
+- `.scratch/eta_http_service_api/p2_candidates/matrix.md`
 
----
+### P3: Edge Semantics
 
-## Probe order — hardest first, stop on falsifier
+For the surviving candidates, prove these semantics:
 
-### P-Scoped-1 (HARD, decides the lab): consumer survey
+- middleware order;
+- handler typed failure vs defect;
+- cancellation and response stream release;
+- unread request body policy;
+- route-not-found and method-not-allowed behavior;
+- automatic or explicit `HEAD` and `OPTIONS`;
+- route template propagation into observability;
+- redaction of query, auth, cookie, and set-cookie data;
+- per-route timeout/body-limit/admission behavior.
 
-This single probe usually closes the lab. If only camelpie hits the
-friction, Branch D wins and the lab ends. If three or more genuinely
-independent consumers hit the same boilerplate, A or B earn their
-place.
+Capture runnable tests or fixtures. Prose alone is not evidence.
 
-Survey 3–5 candidate consumers of the "long-lived child + handle
-escape" pattern that exist or are imminent. Suggested set:
+### P4: Operator Surface
 
-- **camelpie PTT streaming** — concrete, motivating consumer.
-- **OpenAI Realtime session** (`Eta-n0v4` in backlog) — almost
-  certainly the same shape.
-- **HTTP/2 multiplexer writer-fiber pattern** — already shipped in
-  `lib/http/h2/multiplexer.ml`. Does it benefit retroactively from
-  any of the proposed helpers, or is it different?
-- **eta-otel batching loop** — long-running background batcher with
-  finish/cancel semantics. Same shape?
-- **Hypothetical agent-loop / chat-session consumer** — the future
-  shape eta-ai might need.
+Decide whether a runner belongs in `eta_http_service`.
 
-For each consumer, **write the consumer code under all four branches**.
 Compare:
 
-- LOC at the call site
-- LOC of the helper implementation (if any) for branches A and B
-- error-path correctness (typed failure flow)
-- cancellation correctness (parent-cancels-child, child-fails-cancels-parent)
-- observability seam (does each branch surface the child fiber to
-  Tracer / Capabilities cleanly?)
-- discoverability (would a new contributor write this correctly
-  without reading docs?)
+- using `Eta_http_eio.Server.run_*` directly;
+- a thin `Eta_http_service_eio.run` helper;
+- a documented recipe only.
 
-A branch is **dominated** if Branch C is at least as clean for ≥80%
-of consumers. A branch is **eliminated** if it cannot express one of
-the consumers without a documented escape hatch.
+Use a runnable example with graceful shutdown and readiness/draining state.
+Do not add ambient global config.
 
-Capture: `scratch/eta_research/scoped_sessions/p_scoped_1/coverage_matrix.md`
-with a 4-branch × N-consumer grid, plus runnable fixtures
-demonstrating at least Branch C and Branch A or B for the camelpie
-consumer.
+### P5: Final Recommendation
 
-Verdict shapes:
-- **Branch D wins** — only camelpie hits it. Refactor camelpie, write
-  one passing-mention recipe in `lib/eta/`'s docs, close the lab.
-- **Branch C wins** — multiple consumers, but existing primitives
-  express each cleanly. Ship recipe + worked examples in docs. No
-  new API.
-- **A or B wins** — multiple consumers, helper genuinely centralizes
-  a protocol that consumers would otherwise replicate. Proceed to
-  P-Scoped-2.
+Write `docs/research/eta-http-service-api.md` with:
 
-### P-Scoped-2: protocol centralization test (only if A or B survives)
+- recommended package/module/API shape;
+- rejected alternatives and why;
+- open questions that remain after evidence;
+- migration story from raw `Eta_http.Server.handler`;
+- minimal first implementation plan;
+- exact test gates to require before merging;
+- examples that should become docs.
 
-For the surviving branch, prove the helper centralizes a real protocol.
-At least one of:
+## Decision Criteria
 
-- typed failure preservation across the parent/child boundary that
-  consumers would otherwise have to wire by hand;
-- cancellation cleanup that's hard to get right without the helper;
-- close fences (parent must drain child output before close);
-- observability seam (child fiber automatically registered with the
-  parent's Tracer);
-- mode/portability fence (helper enforces that `'err` and the child's
-  result flow correctly across the boundary).
+Prefer the branch that:
 
-If none of these survive scrutiny — if the helper is "a slightly
-shorter way to write `Supervisor.scoped + Scope.start + Scope.await`"
-— it doesn't centralize a protocol. Branch C wins; lab closes with
-the helper rejected.
+- hides repeated protocol/lifecycle complexity behind a small interface;
+- keeps handler code ordinary OCaml;
+- composes with explicit application dependencies;
+- preserves typed failure, cancellation, streaming, and resource release;
+- makes route-level observability better than ad hoc handlers;
+- stays small enough that an Eta user can learn it in one sitting;
+- scores best across fit, convenience, and obviousness using the measured
+  examples, not personal preference.
 
-Capture: `scratch/eta_research/scoped_sessions/p_scoped_2/protocol.md`
-documenting which invariant the helper preserves and what consumer
-boilerplate disappears as a result.
+Reject a branch if:
 
-### P-Scoped-3: camelpie refactor under the winning branch
+- it creates a framework identity for Eta;
+- it owns application state;
+- it adds a service locator or environment channel;
+- it forces all users into schema-first endpoint declarations;
+- it is only a thin rename of already-simple existing primitives;
+- it makes raw `Eta_http.Server.handler` harder to use or understand.
 
-Whichever branch wins, perform the camelpie refactor. Capture the diff
-from the current `Effect.Private.daemon` shape to the new shape under
-the chosen branch. Note:
+## Expected Final Shape
 
-- LOC delta in camelpie
-- Whether `Effect.Private.daemon` use is fully removed or only reduced
-- Any remaining friction the consumer survey didn't anticipate
+The final answer should be direct:
 
-This probe is a sanity check: if the supposed winner produces a
-camelpie diff that's *not* materially clearer than the current code,
-the verdict has no empirical support.
+- "Build `eta_http_service` with API X", or
+- "Do not build it; add docs/examples Y", or
+- "Build only package Z first and defer the rest."
 
-Capture: `scratch/eta_research/scoped_sessions/p_scoped_3/refactor.diff`
-plus `notes.md` summarizing the result.
-
-This probe does **not** change camelpie itself — the diff is captured
-under the lab as evidence; the actual camelpie change happens on a
-separate branch after the lab closes.
-
----
-
-## Hard rules
-
-Inherited from the prior labs. They worked. Same rules, no edits.
-
-1. **No verdict without a captured run-log artifact.** Notes that say
-   "tested" without a corresponding fixture or diff are filed as
-   **Untested**, not as a verdict.
-2. **No paper analysis dressed as evidence.** If the probe needs
-   actual code to surface the issue (consumer A's call-site
-   compared to consumer B's), write the actual code. Do not
-   compare prose descriptions.
-3. **No clean tables.** A 4×5 coverage matrix where one branch is
-   uniformly clean is suspect. Mixed verdicts are expected.
-4. **Surprise findings are the deliverable.** Findings that contradict
-   the user's expected verdict are evidence, not failure.
-5. **Self-correction is reportable.** If a later probe contradicts an
-   earlier verdict, lead with the contradiction.
-6. **Steelman before falsifying.** Each branch gets a real attempt.
-   Branch C ("recipe in docs") must be tried with a *well-written*
-   recipe, not a deliberately weak one. Same for Branch A's helper
-   API and Branch B's session shape.
-7. **Truth is not proof cost.** If finding three additional consumers
-   takes time, that's the cost of the research, not evidence against
-   them existing.
-8. **The user has not pre-decided.** "Branch D probably wins" is the
-   user's prior, not an answer to confirm. The lab tests against
-   evidence.
-
----
-
-## Stop conditions
-
-- **P-Scoped-1 falsifies all four branches** (no consumer can be
-  expressed cleanly under any branch). Pause and report; this is a
-  bigger architectural finding than the lab anticipated.
-- **P-Scoped-1 finds only camelpie.** Branch D wins. Lab closes. No
-  P-Scoped-2 or P-Scoped-3 needed. Report and close.
-- **P-Scoped-2 falsifies the surviving helper branch** (no real
-  protocol). Branch C wins; ship docs + examples. Lab closes.
-
-The lab does **not** pause on:
-- Mixed verdicts within Branch A or B (one consumer benefits, another
-  doesn't). That's a finding; document the fit-set.
-- Multiple branches surviving. That's also a finding; pick one based
-  on the protocol-centralization test in P-Scoped-2.
-
----
-
-## Acceptance criteria
-
-The lab closes when:
-
-1. P-Scoped-1's coverage matrix exists at
-   `scratch/eta_research/scoped_sessions/p_scoped_1/coverage_matrix.md`
-   with all consumer × branch cells classified, and at least Branch C
-   plus the strongest helper candidate fixtured against the camelpie
-   consumer.
-2. If a helper survives: P-Scoped-2 produces
-   `scratch/eta_research/scoped_sessions/p_scoped_2/protocol.md`
-   documenting the protocol, OR records "no protocol centralized"
-   as the verdict.
-3. P-Scoped-3 captures the camelpie refactor diff under the winning
-   branch.
-4. `scratch/eta_research/scoped_sessions/results.md` summarizes
-   verdicts, surprise findings, and what was not measured.
-5. `scratch/eta_research/scoped_sessions/adr.md` proposes either:
-   - the public API addition (Branch A or B) with rationale; or
-   - the recipe-in-docs path (Branch C) with the recipe text drafted; or
-   - the camelpie-refactor-only path (Branch D) with no Eta change.
-6. Journal entry `V-Scoped-Sessions` at the bottom of `journal.md`
-   recording the verdict and what was not measured.
-
-The lab does **not** require:
-- Implementation of the chosen API. (Lab outputs the ADR; if a helper
-  is approved, implementation is a separate task.)
-- Production benchmarks of helper vs raw primitive.
-- Full camelpie refactor. (P-Scoped-3 captures the diff as evidence;
-  the actual camelpie patch lands later.)
-- Surveying every possible consumer in the codebase. (Three to five
-  is enough; more if naturally surfaced.)
-
----
-
-## Non-goals
-
-- Reopening structured concurrency. Eta does not ship public
-  unsupervised-spawn. That's settled.
-- Reopening `Effect.Private.daemon`'s privacy. It stays Private.
-- Adding observability primitives. (Tracer integration is in scope
-  *as a question* — does the helper need one? — but a new Tracer API
-  is out of scope.)
-- Designing a fiber-handle / FiberRef / FiberHandle abstraction. (See
-  separate backlog tasks. This lab is narrower: just the start-use-
-  cancel scoped pattern.)
-- Refactoring `Pool` or `Resource` or any existing module to fit a
-  new shape.
-- Writing the implementation in `lib/eta/`. The lab outputs an ADR; a
-  helper, if approved, lands on a separate branch.
-
----
-
-## Deliverables (per probe)
-
-- `notes.md` — what was tested, what was measured, verdict, what was
-  **not** measured.
-- Fixture files (`.ml`, `.dune`) for runnable comparisons.
-- Captured logs or diffs as artifacts.
-- For P-Scoped-1: `coverage_matrix.md` is the central deliverable.
-
----
-
-## What good looks like
-
-- A 4-branch × N-consumer coverage matrix with mixed cells.
-- An honest answer: either "only camelpie" (D wins), or "multiple
-  consumers, existing primitives suffice" (C wins), or "multiple
-  consumers, helper centralizes [protocol]" (A or B wins).
-- At least one surprise — a consumer the lab didn't expect to fit
-  the pattern, or a consumer that does fit but for a different reason
-  than camelpie does.
-- An ADR that an implementer can read in under 15 minutes and act on
-  the same day.
-
-## What bad looks like
-
-- A coverage matrix where Branch A or B is uniformly clean and the
-  others uniformly fail. (Probably the agent steelmanned only one
-  branch.)
-- A verdict that "the user wants Branch C" wins with no evidence
-  weighed against it.
-- A verdict that adds a public API based on one consumer.
-- An ADR that proposes a helper without naming the protocol it
-  centralizes.
-
-If any of these appear, the lab is not closing — it is restarting.
+Do not end with a vague menu. Make a recommendation and show the evidence that
+falsified the alternatives.

@@ -1,0 +1,16 @@
+(executable
+ (name branch_a_example)
+ (modules branch_a branch_a_example)
+ (libraries eta eta_http eta_http_eio eta_eio eta_router eio_main yojson))
+(executable
+ (name branch_c_example)
+ (modules branch_c branch_c_example)
+ (libraries eta eta_http eta_http_eio eta_eio eta_router eio_main yojson))
+(executable
+ (name socket_test)
+ (modules branch_a socket_test)
+ (libraries eta eta_http eta_http_eio eta_eio eta_router eio_main yojson))
+(executable
+ (name extractors_example)
+ (modules branch_a extractors extractors_example)
+ (libraries eta eta_http eta_http_eio eta_eio eta_router eio_main yojson))
