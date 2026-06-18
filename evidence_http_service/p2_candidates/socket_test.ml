@@ -88,10 +88,9 @@ let () =
   in
   (* bind handler to listener in a fork; the client connects from the main fiber *)
   let ready, resolve_ready = Eio.Promise.create () in
-  let server_done, resolve_server_done = Eio.Promise.create () in
+  let stop, resolve_stop = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->
     Eio.Switch.run @@ fun conn_sw ->
-    let stop, _resolve = Eio.Promise.create () in
     Eta_http_eio.Server.run_h1_on_socket ~sw:conn_sw ~clock ~socket ~stop
       ~config:Eta_http_eio.Server.Config.default
       (service ()));
@@ -115,5 +114,7 @@ let () =
   check "POST /items (create)" (post {|{"id":1,"name":"x"}|}) "HTTP/1.1 201 Created";
   check "POST /items (conflict)" (post {|{"id":1,"name":"y"}|}) "HTTP/1.1 409";
   check "GET /nope" (get "nope") "HTTP/1.1 404";
-  ignore (resolve_server_done, ready);
+  (* shut the listener down cleanly so the process exits 0 *)
+  Eio.Promise.resolve resolve_stop ();
+  ignore ready;
   print_endline "p2_socket: all end-to-end assertions passed"
