@@ -30,6 +30,15 @@
               pkgs.zlib
             ]
           );
+          ladybugdb = pkgs.ladybugdb.overrideAttrs (finalAttrs: _previousAttrs: {
+            version = "0.17.1";
+            src = pkgs.fetchFromGitHub {
+              owner = "LadybugDB";
+              repo = "ladybug";
+              tag = "v${finalAttrs.version}";
+              hash = "sha256-3d0gsSLkO5Np6P4l8AEfEPvzMlkf2wYMCluAtDrwEDc=";
+            };
+          });
           # nixpkgs' turso package installs only the CLI in this lock; build the
           # SQLite-compatible C ABI that eta_turso loads at runtime.
           tursoSqlite3 = pkgs.rustPlatform.buildRustPackage {
@@ -64,10 +73,7 @@
           tursoLibraryPath =
             "${tursoSqlite3}/lib/libturso_sqlite3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
           ladybugLibraryPath =
-            if pkgs.stdenv.isDarwin then
-              "${pkgs.ladybugdb.lib}/lib/liblbug.dylib"
-            else
-              "${pkgs.ladybugdb.lib}/lib/liblbug.so.0.15.3";
+            "${ladybugdb.lib}/lib/liblbug${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
           oxCamlSetup = pkgs.writeShellApplication {
             name = "eta-oxcaml-init";
             runtimeInputs = [
@@ -243,7 +249,7 @@
               pkgs.go
               pkgs.gnumake
               pkgs.h2spec
-              pkgs.ladybugdb.lib
+              ladybugdb.lib
               pkgs.m4
               pkgs.nghttp2
               pkgs.nodejs_24
@@ -262,6 +268,7 @@
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.gmp
               pkgs.caddy
+              pkgs.gdb
               pkgs.jq
               pkgs.jdk21_headless
               pkgs.libev
@@ -270,6 +277,7 @@
               pkgs.nginx
               pkgs.openssl
               pkgs.scala-cli
+              pkgs.valgrind
               pkgs.zlib
             ];
           mainlineShippedTests = pkgs.writeShellApplication {
@@ -384,7 +392,7 @@
               ocamlPackages.ppxlib
               pkgs.duckdb
               pkgs.git
-              pkgs.ladybugdb.lib
+              ladybugdb.lib
               pkgs.nghttp2
               pkgs.openssl
               pkgs.pkg-config

@@ -83,6 +83,10 @@ typedef struct {
 } arrow_release_owner;
 
 typedef struct {
+  arrow_release_owner *owner;
+} arrow_release_owner_handle;
+
+typedef struct {
   void *handle;
   char error[512];
   int attempted;
@@ -190,7 +194,7 @@ static struct custom_operations conn_ops = {
 
 static arrow_release_owner *arrow_owner_val(value v)
 {
-  return (arrow_release_owner *)Data_custom_val(v);
+  return ((arrow_release_owner_handle *)Data_custom_val(v))->owner;
 }
 
 static void arrow_owner_release_array(arrow_release_owner *owner)
@@ -216,8 +220,11 @@ static void arrow_owner_release_schema(arrow_release_owner *owner)
 static void arrow_owner_finalize(value v_owner)
 {
   arrow_release_owner *owner = arrow_owner_val(v_owner);
+  if (owner == NULL) return;
   arrow_owner_release_array(owner);
   arrow_owner_release_schema(owner);
+  caml_stat_free(owner);
+  ((arrow_release_owner_handle *)Data_custom_val(v_owner))->owner = NULL;
 }
 
 static struct custom_operations arrow_owner_ops = {
@@ -230,10 +237,14 @@ static value arrow_owner_alloc(void)
 {
   CAMLparam0();
   CAMLlocal1(v_owner);
+  arrow_release_owner_handle *handle;
   arrow_release_owner *owner;
-  v_owner = caml_alloc_custom(&arrow_owner_ops, sizeof(arrow_release_owner), 0, 1);
-  owner = arrow_owner_val(v_owner);
+  v_owner = caml_alloc_custom(&arrow_owner_ops, sizeof(arrow_release_owner_handle), 0, 1);
+  handle = (arrow_release_owner_handle *)Data_custom_val(v_owner);
+  owner = caml_stat_alloc(sizeof(*owner));
+  if (owner == NULL) caml_raise_out_of_memory();
   memset(owner, 0, sizeof(*owner));
+  handle->owner = owner;
   CAMLreturn(v_owner);
 }
 
@@ -626,6 +637,37 @@ static void fail_last_with_copies(const char *operation, string_copies *copies)
 
 static lbug_value *create_lbug_value(value v, string_copies *copies);
 
+typedef struct bound_lbug_value {
+  lbug_value *value;
+  struct bound_lbug_value *next;
+} bound_lbug_value;
+
+typedef struct {
+  bound_lbug_value *head;
+} bound_lbug_values;
+
+static void bound_lbug_values_free(bound_lbug_values *values)
+{
+  bound_lbug_value *cur = values->head;
+  while (cur != NULL) {
+    bound_lbug_value *next = cur->next;
+    if (cur->value != NULL) api.value_destroy(cur->value);
+    free(cur);
+    cur = next;
+  }
+  values->head = NULL;
+}
+
+static int bound_lbug_values_add(bound_lbug_values *values, lbug_value *value)
+{
+  bound_lbug_value *node = malloc(sizeof(*node));
+  if (node == NULL) return 0;
+  node->value = value;
+  node->next = values->head;
+  values->head = node;
+  return 1;
+}
+
 static void destroy_lbug_values(lbug_value **values, uint64_t count)
 {
   if (values == NULL) return;
@@ -840,7 +882,23 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
   CAMLreturn(Val_unit);
 }
 
-static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *copies)
+static int bind_owned_value(lbug_prepared_statement *stmt, const char *name,
+                            lbug_value *value, bound_lbug_values *bound_values)
+{
+  if (value == NULL) return -2;
+  if (api.prepared_statement_bind_value(stmt, name, value) != LbugSuccess) {
+    api.value_destroy(value);
+    return -1;
+  }
+  if (!bound_lbug_values_add(bound_values, value)) {
+    api.value_destroy(value);
+    return -2;
+  }
+  return 0;
+}
+
+static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *copies,
+                      bound_lbug_values *bound_values)
 {
   const char *name;
   value v = Field(pair, 1);
@@ -848,8 +906,7 @@ static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *
   if (!string_copies_add(copies, String_val(Field(pair, 0)), &name)) return -2;
   if (Is_long(v)) {
     lbug_value *null_value = api.value_create_null();
-    state = api.prepared_statement_bind_value(stmt, name, null_value);
-    if (null_value != NULL) api.value_destroy(null_value);
+    return bind_owned_value(stmt, name, null_value, bound_values);
   } else {
     switch (Tag_val(v)) {
     case 0: state = api.prepared_statement_bind_bool(stmt, name, Bool_val(Field(v, 0))); break;
@@ -865,10 +922,7 @@ static int bind_param(lbug_prepared_statement *stmt, value pair, string_copies *
     case 5:
     case 6: {
       lbug_value *nested = create_lbug_value(v, copies);
-      if (nested == NULL) return -2; /* create_lbug_value failed */
-      state = api.prepared_statement_bind_value(stmt, name, nested);
-      api.value_destroy(nested);
-      break;
+      return bind_owned_value(stmt, name, nested, bound_values);
     }
     default: return -1; /* unsupported type */
     }
@@ -922,6 +976,26 @@ static value make_block(int tag, value field)
   CAMLreturn(out);
 }
 
+static value make_int64_block(int tag, int64_t int_value)
+{
+  CAMLparam0();
+  CAMLlocal2(out, boxed);
+  boxed = caml_copy_int64(int_value);
+  out = caml_alloc(1, tag);
+  Store_field(out, 0, boxed);
+  CAMLreturn(out);
+}
+
+static value make_double_block(int tag, double double_value)
+{
+  CAMLparam0();
+  CAMLlocal2(out, boxed);
+  boxed = caml_copy_double(double_value);
+  out = caml_alloc(1, tag);
+  Store_field(out, 0, boxed);
+  CAMLreturn(out);
+}
+
 static value some_int64(int64_t int_value)
 {
   CAMLparam0();
@@ -958,6 +1032,13 @@ static int64_t arrow_i64(struct ArrowArray *array, int64_t row)
   return values[array->offset + row];
 }
 
+static uint64_t arrow_u64(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const uint64_t *values = (const uint64_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
 static double arrow_f64(struct ArrowArray *array, int64_t row)
 {
   require_arrow_buffers(array, 2);
@@ -965,10 +1046,52 @@ static double arrow_f64(struct ArrowArray *array, int64_t row)
   return values[array->offset + row];
 }
 
+static float arrow_f32(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const float *values = (const float *)array->buffers[1];
+  return values[array->offset + row];
+}
+
+static int8_t arrow_i8(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const int8_t *values = (const int8_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
+static uint8_t arrow_u8(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const uint8_t *values = (const uint8_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
+static int16_t arrow_i16(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const int16_t *values = (const int16_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
+static uint16_t arrow_u16(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const uint16_t *values = (const uint16_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
 static int32_t arrow_i32(struct ArrowArray *array, int64_t row)
 {
   require_arrow_buffers(array, 2);
   const int32_t *values = (const int32_t *)array->buffers[1];
+  return values[array->offset + row];
+}
+
+static uint32_t arrow_u32(struct ArrowArray *array, int64_t row)
+{
+  require_arrow_buffers(array, 2);
+  const uint32_t *values = (const uint32_t *)array->buffers[1];
   return values[array->offset + row];
 }
 
@@ -1029,6 +1152,50 @@ static value arrow_list(struct ArrowSchema *schema, struct ArrowArray *array,
   items = Val_emptylist;
   for (int64_t idx = end; idx > start; idx--) {
     item = arrow_value(schema->children[0], array->children[0], idx - 1);
+    items = cons(item, items);
+  }
+  out = make_block(4, items);
+  CAMLreturn(out);
+}
+
+static int parse_fixed_size_list_format(const char *format, int64_t *size)
+{
+  const char *cursor;
+  int64_t value = 0;
+  if (format == NULL || strncmp(format, "+w:", 3) != 0) return 0;
+  cursor = format + 3;
+  if (*cursor == '\0') return 0;
+  while (*cursor >= '0' && *cursor <= '9') {
+    int digit = *cursor - '0';
+    if (value > (INT64_MAX - digit) / 10) return 0;
+    value = (value * 10) + digit;
+    cursor++;
+  }
+  if (*cursor != '\0' || value <= 0) return 0;
+  *size = value;
+  return 1;
+}
+
+static value arrow_fixed_size_list(struct ArrowSchema *schema,
+                                   struct ArrowArray *array, int64_t row,
+                                   int64_t item_count)
+{
+  CAMLparam0();
+  CAMLlocal3(items, item, out);
+  if (schema == NULL || array == NULL || schema->n_children != 1 ||
+      array->n_children != 1 || schema->children == NULL ||
+      array->children == NULL || schema->children[0] == NULL ||
+      array->children[0] == NULL) {
+    caml_failwith("ladybug: malformed Arrow fixed-size list");
+  }
+  int64_t start = (array->offset + row) * item_count;
+  struct ArrowArray *child = array->children[0];
+  if (start < 0 || item_count < 0 || start + item_count > child->length) {
+    caml_failwith("ladybug: malformed Arrow fixed-size list length");
+  }
+  items = Val_emptylist;
+  for (int64_t idx = item_count; idx > 0; idx--) {
+    item = arrow_value(schema->children[0], child, start + idx - 1);
     items = cons(item, items);
   }
   out = make_block(4, items);
@@ -1285,6 +1452,7 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
 {
   CAMLparam0();
   CAMLlocal2(v, out);
+  int64_t fixed_size_list_items;
   if (schema == NULL || array == NULL) caml_failwith("ladybug: malformed Arrow value");
   if (!arrow_valid(array, row)) CAMLreturn(Val_int(0));
   const char *format = schema->format == NULL ? "" : schema->format;
@@ -1294,14 +1462,34 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
     CAMLreturn(out);
   }
   if (strcmp(format, "l") == 0) {
-    out = caml_alloc(1, 1);
-    Store_field(out, 0, caml_copy_int64(arrow_i64(array, row)));
-    CAMLreturn(out);
+    CAMLreturn(make_int64_block(1, arrow_i64(array, row)));
+  }
+  if (strcmp(format, "L") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_u64(array, row)));
+  }
+  if (strcmp(format, "i") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_i32(array, row)));
+  }
+  if (strcmp(format, "I") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_u32(array, row)));
+  }
+  if (strcmp(format, "s") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_i16(array, row)));
+  }
+  if (strcmp(format, "S") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_u16(array, row)));
+  }
+  if (strcmp(format, "c") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_i8(array, row)));
+  }
+  if (strcmp(format, "C") == 0) {
+    CAMLreturn(make_int64_block(1, (int64_t)arrow_u8(array, row)));
   }
   if (strcmp(format, "g") == 0) {
-    out = caml_alloc(1, 2);
-    Store_field(out, 0, caml_copy_double(arrow_f64(array, row)));
-    CAMLreturn(out);
+    CAMLreturn(make_double_block(2, arrow_f64(array, row)));
+  }
+  if (strcmp(format, "f") == 0) {
+    CAMLreturn(make_double_block(2, (double)arrow_f32(array, row)));
   }
   if (strcmp(format, "u") == 0) {
     v = arrow_string(array, row);
@@ -1312,6 +1500,9 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
   }
   if (strcmp(format, "+L") == 0) {
     CAMLreturn(arrow_list(schema, array, row, 1));
+  }
+  if (parse_fixed_size_list_format(format, &fixed_size_list_items)) {
+    CAMLreturn(arrow_fixed_size_list(schema, array, row, fixed_size_list_items));
   }
   if (strcmp(format, "+m") == 0) {
     CAMLreturn(arrow_map(schema, array, row));
@@ -1329,15 +1520,11 @@ static value arrow_value(struct ArrowSchema *schema, struct ArrowArray *array, i
      64-bit. Decode them to Value.Int rather than the empty-string default. */
   if (format[0] == 't') {
     if (strcmp(format, "tdD") == 0) {
-      out = caml_alloc(1, 1);
-      Store_field(out, 0, caml_copy_int64((int64_t)arrow_i32(array, row)));
-      CAMLreturn(out);
+      CAMLreturn(make_int64_block(1, (int64_t)arrow_i32(array, row)));
     }
     if (format[1] == 's' || format[1] == 't' || format[1] == 'd' ||
         format[1] == 'D') {
-      out = caml_alloc(1, 1);
-      Store_field(out, 0, caml_copy_int64(arrow_i64(array, row)));
-      CAMLreturn(out);
+      CAMLreturn(make_int64_block(1, arrow_i64(array, row)));
     }
   }
   v = caml_copy_string("");
@@ -1369,9 +1556,9 @@ static value arrow_field_names(struct ArrowSchema *schema)
   CAMLreturn(field_names);
 }
 
-static value materialize_arrow_rows(lbug_query_result *result)
+static value materialize_arrow_rows(value v_result_owner)
 {
-  CAMLparam0();
+  CAMLparam1(v_result_owner);
   CAMLlocal5(rows, row_list, pair, value_v, field_names);
   CAMLlocal1(v_owner);
   arrow_release_owner *owner;
@@ -1382,7 +1569,7 @@ static value materialize_arrow_rows(lbug_query_result *result)
      if control leaves before the normal release path. The [result] itself is
      owned by the caller's result_owner, so this function only needs to protect
      the Arrow schema/chunk it borrows. */
-  if (api.query_result_get_arrow_schema(result, &owner->schema) != LbugSuccess)
+  if (api.query_result_get_arrow_schema(result_owner_result(v_result_owner), &owner->schema) != LbugSuccess)
     fail_last("get_arrow_schema");
   arrow_owner_set_schema(owner);
   /* The public query API returns Row.t list, so this path must materialize the
@@ -1392,22 +1579,28 @@ static value materialize_arrow_rows(lbug_query_result *result)
   field_names = arrow_field_names(&owner->schema);
   rows = Val_emptylist;
   for (;;) {
+    owner = arrow_owner_val(v_owner);
     memset(&owner->array, 0, sizeof(owner->array));
-    if (api.query_result_get_next_arrow_chunk(result, 1024, &owner->array) != LbugSuccess) {
+    if (api.query_result_get_next_arrow_chunk(result_owner_result(v_result_owner), 1024, &owner->array) != LbugSuccess) {
+      owner = arrow_owner_val(v_owner);
       arrow_owner_set_array(owner);
       arrow_owner_release_array(owner);
       arrow_owner_release_schema(owner);
       fail_last("get_next_arrow_chunk");
     }
+    owner = arrow_owner_val(v_owner);
     arrow_owner_set_array(owner);
     if (owner->array.release == NULL || owner->array.length == 0) {
       arrow_owner_release_array(owner);
       break;
     }
-    for (int64_t row_idx = 0; row_idx < owner->array.length; row_idx++) {
+    int64_t row_count = owner->array.length;
+    int64_t column_count = owner->schema.n_children;
+    for (int64_t row_idx = 0; row_idx < row_count; row_idx++) {
       row_list = Val_emptylist;
-      for (int64_t c = owner->schema.n_children; c > 0; c--) {
+      for (int64_t c = column_count; c > 0; c--) {
         int64_t col_idx = c - 1;
+        owner = arrow_owner_val(v_owner);
         value_v = arrow_value(owner->schema.children[col_idx], owner->array.children[col_idx], row_idx);
         pair = caml_alloc_tuple(2);
         Store_field(pair, 0, Field(field_names, (mlsize_t)col_idx));
@@ -1416,8 +1609,10 @@ static value materialize_arrow_rows(lbug_query_result *result)
       }
       rows = cons(row_list, rows);
     }
+    owner = arrow_owner_val(v_owner);
     arrow_owner_release_array(owner);
   }
+  owner = arrow_owner_val(v_owner);
   arrow_owner_release_schema(owner);
   CAMLreturn(list_rev(rows));
 }
@@ -1466,6 +1661,7 @@ static value execute_prepared(value v_conn, value v_cypher, value params)
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
+  bound_lbug_values bound_values = { NULL };
   const char *cypher_copy;
   lbug_state state;
   stmt.ptr = NULL;
@@ -1494,8 +1690,9 @@ static value execute_prepared(value v_conn, value v_cypher, value params)
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
+    if (bind_param(&stmt, Field(params, 0), &copies, &bound_values) != 0) {
       api.prepared_statement_destroy(&stmt);
+      bound_lbug_values_free(&bound_values);
       string_copies_free(&copies);
       conn_release(v_conn);
       caml_failwith("LadybugDB bind failed");
@@ -1507,6 +1704,7 @@ static value execute_prepared(value v_conn, value v_cypher, value params)
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
+    bound_lbug_values_free(&bound_values);
     conn_release(v_conn);
     fail_last_with_copies("execute", &copies);
   }
@@ -1514,6 +1712,7 @@ static value execute_prepared(value v_conn, value v_cypher, value params)
      copies now — before any OCaml allocation below can raise — leaving the
      result as the only foreign resource that needs exception-safe cleanup. */
   api.prepared_statement_destroy(&stmt);
+  bound_lbug_values_free(&bound_values);
   string_copies_free(&copies);
   conn_release(v_conn);
   result_owner_take(result_owner, &result);
@@ -1569,7 +1768,7 @@ static value execute_direct_values(value v_conn, value v_cypher)
     result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = materialize_arrow_rows(result_owner_result(result_owner));
+  out = materialize_arrow_rows(result_owner);
   result_owner_destroy(result_owner);
   CAMLreturn(out);
 }
@@ -1582,6 +1781,7 @@ static value execute_prepared_values(value v_conn, value v_cypher, value params)
   lbug_prepared_statement stmt;
   lbug_query_result result;
   string_copies copies = { NULL };
+  bound_lbug_values bound_values = { NULL };
   const char *cypher_copy;
   lbug_state state;
   stmt.ptr = NULL;
@@ -1610,8 +1810,9 @@ static value execute_prepared_values(value v_conn, value v_cypher, value params)
     caml_failwith(buffer);
   }
   while (params != Val_emptylist) {
-    if (bind_param(&stmt, Field(params, 0), &copies) != 0) {
+    if (bind_param(&stmt, Field(params, 0), &copies, &bound_values) != 0) {
       api.prepared_statement_destroy(&stmt);
+      bound_lbug_values_free(&bound_values);
       string_copies_free(&copies);
       conn_release(v_conn);
       caml_failwith("LadybugDB bind failed");
@@ -1623,6 +1824,7 @@ static value execute_prepared_values(value v_conn, value v_cypher, value params)
   caml_leave_blocking_section();
   if (state != LbugSuccess) {
     api.prepared_statement_destroy(&stmt);
+    bound_lbug_values_free(&bound_values);
     conn_release(v_conn);
     fail_last_with_copies("execute", &copies);
   }
@@ -1630,6 +1832,7 @@ static value execute_prepared_values(value v_conn, value v_cypher, value params)
      copies now — before any OCaml allocation below can raise — leaving the
      result as the only foreign resource that needs exception-safe cleanup. */
   api.prepared_statement_destroy(&stmt);
+  bound_lbug_values_free(&bound_values);
   string_copies_free(&copies);
   conn_release(v_conn);
   result_owner_take(result_owner, &result);
@@ -1641,7 +1844,7 @@ static value execute_prepared_values(value v_conn, value v_cypher, value params)
     result_owner_destroy(result_owner);
     caml_failwith(buffer);
   }
-  out = materialize_arrow_rows(result_owner_result(result_owner));
+  out = materialize_arrow_rows(result_owner);
   result_owner_destroy(result_owner);
   CAMLreturn(out);
 }

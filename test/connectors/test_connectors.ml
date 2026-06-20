@@ -548,6 +548,226 @@ let test_ladybug_param_map_round_trips () =
   | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
   | Error err -> Alcotest.failf "%a" pp_error err
 
+let test_ladybug_param_float_list_writes_fixed_float_vector () =
+  let open Eta_ladybug in
+  with_ladybug_connection @@ fun conn ->
+  let dimensions = 2560 in
+  Connection.exec conn
+    (Printf.sprintf
+       "CREATE NODE TABLE Section(id STRING, embedding FLOAT[%d], PRIMARY KEY(id))"
+       dimensions)
+  |> ladybug_ok;
+  Connection.exec conn "CREATE (:Section {id: 'note#1'})" |> ladybug_ok;
+  let embedding =
+    List.init dimensions (fun index ->
+        if index mod 2 = 0 then float_of_int (index + 1) /. 1_000_000.0
+        else -.float_of_int (index + 1) /. 1_000_000.0)
+  in
+  Connection.exec conn
+    ~params:
+      [
+        Param.string "id" "note#1";
+        Param.list "embedding" (List.map (fun value -> Value.Float value) embedding);
+      ]
+    "MATCH (s:Section {id: $id}) SET s.embedding = $embedding"
+  |> ladybug_ok;
+  let query =
+    Query.raw
+      ~cypher:"MATCH (s:Section {id: 'note#1'}) RETURN s.embedding AS embedding"
+      ~decode:(Decode.value "embedding") ()
+  in
+  match Connection.query conn query with
+  | Ok [ Value.List values ] ->
+      Alcotest.(check int) "embedding dimension" dimensions (List.length values);
+      let floats =
+        List.map
+          (function
+            | Value.Float value -> value
+            | value ->
+                Alcotest.failf "embedding item has unexpected value shape: %S"
+                  (match value with
+                  | Value.Null -> "null"
+                  | Value.Bool _ -> "bool"
+                  | Value.Int _ -> "int"
+                  | Value.Float _ -> "float"
+                  | Value.String _ -> "string"
+                  | Value.List _ -> "list"
+                  | Value.Map _ -> "map"
+                  | Value.Struct _ -> "struct"
+                  | Value.Node _ -> "node"
+                  | Value.Rel _ -> "rel"
+                  | Value.Path _ -> "path"))
+          values
+      in
+      Alcotest.(check (float 0.000001)) "first value" (List.hd embedding)
+        (List.hd floats);
+      Alcotest.(check (float 0.000001)) "last value"
+        (List.hd (List.rev embedding))
+        (List.hd (List.rev floats))
+  | Ok [ _ ] -> Alcotest.fail "embedding decoded as wrong constructor"
+  | Ok rows -> Alcotest.failf "expected one row, got %d" (List.length rows)
+  | Error err -> Alcotest.failf "%a" pp_error err
+
+let test_ladybug_nema_section_vector_updates_survive_persistent_table () =
+  let open Eta_ladybug in
+  if require_ladybug_available () then
+    let db_path = Filename.temp_file "eta-ladybug-section-update-" ".db" in
+    Sys.remove db_path;
+    Fun.protect
+      ~finally:(fun () -> remove_tree db_path)
+      (fun () ->
+        let db = Database.open_ ~path:db_path |> ladybug_ok in
+        Fun.protect
+          ~finally:(fun () -> ignore (Database.close db))
+          (fun () ->
+            let conn = Connection.connect db |> ladybug_ok in
+            Fun.protect
+              ~finally:(fun () -> ignore (Connection.close conn))
+              (fun () ->
+                Connection.install_extension conn Extension.vector |> ladybug_ok;
+                Connection.load_extension conn Extension.vector |> ladybug_ok;
+                let dimensions = 2560 in
+                Connection.exec conn
+                  (Printf.sprintf
+                     "CREATE NODE TABLE Section(\
+                      id STRING,\
+                      note_id STRING,\
+                      level INT8,\
+                      heading STRING,\
+                      heading_fold STRING,\
+                      heading_id STRING,\
+                      byte_start INT64,\
+                      byte_end INT64,\
+                      content_hash STRING,\
+                      text STRING,\
+                      embedding FLOAT[%d],\
+                      embedding_model_id STRING,\
+                      embedding_config_hash STRING,\
+                      PRIMARY KEY(id))"
+                     dimensions)
+                |> ladybug_ok;
+                let row_count = 1_178 in
+                let rows =
+                  List.init row_count (fun index ->
+                      let id =
+                        if index < 7 then
+                          Printf.sprintf "kb/decision-log#%d" index
+                        else Printf.sprintf "kb/note-%04d#0" index
+                      in
+                      [
+                        ("id", Value.String id);
+                        ("note_id", Value.String "kb/decision-log.md");
+                        ("level", Value.Int 1L);
+                        ("heading", Value.String "Decision log");
+                        ("heading_fold", Value.String "decision log");
+                        ("heading_id", Value.String "decision-log");
+                        ("byte_start", Value.Int (Int64.of_int (index * 16)));
+                        ("byte_end", Value.Int (Int64.of_int ((index * 16) + 15)));
+                        ( "content_hash",
+                          Value.String (Printf.sprintf "hash-%04d" index) );
+                        ("text", Value.String "section body");
+                      ])
+                in
+                Connection.exec conn
+                  ~params:[ Param.rows "rows" rows ]
+                  "UNWIND $rows AS row CREATE (:Section {\
+                   id: row.id,\
+                   note_id: row.note_id,\
+                   level: row.level,\
+                   heading: row.heading,\
+                   heading_fold: row.heading_fold,\
+                   heading_id: row.heading_id,\
+                   byte_start: row.byte_start,\
+                   byte_end: row.byte_end,\
+                   content_hash: row.content_hash,\
+                   text: row.text})"
+                |> ladybug_ok;
+                let embedding =
+                  List.init dimensions (fun index ->
+                      if index mod 2 = 0 then
+                        float_of_int (index + 1) /. 1_000_000.0
+                      else -.float_of_int (index + 1) /. 1_000_000.0)
+                in
+                let embedding_values =
+                  List.map (fun value -> Value.Float value) embedding
+                in
+                let update_section ~id ~config_hash =
+                  Connection.exec conn
+                    ~params:
+                      [
+                        Param.string "id" id;
+                        Param.list "embedding" embedding_values;
+                        Param.string "model_id" "qwen/qwen3-embedding-4b";
+                        Param.string "config_hash" config_hash;
+                      ]
+                    "MATCH (s:Section {id: $id}) \
+                     SET s.embedding = $embedding, \
+                     s.embedding_model_id = $model_id, \
+                     s.embedding_config_hash = $config_hash"
+                  |> ladybug_ok
+                in
+                for index = 7 to row_count - 1 do
+                  update_section
+                    ~id:(Printf.sprintf "kb/note-%04d#0" index)
+                    ~config_hash:"current-config"
+                done;
+                for index = 0 to 6 do
+                  update_section
+                    ~id:(Printf.sprintf "kb/decision-log#%d" index)
+                    ~config_hash:"test-config"
+                done;
+                let query =
+                  Query.raw
+                    ~cypher:
+                      "MATCH (s:Section) \
+                       WHERE s.embedding_config_hash = 'test-config' \
+                       RETURN count(s) AS c"
+                    ~decode:Decode.(int "c")
+                    ()
+                in
+                let updated = Connection.query conn query |> ladybug_ok in
+                Alcotest.(check (list int64)) "updated sections" [ 7L ] updated)))
+
+let test_ladybug_many_int_rows_survive_gc () =
+  let open Eta_ladybug in
+  let value_kind = function
+    | Value.Null -> "null"
+    | Value.Bool _ -> "bool"
+    | Value.Int _ -> "int"
+    | Value.Float _ -> "float"
+    | Value.String _ -> "string"
+    | Value.List _ -> "list"
+    | Value.Map _ -> "map"
+    | Value.Struct _ -> "struct"
+    | Value.Node _ -> "node"
+    | Value.Rel _ -> "rel"
+    | Value.Path _ -> "path"
+  in
+  let old_control = Gc.get () in
+  Fun.protect
+    ~finally:(fun () -> Gc.set old_control)
+    (fun () ->
+      Gc.set { old_control with minor_heap_size = 1024; space_overhead = 1 };
+      with_ladybug_connection @@ fun conn ->
+      let row_count = 5_000 in
+      let query =
+        Query.raw
+          ~cypher:
+            (Printf.sprintf
+               "UNWIND range(1, %d) AS i RETURN i" row_count)
+          ~decode:Decode.(value "i")
+          ()
+      in
+      let rows = Connection.query conn query |> ladybug_ok in
+      Gc.full_major ();
+      Alcotest.(check int) "row count" row_count (List.length rows);
+      match List.rev rows with
+      | Value.Int last :: _ ->
+          Alcotest.(check int64) "last value" (Int64.of_int row_count) last
+      | value :: _ ->
+          Alcotest.failf "expected int value, got %s" (value_kind value)
+      | [] -> Alcotest.fail "expected rows")
+
 let test_ladybug_error_classification () =
   let open Eta_ladybug in
   Alcotest.(check bool) "parser"
@@ -1169,6 +1389,15 @@ let () =
             test_ladybug_timestamp_not_empty_string;
           Alcotest.test_case "Param.map round-trips as map" `Quick
             test_ladybug_param_map_round_trips;
+          Alcotest.test_case
+            "Param.float list writes fixed float vector property" `Quick
+            test_ladybug_param_float_list_writes_fixed_float_vector;
+            ( "Nema-shaped Section vector updates survive persistent table",
+              `Slow,
+              test_ladybug_nema_section_vector_updates_survive_persistent_table
+            );
+            Alcotest.test_case "many int rows survive GC" `Slow
+            test_ladybug_many_int_rows_survive_gc;
           Alcotest.test_case "connection query timeout" `Quick
             test_ladybug_connection_query_timeout;
           Alcotest.test_case "bind error does not leak statements" `Slow
