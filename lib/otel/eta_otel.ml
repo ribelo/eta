@@ -756,6 +756,431 @@ let meter t : Eta.Capabilities.meter =
       enqueue t t.metric_queue p
   end
 
+module Terminal = struct
+  type event = {
+    event_name : string;
+    event_ts_ms : int;
+    event_attrs : (string * string) list;
+  }
+
+  type open_span = {
+    handle : int;
+    span_id : string;
+    parent_span_id : string option;
+    name : string;
+    trace_id : string;
+    trace_flags : int;
+    trace_state : (string * string) list;
+    baggage : (string * string) list;
+    kind : Eta.Capabilities.span_kind;
+    started_ms : int;
+    mutable attrs : (string * string) list;
+    mutable events : event list;
+    mutable links : Eta.Capabilities.span_link list;
+  }
+
+  type fiber_state = {
+    mutable stack : open_span list;
+    mutable pending_attrs : (string * string) list;
+    mutable pending_links : Eta.Capabilities.span_link list;
+  }
+
+  type t = {
+    state_lock : Eta.Sync_lock.t;
+    output_lock : Eta.Sync_lock.t;
+    stdout : string -> unit;
+    stderr : string -> unit;
+    context_id : int;
+    mutable next_handle : int;
+    table : (int, open_span) Hashtbl.t;
+    fallback : fiber_state;
+  }
+
+  let task_context_local :
+      (int, fiber_state) Hashtbl.t Eta.Runtime_contract.local =
+    Eta.Runtime_contract.create_local ()
+
+  let next_context_id = ref 0
+  let context_id_lock = Eta.Sync_lock.create ()
+
+  let fresh_context_id () =
+    Eta.Sync_lock.use context_id_lock @@ fun () ->
+    incr next_context_id;
+    !next_context_id
+
+  let empty_fiber_state () =
+    { stack = []; pending_attrs = []; pending_links = [] }
+
+  let with_task_context contract f =
+    contract.Eta.Runtime_contract.local_with_binding task_context_local
+      (Hashtbl.create 1) f
+
+  let task_context contract =
+    contract.Eta.Runtime_contract.local_get task_context_local
+
+  let fiber_state contract t =
+    match task_context contract with
+    | None -> t.fallback
+    | Some context -> (
+        match Hashtbl.find_opt context t.context_id with
+        | Some state -> state
+        | None ->
+            let state = empty_fiber_state () in
+            Hashtbl.add context t.context_id state;
+            state)
+
+  let write_channel channel line =
+    output_string channel line;
+    output_char channel '\n';
+    Stdlib.flush channel
+
+  let default_stdout line = write_channel stdout line
+  let default_stderr line = write_channel stderr line
+
+  let hex16 n = Printf.sprintf "%016x" n
+  let root_trace_id t handle = hex16 t.context_id ^ hex16 handle
+  let span_context_id handle = hex16 handle
+
+  let kind_string = function
+    | Eta.Capabilities.Internal -> "internal"
+    | Eta.Capabilities.Server -> "server"
+    | Eta.Capabilities.Client -> "client"
+    | Eta.Capabilities.Producer -> "producer"
+    | Eta.Capabilities.Consumer -> "consumer"
+
+  let metric_kind_string = function
+    | Eta.Capabilities.Counter_cumulative -> "counter_cumulative"
+    | Eta.Capabilities.Counter_monotonic -> "counter_monotonic"
+    | Eta.Capabilities.Gauge -> "gauge"
+
+  let metric_value_string = function
+    | Eta.Capabilities.Int n -> string_of_int n
+    | Eta.Capabilities.Float f -> Printf.sprintf "%.17g" f
+
+  let status_fields = function
+    | Eta.Capabilities.Ok -> ([ ("status", "ok") ], false)
+    | Eta.Capabilities.Error "" -> ([ ("status", "error") ], true)
+    | Eta.Capabilities.Error message ->
+        ([ ("status", "error"); ("status_message", message) ], true)
+    | Eta.Capabilities.Cancelled -> ([ ("status", "cancelled") ], true)
+
+  let safe_label s =
+    let is_label_char = function
+      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '-' | '.' | ':' -> true
+      | _ -> false
+    in
+    if String.equal s "" then "_"
+    else
+      let bytes = Bytes.of_string s in
+      for i = 0 to Bytes.length bytes - 1 do
+        if not (is_label_char (Bytes.unsafe_get bytes i)) then
+          Bytes.unsafe_set bytes i '_'
+      done;
+      Bytes.unsafe_to_string bytes
+
+  let quote_value s =
+    let buffer = Buffer.create (String.length s + 2) in
+    Buffer.add_char buffer '"';
+    String.iter
+      (function
+        | '\\' -> Buffer.add_string buffer "\\\\"
+        | '"' -> Buffer.add_string buffer "\\\""
+        | '\n' -> Buffer.add_string buffer "\\n"
+        | '\r' -> Buffer.add_string buffer "\\r"
+        | '\t' -> Buffer.add_string buffer "\\t"
+        | c -> Buffer.add_char buffer c)
+      s;
+    Buffer.add_char buffer '"';
+    Buffer.contents buffer
+
+  let needs_quote s =
+    String.equal s ""
+    || String.exists
+         (function
+           | ' ' | '\t' | '\n' | '\r' | '"' | '=' -> true
+           | _ -> false)
+         s
+
+  let render_value s = if needs_quote s then quote_value s else s
+  let render_field (key, value) = safe_label key ^ "=" ^ render_value value
+
+  let render_line prefix fields =
+    match fields with
+    | [] -> prefix
+    | _ -> prefix ^ " " ^ String.concat " " (List.map render_field fields)
+
+  let fields_of_pairs prefix pairs =
+    List.map (fun (key, value) -> (prefix ^ safe_label key, value)) pairs
+
+  let fields_of_indexed_pairs prefix index pairs =
+    List.map
+      (fun (key, value) ->
+        (prefix ^ string_of_int index ^ ".attr." ^ safe_label key, value))
+      pairs
+
+  let span_fields span ~status ~ended_ms =
+    let status, to_stderr = status_fields status in
+    let duration_ms = max 0 (ended_ms - span.started_ms) in
+    let base =
+      [
+        ("ts_ms", string_of_int ended_ms);
+        ("started_ms", string_of_int span.started_ms);
+        ("ended_ms", string_of_int ended_ms);
+        ("duration", Eta.Duration.humanize (Eta.Duration.ms duration_ms));
+        ("name", span.name);
+        ("kind", kind_string span.kind);
+      ]
+      @ status
+      @ [
+          ("trace_id", span.trace_id);
+          ("span_id", span.span_id);
+          ("trace_flags", string_of_int span.trace_flags);
+        ]
+    in
+    let parent =
+      match span.parent_span_id with
+      | None -> []
+      | Some parent_span_id -> [ ("parent_span_id", parent_span_id) ]
+    in
+    let trace_state = fields_of_pairs "tracestate." span.trace_state in
+    let baggage = fields_of_pairs "baggage." span.baggage in
+    let attrs = fields_of_pairs "attr." span.attrs in
+    let events =
+      List.mapi
+        (fun index event ->
+          [
+            ("event." ^ string_of_int index ^ ".name", event.event_name);
+            ( "event." ^ string_of_int index ^ ".ts_ms",
+              string_of_int event.event_ts_ms );
+          ]
+          @ fields_of_indexed_pairs "event." index event.event_attrs)
+        span.events
+      |> List.concat
+    in
+    let links =
+      List.mapi
+        (fun index link ->
+          [
+            ( "link." ^ string_of_int index ^ ".trace_id",
+              link.Eta.Capabilities.link_trace_id );
+            ("link." ^ string_of_int index ^ ".span_id", link.link_span_id);
+          ]
+          @ fields_of_indexed_pairs "link." index link.link_attrs)
+        span.links
+      |> List.concat
+    in
+    ( render_line "otel.span"
+        (base @ parent @ trace_state @ baggage @ attrs @ events @ links),
+      to_stderr )
+
+  let metric_fields ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms =
+    let base =
+      [
+        ("ts_ms", string_of_int ts_ms);
+        ("name", name);
+        ("kind", metric_kind_string kind);
+        ("value", metric_value_string value);
+      ]
+    in
+    let description =
+      if String.equal description "" then [] else [ ("description", description) ]
+    in
+    let unit_ = if String.equal unit_ "" then [] else [ ("unit", unit_) ] in
+    render_line "otel.metric"
+      (base @ description @ unit_ @ fields_of_pairs "attr." attrs)
+
+  let create ?(stdout = default_stdout) ?(stderr = default_stderr) () =
+    {
+      state_lock = Eta.Sync_lock.create ();
+      output_lock = Eta.Sync_lock.create ();
+      stdout;
+      stderr;
+      context_id = fresh_context_id ();
+      next_handle = 1;
+      table = Hashtbl.create 64;
+      fallback = empty_fiber_state ();
+    }
+
+  let output t ~stderr line =
+    Eta.Sync_lock.use t.output_lock @@ fun () ->
+    if stderr then t.stderr line else t.stdout line
+
+  let resolve_parent t state ?trace_id ?(trace_flags = 1) ?(trace_state = [])
+      ?(baggage = []) ?parent_id ?external_parent handle =
+    match external_parent with
+    | Some (ctx : Eta.Capabilities.trace_context) ->
+        ( ctx.trace_id,
+          Some ctx.span_id,
+          ctx.trace_flags,
+          ctx.trace_state,
+          ctx.baggage )
+    | None -> (
+        match parent_id with
+        | Some parent_handle -> (
+            match Hashtbl.find_opt t.table parent_handle with
+            | Some parent ->
+                ( parent.trace_id,
+                  Some parent.span_id,
+                  parent.trace_flags,
+                  parent.trace_state,
+                  parent.baggage )
+            | None ->
+                ( Option.value trace_id ~default:(root_trace_id t handle),
+                  None,
+                  trace_flags,
+                  trace_state,
+                  baggage ))
+        | None -> (
+            match state.stack with
+            | parent :: _ ->
+                ( parent.trace_id,
+                  Some parent.span_id,
+                  parent.trace_flags,
+                  parent.trace_state,
+                  parent.baggage )
+            | [] ->
+                ( Option.value trace_id ~default:(root_trace_id t handle),
+                  None,
+                  trace_flags,
+                  trace_state,
+                  baggage )))
+
+  let begin_span contract t ?parent_id ?external_parent ?trace_id ?trace_flags
+      ?trace_state ?baggage ?(kind = Eta.Capabilities.Internal) ~name
+      ~started_ms () =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    let state = fiber_state contract t in
+    let handle = t.next_handle in
+    t.next_handle <- handle + 1;
+    let trace_id, parent_span_id, trace_flags, trace_state, baggage =
+      resolve_parent t state ?trace_id ?trace_flags ?trace_state ?baggage
+        ?parent_id ?external_parent handle
+    in
+    let span =
+      {
+        handle;
+        span_id = span_context_id handle;
+        parent_span_id;
+        name;
+        trace_id;
+        trace_flags;
+        trace_state;
+        baggage;
+        kind;
+        started_ms;
+        attrs = state.pending_attrs;
+        events = [];
+        links = state.pending_links;
+      }
+    in
+    state.pending_attrs <- [];
+    state.pending_links <- [];
+    state.stack <- span :: state.stack;
+    Hashtbl.replace t.table handle span;
+    handle
+
+  let end_span contract t ~span_id ~status ~ended_ms =
+    let line =
+      Eta.Sync_lock.use t.state_lock @@ fun () ->
+      let state = fiber_state contract t in
+      let rec remove acc = function
+        | [] -> None
+        | span :: rest when span.handle = span_id ->
+            state.stack <- List.rev_append acc rest;
+            Some span
+        | span :: rest -> remove (span :: acc) rest
+      in
+      match remove [] state.stack with
+      | None -> None
+      | Some span ->
+          Hashtbl.remove t.table span_id;
+          Some (span_fields span ~status ~ended_ms)
+    in
+    match line with
+    | None -> ()
+    | Some (line, to_stderr) -> output t ~stderr:to_stderr line
+
+  let add_attr contract t ~key ~value =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    let state = fiber_state contract t in
+    match state.stack with
+    | span :: _ -> span.attrs <- span.attrs @ [ (key, value) ]
+    | [] -> state.pending_attrs <- state.pending_attrs @ [ (key, value) ]
+
+  let add_attr_to t ~span_id ~key ~value =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    match Hashtbl.find_opt t.table span_id with
+    | Some span -> span.attrs <- span.attrs @ [ (key, value) ]
+    | None -> ()
+
+  let add_event t ~span_id ~name ~ts_ms ~attrs =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    match Hashtbl.find_opt t.table span_id with
+    | Some span ->
+        span.events <-
+          span.events @ [ { event_name = name; event_ts_ms = ts_ms; event_attrs = attrs } ]
+    | None -> ()
+
+  let add_link contract t link =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    let state = fiber_state contract t in
+    match state.stack with
+    | span :: _ -> span.links <- span.links @ [ link ]
+    | [] -> state.pending_links <- state.pending_links @ [ link ]
+
+  let add_link_to t ~span_id link =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    match Hashtbl.find_opt t.table span_id with
+    | Some span -> span.links <- span.links @ [ link ]
+    | None -> ()
+
+  let inspect t ~span_id =
+    Eta.Sync_lock.use t.state_lock @@ fun () ->
+    match Hashtbl.find_opt t.table span_id with
+    | Some span ->
+        Some
+          {
+            Eta.Capabilities.trace_id = span.trace_id;
+            span_id = span.span_id;
+            name = span.name;
+            trace_flags = span.trace_flags;
+            trace_state = span.trace_state;
+            baggage = span.baggage;
+          }
+    | None -> None
+
+  let tracer t : Eta.Capabilities.tracer =
+    object
+      method with_task_context :
+          'a. Eta.Runtime_contract.t -> (unit -> 'a) -> 'a =
+        with_task_context
+
+      method begin_span contract ?parent_id ?external_parent ?trace_id
+          ?trace_flags ?trace_state ?baggage ?kind ~name ~started_ms () =
+        begin_span contract t ?parent_id ?external_parent ?trace_id ?trace_flags
+          ?trace_state ?baggage ?kind ~name ~started_ms ()
+
+      method end_span contract ~span_id ~status ~ended_ms =
+        end_span contract t ~span_id ~status ~ended_ms
+
+      method add_attr contract ~key ~value = add_attr contract t ~key ~value
+      method add_attr_to _ ~span_id ~key ~value =
+        add_attr_to t ~span_id ~key ~value
+      method add_event _ ~span_id ~name ~ts_ms ~attrs =
+        add_event t ~span_id ~name ~ts_ms ~attrs
+      method add_link contract link = add_link contract t link
+      method add_link_to _ ~span_id link = add_link_to t ~span_id link
+      method inspect _ ~span_id = inspect t ~span_id
+    end
+
+  let meter t : Eta.Capabilities.meter =
+    object
+      method record ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms =
+        output t ~stderr:false
+          (metric_fields ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms)
+    end
+end
+
 module Internal = struct
   type nonrec span = span = {
     trace_id : string;

@@ -909,4 +909,5 @@ let () =
       Test_tracer.suite;
       Test_logger.suite;
       Test_metrics.suite;
+      Test_terminal.suite;
     ]

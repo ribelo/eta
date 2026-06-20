@@ -65,6 +65,31 @@ val meter : t -> Eta.Capabilities.meter
 (** Meter adapter for Eta runtime constructors. Counter values are aggregated
     by attribute set within each batch; gauges retain the latest value. *)
 
+module Terminal : sig
+  (** Human-readable terminal/debug telemetry exporter.
+
+      This exporter is separate from the OTLP HTTP exporter. It writes completed
+      spans and metric points as deterministic single-line records suitable for
+      local debugging and tests. Successful spans and metrics go to [stdout];
+      failed or cancelled spans go to [stderr]. *)
+
+  type t
+
+  val create :
+    ?stdout:(string -> unit) ->
+    ?stderr:(string -> unit) ->
+    unit ->
+    t
+  (** Create a terminal exporter. The default outputs append a newline and
+      flush [stdout] / [stderr]. *)
+
+  val tracer : t -> Eta.Capabilities.tracer
+  (** Tracer adapter for Eta runtime constructors. *)
+
+  val meter : t -> Eta.Capabilities.meter
+  (** Meter adapter for Eta runtime constructors. *)
+end
+
 val flush : ?timeout_s:float -> t -> unit
 (** Block until all in-flight signals are drained or [timeout_s] elapses. *)
 
