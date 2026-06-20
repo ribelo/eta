@@ -41,5 +41,31 @@ let scale t f =
     if Float.is_nan scaled || scaled >= float_of_int max_int then
       invalid_arg "Duration.scale"
     else { ms = clamp_nonnegative (int_of_float scaled) }
+
+let humanize t =
+  if t.ms = 0 then "0"
+  else
+    let parts =
+      [
+        ("d", 86_400_000);
+        ("h", 3_600_000);
+        ("m", 60_000);
+        ("s", 1_000);
+        ("ms", 1);
+      ]
+    in
+    let rec collect remaining acc = function
+      | [] -> List.rev acc
+      | (suffix, unit_ms) :: rest ->
+          let value = remaining / unit_ms in
+          let remaining = remaining mod unit_ms in
+          let acc =
+            if value = 0 then acc
+            else (string_of_int value ^ suffix) :: acc
+          in
+          collect remaining acc rest
+    in
+    String.concat " " (collect t.ms [] parts)
+
 let pp ppf t = Format.fprintf ppf "%dms" t.ms
 let equal a b = a.ms = b.ms

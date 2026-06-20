@@ -124,6 +124,21 @@ val finalizer : Finalizer.t -> 'err t
 val suppressed : primary:'err t -> finalizer:Finalizer.t -> 'err t
 
 val is_interrupt_only : 'err t -> bool
+val failures : 'err t -> 'err list
+(** Collect typed failures in left-to-right tree order. Finalizer diagnostic
+    failures are not part of the typed error channel and are not returned. *)
+
+val defects : 'err t -> die list
+(** Collect unchecked defects, including defects that occurred in finalizers. *)
+
+val interruptors : 'err t -> interrupt_id list
+(** Collect distinct interrupt identities in left-to-right tree order.
+    Anonymous interrupts are ignored. *)
+
+val squash : ('err -> exn) -> 'err t -> exn
+(** Collapse a cause to a representative exception. Typed failures are
+    preferred, then defects, then finalizer failures, then interruption. *)
+
 val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
 val finalizer_of_cause : ('err -> string) -> 'err t -> Finalizer.t
 
@@ -139,4 +154,7 @@ val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 
 val pp :
   (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
+val pretty : ('err -> string) -> 'err t -> string
+(** Render a multi-line cause tree for terminal diagnostics. *)
+
 val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t

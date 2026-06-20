@@ -23,5 +23,8 @@ val clamp : min:t -> max:t -> t -> t
 val between : min:t -> max:t -> t -> bool
 val compare : t -> t -> int
 val scale : t -> float -> t
+val humanize : t -> string
+(** Render a compact human-readable duration such as ["1s 250ms"] or
+    ["2d 3h 4m"]. Zero renders as ["0"]. *)
 val pp : Format.formatter -> t -> unit
 val equal : t -> t -> bool

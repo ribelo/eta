@@ -389,6 +389,89 @@ let rec is_interrupt_only : type err. err t -> bool = function
       is_interrupt_only primary && Finalizer.is_interrupt_only finalizer
   | Fail _ | Die _ -> false
 
+let failures cause =
+  let rec collect acc = function
+    | Fail err -> err :: acc
+    | Die _ | Interrupt _ | Finalizer _ -> acc
+    | Sequential causes | Concurrent causes -> List.fold_left collect acc causes
+    | Suppressed { primary; finalizer = _ } -> collect acc primary
+  in
+  List.rev (collect [] cause)
+
+let defects cause =
+  let rec collect_finalizer acc = function
+    | Finalizer.Fail _ | Finalizer.Interrupt _ -> acc
+    | Finalizer.Die die -> die :: acc
+    | Finalizer.Sequential causes | Finalizer.Concurrent causes ->
+        List.fold_left collect_finalizer acc causes
+    | Finalizer.Finalizer cause -> collect_finalizer acc cause
+    | Finalizer.Suppressed { primary; finalizer } ->
+        collect_finalizer (collect_finalizer acc primary) finalizer
+  in
+  let rec collect acc = function
+    | Fail _ | Interrupt _ -> acc
+    | Die die -> die :: acc
+    | Sequential causes | Concurrent causes -> List.fold_left collect acc causes
+    | Finalizer cause -> collect_finalizer acc cause
+    | Suppressed { primary; finalizer } ->
+        collect_finalizer (collect acc primary) finalizer
+  in
+  List.rev (collect [] cause)
+
+let interruptors cause =
+  let add id acc =
+    if List.exists (equal_interrupt_id id) acc then acc else id :: acc
+  in
+  let add_opt id acc = match id with None -> acc | Some id -> add id acc in
+  let rec collect_finalizer acc = function
+    | Finalizer.Fail _ | Finalizer.Die _ -> acc
+    | Finalizer.Interrupt id -> add_opt id acc
+    | Finalizer.Sequential causes | Finalizer.Concurrent causes ->
+        List.fold_left collect_finalizer acc causes
+    | Finalizer.Finalizer cause -> collect_finalizer acc cause
+    | Finalizer.Suppressed { primary; finalizer } ->
+        collect_finalizer (collect_finalizer acc primary) finalizer
+  in
+  let rec collect acc = function
+    | Fail _ | Die _ -> acc
+    | Interrupt id -> add_opt id acc
+    | Sequential causes | Concurrent causes -> List.fold_left collect acc causes
+    | Finalizer cause -> collect_finalizer acc cause
+    | Suppressed { primary; finalizer } ->
+        collect_finalizer (collect acc primary) finalizer
+  in
+  List.rev (collect [] cause)
+
+let finalizer_failures cause =
+  let rec collect_finalizer acc = function
+    | Finalizer.Fail msg -> msg :: acc
+    | Finalizer.Die _ | Finalizer.Interrupt _ -> acc
+    | Finalizer.Sequential causes | Finalizer.Concurrent causes ->
+        List.fold_left collect_finalizer acc causes
+    | Finalizer.Finalizer cause -> collect_finalizer acc cause
+    | Finalizer.Suppressed { primary; finalizer } ->
+        collect_finalizer (collect_finalizer acc primary) finalizer
+  in
+  let rec collect acc = function
+    | Fail _ | Die _ | Interrupt _ -> acc
+    | Sequential causes | Concurrent causes -> List.fold_left collect acc causes
+    | Finalizer cause -> collect_finalizer acc cause
+    | Suppressed { primary; finalizer } ->
+        collect_finalizer (collect acc primary) finalizer
+  in
+  List.rev (collect [] cause)
+
+let squash render_error cause =
+  match failures cause with
+  | err :: _ -> render_error err
+  | [] -> (
+      match defects cause with
+      | die :: _ -> die.exn
+      | [] -> (
+          match finalizer_failures cause with
+          | msg :: _ -> Failure msg
+          | [] -> Failure "All fibers interrupted without error"))
+
 let rec equal : type err. (err -> err -> bool) -> err t -> err t -> bool =
  fun (equal_err) left right ->
   match (left, right) with
@@ -444,3 +527,82 @@ let rec pp :
   | Suppressed { primary; finalizer } ->
       Format.fprintf fmt "Suppressed{primary=%a; finalizer=%a}" (pp pp_err)
         primary Finalizer.pp finalizer
+
+let pretty render_error cause =
+  let buffer = Buffer.create 128 in
+  let add_line indent text =
+    Buffer.add_string buffer (String.make (indent * 2) ' ');
+    Buffer.add_string buffer text;
+    Buffer.add_char buffer '\n'
+  in
+  let add_annotations indent annotations =
+    List.iter
+      (fun (key, value) -> add_line indent ("annotation " ^ key ^ "=" ^ value))
+      annotations
+  in
+  let add_backtrace indent = function
+    | None -> ()
+    | Some backtrace ->
+        add_line indent "backtrace:";
+        Printexc.raw_backtrace_to_string backtrace
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+               if not (String.equal line "") then add_line (indent + 1) line)
+  in
+  let add_die indent die =
+    add_line indent ("defect: " ^ Printexc.to_string die.exn);
+    (match die.span_name with
+    | None -> ()
+    | Some name -> add_line (indent + 1) ("span: " ^ name));
+    add_annotations (indent + 1) die.annotations;
+    add_backtrace (indent + 1) die.backtrace
+  in
+  let rec add_finalizer indent = function
+    | Finalizer.Fail msg -> add_line indent ("finalizer fail: " ^ msg)
+    | Finalizer.Die die -> add_die indent die
+    | Finalizer.Interrupt None -> add_line indent "interrupt"
+    | Finalizer.Interrupt (Some id) ->
+        add_line indent ("interrupt: " ^ string_of_int id)
+    | Finalizer.Sequential causes ->
+        add_line indent "sequential:";
+        List.iter (add_finalizer (indent + 1)) causes
+    | Finalizer.Concurrent causes ->
+        add_line indent "concurrent:";
+        List.iter (add_finalizer (indent + 1)) causes
+    | Finalizer.Finalizer cause ->
+        add_line indent "finalizer:";
+        add_finalizer (indent + 1) cause
+    | Finalizer.Suppressed { primary; finalizer } ->
+        add_line indent "suppressed:";
+        add_line (indent + 1) "primary:";
+        add_finalizer (indent + 2) primary;
+        add_line (indent + 1) "finalizer:";
+        add_finalizer (indent + 2) finalizer
+  in
+  let rec add_cause indent = function
+    | Fail err -> add_line indent ("fail: " ^ render_error err)
+    | Die die -> add_die indent die
+    | Interrupt None -> add_line indent "interrupt"
+    | Interrupt (Some id) -> add_line indent ("interrupt: " ^ string_of_int id)
+    | Sequential causes ->
+        add_line indent "sequential:";
+        List.iter (add_cause (indent + 1)) causes
+    | Concurrent causes ->
+        add_line indent "concurrent:";
+        List.iter (add_cause (indent + 1)) causes
+    | Finalizer cause ->
+        add_line indent "finalizer:";
+        add_finalizer (indent + 1) cause
+    | Suppressed { primary; finalizer } ->
+        add_line indent "suppressed:";
+        add_line (indent + 1) "primary:";
+        add_cause (indent + 2) primary;
+        add_line (indent + 1) "finalizer:";
+        add_finalizer (indent + 2) finalizer
+  in
+  add_cause 0 cause;
+  let rendered = Buffer.contents buffer in
+  let len = String.length rendered in
+  if len > 0 && Char.equal rendered.[len - 1] '\n' then
+    String.sub rendered 0 (len - 1)
+  else rendered

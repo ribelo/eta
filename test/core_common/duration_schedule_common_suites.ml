@@ -79,6 +79,16 @@ let test_duration_zero_detection_and_conversion () =
   Alcotest.(check (float 0.0)) "ms to seconds float" 1.5
     (Duration.to_seconds_float (Duration.ms 1_500))
 
+let test_duration_humanize () =
+  Alcotest.(check string) "zero" "0" (Duration.humanize Duration.zero);
+  Alcotest.(check string) "millis" "42ms" (Duration.humanize (Duration.ms 42));
+  Alcotest.(check string) "second and millis" "1s 1ms"
+    (Duration.humanize (Duration.ms 1_001));
+  Alcotest.(check string) "compound" "2d 3h 4m 5s 6ms"
+    (Duration.humanize
+       Duration.(
+         days 2 + hours 3 + minutes 4 + seconds 5 + ms 6))
+
 let test_recurs () =
   let s = Schedule.recurs 3 in
   Alcotest.(check some_dur) "0" (Some Duration.zero)
@@ -352,6 +362,7 @@ let tests =
         Alcotest.test_case "min max clamp" `Quick test_duration_min_max_clamp;
         Alcotest.test_case "zero detection and conversion" `Quick
           test_duration_zero_detection_and_conversion;
+        Alcotest.test_case "humanize" `Quick test_duration_humanize;
       ] );
     ( "Schedule",
       [
