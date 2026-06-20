@@ -3,8 +3,8 @@
 Research outcome of the `eta_http_service` evidence-based-coding lab
 (worktree `Eta-http-service-api`, branch `research/eta-http-service-api`).
 Date: 2026-06-18. Evidence artifacts under
-`.scratch/eta_http_service_api/` and the buildable lab under
-`evidence_http_service/`.
+`.scratch/eta_http_service_api/`, including the buildable lab under
+`.scratch/eta_http_service_api/evidence_http_service/`.
 
 ## Recommendation (direct)
 
@@ -153,7 +153,8 @@ socket test per `Serve.*` entry point. The P2/P4 lab already proves both shapes.
 
 ## Examples to promote into docs
 
-From the lab (`evidence_http_service/`), promote into `docs/`:
+From the lab (`.scratch/eta_http_service_api/evidence_http_service/`), promote
+into `docs/`:
 - **First 15 minutes**: `p2_candidates/extractors_example.ml` — health + param
   route + JSON POST, the canonical small service.
 - **Middleware stack**: `p1_baseline/middleware_service.ml` — request id / auth /
