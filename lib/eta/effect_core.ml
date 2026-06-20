@@ -257,6 +257,13 @@ let catch :
 let recover (handler) eff = catch (fun err -> pure (handler err)) eff
 let ignore_errors eff = catch (fun _ -> unit) eff
 let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
+let option eff = catch (fun _ -> pure None) (map (fun value -> Some value) eff)
+
+let exit eff =
+  preserve eff @@ fun frame ->
+  ok
+    (try eval frame eff with
+    | exn -> exit_of_exn frame exn)
 
 let map_cause_error = Cause.map
 
@@ -292,6 +299,18 @@ let delay duration eff =
   preserve eff @@ fun frame ->
   frame.runtime.sleep duration;
   eval frame eff
+
+let sleep duration = sync_frame (fun frame -> frame.runtime.sleep duration)
+let now = sync_frame (fun frame -> frame.runtime.now_ms ())
+
+let timed eff =
+  preserve eff @@ fun frame ->
+  let started_ms = frame.runtime.now_ms () in
+  match eval frame eff with
+  | Exit.Ok value ->
+      let ended_ms = frame.runtime.now_ms () in
+      ok (Duration.ms (ended_ms - started_ms), value)
+  | Exit.Error _ as err -> err
 
 let timeout_as duration ~on_timeout eff =
   preserve eff @@ fun frame ->

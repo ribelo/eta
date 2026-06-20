@@ -194,6 +194,20 @@ val result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
     Use this when a workflow should keep going and handle success/failure as
     data without leaving Eta's runtime boundary. *)
 
+val option : ('a, 'err1) t -> ('a option, 'err2) t
+(** Materialize success as [Some value] and typed failure as [None].
+
+    [option] discards typed failure payloads. Defects, interruption, and
+    finalizer diagnostics are not captured; they remain failed Eta causes.
+    Use {!result} when the typed failure value matters. *)
+
+val exit : ('a, 'err1) t -> (('a, 'err1) Exit.t, 'err2) t
+(** Materialize the full Eta exit as a success value.
+
+    [exit eff] succeeds with [Exit.Ok value] when [eff] succeeds and with
+    [Exit.Error cause] when [eff] fails with a typed failure, defect,
+    interruption, or finalizer diagnostic. *)
+
 val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
     and the surrounding cause structure. [Cause.Fail] values in the primary
@@ -210,7 +224,22 @@ val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
 
 val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
 
+val now : (int, 'err) t
+(** Read the active runtime clock in milliseconds. Runtime constructors and
+    tests can override this clock with their [?now_ms] argument. *)
+
+val sleep : Duration.t -> (unit, 'err) t
+(** Sleep through the active runtime clock. Runtime constructors and tests can
+    override this sleeper with their [?sleep] argument. *)
+
 val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
+val timed : ('a, 'err) t -> (Duration.t * 'a, 'err) t
+(** Measure an effect with the active runtime clock.
+
+    On success, [timed eff] returns [(elapsed, value)]. Typed failures,
+    defects, interruption, and finalizer diagnostics are preserved as the
+    original failed outcome. *)
+
 val timeout : Duration.t -> ('a, [> `Timeout ] as 'err) t -> ('a, 'err) t
 val timeout_as :
   Duration.t -> on_timeout:'err -> ('a, 'err) t -> ('a, 'err) t

@@ -244,6 +244,128 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected finalizer failure"
 
+  let test_effect_option () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check (option int))
+      "success" (Some 7) (run_ok rt (Effect.pure 7 |> Effect.option));
+    Alcotest.(check (option int))
+      "typed failure" None (run_ok rt (Effect.fail "bad" |> Effect.option));
+    (match
+       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.option)
+     with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "option captured defect");
+    match
+      B.run rt
+        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.option)
+    with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "option captured interrupt"
+
+  let test_effect_exit () =
+    B.with_runtime @@ fun _ctx rt ->
+    let defect = Failure "body defect" in
+    Alcotest.(check (testable (Exit.pp pp_hidden Format.pp_print_string) (Exit.equal ( = ) String.equal)))
+      "success" (Exit.Ok 7) (run_ok rt (Effect.pure 7 |> Effect.exit));
+    (match run_ok rt (Effect.fail "bad" |> Effect.exit) with
+    | Exit.Error (Cause.Fail "bad") -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected typed failure exit, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected typed failure exit");
+    (match
+       run_ok rt
+         (Effect.sync (fun () -> raise defect)
+         |> Effect.exit)
+     with
+    | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect exit, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect exit");
+    (match run_ok rt (runtime_interrupt_effect () |> Effect.exit) with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt exit, got %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected interrupt exit");
+    match
+      run_ok rt
+        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.exit)
+    with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer exit, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer exit"
+
+  let test_effect_sleep_now_and_timed_use_runtime_clock () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    B.set_clock clock 100;
+    let program =
+      Effect.now
+      |> Effect.bind (fun before ->
+             Effect.sleep (Duration.ms 25)
+             |> Effect.bind (fun () ->
+                    Effect.now
+                    |> Effect.bind (fun after_sleep ->
+                           Effect.timed
+                             (Effect.sleep (Duration.ms 15)
+                             |> Effect.map (fun () -> "done"))
+                           |> Effect.bind (fun (elapsed, value) ->
+                                  Effect.now
+                                  |> Effect.map (fun after_timed ->
+                                         ( before,
+                                           after_sleep,
+                                           elapsed,
+                                           value,
+                                           after_timed ))))))
+    in
+    let promise = B.fork_run ctx rt program in
+    wait_for_sleepers clock 1;
+    Alcotest.(check bool) "sleep waits" false (B.is_resolved promise);
+    B.adjust_clock clock (Duration.ms 25);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 15);
+    match B.await promise with
+    | Exit.Ok (before, after_sleep, elapsed, value, after_timed) ->
+        Alcotest.(check int) "before" 100 before;
+        Alcotest.(check int) "after sleep" 125 after_sleep;
+        Alcotest.(check int) "elapsed" 15 (Duration.to_ms elapsed);
+        Alcotest.(check string) "value" "done" value;
+        Alcotest.(check int) "after timed" 140 after_timed
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let test_effect_timed_preserves_failures () =
+    B.with_runtime @@ fun _ctx rt ->
+    let defect = Failure "timed defect" in
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (Effect.fail "bad" |> Effect.timed))
+      "bad";
+    (match
+       B.run rt
+         (Effect.sync (fun () -> raise defect)
+         |> Effect.timed)
+     with
+    | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "timed captured defect");
+    match
+      B.run rt
+        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.timed)
+    with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "timed captured interrupt"
+
   let test_effect_yield () =
     B.with_runtime @@ fun _ctx rt ->
     let eff = Effect.yield |> Effect.map (fun () -> 42) in
@@ -1789,6 +1911,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "recover" `Quick test_effect_recover;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "result" `Quick test_effect_result;
+          Alcotest.test_case "option" `Quick test_effect_option;
+          Alcotest.test_case "exit" `Quick test_effect_exit;
+          Alcotest.test_case "sleep now timed runtime clock" `Quick
+            test_effect_sleep_now_and_timed_use_runtime_clock;
+          Alcotest.test_case "timed preserves failures" `Quick
+            test_effect_timed_preserves_failures;
           Alcotest.test_case "yield" `Quick test_effect_yield;
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
