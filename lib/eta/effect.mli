@@ -185,6 +185,14 @@ val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
     remain visible. Use it for best-effort cleanup, refresh, or notification
     effects whose success value is already [unit]. *)
 
+val ignore : ('a, 'err1) t -> (unit, 'err2) t
+(** Run an effect for its effects, discard a successful value, and suppress
+    typed failures.
+
+    [ignore eff] succeeds with [()] when [eff] succeeds or fails only with
+    typed failures. Defects, interruption, and finalizer diagnostics remain
+    visible. Use {!ignore_errors} for the older unit-specialized spelling. *)
+
 val result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
 (** Materialize the typed failure channel into an ordinary OCaml [result].
 

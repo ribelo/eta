@@ -256,6 +256,7 @@ let catch :
 
 let recover (handler) eff = catch (fun err -> pure (handler err)) eff
 let ignore_errors eff = catch (fun _ -> unit) eff
+let ignore eff = catch (fun _ -> unit) (map (fun _ -> ()) eff)
 let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
 let option eff = catch (fun _ -> pure None) (map (fun value -> Some value) eff)
 

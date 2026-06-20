@@ -130,7 +130,7 @@ let rec iter_cause_fail f = function
   | Cause.Finalizer _ -> ()
   | Cause.Suppressed { primary; finalizer } ->
       iter_cause_fail f primary;
-      ignore finalizer
+      Stdlib.ignore finalizer
 
 let with_result_attrs ~(ok_attrs) ~(err_attrs) eff =
   preserve eff @@ fun frame ->
