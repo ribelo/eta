@@ -34,3 +34,8 @@ autoresearch.jsonl
 # Local automation state
 .auto/
 .hill-climbing/
+
+# Local Nema database state; keep .nema/config.toml trackable.
+.nema/db
+.nema/db.wal
+.nema/lock

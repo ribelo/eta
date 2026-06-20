@@ -1,0 +1,42 @@
+default_vault = "root"
+
+[files]
+respect_gitignore = true
+
+[embedding]
+enabled = false
+
+[vaults.root]
+path = "."
+
+[note]
+kindless_kind = "doc"
+
+[note.kinds.doc]
+folder = "."
+extra_fields = true
+
+[note.kinds.note]
+folder = "notes"
+extra_fields = true
+
+[note.kinds.epic]
+folder = "epics"
+extra_fields = false
+
+[note.kinds.task]
+folder = "tasks"
+extra_fields = false
+required = ["status"]
+
+[note.kinds.task.fields.status]
+type = "enum"
+values = ["open", "blocked", "done", "dropped"]
+
+[note.kinds.task.fields.depends_on]
+type = "link_list"
+relation = "depends_on"
+
+[note.kinds.task.fields.epic]
+type = "link"
+relation = "part_of"
