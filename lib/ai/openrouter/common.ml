@@ -163,13 +163,24 @@ let encode_embeddings ?routing ?input_type request =
   | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)
   | Stdlib.Error _ as error -> error
 
-let decode_embeddings raw =
-  Codec.decode_embeddings ~usage_extra_raw_names:[ "cost" ] ~provider:"openrouter"
-    raw
-
 let openrouter_error_json ?status ?raw json =
   Codec.provider_error_json ?status ?raw ~nested_response_error:true
     ~provider:"openrouter" json
+
+let error_envelope json =
+  match Json.object_member "error" json with
+  | Some _ -> true
+  | None ->
+      Option.bind (Json.object_member "response" json) (Json.object_member "error")
+      |> Option.is_some
+
+let decode_embeddings raw =
+  match parse_json raw with
+  | Stdlib.Ok json when error_envelope json ->
+      Stdlib.Error (openrouter_error_json ~raw json)
+  | _ ->
+      Codec.decode_embeddings ~usage_extra_raw_names:[ "cost" ]
+        ~provider:"openrouter" raw
 
 let openrouter_error ?status raw =
   Codec.provider_error ?status ~nested_response_error:true

@@ -347,6 +347,23 @@ let test_decode_embeddings_fixture () =
     (Option.bind response.usage (fun usage ->
          usage.total_tokens))
 
+let test_decode_embeddings_provider_error_envelope () =
+  match
+    O.decode_embeddings
+      "{\"error\":{\"message\":\"No endpoints found for model\",\"code\":\"404\"}}"
+  with
+  | Stdlib.Error
+      (A.Provider_error
+        {
+          provider = "openrouter";
+          message = "No endpoints found for model";
+          code = Some "404";
+          _;
+        }) ->
+      ()
+  | Stdlib.Error _ -> Alcotest.fail "expected Provider_error"
+  | Stdlib.Ok _ -> Alcotest.fail "expected provider error"
+
 let stream_text events =
   events
   |> List.filter_map (function
@@ -677,6 +694,8 @@ let tests =
             test_decode_responses_fixtures;
           Alcotest.test_case "decode embeddings fixture" `Quick
             test_decode_embeddings_fixture;
+          Alcotest.test_case "decode embeddings provider error envelope" `Quick
+            test_decode_embeddings_provider_error_envelope;
           Alcotest.test_case "task API codecs" `Quick
             test_encode_and_decode_task_apis;
           Alcotest.test_case "midstream error" `Quick
