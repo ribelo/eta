@@ -5,7 +5,7 @@
 type unsupported = { protocol : string }
 
 val dispatch :
-  enabled_protocols:Eta_http.Transport.Dispatch.enabled_protocols ->
+  enabled_protocols:Dispatch.enabled_protocols ->
   close:(unit -> unit) ->
   use_h1:(unit -> 'a) ->
   use_h2:(unit -> 'a) ->

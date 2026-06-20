@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
-module H2_proto = Eta_http.H2
+module H2_proto = Eta_http_h2
 
 let error request kind =
   Error.make ~protocol:Error.H2 ~method_:request.Request.method_

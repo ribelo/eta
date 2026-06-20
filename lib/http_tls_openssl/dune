@@ -1,0 +1,19 @@
+(library
+ (name eta_http_tls_openssl)
+ (public_name eta_http_tls_openssl)
+ (synopsis "OpenSSL TLS state-machine bindings for Eta HTTP")
+ (libraries cstruct)
+ (foreign_stubs
+  (language c)
+  (names tls_openssl_stubs)
+  (flags :standard (:include c_flags.sexp)))
+ (c_library_flags :standard (:include c_library_flags.sexp)))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (progn
+   (with-stdout-to c_flags.sexp
+    (bash "echo '('; pkg-config openssl --cflags | tr ' ' '\\n'; echo ')'"))
+   (with-stdout-to c_library_flags.sexp
+    (bash "echo '('; pkg-config openssl --libs | tr ' ' '\\n'; echo ')'")))))

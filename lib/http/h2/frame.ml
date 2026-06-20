@@ -26,7 +26,7 @@ let frame_type_code = function
   | Continuation -> 0x9
   | Other code ->
       if code < 0 || code > 0xff then
-        invalid_arg "Eta_http.H2.Frame.frame_type_code: code outside uint8";
+        invalid_arg "Eta_http_h2.Frame.frame_type_code: code outside uint8";
       code
 
 let frame_type_of_code = function
@@ -69,12 +69,12 @@ let[@zero_alloc] byte n = Char.chr (n land 0xff)
 let validate_range label ~max value =
   if value < 0 || value > max then
     invalid_arg
-      (Printf.sprintf "Eta_http.H2.Frame.%s outside 0..%d" label max)
+      (Printf.sprintf "Eta_http_h2.Frame.%s outside 0..%d" label max)
 
 let validate_header_bounds label len off =
   if off < 0 || off > len - header_size then
     invalid_arg
-      (Printf.sprintf "Eta_http.H2.Frame.%s: need %d bytes at offset %d" label
+      (Printf.sprintf "Eta_http_h2.Frame.%s: need %d bytes at offset %d" label
          header_size off)
 
 let parse_header_with ~label ~len ~get ~off =
@@ -147,7 +147,7 @@ let header ~length ~frame_type ~flags ~stream_id =
 
 let uint32 n =
   if n < 0 || n > 0xffff_ffff then
-    invalid_arg "Eta_http.H2.Frame.uint32: value outside uint32";
+    invalid_arg "Eta_http_h2.Frame.uint32: value outside uint32";
   String.init 4 @@ function
   | 0 -> byte (n lsr 24)
   | 1 -> byte (n lsr 16)
@@ -164,7 +164,7 @@ let goaway_no_error ~last_stream_id =
   ^ uint32 0
 
 let payload len =
-  if len < 0 then invalid_arg "Eta_http.H2.Frame.payload: negative length";
+  if len < 0 then invalid_arg "Eta_http_h2.Frame.payload: negative length";
   String.make len '\000'
 
 let[@zero_alloc] decode32u buf off =

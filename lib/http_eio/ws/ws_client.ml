@@ -225,7 +225,7 @@ let validate_handshake ?(protocols = []) key head =
         match Header.get "connection" head.headers with
         | Some connection
           when Eta.String_helpers.contains_token_ascii_ci connection "upgrade" -> (
-            let expected = Codec.accept_key key in
+            let expected = Codec.accept_key ~sha1:Openssl.sha1 key in
             match Header.get "sec-websocket-accept" head.headers with
             | Some actual when String.equal (trim actual) expected ->
                 let selected = Option.map trim (Header.get "sec-websocket-protocol" head.headers) in
@@ -551,7 +551,7 @@ let make_connection ~flow ~selected_protocol ~max_frame_size
   in
   Effect.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
-let connect_on_flow ?(key = Codec.random_key ())
+let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
     ?(max_frame_size = default_max_frame_size) ?headers ?protocols
     ?(max_consecutive_pings = default_max_consecutive_pings) ~sw:_ ~flow url =
   check_max_frame_size max_frame_size;

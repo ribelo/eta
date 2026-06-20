@@ -1,5 +1,5 @@
-module Error = Error
-module Frame = Eta_http_h2.Frame
+module Error = Eta_http.Error
+module Frame = Frame
 
 type rate_limit = {
   burst : int;
@@ -672,7 +672,7 @@ let has_uppercase value =
 let header_invalid reason = Error.Header_invalid { reason }
 
 let validate_header t (name, value) =
-  match Header.validate_header (name, value) with
+  match Eta_http.Core.Header.validate_header (name, value) with
   | Some error -> Some error
   | None when String.length name > t.config.max_header_name_bytes ->
     Some (header_invalid "header name exceeds 8192 bytes")

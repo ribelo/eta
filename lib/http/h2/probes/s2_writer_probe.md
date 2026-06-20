@@ -8,7 +8,7 @@ back to `ocaml-h2`?
 
 ## Implementation
 
-- `Eta_http_eio.H2.Writer.cstructs_of_iovecs` converts `Bigstringaf.t H2.IOVec.t`
+- `Eta_http_eio.H2.Writer.cstructs_of_iovecs` converts `Bigstringaf.t H2.Iovec.t`
   slices to `Cstruct.t` views with `Cstruct.of_bigarray`.
 - `Eta_http_eio.H2.Writer.write_iovecs` writes those slices with
   `Eio.Flow.single_write`.

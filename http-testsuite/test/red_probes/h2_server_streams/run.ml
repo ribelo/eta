@@ -164,7 +164,7 @@ let h2_config_with_max_streams n =
     base with
     Eta_http_eio.Server.Config.h2_config =
       { base.Eta_http_eio.Server.Config.h2_config with
-        Eta_http.H2.Config.max_concurrent_streams = n
+        Eta_http_h2.Config.max_concurrent_streams = n
       };
   }
 

@@ -33,8 +33,9 @@ val decode : ?masked:bool -> bytes -> (frame * int, parse_error) result
     server-to-client frames. The returned integer is the number of bytes
     consumed. *)
 
-val accept_key : string -> string
-(** Compute [Sec-WebSocket-Accept] for a client key. *)
+val accept_key : sha1:(string -> string) -> string -> string
+(** Compute [Sec-WebSocket-Accept] for a client key using the supplied raw
+    SHA-1 digest function. *)
 
-val random_key : unit -> string
-(** Generate a base64-encoded 16-byte client key. *)
+val key_of_nonce : bytes -> string
+(** Encode a 16-byte client nonce as [Sec-WebSocket-Key]. *)

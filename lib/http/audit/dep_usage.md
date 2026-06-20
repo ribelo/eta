@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: `bash lib/http/audit/run.sh`
-Last updated: 2026-06-10T10:56:18Z
+Last updated: 2026-06-20T16:49:09Z
 Current sites: 0
 
 ## Scope
@@ -11,18 +11,19 @@ The shared package may expose protocol substrate shapes where they are part of
 the shared protocol helpers, but it must not depend on Eio, `eta_eio`, or an
 HTTP backend adapter.
 
-Allowed shared protocol dependencies include:
+Allowed shared dependencies include:
 
-- `cstruct`, `bigstringaf`, `faraday`, and `eta_http_h2` for HTTP/2 and
-  serializer substrate values.
-- `angstrom`, `decompress`, `domain-name`, `ipaddr`, `base64`, `yojson`,
-  `unix`, and the local OpenSSL stubs for backend-neutral parsing, compression,
-  policy, diagnostics, and protocol helpers.
+- `decompress`, `domain-name`, `ipaddr`, `bigstringaf`, and `yojson` for
+  backend-neutral body transducers, URL/host parsing, byte buffers, diagnostics,
+  and projections.
 
 Backend transport dependencies belong in adapter packages:
 
 - `eta_http_eio` owns Eio DNS, TCP, TLS, ALPN dispatch, HTTP/1.1 pooling,
   HTTP/2 connection ownership, and WebSocket client I/O.
+- `eta_http_js` owns js_of_ocaml Fetch integration.
+- `eta_http_h1`, `eta_http_h2`, `eta_http_ws`, and `eta_http_tls_openssl` own
+  concrete protocol/TLS/WebSocket substrate.
 
 ## Search
 
@@ -30,8 +31,8 @@ Backend transport dependencies belong in adapter packages:
 bash lib/http/audit/run.sh
 ```
 
-The script scans shared OCaml sources for raw `Eio.*` or `Eta_eio` use and
-the shared `lib/http/dune` stanza for direct Eio library dependencies.
+The script scans shared OCaml sources and the shared `lib/http/dune` stanza for
+raw Eio, JS, OpenSSL, concrete protocol helper, or backend adapter dependencies.
 
 ## Classification
 

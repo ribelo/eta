@@ -296,7 +296,7 @@ let h2_request_headers ?(end_headers = true) ?(end_stream = true) ~stream_id
     (h2_request_block ?method_ ?path ?authority ())
 
 let h2_frame_header ~length ~ty ~flags ~stream_id =
-  Eta_http.H2.Frame.header ~length ~frame_type:(Other ty) ~flags ~stream_id
+  Eta_http_h2.Frame.header ~length ~frame_type:(Other ty) ~flags ~stream_id
 
 let h2_adversarial_config ?request_header_timeout ?request_body_timeout
     ?idle_timeout ?unread_body_policy ?security_config () =
@@ -519,10 +519,10 @@ let dos_family ~env =
 let window_update ~env =
   let security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       window_update_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };

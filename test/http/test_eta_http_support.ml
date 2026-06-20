@@ -84,12 +84,13 @@ let retry_client responses =
     Eta_http.Client.make_custom ~protocol:Eta_http.Client.H1 ~request
       ~stats:(fun () ->
         Eta.Effect.pure
-          {
-            Eta_http.Client.protocol = H1;
-            active = 0;
-            idle = 0;
-            capacity = 0;
-            opened = !attempts;
-            released = 0;
-          })
+          (Some
+             {
+               Eta_http.Client.protocol = H1;
+               active = 0;
+               idle = 0;
+               capacity = 0;
+               opened = !attempts;
+               released = 0;
+             }))
       ~shutdown:(fun () -> Eta.Effect.unit) )

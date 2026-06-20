@@ -1,0 +1,7 @@
+(include_subdirs no)
+
+(library
+ (name eta_http_ws)
+ (public_name eta_http_ws)
+ (synopsis "WebSocket codec and handshake helpers for Eta HTTP")
+ (libraries eta base64))

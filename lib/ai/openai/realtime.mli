@@ -1,4 +1,4 @@
-(** OpenAI Realtime session and WebSocket API. *)
+(** OpenAI Realtime session, client-secret, and event codecs. *)
 
 type modality = Text | Audio
 
@@ -71,24 +71,6 @@ type server_event =
   | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
   | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
 
-type realtime_error = Eta_http_eio.Ws.Client.ws_error
-
 val client_event_json : client_event -> Eta_ai.Json.t
 val client_event_to_string : client_event -> Eta_ai.raw_json
 val decode_server_event : Eta_ai.raw_json -> server_event
-
-type t
-
-val connect :
-  ?base_url:string ->
-  ?safety_identifier:string ->
-  sw:Eio.Switch.t ->
-  net:_ Eio.Net.t ->
-  api_key:Eta_ai.api_key ->
-  model:string ->
-  unit ->
-  (t, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
-
-val send_event : t -> client_event -> (unit, realtime_error) Eta.Effect.t
-val events : t -> (server_event, Eta_http_eio.Ws.Client.ws_error) Eta_stream.Stream.t
-val close : t -> (unit, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t

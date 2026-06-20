@@ -1,8 +1,8 @@
 # Eta-Primitive-Escape Audit
 
 Run: `bash lib/http/audit/run.sh`
-Last updated: 2026-06-10T10:56:18Z
-Current sites: 5
+Last updated: 2026-06-20T16:49:09Z
+Current sites: 10
 
 ## Scope
 

@@ -46,7 +46,6 @@ let never = make ~mode:Never ~max_attempts:1 ()
 let always ?max_attempts ?schedule ?retry_status () =
   make ?max_attempts ?schedule ?retry_status ~mode:Always ()
 
-let default_now_s () = Unix.gettimeofday ()
 let max_delta_seconds = max_int / 1_000
 let max_delay_ms_float = float_of_int max_int
 
@@ -163,8 +162,7 @@ let delay_for_response t ~now_s ~attempt response =
     | _ -> schedule_delay t ~attempt
   else None
 
-let classify_error ?now_s t ~request ~attempt error =
-  let now_s = Option.value now_s ~default:(default_now_s ()) in
+let classify_error ?(now_s = 0.0) t ~request ~attempt error =
   if not (request_allowed t request) then Stop
   else
     match Error.retryability error with
@@ -174,8 +172,7 @@ let classify_error ?now_s t ~request ~attempt error =
         | None -> Stop
         | Some delay -> Retry_after delay)
 
-let classify_response ?now_s t ~request ~attempt response =
-  let now_s = Option.value now_s ~default:(default_now_s ()) in
+let classify_response ?(now_s = 0.0) t ~request ~attempt response =
   if not (request_allowed t request) then Stop
   else
     match delay_for_response t ~now_s ~attempt response with
@@ -217,27 +214,40 @@ let request_once_effect request_once request =
       try request_once request |> Eta.Effect.Expert.eval ctx
       with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
 
-let run ?(policy = default) ?(now_s = default_now_s) request_once request =
+let runtime_now_s =
+  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.now" (fun ctx ->
+      let contract = Eta.Effect.Expert.contract ctx in
+      Eta.Exit.Ok
+        (float_of_int (contract.Eta.Runtime_contract.now_ms ()) /. 1000.0))
+
+let now_s_effect = function
+  | Some now_s -> Eta.Effect.sync now_s
+  | None -> runtime_now_s
+
+let run ?(policy = default) ?now_s request_once request =
   let rec loop attempt =
     Eta.Effect.catch
       (fun error ->
-        match
-          classify_error policy ~now_s:(now_s ()) ~request ~attempt error
-          |> decision_delay
-        with
-        | None -> Eta.Effect.fail error
-        | Some delay -> delay_then delay (loop (attempt + 1)))
+        now_s_effect now_s
+        |> Eta.Effect.bind (fun now_s ->
+               match
+                 classify_error policy ~now_s ~request ~attempt error
+                 |> decision_delay
+               with
+               | None -> Eta.Effect.fail error
+               | Some delay -> delay_then delay (loop (attempt + 1))))
       (request_once_effect request_once request
       |> Eta.Effect.bind (fun response ->
-             match
-               classify_response policy ~now_s:(now_s ()) ~request ~attempt
-                 response
-               |> decision_delay
-             with
-             | None -> Eta.Effect.pure response
-             | Some delay ->
-                 Body.discard response.body
-                 |> Eta.Effect.bind (fun () ->
-                        delay_then delay (loop (attempt + 1)))))
+             now_s_effect now_s
+             |> Eta.Effect.bind (fun now_s ->
+                    match
+                      classify_response policy ~now_s ~request ~attempt response
+                      |> decision_delay
+                    with
+                    | None -> Eta.Effect.pure response
+                    | Some delay ->
+                        Body.discard response.body
+                        |> Eta.Effect.bind (fun () ->
+                               delay_then delay (loop (attempt + 1))))))
   in
   loop 1

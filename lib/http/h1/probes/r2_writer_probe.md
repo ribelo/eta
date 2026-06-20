@@ -36,12 +36,12 @@ eta_http_r2_writer_alloc verdict=PASS iterations=100000 minor_words=0 words_per_
 ```
 
 The implemented writer still supports `to_string` for tests and fixtures. The
-transport path now calls `Eta_http.H1.Write.write_to_flow`, which writes
+transport path now calls `Eta_http_h1.Write.write_to_flow`, which writes
 request fragments directly to an Eio flow sink instead of allocating one
 complete request string. The `flow matches string writer` test proves the
 direct writer stays byte-identical to the existing wire-format fixtures.
 
-The zero-allocation subject is `Eta_http.H1.Write.write_to_bytes_raw`, a
+The zero-allocation subject is `Eta_http_h1.Write.write_to_bytes_raw`, a
 caller-owned byte-buffer writer. It is annotated with `[@zero_alloc]`; the
 package build checks that annotation, and `writer_alloc.exe` measures 0 minor
 words over 100,000 steady-state writes.

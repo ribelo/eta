@@ -2,7 +2,7 @@
 
 module Body = Stream
 module Body_source = Source
-module H2_proto = Eta_http.H2
+module H2_proto = Eta_http_h2
 
 let skip_header name =
   match Header.normalize_name name with

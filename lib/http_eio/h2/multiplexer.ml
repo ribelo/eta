@@ -2,7 +2,7 @@
 
 module Stream_state = Stream_state
 module Security = Security
-module H2 = Eta_http.H2
+module H2 = Eta_http_h2
 
 (* Multiplexer is intentionally socket-free. It adapts the in-house HTTP/2
    client state-machine callbacks into Eta stream state, while Connection owns

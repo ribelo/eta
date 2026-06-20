@@ -80,7 +80,7 @@ let switching_response ?protocol key =
   ^ "Upgrade: websocket\r\n"
   ^ "Connection: keep-alive, Upgrade\r\n"
   ^ "Sec-WebSocket-Accept: "
-  ^ Eta_http.Ws.Codec.accept_key key
+  ^ Eta_http_ws.Codec.accept_key ~sha1:Eta_http_tls_openssl.sha1 key
   ^ "\r\n"
   ^ (match protocol with
     | None -> ""
@@ -231,11 +231,11 @@ let read_ws_frame ~masked flow =
   let mask_len = if Char.code (Bytes.get header 1) land 0x80 = 0 then 0 else 4 in
   let mask = read_exact flow mask_len in
   let payload = read_exact flow (ws_payload_len header ext) in
-  match Eta_http.Ws.Codec.decode ~masked (bytes_concat [ header; ext; mask; payload ]) with
+  match Eta_http_ws.Codec.decode ~masked (bytes_concat [ header; ext; mask; payload ]) with
   | Ok (frame, _) -> frame
   | Error error ->
       Alcotest.failf "WebSocket frame decode failed: %s"
-        (Eta_http.Ws.Codec.parse_error_to_string error)
+        (Eta_http_ws.Codec.parse_error_to_string error)
 
 let write_ws_switching_response ?protocol flow key =
   Eio.Flow.copy_string (switching_response ?protocol key) flow
@@ -260,16 +260,16 @@ let run_echo_ws_server ?expect_target ?protocol ~messages flow =
   write_ws_switching_response ?protocol flow key;
   for _ = 1 to messages do
     let frame = read_ws_frame ~masked:true flow in
-    let opcode = frame.Eta_http.Ws.Codec.opcode in
+    let opcode = frame.Eta_http_ws.Codec.opcode in
     match opcode with
     | Text | Binary ->
-        Eta_http.Ws.Codec.encode
+        Eta_http_ws.Codec.encode
           { fin = true; opcode; payload = frame.payload }
         |> Bytes.to_string |> fun encoded -> Eio.Flow.copy_string encoded flow
     | Close -> ()
     | Continuation | Ping | Pong -> Alcotest.fail "unexpected client frame"
   done;
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     { fin = true; opcode = Close; payload = close_payload 1000 "" }
   |> Bytes.to_string |> fun encoded -> Eio.Flow.copy_string encoded flow;
   try Eio.Flow.shutdown flow `Send with _ -> ()
@@ -287,27 +287,27 @@ let client_frames_after_upgrade state =
     if off = Bytes.length bytes then List.rev acc
     else
       match
-        Eta_http.Ws.Codec.decode ~masked:true
+        Eta_http_ws.Codec.decode ~masked:true
           (Bytes.sub bytes off (Bytes.length bytes - off))
       with
       | Ok (frame, consumed) when consumed > 0 -> loop (off + consumed) (frame :: acc)
       | Ok _ -> Alcotest.fail "client frame decoder consumed no bytes"
       | Error error ->
           Alcotest.failf "client frame did not decode: %s"
-            (Eta_http.Ws.Codec.parse_error_to_string error)
+            (Eta_http_ws.Codec.parse_error_to_string error)
   in
   loop 0 []
 
 let expect_client_frame state opcode payload =
-  match Eta_http.Ws.Codec.decode ~masked:true (client_frame_after_upgrade state) with
-  | Ok ({ Eta_http.Ws.Codec.opcode = actual_opcode; payload = actual_payload; _ }, _) ->
+  match Eta_http_ws.Codec.decode ~masked:true (client_frame_after_upgrade state) with
+  | Ok ({ Eta_http_ws.Codec.opcode = actual_opcode; payload = actual_payload; _ }, _) ->
       Alcotest.(check int)
-        "opcode" (Eta_http.Ws.Codec.opcode_to_int opcode)
-        (Eta_http.Ws.Codec.opcode_to_int actual_opcode);
+        "opcode" (Eta_http_ws.Codec.opcode_to_int opcode)
+        (Eta_http_ws.Codec.opcode_to_int actual_opcode);
       Alcotest.(check string) "payload" payload (Bytes.to_string actual_payload)
   | Error error ->
       Alcotest.failf "client frame did not decode: %s"
-        (Eta_http.Ws.Codec.parse_error_to_string error)
+        (Eta_http_ws.Codec.parse_error_to_string error)
 
 let close_status_payload code =
   let payload = Bytes.create 2 in
@@ -325,7 +325,7 @@ let raw_close_frame code =
 let test_ws_connect_reads_inbound_text () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let frame =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Text; payload = Bytes.of_string "ready" }
     |> Bytes.to_string
   in
@@ -478,12 +478,12 @@ let test_ws_queued_send_observes_close_sent () =
   Eta_test.Expect.expect_ok (Eio.Promise.await close_done);
   let opcodes =
     client_frames_after_upgrade state
-    |> List.map (fun frame -> frame.Eta_http.Ws.Codec.opcode)
+    |> List.map (fun frame -> frame.Eta_http_ws.Codec.opcode)
   in
   Alcotest.(check (list int))
     "client frames"
-    [ Eta_http.Ws.Codec.opcode_to_int Text; Eta_http.Ws.Codec.opcode_to_int Close ]
-    (List.map Eta_http.Ws.Codec.opcode_to_int opcodes)
+    [ Eta_http_ws.Codec.opcode_to_int Text; Eta_http_ws.Codec.opcode_to_int Close ]
+    (List.map Eta_http_ws.Codec.opcode_to_int opcodes)
 
 let test_ws_close_sent_uses_atomic_state () =
   let source = read_file (find_ws_client_source ()) in
@@ -499,12 +499,12 @@ let test_ws_close_sent_uses_atomic_state () =
 let test_ws_ping_is_internal_and_pong_is_sent () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let ping =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Ping; payload = Bytes.of_string "hi" }
     |> Bytes.to_string
   in
   let text =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Text; payload = Bytes.of_string "after" }
     |> Bytes.to_string
   in
@@ -533,7 +533,7 @@ let test_ws_rejects_http10_upgrade_response () =
     ^ "Upgrade: websocket\r\n"
     ^ "Connection: Upgrade\r\n"
     ^ "Sec-WebSocket-Accept: "
-    ^ Eta_http.Ws.Codec.accept_key key
+    ^ Eta_http_ws.Codec.accept_key ~sha1:Eta_http_tls_openssl.sha1 key
     ^ "\r\n\r\n"
   in
   let _state, flow = scripted_flow [ Return response ] in
@@ -561,7 +561,7 @@ let test_ws_rejects_http10_upgrade_response () =
 let test_ws_rejects_consecutive_ping_flood () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let ping =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Ping; payload = Bytes.of_string "x" }
     |> Bytes.to_string
   in
@@ -591,7 +591,7 @@ let test_ws_rejects_consecutive_ping_flood () =
 let test_ws_close_1011_fails_inbound_stream () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let close =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Close; payload = close_payload 1011 "upstream" }
     |> Bytes.to_string
   in
@@ -664,12 +664,12 @@ let expect_ws_protocol_failure label = function
 let test_ws_rejects_invalid_utf8_text_frame () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let invalid_text =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Text; payload = Bytes.of_string "\xff" }
     |> Bytes.to_string
   in
   let close =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Close; payload = close_payload 1000 "" }
     |> Bytes.to_string
   in
@@ -692,7 +692,7 @@ let test_ws_rejects_invalid_utf8_close_reason () =
   Bytes.set payload 1 (Char.chr (1000 land 0xff));
   Bytes.set payload 2 '\xff';
   let close =
-    Eta_http.Ws.Codec.encode { fin = true; opcode = Close; payload }
+    Eta_http_ws.Codec.encode { fin = true; opcode = Close; payload }
     |> Bytes.to_string
   in
   let _state, flow =
@@ -725,12 +725,12 @@ let test_ws_selected_subprotocol () =
 let test_ws_fragmented_text_reassembles () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let first =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = false; opcode = Text; payload = Bytes.of_string "hel" }
     |> Bytes.to_string
   in
   let second =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Continuation; payload = Bytes.of_string "lo" }
     |> Bytes.to_string
   in
@@ -755,7 +755,7 @@ let test_ws_fragmented_text_reassembles () =
 let test_ws_clean_close_ends_inbound_stream () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let close =
-    Eta_http.Ws.Codec.encode
+    Eta_http_ws.Codec.encode
       { fin = true; opcode = Close; payload = close_payload 1000 "" }
     |> Bytes.to_string
   in
@@ -773,7 +773,7 @@ let test_ws_clean_close_ends_inbound_stream () =
 let test_ws_server_masked_frame_is_protocol_error () =
   let key = "dGhlIHNhbXBsZSBub25jZQ==" in
   let masked =
-    Eta_http.Ws.Codec.encode ~mask:(Bytes.of_string "\001\002\003\004")
+    Eta_http_ws.Codec.encode ~mask:(Bytes.of_string "\001\002\003\004")
       { fin = true; opcode = Text; payload = Bytes.of_string "bad" }
     |> Bytes.to_string
   in

@@ -7,20 +7,20 @@ type drain_result =
       code : int;
     }
 
-module H2 = Eta_http.H2
+module H2 = Eta_http_h2
 
 let cstruct_of_iovec
-    ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) =
+    ({ H2.Iovec.buffer; off; len } : Bigstringaf.t H2.Iovec.t) =
   Cstruct.of_bigarray ~off ~len buffer
 
 let cstructs_of_iovecs iovecs = List.map cstruct_of_iovec iovecs
 
 let cstruct_of_iovecs iovecs =
-  let len = H2.IOVec.lengthv iovecs in
+  let len = H2.Iovec.lengthv iovecs in
   let bytes = Bytes.create len in
   let dst_off = ref 0 in
   List.iter
-    (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
+    (fun ({ H2.Iovec.buffer; off; len } : Bigstringaf.t H2.Iovec.t) ->
       Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
         ~len;
       dst_off := !dst_off + len)
@@ -28,7 +28,7 @@ let cstruct_of_iovecs iovecs =
   Cstruct.of_bytes bytes
 
 let write_iovecs ~flow iovecs =
-  let len = H2.IOVec.lengthv iovecs in
+  let len = H2.Iovec.lengthv iovecs in
   if len > 0 then Eio.Flow.write flow [ cstruct_of_iovecs iovecs ];
   len
 

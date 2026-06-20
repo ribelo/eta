@@ -607,7 +607,7 @@ let run_https_on_socket ~(sw : Eio.Switch.t) ~clock ?time ?stop
   Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
   let enabled_protocols =
-    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+    Dispatch.enabled_protocols_of_alpn_protocols
       (Eta_http.Tls.Config.server_alpn_protocols tls_config)
   in
   let on_connection_close =
@@ -666,7 +666,7 @@ let run_https ~sw ~net ~clock ?time ?domain_manager
   validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
   let enabled_protocols =
-    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+    Dispatch.enabled_protocols_of_alpn_protocols
       (Eta_http.Tls.Config.server_alpn_protocols tls_config)
   in
   let on_connection_close =
@@ -759,7 +759,7 @@ let start_https_on_socket ~sw ~clock ?time ?(config = Config.default)
   Config.validate config;
   let tls_context = Tls_eio.server_context tls_config in
   let enabled_protocols =
-    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+    Dispatch.enabled_protocols_of_alpn_protocols
       (Eta_http.Tls.Config.server_alpn_protocols tls_config)
   in
   let t = create () in
@@ -790,7 +790,7 @@ let start_https ~sw ~net ~clock ?time ?domain_manager
   validate_domain_policy domain_policy;
   let tls_context = Tls_eio.server_context tls_config in
   let enabled_protocols =
-    Eta_http.Transport.Dispatch.enabled_protocols_of_alpn_protocols
+    Dispatch.enabled_protocols_of_alpn_protocols
       (Eta_http.Tls.Config.server_alpn_protocols tls_config)
   in
   let t = create () in

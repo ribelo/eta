@@ -4,7 +4,7 @@ module Error = Error
 module Multiplexer = Multiplexer
 module Writer = Writer
 
-module H2 = Eta_http.H2
+module H2 = Eta_http_h2
 
 (* Connection owns socket lifetime, writes, and failure fan-out. Multiplexer
    owns H2 stream admission and body-reader bookkeeping. The core H2 state

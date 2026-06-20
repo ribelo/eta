@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/openai_compat/audit/run.sh
-Last updated: 2026-06-15T22:49:12Z
+Last updated: 2026-06-20T16:49:09Z
 Current sites: 51
 
 Allowed production dependencies for eta-ai-openai-compat:
@@ -12,8 +12,9 @@ Allowed production dependencies for eta-ai-openai-compat:
 - eta-http
 
 The package must not depend on OpenAI SDKs, Anthropic SDKs, tokenizer
-libraries, provider-specific generated clients, or sibling provider packages.
-Yojson is allowed for structured JSON.
+libraries, provider-specific generated clients, sibling provider packages,
+`eta_http_eio`, `eta_http_js`, Eio, or js_of_ocaml. Yojson is allowed for
+structured JSON.
 
 Search:
 
@@ -41,6 +42,8 @@ The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 - lib/ai/openai_compat/bench/bench_ai_openai_compat.ml:22:  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
 - lib/ai/openai_compat/bench/bench_ai_openai_compat.ml:26:let request : Eta_ai.chat_request =
 - lib/ai/openai_compat/bench/bench_ai_openai_compat.ml:62:                 ~api_key:(Eta_ai.api_key "sk-bench") request)));
+- lib/ai/openai_compat/eta_ai_openai_compat.ml:3:module E = Eta.Effect
+- lib/ai/openai_compat/eta_ai_openai_compat.ml:35:  Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:17:  schema : Eta_ai.Json.t;
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:24:  schema_json:Eta_ai.raw_json ->
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:26:  (structured_output, Eta_ai.ai_error) result
@@ -81,6 +84,4 @@ The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:107:  api_key:Eta_ai.api_key ->
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:108:  Eta_ai.chat_request ->
 - lib/ai/openai_compat/eta_ai_openai_compat.mli:109:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai_compat/eta_ai_openai_compat.ml:3:module E = Eta.Effect
-- lib/ai/openai_compat/eta_ai_openai_compat.ml:35:  Option.value ~default:"" auth.prefix ^ Eta_redacted.value api_key
 <!-- END DEP_MATCHES -->

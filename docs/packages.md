@@ -99,13 +99,14 @@ where supported.
 | --- | --- | --- | --- |
 | `eta_ai` | `Eta_ai` | provider-agnostic chat/streaming vocabulary, SSE parser, telemetry wrappers | `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openai_codec` | `Eta_ai_openai_codec` | shared OpenAI wire codecs | `eta_ai`, `base64` |
-| `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `eta_http_eio`, `eta_stream`, `eio`, `base64`, `yojson` |
+| `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_anthropic` | `Eta_ai_anthropic` | Anthropic Messages provider | `eta_ai`, `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openrouter` | `Eta_ai_openrouter` | OpenRouter provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_openai_compat` | `Eta_ai_openai_compat` | OpenAI-compatible adapter (Together, Groq, Fireworks, ...) | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `yojson` |
 
-Provider packages depend on `eta_ai` and `eta_http`. `eta_ai_openai` also pulls
-`eta_http_eio` for its default transport.
+Provider packages depend on `eta_ai` and `eta_http`. They do not pull a default
+transport; applications pass an explicit `Eta_http.Client.t` from the adapter
+they use.
 
 ### Observability
 
@@ -133,8 +134,9 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | `eta_js_test` | `Eta_js_test` | test helpers for `eta_js` | `eta_js`, `js_of_ocaml` |
 
 > Footgun: the JS packages are disabled in the `5.2.0+ox` switch used by the
-> Nix shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build them with a
-> plain OCaml 5.2.0 switch plus `js_of_ocaml`.
+> default Nix/OxCaml shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build
+> and test them through the flake's mainline shell:
+> `nix develop .#mainline -c dune runtest test/http_js --force`.
 
 ## How OCaml's tree-shaking actually works
 

@@ -1,0 +1,7 @@
+(include_subdirs no)
+
+(library
+ (name eta_http_h1)
+ (public_name eta_http_h1)
+ (synopsis "HTTP/1 protocol helpers for Eta HTTP")
+ (libraries eta eta_http))

@@ -133,10 +133,45 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
+  eta_http
   (bigstringaf (>= 0.9.0))
   (cstruct (>= 6.0.0))
   (angstrom (>= 0.16.0))
   (faraday (>= 0.8.0))))
+
+(package
+ (name eta_http_h1)
+ (synopsis "HTTP/1 protocol helpers for Eta HTTP")
+ (description
+  "eta_http_h1 provides HTTP/1 request and response parser/writer helpers for eta-http adapters and protocol tests.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_http))
+
+(package
+ (name eta_http_tls_openssl)
+ (synopsis "OpenSSL TLS state-machine bindings for Eta HTTP")
+ (description
+  "eta_http_tls_openssl provides native OpenSSL memory-BIO state machines, sessions, CA loading, and concrete TLS context creation for Eta HTTP adapters.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  (cstruct (>= 6.0.0))
+  conf-pkg-config
+  conf-openssl))
+
+(package
+ (name eta_http_ws)
+ (synopsis "WebSocket codec and handshake helpers for Eta HTTP")
+ (description
+  "eta_http_ws provides RFC 6455 frame codecs and backend-neutral handshake helpers.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  base64))
 
 (package
  (name eta_http)
@@ -147,20 +182,26 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
   eta
-  eta_stream
-  eta_http_h2
-  (cstruct (>= 6.0.0))
-  (faraday (>= 0.8.0))
-  (angstrom (>= 0.16.0))
   (yojson (>= 2.0))
   (crowbar :with-test)
   domain-name
   ipaddr
   bigstringaf
-  base64
-  (decompress (= 1.5.3))
-  conf-pkg-config
-  conf-openssl))
+  (decompress (= 1.5.3))))
+
+(package
+ (name eta_http_js)
+ (allow_empty)
+ (synopsis "js_of_ocaml Fetch client adapter for eta-http")
+ (description
+  "eta_http_js provides a js_of_ocaml Fetch-backed HTTP client adapter for Eta HTTP.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.21))
+  eta
+  eta_http
+  eta_jsoo
+  (js_of_ocaml (>= 5.0))))
 
 (package
  (name eta_http_eio)
@@ -174,6 +215,10 @@
   eta_blocking
   eta_eio
   eta_http
+  eta_http_h1
+  eta_http_h2
+  eta_http_tls_openssl
+  eta_http_ws
   eta_stream
   (eio (>= 1.0))
   (cstruct (>= 6.0.0))
@@ -378,7 +423,7 @@
  (name eta_ai_openai)
  (synopsis "OpenAI provider for Eta AI")
  (description
-  "eta_ai_openai provides OpenAI chat, streaming, and realtime clients for Eta.")
+  "eta_ai_openai provides transport-neutral OpenAI chat, responses, embeddings, media, transcription, and realtime codec helpers for Eta.")
  (depends
   (ocaml (>= 5.2.0))
   (dune (>= 3.0))
@@ -387,11 +432,25 @@
   eta_ai_openai_codec
   eta_redacted
   eta_http
-  eta_http_eio
-  eta_stream
-  (eio (>= 1.0))
   base64
   (yojson (>= 2.0))))
+
+(package
+ (name eta_ai_openai_realtime_eio)
+ (synopsis "Eio WebSocket transport for OpenAI Realtime")
+ (description
+  "eta_ai_openai_realtime_eio provides the native Eio WebSocket connection adapter for OpenAI Realtime over eta_http_eio.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_ai
+  eta_ai_openai
+  eta_http
+  eta_http_eio
+  eta_redacted
+  eta_stream
+  (eio (>= 1.0))))
 
 (package
  (name eta_ai_anthropic)

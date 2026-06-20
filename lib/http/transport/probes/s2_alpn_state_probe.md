@@ -2,12 +2,12 @@
 
 ## Question
 
-Can eta-http represent the H-D5 ALPN bootstrap decision without raw Eio
+Can eta-http-eio represent the H-D5 ALPN bootstrap decision without raw Eio
 coordination primitives and before the full h1/h2 dispatcher lands?
 
 ## Implementation
 
-- `Eta_http.Transport.Alpn` is a pure state machine.
+- `Eta_http_eio.Alpn` is a pure state machine owned by the Eio adapter.
 - `begin_request` returns one `Leader` while no protocol route exists.
 - Concurrent first arrivals see `Wait` on the same pending id and increment
   `redundant_cancelled`, matching the H-D5 redundant-connection collapse
@@ -37,7 +37,7 @@ eta-http: 32 tests passed
 
 ## Verdict
 
-PASS for the pure ALPN state-machine cut.
+PASS for the adapter-owned pure ALPN state-machine cut.
 
 This does not complete transport dispatch. The next S2 work must attach
 these decisions to real h1 pool and h2 multiplexer resources, then prove the

@@ -1,4 +1,4 @@
-include Eta_http.H1.Write
+include Eta_http_h1.Write
 
 let flow_write_error ~method_ ~url =
   Error.make ~protocol:H1 ~method_ ~uri:(Url.to_string url)

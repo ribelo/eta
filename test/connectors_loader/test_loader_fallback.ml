@@ -118,7 +118,9 @@ let check_ladybug_arrow_materialization_uses_release_owner () =
   in
   let owner = require_sub body ~needle:"arrow_owner_alloc" in
   let schema =
-    require_sub body ~needle:"api.query_result_get_arrow_schema(result, &owner->schema)"
+    require_sub body
+      ~needle:
+        "api.query_result_get_arrow_schema(result_owner_result(v_result_owner), &owner->schema)"
   in
   let set_schema = require_sub body ~needle:"arrow_owner_set_schema(owner)" in
   let set_array = require_sub body ~needle:"arrow_owner_set_array(owner)" in

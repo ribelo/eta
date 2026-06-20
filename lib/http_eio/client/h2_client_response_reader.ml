@@ -1,7 +1,7 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
 module Body = Stream
-module H2_proto = Eta_http.H2
+module H2_proto = Eta_http_h2
 
 let response_headers response =
   response.H2_proto.Connection.Client.headers

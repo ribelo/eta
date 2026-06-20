@@ -300,7 +300,7 @@ let send_window_update t stream_id window increment =
     | Ok () -> send_window_update_frame t stream_id increment
     | Error _ ->
         invalid_arg
-          "Eta_http.H2.Connection.send_window_update: receive window overflow"
+          "Eta_http_h2.Connection.send_window_update: receive window overflow"
 
 let refresh_connection_recv_window t =
   let available = Window.available t.recv_window in
@@ -474,7 +474,7 @@ let response_declares_empty_body (response : server_response) =
 
 let rec respond reqd response body_kind =
   if reqd.responded then
-    invalid_arg "Eta_http.H2.Connection.Server.Reqd.respond: already responded";
+    invalid_arg "Eta_http_h2.Connection.Server.Reqd.respond: already responded";
   reqd.responded <- true;
   reqd.response <- Some response;
   reqd.response_body_kind <- body_kind;
@@ -486,7 +486,7 @@ let rec respond reqd response body_kind =
       if response_declares_empty_body response then (
         if String.length s <> 0 then
           invalid_arg
-            "Eta_http.H2.Connection.Server.Reqd.respond_with_string: empty \
+            "Eta_http_h2.Connection.Server.Reqd.respond_with_string: empty \
              response body cannot carry bytes";
         Stream.mark_send_end_stream stream;
         Stream.mark_sent_end_stream stream;
@@ -505,7 +505,7 @@ let rec respond reqd response body_kind =
   | `Streaming writer ->
       if response_declares_empty_body response then
         invalid_arg
-          "Eta_http.H2.Connection.Server.Reqd.respond_with_streaming: empty \
+          "Eta_http_h2.Connection.Server.Reqd.respond_with_streaming: empty \
            response body cannot stream";
       Body.Writer.set_write_fn writer (fun buf ~off ~len ->
           ignore (Stream.queue_data stream buf ~off ~len);
@@ -1213,7 +1213,7 @@ module Client = struct
     | None -> ()
     | Some _ ->
         invalid_arg
-          "Eta_http.H2.Connection.Client.create: server push is not supported");
+          "Eta_http_h2.Connection.Client.create: server push is not supported");
     let state =
       {
         client_error_handler = error_handler;
@@ -1232,21 +1232,21 @@ module Client = struct
     | None -> ()
     | Some (name, _) ->
         invalid_arg
-          ("Eta_http.H2.Connection.Client.request: pseudo-header in headers: "
+          ("Eta_http_h2.Connection.Client.request: pseudo-header in headers: "
          ^ name)
 
   let validate_stream_id t stream_id =
     if stream_id <= 0 || stream_id land 1 = 0 then
       invalid_arg
-        "Eta_http.H2.Connection.Client.request: client stream id must be \
+        "Eta_http_h2.Connection.Client.request: client stream id must be \
          positive odd";
     if stream_id <= t.max_client_stream_id then
       invalid_arg
-        "Eta_http.H2.Connection.Client.request: client stream id was already \
+        "Eta_http_h2.Connection.Client.request: client stream id was already \
          used";
     if stream_id > 0x7fffffff then
       invalid_arg
-        "Eta_http.H2.Connection.Client.request: client stream id exhausted"
+        "Eta_http_h2.Connection.Client.request: client stream id exhausted"
 
   let request_headers (request : request) =
     require_no_pseudo_headers request.headers;
@@ -1255,7 +1255,7 @@ module Client = struct
       match request.authority with
       | None ->
           invalid_arg
-            "Eta_http.H2.Connection.Client.request: CONNECT requires :authority"
+            "Eta_http_h2.Connection.Client.request: CONNECT requires :authority"
       | Some authority ->
           [ (":method", request.meth); (":authority", authority) ]
           @ request.headers)
@@ -1263,7 +1263,7 @@ module Client = struct
       match request.scheme with
       | None ->
           invalid_arg
-            "Eta_http.H2.Connection.Client.request: request requires :scheme"
+            "Eta_http_h2.Connection.Client.request: request requires :scheme"
       | Some scheme ->
           let authority =
             match request.authority with
@@ -1278,17 +1278,17 @@ module Client = struct
     match t.role with
     | Server _ ->
         invalid_arg
-          "Eta_http.H2.Connection.Client.request: server connection used as \
+          "Eta_http_h2.Connection.Client.request: server connection used as \
            client"
     | Client c ->
         if not (accepts_new_streams t) then
           invalid_arg
-            "Eta_http.H2.Connection.Client.request: connection is not \
+            "Eta_http_h2.Connection.Client.request: connection is not \
              accepting new streams";
         if t.current_client_streams + 1 > t.peer_settings.max_concurrent_streams
         then
           invalid_arg
-            "Eta_http.H2.Connection.Client.request: peer max_concurrent_streams \
+            "Eta_http_h2.Connection.Client.request: peer max_concurrent_streams \
              exceeded";
         validate_stream_id t stream_id;
         let stream = open_stream t ~id:stream_id in

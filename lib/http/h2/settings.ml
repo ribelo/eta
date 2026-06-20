@@ -52,7 +52,7 @@ let[@zero_alloc] byte n = Char.chr (n land 0xff)
 
 let uint16 n =
   if n < 0 || n > 0xffff then
-    invalid_arg "Eta_http.H2.Settings.uint16: value outside uint16";
+    invalid_arg "Eta_http_h2.Settings.uint16: value outside uint16";
   String.init 2 @@ function
   | 0 -> byte (n lsr 8)
   | 1 -> byte n

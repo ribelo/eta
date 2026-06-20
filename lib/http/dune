@@ -4,31 +4,10 @@
  (synopsis "Backend-neutral HTTP protocol and client contract for Eta")
  (libraries
   eta
-  eta_stream
-  eta_http_h2
-  unix
-  bigstringaf
-  cstruct
   domain-name
   ipaddr
-  base64
+  bigstringaf
   decompress.gz
-  angstrom
-  faraday
-  yojson)
- (foreign_stubs
-  (language c)
-  (names tls_openssl_stubs)
-  (flags :standard (:include c_flags.sexp)))
- (c_library_flags :standard (:include c_library_flags.sexp)))
+  yojson))
 
 (include_subdirs unqualified)
-
-(rule
- (targets c_flags.sexp c_library_flags.sexp)
- (action
-  (progn
-   (with-stdout-to c_flags.sexp
-    (bash "echo '('; pkg-config openssl --cflags | tr ' ' '\\n'; echo ')'"))
-   (with-stdout-to c_library_flags.sexp
-    (bash "echo '('; pkg-config openssl --libs | tr ' ' '\\n'; echo ')'")))))

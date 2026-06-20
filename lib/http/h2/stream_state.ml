@@ -58,7 +58,7 @@ let open_stream t ~tag =
         let id = Admission.stream_id permit in
         if not (is_client_stream_id id) then
           invalid_arg
-            "Eta_http.H2.Stream_state.open_stream: client stream id must be positive odd";
+            "Eta_http_h2.Stream_state.open_stream: client stream id must be positive odd";
         let stream = { id; tag; permit; status = P_atomic.make Active } in
         Hashtbl.replace t.streams id stream;
         Ok stream

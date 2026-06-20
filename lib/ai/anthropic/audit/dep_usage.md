@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/anthropic/audit/run.sh
-Last updated: 2026-06-15T22:49:12Z
+Last updated: 2026-06-20T16:49:09Z
 Current sites: 53
 
 Allowed production dependencies for eta-ai-anthropic:
@@ -12,8 +12,8 @@ Allowed production dependencies for eta-ai-anthropic:
 - eta-http
 
 The package must not depend on Anthropic SDKs, OpenAI SDKs, tokenizer
-libraries, or provider-specific generated clients. Yojson is allowed for
-structured JSON.
+libraries, provider-specific generated clients, `eta_http_eio`, `eta_http_js`,
+Eio, or js_of_ocaml. Yojson is allowed for structured JSON.
 
 Search:
 
@@ -38,10 +38,6 @@ Search:
 - lib/ai/anthropic/bench/bench_ai_anthropic.ml:22:  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
 - lib/ai/anthropic/bench/bench_ai_anthropic.ml:26:let request : Eta_ai.chat_request =
 - lib/ai/anthropic/bench/bench_ai_anthropic.ml:57:              (Eta_ai_anthropic.messages_request ~provider ~api_key:(Eta_ai.api_key "sk-bench")
-- lib/ai/anthropic/eta_ai_anthropic.ml:2:module E = Eta.Effect
-- lib/ai/anthropic/eta_ai_anthropic.ml:484:    | headers -> [ ("Anthropic-Beta", String.concat "," headers) ]
-- lib/ai/anthropic/eta_ai_anthropic.ml:488:       ("x-api-key", Eta_redacted.value api_key);
-- lib/ai/anthropic/eta_ai_anthropic.ml:545:      |> H.Core.Header.unsafe_add "Anthropic-Beta" value
 - lib/ai/anthropic/eta_ai_anthropic.mli:1:(** Anthropic Messages provider.
 - lib/ai/anthropic/eta_ai_anthropic.mli:4:    text is encoded through Anthropic's top-level [system] field, tool results
 - lib/ai/anthropic/eta_ai_anthropic.mli:14:    [beta_header] is added as [Anthropic-Beta]. When [cache_system] is true,
@@ -82,4 +78,8 @@ Search:
 - lib/ai/anthropic/eta_ai_anthropic.mli:89:  api_key:Eta_ai.api_key ->
 - lib/ai/anthropic/eta_ai_anthropic.mli:90:  Eta_ai.chat_request ->
 - lib/ai/anthropic/eta_ai_anthropic.mli:91:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/anthropic/eta_ai_anthropic.ml:2:module E = Eta.Effect
+- lib/ai/anthropic/eta_ai_anthropic.ml:484:    | headers -> [ ("Anthropic-Beta", String.concat "," headers) ]
+- lib/ai/anthropic/eta_ai_anthropic.ml:488:       ("x-api-key", Eta_redacted.value api_key);
+- lib/ai/anthropic/eta_ai_anthropic.ml:545:      |> H.Core.Header.unsafe_add "Anthropic-Beta" value
 <!-- END DEP_MATCHES -->

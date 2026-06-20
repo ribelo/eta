@@ -6,11 +6,8 @@
  (libraries
   eta
   eta_ai
-  eta_ai_openai_codec
-  eta_redacted
-  eta_http
-  eta_http_eio
-  eta_stream
-  eio
-  yojson
-  base64))
+ eta_ai_openai_codec
+ eta_redacted
+ eta_http
+ yojson
+ base64))

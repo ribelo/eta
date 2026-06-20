@@ -51,14 +51,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_http.Client.make_custom ~protocol:Eta_http.Client.H1 ~request
         ~stats:(fun () ->
           Eta.Effect.pure
-            {
-              Eta_http.Client.protocol = H1;
-              active = 0;
-              idle = 0;
-              capacity = 0;
-              opened = !attempts;
-              released = 0;
-            })
+            (Some
+               {
+                 Eta_http.Client.protocol = H1;
+                 active = 0;
+                 idle = 0;
+                 capacity = 0;
+                 opened = !attempts;
+                 released = 0;
+               }))
         ~shutdown:(fun () -> Eta.Effect.unit) )
 
   let read_file path =
@@ -275,8 +276,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check string) "raw authority" "[::1]:8443"
       (Bytes.sub_string bytes 0 len);
     (match
-       Eta_http.H1.Write.to_string ~method_:"GET" ~url ~headers:[]
-         ~body:Eta_http.H1.Write.Empty
+       Eta_http_h1.Write.to_string ~method_:"GET" ~url ~headers:[]
+         ~body:Eta_http_h1.Write.Empty
      with
     | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
     | Ok wire ->
@@ -569,14 +570,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Eta_http.Client.make_custom ~protocol ~request
       ~stats:(fun () ->
         Eta.Effect.pure
-          {
-            Eta_http.Client.protocol;
-            active = 2;
-            idle = 3;
-            capacity = 5;
-            opened = 8;
-            released = 6;
-          })
+          (Some
+             {
+               Eta_http.Client.protocol;
+               active = 2;
+               idle = 3;
+               capacity = 5;
+               opened = 8;
+               released = 6;
+             }))
       ~shutdown:(fun () -> Eta.Effect.unit)
 
   let expect_typed_failure exit predicate =
@@ -856,28 +858,38 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "key attempts" 2 !attempts
 
   let test_ws_accept_key_vector () =
+    let sha1 input =
+      let expected_input =
+        "dGhlIHNhbXBsZSBub25jZQ==258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+      in
+      if not (String.equal input expected_input) then
+        Alcotest.fail "unexpected WebSocket accept-key SHA-1 input";
+      Bytes.unsafe_to_string
+        (Bytes.of_string
+           "\179\122\079\044\192\098\079\022\144\246\070\006\207\056\089\069\178\190\196\234")
+    in
     Alcotest.(check string)
       "accept" "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-      (Eta_http.Ws.Codec.accept_key "dGhlIHNhbXBsZSBub25jZQ==")
+      (Eta_http_ws.Codec.accept_key ~sha1 "dGhlIHNhbXBsZSBub25jZQ==")
 
   let test_ws_codec_masked_text_roundtrip () =
     let mask = Bytes.of_string "\x37\xfa\x21\x3d" in
-    let frame : Eta_http.Ws.Codec.frame =
-      { fin = true; opcode = Eta_http.Ws.Codec.Text; payload = Bytes.of_string "Hello" }
+    let frame : Eta_http_ws.Codec.frame =
+      { fin = true; opcode = Eta_http_ws.Codec.Text; payload = Bytes.of_string "Hello" }
     in
-    let encoded = Eta_http.Ws.Codec.encode ~mask frame in
-    match Eta_http.Ws.Codec.decode ~masked:true encoded with
-    | Ok ({ opcode = Eta_http.Ws.Codec.Text; payload; _ }, consumed) ->
+    let encoded = Eta_http_ws.Codec.encode ~mask frame in
+    match Eta_http_ws.Codec.decode ~masked:true encoded with
+    | Ok ({ opcode = Eta_http_ws.Codec.Text; payload; _ }, consumed) ->
         Alcotest.(check int) "consumed" (Bytes.length encoded) consumed;
         Alcotest.(check string) "payload" "Hello" (Bytes.to_string payload)
     | Ok _ -> Alcotest.fail "decoded unexpected frame"
     | Error error ->
         Alcotest.failf "masked frame failed: %s"
-          (Eta_http.Ws.Codec.parse_error_to_string error)
+          (Eta_http_ws.Codec.parse_error_to_string error)
 
   let test_ws_codec_rejects_one_byte_close_payload () =
     let frame = Bytes.of_string "\x88\x01\000" in
-    match Eta_http.Ws.Codec.decode frame with
+    match Eta_http_ws.Codec.decode frame with
     | Error _ -> ()
     | Ok _ -> Alcotest.fail "one-byte close payload decoded successfully"
 
@@ -886,14 +898,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Invalid_argument
          "WebSocket close frame payload must be empty or at least two bytes")
       (fun () ->
-        let frame : Eta_http.Ws.Codec.frame =
+        let frame : Eta_http_ws.Codec.frame =
           {
             fin = true;
-            opcode = Eta_http.Ws.Codec.Close;
+            opcode = Eta_http_ws.Codec.Close;
             payload = Bytes.of_string "\000";
           }
         in
-        ignore (Eta_http.Ws.Codec.encode frame : bytes))
+        ignore (Eta_http_ws.Codec.encode frame : bytes))
 
   let ws_close_status_payload code =
     let payload = Bytes.create 2 in
@@ -911,20 +923,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_ws_codec_rejects_invalid_close_status_codes () =
     List.iter
       (fun code ->
-        match Eta_http.Ws.Codec.decode (ws_raw_close_frame code) with
+        match Eta_http_ws.Codec.decode (ws_raw_close_frame code) with
         | Error _ -> ()
         | Ok _ -> Alcotest.failf "accepted invalid close status code %d" code)
       [ 999; 1004; 1005; 1006; 1015; 5000 ]
 
   let test_ws_codec_encoder_rejects_invalid_close_status_code () =
-    let frame : Eta_http.Ws.Codec.frame =
+    let frame : Eta_http_ws.Codec.frame =
       {
         fin = true;
-        opcode = Eta_http.Ws.Codec.Close;
+        opcode = Eta_http_ws.Codec.Close;
         payload = ws_close_status_payload 1005;
       }
     in
-    match Eta_http.Ws.Codec.encode frame with
+    match Eta_http_ws.Codec.encode frame with
     | _ -> Alcotest.fail "encoded invalid close status code 1005"
     | exception Invalid_argument message ->
         Alcotest.(check bool)
@@ -947,28 +959,28 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (contains codec "let open Int32")
 
   let h2_frame_header ~length ~frame_type ~flags ~stream_id =
-    Eta_http.H2.Frame.header ~length
-      ~frame_type:(Eta_http.H2.Frame.Other frame_type)
+    Eta_http_h2.Frame.header ~length
+      ~frame_type:(Eta_http_h2.Frame.Other frame_type)
       ~flags ~stream_id
 
-  let h2_payload = Eta_http.H2.Frame.payload
-  let h2_uint32 = Eta_http.H2.Frame.uint32
-  let h2_goaway_no_error = Eta_http.H2.Frame.goaway_no_error
+  let h2_payload = Eta_http_h2.Frame.payload
+  let h2_uint32 = Eta_http_h2.Frame.uint32
+  let h2_goaway_no_error = Eta_http_h2.Frame.goaway_no_error
   let h2_settings_frame = h2_frame_header ~length:0 ~frame_type:0x4 ~flags:0 ~stream_id:0
 
   let h2_security_observation_kind = function
-    | Eta_http.H2.Security.Pass -> None
-    | Eta_http.H2.Security.Connection_error { kind; _ }
-    | Eta_http.H2.Security.Stream_error { kind; _ }
-    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+    | Eta_http_h2.Security.Pass -> None
+    | Eta_http_h2.Security.Connection_error { kind; _ }
+    | Eta_http_h2.Security.Stream_error { kind; _ }
+    | Eta_http_h2.Security.Policy_close { kind; _ } ->
         Some kind
 
   let h2_security_observe security bs ~off ~len =
-    Eta_http.H2.Security.observe_result security bs ~off ~len ~now_ms:0L
+    Eta_http_h2.Security.observe_result security bs ~off ~len ~now_ms:0L
     |> h2_security_observation_kind
 
   let h2_observe_security data =
-    let security = Eta_http.H2.Security.create () in
+    let security = Eta_http_h2.Security.create () in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
     h2_security_observe security bs ~off:0 ~len:(String.length data)
 
@@ -977,44 +989,44 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Error () -> Alcotest.failf "%s rejected unexpectedly" label
 
   let test_h2_admission_counts_cancelled_until_release () =
-    let admission = Eta_http.H2.Admission.create ~max_concurrent:2 in
-    let first = h2_permit "first" (Eta_http.H2.Admission.try_acquire admission) in
+    let admission = Eta_http_h2.Admission.create ~max_concurrent:2 in
+    let first = h2_permit "first" (Eta_http_h2.Admission.try_acquire admission) in
     let second =
-      h2_permit "second" (Eta_http.H2.Admission.try_acquire admission)
+      h2_permit "second" (Eta_http_h2.Admission.try_acquire admission)
     in
     Alcotest.(check int) "first stream id" 1
-      (Eta_http.H2.Admission.stream_id first);
+      (Eta_http_h2.Admission.stream_id first);
     Alcotest.(check int) "second stream id" 3
-      (Eta_http.H2.Admission.stream_id second);
-    (match Eta_http.H2.Admission.try_acquire admission with
+      (Eta_http_h2.Admission.stream_id second);
+    (match Eta_http_h2.Admission.try_acquire admission with
     | Ok _ -> Alcotest.fail "third stream should be rejected at limit"
     | Error () -> ());
-    Eta_http.H2.Admission.mark_remote_reset admission first;
-    let reset_stats = Eta_http.H2.Admission.stats admission in
+    Eta_http_h2.Admission.mark_remote_reset admission first;
+    let reset_stats = Eta_http_h2.Admission.stats admission in
     Alcotest.(check int) "active after remote reset" 1 reset_stats.active;
     Alcotest.(check int) "cancelled after remote reset" 1
       reset_stats.cancelled;
     Alcotest.(check int) "cancelled counts as inflight" 2
       reset_stats.inflight;
-    (match Eta_http.H2.Admission.try_acquire admission with
+    (match Eta_http_h2.Admission.try_acquire admission with
     | Ok _ -> Alcotest.fail "cancelled stream should still occupy admission"
     | Error () -> ());
     Alcotest.(check bool) "remote reset release does not queue RST" true
-      (Eta_http.H2.Admission.release admission first
-      = Eta_http.H2.Admission.No_rst);
-    let third = h2_permit "third" (Eta_http.H2.Admission.try_acquire admission) in
+      (Eta_http_h2.Admission.release admission first
+      = Eta_http_h2.Admission.No_rst);
+    let third = h2_permit "third" (Eta_http_h2.Admission.try_acquire admission) in
     Alcotest.(check int) "third stream id" 5
-      (Eta_http.H2.Admission.stream_id third);
+      (Eta_http_h2.Admission.stream_id third);
     Alcotest.(check bool) "active release queues RST" true
-      (Eta_http.H2.Admission.release admission second
-      = Eta_http.H2.Admission.Queue_rst);
+      (Eta_http_h2.Admission.release admission second
+      = Eta_http_h2.Admission.Queue_rst);
     Alcotest.(check bool) "release is idempotent" true
-      (Eta_http.H2.Admission.release admission second
-      = Eta_http.H2.Admission.No_rst);
+      (Eta_http_h2.Admission.release admission second
+      = Eta_http_h2.Admission.No_rst);
     Alcotest.(check bool) "third active release queues RST" true
-      (Eta_http.H2.Admission.release admission third
-      = Eta_http.H2.Admission.Queue_rst);
-    let stats = Eta_http.H2.Admission.stats admission in
+      (Eta_http_h2.Admission.release admission third
+      = Eta_http_h2.Admission.Queue_rst);
+    let stats = Eta_http_h2.Admission.stats admission in
     Alcotest.(check int) "active final" 0 stats.active;
     Alcotest.(check int) "cancelled final" 0 stats.cancelled;
     Alcotest.(check int) "opened" 3 stats.opened;
@@ -1029,61 +1041,61 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Error () -> Alcotest.failf "%s rejected unexpectedly" label
 
   let test_h2_stream_state_release_decisions () =
-    let state = Eta_http.H2.Stream_state.create ~max_concurrent:2 in
+    let state = Eta_http_h2.Stream_state.create ~max_concurrent:2 in
     let first =
-      h2_stream "first" (Eta_http.H2.Stream_state.open_stream state ~tag:11)
+      h2_stream "first" (Eta_http_h2.Stream_state.open_stream state ~tag:11)
     in
     let second =
-      h2_stream "second" (Eta_http.H2.Stream_state.open_stream state ~tag:12)
+      h2_stream "second" (Eta_http_h2.Stream_state.open_stream state ~tag:12)
     in
     Alcotest.(check bool) "server stream id rejected" false
-      (Eta_http.H2.Stream_state.is_client_stream_id 2);
+      (Eta_http_h2.Stream_state.is_client_stream_id 2);
     Alcotest.(check int) "first stream id" 1
-      (Eta_http.H2.Stream_state.id first);
+      (Eta_http_h2.Stream_state.id first);
     Alcotest.(check bool) "first client stream id" true
-      (Eta_http.H2.Stream_state.is_client_stream_id
-         (Eta_http.H2.Stream_state.id first));
+      (Eta_http_h2.Stream_state.is_client_stream_id
+         (Eta_http_h2.Stream_state.id first));
     Alcotest.(check int) "second stream id" 3
-      (Eta_http.H2.Stream_state.id second);
-    Alcotest.(check int) "tag" 11 (Eta_http.H2.Stream_state.tag first);
-    (match Eta_http.H2.Stream_state.open_stream state ~tag:13 with
+      (Eta_http_h2.Stream_state.id second);
+    Alcotest.(check int) "tag" 11 (Eta_http_h2.Stream_state.tag first);
+    (match Eta_http_h2.Stream_state.open_stream state ~tag:13 with
     | Ok _ -> Alcotest.fail "third stream should be rejected at limit"
     | Error () -> ());
-    Eta_http.H2.Stream_state.mark_remote_reset state
-      (Eta_http.H2.Stream_state.id first);
+    Eta_http_h2.Stream_state.mark_remote_reset state
+      (Eta_http_h2.Stream_state.id first);
     Alcotest.(check bool) "first remote reset" true
-      (Eta_http.H2.Stream_state.status first
-      = Eta_http.H2.Stream_state.Remote_reset);
-    let reset_stats = Eta_http.H2.Stream_state.stats state in
+      (Eta_http_h2.Stream_state.status first
+      = Eta_http_h2.Stream_state.Remote_reset);
+    let reset_stats = Eta_http_h2.Stream_state.stats state in
     Alcotest.(check int) "active after reset" 1 reset_stats.active;
     Alcotest.(check int) "cancelled after reset" 1 reset_stats.cancelled;
     Alcotest.(check int) "cancelled still inflight" 2 reset_stats.inflight;
     Alcotest.(check int) "live after reset" 2 reset_stats.live;
-    (match Eta_http.H2.Stream_state.open_stream state ~tag:14 with
+    (match Eta_http_h2.Stream_state.open_stream state ~tag:14 with
     | Ok _ -> Alcotest.fail "cancelled stream should still occupy admission"
     | Error () -> ());
     Alcotest.(check bool) "remote reset release does not queue RST" true
-      (Eta_http.H2.Stream_state.release state first
-      = Eta_http.H2.Stream_state.No_rst);
+      (Eta_http_h2.Stream_state.release state first
+      = Eta_http_h2.Stream_state.No_rst);
     Alcotest.(check bool) "release idempotent" true
-      (Eta_http.H2.Stream_state.release state first
-      = Eta_http.H2.Stream_state.No_rst);
+      (Eta_http_h2.Stream_state.release state first
+      = Eta_http_h2.Stream_state.No_rst);
     let third =
-      h2_stream "third" (Eta_http.H2.Stream_state.open_stream state ~tag:13)
+      h2_stream "third" (Eta_http_h2.Stream_state.open_stream state ~tag:13)
     in
     Alcotest.(check int) "third stream id" 5
-      (Eta_http.H2.Stream_state.id third);
-    Eta_http.H2.Stream_state.mark_complete state second;
+      (Eta_http_h2.Stream_state.id third);
+    Eta_http_h2.Stream_state.mark_complete state second;
     Alcotest.(check bool) "second complete" true
-      (Eta_http.H2.Stream_state.status second
-      = Eta_http.H2.Stream_state.Complete);
+      (Eta_http_h2.Stream_state.status second
+      = Eta_http_h2.Stream_state.Complete);
     Alcotest.(check bool) "complete release does not queue RST" true
-      (Eta_http.H2.Stream_state.release state second
-      = Eta_http.H2.Stream_state.No_rst);
+      (Eta_http_h2.Stream_state.release state second
+      = Eta_http_h2.Stream_state.No_rst);
     Alcotest.(check bool) "active release queues RST" true
-      (Eta_http.H2.Stream_state.release state third
-      = Eta_http.H2.Stream_state.Queue_rst);
-    let stats = Eta_http.H2.Stream_state.stats state in
+      (Eta_http_h2.Stream_state.release state third
+      = Eta_http_h2.Stream_state.Queue_rst);
+    let stats = Eta_http_h2.Stream_state.stats state in
     Alcotest.(check int) "active final" 0 stats.active;
     Alcotest.(check int) "cancelled final" 0 stats.cancelled;
     Alcotest.(check int) "live final" 0 stats.live;
@@ -1095,33 +1107,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "max inflight" 2 stats.max_inflight
 
   let test_h2_stream_state_close_releases_live_state () =
-    let state = Eta_http.H2.Stream_state.create ~max_concurrent:2 in
+    let state = Eta_http_h2.Stream_state.create ~max_concurrent:2 in
     let first =
-      h2_stream "first" (Eta_http.H2.Stream_state.open_stream state ~tag:1)
+      h2_stream "first" (Eta_http_h2.Stream_state.open_stream state ~tag:1)
     in
     let second =
-      h2_stream "second" (Eta_http.H2.Stream_state.open_stream state ~tag:2)
+      h2_stream "second" (Eta_http_h2.Stream_state.open_stream state ~tag:2)
     in
-    Eta_http.H2.Stream_state.mark_remote_reset state
-      (Eta_http.H2.Stream_state.id first);
-    Eta_http.H2.Stream_state.close state;
+    Eta_http_h2.Stream_state.mark_remote_reset state
+      (Eta_http_h2.Stream_state.id first);
+    Eta_http_h2.Stream_state.close state;
     Alcotest.(check bool) "first released" true
-      (Eta_http.H2.Stream_state.status first = Eta_http.H2.Stream_state.Released);
+      (Eta_http_h2.Stream_state.status first = Eta_http_h2.Stream_state.Released);
     Alcotest.(check bool) "second released" true
-      (Eta_http.H2.Stream_state.status second
-      = Eta_http.H2.Stream_state.Released);
-    (match Eta_http.H2.Stream_state.open_stream state ~tag:3 with
+      (Eta_http_h2.Stream_state.status second
+      = Eta_http_h2.Stream_state.Released);
+    (match Eta_http_h2.Stream_state.open_stream state ~tag:3 with
     | Ok _ -> Alcotest.fail "closed state should reject new streams"
     | Error () -> ());
-    let stats = Eta_http.H2.Stream_state.stats state in
+    let stats = Eta_http_h2.Stream_state.stats state in
     Alcotest.(check int) "active closed" 0 stats.active;
     Alcotest.(check int) "cancelled closed" 0 stats.cancelled;
     Alcotest.(check int) "live closed" 0 stats.live
 
   let test_h2_frame_parse_header () =
     let base =
-      Eta_http.H2.Frame.header ~length:0x010203
-        ~frame_type:(Eta_http.H2.Frame.Other 0xfe)
+      Eta_http_h2.Frame.header ~length:0x010203
+        ~frame_type:(Eta_http_h2.Frame.Other 0xfe)
         ~flags:0xa5 ~stream_id:0x01020304
     in
     let raw = Bytes.of_string base in
@@ -1129,26 +1141,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let data = Bytes.unsafe_to_string raw in
     let check label envelope =
       Alcotest.(check int) (label ^ " length") 0x010203
-        envelope.Eta_http.H2.Frame.length;
+        envelope.Eta_http_h2.Frame.length;
       Alcotest.(check int) (label ^ " type") 0xfe envelope.frame_type;
       Alcotest.(check int) (label ^ " flags") 0xa5 envelope.flags;
       Alcotest.(check int) (label ^ " stream_id") 0x01020304
         envelope.stream_id
     in
-    check "string" (Eta_http.H2.Frame.parse_header_string data ~off:0);
-    check "bytes" (Eta_http.H2.Frame.parse_header_bytes raw ~off:0);
+    check "string" (Eta_http_h2.Frame.parse_header_string data ~off:0);
+    check "bytes" (Eta_http_h2.Frame.parse_header_bytes raw ~off:0);
     let buffer = Buffer.create 16 in
     Buffer.add_string buffer data;
-    check "buffer" (Eta_http.H2.Frame.parse_header_buffer buffer ~off:0)
+    check "buffer" (Eta_http_h2.Frame.parse_header_buffer buffer ~off:0)
 
   let test_h2_frame_uint32_rejects_overflow () =
     Alcotest.check_raises "uint32 overflow"
-      (Invalid_argument "Eta_http.H2.Frame.uint32: value outside uint32")
-      (fun () -> ignore (Eta_http.H2.Frame.uint32 (Int.shift_left 1 32)))
+      (Invalid_argument "Eta_http_h2.Frame.uint32: value outside uint32")
+      (fun () -> ignore (Eta_http_h2.Frame.uint32 (Int.shift_left 1 32)))
 
   let test_h2_writer_preserves_iovec_slices () =
     let buffer = Bigstringaf.of_string ~off:0 ~len:10 "0123456789" in
-    let iovecs = [ { Eta_http.H2.IOVec.buffer; off = 2; len = 4 } ] in
+    let iovecs = [ { Eta_http_h2.Iovec.buffer; off = 2; len = 4 } ] in
     match Eta_http_eio.H2.Writer.cstructs_of_iovecs iovecs with
     | [ slice ] ->
         Alcotest.(check int) "slice len" 4 (Cstruct.length slice);
@@ -1192,15 +1204,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_rejects_oversized_initial_headers_fragment () =
     let config =
       {
-        Eta_http.H2.Security.default_config with
+        Eta_http_h2.Security.default_config with
         max_hpack_block_bytes = 1024;
         max_continuation_accumulator_bytes = 16;
       }
     in
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     let frame =
-      Eta_http.H2.Frame.header ~length:17
-        ~frame_type:Eta_http.H2.Frame.Headers ~flags:0 ~stream_id:1
+      Eta_http_h2.Frame.header ~length:17
+        ~frame_type:Eta_http_h2.Frame.Headers ~flags:0 ~stream_id:1
     in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
     match
@@ -1218,17 +1230,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_rejects_oversized_push_promise_fragment () =
     let config =
       {
-        Eta_http.H2.Security.default_config with
+        Eta_http_h2.Security.default_config with
         max_hpack_block_bytes = 16;
         max_continuation_accumulator_bytes = 16;
       }
     in
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     let payload_len = 4 + 17 in
     let frame =
-      Eta_http.H2.Frame.header ~length:payload_len
-        ~frame_type:Eta_http.H2.Frame.Push_promise ~flags:0x4 ~stream_id:1
-      ^ Eta_http.H2.Frame.uint32 2
+      Eta_http_h2.Frame.header ~length:payload_len
+        ~frame_type:Eta_http_h2.Frame.Push_promise ~flags:0x4 ~stream_id:1
+      ^ Eta_http_h2.Frame.uint32 2
       ^ String.make 17 '\000'
     in
     let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
@@ -1244,7 +1256,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | None -> Alcotest.fail "oversized PUSH_PROMISE fragment was accepted"
 
   let test_h2_security_goaway_churn () =
-    let count = Eta_http.H2.Security.default_config.max_goaway_per_connection + 1 in
+    let count = Eta_http_h2.Security.default_config.max_goaway_per_connection + 1 in
     let data =
       String.concat ""
         (List.init count (fun _ -> h2_goaway_no_error ~last_stream_id:1))
@@ -1320,16 +1332,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_window_update_churn () =
     let config =
       {
-        Eta_http.H2.Security.default_config with
+        Eta_http_h2.Security.default_config with
         window_update_rate =
           {
-            Eta_http.H2.Security.burst = 2;
+            Eta_http_h2.Security.burst = 2;
             window_ms = 1_000;
             max_per_connection = None;
           };
       }
     in
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     let frame =
       h2_frame_header ~length:4 ~frame_type:0x8 ~flags:0 ~stream_id:1
       ^ h2_uint32 1
@@ -1350,15 +1362,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | None -> Alcotest.fail "WINDOW_UPDATE churn was not detected"
 
   let test_h2_security_rejects_zero_window_update_increment () =
-    let security = Eta_http.H2.Security.create () in
+    let security = Eta_http_h2.Security.create () in
     let frame =
       h2_frame_header ~length:4 ~frame_type:0x8 ~flags:0 ~stream_id:1
       ^ h2_uint32 0
     in
-    let header = String.sub frame 0 Eta_http.H2.Frame.header_size in
+    let header = String.sub frame 0 Eta_http_h2.Frame.header_size in
     let payload =
-      String.sub frame Eta_http.H2.Frame.header_size
-        (String.length frame - Eta_http.H2.Frame.header_size)
+      String.sub frame Eta_http_h2.Frame.header_size
+        (String.length frame - Eta_http_h2.Frame.header_size)
     in
     let header_bs =
       Bigstringaf.of_string ~off:0 ~len:(String.length header) header
@@ -1419,11 +1431,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_forgets_completed_stream_headers () =
     let config =
       {
-        Eta_http.H2.Security.default_config with
+        Eta_http_h2.Security.default_config with
         max_response_headers_per_stream = 1;
       }
     in
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     let frame =
       h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
     in
@@ -1436,7 +1448,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Some kind ->
         Alcotest.failf "first headers tripped security: %s"
           (Eta_http.Error.kind_name kind));
-    Eta_http.H2.Security.complete_stream security 1;
+    Eta_http_h2.Security.complete_stream security 1;
     match observe () with
     | None -> ()
     | Some kind ->
@@ -1446,15 +1458,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h2_security_multiplexer_release_forgets_stream_headers () =
     let config =
       {
-        Eta_http.H2.Security.default_config with
+        Eta_http_h2.Security.default_config with
         max_response_headers_per_stream = 1;
       }
     in
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     let mux = Eta_http_eio.H2.Multiplexer.create ~security () in
     let request =
       {
-        Eta_http.H2.Connection.Client.meth = "GET";
+        Eta_http_h2.Connection.Client.meth = "GET";
         scheme = Some "https";
         authority = Some "api.example.test";
         path = "/release";
@@ -1475,7 +1487,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "request failed: %s" message
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     let frame =
       h2_frame_header ~length:0 ~frame_type:0x1 ~flags:0x4 ~stream_id:1
     in
@@ -1496,7 +1508,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta_http.Error.kind_name kind)
 
   let expect_h2_header_invalid label headers =
-    match Eta_http.H2.Security.validate_headers headers with
+    match Eta_http_h2.Security.validate_headers headers with
     | Some (Eta_http.Error.Header_invalid _) -> ()
     | Some kind ->
         Alcotest.failf "%s unexpected error: %s" label
@@ -1520,7 +1532,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       [ "x-good", String.make (64 * 1024 + 1) 'x' ];
     Alcotest.(check bool) "valid" true
       (Option.is_none
-         (Eta_http.H2.Security.validate_headers [ "x-good", "value" ]))
+         (Eta_http_h2.Security.validate_headers [ "x-good", "value" ]))
 
   let test_auto_client_uses_alpn_dispatch_state () =
     let source = read_file (find_http_client_source ()) in
@@ -1536,7 +1548,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ignore (require_sub source ~needle:"begin_alpn state key" : int)
 
   let test_alpn_state_collapses_pending_first_arrivals () =
-    let module A = Eta_http.Transport.Alpn in
+    let module A = Eta_http_eio.Transport.Alpn in
     let alpn = A.create () in
     let leader =
       match A.begin_request alpn with
@@ -1565,7 +1577,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "h2 resolved" 1 stats.h2_resolved
 
   let test_alpn_state_ignores_stale_resolution_and_decodes_protocols () =
-    let module A = Eta_http.Transport.Alpn in
+    let module A = Eta_http_eio.Transport.Alpn in
     let alpn = A.create () in
     let first =
       match A.begin_request alpn with
@@ -1597,7 +1609,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Result.map (( = ) A.H1) (A.protocol_of_alpn (Some "spdy/3")))
 
   let test_dispatch_decides_alpn_route () =
-    let module D = Eta_http.Transport.Dispatch in
+    let module D = Eta_http_eio.Transport.Dispatch in
     let mixed = D.mixed_protocols in
     let h2_only = D.enabled_protocols ~h1:false ~h2:true in
     (match D.decide_alpn ~enabled_protocols:mixed (Some "h2") with
@@ -2118,58 +2130,58 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Bytes.of_string
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhelloextra"
     in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Parse.parse_error_to_string error)
+        Alcotest.fail (Eta_http_h1.Parse.parse_error_to_string error)
     | Ok response ->
         Alcotest.(check string) "version" "http/1.1"
           (Eta_http.Core.Version.to_string response.version);
         Alcotest.(check int) "status" 200 response.status;
         Alcotest.(check string) "reason" "OK"
-          (Eta_http.H1.Parse.span_to_string raw response.reason);
+          (Eta_http_h1.Parse.span_to_string raw response.reason);
         Alcotest.(check (list (pair string string)))
           "headers"
           [ ("Content-Type", "text/plain"); ("Content-Length", "5") ]
-          (Eta_http.H1.Parse.headers_to_list raw response.headers);
+          (Eta_http_h1.Parse.headers_to_list raw response.headers);
         Alcotest.(check string) "body" "hello"
-          (Bytes.to_string (Eta_http.H1.Parse.body_to_bytes raw response))
+          (Bytes.to_string (Eta_http_h1.Parse.body_to_bytes raw response))
 
   let test_h1_parser_no_body_head () =
     let raw = Bytes.of_string "HTTP/1.0 204 No Content\r\nServer: test\r\n\r\n" in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Parse.parse_error_to_string error)
+        Alcotest.fail (Eta_http_h1.Parse.parse_error_to_string error)
     | Ok response ->
         Alcotest.(check string) "version" "http/1.0"
           (Eta_http.Core.Version.to_string response.version);
         Alcotest.(check int) "status" 204 response.status;
         Alcotest.(check string) "reason" "No Content"
-          (Eta_http.H1.Parse.span_to_string raw response.reason);
+          (Eta_http_h1.Parse.span_to_string raw response.reason);
         Alcotest.(check string) "body" ""
-          (Bytes.to_string (Eta_http.H1.Parse.body_to_bytes raw response))
+          (Bytes.to_string (Eta_http_h1.Parse.body_to_bytes raw response))
 
   let test_h1_parser_rejects_bad_content_length () =
     let raw =
       Bytes.of_string "HTTP/1.1 200 OK\r\nContent-Length: nope\r\n\r\n"
     in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
     | Ok _ -> Alcotest.fail "invalid Content-Length unexpectedly parsed"
     | Error error ->
         Alcotest.(check string)
           "error" "invalid Content-Length \"nope\""
-          (Eta_http.H1.Parse.parse_error_to_string error)
+          (Eta_http_h1.Parse.parse_error_to_string error)
 
   let test_h1_parser_rejects_conflicting_content_length () =
     let raw =
       Bytes.of_string
         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello"
     in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
     | Ok _ -> Alcotest.fail "conflicting Content-Length unexpectedly parsed"
     | Error error ->
         Alcotest.(check string)
           "error" "invalid Content-Length \"6\""
-          (Eta_http.H1.Parse.parse_error_to_string error)
+          (Eta_http_h1.Parse.parse_error_to_string error)
 
   let test_h1_parser_ignores_content_length_when_transfer_encoding_present () =
     let raw =
@@ -2180,37 +2192,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ^ "\r\n"
         ^ "5\r\nhello\r\n0\r\n\r\n")
     in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
     | Error error ->
         Alcotest.failf "valid raw Transfer-Encoding response rejected: %s"
-          (Eta_http.H1.Parse.parse_error_to_string error)
+          (Eta_http_h1.Parse.parse_error_to_string error)
     | Ok response ->
         Alcotest.(check string)
           "body"
           "5\r\nhello\r\n0\r\n\r\n"
-          (Bytes.to_string (Eta_http.H1.Parse.body_to_bytes raw response))
+          (Bytes.to_string (Eta_http_h1.Parse.body_to_bytes raw response))
 
   let test_h1_parser_rejects_invalid_header_value_controls () =
     let raw =
       Bytes.of_string "HTTP/1.1 200 OK\r\nX-Bad: ok\000bad\r\n\r\n"
     in
-    match Eta_http.H1.Parse.parse raw ~len:(Bytes.length raw) with
-    | Error (Eta_http.H1.Parse.Invalid_header _) -> ()
+    match Eta_http_h1.Parse.parse raw ~len:(Bytes.length raw) with
+    | Error (Eta_http_h1.Parse.Invalid_header _) -> ()
     | Error error ->
         Alcotest.failf "expected invalid header, got %s"
-          (Eta_http.H1.Parse.parse_error_to_string error)
+          (Eta_http_h1.Parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "control byte in header value was accepted"
 
   let parse_h1_request ?max_request_line_bytes ?max_header_bytes ?max_headers
       raw =
     let buf = Bytes.of_string raw in
     match
-      Eta_http.H1.Request_parse.parse ?max_request_line_bytes
+      Eta_http_h1.Request_parse.parse ?max_request_line_bytes
         ?max_header_bytes ?max_headers buf ~len:(Bytes.length buf)
     with
     | Ok request -> (buf, request)
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Request_parse.parse_error_to_string error)
+        Alcotest.fail (Eta_http_h1.Request_parse.parse_error_to_string error)
 
   let test_h1_request_parser_request_head () =
     let raw =
@@ -2218,100 +2230,100 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let buf, request = parse_h1_request raw in
     Alcotest.(check string) "method" "GET"
-      (Eta_http.H1.Request_parse.method_to_string buf request);
+      (Eta_http_h1.Request_parse.method_to_string buf request);
     Alcotest.(check string) "target" "/items?token=secret"
-      (Eta_http.H1.Request_parse.target_to_string buf request);
+      (Eta_http_h1.Request_parse.target_to_string buf request);
     Alcotest.(check string) "version" "http/1.1"
       (Eta_http.Core.Version.to_string request.version);
     Alcotest.(check (list (pair string string)))
       "headers"
       [ ("Host", "example.test"); ("X-Trace", "abc") ]
-      (Eta_http.H1.Request_parse.headers_to_list buf request.headers);
+      (Eta_http_h1.Request_parse.headers_to_list buf request.headers);
     Alcotest.(check string) "body bytes" "body"
       (Bytes.sub_string buf request.body_off (Bytes.length buf - request.body_off))
 
   let test_h1_request_parser_partial () =
     let buf = Bytes.of_string "GET /items HTTP/1.1\r\nHost: example.test" in
     match
-      Eta_http.H1.Request_parse.parse buf ~len:(Bytes.length buf)
+      Eta_http_h1.Request_parse.parse buf ~len:(Bytes.length buf)
     with
-    | Error Eta_http.H1.Request_parse.Partial -> ()
+    | Error Eta_http_h1.Request_parse.Partial -> ()
     | Error error ->
         Alcotest.failf "expected partial, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "partial request unexpectedly parsed"
 
   let test_h1_request_parser_rejects_limits () =
     let request = Bytes.of_string "GET /too-long HTTP/1.1\r\n\r\n" in
     (match
-       Eta_http.H1.Request_parse.parse request ~max_request_line_bytes:8
+       Eta_http_h1.Request_parse.parse request ~max_request_line_bytes:8
          ~len:(Bytes.length request)
      with
-    | Error (Eta_http.H1.Request_parse.Request_line_too_large { limit = 8 }) ->
+    | Error (Eta_http_h1.Request_parse.Request_line_too_large { limit = 8 }) ->
         ()
     | Error error ->
         Alcotest.failf "expected request line limit, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "oversized request line unexpectedly parsed");
     let headers =
       Bytes.of_string "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n"
     in
     (match
-       Eta_http.H1.Request_parse.parse headers ~max_header_bytes:8
+       Eta_http_h1.Request_parse.parse headers ~max_header_bytes:8
          ~len:(Bytes.length headers)
      with
-    | Error (Eta_http.H1.Request_parse.Header_section_too_large { limit = 8 }) ->
+    | Error (Eta_http_h1.Request_parse.Header_section_too_large { limit = 8 }) ->
         ()
     | Error error ->
         Alcotest.failf "expected header size limit, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "oversized header section unexpectedly parsed");
     let many =
       Bytes.of_string "GET / HTTP/1.1\r\nA: 1\r\nB: 2\r\n\r\n"
     in
     match
-      Eta_http.H1.Request_parse.parse many ~max_headers:1
+      Eta_http_h1.Request_parse.parse many ~max_headers:1
         ~len:(Bytes.length many)
     with
-    | Error (Eta_http.H1.Request_parse.Headers_too_many { limit = 1 }) -> ()
+    | Error (Eta_http_h1.Request_parse.Headers_too_many { limit = 1 }) -> ()
     | Error error ->
         Alcotest.failf "expected header count limit, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "too many headers unexpectedly parsed"
 
   let test_h1_request_parser_rejects_invalid_syntax () =
     let method_buf = Bytes.of_string "G\000T / HTTP/1.1\r\n\r\n" in
     (match
-       Eta_http.H1.Request_parse.parse method_buf
+       Eta_http_h1.Request_parse.parse method_buf
          ~len:(Bytes.length method_buf)
      with
-    | Error (Eta_http.H1.Request_parse.Invalid_method _) -> ()
+    | Error (Eta_http_h1.Request_parse.Invalid_method _) -> ()
     | Error error ->
         Alcotest.failf "expected invalid method, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "invalid method unexpectedly parsed");
     let header_buf =
       Bytes.of_string "GET / HTTP/1.1\r\nX-Bad: ok\000bad\r\n\r\n"
     in
     match
-      Eta_http.H1.Request_parse.parse header_buf
+      Eta_http_h1.Request_parse.parse header_buf
         ~len:(Bytes.length header_buf)
     with
-    | Error (Eta_http.H1.Request_parse.Invalid_header _) -> ()
+    | Error (Eta_http_h1.Request_parse.Invalid_header _) -> ()
     | Error error ->
         Alcotest.failf "expected invalid header, got %s"
-          (Eta_http.H1.Request_parse.parse_error_to_string error)
+          (Eta_http_h1.Request_parse.parse_error_to_string error)
     | Ok _ -> Alcotest.fail "invalid header unexpectedly parsed"
 
   let expect_h1_request_framing
       ?(version = Eta_http.Core.Version.H1_1) label headers expected =
-    match Eta_http.H1.Request_body.of_headers ~version headers with
+    match Eta_http_h1.Request_body.of_headers ~version headers with
     | Error error ->
         Alcotest.failf "%s unexpected framing error: %s" label
-          (Eta_http.H1.Request_body.error_to_string error)
+          (Eta_http_h1.Request_body.error_to_string error)
     | Ok framing ->
         let to_string = function
-          | Eta_http.H1.Request_body.No_body -> "no_body"
+          | Eta_http_h1.Request_body.No_body -> "no_body"
           | Fixed length -> "fixed:" ^ string_of_int length
           | Chunked -> "chunked"
         in
@@ -2319,35 +2331,35 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let expect_h1_request_framing_error
       ?(version = Eta_http.Core.Version.H1_1) label headers expect =
-    match Eta_http.H1.Request_body.of_headers ~version headers with
+    match Eta_http_h1.Request_body.of_headers ~version headers with
     | Ok _ -> Alcotest.failf "%s expected framing error" label
     | Error error ->
         if not (expect error) then
           Alcotest.failf "%s unexpected framing error: %s" label
-            (Eta_http.H1.Request_body.error_to_string error)
+            (Eta_http_h1.Request_body.error_to_string error)
 
   let test_h1_request_body_framing_no_body_and_fixed () =
-    expect_h1_request_framing "absent" [] Eta_http.H1.Request_body.No_body;
+    expect_h1_request_framing "absent" [] Eta_http_h1.Request_body.No_body;
     expect_h1_request_framing "fixed"
       [ ("Content-Length", " 5 ") ]
-      (Eta_http.H1.Request_body.Fixed 5)
+      (Eta_http_h1.Request_body.Fixed 5)
 
   let test_h1_request_body_framing_rejects_content_length () =
     expect_h1_request_framing_error "bad content-length"
       [ ("Content-Length", "nope") ]
       (function
-        | Eta_http.H1.Request_body.Invalid_content_length "nope" -> true
+        | Eta_http_h1.Request_body.Invalid_content_length "nope" -> true
         | _ -> false);
     expect_h1_request_framing_error "duplicate content-length"
       [ ("Content-Length", "5"); ("Content-Length", "005") ]
       (function
-        | Eta_http.H1.Request_body.Duplicate_content_length [ "5"; "005" ] ->
+        | Eta_http_h1.Request_body.Duplicate_content_length [ "5"; "005" ] ->
             true
         | _ -> false);
     expect_h1_request_framing_error "different duplicate content-length"
       [ ("Content-Length", "5"); ("Content-Length", "6") ]
       (function
-        | Eta_http.H1.Request_body.Duplicate_content_length [ "5"; "6" ] ->
+        | Eta_http_h1.Request_body.Duplicate_content_length [ "5"; "6" ] ->
             true
         | _ -> false)
 
@@ -2355,19 +2367,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     expect_h1_request_framing_error "cl te"
       [ ("Content-Length", "4"); ("Transfer-Encoding", "chunked") ]
       (function
-        | Eta_http.H1.Request_body.Content_length_with_transfer_encoding ->
+        | Eta_http_h1.Request_body.Content_length_with_transfer_encoding ->
             true
         | _ -> false);
     expect_h1_request_framing_error "unsupported te"
       [ ("Transfer-Encoding", "gzip") ]
       (function
-        | Eta_http.H1.Request_body.Unsupported_transfer_encoding [ "gzip" ] ->
+        | Eta_http_h1.Request_body.Unsupported_transfer_encoding [ "gzip" ] ->
             true
         | _ -> false);
     expect_h1_request_framing_error "non-final chunked"
       [ ("Transfer-Encoding", "chunked, gzip") ]
       (function
-        | Eta_http.H1.Request_body.Unsupported_transfer_encoding
+        | Eta_http_h1.Request_body.Unsupported_transfer_encoding
             [ "chunked"; "gzip" ] ->
             true
         | _ -> false);
@@ -2377,21 +2389,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           ("empty transfer-encoding token " ^ value)
           [ ("Transfer-Encoding", value) ]
           (function
-            | Eta_http.H1.Request_body.Unsupported_transfer_encoding _ -> true
+            | Eta_http_h1.Request_body.Unsupported_transfer_encoding _ -> true
             | _ -> false))
       [ "chunked,"; "chunked, "; ",chunked"; " , chunked" ];
     expect_h1_request_framing_error
       ~version:Eta_http.Core.Version.H1_0 "http/1.0 transfer-encoding"
       [ ("Transfer-Encoding", "chunked") ]
       (function
-        | Eta_http.H1.Request_body.Transfer_encoding_requires_http_11 -> true
+        | Eta_http_h1.Request_body.Transfer_encoding_requires_http_11 -> true
         | _ -> false)
 
   let test_h1_request_body_framing_chunked_trailers () =
     B.with_test_clock @@ fun _ctx _clock rt ->
     expect_h1_request_framing "chunked"
       [ ("Transfer-Encoding", "chunked"); ("Trailer", "X-Checksum") ]
-      Eta_http.H1.Request_body.Chunked;
+      Eta_http_h1.Request_body.Chunked;
     let context =
       {
         Eta_http.Body.Chunked.protocol = Eta_http.Error.H1;
@@ -2422,11 +2434,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let expect_h1_response_string ?connection_close ~version ~request_method
       response expected =
     match
-      Eta_http.H1.Response_write.to_string ?connection_close ~version
+      Eta_http_h1.Response_write.to_string ?connection_close ~version
         ~request_method response
     with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+        Alcotest.fail (Eta_http_h1.Response_write.error_to_string error)
     | Ok wire -> Alcotest.(check string) "wire" expected wire
 
   let test_h1_response_writer_fixed_body () =
@@ -2463,18 +2475,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let response = Eta_http.Server.Response.make ~status:200 ~body () in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+        Alcotest.fail (Eta_http_h1.Response_write.error_to_string error)
     | Ok prepared ->
         Alcotest.(check string) "head"
           "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"
           prepared.head;
         Alcotest.(check bool) "close" false prepared.close;
         (match prepared.body with
-        | Eta_http.H1.Response_write.Stream_fixed stream ->
+        | Eta_http_h1.Response_write.Stream_fixed stream ->
             Alcotest.(check (option int)) "length" (Some 5) stream.length
         | _ -> Alcotest.fail "expected fixed stream framing")
 
@@ -2487,27 +2499,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ~headers:[ ("Trailer", "X-Done") ] ~body ()
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+        Alcotest.fail (Eta_http_h1.Response_write.error_to_string error)
     | Ok prepared ->
         Alcotest.(check string) "head"
           "HTTP/1.1 200 OK\r\nTrailer: X-Done\r\nTransfer-Encoding: chunked\r\n\r\n"
           prepared.head;
         (match prepared.body with
-        | Eta_http.H1.Response_write.Stream_chunked _ -> ()
+        | Eta_http_h1.Response_write.Stream_chunked _ -> ()
         | _ -> Alcotest.fail "expected chunked stream framing");
         Alcotest.(check string) "chunk" "3\r\nabc\r\n"
           (Bytes.to_string
              (Bytes.concat Bytes.empty
-                (Eta_http.H1.Response_write.encode_chunk
+                (Eta_http_h1.Response_write.encode_chunk
                    (Bytes.of_string "abc"))));
         Alcotest.(check string) "last chunk"
           "0\r\nX-Done: yes\r\n\r\n"
           (Bytes.to_string
-             (Eta_http.H1.Response_write.encode_last_chunk
+             (Eta_http_h1.Response_write.encode_last_chunk
                 ~trailers:[ ("X-Done", "yes") ]
                 ()))
 
@@ -2517,18 +2529,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let response = Eta_http.Server.Response.make ~status:200 ~body () in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_0
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_0
         ~request_method:"GET" response
     with
     | Error error ->
-        Alcotest.fail (Eta_http.H1.Response_write.error_to_string error)
+        Alcotest.fail (Eta_http_h1.Response_write.error_to_string error)
     | Ok prepared ->
         Alcotest.(check string) "head"
           "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n"
           prepared.head;
         Alcotest.(check bool) "close" true prepared.close;
         (match prepared.body with
-        | Eta_http.H1.Response_write.Stream_close_delimited _ -> ()
+        | Eta_http_h1.Response_write.Stream_close_delimited _ -> ()
         | _ -> Alcotest.fail "expected close-delimited stream framing")
 
   let test_h1_response_writer_rejects_caller_framing_headers () =
@@ -2537,14 +2549,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "hello"
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
-    | Error (Eta_http.H1.Response_write.Caller_framing_header "Content-Length") ->
+    | Error (Eta_http_h1.Response_write.Caller_framing_header "Content-Length") ->
         ()
     | Error error ->
         Alcotest.failf "unexpected error: %s"
-          (Eta_http.H1.Response_write.error_to_string error)
+          (Eta_http_h1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "caller framing header unexpectedly accepted"
 
   let test_h1_response_writer_rejects_hop_by_hop_headers () =
@@ -2553,14 +2565,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "hello"
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
-    | Error (Eta_http.H1.Response_write.Caller_hop_by_hop_header "Connection") ->
+    | Error (Eta_http_h1.Response_write.Caller_hop_by_hop_header "Connection") ->
         ()
     | Error error ->
         Alcotest.failf "unexpected error: %s"
-          (Eta_http.H1.Response_write.error_to_string error)
+          (Eta_http_h1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "hop-by-hop header unexpectedly accepted"
 
   let test_h1_response_writer_rejects_trailer_without_chunked_body () =
@@ -2568,13 +2580,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_http.Server.Response.text ~headers:[ ("Trailer", "X-Done") ] "hello"
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
-    | Error Eta_http.H1.Response_write.Trailer_without_chunked_body -> ()
+    | Error Eta_http_h1.Response_write.Trailer_without_chunked_body -> ()
     | Error error ->
         Alcotest.failf "unexpected error: %s"
-          (Eta_http.H1.Response_write.error_to_string error)
+          (Eta_http_h1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "fixed-body Trailer header unexpectedly accepted"
 
   let test_h1_response_writer_rejects_invalid_trailer_names () =
@@ -2586,13 +2598,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ~headers:[ ("Trailer", "Bad Name") ] ~body ()
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
-    | Error (Eta_http.H1.Response_write.Invalid_trailer_name "Bad Name") -> ()
+    | Error (Eta_http_h1.Response_write.Invalid_trailer_name "Bad Name") -> ()
     | Error error ->
         Alcotest.failf "unexpected error: %s"
-          (Eta_http.H1.Response_write.error_to_string error)
+          (Eta_http_h1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "invalid Trailer name unexpectedly accepted"
 
   let test_h1_response_writer_rejects_forbidden_trailer_names () =
@@ -2604,15 +2616,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ~headers:[ ("Trailer", "X-Done, Content-Length") ] ~body ()
     in
     match
-      Eta_http.H1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
+      Eta_http_h1.Response_write.prepare ~version:Eta_http.Core.Version.H1_1
         ~request_method:"GET" response
     with
     | Error
-        (Eta_http.H1.Response_write.Forbidden_trailer_name "Content-Length") ->
+        (Eta_http_h1.Response_write.Forbidden_trailer_name "Content-Length") ->
         ()
     | Error error ->
         Alcotest.failf "unexpected error: %s"
-          (Eta_http.H1.Response_write.error_to_string error)
+          (Eta_http_h1.Response_write.error_to_string error)
     | Ok _ -> Alcotest.fail "forbidden Trailer name unexpectedly accepted"
 
   let test_h1_writer_get_origin_form () =
@@ -2621,9 +2633,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "https://api.example.test:8443/v1/models?limit=1#frag"
     in
     let request =
-      Eta_http.H1.Write.to_string ~method_:"GET" ~url
+      Eta_http_h1.Write.to_string ~method_:"GET" ~url
         ~headers:[ ("Accept", "application/json") ]
-        ~body:Eta_http.H1.Write.Empty
+        ~body:Eta_http_h1.Write.Empty
     in
     match request with
     | Error error -> Alcotest.fail (Eta_http.Error.to_string error)
@@ -2640,9 +2652,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h1_writer_fixed_body () =
     let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
     let request =
-      Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers:[]
+      Eta_http_h1.Write.to_string ~method_:"POST" ~url ~headers:[]
         ~body:
-          (Eta_http.H1.Write.Fixed
+          (Eta_http_h1.Write.Fixed
              [ Bytes.of_string "abc"; Bytes.of_string "def" ])
     in
     match request with
@@ -2686,9 +2698,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h1_writer_rejects_mismatched_content_length () =
     let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
     match
-      Eta_http.H1.Write.to_string ~method_:"POST" ~url
+      Eta_http_h1.Write.to_string ~method_:"POST" ~url
         ~headers:[ ("Content-Length", "3") ]
-        ~body:(Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ])
+        ~body:(Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ])
     with
     | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
         Alcotest.(check bool)
@@ -2703,24 +2715,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       [
         ( "invalid",
           [ ("Content-Length", "nope") ],
-          Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+          Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
         ( "duplicate conflict",
           [ ("Content-Length", "6"); ("Content-Length", "3") ],
-          Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+          Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
         ( "empty mismatch",
           [ ("Content-Length", "1") ],
-          Eta_http.H1.Write.Empty );
+          Eta_http_h1.Write.Empty );
         ( "content length with transfer encoding",
           [ ("Content-Length", "6"); ("Transfer-Encoding", "chunked") ],
-          Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+          Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
       ]
     in
     List.iter
       (fun (label, headers, body) ->
-        Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers ~body
+        Eta_http_h1.Write.to_string ~method_:"POST" ~url ~headers ~body
         |> expect_h1_content_length_invalid (label ^ " string");
         let bytes = Bytes.create 512 in
-        Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
+        Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
           ~headers ~body
         |> expect_h1_content_length_invalid_len (label ^ " bytes") bytes)
       cases
@@ -2728,7 +2740,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_h1_writer_rejects_transfer_encoding_for_fixed_body () =
     let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
     let headers = [ ("Transfer-Encoding", "chunked") ] in
-    let body = Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] in
+    let body = Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] in
     let expect_rejected label = function
       | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
           Alcotest.(check bool)
@@ -2741,11 +2753,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Ok wire ->
           Alcotest.failf "%s serialized invalid request: %S" label wire
     in
-    Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers ~body
+    Eta_http_h1.Write.to_string ~method_:"POST" ~url ~headers ~body
     |> expect_rejected "string";
     let bytes = Bytes.create 512 in
     match
-      Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
+      Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_:"POST" ~url
         ~headers ~body
     with
     | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
@@ -2763,13 +2775,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         "https://API.Example.test:8443/v1/models?limit=1#frag"
     in
     let headers = [ ("Accept", "application/json") ] in
-    let body = Eta_http.H1.Write.Empty in
+    let body = Eta_http_h1.Write.Empty in
     let expected =
-      Eta_http.H1.Write.to_string ~method_:"GET" ~url ~headers ~body
+      Eta_http_h1.Write.to_string ~method_:"GET" ~url ~headers ~body
     in
     let bytes = Bytes.create 512 in
     let actual =
-      Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
+      Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
         ~headers ~body
     in
     match (expected, actual) with
@@ -2783,8 +2795,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
     let bytes = Bytes.create 8 in
     match
-      Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
-        ~headers:[] ~body:Eta_http.H1.Write.Empty
+      Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
+        ~headers:[] ~body:Eta_http_h1.Write.Empty
     with
     | Ok _ -> Alcotest.fail "small writer buffer unexpectedly succeeded"
     | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
@@ -2832,12 +2844,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let url = Eta_http.Core.Url.of_string "http://example.test/injection" in
     List.iter
       (fun (label, headers) ->
-        Eta_http.H1.Write.to_string ~method_:"GET" ~url ~headers
-          ~body:Eta_http.H1.Write.Empty
+        Eta_http_h1.Write.to_string ~method_:"GET" ~url ~headers
+          ~body:Eta_http_h1.Write.Empty
         |> expect_h1_header_invalid (label ^ " string");
         let bytes = Bytes.create 512 in
-        Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
-          ~headers ~body:Eta_http.H1.Write.Empty
+        Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_:"GET" ~url
+          ~headers ~body:Eta_http_h1.Write.Empty
         |> expect_h1_header_invalid_len (label ^ " bytes") bytes)
       h1_injection_cases
 

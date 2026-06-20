@@ -15,10 +15,10 @@ per-commit test, because it requires an API key.
 ## Package boundary
 
 - `eta_ai_openai` depends on `eta`, `eta_ai`, `eta_ai_openai_codec`,
-  `eta_redacted`, `eta_http`, `eta_http_eio`, `eta_stream`, `eio`, `base64`, and
-  `yojson`.
+  `eta_redacted`, `eta_http`, `base64`, and `yojson`.
 - It does not depend on sibling provider packages or the OpenAI SDK.
-- It pulls `eta_http_eio` for the default Eio transport.
+- It does not pull a default transport. Pass an explicit `Eta_http.Client.t`
+  from `eta_http_eio`, `eta_http_js`, or another adapter.
 
 ## Configuration
 

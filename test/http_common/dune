@@ -4,6 +4,9 @@
   eta
   eta_http
   eta_http_eio
+  eta_http_h1
+  eta_http_h2
+  eta_http_ws
   eta_runtime_common_tests
   alcotest
   bigstringaf

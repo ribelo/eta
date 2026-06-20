@@ -38,7 +38,7 @@ type t = {
 
 let create ~max_concurrent =
   if max_concurrent <= 0 then
-    invalid_arg "Eta_http.H2.Admission.create: max_concurrent must be > 0";
+    invalid_arg "Eta_http_h2.Admission.create: max_concurrent must be > 0";
   {
     max_concurrent;
     next_id = 1;

@@ -1,0 +1,13 @@
+(library
+ (name eta_ai_openai_realtime_eio)
+ (public_name eta_ai_openai_realtime_eio)
+ (synopsis "Eio WebSocket transport for OpenAI Realtime")
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai
+  eta_http
+  eta_http_eio
+  eta_redacted
+  eta_stream
+  eio))

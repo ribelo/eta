@@ -7,12 +7,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
 
   let h2_iovecs_to_string iovecs =
-    let len = Eta_http.H2.IOVec.lengthv iovecs in
+    let len = Eta_http_h2.Iovec.lengthv iovecs in
     let bytes = Bytes.create len in
     let dst_off = ref 0 in
     List.iter
-      (fun ({ Eta_http.H2.IOVec.buffer; off; len } :
-              Bigstringaf.t Eta_http.H2.IOVec.t) ->
+      (fun ({ Eta_http_h2.Iovec.buffer; off; len } :
+              Bigstringaf.t Eta_http_h2.Iovec.t) ->
         Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
           ~len;
         dst_off := !dst_off + len)
@@ -25,7 +25,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         let len = String.length data - off in
         let buffer = Bigstringaf.of_string ~off ~len data in
         let consumed =
-          Eta_http.H2.Connection.read client buffer ~off:0 ~len
+          Eta_http_h2.Connection.read client buffer ~off:0 ~len
         in
         if consumed <= 0 then Alcotest.fail "client consumed no h2 bytes";
         loop (off + consumed))
@@ -38,7 +38,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         let len = String.length data - off in
         let buffer = Bigstringaf.of_string ~off ~len data in
         let consumed =
-          Eta_http.H2.Connection.read server buffer ~off:0 ~len
+          Eta_http_h2.Connection.read server buffer ~off:0 ~len
         in
         if consumed <= 0 then Alcotest.fail "server consumed no h2 bytes";
         loop (off + consumed))
@@ -46,41 +46,41 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     loop 0
 
   let rec h2_drain_server_output server acc =
-    match Eta_http.H2.Connection.next_write_operation server with
+    match Eta_http_h2.Connection.next_write_operation server with
     | Write iovecs ->
         let data = h2_iovecs_to_string iovecs in
-        Eta_http.H2.Connection.report_write_result server
+        Eta_http_h2.Connection.report_write_result server
           (`Ok (String.length data));
         h2_drain_server_output server (data :: acc)
     | Yield -> String.concat "" (List.rev acc)
     | Close _ ->
-        Eta_http.H2.Connection.report_write_result server `Closed;
+        Eta_http_h2.Connection.report_write_result server `Closed;
         String.concat "" (List.rev acc)
 
   let h2_drain_client_to_server client server =
-    match Eta_http.H2.Connection.next_write_operation client with
+    match Eta_http_h2.Connection.next_write_operation client with
     | Write iovecs ->
         let data = h2_iovecs_to_string iovecs in
-        Eta_http.H2.Connection.report_write_result client
+        Eta_http_h2.Connection.report_write_result client
           (`Ok (String.length data));
         h2_feed_server server data;
         true
     | Yield -> false
     | Close _ ->
-        Eta_http.H2.Connection.report_write_result client `Closed;
+        Eta_http_h2.Connection.report_write_result client `Closed;
         false
 
   let h2_drain_server_to_client server client =
-    match Eta_http.H2.Connection.next_write_operation server with
+    match Eta_http_h2.Connection.next_write_operation server with
     | Write iovecs ->
         let data = h2_iovecs_to_string iovecs in
-        Eta_http.H2.Connection.report_write_result server
+        Eta_http_h2.Connection.report_write_result server
           (`Ok (String.length data));
         h2_feed_client client data;
         true
     | Yield -> false
     | Close _ ->
-        Eta_http.H2.Connection.report_write_result server `Closed;
+        Eta_http_h2.Connection.report_write_result server `Closed;
         false
 
   let h2_pump_pair ?(limit = 10_000) client server =
@@ -103,8 +103,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let h2_pump_eta_client_server = h2_pump_pair
 
-  let h2_pp_client_error (error : Eta_http.H2.Connection.error) =
-    Format.asprintf "protocol_error:%a:%s" Eta_http.H2.Error_code.pp_hum
+  let h2_pp_client_error (error : Eta_http_h2.Connection.error) =
+    Format.asprintf "protocol_error:%a:%s" Eta_http_h2.Error_code.pp_hum
       error.error_code error.message
 
   type h2_mux_result = {
@@ -114,7 +114,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     mutable mux_stream_errors : string list;
     mutable mux_client_errors : string list;
     mutable mux_stream : Eta_http_eio.H2.Multiplexer.stream option;
-    mutable mux_release : Eta_http.H2.Stream_state.release option;
+    mutable mux_release : Eta_http_h2.Stream_state.release option;
   }
 
   let h2_mux_result () =
@@ -137,7 +137,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let h2_schedule_mux_body mux result stream body =
     let rec loop () =
-      Eta_http.H2.Body.Reader.schedule_read body
+      Eta_http_h2.Body.Reader.schedule_read body
         ~on_eof:(fun () ->
           Eta_http_eio.H2.Multiplexer.mark_complete mux stream;
           result.mux_eof <- true)
@@ -161,7 +161,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let h2_core_request ?(meth = "GET") ?(target = "/")
       ?(authority = "api.example.test") () :
-      Eta_http.H2.Connection.Client.request =
+      Eta_http_h2.Connection.Client.request =
     { meth; scheme = Some "https"; authority = Some authority; path = target; headers = [] }
 
   let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0)
@@ -189,8 +189,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | None -> ()
         | Some body ->
             ignore
-              (Eta_http.H2.Body.Writer.write_string opened.request_body body));
-        Eta_http.H2.Body.Writer.close opened.request_body;
+              (Eta_http_h2.Body.Writer.write_string opened.request_body body));
+        Eta_http_h2.Body.Writer.close opened.request_body;
         Ok opened
 
   let h2_opened label = function
@@ -214,21 +214,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | None -> Alcotest.failf "%s did not install response writer" label
 
   let h2_server_response ?(headers = []) ?(body = `String "") status :
-      Eta_http.H2.Connection.Server.response =
+      Eta_http_h2.Connection.Server.response =
     { status; headers; body; trailers = Lazy.from_val [] }
 
   let h2_create_server ?config request_handler =
-    Eta_http.H2.Connection.Server.create ?config ~request_handler
+    Eta_http_h2.Connection.Server.create ?config ~request_handler
       ~error_handler:(fun error ->
         Alcotest.failf "unexpected h2 server error: %a %s"
-          Eta_http.H2.Error_code.pp_hum error.error_code error.message)
+          Eta_http_h2.Error_code.pp_hum error.error_code error.message)
       ()
 
   let h2_server_read_body reqd ~on_done =
-    let body = Eta_http.H2.Connection.Server.Reqd.request_body reqd in
+    let body = Eta_http_h2.Connection.Server.Reqd.request_body reqd in
     let buffer = Buffer.create 4096 in
     let rec loop () =
-      Eta_http.H2.Body.Reader.schedule_read body
+      Eta_http_h2.Body.Reader.schedule_read body
         ~on_eof:(fun () -> on_done (Buffer.contents buffer))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string buffer (Bigstringaf.substring bs ~off ~len);
@@ -250,7 +250,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          { during = Eta_http.Error.Http_response })
 
   let h2_open_streaming_body mux client server held_writer body_ref =
-    let request : Eta_http.H2.Connection.Client.request =
+    let request : Eta_http_h2.Connection.Client.request =
       {
         meth = "GET";
         scheme = Some "https";
@@ -283,7 +283,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "streaming body request failed: %s" message
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     h2_pump_eta_client_server client server;
     h2_response_writer "streaming body" !held_writer
 
@@ -293,15 +293,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       h2_create_server (fun reqd ->
           held_writer :=
             Some
-              (Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+              (Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
                  (h2_server_response 200)))
     in
     let mux = h2_mux_create (h2_mux_result ()) () in
     let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
     let body_ref = ref None in
     let writer = h2_open_streaming_body mux client server held_writer body_ref in
-    ignore (Eta_http.H2.Body.Writer.write_string writer "hello");
-    Eta_http.H2.Body.Writer.close writer;
+    ignore (Eta_http_h2.Body.Writer.write_string writer "hello");
+    Eta_http_h2.Body.Writer.close writer;
     B.with_test_clock @@ fun _ctx _clock rt ->
     let body =
       Eta_http.Body.Stream.read_all (h2_response_body "eof" !body_ref)
@@ -318,7 +318,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let body_ref = ref None in
     let server =
       h2_create_server (fun reqd ->
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String "hello-inline") 404)
             "hello-inline")
     in
@@ -351,7 +351,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "inline body request failed: %s" message
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     h2_pump_pair client server;
     B.with_test_clock @@ fun _ctx _clock rt ->
     let body =
@@ -369,17 +369,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let server =
       h2_create_server (fun reqd ->
           let response_body =
-            Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+            Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
               (h2_server_response
                  ~headers:[ "content-type", "application/grpc+proto" ]
                  200)
           in
           ignore
-            (Eta_http.H2.Body.Writer.write_string response_body
+            (Eta_http_h2.Body.Writer.write_string response_body
                "\000\000\000\000\005hello");
-          Eta_http.H2.Connection.Server.Reqd.schedule_trailers reqd
+          Eta_http_h2.Connection.Server.Reqd.schedule_trailers reqd
             [ "grpc-status", "0"; "grpc-message", "" ];
-          Eta_http.H2.Body.Writer.close response_body)
+          Eta_http_h2.Body.Writer.close response_body)
     in
     let mux = h2_mux_create (h2_mux_result ()) () in
     let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
@@ -413,7 +413,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "trailers request failed: %s" message
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     h2_pump_pair client server;
     let early_trailers =
       match !trailers_ref with
@@ -438,14 +438,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       h2_create_server (fun reqd ->
           held_writer :=
             Some
-              (Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+              (Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
                  (h2_server_response 200)))
     in
     let mux = h2_mux_create (h2_mux_result ()) () in
     let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
     let body_ref = ref None in
     let writer = h2_open_streaming_body mux client server held_writer body_ref in
-    ignore (Eta_http.H2.Body.Writer.write_string writer "prefix");
+    ignore (Eta_http_h2.Body.Writer.write_string writer "prefix");
     B.with_test_clock @@ fun _ctx _clock rt ->
     let body = h2_response_body "discard" !body_ref in
     let chunk = Eta_http.Body.Stream.read body |> B.run rt |> expect_ok in
@@ -461,8 +461,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let connection_result = h2_mux_result () in
     let server =
       h2_create_server (fun reqd ->
-          let target = (Eta_http.H2.Connection.Server.Reqd.request reqd).path in
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          let target = (Eta_http_h2.Connection.Server.Reqd.request reqd).path in
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String ("get:" ^ target)) 200)
             ("get:" ^ target))
     in
@@ -490,7 +490,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.(check bool) "release complete" true
           (Eta_http_eio.H2.Multiplexer.release mux
              (h2_stream_of_result "concurrent GET" result)
-          = Eta_http.H2.Stream_state.No_rst))
+          = Eta_http_h2.Stream_state.No_rst))
       results;
     Alcotest.(check int) "connection errors" 0
       (List.length connection_result.mux_client_errors);
@@ -507,10 +507,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let held = ref None in
     let server =
       h2_create_server (fun reqd ->
-          match (Eta_http.H2.Connection.Server.Reqd.request reqd).meth, (Eta_http.H2.Connection.Server.Reqd.request reqd).path with
+          match (Eta_http_h2.Connection.Server.Reqd.request reqd).meth, (Eta_http_h2.Connection.Server.Reqd.request reqd).path with
           | "POST", "/upload-hold" -> held := Some reqd
           | _ ->
-              Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+              Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
                 (h2_server_response ~body:(`String "unexpected") 200)
                 "unexpected")
     in
@@ -532,7 +532,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     h2_server_read_body reqd ~on_done:(fun body ->
         let response = Printf.sprintf "upload:%d" (String.length body) in
-        Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+        Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
           (h2_server_response ~body:(`String response) 200)
           response);
     h2_pump_pair client server;
@@ -542,7 +542,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "eof" true result.mux_eof;
     Alcotest.(check bool) "release complete" true
       (Eta_http_eio.H2.Multiplexer.release mux (h2_stream_of_result "upload" result)
-      = Eta_http.H2.Stream_state.No_rst);
+      = Eta_http_h2.Stream_state.No_rst);
     Alcotest.(check int) "connection errors" 0
       (List.length connection_result.mux_client_errors)
 
@@ -551,11 +551,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let server =
       h2_create_server (fun reqd ->
           let body =
-            Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+            Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
               (h2_server_response 200)
           in
-          ignore (Eta_http.H2.Body.Writer.write_string body "partial");
-          Eta_http.H2.Connection.Server.Reqd.report_exn reqd (Failure "reset-fixture"))
+          ignore (Eta_http_h2.Body.Writer.write_string body "partial");
+          Eta_http_h2.Connection.Server.Reqd.report_exn reqd (Failure "reset-fixture"))
     in
     let mux = h2_mux_create ~max_concurrent:32 connection_result () in
     let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
@@ -594,7 +594,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.(check bool) "remote reset release" true
           (Eta_http_eio.H2.Multiplexer.release mux
              (h2_stream_of_result "reset" result)
-          = Eta_http.H2.Stream_state.No_rst))
+          = Eta_http_h2.Stream_state.No_rst))
       results;
     let stats = Eta_http_eio.H2.Multiplexer.stats mux in
     Alcotest.(check int) "active final" 0 stats.active;
@@ -610,15 +610,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let connection_result = h2_mux_result () in
     let server =
       h2_create_server (fun reqd ->
-          match (Eta_http.H2.Connection.Server.Reqd.request reqd).path with
+          match (Eta_http_h2.Connection.Server.Reqd.request reqd).path with
           | "/slow" ->
               let body =
-                Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+                Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
                   (h2_server_response 200)
               in
-              ignore (Eta_http.H2.Body.Writer.write_string body "slow-prefix")
+              ignore (Eta_http_h2.Body.Writer.write_string body "slow-prefix")
           | target ->
-              Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+              Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
                 (h2_server_response ~body:(`String ("get:" ^ target)) 200)
                 ("get:" ^ target))
     in
@@ -636,7 +636,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           ~response_handler:(fun stream response response_body ->
             first.mux_stream <- Some stream;
             first.mux_status <- Some response.status;
-            Eta_http.H2.Body.Reader.schedule_read response_body
+            Eta_http_h2.Body.Reader.schedule_read response_body
               ~on_eof:(fun () -> Alcotest.fail "slow response ended early")
               ~on_read:(fun bs ~off ~len ->
                 Buffer.add_string first.mux_body
@@ -652,13 +652,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
           Alcotest.failf "slow request failed: %s" message
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     h2_pump_pair client server;
     Alcotest.(check (option int)) "slow status" (Some 200) first.mux_status;
     Alcotest.(check string) "first chunk" "slow-prefix"
       (Buffer.contents first.mux_body);
     Alcotest.(check bool) "released active stream" true
-      (first.mux_release = Some Eta_http.H2.Stream_state.Queue_rst);
+      (first.mux_release = Some Eta_http_h2.Stream_state.Queue_rst);
     let after = h2_mux_result () in
     ignore
       (h2_opened "after cancel"
@@ -670,7 +670,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "after release" true
       (Eta_http_eio.H2.Multiplexer.release mux
          (h2_stream_of_result "after cancel" after)
-      = Eta_http.H2.Stream_state.No_rst);
+      = Eta_http_h2.Stream_state.No_rst);
     let stats = Eta_http_eio.H2.Multiplexer.stats mux in
     Alcotest.(check int) "active final" 0 stats.active;
     Alcotest.(check int) "live final" 0 stats.live;
@@ -704,21 +704,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.failf "request failed: %s" message
     in
     Alcotest.(check bool) "request body starts open" false
-      (Eta_http.H2.Body.Writer.is_closed opened.request_body);
+      (Eta_http_h2.Body.Writer.is_closed opened.request_body);
     ignore (Eta_http_eio.H2.Multiplexer.release mux opened.stream);
     Alcotest.(check bool) "release closes request body" true
-      (Eta_http.H2.Body.Writer.is_closed opened.request_body)
+      (Eta_http_h2.Body.Writer.is_closed opened.request_body)
 
   let rec h2_drain_client_writes client =
-    match Eta_http.H2.Connection.next_write_operation client with
+    match Eta_http_h2.Connection.next_write_operation client with
     | Write iovecs ->
         let data = h2_iovecs_to_string iovecs in
-        Eta_http.H2.Connection.report_write_result client
+        Eta_http_h2.Connection.report_write_result client
           (`Ok (String.length data));
         1 + h2_drain_client_writes client
     | Yield -> 0
     | Close _ ->
-        Eta_http.H2.Connection.report_write_result client `Closed;
+        Eta_http_h2.Connection.report_write_result client `Closed;
         0
 
   let test_h2_multiplexer_rejects_after_goaway () =
@@ -731,15 +731,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          (h2_open_mux_request ~tag:1 ~target:"/before-goaway" mux first));
     ignore (h2_drain_client_writes client);
     h2_feed_client client
-      (Eta_http.H2.Frame.settings
-      ^ Eta_http.H2.Frame.goaway_no_error ~last_stream_id:1);
+      (Eta_http_h2.Frame.settings
+      ^ Eta_http_h2.Frame.goaway_no_error ~last_stream_id:1);
     Alcotest.(check bool) "transport open before GOAWAY flush" false
-      (Eta_http.H2.Connection.is_closed client);
+      (Eta_http_h2.Connection.is_closed client);
     ignore (h2_drain_client_writes client);
     Alcotest.(check bool) "transport still draining after GOAWAY" false
-      (Eta_http.H2.Connection.is_closed client);
+      (Eta_http_h2.Connection.is_closed client);
     Alcotest.(check bool) "admission closed after GOAWAY" false
-      (Eta_http.H2.Connection.accepts_new_streams client);
+      (Eta_http_h2.Connection.accepts_new_streams client);
     let after = h2_mux_result () in
     (match h2_open_mux_request ~tag:2 ~target:"/after-goaway" mux after with
     | Error `Connection_closed -> ()
@@ -758,20 +758,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let total_size = num_chunks * String.length chunk_data in
     let mux_config =
       {
-        Eta_http.H2.Config.default with
+        Eta_http_h2.Config.default with
         response_body_buffer_size = total_size;
         initial_window_size = total_size * 2;
       }
     in
     let server_settings =
-      Eta_http.H2.Settings.create ~initial_window_size:(total_size * 2) ()
+      Eta_http_h2.Settings.create ~initial_window_size:(total_size * 2) ()
     in
     let held_writer = ref None in
     let server =
       h2_create_server ~config:server_settings (fun reqd ->
           held_writer :=
             Some
-              (Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+              (Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
                  (h2_server_response 200)))
     in
     let mux = h2_mux_create ~config:mux_config (h2_mux_result ()) () in
@@ -804,7 +804,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | Ok opened -> opened
       | Error _ -> Alcotest.fail "request setup failed"
     in
-    Eta_http.H2.Body.Writer.close opened.request_body;
+    Eta_http_h2.Body.Writer.close opened.request_body;
     h2_pump_pair client server;
     let writer =
       match !held_writer with
@@ -812,9 +812,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | None -> Alcotest.fail "server did not install writer"
     in
     for _ = 1 to num_chunks do
-      ignore (Eta_http.H2.Body.Writer.write_string writer chunk_data)
+      ignore (Eta_http_h2.Body.Writer.write_string writer chunk_data)
     done;
-    Eta_http.H2.Body.Writer.close writer;
+    Eta_http_h2.Body.Writer.close writer;
     h2_pump_pair client server;
     match !body_stream_ref with
     | None -> Alcotest.fail "body_stream was never created"

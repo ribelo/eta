@@ -248,7 +248,7 @@ let handler_timeout_error t request timeout =
 
 let request_parse_error t parse_error =
   let message =
-    Eta_http.H1.Request_parse.parse_error_to_string parse_error
+    Eta_http_h1.Request_parse.parse_error_to_string parse_error
   in
   error t (Bad_request { message })
 
@@ -407,7 +407,7 @@ let read_request_head t =
   let scratch_len = min_positive t.config.read_buffer_size capacity in
   let rec loop used =
     match
-      Eta_http.H1.Request_parse.parse buffer ~len:used
+      Eta_http_h1.Request_parse.parse buffer ~len:used
         ~max_request_line_bytes:limits.max_request_line_bytes
         ~max_header_bytes:limits.max_request_header_bytes
         ~max_headers:limits.max_request_headers
@@ -417,19 +417,19 @@ let read_request_head t =
         let body_len = used - body_off in
         let headers =
           Eta_http.Core.Header.unsafe_of_list
-            (Eta_http.H1.Request_parse.headers_to_list buffer request.headers)
+            (Eta_http_h1.Request_parse.headers_to_list buffer request.headers)
         in
         Ok
           {
-            method_ = Eta_http.H1.Request_parse.method_to_string buffer request;
-            target = Eta_http.H1.Request_parse.target_to_string buffer request;
+            method_ = Eta_http_h1.Request_parse.method_to_string buffer request;
+            target = Eta_http_h1.Request_parse.target_to_string buffer request;
             target_authority = None;
             version = request.version;
             headers;
             body_off;
             body_len;
           }
-    | Error Eta_http.H1.Request_parse.Partial ->
+    | Error Eta_http_h1.Request_parse.Partial ->
         if used >= capacity then
           Error
             (Request_head_error
@@ -790,12 +790,12 @@ let chunked_body t ~head ~initial continue_state =
   (body, state)
 
 let request_body t head continue_state =
-  match Eta_http.H1.Request_body.of_headers ~version:head.version head.headers with
+  match Eta_http_h1.Request_body.of_headers ~version:head.version head.headers with
   | Error body_error ->
       Error
         (error t
            (Header_invalid
-              { reason = Eta_http.H1.Request_body.error_to_string body_error }))
+              { reason = Eta_http_h1.Request_body.error_to_string body_error }))
   | Ok No_body ->
       push_pending t t.head_buffer head.body_off head.body_len;
       Ok
@@ -1110,7 +1110,7 @@ let write_last_chunk t trailers =
   | Ok () -> (
       try
         write_response_bytes t
-          (Eta_http.H1.Response_write.encode_last_chunk ~trailers ())
+          (Eta_http_h1.Response_write.encode_last_chunk ~trailers ())
       with Invalid_argument message ->
         response_write_failure ~response_started:true
           (response_write_error t message))
@@ -1151,7 +1151,7 @@ let rec pump_chunked_response_stream t rt request response stream =
   | Ok (Some chunk) -> (
       match
         write_response_bytes_list t
-          (Eta_http.H1.Response_write.encode_chunk chunk)
+          (Eta_http_h1.Response_write.encode_chunk chunk)
       with
       | Error _ as error -> error
       | Ok () -> pump_chunked_response_stream t rt request response stream)
@@ -1161,20 +1161,20 @@ let rec pump_chunked_response_stream t rt request response stream =
       | Ok trailers -> write_last_chunk t trailers)
 
 let write_stream_response t rt request response = function
-  | Eta_http.H1.Response_write.Suppressed_stream stream ->
+  | Eta_http_h1.Response_write.Suppressed_stream stream ->
       release_response_stream rt stream;
       Ok ()
-  | Eta_http.H1.Response_write.Stream_fixed stream ->
+  | Eta_http_h1.Response_write.Stream_fixed stream ->
       with_released_response_stream rt stream (fun () ->
           let length = Option.value stream.length ~default:0 in
           pump_fixed_response_stream t rt request stream length 0)
-  | Eta_http.H1.Response_write.Stream_chunked stream ->
+  | Eta_http_h1.Response_write.Stream_chunked stream ->
       with_released_response_stream rt stream (fun () ->
           pump_chunked_response_stream t rt request response stream)
-  | Eta_http.H1.Response_write.Stream_close_delimited stream ->
+  | Eta_http_h1.Response_write.Stream_close_delimited stream ->
       with_released_response_stream rt stream (fun () ->
           pump_raw_response_stream t rt request stream)
-  | Eta_http.H1.Response_write.No_body | Eta_http.H1.Response_write.Fixed _ ->
+  | Eta_http_h1.Response_write.No_body | Eta_http_h1.Response_write.Fixed _ ->
       Ok ()
 
 let release_ignored_response_stream rt response =
@@ -1186,22 +1186,22 @@ let release_ignored_response ?rt response =
   Option.iter (fun rt -> release_ignored_response_stream rt response) rt
 
 let write_prepared_response ?rt t request response
-    (prepared : Eta_http.H1.Response_write.prepared) =
+    (prepared : Eta_http_h1.Response_write.prepared) =
   match prepared.body with
-  | Eta_http.H1.Response_write.No_body -> (
+  | Eta_http_h1.Response_write.No_body -> (
       let result = write_response_string t prepared.head in
       release_ignored_response ?rt response;
       match result with
       | Ok () -> Ok { connection_close = prepared.close }
       | Error error -> response_write_failure ~response_started:true error)
-  | Eta_http.H1.Response_write.Fixed chunks ->
+  | Eta_http_h1.Response_write.Fixed chunks ->
       (* Single writev for head + body. *)
       write_response_head_and_body t prepared.head chunks
       |> Result.map (fun () -> { connection_close = prepared.close })
-  | Eta_http.H1.Response_write.Suppressed_stream _
-  | Eta_http.H1.Response_write.Stream_fixed _
-  | Eta_http.H1.Response_write.Stream_chunked _
-  | Eta_http.H1.Response_write.Stream_close_delimited _ -> (
+  | Eta_http_h1.Response_write.Suppressed_stream _
+  | Eta_http_h1.Response_write.Stream_fixed _
+  | Eta_http_h1.Response_write.Stream_chunked _
+  | Eta_http_h1.Response_write.Stream_close_delimited _ -> (
       match write_response_string t prepared.head with
       | Error error ->
           release_ignored_response ?rt response;
@@ -1223,7 +1223,7 @@ let write_response ?(connection_close = false) ?rt t request response =
       error
   | Ok () -> (
       match
-        Eta_http.H1.Response_write.prepare ~connection_close
+        Eta_http_h1.Response_write.prepare ~connection_close
           ~version:request.Server.Request.version
           ~request_method:request.method_ response
       with
@@ -1231,7 +1231,7 @@ let write_response ?(connection_close = false) ?rt t request response =
           release_ignored_response ?rt response;
           response_write_failure
             (response_write_error t
-               (Eta_http.H1.Response_write.error_to_string error))
+               (Eta_http_h1.Response_write.error_to_string error))
       | Ok prepared -> write_prepared_response ?rt t request response prepared)
 
 let request_metrics t rt request =

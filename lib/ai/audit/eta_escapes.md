@@ -1,7 +1,7 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/ai/audit/run.sh
-Last updated: 2026-06-15T22:49:45Z
+Last updated: 2026-06-20T16:49:09Z
 Current sites: 4
 
 Sites where eta-ai reaches into raw Eio fiber/switch/promise/mutex/condition

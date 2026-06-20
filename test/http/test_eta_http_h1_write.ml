@@ -21,19 +21,19 @@ let test_h1_writer_rejects_invalid_content_length_framing () =
     [
       ( "mismatch",
         [ ("Content-Length", "3") ],
-        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+        Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
       ( "invalid",
         [ ("Content-Length", "nope") ],
-        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+        Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
       ( "duplicate conflict",
         [ ("Content-Length", "6"); ("Content-Length", "3") ],
-        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+        Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
       ( "empty mismatch",
         [ ("Content-Length", "1") ],
-        Eta_http.H1.Write.Empty );
+        Eta_http_h1.Write.Empty );
       ( "content length with transfer encoding",
         [ ("Content-Length", "6"); ("Transfer-Encoding", "chunked") ],
-        Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] );
+        Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] );
     ]
   in
   List.iter
@@ -48,7 +48,7 @@ let test_h1_writer_rejects_invalid_content_length_framing () =
 let test_h1_writer_rejects_transfer_encoding_for_fixed_body () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
   let headers = [ ("Transfer-Encoding", "chunked") ] in
-  let body = Eta_http.H1.Write.Fixed [ Bytes.of_string "abcdef" ] in
+  let body = Eta_http_h1.Write.Fixed [ Bytes.of_string "abcdef" ] in
   let buffer = Buffer.create 128 in
   let flow = Eio.Flow.buffer_sink buffer in
   match
@@ -67,9 +67,9 @@ let test_h1_writer_rejects_transfer_encoding_for_fixed_body () =
 let test_h1_writer_rejects_transfer_encoding_for_empty_body () =
   let url = Eta_http.Core.Url.of_string "http://example.test/upload" in
   match
-    Eta_http.H1.Write.to_string ~method_:"POST" ~url
+    Eta_http_h1.Write.to_string ~method_:"POST" ~url
       ~headers:[ ("Transfer-Encoding", "chunked") ]
-      ~body:Eta_http.H1.Write.Empty
+      ~body:Eta_http_h1.Write.Empty
   with
   | Error { Eta_http.Error.kind = Header_invalid { reason }; _ } ->
       Alcotest.(check bool)
@@ -87,8 +87,8 @@ let test_h1_writer_stream_headers_own_fixed_framing () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
   let buffer = Buffer.create 128 in
   match
-    Eta_http.H1.Write.write_stream_headers buffer ~method_:"POST" ~url
-      ~headers:[] ~framing:(Eta_http.H1.Write.Fixed_length 3)
+    Eta_http_h1.Write.write_stream_headers buffer ~method_:"POST" ~url
+      ~headers:[] ~framing:(Eta_http_h1.Write.Fixed_length 3)
   with
   | Ok () ->
       Alcotest.(check string)
@@ -104,13 +104,13 @@ let test_h1_response_write_refuses_suppressed_streaming_body_in_to_string () =
   in
   let response = Eta_http.Server.Response.make ~status:204 ~body () in
   match
-    Eta_http.H1.Response_write.to_string
+    Eta_http_h1.Response_write.to_string
       ~version:Eta_http.Core.Version.H1_1 ~request_method:"GET" response
   with
-  | Error Eta_http.H1.Response_write.Streaming_body -> ()
+  | Error Eta_http_h1.Response_write.Streaming_body -> ()
   | Error error ->
       Alcotest.failf "unexpected response write error: %s"
-        (Eta_http.H1.Response_write.error_to_string error)
+        (Eta_http_h1.Response_write.error_to_string error)
   | Ok wire ->
       Alcotest.failf
         "streaming body was silently dropped by pure H1 serializer: %S" wire
@@ -118,12 +118,12 @@ let test_h1_response_write_refuses_suppressed_streaming_body_in_to_string () =
 let test_h1_response_write_suppresses_205_body () =
   let response = Eta_http.Server.Response.text ~status:205 "must-not-appear" in
   match
-    Eta_http.H1.Response_write.to_string
+    Eta_http_h1.Response_write.to_string
       ~version:Eta_http.Core.Version.H1_1 ~request_method:"GET" response
   with
   | Error error ->
       Alcotest.failf "unexpected response write error: %s"
-        (Eta_http.H1.Response_write.error_to_string error)
+        (Eta_http_h1.Response_write.error_to_string error)
   | Ok wire ->
       Alcotest.(check bool)
         "status is 205" true
@@ -138,10 +138,10 @@ let test_h1_response_write_suppresses_205_body () =
 let test_h1_writer_flow_matches_string_writer () =
   let url = Eta_http.Core.Url.of_string "http://example.test/echo" in
   let body =
-    Eta_http.H1.Write.Fixed [ Bytes.of_string "abc"; Bytes.of_string "def" ]
+    Eta_http_h1.Write.Fixed [ Bytes.of_string "abc"; Bytes.of_string "def" ]
   in
   let expected =
-    Eta_http.H1.Write.to_string ~method_:"POST" ~url ~headers:[] ~body
+    Eta_http_h1.Write.to_string ~method_:"POST" ~url ~headers:[] ~body
   in
   let buffer = Buffer.create 128 in
   let flow = Eio.Flow.buffer_sink buffer in
@@ -161,8 +161,8 @@ let test_h1_writer_flow_matches_string_writer () =
 let test_h1_writer_accepts_lowercase_extension_method () =
   let url = Eta_http.Core.Url.of_string "http://example.test/resource" in
   match
-    Eta_http.H1.Write.to_string ~method_:"propfind" ~url ~headers:[]
-      ~body:Eta_http.H1.Write.Empty
+    Eta_http_h1.Write.to_string ~method_:"propfind" ~url ~headers:[]
+      ~body:Eta_http_h1.Write.Empty
   with
   | Ok wire ->
       Alcotest.(check bool)
@@ -179,7 +179,7 @@ let test_h1_writer_flow_write_failure_is_typed () =
     [ `Raise (Unix.Unix_error (Unix.EPIPE, "write", "")) ];
   match
     Eta_http_eio.H1.Write.write_to_flow flow ~method_:"POST" ~url ~headers:[]
-      ~body:(Eta_http.H1.Write.Fixed [ Bytes.of_string "abc" ])
+      ~body:(Eta_http_h1.Write.Fixed [ Bytes.of_string "abc" ])
   with
   | Error { Eta_http.Error.kind = Connection_closed { during = Http_request }; _ } ->
       ()
@@ -193,7 +193,7 @@ let test_h1_writer_flow_write_cancellation_propagates () =
     [ `Raise (Eio.Cancel.Cancelled (Failure "write cancelled")) ];
   match
     Eta_http_eio.H1.Write.write_to_flow flow ~method_:"POST" ~url ~headers:[]
-      ~body:(Eta_http.H1.Write.Fixed [ Bytes.of_string "abc" ])
+      ~body:(Eta_http_h1.Write.Fixed [ Bytes.of_string "abc" ])
   with
   | exception Eio.Cancel.Cancelled _ -> ()
   | Error error ->
@@ -220,7 +220,7 @@ let test_h1_writer_rejects_header_injection () =
       let flow = Eio.Flow.buffer_sink buffer in
       match
         Eta_http_eio.H1.Write.write_to_flow flow ~method_:"GET" ~url ~headers
-          ~body:Eta_http.H1.Write.Empty
+          ~body:Eta_http_h1.Write.Empty
       with
       | Error { Eta_http.Error.kind = Header_invalid _; _ } ->
           Alcotest.(check string)

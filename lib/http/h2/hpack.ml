@@ -471,7 +471,7 @@ let positive_mod n m =
 
 let create max_capacity =
   if max_capacity < 0 then
-    invalid_arg "Eta_http.H2.Hpack.create: negative capacity";
+    invalid_arg "Eta_http_h2.Hpack.create: negative capacity";
   (* Pre-allocate enough cells for the minimum HPACK entry size. *)
   let initial_cells = initial_cells_for_capacity max_capacity in
   { dynamic_table = Array.make initial_cells empty_cell
@@ -499,7 +499,7 @@ let evict_to_dynamic_capacity t =
 
 let set_max_table_size t size =
   if size < 0 then
-    invalid_arg "Eta_http.H2.Hpack.set_max_table_size: negative capacity";
+    invalid_arg "Eta_http_h2.Hpack.set_max_table_size: negative capacity";
   t.max_capacity <- size;
   if t.dynamic_capacity > size then t.dynamic_capacity <- size;
   evict_to_dynamic_capacity t
@@ -507,7 +507,7 @@ let set_max_table_size t size =
 let set_dynamic_table_capacity t capacity =
   if capacity < 0 then
     invalid_arg
-      "Eta_http.H2.Hpack.set_dynamic_table_capacity: negative capacity";
+      "Eta_http_h2.Hpack.set_dynamic_table_capacity: negative capacity";
   if capacity > t.max_capacity then raise Exit;
   t.dynamic_capacity <- capacity;
   evict_to_dynamic_capacity t

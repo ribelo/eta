@@ -40,9 +40,9 @@ val create : ?config:config -> unit -> t
 
 type observation =
   | Pass
-  | Connection_error of { code : int; kind : Error.kind }
-  | Stream_error of { stream_id : int; code : int; kind : Error.kind }
-  | Policy_close of { code : int; kind : Error.kind }
+  | Connection_error of { code : int; kind : Eta_http.Error.kind }
+  | Stream_error of { stream_id : int; code : int; kind : Eta_http.Error.kind }
+  | Policy_close of { code : int; kind : Eta_http.Error.kind }
 
 val complete_stream : t -> int -> unit
 (** Forget per-stream response-header accounting for a stream that has
@@ -64,4 +64,4 @@ val observe_result :
   now_ms:int64 ->
   observation
 
-val validate_headers : (string * string) list -> Error.kind option
+val validate_headers : (string * string) list -> Eta_http.Error.kind option

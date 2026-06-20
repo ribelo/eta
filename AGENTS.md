@@ -86,6 +86,24 @@ nix develop -c dune runtest --force        # full test suite
 nix develop -c eta-oxcaml-test-shipped     # shipped-package subset gate
 ```
 
+Agents must run repository verification through the Nix flake, not through the
+ambient system OCaml or opam switch. Use `nix develop -c ...` for the
+OxCaml/native gates and `nix develop .#mainline -c ...` for js_of_ocaml gates.
+Ambient/system opam results are not valid handoff evidence unless the user
+explicitly asks for a non-Nix reproduction.
+
+OxCaml and js_of_ocaml are separate build tracks. The OxCaml `5.2.0+ox`
+switch cannot build or run js_of_ocaml libraries/tests, and the existing JS
+stanzas are disabled under that compiler with `enabled_if`. Native Nix/OxCaml
+gates therefore do not verify `eta_jsoo`, `eta_js`, `eta_js_stream`,
+`eta_http_js`, `eta_js_test`, or their JS tests. When changing js_of_ocaml
+code, use the flake's mainline shell and run the relevant JS targets there; do
+not report OxCaml gate success as JS adapter verification.
+
+```sh
+nix develop .#mainline -c dune runtest test/http_js --force
+```
+
 Without Nix, use an OCaml 5.2.0+ox switch, install dependencies, then run the
 same Dune targets:
 

@@ -89,10 +89,10 @@ let failing_server_flow mode =
     | Failing_read -> None
     | Failing_write ->
         let client =
-          Eta_http.H2.Connection.Client.create ~error_handler:(fun _ -> ()) ()
+          Eta_http_h2.Connection.Client.create ~error_handler:(fun _ -> ()) ()
         in
         Some
-          (match Eta_http.H2.Connection.next_write_operation client with
+          (match Eta_http_h2.Connection.next_write_operation client with
           | Write iovecs -> Test_eta_http_h2_support.h2_iovecs_to_string iovecs
           | Yield -> Alcotest.fail "client preface unexpectedly yielded"
           | Close _ -> Alcotest.fail "client preface unexpectedly closed")
@@ -125,11 +125,11 @@ let failing_server_flow mode =
 
 let h2_client_request_bytes target =
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected client h2 error")
       ()
   in
-  let request : Eta_http.H2.Connection.Client.request =
+  let request : Eta_http_h2.Connection.Client.request =
     {
       meth = "GET";
       scheme = Some "http";
@@ -139,34 +139,34 @@ let h2_client_request_bytes target =
     }
   in
   let request_body =
-    Eta_http.H2.Connection.Client.request client ~stream_id:1 request
+    Eta_http_h2.Connection.Client.request client ~stream_id:1 request
       ~error_handler:(fun _ _ -> Alcotest.fail "unexpected stream h2 error")
       ~response_handler:(fun _ _ -> ())
   in
-  Eta_http.H2.Body.Writer.close request_body;
+  Eta_http_h2.Body.Writer.close request_body;
   let rec drain acc =
-    match Eta_http.H2.Connection.next_write_operation client with
+    match Eta_http_h2.Connection.next_write_operation client with
     | Write iovecs ->
         let data = Test_eta_http_h2_support.h2_iovecs_to_string iovecs in
-        Eta_http.H2.Connection.report_write_result client
+        Eta_http_h2.Connection.report_write_result client
           (`Ok (String.length data));
         drain (data :: acc)
     | Yield -> String.concat "" (List.rev acc)
     | Close _ ->
-        Eta_http.H2.Connection.report_write_result client `Closed;
+        Eta_http_h2.Connection.report_write_result client `Closed;
         String.concat "" (List.rev acc)
   in
   drain []
 
 let hpack_header name value =
-  { Eta_http.Hpack.name; value; sensitive = false }
+  { Eta_http_h2.Hpack.name; value; sensitive = false }
 
-let hpack_block encoder headers = Eta_http.Hpack.encode_headers encoder headers
+let hpack_block encoder headers = Eta_http_h2.Hpack.encode_headers encoder headers
 
 let raw_h2_headers encoder ?(end_stream = false) ~stream_id headers =
   let block = hpack_block encoder headers in
   let flags = 0x4 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+  Eta_http_h2.Frame.header ~length:(String.length block) ~frame_type:Headers
     ~flags ~stream_id
   ^ block
 
@@ -175,38 +175,38 @@ let raw_h2_split_headers encoder ?(end_stream = false) ~stream_id headers =
   let split = min 1 (String.length block) in
   let first = String.sub block 0 split in
   let rest = String.sub block split (String.length block - split) in
-  Eta_http.H2.Frame.header ~length:(String.length first)
+  Eta_http_h2.Frame.header ~length:(String.length first)
     ~frame_type:Headers
     ~flags:(if end_stream then 0x1 else 0)
     ~stream_id
   ^ first
-  ^ Eta_http.H2.Frame.header ~length:(String.length rest)
+  ^ Eta_http_h2.Frame.header ~length:(String.length rest)
       ~frame_type:Continuation ~flags:0x4 ~stream_id
   ^ rest
 
 let raw_h2_data ?(end_stream = false) ~stream_id data =
   let flags = if end_stream then 0x1 else 0 in
-  Eta_http.H2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
+  Eta_http_h2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
     ~stream_id
   ^ data
 
 let raw_h2_ping payload =
   let payload_len = String.length payload in
   if payload_len <> 8 then invalid_arg "raw_h2_ping payload must be 8 bytes";
-  Eta_http.H2.Frame.header ~length:payload_len ~frame_type:Ping ~flags:0
+  Eta_http_h2.Frame.header ~length:payload_len ~frame_type:Ping ~flags:0
     ~stream_id:0
   ^ payload
 
 let raw_h2_window_update ~stream_id increment =
-  Eta_http.H2.Frame.header ~length:4 ~frame_type:Window_update ~flags:0
+  Eta_http_h2.Frame.header ~length:4 ~frame_type:Window_update ~flags:0
     ~stream_id
-  ^ Eta_http.H2.Frame.uint32 increment
+  ^ Eta_http_h2.Frame.uint32 increment
 
 let raw_h2_settings_pair id value =
   let bytes = Bytes.create 6 in
   Bytes.set bytes 0 (Char.chr ((id lsr 8) land 0xff));
   Bytes.set bytes 1 (Char.chr (id land 0xff));
-  Bytes.blit_string (Eta_http.H2.Frame.uint32 value) 0 bytes 2 4;
+  Bytes.blit_string (Eta_http_h2.Frame.uint32 value) 0 bytes 2 4;
   Bytes.unsafe_to_string bytes
 
 let raw_h2_settings pairs =
@@ -215,7 +215,7 @@ let raw_h2_settings pairs =
     |> List.map (fun (id, value) -> raw_h2_settings_pair id value)
     |> String.concat ""
   in
-  Eta_http.H2.Frame.header ~length:(String.length payload)
+  Eta_http_h2.Frame.header ~length:(String.length payload)
     ~frame_type:Settings ~flags:0 ~stream_id:0
   ^ payload
 
@@ -226,14 +226,14 @@ let raw_h2_padded_data ?(end_stream = false) ~stream_id ~padding data =
     String.make 1 (Char.chr padding) ^ data ^ String.make padding '\000'
   in
   let flags = 0x8 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length payload) ~frame_type:Data
+  Eta_http_h2.Frame.header ~length:(String.length payload) ~frame_type:Data
     ~flags ~stream_id
   ^ payload
 
 let raw_h2_rst_stream ~stream_id error_code =
-  Eta_http.H2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
+  Eta_http_h2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
     ~stream_id
-  ^ Eta_http.H2.Frame.uint32 error_code
+  ^ Eta_http_h2.Frame.uint32 error_code
 
 let hpack_literal_no_index ~name ~value =
   let encode_int7 n =
@@ -278,7 +278,7 @@ let hpack_indexed index =
 
 let raw_h2_headers_block ?(end_stream = true) ~stream_id block =
   let flags = 0x4 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+  Eta_http_h2.Frame.header ~length:(String.length block) ~frame_type:Headers
     ~flags ~stream_id
   ^ block
 
@@ -293,18 +293,18 @@ let malicious_h2_request_headers ?(end_stream = true) ~stream_id () =
       ]
   in
   let flags = 0x4 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+  Eta_http_h2.Frame.header ~length:(String.length block) ~frame_type:Headers
     ~flags ~stream_id
   ^ block
 
 let raw_h2_has_frame ?stream_id frame_type bytes =
-  let target = Eta_http.H2.Frame.frame_type_code frame_type in
+  let target = Eta_http_h2.Frame.frame_type_code frame_type in
   let len = String.length bytes in
   let rec loop off =
-    if off + Eta_http.H2.Frame.header_size > len then false
+    if off + Eta_http_h2.Frame.header_size > len then false
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let next = off + Eta_http_h2.Frame.header_size + envelope.length in
       if next > len then false
       else
         (envelope.frame_type = target
@@ -317,13 +317,13 @@ let raw_h2_has_frame ?stream_id frame_type bytes =
   loop 0
 
 let raw_h2_frame_payload ?stream_id frame_type bytes =
-  let target = Eta_http.H2.Frame.frame_type_code frame_type in
+  let target = Eta_http_h2.Frame.frame_type_code frame_type in
   let len = String.length bytes in
   let rec loop off =
-    if off + Eta_http.H2.Frame.header_size > len then None
+    if off + Eta_http_h2.Frame.header_size > len then None
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let payload_off = off + Eta_http.H2.Frame.header_size in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let payload_off = off + Eta_http_h2.Frame.header_size in
       let next = payload_off + envelope.length in
       if next > len then None
       else if
@@ -341,7 +341,7 @@ let raw_h2_response_status ~stream_id bytes =
   match raw_h2_frame_payload ~stream_id Headers bytes with
   | None -> Alcotest.failf "missing response HEADERS on stream %d" stream_id
   | Some payload ->
-      let module Hpack = Eta_http.Hpack in
+      let module Hpack = Eta_http_h2.Hpack in
       let decoder = Hpack.create 4096 in
       match Hpack.decode_headers_string decoder payload with
       | Error _ -> Alcotest.fail "failed to decode response HEADERS"
@@ -363,14 +363,14 @@ let raw_h2_uint32_at bytes off =
 let raw_h2_goaway_payload bytes =
   let len = String.length bytes in
   let rec loop off =
-    if off + Eta_http.H2.Frame.header_size > len then None
+    if off + Eta_http_h2.Frame.header_size > len then None
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let payload_off = off + Eta_http.H2.Frame.header_size in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let payload_off = off + Eta_http_h2.Frame.header_size in
       let next = payload_off + envelope.length in
       if next > len then None
       else if
-        envelope.frame_type = Eta_http.H2.Frame.frame_type_code Goaway
+        envelope.frame_type = Eta_http_h2.Frame.frame_type_code Goaway
         && envelope.stream_id = 0 && envelope.length >= 8
       then
         Some
@@ -393,14 +393,14 @@ let raw_h2_has_goaway_error error_code bytes =
 let raw_h2_rst_stream_payload ~stream_id bytes =
   let len = String.length bytes in
   let rec loop off =
-    if off + Eta_http.H2.Frame.header_size > len then None
+    if off + Eta_http_h2.Frame.header_size > len then None
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let payload_off = off + Eta_http.H2.Frame.header_size in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let payload_off = off + Eta_http_h2.Frame.header_size in
       let next = payload_off + envelope.length in
       if next > len then None
       else if
-        envelope.frame_type = Eta_http.H2.Frame.frame_type_code Rst_stream
+        envelope.frame_type = Eta_http_h2.Frame.frame_type_code Rst_stream
         && envelope.stream_id = stream_id && envelope.length = 4
       then Some (raw_h2_uint32_at bytes payload_off)
       else loop next
@@ -410,14 +410,14 @@ let raw_h2_rst_stream_payload ~stream_id bytes =
 let raw_h2_window_update_payload ?stream_id bytes =
   let len = String.length bytes in
   let rec loop off =
-    if off + Eta_http.H2.Frame.header_size > len then None
+    if off + Eta_http_h2.Frame.header_size > len then None
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let payload_off = off + Eta_http.H2.Frame.header_size in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let payload_off = off + Eta_http_h2.Frame.header_size in
       let next = payload_off + envelope.length in
       if next > len then None
       else if
-        envelope.frame_type = Eta_http.H2.Frame.frame_type_code Window_update
+        envelope.frame_type = Eta_http_h2.Frame.frame_type_code Window_update
         && envelope.length = 4
         &&
         match stream_id with
@@ -429,13 +429,13 @@ let raw_h2_window_update_payload ?stream_id bytes =
   loop 0
 
 let raw_h2_count_frames ?stream_id frame_type bytes =
-  let target = Eta_http.H2.Frame.frame_type_code frame_type in
+  let target = Eta_http_h2.Frame.frame_type_code frame_type in
   let len = String.length bytes in
   let rec loop off count =
-    if off + Eta_http.H2.Frame.header_size > len then count
+    if off + Eta_http_h2.Frame.header_size > len then count
     else
-      let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-      let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+      let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+      let next = off + Eta_http_h2.Frame.header_size + envelope.length in
       if next > len then count
       else
         let count =
@@ -458,10 +458,10 @@ let read_raw_until_h2_frame ~frame_type ?stream_id flow =
   let frame_summary bytes =
     let len = String.length bytes in
     let rec loop off acc =
-      if off + Eta_http.H2.Frame.header_size > len then List.rev acc
+      if off + Eta_http_h2.Frame.header_size > len then List.rev acc
       else
-        let envelope = Eta_http.H2.Frame.parse_header_string bytes ~off in
-        let next = off + Eta_http.H2.Frame.header_size + envelope.length in
+        let envelope = Eta_http_h2.Frame.parse_header_string bytes ~off in
+        let next = off + Eta_http_h2.Frame.header_size + envelope.length in
         if next > len then List.rev acc
         else
           loop next
@@ -480,7 +480,7 @@ let read_raw_until_h2_frame ~frame_type ?stream_id flow =
           Alcotest.failf
             "connection closed before HTTP/2 frame type %d; received %d bytes: \
              %s"
-            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (Eta_http_h2.Frame.frame_type_code frame_type)
             (String.length bytes) (frame_summary bytes)
       | len ->
           Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
@@ -490,7 +490,7 @@ let read_raw_until_h2_frame ~frame_type ?stream_id flow =
           Alcotest.failf
             "connection ended before HTTP/2 frame type %d; received %d bytes: \
              %s"
-            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (Eta_http_h2.Frame.frame_type_code frame_type)
             (String.length bytes) (frame_summary bytes)
   in
   loop ()
@@ -507,7 +507,7 @@ let read_raw_until_h2_frame_count ~frame_type ~count flow =
           Alcotest.failf
             "connection closed before %d HTTP/2 frames of type %d; received %d"
             count
-            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (Eta_http_h2.Frame.frame_type_code frame_type)
             (String.length bytes)
       | len ->
           Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub scratch 0 len));
@@ -517,15 +517,15 @@ let read_raw_until_h2_frame_count ~frame_type ~count flow =
           Alcotest.failf
             "connection ended before %d HTTP/2 frames of type %d; received %d"
             count
-            (Eta_http.H2.Frame.frame_type_code frame_type)
+            (Eta_http_h2.Frame.frame_type_code frame_type)
             (String.length bytes)
   in
   loop ()
 
 let h2_client_partial_request_bytes target body =
-  let encoder = Eta_http.Hpack.encoder_create 4096 in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-  ^ Eta_http.H2.Frame.settings
+  ^ Eta_http_h2.Frame.settings
   ^ raw_h2_headers encoder ~stream_id:1
       [
         hpack_header ":method" "POST";
@@ -552,8 +552,8 @@ let read_raw_until_close flow =
   in
   loop ()
 
-let pp_h2_client_error fmt (error : Eta_http.H2.Connection.error) =
-  Format.fprintf fmt "protocol_error:%a:%s" Eta_http.H2.Error_code.pp_hum
+let pp_h2_client_error fmt (error : Eta_http_h2.Connection.error) =
+  Format.fprintf fmt "protocol_error:%a:%s" Eta_http_h2.Error_code.pp_hum
     error.error_code error.message
 
 let h2_method_to_string = function
@@ -569,7 +569,7 @@ let h2_method_to_string = function
   | `Other method_ -> method_
 
 let h2_request ?(scheme = "http") ?(headers = []) meth path :
-    Eta_http.H2.Connection.Client.request =
+    Eta_http_h2.Connection.Client.request =
   {
     meth = h2_method_to_string meth;
     scheme = Some scheme;
@@ -588,7 +588,7 @@ let await_h2_response ?(tag = 1) ?request_body ?headers_ref ?trailers_ref
   let body = Buffer.create 32 in
   let eof, resolve_eof = Eio.Promise.create () in
   let rec read_body response_body =
-    Eta_http.H2.Body.Reader.schedule_read response_body
+    Eta_http_h2.Body.Reader.schedule_read response_body
       ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
       ~on_read:(fun bs ~off ~len ->
         Buffer.add_string body (Bigstringaf.substring bs ~off ~len);
@@ -622,8 +622,8 @@ let await_h2_response ?(tag = 1) ?request_body ?headers_ref ?trailers_ref
       (match request_body with
       | None -> ()
       | Some body ->
-          ignore (Eta_http.H2.Body.Writer.write_string opened.request_body body));
-      Eta_http.H2.Body.Writer.close opened.request_body;
+          ignore (Eta_http_h2.Body.Writer.write_string opened.request_body body));
+      Eta_http_h2.Body.Writer.close opened.request_body;
       Eio.Promise.await eof;
       (Option.value ~default:0 !status, Buffer.contents body)
 
@@ -635,7 +635,7 @@ let await_h2_response_outcome ?(tag = 1) ?request_body connection request =
     ignore (Eio.Promise.try_resolve resolve_done outcome)
   in
   let rec read_body response_body =
-    Eta_http.H2.Body.Reader.schedule_read response_body
+    Eta_http_h2.Body.Reader.schedule_read response_body
       ~on_eof:(fun () ->
         resolve_done_once
           (`Eof (Option.value ~default:0 !status, Buffer.contents body)))
@@ -664,9 +664,9 @@ let await_h2_response_outcome ?(tag = 1) ?request_body connection request =
   | Ok opened ->
       Option.iter
         (fun body ->
-          ignore (Eta_http.H2.Body.Writer.write_string opened.request_body body))
+          ignore (Eta_http_h2.Body.Writer.write_string opened.request_body body))
         request_body;
-      Eta_http.H2.Body.Writer.close opened.request_body;
+      Eta_http_h2.Body.Writer.close opened.request_body;
       Eio.Promise.await done_
 
 let run_h2c_with_failing_flow mode =
@@ -996,10 +996,10 @@ let test_h2c_server_enforces_max_concurrent_streams () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let first =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:true ~stream_id:1
             [
               hpack_header ":method" "GET";
@@ -1309,10 +1309,10 @@ let test_h2c_connect_malformed_shapes_do_not_reach_handler () =
         Fun.protect
           ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
           (fun () ->
-            let encoder = Eta_http.Hpack.encoder_create 4096 in
+            let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
             let request =
               "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-              ^ Eta_http.H2.Frame.settings
+              ^ Eta_http_h2.Frame.settings
               ^ raw_h2_headers encoder ~end_stream:true ~stream_id:1 headers
             in
             Eio.Flow.write flow [ Cstruct.of_string request ];
@@ -1373,10 +1373,10 @@ let test_h2c_server_exposes_request_trailers () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
             [
               hpack_header ":method" "POST";
@@ -1431,7 +1431,7 @@ let test_h2c_server_exposes_split_request_trailers () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -1448,7 +1448,7 @@ let test_h2c_server_exposes_split_request_trailers () =
       in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ headers
         ^ body
         ^ trailers
@@ -1496,10 +1496,10 @@ let test_h2c_server_trailers_wait_before_body_eof () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
             [
               hpack_header ":method" "POST";
@@ -1550,10 +1550,10 @@ let test_h2c_server_empty_request_trailers_resolve_after_eof () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
             [
               hpack_header ":method" "POST";
@@ -1610,10 +1610,10 @@ let test_h2c_server_rejects_forbidden_request_trailers () =
           Fun.protect
             ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
             (fun () ->
-              let encoder = Eta_http.Hpack.encoder_create 4096 in
+              let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
               let request =
                 "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-                ^ Eta_http.H2.Frame.settings
+                ^ Eta_http_h2.Frame.settings
                 ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
                     [
                       hpack_header ":method" "POST";
@@ -1661,7 +1661,7 @@ let test_h2c_server_rejects_split_forbidden_request_trailers () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -1678,7 +1678,7 @@ let test_h2c_server_rejects_split_forbidden_request_trailers () =
       in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ headers
         ^ body
         ^ trailers
@@ -1725,7 +1725,7 @@ let test_h2c_server_rejects_data_after_request_trailers () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -1743,7 +1743,7 @@ let test_h2c_server_rejects_data_after_request_trailers () =
       let late_data = raw_h2_data ~end_stream:true ~stream_id:1 "late" in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ headers
         ^ body
         ^ trailers
@@ -1795,10 +1795,10 @@ let test_h2c_request_trailers_fail_after_rst_stream () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
             [
               hpack_header ":method" "POST";
@@ -1851,7 +1851,7 @@ let test_h2c_early_response_drains_unread_body_with_trailers () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request_headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -1870,7 +1870,7 @@ let test_h2c_early_response_drains_unread_body_with_trailers () =
       in
       let early =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request_headers
         ^ request_body
         ^ request_trailers
@@ -1927,10 +1927,10 @@ let test_h2c_rejects_second_headers_without_end_stream () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:false ~stream_id:1
             [
               hpack_header ":method" "POST";
@@ -2079,7 +2079,7 @@ let expect_h2c_header_decode_goaway ~server_limits ~block =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ raw_h2_headers_block ~stream_id:1 block);
         ];
       let response =
@@ -2154,7 +2154,7 @@ let test_h2c_server_rejects_empty_request_header_name () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ raw_h2_headers_block ~stream_id:1 block);
         ];
       let response =
@@ -2475,7 +2475,7 @@ let test_h2c_server_rejects_content_length_mismatch () =
         (stats.protocol_errors >= 2))
 
 let h2_settings_ack =
-  Eta_http.H2.Frame.header ~length:0 ~frame_type:Settings ~flags:0x1
+  Eta_http_h2.Frame.header ~length:0 ~frame_type:Settings ~flags:0x1
     ~stream_id:0
 
 let run_h2c_flow_control_upload ~h2_config ~body_frame expectation =
@@ -2511,7 +2511,7 @@ let run_h2c_flow_control_upload ~h2_config ~body_frame expectation =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -2523,7 +2523,7 @@ let run_h2c_flow_control_upload ~h2_config ~body_frame expectation =
       in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ headers
       in
       Eio.Flow.write flow [ Cstruct.of_string request ];
@@ -2632,7 +2632,7 @@ let test_h2c_server_accepts_data_with_advertised_connection_window () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers1 =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -2655,7 +2655,7 @@ let test_h2c_server_accepts_data_with_advertised_connection_window () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ headers1
             ^ headers3);
         ];
@@ -3689,13 +3689,13 @@ let test_h2c_server_drain_up_to_discard_waits_for_body () =
       let body = Buffer.create 32 in
       let eof, resolve_eof = Eio.Promise.create () in
       let rec read_body response_body =
-        Eta_http.H2.Body.Reader.schedule_read response_body
+        Eta_http_h2.Body.Reader.schedule_read response_body
           ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
           ~on_read:(fun bs ~off ~len ->
             Buffer.add_string body (Bigstringaf.substring bs ~off ~len);
             read_body response_body)
       in
-      let request : Eta_http.H2.Connection.Client.request =
+      let request : Eta_http_h2.Connection.Client.request =
         {
           meth = "POST";
           scheme = Some "http";
@@ -3734,8 +3734,8 @@ let test_h2c_server_drain_up_to_discard_waits_for_body () =
       in
       Alcotest.(check bool) "discard waited for body" false returned_before_body;
       ignore
-        (Eta_http.H2.Body.Writer.write_string opened.request_body "0123456789");
-      Eta_http.H2.Body.Writer.close opened.request_body;
+        (Eta_http_h2.Body.Writer.write_string opened.request_body "0123456789");
+      Eta_http_h2.Body.Writer.close opened.request_body;
       Eio.Promise.await eof;
       Alcotest.(check bool) "discard returned" true
         (Eio.Promise.is_resolved discard_returned);
@@ -3798,7 +3798,7 @@ let test_h2c_server_connection_close_fails_pending_body_read () =
       ignore (Eio.Promise.try_resolve resolve_stop ());
       Eta_http_eio.H2.Connection.shutdown connection)
     (fun () ->
-      let request : Eta_http.H2.Connection.Client.request =
+      let request : Eta_http_h2.Connection.Client.request =
         {
           meth = "POST";
           scheme = Some "http";
@@ -3874,7 +3874,7 @@ let test_h2c_server_handle_graceful_shutdown_waits_for_stream () =
       Eta_http_eio.Server.shutdown server Immediate;
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         raw_h2_headers encoder ~end_stream:true ~stream_id:1
           [
@@ -3886,7 +3886,7 @@ let test_h2c_server_handle_graceful_shutdown_waits_for_stream () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request)
         flow;
       Eio.Time.with_timeout_exn clock 1.0 (fun () ->
@@ -3981,7 +3981,7 @@ let test_h2c_graceful_shutdown_sends_goaway_and_rejects_new_streams () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request stream_id path =
         raw_h2_headers encoder ~end_stream:true ~stream_id
           [
@@ -3993,7 +3993,7 @@ let test_h2c_graceful_shutdown_sends_goaway_and_rejects_new_streams () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request 1 "/wait")
         flow;
       Eio.Time.with_timeout_exn clock 1.0 (fun () ->
@@ -4057,10 +4057,10 @@ let test_h2c_graceful_shutdown_timer_forces_close () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ raw_h2_headers encoder ~end_stream:true ~stream_id:1
             [
               hpack_header ":method" "GET";
@@ -4112,7 +4112,7 @@ let test_h2c_server_closes_on_ingress_security_error () =
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
        ^ String.concat ""
-           (List.init 11 (fun _ -> Eta_http.H2.Frame.settings)))
+           (List.init 11 (fun _ -> Eta_http_h2.Frame.settings)))
         flow;
       let response =
         Eio.Time.with_timeout_exn clock 1.0 (fun () ->
@@ -4152,7 +4152,7 @@ let test_h2c_goaway_last_stream_id_after_processed_stream () =
       Eta_http_eio.Server.shutdown server Immediate;
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         raw_h2_headers encoder ~end_stream:true ~stream_id:1
           [
@@ -4164,7 +4164,7 @@ let test_h2c_goaway_last_stream_id_after_processed_stream () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request)
         flow;
       ignore
@@ -4174,7 +4174,7 @@ let test_h2c_goaway_last_stream_id_after_processed_stream () =
       Alcotest.(check int) "handler calls before malformed frame" 1
         !handler_calls;
       Eio.Flow.copy_string
-        (Eta_http.H2.Frame.header ~length:7 ~frame_type:Ping ~flags:0
+        (Eta_http_h2.Frame.header ~length:7 ~frame_type:Ping ~flags:0
            ~stream_id:0
         ^ "1234567")
         flow;
@@ -4237,10 +4237,10 @@ let test_h2c_server_closes_on_ping_churn () =
   let closed_stats, resolve_closed_stats = Eio.Promise.create () in
   let security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
@@ -4271,7 +4271,7 @@ let test_h2c_server_closes_on_ping_churn () =
     (fun () ->
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ String.concat "" (List.init 3 (fun _ -> raw_h2_ping "pingping")))
         flow;
       let response =
@@ -4303,10 +4303,10 @@ let test_h2c_server_closes_on_empty_data_churn () =
   let closed_stats, resolve_closed_stats = Eio.Promise.create () in
   let security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       empty_data_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
@@ -4338,7 +4338,7 @@ let test_h2c_server_closes_on_empty_data_churn () =
       Eta_http_eio.Server.shutdown server Immediate;
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         raw_h2_headers encoder ~end_stream:false ~stream_id:1
           [
@@ -4350,7 +4350,7 @@ let test_h2c_server_closes_on_empty_data_churn () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ headers
         ^ String.concat ""
             (List.init 3 (fun _ -> raw_h2_data ~stream_id:1 "")))
@@ -4409,7 +4409,7 @@ let test_h2c_server_rejects_window_update_overflow () =
       Eta_http_eio.Server.shutdown server Immediate;
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         raw_h2_headers encoder ~end_stream:true ~stream_id:1
           [
@@ -4421,7 +4421,7 @@ let test_h2c_server_rejects_window_update_overflow () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request)
         flow;
       ignore
@@ -4757,13 +4757,13 @@ let test_h2c_server_multiplexes_slow_uploads () =
     let status = ref 0 in
     let eof, resolve_eof = Eio.Promise.create () in
     let rec read_body response_body =
-      Eta_http.H2.Body.Reader.schedule_read response_body
+      Eta_http_h2.Body.Reader.schedule_read response_body
         ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string body_buf (Bigstringaf.substring bs ~off ~len);
           read_body response_body)
     in
-    let request : Eta_http.H2.Connection.Client.request =
+    let request : Eta_http_h2.Connection.Client.request =
       {
         meth = "POST";
         scheme = Some "http";
@@ -4805,14 +4805,14 @@ let test_h2c_server_multiplexes_slow_uploads () =
           (fun (tag, opened, _, _, _) ->
             let fragment = List.nth (fragments tag) round in
             ignore
-              (Eta_http.H2.Body.Writer.write_string
+              (Eta_http_h2.Body.Writer.write_string
                  opened.Eta_http_eio.H2.Multiplexer.request_body fragment))
           streams;
         Eio.Time.sleep clock 0.005
       done;
       List.iter
         (fun (_, opened, _, _, _) ->
-          Eta_http.H2.Body.Writer.close
+          Eta_http_h2.Body.Writer.close
             opened.Eta_http_eio.H2.Multiplexer.request_body)
         streams;
       List.iter
@@ -4921,7 +4921,7 @@ let test_h2c_server_many_remote_resets_keep_connection_healthy () =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let request_headers stream_id path ~end_stream =
-    let encoder = Eta_http.Hpack.encoder_create 4096 in
+    let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
     raw_h2_headers encoder ~stream_id ~end_stream
       [
         hpack_header ":method" "POST";
@@ -4945,7 +4945,7 @@ let test_h2c_server_many_remote_resets_keep_connection_healthy () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ String.concat "" (List.init 32 reset_stream)
             ^ request_headers final_stream_id "/ok" ~end_stream:true);
         ];
@@ -4989,7 +4989,7 @@ let test_h2c_server_half_close_resets_incomplete_body_without_blocking () =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let request_headers stream_id =
-    let encoder = Eta_http.Hpack.encoder_create 4096 in
+    let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
     raw_h2_headers encoder ~stream_id ~end_stream:false
       [
         hpack_header ":method" "POST";
@@ -5013,7 +5013,7 @@ let test_h2c_server_half_close_resets_incomplete_body_without_blocking () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ request_headers 1
             ^ String.concat "" complete_streams);
         ];
@@ -5127,7 +5127,7 @@ let test_h2c_server_resets_stalled_reader_stream () =
   in
   let connection =
     Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
-      ~config:{ Eta_http.H2.Config.default with initial_window_size = 16384 }
+      ~config:{ Eta_http_h2.Config.default with initial_window_size = 16384 }
       ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
       ()
   in
@@ -5137,7 +5137,7 @@ let test_h2c_server_resets_stalled_reader_stream () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       let reset, resolve_reset = Eio.Promise.create () in
-      let request : Eta_http.H2.Connection.Client.request =
+      let request : Eta_http_h2.Connection.Client.request =
         {
           meth = "GET";
           scheme = Some "http";
@@ -5155,7 +5155,7 @@ let test_h2c_server_resets_stalled_reader_stream () =
              ignore (Eio.Promise.try_resolve resolve_reset ()))
            ~response_handler:(fun _stream _response _response_body -> ())
        with
-      | Ok opened -> Eta_http.H2.Body.Writer.close opened.request_body
+      | Ok opened -> Eta_http_h2.Body.Writer.close opened.request_body
       | Error _ -> Alcotest.fail "stalled-reader request not opened");
       (* The server must not let a non-reading client pin the stream open: it
          should reset the stream once it cannot make write progress within
@@ -5536,7 +5536,7 @@ let test_h2c_server_rejects_data_after_peer_reset () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       let request_headers stream_id path ~end_stream =
-        let encoder = Eta_http.Hpack.encoder_create 4096 in
+        let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
         raw_h2_headers encoder ~stream_id ~end_stream
           [
             hpack_header ":method" "GET";
@@ -5547,7 +5547,7 @@ let test_h2c_server_rejects_data_after_peer_reset () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request_headers 1 "/reset" ~end_stream:false
         ^ raw_h2_rst_stream ~stream_id:1 8
         ^ raw_h2_data ~stream_id:1 "x")
@@ -5590,7 +5590,7 @@ let test_h2c_server_stream_scoped_security_error_preserves_active_stream () =
     Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
   in
   let request_headers stream_id path =
-    let encoder = Eta_http.Hpack.encoder_create 4096 in
+    let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
     raw_h2_headers encoder ~stream_id ~end_stream:true
       [
         hpack_header ":method" "GET";
@@ -5607,13 +5607,13 @@ let test_h2c_server_stream_scoped_security_error_preserves_active_stream () =
     (fun () ->
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ request_headers 1 "/wait")
         flow;
       Eio.Time.with_timeout_exn clock 1.0 (fun () ->
           Eio.Promise.await handler_started);
       Eio.Flow.copy_string
-        (Eta_http.H2.Frame.header ~length:4 ~frame_type:Priority ~flags:0
+        (Eta_http_h2.Frame.header ~length:4 ~frame_type:Priority ~flags:0
            ~stream_id:3
         ^ "\000\000\000\001")
         flow;
@@ -5661,12 +5661,12 @@ let test_h2c_server_rejects_oversized_incomplete_frame () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       let oversized =
-        Eta_http.H2.Frame.header ~length:16385 ~frame_type:Data ~flags:0
+        Eta_http_h2.Frame.header ~length:16385 ~frame_type:Data ~flags:0
           ~stream_id:1
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ oversized)
         flow;
       let response =
@@ -5682,11 +5682,11 @@ let test_h2c_server_rejects_oversized_incomplete_frame () =
 
 let test_h2c_server_receive_cap_ignores_peer_max_frame_size_increase () =
   let oversized_data =
-    Eta_http.H2.Frame.header ~length:16385 ~frame_type:Data ~flags:0
+    Eta_http_h2.Frame.header ~length:16385 ~frame_type:Data ~flags:0
       ~stream_id:1
   in
   let oversized_headers =
-    Eta_http.H2.Frame.header ~length:16385 ~frame_type:Headers ~flags:0
+    Eta_http_h2.Frame.header ~length:16385 ~frame_type:Headers ~flags:0
       ~stream_id:1
   in
   List.iter
@@ -5757,7 +5757,7 @@ let test_h2c_server_goaway_on_incomplete_headers_eof () =
       (try Eio.Flow.shutdown flow `All with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let block =
         hpack_block encoder
           [
@@ -5768,14 +5768,14 @@ let test_h2c_server_goaway_on_incomplete_headers_eof () =
           ]
       in
       let incomplete_headers =
-        Eta_http.H2.Frame.header ~length:(String.length block)
+        Eta_http_h2.Frame.header ~length:(String.length block)
           ~frame_type:Headers ~flags:0x1
           ~stream_id:1
         ^ block
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ incomplete_headers)
         flow;
       Eio.Flow.shutdown flow `Send;
@@ -5798,10 +5798,10 @@ let test_h2c_server_closes_on_rapid_reset_limit () =
   let port = tcp_port (Eio.Net.listening_addr socket) in
   let h2_security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       rst_stream_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
@@ -5826,7 +5826,7 @@ let test_h2c_server_closes_on_rapid_reset_limit () =
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
       let request_headers stream_id =
-        let encoder = Eta_http.Hpack.encoder_create 4096 in
+        let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
         raw_h2_headers encoder ~stream_id ~end_stream:false
           [
             hpack_header ":method" "GET";
@@ -5841,7 +5841,7 @@ let test_h2c_server_closes_on_rapid_reset_limit () =
       in
       Eio.Flow.copy_string
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ String.concat "" (List.init 3 reset_stream))
         flow;
       let response =
@@ -5886,26 +5886,26 @@ let test_h2c_connection_closes_on_default_rapid_reset_limit () =
         ^ raw_h2_rst_stream ~stream_id 8
       in
       let payload =
-        Eta_http.H2.Frame.settings
+        Eta_http_h2.Frame.settings
         ^ String.concat "" (List.init 101 reset_stream)
       in
-      let scanner = Eta_http.H2.Security.create () in
+      let scanner = Eta_http_h2.Security.create () in
       let scanner_result =
-        Eta_http.H2.Security.observe_result scanner
+        Eta_http_h2.Security.observe_result scanner
           (Bigstringaf.of_string ~off:0 ~len:(String.length payload) payload)
           ~off:0 ~len:(String.length payload) ~now_ms:0L
       in
       (match scanner_result with
-      | Eta_http.H2.Security.Policy_close
+      | Eta_http_h2.Security.Policy_close
           { kind = Rst_count_exceeded { observed_count = 101; limit = 100 }; _ }
         ->
           ()
-      | Eta_http.H2.Security.Connection_error { kind; _ }
-      | Eta_http.H2.Security.Stream_error { kind; _ }
-      | Eta_http.H2.Security.Policy_close { kind; _ } ->
+      | Eta_http_h2.Security.Connection_error { kind; _ }
+      | Eta_http_h2.Security.Stream_error { kind; _ }
+      | Eta_http_h2.Security.Policy_close { kind; _ } ->
           Alcotest.failf "unexpected scanner error: %s"
             (Eta_http.Error.kind_name kind)
-      | Eta_http.H2.Security.Pass -> Alcotest.fail "scanner missed rapid reset");
+      | Eta_http_h2.Security.Pass -> Alcotest.fail "scanner missed rapid reset");
       Eio.Flow.write flow
         [ Cstruct.of_string ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" ^ payload) ];
       let closed =

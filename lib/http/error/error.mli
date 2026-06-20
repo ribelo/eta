@@ -41,6 +41,15 @@ type kind =
   | HTTP_status of { status : int; headers : (string * string) list }
   | Decode_error of { codec : string; message : string }
   | Body_too_large of { limit : int; length : int }
+  | Request_body_too_large of { limit : int; length : int }
+  | Unsupported_adapter_feature of {
+      adapter : string;
+      feature : string;
+      message : string;
+    }
+  | Host_api_unavailable of { api : string; message : string }
+  | Host_api_error of { api : string; message : string }
+  | Host_policy_error of { policy : string; message : string }
   | Connection_protocol_violation of { kind : string; message : string }
   | Hpack_decode_overflow of { decoded_bytes : int; limit_bytes : int }
   | Continuation_flood of {

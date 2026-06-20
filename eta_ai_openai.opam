@@ -2,7 +2,7 @@
 opam-version: "2.0"
 synopsis: "OpenAI provider for Eta AI"
 description:
-  "eta_ai_openai provides OpenAI chat, streaming, and realtime clients for Eta."
+  "eta_ai_openai provides transport-neutral OpenAI chat, responses, embeddings, media, transcription, and realtime codec helpers for Eta."
 maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
 authors: ["Rafal Krzywaznia"]
 license: "MIT"
@@ -16,9 +16,6 @@ depends: [
   "eta_ai_openai_codec"
   "eta_redacted"
   "eta_http"
-  "eta_http_eio"
-  "eta_stream"
-  "eio" {>= "1.0"}
   "base64"
   "yojson" {>= "2.0"}
   "odoc" {with-doc}

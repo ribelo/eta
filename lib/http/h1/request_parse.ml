@@ -180,11 +180,11 @@ let parse_header buf line_start line_end =
         }
 
 let ensure_positive name value =
-  if value <= 0 then invalid_arg ("Eta_http.H1.Request_parse.parse: " ^ name)
+  if value <= 0 then invalid_arg ("Eta_http_h1.Request_parse.parse: " ^ name)
 
 let parse ?(max_request_line_bytes = 8 * 1024)
     ?(max_header_bytes = 32 * 1024) ?(max_headers = 256) buf ~len =
-  if len > Bytes.length buf then invalid_arg "Eta_http.H1.Request_parse.parse";
+  if len > Bytes.length buf then invalid_arg "Eta_http_h1.Request_parse.parse";
   ensure_positive "max_request_line_bytes must be > 0" max_request_line_bytes;
   ensure_positive "max_header_bytes must be > 0" max_header_bytes;
   ensure_positive "max_headers must be > 0" max_headers;

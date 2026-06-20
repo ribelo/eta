@@ -1,6 +1,6 @@
 open Test_eta_http_support
 
-module H2_core = Eta_http.H2
+module H2_core = Eta_http_h2
 
 let h2_request path : H2_core.Connection.Client.request =
   {

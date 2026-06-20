@@ -3,40 +3,40 @@ open Test_eta_http_h2_support
 
 let test_now_ms () = 0L
 
-let hpack_header name value = { Eta_http.Hpack.name; value; sensitive = false }
+let hpack_header name value = { Eta_http_h2.Hpack.name; value; sensitive = false }
 
-let hpack_block encoder headers = Eta_http.Hpack.encode_headers encoder headers
+let hpack_block encoder headers = Eta_http_h2.Hpack.encode_headers encoder headers
 
 let raw_headers encoder ?(end_stream = false) ~stream_id headers =
   let block = hpack_block encoder headers in
   let flags = 0x4 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length block)
-    ~frame_type:Eta_http.H2.Frame.Headers ~flags ~stream_id
+  Eta_http_h2.Frame.header ~length:(String.length block)
+    ~frame_type:Eta_http_h2.Frame.Headers ~flags ~stream_id
   ^ block
 
 let test_h2_multiplexer_reads_server_response () =
   let result = h2_read_result () in
   let server =
     h2_create_server (fun reqd ->
-        Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+        Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
           (h2_server_response ~body:(`String "hello-read") 200)
           "hello-read")
   in
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun _ -> result.client_errors <- result.client_errors + 1)
       ()
   in
   let request = h2_core_request ~target:"/reader" () in
   let request_body =
-    Eta_http.H2.Connection.Client.request client ~stream_id:1 request
+    Eta_http_h2.Connection.Client.request client ~stream_id:1 request
       ~error_handler:(fun _ _ ->
         result.stream_errors <- result.stream_errors + 1)
       ~response_handler:(fun _ response ->
         result.status <- Some response.status;
         h2_schedule_eta_body result response.body)
   in
-  Eta_http.H2.Body.Writer.close request_body;
+  Eta_http_h2.Body.Writer.close request_body;
   let request_bytes = Buffer.create 256 in
   let request_flow = Eio.Flow.buffer_sink request_bytes in
   (match Eta_http_eio.H2.Writer.drain_client ~flow:request_flow client with
@@ -71,7 +71,7 @@ let test_h2_multiplexer_reads_server_response () =
 
 let test_h2_multiplexer_read_exception_is_typed_result () =
   let client =
-    Eta_http.H2.Connection.Client.create ~error_handler:(fun _ -> ()) ()
+    Eta_http_h2.Connection.Client.create ~error_handler:(fun _ -> ()) ()
   in
   let reader =
     Eta_http_eio.H2.Multiplexer.create_client_reader ~now_ms:test_now_ms
@@ -99,25 +99,25 @@ let test_h2_default_reader_accepts_max_sized_data_frame () =
   let result = h2_read_result () in
   let server =
     h2_create_server (fun reqd ->
-        Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+        Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
           (h2_server_response ~body:(`String payload) 200)
           payload)
   in
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun _ -> result.client_errors <- result.client_errors + 1)
       ()
   in
   let request = h2_core_request ~target:"/max-data" () in
   let request_body =
-    Eta_http.H2.Connection.Client.request client ~stream_id:1 request
+    Eta_http_h2.Connection.Client.request client ~stream_id:1 request
       ~error_handler:(fun _ _ ->
         result.stream_errors <- result.stream_errors + 1)
       ~response_handler:(fun _ response ->
         result.status <- Some response.status;
         h2_schedule_eta_body result response.body)
   in
-  Eta_http.H2.Body.Writer.close request_body;
+  Eta_http_h2.Body.Writer.close request_body;
   let request_bytes = Buffer.create 256 in
   let request_flow = Eio.Flow.buffer_sink request_bytes in
   (match Eta_http_eio.H2.Writer.drain_client ~flow:request_flow client with
@@ -174,9 +174,9 @@ let test_h2_multiplexer_release_after_final_response () =
     | Error (Eta_http_eio.H2.Multiplexer.Request_failed message) ->
         Alcotest.failf "unexpected request failure: %s" message
   in
-  Eta_http.H2.Body.Writer.close opened.request_body;
-  let stream_id = Eta_http.H2.Stream_state.id opened.stream in
-  let encoder = Eta_http.Hpack.encoder_create 4096 in
+  Eta_http_h2.Body.Writer.close opened.request_body;
+  let stream_id = Eta_http_h2.Stream_state.id opened.stream in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
   let source =
     Eio.Flow.cstruct_source
       (h2_cstruct_chunks ~chunk_size:13
@@ -210,20 +210,20 @@ let test_h2_body_stream_async_bounded_recursion () =
   let total_size = num_chunks * String.length chunk_data in
   let mux_config =
     {
-      Eta_http.H2.Config.default with
+      Eta_http_h2.Config.default with
       response_body_buffer_size = total_size;
       initial_window_size = total_size * 2;
     }
   in
   let server_settings =
-    Eta_http.H2.Settings.create ~initial_window_size:(total_size * 2) ()
+    Eta_http_h2.Settings.create ~initial_window_size:(total_size * 2) ()
   in
   let held_writer = ref None in
   let server =
     h2_create_server ~config:server_settings (fun reqd ->
         held_writer :=
           Some
-            (Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+            (Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
                (h2_server_response 200)))
   in
   let mux = h2_mux_create ~config:mux_config (h2_mux_result ()) () in
@@ -245,7 +245,7 @@ let test_h2_body_stream_async_bounded_recursion () =
     | Ok opened -> opened
     | Error _ -> Alcotest.fail "request setup failed"
   in
-  Eta_http.H2.Body.Writer.close opened.request_body;
+  Eta_http_h2.Body.Writer.close opened.request_body;
   h2_pump_eta_client_server client server;
   let writer =
     match !held_writer with
@@ -253,9 +253,9 @@ let test_h2_body_stream_async_bounded_recursion () =
     | None -> Alcotest.fail "server did not install streaming writer"
   in
   for _ = 1 to num_chunks do
-    ignore (Eta_http.H2.Body.Writer.write_string writer chunk_data)
+    ignore (Eta_http_h2.Body.Writer.write_string writer chunk_data)
   done;
-  Eta_http.H2.Body.Writer.close writer;
+  Eta_http_h2.Body.Writer.close writer;
   h2_pump_eta_client_server client server;
   match !body_stream_ref with
   | None ->

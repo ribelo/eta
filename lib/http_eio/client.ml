@@ -9,7 +9,7 @@ module Response = Response
 module Retry = Retry
 module Shared = Eta_http.Client
 module Url = Url
-module H2_proto = Eta_http.H2
+module H2_proto = Eta_http_h2
 
 type protocol = Shared.protocol = H1 | H2 | Auto
 type stats = Shared.stats = {
@@ -28,7 +28,7 @@ type runtime_options = Shared.runtime_options = {
 type service = Shared.service = {
   request :
     runtime_options -> Request.t -> (Response.t, Error.t) Eta.Effect.t;
-  stats : runtime_options -> (stats, Error.t) Eta.Effect.t;
+  stats : runtime_options -> (stats option, Error.t) Eta.Effect.t;
   shutdown : runtime_options -> (unit, Error.t) Eta.Effect.t;
 }
 type t = Shared.t
@@ -130,26 +130,27 @@ let make_h1 ~sw ~net
   in
   let stats_impl () =
     Eta.Effect.pure
-      (pool_values ()
-       |> List.fold_left
-            (fun acc pool ->
-              let stats = H1_client.pool_stats pool in
-              {
-                protocol = H1;
-                active = acc.active + stats.Eta.Pool.active;
-                idle = acc.idle + stats.idle;
-                capacity = acc.capacity + stats.max_size;
-                opened = acc.opened + stats.opened;
-                released = acc.released + stats.closed;
-              })
-            {
-              protocol = H1;
-              active = 0;
-              idle = 0;
-              capacity = 0;
-              opened = 0;
-              released = 0;
-            })
+      (Some
+         (pool_values ()
+          |> List.fold_left
+               (fun acc pool ->
+                 let stats = H1_client.pool_stats pool in
+                 {
+                   protocol = H1;
+                   active = acc.active + stats.Eta.Pool.active;
+                   idle = acc.idle + stats.idle;
+                   capacity = acc.capacity + stats.max_size;
+                   opened = acc.opened + stats.opened;
+                   released = acc.released + stats.closed;
+                 })
+               {
+                 protocol = H1;
+                 active = 0;
+                 idle = 0;
+                 capacity = 0;
+                 opened = 0;
+                 released = 0;
+               }))
   in
   let shutdown_impl () =
     pool_values () |> List.map H1_client.shutdown_pool |> Eta.Effect.concat
@@ -172,14 +173,15 @@ let make_h1_direct ~sw ~net ?host_eio
   in
   let stats_impl () =
     Eta.Effect.pure
-      {
-        protocol = H1;
-        active = 0;
-        idle = 0;
-        capacity = 0;
-        opened = 0;
-        released = 0;
-      }
+      (Some
+         {
+           protocol = H1;
+           active = 0;
+           idle = 0;
+           capacity = 0;
+           opened = 0;
+           released = 0;
+         })
   in
   let shutdown_impl () = Eta.Effect.unit in
   Shared.make_custom ~protocol:H1 ~request:request_impl ~stats:stats_impl
@@ -490,14 +492,15 @@ let auto_stats_impl state () =
                released = 0;
              }
       in
-      {
-        protocol = !(state.last_protocol);
-        active = h2_stats.active;
-        idle = h2_stats.idle;
-        capacity = h2_stats.capacity;
-        opened = !(state.opened);
-        released = !(state.released);
-      })
+      Some
+        {
+          protocol = !(state.last_protocol);
+          active = h2_stats.active;
+          idle = h2_stats.idle;
+          capacity = h2_stats.capacity;
+          opened = !(state.opened);
+          released = !(state.released);
+        })
 
 let auto_shutdown_impl state () =
   Eta.Effect.sync (fun () ->

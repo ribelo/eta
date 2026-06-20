@@ -63,10 +63,10 @@ let test_server_config_validation () =
     { config with h2_config };
   let h2_security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate =
         {
-          Eta_http.H2.Security.burst = 0;
+          Eta_http_h2.Security.burst = 0;
           window_ms = 1_000;
           max_per_connection = None;
         };

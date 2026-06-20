@@ -1,12 +1,12 @@
 open Test_eta_http_support
 
 let h2_iovecs_to_string iovecs =
-  let len = Eta_http.H2.IOVec.lengthv iovecs in
+  let len = Eta_http_h2.Iovec.lengthv iovecs in
   let bytes = Bytes.create len in
   let dst_off = ref 0 in
   List.iter
-    (fun ({ Eta_http.H2.IOVec.buffer; off; len } :
-            Bigstringaf.t Eta_http.H2.IOVec.t) ->
+    (fun ({ Eta_http_h2.Iovec.buffer; off; len } :
+            Bigstringaf.t Eta_http_h2.Iovec.t) ->
       Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
         ~len;
       dst_off := !dst_off + len)
@@ -18,7 +18,7 @@ let h2_feed_client client data =
       if off < String.length data then (
         let len = String.length data - off in
         let buffer = Bigstringaf.of_string ~off ~len data in
-      let consumed = Eta_http.H2.Connection.read client buffer ~off:0 ~len in
+      let consumed = Eta_http_h2.Connection.read client buffer ~off:0 ~len in
       if consumed <= 0 then Alcotest.fail "client consumed no h2 bytes";
       loop (off + consumed))
   in
@@ -29,45 +29,45 @@ let h2_feed_server server data =
       if off < String.length data then (
         let len = String.length data - off in
         let buffer = Bigstringaf.of_string ~off ~len data in
-      let consumed = Eta_http.H2.Connection.read server buffer ~off:0 ~len in
+      let consumed = Eta_http_h2.Connection.read server buffer ~off:0 ~len in
       if consumed <= 0 then Alcotest.fail "server consumed no h2 bytes";
       loop (off + consumed))
   in
   loop 0
 
 let rec h2_drain_server_output server acc =
-  match Eta_http.H2.Connection.next_write_operation server with
+  match Eta_http_h2.Connection.next_write_operation server with
   | Write iovecs ->
       let data = h2_iovecs_to_string iovecs in
-      Eta_http.H2.Connection.report_write_result server (`Ok (String.length data));
+      Eta_http_h2.Connection.report_write_result server (`Ok (String.length data));
       h2_drain_server_output server (data :: acc)
   | Yield -> String.concat "" (List.rev acc)
   | Close _ ->
-      Eta_http.H2.Connection.report_write_result server `Closed;
+      Eta_http_h2.Connection.report_write_result server `Closed;
       String.concat "" (List.rev acc)
 
 let h2_drain_client_to_server client server =
-  match Eta_http.H2.Connection.next_write_operation client with
+  match Eta_http_h2.Connection.next_write_operation client with
   | Write iovecs ->
       let data = h2_iovecs_to_string iovecs in
-      Eta_http.H2.Connection.report_write_result client (`Ok (String.length data));
+      Eta_http_h2.Connection.report_write_result client (`Ok (String.length data));
       h2_feed_server server data;
       true
   | Yield -> false
   | Close _ ->
-      Eta_http.H2.Connection.report_write_result client `Closed;
+      Eta_http_h2.Connection.report_write_result client `Closed;
       false
 
 let h2_drain_server_to_client server client =
-  match Eta_http.H2.Connection.next_write_operation server with
+  match Eta_http_h2.Connection.next_write_operation server with
   | Write iovecs ->
       let data = h2_iovecs_to_string iovecs in
-      Eta_http.H2.Connection.report_write_result server (`Ok (String.length data));
+      Eta_http_h2.Connection.report_write_result server (`Ok (String.length data));
       h2_feed_client client data;
       true
   | Yield -> false
   | Close _ ->
-      Eta_http.H2.Connection.report_write_result server `Closed;
+      Eta_http_h2.Connection.report_write_result server `Closed;
       false
 
 let h2_pump_pair ?(limit = 10_000) client server =
@@ -119,7 +119,7 @@ let h2_read_result () =
 
 let h2_schedule_body result body =
   let rec loop () =
-    Eta_http.H2.Body.Reader.schedule_read body
+    Eta_http_h2.Body.Reader.schedule_read body
       ~on_eof:(fun () -> result.eof <- true)
       ~on_read:(fun bs ~off ~len ->
         Buffer.add_string result.body (Bigstringaf.substring bs ~off ~len);
@@ -129,7 +129,7 @@ let h2_schedule_body result body =
 
 let h2_schedule_eta_body result body =
   let rec loop () =
-    Eta_http.H2.Body.Reader.schedule_read body
+    Eta_http_h2.Body.Reader.schedule_read body
       ~on_eof:(fun () -> result.eof <- true)
       ~on_read:(fun bs ~off ~len ->
         Buffer.add_string result.body (Bigstringaf.substring bs ~off ~len);
@@ -139,7 +139,7 @@ let h2_schedule_eta_body result body =
 
 let h2_core_request ?(meth = "GET") ?(target = "/")
     ?(authority = "api.example.test") () :
-    Eta_http.H2.Connection.Client.request =
+    Eta_http_h2.Connection.Client.request =
   {
     meth;
     scheme = Some "https";
@@ -148,8 +148,8 @@ let h2_core_request ?(meth = "GET") ?(target = "/")
     headers = [];
   }
 
-let h2_pp_client_error (error : Eta_http.H2.Connection.error) =
-  Format.asprintf "protocol_error:%a:%s" Eta_http.H2.Error_code.pp_hum
+let h2_pp_client_error (error : Eta_http_h2.Connection.error) =
+  Format.asprintf "protocol_error:%a:%s" Eta_http_h2.Error_code.pp_hum
     error.error_code error.message
 
 type h2_mux_result = {
@@ -159,7 +159,7 @@ type h2_mux_result = {
   mutable mux_stream_errors : string list;
   mutable mux_client_errors : string list;
   mutable mux_stream : Eta_http_eio.H2.Multiplexer.stream option;
-  mutable mux_release : Eta_http.H2.Stream_state.release option;
+  mutable mux_release : Eta_http_h2.Stream_state.release option;
 }
 
 let h2_mux_result () =
@@ -181,7 +181,7 @@ let h2_mux_create ?max_concurrent ?config result () =
 
 let h2_schedule_mux_body mux result stream body =
   let rec loop () =
-    Eta_http.H2.Body.Reader.schedule_read body
+    Eta_http_h2.Body.Reader.schedule_read body
       ~on_eof:(fun () ->
         Eta_http_eio.H2.Multiplexer.mark_complete mux stream;
         result.mux_eof <- true)
@@ -205,7 +205,7 @@ let h2_method_to_string = function
 
 let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
     result =
-  let request : Eta_http.H2.Connection.Client.request =
+  let request : Eta_http_h2.Connection.Client.request =
     {
       meth = h2_method_to_string meth;
       scheme = Some "https";
@@ -235,26 +235,26 @@ let h2_open_mux_request ?(meth = `GET) ?body ?(target = "/") ?(tag = 0) mux
       (match body with
       | None -> ()
       | Some body ->
-          ignore (Eta_http.H2.Body.Writer.write_string opened.request_body body));
-      Eta_http.H2.Body.Writer.close opened.request_body;
+          ignore (Eta_http_h2.Body.Writer.write_string opened.request_body body));
+      Eta_http_h2.Body.Writer.close opened.request_body;
       Ok opened
 
 let h2_server_response ?(headers = []) ?(body = `String "") status :
-    Eta_http.H2.Connection.Server.response =
+    Eta_http_h2.Connection.Server.response =
   { status; headers; body; trailers = Lazy.from_val [] }
 
 let h2_create_server ?config request_handler =
-  Eta_http.H2.Connection.Server.create ?config ~request_handler
+  Eta_http_h2.Connection.Server.create ?config ~request_handler
     ~error_handler:(fun error ->
       Alcotest.failf "unexpected h2 server error: %a %s"
-        Eta_http.H2.Error_code.pp_hum error.error_code error.message)
+        Eta_http_h2.Error_code.pp_hum error.error_code error.message)
     ()
 
 let h2_server_read_body reqd ~on_done =
-  let body = Eta_http.H2.Connection.Server.Reqd.request_body reqd in
+  let body = Eta_http_h2.Connection.Server.Reqd.request_body reqd in
   let buffer = Buffer.create 4096 in
   let rec loop () =
-    Eta_http.H2.Body.Reader.schedule_read body
+    Eta_http_h2.Body.Reader.schedule_read body
       ~on_eof:(fun () -> on_done (Buffer.contents buffer))
       ~on_read:(fun bs ~off ~len ->
         Buffer.add_string buffer (Bigstringaf.substring bs ~off ~len);
@@ -264,26 +264,26 @@ let h2_server_read_body reqd ~on_done =
 
 
 let h2_frame_header ~length ~frame_type ~flags ~stream_id =
-  Eta_http.H2.Frame.header ~length ~frame_type:(Other frame_type) ~flags
+  Eta_http_h2.Frame.header ~length ~frame_type:(Other frame_type) ~flags
     ~stream_id
 
-let h2_uint32 = Eta_http.H2.Frame.uint32
+let h2_uint32 = Eta_http_h2.Frame.uint32
 
-let h2_settings_frame = Eta_http.H2.Frame.settings
+let h2_settings_frame = Eta_http_h2.Frame.settings
 
-let h2_goaway_no_error = Eta_http.H2.Frame.goaway_no_error
+let h2_goaway_no_error = Eta_http_h2.Frame.goaway_no_error
 
-let h2_payload = Eta_http.H2.Frame.payload
+let h2_payload = Eta_http_h2.Frame.payload
 
 let h2_observe_security data =
-  let security = Eta_http.H2.Security.create () in
+  let security = Eta_http_h2.Security.create () in
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
   match
-    Eta_http.H2.Security.observe_result security bs ~off:0
+    Eta_http_h2.Security.observe_result security bs ~off:0
       ~len:(String.length data) ~now_ms:0L
   with
-  | Eta_http.H2.Security.Pass -> None
-  | Eta_http.H2.Security.Connection_error { kind; _ }
-  | Eta_http.H2.Security.Stream_error { kind; _ }
-  | Eta_http.H2.Security.Policy_close { kind; _ } ->
+  | Eta_http_h2.Security.Pass -> None
+  | Eta_http_h2.Security.Connection_error { kind; _ }
+  | Eta_http_h2.Security.Stream_error { kind; _ }
+  | Eta_http_h2.Security.Policy_close { kind; _ } ->
       Some kind

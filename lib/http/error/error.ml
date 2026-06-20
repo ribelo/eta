@@ -41,6 +41,15 @@ type kind =
   | HTTP_status of { status : int; headers : (string * string) list }
   | Decode_error of { codec : string; message : string }
   | Body_too_large of { limit : int; length : int }
+  | Request_body_too_large of { limit : int; length : int }
+  | Unsupported_adapter_feature of {
+      adapter : string;
+      feature : string;
+      message : string;
+    }
+  | Host_api_unavailable of { api : string; message : string }
+  | Host_api_error of { api : string; message : string }
+  | Host_policy_error of { policy : string; message : string }
   | Connection_protocol_violation of { kind : string; message : string }
   | Hpack_decode_overflow of { decoded_bytes : int; limit_bytes : int }
   | Continuation_flood of {
@@ -115,6 +124,11 @@ let kind_name = function
   | HTTP_status _ -> "HTTP_status"
   | Decode_error _ -> "Decode_error"
   | Body_too_large _ -> "Body_too_large"
+  | Request_body_too_large _ -> "Request_body_too_large"
+  | Unsupported_adapter_feature _ -> "Unsupported_adapter_feature"
+  | Host_api_unavailable _ -> "Host_api_unavailable"
+  | Host_api_error _ -> "Host_api_error"
+  | Host_policy_error _ -> "Host_policy_error"
   | Connection_protocol_violation _ -> "Connection_protocol_violation"
   | Hpack_decode_overflow _ -> "Hpack_decode_overflow"
   | Continuation_flood _ -> "Continuation_flood"
@@ -138,6 +152,10 @@ let layer t =
   | Response_header_timeout _ | Total_request_timeout _ -> Http_request
   | Response_body_idle_timeout _ | HTTP_status _ -> Http_response
   | Decode_error _ | Body_too_large _ -> Body_decode
+  | Request_body_too_large _ -> Http_request
+  | Unsupported_adapter_feature _ | Host_api_unavailable _ | Host_api_error _
+  | Host_policy_error _ ->
+      Http_request
   | Connection_protocol_violation _ | Hpack_decode_overflow _
   | Continuation_flood _ | Stream_admission_rejected _ | Rst_count_exceeded _
   | Ping_count_exceeded _ | Empty_data_frame_count_exceeded _
@@ -150,7 +168,10 @@ let retryability t =
   | Tls_certificate_error _ -> Not_retryable
   | Tls_handshake_error { stage = Alpn_negotiation; _ } -> Not_retryable
   | Decode_error _ -> Retryable_if_body_replayable
-  | Body_too_large _ -> Not_retryable
+  | Body_too_large _ | Request_body_too_large _
+  | Unsupported_adapter_feature _ | Host_api_unavailable _ | Host_policy_error _ ->
+      Not_retryable
+  | Host_api_error _ -> Retryable_if_body_replayable
   | HTTP_status { status; _ } when status = 408 || status = 429 ->
       Retryable_if_body_replayable
   | HTTP_status { status; _ } when status >= 500 && status <= 599 ->
@@ -198,6 +219,11 @@ let error_class t =
       | None -> "http_status")
   | Decode_error _ -> "decode_error"
   | Body_too_large _ -> "body_too_large"
+  | Request_body_too_large _ -> "request_body_too_large"
+  | Unsupported_adapter_feature _ -> "unsupported_adapter_feature"
+  | Host_api_unavailable _ -> "host_api_unavailable"
+  | Host_api_error _ -> "host_api_error"
+  | Host_policy_error _ -> "host_policy_error"
   | Connection_protocol_violation _ -> "connection_protocol_violation"
   | Hpack_decode_overflow _ -> "hpack_decode_overflow"
   | Continuation_flood _ -> "continuation_flood"

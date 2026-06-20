@@ -62,7 +62,7 @@ module Reader = struct
         match t.state with
         | Open ->
             if Option.is_some t.callbacks then
-              invalid_arg "Eta_http.H2.Body.Reader.schedule_read: read already scheduled";
+              invalid_arg "Eta_http_h2.Body.Reader.schedule_read: read already scheduled";
             t.callbacks <- Some { on_read; on_eof }
         | Received_eof | Closed -> on_eof ())
 

@@ -2,7 +2,7 @@
 
 module Server = Eta_http.Server
 module Types = Server_types
-module H2 = Eta_http.H2
+module H2 = Eta_http_h2
 
 type flow = [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t
 
@@ -164,7 +164,7 @@ type t = {
   with_timeout : 'a. Eta.Duration.t -> (unit -> 'a) -> 'a;
   flow : flow;
   h2 : H2.Connection.t;
-  security : Eta_http.H2.Security.t;
+  security : Eta_http_h2.Security.t;
   mutable security_preface_remaining : int;
   ingress_buffer : Bigstringaf.t;
   max_ingress_buffer_size : int;
@@ -172,8 +172,8 @@ type t = {
   mutable ingress_len : int;
   mutable filter_preface_remaining : int;
   mutable filter_pending : string;
-  request_header_decoder : Eta_http.Hpack.t;
-  request_header_encoder : Eta_http.Hpack.encoder;
+  request_header_decoder : Eta_http_h2.Hpack.t;
+  request_header_encoder : Eta_http_h2.Hpack.encoder;
   mutable encoder_buffer : Bytes.t;
   mutable normalize_request_headers : bool;
   mutable request_header_block : request_header_block option;
@@ -771,9 +771,9 @@ let observe_ingress_security t bytes ~off ~len =
       t.security_preface_remaining <- t.security_preface_remaining - skipped;
       (off + skipped, len - skipped)
   in
-  if len = 0 then Eta_http.H2.Security.Pass
+  if len = 0 then Eta_http_h2.Security.Pass
   else
-    Eta_http.H2.Security.observe_result t.security bytes ~off ~len
+    Eta_http_h2.Security.observe_result t.security bytes ~off ~len
       ~now_ms:(t.now_ms ())
 
 let frame_header_size = 9
@@ -816,7 +816,7 @@ let h2_compression_error = 9
 let h2_enhance_your_calm = 11
 
 let configured_max_frame_size t =
-  t.config.Types.Config.h2_config.Eta_http.H2.Config.read_buffer_size
+  t.config.Types.Config.h2_config.Eta_http_h2.Config.read_buffer_size
 
 let h2_filter_protocol_violation ~kind ~message =
   Eta_http.Error.Connection_protocol_violation { kind; message }
@@ -852,10 +852,10 @@ let request_header_error message =
   h2_filter_protocol_violation ~kind:"h2_request_headers" ~message
 
 let connection_filter_error ?(code = 1) kind =
-  Eta_http.H2.Security.Connection_error { code; kind }
+  Eta_http_h2.Security.Connection_error { code; kind }
 
 let stream_filter_error ?(code = 1) ~stream_id kind =
-  Eta_http.H2.Security.Stream_error { stream_id; code; kind }
+  Eta_http_h2.Security.Stream_error { stream_id; code; kind }
 
 let code s i = Char.code (String.unsafe_get s i)
 
@@ -918,15 +918,15 @@ let request_header_fragment flags payload =
     else Ok (String.sub payload !pos (len - !pos - pad_len)))
 
 let decode_request_header_block t block =
-  let result = Eta_http.Hpack.decode_headers_string t.request_header_decoder block in
+  let result = Eta_http_h2.Hpack.decode_headers_string t.request_header_decoder block in
   result
   |> Result.map_error (fun _ -> request_trailer_error "HPACK decoding error")
 
-let encode_request_header_block t (headers : Eta_http.Hpack.header list) =
+let encode_request_header_block t (headers : Eta_http_h2.Hpack.header list) =
   let buf = t.encoder_buffer in
   let pos_ref = ref 0 in
   List.iter
-    (Eta_http.Hpack.encode_single_header t.request_header_encoder buf pos_ref)
+    (Eta_http_h2.Hpack.encode_single_header t.request_header_encoder buf pos_ref)
     headers;
   Bytes.sub_string buf 0 !pos_ref
 
@@ -943,21 +943,21 @@ let emit_header_block t ~stream_id ~end_stream block =
         lor (if first && end_stream then flag_end_stream else 0)
       in
       let frame_type =
-        if first then Eta_http.H2.Frame.Headers
-        else Eta_http.H2.Frame.Continuation
+        if first then Eta_http_h2.Frame.Headers
+        else Eta_http_h2.Frame.Continuation
       in
       Buffer.add_string output
-        (Eta_http.H2.Frame.header ~length:remaining ~frame_type ~flags
+        (Eta_http_h2.Frame.header ~length:remaining ~frame_type ~flags
            ~stream_id);
       Buffer.add_substring output block off remaining)
     else (
       let flags = if first && end_stream then flag_end_stream else 0 in
       let frame_type =
-        if first then Eta_http.H2.Frame.Headers
-        else Eta_http.H2.Frame.Continuation
+        if first then Eta_http_h2.Frame.Headers
+        else Eta_http_h2.Frame.Continuation
       in
       Buffer.add_string output
-        (Eta_http.H2.Frame.header ~length:max_payload ~frame_type ~flags
+        (Eta_http_h2.Frame.header ~length:max_payload ~frame_type ~flags
            ~stream_id);
       Buffer.add_substring output block off max_payload;
       loop (off + max_payload) false)
@@ -966,13 +966,13 @@ let emit_header_block t ~stream_id ~end_stream block =
   Buffer.contents output
 
 let end_stream_data_frame stream_id =
-  Eta_http.H2.Frame.header ~length:0 ~frame_type:Data ~flags:flag_end_stream
+  Eta_http_h2.Frame.header ~length:0 ~frame_type:Data ~flags:flag_end_stream
     ~stream_id
 
 let rst_stream_frame ~stream_id error_code =
-  Eta_http.H2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
+  Eta_http_h2.Frame.header ~length:4 ~frame_type:Rst_stream ~flags:0
     ~stream_id
-  ^ Eta_http.H2.Frame.uint32 error_code
+  ^ Eta_http_h2.Frame.uint32 error_code
 
 let validate_request_trailers t trailers =
   let limits = t.config.server.limits in
@@ -1061,7 +1061,7 @@ let complete_request_header_block t block =
                     (encode_request_header_block t
                        (List.map
                           (fun (name, value) ->
-                            { Eta_http.Hpack.name; value; sensitive = false })
+                            { Eta_http_h2.Hpack.name; value; sensitive = false })
                           headers)))))
           else
             (match validate_request_trailers t headers with
@@ -1972,7 +1972,7 @@ let trace_ingress_owner_done t ~read_returned_us ~len =
            len (ack_us - read_returned_us) ack_us)
 
 let copy_write_job t iovecs =
-  let len = H2.IOVec.lengthv iovecs in
+  let len = H2.Iovec.lengthv iovecs in
   (* Reuse a per-connection write buffer instead of allocating Bytes.create +
      Cstruct.of_bytes (a fresh Bigarray) per write job. Safe because the
      write_pending guard keeps at most one write job in flight: the previous
@@ -1984,7 +1984,7 @@ let copy_write_job t iovecs =
     t.write_buffer <- Cstruct.create len;
   let dst_off = ref 0 in
   List.iter
-    (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
+    (fun ({ H2.Iovec.buffer; off; len } : Bigstringaf.t H2.Iovec.t) ->
       let src = Cstruct.of_bigarray ~off ~len buffer in
       Cstruct.blit src 0 t.write_buffer !dst_off len;
       dst_off := !dst_off + len)
@@ -2039,7 +2039,7 @@ let write_job t job =
               raise exn)
 
 let schedule_write_iovecs t iovecs =
-  let len = H2.IOVec.lengthv iovecs in
+  let len = H2.Iovec.lengthv iovecs in
   if len = 0 then (
     H2.Connection.report_write_result t.h2 (`Ok 0);
     true)
@@ -2067,14 +2067,14 @@ let rec drain_writes ?(budget = h2_write_batch_budget) t =
         (try Eio.Flow.shutdown t.flow `Send with _ -> ())
 
 let h2_read_buffer_size config =
-  config.Types.Config.h2_config.Eta_http.H2.Config.read_buffer_size
+  config.Types.Config.h2_config.Eta_http_h2.Config.read_buffer_size
 
 let max_ingress_buffer_size config =
   config.Types.Config.read_buffer_size + h2_read_buffer_size config
-  + Eta_http.H2.Frame.header_size
+  + Eta_http_h2.Frame.header_size
 
-let stream_table_initial_capacity (h2_config : Eta_http.H2.Config.t) =
-  min h2_config.Eta_http.H2.Config.max_concurrent_streams 256
+let stream_table_initial_capacity (h2_config : Eta_http_h2.Config.t) =
+  min h2_config.Eta_http_h2.Config.max_concurrent_streams 256
 
 let limited_h2_config (config : Types.Config.t) =
   let limits = config.server.limits in
@@ -2085,7 +2085,7 @@ let limited_h2_config (config : Types.Config.t) =
   in
   {
     h2_config with
-    Eta_http.H2.Config.max_header_count =
+    Eta_http_h2.Config.max_header_count =
       min limits.max_request_headers h2_config.max_header_count;
     max_header_list_size =
       cap limits.max_request_header_bytes h2_config.max_header_list_size;
@@ -2180,7 +2180,7 @@ let close_request_body state =
 
 let forget_stream t ordinal state =
   state.response_writer <- None;
-  Eta_http.H2.Security.complete_stream t.security state.stream_id;
+  Eta_http_h2.Security.complete_stream t.security state.stream_id;
   Hashtbl.remove t.stream_ordinals state.stream_id;
   Hashtbl.remove t.stream_ids_by_ordinal ordinal;
   Hashtbl.remove t.remote_end_streams state.stream_id;
@@ -2480,10 +2480,10 @@ let fail_open_request_bodies t =
     ordinals
 
 let goaway_error_frame ~last_stream_id error_code =
-  Eta_http.H2.Frame.header ~length:8 ~frame_type:Goaway ~flags:0
+  Eta_http_h2.Frame.header ~length:8 ~frame_type:Goaway ~flags:0
     ~stream_id:0
-  ^ Eta_http.H2.Frame.uint32 last_stream_id
-  ^ Eta_http.H2.Frame.uint32 error_code
+  ^ Eta_http_h2.Frame.uint32 last_stream_id
+  ^ Eta_http_h2.Frame.uint32 error_code
 
 let h2_error_code_of_kind = function
   | Eta_http.Error.Connection_protocol_violation { kind = "stream_closed"; _ } ->
@@ -2521,7 +2521,7 @@ let write_goaway_error t ~code _kind =
   try Eio.Flow.write t.flow [ Cstruct.of_string frame ] with _ -> ()
 
 let cleanup_stream_sidecars t ordinal stream_id =
-  Eta_http.H2.Security.complete_stream t.security stream_id;
+  Eta_http_h2.Security.complete_stream t.security stream_id;
   Hashtbl.remove t.stream_ordinals stream_id;
   Hashtbl.remove t.stream_ids_by_ordinal ordinal;
   Hashtbl.remove t.remote_end_streams stream_id;
@@ -2533,7 +2533,7 @@ let cleanup_stream_sidecars t ordinal stream_id =
 let cleanup_stream_sidecars_by_stream_id t stream_id =
   match Hashtbl.find_opt t.stream_ordinals stream_id with
   | None ->
-      Eta_http.H2.Security.complete_stream t.security stream_id;
+      Eta_http_h2.Security.complete_stream t.security stream_id;
       Hashtbl.remove t.remote_end_streams stream_id;
       Hashtbl.remove t.remote_reset_streams stream_id;
       Hashtbl.remove t.graceful_rejected_streams stream_id
@@ -2543,7 +2543,7 @@ let maybe_write_graceful_goaway t =
   if t.graceful_shutdown && not t.graceful_shutdown_goaway_sent then (
     t.graceful_shutdown_goaway_sent <- true;
     enqueue_control_frame t
-      (Eta_http.H2.Frame.goaway_no_error
+      (Eta_http_h2.Frame.goaway_no_error
          ~last_stream_id:(graceful_shutdown_cutoff t)));
   flush_control_frames t
 
@@ -2569,12 +2569,12 @@ let handle_security_stream_error t ~stream_id ~code kind =
   flush_control_frames t
 
 let handle_security_observation t = function
-  | Eta_http.H2.Security.Pass -> false
-  | Eta_http.H2.Security.Connection_error { code; kind }
-  | Eta_http.H2.Security.Policy_close { code; kind } ->
+  | Eta_http_h2.Security.Pass -> false
+  | Eta_http_h2.Security.Connection_error { code; kind }
+  | Eta_http_h2.Security.Policy_close { code; kind } ->
       handle_security_error t ~code kind;
       true
-  | Eta_http.H2.Security.Stream_error { stream_id; code; kind } ->
+  | Eta_http_h2.Security.Stream_error { stream_id; code; kind } ->
       handle_security_stream_error t ~stream_id ~code kind;
       true
 
@@ -2954,7 +2954,7 @@ let handle_command t = function
                       apply_remote_resets t;
                       flush_writes t)))
   | Ingress_eof ->
-      if Eta_http.H2.Security.has_open_header_block t.security then
+      if Eta_http_h2.Security.has_open_header_block t.security then
         handle_security_error t
           ~code:(h2_error_code_of_kind incomplete_header_block_eof_error)
           incomplete_header_block_eof_error
@@ -3590,7 +3590,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
   ()
   in
   let security =
-    Eta_http.H2.Security.create
+    Eta_http_h2.Security.create
       ?config:config.Types.Config.h2_security_config ()
   in
   let closed_signal, close_signal = Eio.Promise.create () in
@@ -3612,8 +3612,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       ingress_len = 0;
       filter_preface_remaining = h2_client_connection_preface_length;
       filter_pending = "";
-      request_header_decoder = Eta_http.Hpack.create 4096;
-      request_header_encoder = Eta_http.Hpack.encoder_create 4096;
+      request_header_decoder = Eta_http_h2.Hpack.create 4096;
+      request_header_encoder = Eta_http_h2.Hpack.encoder_create 4096;
       encoder_buffer = Bytes.create 4096;
       normalize_request_headers = false;
       request_header_block = None;

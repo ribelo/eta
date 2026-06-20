@@ -121,7 +121,7 @@ let test_client ?(with_http_span = false) response captured =
     else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request
-    ~stats:(fun () -> E.pure zero_stats)
+    ~stats:(fun () -> E.pure (Some zero_stats))
     ~shutdown:(fun () -> E.unit)
 
 let request_body_string (request : H.Request.t) =

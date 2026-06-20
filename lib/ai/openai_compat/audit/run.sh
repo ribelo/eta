@@ -4,15 +4,23 @@ set -euo pipefail
 root="${1:-lib/ai/openai_compat}"
 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-dep_pattern='Eta_ai\.|Eta_ai_openai\.|Eta_redacted\.|Eta_http\.|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken'
+dep_pattern='Eta_ai\.|Eta_ai_openai\.|Eta_redacted\.|Eta_http\.|Eta_http_eio|Eta_http_js|Eta_jsoo|Js_of_ocaml|Eta\.(Effect|Eta_redacted|Runtime)|Eio\.|Openai|Anthropic|Tiktoken'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
 dep_sites="$(mktemp)"
 escape_sites="$(mktemp)"
-trap 'rm -f "$dep_sites" "$escape_sites"' EXIT
+forbidden_sites="$(mktemp)"
+trap 'rm -f "$dep_sites" "$escape_sites" "$forbidden_sites"' EXIT
 
 rg -n -t ocaml "$dep_pattern" "$root" >"$dep_sites" || true
+if [ -f "$root/dune" ]; then
+  rg -n '(^|[[:space:]])(eta_http_eio|eta_http_js|eta_jsoo|eta_js|eio|js_of_ocaml)($|[[:space:]])' "$root/dune" >>"$dep_sites" || true
+fi
 rg -n -t ocaml "$escape_pattern" "$root" >"$escape_sites" || true
+rg -n -t ocaml 'Eta_http_eio|Eta_http_js|Eta_jsoo|Js_of_ocaml|Eio\.' "$root" >"$forbidden_sites" || true
+if [ -f "$root/dune" ]; then
+  rg -n '(^|[[:space:]])(eta_http_eio|eta_http_js|eta_jsoo|eta_js|eio|js_of_ocaml)($|[[:space:]])' "$root/dune" >>"$forbidden_sites" || true
+fi
 
 dep_count="$(wc -l <"$dep_sites" | tr -d ' ')"
 escape_count="$(wc -l <"$escape_sites" | tr -d ' ')"
@@ -72,4 +80,10 @@ fi
 if [ "$escape_count" -gt 0 ]; then
   printf '\nEta escape matches:\n'
   sed -n '1,200p' "$escape_sites"
+fi
+
+if [ -s "$forbidden_sites" ]; then
+  printf '\nForbidden backend dependency matches:\n'
+  sed -n '1,200p' "$forbidden_sites"
+  exit 1
 fi

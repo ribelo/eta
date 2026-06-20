@@ -10,10 +10,10 @@ let headers_gen = bounded_list 8 header_gen
 let body_gen =
   Crowbar.choose
     [
-      Crowbar.const Eta_http.H1.Write.Empty;
+      Crowbar.const Eta_http_h1.Write.Empty;
       Crowbar.map
         [ bounded_list 4 (bounded_bytes 128) ]
-        (fun chunks -> Eta_http.H1.Write.Fixed chunks);
+        (fun chunks -> Eta_http_h1.Write.Fixed chunks);
     ]
 
 let url = Eta_http.Core.Url.of_string "https://example.test:8443/fuzz/path?x=1"
@@ -23,16 +23,16 @@ let () =
     [ bounded_string 16; headers_gen; body_gen ]
     (fun method_ headers body ->
       let string_result =
-        Eta_http.H1.Write.to_string ~method_ ~url ~headers ~body
+        Eta_http_h1.Write.to_string ~method_ ~url ~headers ~body
       in
       let bytes = Bytes.make 8192 '\000' in
       let bytes_result =
-        Eta_http.H1.Write.write_to_bytes bytes ~pos:0 ~method_ ~url ~headers
+        Eta_http_h1.Write.write_to_bytes bytes ~pos:0 ~method_ ~url ~headers
           ~body
       in
       let buffer = Buffer.create 512 in
       let buffer_result =
-        Eta_http.H1.Write.write buffer ~method_ ~url ~headers ~body
+        Eta_http_h1.Write.write buffer ~method_ ~url ~headers ~body
       in
       let flow_buffer = Buffer.create 512 in
       let flow = Eio.Flow.buffer_sink flow_buffer in

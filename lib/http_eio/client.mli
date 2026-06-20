@@ -17,7 +17,7 @@ type runtime_options = Eta_http.Client.runtime_options = {
 type service = Eta_http.Client.service = {
   request :
     runtime_options -> Eta_http.Request.t -> (Eta_http.Response.t, Eta_http.Error.t) Eta.Effect.t;
-  stats : runtime_options -> (stats, Eta_http.Error.t) Eta.Effect.t;
+  stats : runtime_options -> (stats option, Eta_http.Error.t) Eta.Effect.t;
   shutdown : runtime_options -> (unit, Eta_http.Error.t) Eta.Effect.t;
 }
 type t = Eta_http.Client.t
@@ -28,7 +28,7 @@ val default_max_response_body_bytes : int
     close-delimited HTTP/1.1 responses. *)
 
 val protocol : t -> protocol
-val stats : t -> (stats, Eta_http.Error.t) Eta.Effect.t
+val stats : t -> (stats option, Eta_http.Error.t) Eta.Effect.t
 val shutdown : t -> (unit, Eta_http.Error.t) Eta.Effect.t
 val request : t -> Eta_http.Request.t -> (Eta_http.Response.t, Eta_http.Error.t) Eta.Effect.t
 val request_with_retry :

@@ -7,7 +7,7 @@ per-stream state while keeping admission bounded by ACTIVE+CANCELLED streams?
 
 ## Implementation
 
-- `Eta_http.H2.Stream_state` wraps `Eta_http.H2.Admission` permits.
+- `Eta_http_h2.Stream_state` wraps `Eta_http_h2.Admission` permits.
 - Each stream stores its public lifecycle status in `Portable.Atomic`:
   `Active`, `Remote_reset`, `Complete`, or `Released`.
 - Remote reset moves the stream from active to cancelled admission, but the

@@ -15,6 +15,10 @@ depends: [
   "eta_blocking"
   "eta_eio"
   "eta_http"
+  "eta_http_h1"
+  "eta_http_h2"
+  "eta_http_tls_openssl"
+  "eta_http_ws"
   "eta_stream"
   "eio" {>= "1.0"}
   "cstruct" {>= "6.0.0"}

@@ -20,7 +20,7 @@ type runtime_options = {
 type service = {
   request :
     runtime_options -> Request.t -> (Response.t, Error.t) Eta.Effect.t;
-  stats : runtime_options -> (stats, Error.t) Eta.Effect.t;
+  stats : runtime_options -> (stats option, Error.t) Eta.Effect.t;
   shutdown : runtime_options -> (unit, Error.t) Eta.Effect.t;
 }
 
@@ -30,7 +30,7 @@ val protocol_to_string : protocol -> string
 val default_max_response_body_bytes : int
 
 val protocol : t -> protocol
-val stats : t -> (stats, Error.t) Eta.Effect.t
+val stats : t -> (stats option, Error.t) Eta.Effect.t
 val shutdown : t -> (unit, Error.t) Eta.Effect.t
 val request : t -> Request.t -> (Response.t, Error.t) Eta.Effect.t
 
@@ -54,7 +54,7 @@ val make_runtime :
 val make_custom :
   protocol:protocol ->
   request:(Request.t -> (Response.t, Error.t) Eta.Effect.t) ->
-  stats:(unit -> (stats, Error.t) Eta.Effect.t) ->
+  stats:(unit -> (stats option, Error.t) Eta.Effect.t) ->
   shutdown:(unit -> (unit, Error.t) Eta.Effect.t) ->
   t
 (** Build a client from custom request, stats, and shutdown handlers. *)

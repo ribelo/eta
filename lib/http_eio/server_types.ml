@@ -53,8 +53,8 @@ module Config = struct
     command_queue_capacity : int;
     tls_handshake_timeout : Eta.Duration.t;
     server : Eta_http.Server.Config.t;
-    h2_config : Eta_http.H2.Config.t;
-    h2_security_config : Eta_http.H2.Security.config option;
+    h2_config : Eta_http_h2.Config.t;
+    h2_security_config : Eta_http_h2.Security.config option;
   }
 
   let default =
@@ -65,7 +65,7 @@ module Config = struct
       command_queue_capacity = 1024;
       tls_handshake_timeout = Eta.Duration.seconds 10;
       server = Eta_http.Server.Config.default;
-      h2_config = { Eta_http.H2.Config.default with max_concurrent_streams = 128 };
+      h2_config = { Eta_http_h2.Config.default with max_concurrent_streams = 128 };
       h2_security_config = None;
     }
 
@@ -102,9 +102,9 @@ module Config = struct
     if value < 0x4000 || value > 0xffffff then
       invalid_arg (field name ^ " must be between 16384 and 16777215")
 
-  let validate_h2_config (config : Eta_http.H2.Config.t) =
+  let validate_h2_config (config : Eta_http_h2.Config.t) =
     validate_h2_frame_size "h2_config.read_buffer_size"
-      config.Eta_http.H2.Config.read_buffer_size;
+      config.Eta_http_h2.Config.read_buffer_size;
     require_positive "h2_config.request_body_buffer_size"
       config.request_body_buffer_size;
     require_positive "h2_config.response_body_buffer_size"
@@ -119,8 +119,8 @@ module Config = struct
     require_positive "h2_config.max_header_count" config.max_header_count
 
   let validate_h2_security_config
-      (config : Eta_http.H2.Security.config) =
-    let require_rate_limit name (limit : Eta_http.H2.Security.rate_limit) =
+      (config : Eta_http_h2.Security.config) =
+    let require_rate_limit name (limit : Eta_http_h2.Security.rate_limit) =
       require_positive (name ^ ".burst") limit.burst;
       require_positive (name ^ ".window_ms") limit.window_ms;
       Option.iter

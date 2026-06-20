@@ -1,6 +1,6 @@
 (executable
  (name run)
- (libraries eta_http_testsuite eio_main)
+ (libraries eta_http_testsuite eta_http_tls_openssl eta_http_ws eio_main)
  (flags (:standard -w +a -warn-error +a)))
 
 (rule

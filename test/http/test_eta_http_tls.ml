@@ -1,5 +1,7 @@
 open Test_eta_http_support
 
+module Dispatch = Eta_http_eio.Transport.Dispatch
+
 let read_file path =
   let input = open_in path in
   Fun.protect
@@ -127,30 +129,30 @@ let with_temp_ca_bundle certs f =
   with_temp_file "eta-http-ca-bundle" contents f
 
 let pump_tls src dst =
-  let pending = Eta_http__Openssl.bio_write_pending src in
+  let pending = Eta_http_tls_openssl.bio_write_pending src in
   if pending = 0 then 0
   else
     let scratch = Cstruct.create pending in
     let buffer = Cstruct.to_bigarray scratch in
-    let read = Eta_http__Openssl.bio_read src buffer 0 pending in
+    let read = Eta_http_tls_openssl.bio_read src buffer 0 pending in
     if read = 0 then 0
     else
-      let written = Eta_http__Openssl.bio_write dst buffer 0 read in
+      let written = Eta_http_tls_openssl.bio_write dst buffer 0 read in
       Alcotest.(check int) "pumped TLS bytes" read written;
       written
 
 let tls_handshake_state label ssl =
-  match Eta_http__Openssl.handshake ssl with
-  | Eta_http__Openssl.Handshake_ok -> `Done
-  | Eta_http__Openssl.Handshake_error (2 | 3) -> `Pending
-  | Eta_http__Openssl.Handshake_error code ->
+  match Eta_http_tls_openssl.handshake ssl with
+  | Eta_http_tls_openssl.Handshake_ok -> `Done
+  | Eta_http_tls_openssl.Handshake_error (2 | 3) -> `Pending
+  | Eta_http_tls_openssl.Handshake_error code ->
       Alcotest.failf "%s handshake failed with SSL_get_error=%d" label code
 
 let tls_handshake_step ssl =
-  match Eta_http__Openssl.handshake ssl with
-  | Eta_http__Openssl.Handshake_ok -> `Done
-  | Eta_http__Openssl.Handshake_error (2 | 3) -> `Pending
-  | Eta_http__Openssl.Handshake_error code -> `Failed code
+  match Eta_http_tls_openssl.handshake ssl with
+  | Eta_http_tls_openssl.Handshake_ok -> `Done
+  | Eta_http_tls_openssl.Handshake_error (2 | 3) -> `Pending
+  | Eta_http_tls_openssl.Handshake_error code -> `Failed code
 
 let drive_tls_handshake client server =
   let rec loop remaining client_done server_done =
@@ -174,7 +176,7 @@ let drain_tls_post_handshake client server =
     if remaining = 0 then ()
     else (
       ignore (pump_tls server client + pump_tls client server : int);
-      ignore (Eta_http__Openssl.read client scratch 0 1 : int);
+      ignore (Eta_http_tls_openssl.read client scratch 0 1 : int);
       loop (remaining - 1))
   in
   loop 20
@@ -371,11 +373,11 @@ let connect_https_h2_tls_flow ~sw ~net ~cert port =
   Eta_http_eio.Tls.Eio.client_of_flow (https_h2_client_config cert) raw_flow
 
 let h2_settings_ack =
-  Eta_http.H2.Frame.header ~length:0 ~frame_type:Settings ~flags:1
+  Eta_http_h2.Frame.header ~length:0 ~frame_type:Settings ~flags:1
     ~stream_id:0
 
 let h2_ping payload =
-  Eta_http.H2.Frame.header ~length:(String.length payload) ~frame_type:Ping
+  Eta_http_h2.Frame.header ~length:(String.length payload) ~frame_type:Ping
     ~flags:0 ~stream_id:0
   ^ payload
 
@@ -385,11 +387,11 @@ let openssl_zero_return = 6
 
 let drain_openssl_client_to_flow ssl flow =
   let rec loop () =
-    let pending = Eta_http__Openssl.bio_write_pending ssl in
+    let pending = Eta_http_tls_openssl.bio_write_pending ssl in
     if pending > 0 then (
       let encrypted = Cstruct.create pending in
       let len =
-        Eta_http__Openssl.bio_read ssl (Cstruct.to_bigarray encrypted) 0
+        Eta_http_tls_openssl.bio_read ssl (Cstruct.to_bigarray encrypted) 0
           pending
       in
       if len > 0 then (
@@ -407,41 +409,41 @@ let feed_openssl_client_from_flow ~clock ssl flow =
   | 0 -> `Eof
   | len ->
       let written =
-        Eta_http__Openssl.bio_write ssl (Cstruct.to_bigarray encrypted) 0 len
+        Eta_http_tls_openssl.bio_write ssl (Cstruct.to_bigarray encrypted) 0 len
       in
       Alcotest.(check int) "fed encrypted TLS bytes" len written;
       `Fed
   | exception End_of_file -> `Eof
 
 let h2_openssl_client cert =
-  let ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca ctx cert;
-  Eta_http__Openssl.create_ssl ctx ~hostname:(Some "localhost") ~ip:None
+  let ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca ctx cert;
+  Eta_http_tls_openssl.create_ssl ctx ~hostname:(Some "localhost") ~ip:None
     ~alpn_protocols:[ "h2" ]
 
 let drive_openssl_client_handshake ~clock ssl flow =
   let rec loop remaining =
     if remaining = 0 then Alcotest.fail "OpenSSL client handshake timed out"
     else
-      match Eta_http__Openssl.handshake ssl with
-      | Eta_http__Openssl.Handshake_ok ->
+      match Eta_http_tls_openssl.handshake ssl with
+      | Eta_http_tls_openssl.Handshake_ok ->
           drain_openssl_client_to_flow ssl flow;
           Alcotest.(check int) "client certificate verified" 0
-            (Eta_http__Openssl.get_verify_result ssl);
+            (Eta_http_tls_openssl.get_verify_result ssl);
           Alcotest.(check (option string)) "client selected h2" (Some "h2")
-            (Eta_http__Openssl.get_alpn_selected ssl)
-      | Eta_http__Openssl.Handshake_error code
+            (Eta_http_tls_openssl.get_alpn_selected ssl)
+      | Eta_http_tls_openssl.Handshake_error code
         when code = openssl_want_read ->
           drain_openssl_client_to_flow ssl flow;
           (match feed_openssl_client_from_flow ~clock ssl flow with
           | `Fed -> loop (remaining - 1)
           | `Eof -> Alcotest.fail "raw EOF during OpenSSL client handshake")
-      | Eta_http__Openssl.Handshake_error code
+      | Eta_http_tls_openssl.Handshake_error code
         when code = openssl_want_write ->
           drain_openssl_client_to_flow ssl flow;
           Eio.Fiber.yield ();
           loop (remaining - 1)
-      | Eta_http__Openssl.Handshake_error code ->
+      | Eta_http_tls_openssl.Handshake_error code ->
           Alcotest.failf "OpenSSL client handshake failed with SSL_get_error=%d"
             code
   in
@@ -452,7 +454,7 @@ let write_openssl_client_plaintext ~clock ssl flow bytes =
   let storage = Cstruct.to_bigarray plaintext in
   let rec loop off len =
     if len > 0 then (
-      let rc = Eta_http__Openssl.write ssl storage off len in
+      let rc = Eta_http_tls_openssl.write ssl storage off len in
       drain_openssl_client_to_flow ssl flow;
       if rc > 0 then loop (off + rc) (len - rc)
       else
@@ -475,7 +477,7 @@ let read_openssl_client_plaintext ~clock ssl flow =
   let storage = Cstruct.to_bigarray plaintext in
   let rec loop () =
     let rc =
-      Eta_http__Openssl.read ssl storage 0 (Cstruct.length plaintext)
+      Eta_http_tls_openssl.read ssl storage 0 (Cstruct.length plaintext)
     in
     if rc > 0 then
       `Data (Cstruct.to_string (Cstruct.sub plaintext 0 rc))
@@ -568,18 +570,18 @@ let with_https_h2_connection ?config ~cert ~key ~env ~sw handler f =
 
 let test_openssl_ssl_finalizer_keeps_ctx_ownership_separate () =
   let exercise_shared_ctx () =
-    let ctx = Eta_http__Openssl.create_ctx () in
+    let ctx = Eta_http_tls_openssl.create_ctx () in
     let ssl_a =
-      Eta_http__Openssl.create_ssl ctx ~hostname:None ~ip:None ~alpn_protocols:[]
+      Eta_http_tls_openssl.create_ssl ctx ~hostname:None ~ip:None ~alpn_protocols:[]
     in
     let ssl_b =
-      Eta_http__Openssl.create_ssl ctx ~hostname:None ~ip:None ~alpn_protocols:[]
+      Eta_http_tls_openssl.create_ssl ctx ~hostname:None ~ip:None ~alpn_protocols:[]
     in
     Gc.full_major ();
     Alcotest.(check int)
       "pending bytes before handshake" 0
-      (Eta_http__Openssl.bio_write_pending ssl_a);
-    ignore (Eta_http__Openssl.bio_write_pending ssl_b : int)
+      (Eta_http_tls_openssl.bio_write_pending ssl_a);
+    ignore (Eta_http_tls_openssl.bio_write_pending ssl_b : int)
   in
   exercise_shared_ctx ();
   Gc.full_major ();
@@ -588,135 +590,135 @@ let test_openssl_ssl_finalizer_keeps_ctx_ownership_separate () =
 let test_openssl_server_ctx_loads_cert_key_and_creates_ssl () =
   with_temp_tls_files @@ fun cert key ->
   let ctx =
-    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+    Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
       ()
   in
-  let ssl = Eta_http__Openssl.create_server_ssl ctx in
+  let ssl = Eta_http_tls_openssl.create_server_ssl ctx in
   Alcotest.(check int)
     "pending bytes before handshake" 0
-    (Eta_http__Openssl.bio_write_pending ssl)
+    (Eta_http_tls_openssl.bio_write_pending ssl)
 
 let test_openssl_server_alpn_selects_client_protocol () =
   with_temp_tls_files @@ fun cert key ->
   let server_ctx =
-    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+    Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "h2"; "http/1.1" ]
       ()
   in
-  let client_ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca client_ctx cert;
-  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client_ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca client_ctx cert;
+  let server = Eta_http_tls_openssl.create_server_ssl server_ctx in
   let client =
-    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+    Eta_http_tls_openssl.create_ssl client_ctx ~hostname:(Some "localhost")
       ~ip:None ~alpn_protocols:[ "h2"; "http/1.1" ]
   in
   drive_tls_handshake client server;
   Alcotest.(check (option string))
-    "client ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected client);
+    "client ALPN" (Some "h2") (Eta_http_tls_openssl.get_alpn_selected client);
   Alcotest.(check (option string))
-    "server ALPN" (Some "h2") (Eta_http__Openssl.get_alpn_selected server)
+    "server ALPN" (Some "h2") (Eta_http_tls_openssl.get_alpn_selected server)
 
 let test_openssl_negotiates_tls13_by_default () =
   with_temp_tls_files @@ fun cert key ->
   let server_ctx =
-    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+    Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "http/1.1" ]
       ()
   in
-  let client_ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca client_ctx cert;
-  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client_ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca client_ctx cert;
+  let server = Eta_http_tls_openssl.create_server_ssl server_ctx in
   let client =
-    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+    Eta_http_tls_openssl.create_ssl client_ctx ~hostname:(Some "localhost")
       ~ip:None ~alpn_protocols:[ "http/1.1" ]
   in
   drive_tls_handshake client server;
   Alcotest.(check string) "client TLS version" "TLSv1.3"
-    (Eta_http__Openssl.get_version client);
+    (Eta_http_tls_openssl.get_version client);
   Alcotest.(check string) "server TLS version" "TLSv1.3"
-    (Eta_http__Openssl.get_version server)
+    (Eta_http_tls_openssl.get_version server)
 
 let test_openssl_server_resumes_client_session () =
   with_temp_tls_files @@ fun cert key ->
   let server_ctx =
-    Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+    Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:cert
       ~private_key_file:key ~alpn_protocols:[ "http/1.1" ]
       ()
   in
-  let client_ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca client_ctx cert;
+  let client_ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca client_ctx cert;
   let handshake ?session () =
-    let server = Eta_http__Openssl.create_server_ssl server_ctx in
+    let server = Eta_http_tls_openssl.create_server_ssl server_ctx in
     let client =
-      Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "localhost")
+      Eta_http_tls_openssl.create_ssl client_ctx ~hostname:(Some "localhost")
         ~ip:None ~alpn_protocols:[ "http/1.1" ]
     in
-    Option.iter (Eta_http__Openssl.set_session client) session;
+    Option.iter (Eta_http_tls_openssl.set_session client) session;
     drive_tls_handshake client server;
     drain_tls_post_handshake client server;
     Alcotest.(check int) "client verify result" 0
-      (Eta_http__Openssl.get_verify_result client);
+      (Eta_http_tls_openssl.get_verify_result client);
     (client, server)
   in
   let client1, server1 = handshake () in
   Alcotest.(check bool) "first client reused" false
-    (Eta_http__Openssl.session_reused client1);
+    (Eta_http_tls_openssl.session_reused client1);
   Alcotest.(check bool) "first server reused" false
-    (Eta_http__Openssl.session_reused server1);
+    (Eta_http_tls_openssl.session_reused server1);
   let session =
-    require_some "client session" (Eta_http__Openssl.get_session client1)
+    require_some "client session" (Eta_http_tls_openssl.get_session client1)
   in
   let client2, server2 = handshake ~session () in
   Alcotest.(check bool) "second client reused" true
-    (Eta_http__Openssl.session_reused client2);
+    (Eta_http_tls_openssl.session_reused client2);
   Alcotest.(check bool) "second server reused" true
-    (Eta_http__Openssl.session_reused server2)
+    (Eta_http_tls_openssl.session_reused server2)
 
 let test_openssl_server_sni_selects_named_certificate () =
   with_temp_tls_files @@ fun default_cert default_key ->
   with_generated_tls_files "alt.localhost" @@ fun alt_cert alt_key ->
   with_temp_ca_bundle [ default_cert; alt_cert ] @@ fun ca_bundle ->
   let certificate =
-    Eta_http__Openssl.server_certificate ~server_name:"alt.localhost"
+    Eta_http_tls_openssl.server_certificate ~server_name:"alt.localhost"
       ~certificate_chain_file:alt_cert ~private_key_file:alt_key
   in
   let server_ctx =
-    Eta_http__Openssl.create_server_ctx
+    Eta_http_tls_openssl.create_server_ctx
       ~certificate_chain_file:default_cert ~private_key_file:default_key
       ~certificates:[ certificate ] ~alpn_protocols:[ "http/1.1" ]
       ()
   in
-  let client_ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca client_ctx ca_bundle;
-  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client_ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca client_ctx ca_bundle;
+  let server = Eta_http_tls_openssl.create_server_ssl server_ctx in
   let client =
-    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "alt.localhost")
+    Eta_http_tls_openssl.create_ssl client_ctx ~hostname:(Some "alt.localhost")
       ~ip:None ~alpn_protocols:[ "http/1.1" ]
   in
   drive_tls_handshake client server;
   Alcotest.(check int) "client verified selected cert" 0
-    (Eta_http__Openssl.get_verify_result client);
+    (Eta_http_tls_openssl.get_verify_result client);
   Alcotest.(check (option string))
     "server SNI" (Some "alt.localhost")
-    (Eta_http__Openssl.get_servername server);
+    (Eta_http_tls_openssl.get_servername server);
   Alcotest.(check (option string))
     "server ALPN" (Some "http/1.1")
-    (Eta_http__Openssl.get_alpn_selected server)
+    (Eta_http_tls_openssl.get_alpn_selected server)
 
 let test_openssl_server_sni_strict_rejects_unknown_name () =
   with_temp_tls_files @@ fun default_cert default_key ->
   let server_ctx =
-    Eta_http__Openssl.create_server_ctx
+    Eta_http_tls_openssl.create_server_ctx
       ~certificate_chain_file:default_cert ~private_key_file:default_key
       ~require_sni_match:true ~alpn_protocols:[ "http/1.1" ]
       ()
   in
-  let client_ctx = Eta_http__Openssl.create_ctx () in
-  Eta_http__Openssl.ctx_load_ca client_ctx default_cert;
-  let server = Eta_http__Openssl.create_server_ssl server_ctx in
+  let client_ctx = Eta_http_tls_openssl.create_ctx () in
+  Eta_http_tls_openssl.ctx_load_ca client_ctx default_cert;
+  let server = Eta_http_tls_openssl.create_server_ssl server_ctx in
   let client =
-    Eta_http__Openssl.create_ssl client_ctx ~hostname:(Some "unknown.localhost")
+    Eta_http_tls_openssl.create_ssl client_ctx ~hostname:(Some "unknown.localhost")
       ~ip:None ~alpn_protocols:[ "http/1.1" ]
   in
   drive_tls_handshake_failure client server
@@ -1007,9 +1009,9 @@ let test_alpn_server_dispatch_routes_and_closes_unsupported () =
   let close () = incr closed in
   let use_h1 () = routes := "h1" :: !routes in
   let use_h2 () = routes := "h2" :: !routes in
-  let mixed = Eta_http.Transport.Dispatch.mixed_protocols in
+  let mixed = Dispatch.mixed_protocols in
   let h2_only =
-    Eta_http.Transport.Dispatch.enabled_protocols ~h1:false ~h2:true
+    Dispatch.enabled_protocols ~h1:false ~h2:true
   in
   let run ?(enabled_protocols = mixed) alpn =
     Eta_http_eio.Transport.Alpn_server.dispatch ~enabled_protocols ~close
@@ -1485,13 +1487,13 @@ let test_https_server_h2_concurrent_large_echo () =
     let status = ref 0 in
     let eof, resolve_eof = Eio.Promise.create () in
     let rec read_body response_body =
-      Eta_http.H2.Body.Reader.schedule_read response_body
+      Eta_http_h2.Body.Reader.schedule_read response_body
         ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string body_buf (Bigstringaf.substring bs ~off ~len);
           read_body response_body)
     in
-    let request : Eta_http.H2.Connection.Client.request =
+    let request : Eta_http_h2.Connection.Client.request =
       {
         meth = "POST";
         scheme = Some "https";
@@ -1526,14 +1528,14 @@ let test_https_server_h2_concurrent_large_echo () =
               String.sub (payload tag) (round * chunk_size) chunk_size
             in
             ignore
-              (Eta_http.H2.Body.Writer.write_string
+              (Eta_http_h2.Body.Writer.write_string
                  opened.Eta_http_eio.H2.Multiplexer.request_body chunk))
           streams;
         Eio.Time.sleep clock 0.002
       done;
       List.iter
         (fun (_, opened, _, _, _) ->
-          Eta_http.H2.Body.Writer.close
+          Eta_http_h2.Body.Writer.close
             opened.Eta_http_eio.H2.Multiplexer.request_body)
         streams;
       List.iter
@@ -1571,14 +1573,14 @@ let test_https_server_h2_split_preface_settings_headers () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-           ^ Eta_http.H2.Frame.settings);
+           ^ Eta_http_h2.Frame.settings);
         ];
       ignore
         (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
              Test_eta_http_h2_server.read_raw_until_h2_frame
                ~frame_type:Settings tls_flow)
           : string);
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let headers =
         Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:true
           ~stream_id:1
@@ -1620,10 +1622,10 @@ let test_https_server_h2_tiny_writes () =
       (try Eio.Flow.close tls_flow with _ -> ());
       Eta_http_eio.Server.shutdown server Immediate)
     (fun () ->
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        ^ Eta_http.H2.Frame.settings
+        ^ Eta_http_h2.Frame.settings
         ^ h2_settings_ack
         ^ Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:false
             ~stream_id:1
@@ -1655,10 +1657,10 @@ let test_https_server_h2_ping_churn_closes_connection () =
   let clock = Eio.Stdenv.clock env in
   let security_config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
@@ -1688,7 +1690,7 @@ let test_https_server_h2_ping_churn_closes_connection () =
         [
           Cstruct.of_string
             ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-            ^ Eta_http.H2.Frame.settings
+            ^ Eta_http_h2.Frame.settings
             ^ String.concat "" (List.init 3 (fun _ -> h2_ping "pingping")));
         ];
       let response =
@@ -1737,10 +1739,10 @@ let test_https_server_h2_idle_timeout_sends_close_notify () =
       drive_openssl_client_handshake ~clock ssl raw_flow;
       write_openssl_client_plaintext ~clock ssl raw_flow
         ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-       ^ Eta_http.H2.Frame.settings);
+       ^ Eta_http_h2.Frame.settings);
       ignore
         (read_openssl_h2_until_frame ~clock ssl raw_flow Settings : string);
-      let encoder = Eta_http.Hpack.encoder_create 4096 in
+      let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
       let request =
         h2_settings_ack
         ^ Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:true
@@ -1812,10 +1814,10 @@ let test_https_server_shutdown_during_headers_keeps_listener_healthy () =
             (fun () ->
               Eio.Flow.copy_string
                 ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-               ^ Eta_http.H2.Frame.settings
+               ^ Eta_http_h2.Frame.settings
                ^ h2_settings_ack)
                 tls_flow;
-              let encoder = Eta_http.Hpack.encoder_create 4096 in
+              let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
               let headers =
                 Test_eta_http_h2_server.raw_h2_headers encoder ~stream_id:1
                   [
@@ -1852,10 +1854,10 @@ let test_https_server_shutdown_during_data_keeps_listener_healthy () =
           Fun.protect
             ~finally:(fun () -> try Eio.Flow.close tls_flow with _ -> ())
             (fun () ->
-              let encoder = Eta_http.Hpack.encoder_create 4096 in
+              let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
               Eio.Flow.copy_string
                 ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-                ^ Eta_http.H2.Frame.settings
+                ^ Eta_http_h2.Frame.settings
                 ^ h2_settings_ack
                 ^ Test_eta_http_h2_server.raw_h2_headers encoder
                     ~end_stream:false ~stream_id:1
@@ -1866,7 +1868,7 @@ let test_https_server_shutdown_during_data_keeps_listener_healthy () =
                       Test_eta_http_h2_server.hpack_header ":authority"
                         "localhost";
                     ]
-                ^ Eta_http.H2.Frame.header ~length:100 ~frame_type:Data ~flags:0
+                ^ Eta_http_h2.Frame.header ~length:100 ~frame_type:Data ~flags:0
                     ~stream_id:1
                 ^ "hello")
                 tls_flow));
@@ -1893,14 +1895,14 @@ let test_https_server_h2_late_trailers_do_not_poison_accept_loop () =
           [
             Cstruct.of_string
               ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-             ^ Eta_http.H2.Frame.settings);
+             ^ Eta_http_h2.Frame.settings);
           ];
         ignore
           (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
                Test_eta_http_h2_server.read_raw_until_h2_frame
                  ~frame_type:Settings tls_flow)
             : string);
-        let encoder = Eta_http.Hpack.encoder_create 4096 in
+        let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
         let headers =
           Test_eta_http_h2_server.raw_h2_headers encoder ~end_stream:false
             ~stream_id:1
@@ -1969,14 +1971,14 @@ let test_https_server_h2_parallel_gets_one_tls_connection () =
     let body = Buffer.create 16 in
     let eof, resolve_eof = Eio.Promise.create () in
     let rec read_body response_body =
-      Eta_http.H2.Body.Reader.schedule_read response_body
+      Eta_http_h2.Body.Reader.schedule_read response_body
         ~on_eof:(fun () -> ignore (Eio.Promise.try_resolve resolve_eof ()))
         ~on_read:(fun bs ~off ~len ->
           Buffer.add_string body (Bigstringaf.substring bs ~off ~len);
           read_body response_body)
     in
     let target = Printf.sprintf "/p%d" tag in
-    let request : Eta_http.H2.Connection.Client.request =
+    let request : Eta_http_h2.Connection.Client.request =
       {
         meth = "GET";
         scheme = Some "https";
@@ -1995,7 +1997,7 @@ let test_https_server_h2_parallel_gets_one_tls_connection () =
           read_body response_body)
     with
     | Ok opened ->
-        Eta_http.H2.Body.Writer.close
+        Eta_http_h2.Body.Writer.close
           opened.Eta_http_eio.H2.Multiplexer.request_body;
         (tag, status, body, eof)
     | Error _ -> Alcotest.failf "stream %d not opened" tag
@@ -2129,7 +2131,7 @@ let test_https_server_h2_goaway_ping_close_does_not_poison_accept_loop () =
           [
             Cstruct.of_string
               ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-             ^ Eta_http.H2.Frame.settings);
+             ^ Eta_http_h2.Frame.settings);
           ];
         ignore
           (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
@@ -2140,7 +2142,7 @@ let test_https_server_h2_goaway_ping_close_does_not_poison_accept_loop () =
           [
             Cstruct.of_string
               (h2_settings_ack
-              ^ Eta_http.H2.Frame.goaway_no_error ~last_stream_id:0
+              ^ Eta_http_h2.Frame.goaway_no_error ~last_stream_id:0
               ^ h2_ping "h2spec\000\000");
           ])
   in
@@ -2488,10 +2490,10 @@ let test_openssl_server_ctx_rejects_invalid_cert () =
   Alcotest.check_raises "invalid cert"
     (Failure "SSL_CTX_use_certificate_chain_file failed") (fun () ->
       ignore
-        (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:bad
+        (Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:bad
            ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
            ()
-          : Eta_http__Openssl.ctx))
+          : Eta_http_tls_openssl.ctx))
 
 let test_openssl_server_ctx_rejects_invalid_key () =
   with_temp_file "eta-http-bad-key" "not a private key" @@ fun bad ->
@@ -2499,10 +2501,10 @@ let test_openssl_server_ctx_rejects_invalid_key () =
   Alcotest.check_raises "invalid key"
     (Failure "SSL_CTX_use_PrivateKey_file failed") (fun () ->
       ignore
-        (Eta_http__Openssl.create_server_ctx ~certificate_chain_file:cert
+        (Eta_http_tls_openssl.create_server_ctx ~certificate_chain_file:cert
            ~private_key_file:bad ~alpn_protocols:[ "h2"; "http/1.1" ]
            ()
-          : Eta_http__Openssl.ctx))
+          : Eta_http_tls_openssl.ctx))
 
 let test_tls_server_config_records_cert_key_and_alpn () =
   let certificate =

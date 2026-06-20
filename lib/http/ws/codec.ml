@@ -194,11 +194,13 @@ let decode ?(masked = false) bytes =
                     then Error Invalid_close_code
                     else Ok ({ fin; opcode; payload }, consumed)
 
-let accept_key key =
+let accept_key ~sha1 key =
   let guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" in
   key ^ guid
-  |> Openssl.sha1
+  |> sha1
   |> Base64.encode_string
 
-let random_key () =
-  Openssl.random_bytes 16 |> Bytes.unsafe_to_string |> Base64.encode_string
+let key_of_nonce nonce =
+  if Bytes.length nonce <> 16 then
+    invalid_arg "Eta_http_ws.Codec.key_of_nonce: nonce must be 16 bytes";
+  Base64.encode_string (Bytes.unsafe_to_string nonce)

@@ -32,54 +32,54 @@ let h2_settings_pair id value =
   Bytes.unsafe_to_string bytes
 
 let h2_settings_payload payload =
-  Eta_http.H2.Frame.header ~length:(String.length payload)
-    ~frame_type:Eta_http.H2.Frame.Settings ~flags:0 ~stream_id:0
+  Eta_http_h2.Frame.header ~length:(String.length payload)
+    ~frame_type:Eta_http_h2.Frame.Settings ~flags:0 ~stream_id:0
   ^ payload
 
 let observe_result_with ?(now_ms = 0L) security data =
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length data) data in
-  Eta_http.H2.Security.observe_result security bs ~off:0
+  Eta_http_h2.Security.observe_result security bs ~off:0
     ~len:(String.length data) ~now_ms
 
 let observation_kind = function
-  | Eta_http.H2.Security.Pass -> None
-  | Eta_http.H2.Security.Connection_error { kind; _ }
-  | Eta_http.H2.Security.Stream_error { kind; _ }
-  | Eta_http.H2.Security.Policy_close { kind; _ } ->
+  | Eta_http_h2.Security.Pass -> None
+  | Eta_http_h2.Security.Connection_error { kind; _ }
+  | Eta_http_h2.Security.Stream_error { kind; _ }
+  | Eta_http_h2.Security.Policy_close { kind; _ } ->
       Some kind
 
 let observe_with security data =
   observe_result_with security data |> observation_kind
 
 let expect_h2_security_stream_error label ~stream_id frame =
-  let security = Eta_http.H2.Security.create () in
+  let security = Eta_http_h2.Security.create () in
   match observe_result_with security frame with
-  | Eta_http.H2.Security.Stream_error { stream_id = observed; _ } ->
+  | Eta_http_h2.Security.Stream_error { stream_id = observed; _ } ->
       Alcotest.(check int) (label ^ " stream") stream_id observed
-  | Eta_http.H2.Security.Pass ->
+  | Eta_http_h2.Security.Pass ->
       Alcotest.failf "%s: expected stream-scoped security error" label
-  | Eta_http.H2.Security.Connection_error { kind; _ }
-  | Eta_http.H2.Security.Policy_close { kind; _ } ->
+  | Eta_http_h2.Security.Connection_error { kind; _ }
+  | Eta_http_h2.Security.Policy_close { kind; _ } ->
       Alcotest.failf "%s: expected stream error, got %s" label
         (Eta_http.Error.kind_name kind)
 
 let expect_h2_security_connection_error label frame =
-  let security = Eta_http.H2.Security.create () in
+  let security = Eta_http_h2.Security.create () in
   match observe_result_with security frame with
-  | Eta_http.H2.Security.Connection_error _ -> ()
-  | Eta_http.H2.Security.Pass ->
+  | Eta_http_h2.Security.Connection_error _ -> ()
+  | Eta_http_h2.Security.Pass ->
       Alcotest.failf "%s: expected connection-scoped security error" label
-  | Eta_http.H2.Security.Stream_error { stream_id; kind; _ } ->
+  | Eta_http_h2.Security.Stream_error { stream_id; kind; _ } ->
       Alcotest.failf "%s: expected connection error, got stream %d %s" label
         stream_id (Eta_http.Error.kind_name kind)
-  | Eta_http.H2.Security.Policy_close { kind; _ } ->
+  | Eta_http_h2.Security.Policy_close { kind; _ } ->
       Alcotest.failf "%s: expected connection error, got policy close %s" label
         (Eta_http.Error.kind_name kind)
 
 let test_h2_multiplexer_partial_frame_eof_is_protocol_error () =
   let errors = ref [] in
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun error -> errors := error :: !errors) ()
   in
   let reader =
@@ -110,47 +110,47 @@ let test_h2_multiplexer_partial_frame_eof_is_protocol_error () =
         (Eta_http.Error.kind_name kind)
   | Close -> Alcotest.fail "partial frame closed without EOF");
   match !errors with
-  | [ { Eta_http.H2.Connection.error_code = Eta_http.H2.Error_code.Protocol_error;
+  | [ { Eta_http_h2.Connection.error_code = Eta_http_h2.Error_code.Protocol_error;
         message;
       } ]
     when String.equal message "transport EOF with incomplete HTTP/2 frame" ->
       ()
   | [ error ] ->
       Alcotest.failf "unexpected h2 client error: %a %s"
-        Eta_http.H2.Error_code.pp_hum error.error_code error.message
+        Eta_http_h2.Error_code.pp_hum error.error_code error.message
   | [] -> Alcotest.fail "partial frame EOF did not report a protocol error"
   | _ :: _ :: _ -> Alcotest.fail "partial frame EOF reported multiple errors"
 
 let test_h2_connection_rejects_oversized_frame () =
   let errors = ref [] in
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun error -> errors := error :: !errors) ()
   in
   let frame =
     h2_frame_header
-      ~length:(Eta_http.H2.Settings.default.max_frame_size + 1)
+      ~length:(Eta_http_h2.Settings.default.max_frame_size + 1)
       ~frame_type:0x0 ~flags:0 ~stream_id:1
   in
   let bs = Bigstringaf.of_string ~off:0 ~len:(String.length frame) frame in
   let consumed =
-    Eta_http.H2.Connection.read client bs ~off:0 ~len:(String.length frame)
+    Eta_http_h2.Connection.read client bs ~off:0 ~len:(String.length frame)
   in
   Alcotest.(check int) "oversized frame header consumed" 9 consumed;
   match !errors with
-  | [ { Eta_http.H2.Connection.error_code = Eta_http.H2.Error_code.Frame_size_error;
+  | [ { Eta_http_h2.Connection.error_code = Eta_http_h2.Error_code.Frame_size_error;
         message = _;
       } ] ->
       ()
   | [ error ] ->
       Alcotest.failf "unexpected oversized-frame error: %a %s"
-        Eta_http.H2.Error_code.pp_hum error.error_code error.message
+        Eta_http_h2.Error_code.pp_hum error.error_code error.message
   | [] -> Alcotest.fail "oversized frame did not report a frame-size error"
   | _ :: _ :: _ -> Alcotest.fail "oversized frame reported multiple errors"
 
 let test_h2_security_settings_churn_reader () =
   let client =
-    Eta_http.H2.Connection.Client.create
+    Eta_http_h2.Connection.Client.create
       ~error_handler:(fun _ -> Alcotest.fail "unexpected h2 client error")
       ()
   in
@@ -181,18 +181,18 @@ let test_h2_security_settings_churn_reader () =
 
 let test_h2_security_rejects_churn_floods () =
   let rate_limit =
-    { Eta_http.H2.Security.burst = 2; window_ms = 1_000; max_per_connection = None }
+    { Eta_http_h2.Security.burst = 2; window_ms = 1_000; max_per_connection = None }
   in
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate = rate_limit;
       empty_data_rate = rate_limit;
       window_update_rate = rate_limit;
     }
   in
   let expect_error label expected frame =
-    let security = Eta_http.H2.Security.create ~config () in
+    let security = Eta_http_h2.Security.create ~config () in
     match observe_with security frame with
     | Some kind when String.equal (Eta_http.Error.kind_name kind) expected -> ()
     | Some kind ->
@@ -217,23 +217,23 @@ let test_h2_security_rejects_churn_floods () =
 let test_h2_security_allows_long_lived_ping_keepalive () =
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = Some 1_000;
         };
     }
   in
-  let security = Eta_http.H2.Security.create ~config () in
+  let security = Eta_http_h2.Security.create ~config () in
   let ping = raw_h2_frame ~frame_type:0x6 ~flags:0 ~stream_id:0 "12345678" in
   for index = 0 to 150 do
     match observe_result_with ~now_ms:(Int64.of_int (index * 30_000)) security ping with
-    | Eta_http.H2.Security.Pass -> ()
-    | Eta_http.H2.Security.Connection_error { kind; _ }
-    | Eta_http.H2.Security.Stream_error { kind; _ }
-    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+    | Eta_http_h2.Security.Pass -> ()
+    | Eta_http_h2.Security.Connection_error { kind; _ }
+    | Eta_http_h2.Security.Stream_error { kind; _ }
+    | Eta_http_h2.Security.Policy_close { kind; _ } ->
         Alcotest.failf "keepalive ping %d rejected: %s" index
           (Eta_http.Error.kind_name kind)
   done
@@ -241,29 +241,29 @@ let test_h2_security_allows_long_lived_ping_keepalive () =
 let test_h2_security_rejects_ping_burst () =
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       ping_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
     }
   in
-  let security = Eta_http.H2.Security.create ~config () in
+  let security = Eta_http_h2.Security.create ~config () in
   let ping = raw_h2_frame ~frame_type:0x6 ~flags:0 ~stream_id:0 "12345678" in
   let rec loop count =
     match observe_result_with ~now_ms:0L security ping with
-    | Eta_http.H2.Security.Pass when count < 3 -> loop (count + 1)
-    | Eta_http.H2.Security.Policy_close
+    | Eta_http_h2.Security.Pass when count < 3 -> loop (count + 1)
+    | Eta_http_h2.Security.Policy_close
         { kind = Eta_http.Error.Ping_count_exceeded { observed_count; limit }; _ } ->
         Alcotest.(check int) "observed" 3 observed_count;
         Alcotest.(check int) "limit" 2 limit
-    | Eta_http.H2.Security.Pass ->
+    | Eta_http_h2.Security.Pass ->
         Alcotest.fail "PING burst passed H2.Security"
-    | Eta_http.H2.Security.Connection_error { kind; _ }
-    | Eta_http.H2.Security.Stream_error { kind; _ }
-    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+    | Eta_http_h2.Security.Connection_error { kind; _ }
+    | Eta_http_h2.Security.Stream_error { kind; _ }
+    | Eta_http_h2.Security.Policy_close { kind; _ } ->
         Alcotest.failf "unexpected PING burst error: %s"
           (Eta_http.Error.kind_name kind)
   in
@@ -272,28 +272,28 @@ let test_h2_security_rejects_ping_burst () =
 let test_h2_security_rejects_settings_burst () =
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       settings_rate =
         {
-          Eta_http.H2.Security.burst = 2;
+          Eta_http_h2.Security.burst = 2;
           window_ms = 1_000;
           max_per_connection = None;
         };
     }
   in
-  let security = Eta_http.H2.Security.create ~config () in
+  let security = Eta_http_h2.Security.create ~config () in
   let rec loop count =
     match observe_result_with ~now_ms:0L security h2_settings_frame with
-    | Eta_http.H2.Security.Pass when count < 3 -> loop (count + 1)
-    | Eta_http.H2.Security.Policy_close
+    | Eta_http_h2.Security.Pass when count < 3 -> loop (count + 1)
+    | Eta_http_h2.Security.Policy_close
         { kind = Eta_http.Error.Settings_count_exceeded { observed_count; limit }; _ } ->
         Alcotest.(check int) "observed" 3 observed_count;
         Alcotest.(check int) "limit" 2 limit
-    | Eta_http.H2.Security.Pass ->
+    | Eta_http_h2.Security.Pass ->
         Alcotest.fail "SETTINGS burst passed H2.Security"
-    | Eta_http.H2.Security.Connection_error { kind; _ }
-    | Eta_http.H2.Security.Stream_error { kind; _ }
-    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+    | Eta_http_h2.Security.Connection_error { kind; _ }
+    | Eta_http_h2.Security.Stream_error { kind; _ }
+    | Eta_http_h2.Security.Policy_close { kind; _ } ->
         Alcotest.failf "unexpected SETTINGS burst error: %s"
           (Eta_http.Error.kind_name kind)
   in
@@ -302,25 +302,25 @@ let test_h2_security_rejects_settings_burst () =
 let test_h2_security_allows_large_window_update_sequence () =
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       window_update_rate =
         {
-          Eta_http.H2.Security.burst = 4;
+          Eta_http_h2.Security.burst = 4;
           window_ms = 1_000;
           max_per_connection = Some 20_000;
         };
     }
   in
-  let security = Eta_http.H2.Security.create ~config () in
+  let security = Eta_http_h2.Security.create ~config () in
   let window_update =
     raw_h2_frame ~frame_type:0x8 ~flags:0 ~stream_id:0 (h2_uint32 65_535)
   in
   for index = 0 to 10_050 do
     match observe_result_with ~now_ms:(Int64.of_int (index * 1_000)) security window_update with
-    | Eta_http.H2.Security.Pass -> ()
-    | Eta_http.H2.Security.Connection_error { kind; _ }
-    | Eta_http.H2.Security.Stream_error { kind; _ }
-    | Eta_http.H2.Security.Policy_close { kind; _ } ->
+    | Eta_http_h2.Security.Pass -> ()
+    | Eta_http_h2.Security.Connection_error { kind; _ }
+    | Eta_http_h2.Security.Stream_error { kind; _ }
+    | Eta_http_h2.Security.Policy_close { kind; _ } ->
         Alcotest.failf "WINDOW_UPDATE %d rejected: %s" index
           (Eta_http.Error.kind_name kind)
   done
@@ -400,9 +400,9 @@ let test_h2_security_rejects_invalid_settings_payload_values () =
     (h2_settings_payload (h2_settings_pair 0xbeef 0x80000000))
 
 let test_h2_security_allows_graceful_repeated_goaway () =
-  let security = Eta_http.H2.Security.create () in
-  let first = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:3 in
-  let second = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:1 in
+  let security = Eta_http_h2.Security.create () in
+  let first = Eta_http_h2.Frame.goaway_no_error ~last_stream_id:3 in
+  let second = Eta_http_h2.Frame.goaway_no_error ~last_stream_id:1 in
   Alcotest.(check bool) "first GOAWAY accepted" true
     (Option.is_none (observe_with security first));
   match observe_with security second with
@@ -412,9 +412,9 @@ let test_h2_security_allows_graceful_repeated_goaway () =
         (Eta_http.Error.kind_name kind)
 
 let test_h2_security_rejects_increasing_goaway_last_stream_id () =
-  let security = Eta_http.H2.Security.create () in
-  let first = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:1 in
-  let second = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:3 in
+  let security = Eta_http_h2.Security.create () in
+  let first = Eta_http_h2.Frame.goaway_no_error ~last_stream_id:1 in
+  let second = Eta_http_h2.Frame.goaway_no_error ~last_stream_id:3 in
   Alcotest.(check bool) "first GOAWAY accepted" true
     (Option.is_none (observe_with security first));
   match observe_with security second with
@@ -430,11 +430,11 @@ let test_h2_security_rejects_increasing_goaway_last_stream_id () =
 let test_h2_security_complete_stream_bounds_header_state () =
   let config =
     {
-      Eta_http.H2.Security.default_config with
+      Eta_http_h2.Security.default_config with
       max_response_headers_per_stream = 1;
     }
   in
-  let security = Eta_http.H2.Security.create ~config () in
+  let security = Eta_http_h2.Security.create ~config () in
   let headers stream_id =
     raw_h2_frame ~frame_type:0x1 ~flags:0x4 ~stream_id ""
   in
@@ -447,18 +447,18 @@ let test_h2_security_complete_stream_bounds_header_state () =
   in
   expect_ok "first stream 1 HEADERS" (headers 1);
   Alcotest.(check int) "tracked after HEADERS" 1
-    (Eta_http.H2.Security.tracked_header_streams security);
-  Eta_http.H2.Security.complete_stream security 1;
+    (Eta_http_h2.Security.tracked_header_streams security);
+  Eta_http_h2.Security.complete_stream security 1;
   Alcotest.(check int) "tracked after complete" 0
-    (Eta_http.H2.Security.tracked_header_streams security);
+    (Eta_http_h2.Security.tracked_header_streams security);
   expect_ok "stream 1 HEADERS after complete" (headers 1);
-  Eta_http.H2.Security.complete_stream security 1;
+  Eta_http_h2.Security.complete_stream security 1;
   for index = 0 to 127 do
     let stream_id = (2 * index) + 1 in
     expect_ok
       (Printf.sprintf "stream %d HEADERS" stream_id)
       (headers stream_id);
-    Eta_http.H2.Security.complete_stream security stream_id
+    Eta_http_h2.Security.complete_stream security stream_id
   done;
   Alcotest.(check int) "tracked after many complete streams" 0
-    (Eta_http.H2.Security.tracked_header_streams security)
+    (Eta_http_h2.Security.tracked_header_streams security)

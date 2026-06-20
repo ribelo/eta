@@ -1,0 +1,15 @@
+(executable
+ (name run_http_js_tests)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (modes js)
+ (libraries eta eta_http eta_http_js eta_jsoo eta_js_test js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps --no-source-map)))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (deps run_http_js_tests.bc.js)
+ (action (run node run_http_js_tests.bc.js)))

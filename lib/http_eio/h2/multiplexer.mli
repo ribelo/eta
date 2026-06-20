@@ -10,7 +10,7 @@ type request_error =
 
 type opened_request = {
   stream : stream;
-  request_body : Eta_http.H2.Body.Writer.t;
+  request_body : Eta_http_h2.Body.Writer.t;
 }
 
 type client_reader
@@ -23,13 +23,13 @@ type read_result =
 
 val create :
   ?max_concurrent:int ->
-  ?config:Eta_http.H2.Config.t ->
+  ?config:Eta_http_h2.Config.t ->
   ?security:Security.t ->
-  ?error_handler:(Eta_http.H2.Connection.error -> unit) ->
+  ?error_handler:(Eta_http_h2.Connection.error -> unit) ->
   unit ->
   t
 
-val client_connection : t -> Eta_http.H2.Connection.t
+val client_connection : t -> Eta_http_h2.Connection.t
 val stats : t -> Stream_state.stats
 val mark_complete : t -> stream -> unit
 val mark_remote_reset : t -> int -> unit
@@ -39,13 +39,13 @@ val shutdown : t -> unit
 val request :
   t ->
   tag:int ->
-  ?trailers_handler:(Eta_http.H2.Headers.t -> unit) ->
-  Eta_http.H2.Connection.Client.request ->
-  error_handler:(stream -> Eta_http.H2.Connection.error -> unit) ->
+  ?trailers_handler:(Eta_http_h2.Headers.t -> unit) ->
+  Eta_http_h2.Connection.Client.request ->
+  error_handler:(stream -> Eta_http_h2.Connection.error -> unit) ->
   response_handler:
     (stream ->
-    Eta_http.H2.Connection.Client.response ->
-    Eta_http.H2.Body.Reader.t ->
+    Eta_http_h2.Connection.Client.response ->
+    Eta_http_h2.Body.Reader.t ->
     unit) ->
   (opened_request, request_error) result
 
@@ -54,7 +54,7 @@ val create_client_reader :
   ?buffer_size:int ->
   ?security:Security.t ->
   ?security_config:Security.config ->
-  Eta_http.H2.Connection.t ->
+  Eta_http_h2.Connection.t ->
   client_reader
 
 val create_reader :
@@ -65,7 +65,7 @@ val create_reader :
   client_reader
 (** Create a reader bound to [t]'s connection state machine. *)
 
-val client : client_reader -> Eta_http.H2.Connection.t
+val client : client_reader -> Eta_http_h2.Connection.t
 
 val read_client_once :
   flow:[> Eio.Flow.source_ty] Eio.Resource.t ->
@@ -85,7 +85,7 @@ val body_stream :
   pump:(unit -> (read_result, Error.t) Eta.Effect.t) ->
   t ->
   stream ->
-  Eta_http.H2.Body.Reader.t ->
+  Eta_http_h2.Body.Reader.t ->
   Stream.t
 
 val body_stream_async :
@@ -96,14 +96,14 @@ val body_stream_async :
   closed_error:Error.t ->
   t ->
   stream ->
-  Eta_http.H2.Body.Reader.t ->
+  Eta_http_h2.Body.Reader.t ->
   Stream.t * (unit -> unit)
 (** Like {!body_stream}, but waits for callbacks delivered by a background
     owner reader instead of reading the socket itself. The second result wakes a
     blocked reader when external state such as [poll_error] changes.
 
     Pull-based with backpressure: each consumer demand arms at most one upstream
-    [Eta_http.H2.Body.Reader.schedule_read], so the internal buffer never runs
+    [Eta_http_h2.Body.Reader.schedule_read], so the internal buffer never runs
     more than one chunk ahead of the consumer even when the state machine
     delivers synchronously from a large pre-buffered frame. The full body is
     delivered without loss, including data still buffered after EOF. *)

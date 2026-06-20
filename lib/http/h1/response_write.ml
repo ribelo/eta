@@ -45,7 +45,7 @@ let error_to_string error = Format.asprintf "%a" pp_error error
 let wire_version = function
   | Version.H1_0 -> "HTTP/1.0"
   | H1_1 -> "HTTP/1.1"
-  | H2 -> invalid_arg "Eta_http.H1.Response_write: HTTP/2 is not H1"
+  | H2 -> invalid_arg "Eta_http_h1.Response_write: HTTP/2 is not H1"
 
 (* Write a non-negative int as decimal digits straight into the buffer, avoiding
    [string_of_int]'s sprintf (caml_format_int) and the intermediate string
@@ -172,7 +172,7 @@ let body_decision ~version ~request_method response =
       match version with
       | Version.H1_1 -> Ok (Stream_chunked stream, None, false)
       | H1_0 -> Ok (Stream_close_delimited stream, None, true)
-      | H2 -> invalid_arg "Eta_http.H1.Response_write: HTTP/2 is not H1")
+      | H2 -> invalid_arg "Eta_http_h1.Response_write: HTTP/2 is not H1")
 
 let trailer_names headers =
   Header.get_all "trailer" headers

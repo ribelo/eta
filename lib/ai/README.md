@@ -22,9 +22,14 @@ share types without each provider depending on every other provider.
 
 - `eta_ai` depends on `eta`, `eta_redacted`, `eta_http`, and `yojson`.
 - It does not depend on any provider package.
-- It does not depend on `eta_http_eio`; provider packages that want the default
-  Eio transport add that themselves.
+- It does not depend on `eta_http_eio`, `eta_http_js`, Eio, or js_of_ocaml.
+  Applications choose and attach a concrete `Eta_http.Client.t` transport.
 - It has no SDK or tokenizer dependency.
+
+Provider packages are transport-neutral too. OpenAI Realtime WebSocket
+connection code lives in `eta_ai_openai_realtime_eio`; the base
+`eta_ai_openai` package keeps only request construction, HTTP endpoint runners,
+Realtime session/client-secret helpers, and event codecs.
 
 ## How to use it
 

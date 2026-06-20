@@ -1,5 +1,7 @@
 open Test_eta_http_support
 
+module Dispatch = Eta_http_eio.Transport.Dispatch
+
 let test_transport_resolve_stream_success () =
   let net = Eio_mock.Net.make "eta-http-net" in
   let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 443) in
@@ -199,8 +201,8 @@ let test_transport_dispatch_unsupported_alpn_closes_flow () =
   let flow = counted_tls_flow closed in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Dispatch.dispatch_alpn
-      ~enabled_protocols:Eta_http.Transport.Dispatch.mixed_protocols
+    Dispatch.dispatch_alpn
+      ~enabled_protocols:Dispatch.mixed_protocols
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -229,8 +231,8 @@ let test_transport_dispatch_supported_alpn_keeps_flow_open () =
   let flow = counted_tls_flow closed in
   with_test_clock @@ fun _sw _clock rt ->
   let result =
-    Eta_http.Transport.Dispatch.dispatch_alpn
-      ~enabled_protocols:Eta_http.Transport.Dispatch.mixed_protocols
+    Dispatch.dispatch_alpn
+      ~enabled_protocols:Dispatch.mixed_protocols
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)
@@ -246,11 +248,11 @@ let test_transport_dispatch_rejects_missing_alpn_without_h1 () =
   let closed = ref 0 in
   let flow = counted_tls_flow closed in
   let enabled_protocols =
-    Eta_http.Transport.Dispatch.enabled_protocols ~h1:false ~h2:true
+    Dispatch.enabled_protocols ~h1:false ~h2:true
   in
   with_test_clock @@ fun _sw _clock rt ->
   match
-    Eta_http.Transport.Dispatch.dispatch_alpn ~enabled_protocols
+    Dispatch.dispatch_alpn ~enabled_protocols
       ~close:(fun () -> close_effect flow)
       ~use_h1:(fun () -> Eta.Effect.pure `H1)
       ~use_h2:(fun () -> Eta.Effect.pure `H2)

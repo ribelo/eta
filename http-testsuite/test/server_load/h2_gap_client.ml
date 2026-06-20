@@ -9,7 +9,7 @@
    Set ETA_H2_GAP_METHOD and ETA_H2_GAP_BODY_BYTES to override the default
    POST 1024-byte request shape. *)
 
-module H2 = Eta_http.H2
+module H2 = Eta_http_h2
 module H2_mux = Eta_http_eio.H2.Multiplexer
 
 type sample = {
@@ -78,11 +78,11 @@ let pp_client_error (error : H2.Connection.error) =
   Format.asprintf "%a:%s" H2.Error_code.pp_hum error.error_code error.message
 
 let iovecs_to_bytes iovecs =
-  let len = H2.IOVec.lengthv iovecs in
+  let len = H2.Iovec.lengthv iovecs in
   let bytes = Bytes.create len in
   let dst_off = ref 0 in
   List.iter
-    (fun ({ H2.IOVec.buffer; off; len } : Bigstringaf.t H2.IOVec.t) ->
+    (fun ({ H2.Iovec.buffer; off; len } : Bigstringaf.t H2.Iovec.t) ->
       Bigstringaf.blit_to_bytes buffer ~src_off:off bytes ~dst_off:!dst_off
         ~len;
       dst_off := !dst_off + len)

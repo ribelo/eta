@@ -1,8 +1,8 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/openai/audit/run.sh
-Last updated: 2026-06-15T22:49:45Z
-Current sites: 156
+Last updated: 2026-06-20T16:49:09Z
+Current sites: 148
 
 Allowed production dependencies for eta-ai-openai:
 
@@ -11,8 +11,9 @@ Allowed production dependencies for eta-ai-openai:
 - eta-redacted
 - eta-http
 
-The package must not depend on OpenAI SDKs, tokenizer libraries, or
-provider-specific generated clients. Yojson is allowed for structured JSON.
+The package must not depend on OpenAI SDKs, tokenizer libraries,
+provider-specific generated clients, `eta_http_eio`, `eta_http_js`, Eio, or
+js_of_ocaml. Yojson is allowed for structured JSON.
 
 Search:
 
@@ -37,50 +38,6 @@ Search:
 - lib/ai/openai/bench/bench_ai_openai.ml:22:  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
 - lib/ai/openai/bench/bench_ai_openai.ml:26:let request : Eta_ai.chat_request =
 - lib/ai/openai/bench/bench_ai_openai.ml:64:                 ~api_key:(Eta_ai.api_key "sk-bench") request)));
-- lib/ai/openai/common.ml:49:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/common.ml:51:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/realtime.ml:3:module E = Eta.Effect
-- lib/ai/openai/realtime.ml:98:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/realtime.ml:100:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/realtime.ml:109:  Eta_http.Request.make ~headers:(auth_headers api_key)
-- lib/ai/openai/realtime.ml:110:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
-- lib/ai/openai/realtime.ml:115:  Eta_http.Body.Stream.read_all body
-- lib/ai/openai/realtime.ml:138:  Eta_http.request client request
-- lib/ai/openai/realtime.ml:141:  |> E.bind (fun (response : Eta_http.Response.t) ->
-- lib/ai/openai/realtime.ml:142:         read_response_body response.Eta_http.Response.body
-- lib/ai/openai/realtime.ml:272:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/realtime.ml:273:    (("Authorization", "Bearer " ^ Eta_redacted.value api_key)
-- lib/ai/openai/realtime.mli:9:  input_audio_format : Eta_ai.audio_format option;
-- lib/ai/openai/realtime.mli:10:  output_audio_format : Eta_ai.audio_format option;
-- lib/ai/openai/realtime.mli:12:  turn_detection : Eta_ai.Json.t option;
-- lib/ai/openai/realtime.mli:13:  tools : Eta_ai.Json.t option;
-- lib/ai/openai/realtime.mli:22:  ?input_audio_format:Eta_ai.audio_format ->
-- lib/ai/openai/realtime.mli:23:  ?output_audio_format:Eta_ai.audio_format ->
-- lib/ai/openai/realtime.mli:25:  ?turn_detection:Eta_ai.Json.t ->
-- lib/ai/openai/realtime.mli:26:  ?tools:Eta_ai.Json.t ->
-- lib/ai/openai/realtime.mli:32:val session_json : session -> Eta_ai.Json.t
-- lib/ai/openai/realtime.mli:33:val session_to_string : session -> Eta_ai.raw_json
-- lib/ai/openai/realtime.mli:38:  raw : Eta_ai.raw_json option;
-- lib/ai/openai/realtime.mli:42:  ?base_url:string -> api_key:Eta_ai.api_key -> session -> Eta_http.Request.t
-- lib/ai/openai/realtime.mli:46:  Eta_http.Client.t ->
-- lib/ai/openai/realtime.mli:47:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/realtime.mli:49:  (client_secret, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:53:  | Input_audio_buffer_append of Eta_ai.audio
-- lib/ai/openai/realtime.mli:56:  | Raw_client_event of Eta_ai.Json.t
-- lib/ai/openai/realtime.mli:61:  raw : Eta_ai.raw_json option;
-- lib/ai/openai/realtime.mli:65:  | Session_created of Eta_ai.raw_json option
-- lib/ai/openai/realtime.mli:68:  | Response_done of Eta_ai.raw_json option
-- lib/ai/openai/realtime.mli:71:  | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
-- lib/ai/openai/realtime.mli:72:  | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
-- lib/ai/openai/realtime.mli:76:val client_event_json : client_event -> Eta_ai.Json.t
-- lib/ai/openai/realtime.mli:77:val client_event_to_string : client_event -> Eta_ai.raw_json
-- lib/ai/openai/realtime.mli:78:val decode_server_event : Eta_ai.raw_json -> server_event
-- lib/ai/openai/realtime.mli:85:  sw:Eio.Switch.t ->
-- lib/ai/openai/realtime.mli:86:  net:_ Eio.Net.t ->
-- lib/ai/openai/realtime.mli:87:  api_key:Eta_ai.api_key ->
-- lib/ai/openai/realtime.mli:90:  (t, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:92:val send_event : t -> client_event -> (unit, realtime_error) Eta.Effect.t
-- lib/ai/openai/realtime.mli:94:val close : t -> (unit, Eta_http_eio.Ws.Client.ws_error) Eta.Effect.t
 - lib/ai/openai/eta_ai_openai.mli:12:  schema : Eta_ai.Json.t;
 - lib/ai/openai/eta_ai_openai.mli:21:  schema_json:Eta_ai.raw_json ->
 - lib/ai/openai/eta_ai_openai.mli:23:  (structured_output, Eta_ai.ai_error) result
@@ -184,4 +141,40 @@ Search:
 - lib/ai/openai/eta_ai_openai.mli:194:  api_key:Eta_ai.api_key ->
 - lib/ai/openai/eta_ai_openai.mli:195:  Eta_ai.chat_request ->
 - lib/ai/openai/eta_ai_openai.mli:196:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/common.ml:49:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/common.ml:51:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/realtime.mli:9:  input_audio_format : Eta_ai.audio_format option;
+- lib/ai/openai/realtime.mli:10:  output_audio_format : Eta_ai.audio_format option;
+- lib/ai/openai/realtime.mli:12:  turn_detection : Eta_ai.Json.t option;
+- lib/ai/openai/realtime.mli:13:  tools : Eta_ai.Json.t option;
+- lib/ai/openai/realtime.mli:22:  ?input_audio_format:Eta_ai.audio_format ->
+- lib/ai/openai/realtime.mli:23:  ?output_audio_format:Eta_ai.audio_format ->
+- lib/ai/openai/realtime.mli:25:  ?turn_detection:Eta_ai.Json.t ->
+- lib/ai/openai/realtime.mli:26:  ?tools:Eta_ai.Json.t ->
+- lib/ai/openai/realtime.mli:32:val session_json : session -> Eta_ai.Json.t
+- lib/ai/openai/realtime.mli:33:val session_to_string : session -> Eta_ai.raw_json
+- lib/ai/openai/realtime.mli:38:  raw : Eta_ai.raw_json option;
+- lib/ai/openai/realtime.mli:42:  ?base_url:string -> api_key:Eta_ai.api_key -> session -> Eta_http.Request.t
+- lib/ai/openai/realtime.mli:46:  Eta_http.Client.t ->
+- lib/ai/openai/realtime.mli:47:  api_key:Eta_ai.api_key ->
+- lib/ai/openai/realtime.mli:49:  (client_secret, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/realtime.mli:53:  | Input_audio_buffer_append of Eta_ai.audio
+- lib/ai/openai/realtime.mli:56:  | Raw_client_event of Eta_ai.Json.t
+- lib/ai/openai/realtime.mli:61:  raw : Eta_ai.raw_json option;
+- lib/ai/openai/realtime.mli:65:  | Session_created of Eta_ai.raw_json option
+- lib/ai/openai/realtime.mli:68:  | Response_done of Eta_ai.raw_json option
+- lib/ai/openai/realtime.mli:71:  | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
+- lib/ai/openai/realtime.mli:72:  | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
+- lib/ai/openai/realtime.mli:74:val client_event_json : client_event -> Eta_ai.Json.t
+- lib/ai/openai/realtime.mli:75:val client_event_to_string : client_event -> Eta_ai.raw_json
+- lib/ai/openai/realtime.mli:76:val decode_server_event : Eta_ai.raw_json -> server_event
+- lib/ai/openai/realtime.ml:3:module E = Eta.Effect
+- lib/ai/openai/realtime.ml:98:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/realtime.ml:100:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/realtime.ml:109:  Eta_http.Request.make ~headers:(auth_headers api_key)
+- lib/ai/openai/realtime.ml:110:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
+- lib/ai/openai/realtime.ml:115:  Eta_http.Body.Stream.read_all body
+- lib/ai/openai/realtime.ml:138:  Eta_http.request client request
+- lib/ai/openai/realtime.ml:141:  |> E.bind (fun (response : Eta_http.Response.t) ->
+- lib/ai/openai/realtime.ml:142:         read_response_body response.Eta_http.Response.body
 <!-- END DEP_MATCHES -->

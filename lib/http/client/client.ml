@@ -25,7 +25,7 @@ type runtime_options = {
 type service = {
   request :
     runtime_options -> Request.t -> (Response.t, Error.t) Eta.Effect.t;
-  stats : runtime_options -> (stats, Error.t) Eta.Effect.t;
+  stats : runtime_options -> (stats option, Error.t) Eta.Effect.t;
   shutdown : runtime_options -> (unit, Error.t) Eta.Effect.t;
 }
 
@@ -39,7 +39,7 @@ type t = {
   protocol : protocol;
   owner_domain : Domain.id;
   request_impl : Request.t -> (Response.t, Error.t) Eta.Effect.t;
-  stats_impl : unit -> (stats, Error.t) Eta.Effect.t;
+  stats_impl : unit -> (stats option, Error.t) Eta.Effect.t;
   shutdown_impl : unit -> (unit, Error.t) Eta.Effect.t;
 }
 

@@ -1,6 +1,16 @@
 (executables
  (names run compare h2_probe h2_tls_probe h1_probe h1_tls_probe h2_gap_client tiny_tls_probe mtop)
- (libraries eta_http_testsuite eta_http_eio eta_eio eio_main eio_linux eio.unix yojson unix memtrace))
+ (libraries
+  eta_http_testsuite
+  eta_http_eio
+  eta_http_h2
+  eta_eio
+  eio_main
+  eio_linux
+  eio.unix
+  yojson
+  unix
+  memtrace))
 
 (rule
  (alias server-load)

@@ -1,0 +1,8 @@
+(library
+ (name eta_http_js)
+ (public_name eta_http_js)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (modules eta_http_js)
+ (libraries eta eta_http eta_jsoo js_of_ocaml)
+ (synopsis "js_of_ocaml Fetch client adapter for eta-http"))

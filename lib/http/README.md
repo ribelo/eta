@@ -11,11 +11,13 @@ helpers. Backend-specific I/O lives in adapter packages such as
 
 - `eta_http` is backend-neutral: request/response model, typed errors, body
   streams, retry policy, TLS policy data, and protocol helpers.
-- Backend-specific I/O lives in `eta_http_eio` (Eio transport) or in a custom
-  adapter.
-- `eta_http_h2` is the shared HTTP/2 state machine; both `eta_http` and
-  `eta_http_eio` depend on it.
-- `eta_http` does not depend on `eio`, `eta_eio`, or `eta_blocking`.
+- Protocol helpers live in sibling packages: `eta_http_h1`, `eta_http_h2`,
+  `eta_http_ws`, and `eta_http_tls_openssl`.
+- Backend-specific I/O lives in adapter packages such as `eta_http_eio`
+  (native Eio) and `eta_http_js` (js_of_ocaml Fetch).
+- `eta_http` does not depend on `eio`, `eta_eio`, `eta_blocking`,
+  `eta_http_eio`, `eta_http_js`, OpenSSL stubs, WebSocket host randomness, or
+  concrete HTTP/1/HTTP/2 helper packages.
 
 ## Status
 
@@ -24,20 +26,22 @@ surface:
 
 - typed error taxonomy, redaction, and JSON-style projection;
 - request/response model with streaming byte bodies;
-- OpenSSL-backed TLS 1.2/1.3 policy chokepoint with TLS 1.3 default
-  negotiation, ALPN, SNI certificate selection, strict-SNI mode, and session
-  resumption support;
+- backend-neutral TLS policy/config data;
 - RFC 3986 client-subset URL parser for absolute `http`/`https` URLs;
 - backend-neutral client service contract for runtime-provided HTTP clients;
-- HTTP/1.1 request serialization, response parsing, chunked trailers, and gzip;
-- HTTP/2 frame, admission, security, informational-response, and stream-state
-  helpers that do not own sockets or scheduler state;
+- gzip body transducers and core header/method/status/version helpers;
 - retry/idempotency policy helpers;
 - OpenTelemetry semantic-convention observability helpers.
 
+HTTP/1 helpers live under `lib/http/h1/` as `eta_http_h1`; HTTP/2 helpers live
+under `lib/http/h2/` as `eta_http_h2`; WebSocket codec helpers live under
+`lib/http/ws/` as `eta_http_ws`; native OpenSSL state-machine bindings live
+under `lib/http_tls_openssl/` as `eta_http_tls_openssl`.
+
 The Eio transport adapter lives under `lib/http_eio/` and owns DNS, TCP, TLS,
 ALPN dispatch, HTTP/1.1 client pooling, HTTP/1.1/h2c/HTTPS server loops,
-HTTP/2 connection ownership, and WebSocket client I/O.
+HTTP/2 connection ownership, and WebSocket client I/O. The JavaScript Fetch
+adapter lives under `lib/http_js/` and is client-only.
 
 ## Edge Server Readiness
 
@@ -135,27 +139,25 @@ Rerunnable research evidence lives under `.scratch/eta_http_research/`:
 | `Eta_http.Core` | URL, method, version, header, status, and span helpers. |
 | `Eta_http.Body` | Request and response body surfaces. |
 | `Eta_http.Tls` | TLS policy chokepoint. |
-| `Eta_http.Transport` | Backend-neutral ALPN and protocol dispatch helpers. |
-| `Eta_http.H1` | HTTP/1.1 parser and serializer modules. |
-| `Eta_http.H2` | HTTP/2 frame, HPACK, admission, security, scheduler, stream, and connection helpers. |
-| `Eta_http.Ws` | RFC 6455 codec. |
+| `Eta_http_h1` | HTTP/1.1 parser and serializer modules. |
+| `Eta_http_h2` | HTTP/2 frame, HPACK, admission, security, scheduler, stream, and connection helpers. |
+| `Eta_http_ws` | RFC 6455 codec. |
 | `Eta_http_eio` | Eio-backed HTTP/1.1, HTTP/2, TLS, and WebSocket transport adapter. |
+| `Eta_http_js` | js_of_ocaml Fetch client adapter. |
 
 ## Constraints
 
 - Source is written clean-room against RFCs, Eta primitives, and the v1
   objective. Reference libraries are design input only.
-- The shared package must not depend on `eta_eio`, `eio`, `eio.unix`, or
-  backend adapter libraries.
+- The shared package must not depend on `eta_eio`, `eio`, `eio.unix`,
+  `js_of_ocaml`, OpenSSL stubs, concrete protocol helper packages, or backend
+  adapter libraries.
 - Applications own state. eta_http owns effect description, client protocol
   interpretation, and resource lifecycle.
-- `eta_http_h2`, `cstruct`, `faraday`, and `bigstringaf` remain shared
-  protocol dependencies where the shared HTTP/2 helpers expose those substrate
-  shapes.
-- `digestif`, `tls-eio`, `x509`, `ca-certs`, and Mirage Crypto are not
-  eta_http dependencies. TLS policy data and the protocol-required WebSocket
-  SHA-1 digest are owned by the local OpenSSL binding; backend TLS I/O belongs
-  in adapter packages.
+- `digestif`, `tls-eio`, `x509`, `ca-certs`, Mirage Crypto, OpenSSL stubs,
+  `cstruct`, `faraday`, `angstrom`, and `base64` are not `eta_http`
+  dependencies. Concrete protocol, TLS, and WebSocket substrate belongs in the
+  sibling packages that use it.
 
 ## Audit Catalogs
 
@@ -180,6 +182,7 @@ Focused eta_http checks:
 
 ```sh
 nix develop -c dune build eta_http.install eta_http_eio.install
+nix develop .#mainline -c dune runtest test/http_js --force
 nix develop -c dune runtest test/http_eio --force
 nix develop -c bash lib/http/audit/run.sh
 ```

@@ -9,7 +9,9 @@ let record_metric ?(attrs = []) ~name ~description value =
 
 let record_client_stats ?(attrs = []) client =
   Client.stats client
-  |> Eta.Effect.bind (fun stats ->
+  |> Eta.Effect.bind (function
+       | None -> Eta.Effect.unit
+       | Some stats ->
          let attrs = protocol_attr stats.Client.protocol :: attrs in
          Eta.Effect.concat
            [

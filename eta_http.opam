@@ -12,20 +12,12 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
-  "eta_stream"
-  "eta_http_h2"
-  "cstruct" {>= "6.0.0"}
-  "faraday" {>= "0.8.0"}
-  "angstrom" {>= "0.16.0"}
   "yojson" {>= "2.0"}
   "crowbar" {with-test}
   "domain-name"
   "ipaddr"
   "bigstringaf"
-  "base64"
   "decompress" {= "1.5.3"}
-  "conf-pkg-config"
-  "conf-openssl"
   "odoc" {with-doc}
 ]
 build: [

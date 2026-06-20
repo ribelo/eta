@@ -39,7 +39,7 @@ The parser returns spans into `bytes` for reason, headers, and body. Accessors
 such as `span_to_string`, `headers_to_list`, and `body_to_bytes` allocate
 deliberately at consumer boundaries.
 
-`Eta_http.H1.Parse.parse_raw` is the measured core: it fills caller-owned
+`Eta_http_h1.Parse.parse_raw` is the measured core: it fills caller-owned
 header arrays and a caller-owned response record, is annotated with
 `[@zero_alloc]`, and is used by the h1 client response loop. The client reads
 transport bytes through Eio's `Cstruct.t` boundary into a fixed 32 KiB parser

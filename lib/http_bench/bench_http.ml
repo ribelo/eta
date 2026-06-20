@@ -14,34 +14,34 @@ let ws_binary_payload = Bytes.make 960 '\000'
 let ws_mask = Bytes.of_string "\001\002\003\004"
 
 let ws_unmasked_text_frame =
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     { fin = true; opcode = Text; payload = ws_text_payload }
 
 let ws_masked_binary_frame =
-  Eta_http.Ws.Codec.encode ~mask:ws_mask
+  Eta_http_ws.Codec.encode ~mask:ws_mask
     { fin = true; opcode = Binary; payload = ws_binary_payload }
 
 let ws_codec_encode_text () =
   ignore
-    (Eta_http.Ws.Codec.encode
+    (Eta_http_ws.Codec.encode
        { fin = true; opcode = Text; payload = ws_text_payload })
 
 let ws_codec_decode_text () =
-  match Eta_http.Ws.Codec.decode ws_unmasked_text_frame with
+  match Eta_http_ws.Codec.decode ws_unmasked_text_frame with
   | Ok ({ opcode = Text; _ }, _) -> ()
   | Ok _ -> failwith "unexpected WebSocket text decode"
-  | Error error -> failwith (Eta_http.Ws.Codec.parse_error_to_string error)
+  | Error error -> failwith (Eta_http_ws.Codec.parse_error_to_string error)
 
 let ws_codec_encode_masked_binary () =
   ignore
-    (Eta_http.Ws.Codec.encode ~mask:ws_mask
+    (Eta_http_ws.Codec.encode ~mask:ws_mask
        { fin = true; opcode = Binary; payload = ws_binary_payload })
 
 let ws_codec_decode_masked_binary () =
-  match Eta_http.Ws.Codec.decode ~masked:true ws_masked_binary_frame with
+  match Eta_http_ws.Codec.decode ~masked:true ws_masked_binary_frame with
   | Ok ({ opcode = Binary; _ }, _) -> ()
   | Ok _ -> failwith "unexpected WebSocket binary decode"
-  | Error error -> failwith (Eta_http.Ws.Codec.parse_error_to_string error)
+  | Error error -> failwith (Eta_http_ws.Codec.parse_error_to_string error)
 
 let tcp_port = function
   | `Tcp (_, port) -> port
@@ -132,9 +132,9 @@ let read_ws_frame ~masked flow =
   let mask_len = if Char.code (Bytes.get header 1) land 0x80 = 0 then 0 else 4 in
   let mask = read_exact flow mask_len in
   let payload = read_exact flow (ws_payload_len header ext) in
-  match Eta_http.Ws.Codec.decode ~masked (bytes_concat [ header; ext; mask; payload ]) with
+  match Eta_http_ws.Codec.decode ~masked (bytes_concat [ header; ext; mask; payload ]) with
   | Ok (frame, _) -> frame
-  | Error error -> failwith (Eta_http.Ws.Codec.parse_error_to_string error)
+  | Error error -> failwith (Eta_http_ws.Codec.parse_error_to_string error)
 
 let write_ws_switching_response flow key =
   Eio.Flow.copy_string
@@ -142,7 +142,7 @@ let write_ws_switching_response flow key =
     ^ "Upgrade: websocket\r\n"
     ^ "Connection: Upgrade\r\n"
     ^ "Sec-WebSocket-Accept: "
-    ^ Eta_http.Ws.Codec.accept_key key
+    ^ Eta_http_ws.Codec.accept_key ~sha1:Eta_http_tls_openssl.sha1 key
     ^ "\r\n\r\n")
     flow
 
@@ -156,16 +156,16 @@ let run_ws_echo_server ~messages flow =
   write_ws_switching_response flow key;
   for _ = 1 to messages do
     let frame = read_ws_frame ~masked:true flow in
-    let opcode = frame.Eta_http.Ws.Codec.opcode in
+    let opcode = frame.Eta_http_ws.Codec.opcode in
     match opcode with
     | Text | Binary ->
-        Eta_http.Ws.Codec.encode
+        Eta_http_ws.Codec.encode
           { fin = true; opcode; payload = frame.payload }
         |> Bytes.to_string |> fun encoded -> Eio.Flow.copy_string encoded flow
     | Close -> ()
     | Continuation | Ping | Pong -> failwith "unexpected WebSocket bench frame"
   done;
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     { fin = true; opcode = Close; payload = Bytes.of_string "\003\232" }
   |> Bytes.to_string |> fun encoded -> Eio.Flow.copy_string encoded flow;
   try Eio.Flow.shutdown flow `Send with _ -> ()
@@ -219,28 +219,28 @@ let ws_loopback_echo messages =
   run_ws_effect rt program
 
 let parse_response () =
-  match Eta_http.H1.Parse.parse response_bytes ~len:(Bytes.length response_bytes) with
+  match Eta_http_h1.Parse.parse response_bytes ~len:(Bytes.length response_bytes) with
   | Ok response ->
-      ignore (Eta_http.H1.Parse.headers_to_list response_bytes response.headers);
-      ignore (Eta_http.H1.Parse.body_to_bytes response_bytes response)
-  | Error err -> failwith (Eta_http.H1.Parse.parse_error_to_string err)
+      ignore (Eta_http_h1.Parse.headers_to_list response_bytes response.headers);
+      ignore (Eta_http_h1.Parse.body_to_bytes response_bytes response)
+  | Error err -> failwith (Eta_http_h1.Parse.parse_error_to_string err)
 
 let parse_response_raw () =
-  let headers = Eta_http.H1.Parse.create_raw_headers 16 in
-  let response = Eta_http.H1.Parse.create_raw_response () in
+  let headers = Eta_http_h1.Parse.create_raw_headers 16 in
+  let response = Eta_http_h1.Parse.create_raw_response () in
   let code =
-    Eta_http.H1.Parse.parse_raw response_bytes ~len:(Bytes.length response_bytes)
+    Eta_http_h1.Parse.parse_raw response_bytes ~len:(Bytes.length response_bytes)
       ~max_header_bytes:4096 ~headers response
   in
-  if code <> Eta_http.H1.Parse.raw_ok then failwith "raw parse failed";
-  ignore (Eta_http.H1.Parse.raw_headers_to_list response_bytes headers response);
-  ignore (Eta_http.H1.Parse.raw_body_len response)
+  if code <> Eta_http_h1.Parse.raw_ok then failwith "raw parse failed";
+  ignore (Eta_http_h1.Parse.raw_headers_to_list response_bytes headers response);
+  ignore (Eta_http_h1.Parse.raw_body_len response)
 
 let write_request () =
-  let body = Eta_http.H1.Write.Fixed request_body in
+  let body = Eta_http_h1.Write.Fixed request_body in
   let url = Eta_http.Core.Url.of_string "https://example.com/submit" in
   ignore
-    (Eta_http.H1.Write.to_string ~method_:"POST" ~url
+    (Eta_http_h1.Write.to_string ~method_:"POST" ~url
        ~headers:(Eta_http.Core.Header.unsafe_of_list [ ("host", "example.com") ])
        ~body)
 
@@ -253,7 +253,7 @@ let url_request () =
   ignore (Eta_http.Request.body_chunks request)
 
 let h2_security () =
-  ignore (Eta_http.H2.Security.validate_headers [ ("content-type", "text/plain") ])
+  ignore (Eta_http_h2.Security.validate_headers [ ("content-type", "text/plain") ])
 
 let projection_error =
   Eta_http.Error.make ~protocol:H2 ~method_:"GET"

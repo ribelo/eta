@@ -108,7 +108,7 @@ let extract_key request =
           else None)
     lines
 
-let accept_key key = Eta_http.Ws.Codec.accept_key key
+let accept_key key = Eta_http_ws.Codec.accept_key ~sha1:Eta_http_tls_openssl.sha1 key
 
 let send_response ?(status = "101 Switching Protocols") ?(upgrade = "websocket")
     ?(connection = "Upgrade") ?accept ?protocol flow =
@@ -134,28 +134,28 @@ let close_payload code reason =
   Bytes.to_string payload
 
 let valid_text_frame payload =
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     {
-      Eta_http.Ws.Codec.fin = true;
-      opcode = Eta_http.Ws.Codec.Text;
+      Eta_http_ws.Codec.fin = true;
+      opcode = Eta_http_ws.Codec.Text;
       payload = Bytes.of_string payload;
     }
   |> Bytes.to_string
 
 let valid_close_frame ?(code = 1000) ?(reason = "") () =
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     {
-      Eta_http.Ws.Codec.fin = true;
-      opcode = Eta_http.Ws.Codec.Close;
+      Eta_http_ws.Codec.fin = true;
+      opcode = Eta_http_ws.Codec.Close;
       payload = Bytes.of_string (close_payload code reason);
     }
   |> Bytes.to_string
 
 let valid_ping_frame payload =
-  Eta_http.Ws.Codec.encode
+  Eta_http_ws.Codec.encode
     {
-      Eta_http.Ws.Codec.fin = true;
-      opcode = Eta_http.Ws.Codec.Ping;
+      Eta_http_ws.Codec.fin = true;
+      opcode = Eta_http_ws.Codec.Ping;
       payload = Bytes.of_string payload;
     }
   |> Bytes.to_string
@@ -191,8 +191,8 @@ let raw_frame ?(fin = true) ?(rsv = 0) opcode payload =
 
 let masked_server_frame opcode payload =
   let mask = Bytes.of_string "\x01\x02\x03\x04" in
-  Eta_http.Ws.Codec.encode ~mask
-    { Eta_http.Ws.Codec.fin = true; opcode; payload = Bytes.of_string payload }
+  Eta_http_ws.Codec.encode ~mask
+    { Eta_http_ws.Codec.fin = true; opcode; payload = Bytes.of_string payload }
   |> Bytes.to_string
 
 (* ---------------------------------------------------------------------------
@@ -437,7 +437,7 @@ let probe_masked_server_text ~env =
     ~expected:Expect_protocol_error
     ~server_fn:
       (handshake_then_one_frame
-         (masked_server_frame Eta_http.Ws.Codec.Text "hello"))
+         (masked_server_frame Eta_http_ws.Codec.Text "hello"))
     ()
 
 (* 6. Interleaved data/control frames. Control frames may be interleaved
@@ -582,10 +582,10 @@ let probe_unsolicited_pong ~env =
     ~server_fn:
       (handshake_then_frames
          [
-           Eta_http.Ws.Codec.encode
+           Eta_http_ws.Codec.encode
              {
-               Eta_http.Ws.Codec.fin = true;
-               opcode = Eta_http.Ws.Codec.Pong;
+               Eta_http_ws.Codec.fin = true;
+               opcode = Eta_http_ws.Codec.Pong;
                payload = Bytes.of_string "ignored";
              }
            |> Bytes.to_string;

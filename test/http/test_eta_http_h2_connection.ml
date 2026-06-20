@@ -7,7 +7,7 @@ let tcp_port = function
 
 let iovecs_len =
   List.fold_left
-    (fun total ({ Eta_http.H2.IOVec.len; _ } : _ Eta_http.H2.IOVec.t) ->
+    (fun total ({ Eta_http_h2.Iovec.len; _ } : _ Eta_http_h2.Iovec.t) ->
       total + len)
     0
 
@@ -21,49 +21,49 @@ let read_into_connection flow conn =
   let len = Eio.Flow.single_read flow chunk in
   let data = Cstruct.to_string (Cstruct.sub chunk 0 len) in
   let buffer = Bigstringaf.of_string ~off:0 ~len data in
-  ignore (Eta_http.H2.Connection.read conn buffer ~off:0 ~len : int)
+  ignore (Eta_http_h2.Connection.read conn buffer ~off:0 ~len : int)
 
 let rec run_server_writer flow server =
-  match Eta_http.H2.Connection.next_write_operation server with
+  match Eta_http_h2.Connection.next_write_operation server with
   | Write iovecs ->
       (try
          let written = write_iovecs flow iovecs in
-         Eta_http.H2.Connection.report_write_result server (`Ok written);
+         Eta_http_h2.Connection.report_write_result server (`Ok written);
          run_server_writer flow server
        with Eio.Io _ ->
-         Eta_http.H2.Connection.report_write_result server `Closed)
+         Eta_http_h2.Connection.report_write_result server `Closed)
   | Yield ->
       let promise, resolver = Eio.Promise.create () in
-      Eta_http.H2.Connection.yield_writer server (fun () ->
+      Eta_http_h2.Connection.yield_writer server (fun () ->
           ignore (Eio.Promise.try_resolve resolver ()));
       Eio.Promise.await promise;
       run_server_writer flow server
   | Close _ ->
-      Eta_http.H2.Connection.report_write_result server `Closed;
+      Eta_http_h2.Connection.report_write_result server `Closed;
       (try Eio.Flow.shutdown flow `Send with _ -> ())
 
 let rec run_server_reader flow server =
   try
     read_into_connection flow server;
-    if not (Eta_http.H2.Connection.is_closed server) then
+    if not (Eta_http_h2.Connection.is_closed server) then
       run_server_reader flow server
   with End_of_file ->
     let empty = Bigstringaf.create 0 in
-    ignore (Eta_http.H2.Connection.read_eof server empty ~off:0 ~len:0 : int)
+    ignore (Eta_http_h2.Connection.read_eof server empty ~off:0 ~len:0 : int)
 
 let run_h2_server flow handler =
   Eio.Switch.run @@ fun sw ->
   let server =
-    Eta_http.H2.Connection.Server.create ~request_handler:handler
+    Eta_http_h2.Connection.Server.create ~request_handler:handler
       ~error_handler:(fun error ->
         Alcotest.failf "unexpected h2 server error: %a %s"
-          Eta_http.H2.Error_code.pp_hum error.error_code error.message)
+          Eta_http_h2.Error_code.pp_hum error.error_code error.message)
       ()
   in
   Eio.Fiber.fork ~sw (fun () -> run_server_writer flow server);
   Fun.protect
     ~finally:(fun () ->
-      Eta_http.H2.Connection.shutdown server;
+      Eta_http_h2.Connection.shutdown server;
       try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () -> run_server_reader flow server)
 
@@ -130,7 +130,7 @@ let request_effect ?body connection target =
                 (response.Eta_http.Response.status, Bytes.to_string body)))
 
 let open_h2_request connection tag target =
-  let request : Eta_http.H2.Connection.Client.request =
+  let request : Eta_http_h2.Connection.Client.request =
     {
       meth = "GET";
       scheme = Some "https";
@@ -186,9 +186,9 @@ let test_h2_connection_admission_error_reports_configured_limit () =
 let test_h2_connection_concurrent_streams () =
   with_h2_server
     (fun reqd ->
-      let target = (Eta_http.H2.Connection.Server.Reqd.request reqd).path in
+      let target = (Eta_http_h2.Connection.Server.Reqd.request reqd).path in
       let body = "ok:" ^ target in
-      Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+      Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
         (h2_server_response ~body:(`String body) 200)
         body)
     (fun _clock rt connection ->
@@ -236,7 +236,7 @@ let wait_until label predicate =
   loop 50
 
 let test_h2_body_reader_drains_buffered_chunks_before_eof () =
-  let module Reader = Eta_http.H2.Body.Reader in
+  let module Reader = Eta_http_h2.Body.Reader in
   let reader = Reader.create () in
   let feed data =
     let len = String.length data in
@@ -272,7 +272,7 @@ let pp_http_error_detail fmt (error : Eta_http.Error.t) =
 let test_h2_connection_returns_early_response () =
   with_h2_server
     (fun reqd ->
-      Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+      Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
         (h2_server_response ~body:(`String "") 413)
         "")
     (fun _clock rt connection ->
@@ -422,10 +422,10 @@ let test_h2_connection_cancelled_body_read_preserves_connection () =
   with_h2_server
     (fun reqd ->
       let body =
-        Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+        Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
           (h2_server_response 200)
       in
-      ignore (Eta_http.H2.Body.Writer.write_string body "partial"))
+      ignore (Eta_http_h2.Body.Writer.write_string body "partial"))
     (fun _clock rt connection ->
       let uri = "https://api.example.test/body-stall" in
       let eff =
@@ -464,7 +464,7 @@ let test_h2_connection_completed_error_response_does_not_hold_switch () =
       let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
       run_h2_server flow (fun reqd ->
           let body = "{\"error\":{\"message\":\"bad key\",\"code\":401}}" in
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String body) 401)
             body));
   let completed, completed_resolver = Eio.Promise.create () in
@@ -503,25 +503,25 @@ let test_h2_connection_completed_error_response_does_not_hold_switch () =
       Alcotest.fail "completed H2 response kept the client switch open"
 
 let hpack_header name value =
-  { Eta_http.Hpack.name; value; sensitive = false }
+  { Eta_http_h2.Hpack.name; value; sensitive = false }
 
-let hpack_block encoder headers = Eta_http.Hpack.encode_headers encoder headers
+let hpack_block encoder headers = Eta_http_h2.Hpack.encode_headers encoder headers
 
 let raw_headers encoder ?(end_stream = false) ~stream_id headers =
   let block = hpack_block encoder headers in
   let flags = 0x4 lor (if end_stream then 0x1 else 0) in
-  Eta_http.H2.Frame.header ~length:(String.length block) ~frame_type:Headers
+  Eta_http_h2.Frame.header ~length:(String.length block) ~frame_type:Headers
     ~flags ~stream_id
   ^ block
 
 let raw_data ?(end_stream = false) ~stream_id data =
   let flags = if end_stream then 0x1 else 0 in
-  Eta_http.H2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
+  Eta_http_h2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
     ~stream_id
   ^ data
 
 let raw_informational_response_server flow =
-  let encoder = Eta_http.Hpack.encoder_create 4096 in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
   let early =
     raw_headers encoder ~stream_id:1
       [ hpack_header ":status" "103"; hpack_header "x-reused" "yes" ]
@@ -536,7 +536,7 @@ let raw_informational_response_server flow =
   in
   let body = raw_data ~end_stream:true ~stream_id:1 "final" in
   let response =
-    String.concat "" [ Eta_http.H2.Frame.settings; early; final; body ]
+    String.concat "" [ Eta_http_h2.Frame.settings; early; final; body ]
   in
   Eio.Flow.write flow [ Cstruct.of_string response ];
   let chunk = Cstruct.create 0x4000 in
@@ -549,9 +549,9 @@ let raw_informational_response_server flow =
 
 (* Server that sends partial body then GOAWAY, used by the GOAWAY-during-body test *)
 let raw_goaway_mid_body_server flow =
-  let encoder = Eta_http.Hpack.encoder_create 4096 in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
   (* Send server preface (SETTINGS) *)
-  let settings_frame = Eta_http.H2.Frame.settings in
+  let settings_frame = Eta_http_h2.Frame.settings in
   (* Response headers for stream 1 (no content-length, streaming) *)
   let response_headers =
     raw_headers encoder ~stream_id:1
@@ -568,7 +568,7 @@ let raw_goaway_mid_body_server flow =
   (* Small delay to ensure client processes first chunk *)
   Eio.Fiber.yield ();
   (* Send GOAWAY with last_stream_id=1 (allows stream 1 to complete) *)
-  let goaway = Eta_http.H2.Frame.goaway_no_error ~last_stream_id:1 in
+  let goaway = Eta_http_h2.Frame.goaway_no_error ~last_stream_id:1 in
   (* Then send more data and close stream *)
   let data2 = raw_data ~end_stream:true ~stream_id:1 "chunk2" in
   (try
@@ -624,9 +624,9 @@ let test_h2_connection_goaway_mid_body_completes_existing_stream () =
 let test_h2_connection_timeout_preserves_connection () =
   with_h2_server
     (fun reqd ->
-      match (Eta_http.H2.Connection.Server.Reqd.request reqd).path with
+      match (Eta_http_h2.Connection.Server.Reqd.request reqd).path with
       | "/fast" ->
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String "fast") 200)
             "fast"
       | _ -> () (* /slow: never respond *))
@@ -677,7 +677,7 @@ let test_h2_connection_switch_close_does_not_fire_security_error () =
       Eio.Switch.run @@ fun conn_sw ->
       let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
       run_h2_server flow (fun reqd ->
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String "ok") 200)
             "ok"));
   (* Client: connect, complete one request, let switch close (daemons cancelled) *)
@@ -726,7 +726,7 @@ let test_h2_connection_failure_kind_on_switch_close_is_not_protocol_violation ()
       Eio.Switch.run @@ fun conn_sw ->
       let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
       run_h2_server flow (fun reqd ->
-          Eta_http.H2.Connection.Server.Reqd.respond_with_string reqd
+          Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
             (h2_server_response ~body:(`String "ok") 200)
             "ok"));
   let failure_kind = ref None in
@@ -821,10 +821,10 @@ let test_h2_connection_body_error_on_switch_close_is_connection_closed () =
       let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
       run_h2_server flow (fun reqd ->
           let body =
-            Eta_http.H2.Connection.Server.Reqd.respond_with_streaming reqd
+            Eta_http_h2.Connection.Server.Reqd.respond_with_streaming reqd
               (h2_server_response 200)
           in
-          ignore (Eta_http.H2.Body.Writer.write_string body "partial")));
+          ignore (Eta_http_h2.Body.Writer.write_string body "partial")));
   (* Client: connect, read first body chunk, return body stream, close switch *)
   let body_promise, body_resolver = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->
