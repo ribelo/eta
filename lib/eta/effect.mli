@@ -197,6 +197,24 @@ val recover : ('err1 -> 'a) -> ('a, 'err1) t -> ('a, 'err2) t
     finalizer diagnostics are not recovered, matching {!catch}. If [f] raises,
     the exception is an unchecked defect. *)
 
+val or_else : (unit -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
+(** Recover from any typed failure with a lazy fallback effect.
+
+    [or_else fallback eff] is shorthand for [catch (fun _ -> fallback ()) eff].
+    Successful values pass through without evaluating [fallback]. The fallback
+    runs only for catchable typed failures. Defects, interruption, and
+    finalizer diagnostics are not caught, matching {!catch}. *)
+
+val or_else_succeed : (unit -> 'a) -> ('a, 'err) t -> ('a, 'outer) t
+(** Recover from any typed failure with a lazy pure value.
+
+    [or_else_succeed fallback eff] is shorthand for
+    [catch (fun _ -> pure (fallback ())) eff]. Successful values pass through
+    without evaluating [fallback]. The fallback runs only for catchable typed
+    failures. Defects, interruption, and finalizer diagnostics are not caught,
+    matching {!catch}. If [fallback] raises, the exception is an unchecked
+    defect. *)
+
 val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
 (** Suppress typed failures from a best-effort unit effect.
 

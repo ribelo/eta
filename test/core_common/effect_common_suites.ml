@@ -302,6 +302,120 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
     | Exit.Ok _ -> Alcotest.fail "expected handler defect"
 
+  let test_effect_or_else_success_noop () =
+    B.with_runtime @@ fun _ctx rt ->
+    let fallback_calls = ref 0 in
+    let eff =
+      Effect.pure "primary"
+      |> Effect.or_else (fun () ->
+             incr fallback_calls;
+             Effect.pure "fallback")
+    in
+    Alcotest.(check string) "success" "primary" (run_ok rt eff);
+    Alcotest.(check int) "fallback skipped" 0 !fallback_calls
+
+  let test_effect_or_else_typed_failure_recovery () =
+    B.with_runtime @@ fun _ctx rt ->
+    let fallback_calls = ref 0 in
+    let eff =
+      Effect.fail `Primary
+      |> Effect.or_else (fun () ->
+             incr fallback_calls;
+             Effect.pure "fallback")
+    in
+    Alcotest.(check string) "fallback success" "fallback" (run_ok rt eff);
+    Alcotest.(check int) "fallback once" 1 !fallback_calls
+
+  let test_effect_or_else_fallback_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.fail `Primary
+      |> Effect.or_else (fun () -> Effect.fail `Fallback)
+    in
+    expect_typed_failure_eq
+      (Alcotest.testable
+         (fun ppf -> function
+           | `Fallback -> Format.pp_print_string ppf "Fallback")
+         ( = ))
+      (B.run rt eff) `Fallback
+
+  let test_effect_or_else_does_not_catch_uncatchable_causes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let fallback_calls = ref 0 in
+    let fallback () =
+      incr fallback_calls;
+      Effect.pure "fallback"
+    in
+    let run label cause assert_uncaught =
+      let before = !fallback_calls in
+      let eff : (string, [ `Typed ]) Effect.t =
+        effect_error_cause cause |> Effect.or_else fallback
+      in
+      (match B.run rt eff with
+      | Exit.Error actual -> assert_uncaught actual
+      | Exit.Ok value ->
+          Alcotest.failf "or_else swallowed %s as %S" label value);
+      Alcotest.(check int)
+        (label ^ " fallback skipped") before !fallback_calls
+    in
+    let defect = Failure "uncaught defect" in
+    run "defect"
+      (Cause.Concurrent [ Cause.Fail `Typed; Cause.die defect ])
+      (function
+        | Cause.Die die when die.exn == defect -> ()
+        | Cause.Concurrent [ Cause.Die die ] when die.exn == defect -> ()
+        | cause ->
+            Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden)
+              cause);
+    run "interrupt"
+      (Cause.Concurrent [ Cause.Fail `Typed; Cause.interrupt ])
+      (function
+        | Cause.Interrupt _ -> ()
+        | Cause.Concurrent [ Cause.Interrupt _ ] -> ()
+        | cause ->
+            Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden)
+              cause);
+    run "finalizer"
+      (Cause.Suppressed
+         {
+           primary = Cause.Fail `Typed;
+           finalizer = Cause.Finalizer.Fail "cleanup";
+         })
+      (function
+        | Cause.Finalizer (Cause.Finalizer.Fail "cleanup") -> ()
+        | cause ->
+            Alcotest.failf "expected finalizer diagnostic, got %a"
+              (Cause.pp pp_hidden) cause)
+
+  let test_effect_or_else_succeed () =
+    B.with_runtime @@ fun _ctx rt ->
+    let fallback_calls = ref 0 in
+    let fallback () =
+      incr fallback_calls;
+      "fallback"
+    in
+    let success =
+      Effect.pure "primary" |> Effect.or_else_succeed fallback
+    in
+    Alcotest.(check string) "success" "primary" (run_ok rt success);
+    Alcotest.(check int) "success skips fallback" 0 !fallback_calls;
+    let recovered =
+      Effect.fail `Primary |> Effect.or_else_succeed fallback
+    in
+    Alcotest.(check string) "typed failure recovered" "fallback"
+      (run_ok rt recovered);
+    Alcotest.(check int) "fallback once" 1 !fallback_calls;
+    match
+      B.run rt
+        (Effect.sync (fun () -> failwith "boom")
+        |> Effect.or_else_succeed fallback)
+    with
+    | Exit.Error (Cause.Die _) ->
+        Alcotest.(check int) "defect skips fallback" 1 !fallback_calls
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect"
+
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check unit)
@@ -2651,6 +2765,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "catch_some skips uncatchable causes" `Quick
             test_effect_catch_some_does_not_catch_uncatchable_causes;
           Alcotest.test_case "recover" `Quick test_effect_recover;
+          Alcotest.test_case "or_else success noop" `Quick
+            test_effect_or_else_success_noop;
+          Alcotest.test_case "or_else typed failure recovery" `Quick
+            test_effect_or_else_typed_failure_recovery;
+          Alcotest.test_case "or_else fallback failure" `Quick
+            test_effect_or_else_fallback_failure;
+          Alcotest.test_case "or_else skips uncatchable causes" `Quick
+            test_effect_or_else_does_not_catch_uncatchable_causes;
+          Alcotest.test_case "or_else_succeed" `Quick
+            test_effect_or_else_succeed;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "ignore" `Quick test_effect_ignore;
           Alcotest.test_case "result" `Quick test_effect_result;

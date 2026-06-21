@@ -58,7 +58,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 2.13 error-accumulating `validate_all`.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
-- 1.8 level-named log helpers; 2.3 `orElse` family; 2.4 `when`/`unless`;
+- 1.8 level-named log helpers; 2.4 `when`/`unless`;
   2.7 `forever`/`iterate`; 2.17 `yield_now`; 2.18 `flip`/`from_option`/`zip`;
   4.x random conveniences; 5.2 sub-ms precision.
 
@@ -213,16 +213,19 @@ effect-smol: `Effect.ignore` / `ignoreCause`. Behavior: run for effect, discard
 both success value and typed failure (`-> (unit, 'never) t`). Extremely common;
 today users must write `catch`/`map` boilerplate.
 
-### 2.3 `orElse` / `orElseSucceed` / `orDie` — **CONSIDER**
+### 2.3 `orElse` / `orElseSucceed` / `orDie` — **ADOPTED / partial**
 effect-smol: `Effect.orElse`, `orElseSucceed`, `orDie`.
 - `orElse : (unit -> ('a,'err2) t) -> ('a,'err1) t -> ('a,'err2) t`
 - `orElseSucceed : (unit -> 'a) -> ('a,'err) t -> ('a,'never) t`
 - `or_die : ('err -> exn) -> ('a,'err) t -> ('a,'outer) t` (promote typed
   failure to defect)
 
-`catch` can express `orElse`, so these are sugar. `orDie` is the interesting one
-(turn an expected failure into an unrecoverable defect) and matches Eta's
-"break loudly" rule. ADOPTED for `or_die`, CONSIDER for the others.
+Eta exposes `Effect.or_else`, `or_else_succeed`, and `or_die`. The recovery
+forms are intentionally thin sugar over Eta's existing `catch` boundary:
+success passes through, fallbacks are lazy, and only typed failures are
+recovered. Defects, interruption, and finalizer diagnostics are not caught.
+Partial only in the type spelling: Eta has no bottom error type, so
+`or_else_succeed` returns `('a, 'outer) t`.
 
 ### 2.4 `when` / `unless` — **CONSIDER**
 effect-smol: `Effect.when` / `unless` (+ effectful predicate variants).

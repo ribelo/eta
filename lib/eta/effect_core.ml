@@ -276,6 +276,8 @@ let catch_some (handler) eff =
               | None -> invalid_arg "Effect.catch_some: empty composite cause"))
 
 let recover (handler) eff = catch (fun err -> pure (handler err)) eff
+let or_else fallback eff = catch (fun _ -> fallback ()) eff
+let or_else_succeed fallback eff = catch (fun _ -> pure (fallback ())) eff
 let ignore_errors eff = catch (fun _ -> unit) eff
 let ignore eff = catch (fun _ -> unit) (map (fun _ -> ()) eff)
 let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
