@@ -29,7 +29,9 @@ let to_api_error err =
 
 let program observed raw =
   domain_program raw
-  |> Effect.tap_error (fun err -> observed := render_domain_error err :: !observed)
+  |> Effect.tap_error (fun err ->
+         Effect.sync (fun () ->
+             observed := render_domain_error err :: !observed))
   |> Effect.map_error to_api_error
 
 let pp_api_error fmt = function

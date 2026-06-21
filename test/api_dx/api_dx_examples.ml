@@ -563,7 +563,7 @@ let typed_error_proposed observe to_boundary raw =
   let open Syntax in
   (let* id = Effect.from_result (Domain.parse_id raw) in
    load_user_proposed id)
-  |> Effect.tap_error observe
+  |> Effect.tap_error (fun err -> Effect.sync (fun () -> observe err))
   |> Effect.map_error to_boundary
 
 let admission_current sem abort body =
@@ -2160,7 +2160,7 @@ match current with
         {|let open Eta.Syntax in
 (let* id = Effect.from_result (parse raw) in
  load_user id)
-|> Effect.tap_error observe
+|> Effect.tap_error (fun err -> Effect.sync (fun () -> observe err))
 |> Effect.map_error to_boundary|};
     };
     {

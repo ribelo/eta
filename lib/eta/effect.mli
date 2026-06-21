@@ -224,11 +224,25 @@ val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
     {!Cause.Finalizer} nodes and are preserved unchanged, including
     [Cause.Suppressed.finalizer] branches. *)
 
-val tap_error : ('err -> unit) -> ('a, 'err) t -> ('a, 'err) t
-(** Run an observer when the eff fails with a typed error, then rethrow the
-    original typed failure. If the observer raises, the runtime reports a
-    suppressed cause with the original [Cause.Fail] as [primary] and the
-    observer exception as [finalizer], so diagnostics retain both failures. *)
+val tap_error : ('err -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effectful observer on the first typed failure, then preserve the
+    original failure when the observer succeeds.
+
+    [tap_error] does not observe defects or interruption-only causes. If the
+    observer fails, its failure becomes the result normally, as in ordinary
+    sequencing; it is not reported as a finalizer or suppressed diagnostic. *)
+
+val tap_cause :
+  ('err Cause.t -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effectful observer with the full cause of any failed exit, then
+    preserve the original failure when the observer succeeds. Observer failure
+    fails normally from the observer path. *)
+
+val tap_defect :
+  (Cause.die -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effectful observer on the first defect in the cause tree, then
+    preserve the original failure when the observer succeeds. Observer failure
+    fails normally from the observer path. *)
 
 val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
 

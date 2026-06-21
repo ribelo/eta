@@ -558,7 +558,9 @@ let test_cause_integration () =
   let program =
     Eta_schema.decode config bad_config_json
     |> Eta.Effect.map (fun _ -> 0)
-    |> Eta.Effect.tap_error (function `Decode issues -> seen := List.length issues)
+    |> Eta.Effect.tap_error (function
+         | `Decode issues ->
+             Eta.Effect.sync (fun () -> seen := List.length issues))
     |> Eta.Effect.catch (function
          | `Decode issues -> Eta.Effect.pure (List.length issues))
   in

@@ -281,22 +281,34 @@ let map_error (f) eff =
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> error (map_cause_error f cause)
 
+let run_observer frame original observer =
+  match eval frame observer with
+  | Exit.Ok () -> original
+  | Exit.Error cause -> error cause
+
 let tap_error (observe) eff =
   preserve eff @@ fun frame ->
   match eval frame eff with
   | Exit.Ok _ as ok -> ok
-  | Exit.Error (Cause.Fail err) as original -> (
-      try
-        observe err;
-        original
-      with exn ->
-        let finalizer =
-          Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
-        in
-        error
-          (Cause.suppressed ~primary:(Cause.Fail err)
-             ~finalizer:(render_cause_error frame finalizer)))
-  | Exit.Error _ as err -> err
+  | Exit.Error cause as original -> (
+      match first_typed_failure cause with
+      | Some err -> run_observer frame original (observe err)
+      | None -> original)
+
+let tap_cause (observe) eff =
+  preserve eff @@ fun frame ->
+  match eval frame eff with
+  | Exit.Ok _ as ok -> ok
+  | Exit.Error cause as original -> run_observer frame original (observe cause)
+
+let tap_defect (observe) eff =
+  preserve eff @@ fun frame ->
+  match eval frame eff with
+  | Exit.Ok _ as ok -> ok
+  | Exit.Error cause as original -> (
+      match Cause.defects cause with
+      | die :: _ -> run_observer frame original (observe die)
+      | [] -> original)
 
 let delay duration eff =
   preserve eff @@ fun frame ->

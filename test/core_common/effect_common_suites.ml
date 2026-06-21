@@ -565,50 +565,102 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let observed = ref false in
     let eff =
       Effect.fail `Boom
-      |> Effect.tap_error (fun (`Boom : [ `Boom ]) -> observed := true)
+      |> Effect.tap_error (fun (`Boom : [ `Boom ]) ->
+             Effect.sync (fun () -> observed := true))
       |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure "recovered")
     in
     Alcotest.(check string) "recovered" "recovered" (run_ok rt eff);
     Alcotest.(check bool) "observed" true !observed
 
-  let test_effect_tap_error_observer_failure_preserves_typed_failure () =
+  let test_effect_tap_error_observer_failure_replaces_original () =
     B.with_runtime @@ fun _ctx rt ->
-    let eff =
+    let eff : (unit, [ `My_error | `Observer_failed ]) Effect.t =
       Effect.fail `My_error
-      |> Effect.tap_error (fun (`My_error : [ `My_error ]) ->
-             failwith "observer crash")
+      |> Effect.tap_error (function
+           | `My_error -> Effect.fail `Observer_failed
+           | `Observer_failed -> Effect.unit)
     in
     match B.run rt eff with
-    | Exit.Error
-        (Cause.Suppressed
-          {
-            primary = Cause.Fail `My_error;
-            finalizer = Cause.Finalizer.Die { exn; _ };
-          }) ->
-        Alcotest.(check string)
-          "observer defect" "Failure(\"observer crash\")"
-          (Printexc.to_string exn)
+    | Exit.Error (Cause.Fail `Observer_failed) -> ()
     | Exit.Error cause ->
-        Alcotest.failf "expected suppressed typed failure, got %a"
+        Alcotest.failf "expected observer failure, got %a"
           (Cause.pp (fun fmt -> function
-            | `My_error -> Format.pp_print_string fmt "My_error"))
+            | `My_error -> Format.pp_print_string fmt "My_error"
+            | `Observer_failed ->
+                Format.pp_print_string fmt "Observer_failed"))
           cause
     | Exit.Ok () -> Alcotest.fail "expected tap_error failure"
 
-  let test_effect_tap_error_does_not_observe_defects () =
+  let test_effect_tap_error_skips_defects_and_interrupts () =
     B.with_runtime @@ fun _ctx rt ->
-    let observed = ref false in
-    let eff =
+    let observed = ref 0 in
+    let observe (_ : string) = Effect.sync (fun () -> incr observed) in
+    let defect_eff =
       Effect.sync (fun () -> failwith "body defect")
-      |> Effect.tap_error (fun (_ : string) -> observed := true)
+      |> Effect.tap_error observe
     in
-    (match B.run rt eff with
+    (match B.run rt defect_eff with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected defect, got %a"
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect");
-    Alcotest.(check bool) "observer not called" false !observed
+    let interrupt_eff =
+      Effect.named "interrupt" (runtime_interrupt_effect ())
+      |> Effect.tap_error observe
+    in
+    (match B.run rt interrupt_eff with
+    | Exit.Error (Cause.Interrupt _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected interrupt");
+    Alcotest.(check int) "observer not called" 0 !observed
+
+  let test_effect_tap_cause_observes_full_cause () =
+    B.with_runtime @@ fun _ctx rt ->
+    let cause =
+      Cause.Suppressed
+        {
+          primary = Cause.Fail "body";
+          finalizer = Cause.Finalizer.Fail "cleanup";
+        }
+    in
+    let observed = ref false in
+    let eff =
+      effect_error_cause cause
+      |> Effect.tap_cause (fun observed_cause ->
+             Effect.sync (fun () ->
+                 observed := Cause.equal String.equal cause observed_cause))
+    in
+    (match B.run rt eff with
+    | Exit.Error actual ->
+        Alcotest.(check string_cause) "original cause" cause actual
+    | Exit.Ok _ -> Alcotest.fail "expected cause failure");
+    Alcotest.(check bool) "observed full cause" true !observed
+
+  let test_effect_tap_defect_observes_first_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let first = Failure "first defect" in
+    let second = Failure "second defect" in
+    let cause : string Cause.t =
+      Cause.Sequential [ Cause.die first; Cause.die second ]
+    in
+    let observed = ref None in
+    let eff =
+      effect_error_cause cause
+      |> Effect.tap_defect (fun die ->
+             Effect.sync (fun () ->
+                 observed := Some (Printexc.to_string die.Cause.exn)))
+    in
+    (match B.run rt eff with
+    | Exit.Error actual ->
+        Alcotest.(check string_cause) "original cause" cause actual
+    | Exit.Ok _ -> Alcotest.fail "expected defect failure");
+    Alcotest.(check (option string))
+      "observed first defect"
+      (Some "Failure(\"first defect\")")
+      !observed
 
   let test_runtime_die_captures_diagnostics () =
     B.with_sampled_traced_runtime Sampler.always_off @@ fun _ctx rt _tracer ->
@@ -2382,11 +2434,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_syntax_operators;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
             test_effect_tap_error_observes_and_rethrows;
-          Alcotest.test_case "tap_error observer failure preserves typed failure"
+          Alcotest.test_case "tap_error observer failure replaces original"
             `Quick
-            test_effect_tap_error_observer_failure_preserves_typed_failure;
-          Alcotest.test_case "tap_error does not observe defects" `Quick
-            test_effect_tap_error_does_not_observe_defects;
+            test_effect_tap_error_observer_failure_replaces_original;
+          Alcotest.test_case "tap_error skips defects and interrupts" `Quick
+            test_effect_tap_error_skips_defects_and_interrupts;
+          Alcotest.test_case "tap_cause observes full cause" `Quick
+            test_effect_tap_cause_observes_full_cause;
+          Alcotest.test_case "tap_defect observes first defect" `Quick
+            test_effect_tap_defect_observes_first_defect;
           Alcotest.test_case "die captures diagnostics" `Quick
             test_runtime_die_captures_diagnostics;
           Alcotest.test_case "finalizer die captures diagnostics" `Quick

@@ -203,7 +203,8 @@ let workloads =
           (Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 1) (Effect.fail `Boom)));
     core "tap_error_failure" (fun () ->
         run_effect
-          (Effect.tap_error (fun (`Boom : [ `Boom ]) -> ()) (Effect.fail `Boom)));
+          (Effect.tap_error (fun (`Boom : [ `Boom ]) -> Effect.unit)
+             (Effect.fail `Boom)));
     core "fail_then_catch" (fun () ->
         run_effect
           (Effect.fail `Boom
