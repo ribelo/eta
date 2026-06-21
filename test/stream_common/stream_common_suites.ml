@@ -89,6 +89,120 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (list int)) "predicate calls" [ 1; 2; 3 ]
       (List.rev !seen)
 
+  let test_tap_success_order () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.tap (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen))
+    in
+    Alcotest.(check (list int))
+      "values preserved" [ 1; 2; 3 ] (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "tap order" [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_tap_failure_fails_stream () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.tap (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    if value = 2 then Eta.Effect.fail (`Tap_failed value)
+                    else Eta.Effect.unit))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Tap_failed 2)) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf "tap failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected tap failure cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list int)) "stopped at failing tap" [ 1; 2 ]
+      (List.rev !seen)
+
+  let test_tap_error_preserves_original_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let observed = ref [] in
+    let stream =
+      Eta_stream.Stream.concat
+        (Eta_stream.Stream.from_iterable [ 1 ])
+        (Eta_stream.Stream.fail `Original)
+      |> Eta_stream.Stream.tap_error (fun error ->
+             Eta.Effect.sync (fun () -> observed := error :: !observed))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail `Original) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf "tap_error unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected tap_error cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list (testable pp_hidden ( = ))))
+      "observed original failure" [ `Original ] (List.rev !observed)
+
+  let test_tap_error_observer_failure_wins () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream : (int, [ `Original | `Observer ]) Eta_stream.Stream.t =
+      Eta_stream.Stream.fail `Original
+      |> Eta_stream.Stream.tap_error (function
+           | `Original -> Eta.Effect.fail `Observer
+           | `Observer -> Eta.Effect.unit)
+    in
+    match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail `Observer) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf "tap_error observer failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected tap_error observer cause: %a"
+          (Eta.Cause.pp pp_hidden) cause
+
+  let test_run_for_each () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+    |> Eta_stream.run_for_each (fun value ->
+           Eta.Effect.sync (fun () -> seen := value :: !seen))
+    |> B.run rt
+    |> check_ok Alcotest.unit "run_for_each" ();
+    Alcotest.(check (list int)) "effects" [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_run_fold_summarizes_without_collecting () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.range ~start:1 ~stop:1_000
+      |> Eta_stream.Stream.map_effect Eta.Effect.pure
+    in
+    Alcotest.(check int) "sum" 500_500
+      (run_ok rt (Eta_stream.run_fold ( + ) 0 stream))
+
+  let test_run_count () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 5 ]
+      |> Eta_stream.Stream.filter (fun value -> value mod 2 = 1)
+    in
+    Alcotest.(check int) "odd count" 3
+      (run_ok rt (Eta_stream.run_count stream))
+
+  let test_tap_respects_take_early_termination () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ]
+      |> Eta_stream.Stream.tap (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen))
+      |> Eta_stream.Stream.take 2
+    in
+    Eta_stream.run_drain stream |> B.run rt
+    |> check_ok Alcotest.unit "take drain" ();
+    Alcotest.(check (list int)) "only taken values tapped" [ 1; 2 ]
+      (List.rev !seen)
+
   let test_from_queue_clean_close_ends_stream () =
     B.with_runtime @@ fun _ctx rt ->
     let queue = Eta.Queue.create () in
@@ -462,6 +576,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "grouped batches" `Quick test_grouped_batches;
           Alcotest.test_case "take_until_effect includes terminal value" `Quick
             test_take_until_effect_includes_terminal_value;
+          Alcotest.test_case "tap success order" `Quick test_tap_success_order;
+          Alcotest.test_case "tap failure fails stream" `Quick
+            test_tap_failure_fails_stream;
+          Alcotest.test_case "tap_error preserves original failure" `Quick
+            test_tap_error_preserves_original_failure;
+          Alcotest.test_case "tap_error observer failure wins" `Quick
+            test_tap_error_observer_failure_wins;
+          Alcotest.test_case "run_for_each" `Quick test_run_for_each;
+          Alcotest.test_case "run_fold summarizes without collecting" `Quick
+            test_run_fold_summarizes_without_collecting;
+          Alcotest.test_case "run_count" `Quick test_run_count;
+          Alcotest.test_case "tap respects take early termination" `Quick
+            test_tap_respects_take_early_termination;
           Alcotest.test_case "from_queue clean close ends stream" `Quick
             test_from_queue_clean_close_ends_stream;
           Alcotest.test_case "from_queue error close fails after drain" `Quick

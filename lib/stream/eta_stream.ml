@@ -25,6 +25,9 @@ module Stream = struct
     | Map_effect :
         ('a, 'err) t * ('a -> ('b, 'err) Eta.Effect.t)
         -> ('b, 'err) t
+    | Tap_error :
+        ('a, 'err) t * ('err -> (unit, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
     | Filter : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_until_effect :
@@ -76,6 +79,11 @@ module Stream = struct
   let fail error = Fail error
   let map (f) stream = Map (stream, f)
   let map_effect (f) stream = Map_effect (stream, f)
+  let tap (f) stream =
+    map_effect
+      (fun value -> Eta.Effect.map (fun () -> value) (f value))
+      stream
+  let tap_error (f) stream = Tap_error (stream, f)
   let filter (f) stream = Filter (stream, f)
   let take n stream = Take (n, stream)
   let take_until_effect (f) stream = Take_until_effect (stream, f)
@@ -290,6 +298,7 @@ and try_fold_pure :
           loop acc values
       (* Generic combinators *)
       | Map (inner, f) -> go inner (fun a x -> k a (f x)) acc
+      | Tap_error (inner, _) -> go inner k acc
       | Filter (inner, pred) ->
           go inner (fun a x -> if pred x then k a x else a) acc
       | Drop (n, inner) ->
@@ -360,6 +369,11 @@ and fold_stream :
             (fun acc value ->
               Eta.Effect.bind (fun mapped -> folder.emit acc mapped) (f value));
         }
+  | Tap_error (inner, observe) ->
+      fold_stream inner acc folder
+      |> Eta.Effect.catch (fun error ->
+             observe error
+             |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
   | Filter (inner, f) ->
       fold_stream inner acc
         {
@@ -900,3 +914,13 @@ let run : type a b err. (a, err) Stream.t -> (a, b, err) Sink.t -> (b, err) Eta.
 
 let run_collect stream = run stream Sink.collect_to_list
 let run_drain stream = run stream Sink.drain
+
+let run_for_each (f) stream =
+  run stream
+    (Sink.fold_effect
+       (fun () value ->
+         f value |> Eta.Effect.map (fun () -> ()))
+       ())
+
+let run_fold (f) init stream = run stream (Sink.fold f init)
+let run_count stream = run stream Sink.count

@@ -549,11 +549,14 @@ Eta's `Eta_stream.Stream` already covers a real core: `map`, `filter`,
 intentionally out of scope, but a handful of **small, high-frequency element
 operators** are missing and would smooth everyday use:
 
-### 7.1 `tap` / `tap_error` (per-element side effect) — **PORT**
+### 7.1 `tap` / `tap_error` (per-element side effect) — **ADOPTED**
 effect-smol: `Stream.tap`, `tapError`. Run an effect for each element (or each
 stream error) without changing the stream. The single most common stream
-primitive that Eta lacks; today users must `map_effect (fun x -> e >>= fun () ->
-pure x)`. Tiny, obviously useful.
+primitive that Eta lacked; Eta now exposes `Stream.tap` and `Stream.tap_error`.
+Element taps preserve the original element when the observer succeeds and fail
+the stream normally when the observer fails. Error taps observe typed stream
+failures, preserve the original failure when the observer succeeds, and let the
+observer failure win when it fails.
 
 ### 7.2 `take_while` / `drop_while` / `drop_until` — **CONSIDER**
 effect-smol: `takeWhile`, `dropWhile`, `dropUntil` (+ effectful variants). Eta has
@@ -573,12 +576,13 @@ tag elements with their index. `zip_with_index` is the cheap, common one.
 effect-smol: `changes` / `changesWith`. Emit an element only when it differs from
 the previous one. Small and handy for state/event streams.
 
-### 7.6 Run helpers: `run_fold` / `run_for_each` / `run_count` / `mk_string` — **PORT**
+### 7.6 Run helpers: `run_fold` / `run_for_each` / `run_count` — **ADOPTED**
 effect-smol: `runForEach`, `runFold`, `runCount`, `runHead`, `mkString`. Eta has
-`run`, `run_collect`, `run_drain`. `run_for_each` (run an effect per element and
-drain) and `run_fold` (fold into a summary without materializing a list) are the
-two missing terminal operators people reach for constantly; `run_collect` forces
-a full list today. Recommend at least `run_for_each` + `run_fold`.
+`run`, `run_collect`, `run_drain`, and now also `run_for_each`, `run_fold`, and
+`run_count`. These terminal helpers delegate to existing `Sink`/`fold_stream`
+machinery, so `run_fold` and `run_count` summarize without materializing the
+whole stream. `mk_string` and `run_head` remain outside the adopted narrow
+slice.
 
 ### 7.7 Stream-level `retry` / `repeat` / `schedule` / `timeout` — **CONSIDER**
 effect-smol: `Stream.retry`, `repeat`, `schedule`, `timeout`. Apply a `Schedule.t`

@@ -43,6 +43,22 @@ module Stream : sig
     ('a -> ('b, 'err) Eta.Effect.t) ->
     ('a, 'err) t ->
     ('b, 'err) t
+  val tap :
+    ('a -> (unit, 'err) Eta.Effect.t) ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Run an effectful observer for every emitted element, preserving the
+      element when the observer succeeds. Observer failure fails the stream
+      normally. *)
+
+  val tap_error :
+    ('err -> (unit, 'err) Eta.Effect.t) ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Run an effectful observer for typed stream failures. If the observer
+      succeeds, the original failure is preserved. If the observer fails, the
+      observer failure becomes the stream failure. *)
+
   val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_until_effect :
@@ -198,3 +214,16 @@ val run :
 val run_collect : ('a, 'err) Stream.t -> ('a list, 'err) Eta.Effect.t
 
 val run_drain : ('a, 'err) Stream.t -> (unit, 'err) Eta.Effect.t
+
+val run_for_each :
+  ('a -> (unit, 'err) Eta.Effect.t) ->
+  ('a, 'err) Stream.t ->
+  (unit, 'err) Eta.Effect.t
+
+val run_fold :
+  ('acc -> 'a -> 'acc) ->
+  'acc ->
+  ('a, 'err) Stream.t ->
+  ('acc, 'err) Eta.Effect.t
+
+val run_count : ('a, 'err) Stream.t -> (int, 'err) Eta.Effect.t
