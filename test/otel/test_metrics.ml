@@ -57,11 +57,14 @@ let test_metrics_otlp_live () =
           Effect.bind
             (fun () ->
               Effect.metric_update ~name:"eta.demo.gauge"
-                ~kind:Capabilities.Gauge (Capabilities.Float 1.5))
+                ~kind:Capabilities.Gauge
+                (Capabilities.Number (Capabilities.Float 1.5)))
             (Effect.metric_update ~name:"eta.demo.counter" ~description:"demo"
-               ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1)))
+               ~kind:(Capabilities.Counter { monotonic = true })
+               (Capabilities.Number (Capabilities.Int 1))))
         (Effect.metric_update ~name:"eta.demo.counter" ~description:"demo"
-           ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1))
+           ~kind:(Capabilities.Counter { monotonic = true })
+           (Capabilities.Number (Capabilities.Int 1)))
     in
     ignore (Runtime.run rt program : (unit, 'err) Exit.t);
     Eta_otel.flush exporter;

@@ -330,7 +330,9 @@ let test_blocking_observability_labels_and_timings () =
             String.equal point.Meter.name "eta.blocking.run_ms"
             && List.mem ("eta.blocking.name", "test.label") point.attrs
             &&
-            match point.value with Meter.Int ms -> ms >= 15 | Meter.Float _ -> false))
+            match point.value with
+            | Meter.Number (Meter.Int ms) -> ms >= 15
+            | Number (Float _) | Category _ -> false))
 
 (* P0: Blocking_runtime must preserve native Eio cancellation identity without
    conflating it with ordinary OCaml exceptions. Shared user-exception coverage

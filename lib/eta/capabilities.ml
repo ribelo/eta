@@ -49,12 +49,33 @@ type log_record = {
   span_id : string;
 }
 
-type metric_kind =
-  | Counter_cumulative
-  | Counter_monotonic
-  | Gauge
+type metric_number = Int of int | Float of float
+type histogram_config = { boundaries : float list }
 
-type metric_value = Int of int | Float of float
+type summary_config = {
+  quantiles : float list;
+  max_age : Duration.t;
+  max_size : int;
+}
+
+type metric_kind =
+  | Counter of { monotonic : bool }
+  | Gauge
+  | Frequency
+  | Histogram of histogram_config
+  | Summary of summary_config
+
+type metric_value = Number of metric_number | Category of string
+
+type metric_point = {
+  name : string;
+  description : string;
+  unit_ : string;
+  kind : metric_kind;
+  attrs : (string * string) list;
+  value : metric_value;
+  ts_ms : int;
+}
 
 class type tracer = object
   method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a
@@ -92,15 +113,7 @@ class type logger = object
 end
 
 class type meter = object
-  method record :
-    name:string ->
-    description:string ->
-    unit_:string ->
-    kind:metric_kind ->
-    attrs:(string * string) list ->
-    value:metric_value ->
-    ts_ms:int ->
-    unit
+  method record : metric_point -> unit
 end
 
 let random_mask = max_int

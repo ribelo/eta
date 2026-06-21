@@ -476,10 +476,16 @@ let test_encode_failure_drains_in_flight () =
       ()
   in
   let meter = Eta_otel.meter exporter in
-  meter#record ~name:"bad.float" ~description:"" ~unit_:"1"
-    ~kind:Capabilities.Gauge ~attrs:[]
-    ~value:(Capabilities.Float (0.0 /. 0.0))
-    ~ts_ms:0;
+  meter#record
+    {
+      Meter.name = "bad.float";
+      description = "";
+      unit_ = "1";
+      kind = Capabilities.Gauge;
+      attrs = [];
+      value = Capabilities.Number (Capabilities.Float (0.0 /. 0.0));
+      ts_ms = 0;
+    };
   Eta_otel.flush ~timeout_s:0.2 exporter;
   Alcotest.(check int) "in-flight drained after encode failure" 0
     (Eta_otel.in_flight exporter)
@@ -500,10 +506,16 @@ let test_encode_failure_keeps_exporter_alive () =
       ()
   in
   let meter = Eta_otel.meter exporter in
-  meter#record ~name:"bad.float" ~description:"" ~unit_:"1"
-    ~kind:Capabilities.Gauge ~attrs:[]
-    ~value:(Capabilities.Float (0.0 /. 0.0))
-    ~ts_ms:0;
+  meter#record
+    {
+      Meter.name = "bad.float";
+      description = "";
+      unit_ = "1";
+      kind = Capabilities.Gauge;
+      attrs = [];
+      value = Capabilities.Number (Capabilities.Float (0.0 /. 0.0));
+      ts_ms = 0;
+    };
   Eta_otel.flush ~timeout_s:0.2 exporter;
   emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter)
     "after-encode-failure";

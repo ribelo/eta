@@ -240,8 +240,8 @@ let metric ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind value =
   { name; description; unit_; attrs; kind; value }
 
 let record_metric frame ~ts_ms { name; description; unit_; attrs; kind; value } =
-  frame.runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
-    ~ts_ms
+  frame.runtime.meter#record
+    { name; description; unit_; attrs; kind; value; ts_ms }
 
 let metric_update ?description ?unit_ ?attrs ~name ~kind value =
   make @@ fun frame ->
@@ -249,6 +249,30 @@ let metric_update ?description ?unit_ ?attrs ~name ~kind value =
      let update = metric ?description ?unit_ ?attrs ~name ~kind value in
      record_metric frame ~ts_ms:(frame.runtime.now_ms ()) update);
   ok ()
+
+let metric_counter ?description ?unit_ ?attrs ~name ?(monotonic = false) value =
+  metric_update ?description ?unit_ ?attrs ~name
+    ~kind:(Capabilities.Counter { monotonic })
+    (Capabilities.Number value)
+
+let metric_gauge ?description ?unit_ ?attrs ~name value =
+  metric_update ?description ?unit_ ?attrs ~name ~kind:Capabilities.Gauge
+    (Capabilities.Number value)
+
+let metric_frequency ?description ?unit_ ?attrs ~name category =
+  metric_update ?description ?unit_ ?attrs ~name ~kind:Capabilities.Frequency
+    (Capabilities.Category category)
+
+let metric_histogram ?description ?unit_ ?attrs ~name ~boundaries value =
+  metric_update ?description ?unit_ ?attrs ~name
+    ~kind:(Meter.histogram ~boundaries)
+    (Capabilities.Number (Capabilities.Float value))
+
+let metric_summary ?description ?unit_ ?attrs ~name ~quantiles ~max_age
+    ~max_size value =
+  metric_update ?description ?unit_ ?attrs ~name
+    ~kind:(Meter.summary ~quantiles ~max_age ~max_size)
+    (Capabilities.Number (Capabilities.Float value))
 
 let metric_updates updates =
   make @@ fun frame ->

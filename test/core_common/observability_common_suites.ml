@@ -484,7 +484,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Effect.log "hidden log";
           Effect.metric_update ~name:"hidden.metric"
-            ~kind:Meter.Counter_cumulative (Meter.Int 1);
+            ~kind:(Meter.Counter { monotonic = false })
+            (Meter.Number (Meter.Int 1));
         ]
       |> Effect.named "hidden span"
       |> Effect.suppress_observability

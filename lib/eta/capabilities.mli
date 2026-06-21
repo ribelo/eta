@@ -115,25 +115,50 @@ class type logger = object
   method log : log_record -> unit
 end
 
-(** Counters and gauges for the metrics signal. Implementations may
-    accumulate in memory or stream to an OTLP exporter. *)
-type metric_kind =
-  | Counter_cumulative  (** latest cumulative value for the export window *)
-  | Counter_monotonic  (** monotonic increment summed within the export window *)
-  | Gauge
+(** Numeric metric observations. *)
+type metric_number = Int of int | Float of float
 
-type metric_value = Int of int | Float of float
+(** Histogram bucket configuration. [boundaries] are explicit upper bounds. *)
+type histogram_config = { boundaries : float list }
+
+(** Summary quantile/window configuration. [quantiles] are probabilities in
+    [[0,1]]. [max_age] and [max_size] describe the intended rolling window for
+    producers/exporters that retain state across batches. Eta's in-process OTLP
+    batch aggregator applies [max_size] within the current export batch. *)
+type summary_config = {
+  quantiles : float list;
+  max_age : Duration.t;
+  max_size : int;
+}
+
+(** Metric instrument kind. Implementations may accumulate in memory or stream
+    to an OTLP exporter. *)
+type metric_kind =
+  | Counter of { monotonic : bool }
+      (** [monotonic=true] observations are increments summed within an export
+          window. [monotonic=false] observations are cumulative values and keep
+          the latest value in the export window. *)
+  | Gauge
+  | Frequency
+  | Histogram of histogram_config
+  | Summary of summary_config
+
+type metric_value =
+  | Number of metric_number
+  | Category of string
+
+type metric_point = {
+  name : string;
+  description : string;
+  unit_ : string;
+  kind : metric_kind;
+  attrs : (string * string) list;
+  value : metric_value;
+  ts_ms : int;
+}
 
 class type meter = object
-  method record :
-    name:string ->
-    description:string ->
-    unit_:string ->
-    kind:metric_kind ->
-    attrs:(string * string) list ->
-    value:metric_value ->
-    ts_ms:int ->
-    unit
+  method record : metric_point -> unit
 end
 
 (** Create a portable random token from an explicit seed. *)

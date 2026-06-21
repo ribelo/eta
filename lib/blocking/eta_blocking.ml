@@ -23,11 +23,11 @@ let emit_blocking_event context (event : Blocking_runtime.event) =
   Expert.record_metric context ~name:"eta.blocking.queue_wait_ms"
     ~description:"Time spent admitted but waiting for a blocking worker"
     ~unit_:"ms" ~kind:Eta.Capabilities.Gauge ~attrs
-    ~value:(Eta.Capabilities.Int event.queue_wait_ms);
+    ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int event.queue_wait_ms));
   Expert.record_metric context ~name:"eta.blocking.run_ms"
     ~description:"Time spent running a blocking callback" ~unit_:"ms"
     ~kind:Eta.Capabilities.Gauge ~attrs
-    ~value:(Eta.Capabilities.Int event.run_ms)
+    ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int event.run_ms))
 
 module Pool = struct
   include Blocking_runtime.Pool

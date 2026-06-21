@@ -21,7 +21,7 @@ let span_info_pp fmt =
   let open Capabilities in
   function
   | None -> Format.fprintf fmt "<none>"
-  | Some s ->
+  | Some (s : Capabilities.span_info) ->
       Format.fprintf fmt "{name=%s; trace_id=%s; span_id=%s}"
         s.name s.trace_id s.span_id
 
@@ -29,7 +29,7 @@ let span_info_eq a b =
   let open Capabilities in
   match (a, b) with
   | None, None -> true
-  | Some a, Some b ->
+  | Some (a : Capabilities.span_info), Some (b : Capabilities.span_info) ->
       a.name = b.name && a.trace_id = b.trace_id && a.span_id = b.span_id
   | _ -> false
 
@@ -48,7 +48,7 @@ let test_with_span () =
   match run_ok rt prog with
   | Some info ->
       Alcotest.(check string) "name visible from inside span" "ok"
-        info.Capabilities.name;
+        (info : Capabilities.span_info).name;
       let dumped = Tracer.dump tracer in
       Alcotest.(check int) "one span emitted" 1 (List.length dumped)
   | None -> Alcotest.fail "current_span returned None inside withSpan"
@@ -102,7 +102,7 @@ let test_nested_with_span_parent_chain () =
   let inner = run_ok rt prog in
   Alcotest.check (Alcotest.option Alcotest.string) "child name"
     (Some "child")
-    (Option.map (fun s -> s.Capabilities.name) inner);
+    (Option.map (fun (s : Capabilities.span_info) -> s.name) inner);
   let dumped = Tracer.dump tracer in
   let by_name name =
     List.find (fun s -> s.Tracer.name = name) dumped
@@ -134,7 +134,7 @@ let test_supervisor_sets_context () =
   match run_ok rt prog with
   | Some info ->
       Alcotest.(check string) "active span name" "ok"
-        info.Capabilities.name
+        (info : Capabilities.span_info).name
   | None ->
       Alcotest.fail
         "current_span returned None inside named span (Eio fiber-local \

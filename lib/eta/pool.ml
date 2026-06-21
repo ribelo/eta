@@ -71,13 +71,13 @@ let metric_int t ~name ~kind ~unit_ value =
   Effect.sync value
   |> Effect.bind (fun value ->
          Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
-           (Capabilities.Int value))
+           (Capabilities.Number (Capabilities.Int value)))
 
 let metric_float t ~name ~kind ~unit_ value =
   Effect.sync value
   |> Effect.bind (fun value ->
          Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
-           (Capabilities.Float value))
+           (Capabilities.Number (Capabilities.Float value)))
 
 let stats_locked t =
   {
@@ -99,42 +99,42 @@ let emit_gauges t =
            [
              Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.active"
                ~kind:Capabilities.Gauge ~unit_:"{connection}"
-               (Capabilities.Int s.active);
+               (Capabilities.Number (Capabilities.Int s.active));
              Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.idle"
                ~kind:Capabilities.Gauge ~unit_:"{connection}"
-               (Capabilities.Int s.idle);
+               (Capabilities.Number (Capabilities.Int s.idle));
              Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.waiting"
                ~kind:Capabilities.Gauge ~unit_:"{waiter}"
-               (Capabilities.Int s.waiting);
+               (Capabilities.Number (Capabilities.Int s.waiting));
              Effect.metric_update ~attrs:t.attrs ~name:"eta.pool.max_size"
                ~kind:Capabilities.Gauge ~unit_:"{connection}"
-               (Capabilities.Int s.max_size);
+               (Capabilities.Number (Capabilities.Int s.max_size));
            ])
   |> Effect.map ignore
 
 let emit_opened t =
   metric_int t ~name:"eta.pool.opened"
-    ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
+    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
       Sync_lock.use t.mutex @@ fun () -> t.opened)
 
 let emit_closed t =
   metric_int t ~name:"eta.pool.closed"
-    ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
+    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
       Sync_lock.use t.mutex @@ fun () -> t.closed)
 
 let emit_health_rejected t =
   metric_int t ~name:"eta.pool.health_rejected"
-    ~kind:Capabilities.Counter_monotonic ~unit_:"{connection}" (fun () ->
+    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
       Sync_lock.use t.mutex @@ fun () -> t.health_rejected)
 
 let emit_cancelled_waiters t =
   metric_int t ~name:"eta.pool.cancelled_waiters"
-    ~kind:Capabilities.Counter_monotonic ~unit_:"{waiter}" (fun () ->
+    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{waiter}" (fun () ->
       Semaphore.cancelled_waiters t.sem)
 
 let emit_wait_ms t started_ms =
   metric_float t ~name:"eta.pool.acquire_wait_ms"
-    ~kind:Capabilities.Counter_cumulative ~unit_:"ms" (fun () ->
+    ~kind:Capabilities.Gauge ~unit_:"ms" (fun () ->
       float_of_int (max 0 (now_ms t - started_ms)))
 
 let with_lock t f =

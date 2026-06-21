@@ -62,8 +62,9 @@ val logger : t -> Eta.Capabilities.logger
 (** Logger adapter for Eta runtime constructors. *)
 
 val meter : t -> Eta.Capabilities.meter
-(** Meter adapter for Eta runtime constructors. Counter values are aggregated
-    by attribute set within each batch; gauges retain the latest value. *)
+(** Meter adapter for Eta runtime constructors. Counter, gauge, frequency,
+    histogram, and summary observations are aggregated by metric identity and
+    attribute set within each batch. *)
 
 module Terminal : sig
   (** Human-readable terminal/debug telemetry exporter.
@@ -120,15 +121,37 @@ module Metric_key : sig
   }
 end
 
+type histogram_state = {
+  count : int;
+  sum : float;
+  min : float option;
+  max : float option;
+  buckets : (float * int) list;
+}
+
+type summary_state = {
+  count : int;
+  sum : float;
+  min : float option;
+  max : float option;
+  quantiles : (float * float) list;
+}
+
+type aggregate_value =
+  | Sum of Eta.Capabilities.metric_number
+  | Gauge of Eta.Capabilities.metric_number
+  | Frequency of (string * int) list
+  | Histogram of histogram_state
+  | Summary of summary_state
+
 val aggregate_points :
   Eta.Meter.point list ->
-  (Metric_key.t
-  * (Eta.Capabilities.metric_value * int * int))
-  list
+  (Metric_key.t * (aggregate_value * int * int)) list
 (** Aggregate raw meter points by [(name, kind, attrs, description, unit_)].
-    Gauges and cumulative counters keep the latest value in the export window.
-    Monotonic counters are increment records and are summed. The returned int
-    pair is [(start_ts_ns, end_ts_ns)]. *)
+    Gauges and cumulative counters keep the latest numeric value, monotonic
+    counters sum increments, frequencies count categories, histograms aggregate
+    explicit buckets, and summaries compute configured quantiles. The returned
+    int pair is [(start_ts_ns, end_ts_ns)]. *)
 
 module Internal : sig
   type span = {

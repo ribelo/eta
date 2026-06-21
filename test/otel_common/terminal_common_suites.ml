@@ -60,13 +60,30 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_otel.Terminal.create ~stdout:(push stdout) ~stderr:(push stderr) ()
     in
     let meter = Eta_otel.Terminal.meter terminal in
-    meter#record ~name:"requests.total" ~description:"Total requests"
-      ~unit_:"request" ~kind:Capabilities.Counter_monotonic
-      ~attrs:[ ("route", "/users"); ("bad key", "x") ]
-      ~value:(Capabilities.Int 2) ~ts_ms:200;
+    meter#record
+      {
+        Meter.name = "requests.total";
+        description = "Total requests";
+        unit_ = "request";
+        kind = Capabilities.Counter { monotonic = true };
+        attrs = [ ("route", "/users"); ("bad key", "x") ];
+        value = Capabilities.Number (Capabilities.Int 2);
+        ts_ms = 200;
+      };
+    meter#record
+      {
+        Meter.name = "latency";
+        description = "";
+        unit_ = "ms";
+        kind = Capabilities.Histogram { boundaries = [ 10.0; 20.0 ] };
+        attrs = [];
+        value = Capabilities.Number (Capabilities.Float 12.5);
+        ts_ms = 201;
+      };
     Alcotest.(check (list string)) "stdout"
       [
         "otel.metric ts_ms=200 name=requests.total kind=counter_monotonic value=2 description=\"Total requests\" unit=request attr.route=/users attr.bad_key=x";
+        "otel.metric ts_ms=201 name=latency kind=histogram value=12.5 boundaries=10,20 unit=ms";
       ]
       !stdout;
     Alcotest.(check (list string)) "stderr" [] !stderr

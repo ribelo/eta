@@ -165,6 +165,25 @@ the timeout elapses. Call it before the program exits to avoid losing spans.
 `Eta_otel.shutdown ?timeout_s exporter` closes the signal mailboxes, drains
 already accepted telemetry, and drops signals submitted after shutdown.
 
+## Metrics
+
+The Eta meter accepts structured observations rather than a single scalar
+record shape. `Effect.metric_counter`, `metric_gauge`, `metric_frequency`,
+`metric_histogram`, `metric_summary`, and `metric_timer` cover the supported
+instrument kinds:
+
+- counters export OTLP `sum` metrics; monotonic counters use delta
+  temporality, cumulative counters keep the latest value in the batch;
+- gauges export OTLP `gauge` metrics and keep the latest value;
+- frequencies count string/category observations and export one gauge data
+  point per category;
+- histograms require explicit bucket boundaries and export count, sum, min,
+  max, bucket counts, and explicit bounds;
+- summaries carry quantile/window configuration and export count, sum, min,
+  max, and quantile values;
+- timers are effect sugar: they measure elapsed runtime and record that
+  duration as a histogram sample.
+
 ## Self Metrics
 
 eta_otel emits exporter self-metrics to `~self_metrics_path`, which defaults to

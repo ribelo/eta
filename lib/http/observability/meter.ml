@@ -5,7 +5,8 @@ let protocol_attr protocol =
 
 let record_metric ?(attrs = []) ~name ~description value =
   Eta.Effect.metric_update ~name ~description ~unit_:"{connection}" ~attrs
-    ~kind:Eta.Capabilities.Gauge (Eta.Capabilities.Int value)
+    ~kind:Eta.Capabilities.Gauge
+    (Eta.Capabilities.Number (Eta.Capabilities.Int value))
 
 let record_client_stats ?(attrs = []) client =
   Client.stats client

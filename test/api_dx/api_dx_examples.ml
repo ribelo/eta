@@ -368,8 +368,8 @@ let observability_current id =
     (Effect.log "request.started"
     |> Effect.bind (fun () ->
            Effect.metric_update ~name:"requests"
-             ~kind:Eta.Capabilities.Counter_monotonic
-             (Eta.Capabilities.Int 1)
+             ~kind:(Eta.Capabilities.Counter { monotonic = true })
+             (Eta.Capabilities.Number (Eta.Capabilities.Int 1))
            |> Effect.bind (fun () ->
                   load_user_proposed id
                   |> Effect.with_result_attrs
@@ -389,8 +389,8 @@ let observability_proposed id =
     (let* () = Effect.log "request.started" in
      let* () =
        Effect.metric_update ~name:"requests"
-         ~kind:Eta.Capabilities.Counter_monotonic
-         (Eta.Capabilities.Int 1)
+         ~kind:(Eta.Capabilities.Counter { monotonic = true })
+         (Eta.Capabilities.Number (Eta.Capabilities.Int 1))
      in
      load_user_proposed id
      |> Effect.with_result_attrs
@@ -415,16 +415,16 @@ let metric_updates_of_stats stats =
   [
     Effect.metric ~name:"pool.active" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_active);
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_active));
     Effect.metric ~name:"pool.idle" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_idle);
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_idle));
     Effect.metric ~name:"pool.waiting" ~unit_:"{waiter}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_waiting);
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_waiting));
     Effect.metric ~name:"pool.max_size" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_max_size);
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_max_size));
   ]
 
 let metric_batch_current snapshot =
@@ -433,21 +433,21 @@ let metric_batch_current snapshot =
   let* () =
     Effect.metric_update ~name:"pool.active" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_active)
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_active))
   in
   let* () =
     Effect.metric_update ~name:"pool.idle" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_idle)
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_idle))
   in
   let* () =
     Effect.metric_update ~name:"pool.waiting" ~unit_:"{waiter}"
       ~kind:Eta.Capabilities.Gauge
-      (Eta.Capabilities.Int stats.metric_waiting)
+      (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_waiting))
   in
   Effect.metric_update ~name:"pool.max_size" ~unit_:"{connection}"
     ~kind:Eta.Capabilities.Gauge
-    (Eta.Capabilities.Int stats.metric_max_size)
+    (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_max_size))
 
 let metric_batch_proposed snapshot =
   Effect.metric_updates_lazy (fun () ->
@@ -2379,7 +2379,7 @@ Effect.with_background
         {|Effect.named "request"
   (Effect.log "request.started"
    |> Effect.bind (fun () ->
-        Effect.metric_update ~name:"requests" ~kind:Counter_monotonic (Int 1)
+        Effect.metric_counter ~name:"requests" ~monotonic:true (Int 1)
         |> Effect.bind (fun () ->
              load_user id
              |> Effect.with_result_attrs ~ok_attrs ~err_attrs)))|};
@@ -2392,7 +2392,7 @@ Effect.with_background
 Effect.named "request"
   (let* () = Effect.log "request.started" in
    let* () =
-     Effect.metric_update ~name:"requests" ~kind:Counter_monotonic (Int 1)
+     Effect.metric_counter ~name:"requests" ~monotonic:true (Int 1)
    in
    load_user id
    |> Effect.with_result_attrs ~ok_attrs ~err_attrs)|};
@@ -2403,13 +2403,12 @@ Effect.named "request"
       code =
         {|let open Eta.Syntax in
 let* stats = Effect.sync snapshot in
-let* () = Effect.metric_update ~name:"pool.active" ~kind:Gauge (Int stats.active) in
-let* () = Effect.metric_update ~name:"pool.idle" ~kind:Gauge (Int stats.idle) in
+let* () = Effect.metric_gauge ~name:"pool.active" (Int stats.active) in
+let* () = Effect.metric_gauge ~name:"pool.idle" (Int stats.idle) in
 let* () =
-  Effect.metric_update ~name:"pool.waiting" ~unit_:"{waiter}" ~kind:Gauge
-    (Int stats.waiting)
+  Effect.metric_gauge ~name:"pool.waiting" ~unit_:"{waiter}" (Int stats.waiting)
 in
-Effect.metric_update ~name:"pool.max_size" ~kind:Gauge (Int stats.max_size)|};
+Effect.metric_gauge ~name:"pool.max_size" (Int stats.max_size)|};
     };
     {
       area = "metric_batch";
@@ -2418,10 +2417,11 @@ Effect.metric_update ~name:"pool.max_size" ~kind:Gauge (Int stats.max_size)|};
         {|Effect.metric_updates_lazy (fun () ->
   let stats = snapshot () in
   [
-    Effect.metric ~name:"pool.active" ~kind:Gauge (Int stats.active);
-    Effect.metric ~name:"pool.idle" ~kind:Gauge (Int stats.idle);
-    Effect.metric ~name:"pool.waiting" ~unit_:"{waiter}" ~kind:Gauge (Int stats.waiting);
-    Effect.metric ~name:"pool.max_size" ~kind:Gauge (Int stats.max_size);
+    Effect.metric ~name:"pool.active" ~kind:Gauge (Number (Int stats.active));
+    Effect.metric ~name:"pool.idle" ~kind:Gauge (Number (Int stats.idle));
+    Effect.metric ~name:"pool.waiting" ~unit_:"{waiter}" ~kind:Gauge
+      (Number (Int stats.waiting));
+    Effect.metric ~name:"pool.max_size" ~kind:Gauge (Number (Int stats.max_size));
   ])|};
     };
     {

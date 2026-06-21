@@ -32,9 +32,9 @@ let point i : Eta.Meter.point =
     name = "bench.metric";
     description = "bench";
     unit_ = "1";
-    kind = Eta.Capabilities.Counter_monotonic;
+    kind = Eta.Capabilities.Counter { monotonic = true };
     attrs = [ ("route", "/bench"); ("bucket", string_of_int (i mod 10)) ];
-    value = Eta.Capabilities.Int 1;
+    value = Eta.Capabilities.Number (Eta.Capabilities.Int 1);
     ts_ms = i;
   }
 

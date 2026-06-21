@@ -34,7 +34,7 @@ let test_terminal_exporter_runtime_adapters () =
         Effect.metric_update ~name:"live.metric" ~description:"Live metric"
           ~unit_:"item" ~kind:Capabilities.Gauge
           ~attrs:[ ("source", "terminal-test") ]
-          (Capabilities.Int 7);
+          (Capabilities.Number (Capabilities.Int 7));
       ]
   in
   (match Runtime.run rt program with

@@ -78,6 +78,29 @@ let encode_traces_request = Otlp_json.encode_traces_request
 let encode_logs_request = Otlp_json.encode_logs_request
 let encode_metrics_request = Otlp_json.encode_metrics_request
 module Metric_key = Metric_aggregation.Metric_key
+type histogram_state = Metric_aggregation.histogram_state = {
+  count : int;
+  sum : float;
+  min : float option;
+  max : float option;
+  buckets : (float * int) list;
+}
+
+type summary_state = Metric_aggregation.summary_state = {
+  count : int;
+  sum : float;
+  min : float option;
+  max : float option;
+  quantiles : (float * float) list;
+}
+
+type aggregate_value = Metric_aggregation.aggregate_value =
+  | Sum of Eta.Capabilities.metric_number
+  | Gauge of Eta.Capabilities.metric_number
+  | Frequency of (string * int) list
+  | Histogram of histogram_state
+  | Summary of summary_state
+
 let aggregate_points = Metric_aggregation.aggregate_points
 (* ------------------------------------------------------------------ *)
 (* OTLP/HTTP transport                                                *)
@@ -231,11 +254,11 @@ let self_queue_metrics t =
     self_metric t ~name:"eta_otel.queue.depth"
       ~description:"Current eta-otel exporter queue depth" ~unit_:"item"
       ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
-      ~value:(Eta.Capabilities.Int length)
+      ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int length))
     :: self_metric t ~name:"eta_otel.queue.dropped"
          ~description:"Cumulative eta-otel exporter queue drops" ~unit_:"item"
          ~kind:Eta.Capabilities.Gauge ~attrs:[ ("queue", queue) ]
-         ~value:(Eta.Capabilities.Int dropped)
+         ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int dropped))
     :: metrics
   in
   []
@@ -251,16 +274,20 @@ let self_export_metrics t signal ~batch_size =
   let queue_metrics = self_queue_metrics t in
   self_metric t ~name:"eta_otel.export.batches"
       ~description:"Eta-otel export batch attempts" ~unit_:"batch"
-      ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
-      ~value:(Eta.Capabilities.Int 1)
+      ~kind:(Eta.Capabilities.Counter { monotonic = true })
+      ~attrs:[ ("signal", signal) ]
+      ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int 1))
   :: self_metric t ~name:"eta_otel.export.items"
       ~description:"Eta-otel export items attempted" ~unit_:"item"
-      ~kind:Eta.Capabilities.Counter_monotonic ~attrs:[ ("signal", signal) ]
-      ~value:(Eta.Capabilities.Int batch_size)
+      ~kind:(Eta.Capabilities.Counter { monotonic = true })
+      ~attrs:[ ("signal", signal) ]
+      ~value:(Eta.Capabilities.Number (Eta.Capabilities.Int batch_size))
   :: self_metric t ~name:"eta_otel.in_flight"
       ~description:"Current eta-otel in-flight export work" ~unit_:"item"
       ~kind:Eta.Capabilities.Gauge ~attrs:[]
-      ~value:(Eta.Capabilities.Int (Drain_counter.value t.in_flight))
+      ~value:
+        (Eta.Capabilities.Number
+           (Eta.Capabilities.Int (Drain_counter.value t.in_flight)))
   :: queue_metrics
 
 let enqueue_self_export_metrics t config signal ~batch_size =
@@ -741,19 +768,7 @@ let logger t : Eta.Capabilities.logger =
 
 let meter t : Eta.Capabilities.meter =
   object
-    method record ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms =
-      let p =
-        {
-          Eta.Meter.name;
-          description;
-          unit_;
-          kind;
-          attrs;
-          value;
-          ts_ms;
-        }
-      in
-      enqueue t t.metric_queue p
+    method record point = enqueue t t.metric_queue point
   end
 
 module Terminal = struct
@@ -849,13 +864,20 @@ module Terminal = struct
     | Eta.Capabilities.Consumer -> "consumer"
 
   let metric_kind_string = function
-    | Eta.Capabilities.Counter_cumulative -> "counter_cumulative"
-    | Eta.Capabilities.Counter_monotonic -> "counter_monotonic"
+    | Eta.Capabilities.Counter { monotonic = false } -> "counter"
+    | Eta.Capabilities.Counter { monotonic = true } -> "counter_monotonic"
     | Eta.Capabilities.Gauge -> "gauge"
+    | Eta.Capabilities.Frequency -> "frequency"
+    | Eta.Capabilities.Histogram _ -> "histogram"
+    | Eta.Capabilities.Summary _ -> "summary"
 
-  let metric_value_string = function
+  let metric_number_string = function
     | Eta.Capabilities.Int n -> string_of_int n
     | Eta.Capabilities.Float f -> Printf.sprintf "%.17g" f
+
+  let metric_value_string = function
+    | Eta.Capabilities.Number number -> metric_number_string number
+    | Eta.Capabilities.Category category -> category
 
   let status_fields = function
     | Eta.Capabilities.Ok -> ([ ("status", "ok") ], false)
@@ -973,7 +995,22 @@ module Terminal = struct
         (base @ parent @ trace_state @ baggage @ attrs @ events @ links),
       to_stderr )
 
-  let metric_fields ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms =
+  let metric_kind_fields = function
+    | Eta.Capabilities.Histogram { boundaries } ->
+        [
+          ( "boundaries",
+            boundaries |> List.map (Printf.sprintf "%.17g") |> String.concat "," );
+        ]
+    | Summary { quantiles; max_age; max_size } ->
+        [
+          ( "quantiles",
+            quantiles |> List.map (Printf.sprintf "%.17g") |> String.concat "," );
+          ("max_age", Eta.Duration.humanize max_age);
+          ("max_size", string_of_int max_size);
+        ]
+    | _ -> []
+
+  let metric_fields { Eta.Meter.name; description; unit_; kind; attrs; value; ts_ms } =
     let base =
       [
         ("ts_ms", string_of_int ts_ms);
@@ -981,6 +1018,7 @@ module Terminal = struct
         ("kind", metric_kind_string kind);
         ("value", metric_value_string value);
       ]
+      @ metric_kind_fields kind
     in
     let description =
       if String.equal description "" then [] else [ ("description", description) ]
@@ -1175,9 +1213,7 @@ module Terminal = struct
 
   let meter t : Eta.Capabilities.meter =
     object
-      method record ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms =
-        output t ~stderr:false
-          (metric_fields ~name ~description ~unit_ ~kind ~attrs ~value ~ts_ms)
+      method record point = output t ~stderr:false (metric_fields point)
     end
 end
 

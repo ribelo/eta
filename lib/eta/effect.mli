@@ -776,8 +776,73 @@ val metric_update :
   kind:Capabilities.metric_kind ->
   Capabilities.metric_value ->
   (unit, 'err) t
-(** Records a runtime observation, not part of the eff's success value or
-    typed error channel. Runtimes without a meter may ignore it. *)
+(** Records a runtime metric observation, not part of the eff's success value
+    or typed error channel. Numeric instruments use [Number _]; frequency uses
+    [Category _]. Runtimes without a meter may ignore it. Prefer the typed
+    helpers below for ordinary instrumentation. *)
+
+val metric_counter :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  ?monotonic:bool ->
+  Capabilities.metric_number ->
+  (unit, 'err) t
+(** Record a counter observation. [monotonic=true] records an increment;
+    [monotonic=false] records the latest cumulative value. *)
+
+val metric_gauge :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  Capabilities.metric_number ->
+  (unit, 'err) t
+(** Record the latest gauge value. *)
+
+val metric_frequency :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  string ->
+  (unit, 'err) t
+(** Record one occurrence of a string/category value. *)
+
+val metric_histogram :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  boundaries:float list ->
+  float ->
+  (unit, 'err) t
+(** Record one histogram sample using explicit bucket boundaries. *)
+
+val metric_summary :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  quantiles:float list ->
+  max_age:Duration.t ->
+  max_size:int ->
+  float ->
+  (unit, 'err) t
+(** Record one summary sample with quantile and window configuration. *)
+
+val metric_timer :
+  ?description:string ->
+  ?unit_:string ->
+  ?attrs:(string * string) list ->
+  name:string ->
+  boundaries:float list ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** Time an effect and record its elapsed runtime as a histogram sample. The
+    source effect's result, typed failure, defect, interruption, and finalizer
+    diagnostics propagate normally. *)
 
 type metric
 (** Description of one metric observation before the runtime timestamp is

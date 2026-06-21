@@ -206,12 +206,12 @@ let encode_logs_request ~resource_attrs ~scope_name records =
 module Metric_aggregation = Metric_aggregation
 module Metric_key = Metric_aggregation.Metric_key
 
-let value_field (v : Eta.Capabilities.metric_value) =
+let value_field (v : Eta.Capabilities.metric_number) =
   match v with
   | Int n -> ("asInt", `String (string_of_int n))
   | Float f -> ("asDouble", `Float f)
 
-let data_point_json (key : Metric_key.t) (value, start_ts, end_ts) : yj =
+let number_data_point_json (key : Metric_key.t) value start_ts end_ts : yj =
   `Assoc
     [
       ("attributes", attrs_json key.attrs);
@@ -220,29 +220,124 @@ let data_point_json (key : Metric_key.t) (value, start_ts, end_ts) : yj =
       value_field value;
     ]
 
+let number_data_points_json key value start_ts end_ts =
+  `List [ number_data_point_json key value start_ts end_ts ]
+
+let count_json count = `String (string_of_int count)
+
+let finite_bound_json boundary =
+  if boundary = infinity then `Float boundary else `Float boundary
+
+let histogram_data_point_json key
+    (state : Metric_aggregation.histogram_state) start_ts end_ts =
+  let bounds, counts =
+    List.fold_right
+      (fun (boundary, count) (bounds, counts) ->
+        let bounds = if boundary = infinity then bounds else boundary :: bounds in
+        (bounds, count_json count :: counts))
+      state.buckets ([], [])
+  in
+  let fields =
+    [
+      ("attributes", attrs_json key.Metric_key.attrs);
+      ("startTimeUnixNano", str_int start_ts);
+      ("timeUnixNano", str_int end_ts);
+      ("count", count_json state.count);
+      ("sum", `Float state.sum);
+      ("bucketCounts", `List counts);
+      ("explicitBounds", `List (List.map finite_bound_json bounds));
+    ]
+  in
+  let fields =
+    match state.min with
+    | None -> fields
+    | Some value -> ("min", `Float value) :: fields
+  in
+  let fields =
+    match state.max with
+    | None -> fields
+    | Some value -> ("max", `Float value) :: fields
+  in
+  `Assoc fields
+
+let quantile_value_json (quantile, value) : yj =
+  `Assoc [ ("quantile", `Float quantile); ("value", `Float value) ]
+
+let summary_data_point_json key (state : Metric_aggregation.summary_state)
+    start_ts end_ts =
+  let fields =
+    [
+      ("attributes", attrs_json key.Metric_key.attrs);
+      ("startTimeUnixNano", str_int start_ts);
+      ("timeUnixNano", str_int end_ts);
+      ("count", count_json state.count);
+      ("sum", `Float state.sum);
+      ("quantileValues", array_map quantile_value_json state.quantiles);
+    ]
+  in
+  let fields =
+    match state.min with
+    | None -> fields
+    | Some value -> ("min", `Float value) :: fields
+  in
+  let fields =
+    match state.max with
+    | None -> fields
+    | Some value -> ("max", `Float value) :: fields
+  in
+  `Assoc fields
+
+let frequency_data_points_json key counts start_ts end_ts =
+  counts
+  |> array_map (fun (category, count) ->
+         let attrs = ("value", category) :: key.Metric_key.attrs in
+         `Assoc
+           [
+             ("attributes", attrs_json attrs);
+             ("startTimeUnixNano", str_int start_ts);
+             ("timeUnixNano", str_int end_ts);
+             ("asInt", `String (string_of_int count));
+           ])
+
 let metric_json (key : Metric_key.t) point : yj =
+  let value, start_ts, end_ts = point in
   let body : yj =
-    match key.kind with
-    | Gauge -> `Assoc [ ("dataPoints", `List [ data_point_json key point ]) ]
-    | Counter_cumulative ->
+    match (key.kind, value) with
+    | Gauge, Metric_aggregation.Gauge value ->
+        `Assoc [ ("dataPoints", number_data_points_json key value start_ts end_ts) ]
+    | Counter { monotonic = false }, Metric_aggregation.Sum value ->
         `Assoc
           [
-            ("dataPoints", `List [ data_point_json key point ]);
+            ("dataPoints", number_data_points_json key value start_ts end_ts);
             ("aggregationTemporality", `Int 2);
             ("isMonotonic", `Bool false);
           ]
-    | Counter_monotonic ->
+    | Counter { monotonic = true }, Metric_aggregation.Sum value ->
         `Assoc
           [
-            ("dataPoints", `List [ data_point_json key point ]);
+            ("dataPoints", number_data_points_json key value start_ts end_ts);
             ("aggregationTemporality", `Int 1);
             ("isMonotonic", `Bool true);
           ]
+    | Frequency, Metric_aggregation.Frequency counts ->
+        `Assoc [ ("dataPoints", frequency_data_points_json key counts start_ts end_ts) ]
+    | Histogram _, Metric_aggregation.Histogram state ->
+        `Assoc
+          [
+            ("dataPoints", `List [ histogram_data_point_json key state start_ts end_ts ]);
+            ("aggregationTemporality", `Int 1);
+          ]
+    | Summary _, Metric_aggregation.Summary state ->
+        `Assoc [ ("dataPoints", `List [ summary_data_point_json key state start_ts end_ts ]) ]
+    | _ -> invalid_arg "Otlp_json.metric_json: metric kind/value mismatch"
   in
   let kind_field =
     match key.kind with
     | Gauge -> "gauge"
-    | Counter_cumulative | Counter_monotonic -> "sum"
+    | Counter _ -> "sum"
+    | Frequency -> "gauge"
+    | Histogram _ -> "histogram"
+    | Summary _ -> "summary"
   in
   `Assoc
     [

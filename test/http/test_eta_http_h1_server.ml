@@ -1491,7 +1491,9 @@ let has_metric name meter = metric_values name meter <> []
 
 let has_int_metric name value meter =
   metric_values name meter
-  |> List.exists (function Eta.Meter.Int actual -> actual = value | Float _ -> false)
+  |> List.exists (function
+       | Eta.Meter.Number (Eta.Meter.Int actual) -> actual = value
+       | Number (Float _) | Category _ -> false)
 
 let test_h1_server_connection_emits_meter_metrics () =
   run_eio @@ fun env ->

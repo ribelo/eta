@@ -2,7 +2,7 @@
 
 let record_metric ?(attrs = []) ~name ~description ~unit_ ~kind value =
   Eta.Effect.metric_update ~name ~description ~unit_ ~attrs ~kind
-    (Eta.Capabilities.Int value)
+    (Eta.Capabilities.Number (Eta.Capabilities.Int value))
 
 let gauge ?attrs ~name ~description ~unit_ value =
   record_metric ?attrs ~name ~description ~unit_ ~kind:Eta.Capabilities.Gauge
@@ -10,7 +10,8 @@ let gauge ?attrs ~name ~description ~unit_ value =
 
 let counter ?attrs ~name ~description ~unit_ value =
   record_metric ?attrs ~name ~description ~unit_
-    ~kind:Eta.Capabilities.Counter_monotonic value
+    ~kind:(Eta.Capabilities.Counter { monotonic = true })
+    value
 
 let active_connections ?attrs value =
   gauge ?attrs ~name:"eta_http.server.connections.active"

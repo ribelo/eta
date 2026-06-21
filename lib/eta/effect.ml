@@ -9,6 +9,18 @@ include Effect_observability
 include Effect_supervisor_scope
 include Effect_schedule
 
+let metric_timer ?description ?(unit_ = "ms") ?attrs ~name ~boundaries eff =
+  now
+  |> bind (fun started ->
+         on_exit
+           (fun _exit ->
+             now
+             |> bind (fun ended ->
+                    let elapsed_ms = max 0 (ended - started) in
+                    metric_histogram ?description ~unit_ ?attrs ~name
+                      ~boundaries (float_of_int elapsed_ms)))
+           eff)
+
 let daemon_internal eff =
   preserve eff @@ fun frame ->
   Runtime_core.incr_active frame.runtime;
@@ -69,8 +81,16 @@ module Expert = struct
   let record_metric context ~name ~description ~unit_ ~kind ~attrs ~value =
     let runtime = context.runtime in
     if runtime.Runtime_core.metrics_enabled then
-      runtime.meter#record ~name ~description ~unit_ ~kind ~attrs ~value
-        ~ts_ms:(runtime.now_ms ())
+      runtime.meter#record
+        {
+          Capabilities.name;
+          description;
+          unit_;
+          kind;
+          attrs;
+          value;
+          ts_ms = runtime.now_ms ();
+        }
 
   let fork_daemon context f =
     Runtime_core.incr_active context.runtime;

@@ -52,7 +52,6 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 3.1 `Schedule.fibonacci` (adopted).
 
 **Tier 3 — real behavior, bigger or design-sensitive (human call):**
-- 1.7 histogram/summary metric kind (confirmed gap; needs OTLP encoding).
 - 2.14 `cached`/`memoize` (single-flight protocol).
 - 6.7 `SubscriptionRef`; 6.8 `Pool.invalidate`; 6.3 queue strategies + batch drain.
 - 2.13 error-accumulating `validate_all`.
@@ -156,16 +155,18 @@ invariant. Eta's stance ("applications own state") suggests plain stdout writes
 in `Effect.sync` are fine and a full Console service is scope creep. Flag for a
 human; I lean OUT-OF-SCOPE except for the parts already covered by logging.
 
-### 1.7 Histogram / summary metric kind — **CONSIDER (confirmed gap)**
+### 1.7 Histogram / summary metric kind — **ADOPTED**
 effect-smol `Metric.ts`: `counter`, `gauge`, `frequency`, `histogram`, `summary`,
-`timer`. **Confirmed:** Eta's metric kinds are only `Counter_cumulative`,
-`Counter_monotonic`, and `Gauge` (`lib/eta/capabilities.mli`); there is no
-`histogram`/`summary`/`bucket`/`quantile` anywhere in core or `lib/otel`. That
-means latency/size **distributions** cannot be recorded — a real gap for any
-performance instrumentation, and the natural sink for a `timed` (2.5) result.
-Larger than a one-liner (needs bucket boundaries + aggregation), and the OTLP
-exporter would need histogram encoding, so it is a CONSIDER rather than a quick
-PORT, but it is a genuine behavioral hole worth a human's prioritization.
+`timer`.
+
+Eta's metric surface now supports counter, gauge, frequency, histogram,
+summary, and timer observations. Histograms carry explicit bucket boundaries and
+aggregate count/sum/min/max/bucket counts. Summaries carry quantile/window
+configuration and aggregate quantiles/count/sum/min/max. Frequencies count
+string/category occurrences. `Effect.metric_timer` is real sugar over runtime
+timing plus histogram observation. `Eta_otel` aggregates the richer states,
+encodes them to OTLP JSON, and the terminal exporter renders the same structured
+metric points.
 
 ### 1.8 Level-named log helpers (`log_info` / `log_error` / …) — **CONSIDER (tiny)**
 effect-smol: `Effect.logTrace`/`logDebug`/`logInfo`/`logWarning`/`logError`/
@@ -772,11 +773,9 @@ claims are therefore real, not just absent from the core interface.
    reopen only against the documented protocol-cluster triggers (V-CDv6).
 5. **Stream papercuts (7.1/7.6):** `Stream.tap` and `run_for_each`/`run_fold`
    are the clearest small wins in the stream surface.
-6. **Distribution metrics (1.7):** no histogram/summary kind exists; decide
-   whether latency/size distributions are worth the bucket + OTLP-encoding cost.
-7. **Cause/Exit inspection (1.5):** extractor helpers + `Exit.match`/`map`/
+6. **Cause/Exit inspection (1.5):** extractor helpers + `Exit.match`/`map`/
    `get_or_else` are confirmed ergonomic gaps; low risk, recommend.
-8. **Effect memoization (2.14):** `cached`/`memoize` is real and useful but
+7. **Effect memoization (2.14):** `cached`/`memoize` is real and useful but
    carries a single-flight protocol — core vs. optional helper is the decision.
 
 ---
@@ -787,8 +786,7 @@ _Status: eleventh pass. Grounded in `lib/eta/*.mli`, `lib/eta/duration.ml`,
 (V-CD decision diary), `.reference/effect-smol/.../{Logger,Console,Effect,
 Schedule,Stream,Cause,Exit,Metric,Clock}.ts`, and `.reference/zio/.../ZIO.scala`.
 Verified directly against source: `Duration.pp` prints raw ms (5.1), finalizers
-do not receive the exit (8.1), no histogram/summary metric kind (1.7), no
-memoization in core (2.14), `Cause`/`Exit` lack extraction/match helpers (1.5),
+do not receive the exit (8.1), no memoization in core (2.14), `Cause`/`Exit` lack extraction/match helpers (1.5),
 Deferred/Latch were previously rejected (6.1/6.2). The surface is now covered
 breadth-first across core, observability, schedule, random, duration,
 concurrency, stream, and the ZIO-distinctive set. Fifth pass added log-level
