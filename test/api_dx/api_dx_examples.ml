@@ -264,9 +264,9 @@ let repeat_heartbeat_current policy tick =
   let rec loop driver =
     tick
     |> Effect.bind (fun () ->
-           match Eta.Schedule.next driver with
+           match Eta.Schedule.next ~now_ms:0 ~input:() driver with
            | None -> Effect.unit
-           | Some (delay, driver) -> Effect.delay delay (loop driver))
+           | Some (metadata, driver) -> Effect.delay metadata.delay (loop driver))
   in
   loop (Eta.Schedule.start policy)
 
@@ -1584,9 +1584,9 @@ Effect.sync call
         {|let rec loop driver =
   tick
   |> Effect.bind (fun () ->
-       match Schedule.next driver with
+       match Schedule.next ~now_ms:0 ~input:() driver with
        | None -> Effect.unit
-       | Some (delay, driver) -> Effect.delay delay (loop driver))
+       | Some (metadata, driver) -> Effect.delay metadata.delay (loop driver))
 in
 loop (Schedule.start policy)|};
     };

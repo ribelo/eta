@@ -26,6 +26,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "%s: expected Ok, got %a" name (Cause.pp pp_hidden)
           cause
 
+  let check_exit_succeeded name = function
+    | Exit.Ok _ -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "%s: expected Ok, got %a" name (Cause.pp pp_hidden)
+          cause
+
   let wait_for_sleepers clock expected =
     let rec loop attempts =
       if B.sleeper_count clock >= expected then ()
@@ -179,14 +185,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let ticks = ref 0 in
     let tick = Effect.named "tick" (Effect.sync (fun () -> incr ticks)) in
-    run_ok rt (Effect.repeat (Schedule.recurs 3) tick);
+    ignore (run_ok rt (Effect.repeat (Schedule.recurs 3) tick) : int);
     Alcotest.(check int) "initial run plus three repeats" 4 !ticks
 
   let test_effect_repeat_recurs_zero_runs_body_once () =
     B.with_runtime @@ fun _ctx rt ->
     let ticks = ref 0 in
-    run_ok rt
-      (Effect.repeat (Schedule.recurs 0) (Effect.sync (fun () -> incr ticks)));
+    ignore
+      (run_ok rt
+         (Effect.repeat (Schedule.recurs 0)
+            (Effect.sync (fun () -> incr ticks)))
+        : int);
     Alcotest.(check int) "initial run only" 1 !ticks
 
   let test_effect_repeat_schedule_uses_virtual_delays () =
@@ -209,7 +218,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.yield ();
     Alcotest.(check int) "third tick" 3 !ticks;
     B.adjust_clock clock (Duration.ms 5);
-    check_exit_ok Alcotest.unit "repeat done" () (B.await promise);
+    check_exit_ok
+      Alcotest.(pair int int)
+      "repeat done" (3, 3) (B.await promise);
     Alcotest.(check int) "three delayed repeats" 4 !ticks
 
   let repeat_start_times schedule body_duration =
@@ -223,7 +234,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise = B.fork_run ctx rt (Effect.repeat schedule body) in
     drive_clock_until_resolved clock promise;
-    check_exit_ok Alcotest.unit "repeat done" () (B.await promise);
+    check_exit_succeeded "repeat done" (B.await promise);
     List.rev !starts
 
   let test_effect_repeat_fixed_cadence_differs_from_spaced () =
@@ -382,6 +393,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "windowed retry starts on aligned boundaries" [ 0; 10; 20 ]
       (List.rev !starts)
 
+  let test_effect_retry_during_bounds_elapsed () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let attempts = ref 0 in
+    let starts = ref [] in
+    let schedule =
+      Schedule.both (Schedule.spaced (Duration.ms 10))
+        (Schedule.during (Duration.ms 15))
+    in
+    let attempt =
+      Effect.now
+      |> Effect.bind (fun now_ms ->
+             Effect.sync (fun () ->
+                 starts := now_ms :: !starts;
+                 incr attempts;
+                 !attempts))
+      |> Effect.bind (fun n -> Effect.fail (`Again n))
+    in
+    let promise =
+      B.fork_run ctx rt (Effect.retry schedule (fun (`Again _) -> true) attempt)
+    in
+    drive_clock_until_resolved clock promise;
+    (match B.await promise with
+    | Exit.Error (Cause.Fail (`Again 3)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected final typed failure, got %a"
+          (Cause.pp (fun fmt (`Again n) ->
+               Format.fprintf fmt "Again %d" n))
+          cause
+    | Exit.Ok value -> Alcotest.failf "unexpected success %d" value);
+    Alcotest.(check (list int))
+      "retry stops once elapsed bound is exceeded" [ 0; 10; 20 ]
+      (List.rev !starts)
+
   let test_effect_retry_timeout_interrupts_loop () =
     B.with_test_clock @@ fun ctx clock rt ->
     let attempts = ref 0 in
@@ -484,7 +528,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else (Schedule.recurs 3)
         (fun (_ : string) -> true)
-        ~or_else:(fun _ ->
+        ~or_else:(fun _ _ ->
           fallback_called := true;
           Effect.pure "fallback")
         attempt
@@ -507,7 +551,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else (Schedule.recurs 5)
         (fun (`Again _) -> true)
-        ~or_else:(fun (`Again _) ->
+        ~or_else:(fun (`Again _) _ ->
           fallback_called := true;
           Effect.pure (-1))
         attempt
@@ -520,6 +564,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
     let fallback_seen = ref None in
+    let fallback_output = ref None in
     let attempt =
       Effect.sync (fun () -> incr attempts)
       |> Effect.bind (fun () -> Effect.fail (`Reject !attempts))
@@ -527,19 +572,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else (Schedule.recurs 5)
         (fun (`Reject n) -> n < 2)
-        ~or_else:(fun (`Reject n) ->
+        ~or_else:(fun (`Reject n) output ->
           fallback_seen := Some n;
+          fallback_output := output;
           Effect.pure ("fallback-" ^ string_of_int n))
         attempt
     in
     Alcotest.(check string) "fallback result" "fallback-2" (run_ok rt eff);
     Alcotest.(check int) "initial plus accepted retry" 2 !attempts;
     Alcotest.(check (option int)) "fallback saw rejected error" (Some 2)
-      !fallback_seen
+      !fallback_seen;
+    Alcotest.(check (option int)) "fallback saw latest schedule output"
+      (Some 0) !fallback_output
 
   let test_effect_retry_or_else_exhausted_fallback () =
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
+    let fallback_output = ref None in
     let attempt =
       Effect.sync (fun () -> incr attempts)
       |> Effect.bind (fun () -> Effect.fail (`Again !attempts))
@@ -547,11 +596,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else (Schedule.recurs 2)
         (fun (`Again _) -> true)
-        ~or_else:(fun (`Again n) -> Effect.pure ("exhausted-" ^ string_of_int n))
+        ~or_else:(fun (`Again n) output ->
+          fallback_output := output;
+          Effect.pure ("exhausted-" ^ string_of_int n))
         attempt
     in
     Alcotest.(check string) "fallback result" "exhausted-3" (run_ok rt eff);
-    Alcotest.(check int) "initial plus two retries" 3 !attempts
+    Alcotest.(check int) "initial plus two retries" 3 !attempts;
+    Alcotest.(check (option int)) "fallback saw terminal schedule output"
+      (Some 2) !fallback_output
 
   let test_effect_retry_or_else_fallback_failure_replaces_original () =
     B.with_runtime @@ fun _ctx rt ->
@@ -563,7 +616,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else (Schedule.recurs 0)
         (fun `Again -> true)
-        ~or_else:(fun `Again -> Effect.fail `Fallback_failed)
+        ~or_else:(fun `Again _ -> Effect.fail `Fallback_failed)
         attempt
     in
     (match B.run rt eff with
@@ -589,22 +642,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
     in
     let fallback_seen = ref None in
+    let fallback_output = ref None in
     let eff =
       effect_error_cause cause
       |> Effect.retry_or_else (Schedule.recurs 0)
            (function `First | `Second -> true)
-           ~or_else:(fun err ->
+           ~or_else:(fun err output ->
              fallback_seen := Some err;
+             fallback_output := output;
              Effect.pure "fallback")
     in
     Alcotest.(check string) "fallback result" "fallback" (run_ok rt eff);
     Alcotest.(check (option error_testable))
-      "fallback saw first typed failure" (Some `First) !fallback_seen
+      "fallback saw first typed failure" (Some `First) !fallback_seen;
+    Alcotest.(check (option int)) "fallback saw terminal output" (Some 0)
+      !fallback_output
 
   let test_effect_retry_or_else_skips_uncatchable_causes () =
     B.with_runtime @@ fun _ctx rt ->
     let fallback_calls = ref 0 in
-    let fallback (_ : string) =
+    let fallback (_ : string) _ =
       incr fallback_calls;
       Effect.pure "fallback"
     in
@@ -676,7 +733,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.retry_or_else schedule
         (fun (`Again _) -> true)
-        ~or_else:(fun (`Again n) ->
+        ~or_else:(fun (`Again n) _ ->
           Effect.pure ("fallback-" ^ string_of_int n))
         attempt
     in
@@ -728,6 +785,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_fibonacci_schedule_uses_virtual_delays;
           Alcotest.test_case "retry uses windowed boundaries" `Quick
             test_effect_retry_windowed_schedule_uses_boundaries;
+          Alcotest.test_case "retry during schedule bounds elapsed" `Quick
+            test_effect_retry_during_bounds_elapsed;
           Alcotest.test_case "retry timeout interrupts loop" `Quick
             test_effect_retry_timeout_interrupts_loop;
           Alcotest.test_case "retry jittered schedule uses runtime random" `Quick

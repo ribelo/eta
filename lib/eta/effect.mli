@@ -277,23 +277,30 @@ val tap_defect :
     preserve the original failure when the observer succeeds. Observer failure
     fails normally from the observer path. *)
 
-val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
+val retry :
+  ('err, 'schedule_out) Schedule.t ->
+  ('err -> bool) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
 (** Retry an effect while the schedule continues and [predicate] accepts the
-    typed failure. Defects, interruption, and finalizer diagnostics are not
-    retried. *)
+    typed failure. The typed failure is passed to the schedule as input.
+    Defects, interruption, and finalizer diagnostics are not retried. *)
 
 val retry_or_else :
-  Schedule.t ->
+  ('err1, 'schedule_out) Schedule.t ->
   ('err1 -> bool) ->
-  or_else:('err1 -> ('a, 'err2) t) ->
+  or_else:('err1 -> 'schedule_out option -> ('a, 'err2) t) ->
   ('a, 'err1) t ->
   ('a, 'err2) t
 (** Retry an effect while the schedule continues and [predicate] accepts the
     typed failure, then run [or_else] with the final typed failure when the
     predicate rejects it or the schedule is exhausted.
 
-    Eta schedules do not produce output, so [or_else] receives only the final
-    typed failure. For composite causes, [retry_or_else] follows {!catch}: it
+    The typed failure is passed to the schedule as input. [or_else] receives
+    the latest schedule output when at least one schedule step has run,
+    including the terminal [Done] output when the schedule is exhausted. It
+    receives [None] when [predicate] rejects the first typed failure before any
+    schedule step. For composite causes, [retry_or_else] follows {!catch}: it
     handles only causes whose primary tree contains typed failures and no
     uncatchable defects, interruption, or finalizer diagnostics, and it uses the
     first typed failure in cause order. Uncatchable diagnostics are not retried
@@ -323,7 +330,14 @@ val timeout_as :
   Duration.t -> on_timeout:'err -> ('a, 'err) t -> ('a, 'err) t
 (** Like {!timeout}, but fails with [on_timeout] instead of widening the error
     row with raw Timeout. *)
-val repeat : Schedule.t -> (unit, 'err) t -> (unit, 'err) t
+val repeat : ('a, 'output) Schedule.t -> ('a, 'err) t -> ('output, 'err) t
+(** Repeat a successful effect according to [schedule].
+
+    The source effect is evaluated once before the schedule is stepped. Each
+    successful value is passed to the schedule as input. When the schedule
+    continues, Eta sleeps for the step delay and runs the source again. When the
+    schedule is done, [repeat] succeeds with the schedule output. The first
+    source failure stops the loop. *)
 
 val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
 (** [finally cleanup eff] runs [cleanup] after [eff] settles, on success,

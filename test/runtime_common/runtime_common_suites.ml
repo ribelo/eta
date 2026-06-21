@@ -417,7 +417,7 @@ module Make (B : Runtime_backend.S) = struct
     let ticks = ref 0 in
     let repeat_eff =
       E.repeat (Schedule.recurs 2) (E.sync (fun () -> incr ticks))
-      |> E.bind (fun () -> E.sync (fun () -> !ticks))
+      |> E.bind (fun (_repeat_count : int) -> E.sync (fun () -> !ticks))
     in
     check_ok Alcotest.int "repeat result" 3 (B.run rt repeat_eff)
 

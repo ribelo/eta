@@ -27,10 +27,10 @@ let preview_delays ~seed count =
   let rec loop driver remaining acc =
     if remaining = 0 then List.rev acc
     else
-      match Schedule.next driver with
+      match Schedule.next ~now_ms:0 ~input:(`Transient 0) driver with
       | None -> List.rev acc
-      | Some (delay, next) ->
-          loop next (remaining - 1) (Duration.to_ms delay :: acc)
+      | Some (metadata, next) ->
+          loop next (remaining - 1) (Duration.to_ms metadata.delay :: acc)
   in
   loop (Schedule.start ~random retry_policy) count []
 

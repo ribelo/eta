@@ -38,10 +38,16 @@ let jittered_delays random =
   let schedule =
     Schedule.(jittered ~min:0.5 ~max:1.5 (spaced (Duration.ms 100)))
   in
-  List.map
-    (fun step ->
-      Option.map Duration.to_ms (Schedule.next_delay ~random schedule ~step))
-    [ 0; 1; 2; 3 ]
+  let rec collect driver remaining acc =
+    if remaining = 0 then List.rev acc
+    else
+      match Schedule.next ~now_ms:0 ~input:() driver with
+      | None -> List.rev acc
+      | Some (metadata, driver) ->
+          collect driver (remaining - 1)
+            (Some (Duration.to_ms metadata.delay) :: acc)
+  in
+  collect (Schedule.start ~random schedule) 4 []
 
 let test_random_set_seed_resets_schedule_jitter () =
   let random = Test_random.create ~seed:123 in

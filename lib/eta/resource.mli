@@ -13,7 +13,7 @@ val auto :
   ?on_error:('err -> unit) ->
   load:('a, 'err) Effect.t ->
   ?random:Capabilities.random ->
-  schedule:Schedule.t ->
+  schedule:(unit, 'schedule_out) Schedule.t ->
   unit ->
   (('a, 'err) t, 'err) Effect.t
 (** Load once to seed the resource, then refresh it in a runtime-owned

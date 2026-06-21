@@ -85,9 +85,9 @@ let auto ?(on_error) ~load ?random ~schedule () =
   let rec refresh_loop resource driver =
     Effect.now
     |> Effect.bind (fun now_ms ->
-           match Schedule.next ~now_ms driver with
-           | None -> Effect.unit
-           | Some (delay, driver') ->
+           match Schedule.step ~now_ms ~input:() driver with
+           | Schedule.Done _, _ -> Effect.unit
+           | Schedule.Continue metadata, driver' ->
                let refresh_once =
                  Effect.all_settled [ refresh resource ]
                  |> Effect.bind (function
@@ -100,7 +100,7 @@ let auto ?(on_error) ~load ?random ~schedule () =
                                ^ string_of_int (List.length results))))
                in
                refresh_once
-               |> Effect.delay delay
+               |> Effect.delay metadata.delay
                |> Effect.bind (fun () -> refresh_loop resource driver'))
   in
   load

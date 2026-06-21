@@ -7,6 +7,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   }
 
   type law_err = [ `E0 | `E1 | `Neg | `Retry | `Release | `Timeout ]
+  type packed_law_schedule = Pack : (law_err, 'output) Schedule.t -> packed_law_schedule
 
   let pp_law_err fmt = function
     | `E0 -> Format.pp_print_string fmt "E0"
@@ -170,14 +171,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     with_law_runtime @@ fun rt _deps ->
     let schedules =
       [
-        Schedule.recurs 0;
-        Schedule.recurs 3;
-        Schedule.both (Schedule.recurs 3) (Schedule.spaced Duration.zero);
-        Schedule.either (Schedule.recurs 2) (Schedule.recurs 4);
+        Pack (Schedule.recurs 0);
+        Pack (Schedule.recurs 3);
+        Pack (Schedule.both (Schedule.recurs 3) (Schedule.spaced Duration.zero));
+        Pack (Schedule.either (Schedule.recurs 2) (Schedule.recurs 4));
       ]
     in
     List.iteri
-      (fun i schedule ->
+      (fun i (Pack schedule) ->
         let attempts = ref 0 in
         let attempt =
           Effect.named "retry.always-succeed" (Effect.sync (fun () ->
@@ -195,9 +196,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     List.iter
       (fun n ->
         let ticks = ref 0 in
-        run_ok rt
-          (Effect.repeat (Schedule.recurs n)
-             (Effect.named "repeat.tick" (Effect.sync (fun () -> incr ticks))));
+        ignore
+          (run_ok rt
+             (Effect.repeat (Schedule.recurs n)
+                (Effect.named "repeat.tick" (Effect.sync (fun () ->
+                     incr ticks))))
+            : int);
         Alcotest.(check int)
           (Printf.sprintf "repeat recurs %d runs initial+n" n)
           (n + 1) !ticks)

@@ -4,6 +4,26 @@ let dur_ms = Duration.ms
 let some_dur = Alcotest.option (Alcotest.testable Duration.pp Duration.equal)
 let dur = Alcotest.testable Duration.pp Duration.equal
 
+let next_delay ?random ?(now_ms = 0) ?(input = ()) schedule ~step =
+  let rec advance driver remaining =
+    match Schedule.next ~now_ms ~input driver with
+    | None -> None
+    | Some (metadata, driver) ->
+        if remaining <= 0 then Some metadata.delay
+        else advance driver (remaining - 1)
+  in
+  advance (Schedule.start ?random schedule) step
+
+let next_continue ?(now_ms = 0) ?(input = ()) driver =
+  match Schedule.next ~now_ms ~input driver with
+  | None -> Alcotest.fail "schedule ended"
+  | Some (metadata, driver) -> (metadata, driver)
+
+let next_continue_with_input ?(now_ms = 0) ~input driver =
+  match Schedule.next ~now_ms ~input driver with
+  | None -> Alcotest.fail "schedule ended"
+  | Some (metadata, driver) -> (metadata, driver)
+
 let test_duration_constructors () =
   Alcotest.(check dur) "seconds" (Duration.ms 1_000) (Duration.seconds 1);
   Alcotest.(check dur) "minutes" (Duration.seconds 60) (Duration.minutes 1);
@@ -92,15 +112,15 @@ let test_duration_humanize () =
 let test_recurs () =
   let s = Schedule.recurs 3 in
   Alcotest.(check some_dur) "0" (Some Duration.zero)
-    (Schedule.next_delay s ~step:0);
+    (next_delay s ~step:0);
   Alcotest.(check some_dur) "exhausted" None
-    (Schedule.next_delay s ~step:3)
+    (next_delay s ~step:3)
 
 let test_recurs_driver_yields_exactly_n_delays () =
   let rec collect driver acc =
-    match Schedule.next driver with
+    match Schedule.next ~now_ms:0 ~input:() driver with
     | None -> List.rev acc
-    | Some (delay, next) -> collect next (delay :: acc)
+    | Some (metadata, next) -> collect next (metadata.delay :: acc)
   in
   Alcotest.(check (list dur))
     "three recurrences"
@@ -110,24 +130,24 @@ let test_recurs_driver_yields_exactly_n_delays () =
 let test_exponential () =
   let s = Schedule.exponential ~factor:2.0 (dur_ms 10) in
   Alcotest.(check some_dur) "step 0" (Some (dur_ms 10))
-    (Schedule.next_delay s ~step:0);
+    (next_delay s ~step:0);
   Alcotest.(check some_dur) "step 2 = 40ms" (Some (dur_ms 40))
-    (Schedule.next_delay s ~step:2)
+    (next_delay s ~step:2)
 
 let test_exponential_saturates_on_overflow () =
   let s = Schedule.exponential ~factor:2.0 (Duration.ms max_int) in
   Alcotest.(check some_dur)
     "large exponent saturates"
     (Some (Duration.ms max_int))
-    (Schedule.next_delay s ~step:1024)
+    (next_delay s ~step:1024)
 
 let collect_with_now schedule nows =
   let rec loop driver acc = function
     | [] -> List.rev acc
     | now_ms :: rest -> (
-        match Schedule.next ~now_ms driver with
+        match Schedule.next ~now_ms ~input:() driver with
         | None -> Alcotest.fail "schedule ended"
-        | Some (delay, next) -> loop next (delay :: acc) rest)
+        | Some (metadata, next) -> loop next (metadata.delay :: acc) rest)
   in
   loop (Schedule.start schedule) [] nows
 
@@ -150,17 +170,118 @@ let test_windowed () =
       Alcotest.(check some_dur)
         ("zero step " ^ string_of_int step)
         (Some Duration.zero)
-        (Schedule.next_delay zero ~step))
+        (next_delay zero ~step))
     [ 0; 1; 2; 3 ]
+
+let test_schedule_outputs_and_done_decision () =
+  let driver = Schedule.start (Schedule.recurs 3) in
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "first output" 0 metadata.output;
+  Alcotest.(check int) "first attempt" 1 metadata.attempt;
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "second output" 1 metadata.output;
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "third output" 2 metadata.output;
+  match Schedule.step ~now_ms:0 ~input:() driver with
+  | Schedule.Done metadata, _ ->
+      Alcotest.(check int) "done output" 3 metadata.output;
+      Alcotest.(check dur) "done delay" Duration.zero metadata.delay
+  | Schedule.Continue _, _ -> Alcotest.fail "expected done decision"
+
+let test_schedule_elapsed_accumulates_from_first_step () =
+  let driver = Schedule.start Schedule.elapsed in
+  let metadata, driver = next_continue ~now_ms:100 driver in
+  Alcotest.(check dur) "initial elapsed" Duration.zero metadata.output;
+  Alcotest.(check int) "start" 100 metadata.start_ms;
+  let metadata, driver = next_continue ~now_ms:125 driver in
+  Alcotest.(check dur) "second elapsed" (Duration.ms 25) metadata.output;
+  Alcotest.(check dur)
+    "elapsed since previous" (Duration.ms 25)
+    metadata.elapsed_since_previous;
+  let metadata, _ = next_continue ~now_ms:180 driver in
+  Alcotest.(check dur) "third elapsed" (Duration.ms 80) metadata.output;
+  Alcotest.(check dur)
+    "third since previous" (Duration.ms 55)
+    metadata.elapsed_since_previous
+
+let test_schedule_during_stops_after_bound () =
+  let driver = Schedule.start (Schedule.during (Duration.ms 50)) in
+  let metadata, driver = next_continue ~now_ms:0 driver in
+  Alcotest.(check dur) "initial output" Duration.zero metadata.output;
+  let metadata, driver = next_continue ~now_ms:50 driver in
+  Alcotest.(check dur) "boundary still continues" (Duration.ms 50) metadata.output;
+  match Schedule.step ~now_ms:51 ~input:() driver with
+  | Schedule.Done metadata, _ ->
+      Alcotest.(check dur) "done output" (Duration.ms 51) metadata.output
+  | Schedule.Continue _, _ -> Alcotest.fail "expected during to stop"
+
+let test_schedule_output_predicates_and_recur_until () =
+  let driver =
+    Schedule.forever |> Schedule.while_output (fun output -> output < 3)
+    |> Schedule.start
+  in
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "while output 0" 0 metadata.output;
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "while output 1" 1 metadata.output;
+  let metadata, driver = next_continue driver in
+  Alcotest.(check int) "while output 2" 2 metadata.output;
+  (match Schedule.step ~now_ms:0 ~input:() driver with
+  | Schedule.Done metadata, _ ->
+      Alcotest.(check int) "while done output" 3 metadata.output
+  | Schedule.Continue _, _ -> Alcotest.fail "expected while_output to stop");
+  let driver =
+    Schedule.recur_until (String.equal "stop")
+    |> Schedule.start
+  in
+  let metadata, driver = next_continue_with_input ~input:"a" driver in
+  Alcotest.(check string) "first input output" "a" metadata.output;
+  let metadata, driver = next_continue_with_input ~input:"b" driver in
+  Alcotest.(check string) "second input output" "b" metadata.output;
+  match Schedule.step ~now_ms:0 ~input:"stop" driver with
+  | Schedule.Done metadata, _ ->
+      Alcotest.(check string) "stop output" "stop" metadata.output
+  | Schedule.Continue _, _ -> Alcotest.fail "expected recur_until to stop"
+
+let test_schedule_modify_delay () =
+  let schedule =
+    Schedule.spaced (Duration.ms 10)
+    |> Schedule.modify_delay (fun output delay ->
+           Duration.ms (Duration.to_ms delay + output))
+  in
+  let driver = Schedule.start schedule in
+  let metadata, driver = next_continue driver in
+  Alcotest.(check dur) "first modified delay" (Duration.ms 10) metadata.delay;
+  let metadata, _ = next_continue driver in
+  Alcotest.(check dur) "second modified delay" (Duration.ms 11) metadata.delay
+
+let test_schedule_taps_input_and_output () =
+  let inputs = ref [] in
+  let outputs = ref [] in
+  let schedule =
+    Schedule.recurs 2
+    |> Schedule.tap_input (fun input -> inputs := input :: !inputs)
+    |> Schedule.tap_output (fun output -> outputs := output :: !outputs)
+  in
+  let driver = Schedule.start schedule in
+  let _, driver = next_continue_with_input ~input:"a" driver in
+  let _, driver = next_continue_with_input ~input:"b" driver in
+  (match Schedule.step ~now_ms:0 ~input:"c" driver with
+  | Schedule.Done _, _ -> ()
+  | Schedule.Continue _, _ -> Alcotest.fail "expected tapped schedule to stop");
+  Alcotest.(check (list string)) "inputs" [ "a"; "b"; "c" ]
+    (List.rev !inputs);
+  Alcotest.(check (list int)) "outputs" [ 0; 1; 2 ] (List.rev !outputs)
 
 let test_fibonacci () =
   let schedule = Schedule.fibonacci (dur_ms 10) in
   let rec collect driver remaining acc =
     if remaining = 0 then List.rev acc
     else
-      match Schedule.next driver with
+      match Schedule.next ~now_ms:0 ~input:() driver with
       | None -> Alcotest.fail "fibonacci schedule ended"
-      | Some (delay, next) -> collect next (remaining - 1) (delay :: acc)
+      | Some (metadata, next) ->
+          collect next (remaining - 1) (metadata.delay :: acc)
   in
   Alcotest.(check (list dur))
     "first fibonacci delays"
@@ -172,14 +293,31 @@ let test_fibonacci_composes_with_recurs_driver () =
     Schedule.both (Schedule.recurs 6) (Schedule.fibonacci (Duration.ms 5))
   in
   let rec collect driver acc =
-    match Schedule.next driver with
+    match Schedule.next ~now_ms:0 ~input:() driver with
     | None -> List.rev acc
-    | Some (delay, next) -> collect next (delay :: acc)
+    | Some (metadata, next) -> collect next (metadata.delay :: acc)
   in
   Alcotest.(check (list dur))
     "recurs limits fibonacci driver"
     (List.map Duration.ms [ 5; 5; 10; 15; 25; 40 ])
     (collect (Schedule.start schedule) [])
+
+let test_schedule_composition_outputs () =
+  let driver =
+    Schedule.both (Schedule.recurs 2) (Schedule.fibonacci (Duration.ms 5))
+    |> Schedule.start
+  in
+  let metadata, driver = next_continue driver in
+  Alcotest.(check (pair int dur)) "first output" (0, Duration.ms 5)
+    metadata.output;
+  let metadata, driver = next_continue driver in
+  Alcotest.(check (pair int dur)) "second output" (1, Duration.ms 5)
+    metadata.output;
+  match Schedule.step ~now_ms:0 ~input:() driver with
+  | Schedule.Done metadata, _ ->
+      Alcotest.(check (pair int dur)) "done output" (2, Duration.ms 10)
+        metadata.output
+  | Schedule.Continue _, _ -> Alcotest.fail "expected composed schedule to stop"
 
 let test_fibonacci_edges () =
   let zero = Schedule.fibonacci Duration.zero in
@@ -188,28 +326,28 @@ let test_fibonacci_edges () =
       Alcotest.(check some_dur)
         ("zero step " ^ string_of_int step)
         (Some Duration.zero)
-        (Schedule.next_delay zero ~step))
+        (next_delay zero ~step))
     [ 0; 1; 2; 3 ];
   let base = Duration.ms ((max_int / 2) + 1) in
   let driver = Schedule.start (Schedule.fibonacci base) in
   let driver =
-    match Schedule.next driver with
-    | Some (delay, next) ->
-        Alcotest.(check dur) "first delay" base delay;
+    match Schedule.next ~now_ms:0 ~input:() driver with
+    | Some (metadata, next) ->
+        Alcotest.(check dur) "first delay" base metadata.delay;
         next
     | None -> Alcotest.fail "fibonacci schedule ended before first delay"
   in
   let driver =
-    match Schedule.next driver with
-    | Some (delay, next) ->
-        Alcotest.(check dur) "second delay" base delay;
+    match Schedule.next ~now_ms:0 ~input:() driver with
+    | Some (metadata, next) ->
+        Alcotest.(check dur) "second delay" base metadata.delay;
         next
     | None -> Alcotest.fail "fibonacci schedule ended before second delay"
   in
-  match Schedule.next driver with
-  | Some (delay, _) ->
+  match Schedule.next ~now_ms:0 ~input:() driver with
+  | Some (metadata, _) ->
       Alcotest.(check dur)
-        "third delay saturates" (Duration.ms max_int) delay
+        "third delay saturates" (Duration.ms max_int) metadata.delay
   | None -> Alcotest.fail "fibonacci schedule ended on overflow"
 
 let test_schedule_linear_saturates_on_overflow () =
@@ -218,43 +356,43 @@ let test_schedule_linear_saturates_on_overflow () =
       (Schedule.linear ~initial:(Duration.ms 1) ~step:(Duration.ms max_int))
   in
   let driver =
-    match Schedule.next driver with
-    | Some (delay, next) ->
-        Alcotest.(check dur) "first delay" (Duration.ms 1) delay;
+    match Schedule.next ~now_ms:0 ~input:() driver with
+    | Some (metadata, next) ->
+        Alcotest.(check dur) "first delay" (Duration.ms 1) metadata.delay;
         next
     | None -> Alcotest.fail "linear schedule ended too early"
   in
-  match Schedule.next driver with
-  | Some (delay, _) ->
+  match Schedule.next ~now_ms:0 ~input:() driver with
+  | Some (metadata, _) ->
       Alcotest.(check dur)
-        "second delay saturates" (Duration.ms max_int) delay
+        "second delay saturates" (Duration.ms max_int) metadata.delay
   | None -> Alcotest.fail "linear schedule ended on overflow"
 
 let test_spaced_fixed_linear () =
   Alcotest.(check some_dur) "spaced" (Some (Duration.seconds 1))
-    (Schedule.next_delay (Schedule.spaced (Duration.seconds 1)) ~step:4);
+    (next_delay (Schedule.spaced (Duration.seconds 1)) ~step:4);
   Alcotest.(check some_dur) "fixed" (Some (Duration.seconds 1))
-    (Schedule.next_delay (Schedule.fixed (Duration.seconds 1)) ~step:4);
+    (next_delay (Schedule.fixed (Duration.seconds 1)) ~step:4);
   Alcotest.(check some_dur) "linear step 3" (Some (Duration.seconds 7))
-    (Schedule.next_delay
+    (next_delay
        (Schedule.linear ~initial:(Duration.seconds 1)
           ~step:(Duration.seconds 2))
        ~step:3)
 
 let test_schedule_composition () =
   Alcotest.(check some_dur) "both takes max" (Some (Duration.seconds 2))
-    (Schedule.next_delay
+    (next_delay
        (Schedule.both (Schedule.spaced (Duration.seconds 1))
           (Schedule.spaced (Duration.seconds 2)))
        ~step:0);
   Alcotest.(check some_dur) "either takes min" (Some (Duration.seconds 1))
-    (Schedule.next_delay
+    (next_delay
        (Schedule.either (Schedule.spaced (Duration.seconds 1))
           (Schedule.spaced (Duration.seconds 2)))
        ~step:0);
   Alcotest.(check some_dur) "and_then falls through"
     (Some (Duration.seconds 1))
-    (Schedule.next_delay
+    (next_delay
        (Schedule.and_then (Schedule.recurs 1)
           (Schedule.spaced (Duration.seconds 1)))
        ~step:1)
@@ -262,9 +400,9 @@ let test_schedule_composition () =
 let test_schedule_composition_termination_with_driver () =
   let collect schedule =
     let rec loop driver acc =
-      match Schedule.next driver with
+      match Schedule.next ~now_ms:0 ~input:() driver with
       | None -> List.rev acc
-      | Some (delay, next) -> loop next (delay :: acc)
+      | Some (metadata, next) -> loop next (metadata.delay :: acc)
     in
     loop (Schedule.start schedule) []
   in
@@ -300,25 +438,25 @@ let test_schedule_and_then_offsets_second_phase () =
       Alcotest.(check some_dur)
         ("exponential warmup " ^ string_of_int step)
         (Some Duration.zero)
-        (Schedule.next_delay exponential ~step))
+        (next_delay exponential ~step))
     [ 0; 1; 2; 3; 4 ];
   Alcotest.(check some_dur) "exponential phase step 0"
     (Some (Duration.seconds 1))
-    (Schedule.next_delay exponential ~step:5);
+    (next_delay exponential ~step:5);
   Alcotest.(check some_dur) "exponential phase step 1"
     (Some (Duration.seconds 2))
-    (Schedule.next_delay exponential ~step:6);
+    (next_delay exponential ~step:6);
   Alcotest.(check some_dur) "exponential phase step 2"
     (Some (Duration.seconds 4))
-    (Schedule.next_delay exponential ~step:7);
+    (next_delay exponential ~step:7);
   let linear =
     Schedule.and_then (Schedule.recurs 3)
       (Schedule.linear ~initial:(Duration.ms 100) ~step:(Duration.ms 50))
   in
   Alcotest.(check some_dur) "linear phase step 0" (Some (Duration.ms 100))
-    (Schedule.next_delay linear ~step:3);
+    (next_delay linear ~step:3);
   Alcotest.(check some_dur) "linear phase step 1" (Some (Duration.ms 150))
-    (Schedule.next_delay linear ~step:4);
+    (next_delay linear ~step:4);
   let jittered =
     Schedule.and_then (Schedule.recurs 2)
       (Schedule.exponential ~factor:2.0 (Duration.ms 100))
@@ -326,7 +464,7 @@ let test_schedule_and_then_offsets_second_phase () =
   in
   Alcotest.(check some_dur) "jittered wraps second phase step 0"
     (Some (Duration.ms 100))
-    (Schedule.next_delay jittered ~step:2)
+    (next_delay jittered ~step:2)
 
 let test_schedule_jittered_uses_random_capability () =
   let random = Capabilities.random_of_seed 17 in
@@ -336,7 +474,7 @@ let test_schedule_jittered_uses_random_capability () =
   in
   Alcotest.(check some_dur) "jittered factor from capability"
     (Some (Duration.ms 177))
-    (Schedule.next_delay ~random schedule ~step:0);
+    (next_delay ~random schedule ~step:0);
   let random = Capabilities.random_of_seed 7 in
   Alcotest.(check int) "inclusive range" 20
     (Random.int_in_range random ~min:10 ~max:20);
@@ -375,18 +513,18 @@ let test_schedule_jittered_stays_inside_multiplier_bounds () =
     ref (Schedule.start ~random:(Capabilities.random_of_seed 23) schedule)
   in
   for step = 0 to 99 do
-    match Schedule.next !driver with
+    match Schedule.next ~now_ms:0 ~input:() !driver with
     | None -> Alcotest.fail "jittered spaced schedule terminated"
-    | Some (delay, next) ->
+    | Some (metadata, next) ->
         driver := next;
         Alcotest.(check bool)
           ("step " ^ string_of_int step ^ " inside lower bound")
           true
-          (Duration.compare delay (Duration.ms 50) >= 0);
+          (Duration.compare metadata.delay (Duration.ms 50) >= 0);
         Alcotest.(check bool)
           ("step " ^ string_of_int step ^ " inside upper bound")
           true
-          (Duration.compare delay (Duration.ms 150) <= 0)
+          (Duration.compare metadata.delay (Duration.ms 150) <= 0)
   done
 
 let test_schedule_jittered_exponential_does_not_raise () =
@@ -399,7 +537,7 @@ let test_schedule_jittered_exponential_does_not_raise () =
     ref (Schedule.start ~random:(Capabilities.random_of_seed 7) schedule)
   in
   for _ = 1 to 80 do
-    match Schedule.next !driver with
+    match Schedule.next ~now_ms:0 ~input:() !driver with
     | Some (_, next_driver) -> driver := next_driver
     | None -> ()
   done;
@@ -466,9 +604,22 @@ let tests =
         Alcotest.test_case "fixed uses cadence with now metadata" `Quick
           test_fixed_uses_cadence_with_now_metadata;
         Alcotest.test_case "windowed" `Quick test_windowed;
+        Alcotest.test_case "outputs and done decision" `Quick
+          test_schedule_outputs_and_done_decision;
+        Alcotest.test_case "elapsed accumulates from first step" `Quick
+          test_schedule_elapsed_accumulates_from_first_step;
+        Alcotest.test_case "during stops after bound" `Quick
+          test_schedule_during_stops_after_bound;
+        Alcotest.test_case "output predicates and recur_until" `Quick
+          test_schedule_output_predicates_and_recur_until;
+        Alcotest.test_case "modify_delay" `Quick test_schedule_modify_delay;
+        Alcotest.test_case "tap_input and tap_output" `Quick
+          test_schedule_taps_input_and_output;
         Alcotest.test_case "fibonacci" `Quick test_fibonacci;
         Alcotest.test_case "fibonacci composes with recurs driver" `Quick
           test_fibonacci_composes_with_recurs_driver;
+        Alcotest.test_case "composition outputs" `Quick
+          test_schedule_composition_outputs;
         Alcotest.test_case "fibonacci edges" `Quick test_fibonacci_edges;
         Alcotest.test_case "linear saturates on overflow" `Quick
           test_schedule_linear_saturates_on_overflow;

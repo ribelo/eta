@@ -8,10 +8,12 @@ type decision =
   | Stop
   | Retry_after of Eta.Duration.t
 
+type packed_schedule = Schedule : (unit, 'output) Eta.Schedule.t -> packed_schedule
+
 type t = {
   mode : mode;
   max_attempts : int;
-  schedule : Eta.Schedule.t;
+  schedule : packed_schedule;
   respect_retry_after : bool;
   max_retry_after : Eta.Duration.t;
   retry_status : (int -> bool);
@@ -23,15 +25,21 @@ let default_retry_status = function
 
 let default_max_retry_after = Eta.Duration.days 1
 
-let make ?(mode = Default) ?(max_attempts = 3)
-    ?(schedule =
-      Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 100)
-      |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
-      |> Eta.Schedule.jittered ~min:0.0 ~max:1.0)
+let default_schedule () =
+  Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 100)
+  |> Eta.Schedule.either (Eta.Schedule.spaced (Eta.Duration.seconds 30))
+  |> Eta.Schedule.jittered ~min:0.0 ~max:1.0
+
+let make ?(mode = Default) ?(max_attempts = 3) ?schedule
     ?(respect_retry_after = true) ?(max_retry_after = default_max_retry_after)
     ?(retry_status = default_retry_status) () =
   if max_attempts <= 0 then
     invalid_arg "Eta_http.Retry_policy.make: max_attempts must be > 0";
+  let schedule =
+    match schedule with
+    | Some schedule -> Schedule schedule
+    | None -> Schedule (default_schedule ())
+  in
   {
     mode;
     max_attempts;
@@ -136,8 +144,22 @@ let request_allowed t request =
   | Always -> Idempotency.body_replayable request
   | Default -> Idempotency.retryable request
 
-let schedule_delay t ~attempt =
-  Eta.Schedule.next_delay t.schedule ~step:(attempt - 1)
+let now_ms_of_seconds now_s =
+  let now_ms = now_s *. 1000.0 in
+  if now_ms <= 0.0 then 0
+  else if now_ms >= float_of_int max_int then max_int
+  else int_of_float now_ms
+
+let schedule_delay t ~now_s ~attempt =
+  let (Schedule schedule) = t.schedule in
+  let rec loop driver remaining =
+    match Eta.Schedule.next ~now_ms:(now_ms_of_seconds now_s) ~input:() driver with
+    | None -> None
+    | Some (metadata, driver) ->
+        if remaining <= 0 then Some metadata.delay
+        else loop driver (remaining - 1)
+  in
+  loop (Eta.Schedule.start schedule) (attempt - 1)
 
 let retry_after_header t ~now_s headers =
   match Header.get "retry-after" headers with
@@ -151,15 +173,15 @@ let delay_for_error t ~now_s ~attempt error =
     | true, HTTP_status { headers; _ } -> (
         match retry_after_header t ~now_s headers with
         | Some delay -> Some delay
-        | None -> schedule_delay t ~attempt)
-    | _ -> schedule_delay t ~attempt
+        | None -> schedule_delay t ~now_s ~attempt)
+    | _ -> schedule_delay t ~now_s ~attempt
 
 let delay_for_response t ~now_s ~attempt response =
   if attempt >= t.max_attempts then None
   else if t.retry_status response.Response.status then
     match t.respect_retry_after, retry_after_header t ~now_s response.headers with
     | true, Some delay -> Some delay
-    | _ -> schedule_delay t ~attempt
+    | _ -> schedule_delay t ~now_s ~attempt
   else None
 
 let classify_error ?(now_s = 0.0) t ~request ~attempt error =

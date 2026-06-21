@@ -424,22 +424,24 @@ let uninterruptible eff =
 
 let repeat schedule eff =
   preserve eff @@ fun frame ->
-  let run_iteration () =
-    run_scope_value frame eff
-  in
   try
-    run_iteration ();
+    let run_iteration () = run_scope frame eff in
     let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-    let continue = ref true in
-    while !continue do
-      match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
-      | None -> continue := false
-      | Some (duration, next_driver) ->
+    let rec loop input =
+      match
+        Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input !driver
+      with
+      | Sch.Done metadata, _ -> ok metadata.output
+      | Sch.Continue metadata, next_driver -> (
           driver := next_driver;
-          frame.runtime.sleep duration;
-          run_iteration ()
-    done;
-    ok ()
+          frame.runtime.sleep metadata.delay;
+          match run_iteration () with
+          | Exit.Ok input -> loop input
+          | Exit.Error _ as error -> error)
+    in
+    match run_iteration () with
+    | Exit.Ok input -> loop input
+    | Exit.Error _ as error -> error
   with exn -> exit_of_exn frame exn
 
 let retry schedule (predicate) eff =
@@ -450,12 +452,14 @@ let retry schedule (predicate) eff =
     match run_attempt () with
     | Exit.Ok _ as ok -> ok
     | Exit.Error (Cause.Fail err) when predicate err -> (
-        match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
-        | Some (duration, next_driver) ->
+        match
+          Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input:err !driver
+        with
+        | Sch.Continue metadata, next_driver ->
             driver := next_driver;
-            frame.runtime.sleep duration;
+            frame.runtime.sleep metadata.delay;
             loop ()
-        | None -> error (Cause.Fail err))
+        | Sch.Done _, _ -> error (Cause.Fail err))
     | Exit.Error _ as err -> err
   in
   loop ()
@@ -463,6 +467,7 @@ let retry schedule (predicate) eff =
 let retry_or_else schedule (predicate) ~or_else eff =
   preserve eff @@ fun frame ->
   let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
+  let last_output = ref None in
   let run_attempt () = run_scope frame eff in
   let rec loop () =
     match run_attempt () with
@@ -474,13 +479,17 @@ let retry_or_else schedule (predicate) ~or_else eff =
             match first_typed_failure cause with
             | Some err ->
                 if predicate err then
-                  match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
-                  | Some (duration, next_driver) ->
+                  match
+                    Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input:err !driver
+                  with
+                  | Sch.Continue metadata, next_driver ->
                       driver := next_driver;
-                      frame.runtime.sleep duration;
+                      last_output := Some metadata.output;
+                      frame.runtime.sleep metadata.delay;
                       loop ()
-                  | None -> eval frame (or_else err)
-                else eval frame (or_else err)
+                  | Sch.Done metadata, _ ->
+                      eval frame (or_else err (Some metadata.output))
+                else eval frame (or_else err !last_output)
             | None -> invalid_arg "Effect.retry_or_else: empty composite cause"))
   in
   loop ()
