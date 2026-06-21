@@ -136,6 +136,17 @@ module Stream : sig
       [schedule] continues. Elements emitted before a failure remain emitted.
       If the schedule is exhausted, the final typed stream error is preserved. *)
 
+  val timeout : Eta.Duration.t -> ('a, 'err) t -> ('a, 'err) t
+  (** End the stream cleanly if the next emitted value does not arrive within
+      [duration]. The timeout is per next value, not total stream lifetime, and
+      resets after every emitted value. Timeout cancels the active upstream pull
+      so source cleanup still runs.
+
+      A zero duration ends immediately without starting an upstream pull. Eta's
+      fold runner does not expose effect-smol's same-turn zero-duration pull
+      race deterministically, so this is the reference-nearest explicit
+      behavior. *)
+
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit the longest leading prefix whose values satisfy [predicate].

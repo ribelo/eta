@@ -56,6 +56,7 @@ module Stream = struct
         ('err, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
         * ('a, 'err) t
         -> ('a, 'err) t
+    | Timeout : Eta.Duration.t * ('a, 'err) t -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take_while_effect :
@@ -136,6 +137,7 @@ module Stream = struct
   let schedule schedule stream = Schedule (schedule, stream)
   let repeat schedule stream = Repeat (schedule, stream)
   let retry schedule stream = Retry (schedule, stream)
+  let timeout duration stream = Timeout (duration, stream)
   let take n stream = Take (n, stream)
   let take_while (f) stream = Take_while (stream, f)
   let take_while_effect (f) stream = Take_while_effect (stream, f)
@@ -540,6 +542,7 @@ and fold_stream :
   | Schedule (schedule, inner) -> fold_schedule schedule inner acc folder
   | Repeat (schedule, inner) -> fold_repeat schedule inner acc folder
   | Retry (schedule, inner) -> fold_retry schedule inner acc folder
+  | Timeout (duration, inner) -> fold_timeout duration inner acc folder
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)
       else
@@ -946,6 +949,88 @@ fun schedule inner acc folder ->
                     |> Eta.Effect.bind (fun () -> loop !latest_acc)))
   in
   loop acc
+
+and fold_timeout :
+    type err acc a.
+    Eta.Duration.t ->
+    (a, err) Stream.t ->
+    acc ->
+    (acc, a, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun duration inner acc folder ->
+  if Eta.Duration.is_zero duration then Eta.Effect.pure (acc, true)
+  else
+    let queue = Eta.Channel.create ~capacity:1 () in
+    let stopped = Atomic.make false in
+    let producer =
+      let publish_failure error =
+        Eta.Effect.named "Eta_stream.timeout.failed"
+          (if Atomic.compare_and_set stopped false true then
+             drain_channel queue
+             |> Eta.Effect.bind (fun () ->
+                    send_channel "Eta_stream.timeout" queue (Failed error))
+           else Eta.Effect.unit)
+      in
+      let publish_done =
+        Eta.Effect.named "Eta_stream.timeout.done"
+          (Eta.Effect.sync (fun () -> Atomic.get stopped)
+          |> Eta.Effect.bind (fun stopped ->
+                 if stopped then Eta.Effect.unit
+                 else send_channel "Eta_stream.timeout" queue Done))
+      in
+      Eta.Effect.bind
+        (fun () -> publish_done)
+        (Eta.Effect.map ignore
+           (fold_stream inner ()
+              {
+                emit =
+                  (fun () value ->
+                    if Atomic.get stopped then Eta.Effect.pure ((), false)
+                    else
+                      send_channel "Eta_stream.timeout" queue (Item value)
+                      |> Eta.Effect.map (fun () ->
+                             ((), not (Atomic.get stopped))));
+              }))
+      |> Eta.Effect.catch (fun error -> publish_failure error)
+    in
+    Eta.Supervisor.scoped
+      {
+        run =
+          (fun (type s) sup ->
+            let open Eta.Supervisor.Scope in
+            let* (child : (s, err, unit) Eta.Supervisor.child) =
+              start sup (lift producer)
+            in
+            let recv_event =
+              recv_channel "Eta_stream.timeout" queue
+              |> Eta.Effect.map (fun event -> `Event event)
+            in
+            let timeout_event =
+              Eta.Effect.sleep duration
+              |> Eta.Effect.map (fun () -> `Timeout)
+            in
+            let rec stop acc keep_going =
+              let () = Atomic.set stopped true in
+              let* () = cancel child in
+              pure (acc, keep_going)
+            and consume acc =
+              let* event =
+                lift (Eta.Effect.race [ recv_event; timeout_event ])
+              in
+              match event with
+              | `Timeout -> stop acc true
+              | `Event Done ->
+                  let* () = await child in
+                  pure (acc, true)
+              | `Event (Failed error) ->
+                  let () = Atomic.set stopped true in
+                  fail error
+              | `Event (Item value) ->
+                  let* acc, keep_going = lift (folder.emit acc value) in
+                  if keep_going then consume acc else stop acc false
+            in
+            consume acc);
+      }
 
 and fold_zip_with :
     type err acc a b c.

@@ -591,6 +591,125 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.await result |> check_ok Alcotest.(list int) "taken" [ 1 ];
     Alcotest.(check int) "no sleeper after take" 0 (B.sleeper_count clock)
 
+  let delayed_single delay_ms value =
+    Eta_stream.Stream.from_effect
+      (Eta.Effect.delay (Eta.Duration.ms delay_ms) (Eta.Effect.pure value))
+
+  let test_timeout_values_before_duration () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let stream =
+      Eta_stream.Stream.concat (delayed_single 5 1) (delayed_single 5 2)
+      |> Eta_stream.Stream.timeout (Eta.Duration.ms 10)
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    B.await result
+    |> check_ok Alcotest.(list int) "values before timeout" [ 1; 2 ]
+
+  let test_timeout_ends_stalled_stream () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let stream =
+      delayed_single 50 1 |> Eta_stream.Stream.timeout (Eta.Duration.ms 10)
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 10);
+    B.await result
+    |> check_ok Alcotest.(list int) "timeout ends cleanly" []
+
+  let test_timeout_resets_after_each_value () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let stream =
+      Eta_stream.Stream.concat
+        (Eta_stream.Stream.concat (delayed_single 5 1) (delayed_single 5 2))
+        (delayed_single 50 3)
+      |> Eta_stream.Stream.timeout (Eta.Duration.ms 10)
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    B.adjust_clock clock (Eta.Duration.ms 10);
+    advance_by_ms_until_resolved clock result 100;
+    B.await result
+    |> check_ok Alcotest.(list int) "timeout resets" [ 1; 2 ]
+
+  let test_timeout_zero_ends_without_pull () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pulled = ref 0 in
+    let stream =
+      Eta_stream.Stream.succeed 1
+      |> Eta_stream.Stream.tap (fun _ ->
+             Eta.Effect.sync (fun () -> incr pulled))
+      |> Eta_stream.Stream.timeout Eta.Duration.zero
+    in
+    Alcotest.(check (list int))
+      "zero timeout values" [] (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check int) "upstream not pulled" 0 !pulled
+
+  let test_timeout_preserves_upstream_failure () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let stream =
+      Eta_stream.Stream.from_effect
+        (Eta.Effect.delay (Eta.Duration.ms 5)
+           (Eta.Effect.fail `Upstream_failed))
+      |> Eta_stream.Stream.timeout (Eta.Duration.ms 10)
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    match B.await result with
+    | Eta.Exit.Error (Eta.Cause.Fail `Upstream_failed) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf "timeout upstream failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected timeout upstream failure cause: %a"
+          (Eta.Cause.pp pp_hidden) cause
+
+  let test_timeout_take_stops_before_timeout () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let stream =
+      Eta_stream.Stream.concat (delayed_single 5 1) (delayed_single 50 2)
+      |> Eta_stream.Stream.timeout (Eta.Duration.ms 10)
+      |> Eta_stream.Stream.take 1
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    B.await result
+    |> check_ok Alcotest.(list int) "take before timeout" [ 1 ]
+
+  let test_timeout_cancels_merge_sources () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let delayed_counted produced =
+      Eta_stream.Stream.from_iterable (List.init 1_000 (fun i -> i))
+      |> Eta_stream.Stream.map_effect (fun value ->
+             Eta.Effect.sync (fun () -> incr produced)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.delay (Eta.Duration.ms 5)
+                      (Eta.Effect.pure value)))
+    in
+    let left_count = ref 0 in
+    let right_count = ref 0 in
+    let stream =
+      Eta_stream.Stream.merge (delayed_counted left_count)
+        (delayed_counted right_count)
+      |> Eta_stream.Stream.timeout (Eta.Duration.ms 3)
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
+    wait_for_sleepers clock 3;
+    B.adjust_clock clock (Eta.Duration.ms 3);
+    B.await result
+    |> check_ok Alcotest.(list int) "merge timeout" [];
+    Alcotest.(check bool) "left cancelled before full production" true
+      (!left_count < 1_000);
+    Alcotest.(check bool) "right cancelled before full production" true
+      (!right_count < 1_000)
+
   let test_predicate_trimming_empty_streams () =
     B.with_runtime @@ fun _ctx rt ->
     let collect stream = run_ok rt (Eta_stream.run_collect stream) in
@@ -1363,6 +1482,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_schedule_tap_failure_fails_stream;
           Alcotest.test_case "repeat take stops before schedule sleep" `Quick
             test_repeat_take_stops_before_schedule_sleep;
+          Alcotest.test_case "timeout emits values before duration" `Quick
+            test_timeout_values_before_duration;
+          Alcotest.test_case "timeout ends stalled stream cleanly" `Quick
+            test_timeout_ends_stalled_stream;
+          Alcotest.test_case "timeout resets after each value" `Quick
+            test_timeout_resets_after_each_value;
+          Alcotest.test_case "timeout zero ends without pull" `Quick
+            test_timeout_zero_ends_without_pull;
+          Alcotest.test_case "timeout preserves upstream failure" `Quick
+            test_timeout_preserves_upstream_failure;
+          Alcotest.test_case "timeout take stops before timeout" `Quick
+            test_timeout_take_stops_before_timeout;
+          Alcotest.test_case "timeout cancels merge sources" `Quick
+            test_timeout_cancels_merge_sources;
           Alcotest.test_case "predicate trimming handles empty streams" `Quick
             test_predicate_trimming_empty_streams;
           Alcotest.test_case "take_while boundary behavior" `Quick

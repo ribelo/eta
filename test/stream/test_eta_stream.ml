@@ -325,6 +325,38 @@ let test_retry_from_file_closes_between_attempts () =
       "fd count grew after from_file retry: before=%d after=%d"
       before after
 
+let test_timeout_from_file_closes () =
+  with_runtime @@ fun env rt ->
+  let large = String.make (1024 * 1024) 'x' in
+  with_file env "stream-timeout-file-close.tmp" large @@ fun path ->
+  let before = fd_count () in
+  let seen = ref 0 in
+  let eff =
+    Eta_stream.Stream.from_file ~chunk_size:4096 path
+    |> Eta_stream.Stream.map_effect (fun chunk ->
+           Effect.sync (fun () -> incr seen)
+           |> Effect.bind (fun () ->
+                  Effect.delay (Duration.ms 100) (Effect.pure chunk)))
+    |> Eta_stream.Stream.timeout (Duration.ms 10)
+    |> run_collect
+    |> Effect.timeout (Duration.ms 1_000)
+  in
+  (match Runtime.run rt eff with
+  | Exit.Ok [] -> ()
+  | Exit.Ok chunks ->
+      Alcotest.failf "timeout from_file unexpectedly emitted %d chunks"
+        (List.length chunks)
+  | Exit.Error cause ->
+      Alcotest.failf "timeout from_file failed: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause);
+  Alcotest.(check bool) "file source was pulled" true (!seen > 0);
+  let after = fd_count () in
+  if before >= 0 && after > before then
+    Alcotest.failf
+      "fd count grew after from_file timeout: before=%d after=%d"
+      before after
+
 let test_from_file_invalid_chunk_size () =
   Eio_main.run @@ fun env ->
   let path = Eio.Path.(Eio.Stdenv.cwd env / "unused-stream-file.tmp") in
@@ -437,6 +469,8 @@ let suite =
         test_repeat_from_file_failure_closes;
       Alcotest.test_case "retry closes from_file between attempts" `Quick
         test_retry_from_file_closes_between_attempts;
+      Alcotest.test_case "timeout closes from_file" `Quick
+        test_timeout_from_file_closes;
       Alcotest.test_case "from_file rejects invalid chunk size" `Quick
         test_from_file_invalid_chunk_size;
       Alcotest.test_case "from_file missing path fails typed" `Quick
