@@ -16,6 +16,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+  let effect_error_cause cause =
+    Effect.Expert.make ~leaf_name:"test.error-cause" @@ fun _context ->
+    Exit.Error cause
+
   let expect_typed_failure_eq testable exit expected =
     match exit with
     | Exit.Error (Cause.Fail actual) ->
@@ -997,6 +1001,176 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected suppressed cleanup failure, got %a"
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected suppressed cleanup failure"
+
+  let test_effect_selective_cleanup_success_noop () =
+    B.with_runtime @@ fun _ctx rt ->
+    let on_error_ran = ref false in
+    let on_interrupt_ran = ref false in
+    let eff =
+      Effect.pure 1
+      |> Effect.on_error (fun _cause ->
+             Effect.sync (fun () -> on_error_ran := true))
+      |> Effect.on_interrupt (fun _interrupt ->
+             Effect.sync (fun () -> on_interrupt_ran := true))
+    in
+    check_exit_ok Alcotest.int "success value" 1 (B.run rt eff);
+    Alcotest.(check bool) "on_error skipped success" false !on_error_ran;
+    Alcotest.(check bool)
+      "on_interrupt skipped success" false !on_interrupt_ran
+
+  let test_effect_on_error_observes_typed_defect_and_suppressed () =
+    B.with_runtime @@ fun _ctx rt ->
+    let label_error_cause = function
+      | Cause.Fail err -> "fail:" ^ err
+      | Cause.Die _ -> "die"
+      | Cause.Interrupt _ -> "interrupt"
+      | Cause.Sequential _ -> "sequential"
+      | Cause.Concurrent _ -> "concurrent"
+      | Cause.Finalizer _ -> "finalizer"
+      | Cause.Suppressed _ -> "suppressed"
+    in
+    let typed_seen = ref [] in
+    let typed : (int, string) Effect.t =
+      Effect.fail "body"
+      |> Effect.on_error (fun cause ->
+             Effect.sync (fun () ->
+                 typed_seen := label_error_cause cause :: !typed_seen))
+    in
+    expect_typed_failure_eq Alcotest.string (B.run rt typed) "body";
+    Alcotest.(check (list string))
+      "typed failure observed" [ "fail:body" ] (List.rev !typed_seen);
+
+    let defect_seen = ref [] in
+    let defect : (int, string) Effect.t =
+      Effect.sync (fun () -> failwith "body defect")
+      |> Effect.on_error (fun cause ->
+             Effect.sync (fun () ->
+                 defect_seen := label_error_cause cause :: !defect_seen))
+    in
+    (match B.run rt defect with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    Alcotest.(check (list string))
+      "defect observed" [ "die" ] (List.rev !defect_seen);
+
+    let suppressed_seen = ref [] in
+    let suppressed : (int, string) Effect.t =
+      (Effect.fail "body" |> Effect.finally (Effect.fail "cleanup"))
+      |> Effect.on_error (fun cause ->
+             Effect.sync (fun () ->
+                 suppressed_seen := label_error_cause cause :: !suppressed_seen))
+    in
+    (match B.run rt suppressed with
+    | Exit.Error (Cause.Suppressed _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected suppressed failure");
+    Alcotest.(check (list string))
+      "suppressed failure observed" [ "suppressed" ] (List.rev !suppressed_seen)
+
+  let test_effect_on_error_skips_interruption () =
+    B.with_runtime @@ fun ctx rt ->
+    let entered, entered_resolver = B.create_promise () in
+    let observed = ref false in
+    let body : (unit, string) Effect.t =
+      Effect.sync (fun () -> B.resolve entered_resolver ())
+      |> Effect.bind (fun () -> B.await_cancel_effect ())
+    in
+    let eff =
+      body
+      |> Effect.on_error (fun _cause ->
+             Effect.sync (fun () -> observed := true))
+    in
+    let fiber = B.fork_run_cancelable ctx rt eff in
+    ignore (B.await entered : unit);
+    B.cancel_fiber fiber;
+    expect_interrupted "on_error" (B.await_cancelable fiber);
+    Alcotest.(check bool) "on_error skipped interruption" false !observed
+
+  let test_effect_on_interrupt_observes_interruption () =
+    B.with_runtime @@ fun ctx rt ->
+    let entered, entered_resolver = B.create_promise () in
+    let cancellation_seen = ref [] in
+    let label_interrupt = function None -> "none" | Some _ -> "some" in
+    let body : (unit, string) Effect.t =
+      Effect.sync (fun () -> B.resolve entered_resolver ())
+      |> Effect.bind (fun () -> B.await_cancel_effect ())
+    in
+    let cancelled =
+      body
+      |> Effect.on_interrupt (fun interrupt ->
+             Effect.sync (fun () ->
+                 cancellation_seen :=
+                   label_interrupt interrupt :: !cancellation_seen))
+    in
+    let fiber = B.fork_run_cancelable ctx rt cancelled in
+    ignore (B.await entered : unit);
+    B.cancel_fiber fiber;
+    expect_interrupted "on_interrupt" (B.await_cancelable fiber);
+    Alcotest.(check (list string))
+      "anonymous cancellation observed" [ "none" ] (List.rev !cancellation_seen);
+
+    let first = Cause.fresh_interrupt_id () in
+    let second = Cause.fresh_interrupt_id () in
+    let observed_id : Cause.interrupt_id option ref = ref None in
+    let composite =
+      effect_error_cause
+        (Cause.concurrent
+           [ Cause.interrupt_with_id first; Cause.interrupt_with_id second ])
+      |> Effect.on_interrupt (fun interrupt ->
+             Effect.sync (fun () -> observed_id := interrupt))
+    in
+    (match B.run rt composite with
+    | Exit.Error cause when Cause.is_interrupt_only cause -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interruption-only cause, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected interruption-only cause");
+    (match !observed_id with
+    | Some id when Cause.equal_interrupt_id id first -> ()
+    | Some _ -> Alcotest.fail "on_interrupt used a later interrupt id"
+    | None -> Alcotest.fail "on_interrupt did not pass an interrupt id")
+
+  let test_effect_selective_cleanup_failure_reporting () =
+    B.with_runtime @@ fun _ctx rt ->
+    let on_error : (int, string) Effect.t =
+      Effect.fail "body"
+      |> Effect.on_error (fun _cause -> Effect.fail "cleanup")
+    in
+    (match B.run rt on_error with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail "body";
+            finalizer = Cause.Finalizer.Fail "<typed failure>";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed on_error cleanup failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected suppressed on_error cleanup failure");
+
+    let on_interrupt : (int, string) Effect.t =
+      effect_error_cause Cause.interrupt
+      |> Effect.on_interrupt (fun _interrupt -> Effect.fail "cleanup")
+    in
+    match B.run rt on_interrupt with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Interrupt _;
+            finalizer = Cause.Finalizer.Fail "<typed failure>";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed on_interrupt cleanup failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ ->
+        Alcotest.fail "expected suppressed on_interrupt cleanup failure"
 
   let test_acquire_use_release_exit_observes_success_failure_and_defect () =
     B.with_runtime @@ fun _ctx rt ->
@@ -2248,6 +2422,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_on_exit_observes_interruption;
           Alcotest.test_case "on_exit cleanup failure reporting" `Quick
             test_effect_on_exit_cleanup_failure_reporting;
+          Alcotest.test_case "selective cleanup success noop" `Quick
+            test_effect_selective_cleanup_success_noop;
+          Alcotest.test_case
+            "on_error observes typed defect and suppressed" `Quick
+            test_effect_on_error_observes_typed_defect_and_suppressed;
+          Alcotest.test_case "on_error skips interruption" `Quick
+            test_effect_on_error_skips_interruption;
+          Alcotest.test_case "on_interrupt observes interruption" `Quick
+            test_effect_on_interrupt_observes_interruption;
+          Alcotest.test_case "selective cleanup failure reporting" `Quick
+            test_effect_selective_cleanup_failure_reporting;
           Alcotest.test_case
             "acquire_use_release_exit observes success failure and defect"
             `Quick

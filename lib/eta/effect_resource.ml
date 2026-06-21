@@ -43,6 +43,28 @@ let on_exit cleanup eff =
 let finally cleanup eff =
   on_exit (fun _ -> cleanup) eff
 
+let on_error cleanup eff =
+  on_exit
+    (function
+      | Exit.Ok _ -> unit
+      | Exit.Error cause ->
+          if Cause.is_interrupt_only cause then unit else cleanup cause)
+    eff
+
+let on_interrupt cleanup eff =
+  let first_interrupt_id cause =
+    match Cause.interruptors cause with
+    | id :: _ -> Some id
+    | [] -> None
+  in
+  on_exit
+    (function
+      | Exit.Ok _ -> unit
+      | Exit.Error cause ->
+          if Cause.is_interrupt_only cause then cleanup (first_interrupt_id cause)
+          else unit)
+    eff
+
 let acquire_release ~acquire ~(release) =
   preserve acquire @@ fun frame ->
   match eval frame acquire with

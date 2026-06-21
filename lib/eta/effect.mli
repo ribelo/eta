@@ -281,6 +281,28 @@ val on_exit :
     rules as {!finally}; the original result is preserved when cleanup
     succeeds. *)
 
+val on_error :
+  ('err Cause.t -> (unit, 'cleanup_err) t) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** [on_error cleanup eff] runs [cleanup cause] only when [eff] exits with an
+    error cause that is not interruption-only.
+
+    This includes typed failures, unchecked defects, composite failures, and
+    suppressed finalizer failures. The original exit is preserved when cleanup
+    succeeds; cleanup failures follow the same reporting rules as {!on_exit}. *)
+
+val on_interrupt :
+  (Cause.interrupt_id option -> (unit, 'cleanup_err) t) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** [on_interrupt cleanup eff] runs [cleanup interrupt_id] only when [eff] exits
+    with an interruption-only cause.
+
+    If the interruption cause is composite, [interrupt_id] is the first
+    interruption id found in the cause tree, or [None] when all interruptions
+    are anonymous. Cleanup failure reporting matches {!on_exit}. *)
+
 val acquire_release :
   acquire:('a, 'err) t ->
   release:('a -> (unit, 'release_err) t) ->
