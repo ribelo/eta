@@ -37,6 +37,10 @@ module Stream = struct
     | Changes_with_effect :
         ('a, 'err) t * ('a -> 'a -> (bool, 'err) Eta.Effect.t)
         -> ('a, 'err) t
+    | Zip_with :
+        ('a, 'err) t * ('b, 'err) t * ('a -> 'b -> 'c)
+        -> ('c, 'err) t
+    | Zip_with_index : ('a, 'err) t -> ('a * int, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take_while_effect :
@@ -110,6 +114,9 @@ module Stream = struct
   let changes stream = Changes_with (stream, ( = ))
   let changes_with (f) stream = Changes_with (stream, f)
   let changes_with_effect (f) stream = Changes_with_effect (stream, f)
+  let zip left right = Zip_with (left, right, fun left right -> (left, right))
+  let zip_with (f) left right = Zip_with (left, right, f)
+  let zip_with_index stream = Zip_with_index stream
   let take n stream = Take (n, stream)
   let take_while (f) stream = Take_while (stream, f)
   let take_while_effect (f) stream = Take_while_effect (stream, f)
@@ -210,6 +217,10 @@ type ('acc, 'a, 'err) folder = {
 }
 
 type ('a, 'err) queue_event = Item of 'a | Done | Failed of 'err
+type ('a, 'err) zip_event =
+  | Zip_item of 'a * (unit, 'err) Eta.Channel.t
+  | Zip_done
+  | Zip_failed of 'err
 type 'a outer_event = Outer_item of 'a | Outer_done
 
 let internal_channel_closed name =
@@ -473,6 +484,27 @@ and fold_stream :
                             (acc, keep_going))
                           (folder.emit acc value))
                     (equivalent last value));
+        }
+  | Zip_with (left, right, f) -> fold_zip_with left right f acc folder
+  | Zip_with_index inner ->
+      let next_index = ref (Some 0) in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              match !next_index with
+              | None ->
+                  Eta.Effect.sync (fun () ->
+                      invalid_arg "Eta_stream.zip_with_index: index overflow")
+              | Some index ->
+                  let next =
+                    if index = max_int then None else Some (index + 1)
+                  in
+                  Eta.Effect.map
+                    (fun (acc, keep_going) ->
+                      next_index := next;
+                      (acc, keep_going))
+                    (folder.emit acc (value, index)));
         }
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)
@@ -773,6 +805,138 @@ and fold_stream :
   | Fn (file, line, col_start, col_end, name, inner) ->
       Eta.Effect.fn (file, line, col_start, col_end) name
         (fold_stream inner acc folder)
+
+and fold_zip_with :
+    type err acc a b c.
+    (a, err) Stream.t ->
+    (b, err) Stream.t ->
+    (a -> b -> c) ->
+    acc ->
+    (acc, c, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun left right f acc folder ->
+  let left_queue = Eta.Channel.create ~capacity:1 () in
+  let right_queue = Eta.Channel.create ~capacity:1 () in
+  let stopped = Atomic.make false in
+  let publish_failure error =
+    Eta.Effect.named "Eta_stream.zip.failed"
+      (if Atomic.compare_and_set stopped false true then
+         drain_channel left_queue
+         |> Eta.Effect.bind (fun () -> drain_channel right_queue)
+         |> Eta.Effect.bind (fun () ->
+                send_channel "Eta_stream.zip.left" left_queue
+                  (Zip_failed error))
+         |> Eta.Effect.bind (fun () ->
+                send_channel "Eta_stream.zip.right" right_queue
+                  (Zip_failed error))
+       else Eta.Effect.unit)
+  in
+  let signal_right_done_to_left () =
+    Eta.Channel.try_send left_queue Zip_done
+    |> Eta.Effect.map (function
+         | `Sent | `Full -> ()
+         | `Closed | `Closed_with_error _ -> ())
+  in
+  let producer name queue ~signal_left stream =
+    let publish_done =
+      Eta.Effect.named (name ^ ".done")
+        (Eta.Effect.sync (fun () -> Atomic.get stopped)
+        |> Eta.Effect.bind (fun stopped ->
+               if stopped then Eta.Effect.unit
+               else
+                 send_channel name queue Zip_done
+                 |> Eta.Effect.bind (fun () ->
+                        if signal_left then signal_right_done_to_left ()
+                        else Eta.Effect.unit)))
+    in
+    Eta.Effect.bind
+      (fun () -> publish_done)
+      (Eta.Effect.map ignore
+         (fold_stream stream ()
+            {
+              emit =
+                (fun () value ->
+                  if Atomic.get stopped then Eta.Effect.pure ((), false)
+                  else
+                    let ack = Eta.Channel.create ~capacity:1 () in
+                    Eta.Effect.map
+                      (fun () -> ((), not (Atomic.get stopped)))
+                      (send_channel name queue (Zip_item (value, ack))
+                      |> Eta.Effect.bind (fun () ->
+                             recv_channel (name ^ ".ack") ack)));
+            }))
+    |> Eta.Effect.catch (fun error -> publish_failure error)
+  in
+  Eta.Supervisor.scoped
+    {
+      run =
+        (fun (type s) sup ->
+          let open Eta.Supervisor.Scope in
+          let* (left_child : (s, err, unit) Eta.Supervisor.child) =
+            start sup
+              (lift
+                 (producer "Eta_stream.zip.left" left_queue ~signal_left:false
+                    left))
+          in
+          let* (right_child : (s, err, unit) Eta.Supervisor.child) =
+            start sup
+              (lift
+                 (producer "Eta_stream.zip.right" right_queue ~signal_left:true
+                    right))
+          in
+          let cancel_both () =
+            let* () = cancel left_child in
+            cancel right_child
+          in
+          let recv_left =
+            recv_channel "Eta_stream.zip.left" left_queue
+          in
+          let recv_right =
+            recv_channel "Eta_stream.zip.right" right_queue
+          in
+          let ack_left ack =
+            send_channel "Eta_stream.zip.left.ack" ack ()
+          in
+          let ack_right ack =
+            send_channel "Eta_stream.zip.right.ack" ack ()
+          in
+          let rec stop acc keep_going =
+            let () = Atomic.set stopped true in
+            let* () = cancel_both () in
+            pure (acc, keep_going)
+          and emit_pair acc left_value left_ack right_value right_ack =
+            let* combined = lift (Eta.Effect.sync (fun () -> f left_value right_value)) in
+            let* acc, keep_going = lift (folder.emit acc combined) in
+            if keep_going then
+              let* () = lift (ack_left left_ack) in
+              let* () = lift (ack_right right_ack) in
+              consume acc
+            else
+              let () = Atomic.set stopped true in
+              let* () = lift (ack_left left_ack) in
+              let* () = lift (ack_right right_ack) in
+              let* () = cancel_both () in
+              pure (acc, false)
+          and handle_right acc left_value left_ack = function
+            | Zip_failed error ->
+                let () = Atomic.set stopped true in
+                fail error
+            | Zip_done -> stop acc true
+            | Zip_item (right_value, right_ack) ->
+                emit_pair acc left_value left_ack right_value right_ack
+          and consume acc =
+            let* left_event = lift recv_left in
+            match left_event with
+            | Zip_failed error ->
+                let () = Atomic.set stopped true in
+                fail error
+            | Zip_done -> stop acc true
+            | Zip_item (left_value, left_ack) ->
+                let* right_event = lift recv_right in
+                handle_right acc left_value left_ack right_event
+          in
+          consume acc);
+    }
 
 and fold_merge :
     type err acc a.

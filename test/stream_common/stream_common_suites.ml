@@ -258,6 +258,123 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (list int)) "upstream stopped after second emission"
       [ 1; 1; 2 ] (List.rev !seen)
 
+  let test_zip_equal_lengths () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.zip
+        (Eta_stream.Stream.from_iterable [ 1; 2; 3 ])
+        (Eta_stream.Stream.from_iterable [ "a"; "b"; "c" ])
+    in
+    Alcotest.(check (list (pair int string)))
+      "pairs" [ (1, "a"); (2, "b"); (3, "c") ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_zip_unequal_lengths () =
+    B.with_runtime @@ fun _ctx rt ->
+    let left_longer =
+      Eta_stream.Stream.zip
+        (Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ])
+        (Eta_stream.Stream.from_iterable [ "a"; "b" ])
+    in
+    let right_longer =
+      Eta_stream.Stream.zip
+        (Eta_stream.Stream.from_iterable [ 1; 2 ])
+        (Eta_stream.Stream.from_iterable [ "a"; "b"; "c"; "d" ])
+    in
+    Alcotest.(check (list (pair int string)))
+      "left longer" [ (1, "a"); (2, "b") ]
+      (run_ok rt (Eta_stream.run_collect left_longer));
+    Alcotest.(check (list (pair int string)))
+      "right longer" [ (1, "a"); (2, "b") ]
+      (run_ok rt (Eta_stream.run_collect right_longer))
+
+  let test_zip_finite_prefix_from_longer_source () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.zip
+        (Eta_stream.Stream.range ~start:1 ~stop:1_000_000)
+        (Eta_stream.Stream.from_iterable [ "a"; "b"; "c" ])
+    in
+    Alcotest.(check (list (pair int string)))
+      "finite prefix" [ (1, "a"); (2, "b"); (3, "c") ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_zip_left_failure_propagates () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let left =
+      Eta_stream.Stream.concat
+        (Eta_stream.Stream.from_iterable [ 1 ])
+        (Eta_stream.Stream.fail `Left_failed)
+    in
+    let right = Eta_stream.Stream.from_iterable [ "a"; "b" ] in
+    let eff =
+      Eta_stream.Stream.zip left right
+      |> fun stream ->
+      Eta_stream.run stream
+        (Eta_stream.Sink.fold_effect
+           (fun () pair ->
+             Eta.Effect.sync (fun () -> seen := pair :: !seen))
+           ())
+    in
+    (match B.run rt eff with
+    | Eta.Exit.Error (Eta.Cause.Fail `Left_failed) -> ()
+    | Eta.Exit.Ok () -> Alcotest.fail "zip left failure unexpectedly succeeded"
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected zip left failure cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list (pair int string)))
+      "emitted before failure" [ (1, "a") ] (List.rev !seen)
+
+  let test_zip_right_failure_propagates () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let left = Eta_stream.Stream.from_iterable [ 1; 2 ] in
+    let right =
+      Eta_stream.Stream.concat
+        (Eta_stream.Stream.from_iterable [ "a" ])
+        (Eta_stream.Stream.fail `Right_failed)
+    in
+    let eff =
+      Eta_stream.Stream.zip left right
+      |> fun stream ->
+      Eta_stream.run stream
+        (Eta_stream.Sink.fold_effect
+           (fun () pair ->
+             Eta.Effect.sync (fun () -> seen := pair :: !seen))
+           ())
+    in
+    (match B.run rt eff with
+    | Eta.Exit.Error (Eta.Cause.Fail `Right_failed) -> ()
+    | Eta.Exit.Ok () -> Alcotest.fail "zip right failure unexpectedly succeeded"
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected zip right failure cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list (pair int string)))
+      "emitted before failure" [ (1, "a") ] (List.rev !seen)
+
+  let test_zip_with_transforms () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.zip_with
+        (fun number label -> Printf.sprintf "%d-%s" number label)
+        (Eta_stream.Stream.from_iterable [ 1; 2; 3 ])
+        (Eta_stream.Stream.from_iterable [ "a"; "b"; "c" ])
+    in
+    Alcotest.(check (list string))
+      "transformed" [ "1-a"; "2-b"; "3-c" ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_zip_with_index_order () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ "a"; "b"; "c" ]
+      |> Eta_stream.Stream.zip_with_index
+    in
+    Alcotest.(check (list (pair string int)))
+      "indexed" [ ("a", 0); ("b", 1); ("c", 2) ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
   let test_predicate_trimming_empty_streams () =
     B.with_runtime @@ fun _ctx rt ->
     let collect stream = run_ok rt (Eta_stream.run_collect stream) in
@@ -720,6 +837,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                   Eta.Effect.delay (Eta.Duration.ms 5)
                     (Eta.Effect.pure value)))
 
+  let test_zip_take_cancels_upstream () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let left_count = ref 0 in
+    let right_count = ref 0 in
+    let stream =
+      Eta_stream.Stream.zip (delayed_counted_source left_count)
+        (delayed_counted_source right_count)
+      |> Eta_stream.Stream.take 1
+    in
+    let result = B.fork_run ctx rt (Eta_stream.run_drain stream) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Eta.Duration.ms 5);
+    B.await result |> check_ok Alcotest.unit "zip take drain" ();
+    Alcotest.(check bool) "left cancelled before full production" true
+      (!left_count < 1_000);
+    Alcotest.(check bool) "right cancelled before full production" true
+      (!right_count < 1_000)
+
   let test_merge_cancellation () =
     B.with_test_clock @@ fun ctx clock rt ->
     let left_count = ref 0 in
@@ -978,6 +1113,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_changes_with_effect_failure;
           Alcotest.test_case "changes take stops upstream" `Quick
             test_changes_take_stops_upstream;
+          Alcotest.test_case "zip equal lengths" `Quick
+            test_zip_equal_lengths;
+          Alcotest.test_case "zip unequal lengths" `Quick
+            test_zip_unequal_lengths;
+          Alcotest.test_case "zip finite prefix from longer source" `Quick
+            test_zip_finite_prefix_from_longer_source;
+          Alcotest.test_case "zip left failure propagates" `Quick
+            test_zip_left_failure_propagates;
+          Alcotest.test_case "zip right failure propagates" `Quick
+            test_zip_right_failure_propagates;
+          Alcotest.test_case "zip_with transforms pairs" `Quick
+            test_zip_with_transforms;
+          Alcotest.test_case "zip_with_index preserves order" `Quick
+            test_zip_with_index_order;
           Alcotest.test_case "predicate trimming handles empty streams" `Quick
             test_predicate_trimming_empty_streams;
           Alcotest.test_case "take_while boundary behavior" `Quick
@@ -1031,6 +1180,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_drain_counter_underflow_raises;
           Alcotest.test_case "drain counter await zero" `Quick
             test_drain_counter_await_zero;
+          Alcotest.test_case "zip take cancels upstream" `Quick
+            test_zip_take_cancels_upstream;
           Alcotest.test_case "merge cancels upstream on downstream stop"
             `Quick test_merge_cancellation;
           Alcotest.test_case

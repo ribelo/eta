@@ -574,9 +574,15 @@ OCaml-idiomatic option slice as `Stream.filter_map` and
 effectful mapper failures fail the stream normally. `map_accum` remains
 deferred as a separate stateful operator decision.
 
-### 7.4 `zip` / `zip_with` / `zip_with_index` — **CONSIDER**
-effect-smol: `zip`, `zipWith`, `zipWithIndex`. Pairwise combine two streams or
-tag elements with their index. `zip_with_index` is the cheap, common one.
+### 7.4 `zip` / `zip_with` / `zip_with_index` — **ADOPTED**
+effect-smol: `zip`, `zipWith`, `zipWithIndex`; ZIO: `zip`, `zipWith`,
+`zipWithIndex`. Eta now exposes lockstep `Stream.zip` and `zip_with`, ending
+when either side ends and discarding the longer stream's unpaired remainder.
+Either-side failure fails the zipped stream and cancels the sibling source.
+Eta also exposes `Stream.zip_with_index`, starting at index 0 and failing
+loudly if the OCaml `int` index would overflow. Wider variants such as
+`zip_all`, `zip_latest`, and Cartesian/cross operators remain outside this
+slice.
 
 ### 7.5 `changes` (dedup consecutive equal) — **ADOPTED**
 effect-smol: `changes` / `changesWith` / `changesWithEffect`; ZIO:

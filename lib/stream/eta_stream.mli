@@ -87,6 +87,24 @@ module Stream : sig
     ('a, 'err) t
   (** Effectful {!changes_with}. Comparator failure fails the stream normally. *)
 
+  val zip :
+    ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
+  (** Pair two streams point-wise. The zipped stream ends when either side
+      ends; unpaired values from the longer side are discarded. *)
+
+  val zip_with :
+    ('a -> 'b -> 'c) ->
+    ('a, 'err) t ->
+    ('b, 'err) t ->
+    ('c, 'err) t
+  (** Pair two streams point-wise and combine each pair with [f]. The zipped
+      stream ends when either side ends. *)
+
+  val zip_with_index : ('a, 'err) t -> ('a * int, 'err) t
+  (** Pair every emitted value with its zero-based index.
+
+      @raise Invalid_argument if the index would exceed [max_int]. *)
+
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit the longest leading prefix whose values satisfy [predicate].
