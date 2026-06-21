@@ -278,6 +278,14 @@ let catch_some (handler) eff =
 let recover (handler) eff = catch (fun err -> pure (handler err)) eff
 let or_else fallback eff = catch (fun _ -> fallback ()) eff
 let or_else_succeed fallback eff = catch (fun _ -> pure (fallback ())) eff
+let when_ condition eff =
+  if condition then map (fun value -> Some value) eff else pure None
+
+let unless condition eff = when_ (not condition) eff
+let when_effect condition eff = bind (fun condition -> when_ condition eff) condition
+let unless_effect condition eff =
+  bind (fun condition -> unless condition eff) condition
+
 let ignore_errors eff = catch (fun _ -> unit) eff
 let ignore eff = catch (fun _ -> unit) (map (fun _ -> ()) eff)
 let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)

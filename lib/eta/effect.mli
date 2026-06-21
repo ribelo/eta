@@ -215,6 +215,36 @@ val or_else_succeed : (unit -> 'a) -> ('a, 'err) t -> ('a, 'outer) t
     matching {!catch}. If [fallback] raises, the exception is an unchecked
     defect. *)
 
+val when_ : bool -> ('a, 'err) t -> ('a option, 'err) t
+(** Conditionally run an effect.
+
+    [when_ condition eff] runs [eff] when [condition] is [true] and maps its
+    success to [Some value]. When [condition] is [false], [eff] is not
+    evaluated and the result is [None]. Typed failures, defects,
+    interruption, and finalizer diagnostics from [eff] propagate normally when
+    the effect runs. *)
+
+val unless : bool -> ('a, 'err) t -> ('a option, 'err) t
+(** Conditionally run an effect when a condition is false.
+
+    [unless condition eff] is [when_ (not condition) eff]. *)
+
+val when_effect : (bool, 'err) t -> ('a, 'err) t -> ('a option, 'err) t
+(** Conditionally run an effect after evaluating an effectful predicate.
+
+    [when_effect condition eff] evaluates [condition] first. If it succeeds
+    with [true], [eff] runs and its success is returned as [Some value]. If it
+    succeeds with [false], [eff] is not evaluated and the result is [None].
+    Predicate failures and diagnostics fail normally; source failures and
+    diagnostics fail normally when [eff] runs. *)
+
+val unless_effect : (bool, 'err) t -> ('a, 'err) t -> ('a option, 'err) t
+(** Conditionally run an effect after an effectful predicate succeeds with
+    [false].
+
+    [unless_effect condition eff] evaluates [condition] first, then behaves as
+    {!unless}. Predicate failures and diagnostics fail normally. *)
+
 val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
 (** Suppress typed failures from a best-effort unit effect.
 

@@ -416,6 +416,116 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect"
 
+  let test_effect_when_run_and_skip () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ran = ref 0 in
+    let source =
+      Effect.sync (fun () ->
+          incr ran;
+          41)
+      |> Effect.map (( + ) 1)
+    in
+    Alcotest.(check (option int))
+      "when true runs" (Some 42) (run_ok rt (Effect.when_ true source));
+    Alcotest.(check int) "ran once" 1 !ran;
+    Alcotest.(check (option int))
+      "when false skips" None (run_ok rt (Effect.when_ false source));
+    Alcotest.(check int) "still ran once" 1 !ran
+
+  let test_effect_when_source_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    expect_typed_failure_eq
+      (Alcotest.testable
+         (fun ppf -> function `Source -> Format.pp_print_string ppf "Source")
+         ( = ))
+      (B.run rt (Effect.fail `Source |> Effect.when_ true))
+      `Source;
+    (match
+       B.run rt (Effect.sync (fun () -> failwith "source defect") |> Effect.when_ true)
+     with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected source defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected source defect");
+    (match B.run rt (effect_error_cause Cause.interrupt |> Effect.when_ true) with
+    | Exit.Error (Cause.Interrupt _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected source interruption, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected source interruption");
+    let cause : [ `Source ] Cause.t =
+      Cause.Suppressed
+        {
+          primary = Cause.Fail `Source;
+          finalizer = Cause.Finalizer.Fail "cleanup";
+        }
+    in
+    match B.run rt (effect_error_cause cause |> Effect.when_ true) with
+    | Exit.Error actual ->
+        Alcotest.check
+          (Alcotest.testable
+             (Cause.pp (fun ppf `Source ->
+                  Format.pp_print_string ppf "Source"))
+             (Cause.equal ( = )))
+          "finalizer diagnostic preserved" cause actual
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer diagnostic"
+
+  let test_effect_when_effect_predicate_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let source_ran = ref false in
+    let source =
+      Effect.sync (fun () ->
+          source_ran := true;
+          "source")
+    in
+    expect_typed_failure_eq
+      (Alcotest.testable
+         (fun ppf -> function `Predicate -> Format.pp_print_string ppf "Predicate")
+         ( = ))
+      (B.run rt (Effect.when_effect (Effect.fail `Predicate) source))
+      `Predicate;
+    Alcotest.(check bool) "source skipped after predicate failure" false !source_ran
+
+  let test_effect_when_effect_laziness () =
+    B.with_runtime @@ fun _ctx rt ->
+    let predicate_ran = ref 0 in
+    let source_ran = ref 0 in
+    let predicate value =
+      Effect.sync (fun () ->
+          incr predicate_ran;
+          value)
+    in
+    let source =
+      Effect.sync (fun () ->
+          incr source_ran;
+          "source")
+    in
+    Alcotest.(check (option string))
+      "false predicate skips source" None
+      (run_ok rt (Effect.when_effect (predicate false) source));
+    Alcotest.(check int) "predicate ran" 1 !predicate_ran;
+    Alcotest.(check int) "source skipped" 0 !source_ran;
+    Alcotest.(check (option string))
+      "true predicate runs source" (Some "source")
+      (run_ok rt (Effect.when_effect (predicate true) source));
+    Alcotest.(check int) "predicate ran twice" 2 !predicate_ran;
+    Alcotest.(check int) "source ran once" 1 !source_ran
+
+  let test_effect_unless_inversion () =
+    B.with_runtime @@ fun _ctx rt ->
+    let source = Effect.pure "source" in
+    Alcotest.(check (option string))
+      "unless false runs" (Some "source") (run_ok rt (Effect.unless false source));
+    Alcotest.(check (option string))
+      "unless true skips" None (run_ok rt (Effect.unless true source));
+    Alcotest.(check (option string))
+      "unless_effect false runs" (Some "source")
+      (run_ok rt (Effect.unless_effect (Effect.pure false) source));
+    Alcotest.(check (option string))
+      "unless_effect true skips" None
+      (run_ok rt (Effect.unless_effect (Effect.pure true) source))
+
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check unit)
@@ -2775,6 +2885,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_or_else_does_not_catch_uncatchable_causes;
           Alcotest.test_case "or_else_succeed" `Quick
             test_effect_or_else_succeed;
+          Alcotest.test_case "when run and skip" `Quick
+            test_effect_when_run_and_skip;
+          Alcotest.test_case "when source failure" `Quick
+            test_effect_when_source_failure;
+          Alcotest.test_case "when_effect predicate failure" `Quick
+            test_effect_when_effect_predicate_failure;
+          Alcotest.test_case "when_effect laziness" `Quick
+            test_effect_when_effect_laziness;
+          Alcotest.test_case "unless inversion" `Quick
+            test_effect_unless_inversion;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "ignore" `Quick test_effect_ignore;
           Alcotest.test_case "result" `Quick test_effect_result;

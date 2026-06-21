@@ -58,7 +58,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 2.13 error-accumulating `validate_all`.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
-- 1.8 level-named log helpers; 2.4 `when`/`unless`;
+- 1.8 level-named log helpers;
   2.7 `forever`/`iterate`; 2.17 `yield_now`; 2.18 `flip`/`from_option`/`zip`;
   4.x random conveniences; 5.2 sub-ms precision.
 
@@ -227,11 +227,13 @@ recovered. Defects, interruption, and finalizer diagnostics are not caught.
 Partial only in the type spelling: Eta has no bottom error type, so
 `or_else_succeed` returns `('a, 'outer) t`.
 
-### 2.4 `when` / `unless` — **CONSIDER**
+### 2.4 `when` / `unless` — **ADOPTED**
 effect-smol: `Effect.when` / `unless` (+ effectful predicate variants).
-Behavior: conditionally run an effect, returning `'a option`. Common control
-flow. Tension: trivially expressible with `if ... then ... else Effect.pure`.
-Worth it mainly for the `option`-wrapping ergonomics. Human decision.
+
+Eta exposes `Effect.when_`, `unless`, `when_effect`, and `unless_effect`.
+They return `Some value` when the guarded effect runs and succeeds, `None` when
+skipped, and preserve normal Eta failure behavior for predicate or guarded
+effect failures. OCaml reserves `when`, so Eta uses `when_`.
 
 ### 2.5 `timed` — **PORT**
 effect-smol: `Effect.timed` → `(Duration.t * 'a)`. Behavior: measure wall-clock
