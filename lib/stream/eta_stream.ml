@@ -30,10 +30,22 @@ module Stream = struct
         -> ('a, 'err) t
     | Filter : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
+    | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
+    | Take_while_effect :
+        ('a, 'err) t * ('a -> (bool, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
     | Take_until_effect :
         ('a, 'err) t * ('a -> (bool, 'err) Eta.Effect.t)
         -> ('a, 'err) t
     | Drop : int * ('a, 'err) t -> ('a, 'err) t
+    | Drop_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
+    | Drop_while_effect :
+        ('a, 'err) t * ('a -> (bool, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
+    | Drop_until : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
+    | Drop_until_effect :
+        ('a, 'err) t * ('a -> (bool, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
     | Scan : ('s -> 'a -> 's) * 's * ('a, 'err) t -> ('s, 'err) t
     | Grouped : int * ('a, 'err) t -> ('a list, 'err) t
     | Concat :
@@ -86,8 +98,14 @@ module Stream = struct
   let tap_error (f) stream = Tap_error (stream, f)
   let filter (f) stream = Filter (stream, f)
   let take n stream = Take (n, stream)
+  let take_while (f) stream = Take_while (stream, f)
+  let take_while_effect (f) stream = Take_while_effect (stream, f)
   let take_until_effect (f) stream = Take_until_effect (stream, f)
   let drop n stream = Drop (n, stream)
+  let drop_while (f) stream = Drop_while (stream, f)
+  let drop_while_effect (f) stream = Drop_while_effect (stream, f)
+  let drop_until (f) stream = Drop_until (stream, f)
+  let drop_until_effect (f) stream = Drop_until_effect (stream, f)
   let scan (f) init stream = Scan (f, init, stream)
   let grouped n stream =
     if n <= 0 then invalid_arg "Eta_stream.grouped: n must be > 0";
@@ -398,6 +416,25 @@ and fold_stream :
                       (acc, keep_going && !remaining > 0))
                     (folder.emit acc value)));
           }
+  | Take_while (inner, predicate) ->
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              if predicate value then folder.emit acc value
+              else Eta.Effect.pure (acc, false));
+        }
+  | Take_while_effect (inner, predicate) ->
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              Eta.Effect.bind
+                (fun keep ->
+                  if keep then folder.emit acc value
+                  else Eta.Effect.pure (acc, false))
+                (predicate value));
+        }
   | Take_until_effect (inner, predicate) ->
       fold_stream inner acc
         {
@@ -421,6 +458,58 @@ and fold_stream :
               if !remaining > 0 then (
                 decr remaining;
                 Eta.Effect.pure (acc, true))
+              else folder.emit acc value);
+        }
+  | Drop_while (inner, predicate) ->
+      let dropping = ref true in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              if !dropping && predicate value then Eta.Effect.pure (acc, true)
+              else (
+                dropping := false;
+                folder.emit acc value));
+        }
+  | Drop_while_effect (inner, predicate) ->
+      let dropping = ref true in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              if !dropping then
+                Eta.Effect.bind
+                  (fun drop ->
+                    if drop then Eta.Effect.pure (acc, true)
+                    else (
+                      dropping := false;
+                      folder.emit acc value))
+                  (predicate value)
+              else folder.emit acc value);
+        }
+  | Drop_until (inner, predicate) ->
+      let dropping = ref true in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              if !dropping then (
+                if predicate value then dropping := false;
+                Eta.Effect.pure (acc, true))
+              else folder.emit acc value);
+        }
+  | Drop_until_effect (inner, predicate) ->
+      let dropping = ref true in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              if !dropping then
+                Eta.Effect.bind
+                  (fun stop ->
+                    if stop then dropping := false;
+                    Eta.Effect.pure (acc, true))
+                  (predicate value)
               else folder.emit acc value);
         }
   | Scan (f, init, inner) ->

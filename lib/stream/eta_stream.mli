@@ -61,11 +61,37 @@ module Stream : sig
 
   val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   val take : int -> ('a, 'err) t -> ('a, 'err) t
+  val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  (** Emit the longest leading prefix whose values satisfy [predicate].
+      The first value for which [predicate] returns [false] is not emitted,
+      and the stream stops. *)
+
+  val take_while_effect :
+    ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
+  (** Effectful {!take_while}. Predicate failure fails the stream normally. *)
+
   val take_until_effect :
     ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit values until [predicate] returns [true]. The value that satisfies
       [predicate] is emitted before the stream stops. *)
   val drop : int -> ('a, 'err) t -> ('a, 'err) t
+  val drop_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  (** Drop the longest leading prefix whose values satisfy [predicate].
+      The first value for which [predicate] returns [false] is emitted,
+      followed by the rest of the stream without rechecking the predicate. *)
+
+  val drop_while_effect :
+    ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
+  (** Effectful {!drop_while}. Predicate failure fails the stream normally. *)
+
+  val drop_until : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  (** Drop values until [predicate] returns [true], drop that matching value
+      too, then emit the rest of the stream without rechecking the predicate. *)
+
+  val drop_until_effect :
+    ('a -> (bool, 'err) Eta.Effect.t) -> ('a, 'err) t -> ('a, 'err) t
+  (** Effectful {!drop_until}. Predicate failure fails the stream normally. *)
+
   val scan : ('s -> 'a -> 's) -> 's -> ('a, 'err) t -> ('s, 'err) t
   val grouped : int -> ('a, 'err) t -> ('a list, 'err) t
   (** Collect upstream values into non-empty batches of at most [n] items.

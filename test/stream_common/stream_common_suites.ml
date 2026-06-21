@@ -89,6 +89,217 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (list int)) "predicate calls" [ 1; 2; 3 ]
       (List.rev !seen)
 
+  let test_predicate_trimming_empty_streams () =
+    B.with_runtime @@ fun _ctx rt ->
+    let collect stream = run_ok rt (Eta_stream.run_collect stream) in
+    Alcotest.(check (list int))
+      "take_while empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.take_while (fun (_ : int) -> true)));
+    Alcotest.(check (list int))
+      "take_while_effect empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.take_while_effect (fun (_ : int) ->
+                Eta.Effect.pure true)));
+    Alcotest.(check (list int))
+      "drop_while empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.drop_while (fun (_ : int) -> true)));
+    Alcotest.(check (list int))
+      "drop_while_effect empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.drop_while_effect (fun (_ : int) ->
+                Eta.Effect.pure true)));
+    Alcotest.(check (list int))
+      "drop_until empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.drop_until (fun (_ : int) -> true)));
+    Alcotest.(check (list int))
+      "drop_until_effect empty" []
+      (collect
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.drop_until_effect (fun (_ : int) ->
+                Eta.Effect.pure true)))
+
+  let test_take_while_boundaries () =
+    B.with_runtime @@ fun _ctx rt ->
+    let collect stream = run_ok rt (Eta_stream.run_collect stream) in
+    Alcotest.(check (list int))
+      "all pass" [ 1; 2; 3 ]
+      (Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.take_while (fun value -> value < 4)
+      |> collect);
+    Alcotest.(check (list int))
+      "terminal false excluded" [ 1; 2 ]
+      (Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ]
+      |> Eta_stream.Stream.take_while (fun value -> value < 3)
+      |> collect);
+    Alcotest.(check (list int))
+      "first false excludes all" []
+      (Eta_stream.Stream.from_iterable [ 1; 2 ]
+      |> Eta_stream.Stream.take_while (fun _value -> false)
+      |> collect)
+
+  let test_take_while_effect_boundaries () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ]
+      |> Eta_stream.Stream.take_while_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.pure (value < 3)))
+    in
+    Alcotest.(check (list int))
+      "terminal false excluded" [ 1; 2 ]
+      (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "predicate calls" [ 1; 2; 3 ]
+      (List.rev !seen)
+
+  let test_take_while_effect_predicate_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.take_while_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    if value = 2 then Eta.Effect.fail (`Predicate_failed value)
+                    else Eta.Effect.pure true))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Predicate_failed 2)) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf
+          "take_while_effect failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected take_while_effect cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list int)) "stopped at predicate failure" [ 1; 2 ]
+      (List.rev !seen)
+
+  let test_drop_while_boundaries_and_no_recheck () =
+    B.with_runtime @@ fun _ctx rt ->
+    let collect stream = run_ok rt (Eta_stream.run_collect stream) in
+    Alcotest.(check (list int))
+      "all drop" []
+      (Eta_stream.Stream.from_iterable [ 1; 2 ]
+      |> Eta_stream.Stream.drop_while (fun value -> value < 3)
+      |> collect);
+    let seen = ref [] in
+    Alcotest.(check (list int))
+      "first false retained" [ 3; 1 ]
+      (Eta_stream.Stream.from_iterable [ 1; 2; 3; 1 ]
+      |> Eta_stream.Stream.drop_while (fun value ->
+             seen := value :: !seen;
+             value < 3)
+      |> collect);
+    Alcotest.(check (list int)) "predicate not rechecked after open"
+      [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_drop_while_effect_boundaries_and_no_recheck () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 1 ]
+      |> Eta_stream.Stream.drop_while_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.pure (value < 3)))
+    in
+    Alcotest.(check (list int))
+      "first false retained" [ 3; 1 ]
+      (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "predicate not rechecked after open"
+      [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_drop_while_effect_predicate_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.drop_while_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    if value = 2 then Eta.Effect.fail (`Predicate_failed value)
+                    else Eta.Effect.pure true))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Predicate_failed 2)) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf
+          "drop_while_effect failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected drop_while_effect cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list int)) "stopped at predicate failure" [ 1; 2 ]
+      (List.rev !seen)
+
+  let test_drop_until_boundaries_and_no_recheck () =
+    B.with_runtime @@ fun _ctx rt ->
+    let collect stream = run_ok rt (Eta_stream.run_collect stream) in
+    Alcotest.(check (list int))
+      "no match drops all" []
+      (Eta_stream.Stream.from_iterable [ 1; 2 ]
+      |> Eta_stream.Stream.drop_until (fun value -> value = 3)
+      |> collect);
+    let seen = ref [] in
+    Alcotest.(check (list int))
+      "first true dropped" [ 4; 1 ]
+      (Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 1 ]
+      |> Eta_stream.Stream.drop_until (fun value ->
+             seen := value :: !seen;
+             value = 3)
+      |> collect);
+    Alcotest.(check (list int)) "predicate not rechecked after open"
+      [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_drop_until_effect_boundaries_and_no_recheck () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 1 ]
+      |> Eta_stream.Stream.drop_until_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.pure (value = 3)))
+    in
+    Alcotest.(check (list int))
+      "first true dropped" [ 4; 1 ]
+      (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "predicate not rechecked after open"
+      [ 1; 2; 3 ] (List.rev !seen)
+
+  let test_drop_until_effect_predicate_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
+      |> Eta_stream.Stream.drop_until_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    if value = 2 then Eta.Effect.fail (`Predicate_failed value)
+                    else Eta.Effect.pure false))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Predicate_failed 2)) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf
+          "drop_until_effect failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected drop_until_effect cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list int)) "stopped at predicate failure" [ 1; 2 ]
+      (List.rev !seen)
+
   let test_tap_success_order () =
     B.with_runtime @@ fun _ctx rt ->
     let seen = ref [] in
@@ -576,6 +787,30 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "grouped batches" `Quick test_grouped_batches;
           Alcotest.test_case "take_until_effect includes terminal value" `Quick
             test_take_until_effect_includes_terminal_value;
+          Alcotest.test_case "predicate trimming handles empty streams" `Quick
+            test_predicate_trimming_empty_streams;
+          Alcotest.test_case "take_while boundary behavior" `Quick
+            test_take_while_boundaries;
+          Alcotest.test_case "take_while_effect boundary behavior" `Quick
+            test_take_while_effect_boundaries;
+          Alcotest.test_case "take_while_effect predicate failure" `Quick
+            test_take_while_effect_predicate_failure;
+          Alcotest.test_case
+            "drop_while boundaries and predicate handoff" `Quick
+            test_drop_while_boundaries_and_no_recheck;
+          Alcotest.test_case
+            "drop_while_effect boundaries and predicate handoff" `Quick
+            test_drop_while_effect_boundaries_and_no_recheck;
+          Alcotest.test_case "drop_while_effect predicate failure" `Quick
+            test_drop_while_effect_predicate_failure;
+          Alcotest.test_case
+            "drop_until boundaries and predicate handoff" `Quick
+            test_drop_until_boundaries_and_no_recheck;
+          Alcotest.test_case
+            "drop_until_effect boundaries and predicate handoff" `Quick
+            test_drop_until_effect_boundaries_and_no_recheck;
+          Alcotest.test_case "drop_until_effect predicate failure" `Quick
+            test_drop_until_effect_predicate_failure;
           Alcotest.test_case "tap success order" `Quick test_tap_success_order;
           Alcotest.test_case "tap failure fails stream" `Quick
             test_tap_failure_fails_stream;

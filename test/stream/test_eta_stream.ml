@@ -82,6 +82,36 @@ let test_take_then_file_close () =
     Alcotest.failf "fd count grew after from_file early take: before=%d after=%d"
       before after
 
+let test_take_while_then_file_close () =
+  with_runtime @@ fun env rt ->
+  let large = String.make (1024 * 1024) 'x' in
+  with_file env "stream-take-while-close.tmp" large @@ fun path ->
+  let before = fd_count () in
+  let seen = ref 0 in
+  let result =
+    Eta_stream.Stream.from_file ~chunk_size:4096 path
+    |> Eta_stream.Stream.take_while (fun _chunk ->
+           incr seen;
+           !seen = 1)
+    |> run_collect
+    |> Runtime.run rt
+  in
+  (match result with
+  | Exit.Ok [ chunk ] ->
+      Alcotest.(check int) "one bounded chunk" 4096 (Bytes.length chunk);
+      Alcotest.(check int) "predicate saw stop boundary" 2 !seen
+  | Exit.Ok chunks ->
+      Alcotest.failf "expected one chunk, got %d" (List.length chunks)
+  | Exit.Error cause ->
+      Alcotest.failf "take_while from_file failed: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause);
+  let after = fd_count () in
+  if before >= 0 && after > before then
+    Alcotest.failf
+      "fd count grew after from_file early take_while: before=%d after=%d"
+      before after
+
 let test_from_file_invalid_chunk_size () =
   Eio_main.run @@ fun env ->
   let path = Eio.Path.(Eio.Stdenv.cwd env / "unused-stream-file.tmp") in
@@ -180,6 +210,8 @@ let suite =
         test_from_file_chunks;
       Alcotest.test_case "take from_file closes" `Quick
         test_take_then_file_close;
+      Alcotest.test_case "take_while from_file closes" `Quick
+        test_take_while_then_file_close;
       Alcotest.test_case "from_file rejects invalid chunk size" `Quick
         test_from_file_invalid_chunk_size;
       Alcotest.test_case "from_file missing path fails typed" `Quick

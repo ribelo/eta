@@ -558,10 +558,14 @@ the stream normally when the observer fails. Error taps observe typed stream
 failures, preserve the original failure when the observer succeeds, and let the
 observer failure win when it fails.
 
-### 7.2 `take_while` / `drop_while` / `drop_until` — **CONSIDER**
-effect-smol: `takeWhile`, `dropWhile`, `dropUntil` (+ effectful variants). Eta has
-`take_until_effect` and positional `take`/`drop` but no predicate-based
-prefix/suffix trimming. Common; low cost.
+### 7.2 `take_while` / `drop_while` / `drop_until` — **ADOPTED**
+effect-smol: `takeWhile`, `dropWhile`, `dropUntil` (+ effectful variants). Eta
+now exposes value-only `Stream.take_while`, `take_while_effect`,
+`drop_while`, `drop_while_effect`, `drop_until`, and `drop_until_effect`.
+`take_while` emits the leading true prefix and excludes the first false value.
+`drop_while` drops the leading true prefix, emits the first false value, and
+then stops rechecking the predicate. `drop_until` drops through the first true
+value, including that matching value, and then stops rechecking the predicate.
 
 ### 7.3 `filter_map` / `map_accum` — **CONSIDER**
 effect-smol: `filterMap` (map + drop `None`), `mapAccum` (stateful map carrying
