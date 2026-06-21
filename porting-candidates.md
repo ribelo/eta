@@ -270,13 +270,12 @@ The effectful + cause-aware observers are the genuinely useful additions; they
 let logging of defects happen inside the effect system instead of out of band.
 Recommend at least `tap_defect` + an effectful `tap_error`.
 
-### 2.10 Typed-failure selective catch (`catchTag` / `catchIf`) — **CONSIDER**
+### 2.10 Typed-failure selective catch (`catchTag` / `catchIf`) — **ADOPTED**
 effect-smol: `Effect.catch`, `catchTag`, `catchCauseIf`. Eta's `catch` catches
-all typed failures. Because Eta uses **polymorphic variants** for typed
-failures (`` `Timeout`` etc.), a `catch_some : ('err -> ('a,'err2) t option) ->
-...` (recover some, rethrow the rest) maps cleanly onto OCaml pattern matching.
-Worth a design note: poly-variant rows already give partial-catch ergonomics via
-`map_error`/`catch` + re-fail, so the value is convenience. Human decision.
+all typed failures. Eta now exposes
+`catch_some : ('err -> ('a, 'err) t option) -> ('a, 'err) t -> ('a, 'err) t`
+for same-row selective recovery: `Some` recovers, `None` preserves the original
+cause. Defects, interruption, and finalizer diagnostics are not caught.
 
 ### 2.11 `sandbox` / `unsandbox` — **CONSIDER**
 effect-smol: `Effect.sandbox` (expose the full `Cause` in the error channel) /

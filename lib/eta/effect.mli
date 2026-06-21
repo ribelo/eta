@@ -169,6 +169,19 @@ val catch :
     values when every branch outcome matters. Recover or ignore cleanup failure
     inside the cleanup eff itself. *)
 
+val catch_some :
+  ('err -> ('a, 'err) t option) -> ('a, 'err) t -> ('a, 'err) t
+(** Selectively handle a typed failure without changing the error row.
+
+    [catch_some handler eff] has the same catchability boundary as {!catch}:
+    it only considers failed exits whose cause tree contains recoverable typed
+    failures and no defects, interruption, or finalizer diagnostics.
+
+    When only typed failures remain, [catch_some] inspects the first typed
+    failure in cause order. [Some recovery] runs that recovery effect. [None]
+    preserves the original cause exactly, including composite typed failures,
+    rather than rebuilding a single [Cause.Fail]. *)
+
 val recover : ('err1 -> 'a) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Pure typed-failure recovery.
 

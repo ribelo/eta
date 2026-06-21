@@ -30,12 +30,13 @@ helpers such as `Eta_blocking.run_result`. Ordinary OCaml exceptions raised
 inside `Effect.sync`, `Eta_blocking.run`, or a blocking callback are unchecked
 defects and surface as `Cause.Die`.
 
-`Effect.catch` handles typed failures only. It does not catch defects,
-interruption, or finalizer diagnostics. Eta intentionally does not expose a
-ZIO-style `catchAllCause`, `sandbox`, `unsandbox`, or `attempt` that turns
-arbitrary exceptions into typed failures. For expected leaf errors, return
-`result` and lift it. For every-branch concurrent outcomes, use
-`Effect.all_settled` or explicit result values.
+`Effect.catch` handles typed failures only. `Effect.catch_some` selectively
+handles the first typed failure while preserving the original cause on
+non-match. Neither catches defects, interruption, or finalizer diagnostics. Eta
+intentionally does not expose a ZIO-style `catchAllCause`, `sandbox`,
+`unsandbox`, or `attempt` that turns arbitrary exceptions into typed failures.
+For expected leaf errors, return `result` and lift it. For every-branch
+concurrent outcomes, use `Effect.all_settled` or explicit result values.
 
 ## Fiber-Local State and Promises
 

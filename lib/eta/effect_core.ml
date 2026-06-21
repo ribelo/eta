@@ -1,6 +1,6 @@
 (** Core Effect machinery: frame infrastructure, the [('a, 'err) t] type, and
-    basic combinators (pure/fail/bind/map/catch/timeout/retry). Internal: see
-    Effect for the public surface. *)
+    basic combinators (pure/fail/bind/map/catch/catch_some/timeout/retry).
+    Internal: see Effect for the public surface. *)
 
 open Runtime_core
 
@@ -255,6 +255,24 @@ let catch :
               match first_typed_failure cause with
               | Some err -> eval frame (handler err)
               | None -> invalid_arg "Effect.catch: empty composite cause"))
+
+let catch_some (handler) eff =
+  match eff with
+  | Pure value -> Pure value
+  | _ ->
+      preserve eff @@ fun frame ->
+      match eval frame eff with
+      | Exit.Ok value -> ok value
+      | Exit.Error cause -> (
+          match stripped_uncatchable cause with
+          | Some _ -> error cause
+          | None -> (
+              match first_typed_failure cause with
+              | Some err -> (
+                  match handler err with
+                  | Some recovery -> eval frame recovery
+                  | None -> error cause)
+              | None -> invalid_arg "Effect.catch_some: empty composite cause"))
 
 let recover (handler) eff = catch (fun err -> pure (handler err)) eff
 let ignore_errors eff = catch (fun _ -> unit) eff

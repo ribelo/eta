@@ -112,7 +112,9 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
   failures. Catch expected errors by returning `result` from the synchronous
   leaf, then use `Effect.sync f |> Effect.flatten_result`.
 - `Effect.catch` handles typed failures only; it does not catch defects,
-  interruption, or finalizer failures.
+  interruption, or finalizer failures. Use `Effect.catch_some` when only some
+  typed failures should recover and non-matches must preserve the original
+  cause.
 - `Effect.ignore_errors` is only for best-effort unit effects. It suppresses
   typed failures, but defects, interruption, and finalizer failures still
   surface.

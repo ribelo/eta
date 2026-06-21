@@ -184,6 +184,100 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "success bypasses catch" 1 (run_ok rt success);
     Alcotest.(check string) "failure recovers" "recovered" (run_ok rt failure)
 
+  let test_effect_catch_some_matching_recovery () =
+    B.with_runtime @@ fun _ctx rt ->
+    let calls = ref 0 in
+    let eff : (string, [ `Cache_miss | `Permission_denied ]) Effect.t =
+      Effect.fail `Cache_miss
+      |> Effect.catch_some (function
+           | `Cache_miss ->
+               incr calls;
+               Some (Effect.pure "fallback")
+           | `Permission_denied ->
+               incr calls;
+               None)
+    in
+    Alcotest.(check string) "recovered" "fallback" (run_ok rt eff);
+    Alcotest.(check int) "handler inspected once" 1 !calls
+
+  let test_effect_catch_some_non_match_preserves_original_composite_cause () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pp_error fmt = function
+      | `First -> Format.pp_print_string fmt "First"
+      | `Second -> Format.pp_print_string fmt "Second"
+    in
+    let cause_testable =
+      Alcotest.testable (Cause.pp pp_error) (Cause.equal ( = ))
+    in
+    let cause : [ `First | `Second ] Cause.t =
+      Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
+    in
+    let calls = ref [] in
+    let eff : (string, [ `First | `Second ]) Effect.t =
+      effect_error_cause cause
+      |> Effect.catch_some (function
+           | `First ->
+               calls := "first" :: !calls;
+               None
+           | `Second ->
+               calls := "second" :: !calls;
+               Some (Effect.pure "second"))
+    in
+    (match B.run rt eff with
+    | Exit.Error actual ->
+        Alcotest.check cause_testable "original composite cause" cause actual
+    | Exit.Ok value ->
+        Alcotest.failf "catch_some recovered non-match as %S" value);
+    Alcotest.(check (list string))
+      "only first typed failure inspected" [ "first" ] (List.rev !calls)
+
+  let test_effect_catch_some_success_noop () =
+    B.with_runtime @@ fun _ctx rt ->
+    let handler_ran = ref false in
+    let eff =
+      Effect.pure "ok"
+      |> Effect.catch_some (fun (`Unexpected : [ `Unexpected ]) ->
+             handler_ran := true;
+             Some (Effect.pure "handled"))
+    in
+    Alcotest.(check string) "success" "ok" (run_ok rt eff);
+    Alcotest.(check bool) "handler skipped" false !handler_ran
+
+  let test_effect_catch_some_does_not_catch_uncatchable_causes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pp_error fmt `Typed = Format.pp_print_string fmt "Typed" in
+    let cause_testable =
+      Alcotest.testable (Cause.pp pp_error) (Cause.equal ( = ))
+    in
+    let handler_calls = ref 0 in
+    let handler (`Typed : [ `Typed ]) =
+      incr handler_calls;
+      Some (Effect.pure "caught")
+    in
+    let check_uncaught label cause =
+      let before = !handler_calls in
+      let eff : (string, [ `Typed ]) Effect.t =
+        effect_error_cause cause |> Effect.catch_some handler
+      in
+      (match B.run rt eff with
+      | Exit.Error actual -> Alcotest.check cause_testable label cause actual
+      | Exit.Ok value ->
+          Alcotest.failf "catch_some swallowed %s as %S" label value);
+      Alcotest.(check int)
+        (label ^ " handler skipped") before !handler_calls
+    in
+    let defect = Failure "uncaught defect" in
+    check_uncaught "defect"
+      (Cause.Concurrent [ Cause.Fail `Typed; Cause.die defect ]);
+    check_uncaught "interrupt"
+      (Cause.Concurrent [ Cause.Fail `Typed; Cause.interrupt ]);
+    check_uncaught "finalizer"
+      (Cause.Suppressed
+         {
+           primary = Cause.Fail `Typed;
+           finalizer = Cause.Finalizer.Fail "cleanup";
+         })
+
   let test_effect_recover () =
     B.with_runtime @@ fun _ctx rt ->
     let recovered = Effect.fail `Bad |> Effect.recover (function `Bad -> 42) in
@@ -2406,6 +2500,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_tap_observer_runtime;
           Alcotest.test_case "catch success and failure" `Quick
             test_effect_catch_success_and_failure;
+          Alcotest.test_case "catch_some matching recovery" `Quick
+            test_effect_catch_some_matching_recovery;
+          Alcotest.test_case "catch_some non-match preserves composite" `Quick
+            test_effect_catch_some_non_match_preserves_original_composite_cause;
+          Alcotest.test_case "catch_some success noop" `Quick
+            test_effect_catch_some_success_noop;
+          Alcotest.test_case "catch_some skips uncatchable causes" `Quick
+            test_effect_catch_some_does_not_catch_uncatchable_causes;
           Alcotest.test_case "recover" `Quick test_effect_recover;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "ignore" `Quick test_effect_ignore;
