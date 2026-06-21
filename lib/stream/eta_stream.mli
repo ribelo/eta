@@ -70,6 +70,23 @@ module Stream : sig
     ('b, 'err) t
   (** Effectful {!filter_map}. Mapper failure fails the stream normally. *)
 
+  val changes : ('a, 'err) t -> ('a, 'err) t
+  (** Emit the first element and then emit only values that are not
+      structurally equal to the previous emitted value. *)
+
+  val changes_with :
+    ('a -> 'a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  (** Emit the first element and then suppress later values when [equivalent
+      previous current] returns [true], where [previous] is the previous
+      emitted value. [equivalent] is expected to be an equivalence relation;
+      behavior for non-equivalence predicates is not a separate Eta policy. *)
+
+  val changes_with_effect :
+    ('a -> 'a -> (bool, 'err) Eta.Effect.t) ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Effectful {!changes_with}. Comparator failure fails the stream normally. *)
+
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit the longest leading prefix whose values satisfy [predicate].

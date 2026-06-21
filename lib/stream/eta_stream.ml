@@ -33,6 +33,10 @@ module Stream = struct
     | Filter_map_effect :
         ('a, 'err) t * ('a -> ('b option, 'err) Eta.Effect.t)
         -> ('b, 'err) t
+    | Changes_with : ('a, 'err) t * ('a -> 'a -> bool) -> ('a, 'err) t
+    | Changes_with_effect :
+        ('a, 'err) t * ('a -> 'a -> (bool, 'err) Eta.Effect.t)
+        -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take_while_effect :
@@ -103,6 +107,9 @@ module Stream = struct
   let filter (f) stream = Filter (stream, f)
   let filter_map (f) stream = Filter_map (stream, f)
   let filter_map_effect (f) stream = Filter_map_effect (stream, f)
+  let changes stream = Changes_with (stream, ( = ))
+  let changes_with (f) stream = Changes_with (stream, f)
+  let changes_with_effect (f) stream = Changes_with_effect (stream, f)
   let take n stream = Take (n, stream)
   let take_while (f) stream = Take_while (stream, f)
   let take_while_effect (f) stream = Take_while_effect (stream, f)
@@ -425,6 +432,47 @@ and fold_stream :
                   | Some mapped -> folder.emit acc mapped
                   | None -> Eta.Effect.pure (acc, true))
                 (f value));
+        }
+  | Changes_with (inner, equivalent) ->
+      let previous = ref None in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              match !previous with
+              | Some last when equivalent last value ->
+                  Eta.Effect.pure (acc, true)
+              | Some _ | None ->
+                  Eta.Effect.map
+                    (fun (acc, keep_going) ->
+                      previous := Some value;
+                      (acc, keep_going))
+                    (folder.emit acc value));
+        }
+  | Changes_with_effect (inner, equivalent) ->
+      let previous = ref None in
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              match !previous with
+              | None ->
+                  Eta.Effect.map
+                    (fun (acc, keep_going) ->
+                      previous := Some value;
+                      (acc, keep_going))
+                    (folder.emit acc value)
+              | Some last ->
+                  Eta.Effect.bind
+                    (fun same ->
+                      if same then Eta.Effect.pure (acc, true)
+                      else
+                        Eta.Effect.map
+                          (fun (acc, keep_going) ->
+                            previous := Some value;
+                            (acc, keep_going))
+                          (folder.emit acc value))
+                    (equivalent last value));
         }
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)

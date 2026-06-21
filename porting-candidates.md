@@ -578,9 +578,13 @@ deferred as a separate stateful operator decision.
 effect-smol: `zip`, `zipWith`, `zipWithIndex`. Pairwise combine two streams or
 tag elements with their index. `zip_with_index` is the cheap, common one.
 
-### 7.5 `changes` (dedup consecutive equal) — **CONSIDER**
-effect-smol: `changes` / `changesWith`. Emit an element only when it differs from
-the previous one. Small and handy for state/event streams.
+### 7.5 `changes` (dedup consecutive equal) — **ADOPTED**
+effect-smol: `changes` / `changesWith` / `changesWithEffect`; ZIO:
+`changes` / `changesWith` / `changesWithZIO`. Eta now exposes
+`Stream.changes`, `changes_with`, and `changes_with_effect`. The first element
+is always emitted; later values are compared against the previous emitted value
+and suppressed when equivalent. `changes` uses OCaml structural equality, while
+the custom comparators are expected to be equivalence relations.
 
 ### 7.6 Run helpers: `run_fold` / `run_for_each` / `run_count` — **ADOPTED**
 effect-smol: `runForEach`, `runFold`, `runCount`, `runHead`, `mkString`. Eta has

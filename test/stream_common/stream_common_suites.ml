@@ -178,6 +178,86 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "count without collecting" 10_000
       (run_ok rt (Eta_stream.run_count stream))
 
+  let test_changes_empty_and_single () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check (list int))
+      "empty" []
+      (run_ok rt
+         (Eta_stream.Stream.empty
+         |> Eta_stream.Stream.changes
+         |> Eta_stream.run_collect));
+    Alcotest.(check (list int))
+      "single" [ 1 ]
+      (run_ok rt
+         (Eta_stream.Stream.succeed 1
+         |> Eta_stream.Stream.changes
+         |> Eta_stream.run_collect))
+
+  let test_changes_dedups_adjacent_only () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 1; 2; 1; 1; 2; 2; 3 ]
+      |> Eta_stream.Stream.changes
+    in
+    Alcotest.(check (list int))
+      "changes" [ 1; 2; 1; 2; 3 ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_changes_with_case_insensitive () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ "A"; "a"; "B"; "b"; "b"; "A" ]
+      |> Eta_stream.Stream.changes_with (fun previous current ->
+             String.equal
+               (String.lowercase_ascii previous)
+               (String.lowercase_ascii current))
+    in
+    Alcotest.(check (list string))
+      "case insensitive changes" [ "A"; "B"; "A" ]
+      (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_changes_with_effect_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let compared = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 1; 2; 3 ]
+      |> Eta_stream.Stream.changes_with_effect (fun previous current ->
+             Eta.Effect.sync (fun () ->
+                 compared := (previous, current) :: !compared)
+             |> Eta.Effect.bind (fun () ->
+                    if current = 2 then
+                      Eta.Effect.fail (`Comparator_failed (previous, current))
+                    else Eta.Effect.pure (previous = current)))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Comparator_failed (1, 2))) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf
+          "changes_with_effect failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected changes_with_effect cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list (pair int int)))
+      "compared against previous emitted value" [ (1, 1); (1, 2) ]
+      (List.rev !compared)
+
+  let test_changes_take_stops_upstream () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 1; 2; 2; 3; 4 ]
+      |> Eta_stream.Stream.map_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.map (fun () -> value))
+      |> Eta_stream.Stream.changes
+      |> Eta_stream.Stream.take 2
+    in
+    Alcotest.(check (list int))
+      "taken values" [ 1; 2 ] (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "upstream stopped after second emission"
+      [ 1; 1; 2 ] (List.rev !seen)
+
   let test_predicate_trimming_empty_streams () =
     B.with_runtime @@ fun _ctx rt ->
     let collect stream = run_ok rt (Eta_stream.run_collect stream) in
@@ -888,6 +968,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_filter_map_take_stops_upstream;
           Alcotest.test_case "filter_map run_count streams" `Quick
             test_filter_map_run_count_streams;
+          Alcotest.test_case "changes handles empty and single streams" `Quick
+            test_changes_empty_and_single;
+          Alcotest.test_case "changes dedups adjacent only" `Quick
+            test_changes_dedups_adjacent_only;
+          Alcotest.test_case "changes_with supports custom equivalence"
+            `Quick test_changes_with_case_insensitive;
+          Alcotest.test_case "changes_with_effect comparator failure" `Quick
+            test_changes_with_effect_failure;
+          Alcotest.test_case "changes take stops upstream" `Quick
+            test_changes_take_stops_upstream;
           Alcotest.test_case "predicate trimming handles empty streams" `Quick
             test_predicate_trimming_empty_streams;
           Alcotest.test_case "take_while boundary behavior" `Quick
