@@ -4,6 +4,7 @@ type t =
   | Spaced of Duration.t
   | Fixed of Duration.t
   | Exponential of Duration.t * float
+  | Fibonacci of Duration.t
   | Linear of { initial : Duration.t; step : Duration.t }
   | Both of t * t
   | Either of t * t
@@ -16,6 +17,7 @@ let forever = Forever
 let spaced d = Spaced d
 let fixed d = Fixed d
 let exponential ?(factor = 2.0) initial = Exponential (initial, factor)
+let fibonacci initial = Fibonacci initial
 let linear ~initial ~step = Linear { initial; step }
 let both a b = Both (a, b)
 let either a b = Either (a, b)
@@ -32,6 +34,7 @@ let rec pp ppf = function
   | Spaced d -> Format.fprintf ppf "Spaced(%a)" Duration.pp d
   | Fixed d -> Format.fprintf ppf "Fixed(%a)" Duration.pp d
   | Exponential (d, f) -> Format.fprintf ppf "Exponential(%a, %g)" Duration.pp d f
+  | Fibonacci d -> Format.fprintf ppf "Fibonacci(%a)" Duration.pp d
   | Linear { initial; step } ->
       Format.fprintf ppf "Linear(%a, %a)" Duration.pp initial Duration.pp step
   | Both (a, b) -> Format.fprintf ppf "Both(%a,%a)" pp a pp b
@@ -66,6 +69,10 @@ type state =
   | Driver_spaced of Duration.t
   | Driver_fixed of Duration.t
   | Driver_exponential of Duration.t * float * int
+  | Driver_fibonacci of {
+      previous : Duration.t;
+      current : Duration.t;
+    }
   | Driver_linear of {
       initial : Duration.t;
       step : Duration.t;
@@ -88,6 +95,7 @@ let rec state_of_schedule = function
   | Spaced d -> Driver_spaced d
   | Fixed d -> Driver_fixed d
   | Exponential (d, factor) -> Driver_exponential (d, factor, 0)
+  | Fibonacci d -> Driver_fibonacci { previous = Duration.zero; current = d }
   | Linear { initial; step } -> Driver_linear { initial; step; index = 0 }
   | Both (a, b) -> Driver_both (state_of_schedule a, state_of_schedule b)
   | Either (a, b) -> Driver_either (state_of_schedule a, state_of_schedule b)
@@ -110,6 +118,9 @@ let rec next_state random = function
       Some
         ( scale_capped d (pow_factor factor step),
           Driver_exponential (d, factor, step + 1) )
+  | Driver_fibonacci { previous; current } ->
+      let next = add_capped previous current in
+      Some (current, Driver_fibonacci { previous = current; current = next })
   | Driver_linear { initial; step; index } ->
       let delta = scale_capped step (float_of_int index) in
       Some

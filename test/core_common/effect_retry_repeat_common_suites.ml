@@ -272,6 +272,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
       (B.await promise)
 
+  let test_effect_retry_fibonacci_schedule_uses_virtual_delays () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.both (Schedule.recurs 3) (Schedule.fibonacci (Duration.ms 5))
+    in
+    let attempt =
+      Effect.sync (fun () ->
+          incr attempts;
+          !attempts)
+      |> Effect.bind (fun n ->
+             if n < 4 then Effect.fail (`Again n) else Effect.pure n)
+    in
+    let promise =
+      B.fork_run ctx rt (Effect.retry schedule (fun (`Again _) -> true) attempt)
+    in
+    wait_until (fun () -> !attempts = 1);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 5);
+    wait_until (fun () -> !attempts = 2);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 5);
+    wait_until (fun () -> !attempts = 3);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 9);
+    B.yield ();
+    Alcotest.(check int) "third fibonacci delay not elapsed" 3 !attempts;
+    B.adjust_clock clock (Duration.ms 1);
+    check_exit_ok Alcotest.int "succeeded after fibonacci delays" 4
+      (B.await promise)
+
   let test_effect_retry_timeout_interrupts_loop () =
     B.with_test_clock @@ fun ctx clock rt ->
     let attempts = ref 0 in
@@ -610,6 +641,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick
             test_effect_retry_schedule_uses_virtual_delays;
+          Alcotest.test_case "retry uses fibonacci virtual delays" `Quick
+            test_effect_retry_fibonacci_schedule_uses_virtual_delays;
           Alcotest.test_case "retry timeout interrupts loop" `Quick
             test_effect_retry_timeout_interrupts_loop;
           Alcotest.test_case "retry jittered schedule uses runtime random" `Quick

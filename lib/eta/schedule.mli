@@ -6,6 +6,7 @@ type t =
   | Spaced of Duration.t
   | Fixed of Duration.t
   | Exponential of Duration.t * float
+  | Fibonacci of Duration.t
   | Linear of { initial : Duration.t; step : Duration.t }
   | Both of t * t
   | Either of t * t
@@ -18,6 +19,7 @@ val forever : t
 val spaced : Duration.t -> t
 val fixed : Duration.t -> t
 val exponential : ?factor:float -> Duration.t -> t
+val fibonacci : Duration.t -> t
 val linear : initial:Duration.t -> step:Duration.t -> t
 
 val both : t -> t -> t

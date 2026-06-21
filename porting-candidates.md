@@ -49,7 +49,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 2.9 effectful / defect-aware `tap` (`tap_defect`, effectful `tap_error`).
 - 2.16 selective cleanup `on_interrupt` / `on_error` (confirmed gap).
 - 8.1 exit-aware finalizer (`acquire_release_exit`) (confirmed gap).
-- 3.1 `Schedule.fibonacci`.
+- 3.1 `Schedule.fibonacci` (adopted).
 
 **Tier 3 — real behavior, bigger or design-sensitive (human call):**
 - 1.7 histogram/summary metric kind (confirmed gap; needs OTLP encoding).
@@ -365,9 +365,9 @@ Eta's `Schedule` (`recurs/forever/spaced/fixed/exponential/linear/both/either/
 and_then/jittered/named` + driver) is solid. effect-smol `Schedule.ts` has
 extras worth eyeing:
 
-### 3.1 `fibonacci` backoff — **PORT**
-effect-smol: `Schedule.fibonacci`. Common backoff curve; trivial to add next to
-`exponential`/`linear`. Low cost, real demand.
+### 3.1 `fibonacci` backoff — **ADOPTED**
+effect-smol: `Schedule.fibonacci`. Eta now exposes `Schedule.fibonacci` next to
+`exponential`/`linear`.
 
 ### 3.2 `windowed` — **CONSIDER**
 effect-smol: `Schedule.windowed(interval)` — recur on fixed wall-clock windows

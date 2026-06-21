@@ -121,6 +121,65 @@ let test_exponential_saturates_on_overflow () =
     (Some (Duration.ms max_int))
     (Schedule.next_delay s ~step:1024)
 
+let test_fibonacci () =
+  let schedule = Schedule.fibonacci (dur_ms 10) in
+  let rec collect driver remaining acc =
+    if remaining = 0 then List.rev acc
+    else
+      match Schedule.next driver with
+      | None -> Alcotest.fail "fibonacci schedule ended"
+      | Some (delay, next) -> collect next (remaining - 1) (delay :: acc)
+  in
+  Alcotest.(check (list dur))
+    "first fibonacci delays"
+    (List.map dur_ms [ 10; 10; 20; 30; 50; 80; 130; 210 ])
+    (collect (Schedule.start schedule) 8 [])
+
+let test_fibonacci_composes_with_recurs_driver () =
+  let schedule =
+    Schedule.both (Schedule.recurs 6) (Schedule.fibonacci (Duration.ms 5))
+  in
+  let rec collect driver acc =
+    match Schedule.next driver with
+    | None -> List.rev acc
+    | Some (delay, next) -> collect next (delay :: acc)
+  in
+  Alcotest.(check (list dur))
+    "recurs limits fibonacci driver"
+    (List.map Duration.ms [ 5; 5; 10; 15; 25; 40 ])
+    (collect (Schedule.start schedule) [])
+
+let test_fibonacci_edges () =
+  let zero = Schedule.fibonacci Duration.zero in
+  List.iter
+    (fun step ->
+      Alcotest.(check some_dur)
+        ("zero step " ^ string_of_int step)
+        (Some Duration.zero)
+        (Schedule.next_delay zero ~step))
+    [ 0; 1; 2; 3 ];
+  let base = Duration.ms ((max_int / 2) + 1) in
+  let driver = Schedule.start (Schedule.fibonacci base) in
+  let driver =
+    match Schedule.next driver with
+    | Some (delay, next) ->
+        Alcotest.(check dur) "first delay" base delay;
+        next
+    | None -> Alcotest.fail "fibonacci schedule ended before first delay"
+  in
+  let driver =
+    match Schedule.next driver with
+    | Some (delay, next) ->
+        Alcotest.(check dur) "second delay" base delay;
+        next
+    | None -> Alcotest.fail "fibonacci schedule ended before second delay"
+  in
+  match Schedule.next driver with
+  | Some (delay, _) ->
+      Alcotest.(check dur)
+        "third delay saturates" (Duration.ms max_int) delay
+  | None -> Alcotest.fail "fibonacci schedule ended on overflow"
+
 let test_schedule_linear_saturates_on_overflow () =
   let driver =
     Schedule.start
@@ -372,6 +431,10 @@ let tests =
         Alcotest.test_case "exponential" `Quick test_exponential;
         Alcotest.test_case "exponential saturates on overflow" `Quick
           test_exponential_saturates_on_overflow;
+        Alcotest.test_case "fibonacci" `Quick test_fibonacci;
+        Alcotest.test_case "fibonacci composes with recurs driver" `Quick
+          test_fibonacci_composes_with_recurs_driver;
+        Alcotest.test_case "fibonacci edges" `Quick test_fibonacci_edges;
         Alcotest.test_case "linear saturates on overflow" `Quick
           test_schedule_linear_saturates_on_overflow;
         Alcotest.test_case "spaced fixed linear" `Quick
