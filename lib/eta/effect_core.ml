@@ -1,6 +1,7 @@
 (** Core Effect machinery: frame infrastructure, the [('a, 'err) t] type, and
-    basic combinators (pure/fail/bind/map/catch/catch_some/timeout/retry).
-    Internal: see Effect for the public surface. *)
+    basic combinators
+    (pure/fail/from_option/bind/map/catch/catch_some/timeout/retry). Internal:
+    see Effect for the public surface. *)
 
 open Runtime_core
 
@@ -174,6 +175,7 @@ let pure value = Pure value
 let fail err = Fail err
 let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
+let from_option ~if_none = function Some value -> pure value | None -> fail if_none
 
 let sync_frame f =
   make (fun frame ->

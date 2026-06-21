@@ -537,6 +537,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.run rt (Effect.from_result (Error "bad")))
       "bad"
 
+  let test_effect_from_option () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check int)
+      "some" 7
+      (run_ok rt (Effect.from_option ~if_none:"missing" (Some 7)));
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (Effect.from_option ~if_none:"missing" None))
+      "missing"
+
   let test_effect_flatten_result () =
     B.with_runtime @@ fun _ctx rt ->
     let lift f = Effect.sync f |> Effect.flatten_result in
@@ -2522,6 +2531,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "catch handler failure uses outer key" `Quick
             test_effect_catch_handler_failure_uses_outer_key;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
+          Alcotest.test_case "from_option" `Quick test_effect_from_option;
           Alcotest.test_case "flatten_result" `Quick
             test_effect_flatten_result;
           Alcotest.test_case "exit to_result faithful subset" `Quick

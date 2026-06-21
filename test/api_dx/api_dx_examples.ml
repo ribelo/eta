@@ -1023,9 +1023,12 @@ let trace_context_current headers body =
   | _ -> body
 
 let trace_context_proposed headers body =
-  match Eta.Trace_context.extract headers with
-  | None -> Effect.fail `Bad_trace_context
-  | Some ctx -> Effect.with_context ctx body
+  let open Syntax in
+  let* ctx =
+    Eta.Trace_context.extract headers
+    |> Effect.from_option ~if_none:`Bad_trace_context
+  in
+  Effect.with_context ctx body
 
 let trace_context_injection_current ctx =
   let flags = Printf.sprintf "%02x" ctx.Eta.Capabilities.trace_flags in
@@ -2047,9 +2050,12 @@ Sampler.sample sampler ~trace_id ~name:"request"
       area = "trace_context";
       variant = "proposed";
       code =
-        {|match Trace_context.extract headers with
-| None -> Effect.fail `Bad_trace_context
-| Some ctx -> Effect.with_context ctx body|};
+        {|let open Eta.Syntax in
+let* ctx =
+  Trace_context.extract headers
+  |> Effect.from_option ~if_none:`Bad_trace_context
+in
+Effect.with_context ctx body|};
     };
     {
       area = "trace_context_injection";
@@ -3045,10 +3051,12 @@ let assert_expected_shape snippet =
           "sampler proposed example should use Sampler policy helpers instead of manual hashing"
   | "trace_context", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
-      if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
-        failwith "trace_context proposed example should be direct boundary use";
+      if bind <> 0 || let_star <> 1 || let_at <> 0 || from_result <> 0 then
+        failwith
+          "trace_context proposed example should extract once and lift the optional context";
       if
         count_sub snippet.code "Trace_context.extract" <> 1
+        || count_sub snippet.code "Effect.from_option" <> 1
         || count_sub snippet.code "Effect.with_context" <> 1
         || count_sub snippet.code "Effect.with_external_parent" <> 0
         || count_sub snippet.code "String.sub" <> 0

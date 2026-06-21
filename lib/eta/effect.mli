@@ -39,6 +39,13 @@ val from_result : ('a, 'err) result -> ('a, 'err) t
 
     Use this for pure validation/parsing results. *)
 
+val from_option : if_none:'err -> 'a option -> ('a, 'err) t
+(** Lift an already-computed OCaml [option] into Eta.
+
+    [Some value] becomes [pure value]. [None] becomes [fail if_none]. Use this
+    for pure lookup/extraction results that should enter Eta's typed failure
+    channel. *)
+
 val flatten_result : (('a, 'err) result, 'err) t -> ('a, 'err) t
 (** Flatten an effect that succeeds with an OCaml [result].
 
