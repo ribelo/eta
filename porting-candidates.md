@@ -600,11 +600,15 @@ machinery, so `run_fold` and `run_count` summarize without materializing the
 whole stream. `mk_string` and `run_head` remain outside the adopted narrow
 slice.
 
-### 7.7 Stream-level `retry` / `repeat` / `schedule` / `timeout` — **CONSIDER**
-effect-smol: `Stream.retry`, `repeat`, `schedule`, `timeout`. Apply a `Schedule.t`
-to an entire stream (retry the source on failure, repeat it, throttle emission).
-Eta already has `Schedule.t`; wiring it into streams is a natural reuse but a
-larger change. Human decision.
+### 7.7 Stream-level `retry` / `repeat` / `schedule` / `timeout` — **PARTIAL**
+effect-smol: `Stream.fromSchedule`, `retry`, `repeat`, `schedule`, `timeout`;
+ZIO: `ZStream.fromSchedule`, `retry`, `repeat`, `schedule`. Eta now wires its
+typed `Schedule.t` into streams for the non-timeout slice: `Stream.from_schedule`
+emits continuing schedule outputs; `Stream.schedule` gates elements with
+schedule inputs; `Stream.repeat` repeats the whole source stream; and
+`Stream.retry` retries the whole source on typed stream failure while preserving
+already-emitted prefixes. Schedule taps run as Eta effects and fail the stream
+normally. Stream-level `timeout` / `timeout_or_else` remains deferred.
 
 ### 7.8 Text streaming: `split_lines` / `decode_text` — **CONSIDER**
 effect-smol: `splitLines`, `decodeText`, `encodeText`. Eta has `from_file`

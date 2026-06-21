@@ -240,6 +240,91 @@ let test_zip_opposite_failure_closes_file () =
       "fd count grew after from_file zip failure: before=%d after=%d"
       before after
 
+let test_repeat_from_file_failure_closes () =
+  with_runtime @@ fun env rt ->
+  let contents = String.make 4096 'x' in
+  with_file env "stream-repeat-file-failure-close.tmp" contents @@ fun path ->
+  let before = fd_count () in
+  let attempts = ref 0 in
+  let source =
+    Eta_stream.Stream.from_effect
+      (Effect.sync (fun () ->
+           incr attempts;
+           !attempts))
+    |> Eta_stream.Stream.flat_map (fun attempt ->
+           let file_once =
+             Eta_stream.Stream.from_file ~chunk_size:4096 path
+           in
+           if attempt = 2 then
+             Eta_stream.Stream.concat file_once
+               (Eta_stream.Stream.fail `Repeat_failed)
+           else file_once)
+  in
+  let eff =
+    source
+    |> Eta_stream.Stream.repeat (Schedule.recurs 2)
+    |> run_collect
+    |> Effect.timeout (Duration.ms 1_000)
+  in
+  (match Runtime.run rt eff with
+  | Exit.Error (Cause.Fail `Repeat_failed) -> ()
+  | Exit.Ok chunks ->
+      Alcotest.failf "repeat from_file failure unexpectedly succeeded with %d chunks"
+        (List.length chunks)
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected repeat from_file failure cause: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause);
+  Alcotest.(check int) "repeat attempts" 2 !attempts;
+  let after = fd_count () in
+  if before >= 0 && after > before then
+    Alcotest.failf
+      "fd count grew after from_file repeat failure: before=%d after=%d"
+      before after
+
+let test_retry_from_file_closes_between_attempts () =
+  with_runtime @@ fun env rt ->
+  let contents = String.make 4096 'x' in
+  with_file env "stream-retry-file-close.tmp" contents @@ fun path ->
+  let before = fd_count () in
+  let attempts = ref 0 in
+  let source =
+    Eta_stream.Stream.from_effect
+      (Effect.sync (fun () ->
+           incr attempts;
+           !attempts))
+    |> Eta_stream.Stream.flat_map (fun attempt ->
+           let file_once =
+             Eta_stream.Stream.from_file ~chunk_size:4096 path
+           in
+           if attempt = 1 then
+             Eta_stream.Stream.concat file_once
+               (Eta_stream.Stream.fail `Retry_failed)
+           else file_once)
+  in
+  let eff =
+    source
+    |> Eta_stream.Stream.retry (Schedule.recurs 1)
+    |> run_collect
+    |> Effect.timeout (Duration.ms 1_000)
+  in
+  (match Runtime.run rt eff with
+  | Exit.Ok [ first; second ] ->
+      Alcotest.(check int) "first chunk" 4096 (Bytes.length first);
+      Alcotest.(check int) "second chunk" 4096 (Bytes.length second)
+  | Exit.Ok chunks ->
+      Alcotest.failf "expected two chunks, got %d" (List.length chunks)
+  | Exit.Error cause ->
+      Alcotest.failf "retry from_file failed: %a"
+        (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
+        cause);
+  Alcotest.(check int) "retry attempts" 2 !attempts;
+  let after = fd_count () in
+  if before >= 0 && after > before then
+    Alcotest.failf
+      "fd count grew after from_file retry: before=%d after=%d"
+      before after
+
 let test_from_file_invalid_chunk_size () =
   Eio_main.run @@ fun env ->
   let path = Eio.Path.(Eio.Stdenv.cwd env / "unused-stream-file.tmp") in
@@ -348,6 +433,10 @@ let suite =
         test_zip_take_then_file_close;
       Alcotest.test_case "zip opposite failure closes from_file" `Quick
         test_zip_opposite_failure_closes_file;
+      Alcotest.test_case "repeat failure closes from_file" `Quick
+        test_repeat_from_file_failure_closes;
+      Alcotest.test_case "retry closes from_file between attempts" `Quick
+        test_retry_from_file_closes_between_attempts;
       Alcotest.test_case "from_file rejects invalid chunk size" `Quick
         test_from_file_invalid_chunk_size;
       Alcotest.test_case "from_file missing path fails typed" `Quick

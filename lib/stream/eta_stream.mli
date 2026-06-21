@@ -37,6 +37,12 @@ module Stream : sig
   val range : start:int -> stop:int -> (int, 'err) t
   val from_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
   val fail : 'err -> ('a, 'err) t
+  val from_schedule :
+    (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('out, 'err) t
+  (** Emit each continuing output of [schedule]. Each continuing step sleeps
+      for its computed delay before emitting its output; the terminal [Done]
+      output is not emitted. Schedule tap failures fail the stream normally. *)
 
   val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
   val map_effect :
@@ -104,6 +110,31 @@ module Stream : sig
   (** Pair every emitted value with its zero-based index.
 
       @raise Invalid_argument if the index would exceed [max_int]. *)
+
+  val schedule :
+    ('a, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Emit upstream values while [schedule] continues. Each upstream value is
+      passed to the schedule as input. A continuing step emits the value and
+      sleeps for its delay before the next value is processed; a terminal step
+      stops the stream without emitting that value. *)
+
+  val repeat :
+    (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Run the whole source stream once, then repeat it for every continuing
+      schedule step. Each continuing step sleeps before the next repetition.
+      Source or schedule tap failures fail the stream normally. *)
+
+  val retry :
+    ('err, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('a, 'err) t ->
+    ('a, 'err) t
+  (** Retry the whole source stream when it fails with a typed error and
+      [schedule] continues. Elements emitted before a failure remain emitted.
+      If the schedule is exhausted, the final typed stream error is preserved. *)
 
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t

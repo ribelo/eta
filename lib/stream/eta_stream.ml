@@ -21,6 +21,9 @@ module Stream = struct
     | Chunk : 'a chunk -> ('a, 'err) t
     | From_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
     | Fail : 'err -> ('a, 'err) t
+    | From_schedule :
+        (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        -> ('out, 'err) t
     | Map : ('a, 'err) t * ('a -> 'b) -> ('b, 'err) t
     | Map_effect :
         ('a, 'err) t * ('a -> ('b, 'err) Eta.Effect.t)
@@ -41,6 +44,18 @@ module Stream = struct
         ('a, 'err) t * ('b, 'err) t * ('a -> 'b -> 'c)
         -> ('c, 'err) t
     | Zip_with_index : ('a, 'err) t -> ('a * int, 'err) t
+    | Schedule :
+        ('a, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        * ('a, 'err) t
+        -> ('a, 'err) t
+    | Repeat :
+        (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        * ('a, 'err) t
+        -> ('a, 'err) t
+    | Retry :
+        ('err, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        * ('a, 'err) t
+        -> ('a, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take_while_effect :
@@ -101,6 +116,7 @@ module Stream = struct
     Range { start; stop }
   let from_effect eff = From_effect eff
   let fail error = Fail error
+  let from_schedule schedule = From_schedule schedule
   let map (f) stream = Map (stream, f)
   let map_effect (f) stream = Map_effect (stream, f)
   let tap (f) stream =
@@ -117,6 +133,9 @@ module Stream = struct
   let zip left right = Zip_with (left, right, fun left right -> (left, right))
   let zip_with (f) left right = Zip_with (left, right, f)
   let zip_with_index stream = Zip_with_index stream
+  let schedule schedule stream = Schedule (schedule, stream)
+  let repeat schedule stream = Repeat (schedule, stream)
+  let retry schedule stream = Retry (schedule, stream)
   let take n stream = Take (n, stream)
   let take_while (f) stream = Take_while (stream, f)
   let take_while_effect (f) stream = Take_while_effect (stream, f)
@@ -244,6 +263,17 @@ let rec drain_channel channel =
        | `Item _ -> drain_channel channel
        | `Empty | `Closed | `Closed_with_error _ -> Eta.Effect.unit)
 
+let rec drive_schedule_step = function
+  | Eta.Schedule.Complete (decision, driver) ->
+      Eta.Effect.pure (decision, driver)
+  | Eta.Schedule.Hook (hook, resume) ->
+      hook |> Eta.Effect.bind (fun () -> drive_schedule_step (resume ()))
+
+let schedule_step ~input driver =
+  Eta.Effect.bind
+    (fun now_ms ->
+      Eta.Schedule.step_plan ~now_ms ~input driver |> drive_schedule_step)
+    Eta.Effect.now
 
 let make_file_error ~operation ~path cause =
   Eta_stream_file.make_error ~operation ~path cause
@@ -400,6 +430,7 @@ and fold_stream :
   | Chunk values -> fold_values values acc folder
   | From_effect eff -> Eta.Effect.bind (fun value -> folder.emit acc value) eff
   | Fail error -> Eta.Effect.fail error
+  | From_schedule schedule -> fold_from_schedule schedule acc folder
   | Map (inner, f) ->
       fold_stream inner acc {
         emit = (fun acc value -> folder.emit acc (f value));
@@ -506,6 +537,9 @@ and fold_stream :
                       (acc, keep_going))
                     (folder.emit acc (value, index)));
         }
+  | Schedule (schedule, inner) -> fold_schedule schedule inner acc folder
+  | Repeat (schedule, inner) -> fold_repeat schedule inner acc folder
+  | Retry (schedule, inner) -> fold_retry schedule inner acc folder
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)
       else
@@ -805,6 +839,113 @@ and fold_stream :
   | Fn (file, line, col_start, col_end, name, inner) ->
       Eta.Effect.fn (file, line, col_start, col_end) name
         (fold_stream inner acc folder)
+
+and fold_from_schedule :
+    type err acc out.
+    (unit, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    acc ->
+    (acc, out, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun schedule acc folder ->
+  let rec loop acc driver =
+    schedule_step ~input:() driver
+    |> Eta.Effect.bind (function
+         | Eta.Schedule.Done _, _ -> Eta.Effect.pure (acc, true)
+         | Eta.Schedule.Continue metadata, next_driver ->
+             Eta.Effect.sleep metadata.delay
+             |> Eta.Effect.bind (fun () ->
+                    folder.emit acc metadata.output)
+             |> Eta.Effect.bind (fun (acc, keep_going) ->
+                    if keep_going then loop acc next_driver
+                    else Eta.Effect.pure (acc, false)))
+  in
+  loop acc (Eta.Schedule.start schedule)
+
+and fold_schedule :
+    type err acc a out.
+    (a, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (a, err) Stream.t ->
+    acc ->
+    (acc, a, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun schedule inner acc folder ->
+  let driver = ref (Eta.Schedule.start schedule) in
+  let pending_delay = ref None in
+  let sleep_pending () =
+    match !pending_delay with
+    | None -> Eta.Effect.unit
+    | Some delay ->
+        pending_delay := None;
+        Eta.Effect.sleep delay
+  in
+  fold_stream inner acc
+    {
+      emit =
+        (fun acc value ->
+          sleep_pending ()
+          |> Eta.Effect.bind (fun () -> schedule_step ~input:value !driver)
+          |> Eta.Effect.bind (function
+               | Eta.Schedule.Done _, _ -> Eta.Effect.pure (acc, false)
+               | Eta.Schedule.Continue metadata, next_driver ->
+                   driver := next_driver;
+                   pending_delay := Some metadata.delay;
+                   folder.emit acc value));
+    }
+
+and fold_repeat :
+    type err acc a out.
+    (unit, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (a, err) Stream.t ->
+    acc ->
+    (acc, a, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun schedule inner acc folder ->
+  let rec loop acc driver =
+    fold_stream inner acc folder
+    |> Eta.Effect.bind (fun (acc, keep_going) ->
+           if not keep_going then Eta.Effect.pure (acc, false)
+           else
+             schedule_step ~input:() driver
+             |> Eta.Effect.bind (function
+                  | Eta.Schedule.Done _, _ -> Eta.Effect.pure (acc, true)
+                  | Eta.Schedule.Continue metadata, next_driver ->
+                      Eta.Effect.sleep metadata.delay
+                      |> Eta.Effect.bind (fun () -> loop acc next_driver)))
+  in
+  loop acc (Eta.Schedule.start schedule)
+
+and fold_retry :
+    type err acc a out.
+    (err, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (a, err) Stream.t ->
+    acc ->
+    (acc, a, err) folder ->
+    (acc * bool, err) Eta.Effect.t =
+fun schedule inner acc folder ->
+  let driver = ref (Eta.Schedule.start schedule) in
+  let reset_driver () = driver := Eta.Schedule.start schedule in
+  let rec loop acc =
+    let latest_acc = ref acc in
+    fold_stream inner acc
+      {
+        emit =
+          (fun acc value ->
+            reset_driver ();
+            folder.emit acc value
+            |> Eta.Effect.map (fun (acc, keep_going) ->
+                   latest_acc := acc;
+                   (acc, keep_going)));
+      }
+    |> Eta.Effect.catch (fun error ->
+           schedule_step ~input:error !driver
+           |> Eta.Effect.bind (function
+                | Eta.Schedule.Done _, _ -> Eta.Effect.fail error
+                | Eta.Schedule.Continue metadata, next_driver ->
+                    driver := next_driver;
+                    Eta.Effect.sleep metadata.delay
+                    |> Eta.Effect.bind (fun () -> loop !latest_acc)))
+  in
+  loop acc
 
 and fold_zip_with :
     type err acc a b c.
