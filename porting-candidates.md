@@ -217,11 +217,12 @@ today users must write `catch`/`map` boilerplate.
 effect-smol: `Effect.orElse`, `orElseSucceed`, `orDie`.
 - `orElse : (unit -> ('a,'err2) t) -> ('a,'err1) t -> ('a,'err2) t`
 - `orElseSucceed : (unit -> 'a) -> ('a,'err) t -> ('a,'never) t`
-- `orDie : ('a,'err) t -> ('a,'never) t` (promote typed failure to defect)
+- `or_die : ('err -> exn) -> ('a,'err) t -> ('a,'outer) t` (promote typed
+  failure to defect)
 
 `catch` can express `orElse`, so these are sugar. `orDie` is the interesting one
 (turn an expected failure into an unrecoverable defect) and matches Eta's
-"break loudly" rule. Lean PORT for `orDie`, CONSIDER for the others.
+"break loudly" rule. ADOPTED for `or_die`, CONSIDER for the others.
 
 ### 2.4 `when` / `unless` — **CONSIDER**
 effect-smol: `Effect.when` / `unless` (+ effectful predicate variants).

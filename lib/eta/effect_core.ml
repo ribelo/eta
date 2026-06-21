@@ -301,6 +301,29 @@ let map_error (f) eff =
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> error (map_cause_error f cause)
 
+let rec or_die_cause :
+    type err outer. frame -> (err -> exn) -> err Cause.t -> outer Cause.t =
+ fun frame to_exn -> function
+  | Cause.Fail err -> Runtime_core.die_of_exn_runtime frame.runtime (to_exn err)
+  | Cause.Die die -> Cause.Die die
+  | Cause.Interrupt id -> Cause.Interrupt id
+  | Cause.Sequential causes ->
+      Cause.Sequential (List.map (or_die_cause frame to_exn) causes)
+  | Cause.Concurrent causes ->
+      Cause.Concurrent (List.map (or_die_cause frame to_exn) causes)
+  | Cause.Finalizer cause -> Cause.Finalizer cause
+  | Cause.Suppressed { primary; finalizer } ->
+      Cause.Suppressed { primary = or_die_cause frame to_exn primary; finalizer }
+
+let or_die (to_exn) eff =
+  match eff with
+  | Pure value -> Pure value
+  | _ ->
+      preserve eff @@ fun frame ->
+      match eval frame eff with
+      | Exit.Ok _ as ok -> ok
+      | Exit.Error cause -> error (or_die_cause frame to_exn cause)
+
 let run_observer frame original observer =
   match eval frame observer with
   | Exit.Ok () -> original

@@ -651,6 +651,139 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected suppressed interrupt"
 
+  let test_effect_or_die_converts_simple_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.fail "boom"
+      |> Effect.or_die (fun err -> Failure ("typed:" ^ err))
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "converted exception" "Failure(\"typed:boom\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error cause ->
+        Alcotest.failf "expected converted defect, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect"
+
+  let test_effect_or_die_converts_composite_typed_failures () =
+    B.with_runtime @@ fun _ctx rt ->
+    let cause : [ `Left | `Right ] Cause.t =
+      Cause.Sequential
+        [
+          Cause.Fail `Left;
+          Cause.Concurrent [ Cause.Fail `Right; Cause.Fail `Left ];
+        ]
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.or_die (function
+           | `Left -> Failure "left"
+           | `Right -> Invalid_argument "right")
+    in
+    match B.run rt eff with
+    | Exit.Error
+        (Cause.Sequential
+          [
+            Cause.Die left;
+            Cause.Concurrent [ Cause.Die right; Cause.Die left_again ];
+          ]) ->
+        Alcotest.(check string)
+          "left" "Failure(\"left\")" (Printexc.to_string left.exn);
+        Alcotest.(check string)
+          "right" "Invalid_argument(\"right\")"
+          (Printexc.to_string right.exn);
+        Alcotest.(check string)
+          "left again" "Failure(\"left\")"
+          (Printexc.to_string left_again.exn)
+    | Exit.Error cause ->
+        Alcotest.failf "expected converted composite defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected composite defect"
+
+  let test_effect_or_die_preserves_existing_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let existing = Failure "existing defect" in
+    let cause : [ `Typed ] Cause.t =
+      Cause.Concurrent [ Cause.Fail `Typed; Cause.die existing ]
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.or_die (function `Typed -> Failure "typed defect")
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Concurrent [ Cause.Die converted; Cause.Die preserved ])
+      ->
+        Alcotest.(check string)
+          "converted" "Failure(\"typed defect\")"
+          (Printexc.to_string converted.exn);
+        Alcotest.(check bool) "existing defect preserved" true
+          (preserved.exn == existing)
+    | Exit.Error cause ->
+        Alcotest.failf "expected mixed defect cause, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected mixed defect cause"
+
+  let test_effect_or_die_preserves_suppressed_finalizer () =
+    B.with_runtime @@ fun _ctx rt ->
+    let cause : [ `Body ] Cause.t =
+      Cause.Suppressed
+        {
+          primary = Cause.Fail `Body;
+          finalizer = Cause.Finalizer.Fail "cleanup";
+        }
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.or_die (function `Body -> Failure "body defect")
+    in
+    match B.run rt eff with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Die body;
+            finalizer = Cause.Finalizer.Fail "cleanup";
+          }) ->
+        Alcotest.(check string)
+          "body" "Failure(\"body defect\")" (Printexc.to_string body.exn)
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed finalizer to remain, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected suppressed defect"
+
+  let test_effect_or_die_success_passthrough () =
+    B.with_runtime @@ fun _ctx rt ->
+    let called = ref false in
+    let eff =
+      Effect.pure 42
+      |> Effect.or_die (fun (_ : string) ->
+             called := true;
+             Failure "unexpected")
+    in
+    Alcotest.(check int) "success" 42 (run_ok rt eff);
+    Alcotest.(check bool) "converter not called" false !called
+
+  let test_effect_or_die_preserves_interruption () =
+    B.with_runtime @@ fun _ctx rt ->
+    let cause : string Cause.t =
+      Cause.Concurrent [ Cause.Fail "typed"; Cause.interrupt ]
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.or_die (fun err -> Failure ("typed:" ^ err))
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Concurrent [ Cause.Die converted; Cause.Interrupt None ])
+      ->
+        Alcotest.(check string)
+          "converted" "Failure(\"typed:typed\")"
+          (Printexc.to_string converted.exn)
+    | Exit.Error cause ->
+        Alcotest.failf "expected interruption to be preserved, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected interrupted defect"
+
   let test_effect_syntax_operators () =
     B.with_runtime @@ fun _ctx rt ->
     let open Eta.Syntax in
@@ -2542,6 +2675,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_map_error_preserves_defects_in_cause_tree;
           Alcotest.test_case "map_error preserves interrupts" `Quick
             test_effect_map_error_preserves_interrupts_in_cause_tree;
+          Alcotest.test_case "or_die converts typed failure" `Quick
+            test_effect_or_die_converts_simple_typed_failure;
+          Alcotest.test_case "or_die converts composite typed failures" `Quick
+            test_effect_or_die_converts_composite_typed_failures;
+          Alcotest.test_case "or_die preserves existing defect" `Quick
+            test_effect_or_die_preserves_existing_defect;
+          Alcotest.test_case "or_die preserves suppressed finalizer" `Quick
+            test_effect_or_die_preserves_suppressed_finalizer;
+          Alcotest.test_case "or_die success passthrough" `Quick
+            test_effect_or_die_success_passthrough;
+          Alcotest.test_case "or_die preserves interruption" `Quick
+            test_effect_or_die_preserves_interruption;
           Alcotest.test_case "syntax operators" `Quick
             test_effect_syntax_operators;
           Alcotest.test_case "tap_error observes and rethrows" `Quick

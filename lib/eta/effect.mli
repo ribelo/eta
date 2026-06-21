@@ -244,6 +244,19 @@ val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
     {!Cause.Finalizer} nodes and are preserved unchanged, including
     [Cause.Suppressed.finalizer] branches. *)
 
+val or_die : ('err -> exn) -> ('a, 'err) t -> ('a, 'outer) t
+(** Convert typed failures into unchecked defects.
+
+    [or_die to_exn eff] preserves successful values. On failure, every
+    [Cause.Fail err] in the primary cause tree becomes a [Cause.Die] built from
+    [to_exn err]. [Sequential] and [Concurrent] structure is preserved.
+    Existing defects, interruption, and finalizer diagnostics are preserved.
+    For [Cause.Suppressed], only the primary cause is converted; the rendered
+    finalizer diagnostic is left unchanged.
+
+    If [to_exn] raises, the exception is reported through Eta's ordinary defect
+    capture path. *)
+
 val tap_error : ('err -> (unit, 'err) t) -> ('a, 'err) t -> ('a, 'err) t
 (** Run an effectful observer on the first typed failure, then preserve the
     original failure when the observer succeeds.
