@@ -394,6 +394,14 @@ val repeat :
     run in the current Eta runtime; tap failures fail [repeat] normally through
     the same typed channel. The first source failure stops the loop. *)
 
+val forever : ('a, 'err) t -> ('b, 'err) t
+(** Repeat an effect forever, discarding every successful value.
+
+    [forever eff] runs [eff], discards a successful value, and immediately
+    repeats after every success. The returned effect never succeeds. A typed
+    failure, defect, interruption, or finalizer diagnostic from [eff] stops the
+    loop and propagates normally. *)
+
 val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
 (** [finally cleanup eff] runs [cleanup] after [eff] settles, on success,
     typed failure, unchecked defect, or cancellation.

@@ -59,7 +59,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
 - 1.8 level-named log helpers;
-  2.7 `forever`/`iterate`; 2.17 `yield_now`; 2.18 `flip`/`from_option`/`zip`;
+  2.7 `iterate`/`loop`; 2.17 `yield_now`; 2.18 `flip`/`from_option`/`zip`;
   4.x random conveniences; 5.2 sub-ms precision.
 
 **Already decided / don't reopen without a protocol trigger:** Deferred (6.1),
@@ -251,11 +251,15 @@ time from the runtime clock. Users who want "sleep here" or "what time is it
 (deterministically, honoring the test clock)" have no in-effect path. Small and
 important for determinism. Recommend.
 
-### 2.7 `forever` / `iterate` / `loop` — **CONSIDER**
+### 2.7 `forever` / `iterate` / `loop` — **ADOPTED / partial**
 effect-smol: `Effect.forever`, `iterate`, `loop`. Eta has `repeat` (schedule
-driven). `forever` (repeat until interrupt) and `iterate`/`loop` (stateful
-recursion with an effect body) are convenient but overlap with `repeat` +
-recursion. Human decision on whether they earn surface.
+driven).
+
+Eta exposes `Effect.forever` as thin sugar over the repeat/schedule machinery:
+successful values are discarded and the source repeats forever until typed
+failure, defect, interruption, or finalizer diagnostics stop the loop normally.
+`iterate` and `loop` remain deferred; they overlap with ordinary recursion and
+have not earned additional surface yet.
 
 ### 2.8 `filterOrFail` — **CONSIDER**
 effect-smol: `Effect.filterOrFail` (assert a predicate on the success value,

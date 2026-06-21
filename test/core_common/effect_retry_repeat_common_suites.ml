@@ -295,6 +295,87 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
     | Exit.Ok _ -> Alcotest.fail "expected timeout"
 
+  let test_effect_forever_repeats_until_timeout () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let ticks = ref 0 in
+    let source =
+      Effect.sync (fun () -> incr ticks)
+      |> Effect.bind (fun () -> Effect.sleep (Duration.ms 10))
+    in
+    let eff =
+      Effect.forever source
+      |> Effect.timeout_as (Duration.ms 25) ~on_timeout:`Timed_out
+    in
+    let promise = B.fork_run ctx rt eff in
+    wait_until (fun () -> !ticks = 1);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    wait_until (fun () -> !ticks = 2);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    wait_until (fun () -> !ticks = 3);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 5);
+    match B.await promise with
+    | Exit.Error (Cause.Fail `Timed_out) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected timeout, got %a"
+          (Cause.pp (fun fmt `Timed_out ->
+               Format.pp_print_string fmt "Timed_out"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "forever unexpectedly succeeded"
+
+  let test_effect_forever_stops_on_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let source =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () ->
+             if !attempts < 3 then Effect.pure "ok" else Effect.fail `Boom)
+    in
+    (match B.run rt (Effect.forever source) with
+    | Exit.Error (Cause.Fail `Boom) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected typed failure, got %a"
+          (Cause.pp (fun fmt `Boom -> Format.pp_print_string fmt "Boom"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "forever unexpectedly succeeded");
+    Alcotest.(check int) "stopped after failure" 3 !attempts
+
+  let test_effect_forever_stops_on_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let source =
+      Effect.sync (fun () ->
+          incr attempts;
+          failwith "forever defect")
+    in
+    (match B.run rt (Effect.forever source) with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "forever unexpectedly succeeded");
+    Alcotest.(check int) "not repeated after defect" 1 !attempts
+
+  let test_effect_forever_stops_on_finalizer_diagnostic () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let source =
+      Effect.scoped
+        (Effect.acquire_use_release ~acquire:Effect.unit
+           ~release:(fun () -> Effect.fail "release")
+           (fun () -> Effect.sync (fun () -> incr attempts)))
+    in
+    (match B.run rt (Effect.forever source) with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer diagnostic, got %a"
+          (Cause.pp Format.pp_print_string)
+          cause
+    | Exit.Ok _ -> Alcotest.fail "forever unexpectedly succeeded");
+    Alcotest.(check int) "not repeated after finalizer diagnostic" 1 !attempts
+
   let test_effect_retry_schedule_until_success () =
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
@@ -908,6 +989,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_repeat_fixed_overrun_has_no_pileup;
           Alcotest.test_case "repeat timeout interrupts loop" `Quick
             test_effect_repeat_timeout_interrupts_loop;
+          Alcotest.test_case "forever repeats until timeout" `Quick
+            test_effect_forever_repeats_until_timeout;
+          Alcotest.test_case "forever stops on typed failure" `Quick
+            test_effect_forever_stops_on_typed_failure;
+          Alcotest.test_case "forever stops on defect" `Quick
+            test_effect_forever_stops_on_defect;
+          Alcotest.test_case "forever stops on finalizer diagnostic" `Quick
+            test_effect_forever_stops_on_finalizer_diagnostic;
           Alcotest.test_case "retry schedule until success" `Quick
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick

@@ -29,6 +29,8 @@ let repeat schedule eff =
     | Exit.Error _ as error -> error
   with exn -> exit_of_exn frame exn
 
+let forever eff = repeat Sch.forever eff |> map (fun (_ : int) -> assert false)
+
 let retry schedule (predicate) eff =
   preserve eff @@ fun frame ->
   try
