@@ -278,6 +278,29 @@ val tap_defect :
     fails normally from the observer path. *)
 
 val retry : Schedule.t -> ('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
+(** Retry an effect while the schedule continues and [predicate] accepts the
+    typed failure. Defects, interruption, and finalizer diagnostics are not
+    retried. *)
+
+val retry_or_else :
+  Schedule.t ->
+  ('err1 -> bool) ->
+  or_else:('err1 -> ('a, 'err2) t) ->
+  ('a, 'err1) t ->
+  ('a, 'err2) t
+(** Retry an effect while the schedule continues and [predicate] accepts the
+    typed failure, then run [or_else] with the final typed failure when the
+    predicate rejects it or the schedule is exhausted.
+
+    Eta schedules do not produce output, so [or_else] receives only the final
+    typed failure. For composite causes, [retry_or_else] follows {!catch}: it
+    handles only causes whose primary tree contains typed failures and no
+    uncatchable defects, interruption, or finalizer diagnostics, and it uses the
+    first typed failure in cause order. Uncatchable diagnostics are not retried
+    and do not run [or_else].
+
+    If [or_else] fails, its failure becomes the result normally; the original
+    typed failure is not suppressed or reported as a finalizer diagnostic. *)
 
 val now : (int, 'err) t
 (** Read the active runtime clock in milliseconds. Runtime constructors and

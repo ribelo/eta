@@ -16,6 +16,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+  let effect_error_cause cause =
+    Effect.Expert.make ~leaf_name:"test.error-cause" @@ fun _context ->
+    Exit.Error cause
+
   let check_exit_ok test name expected = function
     | Exit.Ok actual -> Alcotest.check test name expected actual
     | Exit.Error cause ->
@@ -358,6 +362,226 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "only one resource live at a time (retry should scope per-attempt)" 1
       !max_active
 
+  let test_effect_retry_or_else_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let fallback_called = ref false in
+    let attempt =
+      Effect.sync (fun () ->
+          incr attempts;
+          "ok")
+    in
+    let eff =
+      Effect.retry_or_else (Schedule.recurs 3)
+        (fun (_ : string) -> true)
+        ~or_else:(fun _ ->
+          fallback_called := true;
+          Effect.pure "fallback")
+        attempt
+    in
+    Alcotest.(check string) "result" "ok" (run_ok rt eff);
+    Alcotest.(check int) "one attempt" 1 !attempts;
+    Alcotest.(check bool) "fallback skipped" false !fallback_called
+
+  let test_effect_retry_or_else_eventual_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let fallback_called = ref false in
+    let attempt =
+      Effect.sync (fun () ->
+          incr attempts;
+          !attempts)
+      |> Effect.bind (fun n ->
+             if n < 3 then Effect.fail (`Again n) else Effect.pure n)
+    in
+    let eff =
+      Effect.retry_or_else (Schedule.recurs 5)
+        (fun (`Again _) -> true)
+        ~or_else:(fun (`Again _) ->
+          fallback_called := true;
+          Effect.pure (-1))
+        attempt
+    in
+    Alcotest.(check int) "success" 3 (run_ok rt eff);
+    Alcotest.(check int) "initial plus retries" 3 !attempts;
+    Alcotest.(check bool) "fallback skipped" false !fallback_called
+
+  let test_effect_retry_or_else_predicate_rejection_fallback () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let fallback_seen = ref None in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail (`Reject !attempts))
+    in
+    let eff =
+      Effect.retry_or_else (Schedule.recurs 5)
+        (fun (`Reject n) -> n < 2)
+        ~or_else:(fun (`Reject n) ->
+          fallback_seen := Some n;
+          Effect.pure ("fallback-" ^ string_of_int n))
+        attempt
+    in
+    Alcotest.(check string) "fallback result" "fallback-2" (run_ok rt eff);
+    Alcotest.(check int) "initial plus accepted retry" 2 !attempts;
+    Alcotest.(check (option int)) "fallback saw rejected error" (Some 2)
+      !fallback_seen
+
+  let test_effect_retry_or_else_exhausted_fallback () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail (`Again !attempts))
+    in
+    let eff =
+      Effect.retry_or_else (Schedule.recurs 2)
+        (fun (`Again _) -> true)
+        ~or_else:(fun (`Again n) -> Effect.pure ("exhausted-" ^ string_of_int n))
+        attempt
+    in
+    Alcotest.(check string) "fallback result" "exhausted-3" (run_ok rt eff);
+    Alcotest.(check int) "initial plus two retries" 3 !attempts
+
+  let test_effect_retry_or_else_fallback_failure_replaces_original () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    let eff =
+      Effect.retry_or_else (Schedule.recurs 0)
+        (fun `Again -> true)
+        ~or_else:(fun `Again -> Effect.fail `Fallback_failed)
+        attempt
+    in
+    (match B.run rt eff with
+    | Exit.Error (Cause.Fail `Fallback_failed) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected fallback failure, got %a"
+          (Cause.pp (fun fmt `Fallback_failed ->
+               Format.pp_print_string fmt "Fallback_failed"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected fallback failure");
+    Alcotest.(check int) "initial only" 1 !attempts
+
+  let test_effect_retry_or_else_composite_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let error_testable =
+      Alcotest.testable
+        (fun fmt -> function
+          | `First -> Format.pp_print_string fmt "First"
+          | `Second -> Format.pp_print_string fmt "Second")
+        ( = )
+    in
+    let cause : [ `First | `Second ] Cause.t =
+      Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
+    in
+    let fallback_seen = ref None in
+    let eff =
+      effect_error_cause cause
+      |> Effect.retry_or_else (Schedule.recurs 0)
+           (function `First | `Second -> true)
+           ~or_else:(fun err ->
+             fallback_seen := Some err;
+             Effect.pure "fallback")
+    in
+    Alcotest.(check string) "fallback result" "fallback" (run_ok rt eff);
+    Alcotest.(check (option error_testable))
+      "fallback saw first typed failure" (Some `First) !fallback_seen
+
+  let test_effect_retry_or_else_skips_uncatchable_causes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let fallback_calls = ref 0 in
+    let fallback (_ : string) =
+      incr fallback_calls;
+      Effect.pure "fallback"
+    in
+    let defect_attempts = ref 0 in
+    let defect = Failure "retry_or_else defect" in
+    let defect_attempt =
+      Effect.sync (fun () ->
+          incr defect_attempts;
+          raise defect)
+    in
+    (match
+       B.run rt
+         (Effect.retry_or_else (Schedule.recurs 3)
+            (fun (_ : string) -> true)
+            ~or_else:fallback defect_attempt)
+     with
+    | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok value -> Alcotest.failf "unexpected fallback result %S" value);
+    Alcotest.(check int) "defect not retried" 1 !defect_attempts;
+    let interrupt_attempts = ref 0 in
+    let interrupt_attempt =
+      Effect.sync (fun () -> incr interrupt_attempts)
+      |> Effect.bind (fun () -> runtime_interrupt_effect ())
+    in
+    (match
+       B.run rt
+         (Effect.retry_or_else (Schedule.recurs 3)
+            (fun (_ : string) -> true)
+            ~or_else:fallback interrupt_attempt)
+     with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok value -> Alcotest.failf "unexpected fallback result %S" value);
+    Alcotest.(check int) "interrupt not retried" 1 !interrupt_attempts;
+    let finalizer_attempts = ref 0 in
+    let finalizer_attempt =
+      Effect.sync (fun () -> incr finalizer_attempts)
+      |> Effect.bind (fun () -> Effect.fail "body")
+      |> Effect.finally (Effect.fail "cleanup")
+    in
+    (match
+       B.run rt
+         (Effect.retry_or_else (Schedule.recurs 3)
+            (fun (_ : string) -> true)
+            ~or_else:fallback finalizer_attempt)
+     with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer diagnostic, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok value -> Alcotest.failf "unexpected fallback result %S" value);
+    Alcotest.(check int) "finalizer failure not retried" 1 !finalizer_attempts;
+    Alcotest.(check int) "fallback skipped for uncatchable causes" 0
+      !fallback_calls
+
+  let test_effect_retry_or_else_uses_virtual_delays () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.ms 5))
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail (`Again !attempts))
+    in
+    let eff =
+      Effect.retry_or_else schedule
+        (fun (`Again _) -> true)
+        ~or_else:(fun (`Again n) ->
+          Effect.pure ("fallback-" ^ string_of_int n))
+        attempt
+    in
+    let promise = B.fork_run ctx rt eff in
+    wait_until (fun () -> !attempts = 1);
+    Alcotest.(check int) "initial attempt" 1 !attempts;
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 5);
+    wait_until (fun () -> !attempts = 2);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 5);
+    check_exit_ok Alcotest.string "fallback after delayed retries" "fallback-3"
+      (B.await promise);
+    Alcotest.(check int) "initial plus delayed retries" 3 !attempts
+
   let tests =
     [
       ( "Effect retry/repeat",
@@ -392,6 +616,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_jittered_schedule_uses_runtime_random;
           Alcotest.test_case "retry releases resources each failed attempt"
             `Quick test_effect_retry_releases_resources_each_failed_attempt;
+          Alcotest.test_case "retry_or_else success" `Quick
+            test_effect_retry_or_else_success;
+          Alcotest.test_case "retry_or_else eventual success" `Quick
+            test_effect_retry_or_else_eventual_success;
+          Alcotest.test_case "retry_or_else predicate rejection fallback" `Quick
+            test_effect_retry_or_else_predicate_rejection_fallback;
+          Alcotest.test_case "retry_or_else exhausted fallback" `Quick
+            test_effect_retry_or_else_exhausted_fallback;
+          Alcotest.test_case "retry_or_else fallback failure" `Quick
+            test_effect_retry_or_else_fallback_failure_replaces_original;
+          Alcotest.test_case "retry_or_else composite typed failure" `Quick
+            test_effect_retry_or_else_composite_typed_failure;
+          Alcotest.test_case "retry_or_else skips uncatchable causes" `Quick
+            test_effect_retry_or_else_skips_uncatchable_causes;
+          Alcotest.test_case "retry_or_else virtual delays" `Quick
+            test_effect_retry_or_else_uses_virtual_delays;
         ] );
     ]
 end

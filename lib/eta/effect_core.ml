@@ -460,5 +460,30 @@ let retry schedule (predicate) eff =
   in
   loop ()
 
+let retry_or_else schedule (predicate) ~or_else eff =
+  preserve eff @@ fun frame ->
+  let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
+  let run_attempt () = run_scope frame eff in
+  let rec loop () =
+    match run_attempt () with
+    | Exit.Ok _ as ok -> ok
+    | Exit.Error cause -> (
+        match stripped_uncatchable cause with
+        | Some cause -> error cause
+        | None -> (
+            match first_typed_failure cause with
+            | Some err ->
+                if predicate err then
+                  match Sch.next !driver with
+                  | Some (duration, next_driver) ->
+                      driver := next_driver;
+                      frame.runtime.sleep duration;
+                      loop ()
+                  | None -> eval frame (or_else err)
+                else eval frame (or_else err)
+            | None -> invalid_arg "Effect.retry_or_else: empty composite cause"))
+  in
+  loop ()
+
 let name eff = leaf_name eff
 let collect_names eff = names eff

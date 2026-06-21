@@ -286,12 +286,12 @@ users handle defects/interrupts inside the effect rather than only at run
 boundary. Powerful but a sharp tool; verify it does not let users silently
 swallow interrupts (Eta cares about interruption integrity). Human decision.
 
-### 2.12 `retry` family: `retryN` / `retryOrElse` / `repeatN` — **CONSIDER**
+### 2.12 `retry` family: `retryN` / `retryOrElse` / `repeatN` — **PARTIAL**
 effect-smol: `Effect.retryOrElse`, schedule-less `retryN`. Eta's `retry` takes a
 full `Schedule.t` + an `'err -> bool` predicate, which already covers `retryN`
 (via `Schedule.recurs`). `retryOrElse` (run a fallback when the schedule is
-exhausted) is the missing behavior and is genuinely useful. CONSIDER
-`retry_or_else`.
+exhausted) is now exposed as `retry_or_else`; schedule-less `retryN` and
+`repeatN` remain convenience candidates.
 
 ### 2.13 Error accumulation: `validate` / `validateAll` / `partition` — **CONSIDER**
 effect-smol: `Effect.validate`, `validateAll`, `partition`. Eta's `all` is
