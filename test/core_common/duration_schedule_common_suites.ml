@@ -121,6 +121,38 @@ let test_exponential_saturates_on_overflow () =
     (Some (Duration.ms max_int))
     (Schedule.next_delay s ~step:1024)
 
+let collect_with_now schedule nows =
+  let rec loop driver acc = function
+    | [] -> List.rev acc
+    | now_ms :: rest -> (
+        match Schedule.next ~now_ms driver with
+        | None -> Alcotest.fail "schedule ended"
+        | Some (delay, next) -> loop next (delay :: acc) rest)
+  in
+  loop (Schedule.start schedule) [] nows
+
+let test_fixed_uses_cadence_with_now_metadata () =
+  let schedule = Schedule.fixed (Duration.ms 5_000) in
+  Alcotest.(check (list dur))
+    "fixed cadence delays"
+    (List.map Duration.ms [ 5_000; 3_500; 0; 3_000 ])
+    (collect_with_now schedule [ 0; 6_500; 16_000; 17_000 ])
+
+let test_windowed () =
+  let schedule = Schedule.windowed (Duration.ms 10) in
+  Alcotest.(check (list dur))
+    "window boundary delays"
+    (List.map Duration.ms [ 10; 7; 10; 3 ])
+    (collect_with_now schedule [ 0; 13; 20; 27 ]);
+  let zero = Schedule.windowed Duration.zero in
+  List.iter
+    (fun step ->
+      Alcotest.(check some_dur)
+        ("zero step " ^ string_of_int step)
+        (Some Duration.zero)
+        (Schedule.next_delay zero ~step))
+    [ 0; 1; 2; 3 ]
+
 let test_fibonacci () =
   let schedule = Schedule.fibonacci (dur_ms 10) in
   let rec collect driver remaining acc =
@@ -431,6 +463,9 @@ let tests =
         Alcotest.test_case "exponential" `Quick test_exponential;
         Alcotest.test_case "exponential saturates on overflow" `Quick
           test_exponential_saturates_on_overflow;
+        Alcotest.test_case "fixed uses cadence with now metadata" `Quick
+          test_fixed_uses_cadence_with_now_metadata;
+        Alcotest.test_case "windowed" `Quick test_windowed;
         Alcotest.test_case "fibonacci" `Quick test_fibonacci;
         Alcotest.test_case "fibonacci composes with recurs driver" `Quick
           test_fibonacci_composes_with_recurs_driver;

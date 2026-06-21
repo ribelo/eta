@@ -362,17 +362,17 @@ Verified present in effect-smol `Effect.ts`, absent in Eta's `effect.mli`:
 ## 3. Schedule
 
 Eta's `Schedule` (`recurs/forever/spaced/fixed/exponential/linear/both/either/
-and_then/jittered/named` + driver) is solid. effect-smol `Schedule.ts` has
-extras worth eyeing:
+and_then/jittered/windowed/named` + driver) is solid. effect-smol
+`Schedule.ts` has extras worth eyeing:
 
 ### 3.1 `fibonacci` backoff — **ADOPTED**
 effect-smol: `Schedule.fibonacci`. Eta now exposes `Schedule.fibonacci` next to
 `exponential`/`linear`.
 
-### 3.2 `windowed` — **CONSIDER**
-effect-smol: `Schedule.windowed(interval)` — recur on fixed wall-clock windows
-(distinct from `fixed`, which is about spacing from the start). Useful for
-"once per minute boundary" semantics. CONSIDER.
+### 3.2 `windowed` — **ADOPTED**
+effect-smol: `Schedule.windowed(interval)`. Eta now exposes `Schedule.windowed`
+and `Schedule.fixed` now uses clock-aware cadence semantics instead of behaving
+like `spaced`.
 
 ### 3.3 Output/elapsed-aware combinators — **CONSIDER**
 effect-smol: `Schedule.elapsed`, `during`/`upTo`, `collectOutputs`,

@@ -48,6 +48,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     loop 20
 
+  let drive_clock_until_resolved ?(steps = 200) clock promise =
+    let rec loop remaining =
+      if B.is_resolved promise then ()
+      else if remaining = 0 then Alcotest.fail "promise did not resolve"
+      else (
+        if B.sleeper_count clock > 0 then B.adjust_clock clock (Duration.ms 1)
+        else B.yield ();
+        loop (remaining - 1))
+    in
+    loop steps
+
   let expect_interrupted label = function
     | `Cancelled -> ()
     | `Returned (Exit.Error (Cause.Interrupt _)) -> ()
@@ -201,6 +212,48 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok Alcotest.unit "repeat done" () (B.await promise);
     Alcotest.(check int) "three delayed repeats" 4 !ticks
 
+  let repeat_start_times schedule body_duration =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let starts = ref [] in
+    let body =
+      Effect.now
+      |> Effect.bind (fun now_ms ->
+             Effect.sync (fun () -> starts := now_ms :: !starts))
+      |> Effect.bind (fun () -> Effect.sleep body_duration)
+    in
+    let promise = B.fork_run ctx rt (Effect.repeat schedule body) in
+    drive_clock_until_resolved clock promise;
+    check_exit_ok Alcotest.unit "repeat done" () (B.await promise);
+    List.rev !starts
+
+  let test_effect_repeat_fixed_cadence_differs_from_spaced () =
+    let fixed_starts =
+      repeat_start_times
+        (Schedule.both (Schedule.recurs 3) (Schedule.fixed (Duration.ms 10)))
+        (Duration.ms 5)
+    in
+    let spaced_starts =
+      repeat_start_times
+        (Schedule.both (Schedule.recurs 3) (Schedule.spaced (Duration.ms 10)))
+        (Duration.ms 5)
+    in
+    Alcotest.(check (list int))
+      "fixed keeps cadence after first scheduled delay" [ 0; 15; 25; 35 ]
+      fixed_starts;
+    Alcotest.(check (list int))
+      "spaced waits after each completed action" [ 0; 15; 30; 45 ]
+      spaced_starts
+
+  let test_effect_repeat_fixed_overrun_has_no_pileup () =
+    let starts =
+      repeat_start_times
+        (Schedule.both (Schedule.recurs 3) (Schedule.fixed (Duration.ms 10)))
+        (Duration.ms 15)
+    in
+    Alcotest.(check (list int))
+      "overrun runs next recurrence immediately without replaying missed slots"
+      [ 0; 25; 40; 55 ] starts
+
   let test_effect_repeat_timeout_interrupts_loop () =
     B.with_test_clock @@ fun ctx clock rt ->
     let ticks = ref 0 in
@@ -302,6 +355,32 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 1);
     check_exit_ok Alcotest.int "succeeded after fibonacci delays" 4
       (B.await promise)
+
+  let test_effect_retry_windowed_schedule_uses_boundaries () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let attempts = ref 0 in
+    let starts = ref [] in
+    let schedule =
+      Schedule.both (Schedule.recurs 2) (Schedule.windowed (Duration.ms 10))
+    in
+    let attempt =
+      Effect.now
+      |> Effect.bind (fun now_ms ->
+             Effect.sync (fun () ->
+                 starts := now_ms :: !starts;
+                 incr attempts;
+                 !attempts))
+      |> Effect.bind (fun n ->
+             if n < 3 then Effect.fail (`Again n) else Effect.pure n)
+    in
+    let promise =
+      B.fork_run ctx rt (Effect.retry schedule (fun (`Again _) -> true) attempt)
+    in
+    drive_clock_until_resolved clock promise;
+    check_exit_ok Alcotest.int "retry result" 3 (B.await promise);
+    Alcotest.(check (list int))
+      "windowed retry starts on aligned boundaries" [ 0; 10; 20 ]
+      (List.rev !starts)
 
   let test_effect_retry_timeout_interrupts_loop () =
     B.with_test_clock @@ fun ctx clock rt ->
@@ -635,6 +714,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_repeat_recurs_zero_runs_body_once;
           Alcotest.test_case "repeat schedule uses virtual delays" `Quick
             test_effect_repeat_schedule_uses_virtual_delays;
+          Alcotest.test_case "repeat fixed cadence differs from spaced" `Quick
+            test_effect_repeat_fixed_cadence_differs_from_spaced;
+          Alcotest.test_case "repeat fixed overrun has no pileup" `Quick
+            test_effect_repeat_fixed_overrun_has_no_pileup;
           Alcotest.test_case "repeat timeout interrupts loop" `Quick
             test_effect_repeat_timeout_interrupts_loop;
           Alcotest.test_case "retry schedule until success" `Quick
@@ -643,6 +726,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_schedule_uses_virtual_delays;
           Alcotest.test_case "retry uses fibonacci virtual delays" `Quick
             test_effect_retry_fibonacci_schedule_uses_virtual_delays;
+          Alcotest.test_case "retry uses windowed boundaries" `Quick
+            test_effect_retry_windowed_schedule_uses_boundaries;
           Alcotest.test_case "retry timeout interrupts loop" `Quick
             test_effect_retry_timeout_interrupts_loop;
           Alcotest.test_case "retry jittered schedule uses runtime random" `Quick

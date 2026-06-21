@@ -83,23 +83,25 @@ let auto ?(on_error) ~load ?random ~schedule () =
              | _ -> Effect.unit))
   in
   let rec refresh_loop resource driver =
-    match Schedule.next driver with
-    | None -> Effect.unit
-    | Some (delay, driver') ->
-        let refresh_once =
-          Effect.all_settled [ refresh resource ]
-          |> Effect.bind (function
-               | [ Ok () ] -> Effect.unit
-               | [ Error cause ] -> record_failure resource cause
-               | results ->
-                   Effect.sync (fun () ->
-                       invalid_arg
-                         ("Eta.Resource.auto: expected one refresh result, got "
-                         ^ string_of_int (List.length results))))
-        in
-        refresh_once
-        |> Effect.delay delay
-        |> Effect.bind (fun () -> refresh_loop resource driver')
+    Effect.now
+    |> Effect.bind (fun now_ms ->
+           match Schedule.next ~now_ms driver with
+           | None -> Effect.unit
+           | Some (delay, driver') ->
+               let refresh_once =
+                 Effect.all_settled [ refresh resource ]
+                 |> Effect.bind (function
+                      | [ Ok () ] -> Effect.unit
+                      | [ Error cause ] -> record_failure resource cause
+                      | results ->
+                          Effect.sync (fun () ->
+                              invalid_arg
+                                ("Eta.Resource.auto: expected one refresh result, got "
+                               ^ string_of_int (List.length results))))
+               in
+               refresh_once
+               |> Effect.delay delay
+               |> Effect.bind (fun () -> refresh_loop resource driver'))
   in
   load
   |> Effect.map (loaded load)

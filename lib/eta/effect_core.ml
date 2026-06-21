@@ -432,7 +432,7 @@ let repeat schedule eff =
     let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
     let continue = ref true in
     while !continue do
-      match Sch.next !driver with
+      match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
       | None -> continue := false
       | Some (duration, next_driver) ->
           driver := next_driver;
@@ -450,7 +450,7 @@ let retry schedule (predicate) eff =
     match run_attempt () with
     | Exit.Ok _ as ok -> ok
     | Exit.Error (Cause.Fail err) when predicate err -> (
-        match Sch.next !driver with
+        match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
         | Some (duration, next_driver) ->
             driver := next_driver;
             frame.runtime.sleep duration;
@@ -474,7 +474,7 @@ let retry_or_else schedule (predicate) ~or_else eff =
             match first_typed_failure cause with
             | Some err ->
                 if predicate err then
-                  match Sch.next !driver with
+                  match Sch.next ~now_ms:(frame.runtime.now_ms ()) !driver with
                   | Some (duration, next_driver) ->
                       driver := next_driver;
                       frame.runtime.sleep duration;

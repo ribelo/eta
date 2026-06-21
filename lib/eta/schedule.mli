@@ -5,6 +5,7 @@ type t =
   | Forever
   | Spaced of Duration.t
   | Fixed of Duration.t
+  | Windowed of Duration.t
   | Exponential of Duration.t * float
   | Fibonacci of Duration.t
   | Linear of { initial : Duration.t; step : Duration.t }
@@ -18,6 +19,7 @@ val recurs : int -> t
 val forever : t
 val spaced : Duration.t -> t
 val fixed : Duration.t -> t
+val windowed : Duration.t -> t
 val exponential : ?factor:float -> Duration.t -> t
 val fibonacci : Duration.t -> t
 val linear : initial:Duration.t -> step:Duration.t -> t
@@ -37,9 +39,12 @@ val start : ?random:Capabilities.random -> t -> driver
     runtimes should pass an explicit worker-safe random capability instead of
     relying on the same-domain default. *)
 
-val next : driver -> (Duration.t * driver) option
+val next : ?now_ms:int -> driver -> (Duration.t * driver) option
 (** Return the next delay and advanced driver, or [None] when the schedule has
-    terminated. Composed schedules advance each phase with its own local step. *)
+    terminated. Composed schedules advance each phase with its own local step.
+    Runtime drivers pass [now_ms] so cadence-aware schedules such as {!fixed}
+    and {!windowed} can account for action duration. Omitting [now_ms] preserves
+    delay-only driver behavior for manual callers. *)
 
 (** [next_delay schedule ~step] is the wait before the next attempt or [None]
     if the schedule has terminated. This compatibility helper starts a fresh

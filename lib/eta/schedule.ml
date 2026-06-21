@@ -3,6 +3,7 @@ type t =
   | Forever
   | Spaced of Duration.t
   | Fixed of Duration.t
+  | Windowed of Duration.t
   | Exponential of Duration.t * float
   | Fibonacci of Duration.t
   | Linear of { initial : Duration.t; step : Duration.t }
@@ -16,6 +17,7 @@ let recurs n = Recurs (max 0 n)
 let forever = Forever
 let spaced d = Spaced d
 let fixed d = Fixed d
+let windowed d = Windowed d
 let exponential ?(factor = 2.0) initial = Exponential (initial, factor)
 let fibonacci initial = Fibonacci initial
 let linear ~initial ~step = Linear { initial; step }
@@ -33,6 +35,7 @@ let rec pp ppf = function
   | Forever -> Format.fprintf ppf "Forever"
   | Spaced d -> Format.fprintf ppf "Spaced(%a)" Duration.pp d
   | Fixed d -> Format.fprintf ppf "Fixed(%a)" Duration.pp d
+  | Windowed d -> Format.fprintf ppf "Windowed(%a)" Duration.pp d
   | Exponential (d, f) -> Format.fprintf ppf "Exponential(%a, %g)" Duration.pp d f
   | Fibonacci d -> Format.fprintf ppf "Fibonacci(%a)" Duration.pp d
   | Linear { initial; step } ->
@@ -61,13 +64,24 @@ let add_capped a b =
   if a_ms > max_int - b_ms then Duration.ms max_int
   else Duration.ms (a_ms + b_ms)
 
+let add_ms_capped a b = if a > max_int - b then max_int else a + b
+let elapsed_since ~start now_ms = if now_ms <= start then 0 else now_ms - start
+
 let default_random = lazy (Capabilities.random_default ())
 
 type state =
   | Driver_recurs of int
   | Driver_forever
   | Driver_spaced of Duration.t
-  | Driver_fixed of Duration.t
+  | Driver_fixed of {
+      interval : Duration.t;
+      start_ms : int option;
+      last_run_ms : int option;
+    }
+  | Driver_windowed of {
+      interval : Duration.t;
+      start_ms : int option;
+    }
   | Driver_exponential of Duration.t * float * int
   | Driver_fibonacci of {
       previous : Duration.t;
@@ -93,7 +107,8 @@ let rec state_of_schedule = function
   | Recurs n -> Driver_recurs n
   | Forever -> Driver_forever
   | Spaced d -> Driver_spaced d
-  | Fixed d -> Driver_fixed d
+  | Fixed d -> Driver_fixed { interval = d; start_ms = None; last_run_ms = None }
+  | Windowed d -> Driver_windowed { interval = d; start_ms = None }
   | Exponential (d, factor) -> Driver_exponential (d, factor, 0)
   | Fibonacci d -> Driver_fibonacci { previous = Duration.zero; current = d }
   | Linear { initial; step } -> Driver_linear { initial; step; index = 0 }
@@ -107,13 +122,68 @@ let rec state_of_schedule = function
 let start ?(random = Lazy.force default_random) schedule =
   { random; state = state_of_schedule schedule }
 
-let rec next_state random = function
+let rec next_state random ~now_ms = function
   | Driver_recurs remaining ->
       if remaining > 0 then Some (Duration.zero, Driver_recurs (remaining - 1))
       else None
   | Driver_forever -> Some (Duration.zero, Driver_forever)
   | Driver_spaced d -> Some (d, Driver_spaced d)
-  | Driver_fixed d -> Some (d, Driver_fixed d)
+  | Driver_fixed { interval; start_ms; last_run_ms } ->
+      let interval_ms = Duration.to_ms interval in
+      if interval_ms = 0 then
+        Some
+          ( Duration.zero,
+            Driver_fixed { interval; start_ms; last_run_ms } )
+      else (
+        match (start_ms, last_run_ms) with
+        | Some start_ms, Some last_run_ms ->
+            let running_behind =
+              now_ms > add_ms_capped last_run_ms interval_ms
+            in
+            let elapsed = elapsed_since ~start:start_ms now_ms in
+            let boundary = interval_ms - (elapsed mod interval_ms) in
+            let delay_ms =
+              if running_behind then 0
+              else if boundary = 0 then interval_ms
+              else boundary
+            in
+            let next_run_ms =
+              if running_behind then now_ms else add_ms_capped now_ms delay_ms
+            in
+            Some
+              ( Duration.ms delay_ms,
+                Driver_fixed
+                  {
+                    interval;
+                    start_ms = Some start_ms;
+                    last_run_ms = Some next_run_ms;
+                  } )
+        | _ ->
+            Some
+              ( interval,
+                Driver_fixed
+                  {
+                    interval;
+                    start_ms = Some now_ms;
+                    last_run_ms = Some (add_ms_capped now_ms interval_ms);
+                  } ))
+  | Driver_windowed { interval; start_ms } ->
+      let interval_ms = Duration.to_ms interval in
+      if interval_ms = 0 then
+        Some (Duration.zero, Driver_windowed { interval; start_ms })
+      else (
+        match start_ms with
+        | None ->
+            Some
+              ( interval,
+                Driver_windowed { interval; start_ms = Some now_ms } )
+        | Some start_ms ->
+            let elapsed = elapsed_since ~start:start_ms now_ms in
+            let boundary = interval_ms - (elapsed mod interval_ms) in
+            let delay_ms = if boundary = 0 then interval_ms else boundary in
+            Some
+              ( Duration.ms delay_ms,
+                Driver_windowed { interval; start_ms = Some start_ms } ))
   | Driver_exponential (d, factor, step) ->
       Some
         ( scale_capped d (pow_factor factor step),
@@ -127,23 +197,23 @@ let rec next_state random = function
         ( add_capped initial delta,
           Driver_linear { initial; step; index = index + 1 } )
   | Driver_both (a, b) -> (
-      match next_state random a, next_state random b with
+      match next_state random ~now_ms a, next_state random ~now_ms b with
       | Some (da, a'), Some (db, b') ->
           Some (Duration.max da db, Driver_both (a', b'))
       | _ -> None)
   | Driver_either (a, b) -> (
-      match next_state random a, next_state random b with
+      match next_state random ~now_ms a, next_state random ~now_ms b with
       | Some (da, a'), Some (db, b') ->
           Some (Duration.min da db, Driver_either (a', b'))
       | Some (d, a'), None -> Some (d, a')
       | None, Some (d, b') -> Some (d, b')
       | None, None -> None)
   | Driver_and_then (a, b) -> (
-      match next_state random a with
+      match next_state random ~now_ms a with
       | Some (d, a') -> Some (d, Driver_and_then (a', b))
-      | None -> next_state random (state_of_schedule b))
+      | None -> next_state random ~now_ms (state_of_schedule b))
   | Driver_jittered (inner, lo, hi) -> (
-      match next_state random inner with
+      match next_state random ~now_ms inner with
       | None -> None
       | Some (d, inner') ->
           let factor =
@@ -151,12 +221,12 @@ let rec next_state random = function
           in
           Some (scale_capped d factor, Driver_jittered (inner', lo, hi)))
   | Driver_named inner -> (
-      match next_state random inner with
+      match next_state random ~now_ms inner with
       | None -> None
       | Some (d, inner') -> Some (d, Driver_named inner'))
 
-let next driver =
-  match next_state driver.random driver.state with
+let next ?(now_ms = 0) driver =
+  match next_state driver.random ~now_ms driver.state with
   | None -> None
   | Some (delay, state) -> Some (delay, { driver with state })
 
