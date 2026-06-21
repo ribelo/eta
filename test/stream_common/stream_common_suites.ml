@@ -89,6 +89,95 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (list int)) "predicate calls" [ 1; 2; 3 ]
       (List.rev !seen)
 
+  let test_filter_map_selects_values () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 5 ]
+      |> Eta_stream.Stream.filter_map (fun value ->
+             if value mod 2 = 0 then Some (value * 10) else None)
+    in
+    Alcotest.(check (list int))
+      "selected values" [ 20; 40 ] (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_filter_map_all_dropped () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 3; 5 ]
+      |> Eta_stream.Stream.filter_map (fun value ->
+             if value mod 2 = 0 then Some value else None)
+    in
+    Alcotest.(check (list int))
+      "all dropped" [] (run_ok rt (Eta_stream.run_collect stream))
+
+  let test_filter_map_effect_selects_and_drops () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ]
+      |> Eta_stream.Stream.filter_map_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    Eta.Effect.pure
+                      (if value mod 2 = 0 then Some (string_of_int value)
+                       else None)))
+    in
+    Alcotest.(check (list string))
+      "selected values" [ "2"; "4" ]
+      (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "mapper calls" [ 1; 2; 3; 4 ]
+      (List.rev !seen)
+
+  let test_filter_map_effect_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4 ]
+      |> Eta_stream.Stream.filter_map_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.bind (fun () ->
+                    if value = 3 then Eta.Effect.fail (`Mapper_failed value)
+                    else Eta.Effect.pure (Some value)))
+    in
+    (match B.run rt (Eta_stream.run_collect stream) with
+    | Eta.Exit.Error (Eta.Cause.Fail (`Mapper_failed 3)) -> ()
+    | Eta.Exit.Ok values ->
+        Alcotest.failf
+          "filter_map_effect failure unexpectedly succeeded with %d values"
+          (List.length values)
+    | Eta.Exit.Error cause ->
+        Alcotest.failf "unexpected filter_map_effect cause: %a"
+          (Eta.Cause.pp pp_hidden) cause);
+    Alcotest.(check (list int)) "stopped at mapper failure" [ 1; 2; 3 ]
+      (List.rev !seen)
+
+  let test_filter_map_take_stops_upstream () =
+    B.with_runtime @@ fun _ctx rt ->
+    let seen = ref [] in
+    let stream =
+      Eta_stream.Stream.from_iterable [ 1; 2; 3; 4; 5 ]
+      |> Eta_stream.Stream.map_effect (fun value ->
+             Eta.Effect.sync (fun () -> seen := value :: !seen)
+             |> Eta.Effect.map (fun () -> value))
+      |> Eta_stream.Stream.filter_map (fun value ->
+             if value mod 2 = 0 then Some value else None)
+      |> Eta_stream.Stream.take 2
+    in
+    Alcotest.(check (list int))
+      "taken values" [ 2; 4 ] (run_ok rt (Eta_stream.run_collect stream));
+    Alcotest.(check (list int)) "upstream stopped after second emission"
+      [ 1; 2; 3; 4 ] (List.rev !seen)
+
+  let test_filter_map_run_count_streams () =
+    B.with_runtime @@ fun _ctx rt ->
+    let stream =
+      Eta_stream.Stream.range ~start:1 ~stop:100_000
+      |> Eta_stream.Stream.filter_map (fun value ->
+             if value mod 10 = 0 then Some value else None)
+    in
+    Alcotest.(check int)
+      "count without collecting" 10_000
+      (run_ok rt (Eta_stream.run_count stream))
+
   let test_predicate_trimming_empty_streams () =
     B.with_runtime @@ fun _ctx rt ->
     let collect stream = run_ok rt (Eta_stream.run_collect stream) in
@@ -787,6 +876,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "grouped batches" `Quick test_grouped_batches;
           Alcotest.test_case "take_until_effect includes terminal value" `Quick
             test_take_until_effect_includes_terminal_value;
+          Alcotest.test_case "filter_map selects values" `Quick
+            test_filter_map_selects_values;
+          Alcotest.test_case "filter_map drops all None values" `Quick
+            test_filter_map_all_dropped;
+          Alcotest.test_case "filter_map_effect selects and drops" `Quick
+            test_filter_map_effect_selects_and_drops;
+          Alcotest.test_case "filter_map_effect mapper failure" `Quick
+            test_filter_map_effect_failure;
+          Alcotest.test_case "filter_map take stops upstream" `Quick
+            test_filter_map_take_stops_upstream;
+          Alcotest.test_case "filter_map run_count streams" `Quick
+            test_filter_map_run_count_streams;
           Alcotest.test_case "predicate trimming handles empty streams" `Quick
             test_predicate_trimming_empty_streams;
           Alcotest.test_case "take_while boundary behavior" `Quick

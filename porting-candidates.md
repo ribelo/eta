@@ -567,10 +567,12 @@ now exposes value-only `Stream.take_while`, `take_while_effect`,
 then stops rechecking the predicate. `drop_until` drops through the first true
 value, including that matching value, and then stops rechecking the predicate.
 
-### 7.3 `filter_map` / `map_accum` — **CONSIDER**
-effect-smol: `filterMap` (map + drop `None`), `mapAccum` (stateful map carrying
-an accumulator). Both are frequently reached for and awkward to express with the
-current surface. `filter_map` especially.
+### 7.3 `filter_map` / `map_accum` — **PARTIAL**
+effect-smol: `filterMap`; ZIO: `collect` / `collectZIO`. Eta now exposes the
+OCaml-idiomatic option slice as `Stream.filter_map` and
+`Stream.filter_map_effect`: `Some value` is emitted, `None` is dropped, and
+effectful mapper failures fail the stream normally. `map_accum` remains
+deferred as a separate stateful operator decision.
 
 ### 7.4 `zip` / `zip_with` / `zip_with_index` — **CONSIDER**
 effect-smol: `zip`, `zipWith`, `zipWithIndex`. Pairwise combine two streams or

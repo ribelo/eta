@@ -29,6 +29,10 @@ module Stream = struct
         ('a, 'err) t * ('err -> (unit, 'err) Eta.Effect.t)
         -> ('a, 'err) t
     | Filter : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
+    | Filter_map : ('a, 'err) t * ('a -> 'b option) -> ('b, 'err) t
+    | Filter_map_effect :
+        ('a, 'err) t * ('a -> ('b option, 'err) Eta.Effect.t)
+        -> ('b, 'err) t
     | Take : int * ('a, 'err) t -> ('a, 'err) t
     | Take_while : ('a, 'err) t * ('a -> bool) -> ('a, 'err) t
     | Take_while_effect :
@@ -97,6 +101,8 @@ module Stream = struct
       stream
   let tap_error (f) stream = Tap_error (stream, f)
   let filter (f) stream = Filter (stream, f)
+  let filter_map (f) stream = Filter_map (stream, f)
+  let filter_map_effect (f) stream = Filter_map_effect (stream, f)
   let take n stream = Take (n, stream)
   let take_while (f) stream = Take_while (stream, f)
   let take_while_effect (f) stream = Take_while_effect (stream, f)
@@ -399,6 +405,26 @@ and fold_stream :
               (fun acc value ->
                 if f value then folder.emit acc value
                 else Eta.Effect.pure (acc, true));
+        }
+  | Filter_map (inner, f) ->
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              match f value with
+              | Some mapped -> folder.emit acc mapped
+              | None -> Eta.Effect.pure (acc, true));
+        }
+  | Filter_map_effect (inner, f) ->
+      fold_stream inner acc
+        {
+          emit =
+            (fun acc value ->
+              Eta.Effect.bind
+                (function
+                  | Some mapped -> folder.emit acc mapped
+                  | None -> Eta.Effect.pure (acc, true))
+                (f value));
         }
   | Take (n, inner) ->
       if n <= 0 then Eta.Effect.pure (acc, false)

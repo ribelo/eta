@@ -60,6 +60,16 @@ module Stream : sig
       observer failure becomes the stream failure. *)
 
   val filter : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
+  val filter_map : ('a -> 'b option) -> ('a, 'err) t -> ('b, 'err) t
+  (** Map and filter in one pass. [Some value] is emitted and [None] is
+      dropped. *)
+
+  val filter_map_effect :
+    ('a -> ('b option, 'err) Eta.Effect.t) ->
+    ('a, 'err) t ->
+    ('b, 'err) t
+  (** Effectful {!filter_map}. Mapper failure fails the stream normally. *)
+
   val take : int -> ('a, 'err) t -> ('a, 'err) t
   val take_while : ('a -> bool) -> ('a, 'err) t -> ('a, 'err) t
   (** Emit the longest leading prefix whose values satisfy [predicate].
