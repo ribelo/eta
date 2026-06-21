@@ -245,6 +245,17 @@ val unless_effect : (bool, 'err) t -> ('a, 'err) t -> ('a option, 'err) t
     [unless_effect condition eff] evaluates [condition] first, then behaves as
     {!unless}. Predicate failures and diagnostics fail normally. *)
 
+val filter_or_fail :
+  ('a -> bool) -> if_false:('a -> 'err) -> ('a, 'err) t -> ('a, 'err) t
+(** Assert a predicate on a successful value.
+
+    [filter_or_fail predicate ~if_false eff] preserves [eff]'s success value
+    when [predicate value] is [true]. When [predicate value] is [false], it
+    fails with [if_false value] in Eta's typed error channel. Source typed
+    failures, defects, interruption, and finalizer diagnostics propagate
+    normally. If [predicate] or [if_false] raises, the exception is an
+    unchecked defect. *)
+
 val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
 (** Suppress typed failures from a best-effort unit effect.
 

@@ -286,6 +286,9 @@ let when_effect condition eff = bind (fun condition -> when_ condition eff) cond
 let unless_effect condition eff =
   bind (fun condition -> unless condition eff) condition
 
+let filter_or_fail predicate ~if_false eff =
+  bind (fun value -> if predicate value then pure value else fail (if_false value)) eff
+
 let ignore_errors eff = catch (fun _ -> unit) eff
 let ignore eff = catch (fun _ -> unit) (map (fun _ -> ()) eff)
 let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)

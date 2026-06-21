@@ -526,6 +526,92 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "unless_effect true skips" None
       (run_ok rt (Effect.unless_effect (Effect.pure true) source))
 
+  let test_effect_filter_or_fail_true_pass_through () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.pure 42
+      |> Effect.filter_or_fail (fun value -> value > 10) ~if_false:(fun value ->
+             `Too_small value)
+    in
+    Alcotest.(check int) "success value" 42 (run_ok rt eff)
+
+  let test_effect_filter_or_fail_false_uses_value () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.pure 7
+      |> Effect.filter_or_fail (fun value -> value > 10) ~if_false:(fun value ->
+             `Too_small value)
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Fail (`Too_small 7)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected typed failure from value, got %a"
+          (Cause.pp (fun fmt (`Too_small value) ->
+               Format.fprintf fmt "Too_small %d" value))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected typed failure"
+
+  let test_effect_filter_or_fail_source_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.fail `Source
+      |> Effect.filter_or_fail (fun (_ : int) -> true) ~if_false:(fun _ ->
+             `Filtered)
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Fail `Source) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected source typed failure, got %a"
+          (Cause.pp (fun fmt -> function
+            | `Source -> Format.pp_print_string fmt "Source"
+            | `Filtered -> Format.pp_print_string fmt "Filtered"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected source typed failure"
+
+  let test_effect_filter_or_fail_source_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.sync (fun () -> failwith "source defect")
+      |> Effect.filter_or_fail (fun (_ : int) -> true) ~if_false:(fun _ ->
+             `Filtered)
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected source defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected source defect"
+
+  let test_effect_filter_or_fail_finalizer_diagnostic () =
+    B.with_runtime @@ fun _ctx rt ->
+    let cause : [ `Source | `Filtered ] Cause.t =
+      Cause.Suppressed
+        {
+          primary = Cause.Fail `Source;
+          finalizer = Cause.Finalizer.Fail "cleanup";
+        }
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.filter_or_fail (fun (_ : int) -> true) ~if_false:(fun _ ->
+             `Filtered)
+    in
+    match B.run rt eff with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail `Source;
+            finalizer = Cause.Finalizer.Fail "cleanup";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer diagnostic, got %a"
+          (Cause.pp (fun ppf -> function
+            | `Source -> Format.pp_print_string ppf "Source"
+            | `Filtered -> Format.pp_print_string ppf "Filtered"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer diagnostic"
+
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check unit)
@@ -2895,6 +2981,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_when_effect_laziness;
           Alcotest.test_case "unless inversion" `Quick
             test_effect_unless_inversion;
+          Alcotest.test_case "filter_or_fail true pass-through" `Quick
+            test_effect_filter_or_fail_true_pass_through;
+          Alcotest.test_case "filter_or_fail false uses value" `Quick
+            test_effect_filter_or_fail_false_uses_value;
+          Alcotest.test_case "filter_or_fail source typed failure" `Quick
+            test_effect_filter_or_fail_source_typed_failure;
+          Alcotest.test_case "filter_or_fail source defect" `Quick
+            test_effect_filter_or_fail_source_defect;
+          Alcotest.test_case "filter_or_fail finalizer diagnostic" `Quick
+            test_effect_filter_or_fail_finalizer_diagnostic;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "ignore" `Quick test_effect_ignore;
           Alcotest.test_case "result" `Quick test_effect_result;

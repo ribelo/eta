@@ -261,10 +261,16 @@ failure, defect, interruption, or finalizer diagnostics stop the loop normally.
 `iterate` and `loop` remain deferred; they overlap with ordinary recursion and
 have not earned additional surface yet.
 
-### 2.8 `filterOrFail` — **CONSIDER**
+### 2.8 `filterOrFail` — **ADOPTED**
 effect-smol: `Effect.filterOrFail` (assert a predicate on the success value,
-else fail with a supplied error). Common validation step. Easily written with
-`bind` + `if`. CONSIDER.
+else fail with a supplied error).
+
+Eta exposes the narrow typed-error form as `Effect.filter_or_fail`:
+`filter_or_fail : ('a -> bool) -> if_false:('a -> 'err) -> ('a,'err) t ->
+('a,'err) t`. It preserves the source success when the predicate is true,
+fails with the `if_false` value when false, and leaves source failures and
+diagnostics to propagate normally. Eta deliberately does not import Effect's
+`NoSuchElementError` taxonomy.
 
 ### 2.9 `tap_both` / `tap_error_cause` / `tap_defect` — **CONSIDER**
 effect-smol: `Effect.tapBoth`, `tapErrorCause`, `tapDefect`. Eta has
