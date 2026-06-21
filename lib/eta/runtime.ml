@@ -25,6 +25,7 @@ let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
       error_renderer = Effect_core.default_renderer;
       fail_key = runtime.Runtime_core.default_fail_key;
       sw = runtime.Runtime_core.outer_scope;
+      interrupt_of_cancel = Effect_core.default_interrupt_of_cancel;
       finalizers;
     }
   in

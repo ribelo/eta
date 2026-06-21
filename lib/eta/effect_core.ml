@@ -17,6 +17,7 @@ type frame = {
   error_renderer : (Obj.t -> string);
   fail_key : Runtime_core.Typed_fail.key;
   sw : Runtime_contract.scope;
+  interrupt_of_cancel : 'err. exn -> 'err Cause.t;
   finalizers : (unit -> unit) list ref;
 }
 
@@ -54,6 +55,7 @@ let render_error frame err =
 let ok value = Exit.Ok value
 let[@cold] [@zero_alloc assume error] error cause = Exit.Error cause
 let default_renderer _ = "<typed failure>"
+let default_interrupt_of_cancel _ = Cause.interrupt
 
 type ('a, +'err) t =
   | Pure : 'a -> ('a, 'err) t
@@ -140,8 +142,8 @@ let interrupt_of_cancel = function
 let run_scope_body ?sw ?internal_cancel frame (body) =
   let finalizers = ref [] in
   let sw = Option.value sw ~default:frame.sw in
-  let child_frame = { frame with sw; finalizers } in
   let interrupt_of_cancel = interrupt_of_cancel internal_cancel in
+  let child_frame = { frame with sw; interrupt_of_cancel; finalizers } in
   try
     ok
       (Runtime_core.with_finalizers ~runtime:frame.runtime

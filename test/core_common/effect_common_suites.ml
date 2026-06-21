@@ -896,6 +896,231 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok Alcotest.string "fast wins" "fast" (B.await promise);
     Alcotest.(check bool) "cleanup ran" true !finalized
 
+  let test_effect_on_exit_observes_success_failure_and_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let label_int_exit = function
+      | Exit.Ok value -> "ok:" ^ string_of_int value
+      | Exit.Error (Cause.Fail err) -> "fail:" ^ err
+      | Exit.Error (Cause.Die _) -> "die"
+      | Exit.Error (Cause.Interrupt _) -> "interrupt"
+      | Exit.Error _ -> "other"
+    in
+    let success_seen = ref [] in
+    let success =
+      Effect.pure 42
+      |> Effect.on_exit (fun exit ->
+             Effect.sync (fun () ->
+                 success_seen := label_int_exit exit :: !success_seen))
+    in
+    check_exit_ok Alcotest.int "success value" 42 (B.run rt success);
+    Alcotest.(check (list string))
+      "success exit" [ "ok:42" ] (List.rev !success_seen);
+
+    let failure_seen = ref [] in
+    let failure : (int, string) Effect.t =
+      Effect.fail "body"
+      |> Effect.on_exit (fun exit ->
+             Effect.sync (fun () ->
+                 failure_seen := label_int_exit exit :: !failure_seen))
+    in
+    expect_typed_failure_eq Alcotest.string (B.run rt failure) "body";
+    Alcotest.(check (list string))
+      "failure exit" [ "fail:body" ] (List.rev !failure_seen);
+
+    let defect_seen = ref [] in
+    let defect : (int, string) Effect.t =
+      Effect.sync (fun () -> failwith "body defect")
+      |> Effect.on_exit (fun exit ->
+             Effect.sync (fun () ->
+                 defect_seen := label_int_exit exit :: !defect_seen))
+    in
+    (match B.run rt defect with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    Alcotest.(check (list string)) "defect exit" [ "die" ] (List.rev !defect_seen)
+
+  let test_effect_on_exit_observes_interruption () =
+    B.with_runtime @@ fun ctx rt ->
+    let entered, entered_resolver = B.create_promise () in
+    let observed = ref [] in
+    let label_unit_exit = function
+      | Exit.Ok () -> "ok"
+      | Exit.Error (Cause.Interrupt _) -> "interrupt"
+      | Exit.Error _ -> "other"
+    in
+    let body : (unit, string) Effect.t =
+      Effect.sync (fun () -> B.resolve entered_resolver ())
+      |> Effect.bind (fun () -> B.await_cancel_effect ())
+    in
+    let eff =
+      body
+      |> Effect.on_exit (fun exit ->
+             Effect.sync (fun () ->
+                 observed := label_unit_exit exit :: !observed))
+    in
+    let fiber = B.fork_run_cancelable ctx rt eff in
+    ignore (B.await entered : unit);
+    B.cancel_fiber fiber;
+    expect_interrupted "on_exit" (B.await_cancelable fiber);
+    Alcotest.(check (list string))
+      "interruption exit" [ "interrupt" ] (List.rev !observed)
+
+  let test_effect_on_exit_cleanup_failure_reporting () =
+    B.with_runtime @@ fun _ctx rt ->
+    let success =
+      Effect.pure 1
+      |> Effect.on_exit (fun _ -> Effect.fail "cleanup")
+    in
+    (match B.run rt success with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer cleanup failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer cleanup failure");
+
+    let failure : (int, string) Effect.t =
+      Effect.fail "body"
+      |> Effect.on_exit (fun _ -> Effect.fail "cleanup")
+    in
+    match B.run rt failure with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail "body";
+            finalizer = Cause.Finalizer.Fail "<typed failure>";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed cleanup failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected suppressed cleanup failure"
+
+  let test_acquire_use_release_exit_observes_success_failure_and_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let label_int_exit = function
+      | Exit.Ok value -> "ok:" ^ string_of_int value
+      | Exit.Error (Cause.Fail err) -> "fail:" ^ err
+      | Exit.Error (Cause.Die _) -> "die"
+      | Exit.Error (Cause.Interrupt _) -> "interrupt"
+      | Exit.Error _ -> "other"
+    in
+    let success_seen = ref [] in
+    let success =
+      Effect.acquire_use_release_exit ~acquire:(Effect.pure "resource")
+        ~release:(fun _resource exit ->
+          Effect.sync (fun () ->
+              success_seen := label_int_exit exit :: !success_seen))
+        (fun _resource -> Effect.pure 7)
+    in
+    check_exit_ok Alcotest.int "success value" 7 (B.run rt success);
+    Alcotest.(check (list string))
+      "release saw success" [ "ok:7" ] (List.rev !success_seen);
+
+    let failure_seen = ref [] in
+    let failure : (int, string) Effect.t =
+      Effect.acquire_use_release_exit ~acquire:(Effect.pure "resource")
+        ~release:(fun _resource exit ->
+          Effect.sync (fun () ->
+              failure_seen := label_int_exit exit :: !failure_seen))
+        (fun _resource -> Effect.fail "body")
+    in
+    expect_typed_failure_eq Alcotest.string (B.run rt failure) "body";
+    Alcotest.(check (list string))
+      "release saw failure" [ "fail:body" ] (List.rev !failure_seen);
+
+    let defect_seen = ref [] in
+    let defect : (int, string) Effect.t =
+      Effect.acquire_use_release_exit ~acquire:(Effect.pure "resource")
+        ~release:(fun _resource exit ->
+          Effect.sync (fun () ->
+              defect_seen := label_int_exit exit :: !defect_seen))
+        (fun _resource -> Effect.sync (fun () -> failwith "body defect"))
+    in
+    (match B.run rt defect with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected defect");
+    Alcotest.(check (list string))
+      "release saw defect" [ "die" ] (List.rev !defect_seen)
+
+  let test_acquire_use_release_exit_observes_interruption () =
+    B.with_runtime @@ fun ctx rt ->
+    let entered, entered_resolver = B.create_promise () in
+    let observed = ref [] in
+    let label_unit_exit = function
+      | Exit.Ok () -> "ok"
+      | Exit.Error (Cause.Interrupt _) -> "interrupt"
+      | Exit.Error _ -> "other"
+    in
+    let body () : (unit, string) Effect.t =
+      Effect.sync (fun () -> B.resolve entered_resolver ())
+      |> Effect.bind (fun () -> B.await_cancel_effect ())
+    in
+    let eff =
+      Effect.acquire_use_release_exit ~acquire:Effect.unit
+        ~release:(fun () exit ->
+          Effect.sync (fun () -> observed := label_unit_exit exit :: !observed))
+        body
+    in
+    let fiber = B.fork_run_cancelable ctx rt eff in
+    ignore (B.await entered : unit);
+    B.cancel_fiber fiber;
+    expect_interrupted "acquire_use_release_exit" (B.await_cancelable fiber);
+    Alcotest.(check (list string))
+      "release saw interruption" [ "interrupt" ] (List.rev !observed)
+
+  let test_acquire_use_release_exit_release_failure_reporting () =
+    B.with_runtime @@ fun _ctx rt ->
+    let success =
+      Effect.acquire_use_release_exit ~acquire:Effect.unit
+        ~release:(fun () _exit -> Effect.fail "release")
+        (fun () -> Effect.pure 1)
+    in
+    (match B.run rt success with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer release failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected finalizer release failure");
+
+    let failure : (int, string) Effect.t =
+      Effect.acquire_use_release_exit ~acquire:Effect.unit
+        ~release:(fun () _exit -> Effect.fail "release")
+        (fun () -> Effect.fail "body")
+    in
+    match B.run rt failure with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail "body";
+            finalizer = Cause.Finalizer.Fail "<typed failure>";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected suppressed release failure, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "expected suppressed release failure"
+
+  let test_with_resource_exit_alias_success () =
+    B.with_runtime @@ fun _ctx rt ->
+    let released = ref false in
+    let eff =
+      Effect.with_resource_exit ~acquire:(Effect.pure "resource")
+        ~release:(fun resource exit ->
+          Effect.sync (fun () ->
+              match (resource, exit) with
+              | "resource", Exit.Ok 3 -> released := true
+              | _ -> Alcotest.fail "unexpected release input"))
+        (fun _resource -> Effect.pure 3)
+    in
+    check_exit_ok Alcotest.int "alias value" 3 (B.run rt eff);
+    Alcotest.(check bool) "alias released" true !released
+
   let test_effect_catch_preserves_suppressed_finalizer_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let handler_ran = ref false in
@@ -2017,6 +2242,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_finally_suppresses_cleanup_failure_after_defect;
           Alcotest.test_case "finally runs on cancellation" `Quick
             test_effect_finally_runs_on_cancellation;
+          Alcotest.test_case "on_exit observes success failure and defect"
+            `Quick test_effect_on_exit_observes_success_failure_and_defect;
+          Alcotest.test_case "on_exit observes interruption" `Quick
+            test_effect_on_exit_observes_interruption;
+          Alcotest.test_case "on_exit cleanup failure reporting" `Quick
+            test_effect_on_exit_cleanup_failure_reporting;
+          Alcotest.test_case
+            "acquire_use_release_exit observes success failure and defect"
+            `Quick
+            test_acquire_use_release_exit_observes_success_failure_and_defect;
+          Alcotest.test_case "acquire_use_release_exit observes interruption"
+            `Quick test_acquire_use_release_exit_observes_interruption;
+          Alcotest.test_case "acquire_use_release_exit release failure reporting"
+            `Quick test_acquire_use_release_exit_release_failure_reporting;
+          Alcotest.test_case "with_resource_exit alias success" `Quick
+            test_with_resource_exit_alias_success;
           Alcotest.test_case "catch preserves suppressed finalizer failure"
             `Quick test_effect_catch_preserves_suppressed_finalizer_failure;
           Alcotest.test_case "catch preserves finalizer defect" `Quick

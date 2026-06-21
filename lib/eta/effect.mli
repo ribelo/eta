@@ -269,6 +269,18 @@ val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
     body-bounded resource lifetimes, or {!acquire_release} and {!scoped} when
     the resource should live until an enclosing runtime or scope boundary. *)
 
+val on_exit :
+  (('a, 'err) Exit.t -> (unit, 'cleanup_err) t) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** [on_exit cleanup eff] runs [cleanup] with the full exit of [eff].
+
+    On success, [cleanup] receives [Exit.Ok value]. On typed failure,
+    unchecked defect, or interruption, it receives [Exit.Error cause].
+    Cleanup failures are reported with the same finalizer/suppressed-finalizer
+    rules as {!finally}; the original result is preserved when cleanup
+    succeeds. *)
+
 val acquire_release :
   acquire:('a, 'err) t ->
   release:('a -> (unit, 'release_err) t) ->
@@ -292,6 +304,19 @@ val acquire_use_release :
     cancellation protection, and suppressed finalizer failure reporting match
     scoped {!acquire_release}. *)
 
+val acquire_use_release_exit :
+  acquire:('a, 'err) t ->
+  release:('a -> ('b, 'err) Exit.t -> (unit, 'release_err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+(** Acquire a resource, run [body], and release it with the full exit of the
+    scoped body.
+
+    This is the exit-aware lexical bracket. [release] sees [Exit.Ok value] for
+    body success and [Exit.Error cause] for typed failure, defect, interruption,
+    or body-scope finalizer failure. Release failures use the same finalizer and
+    suppressed-finalizer reporting as {!acquire_use_release}. *)
+
 val with_resource :
   acquire:('a, 'err) t ->
   release:('a -> (unit, 'release_err) t) ->
@@ -308,6 +333,13 @@ val with_resource :
 
     Use {!acquire_release} directly when a resource should live until an
     enclosing runtime or {!scoped} boundary rather than just the callback body. *)
+
+val with_resource_exit :
+  acquire:('a, 'err) t ->
+  release:('a -> ('b, 'err) Exit.t -> (unit, 'release_err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+(** Friendly name for {!acquire_use_release_exit}. *)
 
 val scoped : ('a, 'err) t -> ('a, 'err) t
 (** Open a resource scope around an effect.
