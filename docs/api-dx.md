@@ -307,16 +307,18 @@ capabilities such as blocking pools or HTTP clients; they are not a general
 application dependency-injection channel.
 
 `Schedule` is not replaced by recursive retry loops or ad hoc sleep calls. It
-owns pure retry/repeat policy description, bounded recurrence, composition,
+owns retry/repeat policy description, bounded recurrence, composition,
 exponential and linear backoff, deterministic jitter through the runtime random
-capability, and a stateful driver for interpreters. Use
+capability, effectful input/output taps, and a stateful driver for interpreters.
+Use
 `Effect.retry policy retryable effect` instead of spelling retry lifecycle in
 application code.
 
 `Effect.repeat` is not replaced by hand-written recursion over `Schedule.start`
 and `Schedule.next`. The manual shape is useful for interpreters, but
-application code should describe a scheduled unit effect and let Eta drive the
-policy, sleeps, cancellation, and iteration failure behavior.
+`Schedule.next` applies only to hook-free schedules; application code should
+describe a scheduled unit effect and let Eta drive the policy, taps, sleeps,
+cancellation, and iteration failure behavior.
 
 `Duration` is not replaced by raw millisecond integers or seconds floats. The
 typed value keeps unit conversion, non-negative clamping, bounded arithmetic,

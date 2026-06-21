@@ -336,6 +336,137 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok Alcotest.int "succeeded on delayed third attempt" 3
       (B.await promise)
 
+  let test_schedule_tap_input_runs_before_inner_step () =
+    B.with_runtime @@ fun _ctx rt ->
+    let events = ref [] in
+    let attempts = ref 0 in
+    let record event = Effect.sync (fun () -> events := event :: !events) in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_output (fun output -> record (`Output output))
+      |> Schedule.tap_input (fun (`Again n) -> record (`Input n))
+    in
+    let attempt =
+      Effect.sync (fun () ->
+          incr attempts;
+          events := `Attempt !attempts :: !events;
+          !attempts)
+      |> Effect.bind (fun n ->
+             if n = 1 then Effect.fail (`Again n) else Effect.pure n)
+    in
+    Alcotest.(check int) "retry result" 2
+      (run_ok rt (Effect.retry schedule (fun (`Again _) -> true) attempt));
+    Alcotest.(check (list (testable pp_hidden ( = ))))
+      "tap input before inner output"
+      [ `Attempt 1; `Input 1; `Output 0; `Attempt 2 ]
+      (List.rev !events)
+
+  let test_schedule_tap_output_runs_on_continue_and_done () =
+    B.with_runtime @@ fun _ctx rt ->
+    let outputs = ref [] in
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_output (fun output ->
+             Effect.sync (fun () -> outputs := output :: !outputs))
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    (match B.run rt (Effect.retry schedule (fun `Again -> true) attempt) with
+    | Exit.Error (Cause.Fail `Again) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected final typed failure, got %a"
+          (Cause.pp (fun fmt `Again -> Format.pp_print_string fmt "Again"))
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected final typed failure");
+    Alcotest.(check int) "initial plus retry" 2 !attempts;
+    Alcotest.(check (list int)) "continue and done outputs" [ 0; 1 ]
+      (List.rev !outputs)
+
+  let test_schedule_tap_failure_stops_retry_without_sleep () =
+    B.with_test_clock @@ fun _ctx clock rt ->
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.spaced (Duration.ms 10)
+      |> Schedule.tap_input (fun _ -> Effect.fail `Tap_failed)
+    in
+    let attempt : (unit, [ `Again | `Tap_failed ]) Effect.t =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    (match
+       B.run rt
+         (Effect.retry schedule
+            (function `Again -> true | `Tap_failed -> false)
+            attempt)
+     with
+    | Exit.Error (Cause.Fail `Tap_failed) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected tap failure, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected tap failure");
+    Alcotest.(check int) "source attempted once" 1 !attempts;
+    Alcotest.(check int) "no retry sleep scheduled" 0 (B.sleeper_count clock)
+
+  let test_schedule_tap_failure_stops_repeat () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ticks = ref 0 in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_output (fun _ -> Effect.fail `Tap_failed)
+    in
+    let body =
+      Effect.sync (fun () ->
+          incr ticks;
+          ())
+    in
+    (match B.run rt (Effect.repeat schedule body) with
+    | Exit.Error (Cause.Fail `Tap_failed) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected tap failure, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected tap failure");
+    Alcotest.(check int) "body ran before failed schedule tap" 1 !ticks
+
+  let test_schedule_tap_callback_exception_is_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let defect = Failure "tap callback boom" in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_input (fun _ -> raise defect)
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    (match B.run rt (Effect.retry schedule (fun `Again -> true) attempt) with
+    | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected tap callback defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected tap callback defect");
+    Alcotest.(check int) "source attempted once" 1 !attempts
+
+  let test_schedule_tap_interruption_is_preserved () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_input (fun _ -> runtime_interrupt_effect ())
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    (match B.run rt (Effect.retry schedule (fun `Again -> true) attempt) with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected tap interruption, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected tap interruption");
+    Alcotest.(check int) "source attempted once" 1 !attempts
+
   let test_effect_retry_fibonacci_schedule_uses_virtual_delays () =
     B.with_test_clock @@ fun ctx clock rt ->
     let attempts = ref 0 in
@@ -781,6 +912,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_schedule_until_success;
           Alcotest.test_case "retry schedule uses virtual delays" `Quick
             test_effect_retry_schedule_uses_virtual_delays;
+          Alcotest.test_case "schedule tap_input runs before inner step" `Quick
+            test_schedule_tap_input_runs_before_inner_step;
+          Alcotest.test_case "schedule tap_output runs on continue and done"
+            `Quick test_schedule_tap_output_runs_on_continue_and_done;
+          Alcotest.test_case "schedule tap failure stops retry without sleep"
+            `Quick test_schedule_tap_failure_stops_retry_without_sleep;
+          Alcotest.test_case "schedule tap failure stops repeat" `Quick
+            test_schedule_tap_failure_stops_repeat;
+          Alcotest.test_case "schedule tap callback exception is defect" `Quick
+            test_schedule_tap_callback_exception_is_defect;
+          Alcotest.test_case "schedule tap interruption is preserved" `Quick
+            test_schedule_tap_interruption_is_preserved;
           Alcotest.test_case "retry uses fibonacci virtual delays" `Quick
             test_effect_retry_fibonacci_schedule_uses_virtual_delays;
           Alcotest.test_case "retry uses windowed boundaries" `Quick

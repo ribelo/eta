@@ -8,6 +8,7 @@
   effect_core
   effect_observability
   effect_resource
+  effect_schedule
   effect_supervisor_scope
   runtime_core
   runtime_erasure

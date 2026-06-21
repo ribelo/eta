@@ -278,16 +278,18 @@ val tap_defect :
     fails normally from the observer path. *)
 
 val retry :
-  ('err, 'schedule_out) Schedule.t ->
+  ('err, 'schedule_out, (unit, 'err) t) Schedule.t ->
   ('err -> bool) ->
   ('a, 'err) t ->
   ('a, 'err) t
 (** Retry an effect while the schedule continues and [predicate] accepts the
     typed failure. The typed failure is passed to the schedule as input.
-    Defects, interruption, and finalizer diagnostics are not retried. *)
+    Schedule taps run in the current Eta runtime; tap failures fail the retry
+    normally through the same typed channel. Defects, interruption, and
+    finalizer diagnostics are not retried. *)
 
 val retry_or_else :
-  ('err1, 'schedule_out) Schedule.t ->
+  ('err1, 'schedule_out, (unit, 'err2) t) Schedule.t ->
   ('err1 -> bool) ->
   or_else:('err1 -> 'schedule_out option -> ('a, 'err2) t) ->
   ('a, 'err1) t ->
@@ -306,8 +308,9 @@ val retry_or_else :
     first typed failure in cause order. Uncatchable diagnostics are not retried
     and do not run [or_else].
 
-    If [or_else] fails, its failure becomes the result normally; the original
-    typed failure is not suppressed or reported as a finalizer diagnostic. *)
+    Schedule taps run in the current Eta runtime. Tap failures and [or_else]
+    failures become the result normally; the original typed failure is not
+    suppressed or reported as a finalizer diagnostic. *)
 
 val now : (int, 'err) t
 (** Read the active runtime clock in milliseconds. Runtime constructors and
@@ -330,14 +333,18 @@ val timeout_as :
   Duration.t -> on_timeout:'err -> ('a, 'err) t -> ('a, 'err) t
 (** Like {!timeout}, but fails with [on_timeout] instead of widening the error
     row with raw Timeout. *)
-val repeat : ('a, 'output) Schedule.t -> ('a, 'err) t -> ('output, 'err) t
+val repeat :
+  ('a, 'output, (unit, 'err) t) Schedule.t ->
+  ('a, 'err) t ->
+  ('output, 'err) t
 (** Repeat a successful effect according to [schedule].
 
     The source effect is evaluated once before the schedule is stepped. Each
     successful value is passed to the schedule as input. When the schedule
     continues, Eta sleeps for the step delay and runs the source again. When the
-    schedule is done, [repeat] succeeds with the schedule output. The first
-    source failure stops the loop. *)
+    schedule is done, [repeat] succeeds with the schedule output. Schedule taps
+    run in the current Eta runtime; tap failures fail [repeat] normally through
+    the same typed channel. The first source failure stops the loop. *)
 
 val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
 (** [finally cleanup eff] runs [cleanup] after [eff] settles, on success,

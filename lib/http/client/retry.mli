@@ -23,7 +23,7 @@ val default_max_retry_after : Eta.Duration.t
 val make :
   ?mode:mode ->
   ?max_attempts:int ->
-  ?schedule:(unit, 'schedule_out) Eta.Schedule.t ->
+  ?schedule:(unit, 'schedule_out, Eta.Schedule.no_hook) Eta.Schedule.t ->
   ?respect_retry_after:bool ->
   ?max_retry_after:Eta.Duration.t ->
   ?retry_status:(int -> bool) ->
@@ -39,7 +39,7 @@ val default : t
 val never : t
 val always :
   ?max_attempts:int ->
-  ?schedule:(unit, 'schedule_out) Eta.Schedule.t ->
+  ?schedule:(unit, 'schedule_out, Eta.Schedule.no_hook) Eta.Schedule.t ->
   ?retry_status:(int -> bool) ->
   unit ->
   t

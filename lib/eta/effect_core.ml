@@ -6,7 +6,6 @@
 open Runtime_core
 
 module RObs = Runtime_observability
-module Sch = Schedule
 module P_atomic = Atomic
 
 (* ---------------------------------------------------------------- *)
@@ -421,78 +420,6 @@ let timeout duration eff = timeout_as duration ~on_timeout:`Timeout eff
 let uninterruptible eff =
   preserve eff @@ fun frame ->
   frame.runtime.contract.Runtime_contract.protect (fun () -> eval frame eff)
-
-let repeat schedule eff =
-  preserve eff @@ fun frame ->
-  try
-    let run_iteration () = run_scope frame eff in
-    let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-    let rec loop input =
-      match
-        Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input !driver
-      with
-      | Sch.Done metadata, _ -> ok metadata.output
-      | Sch.Continue metadata, next_driver -> (
-          driver := next_driver;
-          frame.runtime.sleep metadata.delay;
-          match run_iteration () with
-          | Exit.Ok input -> loop input
-          | Exit.Error _ as error -> error)
-    in
-    match run_iteration () with
-    | Exit.Ok input -> loop input
-    | Exit.Error _ as error -> error
-  with exn -> exit_of_exn frame exn
-
-let retry schedule (predicate) eff =
-  preserve eff @@ fun frame ->
-  let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-  let run_attempt () = run_scope frame eff in
-  let rec loop () =
-    match run_attempt () with
-    | Exit.Ok _ as ok -> ok
-    | Exit.Error (Cause.Fail err) when predicate err -> (
-        match
-          Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input:err !driver
-        with
-        | Sch.Continue metadata, next_driver ->
-            driver := next_driver;
-            frame.runtime.sleep metadata.delay;
-            loop ()
-        | Sch.Done _, _ -> error (Cause.Fail err))
-    | Exit.Error _ as err -> err
-  in
-  loop ()
-
-let retry_or_else schedule (predicate) ~or_else eff =
-  preserve eff @@ fun frame ->
-  let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
-  let last_output = ref None in
-  let run_attempt () = run_scope frame eff in
-  let rec loop () =
-    match run_attempt () with
-    | Exit.Ok _ as ok -> ok
-    | Exit.Error cause -> (
-        match stripped_uncatchable cause with
-        | Some cause -> error cause
-        | None -> (
-            match first_typed_failure cause with
-            | Some err ->
-                if predicate err then
-                  match
-                    Sch.step ~now_ms:(frame.runtime.now_ms ()) ~input:err !driver
-                  with
-                  | Sch.Continue metadata, next_driver ->
-                      driver := next_driver;
-                      last_output := Some metadata.output;
-                      frame.runtime.sleep metadata.delay;
-                      loop ()
-                  | Sch.Done metadata, _ ->
-                      eval frame (or_else err (Some metadata.output))
-                else eval frame (or_else err !last_output)
-            | None -> invalid_arg "Effect.retry_or_else: empty composite cause"))
-  in
-  loop ()
 
 let name eff = leaf_name eff
 let collect_names eff = names eff

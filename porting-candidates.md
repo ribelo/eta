@@ -377,13 +377,17 @@ like `spaced`.
 ### 3.3 Output/elapsed-aware combinators — **ADOPTED**
 effect-smol: `Schedule.elapsed`, `during`/`upTo`, `collectOutputs`,
 `tapOutput`/`tapInput`, `modifyDelay`, `whileOutput`/`recurUntil`. Eta now uses
-a typed `('input, 'output) Schedule.t` with stateful drivers that step with
-input, runtime clock, elapsed metadata, output, and `Continue`/`Done`
+a typed `('input, 'output, 'hook) Schedule.t` with stateful drivers that step
+with input, runtime clock, elapsed metadata, output, and `Continue`/`Done`
 decisions. Adopted behavior slice: `elapsed`, `during`, `modify_delay`,
-`tap_input`, `tap_output`, `while_output`, and `recur_until`. Existing
-constructors run on the same engine, and `retry`/`repeat`/`retry_or_else`/
-`Resource.auto` pass real runtime clock metadata plus their relevant schedule
-input.
+effectful `tap_input`, effectful `tap_output`, `while_output`, and
+`recur_until`. Existing constructors run on the same engine, and
+`retry`/`repeat`/`retry_or_else`/`Resource.auto` pass real runtime clock
+metadata plus their relevant schedule input. Schedule taps now run ordinary
+Eta effects in the surrounding runtime: input taps run before the inner step
+and do not advance inner state on failure; output taps run after both
+`Continue` and `Done` outputs. Hook-free schedules still support direct
+`Schedule.step`/`Schedule.next` inspection.
 
 ### 3.4 `cron` schedule — **LEAVE-TO-HUMAN**
 effect-smol ships `Cron.ts` + `Schedule.cron`. A cron-driven schedule is a real

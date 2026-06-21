@@ -255,24 +255,6 @@ let test_schedule_modify_delay () =
   let metadata, _ = next_continue driver in
   Alcotest.(check dur) "second modified delay" (Duration.ms 11) metadata.delay
 
-let test_schedule_taps_input_and_output () =
-  let inputs = ref [] in
-  let outputs = ref [] in
-  let schedule =
-    Schedule.recurs 2
-    |> Schedule.tap_input (fun input -> inputs := input :: !inputs)
-    |> Schedule.tap_output (fun output -> outputs := output :: !outputs)
-  in
-  let driver = Schedule.start schedule in
-  let _, driver = next_continue_with_input ~input:"a" driver in
-  let _, driver = next_continue_with_input ~input:"b" driver in
-  (match Schedule.step ~now_ms:0 ~input:"c" driver with
-  | Schedule.Done _, _ -> ()
-  | Schedule.Continue _, _ -> Alcotest.fail "expected tapped schedule to stop");
-  Alcotest.(check (list string)) "inputs" [ "a"; "b"; "c" ]
-    (List.rev !inputs);
-  Alcotest.(check (list int)) "outputs" [ 0; 1; 2 ] (List.rev !outputs)
-
 let test_fibonacci () =
   let schedule = Schedule.fibonacci (dur_ms 10) in
   let rec collect driver remaining acc =
@@ -613,8 +595,6 @@ let tests =
         Alcotest.test_case "output predicates and recur_until" `Quick
           test_schedule_output_predicates_and_recur_until;
         Alcotest.test_case "modify_delay" `Quick test_schedule_modify_delay;
-        Alcotest.test_case "tap_input and tap_output" `Quick
-          test_schedule_taps_input_and_output;
         Alcotest.test_case "fibonacci" `Quick test_fibonacci;
         Alcotest.test_case "fibonacci composes with recurs driver" `Quick
           test_fibonacci_composes_with_recurs_driver;

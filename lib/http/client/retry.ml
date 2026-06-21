@@ -8,7 +8,10 @@ type decision =
   | Stop
   | Retry_after of Eta.Duration.t
 
-type packed_schedule = Schedule : (unit, 'output) Eta.Schedule.t -> packed_schedule
+type packed_schedule =
+  | Schedule :
+      (unit, 'output, Eta.Schedule.no_hook) Eta.Schedule.t
+      -> packed_schedule
 
 type t = {
   mode : mode;

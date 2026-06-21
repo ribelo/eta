@@ -2,34 +2,45 @@ type ('left, 'right) and_then_output =
   | First_phase of 'left
   | Second_phase of 'right
 
-type (_, _) t =
-  | Recurs : int -> ('input, int) t
-  | Forever : ('input, int) t
-  | Spaced : Duration.t -> ('input, int) t
-  | Fixed : Duration.t -> ('input, int) t
-  | Windowed : Duration.t -> ('input, int) t
-  | Exponential : Duration.t * float -> ('input, Duration.t) t
-  | Fibonacci : Duration.t -> ('input, Duration.t) t
-  | Linear : { initial : Duration.t; step : Duration.t } -> ('input, Duration.t) t
-  | Elapsed : ('input, Duration.t) t
-  | During : Duration.t -> ('input, Duration.t) t
-  | Recur_until : ('input -> bool) -> ('input, 'input) t
-  | Both : ('input, 'a) t * ('input, 'b) t -> ('input, 'a * 'b) t
-  | Either : ('input, 'a) t * ('input, 'b) t -> ('input, 'a * 'b) t
+type (_, _, _) t =
+  | Recurs : int -> ('input, int, 'hook) t
+  | Forever : ('input, int, 'hook) t
+  | Spaced : Duration.t -> ('input, int, 'hook) t
+  | Fixed : Duration.t -> ('input, int, 'hook) t
+  | Windowed : Duration.t -> ('input, int, 'hook) t
+  | Exponential : Duration.t * float -> ('input, Duration.t, 'hook) t
+  | Fibonacci : Duration.t -> ('input, Duration.t, 'hook) t
+  | Linear : { initial : Duration.t; step : Duration.t } -> ('input, Duration.t, 'hook) t
+  | Elapsed : ('input, Duration.t, 'hook) t
+  | During : Duration.t -> ('input, Duration.t, 'hook) t
+  | Recur_until : ('input -> bool) -> ('input, 'input, 'hook) t
+  | Both :
+      ('input, 'a, 'hook) t * ('input, 'b, 'hook) t
+      -> ('input, 'a * 'b, 'hook) t
+  | Either :
+      ('input, 'a, 'hook) t * ('input, 'b, 'hook) t
+      -> ('input, 'a * 'b, 'hook) t
   | And_then :
-      ('input, 'left) t * ('input, 'right) t
-      -> ('input, ('left, 'right) and_then_output) t
+      ('input, 'left, 'hook) t * ('input, 'right, 'hook) t
+      -> ('input, ('left, 'right) and_then_output, 'hook) t
   | Modify_delay :
-      ('output -> Duration.t -> Duration.t) * ('input, 'output) t
-      -> ('input, 'output) t
+      ('output -> Duration.t -> Duration.t) * ('input, 'output, 'hook) t
+      -> ('input, 'output, 'hook) t
   | While_output :
-      ('output -> bool) * ('input, 'output) t -> ('input, 'output) t
+      ('output -> bool) * ('input, 'output, 'hook) t
+      -> ('input, 'output, 'hook) t
   | Tap_input :
-      ('input -> unit) * ('input, 'output) t -> ('input, 'output) t
+      ('input -> 'hook) * ('input, 'output, 'hook) t
+      -> ('input, 'output, 'hook) t
   | Tap_output :
-      ('output -> unit) * ('input, 'output) t -> ('input, 'output) t
-  | Jittered : ('input, 'output) t * float * float -> ('input, 'output) t
-  | Named : ('input, 'output) t * string -> ('input, 'output) t
+      ('output -> 'hook) * ('input, 'output, 'hook) t
+      -> ('input, 'output, 'hook) t
+  | Jittered :
+      ('input, 'output, 'hook) t * float * float
+      -> ('input, 'output, 'hook) t
+  | Named : ('input, 'output, 'hook) t * string -> ('input, 'output, 'hook) t
+
+type no_hook = |
 
 type ('input, 'output) metadata = {
   input : 'input;
@@ -72,7 +83,8 @@ let jittered ?(min = 0.8) ?(max = 1.2) self =
 
 let named name s = Named (s, name)
 
-let rec pp : type input output. Format.formatter -> (input, output) t -> unit =
+let rec pp :
+    type input output hook. Format.formatter -> (input, output, hook) t -> unit =
  fun ppf -> function
   | Recurs n -> Format.fprintf ppf "Recurs(%d)" n
   | Forever -> Format.fprintf ppf "Forever"
@@ -185,84 +197,95 @@ let map_continue_delay decision f =
 
 let default_random = lazy (Capabilities.random_default ())
 
-type (_, _) state =
+type (_, _, _) state =
   | Driver_recurs : {
       times : int;
       count : int;
       meta : meta_state;
-    } -> ('input, int) state
+    } -> ('input, int, 'hook) state
   | Driver_forever : {
       count : int;
       meta : meta_state;
-    } -> ('input, int) state
+    } -> ('input, int, 'hook) state
   | Driver_spaced : {
       duration : Duration.t;
       count : int;
       meta : meta_state;
-    } -> ('input, int) state
+    } -> ('input, int, 'hook) state
   | Driver_fixed : {
       interval : Duration.t;
       count : int;
       last_run_ms : int option;
       meta : meta_state;
-    } -> ('input, int) state
+    } -> ('input, int, 'hook) state
   | Driver_windowed : {
       interval : Duration.t;
       count : int;
       meta : meta_state;
-    } -> ('input, int) state
+    } -> ('input, int, 'hook) state
   | Driver_exponential : {
       initial : Duration.t;
       factor : float;
       index : int;
       meta : meta_state;
-    } -> ('input, Duration.t) state
+    } -> ('input, Duration.t, 'hook) state
   | Driver_fibonacci : {
       previous : Duration.t;
       current : Duration.t;
       meta : meta_state;
-    } -> ('input, Duration.t) state
+    } -> ('input, Duration.t, 'hook) state
   | Driver_linear : {
       initial : Duration.t;
       step : Duration.t;
       index : int;
       meta : meta_state;
-    } -> ('input, Duration.t) state
+    } -> ('input, Duration.t, 'hook) state
   | Driver_elapsed : {
       meta : meta_state;
-    } -> ('input, Duration.t) state
+    } -> ('input, Duration.t, 'hook) state
   | Driver_during : {
       duration : Duration.t;
       meta : meta_state;
-    } -> ('input, Duration.t) state
+    } -> ('input, Duration.t, 'hook) state
   | Driver_recur_until : {
       predicate : 'input -> bool;
       meta : meta_state;
-    } -> ('input, 'input) state
-  | Driver_both : ('input, 'a) phase * ('input, 'b) phase -> ('input, 'a * 'b) state
-  | Driver_either : ('input, 'a) phase * ('input, 'b) phase -> ('input, 'a * 'b) state
+    } -> ('input, 'input, 'hook) state
+  | Driver_both :
+      ('input, 'a, 'hook) phase * ('input, 'b, 'hook) phase
+      -> ('input, 'a * 'b, 'hook) state
+  | Driver_either :
+      ('input, 'a, 'hook) phase * ('input, 'b, 'hook) phase
+      -> ('input, 'a * 'b, 'hook) state
   | Driver_and_then_first :
-      ('input, 'left) state * ('input, 'right) t
-      -> ('input, ('left, 'right) and_then_output) state
+      ('input, 'left, 'hook) state * ('input, 'right, 'hook) t
+      -> ('input, ('left, 'right) and_then_output, 'hook) state
   | Driver_and_then_second :
-      ('input, 'right) state -> ('input, ('left, 'right) and_then_output) state
+      ('input, 'right, 'hook) state
+      -> ('input, ('left, 'right) and_then_output, 'hook) state
   | Driver_modify_delay :
-      ('output -> Duration.t -> Duration.t) * ('input, 'output) state
-      -> ('input, 'output) state
+      ('output -> Duration.t -> Duration.t) * ('input, 'output, 'hook) state
+      -> ('input, 'output, 'hook) state
   | Driver_while_output :
-      ('output -> bool) * ('input, 'output) state -> ('input, 'output) state
+      ('output -> bool) * ('input, 'output, 'hook) state
+      -> ('input, 'output, 'hook) state
   | Driver_tap_input :
-      ('input -> unit) * ('input, 'output) state -> ('input, 'output) state
+      ('input -> 'hook) * ('input, 'output, 'hook) state
+      -> ('input, 'output, 'hook) state
   | Driver_tap_output :
-      ('output -> unit) * ('input, 'output) state -> ('input, 'output) state
-  | Driver_jittered : ('input, 'output) state * float * float -> ('input, 'output) state
-  | Driver_named : ('input, 'output) state -> ('input, 'output) state
+      ('output -> 'hook) * ('input, 'output, 'hook) state
+      -> ('input, 'output, 'hook) state
+  | Driver_jittered :
+      ('input, 'output, 'hook) state * float * float
+      -> ('input, 'output, 'hook) state
+  | Driver_named : ('input, 'output, 'hook) state -> ('input, 'output, 'hook) state
 
-and (_, _) phase =
-  | Active : ('input, 'output) state -> ('input, 'output) phase
-  | Finished : ('input, 'output) metadata -> ('input, 'output) phase
+and (_, _, _) phase =
+  | Active : ('input, 'output, 'hook) state -> ('input, 'output, 'hook) phase
+  | Finished : ('input, 'output) metadata -> ('input, 'output, 'hook) phase
 
-let rec state_of_schedule : type input output. (input, output) t -> (input, output) state =
+let rec state_of_schedule :
+    type input output hook. (input, output, hook) t -> (input, output, hook) state =
  function
   | Recurs n -> Driver_recurs { times = n; count = 0; meta = initial_meta_state }
   | Forever -> Driver_forever { count = 0; meta = initial_meta_state }
@@ -319,26 +342,41 @@ let step_result_phase decision state =
   | Continue _ -> Active state
   | Done metadata -> Finished metadata
 
+type ('hook, 'a) suspended =
+  | Return of 'a
+  | Run_hook of 'hook * (unit -> ('hook, 'a) suspended)
+
+let return value = Return value
+
+let rec bind_suspended f step =
+  match step with
+  | Return value -> f value
+  | Run_hook (hook, resume) ->
+      Run_hook (hook, fun () -> bind_suspended f (resume ()))
+
+let map_suspended f step = bind_suspended (fun value -> Return (f value)) step
+
 let rec step_phase :
-    type input output.
+    type input output hook.
     Capabilities.random ->
     now_ms:int ->
     input:input ->
-    (input, output) phase ->
-    (input, output) decision * (input, output) phase =
+    (input, output, hook) phase ->
+    (hook, (input, output) decision * (input, output, hook) phase) suspended =
  fun random ~now_ms ~input -> function
-  | Finished metadata -> (Done metadata, Finished metadata)
+  | Finished metadata -> return (Done metadata, Finished metadata)
   | Active state ->
-      let decision, state = step_state random ~now_ms ~input state in
-      (decision, step_result_phase decision state)
+      step_state random ~now_ms ~input state
+      |> map_suspended (fun (decision, state) ->
+             (decision, step_result_phase decision state))
 
 and step_state :
-    type input output.
+    type input output hook.
     Capabilities.random ->
     now_ms:int ->
     input:input ->
-    (input, output) state ->
-    (input, output) decision * (input, output) state =
+    (input, output, hook) state ->
+    (hook, (input, output) decision * (input, output, hook) state) suspended =
  fun random ~now_ms ~input -> function
   | Driver_recurs { times; count; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
@@ -347,15 +385,17 @@ and step_state :
         if count < times then continue input_meta ~output:count ~delay:Duration.zero
         else done_ input_meta ~output:count
       in
-      (decision, state)
+      return (decision, state)
   | Driver_forever { count; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
-      ( continue input_meta ~output:count ~delay:Duration.zero,
-        Driver_forever { count = count + 1; meta } )
+      return
+        ( continue input_meta ~output:count ~delay:Duration.zero,
+          Driver_forever { count = count + 1; meta } )
   | Driver_spaced { duration; count; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
-      ( continue input_meta ~output:count ~delay:duration,
-        Driver_spaced { duration; count = count + 1; meta } )
+      return
+        ( continue input_meta ~output:count ~delay:duration,
+          Driver_spaced { duration; count = count + 1; meta } )
   | Driver_fixed { interval; count; last_run_ms; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let interval_ms = Duration.to_ms interval in
@@ -378,9 +418,10 @@ and step_state :
               in
               (delay_ms, Some next_run_ms)
       in
-      ( continue input_meta ~output:count ~delay:(Duration.ms delay_ms),
-        Driver_fixed
-          { interval; count = count + 1; last_run_ms; meta } )
+      return
+        ( continue input_meta ~output:count ~delay:(Duration.ms delay_ms),
+          Driver_fixed
+            { interval; count = count + 1; last_run_ms; meta } )
   | Driver_windowed { interval; count; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let interval_ms = Duration.to_ms interval in
@@ -391,28 +432,33 @@ and step_state :
           let boundary = interval_ms - (elapsed_ms mod interval_ms) in
           if boundary = 0 then interval_ms else boundary
       in
-      ( continue input_meta ~output:count ~delay:(Duration.ms delay_ms),
-        Driver_windowed { interval; count = count + 1; meta } )
+      return
+        ( continue input_meta ~output:count ~delay:(Duration.ms delay_ms),
+          Driver_windowed { interval; count = count + 1; meta } )
   | Driver_exponential { initial; factor; index; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let duration = scale_capped initial (pow_factor factor index) in
-      ( continue input_meta ~output:duration ~delay:duration,
-        Driver_exponential { initial; factor; index = index + 1; meta } )
+      return
+        ( continue input_meta ~output:duration ~delay:duration,
+          Driver_exponential { initial; factor; index = index + 1; meta } )
   | Driver_fibonacci { previous; current; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let next = add_capped previous current in
-      ( continue input_meta ~output:current ~delay:current,
-        Driver_fibonacci { previous = current; current = next; meta } )
+      return
+        ( continue input_meta ~output:current ~delay:current,
+          Driver_fibonacci { previous = current; current = next; meta } )
   | Driver_linear { initial; step; index; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let delta = scale_capped step (float_of_int index) in
       let duration = add_capped initial delta in
-      ( continue input_meta ~output:duration ~delay:duration,
-        Driver_linear { initial; step; index = index + 1; meta } )
+      return
+        ( continue input_meta ~output:duration ~delay:duration,
+          Driver_linear { initial; step; index = index + 1; meta } )
   | Driver_elapsed { meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
-      ( continue input_meta ~output:input_meta.elapsed ~delay:Duration.zero,
-        Driver_elapsed { meta } )
+      return
+        ( continue input_meta ~output:input_meta.elapsed ~delay:Duration.zero,
+          Driver_elapsed { meta } )
   | Driver_during { duration; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let output = input_meta.elapsed in
@@ -421,115 +467,181 @@ and step_state :
           continue input_meta ~output ~delay:Duration.zero
         else done_ input_meta ~output
       in
-      (decision, Driver_during { duration; meta })
+      return (decision, Driver_during { duration; meta })
   | Driver_recur_until { predicate; meta } ->
       let input_meta, meta = next_input_metadata ~now_ms ~input meta in
       let decision =
         if predicate input then done_ input_meta ~output:input
         else continue input_meta ~output:input ~delay:Duration.zero
       in
-      (decision, Driver_recur_until { predicate; meta })
+      return (decision, Driver_recur_until { predicate; meta })
   | Driver_both (left, right) ->
-      let left_decision, left = step_phase random ~now_ms ~input left in
-      let right_decision, right = step_phase random ~now_ms ~input right in
-      let output = (output_of_decision left_decision, output_of_decision right_decision) in
-      let decision =
-        match (left_decision, right_decision) with
-        | Continue left_metadata, Continue right_metadata ->
-            Continue
-              (combine_metadata left_metadata ~output
-                 ~delay:(Duration.max left_metadata.delay right_metadata.delay))
-        | Continue left_metadata, Done _ ->
-            Done (combine_metadata left_metadata ~output ~delay:Duration.zero)
-        | Done _, Continue right_metadata ->
-            Done (combine_metadata right_metadata ~output ~delay:Duration.zero)
-        | Done left_metadata, Done _ ->
-            Done (combine_metadata left_metadata ~output ~delay:Duration.zero)
-      in
-      (decision, Driver_both (left, right))
+      step_phase random ~now_ms ~input left
+      |> bind_suspended (fun (left_decision, left) ->
+             step_phase random ~now_ms ~input right
+             |> map_suspended (fun (right_decision, right) ->
+                    let output =
+                      ( output_of_decision left_decision,
+                        output_of_decision right_decision )
+                    in
+                    let decision =
+                      match (left_decision, right_decision) with
+                      | Continue left_metadata, Continue right_metadata ->
+                          Continue
+                            (combine_metadata left_metadata ~output
+                               ~delay:
+                                 (Duration.max left_metadata.delay
+                                    right_metadata.delay))
+                      | Continue left_metadata, Done _ ->
+                          Done
+                            (combine_metadata left_metadata ~output
+                               ~delay:Duration.zero)
+                      | Done _, Continue right_metadata ->
+                          Done
+                            (combine_metadata right_metadata ~output
+                               ~delay:Duration.zero)
+                      | Done left_metadata, Done _ ->
+                          Done
+                            (combine_metadata left_metadata ~output
+                               ~delay:Duration.zero)
+                    in
+                    (decision, Driver_both (left, right))))
   | Driver_either (left, right) ->
-      let left_decision, left = step_phase random ~now_ms ~input left in
-      let right_decision, right = step_phase random ~now_ms ~input right in
-      let output = (output_of_decision left_decision, output_of_decision right_decision) in
-      let decision =
-        match (left_decision, right_decision) with
-        | Continue left_metadata, Continue right_metadata ->
-            Continue
-              (combine_metadata left_metadata ~output
-                 ~delay:(Duration.min left_metadata.delay right_metadata.delay))
-        | Continue left_metadata, Done _ ->
-            Continue (combine_metadata left_metadata ~output ~delay:left_metadata.delay)
-        | Done _, Continue right_metadata ->
-            Continue (combine_metadata right_metadata ~output ~delay:right_metadata.delay)
-        | Done left_metadata, Done _ ->
-            Done (combine_metadata left_metadata ~output ~delay:Duration.zero)
-      in
-      (decision, Driver_either (left, right))
+      step_phase random ~now_ms ~input left
+      |> bind_suspended (fun (left_decision, left) ->
+             step_phase random ~now_ms ~input right
+             |> map_suspended (fun (right_decision, right) ->
+                    let output =
+                      ( output_of_decision left_decision,
+                        output_of_decision right_decision )
+                    in
+                    let decision =
+                      match (left_decision, right_decision) with
+                      | Continue left_metadata, Continue right_metadata ->
+                          Continue
+                            (combine_metadata left_metadata ~output
+                               ~delay:
+                                 (Duration.min left_metadata.delay
+                                    right_metadata.delay))
+                      | Continue left_metadata, Done _ ->
+                          Continue
+                            (combine_metadata left_metadata ~output
+                               ~delay:left_metadata.delay)
+                      | Done _, Continue right_metadata ->
+                          Continue
+                            (combine_metadata right_metadata ~output
+                               ~delay:right_metadata.delay)
+                      | Done left_metadata, Done _ ->
+                          Done
+                            (combine_metadata left_metadata ~output
+                               ~delay:Duration.zero)
+                    in
+                    (decision, Driver_either (left, right))))
   | Driver_and_then_first (left, right_schedule) -> (
-      let left_decision, left_state = step_state random ~now_ms ~input left in
-      match left_decision with
-      | Continue metadata ->
-          ( Continue { metadata with output = First_phase metadata.output },
-            Driver_and_then_first (left_state, right_schedule) )
-      | Done _ ->
-          let right_state = state_of_schedule right_schedule in
-          step_state random ~now_ms ~input (Driver_and_then_second right_state))
+      step_state random ~now_ms ~input left
+      |> bind_suspended (fun (left_decision, left_state) ->
+             match left_decision with
+             | Continue metadata ->
+                 return
+                   ( Continue { metadata with output = First_phase metadata.output },
+                     Driver_and_then_first (left_state, right_schedule) )
+             | Done _ ->
+                 let right_state = state_of_schedule right_schedule in
+                 step_state random ~now_ms ~input
+                   (Driver_and_then_second right_state)))
   | Driver_and_then_second state ->
-      let decision, state = step_state random ~now_ms ~input state in
-      let decision =
-        match decision with
-        | Continue metadata ->
-            Continue { metadata with output = Second_phase metadata.output }
-        | Done metadata ->
-            Done { metadata with output = Second_phase metadata.output }
-      in
-      (decision, Driver_and_then_second state)
+      step_state random ~now_ms ~input state
+      |> map_suspended (fun (decision, state) ->
+             let decision =
+               match decision with
+               | Continue metadata ->
+                   Continue { metadata with output = Second_phase metadata.output }
+               | Done metadata ->
+                   Done { metadata with output = Second_phase metadata.output }
+             in
+             (decision, Driver_and_then_second state))
   | Driver_modify_delay (f, inner) ->
-      let decision, inner = step_state random ~now_ms ~input inner in
-      ( map_continue_delay decision (fun delay ->
-            f (current_metadata decision).output delay),
-        Driver_modify_delay (f, inner) )
+      step_state random ~now_ms ~input inner
+      |> map_suspended (fun (decision, inner) ->
+             ( map_continue_delay decision (fun delay ->
+                   f (current_metadata decision).output delay),
+               Driver_modify_delay (f, inner) ))
   | Driver_while_output (predicate, inner) ->
-      let decision, inner = step_state random ~now_ms ~input inner in
-      let decision =
-        match decision with
-        | Done _ as done_ -> done_
-        | Continue metadata ->
-            if predicate metadata.output then Continue metadata
-            else Done { metadata with delay = Duration.zero }
-      in
-      (decision, Driver_while_output (predicate, inner))
+      step_state random ~now_ms ~input inner
+      |> map_suspended (fun (decision, inner) ->
+             let decision =
+               match decision with
+               | Done _ as done_ -> done_
+               | Continue metadata ->
+                   if predicate metadata.output then Continue metadata
+                   else Done { metadata with delay = Duration.zero }
+             in
+             (decision, Driver_while_output (predicate, inner)))
   | Driver_tap_input (f, inner) ->
-      f input;
-      let decision, inner = step_state random ~now_ms ~input inner in
-      (decision, Driver_tap_input (f, inner))
+      Run_hook
+        ( f input,
+          fun () ->
+            step_state random ~now_ms ~input inner
+            |> map_suspended (fun (decision, inner) ->
+                   (decision, Driver_tap_input (f, inner))) )
   | Driver_tap_output (f, inner) ->
-      let decision, inner = step_state random ~now_ms ~input inner in
-      f (current_metadata decision).output;
-      (decision, Driver_tap_output (f, inner))
+      step_state random ~now_ms ~input inner
+      |> bind_suspended (fun (decision, inner) ->
+             Run_hook
+               ( f (current_metadata decision).output,
+                 fun () -> return (decision, Driver_tap_output (f, inner)) ))
   | Driver_jittered (inner, lo, hi) ->
-      let decision, inner = step_state random ~now_ms ~input inner in
-      let decision =
-        map_continue_delay decision @@ fun delay ->
-        let factor = lo +. ((hi -. lo) *. Capabilities.random_float random 1.0) in
-        scale_capped delay factor
-      in
-      (decision, Driver_jittered (inner, lo, hi))
+      step_state random ~now_ms ~input inner
+      |> map_suspended (fun (decision, inner) ->
+             let decision =
+               map_continue_delay decision @@ fun delay ->
+               let factor =
+                 lo +. ((hi -. lo) *. Capabilities.random_float random 1.0)
+               in
+               scale_capped delay factor
+             in
+             (decision, Driver_jittered (inner, lo, hi)))
   | Driver_named inner ->
-      let decision, inner = step_state random ~now_ms ~input inner in
-      (decision, Driver_named inner)
+      step_state random ~now_ms ~input inner
+      |> map_suspended (fun (decision, inner) -> (decision, Driver_named inner))
 
-type ('input, 'output) driver = {
+type ('input, 'output, 'hook) driver = {
   random : Capabilities.random;
-  phase : ('input, 'output) phase;
+  phase : ('input, 'output, 'hook) phase;
 }
+
+type ('input, 'output, 'hook) step =
+  | Complete of
+      ('input, 'output) decision * ('input, 'output, 'hook) driver
+  | Hook of 'hook * (unit -> ('input, 'output, 'hook) step)
 
 let start ?(random = Lazy.force default_random) schedule =
   { random; phase = Active (state_of_schedule schedule) }
 
-let step ~now_ms ~input driver =
-  let decision, phase = step_phase driver.random ~now_ms ~input driver.phase in
+let step_plan ~now_ms ~input driver =
+  let rec loop = function
+    | Return (decision, phase) -> Complete (decision, { driver with phase })
+    | Run_hook (hook, resume) -> Hook (hook, fun () -> loop (resume ()))
+  in
+  loop (step_phase driver.random ~now_ms ~input driver.phase)
+
+let rec run_suspended ~run_hook = function
+  | Return value -> value
+  | Run_hook (hook, resume) ->
+      run_hook hook;
+      run_suspended ~run_hook (resume ())
+
+let step_with_hooks ~run_hook ~now_ms ~input driver =
+  let decision, phase =
+    run_suspended ~run_hook
+      (step_phase driver.random ~now_ms ~input driver.phase)
+  in
   (decision, { driver with phase })
+
+let absurd_no_hook (hook : no_hook) = match hook with _ -> .
+
+let step ~now_ms ~input driver =
+  step_with_hooks ~run_hook:absurd_no_hook ~now_ms ~input driver
 
 let next ~now_ms ~input driver =
   match step ~now_ms ~input driver with

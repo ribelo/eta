@@ -7,6 +7,7 @@ include Effect_resource
 include Effect_concurrent
 include Effect_observability
 include Effect_supervisor_scope
+include Effect_schedule
 
 let daemon_internal eff =
   preserve eff @@ fun frame ->
