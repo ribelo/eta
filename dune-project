@@ -18,6 +18,16 @@
   (dune (>= 3.0))))
 
 (package
+ (name eta_cache)
+ (synopsis "Effect-integrated keyed cache for Eta")
+ (description
+  "eta_cache provides a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta))
+
+(package
  (name eta_js)
  (allow_empty)
  (synopsis "Js_of_ocaml Eta facade")
