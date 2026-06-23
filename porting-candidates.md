@@ -667,11 +667,12 @@ state. Eta uses `Capabilities`/env-row DI for context and `annotate`/`with_conte
 for span context, which covers much of the need. A general FiberRef may conflict
 with "applications own state". Flag for a human.
 
-### 8.3 `ZIO.never` / `dieMessage` — **PORT (tiny)**
+### 8.3 `ZIO.never` / `dieMessage` — **ADOPTED**
 ZIO: `ZIO.never` (block forever until interrupted), `ZIO.dieMessage` (die with a
-string). `never` is occasionally needed for "park this fiber" patterns;
-`die_message : string -> ('a,_) t` is a one-liner over `Cause.die`. Tiny, low
-risk. Recommend the pair if a use case appears.
+string). Eta adds only `Effect.never` and `Effect.die_message`. `never` is an
+interruptible parked fiber implemented with the backend-neutral runtime promise
+path, and `die_message` is string-backed unchecked-defect sugar, not a typed
+failure or new cause taxonomy.
 
 ### 8.4 Log spans / log annotations — **CONSIDER**
 ZIO: `ZIO.logSpan`, `ZIO.logAnnotate`; effect-smol: `annotateLogs`,

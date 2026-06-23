@@ -41,6 +41,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "%s: expected Ok, got %a" label (Cause.pp pp_hidden) cause
 
+  let check_failure_message label expected = function
+    | Failure actual -> Alcotest.(check string) label expected actual
+    | exn ->
+        Alcotest.failf "%s: expected Failure, got %s" label
+          (Printexc.to_string exn)
+
   let expect_interrupted label = function
     | `Cancelled -> ()
     | `Returned (Exit.Error (Cause.Interrupt _)) -> ()
@@ -106,6 +112,60 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_pure () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check int) "pure" 42 (run_ok rt (Effect.pure 42))
+
+  let test_never_times_out_and_is_interruptible () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let timed =
+      B.fork_run ctx rt
+        (Effect.never |> Effect.timeout_as (Duration.ms 5) ~on_timeout:`Timeout)
+    in
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 5);
+    (match B.await timed with
+    | Exit.Error (Cause.Fail `Timeout) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected never timeout, got %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok _ -> Alcotest.fail "never unexpectedly succeeded");
+    let fiber = B.fork_run_cancelable ctx rt Effect.never in
+    B.yield ();
+    B.cancel_fiber fiber;
+    expect_interrupted "never" (B.await_cancelable fiber)
+
+  let test_die_message_produces_failure_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    match B.run rt (Effect.die_message "boom") with
+    | Exit.Error (Cause.Die { exn; _ }) ->
+        check_failure_message "die_message defect" "boom" exn
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die(Failure boom), got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected Die"
+
+  let test_catch_does_not_recover_die_message () =
+    B.with_runtime @@ fun _ctx rt ->
+    let eff =
+      Effect.die_message "boom"
+      |> Effect.catch (fun (`Typed : [ `Typed ]) -> Effect.pure "recovered")
+    in
+    match B.run rt eff with
+    | Exit.Error (Cause.Die { exn; _ }) ->
+        check_failure_message "uncaught die_message" "boom" exn
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die(Failure boom), got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok value ->
+        Alcotest.failf "die_message was recovered as %S" value
+
+  let test_exit_captures_die_message () =
+    B.with_runtime @@ fun _ctx rt ->
+    match run_ok rt (Effect.die_message "boom" |> Effect.exit) with
+    | Exit.Error (Cause.Die { exn; _ }) ->
+        check_failure_message "exit die_message" "boom" exn
+    | Exit.Error cause ->
+        Alcotest.failf "expected Die(Failure boom), got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected failed exit"
 
   let test_map () =
     B.with_runtime @@ fun _ctx rt ->
@@ -2944,6 +3004,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ( "Effect",
         [
           Alcotest.test_case "Pure" `Quick test_pure;
+          Alcotest.test_case "never times out and is interruptible" `Quick
+            test_never_times_out_and_is_interruptible;
+          Alcotest.test_case "die_message produces Failure defect" `Quick
+            test_die_message_produces_failure_defect;
+          Alcotest.test_case "catch does not recover die_message" `Quick
+            test_catch_does_not_recover_die_message;
+          Alcotest.test_case "exit captures die_message" `Quick
+            test_exit_captures_die_message;
           Alcotest.test_case "Map" `Quick test_map;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick

@@ -75,6 +75,19 @@ val yield : (unit, 'err) t
     scheduling yield. It delegates to the runtime contract rather than calling a
     backend primitive such as [Eio.Fiber.yield] from user code. *)
 
+val never : ('a, 'err) t
+(** An interruptible effect that never succeeds on its own.
+
+    [never] parks the current Eta fiber by waiting on an unresolved
+    backend-neutral runtime promise until it is interrupted by its parent, a
+    timeout, race loser cancellation, or another runtime cancellation source. *)
+
+val die_message : string -> ('a, 'err) t
+(** Fail with an unchecked defect carrying [Failure message].
+
+    This is sugar for a string-backed defect. It does not use the typed failure
+    channel and does not introduce a new cause taxonomy. *)
+
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 (** Transform the success value of an effect. In application code, the mapping
     operator from {!Syntax} is usually the more readable spelling. *)

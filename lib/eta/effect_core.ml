@@ -186,6 +186,25 @@ let sync_frame f =
 let sync f = sync_frame (fun _frame -> f ())
 let yield = sync_frame (fun frame -> fiber_yield frame)
 
+let never : 'a 'err. ('a, 'err) t =
+  Custom
+    {
+      eval =
+        (fun frame ->
+          let promise, _resolver =
+            frame.runtime.contract.Runtime_contract.create_promise ()
+          in
+          try ok (frame.runtime.contract.Runtime_contract.await_promise promise)
+          with
+          | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
+              raise exn
+          | exn -> exit_of_exn frame exn);
+      leaf_name = Some "Effect.never";
+      names = [];
+    }
+
+let die_message message = sync (fun () -> failwith message)
+
 (* ---------------------------------------------------------------- *)
 (* Combinators                                                       *)
 (* ---------------------------------------------------------------- *)
