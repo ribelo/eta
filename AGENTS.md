@@ -212,3 +212,6 @@ changes, call out updates to both `.ml` and `.mli` files.
 Do not treat Eta as an application framework. The README is explicit:
 applications own state; Eta owns effect description and interpretation.
 Preserve that boundary when adding features.
+
+Work is done only when it is committed. It is the agent's job to keep the
+worktree, branch, and handoff claims in sync before reporting completion.
