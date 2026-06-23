@@ -22,6 +22,7 @@ type stats = {
   opened : int;
   closed : int;
   health_rejected : int;
+  invalidated : int;
   cancelled_waiters : int;
   shutting_down : bool;
 }
@@ -51,6 +52,30 @@ val create :
 
     @raise Invalid_argument if [max_size <= 0], [max_idle < 0],
     [max_idle > max_size], or [idle_check_interval <= 0]. *)
+
+module Lease : sig
+  type ('conn, 'err) t
+
+  val resource : ('conn, 'err) t -> 'conn
+  (** Resource checked out by this lease. *)
+
+  val invalidate : ('conn, 'err) t -> (unit, 'err) Effect.t
+  (** Mark the checked-out resource for disposal when the lease is released.
+
+      Invalidating a lease is idempotent while the resource is checked out.
+      The resource remains available to the current borrower and is closed by
+      the pool finalizer instead of returning to the idle set. *)
+end
+
+val with_lease :
+  ('conn, ([> `Pool_shutdown ] as 'err)) t ->
+  (('conn, 'err) Lease.t -> ('a, 'err) Effect.t) ->
+  ('a, 'err) Effect.t
+(** Acquire one resource lease, run [body], and release the resource when
+    [body] finishes, fails, or is cancelled.
+
+    [Lease.invalidate] can be used by [body] to discard the checked-out
+    resource at release time. It does not change how [body] exits. *)
 
 val with_resource :
   ('conn, ([> `Pool_shutdown ] as 'err)) t ->

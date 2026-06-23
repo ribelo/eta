@@ -9,6 +9,7 @@ type stats = {
   opened : int;
   closed : int;
   health_rejected : int;
+  invalidated : int;
   cancelled_waiters : int;
   shutting_down : bool;
 }
@@ -41,11 +42,19 @@ type ('conn, 'err) t = {
   mutable opened : int;
   mutable closed : int;
   mutable health_rejected : int;
+  mutable invalidated : int;
   mutable shutting_down : bool;
   shutdown_requested : unit Runtime_contract.promise;
   shutdown_resolver : unit Runtime_contract.resolver;
   shutdown_contract : Runtime_contract.t;
   shutdown_resolved : bool Atomic.t;
+}
+
+type ('conn, 'err) lease = {
+  pool : ('conn, 'err) t;
+  entry : 'conn entry;
+  mutable invalidated : bool;
+  mutable released : bool;
 }
 
 let now_ms t = t.shutdown_contract.Runtime_contract.now_ms ()
@@ -88,6 +97,7 @@ let stats_locked t =
     opened = t.opened;
     closed = t.closed;
     health_rejected = t.health_rejected;
+    invalidated = t.invalidated;
     cancelled_waiters = Semaphore.cancelled_waiters t.sem;
     shutting_down = t.shutting_down;
   }
@@ -126,6 +136,11 @@ let emit_health_rejected t =
   metric_int t ~name:"eta.pool.health_rejected"
     ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
       Sync_lock.use t.mutex @@ fun () -> t.health_rejected)
+
+let emit_invalidated t =
+  metric_int t ~name:"eta.pool.invalidated"
+    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
+      Sync_lock.use t.mutex @@ fun () -> t.invalidated)
 
 let emit_cancelled_waiters t =
   metric_int t ~name:"eta.pool.cancelled_waiters"
@@ -220,6 +235,30 @@ let mark_opened t =
 let mark_health_rejected t =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () -> t.health_rejected <- t.health_rejected + 1
+
+let mark_lease_invalidated lease =
+  Effect.sync @@ fun () ->
+  let t = lease.pool in
+  with_lock t @@ fun () ->
+  if lease.released || lease.invalidated then false
+  else (
+    lease.invalidated <- true;
+    t.invalidated <- t.invalidated + 1;
+    true)
+
+module Lease = struct
+  type nonrec ('conn, 'err) t = ('conn, 'err) lease
+
+  let resource lease = lease.entry.conn
+
+  let invalidate lease =
+    mark_lease_invalidated lease
+    |> Effect.bind (function
+         | false -> Effect.unit
+         | true ->
+             log lease.pool "eta.pool.invalidated"
+             |> Effect.bind (fun () -> emit_invalidated lease.pool))
+end
 
 let mark_closed ?(release_permit = true) t =
   Effect.sync @@ fun () ->
@@ -346,13 +385,19 @@ let mark_released_to_close t =
 let mark_active_close_finished t =
   mark_released_to_close t |> Effect.bind (fun () -> emit_gauges t)
 
-let release_entry ?(release_permit = true) t entry =
+let make_lease t entry =
+  { pool = t; entry; invalidated = false; released = false }
+
+let release_lease ?(release_permit = true) lease =
+  let t = lease.pool in
+  let entry = lease.entry in
   let decide =
     Effect.sync @@ fun () ->
     let now = if t.expires_entries then now_ms t else 0 in
     with_lock t @@ fun () ->
     let close =
-      t.shutting_down
+      lease.invalidated
+      || t.shutting_down
       || (
            t.expires_entries
            &&
@@ -361,6 +406,7 @@ let release_entry ?(release_permit = true) t entry =
                duration_expired ~now max_lifetime entry.created_ms
            | None -> false)
     in
+    lease.released <- true;
     if close || t.idle_count >= t.max_idle then `Close
     else (
       entry.last_used_ms <- now;
@@ -493,7 +539,7 @@ let rec run_acquisition t state =
 
 let acquire_entry t = run_acquisition t Reserve_slot
 
-let with_resource t body =
+let with_lease t body =
   let checkout () =
     let acquired = ref None in
     let release_permit =
@@ -503,16 +549,17 @@ let with_resource t body =
       Effect.sync (fun () -> !acquired)
       |> Effect.bind (function
            | None -> release_permit
-           | Some entry ->
-               release_entry ~release_permit:false t entry
+           | Some lease ->
+               release_lease ~release_permit:false lease
                |> Effect.finally release_permit)
     in
     Effect.finally release_acquired
       (Effect.scoped
          (span t "eta.pool.acquire" (acquire_entry t)
          |> Effect.bind (fun entry ->
-                Effect.sync (fun () -> acquired := Some entry)
-                |> Effect.bind (fun () -> body entry.conn))))
+                let lease = make_lease t entry in
+                Effect.sync (fun () -> acquired := Some lease)
+                |> Effect.bind (fun () -> body lease))))
   in
   Effect.sync (fun () -> Sync_lock.use t.mutex (fun () -> t.shutting_down))
   |> Effect.bind (function
@@ -524,6 +571,9 @@ let with_resource t body =
            |> Effect.bind (function
                 | `Shutdown -> Effect.fail `Pool_shutdown
                 | `Acquired -> checkout ()))
+
+let with_resource t body =
+  with_lease t (fun lease -> body (Lease.resource lease))
 
 let evict_idle_once t =
   let expired =
@@ -584,6 +634,7 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
            opened = 0;
            closed = 0;
            health_rejected = 0;
+           invalidated = 0;
            shutting_down = false;
            shutdown_requested;
            shutdown_resolver;

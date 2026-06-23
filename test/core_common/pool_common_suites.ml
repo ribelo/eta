@@ -55,6 +55,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected Die, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected Die"
 
+  let expect_interrupt label = function
+    | Exit.Error cause when Cause.is_interrupt_only cause -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "%s: expected interrupt, got %a" label
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.failf "%s: expected interrupt, got Ok" label
+
+  let runtime_interrupt_effect () =
+    Effect.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
+    let contract = Effect.Expert.contract context in
+    contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
+    contract.Eta.Runtime_contract.cancel cancel_context Exit;
+    contract.Eta.Runtime_contract.await_cancel ()
+
   let wait_until ?(attempts = 300) pred =
     let rec loop n =
       if pred () then ()
@@ -74,9 +88,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       if pred stats then ()
       else if n = 0 then
         Alcotest.failf
-          "condition did not become true: active=%d idle=%d waiting=%d opened=%d closed=%d"
+          "condition did not become true: active=%d idle=%d waiting=%d opened=%d closed=%d invalidated=%d"
           stats.Pool.active stats.Pool.idle stats.Pool.waiting
-          stats.Pool.opened stats.Pool.closed
+          stats.Pool.opened stats.Pool.closed stats.Pool.invalidated
       else (
         B.yield ();
         loop (n - 1))
@@ -188,6 +202,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let stats = Pool.stats pool in
     Alcotest.(check int) "active" 0 stats.Pool.active;
     Alcotest.(check int) "idle" 1 stats.Pool.idle;
+    Alcotest.(check int) "not invalidated" 0 stats.Pool.invalidated;
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_with_resource_body_typed_failure_releases_resource () =
@@ -199,6 +214,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let stats = Pool.stats pool in
     Alcotest.(check int) "active" 0 stats.Pool.active;
     Alcotest.(check int) "idle" 1 stats.Pool.idle;
+    Alcotest.(check int) "not invalidated" 0 stats.Pool.invalidated;
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_with_resource_body_defect_releases_resource () =
@@ -212,7 +228,178 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let stats = Pool.stats pool in
     Alcotest.(check int) "active" 0 stats.Pool.active;
     Alcotest.(check int) "idle" 1 stats.Pool.idle;
+    Alcotest.(check int) "not invalidated" 0 stats.Pool.invalidated;
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_with_resource_body_interruption_releases_without_invalidation () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    B.run rt (Pool.with_resource pool (fun _ -> runtime_interrupt_effect ()))
+    |> expect_interrupt "body interruption";
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 1 stats.Pool.idle;
+    Alcotest.(check int) "closed" 0 stats.Pool.closed;
+    Alcotest.(check int) "not invalidated" 0 stats.Pool.invalidated;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_closes_on_release_and_replaces () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    let first =
+      run_ok rt
+        (Pool.with_lease pool (fun lease ->
+             let conn = Pool.Lease.resource lease in
+             Pool.Lease.invalidate lease |> E.map (fun () -> conn.id)))
+    in
+    Alcotest.(check int) "invalidated id" 1 first;
+    let after_invalidated = Pool.stats pool in
+    Alcotest.(check int) "active" 0 after_invalidated.Pool.active;
+    Alcotest.(check int) "idle" 0 after_invalidated.Pool.idle;
+    Alcotest.(check int) "closed" 1 after_invalidated.Pool.closed;
+    Alcotest.(check int) "invalidated" 1 after_invalidated.Pool.invalidated;
+    Alcotest.(check int)
+      "health not rejected" 0 after_invalidated.Pool.health_rejected;
+    Alcotest.(check int) "factory closed" 1 !(factory.closed);
+    Alcotest.(check int) "factory live" 0 !(factory.live);
+    let second = run_ok rt (Pool.with_resource pool pool_use) in
+    Alcotest.(check int) "replacement id" 2 second;
+    let after_replacement = Pool.stats pool in
+    Alcotest.(check int) "opened replacement" 2 after_replacement.Pool.opened;
+    Alcotest.(check int) "idle replacement" 1 after_replacement.Pool.idle;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_is_idempotent () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    run_ok rt
+      (Pool.with_lease pool (fun lease ->
+           Pool.Lease.invalidate lease
+           |> E.bind (fun () -> Pool.Lease.invalidate lease)
+           |> E.bind (fun () -> Pool.Lease.invalidate lease)));
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "closed once" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated once" 1 stats.Pool.invalidated;
+    Alcotest.(check int) "health not rejected" 0 stats.Pool.health_rejected;
+    Alcotest.(check int) "factory closed once" 1 !(factory.closed);
+    Alcotest.(check int) "factory live" 0 !(factory.live);
+    let replacement = run_ok rt (Pool.with_resource pool pool_use) in
+    Alcotest.(check int) "replacement id" 2 replacement;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_preserves_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    B.run rt
+      (Pool.with_lease pool (fun lease ->
+           Pool.Lease.invalidate lease |> E.bind (fun () -> E.fail `Open_failed)))
+    |> expect_fail "invalidated typed failure" (( = ) `Open_failed);
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 0 stats.Pool.idle;
+    Alcotest.(check int) "closed" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
+    let replacement = run_ok rt (Pool.with_resource pool pool_use) in
+    Alcotest.(check int) "replacement id" 2 replacement;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_preserves_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    B.run rt
+      (Pool.with_lease pool (fun lease ->
+           Pool.Lease.invalidate lease
+           |> E.bind (fun () -> E.sync (fun () -> failwith "body defect"))))
+    |> expect_die;
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 0 stats.Pool.idle;
+    Alcotest.(check int) "closed" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
+    let replacement = run_ok rt (Pool.with_resource pool pool_use) in
+    Alcotest.(check int) "replacement id" 2 replacement;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_preserves_interruption () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    B.run rt
+      (Pool.with_lease pool (fun lease ->
+           Pool.Lease.invalidate lease
+           |> E.bind (fun () -> runtime_interrupt_effect ())))
+    |> expect_interrupt "invalidated interruption";
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 0 stats.Pool.idle;
+    Alcotest.(check int) "closed" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
+    let replacement = run_ok rt (Pool.with_resource pool pool_use) in
+    Alcotest.(check int) "replacement id" 2 replacement;
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
+  let test_pool_lease_invalidation_reports_close_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let factory = make_pool_factory () in
+    let release_calls = ref 0 in
+    let release conn =
+      E.sync (fun () -> incr release_calls)
+      |> E.bind (fun () -> pool_close factory conn)
+      |> E.bind (fun () -> E.fail `Close_failed)
+    in
+    let pool =
+      run_ok rt
+        (Pool.create ~name:"test.pool" ~kind:"test" ~max_size:1
+           ~acquire:(pool_open factory) ~release ~health_check:pool_health ())
+    in
+    (match
+       B.run rt (Pool.with_lease pool (fun lease -> Pool.Lease.invalidate lease))
+     with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected invalidated close failure, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "expected invalidated close failure");
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 0 stats.Pool.idle;
+    Alcotest.(check int) "closed accounted" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
+    Alcotest.(check int) "release called once" 1 !release_calls;
+    Alcotest.(check int) "factory closed once" 1 !(factory.closed)
+
+  let test_pool_lease_invalidation_during_shutdown_closes_once () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let factory = make_pool_factory () in
+    let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
+    let holder =
+      B.fork_run ctx rt
+        (Pool.with_lease pool (fun lease ->
+             Pool.Lease.invalidate lease
+             |> E.bind (fun () -> E.delay (Duration.ms 10) E.unit)))
+    in
+    wait_until_pool_stats pool (fun stats ->
+        stats.Pool.active = 1 && stats.Pool.invalidated = 1);
+    let shutdown =
+      B.fork_run ctx rt (Pool.shutdown ~deadline:(Duration.ms 100) pool)
+    in
+    wait_until_pool_stats pool (fun stats -> stats.Pool.shutting_down);
+    advance_clock_until_all_resolved clock [ holder; shutdown ] 200;
+    check_exit_ok Alcotest.unit "holder done" () (B.await holder);
+    check_exit_ok Alcotest.unit "shutdown done" () (B.await shutdown);
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "active" 0 stats.Pool.active;
+    Alcotest.(check int) "idle" 0 stats.Pool.idle;
+    Alcotest.(check int) "waiting" 0 stats.Pool.waiting;
+    Alcotest.(check int) "closed once" 1 stats.Pool.closed;
+    Alcotest.(check int) "invalidated once" 1 stats.Pool.invalidated;
+    Alcotest.(check int) "factory closed once" 1 !(factory.closed);
+    Alcotest.(check int) "factory live" 0 !(factory.live)
 
   let test_pool_release_defect_releases_capacity () =
     B.with_runtime @@ fun _ctx rt ->
@@ -789,6 +976,30 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "shutdown log" true
       (List.exists (String.equal "eta.pool.shutdown_started") log_bodies)
 
+  let test_pool_lease_invalidation_observability () =
+    B.with_observed_runtime @@ fun _ctx rt _tracer logger meter ->
+    let factory = make_pool_factory () in
+    let pool =
+      run_ok rt
+        (Pool.create ~name:"obs.pool" ~kind:"sql.client" ~max_size:1
+           ~acquire:(pool_open factory) ~release:(pool_close factory)
+           ~health_check:pool_health ())
+    in
+    run_ok rt (Pool.with_lease pool (fun lease -> Pool.Lease.invalidate lease));
+    let stats = Pool.stats pool in
+    Alcotest.(check int) "invalidated" 1 stats.Pool.invalidated;
+    Alcotest.(check int) "closed" 1 stats.Pool.closed;
+    Alcotest.(check int) "health not rejected" 0 stats.Pool.health_rejected;
+    let metric_names = List.map (fun p -> p.Meter.name) (Meter.dump meter) in
+    let has_metric name = List.exists (String.equal name) metric_names in
+    Alcotest.(check bool)
+      "invalidated metric" true (has_metric "eta.pool.invalidated");
+    Alcotest.(check bool) "closed metric" true (has_metric "eta.pool.closed");
+    let log_bodies = List.map (fun r -> r.Logger.body) (Logger.dump logger) in
+    Alcotest.(check bool) "invalidated log" true
+      (List.exists (String.equal "eta.pool.invalidated") log_bodies);
+    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+
   let tests =
     [
       ( "Pool",
@@ -801,6 +1012,28 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_pool_with_resource_body_typed_failure_releases_resource;
           Alcotest.test_case "body defect releases resource" `Quick
             test_pool_with_resource_body_defect_releases_resource;
+          Alcotest.test_case
+            "body interruption releases without invalidation" `Quick
+            test_pool_with_resource_body_interruption_releases_without_invalidation;
+          Alcotest.test_case
+            "lease invalidation closes on release and replaces" `Quick
+            test_pool_lease_invalidation_closes_on_release_and_replaces;
+          Alcotest.test_case "lease invalidation is idempotent" `Quick
+            test_pool_lease_invalidation_is_idempotent;
+          Alcotest.test_case
+            "lease invalidation preserves typed failure" `Quick
+            test_pool_lease_invalidation_preserves_typed_failure;
+          Alcotest.test_case "lease invalidation preserves defect" `Quick
+            test_pool_lease_invalidation_preserves_defect;
+          Alcotest.test_case
+            "lease invalidation preserves interruption" `Quick
+            test_pool_lease_invalidation_preserves_interruption;
+          Alcotest.test_case
+            "lease invalidation reports close failure" `Quick
+            test_pool_lease_invalidation_reports_close_failure;
+          Alcotest.test_case
+            "lease invalidation during shutdown closes once" `Quick
+            test_pool_lease_invalidation_during_shutdown_closes_once;
           Alcotest.test_case "release defect releases capacity" `Quick
             test_pool_release_defect_releases_capacity;
           Alcotest.test_case "shutdown release defect removes idle" `Quick
@@ -843,6 +1076,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_pool_release_detects_active_underflow;
           Alcotest.test_case "observability signals" `Quick
             test_pool_observability_signals;
+          Alcotest.test_case "lease invalidation observability" `Quick
+            test_pool_lease_invalidation_observability;
         ] );
     ]
 end

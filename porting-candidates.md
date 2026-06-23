@@ -63,8 +63,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - None currently open.
 
 **Tier 3 — real behavior, bigger or design-sensitive (human call):**
-- 2.14 `cached`/`memoize` (single-flight protocol).
-- 6.7 `SubscriptionRef`; 6.8 `Pool.invalidate`; 6.3 queue strategies + batch drain.
+- 6.7 `SubscriptionRef`; 6.3 queue strategies + batch drain.
 - 2.13 error-accumulating `validate_all`.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
@@ -311,19 +310,16 @@ useful behavior for form/config validation. Slightly bigger than a one-liner;
 needs an error-collection type. Human decision on whether Eta wants accumulation
 semantics or leaves it to `all_settled` + manual partition.
 
-### 2.14 `cached` / `cached_with_ttl` / `memoize` — **CONSIDER**
+### 2.14 `cached` / `cached_with_ttl` / `memoize` — **ADOPTED / optional package**
 effect-smol: `Effect.cached`, `cachedWithTTL`, `cachedInvalidateWithTTL`; ZIO:
-`ZIO.cached(ttl)`, `ZIO.memoize`. Behavior: turn an effect into one whose result
-is computed once (or once per TTL window) and reused by later evaluations —
-`cached : ('a,'err) t -> (('a,'err) t, 'never) t`. **Confirmed:** Eta has no
-memoization anywhere in core (`lib/eta`); only `Resource` mentions caching. This
-is a genuinely useful behavior (expensive config load, single-flight
-initialization) that is awkward to build correctly by hand (needs a lock +
-one-shot cell so concurrent callers don't double-compute). The single-flight
-guarantee is a real protocol, so it plausibly clears the H-W4 bar. Bigger than a
-one-liner; human decision on whether it belongs in core or an optional helper.
-Note: the keyed/effect-smol `Cache.ts` (full LRU/TTL keyed cache) is a heavier,
-separate concern — OUT-OF-SCOPE for core, candidate for an optional package.
+`ZIO.cached(ttl)`, `ZIO.memoize`. Eta now ships the heavier keyed cache as the
+optional `eta_cache` package, keeping LRU/TTL/single-flight cache dependencies
+outside the root `eta` package. This adopts the cache portion as optional
+surface area.
+
+Core `Effect.cached` / `cached_with_ttl` / `memoize` helpers remain deferred.
+Do not add them to `lib/eta` unless separately requested; the root package still
+owns effect description and interpretation, not a general cache subsystem.
 
 ### 2.15 `timeout_fail` / `disconnect` — **mostly COVERED / niche**
 ZIO: `timeoutFail` (timeout with a custom error) is already covered by Eta's
@@ -511,16 +507,19 @@ hot-reload, connection-state watching, UI-ish event loops. It owns a real
 protocol (latest-value + change feed + close), so it plausibly clears H-W4.
 Bigger than a one-liner; human decision on core vs. `eta_stream`.
 
-### 6.8 `Pool.invalidate` (discard a known-bad checked-out resource) — **CONSIDER (confirmed gap)**
+### 6.8 `Pool.invalidate` (discard a known-bad checked-out resource) — **ADOPTED**
 effect-smol/ZIO: `Pool.invalidate` — a borrower that detects a broken resource
 (dead socket, poisoned connection) marks it so it is destroyed instead of
-returned to the pool. **Confirmed:** Eta's `Pool` is otherwise *richer* than the
-reference (it already has `max_idle`, `idle_lifetime`, `max_lifetime`,
-`idle_check_interval` eviction and a `health_check` daemon), but `with_resource`
-always returns the resource to the pool and there is no per-borrow invalidate.
-A broken connection therefore lingers until the health-check daemon catches it.
-Adding `invalidate` (or a `with_resource` variant whose body can signal
-"destroy, don't reuse") closes a real connection-pool correctness gap. CONSIDER.
+returned to the pool. Eta adopts this through checked-out lease handles:
+`Pool.with_lease`, opaque `Pool.Lease.t`, `Pool.Lease.resource`, and
+`Pool.Lease.invalidate`.
+
+`with_resource` remains source-compatible and semantically unchanged. There is
+no global raw-connection invalidation API. Borrowers explicitly invalidate a
+lease; typed failure, defect, or interruption do not auto-invalidate. The marked
+resource is closed once when the lease releases/finalizes, is not returned to
+idle, frees capacity, increments `closed` on actual close, and reports
+`stats.invalidated`, `eta.pool.invalidated`, and `"eta.pool.invalidated"`.
 
 ### 6.9 STM / transactional refs (`TxRef` family, ZIO `STM`/`TRef`) — **LEAVE-TO-HUMAN (likely deliberate omission; straddles small/big)**
 **Confirmed:** Eta has no software-transactional-memory layer anywhere (`lib/`
@@ -689,10 +688,9 @@ behavior. Eta should not absorb them into core:
 - `Config` / `ConfigProvider` — configuration loading is an application concern;
   candidate for an optional `eta_config` package, **not** core. (Borderline —
   flag if a consumer asks.)
-- `Cache` (full keyed LRU/TTL cache), `RequestResolver`/`Request` (batching/
-  dedup data layer), `ManagedRuntime`, `LayerMap`, `ExecutionPlan` — heavier
-  subsystems; if any is wanted it is an optional package, not core. (The
-  single-effect `cached`/`memoize` in 2.14 is the small, separable part.)
+- `RequestResolver`/`Request` (batching/dedup data layer), `ManagedRuntime`,
+  `LayerMap`, `ExecutionPlan` — heavier subsystems; if any is wanted it is an
+  optional package, not core.
 
 ---
 
@@ -707,9 +705,9 @@ the reference and found to meet or exceed it:
   Covers effect-smol `Tracer`/`withSpan` span options.
 - **Pool lifecycle** — Eta's `Pool` already has bounded sizing (`max_size`/
   `max_idle`), TTL/idle eviction (`idle_lifetime`/`max_lifetime`/
-  `idle_check_interval`) via a runtime daemon, and `health_check`. This is
-  *richer* than effect-smol `Pool.makeWithTTL`. Only `invalidate` is missing
-  (6.8).
+  `idle_check_interval`) via a runtime daemon, `health_check`, and checked-out
+  invalidation via `Pool.with_lease` / `Pool.Lease.invalidate`. This is
+  *richer* than effect-smol `Pool.makeWithTTL`.
 - **Semaphore** — `make`/`try_acquire`/`acquire`/`release`/`with_permits`/
   `with_permits_or_abort`/`available`/`waiting`/`cancelled_waiters` matches
   effect-smol `Semaphore` (`withPermits`/`take`/`release`).
@@ -755,14 +753,12 @@ called out on their individual entries.
    slices are adopted. The remaining small-sugar decisions are `orElse` /
    `orElseSucceed`, `when` / `unless`, `forever` / `iterate` / `loop`, and
    `filterOrFail`, plus `flip` / sequential `zip` / `race_first`.
-3. **Effect memoization (2.14):** `cached`/`memoize` is real and useful but
-   carries a single-flight protocol — core vs. optional helper is the decision.
-4. **Concurrency helpers (6.3/6.7/6.8/6.9):** queue strategies/batch drain,
-   `SubscriptionRef`, `Pool.invalidate`, and STM remain design-sensitive; STM is
-   a subsystem, not a small port.
-5. **Stream text/rate shaping (7.8/7.9):** `split_lines` / `decode_text` and
+3. **Concurrency helpers (6.3/6.7/6.9):** queue strategies/batch drain,
+   `SubscriptionRef`, and STM remain design-sensitive; STM is a subsystem, not a
+   small port.
+4. **Stream text/rate shaping (7.8/7.9):** `split_lines` / `decode_text` and
    throttle/debounce/grouped-within remain separate stream design calls.
-6. **Deferred/Latch (6.1/6.2):** already decided in `journal.md` (V-CDv2/V-CDv4);
+5. **Deferred/Latch (6.1/6.2):** already decided in `journal.md` (V-CDv2/V-CDv4);
    reopen only against the documented protocol-cluster triggers (V-CDv6).
 
 ---
@@ -770,6 +766,5 @@ called out on their individual entries.
 _Status: living catalogue. Grounded in `lib/eta/*.mli`, `lib/otel/eta_otel.mli`,
 `lib/stream/eta_stream.ml`, `journal.md`, `.reference/effect-smol`, and
 `.reference/zio`. The adopted/non-gap entries above have been refreshed against
-current source. Current still-open verified gaps include no effect
-memoization/single-flight helper (2.14) and no STM subsystem (6.9).
-Deferred/Latch were previously rejected (6.1/6.2)._
+current source. The current still-open verified gap called out here is no STM
+subsystem (6.9). Deferred/Latch were previously rejected (6.1/6.2)._
