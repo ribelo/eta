@@ -428,7 +428,11 @@ let queue_close_error t error = Queue.close_with_error t.incoming error
 
 let enqueue t message =
   Queue.send t.incoming message
-  |> Effect.catch (function `Closed | `Closed_with_error _ -> Effect.unit)
+  |> Effect.catch (function
+       | `Closed | `Closed_with_error _ -> Effect.unit
+       | `Dropped ->
+           Effect.sync (fun () ->
+               failwith "unbounded WebSocket incoming queue dropped a message"))
 
 let close_queue_for_peer_close t code reason =
   match code with

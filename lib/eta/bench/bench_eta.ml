@@ -66,8 +66,8 @@ let rec queue_try_send_loop q i n =
     Queue.try_send q i
     |> Effect.bind (function
          | `Sent -> queue_try_send_loop q (i + 1) n
-         | `Closed | `Closed_with_error _ ->
-             Effect.sync (fun () -> failwith "queue closed during bench"))
+         | `Dropped | `Full | `Closed | `Closed_with_error _ ->
+             Effect.sync (fun () -> failwith "queue try_send failed during bench"))
 
 let rec queue_try_recv_loop q remaining acc =
   if remaining = 0 then Effect.pure acc

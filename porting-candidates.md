@@ -63,7 +63,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - None currently open.
 
 **Tier 3 — real behavior, bigger or design-sensitive (human call):**
-- 6.7 `SubscriptionRef`; 6.3 queue strategies + batch drain.
+- 6.7 `SubscriptionRef`.
 - 2.13 error-accumulating `validate_all`.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
@@ -465,18 +465,30 @@ core." Standing guidance is to use `Eio.Condition` + `Eio.Mutex` directly.
 Recorded here so we don't re-litigate; only reopen against a real protocol
 cluster per V-CDv6.
 
-### 6.3 `Queue` strategies + batch drain (sliding / dropping / `take_all`) — **CONSIDER (confirmed gap)**
+### 6.3 `Queue` strategies + batch drain (sliding / dropping / `take_all`) — **ADOPTED / sliding deferred**
 effect-smol/ZIO: bounded queues with `sliding` (drop oldest) and `dropping`
 (drop newest) overflow strategies, plus batch consumers `takeAll` / `takeN` /
-`takeBetween` and `poll`. **Confirmed:** Eta's public `Queue` has `send`/`recv`/
-`try_send`/`try_recv`/`close`/`stats` only — no overflow strategy knob and no
-batch drain. The `mailbox_internal` in `lib/stream` already implements `dropped`
-accounting and `take_batch`, so both behaviors exist internally; promoting (a) a
-sliding/dropping strategy and (b) a `take_all`/`take_batch` drain to the public
-`Queue`/`Channel` would close a real backpressure + throughput gap for batching
-consumers. CONSIDER — note the journal rejected a *generic* PubSub on
-policy-choice grounds (V-CDv3), so frame any strategy knob as an explicit,
-named choice rather than a hidden default.
+`takeBetween` and `poll`. Eta adopts the queue-owned pieces with an explicit
+overflow knob:
+
+- `Queue.overflow = Unbounded | Drop_new of { capacity : int } | Backpressure of
+  { capacity : int }`.
+- `Queue.create ?overflow ()` defaults to `Unbounded`; `Queue.unbounded ()`
+  remains the source-compatible unbounded alias.
+- `Queue.offer` reports admission as `true` or `false`, so dropping is not
+  represented as a typed failure in the admission API.
+- `Queue.offer_all` returns the values not admitted by policy; `[]` means the
+  full input was admitted.
+- `Queue.send` remains an enqueue-or-fail helper and fails with [`Dropped] if a
+  drop-new queue rejects the value.
+- `Queue.try_send` reports [`Full] for full backpressure queues and [`Dropped]
+  for full drop-new queues.
+- `Queue.take_all` and `Queue.take_batch` drain currently buffered values and
+  release backpressure capacity.
+
+Sliding/drop-old is deliberately deferred for now. The adopted API keeps the
+strategy knob explicit, matching the journal guidance against hidden policy
+defaults (V-CDv3).
 
 ### 6.4 `FiberSet` / `FiberMap` / `FiberHandle` — **LEAVE-TO-HUMAN**
 effect-smol: collections that own forked fibers and interrupt them as a group.
@@ -753,9 +765,8 @@ called out on their individual entries.
    slices are adopted. The remaining small-sugar decisions are `orElse` /
    `orElseSucceed`, `when` / `unless`, `forever` / `iterate` / `loop`, and
    `filterOrFail`, plus `flip` / sequential `zip` / `race_first`.
-3. **Concurrency helpers (6.3/6.7/6.9):** queue strategies/batch drain,
-   `SubscriptionRef`, and STM remain design-sensitive; STM is a subsystem, not a
-   small port.
+3. **Concurrency helpers (6.7/6.9):** `SubscriptionRef` and STM remain
+   design-sensitive; STM is a subsystem, not a small port.
 4. **Stream text/rate shaping (7.8/7.9):** `split_lines` / `decode_text` and
    throttle/debounce/grouped-within remain separate stream design calls.
 5. **Deferred/Latch (6.1/6.2):** already decided in `journal.md` (V-CDv2/V-CDv4);
