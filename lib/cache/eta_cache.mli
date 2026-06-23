@@ -41,8 +41,8 @@ module Make (Key : Key) : sig
       long a successful or typed-failed lookup result is retained.
       [Eta.Duration.zero] means the result is not cached.
 
-      Interrupted and defective lookups are delivered to current waiters but
-      are not cached; a later [get] retries the key.
+      Interrupted, interruption-containing, and defective lookups are delivered
+      to current waiters but are not cached; a later [get] retries the key.
 
       @raise Invalid_argument if [capacity <= 0]. *)
 

@@ -62,6 +62,23 @@ let runtime_interrupt_effect () =
   contract.Runtime_contract.cancel cancel_context Exit;
   contract.Runtime_contract.await_cancel ()
 
+let mixed_interrupt_failure_cause () =
+  Cause.concurrent [ Cause.interrupt; Cause.fail (`Mixed 1) ]
+
+let mixed_interrupt_failure_effect () =
+  Effect.Expert.make ~leaf_name:"test.cache.mixed_interrupt" @@ fun _context ->
+  Exit.Error (mixed_interrupt_failure_cause ())
+
+let expect_mixed_interrupt_failure label = function
+  | Exit.Error cause when Cause.equal ( = ) (mixed_interrupt_failure_cause ()) cause ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected mixed interrupt/failure, got %a" label
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok value ->
+      Alcotest.failf "%s: expected mixed interrupt/failure, got Ok %d" label
+        value
+
 let test_cold_miss_computes_once () =
   with_runtime @@ fun rt ->
   let calls = ref 0 in
@@ -259,6 +276,21 @@ let test_interrupted_lookup_removes_pending_and_retries () =
   check_ok_int "later get retried" 42 (run_exit rt (Int_cache.get cache 1));
   Alcotest.(check int) "interrupted lookup did not poison key" 2 !calls
 
+let test_mixed_interrupt_failure_is_not_cached () =
+  with_runtime @@ fun rt ->
+  let calls = ref 0 in
+  let lookup _key =
+    Effect.sync (fun () -> incr calls; !calls)
+    |> Effect.bind (function
+         | 1 -> mixed_interrupt_failure_effect ()
+         | _ -> Effect.pure 42)
+  in
+  let cache = make_cache rt ~lookup in
+  expect_mixed_interrupt_failure "first lookup"
+    (run_ok rt (Effect.exit (Int_cache.get cache 1)));
+  check_ok_int "later get retried" 42 (run_exit rt (Int_cache.get cache 1));
+  Alcotest.(check int) "mixed interruption was not cached" 2 !calls
+
 let () =
   Alcotest.run "eta_cache"
     [
@@ -276,6 +308,8 @@ let () =
             test_lookup_defect_propagates_and_is_not_cached;
           Alcotest.test_case "interrupted lookup removes pending" `Quick
             test_interrupted_lookup_removes_pending_and_retries;
+          Alcotest.test_case "mixed interruption and failure is not cached"
+            `Quick test_mixed_interrupt_failure_is_not_cached;
         ] );
       ( "ttl",
         [

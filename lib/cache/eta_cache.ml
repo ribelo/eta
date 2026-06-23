@@ -142,12 +142,28 @@ module Make (Key : Key) = struct
     remove_entry_locked t entry;
     t.expirations <- t.expirations + 1
 
+  let rec finalizer_contains_interrupt = function
+    | Cause.Finalizer.Interrupt _ -> true
+    | Fail _ | Die _ -> false
+    | Sequential causes | Concurrent causes ->
+        List.exists finalizer_contains_interrupt causes
+    | Finalizer cause -> finalizer_contains_interrupt cause
+    | Suppressed { primary; finalizer } ->
+        finalizer_contains_interrupt primary || finalizer_contains_interrupt finalizer
+
+  let rec contains_interrupt = function
+    | Cause.Interrupt _ -> true
+    | Fail _ | Die _ -> false
+    | Sequential causes | Concurrent causes -> List.exists contains_interrupt causes
+    | Finalizer cause -> finalizer_contains_interrupt cause
+    | Suppressed { primary; finalizer } ->
+        contains_interrupt primary || finalizer_contains_interrupt finalizer
+
   let cacheable_exit = function
     | Exit.Ok _ -> true
     | Exit.Error cause ->
-        (not (Cause.is_interrupt_only cause))
-        && Cause.defects cause = []
-        && Cause.failures cause <> []
+        (not (contains_interrupt cause))
+        && Cause.defects cause = [] && Cause.failures cause <> []
 
   let retention t duration =
     let ttl_ms = Duration.to_ms duration in
