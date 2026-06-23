@@ -105,3 +105,8 @@ nix develop -c dune runtest --force
 ```
 
 Without Nix, after `opam install . --deps-only --with-test`, use `dune runtest test/stream --force`.
+
+## Design Records
+
+- [ADR 0001: effect-reader stream source](docs/adrs/0001-effect-reader-stream.md)
+- [ADR 0002: stream idle timeout](docs/adrs/0002-stream-timeout.md)
