@@ -217,7 +217,8 @@ let test_repeat_schedule done_ =
   let tick = Eta_js.Effect.sync (fun () -> incr ticks) in
   let eff =
     Eta_js.Effect.repeat (Eta_js.Schedule.recurs 2) tick
-    |> Eta_js.Effect.bind (fun () -> Eta_js.Effect.sync (fun () -> !ticks))
+    |> Eta_js.Effect.bind (fun (_repeat_count : int) ->
+           Eta_js.Effect.sync (fun () -> !ticks))
   in
   run eff ~on_result:(finish done_ (expect_ok_int "repeat schedule" 3))
 
