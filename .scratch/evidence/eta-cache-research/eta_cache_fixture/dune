@@ -1,0 +1,4 @@
+(executable
+ (name runtime_smoke)
+ (modules cache_probe runtime_smoke)
+ (libraries eta eta_eio eio_main alcotest))

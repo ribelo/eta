@@ -1,0 +1,8 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta' is dirty
+baseline (harness only)       0.000 words/hit  (minor=24.0 major=24.0 over 1000000)
+intrusive LRU hit             4.004 words/hit  (minor=4000024.0 major=4120.0 over 1000000)
+intrusive-sentinel hit        2.000 words/hit  (minor=2000024.0 major=24.0 over 1000000)
+reinsertion LRU hit        1548.019 words/hit  (minor=154300024.0 major=501849.0 over 100000)
+
+Lower words/hit = less allocation on the hit path.
+Expect sentinel-intrusive near the Hashtbl.find_opt floor and reinsertion much higher.
