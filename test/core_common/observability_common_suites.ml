@@ -9,6 +9,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+  let pp_log_level fmt = function
+    | Capabilities.Trace -> Format.pp_print_string fmt "Trace"
+    | Capabilities.Debug -> Format.pp_print_string fmt "Debug"
+    | Capabilities.Info -> Format.pp_print_string fmt "Info"
+    | Capabilities.Warn -> Format.pp_print_string fmt "Warn"
+    | Capabilities.Error -> Format.pp_print_string fmt "Error"
+    | Capabilities.Fatal -> Format.pp_print_string fmt "Fatal"
+
+  let log_level = Alcotest.testable pp_log_level ( = )
+
   let check_exit_ok testable label expected = function
     | Exit.Ok actual -> Alcotest.check testable label expected actual
     | Exit.Error cause ->
@@ -59,6 +69,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let require_current_span = function
     | Some span -> span
     | None -> Alcotest.fail "expected current span"
+
+  let only_log logger =
+    match Logger.dump logger with
+    | [ record ] -> record
+    | records -> Alcotest.failf "expected one log, got %d" (List.length records)
+
+  let log_attr key record = List.assoc_opt key record.Logger.attrs
 
   type observability_err = [ `Boom | `Db of int | `Inner | `Outer ]
 
@@ -449,6 +466,97 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         die.annotations
     | _ -> Alcotest.fail "expected Die with annotate_all diagnostics"
 
+  let test_observability_annotate_logs_propagates () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.log "request.started"
+      |> Effect.annotate_logs [ ("request.id", "req-1") ]
+    in
+    run_ok rt program;
+    let record = only_log logger in
+    Alcotest.(check string) "body" "request.started" record.Logger.body;
+    Alcotest.(check (option string)) "request id" (Some "req-1")
+      (log_attr "request.id" record)
+
+  let test_observability_annotate_logs_nested_composition () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.log "nested"
+      |> Effect.annotate_logs [ ("inner", "yes") ]
+      |> Effect.annotate_logs [ ("outer", "yes") ]
+    in
+    run_ok rt program;
+    let record = only_log logger in
+    Alcotest.(check (list (pair string string)))
+      "attrs" [ ("outer", "yes"); ("inner", "yes") ] record.Logger.attrs
+
+  let test_observability_annotate_logs_merges_per_call_attrs () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.log ~attrs:[ ("call", "yes") ] "merged"
+      |> Effect.annotate_logs [ ("scope", "yes") ]
+    in
+    run_ok rt program;
+    let record = only_log logger in
+    Alcotest.(check (list (pair string string)))
+      "attrs" [ ("scope", "yes"); ("call", "yes") ] record.Logger.attrs
+
+  let test_observability_annotate_logs_is_fiber_local () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let branch name =
+      Effect.yield
+      |> Effect.bind (fun () -> Effect.log name)
+      |> Effect.annotate_logs [ ("branch", name) ]
+    in
+    let program = Effect.par (branch "left") (branch "right") in
+    ignore (run_ok rt program : unit * unit);
+    let records = Logger.dump logger in
+    Alcotest.(check int) "log count" 2 (List.length records);
+    List.iter
+      (fun record ->
+        Alcotest.(check (option string))
+          ("branch attr for " ^ record.Logger.body)
+          (Some record.Logger.body)
+          (log_attr "branch" record))
+      records
+
+  let test_observability_span_annotate_does_not_affect_logs () =
+    B.with_observed_runtime @@ fun _ctx rt tracer logger _meter ->
+    let program =
+      Effect.named "span"
+        (Effect.log "inside"
+        |> Effect.annotate ~key:"span.attr" ~value:"yes")
+    in
+    run_ok rt program;
+    let span = only_span tracer in
+    Alcotest.(check (option string)) "span attr" (Some "yes")
+      (attr "span.attr" span);
+    let record = only_log logger in
+    Alcotest.(check (list (pair string string))) "log attrs" []
+      record.Logger.attrs
+
+  let test_observability_log_level_helpers () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let cases =
+      [
+        (Capabilities.Trace, Effect.log_trace ~attrs:[ ("case", "trace") ] "trace");
+        (Capabilities.Debug, Effect.log_debug "debug");
+        (Capabilities.Info, Effect.log_info "info");
+        (Capabilities.Warn, Effect.log_warn "warn");
+        (Capabilities.Error, Effect.log_error "error");
+        (Capabilities.Fatal, Effect.log_fatal "fatal");
+      ]
+    in
+    run_ok rt (Effect.concat (List.map snd cases));
+    Alcotest.(check (list log_level))
+      "levels" (List.map fst cases)
+      (List.map (fun record -> record.Logger.level) (Logger.dump logger));
+    match Logger.dump logger with
+    | first :: _ ->
+        Alcotest.(check (option string)) "helper attrs" (Some "trace")
+          (log_attr "case" first)
+    | [] -> Alcotest.fail "expected helper logs"
+
   let counting_noop_tracer count : Capabilities.tracer =
     object
       method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
@@ -838,6 +946,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_noop_runtime_keeps_die_diagnostics;
           Alcotest.test_case "annotate_all die diagnostics" `Quick
             test_observability_annotate_all_die_diagnostics;
+          Alcotest.test_case "annotate_logs propagates" `Quick
+            test_observability_annotate_logs_propagates;
+          Alcotest.test_case "annotate_logs nested composition" `Quick
+            test_observability_annotate_logs_nested_composition;
+          Alcotest.test_case "annotate_logs merges per-call attrs" `Quick
+            test_observability_annotate_logs_merges_per_call_attrs;
+          Alcotest.test_case "annotate_logs is fiber-local" `Quick
+            test_observability_annotate_logs_is_fiber_local;
+          Alcotest.test_case "span annotate does not affect logs" `Quick
+            test_observability_span_annotate_does_not_affect_logs;
+          Alcotest.test_case "log level helpers" `Quick
+            test_observability_log_level_helpers;
           Alcotest.test_case "custom noop tracer is explicitly enabled" `Quick
             test_observability_custom_noop_tracer_is_explicitly_enabled;
           Alcotest.test_case "suppress observability" `Quick

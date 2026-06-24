@@ -210,9 +210,18 @@ let current_context =
         | None -> ok (local_get frame RObs.trace_context_key))
     | None -> ok (local_get frame RObs.trace_context_key)
 
+let annotate_logs attrs eff =
+  match attrs with
+  | [] -> eff
+  | _ ->
+      preserve eff @@ fun frame ->
+      RObs.with_log_attrs frame.runtime.contract attrs @@ fun () ->
+      eval frame eff
+
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   make @@ fun frame ->
   (if frame.runtime.logging_enabled then
+    let scoped_attrs = RObs.current_log_attrs frame.runtime.contract in
     let trace_id, span_id =
       if not frame.runtime.tracing_enabled then ("", "")
       else
@@ -224,8 +233,22 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
             | Some info -> (info.trace_id, info.span_id))
     in
     frame.runtime.logger#log
-      { Capabilities.level; body; ts_ms = frame.runtime.now_ms (); attrs; trace_id; span_id });
+      {
+        Capabilities.level;
+        body;
+        ts_ms = frame.runtime.now_ms ();
+        attrs = scoped_attrs @ attrs;
+        trace_id;
+        span_id;
+      });
   ok ()
+
+let log_trace ?attrs body = log ~level:Capabilities.Trace ?attrs body
+let log_debug ?attrs body = log ~level:Capabilities.Debug ?attrs body
+let log_info ?attrs body = log ~level:Capabilities.Info ?attrs body
+let log_warn ?attrs body = log ~level:Capabilities.Warn ?attrs body
+let log_error ?attrs body = log ~level:Capabilities.Error ?attrs body
+let log_fatal ?attrs body = log ~level:Capabilities.Fatal ?attrs body
 
 type metric = {
   name : string;

@@ -772,6 +772,15 @@ val current_context : (Capabilities.trace_context option, 'err) t
     span's context; otherwise it is the ambient context installed by
     {!with_context}, if any. *)
 
+val annotate_logs : (string * string) list -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effect with scoped log attributes.
+
+    [body |> annotate_logs attrs] appends [attrs] to every {!log} record emitted
+    in [body]'s dynamic scope. Nested scopes accumulate from outermost to
+    innermost, and scoped attributes are merged before per-call [log ~attrs]
+    attributes. The binding is runtime-local/fiber-local and does not affect
+    span attributes installed by {!annotate} or {!annotate_all}. *)
+
 val log :
   ?level:Capabilities.log_level ->
   ?attrs:(string * string) list ->
@@ -779,7 +788,30 @@ val log :
   (unit, 'err) t
 (** Emit a structured log record to the runtime's logger. The runtime
     automatically populates the record's [trace_id]/[span_id] from the
-    active span and [ts_ms] from the runtime's clock. *)
+    active span and [ts_ms] from the runtime's clock. Scoped attributes from
+    {!annotate_logs} are prepended to the per-call [attrs]. *)
+
+val log_trace :
+  ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Trace] level. *)
+
+val log_debug :
+  ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Debug] level. *)
+
+val log_info : ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Info] level. *)
+
+val log_warn : ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Warn] level. *)
+
+val log_error :
+  ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Error] level. *)
+
+val log_fatal :
+  ?attrs:(string * string) list -> string -> (unit, 'err) t
+(** Emit a structured log record at [Fatal] level. *)
 
 val metric_update :
   ?description:string ->

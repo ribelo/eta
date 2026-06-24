@@ -4,6 +4,8 @@ let sampled_key : bool Runtime_contract.local =
   Runtime_contract.create_local ()
 let trace_context_key : Capabilities.trace_context Runtime_contract.local =
   Runtime_contract.create_local ()
+let log_attrs_key : (string * string) list Runtime_contract.local =
+  Runtime_contract.create_local ()
 type die_context = {
   span_name : string option;
   rev_annotations : (string * string) list;
@@ -22,6 +24,18 @@ let current_die_context contract =
   match local_get contract die_context_key with
   | Some context -> context
   | None -> empty_die_context
+
+let current_log_attrs contract =
+  match local_get contract log_attrs_key with
+  | Some attrs -> attrs
+  | None -> []
+
+let with_log_attrs contract attrs f =
+  match attrs with
+  | [] -> f ()
+  | _ ->
+      let current = current_log_attrs contract in
+      local_with_binding contract log_attrs_key (current @ attrs) f
 
 let with_die_context contract context f =
   local_with_binding contract die_context_key context f

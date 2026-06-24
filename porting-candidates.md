@@ -44,6 +44,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 1.4 Console span + metric exporter.
 - 1.5 `Cause`/`Exit` inspection helpers.
 - 1.7 full distribution metric surface.
+- 1.8 level-named log helpers.
 - 2.1 `Effect.result` / `option` / `exit`.
 - 2.2 `Effect.ignore`.
 - 2.5 `Effect.timed`.
@@ -58,6 +59,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 7.1 `Stream.tap` / `tap_error`.
 - 7.6 `Stream.run_for_each` / `run_fold` / `run_count`.
 - 8.1 exit-aware finalizer (`acquire_use_release_exit`).
+- 8.4 scoped log annotations (`Effect.annotate_logs`).
 
 **Tier 2 — small, high-frequency effect ergonomics (likely worth it):**
 - None currently open.
@@ -67,8 +69,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 2.13 error-accumulating `validate_all`.
 
 **Tier 4 — taste/sugar or niche (default: skip unless a consumer asks):**
-- 1.8 level-named log helpers;
-  2.7 `iterate`/`loop`; 2.18 `flip`/`zip`/`race_first`;
+- 2.7 `iterate`/`loop`; 2.18 `flip`/`zip`/`race_first`;
   4.x random conveniences; 5.2 sub-ms precision.
 
 **Already decided / don't reopen without a protocol trigger:** Deferred (6.1),
@@ -171,13 +172,15 @@ timing plus histogram observation. `Eta_otel` aggregates the richer states,
 encodes them to OTLP JSON, and the terminal exporter renders the same structured
 metric points.
 
-### 1.8 Level-named log helpers (`log_info` / `log_error` / …) — **CONSIDER (tiny)**
+### 1.8 Level-named log helpers (`log_info` / `log_error` / …) — **ADOPTED**
 effect-smol: `Effect.logTrace`/`logDebug`/`logInfo`/`logWarning`/`logError`/
-`logFatal` (plus `logWithLevel`). Eta has a single `Effect.log ?level:... msg`.
-The per-level helpers are pure sugar over the `?level` argument, but they read
-better at call sites (`Effect.log_info "..."`) and match what users expect from
-the reference. Trivial to add; human decision on whether the sugar earns six
-extra names.
+`logFatal` (plus `logWithLevel`). Eta now exposes `Effect.log_trace`,
+`log_debug`, `log_info`, `log_warn`, `log_error`, and `log_fatal` as direct
+sugar over `Effect.log ?level`.
+
+Accepted by the committed research verdict in
+`/home/ribelo/projects/ribelo/ocaml/Eta-logging-api-research/logging-api-evidence/verdict.md`
+V-X2.
 
 ### 1.9 Scoped runtime settings (`with_minimum_log_level`, etc.) — **CONSIDER**
 effect-smol `References.ts` exposes scoped runtime knobs adjustable for a region:
@@ -674,13 +677,15 @@ interruptible parked fiber implemented with the backend-neutral runtime promise
 path, and `die_message` is string-backed unchecked-defect sugar, not a typed
 failure or new cause taxonomy.
 
-### 8.4 Log spans / log annotations — **CONSIDER**
+### 8.4 Log spans / log annotations — **ADOPTED**
 ZIO: `ZIO.logSpan`, `ZIO.logAnnotate`; effect-smol: `annotateLogs`,
-`withLogSpan`. Eta has span `annotate`/`annotate_all` for the **tracer**, but no
-equivalent for attaching key/values to **log records** for a dynamic scope.
-Since the console logger (section 1) will render `attrs`, a
-`Effect.annotate_logs` that injects attrs into every `Effect.log` in scope is a
-natural companion. CONSIDER alongside section 1.
+`withLogSpan`. Eta now exposes `Effect.annotate_logs` for dynamic, fiber-local
+log-record attributes. Nested scopes accumulate, and scoped attrs merge before
+per-call `Effect.log ~attrs`.
+
+Accepted by the committed research verdict in
+`/home/ribelo/projects/ribelo/ocaml/Eta-logging-api-research/logging-api-evidence/verdict.md`
+V-X1. `withLogSpan` remains deferred and was not adopted in this slice.
 
 ---
 
