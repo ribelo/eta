@@ -86,6 +86,25 @@ effect phase.
 Automatic behavior can be built as an adapter that calls `stabilize` at chosen
 loop boundaries. The core package must not assume a browser-like event loop.
 
+### Core Algorithm
+
+The semantic core follows Jane Street Incremental's explicit stabilization
+model: push invalidation when sources change, then pull recomputation during
+stabilization.
+
+Source mutation marks sources changed and makes necessary dependents stale; it
+does not recompute derived values. Stabilization processes necessary stale nodes
+in deterministic topological or height order. Each node reads already-stable
+children, recomputes at most once per stabilization, applies its cutoff, and
+only propagates change when its value changed by cutoff.
+
+Pure pull is not the target because `get` must remain a snapshot read rather
+than a recomputation point. Eager push is not the target because it violates
+manual batching and can compute intermediate states that no observer should
+see. Alien Signals is useful implementation prior art for intrusive dependency
+links and dirty flags, but its automatic JS-style effect scheduling is not the
+semantic model for Eta.
+
 ### Reentrancy
 
 Stabilization is non-reentrant. Calling stabilization while the same graph is
@@ -260,6 +279,8 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 
 - A small research fixture proves diamond propagation without duplicate
   recomputation.
+- Stabilization recomputes necessary stale nodes at most once in deterministic
+  topological or height order.
 - Dynamic dependency changes through `bind` detach old dependencies.
 - Cutoffs suppress downstream recomputation and observer callbacks.
 - Observer registration does not run callbacks; the next stabilization emits the
