@@ -192,7 +192,11 @@ Observer semantics:
 - observers see stabilized values, not intermediate updates;
 - after initialization, observer callbacks run with `Changed` only when the
   observed value changes by cutoff;
-- observers run in deterministic registration order;
+- observer events are collected after pure graph propagation reaches a stable
+  snapshot;
+- observer callbacks run sequentially in deterministic graph order;
+- multiple observers of the same signal run in registration order;
+- independent graph regions use a stable internal tie-breaker;
 - typed observer failure makes `stabilize` fail;
 - defects and interruption propagate normally;
 - observers that already ran before a failure are not rolled back;
@@ -256,7 +260,7 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
   recomputation.
 - Dynamic dependency changes through `bind` detach old dependencies.
 - Cutoffs suppress downstream recomputation and observer callbacks.
-- Observer fail-fast behavior is typed and deterministic.
+- Observer ordering and fail-fast behavior are typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
 - Reentrant stabilization and same-variable effectful update fail as defects.
