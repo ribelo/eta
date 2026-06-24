@@ -134,25 +134,96 @@ val const : 'a -> 'a signal
 val watch : 'a var -> 'a signal
 val map : ?equal:('b -> 'b -> bool) -> ('a -> 'b) -> 'a signal -> 'b signal
 val map2 :
-  ?equal:('c -> 'c -> bool) ->
-  ('a -> 'b -> 'c) ->
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'r) ->
   'a signal ->
   'b signal ->
-  'c signal
-val both : 'a signal -> 'b signal -> ('a * 'b) signal
+  'r signal
 val map3 :
-  ?equal:('d -> 'd -> bool) ->
-  ('a -> 'b -> 'c -> 'd) ->
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'r) ->
   'a signal ->
   'b signal ->
   'c signal ->
-  'd signal
+  'r signal
+val map4 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'r signal
+val map5 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'e -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'e signal ->
+  'r signal
+val map6 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'e signal ->
+  'f signal ->
+  'r signal
+val map7 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'e signal ->
+  'f signal ->
+  'g signal ->
+  'r signal
+val map8 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'e signal ->
+  'f signal ->
+  'g signal ->
+  'h signal ->
+  'r signal
+val map9 :
+  ?equal:('r -> 'r -> bool) ->
+  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'r) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal ->
+  'e signal ->
+  'f signal ->
+  'g signal ->
+  'h signal ->
+  'i signal ->
+  'r signal
+val both : 'a signal -> 'b signal -> ('a * 'b) signal
+val all : 'a signal list -> 'a list signal
 val bind :
   ?equal:('b -> 'b -> bool) ->
   'a signal ->
   ('a -> 'b signal) ->
   'b signal
 ```
+
+The n-ary maps are not only call-site sugar: they let the graph represent an
+n-input pure computation as one node instead of building intermediate tuple
+nodes with `both` plus `map`. The target contract includes `map2` through
+`map9`, `both`, and `all`. `map10+` and specialized collection folds are not
+part of this contract unless separate evidence shows sustained pressure for
+them.
 
 There is no `computed : (unit -> 'a) -> 'a signal` that tracks dependencies by
 intercepting `get`.
@@ -294,21 +365,91 @@ module type S = sig
     'b signal
 
   val map2 :
-    ?equal:('c -> 'c -> bool) ->
-    ('a -> 'b -> 'c) ->
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'r) ->
     'a signal ->
     'b signal ->
-    'c signal
-
-  val both : 'a signal -> 'b signal -> ('a * 'b) signal
+    'r signal
 
   val map3 :
-    ?equal:('d -> 'd -> bool) ->
-    ('a -> 'b -> 'c -> 'd) ->
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'r) ->
     'a signal ->
     'b signal ->
     'c signal ->
-    'd signal
+    'r signal
+
+  val map4 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'r signal
+
+  val map5 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'e signal ->
+    'r signal
+
+  val map6 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'e signal ->
+    'f signal ->
+    'r signal
+
+  val map7 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'e signal ->
+    'f signal ->
+    'g signal ->
+    'r signal
+
+  val map8 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'e signal ->
+    'f signal ->
+    'g signal ->
+    'h signal ->
+    'r signal
+
+  val map9 :
+    ?equal:('r -> 'r -> bool) ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'r) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal ->
+    'e signal ->
+    'f signal ->
+    'g signal ->
+    'h signal ->
+    'i signal ->
+    'r signal
+
+  val both : 'a signal -> 'b signal -> ('a * 'b) signal
+  val all : 'a signal list -> 'a list signal
 
   val bind :
     ?equal:('b -> 'b -> bool) ->
