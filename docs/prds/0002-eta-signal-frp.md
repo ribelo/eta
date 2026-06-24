@@ -226,7 +226,8 @@ depends on it, directly or through derived nodes.
 path to an observer are not recomputed during stabilization.
 
 `get` reads the last stabilized cached value. It does not make the signal
-necessary and does not force recomputation.
+necessary and does not force recomputation. If inputs have changed since the
+last stabilization, `get` still returns the last stable snapshot.
 
 ### Cutoffs
 
@@ -302,8 +303,6 @@ module Make () : S
 
 ## Open Questions
 
-- Should `get` on a dirty signal before stabilization return the last
-  stabilized value, fail loudly, or force a local recomputation?
 - Should `stabilize` process all dirty nodes before running any observers, or
   interleave recomputation and observers by topological order?
 - Should observer callbacks be allowed to call `set`, and if so are those
