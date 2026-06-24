@@ -215,6 +215,11 @@ The target contract exposes explicit effectful observers. Observer callbacks
 receive either an initialization event with the current value or a changed event
 with the previous and new values.
 
+Observers are opaque handles, not just callback registrations. The handle is
+the demand token that keeps the observed subgraph necessary, and it is the
+lifecycle token used to stop future observation. Callback-only observation is
+not the target contract.
+
 Observer semantics:
 
 - registering an observer does not run its callback immediately;
@@ -300,6 +305,7 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 - Cutoffs suppress downstream recomputation and observer callbacks.
 - Observer registration does not run callbacks; the next stabilization emits the
   initialization event.
+- Observer handles control demand and disposal; observation is not callback-only.
 - Observer ordering and fail-fast behavior are typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
