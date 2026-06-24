@@ -255,6 +255,12 @@ Observer semantics:
 The target contract does not include an `Invalidated` update event. Observer
 disposal is explicit and does not invoke callbacks.
 
+Eta copies Incremental's observer liveness model, but not Incremental's default
+finalizer contract. Explicit disposal is the portable public contract. A native
+or js_of_ocaml implementation may add best-effort finalizer cleanup if both
+backends are verified, but correctness and timely release of demand must not
+depend on GC timing.
+
 ### Liveness
 
 Observers are the demand boundary. A signal becomes necessary when an observer
@@ -314,6 +320,8 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 - Observer handles control demand and disposal; observation is not callback-only.
 - Observer handles expose initialized stabilized values, and fail loudly before
   initialization or after disposal.
+- Explicit observer disposal releases demand; finalizer cleanup is best-effort
+  only and not required for correctness.
 - Observer ordering and fail-fast behavior are typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
