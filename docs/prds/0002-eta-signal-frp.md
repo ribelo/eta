@@ -220,6 +220,12 @@ the demand token that keeps the observed subgraph necessary, and it is the
 lifecycle token used to stop future observation. Callback-only observation is
 not the target contract.
 
+Observer handles expose the last stabilized observed value synchronously after
+initialization. Reading through the observer makes liveness explicit: the value
+is available because the handle keeps the observed subgraph necessary. Reading
+an observer before its initialization stabilization, or after disposal, fails
+loudly.
+
 Observer semantics:
 
 - registering an observer does not run its callback immediately;
@@ -306,6 +312,8 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 - Observer registration does not run callbacks; the next stabilization emits the
   initialization event.
 - Observer handles control demand and disposal; observation is not callback-only.
+- Observer handles expose initialized stabilized values, and fail loudly before
+  initialization or after disposal.
 - Observer ordering and fail-fast behavior are typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
