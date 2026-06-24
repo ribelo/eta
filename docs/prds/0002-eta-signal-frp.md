@@ -39,14 +39,14 @@ and `Effect.t` as the contract for runtime interaction.
 ## Non-Goals
 
 - No global ambient graph.
-- No SolidJS-style implicit dependency tracking in v1.
+- No SolidJS-style implicit dependency tracking in the target contract.
 - No automatic stabilization in the kernel.
 - No UI framework, DOM model, TEA framework, or renderer.
 - No STM.
-- No cross-graph dependencies in v1.
+- No cross-graph dependencies in the target contract.
 - No direct dependency from root `eta` to `eta_signal`.
 - No JavaScript-specific performance assumptions as implementation proof.
-- No promise that v1 is as broad as Jane Street Incremental.
+- No promise that the target contract is as broad as Jane Street Incremental.
 
 ## Agreed Decisions
 
@@ -74,7 +74,7 @@ val stabilize : unit -> (unit, 'err) Effect.t
 val dispose : observer -> (unit, 'err) Effect.t
 ```
 
-Computed nodes are pure and synchronous in v1. Effectful work belongs in
+Computed nodes are pure and synchronous. Effectful work belongs in
 observers or explicit update operations, not inside derived pure nodes.
 
 ### Explicit Stabilization
@@ -126,7 +126,7 @@ observe or read from one graph, then set a variable in another graph.
 
 ### Explicit Dependency Combinators
 
-V1 is Incremental-like, not Solid-like. Dependencies are described by
+The target contract is Incremental-like, not Solid-like. Dependencies are described by
 combinators:
 
 ```ocaml
@@ -139,6 +139,14 @@ val map2 :
   'a signal ->
   'b signal ->
   'c signal
+val both : 'a signal -> 'b signal -> ('a * 'b) signal
+val map3 :
+  ?equal:('d -> 'd -> bool) ->
+  ('a -> 'b -> 'c -> 'd) ->
+  'a signal ->
+  'b signal ->
+  'c signal ->
+  'd signal
 val bind :
   ?equal:('b -> 'b -> bool) ->
   'a signal ->
@@ -146,12 +154,13 @@ val bind :
   'b signal
 ```
 
-There is no v1 `computed : (unit -> 'a) -> 'a signal` that tracks dependencies
-by intercepting `get`.
+There is no `computed : (unit -> 'a) -> 'a signal` that tracks dependencies by
+intercepting `get`.
 
 ### Dynamic Dependencies
 
-V1 includes explicit `bind` as the dynamic dependency primitive.
+The target contract includes explicit `bind` as the dynamic dependency
+primitive.
 
 `bind source f` depends on `source`. When `source` changes and passes cutoff,
 the node detaches from the old inner signal, attaches to the signal returned by
@@ -164,7 +173,7 @@ Cycles are invalid and must fail loudly.
 
 ### Effectful Updates
 
-V1 includes a single effectful update primitive:
+The target contract includes a single effectful update primitive:
 
 ```ocaml
 val modify_effect :
@@ -187,7 +196,7 @@ one behavior and document it.
 
 ### Observers
 
-V1 exposes explicit effectful observers:
+The target contract exposes explicit effectful observers:
 
 ```ocaml
 type observer
@@ -223,8 +232,8 @@ Observer semantics:
   current stabilization;
 - disposal removes the observer from future stabilizations.
 
-V1 does not include an `Invalidated` update event. Observer disposal is explicit
-and does not invoke callbacks.
+The target contract does not include an `Invalidated` update event. Observer
+disposal is explicit and does not invoke callbacks.
 
 ### Liveness
 
@@ -291,6 +300,16 @@ module type S = sig
     'b signal ->
     'c signal
 
+  val both : 'a signal -> 'b signal -> ('a * 'b) signal
+
+  val map3 :
+    ?equal:('d -> 'd -> bool) ->
+    ('a -> 'b -> 'c -> 'd) ->
+    'a signal ->
+    'b signal ->
+    'c signal ->
+    'd signal
+
   val bind :
     ?equal:('b -> 'b -> bool) ->
     'a signal ->
@@ -312,10 +331,8 @@ module Make () : S
 
 ## Open Questions
 
-- Should v1 include `map3`/`both`/`tuple` convenience helpers, or keep only
-  `map`/`map2`/`bind`?
-- Should `eta_stream` provide a `from_signal` bridge in v1, or should that wait
-  until the kernel is proven?
+- Should `eta_stream` provide a `from_signal` bridge in the target contract, or
+  should that wait until the kernel is proven?
 - Should `eta_signal` expose graph statistics or debug inspection?
 
 ## Acceptance Criteria Before Implementation
