@@ -187,24 +187,35 @@ V1 exposes explicit effectful observers:
 ```ocaml
 type observer
 
+type 'a update =
+  | Initialized of 'a
+  | Changed of { old_value : 'a; new_value : 'a }
+
 val observe :
   ?equal:('a -> 'a -> bool) ->
   'a signal ->
-  ('a -> (unit, 'err) Effect.t) ->
+  ('a update -> (unit, 'err) Effect.t) ->
   (observer, 'err) Effect.t
 ```
 
 Observer semantics:
 
+- registering an observer does not run its callback immediately;
+- the first later `stabilize` initializes the observer and runs
+  `Initialized current_value`;
 - observers run only during `stabilize`;
 - observers see stabilized values, not intermediate updates;
-- observer callbacks run when the observed value changes by cutoff;
+- after initialization, observer callbacks run with `Changed` only when the
+  observed value changes by cutoff;
 - observers run in deterministic registration order;
 - typed observer failure makes `stabilize` fail;
 - defects and interruption propagate normally;
 - observers that already ran before a failure are not rolled back;
 - observers after a fail-fast observer failure do not run;
 - disposal removes the observer from future stabilizations.
+
+V1 does not include an `Invalidated` update event. Observer disposal is explicit
+and does not invoke callbacks.
 
 ### Cutoffs
 
@@ -268,7 +279,7 @@ module type S = sig
   val observe :
     ?equal:('a -> 'a -> bool) ->
     'a signal ->
-    ('a -> (unit, 'err) Effect.t) ->
+    ('a update -> (unit, 'err) Effect.t) ->
     (observer, 'err) Effect.t
 
   val dispose : observer -> (unit, 'err) Effect.t
@@ -280,8 +291,6 @@ module Make () : S
 
 ## Open Questions
 
-- Should observers fire with the initial value on first `stabilize`, or only
-  after a value changes?
 - Are unobserved derived nodes recomputed during `stabilize`, or only nodes
   needed by observers and explicit reads?
 - Should `get` on a dirty signal before stabilization return the last
@@ -308,4 +317,3 @@ module Make () : S
 - Cycle detection fails loudly.
 - A microbenchmark compares update/stabilization cost against manual
   `Mutable_ref` recomputation for representative static and dynamic graphs.
-
