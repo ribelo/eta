@@ -217,6 +217,10 @@ Observer semantics:
 - defects and interruption propagate normally;
 - observers that already ran before a failure are not rolled back;
 - observers after a fail-fast observer failure do not run;
+- observer callbacks may call `set` or other mutation operations, but those
+  changes are deferred to the next explicit `stabilize`;
+- `get` during observer callbacks still reads the snapshot produced by the
+  current stabilization;
 - disposal removes the observer from future stabilizations.
 
 V1 does not include an `Invalidated` update event. Observer disposal is explicit
@@ -308,8 +312,6 @@ module Make () : S
 
 ## Open Questions
 
-- Should observer callbacks be allowed to call `set`, and if so are those
-  updates applied in the current stabilization or the next one?
 - Should v1 include `map3`/`both`/`tuple` convenience helpers, or keep only
   `map`/`map2`/`bind`?
 - Should `eta_stream` provide a `from_signal` bridge in v1, or should that wait
