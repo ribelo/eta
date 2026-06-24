@@ -23,6 +23,11 @@ intended capability is an Incremental-like FRP substrate built on top of Eta:
 explicit graphs, explicit stabilization, ordinary OCaml values in the graph,
 and `Effect.t` as the contract for runtime interaction.
 
+The implementation should be a close semantic rewrite of Jane Street
+Incremental adapted to Eta primitives and Eta's effect contract, not a
+dependency on Incremental or Jane Street libraries. The local
+`.reference/incremental` checkout is the primary implementation prior art.
+
 ## Goals
 
 - Provide a minimal fine-grained reactive graph package named `eta_signal`.
@@ -45,6 +50,8 @@ and `Effect.t` as the contract for runtime interaction.
 - No STM.
 - No cross-graph dependencies in the target contract.
 - No direct dependency from root `eta` to `eta_signal`.
+- No use of `eta_signal` from root `eta`; optional and higher-level Eta
+  packages may use `eta_signal` after the package is proven.
 - No JavaScript-specific performance assumptions as implementation proof.
 - No promise that the target contract is as broad as Jane Street Incremental.
 
@@ -178,6 +185,12 @@ primitive.
 the node detaches from the old inner signal, attaches to the signal returned by
 `f current`, and exposes that inner signal's current value.
 
+`bind` requires Incremental-style scopes and invalidation. Nodes created while
+the dynamic dependency selector runs are associated with that selector scope.
+When the source changes, the old scope is invalidated, old inner dependencies
+become unnecessary, and old inner nodes are not recomputed just to discover that
+they are obsolete.
+
 `bind` is expected to be more expensive than `map`/`map2` and should be
 documented as the graph-changing primitive.
 
@@ -282,6 +295,8 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 - Stabilization recomputes necessary stale nodes at most once in deterministic
   topological or height order.
 - Dynamic dependency changes through `bind` detach old dependencies.
+- Dynamic dependency changes invalidate old selector scopes and do not recompute
+  obsolete inner nodes.
 - Cutoffs suppress downstream recomputation and observer callbacks.
 - Observer registration does not run callbacks; the next stabilization emits the
   initialization event.
