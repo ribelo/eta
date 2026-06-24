@@ -6,6 +6,8 @@ let trace_context_key : Capabilities.trace_context Runtime_contract.local =
   Runtime_contract.create_local ()
 let log_attrs_key : (string * string) list Runtime_contract.local =
   Runtime_contract.create_local ()
+let minimum_log_level_key : Capabilities.log_level Runtime_contract.local =
+  Runtime_contract.create_local ()
 type die_context = {
   span_name : string option;
   rev_annotations : (string * string) list;
@@ -36,6 +38,31 @@ let with_log_attrs contract attrs f =
   | _ ->
       let current = current_log_attrs contract in
       local_with_binding contract log_attrs_key (current @ attrs) f
+
+let log_level_rank = function
+  | Capabilities.Trace -> 0
+  | Capabilities.Debug -> 1
+  | Capabilities.Info -> 2
+  | Capabilities.Warn -> 3
+  | Capabilities.Error -> 4
+  | Capabilities.Fatal -> 5
+
+let log_level_compare left right =
+  Int.compare (log_level_rank left) (log_level_rank right)
+
+let log_level_enabled ~minimum level = log_level_compare level minimum >= 0
+
+let current_minimum_log_level contract =
+  local_get contract minimum_log_level_key
+
+let with_minimum_log_level contract level f =
+  let effective =
+    match current_minimum_log_level contract with
+    | None -> level
+    | Some current ->
+        if log_level_compare current level >= 0 then current else level
+  in
+  local_with_binding contract minimum_log_level_key effective f
 
 let with_die_context contract context f =
   local_with_binding contract die_context_key context f

@@ -218,9 +218,20 @@ let annotate_logs attrs eff =
       RObs.with_log_attrs frame.runtime.contract attrs @@ fun () ->
       eval frame eff
 
+let with_minimum_log_level level eff =
+  preserve eff @@ fun frame ->
+  RObs.with_minimum_log_level frame.runtime.contract level @@ fun () ->
+  eval frame eff
+
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   make @@ fun frame ->
-  (if frame.runtime.logging_enabled then
+  (if
+     frame.runtime.logging_enabled
+     &&
+     match RObs.current_minimum_log_level frame.runtime.contract with
+     | None -> true
+     | Some minimum -> RObs.log_level_enabled ~minimum level
+   then
     let scoped_attrs = RObs.current_log_attrs frame.runtime.contract in
     let trace_id, span_id =
       if not frame.runtime.tracing_enabled then ("", "")

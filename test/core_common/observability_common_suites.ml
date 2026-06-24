@@ -76,6 +76,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | records -> Alcotest.failf "expected one log, got %d" (List.length records)
 
   let log_attr key record = List.assoc_opt key record.Logger.attrs
+  let log_bodies logger = List.map (fun record -> record.Logger.body) (Logger.dump logger)
 
   type observability_err = [ `Boom | `Db of int | `Inner | `Outer ]
 
@@ -557,6 +558,116 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (log_attr "case" first)
     | [] -> Alcotest.fail "expected helper logs"
 
+  let test_observability_minimum_log_level_drops_lower () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.concat
+        [
+          Effect.log ~level:Capabilities.Trace "trace";
+          Effect.log ~level:Capabilities.Debug "debug";
+          Effect.log ~level:Capabilities.Info "info";
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Warn
+    in
+    run_ok rt program;
+    Alcotest.(check (list string)) "logs" [] (log_bodies logger)
+
+  let test_observability_minimum_log_level_allows_equal_and_higher () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.concat
+        [
+          Effect.log ~level:Capabilities.Warn "warn";
+          Effect.log ~level:Capabilities.Error "error";
+          Effect.log ~level:Capabilities.Fatal "fatal";
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Warn
+    in
+    run_ok rt program;
+    Alcotest.(check (list string))
+      "logs" [ "warn"; "error"; "fatal" ] (log_bodies logger)
+
+  let test_observability_minimum_log_level_nested_composition () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let inner_strict =
+      Effect.concat
+        [
+          Effect.log ~level:Capabilities.Info "inner-info";
+          Effect.log ~level:Capabilities.Error "inner-error";
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Error
+    in
+    let inner_loose =
+      Effect.concat
+        [
+          Effect.log ~level:Capabilities.Trace "loose-trace";
+          Effect.log ~level:Capabilities.Debug "loose-debug";
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Trace
+    in
+    let program =
+      Effect.concat
+        [
+          Effect.log ~level:Capabilities.Debug "outer-debug";
+          inner_strict;
+          inner_loose;
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Debug
+    in
+    run_ok rt program;
+    Alcotest.(check (list string))
+      "logs" [ "outer-debug"; "inner-error"; "loose-debug" ]
+      (log_bodies logger)
+
+  let test_observability_minimum_log_level_is_fiber_local () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let left =
+      Effect.yield
+      |> Effect.bind (fun () ->
+             Effect.concat [ Effect.log_debug "left-debug"; Effect.log_error "left-error" ])
+      |> Effect.with_minimum_log_level Capabilities.Error
+    in
+    let right =
+      Effect.yield |> Effect.bind (fun () -> Effect.log_debug "right-debug")
+    in
+    ignore (run_ok rt (Effect.par left right) : unit * unit);
+    let bodies = log_bodies logger in
+    Alcotest.(check int) "log count" 2 (List.length bodies);
+    Alcotest.(check bool) "left error emitted" true
+      (List.mem "left-error" bodies);
+    Alcotest.(check bool) "right debug emitted" true
+      (List.mem "right-debug" bodies);
+    Alcotest.(check bool) "left debug dropped" false
+      (List.mem "left-debug" bodies)
+
+  let test_observability_log_level_helpers_respect_minimum () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.concat
+        [
+          Effect.log_warn "warn";
+          Effect.log_error "error";
+          Effect.log_fatal "fatal";
+        ]
+      |> Effect.with_minimum_log_level Capabilities.Error
+    in
+    run_ok rt program;
+    Alcotest.(check (list string)) "logs" [ "error"; "fatal" ]
+      (log_bodies logger)
+
+  let test_observability_annotate_logs_with_minimum_log_level () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let program =
+      Effect.concat [ Effect.log_debug "dropped"; Effect.log_warn "allowed" ]
+      |> Effect.annotate_logs [ ("request.id", "req-1") ]
+      |> Effect.with_minimum_log_level Capabilities.Warn
+    in
+    run_ok rt program;
+    let record = only_log logger in
+    Alcotest.(check string) "body" "allowed" record.Logger.body;
+    Alcotest.(check (option string)) "request id" (Some "req-1")
+      (log_attr "request.id" record)
+
   let counting_noop_tracer count : Capabilities.tracer =
     object
       method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
@@ -958,6 +1069,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_span_annotate_does_not_affect_logs;
           Alcotest.test_case "log level helpers" `Quick
             test_observability_log_level_helpers;
+          Alcotest.test_case "minimum log level drops lower records" `Quick
+            test_observability_minimum_log_level_drops_lower;
+          Alcotest.test_case "minimum log level allows equal and higher" `Quick
+            test_observability_minimum_log_level_allows_equal_and_higher;
+          Alcotest.test_case "minimum log level nested composition" `Quick
+            test_observability_minimum_log_level_nested_composition;
+          Alcotest.test_case "minimum log level is fiber-local" `Quick
+            test_observability_minimum_log_level_is_fiber_local;
+          Alcotest.test_case "log level helpers respect minimum" `Quick
+            test_observability_log_level_helpers_respect_minimum;
+          Alcotest.test_case "annotate_logs with minimum log level" `Quick
+            test_observability_annotate_logs_with_minimum_log_level;
           Alcotest.test_case "custom noop tracer is explicitly enabled" `Quick
             test_observability_custom_noop_tracer_is_explicitly_enabled;
           Alcotest.test_case "suppress observability" `Quick

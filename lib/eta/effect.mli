@@ -781,6 +781,17 @@ val annotate_logs : (string * string) list -> ('a, 'err) t -> ('a, 'err) t
     attributes. The binding is runtime-local/fiber-local and does not affect
     span attributes installed by {!annotate} or {!annotate_all}. *)
 
+val with_minimum_log_level :
+  Capabilities.log_level -> ('a, 'err) t -> ('a, 'err) t
+(** Run an effect with a scoped minimum log level.
+
+    [body |> with_minimum_log_level Warn] drops {!log} records below [Warn]
+    before they reach the runtime logger. Nested scopes use the stricter
+    effective minimum for the current dynamic scope. The binding is
+    runtime-local/fiber-local and affects only {!log} and the level helpers
+    below; logger-level filters still apply independently after a record is
+    admitted by this scope. *)
+
 val log :
   ?level:Capabilities.log_level ->
   ?attrs:(string * string) list ->
@@ -789,7 +800,9 @@ val log :
 (** Emit a structured log record to the runtime's logger. The runtime
     automatically populates the record's [trace_id]/[span_id] from the
     active span and [ts_ms] from the runtime's clock. Scoped attributes from
-    {!annotate_logs} are prepended to the per-call [attrs]. *)
+    {!annotate_logs} are prepended to the per-call [attrs]. Records below the
+    scoped {!with_minimum_log_level}, when one is active, are dropped before
+    reaching the logger. *)
 
 val log_trace :
   ?attrs:(string * string) list -> string -> (unit, 'err) t

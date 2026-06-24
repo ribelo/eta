@@ -45,6 +45,7 @@ reflect value × confidence × fit-with-Eta, not effort.
 - 1.5 `Cause`/`Exit` inspection helpers.
 - 1.7 full distribution metric surface.
 - 1.8 level-named log helpers.
+- 1.9 scoped minimum log level.
 - 2.1 `Effect.result` / `option` / `exit`.
 - 2.2 `Effect.ignore`.
 - 2.5 `Effect.timed`.
@@ -182,16 +183,17 @@ Accepted by the committed research verdict in
 `/home/ribelo/projects/ribelo/ocaml/Eta-logging-api-research/logging-api-evidence/verdict.md`
 V-X2.
 
-### 1.9 Scoped runtime settings (`with_minimum_log_level`, etc.) — **CONSIDER**
+### 1.9 Scoped runtime settings (`with_minimum_log_level`, etc.) — **ADOPTED**
 effect-smol `References.ts` exposes scoped runtime knobs adjustable for a region:
 `MinimumLogLevel` (`Effect.withMinimumLogLevel`), `TracerEnabled`,
 `CurrentConcurrency`, `LogToStderr`, `UnhandledLogLevel`. Eta already has
 `suppress_observability` (a tracer-off region) and per-call concurrency via
-`for_each_par_bounded ~max`, so most of this is covered. The one clear gap is a
-scoped **minimum log level** — "raise verbosity to Debug just inside this block"
-or "drop everything below Warn here" — which complements the logger-level filter
-(1.2) but applies dynamically per effect scope rather than per logger. CONSIDER
-a `with_minimum_log_level : level -> ('a,'err) t -> ('a,'err) t`.
+`for_each_par_bounded ~max`, so most of this is covered. Eta now adopts only the
+clear gap from this section: `Effect.with_minimum_log_level`, a runtime-local
+dynamic scope that drops lower-severity `Effect.log` records before they reach
+the runtime logger. Nested scopes use the stricter effective minimum, and
+logger-level filters still apply independently. The broader runtime settings
+API remains out of scope.
 
 ---
 
