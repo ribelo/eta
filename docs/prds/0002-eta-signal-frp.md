@@ -217,6 +217,17 @@ Observer semantics:
 V1 does not include an `Invalidated` update event. Observer disposal is explicit
 and does not invoke callbacks.
 
+### Liveness
+
+Observers are the demand boundary. A signal becomes necessary when an observer
+depends on it, directly or through derived nodes.
+
+`stabilize` recomputes only the necessary dirty subgraph. Derived nodes with no
+path to an observer are not recomputed during stabilization.
+
+`get` reads the last stabilized cached value. It does not make the signal
+necessary and does not force recomputation.
+
 ### Cutoffs
 
 The default cutoff is physical equality (`==`).
@@ -291,8 +302,6 @@ module Make () : S
 
 ## Open Questions
 
-- Are unobserved derived nodes recomputed during `stabilize`, or only nodes
-  needed by observers and explicit reads?
 - Should `get` on a dirty signal before stabilization return the last
   stabilized value, fail loudly, or force a local recomputation?
 - Should `stabilize` process all dirty nodes before running any observers, or
