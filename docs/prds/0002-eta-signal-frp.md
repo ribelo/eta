@@ -52,27 +52,15 @@ and `Effect.t` as the contract for runtime interaction.
 
 ### Values and Effects
 
-Signals carry ordinary OCaml values:
+Signals carry ordinary OCaml values. Variables, signals, and observers are
+distinct public concepts.
 
-```ocaml
-type 'a signal
-type 'a var
-```
-
-Reading a stabilized signal is synchronous:
-
-```ocaml
-val get : 'a signal -> 'a
-```
+Reading a stabilized signal is synchronous. It returns the last stable cached
+value directly, not an effect.
 
 Operations that interact with graph state, observers, lifecycle, or runtime
-behavior return Eta effects:
-
-```ocaml
-val set : 'a var -> 'a -> (unit, 'err) Effect.t
-val stabilize : unit -> (unit, 'err) Effect.t
-val dispose : observer -> (unit, 'err) Effect.t
-```
+behavior return Eta effects. This includes source mutation, stabilization,
+observer registration/disposal, and effectful updates.
 
 Computed nodes are pure and synchronous. Effectful work belongs in
 observers or explicit update operations, not inside derived pure nodes.
@@ -100,18 +88,8 @@ loop boundaries. The core package must not assume a browser-like event loop.
 
 ### Functorized Graph Instances
 
-The primary interface is a functorized graph instance:
-
-```ocaml
-module Make () : S
-```
-
-Each functor application owns an independent graph:
-
-```ocaml
-module Ui = Eta_signal.Make ()
-module Config = Eta_signal.Make ()
-```
+The primary interface is a functorized graph instance. Each functor application
+owns an independent graph.
 
 The graph is not passed as a value to every constructor, and there is no hidden
 global graph. This uses OCaml's module system for graph isolation.
@@ -127,96 +105,8 @@ observe or read from one graph, then set a variable in another graph.
 ### Explicit Dependency Combinators
 
 The target contract is Incremental-like, not Solid-like. Dependencies are described by
-combinators:
-
-```ocaml
-val const : 'a -> 'a signal
-val watch : 'a var -> 'a signal
-val map : ?equal:('b -> 'b -> bool) -> ('a -> 'b) -> 'a signal -> 'b signal
-val map2 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'r signal
-val map3 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'r signal
-val map4 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'r signal
-val map5 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'e -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'e signal ->
-  'r signal
-val map6 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'e signal ->
-  'f signal ->
-  'r signal
-val map7 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'e signal ->
-  'f signal ->
-  'g signal ->
-  'r signal
-val map8 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'e signal ->
-  'f signal ->
-  'g signal ->
-  'h signal ->
-  'r signal
-val map9 :
-  ?equal:('r -> 'r -> bool) ->
-  ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'r) ->
-  'a signal ->
-  'b signal ->
-  'c signal ->
-  'd signal ->
-  'e signal ->
-  'f signal ->
-  'g signal ->
-  'h signal ->
-  'i signal ->
-  'r signal
-val both : 'a signal -> 'b signal -> ('a * 'b) signal
-val all : 'a signal list -> 'a list signal
-val bind :
-  ?equal:('b -> 'b -> bool) ->
-  'a signal ->
-  ('a -> 'b signal) ->
-  'b signal
-```
+named combinators: constants, watching variables, unary mapping, n-ary mapping,
+pairing, homogeneous collection joining, and explicit dynamic binding.
 
 The n-ary maps are not only call-site sugar: they let the graph represent an
 n-input pure computation as one node instead of building intermediate tuple
@@ -227,6 +117,23 @@ them.
 
 There is no `computed : (unit -> 'a) -> 'a signal` that tracks dependencies by
 intercepting `get`.
+
+### Failure and Defect Propagation
+
+Errors propagate through Eta's existing effect model. Typed failures remain
+typed failures. Defects remain defects. Interruption remains interruption.
+Finalizer diagnostics propagate according to ordinary Eta semantics.
+
+The catch boundary is the effect-returning public operation, not each graph
+node. In particular, exceptions raised by user callbacks during stabilization
+are captured as defects of the stabilizing effect. This includes mapping
+functions, dynamic dependency selectors, cutoff predicates, and observer
+callback construction. A failed stabilization does not publish a half-updated
+snapshot.
+
+Invalid state should be unrepresentable where OCaml types can express the
+constraint. When that is not possible, invalid graph states fail loudly instead
+of being silently ignored.
 
 ### Dynamic Dependencies
 
@@ -244,14 +151,8 @@ Cycles are invalid and must fail loudly.
 
 ### Effectful Updates
 
-The target contract includes a single effectful update primitive:
-
-```ocaml
-val modify_effect :
-  'a var ->
-  ('a -> ('b * 'a, 'err) Effect.t) ->
-  ('b, 'err) Effect.t
-```
+The target contract includes a single effectful update primitive for serialized
+source mutation that must run an Eta effect before deciding the stored value.
 
 Semantics:
 
@@ -267,21 +168,9 @@ one behavior and document it.
 
 ### Observers
 
-The target contract exposes explicit effectful observers:
-
-```ocaml
-type observer
-
-type 'a update =
-  | Initialized of 'a
-  | Changed of { old_value : 'a; new_value : 'a }
-
-val observe :
-  ?equal:('a -> 'a -> bool) ->
-  'a signal ->
-  ('a update -> (unit, 'err) Effect.t) ->
-  (observer, 'err) Effect.t
-```
+The target contract exposes explicit effectful observers. Observer callbacks
+receive either an initialization event with the current value or a changed event
+with the previous and new values.
 
 Observer semantics:
 
@@ -324,12 +213,6 @@ The default cutoff is physical equality (`==`).
 
 Nodes may accept custom equality:
 
-```ocaml
-val var : ?equal:('a -> 'a -> bool) -> 'a -> 'a var
-val map : ?equal:('b -> 'b -> bool) -> ...
-val observe : ?equal:('a -> 'a -> bool) -> ...
-```
-
 Rationale:
 
 - physical equality is cheap;
@@ -337,138 +220,18 @@ Rationale:
   functions/custom values;
 - consumers can opt into structural/domain equality where it is correct.
 
-## Sketch Interface
+## Interface Shape
 
-```ocaml
-module type S = sig
-  type 'a var
-  type 'a signal
-  type observer
+The surface is organized around a functorized graph module with opaque variable,
+signal, and observer types.
 
-  val var : ?equal:('a -> 'a -> bool) -> 'a -> 'a var
-  val watch : 'a var -> 'a signal
-  val const : 'a -> 'a signal
+The graph surface includes source creation and mutation, synchronous snapshot
+reads, pure derived nodes, explicit dynamic dependencies, observer lifecycle,
+and explicit stabilization.
 
-  val get : 'a signal -> 'a
-
-  val set : 'a var -> 'a -> (unit, 'err) Effect.t
-  val modify : 'a var -> ('a -> 'b * 'a) -> ('b, 'err) Effect.t
-  val modify_effect :
-    'a var ->
-    ('a -> ('b * 'a, 'err) Effect.t) ->
-    ('b, 'err) Effect.t
-
-  val map :
-    ?equal:('b -> 'b -> bool) ->
-    ('a -> 'b) ->
-    'a signal ->
-    'b signal
-
-  val map2 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'r signal
-
-  val map3 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'r signal
-
-  val map4 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'r signal
-
-  val map5 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'e signal ->
-    'r signal
-
-  val map6 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'e signal ->
-    'f signal ->
-    'r signal
-
-  val map7 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'e signal ->
-    'f signal ->
-    'g signal ->
-    'r signal
-
-  val map8 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'e signal ->
-    'f signal ->
-    'g signal ->
-    'h signal ->
-    'r signal
-
-  val map9 :
-    ?equal:('r -> 'r -> bool) ->
-    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'r) ->
-    'a signal ->
-    'b signal ->
-    'c signal ->
-    'd signal ->
-    'e signal ->
-    'f signal ->
-    'g signal ->
-    'h signal ->
-    'i signal ->
-    'r signal
-
-  val both : 'a signal -> 'b signal -> ('a * 'b) signal
-  val all : 'a signal list -> 'a list signal
-
-  val bind :
-    ?equal:('b -> 'b -> bool) ->
-    'a signal ->
-    ('a -> 'b signal) ->
-    'b signal
-
-  val observe :
-    ?equal:('a -> 'a -> bool) ->
-    'a signal ->
-    ('a update -> (unit, 'err) Effect.t) ->
-    (observer, 'err) Effect.t
-
-  val dispose : observer -> (unit, 'err) Effect.t
-  val stabilize : unit -> (unit, 'err) Effect.t
-end
-
-module Make () : S
-```
+The derived-node surface includes constants, watched variables, unary maps,
+`map2` through `map9`, pairs, homogeneous collection joining, and explicit
+dynamic binding. Derived nodes accept custom result cutoffs where useful.
 
 ## Open Questions
 
