@@ -87,8 +87,13 @@ propagate immediately and does not run observers.
 - recompute observed dirty graph in dependency order;
 - apply cutoffs;
 - update cached values;
+- collect observer update events;
 - run observers whose observed values changed;
 - return through `Effect.t`.
+
+Stabilization is two-phase. The pure graph recomputation phase reaches a stable
+snapshot first. Observer callbacks run only after that snapshot exists, in the
+effect phase.
 
 Automatic behavior can be built as an adapter that calls `stabilize` at chosen
 loop boundaries. The core package must not assume a browser-like event loop.
@@ -203,7 +208,7 @@ Observer semantics:
 - registering an observer does not run its callback immediately;
 - the first later `stabilize` initializes the observer and runs
   `Initialized current_value`;
-- observers run only during `stabilize`;
+- observers run only during the effect phase of `stabilize`;
 - observers see stabilized values, not intermediate updates;
 - after initialization, observer callbacks run with `Changed` only when the
   observed value changes by cutoff;
@@ -303,8 +308,6 @@ module Make () : S
 
 ## Open Questions
 
-- Should `stabilize` process all dirty nodes before running any observers, or
-  interleave recomputation and observers by topological order?
 - Should observer callbacks be allowed to call `set`, and if so are those
   updates applied in the current stabilization or the next one?
 - Should v1 include `map3`/`both`/`tuple` convenience helpers, or keep only
