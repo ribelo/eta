@@ -86,6 +86,21 @@ effect phase.
 Automatic behavior can be built as an adapter that calls `stabilize` at chosen
 loop boundaries. The core package must not assume a browser-like event loop.
 
+### Reentrancy
+
+Stabilization is non-reentrant. Calling stabilization while the same graph is
+already stabilizing fails loudly as a defect instead of blocking, nesting, or
+silently doing nothing.
+
+Effectful update is non-reentrant per variable. Re-entering effectful update on
+the same variable from inside its update callback fails loudly as a defect
+instead of deadlocking. Updates to other variables still follow the normal
+mutation rules.
+
+Observer callbacks may call ordinary mutation operations. Those mutations mark
+sources dirty for the next explicit stabilization; they do not mutate the
+snapshot currently being observed.
+
 ### Functorized Graph Instances
 
 The primary interface is a functorized graph instance. Each functor application
@@ -161,10 +176,6 @@ Semantics:
 - on success, the new value is stored and published to the graph exactly once;
 - on typed failure, defect, or interruption, the value is unchanged;
 - cleanup releases the update slot.
-
-Re-entering update on the same variable from inside `modify_effect` is invalid
-or deadlocks depending on implementation. The final implementation must choose
-one behavior and document it.
 
 ### Observers
 
@@ -248,6 +259,7 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
 - Observer fail-fast behavior is typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
+- Reentrant stabilization and same-variable effectful update fail as defects.
 - Cycle detection fails loudly.
 - A microbenchmark compares update/stabilization cost against manual
   `Mutable_ref` recomputation for representative static and dynamic graphs.
