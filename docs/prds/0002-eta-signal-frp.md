@@ -186,6 +186,8 @@ with the previous and new values.
 Observer semantics:
 
 - registering an observer does not run its callback immediately;
+- registration attaches demand and returns the observer handle, but does not run
+  user observer code;
 - the first later `stabilize` initializes the observer and runs
   `Initialized current_value`;
 - observers run only during the effect phase of `stabilize`;
@@ -260,6 +262,8 @@ dynamic binding. Derived nodes accept custom result cutoffs where useful.
   recomputation.
 - Dynamic dependency changes through `bind` detach old dependencies.
 - Cutoffs suppress downstream recomputation and observer callbacks.
+- Observer registration does not run callbacks; the next stabilization emits the
+  initialization event.
 - Observer ordering and fail-fast behavior are typed and deterministic.
 - Multiple functor instances cannot compose signals by accident.
 - Manual stabilization coalesces multiple source updates.
