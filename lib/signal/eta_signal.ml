@@ -1016,7 +1016,8 @@ module Make (Observer_error : Observer_error) = struct
       in
       acquire
       |> Effect.bind (fun old_value ->
-             f old_value
+             Effect.sync (fun () -> f old_value)
+             |> Effect.bind (fun effect -> effect)
              |> Effect.bind (fun new_value ->
                     set source new_value |> Effect.map (fun () -> new_value))
              |> Effect.on_exit (fun _ -> release_update source))

@@ -8,7 +8,8 @@ module Signal = Eta_signal.Make (struct
 end)
 
 type test_error =
-  [ Signal.graph_error
+  [ `Update_failed
+  | Signal.graph_error
   | Signal.observer_read_error
   | Signal.stabilize_error
   | Signal.time_error
@@ -675,6 +676,56 @@ let test_effectful_update_reentry_fails_and_preserves_value () =
                |> Effect.map (fun _ -> current + 1)))));
   Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
 
+let test_effectful_update_failures_preserve_value_and_release_slot () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  expect_fail "typed update failure" (( = ) `Update_failed)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Var.update_effect source (fun _ -> Effect.fail `Update_failed))));
+  Alcotest.(check int) "typed failure leaves value unchanged" 1
+    (Signal.Var.value source);
+  Alcotest.(check int) "slot released after typed failure" 2
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 1))));
+  expect_die "update callback defect"
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Var.update_effect source (fun _ -> failwith "update defect"))));
+  Alcotest.(check int) "defect leaves value unchanged" 2
+    (Signal.Var.value source);
+  Alcotest.(check int) "slot released after defect" 3
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 1))))
+
+let test_effectful_update_interruption_preserves_value_and_releases_slot () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let cancel_ctx = ref None in
+  let updating =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Eta_eio.Runtime.run rt
+          (widen
+             (Signal.Var.update_effect source (fun current ->
+                  Effect.sync (fun () ->
+                      Eio.Promise.resolve started_resolver ())
+                  |> Effect.bind (fun () ->
+                         Effect.never |> Effect.map (fun () -> current + 10))))))
+  in
+  Eio.Promise.await started;
+  wait_until "update cancellation context" (fun () -> Option.is_some !cancel_ctx);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled "interrupted update" updating;
+  Alcotest.(check int) "interruption leaves value unchanged" 1
+    (Signal.Var.value source);
+  Alcotest.(check int) "slot released after interruption" 2
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 1))))
+
 let test_queued_graph_operation_cancellation_does_not_run () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -1046,6 +1097,10 @@ let () =
             test_reentrant_stabilization_does_not_clear_outer_phase;
           Alcotest.test_case "effectful update reentry typed failure" `Quick
             test_effectful_update_reentry_fails_and_preserves_value;
+          Alcotest.test_case "effectful update failure cleanup" `Quick
+            test_effectful_update_failures_preserve_value_and_release_slot;
+          Alcotest.test_case "effectful update interruption cleanup" `Quick
+            test_effectful_update_interruption_preserves_value_and_releases_slot;
           Alcotest.test_case "queued graph operation cancellation" `Quick
             test_queued_graph_operation_cancellation_does_not_run;
           Alcotest.test_case "active graph interruption releases lane" `Quick
