@@ -95,20 +95,37 @@ let record_observer events update =
 
 let render pp value = Format.asprintf "%a" pp value
 
+let check_render label pp value expected =
+  Alcotest.(check string) label expected (render pp value)
+
 let test_error_pretty_printers_are_clear () =
-  Alcotest.(check string) "graph error" "cycle detected"
-    (render Signal.pp_graph_error `Cycle);
-  Alcotest.(check string) "observer read error" "disposed observer"
-    (render Signal.pp_observer_read_error `Disposed_observer);
-  Alcotest.(check string) "stabilize graph error" "reentrant stabilization"
-    (render Signal.pp_stabilize_error `Reentrant_stabilization);
-  Alcotest.(check string)
-    "stabilize observer error" "observer callback failed: observer failed"
-    (render Signal.pp_stabilize_error (`Observer_error `Observer_failed));
-  Alcotest.(check string) "time error" "invalid interval"
-    (render Signal.pp_time_error `Invalid_interval);
-  Alcotest.(check string) "stream error" "stream bridge capacity must be positive"
-    (render Signal.pp_stream_error `Invalid_capacity)
+  check_render "ambiguous scope" Signal.pp_graph_error `Ambiguous_scope
+    "ambiguous dynamic scope";
+  check_render "cycle" Signal.pp_graph_error `Cycle "cycle detected";
+  check_render "invalid scope" Signal.pp_graph_error `Invalid_scope
+    "invalid dynamic scope";
+  check_render "reentrant stabilization" Signal.pp_graph_error
+    `Reentrant_stabilization "reentrant stabilization";
+  check_render "reentrant update" Signal.pp_graph_error `Reentrant_update
+    "same-variable effectful update reentry";
+  check_render "disposed observer" Signal.pp_observer_read_error
+    `Disposed_observer "disposed observer";
+  check_render "no current observer value" Signal.pp_observer_read_error
+    `No_current_value "no current observer value";
+  check_render "uninitialized observer" Signal.pp_observer_read_error
+    `Uninitialized_observer "uninitialized observer";
+  check_render "stabilize graph error" Signal.pp_stabilize_error
+    `Reentrant_stabilization "reentrant stabilization";
+  check_render "stabilize observer error" Signal.pp_stabilize_error
+    (`Observer_error `Observer_failed) "observer callback failed: observer failed";
+  check_render "invalid interval" Signal.pp_time_error `Invalid_interval
+    "invalid interval";
+  check_render "past deadline" Signal.pp_time_error `Past_deadline
+    "deadline is in the past";
+  check_render "stream graph error" Signal.pp_stream_error `Cycle
+    "cycle detected";
+  check_render "invalid stream capacity" Signal.pp_stream_error
+    `Invalid_capacity "stream bridge capacity must be positive"
 
 let test_observer_initializes_on_stabilize () =
   with_runtime @@ fun rt ->
