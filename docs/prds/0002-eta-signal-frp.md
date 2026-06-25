@@ -588,9 +588,10 @@ notes below.
   recomputation, typed error pretty-printers, reentrant stabilization,
   same-variable effectful update reentry, queued and active graph-lane
   interruption cleanup, stats/DOT introspection, time-node demand and explicit
-  stabilization behavior, timer inertness after disposal or bind invalidation,
-  timer restart after re-observation,
-  and signal-to-stream emission, closure, validation, and backpressure.
+  stabilization behavior, time-node refresh when observed after idle time,
+  timer inertness after disposal or bind invalidation, timer restart after
+  re-observation, and signal-to-stream emission, closure, validation, and
+  backpressure.
 - Benchmark evidence: `lib/signal/bench/bench_signal.ml` compares Eta signal
   update/stabilization cost against manual `Mutable_ref` recomputation for both
   representative static and dynamic graphs.
@@ -636,9 +637,9 @@ depend on a policy/API decision recorded in the audit notes below.
 | Stats and debug introspection expose demand/recompute/scope behavior without mutating | `test_stats_and_dot_are_read_only` | Covered |
 | Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_backpressures_at_capacity`, `test/signal/negative/stream_to_signal_negative.ml` | Covered; bridge lifecycle/buffering shape needs human review |
 | No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
-| Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_interval_requires_explicit_stabilization` | Covered; schedule-facing API decision needs human review |
-| Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_absolute_deadline` | Covered |
-| Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch` | Covered; exact time API shape needs human review |
+| Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered; schedule-facing API decision needs human review |
+| Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_after_elapsed_before_observe`, `test_time_absolute_deadline` | Covered |
+| Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_now_refreshes_after_idle_observe`, `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch` | Covered; exact time API shape needs human review |
 | Timer work is owned by graph demand and does not keep unnecessary subgraphs alive | `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_stats_and_dot_are_read_only` | Covered |
 | Microbenchmark compares signal update/stabilization with manual `Mutable_ref` recomputation for static and dynamic graphs | `lib/signal/bench/bench_signal.ml` | Covered |
 

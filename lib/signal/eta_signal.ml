@@ -1353,7 +1353,7 @@ module Make (Observer_error : Observer_error) () = struct
                                       timer_loop timer driver update
                                   | `Stop -> Effect.unit))))
 
-    let attach_timer signal interval update =
+    let attach_timer ?(update_on_start = false) signal interval update =
       let timer =
         {
           timer_active = false;
@@ -1363,16 +1363,27 @@ module Make (Observer_error : Observer_error) () = struct
           timer_start =
             (fun timer ->
               let driver = Schedule.start (Schedule.spaced interval) in
-              Effect.daemon (timer_loop timer driver update));
+              let start_loop () =
+                Effect.daemon (timer_loop timer driver update)
+              in
+              if update_on_start then
+                update.timer_update timer
+                |> Effect.bind (fun () ->
+                       timer_after_update_state timer
+                       |> Effect.bind (function
+                            | `Continue -> start_loop ()
+                            | `Stop -> Effect.unit))
+              else start_loop ());
         }
       in
       signal.timer <- Some timer;
       signal
 
-    let make_timer_signal ?equal initial interval update =
+    let make_timer_signal ?(update_on_start = false) ?equal initial interval
+        update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
-      attach_timer signal interval
+      attach_timer ~update_on_start signal interval
         { timer_update = (fun timer -> update.source_timer_update timer source) }
 
     let now ~every () =
@@ -1381,7 +1392,8 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              Effect.now
              |> Effect.map (fun initial ->
-                    make_timer_signal ~equal:Int.equal initial every
+                    make_timer_signal ~update_on_start:true ~equal:Int.equal
+                      initial every
                       {
                         source_timer_update =
                           (fun _timer source ->
@@ -1397,7 +1409,8 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun now_ms ->
                     Effect.from_result (validate_future now_ms deadline_ms)
                     |> Effect.map (fun () ->
-                           make_timer_signal ~equal:Bool.equal false every
+                           make_timer_signal ~update_on_start:true
+                             ~equal:Bool.equal false every
                              {
                                source_timer_update =
                                  (fun timer source ->
