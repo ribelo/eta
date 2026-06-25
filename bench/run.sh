@@ -55,6 +55,7 @@ run_runtime() {
 
 build_targets=(
   lib/eta/bench/bench_eta.exe
+  lib/signal/bench/bench_signal.exe
   lib/stream/bench/bench_stream.exe
   lib/schema/bench/bench_schema.exe
   lib/otel/bench/bench_otel.exe
@@ -80,6 +81,7 @@ for target in "${build_targets[@]}"; do
 done
 
 run_runtime _build/default/lib/eta/bench/bench_eta.exe
+run_runtime _build/default/lib/signal/bench/bench_signal.exe
 run_runtime _build/default/lib/stream/bench/bench_stream.exe
 run_runtime _build/default/lib/schema/bench/bench_schema.exe
 run_runtime _build/default/lib/otel/bench/bench_otel.exe

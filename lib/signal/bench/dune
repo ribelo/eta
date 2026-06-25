@@ -1,0 +1,9 @@
+(executable
+ (name bench_signal)
+ (libraries eta_eio bench_lib eta eta_signal eta_stream eio_main))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_signal.exe --quick))))

@@ -28,6 +28,17 @@
   eta))
 
 (package
+ (name eta_signal)
+ (synopsis "Incremental-style reactive signals for Eta")
+ (description
+  "eta_signal provides an optional explicit-stabilization reactive graph for Eta programs.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_stream))
+
+(package
  (name eta_js)
  (allow_empty)
  (synopsis "Js_of_ocaml Eta facade")

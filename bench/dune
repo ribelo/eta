@@ -2,6 +2,7 @@
  (name bench)
  (deps
   (alias ../lib/eta/bench/bench)
+  (alias ../lib/signal/bench/bench)
   (alias ../lib/stream/bench/bench)
   (alias ../lib/schema/bench/bench)
   (alias ../bench/router/ocaml/bench)

@@ -1,0 +1,5 @@
+(library
+ (name eta_signal)
+ (public_name eta_signal)
+ (synopsis "Incremental-style reactive signals for Eta")
+ (libraries eta eta_stream))
