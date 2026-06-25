@@ -689,6 +689,31 @@ let test_dispose_removes_demand () =
   expect_fail "disposed read" (( = ) `Disposed_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
+let test_dispose_before_initialization_removes_demand () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let calls = ref 0 in
+  let callback_ran = ref false in
+  let mapped =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           incr calls;
+           n + 1)
+  in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe mapped (fun _ ->
+           Effect.sync (fun () -> callback_ran := true)))
+  in
+  run_ok rt (Signal.Observer.dispose observer);
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "disposed uninitialized observer releases demand" 0 !calls;
+  Alcotest.(check bool) "disposed uninitialized observer has no callback" false
+    !callback_ran;
+  expect_fail "disposed uninitialized read" (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
+
 let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1430,6 +1455,9 @@ let () =
             test_observer_read_during_callback_sees_current_snapshot;
           Alcotest.test_case "dispose removes demand" `Quick
             test_dispose_removes_demand;
+          Alcotest.test_case "dispose before initialization removes demand"
+            `Quick
+            test_dispose_before_initialization_removes_demand;
           Alcotest.test_case "pure failure does not publish snapshot" `Quick
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "failed initial stabilize has no current" `Quick
