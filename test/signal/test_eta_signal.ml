@@ -1,11 +1,14 @@
 open Eta
 
-module Signal = Eta_signal.Make (struct
+module Observer_error = struct
   type t = [ `Observer_failed ]
 
   let pp ppf = function
     | `Observer_failed -> Format.pp_print_string ppf "observer failed"
-end) ()
+end
+
+module Signal = Eta_signal.Make (Observer_error) ()
+module Other_signal = Eta_signal.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -168,6 +171,60 @@ let test_manual_stabilization_coalesces_sets () =
   Alcotest.(check int) "observer sees coalesced value" 3
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "two events" 2 (List.length !events)
+
+let test_functor_instances_stabilize_independently () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let other_source = Other_signal.Var.create 10 in
+  let events = ref [] in
+  let other_events = ref [] in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source)
+         (record_observer events))
+  in
+  let other_observer =
+    run_ok rt
+      (Other_signal.Observer.observe
+         (Other_signal.Var.watch other_source)
+         (record_observer other_events))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "first graph initialized" 1
+    (run_ok rt (Signal.Observer.read observer));
+  (match
+     Eta_eio.Runtime.run rt
+       (widen (Other_signal.Observer.read other_observer))
+   with
+   | Exit.Error (Cause.Fail `Uninitialized_observer) -> ()
+   | Exit.Error cause ->
+       Alcotest.failf "expected second graph to remain uninitialized, got %a"
+         (Cause.pp pp_hidden) cause
+   | Exit.Ok _ ->
+       Alcotest.fail "second graph initialized during first graph stabilize");
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt (Other_signal.Var.set other_source 20);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "first graph changed" 2
+    (run_ok rt (Signal.Observer.read observer));
+  (match
+     Eta_eio.Runtime.run rt
+       (widen (Other_signal.Observer.read other_observer))
+   with
+   | Exit.Error (Cause.Fail `Uninitialized_observer) -> ()
+   | Exit.Error cause ->
+       Alcotest.failf "expected second graph to still be uninitialized, got %a"
+         (Cause.pp pp_hidden) cause
+   | Exit.Ok _ ->
+       Alcotest.fail "second graph updated during first graph stabilize");
+  run_ok rt Other_signal.stabilize;
+  Alcotest.(check int) "second graph initialized with its latest source" 20
+    (run_ok rt (Other_signal.Observer.read other_observer));
+  Alcotest.(check int) "first graph event count" 2 (List.length !events);
+  Alcotest.(check int) "second graph event count" 1
+    (List.length !other_events);
+  run_ok rt (Signal.Observer.dispose observer);
+  run_ok rt (Other_signal.Observer.dispose other_observer)
 
 let test_diamond_recomputes_shared_node_once () =
   with_runtime @@ fun rt ->
@@ -1529,6 +1586,8 @@ let () =
             test_observer_initializes_on_stabilize;
           Alcotest.test_case "manual stabilization coalesces sets" `Quick
             test_manual_stabilization_coalesces_sets;
+          Alcotest.test_case "functor instances stabilize independently" `Quick
+            test_functor_instances_stabilize_independently;
           Alcotest.test_case "diamond recomputes shared node once" `Quick
             test_diamond_recomputes_shared_node_once;
           Alcotest.test_case "recompute order is topological" `Quick
