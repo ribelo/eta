@@ -589,6 +589,15 @@ need human review before the PRD is considered final.
   operation-boundary typed reporting, or specify a different constructor family
   if constructor-time typed failures outside effect-returning operations are
   required.
+- Source mutation during stabilization needs phase-specific wording. The
+  implementation supports ordinary source mutation from observer callbacks and
+  other Eta effectful operations while the graph is in the observer/effect
+  phase, and those mutations are delayed to the next explicit stabilization.
+  Pure recomputation callbacks remain synchronous pure functions and do not
+  receive an Eta effect context in which `Var.set` can be called normally. The
+  PRD should either narrow the mutation-during-stabilization statement to
+  effect-phase/public effect operations, or specify a safe effectful
+  pure-recompute mutation mechanism.
 - The signal-to-stream bridge needed a lifecycle and buffering contract. The
   implementation chooses `Stream.observe ?capacity` with a default capacity of
   1024, backed by an Eta queue with backpressure. Observer disposal cleanly
