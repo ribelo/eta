@@ -1547,6 +1547,32 @@ let test_time_timer_becomes_inert_after_dispose () =
   Alcotest.(check int) "disposed timer did not reschedule" 0
     (Eta_test.Test_clock.sleeper_count clock)
 
+let test_time_interval_restarts_after_reobserve () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let first_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt (Signal.Observer.dispose first_observer);
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  Alcotest.(check int) "disposed timer stopped" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  let second_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reobserved initial tick" 0
+    (run_ok rt (Signal.Observer.read second_observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reobserved timer ticked" 1
+    (run_ok rt (Signal.Observer.read second_observer));
+  run_ok rt (Signal.Observer.dispose second_observer)
+
 let test_time_timer_becomes_inert_after_bind_switch () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create true in
@@ -1883,6 +1909,8 @@ let () =
             test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
+          Alcotest.test_case "time interval restarts after reobserve" `Quick
+            test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time timer inert after bind switch" `Quick
             test_time_timer_becomes_inert_after_bind_switch;
           Alcotest.test_case "time now uses runtime clock" `Quick
