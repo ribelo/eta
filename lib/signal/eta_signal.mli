@@ -25,6 +25,7 @@ module Make (Observer_error : Observer_error) : sig
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
 
   type time_error = [ `Invalid_interval | `Past_deadline ]
+  type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a var
   type 'a signal
@@ -52,6 +53,7 @@ module Make (Observer_error : Observer_error) : sig
   val pp_observer_read_error : Format.formatter -> observer_read_error -> unit
   val pp_stabilize_error : Format.formatter -> stabilize_error -> unit
   val pp_time_error : Format.formatter -> time_error -> unit
+  val pp_stream_error : Format.formatter -> stream_error -> unit
 
   module Var : sig
     type 'a t = 'a var
@@ -211,9 +213,21 @@ module Make (Observer_error : Observer_error) : sig
 
   module Stream : sig
     val observe :
+      ?capacity:int ->
       ?equal:('a -> 'a -> bool) ->
       'a signal ->
-      ('a observer * ('a update, graph_error) Eta_stream.Stream.t, graph_error)
+      ('a observer * ('a update, graph_error) Eta_stream.Stream.t, stream_error)
       Eta.Effect.t
+    (** [observe ?capacity signal] creates an observer and a stream of observer
+        updates. [capacity] defaults to [1024] and bounds the bridge queue with
+        backpressure; stabilization waits while the stream has [capacity]
+        buffered updates and no consumer has made room.
+
+        Disposing the returned observer cleanly closes the stream queue.
+        Buffered updates drain before the stream ends. Early stream consumers
+        such as {!Eta_stream.Stream.take} do not dispose the observer; the
+        returned observer remains the lifecycle handle.
+
+        Fails with [`Invalid_capacity] when [capacity <= 0]. *)
   end
 end

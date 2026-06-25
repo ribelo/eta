@@ -11,7 +11,8 @@ type test_error =
   [ Signal.graph_error
   | Signal.observer_read_error
   | Signal.stabilize_error
-  | Signal.time_error ]
+  | Signal.time_error
+  | Signal.stream_error ]
 
 let pp_hidden ppf _ = Format.pp_print_string ppf "<signal-error>"
 
@@ -704,6 +705,60 @@ let test_stream_bridge_emits_after_stabilize () =
    | _ -> Alcotest.fail "expected initialized stream update");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_validates_capacity () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  expect_fail "invalid stream capacity" (( = ) `Invalid_capacity)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Stream.observe ~capacity:0 signal)))
+
+let test_stream_bridge_closes_on_observer_dispose () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observer, stream = run_ok rt (Signal.Stream.observe signal) in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Observer.dispose observer);
+  match run_ok rt (Eta_stream.run_collect stream) with
+  | [ Signal.Initialized 1 ] -> ()
+  | _ -> Alcotest.fail "expected stream to drain buffered update and close"
+
+let test_stream_bridge_backpressures_at_capacity () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 2);
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "stabilization waits for bridge capacity" false
+    (Eio.Promise.is_resolved stabilizer);
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initial stream update");
+  ignore
+    (expect_exit_ok "backpressured stabilize"
+       (Eio.Promise.await_exn stabilizer)
+      : unit);
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected changed stream update after capacity frees");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal"
     [
@@ -767,5 +822,11 @@ let () =
             test_time_validation_errors;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick
             test_stream_bridge_emits_after_stabilize;
+          Alcotest.test_case "stream bridge validates capacity" `Quick
+            test_stream_bridge_validates_capacity;
+          Alcotest.test_case "stream bridge closes on dispose" `Quick
+            test_stream_bridge_closes_on_observer_dispose;
+          Alcotest.test_case "stream bridge backpressures" `Quick
+            test_stream_bridge_backpressures_at_capacity;
         ] );
     ]

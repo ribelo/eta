@@ -578,7 +578,10 @@ need human review before the PRD is considered final.
   The implementation can report such errors through `stabilize` when they occur
   during pure recomputation, but the PRD should clarify whether constructors
   are allowed to raise outside effect-returning public operations.
-- The signal-to-stream bridge needs a lifecycle and buffering contract. The PRD
-  requires updates to enter streams only after stabilization, but it does not
-  specify queue capacity/backpressure, whether stream consumer shutdown should
-  dispose the observer, or whether disposal should close the stream.
+- The signal-to-stream bridge needed a lifecycle and buffering contract. The
+  implementation chooses `Stream.observe ?capacity` with a default capacity of
+  1024, backed by an Eta queue with backpressure. Observer disposal cleanly
+  closes the stream after buffered updates drain. Early stream termination does
+  not dispose the observer; the returned observer remains the lifecycle handle.
+  The PRD should either bless that shape or specify a different bridge
+  ownership contract.

@@ -25,6 +25,7 @@ module Make (Observer_error : Observer_error) = struct
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
   type time_error = [ `Invalid_interval | `Past_deadline ]
+  type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a update =
     | Initialized of 'a
@@ -67,6 +68,11 @@ module Make (Observer_error : Observer_error) = struct
   let pp_time_error ppf = function
     | `Invalid_interval -> Format.pp_print_string ppf "invalid interval"
     | `Past_deadline -> Format.pp_print_string ppf "deadline is in the past"
+
+  let pp_stream_error ppf = function
+    | #graph_error as err -> pp_graph_error ppf err
+    | `Invalid_capacity ->
+        Format.pp_print_string ppf "stream bridge capacity must be positive"
 
   let default_equal a b = a == b
 
@@ -1291,11 +1297,23 @@ module Make (Observer_error : Observer_error) = struct
   end
 
   module Stream = struct
-    let observe ?equal signal =
-      Effect.sync (fun () -> Queue.create ())
+    let default_capacity = 1024
+
+    let create_bridge_queue capacity =
+      if capacity <= 0 then Error `Invalid_capacity
+      else
+        Ok
+          (Queue.create
+             ~overflow:(Queue.Backpressure { capacity })
+             ())
+
+    let observe ?(capacity = default_capacity) ?equal signal =
+      Effect.sync (fun () -> create_bridge_queue capacity)
+      |> Effect.flatten_result
       |> Effect.bind (fun queue ->
              Observer.observe ?equal signal (fun update ->
                  Queue.send queue update |> Effect.ignore)
+             |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     observer.obs_on_dispose <-
                       (fun () -> Queue.close queue) :: observer.obs_on_dispose;
