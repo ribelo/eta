@@ -1268,6 +1268,35 @@ let test_active_graph_operation_interruption_releases_lane () =
 
 let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
+  let check_stats label expected actual =
+    Alcotest.(check int)
+      (label ^ " stabilization_count")
+      expected.Signal.stabilization_count actual.Signal.stabilization_count;
+    Alcotest.(check int)
+      (label ^ " active_observer_count")
+      expected.Signal.active_observer_count actual.Signal.active_observer_count;
+    Alcotest.(check int)
+      (label ^ " necessary_node_count")
+      expected.Signal.necessary_node_count actual.Signal.necessary_node_count;
+    Alcotest.(check int)
+      (label ^ " stale_node_count")
+      expected.Signal.stale_node_count actual.Signal.stale_node_count;
+    Alcotest.(check int)
+      (label ^ " recompute_count")
+      expected.Signal.recompute_count actual.Signal.recompute_count;
+    Alcotest.(check int)
+      (label ^ " dynamic_scope_invalidations")
+      expected.Signal.dynamic_scope_invalidations
+      actual.Signal.dynamic_scope_invalidations;
+    Alcotest.(check int)
+      (label ^ " nodes_became_necessary")
+      expected.Signal.nodes_became_necessary
+      actual.Signal.nodes_became_necessary;
+    Alcotest.(check int)
+      (label ^ " nodes_became_unnecessary")
+      expected.Signal.nodes_became_unnecessary
+      actual.Signal.nodes_became_unnecessary
+  in
   let before = run_ok rt (Signal.stats ()) in
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source |> Signal.map (fun n -> n + 1) in
@@ -1296,8 +1325,12 @@ let test_stats_and_dot_are_read_only () =
   Alcotest.(check bool) "stale nodes clear after stabilize" true
     (after_stabilize.Signal.stale_node_count
      < after_observe.Signal.stale_node_count);
+  let after_stats_read = run_ok rt (Signal.stats ()) in
+  check_stats "stats read-only" after_stabilize after_stats_read;
   let dot = run_ok rt (Signal.to_dot ()) in
   Alcotest.(check bool) "dot dump is non-empty" true (String.length dot > 0);
+  let after_dot = run_ok rt (Signal.stats ()) in
+  check_stats "dot read-only" after_stabilize after_dot;
   run_ok rt (Signal.Observer.dispose observer);
   let after_dispose = run_ok rt (Signal.stats ()) in
   Alcotest.(check bool) "unnecessary transition counted" true
