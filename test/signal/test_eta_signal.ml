@@ -1376,6 +1376,30 @@ let test_stream_bridge_closes_on_observer_dispose () =
   | [ Signal.Initialized 1 ] -> ()
   | _ -> Alcotest.fail "expected stream to drain buffered update and close"
 
+let test_stream_bridge_take_does_not_dispose_observer () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observer, stream = run_ok rt (Signal.Stream.observe signal) in
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initialized stream update");
+  Alcotest.(check int) "observer remains alive after take" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer still updates after take" 2
+    (run_ok rt (Signal.Observer.read observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected changed stream update after take");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_backpressures_at_capacity () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -1525,6 +1549,8 @@ let () =
             test_stream_bridge_validates_capacity;
           Alcotest.test_case "stream bridge closes on dispose" `Quick
             test_stream_bridge_closes_on_observer_dispose;
+          Alcotest.test_case "stream bridge take keeps observer" `Quick
+            test_stream_bridge_take_does_not_dispose_observer;
           Alcotest.test_case "stream bridge backpressures" `Quick
             test_stream_bridge_backpressures_at_capacity;
         ] );
