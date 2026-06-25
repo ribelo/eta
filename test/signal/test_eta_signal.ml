@@ -1331,6 +1331,9 @@ let test_time_absolute_deadline () =
   run_ok rt Signal.stabilize;
   Alcotest.(check bool) "absolute deadline reached" true
     (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Async.yield ();
+  Alcotest.(check int) "absolute deadline timer stopped" 0
+    (Eta_test.Test_clock.sleeper_count clock);
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_step_function () =

@@ -225,6 +225,7 @@ module Make (Observer_error : Observer_error) () = struct
   and timer_node = {
     mutable timer_active : bool;
     mutable timer_running : bool;
+    mutable timer_finished : bool;
     mutable timer_generation : int;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
@@ -945,8 +946,12 @@ module Make (Observer_error : Observer_error) () = struct
     timer.timer_active <- false;
     timer.timer_generation <- timer.timer_generation + 1
 
+  let timer_finish_unlocked timer =
+    timer.timer_finished <- true;
+    timer_stop_unlocked timer
+
   let timer_start_unlocked timer =
-    if timer.timer_active then None
+    if timer.timer_active || timer.timer_finished then None
     else (
       timer.timer_active <- true;
       timer.timer_generation <- timer.timer_generation + 1;
@@ -1341,6 +1346,7 @@ module Make (Observer_error : Observer_error) () = struct
         {
           timer_active = false;
           timer_running = false;
+          timer_finished = false;
           timer_generation = 0;
           timer_start =
             (fun timer ->
@@ -1389,7 +1395,8 @@ module Make (Observer_error : Observer_error) () = struct
                                             |> Effect.bind (fun () ->
                                                    with_graph_lane_sync
                                                      (fun () ->
-                                                       timer_stop_unlocked timer))
+                                                       timer_finish_unlocked
+                                                         timer))
                                           else Var.set source false));
                              })))
 
