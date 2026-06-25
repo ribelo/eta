@@ -419,6 +419,45 @@ let test_cutoff_suppresses_downstream_recompute () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "downstream not recomputed" 1 !downstream_calls
 
+let test_source_equality_suppresses_graph_propagation () =
+  with_runtime @@ fun rt ->
+  let source =
+    Signal.Var.create ~equal:(fun old_value new_value ->
+        old_value mod 2 = new_value mod 2)
+      0
+  in
+  let calls = ref 0 in
+  let observed =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr calls;
+           value)
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe observed (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial recompute" 1 !calls;
+  run_ok rt (Signal.Var.set source 2);
+  Alcotest.(check int) "source value updates immediately" 2
+    (Signal.Var.value source);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "equal source update does not recompute" 1 !calls;
+  Alcotest.(check int) "observer keeps previous graph snapshot" 0
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "equal source update emits no event" 1
+    (List.length !events);
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "non-equal source update recomputes" 2 !calls;
+  Alcotest.(check int) "observer sees non-equal update" 3
+    (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !events with
+   | [ Signal.Initialized 0; Changed { old_value = 0; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected initialization and non-equal change event");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_default_cutoff_is_physical_equality () =
   with_runtime @@ fun rt ->
   let initial = Array.make 1 1 in
@@ -1657,6 +1696,8 @@ let () =
             test_n_ary_maps_both_and_all;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
             test_cutoff_suppresses_downstream_recompute;
+          Alcotest.test_case "source equality suppresses propagation" `Quick
+            test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "observer equality is observer-local" `Quick
