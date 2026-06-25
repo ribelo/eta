@@ -1333,6 +1333,12 @@ let test_stats_and_dot_are_read_only () =
   check_stats "dot read-only" after_stabilize after_dot;
   run_ok rt (Signal.Observer.dispose observer);
   let after_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "active observer decrements"
+    before.Signal.active_observer_count
+    after_dispose.Signal.active_observer_count;
+  Alcotest.(check bool) "necessary nodes drop after dispose" true
+    (after_dispose.Signal.necessary_node_count
+     < after_stabilize.Signal.necessary_node_count);
   Alcotest.(check bool) "unnecessary transition counted" true
     (after_dispose.Signal.nodes_became_unnecessary
      > after_stabilize.Signal.nodes_became_unnecessary)
