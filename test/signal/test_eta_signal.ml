@@ -1311,6 +1311,28 @@ let test_time_after_deadline () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_absolute_deadline () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "initial absolute deadline" false
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "absolute deadline not reached" false
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "absolute deadline reached" true
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_step_function () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
@@ -1539,6 +1561,8 @@ let () =
             test_time_now_uses_runtime_clock;
           Alcotest.test_case "time after deadline" `Quick
             test_time_after_deadline;
+          Alcotest.test_case "time absolute deadline" `Quick
+            test_time_absolute_deadline;
           Alcotest.test_case "time step function" `Quick
             test_time_step_function;
           Alcotest.test_case "time validation errors" `Quick
