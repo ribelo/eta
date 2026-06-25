@@ -4,3 +4,11 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree negative)
+  (:eta_signal_cma ../../lib/signal/eta_signal.cma))
+ (action
+  (run bash negative/run.sh %{eta_signal_cma})))

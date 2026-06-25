@@ -5,7 +5,7 @@ module Signal = Eta_signal.Make (struct
 
   let pp ppf = function
     | `Observer_failed -> Format.pp_print_string ppf "observer failed"
-end)
+end) ()
 
 type test_error =
   [ `Update_failed

@@ -9,7 +9,7 @@ module type Observer_error = sig
   val pp : Format.formatter -> t -> unit
 end
 
-module Make (Observer_error : Observer_error) : sig
+module Make (Observer_error : Observer_error) () : sig
   type observer_error = Observer_error.t
 
   type graph_error =

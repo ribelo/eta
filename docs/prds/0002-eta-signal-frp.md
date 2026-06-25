@@ -564,8 +564,11 @@ need human review before the PRD is considered final.
 - Observer callback typed errors needed a concrete OCaml surface. The
   implementation chooses a graph-wide observer error type as the graph functor
   parameter and wraps callback failures as `` `Observer_error`` from
-  `stabilize`. The PRD should either bless that shape or specify a different
-  callback error model.
+  `stabilize`. The graph functor is a generative two-step functor,
+  `Make(Observer_error)()`, so repeated applications with the same observer
+  error module still create incompatible graph-owned signal/variable/observer
+  types. The PRD should either bless that shape or specify a different callback
+  error and graph-instance model.
 - Time/clock nodes needed exact OCaml API signatures. The implementation
   chooses effectful constructors for runtime-clock-backed nodes, explicit
   `~every` intervals for current-time/deadline/relative-delay/step nodes, and

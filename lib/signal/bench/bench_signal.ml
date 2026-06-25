@@ -4,7 +4,7 @@ module Signal = Eta_signal.Make (struct
   type t = |
 
   let pp _ppf (value : t) = match value with _ -> .
-end)
+end) ()
 
 let run_effect program =
   Eio_main.run @@ fun stdenv ->
