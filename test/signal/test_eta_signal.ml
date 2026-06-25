@@ -1203,6 +1203,37 @@ let test_effectful_update_success_publishes_once () =
   Alcotest.(check int) "no duplicate event" 0 (List.length !events);
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_effectful_update_sees_pending_source_value () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let seen = ref None in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe observed (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  events := [];
+  run_ok rt (Signal.Var.set source 2);
+  Alcotest.(check int) "observer still has old snapshot" 1
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "update result" 3
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.sync (fun () -> seen := Some current)
+            |> Effect.map (fun () -> current + 1))));
+  Alcotest.(check (option int)) "callback sees pending source value" (Some 2)
+    !seen;
+  Alcotest.(check int) "source stores update result" 3 (Signal.Var.value source);
+  Alcotest.(check int) "no event before stabilization" 0 (List.length !events);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer sees coalesced update" 3
+    (run_ok rt (Signal.Observer.read observer));
+  (match !events with
+   | [ Signal.Changed { old_value = 1; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected pending set and effectful update to coalesce");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_effectful_update_allows_other_variable_mutation () =
   with_runtime @@ fun rt ->
   let left = Signal.Var.create 1 in
@@ -1808,6 +1839,8 @@ let () =
             test_effectful_update_reentry_fails_and_preserves_value;
           Alcotest.test_case "effectful update publishes once" `Quick
             test_effectful_update_success_publishes_once;
+          Alcotest.test_case "effectful update sees pending source value"
+            `Quick test_effectful_update_sees_pending_source_value;
           Alcotest.test_case "effectful update allows other variable mutation"
             `Quick
             test_effectful_update_allows_other_variable_mutation;
