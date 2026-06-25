@@ -255,6 +255,61 @@ let test_cutoff_suppresses_downstream_recompute () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "downstream not recomputed" 1 !downstream_calls
 
+let test_default_cutoff_is_physical_equality () =
+  with_runtime @@ fun rt ->
+  let initial = Array.make 1 1 in
+  let next = Array.copy initial in
+  Alcotest.(check bool) "test values are distinct blocks" false (initial == next);
+  let source = Signal.Var.create initial in
+  let events = ref [] in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source) (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source next);
+  run_ok rt Signal.stabilize;
+  (match List.rev !events with
+   | [ Signal.Initialized initialized; Changed { old_value; new_value } ] ->
+       Alcotest.(check (list int)) "initialized value" [ 1 ]
+         (Array.to_list initialized);
+       Alcotest.(check bool) "old value is initial block" true
+         (old_value == initial);
+       Alcotest.(check bool) "new value is next block" true
+         (new_value == next)
+   | _ -> Alcotest.fail "expected initialized and changed events");
+  Alcotest.(check bool) "observer current is next block" true
+    (run_ok rt (Signal.Observer.read observer) == next);
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_observer_equality_suppresses_only_that_observer () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let suppressed_events = ref [] in
+  let normal_events = ref [] in
+  let suppressed_observer =
+    run_ok rt
+      (Signal.Observer.observe ~equal:(fun _old_value _new_value -> true)
+         signal (record_observer suppressed_events))
+  in
+  let normal_observer =
+    run_ok rt (Signal.Observer.observe signal (record_observer normal_events))
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "suppressed observer saw only initialization" 1
+    (List.length !suppressed_events);
+  Alcotest.(check int) "normal observer saw initialization and change" 2
+    (List.length !normal_events);
+  Alcotest.(check int) "suppressed observer current still updates" 1
+    (run_ok rt (Signal.Observer.read suppressed_observer));
+  Alcotest.(check int) "normal observer current updates" 1
+    (run_ok rt (Signal.Observer.read normal_observer));
+  run_ok rt (Signal.Observer.dispose suppressed_observer);
+  run_ok rt (Signal.Observer.dispose normal_observer)
+
 let test_bind_detaches_old_dependency () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -927,6 +982,10 @@ let () =
             test_n_ary_maps_both_and_all;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
             test_cutoff_suppresses_downstream_recompute;
+          Alcotest.test_case "default cutoff is physical equality" `Quick
+            test_default_cutoff_is_physical_equality;
+          Alcotest.test_case "observer equality is observer-local" `Quick
+            test_observer_equality_suppresses_only_that_observer;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick
