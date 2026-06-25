@@ -670,6 +670,13 @@ need human review before the PRD is considered final.
   clock, but it does not expose a public schedule-taking clock-node constructor.
   The PRD should either bless schedule-backed timer nodes without a public
   schedule surface, or specify a schedule-taking clock-node API.
+- `Time.step` introduces a timer-owned user callback boundary. The
+  implementation runs the step function from the demand-owned timer daemon that
+  updates the backing source, so callback defects follow Eta daemon diagnostics
+  rather than returning from `stabilize` as observer/recompute callback defects
+  do. The PRD should either bless daemon-diagnostic reporting for timer callback
+  defects, specify a typed/time-specific failure channel, or remove user
+  callbacks from timer-owned nodes.
 - Node constructors appear to need to stay synchronous/pure so `bind` selectors
   can return signals directly. The implementation reports ambiguous node
   creation during pure recomputation or observer callback construction through
