@@ -24,6 +24,15 @@ for src in "$fixture_dir"/*_negative.ml; do
     public_batch_negative.ml)
       expected='Unbound value "?Signal\.batch"?|Unbound value "?batch"?'
       ;;
+    public_expert_negative.ml)
+      expected='Unbound module "?Signal\.Expert"?|Unbound value "?Signal\.Expert'
+      ;;
+    public_scope_negative.ml)
+      expected='Unbound module "?Signal\.Scope"?|Unbound value "?Signal\.Scope'
+      ;;
+    stream_to_signal_negative.ml)
+      expected='Unbound value "?Signal\.Stream\.to_signal"?|Unbound value "?to_signal"?'
+      ;;
     *)
       echo "no expected failure pattern configured for: $name"
       status=1
