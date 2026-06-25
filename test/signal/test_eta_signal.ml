@@ -283,6 +283,59 @@ let test_bind_detaches_old_dependency () =
   Alcotest.(check int) "right still active" 21
     (run_ok rt (Signal.Observer.read observer))
 
+let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let left_calls = ref 0 in
+  let right_calls = ref 0 in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then
+          Signal.Var.watch left
+          |> Signal.map (fun value ->
+                 incr left_calls;
+                 value)
+        else
+          Signal.Var.watch right
+          |> Signal.map (fun value ->
+                 incr right_calls;
+                 value))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let before_switch = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "initial left value" 10
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "left inner computed once" 1 !left_calls;
+  Alcotest.(check int) "right inner not yet computed" 0 !right_calls;
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  let after_switch = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool)
+    "scope invalidation counted" true
+    (after_switch.Signal.dynamic_scope_invalidations
+     > before_switch.Signal.dynamic_scope_invalidations);
+  Alcotest.(check int) "switched right value" 20
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "obsolete left inner not recomputed on switch" 1
+    !left_calls;
+  Alcotest.(check int) "right inner computed once" 1 !right_calls;
+  run_ok rt (Signal.Var.set left 99);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "obsolete left update does not recompute old scope" 1
+    !left_calls;
+  run_ok rt (Signal.Var.set right 21);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "active right update recomputes active scope" 2
+    !right_calls;
+  Alcotest.(check int) "right value updates" 21
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_bind_cycle_detection_is_typed_failure () =
   with_runtime @@ fun rt ->
   let trigger = Signal.Var.create () in
@@ -876,6 +929,8 @@ let () =
             test_cutoff_suppresses_downstream_recompute;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
+          Alcotest.test_case "bind invalidates old scope" `Quick
+            test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
           Alcotest.test_case "bind cycle detection typed failure" `Quick
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "unobserved nodes do not recompute" `Quick
