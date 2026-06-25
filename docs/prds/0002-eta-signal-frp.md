@@ -582,10 +582,11 @@ notes below.
 - Runtime acceptance evidence: `test/signal/test_eta_signal.ml` covers diamond
   propagation, deterministic recompute order, n-ary combinators, cutoffs,
   observer initialization/change/read/disposal semantics, disposal before
-  initialization, observer ordering and fail-fast behavior, delayed observer
-  mutation, atomic pure snapshot rollback/retry, dynamic `bind` dependency
-  detachment, scope invalidation, bind rollback, cycle detection, necessary-only
-  recomputation, typed error pretty-printers, reentrant stabilization,
+  initialization, observer ordering, fail-fast behavior, and observer reads
+  after callback failure, delayed observer mutation, atomic pure snapshot
+  rollback/retry, dynamic `bind` dependency detachment, scope invalidation, bind
+  rollback, cycle detection, necessary-only recomputation, typed error
+  pretty-printers, reentrant stabilization,
   same-variable effectful update reentry, queued and active graph-lane
   interruption cleanup, stats/DOT introspection, time-node demand and explicit
   stabilization behavior, time-node refresh when observed after idle time,
@@ -621,7 +622,7 @@ depend on a policy/API decision recorded in the audit notes below.
 | Unsafe synchronous observer reads are limited to tests/debugging | `lib/signal/eta_signal.mli`, `test_observer_unsafe_read_exn_reports_invalid_state` | Covered |
 | Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
 | Observer ordering and fail-fast behavior are typed and deterministic | `test_observer_callbacks_run_in_registration_order`, `test_observer_failure_fails_stabilize`, `test_observer_failure_is_fail_fast` | Covered; observer-error API shape needs human review |
-| Pure snapshot publication is atomic; already-run observer effects are not rolled back | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_effects_before_later_failure_are_not_rolled_back`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
+| Pure snapshot publication is atomic; already-run observer effects are not rolled back | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_failure_is_fail_fast`, `test_observer_effects_before_later_failure_are_not_rolled_back`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Multiple functor instances cannot compose signals by accident | `test_functor_instances_stabilize_independently`, `test/signal/negative/cross_graph_signal_negative.ml` | Covered |
 | Main public surface has no first-class graph values | `test/signal/negative/first_class_graph_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Manual stabilization coalesces multiple source updates | `test_manual_stabilization_coalesces_sets` | Covered |

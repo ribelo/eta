@@ -1060,19 +1060,25 @@ let test_observer_failure_is_fail_fast () =
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
   let later_ran = ref false in
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
-      : int Signal.observer);
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (fun _ ->
-            Effect.sync (fun () -> later_ran := true)))
-      : int Signal.observer);
+  let failing_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
+  in
+  let later_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           Effect.sync (fun () -> later_ran := true)))
+  in
   expect_fail "observer failure"
     (function `Observer_error `Observer_failed -> true | _ -> false)
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check bool) "later observer did not run" false !later_ran
+  Alcotest.(check bool) "later observer did not run" false !later_ran;
+  Alcotest.(check int) "failing observer snapshot published" 1
+    (run_ok rt (Signal.Observer.read failing_observer));
+  Alcotest.(check int) "skipped observer snapshot published" 1
+    (run_ok rt (Signal.Observer.read later_observer));
+  run_ok rt (Signal.Observer.dispose failing_observer);
+  run_ok rt (Signal.Observer.dispose later_observer)
 
 let test_observer_effects_before_later_failure_are_not_rolled_back () =
   with_runtime @@ fun rt ->
