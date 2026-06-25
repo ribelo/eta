@@ -93,6 +93,23 @@ let with_runtime_and_switch f =
 let record_observer events update =
   Effect.sync (fun () -> events := update :: !events)
 
+let render pp value = Format.asprintf "%a" pp value
+
+let test_error_pretty_printers_are_clear () =
+  Alcotest.(check string) "graph error" "cycle detected"
+    (render Signal.pp_graph_error `Cycle);
+  Alcotest.(check string) "observer read error" "disposed observer"
+    (render Signal.pp_observer_read_error `Disposed_observer);
+  Alcotest.(check string) "stabilize graph error" "reentrant stabilization"
+    (render Signal.pp_stabilize_error `Reentrant_stabilization);
+  Alcotest.(check string)
+    "stabilize observer error" "observer callback failed: observer failed"
+    (render Signal.pp_stabilize_error (`Observer_error `Observer_failed));
+  Alcotest.(check string) "time error" "invalid interval"
+    (render Signal.pp_time_error `Invalid_interval);
+  Alcotest.(check string) "stream error" "stream bridge capacity must be positive"
+    (render Signal.pp_stream_error `Invalid_capacity)
+
 let test_observer_initializes_on_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1119,6 +1136,8 @@ let test_stats_and_dot_are_read_only () =
   Alcotest.(check bool) "necessary nodes visible" true
     (after_observe.Signal.necessary_node_count
      > before.Signal.necessary_node_count);
+  Alcotest.(check bool) "stale nodes visible before stabilize" true
+    (after_observe.Signal.stale_node_count > before.Signal.stale_node_count);
   run_ok rt Signal.stabilize;
   let after_stabilize = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "stabilization count increments"
@@ -1126,6 +1145,9 @@ let test_stats_and_dot_are_read_only () =
     after_stabilize.Signal.stabilization_count;
   Alcotest.(check bool) "recompute count visible" true
     (after_stabilize.Signal.recompute_count > before.Signal.recompute_count);
+  Alcotest.(check bool) "stale nodes clear after stabilize" true
+    (after_stabilize.Signal.stale_node_count
+     < after_observe.Signal.stale_node_count);
   let dot = run_ok rt (Signal.to_dot ()) in
   Alcotest.(check bool) "dot dump is non-empty" true (String.length dot > 0);
   run_ok rt (Signal.Observer.dispose observer);
@@ -1349,6 +1371,8 @@ let () =
     [
       ( "core",
         [
+          Alcotest.test_case "error pretty printers are clear" `Quick
+            test_error_pretty_printers_are_clear;
           Alcotest.test_case "observer initializes on stabilize" `Quick
             test_observer_initializes_on_stabilize;
           Alcotest.test_case "manual stabilization coalesces sets" `Quick
