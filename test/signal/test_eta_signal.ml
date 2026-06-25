@@ -1426,6 +1426,17 @@ let test_stats_and_dot_are_read_only () =
       expected.Signal.nodes_became_unnecessary
       actual.Signal.nodes_became_unnecessary
   in
+  let count_occurrences text needle =
+    let text_len = String.length text in
+    let needle_len = String.length needle in
+    let rec loop index count =
+      if needle_len = 0 || index + needle_len > text_len then count
+      else if String.sub text index needle_len = needle then
+        loop (index + needle_len) (count + 1)
+      else loop (index + 1) count
+    in
+    loop 0 0
+  in
   let before = run_ok rt (Signal.stats ()) in
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source |> Signal.map (fun n -> n + 1) in
@@ -1456,10 +1467,22 @@ let test_stats_and_dot_are_read_only () =
      < after_observe.Signal.stale_node_count);
   let after_stats_read = run_ok rt (Signal.stats ()) in
   check_stats "stats read-only" after_stabilize after_stats_read;
+  let dot_before_unobserved = run_ok rt (Signal.to_dot ()) in
+  Alcotest.(check bool)
+    "dot dump is non-empty" true
+    (String.length dot_before_unobserved > 0);
+  let necessary_dot_nodes =
+    count_occurrences dot_before_unobserved "[label="
+  in
+  let _unobserved =
+    Signal.Var.watch (Signal.Var.create 10) |> Signal.map (fun n -> n + 1)
+  in
+  let before_dot = run_ok rt (Signal.stats ()) in
   let dot = run_ok rt (Signal.to_dot ()) in
-  Alcotest.(check bool) "dot dump is non-empty" true (String.length dot > 0);
+  Alcotest.(check int) "dot ignores unobserved nodes" necessary_dot_nodes
+    (count_occurrences dot "[label=");
   let after_dot = run_ok rt (Signal.stats ()) in
-  check_stats "dot read-only" after_stabilize after_dot;
+  check_stats "dot read-only" before_dot after_dot;
   run_ok rt (Signal.Observer.dispose observer);
   let after_dispose = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "active observer decrements"

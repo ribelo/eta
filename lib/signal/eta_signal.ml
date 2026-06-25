@@ -1290,17 +1290,21 @@ module Make (Observer_error : Observer_error) () = struct
 
   let to_dot () =
     with_graph_lane_sync @@ fun () ->
+    let necessary = collect_necessary_node_ids () in
     let buffer = Buffer.create 256 in
     let formatter = Format.formatter_of_buffer buffer in
     Format.fprintf formatter "digraph eta_signal {@.";
     List.iter
       (fun (P signal) ->
-        Format.fprintf formatter "  n%d [label=\"%s:%d\"];@." signal.id
-          (kind_name signal.kind) signal.id;
-        List.iter
-          (fun (P dependency) ->
-            Format.fprintf formatter "  n%d -> n%d;@." dependency.id signal.id)
-          signal.dependencies)
+        if Hashtbl.mem necessary signal.id then (
+          Format.fprintf formatter "  n%d [label=\"%s:%d\"];@." signal.id
+            (kind_name signal.kind) signal.id;
+          List.iter
+            (fun (P dependency) ->
+              if Hashtbl.mem necessary dependency.id then
+                Format.fprintf formatter "  n%d -> n%d;@." dependency.id
+                  signal.id)
+            signal.dependencies))
       graph.all_nodes;
     Format.fprintf formatter "}@.";
     Format.pp_print_flush formatter ();
