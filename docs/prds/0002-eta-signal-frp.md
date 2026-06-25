@@ -662,8 +662,11 @@ need human review before the PRD is considered final.
   `stabilize`. The graph functor is a generative two-step functor,
   `Make(Observer_error)()`, so repeated applications with the same observer
   error module still create incompatible graph-owned signal/variable/observer
-  types. The PRD should either bless that shape or specify a different callback
-  error and graph-instance model.
+  types. This is characterized by `test_observer_failure_fails_stabilize`,
+  `test_error_pretty_printers_are_clear`, and
+  `test/signal/negative/cross_graph_signal_negative.ml`. The PRD should either
+  bless that shape or specify a different callback error and graph-instance
+  model.
 - Observer disposal during the observer-effect phase needs same-stabilization
   wording. The implementation computes the observer event list before running
   observer callbacks, then runs that list sequentially. If one callback disposes
@@ -678,14 +681,18 @@ need human review before the PRD is considered final.
   chooses effectful constructors for runtime-clock-backed nodes, explicit
   `~every` intervals for current-time/deadline/relative-delay/step nodes, and
   demand-owned timer fibers that stop or become inert through observation
-  disposal and dynamic-scope invalidation. The PRD should either bless that API
-  shape or specify different signatures and lifecycle ownership.
+  disposal and dynamic-scope invalidation. This is reflected in
+  `lib/signal/eta_signal.mli` and characterized by `test_time_validation_errors`
+  plus the time-node behavior tests. The PRD should either bless that API shape
+  or specify different signatures and lifecycle ownership.
 - The time/clock acceptance text names Eta schedule primitives. The
   implementation uses runtime clock reads, `Duration`, `Eta.Schedule` recurrence
   drivers, `Effect.sleep`, runtime-managed daemon fibers, and the Eta test
   clock, but it does not expose a public schedule-taking clock-node constructor.
-  The PRD should either bless schedule-backed timer nodes without a public
-  schedule surface, or specify a schedule-taking clock-node API.
+  This is visible in `lib/signal/eta_signal.ml`'s timer loop and the absence of
+  any schedule-taking `Time` constructor in `lib/signal/eta_signal.mli`. The PRD
+  should either bless schedule-backed timer nodes without a public schedule
+  surface, or specify a schedule-taking clock-node API.
 - Timer demand can begin from ordinary observer lifecycle operations or from a
   dynamic `bind` branch switch during stabilization. The implementation refreshes
   `now` and deadline-backed sources immediately when observer lifecycle
@@ -712,30 +719,39 @@ need human review before the PRD is considered final.
   can return signals directly. The implementation reports ambiguous node
   creation during pure recomputation or observer callback construction through
   the typed `stabilize` error channel, but constructors themselves are not Eta
-  effects. The PRD should either bless synchronous constructors with
-  operation-boundary typed reporting, or specify a different constructor family
-  if constructor-time typed failures outside effect-returning operations are
-  required.
+  effects. This is characterized by
+  `test_ambiguous_node_creation_during_pure_recompute_is_typed_failure` and
+  `test_ambiguous_node_creation_during_observer_callback_is_typed_failure`. The
+  PRD should either bless synchronous constructors with operation-boundary typed
+  reporting, or specify a different constructor family if constructor-time typed
+  failures outside effect-returning operations are required.
 - Effectful same-variable updates needed an in-flight concurrency policy. The
   implementation uses a per-variable update slot: while an `update_effect`
   callback is active, a second `update_effect` on the same variable fails with
   `` `Reentrant_update`` rather than queueing behind it. This covers explicit
-  nested reentry and concurrent in-flight calls with the same typed failure.
-  The PRD should either bless fail-fast in-flight same-variable updates, or
-  specify queued FIFO serialization for non-nested callers.
+  nested reentry and concurrent in-flight calls with the same typed failure,
+  characterized by `test_effectful_update_reentry_fails_and_preserves_value`
+  and `test_concurrent_effectful_update_same_variable_fails_fast`. The PRD
+  should either bless fail-fast in-flight same-variable updates, or specify
+  queued FIFO serialization for non-nested callers.
 - Source mutation during stabilization needs phase-specific wording. The
   implementation supports ordinary source mutation from observer callbacks and
   other Eta effectful operations while the graph is in the observer/effect
   phase, and those mutations are delayed to the next explicit stabilization.
   Pure recomputation callbacks remain synchronous pure functions and do not
   receive an Eta effect context in which `Var.set` can be called normally. The
-  PRD should either narrow the mutation-during-stabilization statement to
-  effect-phase/public effect operations, or specify a safe effectful
-  pure-recompute mutation mechanism.
+  supported effect-phase behavior is characterized by
+  `test_observer_mutation_is_delayed_to_next_stabilization`. The PRD should
+  either narrow the mutation-during-stabilization statement to effect-phase/public
+  effect operations, or specify a safe effectful pure-recompute mutation
+  mechanism.
 - The signal-to-stream bridge needed a lifecycle and buffering contract. The
   implementation chooses `Stream.observe ?capacity` with a default capacity of
   1024, backed by an Eta queue with backpressure. Observer disposal cleanly
   closes the stream after buffered updates drain. Early stream termination does
   not dispose the observer; the returned observer remains the lifecycle handle.
-  The PRD should either bless that shape or specify a different bridge
-  ownership contract.
+  This is characterized by `test_stream_bridge_closes_on_observer_dispose`,
+  `test_stream_bridge_take_does_not_dispose_observer`,
+  `test_stream_bridge_backpressures_at_capacity`, and
+  `test_stream_bridge_dispose_unblocks_backpressure`. The PRD should either
+  bless that shape or specify a different bridge ownership contract.
