@@ -1798,6 +1798,41 @@ let test_stream_bridge_take_does_not_dispose_observer () =
    | _ -> Alcotest.fail "expected changed stream update after take");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_equal_suppresses_updates () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let fresh_a () = Bytes.to_string (Bytes.of_string "a") in
+  let source = Signal.Var.create (fresh_a ()) in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    run_ok rt (Signal.Stream.observe ~equal:String.equal signal)
+  in
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized "a" ] -> ()
+   | _ -> Alcotest.fail "expected initialized stream update");
+  let next =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt
+          (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)))
+  in
+  run_ok rt (Signal.Var.set source (fresh_a ()));
+  run_ok rt Signal.stabilize;
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool) "equal update did not emit" false
+    (Eio.Promise.is_resolved next);
+  run_ok rt (Signal.Var.set source "b");
+  run_ok rt Signal.stabilize;
+  (match
+     expect_exit_ok "stream equal changed update" (Eio.Promise.await_exn next)
+   with
+   | [ Signal.Changed { old_value = "a"; new_value = "b" } ] -> ()
+   | _ -> Alcotest.fail "expected changed stream update after unequal value");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_backpressures_at_capacity () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -1969,6 +2004,8 @@ let () =
             test_stream_bridge_closes_on_observer_dispose;
           Alcotest.test_case "stream bridge take keeps observer" `Quick
             test_stream_bridge_take_does_not_dispose_observer;
+          Alcotest.test_case "stream bridge equality suppresses" `Quick
+            test_stream_bridge_equal_suppresses_updates;
           Alcotest.test_case "stream bridge backpressures" `Quick
             test_stream_bridge_backpressures_at_capacity;
         ] );
