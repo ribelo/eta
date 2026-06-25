@@ -678,6 +678,13 @@ need human review before the PRD is considered final.
   operation-boundary typed reporting, or specify a different constructor family
   if constructor-time typed failures outside effect-returning operations are
   required.
+- Effectful same-variable updates needed an in-flight concurrency policy. The
+  implementation uses a per-variable update slot: while an `update_effect`
+  callback is active, a second `update_effect` on the same variable fails with
+  `` `Reentrant_update`` rather than queueing behind it. This covers explicit
+  nested reentry and concurrent in-flight calls with the same typed failure.
+  The PRD should either bless fail-fast in-flight same-variable updates, or
+  specify queued FIFO serialization for non-nested callers.
 - Source mutation during stabilization needs phase-specific wording. The
   implementation supports ordinary source mutation from observer callbacks and
   other Eta effectful operations while the graph is in the observer/effect
