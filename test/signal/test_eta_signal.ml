@@ -58,6 +58,36 @@ let wait_for_sleepers clock expected =
   in
   loop 20
 
+let wait_until label predicate =
+  let rec loop attempts =
+    if predicate () then ()
+    else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 50
+
+let await_cancelled label promise =
+  try
+    match Eio.Promise.await_exn promise with
+    | Exit.Ok _ -> Alcotest.failf "%s: expected Eio cancellation, got Ok" label
+    | Exit.Error cause ->
+        Alcotest.failf "%s: expected Eio cancellation, got %a" label
+          (Cause.pp pp_hidden) cause
+  with Eio.Cancel.Cancelled _ -> ()
+
+let expect_exit_ok label = function
+  | Exit.Ok value -> value
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected Ok, got %a" label (Cause.pp pp_hidden) cause
+
+let with_runtime_and_switch f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
+  f sw rt
+
 let record_observer events update =
   Effect.sync (fun () -> events := update :: !events)
 
@@ -374,6 +404,32 @@ let test_reentrant_stabilization_is_typed_failure () =
    | Some (Exit.Ok ()) -> Alcotest.fail "nested stabilize unexpectedly succeeded"
    | None -> Alcotest.fail "nested stabilize did not run")
 
+let test_reentrant_stabilization_does_not_clear_outer_phase () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let nested = ref [] in
+  let record_nested () =
+    Effect.exit Signal.stabilize
+    |> Effect.bind (fun exit ->
+           Effect.sync (fun () -> nested := exit :: !nested))
+  in
+  ignore
+    (run_ok rt (Signal.Observer.observe observed (fun _ -> record_nested ()))
+      : int Signal.observer);
+  ignore
+    (run_ok rt (Signal.Observer.observe observed (fun _ -> record_nested ()))
+      : int Signal.observer);
+  run_ok rt Signal.stabilize;
+  let is_reentrant = function
+    | Exit.Error (Cause.Fail `Reentrant_stabilization) -> true
+    | Exit.Ok _ | Exit.Error _ -> false
+  in
+  Alcotest.(check int) "two nested attempts" 2 (List.length !nested);
+  Alcotest.(check bool)
+    "all nested attempts remained reentrant" true
+    (List.for_all is_reentrant !nested)
+
 let test_effectful_update_reentry_fails_and_preserves_value () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -384,6 +440,90 @@ let test_effectful_update_reentry_fails_and_preserves_value () =
                Signal.Var.update_effect source (fun _ -> Effect.pure (current + 10))
                |> Effect.map (fun _ -> current + 1)))));
   Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
+
+let test_queued_graph_operation_cancellation_does_not_run () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref true in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           n)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  let attempted, attempted_resolver = Eio.Promise.create () in
+  let cancel_ctx = ref None in
+  let queued_set =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Eta_eio.Runtime.run rt
+          (widen
+             (Effect.sync (fun () -> Eio.Promise.resolve attempted_resolver ())
+             |> Effect.bind (fun () -> Signal.Var.set source 2))))
+  in
+  wait_until "queued set cancellation context" (fun () ->
+      Option.is_some !cancel_ctx);
+  Eio.Promise.await attempted;
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled "queued set" queued_set;
+  Eio.Promise.resolve release_resolver ();
+  ignore (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
+  Alcotest.(check int) "cancelled set did not run" 1 (Signal.Var.value source);
+  Alcotest.(check int) "observer kept original value" 1
+    (run_ok rt (Signal.Observer.read observer))
+
+let test_active_graph_operation_interruption_releases_lane () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref true in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           n)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  let cancel_ctx = ref None in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  wait_until "active stabilize cancellation context" (fun () ->
+      Option.is_some !cancel_ctx);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled "active stabilize" stabilizer;
+  Eio.Promise.resolve release_resolver ();
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "lane released for later set/stabilize" 2
+    (run_ok rt (Signal.Observer.read observer))
 
 let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
@@ -599,8 +739,14 @@ let () =
             test_observer_failure_is_fail_fast;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
+          Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick
+            test_reentrant_stabilization_does_not_clear_outer_phase;
           Alcotest.test_case "effectful update reentry typed failure" `Quick
             test_effectful_update_reentry_fails_and_preserves_value;
+          Alcotest.test_case "queued graph operation cancellation" `Quick
+            test_queued_graph_operation_cancellation_does_not_run;
+          Alcotest.test_case "active graph interruption releases lane" `Quick
+            test_active_graph_operation_interruption_releases_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
           Alcotest.test_case "time interval starts on observe" `Quick

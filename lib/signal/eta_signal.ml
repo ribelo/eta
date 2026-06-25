@@ -1,6 +1,8 @@
 module Effect = Eta.Effect
 module Duration = Eta.Duration
 module Queue = Eta.Queue
+module Runtime_contract = Eta.Runtime_contract
+module Sync_lock = Eta.Sync_lock
 
 module type Observer_error = sig
   type t
@@ -223,7 +225,28 @@ module Make (Observer_error : Observer_error) = struct
 
   type event = E : 'a observer * 'a update -> event
 
+  type lane_waiter_state =
+    | Lane_waiting
+    | Lane_granted
+    | Lane_claimed
+    | Lane_cancelled
+
+  type lane_waiter = {
+    lane_contract : Runtime_contract.t;
+    lane_resolver : unit Runtime_contract.resolver;
+    mutable lane_state : lane_waiter_state;
+  }
+
+  type lane = {
+    lane_lock : Sync_lock.t;
+    lane_waiters : lane_waiter Stdlib.Queue.t;
+    mutable lane_busy : bool;
+    mutable lane_waiting : int;
+    mutable lane_cancelled : int;
+  }
+
   type graph = {
+    lane : lane;
     mutable next_id : int;
     mutable next_scope_id : int;
     mutable phase : phase;
@@ -246,6 +269,14 @@ module Make (Observer_error : Observer_error) = struct
 
   let graph =
     {
+      lane =
+        {
+          lane_lock = Sync_lock.create ();
+          lane_waiters = Stdlib.Queue.create ();
+          lane_busy = false;
+          lane_waiting = 0;
+          lane_cancelled = 0;
+        };
       next_id = 0;
       next_scope_id = 1;
       phase = Not_stabilizing;
@@ -263,6 +294,119 @@ module Make (Observer_error : Observer_error) = struct
       nodes_became_necessary = 0;
       nodes_became_unnecessary = 0;
     }
+
+  let with_lane_lock lane f = Sync_lock.use lane.lane_lock f
+
+  let rec take_waiting_waiter waiters =
+    if Stdlib.Queue.is_empty waiters then None
+    else
+      let waiter = Stdlib.Queue.take waiters in
+      match waiter.lane_state with
+      | Lane_waiting -> Some waiter
+      | Lane_granted | Lane_claimed | Lane_cancelled ->
+          take_waiting_waiter waiters
+
+  let compact_cancelled_lane_waiters_locked lane =
+    if lane.lane_cancelled > 0 then (
+      let live = Stdlib.Queue.create () in
+      Stdlib.Queue.iter
+        (fun waiter ->
+          match waiter.lane_state with
+          | Lane_waiting -> Stdlib.Queue.push waiter live
+          | Lane_granted | Lane_claimed | Lane_cancelled -> ())
+        lane.lane_waiters;
+      Stdlib.Queue.clear lane.lane_waiters;
+      Stdlib.Queue.iter
+        (fun waiter -> Stdlib.Queue.push waiter lane.lane_waiters)
+        live)
+
+  let grant_lane_waiter waiter =
+    waiter.lane_state <- Lane_granted;
+    waiter.lane_contract.Runtime_contract.resolve_promise waiter.lane_resolver ()
+
+  let release_lane_locked lane =
+    match take_waiting_waiter lane.lane_waiters with
+    | Some waiter ->
+        lane.lane_waiting <- lane.lane_waiting - 1;
+        grant_lane_waiter waiter
+    | None -> lane.lane_busy <- false
+
+  let cancel_lane_waiter_locked lane waiter =
+    match waiter.lane_state with
+    | Lane_waiting ->
+        waiter.lane_state <- Lane_cancelled;
+        lane.lane_waiting <- lane.lane_waiting - 1;
+        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        compact_cancelled_lane_waiters_locked lane
+    | Lane_granted ->
+        waiter.lane_state <- Lane_cancelled;
+        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        release_lane_locked lane
+    | Lane_claimed | Lane_cancelled -> ()
+
+  let claim_lane_waiter_locked waiter =
+    match waiter.lane_state with
+    | Lane_granted -> waiter.lane_state <- Lane_claimed
+    | Lane_waiting ->
+        invalid_arg "Eta_signal lane waiter was not granted"
+    | Lane_claimed | Lane_cancelled -> ()
+
+  let with_lane_lock_during_cancel contract lane f =
+    contract.Runtime_contract.protect (fun () -> with_lane_lock lane f)
+
+  let enqueue_lane_waiter contract lane =
+    let promise, resolver = contract.Runtime_contract.create_promise () in
+    let waiter =
+      { lane_contract = contract; lane_resolver = resolver; lane_state = Lane_waiting }
+    in
+    Stdlib.Queue.push waiter lane.lane_waiters;
+    lane.lane_waiting <- lane.lane_waiting + 1;
+    (promise, waiter)
+
+  let enter_lane_sync contract lane =
+    match
+      with_lane_lock lane @@ fun () ->
+      if lane.lane_busy then
+        let promise, waiter = enqueue_lane_waiter contract lane in
+        `Wait (promise, waiter)
+      else (
+        lane.lane_busy <- true;
+        `Ready)
+    with
+    | `Ready -> ()
+    | `Wait (promise, waiter) -> (
+        try
+          contract.Runtime_contract.await_promise promise;
+          with_lane_lock_during_cancel contract lane (fun () ->
+              claim_lane_waiter_locked waiter)
+        with exn
+          when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+          with_lane_lock_during_cancel contract lane (fun () ->
+              cancel_lane_waiter_locked lane waiter);
+          raise exn)
+
+  let leave_lane_sync lane =
+    with_lane_lock lane @@ fun () -> release_lane_locked lane
+
+  let enter_graph_lane () =
+    Effect.Expert.make ~leaf_name:"Eta_signal.enter_graph_lane" (fun context ->
+        let contract = Effect.Expert.contract context in
+        try
+          enter_lane_sync contract graph.lane;
+          Eta.Exit.Ok ()
+        with exn
+          when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+          raise exn)
+
+  let leave_graph_lane () =
+    Effect.sync (fun () -> leave_lane_sync graph.lane)
+
+  let with_graph_lane effect =
+    enter_graph_lane ()
+    |> Effect.bind (fun () ->
+           effect |> Effect.on_exit (fun _exit -> leave_graph_lane ()))
+
+  let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
 
   let next_id () =
     let id = graph.next_id in
@@ -691,23 +835,19 @@ module Make (Observer_error : Observer_error) = struct
 
   let observer_active (O observer) = not observer.obs_disposed
 
-  let timer_stop timer =
+  let timer_stop_unlocked timer =
     timer.timer_active <- false;
     timer.timer_generation <- timer.timer_generation + 1
 
-  let timer_start timer =
-    Effect.sync
-      (fun () ->
-        if timer.timer_active then false
-        else (
-          timer.timer_active <- true;
-          timer.timer_generation <- timer.timer_generation + 1;
-          if timer.timer_running then false
-          else (
-            timer.timer_running <- true;
-            true)))
-    |> Effect.bind (fun should_start ->
-           if should_start then timer.timer_start timer else Effect.unit)
+  let timer_start_unlocked timer =
+    if timer.timer_active then None
+    else (
+      timer.timer_active <- true;
+      timer.timer_generation <- timer.timer_generation + 1;
+      if timer.timer_running then None
+      else (
+        timer.timer_running <- true;
+        Some (timer.timer_start timer)))
 
   let necessary_timers () =
     let seen_nodes = Hashtbl.create 16 in
@@ -729,17 +869,18 @@ module Make (Observer_error : Observer_error) = struct
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
       graph.all_nodes
 
-  let refresh_timer_demand () =
+  let refresh_timer_demand_unlocked () =
     let needed = necessary_timers () in
-    let starts =
-      all_timers ()
-      |> List.filter_map (fun (id, timer) ->
-             if Hashtbl.mem needed id then Some timer
-             else (
-               timer_stop timer;
-               None))
-    in
-    Effect.concat (List.map timer_start starts)
+    all_timers ()
+    |> List.filter_map (fun (id, timer) ->
+           if Hashtbl.mem needed id then timer_start_unlocked timer
+           else (
+             timer_stop_unlocked timer;
+             None))
+
+  let refresh_timer_demand () =
+    with_graph_lane_sync refresh_timer_demand_unlocked
+    |> Effect.bind Effect.concat
 
   let collect_observer_event (O observer) =
     if observer.obs_disposed then None
@@ -801,17 +942,14 @@ module Make (Observer_error : Observer_error) = struct
         |> Effect.bind (fun () -> run_events rest)
 
   let stabilize =
-    let body =
-      Effect.sync begin_stabilize
-      |> Effect.map (function
-           | Ok events -> Ok events
-           | Error (#graph_error as err) -> Error (err :> stabilize_error))
-      |> Effect.flatten_result
-      |> Effect.bind (fun events ->
-             refresh_timer_demand () |> Effect.bind (fun () -> run_events events))
-    in
-    body
-    |> Effect.on_exit (fun _exit -> Effect.sync finish_stabilize)
+    with_graph_lane_sync begin_stabilize
+    |> Effect.map (function
+         | Ok events -> Ok events
+         | Error (#graph_error as err) -> Error (err :> stabilize_error))
+    |> Effect.flatten_result
+    |> Effect.bind (fun events ->
+           (refresh_timer_demand () |> Effect.bind (fun () -> run_events events))
+           |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))
 
   module Var = struct
     type 'a t = 'a var
@@ -842,16 +980,16 @@ module Make (Observer_error : Observer_error) = struct
         graph.pending_vars <- V source :: graph.pending_vars)
 
     let set (source : 'a t) value =
-      Effect.sync @@ fun () ->
+      with_graph_lane_sync @@ fun () ->
       source.source_value <- value;
       queue_var source
 
     let release_update (source : 'a t) =
-      Effect.sync (fun () -> source.updating <- false)
+      with_graph_lane_sync (fun () -> source.updating <- false)
 
     let update_effect (source : 'a t) f =
       let acquire =
-        Effect.sync (fun () ->
+        with_graph_lane_sync (fun () ->
             if source.updating then Error `Reentrant_update
             else (
               source.updating <- true;
@@ -870,7 +1008,7 @@ module Make (Observer_error : Observer_error) = struct
     type 'a t = 'a observer
 
     let observe ?(equal = default_equal) signal callback =
-      Effect.sync (fun () ->
+      with_graph_lane_sync (fun () ->
           if not signal.valid then Error `Invalid_scope
           else
             let observer =
@@ -910,7 +1048,7 @@ module Make (Observer_error : Observer_error) = struct
       | None -> invalid_arg "Eta_signal observer is not initialized"
 
     let dispose observer =
-      Effect.sync
+      with_graph_lane_sync
         (fun () ->
           if not observer.obs_disposed then (
             observer.obs_disposed <- true;
@@ -981,7 +1119,7 @@ module Make (Observer_error : Observer_error) = struct
       0 graph.all_nodes
 
   let stats () =
-    Effect.sync @@ fun () ->
+    with_graph_lane_sync @@ fun () ->
     {
       stabilization_count = graph.stabilization_count;
       active_observer_count = active_observer_count ();
@@ -1009,7 +1147,7 @@ module Make (Observer_error : Observer_error) = struct
     | Bind _ -> "bind"
 
   let to_dot () =
-    Effect.sync @@ fun () ->
+    with_graph_lane_sync @@ fun () ->
     let buffer = Buffer.create 256 in
     let formatter = Format.formatter_of_buffer buffer in
     Format.fprintf formatter "digraph eta_signal {@.";
@@ -1033,23 +1171,34 @@ module Make (Observer_error : Observer_error) = struct
     let validate_future now deadline_ms =
       if deadline_ms <= now then Error `Past_deadline else Ok ()
 
+    let timer_active timer =
+      with_graph_lane_sync (fun () -> timer.timer_active)
+
+    let timer_mark_stopped timer =
+      with_graph_lane_sync (fun () -> timer.timer_running <- false)
+
+    let timer_after_update_state timer =
+      with_graph_lane_sync (fun () ->
+          if timer.timer_active then `Continue
+          else (
+            timer.timer_running <- false;
+            `Stop))
+
     let rec timer_loop timer interval update =
       Effect.sleep interval
       |> Effect.bind (fun () ->
-             Effect.sync (fun () -> timer.timer_active)
+             timer_active timer
              |> Effect.bind (fun active ->
                     if not active then
-                      Effect.sync (fun () -> timer.timer_running <- false)
+                      timer_mark_stopped timer
                     else
                       update.timer_update timer
                       |> Effect.bind (fun () ->
-                             Effect.sync (fun () -> timer.timer_active)
-                             |> Effect.bind (fun active ->
-                                    if active then
+                             timer_after_update_state timer
+                             |> Effect.bind (function
+                                  | `Continue ->
                                       timer_loop timer interval update
-                                    else
-                                      Effect.sync (fun () ->
-                                          timer.timer_running <- false)))))
+                                  | `Stop -> Effect.unit))))
 
     let attach_timer signal interval update =
       let timer =
@@ -1102,8 +1251,9 @@ module Make (Observer_error : Observer_error) = struct
                                           if now_ms >= deadline_ms then
                                             Var.set source true
                                             |> Effect.bind (fun () ->
-                                                   Effect.sync (fun () ->
-                                                       timer_stop timer))
+                                                   with_graph_lane_sync
+                                                     (fun () ->
+                                                       timer_stop_unlocked timer))
                                           else Var.set source false));
                              })))
 

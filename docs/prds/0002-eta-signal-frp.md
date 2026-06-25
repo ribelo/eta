@@ -582,8 +582,3 @@ need human review before the PRD is considered final.
   requires updates to enter streams only after stabilization, but it does not
   specify queue capacity/backpressure, whether stream consumer shutdown should
   dispose the observer, or whether disposal should close the stream.
-- The graph-lane serialization requirement needs an implementation strategy for
-  interruptible waiting. The first implementation slice uses short synchronous
-  critical sections and typed reentrant-stabilization failure, but a full PRD
-  match still needs an Eta-owned cancellable lane queue or an equivalent runtime
-  primitive.
