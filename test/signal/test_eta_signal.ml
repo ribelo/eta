@@ -877,6 +877,26 @@ let test_observer_failure_is_fail_fast () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   Alcotest.(check bool) "later observer did not run" false !later_ran
 
+let test_observer_effects_before_later_failure_are_not_rolled_back () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let effects = ref [] in
+  ignore
+    (run_ok rt
+       (Signal.Observer.observe observed (fun _ ->
+            Effect.sync (fun () -> effects := "first" :: !effects)))
+      : int Signal.observer);
+  ignore
+    (run_ok rt
+       (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
+      : int Signal.observer);
+  expect_fail "later observer failure"
+    (function `Observer_error `Observer_failed -> true | _ -> false)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check (list string))
+    "already-run observer effect remains" [ "first" ] (List.rev !effects)
+
 let test_observer_callback_construction_defect_does_not_poison_graph () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1431,6 +1451,8 @@ let () =
             test_observer_failure_fails_stabilize;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
+          Alcotest.test_case "observer effects survive later failure" `Quick
+            test_observer_effects_before_later_failure_are_not_rolled_back;
           Alcotest.test_case "observer construction defect does not poison"
             `Quick
             test_observer_callback_construction_defect_does_not_poison_graph;
