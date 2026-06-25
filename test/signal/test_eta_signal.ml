@@ -888,6 +888,33 @@ let test_effectful_update_reentry_fails_and_preserves_value () =
                |> Effect.map (fun _ -> current + 1)))));
   Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
 
+let test_effectful_update_allows_other_variable_mutation () =
+  with_runtime @@ fun rt ->
+  let left = Signal.Var.create 1 in
+  let right = Signal.Var.create 10 in
+  let combined =
+    Signal.map2 ( + ) (Signal.Var.watch left) (Signal.Var.watch right)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial observer value" 11
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "left update result" 2
+    (run_ok rt
+       (Signal.Var.update_effect left (fun current ->
+            Signal.Var.update_effect right (fun other ->
+                Effect.pure (other + 5))
+            |> Effect.map (fun _ -> current + 1))));
+  Alcotest.(check int) "left source updated" 2 (Signal.Var.value left);
+  Alcotest.(check int) "right source updated" 15 (Signal.Var.value right);
+  Alcotest.(check int) "observer waits for stabilization" 11
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer sees both updates" 17
+    (run_ok rt (Signal.Observer.read observer))
+
 let test_effectful_update_failures_preserve_value_and_release_slot () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1335,6 +1362,9 @@ let () =
             test_reentrant_stabilization_does_not_clear_outer_phase;
           Alcotest.test_case "effectful update reentry typed failure" `Quick
             test_effectful_update_reentry_fails_and_preserves_value;
+          Alcotest.test_case "effectful update allows other variable mutation"
+            `Quick
+            test_effectful_update_allows_other_variable_mutation;
           Alcotest.test_case "effectful update failure cleanup" `Quick
             test_effectful_update_failures_preserve_value_and_release_slot;
           Alcotest.test_case "effectful update interruption cleanup" `Quick
