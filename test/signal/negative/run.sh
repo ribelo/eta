@@ -18,8 +18,17 @@ for src in "$fixture_dir"/*_negative.ml; do
     cross_graph_signal_negative.ml)
       expected='A\.signal|B\.signal|expression was expected of type.*signal|This expression has type.*signal'
       ;;
+    global_graph_negative.ml)
+      expected='Unbound module "?Eta_signal\.Var"?|Unbound value "?Eta_signal\.Var'
+      ;;
+    first_class_graph_negative.ml)
+      expected='Unbound module "?Signal\.Graph"?|Unbound value "?Signal\.Graph'
+      ;;
     raw_signal_read_negative.ml)
       expected='Unbound value "?Signal\.read"?|Unbound value "?read"?'
+      ;;
+    derived_signal_delete_negative.ml)
+      expected='Unbound value "?Signal\.dispose"?|Unbound value "?dispose"?'
       ;;
     public_batch_negative.ml)
       expected='Unbound value "?Signal\.batch"?|Unbound value "?batch"?'
