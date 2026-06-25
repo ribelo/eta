@@ -1213,6 +1213,37 @@ let test_effectful_update_reentry_fails_and_preserves_value () =
                |> Effect.map (fun _ -> current + 1)))));
   Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
 
+let test_concurrent_effectful_update_same_variable_fails_fast () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let first =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt
+          (widen
+             (Signal.Var.update_effect source (fun current ->
+                  Effect.sync (fun () ->
+                      Eio.Promise.resolve started_resolver ();
+                      Eio.Promise.await release;
+                      current + 10)))))
+  in
+  Eio.Promise.await started;
+  expect_fail "concurrent update" (( = ) `Reentrant_update)
+    (Eta_eio.Runtime.run rt
+       (widen
+          (Signal.Var.update_effect source (fun current ->
+               Effect.pure (current + 100)))));
+  Alcotest.(check int) "failed concurrent update leaves value unchanged" 1
+    (Signal.Var.value source);
+  Eio.Promise.resolve release_resolver ();
+  Alcotest.(check int) "first update succeeds" 11
+    (expect_exit_ok "first update" (Eio.Promise.await_exn first));
+  Alcotest.(check int) "slot released after first update" 12
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 1))))
+
 let test_effectful_update_success_publishes_once () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -2024,6 +2055,8 @@ let () =
             test_reentrant_stabilization_does_not_clear_outer_phase;
           Alcotest.test_case "effectful update reentry typed failure" `Quick
             test_effectful_update_reentry_fails_and_preserves_value;
+          Alcotest.test_case "concurrent effectful update fails fast" `Quick
+            test_concurrent_effectful_update_same_variable_fails_fast;
           Alcotest.test_case "effectful update publishes once" `Quick
             test_effectful_update_success_publishes_once;
           Alcotest.test_case "effectful update sees pending source value"

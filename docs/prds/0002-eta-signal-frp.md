@@ -587,9 +587,9 @@ notes below.
   rollback/retry, dynamic `bind` dependency detachment, scope invalidation, bind
   rollback, cycle detection, necessary-only recomputation, typed error
   pretty-printers, reentrant stabilization,
-  same-variable effectful update reentry, queued and active graph-lane
-  interruption cleanup, observer-effect interruption cleanup, stats/DOT
-  introspection, time-node demand and explicit stabilization behavior,
+  same-variable effectful update reentry and in-flight conflict, queued and
+  active graph-lane interruption cleanup, observer-effect interruption cleanup,
+  stats/DOT introspection, time-node demand and explicit stabilization behavior,
   time-node refresh when observed after idle time, timer inertness after
   disposal or bind invalidation, timer restart after re-observation, and
   signal-to-stream emission, closure, validation, equality suppression,
@@ -632,7 +632,7 @@ depend on a policy/API decision recorded in the audit notes below.
 | Graph mutation, lifecycle changes, timer updates, and stabilization are serialized while observer reads are non-mutating | `test_reentrant_stabilization_is_typed_failure`, `test_effectful_update_reentry_fails_and_preserves_value`, `test_queued_graph_operation_cancellation_does_not_run`, `test_active_graph_operation_interruption_releases_lane`, `test_observer_read_does_not_force_recompute` | Covered |
 | Raw derived signals have no public value read | `test/signal/negative/raw_signal_read_negative.ml`, `test_observer_read_does_not_force_recompute` | Covered |
 | Queued or active graph-lane interruption cleans up without pending mutations | `test_queued_graph_operation_cancellation_does_not_run`, `test_active_graph_operation_interruption_releases_lane`, `test_effectful_update_interruption_preserves_value_and_releases_slot` | Covered |
-| Reentrant stabilization and same-variable effectful update fail typed | `test_reentrant_stabilization_is_typed_failure`, `test_reentrant_stabilization_does_not_clear_outer_phase`, `test_effectful_update_reentry_fails_and_preserves_value` | Covered |
+| Reentrant stabilization and same-variable effectful update fail typed | `test_reentrant_stabilization_is_typed_failure`, `test_reentrant_stabilization_does_not_clear_outer_phase`, `test_effectful_update_reentry_fails_and_preserves_value`, `test_concurrent_effectful_update_same_variable_fails_fast` | Covered |
 | Cycle detection fails typed | `test_bind_cycle_detection_is_typed_failure` | Covered |
 | Expected public failures use small operation-scoped typed error families with clear printers | `lib/signal/eta_signal.mli`, `test_error_pretty_printers_are_clear` | Covered |
 | User callback exceptions are defects and do not permanently poison the graph | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
