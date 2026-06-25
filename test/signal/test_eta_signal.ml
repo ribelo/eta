@@ -161,6 +161,58 @@ let test_diamond_recomputes_shared_node_once () =
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "updated shared compute once" 2 !calls
 
+let test_recompute_order_is_topological () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let order = ref [] in
+  let record label =
+    order := label :: !order
+  in
+  let shared =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           record "shared";
+           n + 1)
+  in
+  let left =
+    Signal.map
+      (fun n ->
+        record "left";
+        n * 2)
+      shared
+  in
+  let right =
+    Signal.map
+      (fun n ->
+        record "right";
+        n * 3)
+      shared
+  in
+  let total =
+    Signal.map2
+      (fun left right ->
+        record "total";
+        left + right)
+      left right
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe total (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "initial topological recompute order"
+    [ "shared"; "left"; "right"; "total" ]
+    (List.rev !order);
+  order := [];
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "updated topological recompute order"
+    [ "shared"; "left"; "right"; "total" ]
+    (List.rev !order);
+  Alcotest.(check int) "updated value" 15
+    (run_ok rt (Signal.Observer.read observer))
+
 let test_n_ary_maps_both_and_all () =
   with_runtime @@ fun rt ->
   let v1 = Signal.Var.create 1 in
@@ -1303,6 +1355,8 @@ let () =
             test_manual_stabilization_coalesces_sets;
           Alcotest.test_case "diamond recomputes shared node once" `Quick
             test_diamond_recomputes_shared_node_once;
+          Alcotest.test_case "recompute order is topological" `Quick
+            test_recompute_order_is_topological;
           Alcotest.test_case "n-ary maps, both, and all" `Quick
             test_n_ary_maps_both_and_all;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
