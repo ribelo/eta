@@ -672,6 +672,16 @@ need human review before the PRD is considered final.
   clock, but it does not expose a public schedule-taking clock-node constructor.
   The PRD should either bless schedule-backed timer nodes without a public
   schedule surface, or specify a schedule-taking clock-node API.
+- Timer demand can begin from ordinary observer lifecycle operations or from a
+  dynamic `bind` branch switch during stabilization. The implementation refreshes
+  `now` and deadline-backed sources immediately when observer lifecycle
+  operations make them necessary before a stabilization starts. When a `bind`
+  switch makes a timer necessary during stabilization, timer startup happens
+  after the pure snapshot and observer events have already been computed, so the
+  refreshed timer source is visible on the next explicit stabilization rather
+  than the same one. The PRD should either bless this one-stabilization delay for
+  dynamically activated timers, or require a staging redesign where effectful
+  timer startup can refresh sources before observer events are published.
 - `Time.step` introduces a timer-owned user callback boundary. The
   implementation runs the step function from the demand-owned timer daemon that
   updates the backing source, so callback defects follow Eta daemon diagnostics
