@@ -801,6 +801,45 @@ let test_observer_read_during_callback_sees_current_snapshot () =
   Alcotest.(check (list int)) "callback reads current snapshots" [ 1; 2 ]
     (List.rev !seen)
 
+let test_observer_read_does_not_force_recompute () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let calls = ref 0 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr calls;
+           value)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let after_stabilize = run_ok rt (Signal.stats ()) in
+  run_ok rt (Signal.Var.set source 2);
+  let before_read = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "read returns old stabilized snapshot" 1
+    (run_ok rt (Signal.Observer.read observer));
+  let after_read = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "observer read does not stabilize"
+    before_read.Signal.stabilization_count
+    after_read.Signal.stabilization_count;
+  Alcotest.(check int) "observer read does not recompute"
+    before_read.Signal.recompute_count after_read.Signal.recompute_count;
+  Alcotest.(check int) "pending update not recomputed by read" 1 !calls;
+  run_ok rt Signal.stabilize;
+  let after_second_stabilize = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "later stabilization recomputes" true
+    (after_second_stabilize.Signal.recompute_count
+     > after_read.Signal.recompute_count);
+  Alcotest.(check int) "map recomputed by later stabilization" 2 !calls;
+  Alcotest.(check bool) "stabilization count advanced" true
+    (after_second_stabilize.Signal.stabilization_count
+     > after_stabilize.Signal.stabilization_count);
+  Alcotest.(check int) "observer sees new snapshot after stabilize" 2
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_dispose_removes_demand () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1721,6 +1760,8 @@ let () =
             test_observer_mutation_is_delayed_to_next_stabilization;
           Alcotest.test_case "observer read during callback" `Quick
             test_observer_read_during_callback_sees_current_snapshot;
+          Alcotest.test_case "observer read does not force recompute" `Quick
+            test_observer_read_does_not_force_recompute;
           Alcotest.test_case "dispose removes demand" `Quick
             test_dispose_removes_demand;
           Alcotest.test_case "dispose before initialization removes demand"
