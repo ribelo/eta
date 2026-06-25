@@ -651,6 +651,23 @@ depend on a policy/API decision recorded in the audit notes below.
   for the PRD acceptance criteria, with the remaining unresolved items limited
   to the human-review decisions recorded below.
 
+### Human Review Checklist
+
+Review these decisions before the PRD is considered final:
+
+| Decision | Current implementation choice |
+| --- | --- |
+| Observer callback error and graph instance shape | `Make(Observer_error)()` takes a graph-wide observer error module; callback failures surface as `` `Observer_error`` from `stabilize`; repeated applications with the same error module are still generative and incompatible. |
+| Same-stabilization observer disposal | Observer events are collected before observer callbacks run; disposal during one callback does not cancel another already-collected observer event in that same stabilization. |
+| Time/clock public API | Runtime-clock-backed constructors are effectful and use explicit `~every` cadence arguments for `now`, `deadline`, `after`, and `step`; timers are demand-owned. |
+| Schedule-facing time API | Timers internally use Eta `Schedule`, `Duration`, `Effect.sleep`, and runtime/test clocks, but there is no public schedule-taking time-node constructor. |
+| Dynamic timer activation timing | Timers made necessary by a `bind` branch switch during stabilization refresh after observer events for that snapshot, so refreshed source values appear on the next explicit stabilization. |
+| `Time.step` callback defects | Step-function defects are daemon diagnostics, not `stabilize` failures; failed timer daemons clean up so demand refresh can restart them. |
+| Node constructor error shape | Node constructors stay synchronous so `bind` selectors can return signals directly; ambiguous construction during effect-returning operations is reported at that operation boundary. |
+| Same-variable `update_effect` concurrency | A second same-variable `update_effect` while one is active fails with `` `Reentrant_update`` instead of queueing. |
+| Source mutation during stabilization | Public Eta mutations are supported in the observer/effect phase and are delayed to the next stabilization; pure recompute functions do not receive an Eta effect context for mutation. |
+| Signal-to-stream bridge ownership | `Stream.observe ?capacity` returns both observer and stream, defaults capacity to 1024, backpressures through Eta queues, closes on observer disposal after draining buffered updates, and does not dispose the observer when consumers stop early. |
+
 ## Implementation Audit Notes
 
 This section records implementation-time gaps or underspecified decisions that
