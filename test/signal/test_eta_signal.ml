@@ -1459,18 +1459,25 @@ let test_time_interval_starts_only_when_observed () =
 let test_time_interval_requires_explicit_stabilization () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let events = ref [] in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Signal.Observer.observe signal (record_observer events))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial observer event" 1 (List.length !events);
   Eta_test.Test_clock.adjust clock (Duration.ms 10);
   Eta_test.Async.yield ();
   Alcotest.(check int) "read before stabilize remains old" 0
     (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "timer tick did not run callback" 1
+    (List.length !events);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "stabilized tick" 1
     (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !events with
+   | [ Signal.Initialized 0; Changed { old_value = 0; new_value = 1 } ] -> ()
+   | _ -> Alcotest.fail "expected timer update after explicit stabilize");
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_becomes_inert_after_dispose () =
