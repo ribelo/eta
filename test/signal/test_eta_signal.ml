@@ -160,6 +160,76 @@ let test_diamond_recomputes_shared_node_once () =
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "updated shared compute once" 2 !calls
 
+let test_n_ary_maps_both_and_all () =
+  with_runtime @@ fun rt ->
+  let v1 = Signal.Var.create 1 in
+  let v2 = Signal.Var.create 2 in
+  let v3 = Signal.Var.create 3 in
+  let v4 = Signal.Var.create 4 in
+  let v5 = Signal.Var.create 5 in
+  let v6 = Signal.Var.create 6 in
+  let v7 = Signal.Var.create 7 in
+  let v8 = Signal.Var.create 8 in
+  let v9 = Signal.Var.create 9 in
+  let s1 = Signal.Var.watch v1 in
+  let s2 = Signal.Var.watch v2 in
+  let s3 = Signal.Var.watch v3 in
+  let s4 = Signal.Var.watch v4 in
+  let s5 = Signal.Var.watch v5 in
+  let s6 = Signal.Var.watch v6 in
+  let s7 = Signal.Var.watch v7 in
+  let s8 = Signal.Var.watch v8 in
+  let s9 = Signal.Var.watch v9 in
+  let sum3 = Signal.map3 (fun a b c -> a + b + c) s1 s2 s3 in
+  let sum4 = Signal.map4 (fun a b c d -> a + b + c + d) s1 s2 s3 s4 in
+  let sum5 =
+    Signal.map5 (fun a b c d e -> a + b + c + d + e) s1 s2 s3 s4 s5
+  in
+  let sum6 =
+    Signal.map6
+      (fun a b c d e f -> a + b + c + d + e + f)
+      s1 s2 s3 s4 s5 s6
+  in
+  let sum7 =
+    Signal.map7
+      (fun a b c d e f g -> a + b + c + d + e + f + g)
+      s1 s2 s3 s4 s5 s6 s7
+  in
+  let sum8 =
+    Signal.map8
+      (fun a b c d e f g h -> a + b + c + d + e + f + g + h)
+      s1 s2 s3 s4 s5 s6 s7 s8
+  in
+  let sum9 =
+    Signal.map9
+      (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+      s1 s2 s3 s4 s5 s6 s7 s8 s9
+  in
+  let pair_sum = Signal.both s1 s2 |> Signal.map (fun (a, b) -> a + b) in
+  let all_sum =
+    Signal.all [ s1; s2; s3 ] |> Signal.map (List.fold_left ( + ) 0)
+  in
+  let combined =
+    Signal.all
+      [ sum3; sum4; sum5; sum6; sum7; sum8; sum9; pair_sum; all_sum ]
+    |> Signal.map (List.fold_left ( + ) 0)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial combined n-ary value" 170
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set v9 10);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "map9 updates through all" 171
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set v1 11);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "shared source updates all combinators" 261
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_cutoff_suppresses_downstream_recompute () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
@@ -800,6 +870,8 @@ let () =
             test_manual_stabilization_coalesces_sets;
           Alcotest.test_case "diamond recomputes shared node once" `Quick
             test_diamond_recomputes_shared_node_once;
+          Alcotest.test_case "n-ary maps, both, and all" `Quick
+            test_n_ary_maps_both_and_all;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
             test_cutoff_suppresses_downstream_recompute;
           Alcotest.test_case "bind detaches old dependency" `Quick
