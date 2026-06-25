@@ -478,6 +478,53 @@ let test_bind_selector_failure_preserves_previous_branch () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 1 in
+  let right = Signal.Var.create 10 in
+  let bad = Signal.Var.create 0 in
+  let left_inner = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then
+          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
+          left_inner := Some signal;
+          signal
+        else Signal.Var.watch right)
+  in
+  let failing =
+    Signal.Var.watch bad
+    |> Signal.map (fun value ->
+           if value = 1 then failwith "later pure failure";
+           value)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  let failing_observer =
+    (run_ok rt (Signal.Observer.observe failing (fun _ -> Effect.unit))
+      : int Signal.observer)
+  in
+  run_ok rt Signal.stabilize;
+  let old_inner =
+    match !left_inner with
+    | Some signal -> signal
+    | None -> Alcotest.fail "left branch was not created"
+  in
+  Alcotest.(check int) "initial selected value" 1
+    (run_ok rt (Signal.Observer.read selected_observer));
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt (Signal.Var.set bad 1);
+  expect_die "later pure failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose failing_observer);
+  let old_inner_observer =
+    run_ok rt (Signal.Observer.observe old_inner (fun _ -> Effect.unit))
+  in
+  run_ok rt (Signal.Observer.dispose old_inner_observer);
+  run_ok rt (Signal.Observer.dispose selected_observer)
+
 let test_bind_cycle_detection_is_typed_failure () =
   with_runtime @@ fun rt ->
   let trigger = Signal.Var.create () in
@@ -1187,6 +1234,8 @@ let () =
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
           Alcotest.test_case "bind selector failure preserves branch" `Quick
             test_bind_selector_failure_preserves_previous_branch;
+          Alcotest.test_case "bind switch rollback preserves old branch" `Quick
+            test_bind_switch_is_not_committed_when_later_pure_node_fails;
           Alcotest.test_case "bind cycle detection typed failure" `Quick
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "unobserved nodes do not recompute" `Quick

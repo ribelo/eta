@@ -180,10 +180,17 @@ module Make (Observer_error : Observer_error) () = struct
   and ('a, 'b) bind = {
     source : 'a signal;
     selector : 'a -> 'b signal;
+    mutable owner : 'b signal option;
     mutable source_value : 'a option;
     mutable inner : 'b signal option;
     mutable inner_scope : scope option;
+    mutable staged_source_value : 'a option;
+    mutable staged_inner : 'b signal option;
+    mutable staged_inner_scope : scope option;
+    mutable staged_bind_generation : int;
   }
+
+  and packed_bind = B : ('a, 'b) bind -> packed_bind
 
   and 'a var = {
     var_id : int;
@@ -260,6 +267,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable stabilization_id : int;
     mutable pending_vars : packed_var list;
     mutable staged_vars : packed_var list;
+    mutable staged_binds : packed_bind list;
     mutable computed_nodes : packed_signal list;
     mutable staged_observers : packed_observer list;
     mutable observers : packed_observer list;
@@ -291,6 +299,7 @@ module Make (Observer_error : Observer_error) () = struct
       stabilization_id = 0;
       pending_vars = [];
       staged_vars = [];
+      staged_binds = [];
       computed_nodes = [];
       staged_observers = [];
       observers = [];
@@ -585,8 +594,23 @@ module Make (Observer_error : Observer_error) () = struct
           ())
 
   let make_bind ?equal source selector =
-    let bind = { source; selector; source_value = None; inner = None; inner_scope = None } in
-    new_signal ?equal (Bind bind) [ P source ]
+    let bind =
+      {
+        source;
+        selector;
+        owner = None;
+        source_value = None;
+        inner = None;
+        inner_scope = None;
+        staged_source_value = None;
+        staged_inner = None;
+        staged_inner_scope = None;
+        staged_bind_generation = -1;
+      }
+    in
+    let signal = new_signal ?equal (Bind bind) [ P source ] in
+    bind.owner <- Some signal;
+    signal
 
   let current_or_raise signal =
     match signal.value with
@@ -617,6 +641,59 @@ module Make (Observer_error : Observer_error) () = struct
     if var.staged_var_generation = current_generation () then
       var.staged_graph_value <- None
 
+  let remember_staged_bind (B bind as packed) =
+    let generation = current_generation () in
+    if bind.staged_bind_generation <> generation then (
+      bind.staged_bind_generation <- generation;
+      graph.staged_binds <- packed :: graph.staged_binds)
+
+  let stage_bind_switch bind source_value inner scope =
+    remember_staged_bind (B bind);
+    bind.staged_source_value <- Some source_value;
+    bind.staged_inner <- Some inner;
+    bind.staged_inner_scope <- Some scope
+
+  let bind_effective_source_value bind =
+    if bind.staged_bind_generation = current_generation () then
+      bind.staged_source_value
+    else bind.source_value
+
+  let bind_effective_inner bind =
+    if bind.staged_bind_generation = current_generation () then bind.staged_inner
+    else bind.inner
+
+  let clear_staged_bind bind =
+    bind.staged_source_value <- None;
+    bind.staged_inner <- None;
+    bind.staged_inner_scope <- None
+
+  let commit_bind (B bind) =
+    if bind.staged_bind_generation = current_generation () then (
+      (match
+         ( bind.owner,
+           bind.staged_source_value,
+           bind.staged_inner,
+           bind.staged_inner_scope )
+       with
+       | Some owner, Some source_value, Some inner, Some scope ->
+           (match bind.inner with
+            | None -> ()
+            | Some old_inner -> detach_dependency owner old_inner);
+           (match bind.inner_scope with
+            | None -> ()
+            | Some old_scope -> invalidate_scope old_scope);
+           bind.source_value <- Some source_value;
+           bind.inner <- Some inner;
+           bind.inner_scope <- Some scope;
+           attach_dependency owner inner
+       | _ -> raise (Graph_error `Invalid_scope));
+      clear_staged_bind bind)
+
+  let rollback_bind (B bind) =
+    if bind.staged_bind_generation = current_generation () then (
+      Option.iter invalidate_scope bind.staged_inner_scope;
+      clear_staged_bind bind)
+
   let commit_observer (O observer) =
     if observer.obs_staged_generation = current_generation () then (
       (match observer.obs_staged_current with
@@ -634,17 +711,21 @@ module Make (Observer_error : Observer_error) () = struct
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
     List.iter rollback_var graph.staged_vars;
+    List.iter rollback_bind graph.staged_binds;
     List.iter rollback_observer graph.staged_observers;
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
+    graph.staged_binds <- [];
     graph.staged_observers <- []
 
   let commit_staging () =
     List.iter commit_var graph.staged_vars;
+    List.iter commit_bind graph.staged_binds;
     List.iter commit_signal graph.computed_nodes;
     List.iter commit_observer graph.staged_observers;
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
+    graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.stabilization_count <- graph.stabilization_count + 1
 
@@ -812,7 +893,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         let needs_new_inner =
-          match bind.source_value with
+          match bind_effective_source_value bind with
           | None -> true
           | Some previous -> source_changed && not (bind.source.equal previous source_value)
         in
@@ -842,21 +923,12 @@ module Make (Observer_error : Observer_error) () = struct
               invalidate_scope scope;
               raise exn
           in
-          (match bind.inner with
-           | None -> ()
-           | Some old_inner -> detach_dependency signal old_inner);
-          (match bind.inner_scope with
-           | None -> ()
-           | Some scope -> invalidate_scope scope);
-          bind.source_value <- Some source_value;
-          bind.inner <- Some inner;
-          bind.inner_scope <- Some scope;
-          attach_dependency signal inner;
+          stage_bind_switch bind source_value inner scope;
           if changed then stage_signal signal inner_value;
           (if changed then inner_value else current_or_raise signal), changed)
         else
           let inner =
-            match bind.inner with
+            match bind_effective_inner bind with
             | Some inner -> inner
             | None -> raise (Graph_error `Invalid_scope)
           in
@@ -967,6 +1039,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.stabilization_id <- graph.stabilization_id + 1;
       graph.computed_nodes <- [];
       graph.staged_vars <- [];
+      graph.staged_binds <- [];
       graph.staged_observers <- [];
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
