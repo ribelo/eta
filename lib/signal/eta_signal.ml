@@ -942,10 +942,16 @@ module Make (Observer_error : Observer_error) = struct
 
   let rec run_events = function
     | [] -> Effect.unit
-    | E (observer, update) :: rest ->
-        observer.obs_callback update
-        |> Effect.map_error (fun err -> `Observer_error err)
-        |> Effect.bind (fun () -> run_events rest)
+    | E (observer, update) :: rest -> (
+        match
+          try Ok (observer.obs_callback update)
+          with Graph_error err -> Error (err :> stabilize_error)
+        with
+        | Error err -> Effect.fail err
+        | Ok effect ->
+            effect
+            |> Effect.map_error (fun err -> `Observer_error err)
+            |> Effect.bind (fun () -> run_events rest))
 
   let stabilize =
     with_graph_lane_sync begin_stabilize

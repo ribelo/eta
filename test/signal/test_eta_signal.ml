@@ -352,6 +352,36 @@ let test_cutoff_exception_is_defect_without_partial_snapshot () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_ambiguous_node_creation_during_pure_recompute_is_typed_failure () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           ignore (Signal.const n : int Signal.signal);
+           n)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  expect_fail "pure ambiguous scope" (( = ) `Ambiguous_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_ambiguous_node_creation_during_observer_callback_is_typed_failure () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           ignore (Signal.const 1 : int Signal.signal);
+           Effect.unit))
+  in
+  expect_fail "observer ambiguous scope" (( = ) `Ambiguous_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_observer_failure_fails_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -788,6 +818,11 @@ let () =
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "cutoff exception preserves snapshot" `Quick
             test_cutoff_exception_is_defect_without_partial_snapshot;
+          Alcotest.test_case "pure ambiguous node creation typed failure" `Quick
+            test_ambiguous_node_creation_during_pure_recompute_is_typed_failure;
+          Alcotest.test_case "observer ambiguous node creation typed failure"
+            `Quick
+            test_ambiguous_node_creation_during_observer_callback_is_typed_failure;
           Alcotest.test_case "observer failure fails stabilize" `Quick
             test_observer_failure_fails_stabilize;
           Alcotest.test_case "observer failure is fail-fast" `Quick

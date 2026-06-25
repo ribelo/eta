@@ -573,11 +573,13 @@ need human review before the PRD is considered final.
   disposal and dynamic-scope invalidation. The PRD should either bless that API
   shape or specify different signatures and lifecycle ownership.
 - Node constructors appear to need to stay synchronous/pure so `bind` selectors
-  can return signals directly. That makes typed graph errors for ambiguous node
-  creation during stabilization hard to report from the constructor itself.
-  The implementation can report such errors through `stabilize` when they occur
-  during pure recomputation, but the PRD should clarify whether constructors
-  are allowed to raise outside effect-returning public operations.
+  can return signals directly. The implementation reports ambiguous node
+  creation during pure recomputation or observer callback construction through
+  the typed `stabilize` error channel, but constructors themselves are not Eta
+  effects. The PRD should either bless synchronous constructors with
+  operation-boundary typed reporting, or specify a different constructor family
+  if constructor-time typed failures outside effect-returning operations are
+  required.
 - The signal-to-stream bridge needed a lifecycle and buffering contract. The
   implementation chooses `Stream.observe ?capacity` with a default capacity of
   1024, backed by an Eta queue with backpressure. Observer disposal cleanly
