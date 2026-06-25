@@ -593,6 +593,54 @@ notes below.
 - Benchmark evidence: `lib/signal/bench/bench_signal.ml` compares Eta signal
   update/stabilization cost against manual `Mutable_ref` recomputation for both
   representative static and dynamic graphs.
+
+### Acceptance Criteria Evidence Matrix
+
+This matrix is the current self-audit ledger for the acceptance criteria above.
+Items marked "human review" have executable implementation evidence, but still
+depend on a policy/API decision recorded in the audit notes below.
+
+| Criterion | Current evidence | Audit status |
+| --- | --- | --- |
+| Diamond propagation without duplicate recomputation | `test_diamond_recomputes_shared_node_once` | Covered |
+| Necessary stale nodes recompute at most once in deterministic topological order | `test_diamond_recomputes_shared_node_once`, `test_recompute_order_is_topological` | Covered |
+| `bind` dynamic dependency changes detach old dependencies | `test_bind_detaches_old_dependency` | Covered |
+| `bind` invalidates old selector scopes without recomputing obsolete inner nodes | `test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes` | Covered |
+| Node creation during stabilization respects scope or fails typed when ambiguous | `test_ambiguous_node_creation_during_pure_recompute_is_typed_failure`, `test_ambiguous_node_creation_during_observer_callback_is_typed_failure` | Covered; constructor-shape wording needs human review |
+| Scope save/restore is not public | `test/signal/negative/public_scope_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
+| Derived nodes have no public delete; disposal and bind invalidation remove demand | `test/signal/negative/derived_signal_delete_negative.ml`, `test_dispose_removes_demand`, `test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes` | Covered |
+| Cutoffs suppress downstream recomputation and observer callbacks | `test_cutoff_suppresses_downstream_recompute`, `test_observer_equality_suppresses_only_that_observer` | Covered |
+| Default cutoff is physical equality; structural/domain equality is opt-in | `test_default_cutoff_is_physical_equality`, `test_source_equality_suppresses_graph_propagation`, `test_observer_equality_suppresses_only_that_observer` | Covered |
+| Node equality controls propagation; observer equality controls only callback emission | `test_source_equality_suppresses_graph_propagation`, `test_cutoff_suppresses_downstream_recompute`, `test_observer_equality_suppresses_only_that_observer` | Covered |
+| Equality callback exceptions are defects without partial pure snapshots | `test_cutoff_exception_is_defect_without_partial_snapshot`, `test_source_equality_exception_is_defect_without_partial_snapshot`, `test_observer_equality_exception_is_defect_without_partial_snapshot` | Covered |
+| Observer registration does not run callbacks; next stabilization initializes | `test_observer_initializes_on_stabilize` | Covered |
+| Observer handles control demand and disposal; observation is not callback-only | `lib/signal/eta_signal.mli`, `test_dispose_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
+| Primary observer reads are Eta effects with typed invalid-state failures | `test_observer_initializes_on_stabilize`, `test_failed_initial_stabilization_leaves_no_current_value`, `test_dispose_removes_demand` | Covered |
+| Unsafe synchronous observer reads are limited to tests/debugging | `lib/signal/eta_signal.mli`, `test_observer_unsafe_read_exn_reports_invalid_state` | Covered |
+| Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
+| Observer ordering and fail-fast behavior are typed and deterministic | `test_observer_callbacks_run_in_registration_order`, `test_observer_failure_fails_stabilize`, `test_observer_failure_is_fail_fast` | Covered; observer-error API shape needs human review |
+| Pure snapshot publication is atomic; already-run observer effects are not rolled back | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_effects_before_later_failure_are_not_rolled_back`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
+| Multiple functor instances cannot compose signals by accident | `test_functor_instances_stabilize_independently`, `test/signal/negative/cross_graph_signal_negative.ml` | Covered |
+| Main public surface has no first-class graph values | `test/signal/negative/first_class_graph_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
+| Manual stabilization coalesces multiple source updates | `test_manual_stabilization_coalesces_sets` | Covered |
+| Source mutation during stabilization is delayed to the next stabilization | `test_observer_mutation_is_delayed_to_next_stabilization` | Covered; phase wording needs human review |
+| There is no public batch primitive | `test/signal/negative/public_batch_negative.ml` | Covered |
+| Graph mutation, lifecycle changes, timer updates, and stabilization are serialized while observer reads are non-mutating | `test_reentrant_stabilization_is_typed_failure`, `test_effectful_update_reentry_fails_and_preserves_value`, `test_queued_graph_operation_cancellation_does_not_run`, `test_active_graph_operation_interruption_releases_lane`, `test_observer_read_does_not_force_recompute` | Covered |
+| Raw derived signals have no public value read | `test/signal/negative/raw_signal_read_negative.ml`, `test_observer_read_does_not_force_recompute` | Covered |
+| Queued or active graph-lane interruption cleans up without pending mutations | `test_queued_graph_operation_cancellation_does_not_run`, `test_active_graph_operation_interruption_releases_lane`, `test_effectful_update_interruption_preserves_value_and_releases_slot` | Covered |
+| Reentrant stabilization and same-variable effectful update fail typed | `test_reentrant_stabilization_is_typed_failure`, `test_reentrant_stabilization_does_not_clear_outer_phase`, `test_effectful_update_reentry_fails_and_preserves_value` | Covered |
+| Cycle detection fails typed | `test_bind_cycle_detection_is_typed_failure` | Covered |
+| Expected public failures use small operation-scoped typed error families with clear printers | `lib/signal/eta_signal.mli`, `test_error_pretty_printers_are_clear` | Covered |
+| User callback exceptions are defects and do not permanently poison the graph | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
+| Stats and debug introspection expose demand/recompute/scope behavior without mutating | `test_stats_and_dot_are_read_only` | Covered |
+| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_backpressures_at_capacity`, `test/signal/negative/stream_to_signal_negative.ml` | Covered; bridge lifecycle/buffering shape needs human review |
+| No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
+| Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_interval_requires_explicit_stabilization` | Covered; schedule-facing API decision needs human review |
+| Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_absolute_deadline` | Covered |
+| Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_timer_becomes_inert_after_dispose`, `test_time_timer_becomes_inert_after_bind_switch` | Covered; exact time API shape needs human review |
+| Timer work is owned by graph demand and does not keep unnecessary subgraphs alive | `test_time_timer_becomes_inert_after_dispose`, `test_time_timer_becomes_inert_after_bind_switch`, `test_stats_and_dot_are_read_only` | Covered |
+| Microbenchmark compares signal update/stabilization with manual `Mutable_ref` recomputation for static and dynamic graphs | `lib/signal/bench/bench_signal.ml` | Covered |
+
 - Current audit result: the implementation has executable or manifest evidence
   for the PRD acceptance criteria, with the remaining unresolved items limited
   to the human-review decisions recorded below.
