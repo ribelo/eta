@@ -660,6 +660,15 @@ need human review before the PRD is considered final.
   error module still create incompatible graph-owned signal/variable/observer
   types. The PRD should either bless that shape or specify a different callback
   error and graph-instance model.
+- Observer disposal during the observer-effect phase needs same-stabilization
+  wording. The implementation computes the observer event list before running
+  observer callbacks, then runs that list sequentially. If one callback disposes
+  another observer whose event was already collected, the disposed observer's
+  callback may still run in that stabilization; disposal reliably removes the
+  observer from later stabilizations and releases demand. The PRD should either
+  bless event-list snapshot semantics for same-stabilization disposal, or
+  require callback-time disposal to cancel not-yet-run observer events in the
+  same stabilization.
 - Time/clock nodes needed exact OCaml API signatures. The implementation
   chooses effectful constructors for runtime-clock-backed nodes, explicit
   `~every` intervals for current-time/deadline/relative-delay/step nodes, and
