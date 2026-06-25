@@ -79,7 +79,14 @@ module Make (Observer_error : Observer_error) () : sig
       ('a t, graph_error) Eta.Effect.t
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
+    (** Read the last stabilized observed value. This is the primary value-read
+        surface for derived values and reports invalid observer state through
+        typed Eta failures. *)
+
     val unsafe_read_exn : 'a t -> 'a
+    (** Synchronous read for tests and debugging. Raises when the observer is
+        disposed or not initialized; normal consumers should prefer {!read}. *)
+
     val dispose : 'a t -> (unit, 'err) Eta.Effect.t
   end
 
