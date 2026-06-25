@@ -1713,6 +1713,31 @@ let test_time_timer_becomes_inert_after_bind_switch () =
     (Eta_test.Test_clock.sleeper_count clock);
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_now_bind_activation_refreshes_next_stabilization () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let use_timer = Signal.Var.create false in
+  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ()) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+        if use_timer then now_signal else Signal.const (-1))
+  in
+  Eta_test.Test_clock.adjust clock (Duration.ms 20);
+  Eta_test.Async.yield ();
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "inactive branch value" (-1)
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set use_timer true);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "dynamic activation uses pre-refresh snapshot" 0
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "refreshed now appears next stabilization" 20
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_now_uses_runtime_clock () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ()) in
@@ -2175,6 +2200,8 @@ let () =
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time timer inert after bind switch" `Quick
             test_time_timer_becomes_inert_after_bind_switch;
+          Alcotest.test_case "time now bind activation refreshes next" `Quick
+            test_time_now_bind_activation_refreshes_next_stabilization;
           Alcotest.test_case "time now uses runtime clock" `Quick
             test_time_now_uses_runtime_clock;
           Alcotest.test_case "time now refreshes after idle observe" `Quick
