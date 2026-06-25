@@ -547,6 +547,41 @@ let test_observer_callbacks_run_in_registration_order () =
   run_ok rt (Signal.Observer.dispose left_second);
   run_ok rt (Signal.Observer.dispose right_first)
 
+let test_observer_dispose_during_callback_keeps_collected_event () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let events = ref [] in
+  let later_observer = ref None in
+  let first_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           Effect.sync (fun () -> events := "first" :: !events)
+           |> Effect.bind (fun () ->
+                  match !later_observer with
+                  | Some observer -> Signal.Observer.dispose observer
+                  | None -> Effect.sync (fun () -> Alcotest.fail "missing observer"))))
+  in
+  let second_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           Effect.sync (fun () -> events := "second" :: !events)))
+  in
+  later_observer := Some second_observer;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "collected event still runs after same-stabilization disposal"
+    [ "first"; "second" ] (List.rev !events);
+  expect_fail "same-stabilization disposed observer read" (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read second_observer)));
+  events := [];
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "disposed observer is absent from later stabilization" [ "first" ]
+    (List.rev !events);
+  run_ok rt (Signal.Observer.dispose first_observer)
+
 let test_bind_detaches_old_dependency () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -1998,6 +2033,8 @@ let () =
           Alcotest.test_case "observer callbacks run in registration order"
             `Quick
             test_observer_callbacks_run_in_registration_order;
+          Alcotest.test_case "observer dispose keeps collected event" `Quick
+            test_observer_dispose_during_callback_keeps_collected_event;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick

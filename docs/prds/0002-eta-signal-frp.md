@@ -582,10 +582,11 @@ notes below.
 - Runtime acceptance evidence: `test/signal/test_eta_signal.ml` covers diamond
   propagation, deterministic recompute order, n-ary combinators, cutoffs,
   observer initialization/change/read/disposal semantics, disposal before
-  initialization, observer ordering, fail-fast behavior, and observer reads
-  after callback failure, delayed observer mutation, atomic pure snapshot
-  rollback/retry, dynamic `bind` dependency detachment, scope invalidation, bind
-  rollback, cycle detection, necessary-only recomputation, typed error
+  initialization, same-stabilization observer disposal event-list behavior,
+  observer ordering, fail-fast behavior, and observer reads after callback
+  failure, delayed observer mutation, atomic pure snapshot rollback/retry,
+  dynamic `bind` dependency detachment, scope invalidation, bind rollback, cycle
+  detection, necessary-only recomputation, typed error
   pretty-printers, reentrant stabilization,
   same-variable effectful update reentry and in-flight conflict, queued and
   active graph-lane interruption cleanup, observer-effect interruption cleanup,
@@ -621,7 +622,7 @@ depend on a policy/API decision recorded in the audit notes below.
 | Observer handles control demand and disposal; observation is not callback-only | `lib/signal/eta_signal.mli`, `test_dispose_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
 | Primary observer reads are Eta effects with typed invalid-state failures | `test_observer_initializes_on_stabilize`, `test_failed_initial_stabilization_leaves_no_current_value`, `test_dispose_removes_demand` | Covered |
 | Unsafe synchronous observer reads are limited to tests/debugging | `lib/signal/eta_signal.mli`, `test_observer_unsafe_read_exn_reports_invalid_state` | Covered |
-| Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
+| Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_observer_dispose_during_callback_keeps_collected_event`, `test_stats_and_dot_are_read_only` | Covered; same-stabilization event-list semantics need human review |
 | Observer ordering, fail-fast behavior, and observer-effect interruption are deterministic | `test_observer_callbacks_run_in_registration_order`, `test_observer_failure_fails_stabilize`, `test_observer_failure_is_fail_fast`, `test_observer_callback_interruption_releases_phase` | Covered; observer-error API shape needs human review |
 | Pure snapshot publication is atomic; already-run observer effects are not rolled back | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_failure_is_fail_fast`, `test_observer_effects_before_later_failure_are_not_rolled_back`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Multiple functor instances cannot compose signals by accident | `test_functor_instances_stabilize_independently`, `test/signal/negative/cross_graph_signal_negative.ml` | Covered |
@@ -667,10 +668,11 @@ need human review before the PRD is considered final.
   observer callbacks, then runs that list sequentially. If one callback disposes
   another observer whose event was already collected, the disposed observer's
   callback may still run in that stabilization; disposal reliably removes the
-  observer from later stabilizations and releases demand. The PRD should either
-  bless event-list snapshot semantics for same-stabilization disposal, or
-  require callback-time disposal to cancel not-yet-run observer events in the
-  same stabilization.
+  observer from later stabilizations and releases demand. This is characterized
+  by `test_observer_dispose_during_callback_keeps_collected_event`. The PRD
+  should either bless event-list snapshot semantics for same-stabilization
+  disposal, or require callback-time disposal to cancel not-yet-run observer
+  events in the same stabilization.
 - Time/clock nodes needed exact OCaml API signatures. The implementation
   chooses effectful constructors for runtime-clock-backed nodes, explicit
   `~every` intervals for current-time/deadline/relative-delay/step nodes, and
