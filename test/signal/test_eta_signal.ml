@@ -619,6 +619,29 @@ let test_observer_failure_is_fail_fast () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   Alcotest.(check bool) "later observer did not run" false !later_ran
 
+let test_observer_callback_construction_defect_does_not_poison_graph () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let fail_once = ref true in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           if !fail_once then (
+             fail_once := false;
+             failwith "observer construction");
+           Effect.unit))
+  in
+  expect_die "observer construction defect"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "snapshot published before observer defect" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "later stabilization is not poisoned" 2
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_reentrant_stabilization_is_typed_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1091,6 +1114,9 @@ let () =
             test_observer_failure_fails_stabilize;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
+          Alcotest.test_case "observer construction defect does not poison"
+            `Quick
+            test_observer_callback_construction_defect_does_not_poison_graph;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
           Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick
