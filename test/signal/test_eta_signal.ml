@@ -1123,6 +1123,39 @@ let test_observer_callback_construction_defect_does_not_poison_graph () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_observer_callback_interruption_releases_phase () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let block_callback = ref true in
+  let started, started_resolver = Eio.Promise.create () in
+  let cancel_ctx = ref None in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+           if !block_callback then (
+             block_callback := false;
+             Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+             |> Effect.bind (fun () -> Effect.never))
+           else Effect.unit))
+  in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  wait_until "observer cancellation context" (fun () -> Option.is_some !cancel_ctx);
+  Alcotest.(check int) "snapshot published before observer interruption" 1
+    (run_ok rt (Signal.Observer.read observer));
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled "observer callback stabilize" stabilizer;
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "phase released after observer interruption" 2
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_reentrant_stabilization_is_typed_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1983,6 +2016,8 @@ let () =
           Alcotest.test_case "observer construction defect does not poison"
             `Quick
             test_observer_callback_construction_defect_does_not_poison_graph;
+          Alcotest.test_case "observer interruption releases phase" `Quick
+            test_observer_callback_interruption_releases_phase;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
           Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick
