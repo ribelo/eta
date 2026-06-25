@@ -93,6 +93,18 @@ let with_runtime_and_switch f =
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   f sw rt
 
+let with_logger_test_clock f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let logger = Logger.in_memory () in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~logger:(Logger.as_capability logger) ()
+  in
+  f sw clock rt logger
+
 let record_observer events update =
   Effect.sync (fun () -> events := update :: !events)
 
@@ -1822,6 +1834,48 @@ let test_time_step_function () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
+  with_logger_test_clock @@ fun _sw clock rt logger ->
+  let fail = ref true in
+  let signal =
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 (fun n ->
+           if !fail then (
+             fail := false;
+             failwith "time step defect");
+           n + 1))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial step value" 1
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  Eta_eio.Runtime.drain rt;
+  (match Logger.dump logger with
+   | [ record ] ->
+       Alcotest.(check bool) "diagnostic level" true
+         (record.level = Logger.Error);
+       Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
+         record.body;
+       Alcotest.(check (option string))
+         "step exception message" (Some "Failure(\"time step defect\")")
+         (List.assoc_opt "exception.message" record.attrs)
+   | records ->
+       Alcotest.failf "expected one step daemon diagnostic, got %d"
+         (List.length records));
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 1;
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "timer restarts after step defect" 2
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_validation_errors () =
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   expect_fail "invalid interval" (( = ) `Invalid_interval)
@@ -2133,6 +2187,8 @@ let () =
             test_time_absolute_deadline;
           Alcotest.test_case "time step function" `Quick
             test_time_step_function;
+          Alcotest.test_case "time step defect logs diagnostic" `Quick
+            test_time_step_defect_logs_daemon_diagnostic_and_restarts;
           Alcotest.test_case "time validation errors" `Quick
             test_time_validation_errors;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick

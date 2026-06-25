@@ -1323,6 +1323,19 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_mark_stopped timer =
       with_graph_lane_sync (fun () -> timer.timer_running <- false)
 
+    let timer_mark_failed timer =
+      with_graph_lane_sync (fun () ->
+          timer.timer_running <- false;
+          if timer.timer_active then timer_stop_unlocked timer)
+
+    let timer_cleanup_after_exit timer = function
+      | Eta.Exit.Ok _ -> timer_mark_stopped timer
+      | Eta.Exit.Error _ -> timer_mark_failed timer
+
+    let timer_cleanup_failed_start timer = function
+      | Eta.Exit.Ok _ -> Effect.unit
+      | Eta.Exit.Error _ -> timer_mark_failed timer
+
     let timer_after_update_state timer =
       with_graph_lane_sync (fun () ->
           if timer.timer_active then `Continue
@@ -1364,15 +1377,18 @@ module Make (Observer_error : Observer_error) () = struct
             (fun timer ->
               let driver = Schedule.start (Schedule.spaced interval) in
               let start_loop () =
-                Effect.daemon (timer_loop timer driver update)
+                Effect.daemon
+                  (timer_loop timer driver update
+                  |> Effect.on_exit (timer_cleanup_after_exit timer))
               in
               if update_on_start then
-                update.timer_update timer
+                (update.timer_update timer
                 |> Effect.bind (fun () ->
                        timer_after_update_state timer
                        |> Effect.bind (function
                             | `Continue -> start_loop ()
-                            | `Stop -> Effect.unit))
+                            | `Stop -> Effect.unit)))
+                |> Effect.on_exit (timer_cleanup_failed_start timer)
               else start_loop ());
         }
       in
