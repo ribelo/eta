@@ -556,6 +556,47 @@ invalidation, heights, scopes, or observer scheduling.
 - A microbenchmark compares update/stabilization cost against manual
   `Mutable_ref` recomputation for representative static and dynamic graphs.
 
+## Implementation Self-Audit Evidence
+
+This section records current implementation evidence for the PRD audit. It does
+not bless or resolve the human-review decisions in the implementation audit
+notes below.
+
+- Package boundary evidence: `dune-project`, `eta_signal.opam`, and
+  `lib/signal/dune` define `eta_signal` as an optional public package/library
+  depending on `eta` and `eta_stream`; the root `eta` package does not depend on
+  `eta_signal`.
+- Public surface evidence: `lib/signal/eta_signal.mli` exposes a functorized
+  graph instance `Make(Observer_error)()` with opaque variable, signal, and
+  observer types; explicit `stabilize`; source mutation and effectful update;
+  observer lifecycle and reads; `const`, `map`, `map2` through `map9`, `both`,
+  `all`, and `bind`; operation-scoped error families and pretty-printers; stats
+  and DOT introspection; time nodes; and the signal-to-stream bridge.
+- Public non-goal evidence: compile-negative fixtures under
+  `test/signal/negative/` enforce no global graph, no accidental cross-graph
+  signal composition, no first-class `Graph` surface, no raw derived signal
+  read, no derived-signal dispose, no public batch primitive, no public
+  `Expert`, no public `Scope`, no stream-to-signal bridge, no Solid-style
+  `computed`, and no `map10` surface beyond the PRD's `map2` through `map9`
+  target.
+- Runtime acceptance evidence: `test/signal/test_eta_signal.ml` covers diamond
+  propagation, deterministic recompute order, n-ary combinators, cutoffs,
+  observer initialization/change/read/disposal semantics, disposal before
+  initialization, observer ordering and fail-fast behavior, delayed observer
+  mutation, atomic pure snapshot rollback/retry, dynamic `bind` dependency
+  detachment, scope invalidation, bind rollback, cycle detection, necessary-only
+  recomputation, typed error pretty-printers, reentrant stabilization,
+  same-variable effectful update reentry, queued and active graph-lane
+  interruption cleanup, stats/DOT introspection, time-node demand and explicit
+  stabilization behavior, timer inertness after disposal or bind invalidation,
+  and signal-to-stream emission, closure, validation, and backpressure.
+- Benchmark evidence: `lib/signal/bench/bench_signal.ml` compares Eta signal
+  update/stabilization cost against manual `Mutable_ref` recomputation for both
+  representative static and dynamic graphs.
+- Current audit result: the implementation has executable or manifest evidence
+  for the PRD acceptance criteria, with the remaining unresolved items limited
+  to the human-review decisions recorded below.
+
 ## Implementation Audit Notes
 
 This section records implementation-time gaps or underspecified decisions that
