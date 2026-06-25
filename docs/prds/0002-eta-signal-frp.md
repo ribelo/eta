@@ -617,11 +617,11 @@ need human review before the PRD is considered final.
   disposal and dynamic-scope invalidation. The PRD should either bless that API
   shape or specify different signatures and lifecycle ownership.
 - The time/clock acceptance text names Eta schedule primitives. The
-  implementation currently uses runtime clock reads, `Duration`, `Effect.sleep`,
-  runtime-managed daemon fibers, and the Eta test clock, but it does not expose
-  or directly route timer nodes through a public `Schedule` API. The PRD should
-  either bless sleep-loop-backed timer nodes as satisfying the schedule
-  requirement, or specify a schedule-backed clock-node surface.
+  implementation uses runtime clock reads, `Duration`, `Eta.Schedule` recurrence
+  drivers, `Effect.sleep`, runtime-managed daemon fibers, and the Eta test
+  clock, but it does not expose a public schedule-taking clock-node constructor.
+  The PRD should either bless schedule-backed timer nodes without a public
+  schedule surface, or specify a schedule-taking clock-node API.
 - Node constructors appear to need to stay synchronous/pure so `bind` selectors
   can return signals directly. The implementation reports ambiguous node
   creation during pure recomputation or observer callback construction through

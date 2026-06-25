@@ -2,6 +2,7 @@ module Effect = Eta.Effect
 module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
+module Schedule = Eta.Schedule
 module Sync_lock = Eta.Sync_lock
 
 module type Observer_error = sig
@@ -1325,8 +1326,15 @@ module Make (Observer_error : Observer_error) () = struct
             timer.timer_running <- false;
             `Stop))
 
-    let rec timer_loop timer interval update =
-      Effect.sleep interval
+    let rec timer_loop timer driver update =
+      Effect.now
+      |> Effect.bind (fun now_ms ->
+             let delay, driver =
+               match Schedule.next ~now_ms ~input:() driver with
+               | Some (metadata, driver) -> (metadata.delay, driver)
+               | None -> assert false
+             in
+             Effect.sleep delay)
       |> Effect.bind (fun () ->
              timer_active timer
              |> Effect.bind (fun active ->
@@ -1338,7 +1346,7 @@ module Make (Observer_error : Observer_error) () = struct
                              timer_after_update_state timer
                              |> Effect.bind (function
                                   | `Continue ->
-                                      timer_loop timer interval update
+                                      timer_loop timer driver update
                                   | `Stop -> Effect.unit))))
 
     let attach_timer signal interval update =
@@ -1350,7 +1358,8 @@ module Make (Observer_error : Observer_error) () = struct
           timer_generation = 0;
           timer_start =
             (fun timer ->
-              Effect.daemon (timer_loop timer interval update));
+              let driver = Schedule.start (Schedule.spaced interval) in
+              Effect.daemon (timer_loop timer driver update));
         }
       in
       signal.timer <- Some timer;
