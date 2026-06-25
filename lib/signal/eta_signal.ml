@@ -207,6 +207,7 @@ module Make (Observer_error : Observer_error) = struct
     mutable obs_current : 'a option;
     mutable obs_staged_current : 'a option;
     mutable obs_initialized : bool;
+    mutable obs_failed_without_current : bool;
     mutable obs_disposed : bool;
     mutable obs_staged_generation : int;
     mutable obs_on_dispose : (unit -> unit) list;
@@ -620,6 +621,7 @@ module Make (Observer_error : Observer_error) = struct
        | None -> ()
        | Some value ->
            observer.obs_current <- Some value;
+           observer.obs_failed_without_current <- false;
            observer.obs_initialized <- true);
       observer.obs_staged_current <- None)
 
@@ -649,8 +651,12 @@ module Make (Observer_error : Observer_error) = struct
       var.queued <- true;
       graph.pending_vars <- packed :: graph.pending_vars)
 
-  let rollback_pure pending_at_start =
+  let mark_failed_without_current (O observer) =
+    if observer.obs_current = None then observer.obs_failed_without_current <- true
+
+  let rollback_pure observers pending_at_start =
     reset_staging ();
+    List.iter mark_failed_without_current observers;
     List.iter requeue_if_needed pending_at_start;
     graph.phase <- Not_stabilizing
 
@@ -916,23 +922,23 @@ module Make (Observer_error : Observer_error) = struct
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
       List.iter (fun (V var) -> var.queued <- false) pending_at_start;
+      let observers =
+        graph.observers
+        |> List.filter observer_active
+        |> List.sort (fun (O a) (O b) -> Int.compare a.obs_id b.obs_id)
+      in
       try
         List.iter stage_pending_var pending_at_start;
-        let observers =
-          graph.observers
-          |> List.filter observer_active
-          |> List.sort (fun (O a) (O b) -> Int.compare a.obs_id b.obs_id)
-        in
         let events = List.filter_map collect_observer_event observers in
         commit_staging ();
         graph.phase <- Running_observers;
         Ok events
       with
       | Graph_error err ->
-          rollback_pure pending_at_start;
+          rollback_pure observers pending_at_start;
           Error err
       | exn ->
-          rollback_pure pending_at_start;
+          rollback_pure observers pending_at_start;
           raise exn)
 
   let finish_stabilize () =
@@ -1032,6 +1038,7 @@ module Make (Observer_error : Observer_error) = struct
                 obs_current = None;
                 obs_staged_current = None;
                 obs_initialized = false;
+                obs_failed_without_current = false;
                 obs_disposed = false;
                 obs_staged_generation = -1;
                 obs_on_dispose = [];
@@ -1046,11 +1053,13 @@ module Make (Observer_error : Observer_error) = struct
     let read observer =
       Effect.sync (fun () ->
           if observer.obs_disposed then Error `Disposed_observer
-          else if not observer.obs_initialized then Error `Uninitialized_observer
           else
             match observer.obs_current with
             | Some value -> Ok value
-            | None -> Error `No_current_value)
+            | None ->
+                if observer.obs_failed_without_current || observer.obs_initialized
+                then Error `No_current_value
+                else Error `Uninitialized_observer)
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
