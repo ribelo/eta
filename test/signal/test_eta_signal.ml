@@ -138,6 +138,8 @@ let test_observer_initializes_on_stabilize () =
   let observer =
     run_ok rt (Signal.Observer.observe doubled (record_observer events))
   in
+  Alcotest.(check int) "registration does not run callback" 0
+    (List.length !events);
   expect_fail "read before stabilize"
     (( = ) `Uninitialized_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)));
@@ -151,6 +153,24 @@ let test_observer_initializes_on_stabilize () =
          | Signal.Initialized n -> n
          | Changed _ -> Alcotest.fail "unexpected changed event")
        (List.rev !events))
+
+let test_observer_unsafe_read_exn_reports_invalid_state () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source) (fun _ -> Effect.unit))
+  in
+  Alcotest.check_raises "unsafe read before stabilize"
+    (Invalid_argument "Eta_signal observer is not initialized")
+    (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "unsafe read stabilized value" 1
+    (Signal.Observer.unsafe_read_exn observer);
+  run_ok rt (Signal.Observer.dispose observer);
+  Alcotest.check_raises "unsafe read after dispose"
+    (Invalid_argument "Eta_signal observer is disposed")
+    (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int))
 
 let test_manual_stabilization_coalesces_sets () =
   with_runtime @@ fun rt ->
@@ -1623,6 +1643,8 @@ let () =
             test_error_pretty_printers_are_clear;
           Alcotest.test_case "observer initializes on stabilize" `Quick
             test_observer_initializes_on_stabilize;
+          Alcotest.test_case "observer unsafe read reports invalid state"
+            `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "manual stabilization coalesces sets" `Quick
             test_manual_stabilization_coalesces_sets;
           Alcotest.test_case "functor instances stabilize independently" `Quick
