@@ -1361,9 +1361,21 @@ let test_time_validation_errors () =
   expect_fail "invalid interval" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.interval Duration.zero)));
+  expect_fail "invalid now cadence" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.now ~every:Duration.zero ())));
+  expect_fail "invalid deadline cadence" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.deadline ~every:Duration.zero 1)));
   expect_fail "invalid after interval" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.after ~every:Duration.zero (Duration.ms 1))));
+  expect_fail "invalid after duration" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.after ~every:(Duration.ms 1) Duration.zero)));
+  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.step ~every:Duration.zero ~initial:0 succ)));
   expect_fail "past deadline" (( = ) `Past_deadline)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.deadline ~every:(Duration.ms 1) 0)))
