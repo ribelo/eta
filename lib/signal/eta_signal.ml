@@ -270,6 +270,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable dynamic_scope_invalidations : int;
     mutable nodes_became_necessary : int;
     mutable nodes_became_unnecessary : int;
+    mutable necessary_node_ids : (int, unit) Hashtbl.t;
   }
 
   exception Graph_error of graph_error
@@ -300,6 +301,7 @@ module Make (Observer_error : Observer_error) () = struct
       dynamic_scope_invalidations = 0;
       nodes_became_necessary = 0;
       nodes_became_unnecessary = 0;
+      necessary_node_ids = Hashtbl.create 16;
     }
 
   let with_lane_lock lane f = Sync_lock.use lane.lane_lock f
@@ -815,35 +817,55 @@ module Make (Observer_error : Observer_error) () = struct
           | Some previous -> source_changed && not (bind.source.equal previous source_value)
         in
         if needs_new_inner then (
+          let scope = new_scope () in
+          let previous_scope = graph.current_scope in
+          let inner, inner_value, changed =
+            try
+              graph.current_scope <- Some scope;
+              let inner =
+                Fun.protect
+                  ~finally:(fun () -> graph.current_scope <- previous_scope)
+                  (fun () -> bind.selector source_value)
+              in
+              let inner_value, _inner_changed = compute inner in
+              graph.recompute_count <- graph.recompute_count + 1;
+              let changed =
+                (not signal.initialized)
+                ||
+                match signal.value with
+                | None -> true
+                | Some old_value -> not (signal.equal old_value inner_value)
+              in
+              (inner, inner_value, changed)
+            with exn ->
+              graph.current_scope <- previous_scope;
+              invalidate_scope scope;
+              raise exn
+          in
           (match bind.inner with
            | None -> ()
            | Some old_inner -> detach_dependency signal old_inner);
           (match bind.inner_scope with
            | None -> ()
            | Some scope -> invalidate_scope scope);
-          let scope = new_scope () in
-          let previous_scope = graph.current_scope in
-          graph.current_scope <- Some scope;
-          let inner =
-            Fun.protect
-              ~finally:(fun () -> graph.current_scope <- previous_scope)
-              (fun () -> bind.selector source_value)
-          in
           bind.source_value <- Some source_value;
           bind.inner <- Some inner;
           bind.inner_scope <- Some scope;
-          attach_dependency signal inner);
-        let inner =
-          match bind.inner with
-          | Some inner -> inner
-          | None -> raise (Graph_error `Invalid_scope)
-        in
-        let inner_value, inner_changed = compute inner in
-        if
-          signal.dirty || source_changed || inner_changed
-          || not signal.initialized
-        then recompute inner_value
-        else use_cached ()
+          attach_dependency signal inner;
+          if changed then stage_signal signal inner_value;
+          (if changed then inner_value else current_or_raise signal), changed)
+        else
+          let inner =
+            match bind.inner with
+            | Some inner -> inner
+            | None -> raise (Graph_error `Invalid_scope)
+          in
+          let inner_value, inner_changed = compute inner in
+          if
+            signal.dirty || source_changed || inner_changed
+            || not signal.initialized
+          then recompute inner_value
+          else use_cached ()
 
   let observer_active (O observer) = not observer.obs_disposed
 
@@ -860,6 +882,33 @@ module Make (Observer_error : Observer_error) () = struct
       else (
         timer.timer_running <- true;
         Some (timer.timer_start timer)))
+
+  let collect_necessary_node_ids () =
+    let seen = Hashtbl.create 16 in
+    let rec visit (P signal) =
+      if signal.valid && not (Hashtbl.mem seen signal.id) then (
+        Hashtbl.add seen signal.id ();
+        List.iter visit signal.dependencies)
+    in
+    List.iter
+      (fun (O observer) ->
+        if not observer.obs_disposed then visit (P observer.obs_signal))
+      graph.observers;
+    seen
+
+  let update_necessity_counters_unlocked () =
+    let next = collect_necessary_node_ids () in
+    Hashtbl.iter
+      (fun id () ->
+        if not (Hashtbl.mem graph.necessary_node_ids id) then
+          graph.nodes_became_necessary <- graph.nodes_became_necessary + 1)
+      next;
+    Hashtbl.iter
+      (fun id () ->
+        if not (Hashtbl.mem next id) then
+          graph.nodes_became_unnecessary <- graph.nodes_became_unnecessary + 1)
+      graph.necessary_node_ids;
+    graph.necessary_node_ids <- next
 
   let necessary_timers () =
     let seen_nodes = Hashtbl.create 16 in
@@ -931,6 +980,7 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter stage_pending_var pending_at_start;
         let events = List.filter_map collect_observer_event observers in
         commit_staging ();
+        update_necessity_counters_unlocked ();
         graph.phase <- Running_observers;
         Ok events
       with
@@ -1046,6 +1096,7 @@ module Make (Observer_error : Observer_error) () = struct
               }
             in
             graph.observers <- O observer :: graph.observers;
+            update_necessity_counters_unlocked ();
             Ok observer)
       |> Effect.flatten_result
       |> Effect.bind (fun observer ->
@@ -1076,7 +1127,7 @@ module Make (Observer_error : Observer_error) () = struct
             observer.obs_disposed <- true;
             List.iter (fun f -> f ()) observer.obs_on_dispose;
             observer.obs_on_dispose <- [];
-            graph.nodes_became_unnecessary <- graph.nodes_became_unnecessary + 1))
+            update_necessity_counters_unlocked ()))
       |> Effect.bind (fun () -> refresh_timer_demand ())
   end
 
@@ -1123,17 +1174,7 @@ module Make (Observer_error : Observer_error) () = struct
       0 graph.observers
 
   let necessary_node_count () =
-    let seen = Hashtbl.create 16 in
-    let rec visit (P signal) =
-      if not (Hashtbl.mem seen signal.id) then (
-        Hashtbl.add seen signal.id ();
-        List.iter visit signal.dependencies)
-    in
-    List.iter
-      (fun (O observer) ->
-        if not observer.obs_disposed then visit (P observer.obs_signal))
-      graph.observers;
-    Hashtbl.length seen
+    Hashtbl.length (collect_necessary_node_ids ())
 
   let stale_node_count () =
     List.fold_left

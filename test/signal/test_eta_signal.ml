@@ -426,6 +426,58 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_selector_failure_preserves_previous_branch () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 1 in
+  let right = Signal.Var.create 10 in
+  let fail_selector = ref true in
+  let fail_inner = ref false in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then Signal.Var.watch left
+        else if !fail_selector then failwith "selector"
+        else
+          Signal.Var.watch right
+          |> Signal.map (fun value ->
+                 if !fail_inner then failwith "inner";
+                 value))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial left branch" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set choose_left false);
+  expect_die "selector defect"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "old snapshot remains after selector defect" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set choose_left true);
+  run_ok rt (Signal.Var.set left 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "old branch is still active after failed switch" 2
+    (run_ok rt (Signal.Observer.read observer));
+  fail_selector := false;
+  fail_inner := true;
+  run_ok rt (Signal.Var.set choose_left false);
+  expect_die "inner branch defect"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "old snapshot remains after inner defect" 2
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set choose_left true);
+  run_ok rt (Signal.Var.set left 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "old branch remains active after inner defect" 3
+    (run_ok rt (Signal.Observer.read observer));
+  fail_inner := false;
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "later successful switch reaches right branch" 10
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_bind_cycle_detection_is_typed_failure () =
   with_runtime @@ fun rt ->
   let trigger = Signal.Var.create () in
@@ -876,6 +928,9 @@ let test_stats_and_dot_are_read_only () =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   let after_observe = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "necessary transition counted" true
+    (after_observe.Signal.nodes_became_necessary
+     > before.Signal.nodes_became_necessary);
   Alcotest.(check int) "active observer increments"
     (before.Signal.active_observer_count + 1)
     after_observe.Signal.active_observer_count;
@@ -891,7 +946,11 @@ let test_stats_and_dot_are_read_only () =
     (after_stabilize.Signal.recompute_count > before.Signal.recompute_count);
   let dot = run_ok rt (Signal.to_dot ()) in
   Alcotest.(check bool) "dot dump is non-empty" true (String.length dot > 0);
-  run_ok rt (Signal.Observer.dispose observer)
+  run_ok rt (Signal.Observer.dispose observer);
+  let after_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "unnecessary transition counted" true
+    (after_dispose.Signal.nodes_became_unnecessary
+     > after_stabilize.Signal.nodes_became_unnecessary)
 
 let test_time_interval_starts_only_when_observed () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -1126,6 +1185,8 @@ let () =
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
+          Alcotest.test_case "bind selector failure preserves branch" `Quick
+            test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind cycle detection typed failure" `Quick
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "unobserved nodes do not recompute" `Quick
