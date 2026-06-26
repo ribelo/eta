@@ -576,22 +576,22 @@ let[@zero_alloc] [@inline always] decode_int_prefix prefix prefix_bits bytes pos
   let i = prefix land max_prefix in
   if i < max_prefix then i
   else
-    let mutable j = i in
-    let mutable m = 0 in
-    let mutable finished = false in
-    let mutable result = 0 in
+    let j = ref i in
+    let m = ref 0 in
+    let finished = ref false in
+    let result = ref 0 in
     let bytes_len = Bytes.length bytes in
-    while (not finished) && !pos_ref < bytes_len do
+    while (not !finished) && !pos_ref < bytes_len do
       let b = Char.code (Bytes.unsafe_get bytes !pos_ref) in
       incr pos_ref;
-      j <- j + ((b land 127) lsl m);
+      j := !j + ((b land 127) lsl !m);
       if b land 128 = 0 then begin
-        result <- j;
-        finished <- true
+        result := !j;
+        finished := true
       end
-      else m <- m + 7
+      else m := !m + 7
     done;
-    if finished then result else raise Exit
+    if !finished then !result else raise Exit
 
 (** Decode a string literal (RFC 7541 §5.2). *)
 let decode_string_literal bytes pos_ref =
@@ -767,13 +767,13 @@ let encoder_write_int buf pos_ref prefix n i =
   end else begin
     Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (prefix lor max_prefix));
     incr pos_ref;
-    let mutable rem = i - max_prefix in
-    while rem >= 128 do
-      Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (rem land 127 lor 128));
+    let rem = ref (i - max_prefix) in
+    while !rem >= 128 do
+      Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr (!rem land 127 lor 128));
       incr pos_ref;
-      rem <- rem lsr 7
+      rem := !rem lsr 7
     done;
-    Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr rem);
+    Bytes.unsafe_set buf !pos_ref (Char.unsafe_chr !rem);
     incr pos_ref
   end
 
