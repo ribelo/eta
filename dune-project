@@ -253,6 +253,7 @@
   eta_http_ws
   eta_stream
   (eio (>= 1.0))
+  (eio_main (>= 1.0))
   (cstruct (>= 6.0.0))
   (faraday (>= 0.8.0))
   (angstrom (>= 0.16.0))
