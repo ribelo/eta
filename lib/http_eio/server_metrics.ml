@@ -46,8 +46,8 @@ let request ~runtime ~connection ~emit_url_full request =
       @ transport_attrs connection;
   }
 
-let run t effect =
-  ignore (Eta.Runtime.run t.runtime effect : (unit, Eta_http.Server.Error.t) Eta.Exit.t)
+let run t operation =
+  ignore (Eta.Runtime.run t.runtime operation : (unit, Eta_http.Server.Error.t) Eta.Exit.t)
 
 let validate_non_negative name value =
   if value < 0 then

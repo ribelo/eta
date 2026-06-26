@@ -1071,8 +1071,8 @@ let handler_failed_error t request exn =
 let run_response_body_effect t request rt effect_thunk =
   let run () =
     try
-      let effect = effect_thunk () in
-      match Eta.Runtime.run rt effect with
+      let operation = effect_thunk () in
+      match Eta.Runtime.run rt operation with
       | Eta.Exit.Ok value -> Ok value
       | Eta.Exit.Error cause ->
           response_write_failure ~response_started:true
@@ -1283,8 +1283,8 @@ let watchdog_loop t =
 
 let run_handler t rt request handler =
   let run () =
-    let effect = safe_handler_effect t request handler in
-    match Eta.Runtime.run rt effect with
+    let operation = safe_handler_effect t request handler in
+    match Eta.Runtime.run rt operation with
     | Eta.Exit.Ok response -> (response, false)
     | Eta.Exit.Error cause -> (fallback_error_response t request cause, true)
   in

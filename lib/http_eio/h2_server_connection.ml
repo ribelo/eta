@@ -3263,8 +3263,8 @@ let handler_failed_error t request exn =
 let run_response_body_effect t rt request effect_thunk =
   let run () =
     try
-      let effect = effect_thunk () in
-      match Eta.Runtime.run rt effect with
+      let operation = effect_thunk () in
+      match Eta.Runtime.run rt operation with
       | Eta.Exit.Ok value -> Ok value
       | Eta.Exit.Error cause -> Error (response_error_of_cause t cause)
     with
@@ -3362,10 +3362,10 @@ let safe_handler_effect t request handler =
 
 let run_handler_body t ordinal request handler =
   let rt = t.runtime in
-  let effect = safe_handler_effect t request handler in
+  let operation = safe_handler_effect t request handler in
   let run_runtime () =
     let started_us = runtime_probe_now t in
-    match Eta.Runtime.run rt effect with
+    match Eta.Runtime.run rt operation with
     | result ->
         runtime_probe_handler_runtime t started_us;
         result
