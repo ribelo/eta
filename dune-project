@@ -110,6 +110,17 @@
   eta))
 
 (package
+ (name eta_linux_input)
+ (synopsis "Linux evdev and uinput primitives for Eta applications")
+ (description
+  "eta_linux_input provides reusable Linux evdev input-device metadata, event reading, exclusive grabs, and uinput virtual-device helpers for Eta applications.")
+ (depends
+  (ocaml (>= 5.2.0))
+  (dune (>= 3.0))
+  eta
+  eta_blocking))
+
+(package
  (name eta_par)
  (synopsis "Native heartbeat-backed parallel runtime for Eta")
  (description

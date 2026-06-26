@@ -1,0 +1,8 @@
+(library
+ (name eta_linux_input)
+ (public_name eta_linux_input)
+ (synopsis "Linux evdev and uinput primitives for Eta applications")
+ (libraries eta eta_blocking unix)
+ (foreign_stubs
+  (language c)
+  (names linux_input_stubs)))
