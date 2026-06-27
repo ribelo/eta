@@ -2688,12 +2688,17 @@ let test_time_interval_requires_explicit_stabilization () =
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let check_timer_snapshot label
-      (expected_interval, expected_now, expected_after, expected_deadline)
-      (actual_interval, actual_now, actual_after, actual_deadline) =
+      ( expected_interval,
+        expected_now,
+        expected_after,
+        expected_deadline,
+        expected_step )
+      (actual_interval, actual_now, actual_after, actual_deadline, actual_step) =
     Alcotest.(check int) (label ^ " interval") expected_interval actual_interval;
     Alcotest.(check int) (label ^ " now") expected_now actual_now;
     Alcotest.(check bool) (label ^ " after") expected_after actual_after;
-    Alcotest.(check bool) (label ^ " deadline") expected_deadline actual_deadline
+    Alcotest.(check bool) (label ^ " deadline") expected_deadline actual_deadline;
+    Alcotest.(check int) (label ^ " step") expected_step actual_step
   in
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let now = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
@@ -2701,39 +2706,43 @@ let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
     run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 50))
   in
   let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 50) in
+  let step =
+    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+  in
   let combined =
-    Signal.map4
-      (fun interval now after deadline -> (interval, now, after, deadline))
-      interval now after deadline
+    Signal.map5
+      (fun interval now after deadline step ->
+        (interval, now, after, deadline, step))
+      interval now after deadline step
   in
   let events = ref [] in
   let observer =
     run_ok rt (Signal.Observer.observe combined (record_observer events))
   in
-  wait_for_sleepers clock 4;
+  wait_for_sleepers clock 5;
   run_ok rt Signal.stabilize;
-  check_timer_snapshot "initial timer snapshot" (0, 0, false, false)
+  check_timer_snapshot "initial timer snapshot" (0, 0, false, false, 0)
     (run_ok rt (Signal.Observer.read observer));
   Eta_test.Test_clock.adjust clock (Duration.ms 100);
   Eta_test.Async.yield ();
   wait_until "large-jump timers settle" (fun () ->
-      Eta_test.Test_clock.sleeper_count clock = 2);
+      Eta_test.Test_clock.sleeper_count clock = 3);
   check_timer_snapshot "large clock jump does not auto-stabilize"
-    (0, 0, false, false)
+    (0, 0, false, false, 0)
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "large clock jump emitted no callback before stabilize" 1
     (List.length !events);
   run_ok rt Signal.stabilize;
   check_timer_snapshot "large clock jump catches up on explicit stabilize"
-    (10, 100, true, true)
+    (10, 100, true, true, 10)
     (run_ok rt (Signal.Observer.read observer));
   (match List.rev !events with
    | [
-       Signal.Initialized (0, 0, false, false);
+       Signal.Initialized (0, 0, false, false, 0);
        Changed
          {
-           old_value = (0, 0, false, false);
-           new_value = (10, 100, true, true);
+           old_value = (0, 0, false, false, 0);
+           new_value = (10, 100, true, true, 10);
          };
      ] -> ()
    | _ -> Alcotest.fail "unexpected large clock jump events");
