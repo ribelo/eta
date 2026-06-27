@@ -96,10 +96,15 @@ observers or explicit update operations, not inside derived pure nodes.
 The kernel uses explicit stabilization. `set` marks sources dirty. It does not
 propagate immediately and does not run observers.
 
-Source mutation during stabilization is allowed but delayed. It behaves as if
+Public Eta source mutation from observer callbacks and other observer/effect
+phase operations during stabilization is allowed but delayed. It behaves as if
 the mutation happened immediately after the current stabilization completes, so
 the new source value is not visible to derived nodes or observers until the
 next explicit stabilization.
+
+Pure recompute functions remain synchronous and do not receive an Eta effect
+context. They cannot perform public source mutation as part of recomputation;
+effectful graph work belongs in observers or explicit update operations.
 
 Multiple source mutations before one stabilization are the batching mechanism.
 There is no separate public batch or transaction primitive in the target
@@ -214,6 +219,12 @@ are captured as defects of the stabilizing effect. This includes mapping
 functions, dynamic dependency selectors, cutoff predicates, and observer
 callback construction. A failed stabilization does not publish a half-updated
 snapshot.
+
+`Time.step` callbacks are not stabilization callbacks. They run in
+demand-owned timer daemons that update backing sources, so step callback
+defects are reported as daemon diagnostics rather than as `stabilize` failures.
+Failed timer daemons clean up their timer state so a later demand refresh can
+restart them.
 
 Eta does not copy Incremental's permanent poisoning behavior after callback
 exceptions. A callback exception fails the current operation as an Eta defect,
@@ -422,6 +433,13 @@ The bridge emits the same initialized/changed updates as observers and preserves
 explicit stabilization: updates enter the stream only after stabilization
 reaches a stable snapshot and runs the observer effect phase.
 
+The v1 public bridge is `Stream.observe ?capacity signal`, returning the
+observer lifecycle handle and the stream. `capacity` defaults to 1024 and bounds
+an Eta queue, so stream publication backpressures when the queue is full.
+Disposing the returned observer closes the stream after buffered updates drain.
+Stopping, taking from, or abandoning the stream early does not dispose the
+observer; the returned observer remains the lifecycle owner.
+
 The target does not include a stream-to-signal bridge in the kernel. Converting
 an arbitrary stream into a signal requires policy choices for initial value,
 buffering, coalescing, backpressure, close semantics, failure mapping, and which
@@ -440,6 +458,10 @@ The target includes time/clock nodes, but they are driven by Eta primitives that
 already exist: runtime clock reads, `Duration`, `Effect.sleep`, `Schedule`, and
 runtime-managed fibers. `eta_signal` must not introduce a separate timing wheel
 or scheduler.
+
+Internal timer drivers may use Eta `Schedule`, but v1 does not expose a public
+schedule-taking time-node constructor. Public time constructors use explicit
+runtime-clock and duration arguments.
 
 Time nodes preserve explicit stabilization. Timer effects may update clock
 sources and mark dependent graph regions stale, but observer callbacks still run
@@ -464,6 +486,10 @@ watching the current runtime time, one-shot deadlines, relative delays,
 interval ticks, and step functions. Their implementation must route through
 Eta's runtime clock/sleep and test-clock facilities so native and js_of_ocaml
 behavior remain portable and testable.
+
+`Time.step` step functions run from the timer daemon that advances the backing
+source. Their callback defects follow the timer-daemon diagnostic path described
+above, not the stabilization callback failure path.
 
 ## Interface Shape
 
@@ -524,7 +550,8 @@ invalidation, heights, scopes, or observer scheduling.
 - Multiple functor instances cannot compose signals by accident.
 - The main public surface has no first-class graph values.
 - Manual stabilization coalesces multiple source updates.
-- Source mutation during stabilization is delayed to the next stabilization.
+- Public source mutation from observer/effect phase stabilization work is
+  delayed to the next stabilization.
 - There is no public batch primitive; repeated mutations before one
   stabilization are the batch.
 - Graph mutation, lifecycle changes, timer updates, and stabilization are
@@ -558,9 +585,9 @@ invalidation, heights, scopes, or observer scheduling.
 
 ## Implementation Self-Audit Evidence
 
-This section records current implementation evidence for the PRD audit. It does
-not bless or resolve the human-review decisions in the implementation audit
-notes below.
+This section records current implementation evidence for the PRD audit. The
+self-audit decisions reviewed on 2026-06-27 are incorporated into the final
+contract and summarized in the review resolution below.
 
 - Package boundary evidence: `dune-project`, `eta_signal.opam`, and
   `lib/signal/dune` define `eta_signal` as an optional public package/library
@@ -603,8 +630,9 @@ notes below.
 ### Acceptance Criteria Evidence Matrix
 
 This matrix is the current self-audit ledger for the acceptance criteria above.
-Items marked "human review" have executable implementation evidence, but still
-depend on a policy/API decision recorded in the audit notes below.
+All listed criteria have executable or manifest evidence. Decisions raised
+during self-audit were reviewed on 2026-06-27 and are now part of the PRD
+contract.
 
 | Criterion | Current evidence | Audit status |
 | --- | --- | --- |
@@ -612,7 +640,7 @@ depend on a policy/API decision recorded in the audit notes below.
 | Necessary stale nodes recompute at most once in deterministic topological order | `test_diamond_recomputes_shared_node_once`, `test_recompute_order_is_topological` | Covered |
 | `bind` dynamic dependency changes detach old dependencies | `test_bind_detaches_old_dependency` | Covered |
 | `bind` invalidates old selector scopes without recomputing obsolete inner nodes | `test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes` | Covered |
-| Node creation during stabilization respects scope or fails typed when ambiguous | `test_ambiguous_node_creation_during_pure_recompute_is_typed_failure`, `test_ambiguous_node_creation_during_observer_callback_is_typed_failure` | Covered; constructor-shape wording needs human review |
+| Node creation during stabilization respects scope or fails typed when ambiguous | `test_ambiguous_node_creation_during_pure_recompute_is_typed_failure`, `test_ambiguous_node_creation_during_observer_callback_is_typed_failure` | Covered |
 | Scope save/restore is not public | `test/signal/negative/public_scope_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Derived nodes have no public delete; disposal and bind invalidation remove demand | `test/signal/negative/derived_signal_delete_negative.ml`, `test_dispose_removes_demand`, `test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes` | Covered |
 | Cutoffs suppress downstream recomputation and observer callbacks | `test_cutoff_suppresses_downstream_recompute`, `test_observer_equality_suppresses_only_that_observer` | Covered |
@@ -623,13 +651,13 @@ depend on a policy/API decision recorded in the audit notes below.
 | Observer handles control demand and disposal; observation is not callback-only | `lib/signal/eta_signal.mli`, `test_dispose_removes_demand`, `test_stats_and_dot_are_read_only` | Covered |
 | Primary observer reads are Eta effects with typed invalid-state failures | `test_observer_initializes_on_stabilize`, `test_failed_initial_stabilization_leaves_no_current_value`, `test_dispose_removes_demand` | Covered |
 | Unsafe synchronous observer reads are limited to tests/debugging | `lib/signal/eta_signal.mli`, `test_observer_unsafe_read_exn_reports_invalid_state` | Covered |
-| Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_observer_dispose_during_callback_keeps_collected_event`, `test_stats_and_dot_are_read_only` | Covered; same-stabilization event-list semantics need human review |
-| Observer ordering, fail-fast behavior, and observer-effect interruption are deterministic | `test_observer_callbacks_run_in_registration_order`, `test_observer_failure_fails_stabilize`, `test_observer_failure_is_fail_fast`, `test_observer_callback_interruption_releases_phase` | Covered; observer-error API shape needs human review |
+| Explicit observer disposal releases demand; correctness does not rely on finalizers | `test_dispose_removes_demand`, `test_dispose_before_initialization_removes_demand`, `test_observer_dispose_during_callback_keeps_collected_event`, `test_stats_and_dot_are_read_only` | Covered |
+| Observer ordering, fail-fast behavior, and observer-effect interruption are deterministic | `test_observer_callbacks_run_in_registration_order`, `test_observer_failure_fails_stabilize`, `test_observer_failure_is_fail_fast`, `test_observer_callback_interruption_releases_phase` | Covered |
 | Pure snapshot publication is atomic; already-run observer effects are not rolled back | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_failure_is_fail_fast`, `test_observer_effects_before_later_failure_are_not_rolled_back`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Multiple functor instances cannot compose signals by accident | `test_functor_instances_stabilize_independently`, `test/signal/negative/cross_graph_signal_negative.ml` | Covered |
 | Main public surface has no first-class graph values | `test/signal/negative/first_class_graph_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Manual stabilization coalesces multiple source updates | `test_manual_stabilization_coalesces_sets` | Covered |
-| Source mutation during stabilization is delayed to the next stabilization | `test_observer_mutation_is_delayed_to_next_stabilization` | Covered; phase wording needs human review |
+| Public source mutation from observer/effect phase stabilization work is delayed to the next stabilization | `test_observer_mutation_is_delayed_to_next_stabilization` | Covered |
 | There is no public batch primitive | `test/signal/negative/public_batch_negative.ml` | Covered |
 | Graph mutation, lifecycle changes, timer updates, and stabilization are serialized while observer reads are non-mutating | `test_reentrant_stabilization_is_typed_failure`, `test_effectful_update_reentry_fails_and_preserves_value`, `test_queued_graph_operation_cancellation_does_not_run`, `test_active_graph_operation_interruption_releases_lane`, `test_observer_read_does_not_force_recompute` | Covered |
 | Raw derived signals have no public value read | `test/signal/negative/raw_signal_read_negative.ml`, `test_observer_read_does_not_force_recompute` | Covered |
@@ -639,136 +667,50 @@ depend on a policy/API decision recorded in the audit notes below.
 | Expected public failures use small operation-scoped typed error families with clear printers | `lib/signal/eta_signal.mli`, `test_error_pretty_printers_are_clear` | Covered |
 | User callback exceptions are defects and do not permanently poison the graph | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Stats and debug introspection expose demand/recompute/scope behavior without mutating | `test_stats_and_dot_are_read_only` | Covered |
-| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_backpressures_at_capacity`, `test_stream_bridge_dispose_unblocks_backpressure`, `test/signal/negative/stream_to_signal_negative.ml` | Covered; bridge lifecycle/buffering shape needs human review |
+| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_backpressures_at_capacity`, `test_stream_bridge_dispose_unblocks_backpressure`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
 | No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
-| Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered; schedule-facing API decision needs human review |
+| Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered |
 | Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_after_elapsed_before_observe`, `test_time_absolute_deadline` | Covered |
-| Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_now_refreshes_after_idle_observe`, `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_time_now_bind_activation_refreshes_next_stabilization`, `test_time_step_defect_logs_daemon_diagnostic_and_restarts` | Covered; exact time API shape needs human review |
+| Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_now_refreshes_after_idle_observe`, `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_time_now_bind_activation_refreshes_next_stabilization`, `test_time_step_defect_logs_daemon_diagnostic_and_restarts` | Covered |
 | Timer work is owned by graph demand and does not keep unnecessary subgraphs alive | `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_stats_and_dot_are_read_only` | Covered |
 | Microbenchmark compares signal update/stabilization with manual `Mutable_ref` recomputation for static and dynamic graphs | `lib/signal/bench/bench_signal.ml` | Covered |
 
 - Current audit result: the implementation has executable or manifest evidence
-  for the PRD acceptance criteria, with the remaining unresolved items limited
-  to the human-review decisions recorded below.
+  for the PRD acceptance criteria, and all self-audit decisions have been folded
+  into the final contract text.
 
-### Human Review Checklist
+## Review Resolution
 
-Review these decisions before the PRD is considered final:
+The self-audit decisions were reviewed on 2026-06-27 and are now part of this
+PRD contract:
 
-| Decision | Current implementation choice |
-| --- | --- |
-| Observer callback error and graph instance shape | `Make(Observer_error)()` takes a graph-wide observer error module; callback failures surface as `` `Observer_error`` from `stabilize`; repeated applications with the same error module are still generative and incompatible. |
-| Same-stabilization observer disposal | Observer events are collected before observer callbacks run; disposal during one callback does not cancel another already-collected observer event in that same stabilization. |
-| Time/clock public API | Runtime-clock-backed constructors are effectful and use explicit `~every` cadence arguments for `now`, `deadline`, `after`, and `step`; timers are demand-owned. |
-| Schedule-facing time API | Timers internally use Eta `Schedule`, `Duration`, `Effect.sleep`, and runtime/test clocks, but there is no public schedule-taking time-node constructor. |
-| Dynamic timer activation timing | Timers made necessary by a `bind` branch switch during stabilization refresh after observer events for that snapshot, so refreshed source values appear on the next explicit stabilization. |
-| `Time.step` callback defects | Step-function defects are daemon diagnostics, not `stabilize` failures; failed timer daemons clean up so demand refresh can restart them. |
-| Node constructor error shape | Node constructors stay synchronous so `bind` selectors can return signals directly; ambiguous construction during effect-returning operations is reported at that operation boundary. |
-| Same-variable `update_effect` concurrency | A second same-variable `update_effect` while one is active fails with `` `Reentrant_update`` instead of queueing. |
-| Source mutation during stabilization | Public Eta mutations are supported in the observer/effect phase and are delayed to the next stabilization; pure recompute functions do not receive an Eta effect context for mutation. |
-| Signal-to-stream bridge ownership | `Stream.observe ?capacity` returns both observer and stream, defaults capacity to 1024, backpressures through Eta queues, closes on observer disposal after draining buffered updates, and does not dispose the observer when consumers stop early. |
+- Observer callback failures use the graph-wide observer error module and surface
+  as `` `Observer_error`` from `stabilize`.
+- The graph functor remains generative; repeated applications with the same
+  observer error module still produce incompatible graph-owned types.
+- Observer events are collected before observer callbacks run, so disposal
+  during one callback does not cancel another already-collected event in the same
+  stabilization.
+- Runtime-clock-backed time constructors are effectful, use explicit `~every`
+  cadence arguments, and own timers through graph demand.
+- Time internals may use Eta `Schedule`, but v1 exposes no public
+  schedule-taking time-node constructor.
+- Timers made necessary by a `bind` branch switch during stabilization refresh
+  after observer events for that snapshot, so the refreshed timer source appears
+  on the next explicit stabilization.
+- `Time.step` callback defects are timer-daemon diagnostics, not `stabilize`
+  failures, and failed daemons clean up so later demand refresh can restart them.
+- Node constructors stay synchronous so `bind` selectors can return signals
+  directly; ambiguous construction is reported at the enclosing operation
+  boundary.
+- A second same-variable `update_effect` while one is active fails with
+  `` `Reentrant_update`` instead of queueing.
+- Public Eta mutations from the observer/effect phase during stabilization are
+  delayed to the next stabilization; pure recompute functions remain synchronous
+  and cannot mutate through Eta effects.
+- `Stream.observe ?capacity` returns the observer lifecycle handle and stream,
+  defaults capacity to 1024, backpressures through Eta queues, closes on observer
+  disposal after buffered updates drain, and does not dispose the observer when
+  consumers stop early.
 
-## Implementation Audit Notes
-
-This section records implementation-time gaps or underspecified decisions that
-need human review before the PRD is considered final.
-
-- Observer callback typed errors needed a concrete OCaml surface. The
-  implementation chooses a graph-wide observer error type as the graph functor
-  parameter and wraps callback failures as `` `Observer_error`` from
-  `stabilize`. The graph functor is a generative two-step functor,
-  `Make(Observer_error)()`, so repeated applications with the same observer
-  error module still create incompatible graph-owned signal/variable/observer
-  types. This is characterized by `test_observer_failure_fails_stabilize`,
-  `test_error_pretty_printers_are_clear`, and
-  `test/signal/negative/cross_graph_signal_negative.ml`. The PRD should either
-  bless that shape or specify a different callback error and graph-instance
-  model.
-- Observer disposal during the observer-effect phase needs same-stabilization
-  wording. The implementation computes the observer event list before running
-  observer callbacks, then runs that list sequentially. If one callback disposes
-  another observer whose event was already collected, the disposed observer's
-  callback may still run in that stabilization; disposal reliably removes the
-  observer from later stabilizations and releases demand. This is characterized
-  by `test_observer_dispose_during_callback_keeps_collected_event`. The PRD
-  should either bless event-list snapshot semantics for same-stabilization
-  disposal, or require callback-time disposal to cancel not-yet-run observer
-  events in the same stabilization.
-- Time/clock nodes needed exact OCaml API signatures. The implementation
-  chooses effectful constructors for runtime-clock-backed nodes, explicit
-  `~every` intervals for current-time/deadline/relative-delay/step nodes, and
-  demand-owned timer fibers that stop or become inert through observation
-  disposal and dynamic-scope invalidation. This is reflected in
-  `lib/signal/eta_signal.mli` and characterized by `test_time_validation_errors`
-  plus the time-node behavior tests. The PRD should either bless that API shape
-  or specify different signatures and lifecycle ownership.
-- The time/clock acceptance text names Eta schedule primitives. The
-  implementation uses runtime clock reads, `Duration`, `Eta.Schedule` recurrence
-  drivers, `Effect.sleep`, runtime-managed daemon fibers, and the Eta test
-  clock, but it does not expose a public schedule-taking clock-node constructor.
-  This is visible in `lib/signal/eta_signal.ml`'s timer loop and the absence of
-  any schedule-taking `Time` constructor in `lib/signal/eta_signal.mli`. The PRD
-  should either bless schedule-backed timer nodes without a public schedule
-  surface, or specify a schedule-taking clock-node API.
-- Timer demand can begin from ordinary observer lifecycle operations or from a
-  dynamic `bind` branch switch during stabilization. The implementation refreshes
-  `now` and deadline-backed sources immediately when observer lifecycle
-  operations make them necessary before a stabilization starts. When a `bind`
-  switch makes a timer necessary during stabilization, timer startup happens
-  after the pure snapshot and observer events have already been computed, so the
-  refreshed timer source is visible on the next explicit stabilization rather
-  than the same one. This is characterized by
-  `test_time_now_bind_activation_refreshes_next_stabilization`. The PRD should
-  either bless this one-stabilization delay for dynamically activated timers, or
-  require a staging redesign where effectful timer startup can refresh sources
-  before observer events are published.
-- `Time.step` introduces a timer-owned user callback boundary. The
-  implementation runs the step function from the demand-owned timer daemon that
-  updates the backing source, so callback defects follow Eta daemon diagnostics
-  rather than returning from `stabilize` as observer/recompute callback defects
-  do. Timer cleanup releases the failed daemon state so a later demand refresh
-  can restart the timer while the signal remains necessary. This is
-  characterized by `test_time_step_defect_logs_daemon_diagnostic_and_restarts`.
-  The PRD should either bless daemon-diagnostic reporting for timer callback
-  defects, specify a typed/time-specific failure channel, or remove user
-  callbacks from timer-owned nodes.
-- Node constructors appear to need to stay synchronous/pure so `bind` selectors
-  can return signals directly. The implementation reports ambiguous node
-  creation during pure recomputation or observer callback construction through
-  the typed `stabilize` error channel, but constructors themselves are not Eta
-  effects. This is characterized by
-  `test_ambiguous_node_creation_during_pure_recompute_is_typed_failure` and
-  `test_ambiguous_node_creation_during_observer_callback_is_typed_failure`. The
-  PRD should either bless synchronous constructors with operation-boundary typed
-  reporting, or specify a different constructor family if constructor-time typed
-  failures outside effect-returning operations are required.
-- Effectful same-variable updates needed an in-flight concurrency policy. The
-  implementation uses a per-variable update slot: while an `update_effect`
-  callback is active, a second `update_effect` on the same variable fails with
-  `` `Reentrant_update`` rather than queueing behind it. This covers explicit
-  nested reentry and concurrent in-flight calls with the same typed failure,
-  characterized by `test_effectful_update_reentry_fails_and_preserves_value`
-  and `test_concurrent_effectful_update_same_variable_fails_fast`. The PRD
-  should either bless fail-fast in-flight same-variable updates, or specify
-  queued FIFO serialization for non-nested callers.
-- Source mutation during stabilization needs phase-specific wording. The
-  implementation supports ordinary source mutation from observer callbacks and
-  other Eta effectful operations while the graph is in the observer/effect
-  phase, and those mutations are delayed to the next explicit stabilization.
-  Pure recomputation callbacks remain synchronous pure functions and do not
-  receive an Eta effect context in which `Var.set` can be called normally. The
-  supported effect-phase behavior is characterized by
-  `test_observer_mutation_is_delayed_to_next_stabilization`. The PRD should
-  either narrow the mutation-during-stabilization statement to effect-phase/public
-  effect operations, or specify a safe effectful pure-recompute mutation
-  mechanism.
-- The signal-to-stream bridge needed a lifecycle and buffering contract. The
-  implementation chooses `Stream.observe ?capacity` with a default capacity of
-  1024, backed by an Eta queue with backpressure. Observer disposal cleanly
-  closes the stream after buffered updates drain. Early stream termination does
-  not dispose the observer; the returned observer remains the lifecycle handle.
-  This is characterized by `test_stream_bridge_closes_on_observer_dispose`,
-  `test_stream_bridge_take_does_not_dispose_observer`,
-  `test_stream_bridge_backpressures_at_capacity`, and
-  `test_stream_bridge_dispose_unblocks_backpressure`. The PRD should either
-  bless that shape or specify a different bridge ownership contract.
+No unresolved implementation audit notes remain.
