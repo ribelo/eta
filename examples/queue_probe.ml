@@ -4,6 +4,8 @@ type upstream_error = [ `Upstream_failed of string ]
 
 let render_send = function
   | `Sent -> "sent"
+  | `Dropped -> "dropped"
+  | `Full -> "full"
   | `Closed -> "closed"
   | `Closed_with_error (`Upstream_failed reason) -> "closed:" ^ reason
 

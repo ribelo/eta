@@ -54,6 +54,8 @@ The current examples cover:
 - `map_projection.ml` - success-value projection with `let+` instead of
   `bind` plus `pure`.
 - `stream_decode.ml` - typed decoding inside an `Eta_stream` pipeline.
+- `signal_stabilization.ml` - explicit `Eta_signal` stabilization and stream
+  bridge disposal lifecycle.
 - `batch_concurrency.ml` - bounded parallel fan-out and collected branch
   outcomes.
 - `all_health_checks.ml` - fail-fast collection of a homogeneous list of

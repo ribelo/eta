@@ -12,7 +12,7 @@ let hidden_export =
   Effect.named "hidden.export"
     (let* () = Effect.log "hidden.log" in
      let* () =
-       Effect.metric_update ~name:"hidden.metric" ~kind:Meter.Counter_cumulative
+       Effect.metric_counter ~name:"hidden.metric" ~monotonic:false
          (Meter.Int 1)
      in
      Effect.event "hidden.event")

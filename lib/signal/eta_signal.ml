@@ -421,10 +421,10 @@ module Make (Observer_error : Observer_error) () = struct
   let leave_graph_lane () =
     Effect.sync (fun () -> leave_lane_sync graph.lane)
 
-  let with_graph_lane effect =
+  let with_graph_lane eff =
     enter_graph_lane ()
     |> Effect.bind (fun () ->
-           effect |> Effect.on_exit (fun _exit -> leave_graph_lane ()))
+           eff |> Effect.on_exit (fun _exit -> leave_graph_lane ()))
 
   let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
 
@@ -1083,8 +1083,8 @@ module Make (Observer_error : Observer_error) () = struct
           with Graph_error err -> Error (err :> stabilize_error)
         with
         | Error err -> Effect.fail err
-        | Ok effect ->
-            effect
+        | Ok observer_eff ->
+            observer_eff
             |> Effect.map_error (fun err -> `Observer_error err)
             |> Effect.bind (fun () -> run_events rest))
 
@@ -1146,7 +1146,7 @@ module Make (Observer_error : Observer_error) () = struct
       acquire
       |> Effect.bind (fun old_value ->
              Effect.sync (fun () -> f old_value)
-             |> Effect.bind (fun effect -> effect)
+             |> Effect.bind (fun update_eff -> update_eff)
              |> Effect.bind (fun new_value ->
                     set source new_value |> Effect.map (fun () -> new_value))
              |> Effect.on_exit (fun _ -> release_update source))

@@ -1,0 +1,17 @@
+(executable
+ (name test_eta_signal_jsoo)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (modes js)
+ (libraries eta eta_signal eta_stream eta_jsoo eta_js_test js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (deps
+  test_eta_signal_jsoo.bc.js)
+ (action
+  (run node test_eta_signal_jsoo.bc.js)))

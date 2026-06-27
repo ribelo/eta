@@ -17,9 +17,9 @@ let program id =
          "request.started"
      in
      let* () =
-       Effect.metric_update ~name:"example.requests"
+       Effect.metric_counter ~name:"example.requests"
          ~description:"handled example requests" ~unit_:"{request}"
-         ~attrs:[ ("route", "/users/:id") ] ~kind:Meter.Counter_monotonic
+         ~attrs:[ ("route", "/users/:id") ]
          (Meter.Int 1)
      in
      let* user =

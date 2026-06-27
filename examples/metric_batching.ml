@@ -15,7 +15,7 @@ let snapshot calls =
   { active = 3; idle = 1; waiting = 2; max_size = 8 }
 
 let gauge ?(unit_ = "{connection}") name value =
-  Effect.metric ~name ~unit_ ~kind:Meter.Gauge (Meter.Int value)
+  Effect.metric ~name ~unit_ ~kind:Meter.gauge (Meter.number (Meter.Int value))
 
 let metrics_of_stats stats =
   [

@@ -12,7 +12,7 @@ let () =
   let ticks = ref 0 in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   match Eta_eio.Runtime.run rt (heartbeat ticks) with
-  | Exit.Ok () ->
+  | Exit.Ok _ ->
       if !ticks <> 4 then
         failwith
           (Printf.sprintf "repeat heartbeat expected 4 ticks, got %d" !ticks);

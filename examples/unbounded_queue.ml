@@ -1,11 +1,12 @@
 open Eta
 
 type upstream_error = [ `Upstream_failed of string ]
-type error = [ `Closed | `Closed_with_error of upstream_error ]
+type error = [ `Closed | `Closed_with_error of upstream_error | `Dropped ]
 
 let render_close = function
   | `Closed -> "closed"
   | `Closed_with_error (`Upstream_failed reason) -> "closed:" ^ reason
+  | `Dropped -> "dropped"
 
 let producer queue =
   let open Syntax in

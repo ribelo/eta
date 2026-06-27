@@ -45,8 +45,17 @@ for src in "$fixture_dir"/*_negative.ml; do
     map10_negative.ml)
       expected='Unbound value "?Signal\.map10"?|Unbound value "?map10"?'
       ;;
+    map_mutation_value_negative.ml)
+      expected='Eta\.Effect\.t|Effect\.t|but an expression was expected of type.*int Signal\.signal|This expression has type.*Effect'
+      ;;
+    observer_read_error_negative.ml)
+      expected='observer_read_error|graph_error|The second variant type does not allow tag|This expression has type.*Observer\.read'
+      ;;
     stream_to_signal_negative.ml)
       expected='Unbound value "?Signal\.Stream\.to_signal"?|Unbound value "?to_signal"?'
+      ;;
+    time_constructor_effectful_negative.ml)
+      expected='Eta\.Effect\.t|Effect\.t|but an expression was expected of type.*Signal\.signal|This expression has type.*Effect'
       ;;
     *)
       echo "no expected failure pattern configured for: $name"

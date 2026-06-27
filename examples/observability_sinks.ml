@@ -10,8 +10,8 @@ let step name =
        Effect.log ~attrs:[ ("step", name) ] "step.finished"
      in
      let* () =
-       Effect.metric_update ~name:"example.step.finished"
-         ~attrs:[ ("step", name) ] ~kind:Meter.Counter_monotonic
+       Effect.metric_counter ~name:"example.step.finished"
+         ~attrs:[ ("step", name) ]
          (Meter.Int 1)
      in
      Effect.event ~attrs:[ ("step", name) ] "step.event")

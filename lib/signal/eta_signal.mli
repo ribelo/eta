@@ -59,9 +59,18 @@ module Make (Observer_error : Observer_error) () : sig
     type 'a t = 'a var
 
     val create : ?equal:('a -> 'a -> bool) -> 'a -> 'a t
+    (** Create a source variable. Without [?equal], source updates use
+        physical equality as their cutoff. *)
+
     val value : 'a t -> 'a
+    (** Synchronously read the current source value, including values set since
+        the last stabilization. *)
+
     val watch : 'a t -> 'a signal
     val set : 'a t -> 'a -> (unit, 'err) Eta.Effect.t
+    (** Set the source value. Sets performed from observer callbacks are
+        accepted, but are published by a later explicit stabilization rather
+        than by the currently running observer phase. *)
 
     val update_effect :
       'a t ->
@@ -77,6 +86,10 @@ module Make (Observer_error : Observer_error) () : sig
       'a signal ->
       ('a update -> (unit, observer_error) Eta.Effect.t) ->
       ('a t, graph_error) Eta.Effect.t
+    (** Create a lifecycle handle for observing [signal]. Registering an
+        observer does not run its callback; the first explicit stabilization
+        initializes observed values and callbacks run after a consistent
+        snapshot is published. *)
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
     (** Read the last stabilized observed value. This is the primary value-read
@@ -180,12 +193,23 @@ module Make (Observer_error : Observer_error) () : sig
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
   val bind : ?equal:('b -> 'b -> bool) -> 'a signal -> ('a -> 'b signal) -> 'b signal
+  (** Dynamically select a signal from the current value of another signal.
+      Nodes created by an inactive branch are invalidated when that branch is
+      replaced; observing a captured inactive-branch node fails with
+      [`Invalid_scope]. *)
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, 'err) Eta.Effect.t
   val to_dot : unit -> (string, 'err) Eta.Effect.t
 
   module Time : sig
+    (** Time nodes are demand-owned source-updating effects. They never call
+        {!stabilize}; observers see timer changes only after explicit
+        stabilization. When a clock jump wakes several elapsed cadences under
+        the runtime clock, interval and step nodes apply one source update per
+        awakened cadence before the next stabilization observes the final
+        source value. *)
+
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
     (** Signal containing the runtime clock in milliseconds. The timer source

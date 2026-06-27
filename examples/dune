@@ -74,6 +74,11 @@
  (libraries eta eta_eio eta_stream eio_main))
 
 (executable
+ (name signal_stabilization)
+ (modules signal_stabilization)
+ (libraries eta eta_eio eta_signal eta_stream eio_main))
+
+(executable
  (name batch_concurrency)
  (modules batch_concurrency)
  (libraries eta eta_eio eio_main))
@@ -281,6 +286,7 @@
   tap_success.exe
   map_projection.exe
   stream_decode.exe
+  signal_stabilization.exe
   batch_concurrency.exe
   all_health_checks.exe
   blueprint_names.exe

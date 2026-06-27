@@ -2,7 +2,7 @@ open Eta
 
 type error = [ `Transient of int | `Fatal ]
 
-let retry_policy =
+let retry_policy () =
   Schedule.(
     both (recurs 3) (exponential ~factor:2.0 (Duration.ms 10))
     |> jittered ~min:1.0 ~max:2.0
@@ -20,7 +20,7 @@ let call attempts =
   |> Effect.flatten_result
 
 let program attempts =
-  call attempts |> Effect.retry retry_policy retryable
+  call attempts |> Effect.retry (retry_policy ()) retryable
 
 let preview_delays ~seed count =
   let random = Capabilities.random_of_seed seed in
@@ -32,7 +32,7 @@ let preview_delays ~seed count =
       | Some (metadata, next) ->
           loop next (remaining - 1) (Duration.to_ms metadata.delay :: acc)
   in
-  loop (Schedule.start ~random retry_policy) count []
+  loop (Schedule.start ~random (retry_policy ())) count []
 
 let format_ints values =
   values |> List.map string_of_int |> String.concat ","

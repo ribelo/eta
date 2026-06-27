@@ -113,6 +113,17 @@ let render pp value = Format.asprintf "%a" pp value
 let check_render label pp value expected =
   Alcotest.(check string) label expected (render pp value)
 
+let count_occurrences text needle =
+  let text_len = String.length text in
+  let needle_len = String.length needle in
+  let rec loop index count =
+    if needle_len = 0 || index + needle_len > text_len then count
+    else if String.sub text index needle_len = needle then
+      loop (index + needle_len) (count + 1)
+    else loop (index + 1) count
+  in
+  loop 0 0
+
 let test_error_pretty_printers_are_clear () =
   check_render "ambiguous scope" Signal.pp_graph_error `Ambiguous_scope
     "ambiguous dynamic scope";
@@ -165,6 +176,40 @@ let test_observer_initializes_on_stabilize () =
          | Signal.Initialized n -> n
          | Changed _ -> Alcotest.fail "unexpected changed event")
        (List.rev !events))
+
+let test_observe_after_stabilization_and_disposal_clears_graph () =
+  with_runtime @@ fun rt ->
+  run_ok rt Signal.stabilize;
+  let before = run_ok rt (Signal.stats ()) in
+  let before_dot_nodes = count_occurrences (run_ok rt (Signal.to_dot ())) "[label=" in
+  let source = Signal.Var.create 1 in
+  run_ok rt (Signal.Var.set source 2);
+  let signal = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let after_observe = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "observer after prior stabilization sees latest source" 3
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check bool) "observe after stabilization adds demand" true
+    (after_observe.Signal.necessary_node_count
+     > before.Signal.necessary_node_count);
+  Alcotest.(check bool) "to_dot shows observed graph" true
+    (count_occurrences (run_ok rt (Signal.to_dot ())) "[label="
+     > before_dot_nodes);
+  run_ok rt (Signal.Observer.dispose observer);
+  run_ok rt Signal.stabilize;
+  let after_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "disposal returns active observer count to baseline"
+    before.Signal.active_observer_count
+    after_dispose.Signal.active_observer_count;
+  Alcotest.(check bool) "disposal releases necessary graph" true
+    (after_dispose.Signal.necessary_node_count
+     <= before.Signal.necessary_node_count);
+  Alcotest.(check bool) "to_dot returns to baseline necessary graph" true
+    (count_occurrences (run_ok rt (Signal.to_dot ())) "[label="
+     <= before_dot_nodes)
 
 let test_observer_unsafe_read_exn_reports_invalid_state () =
   with_runtime @@ fun rt ->
@@ -283,6 +328,89 @@ let test_diamond_recomputes_shared_node_once () =
   Alcotest.(check int) "updated total" 15
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "updated shared compute once" 2 !calls
+
+let test_diamond_observers_see_glitch_free_snapshots () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let shared = Signal.Var.watch source |> Signal.map (fun n -> n * 10) in
+  let left = Signal.map (fun n -> n + 1) shared in
+  let right = Signal.map (fun n -> n + 2) shared in
+  let downstream = Signal.map2 (fun left right -> (left, right)) left right in
+  let left_observer = ref None in
+  let right_observer = ref None in
+  let downstream_observer = ref None in
+  let events = ref [] in
+  let check_snapshot label expected_left expected_right expected_downstream =
+    match (!left_observer, !right_observer, !downstream_observer) with
+    | Some left_observer, Some right_observer, Some downstream_observer ->
+        Signal.Observer.read left_observer
+        |> Effect.map_error (fun _ -> `Observer_failed)
+        |> Effect.bind (fun actual_left ->
+               Signal.Observer.read right_observer
+               |> Effect.map_error (fun _ -> `Observer_failed)
+               |> Effect.bind (fun actual_right ->
+                      Signal.Observer.read downstream_observer
+                      |> Effect.map_error (fun _ -> `Observer_failed)
+                      |> Effect.bind (fun actual_downstream ->
+                             Effect.sync (fun () ->
+                                 Alcotest.(check int)
+                                   (label ^ " left snapshot") expected_left
+                                   actual_left;
+                                 Alcotest.(check int)
+                                   (label ^ " right snapshot") expected_right
+                                   actual_right;
+                                 Alcotest.(check (pair int int))
+                                   (label ^ " downstream snapshot")
+                                   expected_downstream actual_downstream))))
+    | _ -> Effect.unit
+  in
+  let left_callback = function
+    | Signal.Initialized value | Changed { new_value = value; _ } ->
+        Effect.sync (fun () -> events := ("left", value) :: !events)
+        |> Effect.bind (fun () ->
+               check_snapshot "left callback" value (value + 1)
+                 (value, value + 1))
+  in
+  let right_callback = function
+    | Signal.Initialized value | Changed { new_value = value; _ } ->
+        Effect.sync (fun () -> events := ("right", value) :: !events)
+        |> Effect.bind (fun () ->
+               check_snapshot "right callback" (value - 1) value
+                 (value - 1, value))
+  in
+  let downstream_callback = function
+    | Signal.Initialized value | Changed { new_value = value; _ } ->
+        let expected_left, expected_right = value in
+        Effect.sync (fun () -> events := ("downstream", expected_left) :: !events)
+        |> Effect.bind (fun () ->
+               check_snapshot "downstream callback" expected_left expected_right
+                 value)
+  in
+  let left_handle = run_ok rt (Signal.Observer.observe left left_callback) in
+  let right_handle = run_ok rt (Signal.Observer.observe right right_callback) in
+  let downstream_handle =
+    run_ok rt (Signal.Observer.observe downstream downstream_callback)
+  in
+  left_observer := Some left_handle;
+  right_observer := Some right_handle;
+  downstream_observer := Some downstream_handle;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list (pair string int)))
+    "initial callbacks see complete diamond"
+    [ ("left", 11); ("right", 12); ("downstream", 11) ]
+    (List.rev !events);
+  events := [];
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list (pair string int)))
+    "changed callbacks see complete diamond"
+    [ ("left", 21); ("right", 22); ("downstream", 21) ]
+    (List.rev !events);
+  Alcotest.(check (pair int int)) "downstream observer final snapshot" (21, 22)
+    (run_ok rt (Signal.Observer.read downstream_handle));
+  run_ok rt (Signal.Observer.dispose left_handle);
+  run_ok rt (Signal.Observer.dispose right_handle);
+  run_ok rt (Signal.Observer.dispose downstream_handle)
 
 let test_recompute_order_is_topological () =
   with_runtime @@ fun rt ->
@@ -406,6 +534,134 @@ let test_n_ary_maps_both_and_all () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_map_arity_matrix_initializes_and_coalesces () =
+  with_runtime @@ fun rt ->
+  let v1 = Signal.Var.create 1 in
+  let v2 = Signal.Var.create 2 in
+  let v3 = Signal.Var.create 3 in
+  let v4 = Signal.Var.create 4 in
+  let v5 = Signal.Var.create 5 in
+  let v6 = Signal.Var.create 6 in
+  let v7 = Signal.Var.create 7 in
+  let v8 = Signal.Var.create 8 in
+  let v9 = Signal.Var.create 9 in
+  let s1 = Signal.Var.watch v1 in
+  let s2 = Signal.Var.watch v2 in
+  let s3 = Signal.Var.watch v3 in
+  let s4 = Signal.Var.watch v4 in
+  let s5 = Signal.Var.watch v5 in
+  let s6 = Signal.Var.watch v6 in
+  let s7 = Signal.Var.watch v7 in
+  let s8 = Signal.Var.watch v8 in
+  let s9 = Signal.Var.watch v9 in
+  let mapped =
+    [
+      Signal.const 10 |> Signal.map (fun n -> n + 1);
+      Signal.map (fun a -> a) s1;
+      Signal.map2 (fun a b -> a + b) s1 s2;
+      Signal.map3 (fun a b c -> a + b + c) s1 s2 s3;
+      Signal.map4 (fun a b c d -> a + b + c + d) s1 s2 s3 s4;
+      Signal.map5 (fun a b c d e -> a + b + c + d + e) s1 s2 s3 s4 s5;
+      Signal.map6
+        (fun a b c d e f -> a + b + c + d + e + f)
+        s1 s2 s3 s4 s5 s6;
+      Signal.map7
+        (fun a b c d e f g -> a + b + c + d + e + f + g)
+        s1 s2 s3 s4 s5 s6 s7;
+      Signal.map8
+        (fun a b c d e f g h -> a + b + c + d + e + f + g + h)
+        s1 s2 s3 s4 s5 s6 s7 s8;
+      Signal.map9
+        (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+        s1 s2 s3 s4 s5 s6 s7 s8 s9;
+    ]
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe (Signal.all mapped) (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "map arities initialize"
+    [ 11; 1; 3; 6; 10; 15; 21; 28; 36; 45 ]
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set v1 100);
+  run_ok rt (Signal.Var.set v1 101);
+  run_ok rt (Signal.Var.set v9 90);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "map arities publish final coalesced source values"
+    [ 11; 101; 103; 106; 110; 115; 121; 128; 136; 226 ]
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "one initialization and one changed event" 2
+    (List.length !events);
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_map_invariants_repeated_children_cutoff_and_final_values () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let shared_calls = ref 0 in
+  let shared =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr shared_calls;
+           value)
+  in
+  let repeated_map2 = Signal.map2 ( + ) shared shared in
+  let repeated_map9 =
+    Signal.map9
+      (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+      shared shared shared shared shared shared shared shared shared
+  in
+  let cutoff_source = Signal.Var.create 0 in
+  let cutoff_child =
+    Signal.Var.watch cutoff_source
+    |> Signal.map ~equal:Int.equal (fun value -> value mod 2)
+  in
+  let cutoff_calls = ref 0 in
+  let cutoff_map9 =
+    Signal.map9
+      (fun a b c d e f g h i ->
+        incr cutoff_calls;
+        a + b + c + d + e + f + g + h + i)
+      cutoff_child cutoff_child cutoff_child cutoff_child cutoff_child
+      cutoff_child cutoff_child cutoff_child cutoff_child
+  in
+  let left = Signal.Var.create 1 in
+  let right = Signal.Var.create 10 in
+  let map2_calls = ref 0 in
+  let two_inputs =
+    Signal.map2
+      (fun a b ->
+        incr map2_calls;
+        a + b)
+      (Signal.Var.watch left) (Signal.Var.watch right)
+  in
+  let combined =
+    Signal.all [ repeated_map2; repeated_map9; cutoff_map9; two_inputs ]
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int)) "initial invariant values" [ 2; 9; 0; 11 ]
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "repeated child recomputed once initially" 1 !shared_calls;
+  Alcotest.(check int) "map2 computed once initially" 1 !map2_calls;
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt (Signal.Var.set cutoff_source 2);
+  run_ok rt (Signal.Var.set left 2);
+  run_ok rt (Signal.Var.set right 20);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "updated invariant values" [ 4; 18; 0; 22 ]
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "repeated child recomputed once after update" 2
+    !shared_calls;
+  Alcotest.(check int) "child cutoff suppressed map9 recompute" 1 !cutoff_calls;
+  Alcotest.(check int) "two changed inputs recomputed once" 2 !map2_calls;
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_cutoff_suppresses_downstream_recompute () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
@@ -497,6 +753,37 @@ let test_default_cutoff_is_physical_equality () =
     (run_ok rt (Signal.Observer.read observer) == next);
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_default_physical_cutoff_suppresses_in_place_mutation () =
+  with_runtime @@ fun rt ->
+  let block = Array.make 1 1 in
+  let source = Signal.Var.create block in
+  let mapped_calls = ref 0 in
+  let mapped =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr mapped_calls;
+           Array.get value 0)
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe mapped (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial mapped value" 1
+    (run_ok rt (Signal.Observer.read observer));
+  Array.set block 0 2;
+  run_ok rt (Signal.Var.set source block);
+  Alcotest.(check int) "direct source exposes mutated block" 2
+    (Array.get (Signal.Var.value source) 0);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "physical cutoff suppresses recompute" 1 !mapped_calls;
+  Alcotest.(check int) "observer keeps previous derived snapshot" 1
+    (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !events with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected no event after same-block mutation");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_observer_equality_suppresses_only_that_observer () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
@@ -558,6 +845,105 @@ let test_observer_callbacks_run_in_registration_order () =
   run_ok rt (Signal.Observer.dispose left_first);
   run_ok rt (Signal.Observer.dispose left_second);
   run_ok rt (Signal.Observer.dispose right_first)
+
+let test_observer_ordering_across_graph_branches_is_deterministic () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let upstream =
+    Signal.Var.watch source |> Signal.map (fun value -> value + 1)
+  in
+  let downstream = Signal.map (fun value -> value * 10) upstream in
+  let independent = Signal.Var.watch source |> Signal.map (fun value -> -value) in
+  let events = ref [] in
+  let record label _update =
+    Effect.sync (fun () -> events := label :: !events)
+  in
+  let upstream_observer =
+    run_ok rt (Signal.Observer.observe upstream (record "upstream"))
+  in
+  let downstream_observer =
+    run_ok rt (Signal.Observer.observe downstream (record "downstream"))
+  in
+  let independent_observer =
+    run_ok rt (Signal.Observer.observe independent (record "independent"))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "initial graph observer order"
+    [ "upstream"; "downstream"; "independent" ]
+    (List.rev !events);
+  events := [];
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list string))
+    "changed graph observer order"
+    [ "upstream"; "downstream"; "independent" ]
+    (List.rev !events);
+  run_ok rt (Signal.Observer.dispose upstream_observer);
+  run_ok rt (Signal.Observer.dispose downstream_observer);
+  run_ok rt (Signal.Observer.dispose independent_observer)
+
+let test_observer_callbacks_read_consistent_published_snapshot () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let left = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
+  let right = Signal.Var.watch source |> Signal.map (fun value -> value + 2) in
+  let total = Signal.map2 ( + ) left right in
+  let left_observer = ref None in
+  let right_observer = ref None in
+  let total_observer = ref None in
+  let snapshots = ref [] in
+  let record_snapshot label =
+    match (!left_observer, !right_observer, !total_observer) with
+    | Some left_observer, Some right_observer, Some total_observer ->
+        Signal.Observer.read left_observer
+        |> Effect.map_error (fun _ -> `Observer_failed)
+        |> Effect.bind (fun left_value ->
+               Signal.Observer.read right_observer
+               |> Effect.map_error (fun _ -> `Observer_failed)
+               |> Effect.bind (fun right_value ->
+                      Signal.Observer.read total_observer
+                      |> Effect.map_error (fun _ -> `Observer_failed)
+                      |> Effect.bind (fun total_value ->
+                             Effect.sync (fun () ->
+                                 snapshots :=
+                                   (label, left_value, right_value, total_value)
+                                   :: !snapshots))))
+    | _ -> Effect.unit
+  in
+  let left_handle =
+    run_ok rt
+      (Signal.Observer.observe left (fun _ ->
+           Signal.Var.set source 100 |> Effect.bind (fun () -> record_snapshot "left")))
+  in
+  let right_handle =
+    run_ok rt (Signal.Observer.observe right (fun _ -> record_snapshot "right"))
+  in
+  let total_handle =
+    run_ok rt (Signal.Observer.observe total (fun _ -> record_snapshot "total"))
+  in
+  left_observer := Some left_handle;
+  right_observer := Some right_handle;
+  total_observer := Some total_handle;
+  run_ok rt Signal.stabilize;
+  snapshots := [];
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  let render_snapshot (label, left_value, right_value, total_value) =
+    Printf.sprintf "%s:%d:%d:%d" label left_value right_value total_value
+  in
+  Alcotest.(check (list string))
+    "all callbacks read same changed snapshot"
+    [ "left:3:4:7"; "right:3:4:7"; "total:3:4:7" ]
+    (List.rev_map render_snapshot !snapshots);
+  Alcotest.(check int) "callback mutation waits for next stabilization" 7
+    (run_ok rt (Signal.Observer.read total_handle));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "next stabilization sees callback mutation" 203
+    (run_ok rt (Signal.Observer.read total_handle));
+  run_ok rt (Signal.Observer.dispose left_handle);
+  run_ok rt (Signal.Observer.dispose right_handle);
+  run_ok rt (Signal.Observer.dispose total_handle)
 
 let test_observer_dispose_during_callback_keeps_collected_event () =
   with_runtime @@ fun rt ->
@@ -673,6 +1059,275 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
     !right_calls;
   Alcotest.(check int) "right value updates" 21
     (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_invalidated_bind_rhs_cannot_be_observed () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let captured_left = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then (
+          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
+          captured_left := Some signal;
+          signal)
+        else Signal.Var.watch right)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial captured branch" 10
+    (run_ok rt (Signal.Observer.read observer));
+  let captured =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind RHS signal"
+  in
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "active branch switched" 20
+    (run_ok rt (Signal.Observer.read observer));
+  let before = run_ok rt (Signal.stats ()) in
+  expect_fail "captured invalid scope observe" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Observer.observe captured (fun _ -> Effect.unit))));
+  let after = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "failed observe did not add observer"
+    before.Signal.active_observer_count after.Signal.active_observer_count;
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
+  with_runtime @@ fun rt ->
+  let a_target = Signal.Var.create (Signal.const 1) in
+  let b_target = Signal.Var.create (Signal.const 10) in
+  let a = Signal.bind (Signal.Var.watch a_target) (fun signal -> signal) in
+  let b = Signal.bind (Signal.Var.watch b_target) (fun signal -> signal) in
+  let a_observer =
+    run_ok rt (Signal.Observer.observe a (fun _ -> Effect.unit))
+  in
+  let b_observer =
+    run_ok rt (Signal.Observer.observe b (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial a" 1
+    (run_ok rt (Signal.Observer.read a_observer));
+  Alcotest.(check int) "initial b" 10
+    (run_ok rt (Signal.Observer.read b_observer));
+  run_ok rt (Signal.Var.set a_target b);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "one-way a follows b" 10
+    (run_ok rt (Signal.Observer.read a_observer));
+  Alcotest.(check int) "one-way b remains constant" 10
+    (run_ok rt (Signal.Observer.read b_observer));
+  run_ok rt (Signal.Var.set a_target (Signal.const 2));
+  run_ok rt (Signal.Var.set b_target a);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reverse a constant" 2
+    (run_ok rt (Signal.Observer.read a_observer));
+  Alcotest.(check int) "reverse b follows a" 2
+    (run_ok rt (Signal.Observer.read b_observer));
+  run_ok rt (Signal.Var.set a_target b);
+  run_ok rt (Signal.Var.set b_target a);
+  expect_fail "dynamic signal cycle" (( = ) `Cycle)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "a snapshot preserved after cycle" 2
+    (run_ok rt (Signal.Observer.read a_observer));
+  Alcotest.(check int) "b snapshot preserved after cycle" 2
+    (run_ok rt (Signal.Observer.read b_observer));
+  run_ok rt (Signal.Observer.dispose a_observer);
+  run_ok rt (Signal.Observer.dispose b_observer)
+
+let test_dynamic_list_bind_switches_dependency_set () =
+  with_runtime @@ fun rt ->
+  let indices = Signal.Var.create [ 0; 2 ] in
+  let values =
+    [| Signal.Var.create 10; Signal.Var.create 20; Signal.Var.create 30;
+       Signal.Var.create 40 |]
+  in
+  let calls = Array.make 4 0 in
+  let watch_index index =
+    Signal.Var.watch values.(index)
+    |> Signal.map (fun value ->
+           calls.(index) <- calls.(index) + 1;
+           value)
+  in
+  let selected_sum =
+    Signal.bind (Signal.Var.watch indices) (fun indices ->
+        indices
+        |> List.map watch_index
+        |> Signal.all
+        |> Signal.map (List.fold_left ( + ) 0))
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected_sum (record_observer events))
+  in
+  let check_calls label expected =
+    Alcotest.(check (list int)) label expected (Array.to_list calls)
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial selected sum" 40
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "initial active inputs recomputed" [ 1; 0; 1; 0 ];
+  run_ok rt (Signal.Var.set values.(1) 200);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "excluded input ignored" 40
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "excluded input did not recompute" [ 1; 0; 1; 0 ];
+  run_ok rt (Signal.Var.set values.(2) 300);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "included input updates" 310
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "included input recomputed" [ 1; 0; 2; 0 ];
+  run_ok rt (Signal.Var.set indices [ 1; 3 ]);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "new dependency set uses latest values" 240
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "new active inputs attach" [ 1; 1; 2; 1 ];
+  run_ok rt (Signal.Var.set values.(0) 1000);
+  run_ok rt (Signal.Var.set values.(2) 3000);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "old dependency set detached" 240
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "detached inputs ignored" [ 1; 1; 2; 1 ];
+  run_ok rt (Signal.Var.set values.(1) 210);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "current dependency still active" 250
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "current input recomputed" [ 1; 2; 2; 1 ];
+  (match List.rev !events with
+   | [
+       Signal.Initialized 40;
+       Changed { old_value = 40; new_value = 310 };
+       Changed { old_value = 310; new_value = 240 };
+       Changed { old_value = 240; new_value = 250 };
+     ] -> ()
+   | _ -> Alcotest.fail "unexpected dynamic list observer events");
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_bind_branch_churn_releases_inactive_scopes () =
+  with_runtime @@ fun rt ->
+  let choice = Signal.Var.create `A in
+  let sources =
+    [| Signal.Var.create 10; Signal.Var.create 20; Signal.Var.create 30 |]
+  in
+  let calls = Array.make 3 0 in
+  let index = function `A -> 0 | `B -> 1 | `C -> 2 in
+  let selected =
+    Signal.bind (Signal.Var.watch choice) (fun branch ->
+        let index = index branch in
+        Signal.Var.watch sources.(index)
+        |> Signal.map (fun value ->
+               calls.(index) <- calls.(index) + 1;
+               value))
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (record_observer events))
+  in
+  let check_calls label expected =
+    Alcotest.(check (list int)) label expected (Array.to_list calls)
+  in
+  let set_sources a b c =
+    run_ok rt (Signal.Var.set sources.(0) a);
+    run_ok rt (Signal.Var.set sources.(1) b);
+    run_ok rt (Signal.Var.set sources.(2) c)
+  in
+  let switch label branch expected_value expected_calls =
+    run_ok rt (Signal.Var.set choice branch);
+    run_ok rt Signal.stabilize;
+    Alcotest.(check int) (label ^ " selected value") expected_value
+      (run_ok rt (Signal.Observer.read observer));
+    check_calls (label ^ " calls") expected_calls
+  in
+  run_ok rt Signal.stabilize;
+  let before_churn = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "initial branch value" 10
+    (run_ok rt (Signal.Observer.read observer));
+  check_calls "initial calls" [ 1; 0; 0 ];
+  set_sources 11 21 31;
+  switch "switch to b" `B 21 [ 1; 1; 0 ];
+  set_sources 12 22 32;
+  switch "switch to c" `C 32 [ 1; 1; 1 ];
+  set_sources 13 23 33;
+  switch "reactivate a" `A 13 [ 2; 1; 1 ];
+  set_sources 14 24 34;
+  switch "reactivate b" `B 24 [ 2; 2; 1 ];
+  set_sources 15 25 35;
+  switch "reactivate a again" `A 15 [ 3; 2; 1 ];
+  let after_churn = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool)
+    "branch churn invalidated old scopes" true
+    (after_churn.Signal.dynamic_scope_invalidations
+     >= before_churn.Signal.dynamic_scope_invalidations + 5);
+  Alcotest.(check bool)
+    "branch churn released unnecessary nodes" true
+    (after_churn.Signal.nodes_became_unnecessary
+     > before_churn.Signal.nodes_became_unnecessary);
+  Alcotest.(check int) "branch churn did not add observers"
+    before_churn.Signal.active_observer_count
+    after_churn.Signal.active_observer_count;
+  (match List.rev !events with
+   | [
+       Signal.Initialized 10;
+       Changed { old_value = 10; new_value = 21 };
+       Changed { old_value = 21; new_value = 32 };
+       Changed { old_value = 32; new_value = 13 };
+       Changed { old_value = 13; new_value = 24 };
+       Changed { old_value = 24; new_value = 15 };
+     ] -> ()
+   | _ -> Alcotest.fail "unexpected bind churn observer events");
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes () =
+  with_runtime @@ fun rt ->
+  let a = Signal.Var.create 1 in
+  let b = Signal.Var.create 2 in
+  let c = Signal.Var.create 3 in
+  let map_sum =
+    Signal.map3 (fun a b c -> a + b + c) (Signal.Var.watch a)
+      (Signal.Var.watch b) (Signal.Var.watch c)
+  in
+  let outer_rhs_calls = ref 0 in
+  let inner_rhs_calls = ref 0 in
+  let bind_sum =
+    Signal.bind (Signal.Var.watch a) (fun a ->
+        incr outer_rhs_calls;
+        Signal.bind (Signal.Var.watch b) (fun b ->
+            incr inner_rhs_calls;
+            Signal.Var.watch c |> Signal.map (fun c -> a + b + c)))
+  in
+  let combined = Signal.both map_sum bind_sum in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let before_rewire = run_ok rt (Signal.stats ()) in
+  Alcotest.(check (pair int int)) "initial sums match" (6, 6)
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "outer rhs created once" 1 !outer_rhs_calls;
+  Alcotest.(check int) "inner rhs created once" 1 !inner_rhs_calls;
+  run_ok rt (Signal.Var.set c 4);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (pair int int)) "leaf update keeps sums equal" (7, 7)
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "leaf update does not recreate outer rhs" 1
+    !outer_rhs_calls;
+  Alcotest.(check int) "leaf update does not recreate inner rhs" 1
+    !inner_rhs_calls;
+  run_ok rt (Signal.Var.set a 10);
+  run_ok rt Signal.stabilize;
+  let after_rewire = run_ok rt (Signal.stats ()) in
+  Alcotest.(check (pair int int)) "outer source update keeps sums equal" (16, 16)
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "outer source recreates outer rhs" 2 !outer_rhs_calls;
+  Alcotest.(check int) "outer source recreates nested rhs" 2 !inner_rhs_calls;
+  Alcotest.(check bool) "nested bind invalidated stale scopes" true
+    (after_rewire.Signal.dynamic_scope_invalidations
+     > before_rewire.Signal.dynamic_scope_invalidations);
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_selector_failure_preserves_previous_branch () =
@@ -823,6 +1478,56 @@ let test_observer_mutation_is_delayed_to_next_stabilization () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "next stabilization sees observer mutation" 2
     (run_ok rt (Signal.Observer.read observer))
+
+let test_observer_phase_multiple_sets_publish_final_next_value () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let events = ref [] in
+  let pending_values = ref [] in
+  let snapshot_reads = ref [] in
+  let observer_ref = ref None in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe signal (fun update ->
+           Effect.sync (fun () -> events := update :: !events)
+           |> Effect.bind (fun () ->
+                  match (!observer_ref, update) with
+                  | Some observer, Signal.Initialized 1 ->
+                      Signal.Var.set source 2
+                      |> Effect.bind (fun () ->
+                             Effect.sync (fun () ->
+                                 pending_values :=
+                                   Signal.Var.value source :: !pending_values))
+                      |> Effect.bind (fun () -> Signal.Var.set source 3)
+                      |> Effect.bind (fun () ->
+                             Signal.Observer.read observer
+                             |> Effect.map_error (fun _ -> `Observer_failed))
+                      |> Effect.bind (fun snapshot ->
+                             Effect.sync (fun () ->
+                                 pending_values :=
+                                   Signal.Var.value source :: !pending_values;
+                                 snapshot_reads := snapshot :: !snapshot_reads))
+                  | _ -> Effect.unit)))
+  in
+  observer_ref := Some observer;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "current stabilization snapshot remains stable" 1
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check (list int)) "callback saw pending source values" [ 2; 3 ]
+    (List.rev !pending_values);
+  Alcotest.(check (list int)) "callback observer read saw snapshot" [ 1 ]
+    (List.rev !snapshot_reads);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "next stabilization publishes final pending value" 3
+    (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !events with
+   | [
+       Signal.Initialized 1;
+       Changed { old_value = 1; new_value = 3 };
+     ] -> ()
+   | _ -> Alcotest.fail "expected coalesced observer-phase mutation events");
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_read_during_callback_sees_current_snapshot () =
   with_runtime @@ fun rt ->
@@ -1102,6 +1807,41 @@ let test_observer_failure_fails_stabilize () =
     (function `Observer_error `Observer_failed -> true | _ -> false)
     (Eta_eio.Runtime.run rt (widen Signal.stabilize))
 
+let test_observer_typed_failure_retries_after_flag_fixed () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let fail = ref false in
+  let callback_values = ref [] in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source) (function
+        | Signal.Initialized value ->
+            Effect.sync (fun () -> callback_values := value :: !callback_values)
+        | Changed { new_value; _ } ->
+            if !fail then Effect.fail `Observer_failed
+            else
+              Effect.sync (fun () ->
+                  callback_values := new_value :: !callback_values)))
+  in
+  run_ok rt Signal.stabilize;
+  fail := true;
+  run_ok rt (Signal.Var.set source 2);
+  expect_fail "observer typed failure"
+    (function `Observer_error `Observer_failed -> true | _ -> false)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "snapshot published before observer failure" 2
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check (list int)) "failing callback did not record side effect" [ 1 ]
+    (List.rev !callback_values);
+  fail := false;
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "later stabilization succeeds" 3
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check (list int)) "retry records later value" [ 1; 3 ]
+    (List.rev !callback_values);
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_observer_failure_is_fail_fast () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -1126,6 +1866,50 @@ let test_observer_failure_is_fail_fast () =
     (run_ok rt (Signal.Observer.read later_observer));
   run_ok rt (Signal.Observer.dispose failing_observer);
   run_ok rt (Signal.Observer.dispose later_observer)
+
+let test_observer_registration_and_self_disposal_inside_callback () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let primary_events = ref [] in
+  let late_events = ref [] in
+  let primary_ref = ref None in
+  let late_ref = ref None in
+  let primary =
+    run_ok rt
+      (Signal.Observer.observe signal (fun update ->
+           Effect.sync (fun () -> primary_events := update :: !primary_events)
+           |> Effect.bind (fun () ->
+                  match (!primary_ref, update) with
+                  | Some primary, Signal.Initialized _ ->
+                      Signal.Observer.observe signal (record_observer late_events)
+                      |> Effect.map_error (fun _ -> `Observer_failed)
+                      |> Effect.bind (fun late ->
+                             Effect.sync (fun () -> late_ref := Some late)
+                             |> Effect.bind (fun () ->
+                                    Signal.Observer.dispose primary))
+                  | _ -> Effect.unit)))
+  in
+  primary_ref := Some primary;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "late observer not run in current stabilization" 0
+    (List.length !late_events);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "late observer initializes next stabilization" 1
+    (List.length !late_events);
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "self-disposed observer has no future callbacks" 1
+    (List.length !primary_events);
+  (match List.rev !late_events with
+   | [
+       Signal.Initialized 1;
+       Changed { old_value = 1; new_value = 2 };
+     ] -> ()
+   | _ -> Alcotest.fail "unexpected late observer events");
+  (match !late_ref with
+   | Some late -> run_ok rt (Signal.Observer.dispose late)
+   | None -> Alcotest.fail "late observer was not registered")
 
 let test_observer_effects_before_later_failure_are_not_rolled_back () =
   with_runtime @@ fun rt ->
@@ -1612,6 +2396,123 @@ let test_stats_and_dot_are_read_only () =
     (after_dispose.Signal.nodes_became_unnecessary
      > after_stabilize.Signal.nodes_became_unnecessary)
 
+let test_deterministic_model_matches_small_dynamic_graph () =
+  with_runtime @@ fun rt ->
+  let left = Signal.Var.create 1 in
+  let right = Signal.Var.create 10 in
+  let choose_left = Signal.Var.create true in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then Signal.Var.watch left else Signal.Var.watch right)
+  in
+  let both_sources =
+    Signal.all [ Signal.Var.watch left; Signal.Var.watch right ]
+    |> Signal.map (List.fold_left ( + ) 0)
+  in
+  let total = Signal.map2 ( + ) selected both_sources in
+  let observer =
+    run_ok rt (Signal.Observer.observe total (fun _ -> Effect.unit))
+  in
+  let model_left = ref 1 in
+  let model_right = ref 10 in
+  let model_choose_left = ref true in
+  let expected () =
+    let selected = if !model_choose_left then !model_left else !model_right in
+    selected + !model_left + !model_right
+  in
+  let operations =
+    [
+      `Set_left 2;
+      `Set_right 20;
+      `Choose false;
+      `Set_left 3;
+      `Set_right 21;
+      `Choose true;
+      `Set_left 4;
+      `Choose false;
+      `Set_right 22;
+      `Choose true;
+    ]
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial model value" (expected ())
+    (run_ok rt (Signal.Observer.read observer));
+  List.iteri
+    (fun index operation ->
+      (match operation with
+       | `Set_left value ->
+           model_left := value;
+           run_ok rt (Signal.Var.set left value)
+       | `Set_right value ->
+           model_right := value;
+           run_ok rt (Signal.Var.set right value)
+       | `Choose value ->
+           model_choose_left := value;
+           run_ok rt (Signal.Var.set choose_left value));
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int)
+        (Printf.sprintf "model step %d" index)
+        (expected ())
+        (run_ok rt (Signal.Observer.read observer)))
+    operations;
+  run_ok rt (Signal.Observer.dispose observer);
+  expect_fail "disposed model observer read" (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
+
+let test_fanout_fanin_cutoff_and_partial_disposal () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let root_calls = ref 0 in
+  let root =
+    Signal.Var.watch source
+    |> Signal.map ~equal:Int.equal (fun value ->
+           incr root_calls;
+           value mod 2)
+  in
+  let child_calls = Array.make 8 0 in
+  let children =
+    List.init 8 (fun index ->
+        Signal.map
+          (fun value ->
+            child_calls.(index) <- child_calls.(index) + 1;
+            value + index)
+          root)
+  in
+  let sum =
+    Signal.all children |> Signal.map (List.fold_left ( + ) 0)
+  in
+  let first_observer =
+    run_ok rt (Signal.Observer.observe sum (fun _ -> Effect.unit))
+  in
+  let second_observer =
+    run_ok rt (Signal.Observer.observe sum (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let after_initial = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "initial fanin sum" 28
+    (run_ok rt (Signal.Observer.read first_observer));
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "root recomputed for cutoff" 2 !root_calls;
+  Alcotest.(check (list int))
+    "root cutoff suppressed fanout children" (List.init 8 (fun _ -> 1))
+    (Array.to_list child_calls);
+  run_ok rt (Signal.Observer.dispose first_observer);
+  let after_partial_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "shared graph remains necessary after partial dispose"
+    true
+    (after_partial_dispose.Signal.necessary_node_count
+     = after_initial.Signal.necessary_node_count);
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "remaining observer sees fanin update" 36
+    (run_ok rt (Signal.Observer.read second_observer));
+  run_ok rt (Signal.Observer.dispose second_observer);
+  let after_final_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "final disposal clears necessary fanout" true
+    (after_final_dispose.Signal.necessary_node_count
+     < after_partial_dispose.Signal.necessary_node_count)
+
 let test_time_interval_starts_only_when_observed () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -1649,6 +2550,60 @@ let test_time_interval_requires_explicit_stabilization () =
   (match List.rev !events with
    | [ Signal.Initialized 0; Changed { old_value = 0; new_value = 1 } ] -> ()
    | _ -> Alcotest.fail "expected timer update after explicit stabilize");
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let check_timer_snapshot label
+      (expected_interval, expected_now, expected_after, expected_deadline)
+      (actual_interval, actual_now, actual_after, actual_deadline) =
+    Alcotest.(check int) (label ^ " interval") expected_interval actual_interval;
+    Alcotest.(check int) (label ^ " now") expected_now actual_now;
+    Alcotest.(check bool) (label ^ " after") expected_after actual_after;
+    Alcotest.(check bool) (label ^ " deadline") expected_deadline actual_deadline
+  in
+  let interval = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let now = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let after =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 50))
+  in
+  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 50) in
+  let combined =
+    Signal.map4
+      (fun interval now after deadline -> (interval, now, after, deadline))
+      interval now after deadline
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (record_observer events))
+  in
+  wait_for_sleepers clock 4;
+  run_ok rt Signal.stabilize;
+  check_timer_snapshot "initial timer snapshot" (0, 0, false, false)
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 100);
+  Eta_test.Async.yield ();
+  wait_until "large-jump timers settle" (fun () ->
+      Eta_test.Test_clock.sleeper_count clock = 2);
+  check_timer_snapshot "large clock jump does not auto-stabilize"
+    (0, 0, false, false)
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "large clock jump emitted no callback before stabilize" 1
+    (List.length !events);
+  run_ok rt Signal.stabilize;
+  check_timer_snapshot "large clock jump catches up on explicit stabilize"
+    (10, 100, true, true)
+    (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !events with
+   | [
+       Signal.Initialized (0, 0, false, false);
+       Changed
+         {
+           old_value = (0, 0, false, false);
+           new_value = (10, 100, true, true);
+         };
+     ] -> ()
+   | _ -> Alcotest.fail "unexpected large clock jump events");
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_becomes_inert_after_dispose () =
@@ -1711,6 +2666,39 @@ let test_time_timer_becomes_inert_after_bind_switch () =
   Eta_test.Async.yield ();
   Alcotest.(check int) "detached timer did not reschedule" 0
     (Eta_test.Test_clock.sleeper_count clock);
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_branch_churn_keeps_single_active_sleeper () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let use_timer = Signal.Var.create false in
+  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+        if use_timer then timer else Signal.const (-1))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "inactive timer has no sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  for i = 1 to 4 do
+    run_ok rt (Signal.Var.set use_timer true);
+    run_ok rt Signal.stabilize;
+    wait_for_sleepers clock 1;
+    Alcotest.(check int)
+      (Printf.sprintf "active branch %d has one sleeper" i)
+      1
+      (Eta_test.Test_clock.sleeper_count clock);
+    run_ok rt (Signal.Var.set use_timer false);
+    run_ok rt Signal.stabilize;
+    Eta_test.Test_clock.adjust clock (Duration.ms 10);
+    Eta_test.Async.yield ();
+    Alcotest.(check int)
+      (Printf.sprintf "inactive branch %d has no sleeper" i)
+      0
+      (Eta_test.Test_clock.sleeper_count clock)
+  done;
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_now_bind_activation_refreshes_next_stabilization () =
@@ -1982,6 +2970,38 @@ let test_stream_bridge_take_does_not_dispose_observer () =
    | _ -> Alcotest.fail "expected changed stream update after take");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_multiple_bridges_dispose_independently () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let first_observer, first_stream = run_ok rt (Signal.Stream.observe signal) in
+  let second_observer, second_stream = run_ok rt (Signal.Stream.observe signal) in
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 first_stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected first bridge initialization");
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 second_stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected second bridge initialization");
+  run_ok rt (Signal.Observer.dispose first_observer);
+  (match run_ok rt (Eta_stream.run_collect first_stream) with
+   | [] -> ()
+   | _ -> Alcotest.fail "expected first bridge to close");
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "second observer remains alive" 2
+    (run_ok rt (Signal.Observer.read second_observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 second_stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected second bridge changed update");
+  run_ok rt (Signal.Observer.dispose second_observer)
+
 let test_stream_bridge_equal_suppresses_updates () =
   with_runtime_and_switch @@ fun sw rt ->
   let fresh_a () = Bytes.to_string (Bytes.of_string "a") in
@@ -2080,6 +3100,53 @@ let test_stream_bridge_dispose_unblocks_backpressure () =
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected buffered update to drain after dispose")
 
+let test_stream_bridge_interrupted_backpressure_releases_lane () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 2);
+  let cancel_ctx = ref None in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        cancel_ctx := Some ctx;
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  wait_until "backpressured stabilize cancellation context" (fun () ->
+      Option.is_some !cancel_ctx);
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "stabilization is blocked by stream backpressure" false
+    (Eio.Promise.is_resolved stabilizer);
+  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+  await_cancelled "backpressured stream stabilize" stabilizer;
+  Alcotest.(check int) "interrupted observer snapshot was published" 2
+    (run_ok rt (Signal.Observer.read observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initial stream update after cancellation");
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "graph lane released for later stabilization" 3
+    (run_ok rt (Signal.Observer.read observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected later changed stream update");
+  run_ok rt (Signal.Observer.dispose observer);
+  (match run_ok rt (Eta_stream.run_collect stream) with
+   | [] -> ()
+   | _ -> Alcotest.fail "expected stream to close after dispose")
+
 let () =
   Alcotest.run "eta_signal"
     [
@@ -2089,6 +3156,8 @@ let () =
             test_error_pretty_printers_are_clear;
           Alcotest.test_case "observer initializes on stabilize" `Quick
             test_observer_initializes_on_stabilize;
+          Alcotest.test_case "observe after stabilize and dispose clears graph"
+            `Quick test_observe_after_stabilization_and_disposal_clears_graph;
           Alcotest.test_case "observer unsafe read reports invalid state"
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "manual stabilization coalesces sets" `Quick
@@ -2097,27 +3166,49 @@ let () =
             test_functor_instances_stabilize_independently;
           Alcotest.test_case "diamond recomputes shared node once" `Quick
             test_diamond_recomputes_shared_node_once;
+          Alcotest.test_case "diamond observers see glitch-free snapshots"
+            `Quick test_diamond_observers_see_glitch_free_snapshots;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
           Alcotest.test_case "n-ary maps, both, and all" `Quick
             test_n_ary_maps_both_and_all;
+          Alcotest.test_case "map arity matrix initializes and coalesces"
+            `Quick test_map_arity_matrix_initializes_and_coalesces;
+          Alcotest.test_case "map invariants repeated children and cutoff"
+            `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
             test_cutoff_suppresses_downstream_recompute;
           Alcotest.test_case "source equality suppresses propagation" `Quick
             test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
+          Alcotest.test_case "physical cutoff suppresses in-place mutation"
+            `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "observer equality is observer-local" `Quick
             test_observer_equality_suppresses_only_that_observer;
           Alcotest.test_case "observer callbacks run in registration order"
             `Quick
             test_observer_callbacks_run_in_registration_order;
+          Alcotest.test_case "observer ordering across graph branches" `Quick
+            test_observer_ordering_across_graph_branches_is_deterministic;
+          Alcotest.test_case "observer callbacks read consistent snapshot"
+            `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case "observer dispose keeps collected event" `Quick
             test_observer_dispose_during_callback_keeps_collected_event;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
+          Alcotest.test_case "invalidated bind rhs cannot be observed" `Quick
+            test_invalidated_bind_rhs_cannot_be_observed;
+          Alcotest.test_case "dynamic signal rewires and cycle" `Quick
+            test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
+          Alcotest.test_case "dynamic list bind switches dependency set" `Quick
+            test_dynamic_list_bind_switches_dependency_set;
+          Alcotest.test_case "bind branch churn releases inactive scopes" `Quick
+            test_bind_branch_churn_releases_inactive_scopes;
+          Alcotest.test_case "nested bind matches map3 and recreates scopes"
+            `Quick test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes;
           Alcotest.test_case "bind selector failure preserves branch" `Quick
             test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind switch rollback preserves old branch" `Quick
@@ -2128,6 +3219,8 @@ let () =
             test_unobserved_nodes_do_not_recompute;
           Alcotest.test_case "observer mutation is delayed" `Quick
             test_observer_mutation_is_delayed_to_next_stabilization;
+          Alcotest.test_case "observer phase multiple sets publish final value"
+            `Quick test_observer_phase_multiple_sets_publish_final_next_value;
           Alcotest.test_case "observer read during callback" `Quick
             test_observer_read_during_callback_sees_current_snapshot;
           Alcotest.test_case "observer read does not force recompute" `Quick
@@ -2156,8 +3249,12 @@ let () =
             test_ambiguous_node_creation_during_observer_callback_is_typed_failure;
           Alcotest.test_case "observer failure fails stabilize" `Quick
             test_observer_failure_fails_stabilize;
+          Alcotest.test_case "observer typed failure retries" `Quick
+            test_observer_typed_failure_retries_after_flag_fixed;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
+          Alcotest.test_case "observer lifecycle changes inside callback"
+            `Quick test_observer_registration_and_self_disposal_inside_callback;
           Alcotest.test_case "observer effects survive later failure" `Quick
             test_observer_effects_before_later_failure_are_not_rolled_back;
           Alcotest.test_case "observer construction defect does not poison"
@@ -2190,16 +3287,24 @@ let () =
             test_active_graph_operation_interruption_releases_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
+          Alcotest.test_case "deterministic model matches dynamic graph" `Quick
+            test_deterministic_model_matches_small_dynamic_graph;
+          Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
+            test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
+          Alcotest.test_case "time large clock jump catches up explicitly"
+            `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time timer inert after bind switch" `Quick
             test_time_timer_becomes_inert_after_bind_switch;
+          Alcotest.test_case "time branch churn keeps single sleeper" `Quick
+            test_time_branch_churn_keeps_single_active_sleeper;
           Alcotest.test_case "time now bind activation refreshes next" `Quick
             test_time_now_bind_activation_refreshes_next_stabilization;
           Alcotest.test_case "time now uses runtime clock" `Quick
@@ -2226,11 +3331,15 @@ let () =
             test_stream_bridge_closes_on_observer_dispose;
           Alcotest.test_case "stream bridge take keeps observer" `Quick
             test_stream_bridge_take_does_not_dispose_observer;
+          Alcotest.test_case "stream bridge multiple bridges dispose separately"
+            `Quick test_stream_bridge_multiple_bridges_dispose_independently;
           Alcotest.test_case "stream bridge equality suppresses" `Quick
             test_stream_bridge_equal_suppresses_updates;
           Alcotest.test_case "stream bridge backpressures" `Quick
             test_stream_bridge_backpressures_at_capacity;
           Alcotest.test_case "stream bridge dispose unblocks backpressure"
             `Quick test_stream_bridge_dispose_unblocks_backpressure;
+          Alcotest.test_case "stream bridge interrupted backpressure"
+            `Quick test_stream_bridge_interrupted_backpressure_releases_lane;
         ] );
     ]
