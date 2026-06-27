@@ -75,3 +75,13 @@ few accepted decisions.
 ## Open Grilling Areas
 
 - None recorded yet.
+
+## Audit Clarifications
+
+- T15 "self-disposal during stream observer update" is not directly
+  expressible as a callback on the internal stream bridge observer; the public
+  contract exposes the returned observer handle instead. The public-contract
+  test case disposes that returned observer from another observer callback in
+  the same observer/effect phase after the bridge update is queued, then asserts
+  that the queued update drains, the stream closes, and later stabilizations can
+  proceed.

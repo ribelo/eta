@@ -2459,6 +2459,139 @@ let test_deterministic_model_matches_small_dynamic_graph () =
   expect_fail "disposed model observer read" (( = ) `Disposed_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
+let test_randomized_model_matches_small_signal_graph () =
+  with_runtime @@ fun rt ->
+  let next rng bound =
+    rng := ((!rng * 1103515245) + 12345) land 0x3fffffff;
+    !rng mod bound
+  in
+  let random_value rng = next rng 41 - 20 in
+  let run_seed seed =
+    let rng = ref seed in
+    let a = Signal.Var.create 1 in
+    let b = Signal.Var.create 2 in
+    let c = Signal.Var.create 3 in
+    let choose_pair = Signal.Var.create true in
+    let offset = Signal.Var.create 0 in
+    let model_a = ref 1 in
+    let model_b = ref 2 in
+    let model_c = ref 3 in
+    let model_choose_pair = ref true in
+    let model_offset = ref 0 in
+    let mapped_a = Signal.Var.watch a |> Signal.map (fun value -> value + 10) in
+    let pair_sum = Signal.map2 ( + ) mapped_a (Signal.Var.watch b) in
+    let all_sum =
+      Signal.all [ mapped_a; Signal.Var.watch b; Signal.Var.watch c ]
+      |> Signal.map (List.fold_left ( + ) 0)
+    in
+    let selected =
+      Signal.bind (Signal.Var.watch choose_pair) (fun use_pair ->
+          if use_pair then pair_sum else all_sum)
+    in
+    let total = Signal.map2 ( + ) selected (Signal.Var.watch offset) in
+    let expected () =
+      let mapped_a = !model_a + 10 in
+      let pair_sum = mapped_a + !model_b in
+      let all_sum = mapped_a + !model_b + !model_c in
+      let selected = if !model_choose_pair then pair_sum else all_sum in
+      selected + !model_offset
+    in
+    let make_observer () =
+      run_ok rt (Signal.Observer.observe total (fun _ -> Effect.unit))
+    in
+    let observer = ref (make_observer ()) in
+    let check_read label expected =
+      Alcotest.(check int) label expected
+        (run_ok rt (Signal.Observer.read !observer))
+    in
+    let check_uninitialized label =
+      expect_fail label
+        (( = ) `Uninitialized_observer)
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.read !observer)))
+    in
+    let check_disposed label disposed =
+      expect_fail label
+        (( = ) `Disposed_observer)
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.read disposed)))
+    in
+    let last_stabilized = ref 0 in
+    let apply_write step write_index =
+      let label =
+        Printf.sprintf "seed %d step %d write %d" seed step write_index
+      in
+      match next rng 5 with
+      | 0 ->
+          let value = random_value rng in
+          model_a := value;
+          run_ok rt (Signal.Var.set a value);
+          Alcotest.(check int) (label ^ " source a") value (Signal.Var.value a)
+      | 1 ->
+          let value = random_value rng in
+          model_b := value;
+          run_ok rt (Signal.Var.set b value);
+          Alcotest.(check int) (label ^ " source b") value (Signal.Var.value b)
+      | 2 ->
+          let value = random_value rng in
+          model_c := value;
+          run_ok rt (Signal.Var.set c value);
+          Alcotest.(check int) (label ^ " source c") value (Signal.Var.value c)
+      | 3 ->
+          let value = next rng 2 = 0 in
+          model_choose_pair := value;
+          run_ok rt (Signal.Var.set choose_pair value);
+          Alcotest.(check bool)
+            (label ^ " source choose")
+            value (Signal.Var.value choose_pair)
+      | _ ->
+          let value = random_value rng in
+          model_offset := value;
+          run_ok rt (Signal.Var.set offset value);
+          Alcotest.(check int)
+            (label ^ " source offset")
+            value (Signal.Var.value offset)
+    in
+    check_uninitialized
+      (Printf.sprintf "seed %d initial observer uninitialized" seed);
+    run_ok rt Signal.stabilize;
+    last_stabilized := expected ();
+    check_read
+      (Printf.sprintf "seed %d initial stabilized value" seed)
+      !last_stabilized;
+    for step = 1 to 40 do
+      let write_count = 1 + next rng 4 in
+      for write_index = 1 to write_count do
+        apply_write step write_index
+      done;
+      if next rng 3 = 0 then
+        check_read
+          (Printf.sprintf "seed %d step %d read before stabilize" seed step)
+          !last_stabilized;
+      run_ok rt Signal.stabilize;
+      last_stabilized := expected ();
+      check_read
+        (Printf.sprintf "seed %d step %d stabilized model" seed step)
+        !last_stabilized;
+      if next rng 7 = 0 then (
+        let disposed = !observer in
+        run_ok rt (Signal.Observer.dispose disposed);
+        check_disposed
+          (Printf.sprintf "seed %d step %d disposed observer read" seed step)
+          disposed;
+        observer := make_observer ();
+        check_uninitialized
+          (Printf.sprintf "seed %d step %d replacement uninitialized" seed step);
+        run_ok rt Signal.stabilize;
+        last_stabilized := expected ();
+        check_read
+          (Printf.sprintf "seed %d step %d replacement stabilized" seed step)
+          !last_stabilized)
+    done;
+    let disposed = !observer in
+    run_ok rt (Signal.Observer.dispose disposed);
+    check_disposed (Printf.sprintf "seed %d final disposed read" seed) disposed
+  in
+  List.iter run_seed [ 7; 19; 101 ]
+
 let test_fanout_fanin_cutoff_and_partial_disposal () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
@@ -3100,6 +3233,97 @@ let test_stream_bridge_dispose_unblocks_backpressure () =
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected buffered update to drain after dispose")
 
+let test_stream_bridge_backpressure_then_observer_failure_releases_phase () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let bridge_observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
+  in
+  let fail_next = ref false in
+  let failing_observer =
+    run_ok rt
+      (Signal.Observer.observe signal (function
+        | Signal.Changed _ when !fail_next -> Effect.fail `Observer_failed
+        | _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  fail_next := true;
+  run_ok rt (Signal.Var.set source 2);
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "stabilization waits before later observer failure" false
+    (Eio.Promise.is_resolved stabilizer);
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initial stream update before failure");
+  expect_fail "backpressure then observer failure"
+    (function `Observer_error `Observer_failed -> true | _ -> false)
+    (Eio.Promise.await_exn stabilizer);
+  Alcotest.(check int) "bridge snapshot published before failure" 2
+    (run_ok rt (Signal.Observer.read bridge_observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected changed stream update before failure");
+  fail_next := false;
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "graph phase released after observer failure" 3
+    (run_ok rt (Signal.Observer.read bridge_observer));
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected later stream update after failure");
+  run_ok rt (Signal.Observer.dispose bridge_observer);
+  run_ok rt (Signal.Observer.dispose failing_observer)
+
+let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let bridge_observer, stream = run_ok rt (Signal.Stream.observe signal) in
+  let dispose_bridge = ref false in
+  let disposer =
+    run_ok rt
+      (Signal.Observer.observe signal (function
+        | Signal.Changed _ when !dispose_bridge ->
+            Signal.Observer.dispose bridge_observer
+        | _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initial stream update");
+  dispose_bridge := true;
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  expect_fail "bridge disposed during observer phase"
+    (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read bridge_observer)));
+  (match run_ok rt (Eta_stream.run_collect stream) with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ ->
+       Alcotest.fail
+         "expected changed stream update to drain before deterministic close");
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "disposer observer remains alive after bridge disposal" 3
+    (run_ok rt (Signal.Observer.read disposer));
+  run_ok rt (Signal.Observer.dispose disposer)
+
 let test_stream_bridge_interrupted_backpressure_releases_lane () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -3289,6 +3513,8 @@ let () =
             test_stats_and_dot_are_read_only;
           Alcotest.test_case "deterministic model matches dynamic graph" `Quick
             test_deterministic_model_matches_small_dynamic_graph;
+          Alcotest.test_case "randomized model matches dynamic graph" `Quick
+            test_randomized_model_matches_small_signal_graph;
           Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
             test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick
@@ -3339,6 +3565,13 @@ let () =
             test_stream_bridge_backpressures_at_capacity;
           Alcotest.test_case "stream bridge dispose unblocks backpressure"
             `Quick test_stream_bridge_dispose_unblocks_backpressure;
+          Alcotest.test_case
+            "stream bridge backpressure plus observer failure releases phase"
+            `Quick
+            test_stream_bridge_backpressure_then_observer_failure_releases_phase;
+          Alcotest.test_case "stream bridge dispose during observer phase"
+            `Quick
+            test_stream_bridge_dispose_during_observer_phase_is_deterministic;
           Alcotest.test_case "stream bridge interrupted backpressure"
             `Quick test_stream_bridge_interrupted_backpressure_releases_lane;
         ] );
