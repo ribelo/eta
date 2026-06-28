@@ -1,7 +1,7 @@
-# Backend Split
+# Schema Common Backend Split
 
 The former direct `test/schema/run.ml` executable has been moved into
-`test/schema_common` and is now instantiated by `test/schema_eio`.
+`test/schema_common` and is instantiated by `test/schema_eio`.
 
 These scenarios cover Eta-owned schema and JSON behavior, including typed
 decode/encode failures and `decode_with_policy` effects. `Eta_schema_test` now

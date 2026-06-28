@@ -1,4 +1,4 @@
-# PPX Backend Split
+# PPX Common Backend Split
 
 `test/ppx_common` owns PPX-generated Eta runtime behavior and runs it through
 the Eio-backed runtime:
@@ -9,5 +9,4 @@ the Eio-backed runtime:
 `[%eta.sql.table]` is also covered in `test/ppx_common`. The generator emits
 code against `Eta_sql`, so the shared suite links that package even though the
 assertions exercise only generated SQL metadata and do not open SQLite or run
-database effects. There are no remaining backend-specific PPX tests in
-`test/ppx`.
+database effects. There is no direct `test/ppx` suite.
