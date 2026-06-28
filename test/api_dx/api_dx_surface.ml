@@ -114,7 +114,6 @@ let preferred_docs =
     "README.md";
     "examples/README.md";
     "docs/hardening.md";
-    "docs/optimization-matrix.md";
     "docs/packages.md";
     "docs/services.md";
     "docs/background-work.md";

@@ -47,8 +47,9 @@ adapter lives under `lib/http_js/` and is client-only.
 
 `eta_http_eio.Server` is intended for edge service. The evidence below shows
 which gates currently pass, but Eta is still pre-1.0 and not universally
-production-ready. See `docs/http-server-production-readiness-audit.md` for the
-current readiness caveats (server WebSocket upgrade support, operational
+production-ready. See
+`.scratch/research/evidence/eta_http_research/http-server-production-readiness-audit.md`
+for the current readiness caveats (server WebSocket upgrade support, operational
 recipes, advanced TLS/deployment features, and broader adversarial/soak
 coverage) before exposing a server directly on the public Internet.
 

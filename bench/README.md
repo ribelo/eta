@@ -4,7 +4,7 @@ The bench suite records runtime and compile-time measurements for Eta over
 time. It is opt-in infrastructure, not a CI gate.
 
 Package-level optimization status is tracked separately in
-[docs/optimization-matrix.md](../docs/optimization-matrix.md).
+[.scratch/research/planning/optimization-matrix.md](../.scratch/research/planning/optimization-matrix.md).
 
 ## What It Measures
 
