@@ -13,12 +13,16 @@ Optional public surfaces live in sibling `lib/<feature>/` directories and
 publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
 `eta_ai`, and `eta_test`.
 
-Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
-experiments may live under local `.scratch/`, which is ignored by git. Keep
-`.scratch/` out of the main Dune workspace and out of the published library
-unless an experiment is deliberately promoted into real project code under
-`lib/`, `test/`, or `tools/`. Durable research conclusions belong under
-`docs/research/` or package-local ADRs, not in tracked scratch files.
+Tests live under top-level `test/`, mirroring the `lib/` package layout.
+Research work happens in local `.scratch/`, which is ignored by git. Keep
+`.scratch/` out of the main Dune workspace and out of the published library.
+Tracked documentation must not cite, depend on, or require `.scratch/` paths or
+ignored local artifacts as evidence. If a research result becomes durable
+documentation, include the relevant evidence directly in the tracked document or
+promote the supporting source, fixture, benchmark, or transcript into tracked
+repo code under `lib/`, `test/`, `bench/`, `tools/`, `http-testsuite/`, or
+package-local docs before referring to it. Otherwise keep both the experiment
+and its notes in `.scratch/`.
 
 If scratch code needs Dune, make `.scratch/` a separate Dune project and build
 specific experiments explicitly, for example `dune build --root .scratch
