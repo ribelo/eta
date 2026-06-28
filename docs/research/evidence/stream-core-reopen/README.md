@@ -36,10 +36,10 @@ V-S1..V-S10 were written:
 
 | #  | Proof question | Evidence | Risk | Status |
 | -- | -------------- | -------- | ---- | ------ |
-| P1 | Can each candidate express a REAL streaming transducer (chunk-by-chunk, leftover, terminal value, distinct upstream-EOF vs upstream-error)? | `b_channel_transducer.ml`, `c_pull_core.ml`, `a_current_shape.ml` | High | Proven (B,C) / Contradicted (A) |
-| P2 | Can candidate A express the same transducer, even awkwardly? | `a_current_shape.ml` (attempt1 flat_map+ref, attempt2 scan) | High | Contradicted — terminal value structurally dropped |
-| P3 | Does a public Channel really cost "seven parameters" in OCaml? | `d_type_burden.ml` | High | Contradicted — 5 params, call sites infer with zero annotations |
-| P4 | Does a Channel preserve the typed-error row through `run`? | `neg_error_row.ml` (compile-time negative) | Medium | Proven |
+| P1 | Can each candidate express a REAL streaming transducer (chunk-by-chunk, leftover, terminal value, distinct upstream-EOF vs upstream-error)? | Local `.scratch/evidence/stream-core-reopen/{b_channel_transducer,c_pull_core,a_current_shape}.ml` | High | Proven (B,C) / Contradicted (A) |
+| P2 | Can candidate A express the same transducer, even awkwardly? | Local `.scratch/evidence/stream-core-reopen/a_current_shape.ml` (attempt1 flat_map+ref, attempt2 scan) | High | Contradicted — terminal value structurally dropped |
+| P3 | Does a public Channel really cost "seven parameters" in OCaml? | Local `.scratch/evidence/stream-core-reopen/d_type_burden.ml` | High | Contradicted — 5 params, call sites infer with zero annotations |
+| P4 | Does a Channel preserve the typed-error row through `run`? | Local `.scratch/evidence/stream-core-reopen/neg_error_row.ml` (compile-time negative) | Medium | Proven |
 | P5 | Is the transducer need real, not hypothetical? | `lib/http/body/{stream,transducer}.ml`, ADR 0001 | Medium | Proven (production code) |
 | P6 | Runtime lifecycle (early take, typed failure, interruption cleanup)? | Real eta_stream tests in `test/stream` + HTTP body; not re-derived here | Medium | Affirmed via existing real tests |
 
@@ -62,7 +62,11 @@ dune build --root .scratch evidence/stream-core-reopen/neg_error_row.exe
 # expected error: "These two variant types have no intersection"
 ```
 
-## Files
+## Local Scratch Files
+
+The buildable experiment files live under the ignored local scratch project
+`.scratch/evidence/stream-core-reopen/`. Tracked docs keep only the durable
+summary, hypothesis ledger, and verdict.
 
 - `common.ml` — minimal `Effect` model (one typed-error row, like real `eta`).
 - `a_current_shape.ml` — candidate A: faithful replica of `eta_stream`'s

@@ -35,15 +35,17 @@ Two facts have changed since:
    InErr, InDone, Env`). In Eta-shaped OCaml the count is **5**: Eta has one
    typed-error row so `OutErr`/`InErr` collapse to one `'err`, and `Env` is
    absorbed into the embedded `('a,'err) Effect.t`. Call sites infer with zero
-   annotations (`docs/research/evidence/stream-core-reopen/d_type_burden.ml`).
+   annotations; the result is recorded in
+   `docs/research/evidence/stream-core-reopen/verdict.md`.
 
 The current shape provably **cannot** express a streaming transducer: a
 `split_lines` via `flat_map`+mutable-ref drops the trailing partial line (no
 terminal-value hook) and breaks retry/cleanup; via `scan` it emits the whole
 accumulator each step and recovers the leftover only by accident
 (`a_current_shape.ml`). A 5-parameter Channel expresses the same transducer
-cleanly with leftover carry and a typed `done` value
-(`b_channel_transducer.ml`).
+cleanly with leftover carry and a typed `done` value. The executable fixture
+names and observed output are recorded in
+`docs/research/evidence/stream-core-reopen/verdict.md`.
 
 ## Decision
 
@@ -135,7 +137,6 @@ Research verdict only in this pass. A follow-up objective should:
 - `docs/research/evidence/stream-core-reopen/README.md`
 - `docs/research/evidence/stream-core-reopen/verdict.md`
 - `docs/research/evidence/stream-core-reopen/candidates.md`
-- `docs/research/evidence/stream-core-reopen/{a_current_shape,b_channel_transducer,c_pull_core,d_type_burden,neg_error_row}.ml`
 - `lib/http/body/stream.mli`, `lib/http/body/transducer.{ml,mli}`
 - `lib/stream/docs/adrs/0001-effect-reader-stream.md`
 - `docs/research/journal.md`, section `effet-stream design — Stream / Sink / Channel` (V-S1..V-S10)
