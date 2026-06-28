@@ -19,6 +19,8 @@ type failing_server_flow = {
   mode : failing_server_flow_mode;
   mutable shutdowns : int;
   mutable closes : int;
+  forbidden_close_domain : Domain.id option Atomic.t;
+  forbidden_domain_closes : int Atomic.t;
   mutable pending_read : string option;
   read_release : unit Eio.Promise.u option;
   read_block : unit Eio.Promise.t option;
@@ -77,6 +79,10 @@ module Failing_server_flow = struct
       t.read_release
 
   let close t =
+    (match Atomic.get t.forbidden_close_domain with
+    | Some domain when domain = Domain.self () ->
+        Atomic.incr t.forbidden_domain_closes
+    | Some _ | None -> ());
     t.closes <- t.closes + 1;
     release_blocked_write t.mode;
     Option.iter (fun release -> ignore (Eio.Promise.try_resolve release ()))
@@ -111,7 +117,16 @@ let failing_server_flow mode =
         (Some blocked, Some release)
   in
   let state =
-    { mode; shutdowns = 0; closes = 0; pending_read; read_block; read_release }
+    {
+      mode;
+      shutdowns = 0;
+      closes = 0;
+      forbidden_close_domain = Atomic.make None;
+      forbidden_domain_closes = Atomic.make 0;
+      pending_read;
+      read_block;
+      read_release;
+    }
   in
   let flow : Eta_http_eio.H2.Server_connection.flow =
     Eio.Resource.T
@@ -743,6 +758,42 @@ let test_h2c_server_shutdown_while_transport_write_blocked () =
   Alcotest.(check int) "active streams" 0 stats.active_streams;
   Alcotest.(check bool) "flow shutdown" true
     (state.shutdowns > 0 || state.closes > 0)
+
+let test_h2c_immediate_shutdown_does_not_close_from_caller_domain () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let domain_mgr = Eio.Stdenv.domain_mgr env in
+  let state, flow = failing_server_flow (Blocking_read { request_bytes = "" }) in
+  let started = Eio.Stream.create 1 in
+  let closed = Eio.Stream.create 1 in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Domain_manager.run domain_mgr (fun () ->
+          Eio.Switch.run @@ fun conn_sw ->
+          Eta_http_eio.H2.Server_connection.run_h2c ~sw:conn_sw ~clock ~flow
+            ~peer:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 31337))
+            ~config:Eta_http_eio.Server.Config.default ~runtime_factory
+            ~on_start:(fun current ->
+              Eio.Stream.add started (current, Domain.self ()))
+            ~on_close:(fun _stats -> Eio.Stream.add closed (Domain.self ()))
+            (fun _request -> Alcotest.fail "blocked read reached handler")));
+  let connection, owner_domain =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> Eio.Stream.take started)
+  in
+  Alcotest.(check bool) "connection owner is foreign" true
+    (owner_domain <> Domain.self ());
+  Atomic.set state.forbidden_close_domain (Some (Domain.self ()));
+  Eta_http_eio.H2.Server_connection.shutdown connection Immediate;
+  Alcotest.(check int) "caller-domain closes" 0
+    (Atomic.get state.forbidden_domain_closes);
+  let closed_domain =
+    Eio.Time.with_timeout_exn clock 1.0 (fun () -> Eio.Stream.take closed)
+  in
+  Alcotest.(check bool) "closed in owner domain" true
+    (closed_domain = owner_domain)
 
 let test_h2c_server_response_write_timeout_is_typed () =
   run_eio @@ fun env ->

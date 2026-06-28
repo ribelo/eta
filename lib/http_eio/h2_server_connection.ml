@@ -3484,11 +3484,7 @@ let run_handler t ordinal request handler =
   | _ -> ()
 
 let shutdown t policy =
-  if not t.closed then (
-    let queued = enqueue t (Shutdown policy) in
-    match policy with
-    | Types.Immediate when queued -> abortive_close_flow t.flow
-    | Immediate | Graceful _ -> ())
+  if not t.closed then ignore (enqueue t (Shutdown policy))
 
 let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =

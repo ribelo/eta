@@ -706,6 +706,9 @@ let () =
             test_h2c_server_write_exception_closes_typed;
           Alcotest.test_case "h2c shutdown while transport write blocked"
             `Quick test_h2c_server_shutdown_while_transport_write_blocked;
+          Alcotest.test_case
+            "h2c immediate shutdown closes in owner domain" `Quick
+            test_h2c_immediate_shutdown_does_not_close_from_caller_domain;
           Alcotest.test_case "h2c response write timeout is typed" `Quick
             test_h2c_server_response_write_timeout_is_typed;
           Alcotest.test_case "h2c ping churn closes connection" `Quick
