@@ -1,5 +1,0 @@
-(executable
- (name debug)
- (public_name debug_h1_tls)
- (package eta_http_eio)
- (libraries eta_http_eio eta_http_testsuite eio_main))
