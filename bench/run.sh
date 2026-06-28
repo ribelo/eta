@@ -60,7 +60,7 @@ build_targets=(
   lib/schema/bench/bench_schema.exe
   lib/otel/bench/bench_otel.exe
   lib/par/bench/bench_par.exe
-  lib/http_bench/bench_http.exe
+  bench/http/bench_http.exe
   lib/sql/bench/bench_sql.exe
   lib/ai/bench/bench_ai.exe
   lib/ai/openai_codec/bench/bench_ai_openai_codec.exe
@@ -86,7 +86,7 @@ run_runtime _build/default/lib/stream/bench/bench_stream.exe
 run_runtime _build/default/lib/schema/bench/bench_schema.exe
 run_runtime _build/default/lib/otel/bench/bench_otel.exe
 run_runtime _build/default/lib/par/bench/bench_par.exe
-run_runtime _build/default/lib/http_bench/bench_http.exe
+run_runtime _build/default/bench/http/bench_http.exe
 run_runtime _build/default/lib/sql/bench/bench_sql.exe
 run_runtime _build/default/lib/ai/bench/bench_ai.exe
 run_runtime _build/default/lib/ai/openai_codec/bench/bench_ai_openai_codec.exe

@@ -8,7 +8,7 @@
   (alias ../bench/router/ocaml/bench)
   (alias ../lib/otel/bench/bench)
   (alias ../lib/par/bench/bench)
-  (alias ../lib/http_bench/bench)
+  (alias ../bench/http/bench)
   (alias ../bench/http_server_loop/bench)
   (alias ../lib/sql/bench/bench)
   (alias ../lib/ai/bench/bench)
