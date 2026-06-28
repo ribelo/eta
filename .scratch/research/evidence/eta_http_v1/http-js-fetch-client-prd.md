@@ -1,5 +1,8 @@
 # PRD: HTTP JS Fetch Client and Transport-Neutral Package Split
 
+Archived implementation-planning artifact. The durable accepted decision lives
+in `docs/adrs/0001-http-js-fetch-and-transport-boundaries.md`.
+
 ## Problem Statement
 
 Eta users can make HTTP requests from native OCaml through the Eio adapter, but

@@ -2,8 +2,9 @@
 
 Research outcome of the `eta_http_service` evidence-based-coding lab
 (worktree `Eta-http-service-api`, branch `research/eta-http-service-api`).
-Date: 2026-06-18. This document is the promoted durable summary; the original
-buildable scratch lab was local research evidence and is no longer tracked.
+Date: 2026-06-18. This tracked directory preserves the promoted durable
+summary; the original buildable scratch lab was local research evidence and is
+no longer tracked.
 
 ## Recommendation (direct)
 
