@@ -9,7 +9,9 @@ _opam/
 backlog/
 .objectives/
 .review/
-.scratch/
+.scratch/*
+!.scratch/research/
+!.scratch/research/**
 docs/big-picture/
 /journal.md
 /OBJECTIVE.md

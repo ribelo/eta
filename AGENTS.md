@@ -14,15 +14,21 @@ publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
 `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout.
-Research work happens in local `.scratch/`, which is ignored by git. Keep
-`.scratch/` out of the main Dune workspace and out of the published library.
-Tracked documentation must not cite, depend on, or require `.scratch/` paths or
-ignored local artifacts as evidence. If a research result becomes durable
-documentation, write the decision or API rationale as documentation and promote
-any repeatable proof into tracked tests, benchmarks, tools, or source fixtures
-under `lib/`, `test/`, `bench/`, `tools/`, or `http-testsuite/` before citing
-it. Otherwise keep the whole research bundle - code, notes, evidence, logs, and
-journal - in `.scratch/`.
+Research work happens under `.scratch/`. Durable research bundles that must be
+preserved in git live under tracked `.scratch/research/`; local throwaway
+checkouts, build output, generated logs, and work-in-progress probes stay in
+ignored `.scratch/` paths outside `.scratch/research/`. Keep `.scratch/` out of
+the main Dune workspace and out of the published library.
+
+`docs/` is for durable project and package documentation, not research bundles.
+Documentation may summarize a research decision, but it must not depend on
+ignored local artifacts. If a research result becomes durable documentation,
+write the decision or API rationale as documentation and cite only tracked
+provenance, such as `.scratch/research/` material or project tests. If a proof
+needs to become an ongoing project gate, promote it into tracked tests,
+benchmarks, tools, or source fixtures under `lib/`, `test/`, `bench/`, `tools/`,
+or `http-testsuite/`. Otherwise keep the whole research bundle - code, notes,
+evidence, logs, and journal - under `.scratch/research/`.
 
 If scratch code needs Dune, make `.scratch/` a separate Dune project and build
 specific experiments explicitly, for example `dune build --root .scratch
