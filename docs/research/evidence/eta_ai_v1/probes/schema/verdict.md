@@ -8,7 +8,7 @@ Decision:
   Schema export module before Phase A-C closes.
 - Do not build an eta-ai-local JSON Schema generator around eta-schema internals.
 - The required eta-schema extension is filed as
-  packages/eta-schema/docs/adrs/0001-json-schema-export.md.
+  `lib/schema/docs/adrs/0001-json-schema-export.md`.
 
 Evidence:
 

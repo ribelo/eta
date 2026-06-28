@@ -20,7 +20,7 @@ Evidence:
 
 - The first live run reached no provider payloads and failed all HTTPS calls
   with Mirage_crypto_rng's uninitialized default generator error.
-- packages/eta-http/transport/connect.ml now initializes the process-wide
+- `lib/http_eio/transport/connect.ml` now initializes the process-wide
   Mirage crypto RNG before TLS handshakes and maps initialization failure into
   eta-http's typed TLS error channel.
 - The filtered live reach canary passed for Anthropic after choosing
@@ -32,8 +32,7 @@ Evidence:
   Kimi Code returned a product-scope 403, Z.ai returned insufficient resource
   state, and Moonshot returned insufficient balance.
 - The canary redacts configured env-key values plus key-like sk-/ak- and org-
-  tokens before printing provider error text or writing
-  results/live_reach_latest.txt.
+  tokens before printing provider error text or writing local scratch results.
 
 Verification:
 

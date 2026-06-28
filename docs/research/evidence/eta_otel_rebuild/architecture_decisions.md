@@ -2,10 +2,9 @@
 
 Sources:
 
-- external_exporter_analysis.md
-- eta_api_gap_analysis.md
-- current_inventory.md
-- Current Eta APIs in packages/eta/*.mli
+- transient scratch notes: external exporter analysis, API gap analysis, and
+  current implementation inventory (not retained in Git)
+- Current Eta APIs in `lib/eta/*.mli`
 
 ## ADR-1: push-vs-poll signal ingestion
 
