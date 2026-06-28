@@ -1481,6 +1481,89 @@ let test_h1_server_handle_graceful_shutdown_waits_for_request () =
       Alcotest.(check int) "closed connections after shutdown" 1
         stats.closed_connections)
 
+let test_h1_server_connection_shutdown_from_foreign_domain () =
+  run_eio @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio.Stdenv.net env in
+  let clock = Eio.Stdenv.clock env in
+  let domain_mgr = Eio.Stdenv.domain_mgr env in
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  let started = Eio.Stream.create 1 in
+  let handler_started = Eio.Stream.create 1 in
+  let release_handler = Eio.Stream.create 1 in
+  let closed = Eio.Stream.create 1 in
+  let runtime_factory ~sw ~connection:_ () =
+    Eta_eio.Runtime.create ~sw ~clock ()
+  in
+  let handler (_request : Eta_http.Server.Request.t) =
+    Eta.Effect.sync (fun () ->
+        Eio.Stream.add handler_started (Domain.self ());
+        Eio.Stream.take release_handler;
+        Eta_http.Server.Response.text "done\n")
+  in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Domain_manager.run domain_mgr (fun () ->
+          Eio.Switch.run @@ fun conn_sw ->
+          let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+          let connection : Eta_http_eio.Server.Connection_info.t =
+            {
+              id = "h1-foreign-domain";
+              peer = { address = Some "127.0.0.1"; port = Some port };
+              protocol = Eta_http.Server.Error.H1;
+              tls = false;
+              alpn_protocol = None;
+            }
+          in
+          Eta_http_eio.H1.Server_connection.run ~sw:conn_sw ~clock
+            ~flow:(flow :> Eta_http_eio.H1.Server_connection.flow)
+            ~connection ~config:Eta_http_eio.Server.Config.default
+            ~runtime_factory
+            ~on_start:(fun connection ->
+              Eio.Stream.add started (connection, Domain.self ()))
+            ~on_close:(fun _stats -> Eio.Stream.add closed (Domain.self ()))
+            handler));
+  let flow =
+    Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Eio.Stream.add release_handler ();
+      try Eio.Flow.shutdown flow `All with _ -> ())
+    (fun () ->
+      let connection, connection_domain =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Stream.take started)
+      in
+      Alcotest.(check bool) "connection owner is foreign" true
+        (connection_domain <> Domain.self ());
+      Eio.Flow.copy_string
+        "GET /wait HTTP/1.1\r\nHost: example.test\r\n\r\n"
+        flow;
+      let handler_domain =
+        Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+            Eio.Stream.take handler_started)
+      in
+      Alcotest.(check bool) "handler is foreign" true
+        (handler_domain <> Domain.self ());
+      let shutdown_result =
+        match
+          Eta_http_eio.H1.Server_connection.shutdown connection Immediate
+        with
+        | () -> Ok ()
+        | exception Invalid_argument message
+          when contains message "wrong domain" ->
+            Error message
+      in
+      Alcotest.(check (result unit string)) "shutdown from caller domain"
+        (Ok ()) shutdown_result;
+      ignore
+        (Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+             Eio.Stream.take closed)))
+
 let metric_values name meter =
   Eta.Meter.dump meter
   |> List.filter_map (fun point ->

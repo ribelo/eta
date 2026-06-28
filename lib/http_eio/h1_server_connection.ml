@@ -29,6 +29,8 @@ type handler_watch = {
   hw_cancel : Eio.Cancel.t;
 }
 
+type command = Shutdown of Types.shutdown
+
 type t = {
   sw : Eio.Switch.t;
   now_ms : unit -> int64;
@@ -53,6 +55,8 @@ type t = {
   mutable active_request : bool;
   closed_signal : unit Eio.Promise.t;
   close_signal : unit Eio.Promise.u;
+  commands : command Eio.Stream.t;
+  closed_atomic : bool Atomic.t;
   mutable closed : bool;
   mutable handler_watch : handler_watch option;
   mutable trace_current_ordinal : int option;
@@ -195,6 +199,7 @@ let shutdown_all t = try Eio.Flow.shutdown t.flow `All with _ -> ()
 let mark_closed t =
   if not t.closed then (
     t.closed <- true;
+    Atomic.set t.closed_atomic true;
     (* Abort an in-flight handler on connection close (replaces the per-request
        Fiber.first race against closed_signal). *)
     (match t.handler_watch with
@@ -1470,12 +1475,23 @@ let rec run_requests t ordinal handler =
                       if reusable && (not t.draining) && not t.closed then
                         run_requests t (ordinal + 1) handler))))
 
-let shutdown t policy =
+let begin_shutdown t policy =
   if not t.closed then (
     mark_shutdown_active t;
     match policy with
     | Types.Immediate -> close_immediately t
     | Types.Graceful timeout -> begin_graceful_shutdown t timeout)
+
+let rec command_loop t =
+  if not t.closed then (
+    match Eio.Stream.take t.commands with
+    | Shutdown policy ->
+        begin_shutdown t policy;
+        command_loop t)
+
+let shutdown t policy =
+  if not (Atomic.get t.closed_atomic) then
+    Eio.Stream.add t.commands (Shutdown policy)
 
 let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
@@ -1511,6 +1527,8 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
       active_request = false;
       closed_signal;
       close_signal;
+      commands = Eio.Stream.create config.command_queue_capacity;
+      closed_atomic = Atomic.make false;
       closed = false;
       handler_watch = None;
       trace_current_ordinal = None;
@@ -1523,6 +1541,7 @@ let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     (fun metrics -> Server_metrics.active_connections metrics 1)
     t.connection_metrics;
   Option.iter (fun on_start -> on_start t) on_start;
+  Eio.Fiber.fork_daemon ~sw (fun () -> command_loop t; `Stop_daemon);
   Eio.Fiber.fork_daemon ~sw (fun () -> watchdog_loop t; `Stop_daemon);
   Fun.protect
     ~finally:(fun () ->

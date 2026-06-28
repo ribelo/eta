@@ -271,6 +271,8 @@ let () =
             test_h1_server_run_on_unix_socket_plain_get;
           Alcotest.test_case "h1 server handle graceful shutdown" `Quick
             test_h1_server_handle_graceful_shutdown_waits_for_request;
+          Alcotest.test_case "h1 shutdown from foreign domain" `Quick
+            test_h1_server_connection_shutdown_from_foreign_domain;
           Alcotest.test_case "meter metrics" `Quick
             test_h1_server_connection_emits_meter_metrics;
           Alcotest.test_case "stream response releases after body written" `Quick
