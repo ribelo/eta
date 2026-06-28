@@ -207,7 +207,7 @@
 (package
  (name eta_http_js)
  (allow_empty)
- (synopsis "js_of_ocaml Fetch client adapter for eta-http")
+ (synopsis "Js_of_ocaml Fetch client adapter for eta-http")
  (description
   "eta_http_js provides a js_of_ocaml Fetch-backed HTTP client adapter for Eta HTTP.")
  (depends
