@@ -9,8 +9,8 @@ license: "MIT"
 homepage: "https://github.com/ribelo/eta"
 bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
+  "dune" {>= "3.21"}
   "ocaml" {>= "5.2.0"}
-  "dune" {>= "3.21" & >= "3.0"}
   "eta_ai"
   "base64"
   "odoc" {with-doc}
